@@ -7,6 +7,7 @@ import {
   checkWorktreeRequirement,
   DELEGATION_FAILURE_MESSAGE,
   DELEGATION_RETRY_PROMPT,
+  isExplicitWorktreeRequest,
   isSingleTaskDelegationRequired,
   MAX_DELEGATION_RETRIES,
   MAX_INCOMPLETE_INTENT_RETRIES,
@@ -336,6 +337,32 @@ describe('completionPolicy', () => {
       expect(
         checkWorktreeRequirement('Fix the bug and run tests.', new Set(), 0)
       ).toEqual({ action: 'none' });
+    });
+
+    it('ignores negated worktree instructions without hiding later positive directives', () => {
+      expect(
+        isExplicitWorktreeRequest('Do not create or enter another worktree.')
+      ).toBe(false);
+      expect(
+        checkWorktreeRequirement(
+          'Work in the current workspace without creating a git worktree.',
+          new Set(),
+          0
+        )
+      ).toEqual({ action: 'none' });
+      expect(isExplicitWorktreeRequest('不要创建或进入工作树。')).toBe(false);
+      expect(
+        checkWorktreeRequirement(
+          'Do not edit the current checkout; enter a worktree instead.',
+          new Set(),
+          0
+        )
+      ).toEqual(
+        expect.objectContaining({
+          action: 'retry',
+          tool: 'EnterWorktree',
+        })
+      );
     });
 
     it('fails closed after repeated worktree protocol violations', () => {

@@ -27,6 +27,14 @@ import { getCwd } from '../utils/cwd.js';
 import { DEFAULT_CONFIG } from './defaults.js';
 import { formatMaxTurnsRange, isValidMaxTurns } from './maxTurns.js';
 import {
+  isValidConcurrentTaskLimit,
+  isValidQueuedTaskLimit,
+  MAX_CONCURRENT_TASKS,
+  MAX_QUEUED_TASKS,
+  MIN_CONCURRENT_TASKS,
+  MIN_QUEUED_TASKS,
+} from './taskConcurrency.js';
+import {
   BladeConfig,
   type PermissionConfig,
   PermissionMode,
@@ -461,6 +469,16 @@ export class ConfigManager {
     if (!isValidMaxTurns(config.maxTurns)) {
       errors.push(`maxTurns 必须是 ${formatMaxTurnsRange()}`);
     }
+    if (!isValidConcurrentTaskLimit(config.maxConcurrentTasks)) {
+      errors.push(
+        `maxConcurrentTasks 必须是 ${MIN_CONCURRENT_TASKS}-${MAX_CONCURRENT_TASKS} 之间的整数`
+      );
+    }
+    if (!isValidQueuedTaskLimit(config.maxQueuedTasks)) {
+      errors.push(
+        `maxQueuedTasks 必须是 ${MIN_QUEUED_TASKS}-${MAX_QUEUED_TASKS} 之间的整数`
+      );
+    }
 
     if (config.models && config.models.length > 0) {
       if (!config.currentModelId) {
@@ -578,6 +596,12 @@ export function mergeRuntimeConfig(
   // 3. 最大轮次 (CLI 优先)
   if (cliOptions.maxTurns !== undefined) {
     result.maxTurns = cliOptions.maxTurns;
+  }
+  if (cliOptions.maxConcurrentTasks !== undefined) {
+    result.maxConcurrentTasks = cliOptions.maxConcurrentTasks;
+  }
+  if (cliOptions.maxQueuedTasks !== undefined) {
+    result.maxQueuedTasks = cliOptions.maxQueuedTasks;
   }
 
   // 4. CLI 专属字段 - 系统提示

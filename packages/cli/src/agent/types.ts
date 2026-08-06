@@ -12,6 +12,7 @@ import type {
   PreparedInputTurn,
   SteeringMessage,
 } from './runtime/ActiveTurnMailbox.js';
+import type { TaskAdmissionHandle } from './runtime/TaskRunScheduler.js';
 
 /**
  * 用户消息内容类型
@@ -119,6 +120,8 @@ export interface LoopOptions {
   goalContinuationOnly?: boolean;
   /** Model-visible control input that must not remain in transcript history. */
   transientInput?: 'goal_continuation';
+  /** Optional surface-reserved admission used for accurate queued responses. */
+  taskAdmission?: TaskAdmissionHandle;
   /** SessionRuntime-owned same-turn user steering source. */
   turnSteering?: {
     drain: () => Promise<SteeringMessage[]>;

@@ -133,7 +133,11 @@ export function Sidebar({ className }: SidebarProps) {
     const diff = session.taskDiffStat
       ? `${session.taskDiffStat.changedFiles} files +${session.taskDiffStat.additions} -${session.taskDiffStat.deletions}`
       : undefined;
-    return { project, environment, diff };
+    const queue =
+      session.taskStatus === 'queued' && session.taskQueuePosition
+        ? `#${session.taskQueuePosition}/${session.taskQueueDepth ?? session.taskQueuePosition} queued`
+        : undefined;
+    return { project, environment, diff, queue };
   };
 
   const handleNewChat = () => {
@@ -406,6 +410,14 @@ export function Sidebar({ className }: SidebarProps) {
                           <span className="truncate">{taskContext.project}</span>
                           <span>·</span>
                           <span className="truncate">{taskContext.environment}</span>
+                          {taskContext.queue && (
+                            <>
+                              <span>·</span>
+                              <span className="truncate text-amber-700 dark:text-amber-400">
+                                {taskContext.queue}
+                              </span>
+                            </>
+                          )}
                           {taskContext.diff && (
                             <>
                               <span>·</span>

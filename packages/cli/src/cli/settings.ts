@@ -3,8 +3,14 @@ import path from 'node:path';
 import { getOriginalCwd } from '../bootstrap/state.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
 import { MAX_AGENT_TURNS } from '../config/maxTurns.js';
+import {
+  MAX_CONCURRENT_TASKS,
+  MAX_QUEUED_TASKS,
+  MIN_CONCURRENT_TASKS,
+  MIN_QUEUED_TASKS,
+} from '../config/taskConcurrency.js';
 import { PermissionMode, type RuntimeConfig } from '../config/types.js';
-import { StringEnum, Type, safeParseSchema } from '../schema/index.js';
+import { StringEnum, safeParseSchema, Type } from '../schema/index.js';
 
 const RUNTIME_SETTING_FIELDS = [
   'systemPrompt',
@@ -91,6 +97,18 @@ const RuntimeSettingsSchema = Type.Object({
   ),
   permissionMode: Type.Optional(Type.Enum(PermissionMode)),
   maxTurns: Type.Optional(Type.Integer({ minimum: -1, maximum: MAX_AGENT_TURNS })),
+  maxConcurrentTasks: Type.Optional(
+    Type.Integer({
+      minimum: MIN_CONCURRENT_TASKS,
+      maximum: MAX_CONCURRENT_TASKS,
+    })
+  ),
+  maxQueuedTasks: Type.Optional(
+    Type.Integer({
+      minimum: MIN_QUEUED_TASKS,
+      maximum: MAX_QUEUED_TASKS,
+    })
+  ),
   systemPrompt: Type.Optional(Type.String()),
   appendSystemPrompt: Type.Optional(Type.String()),
   initialMessage: Type.Optional(Type.String()),
@@ -142,6 +160,8 @@ const ARGUMENT_MAPPINGS = [
   ['settingSources', 'settingSources'],
   ['permissionMode', 'permissionMode'],
   ['maxTurns', 'maxTurns'],
+  ['maxConcurrentTasks', 'maxConcurrentTasks'],
+  ['maxQueuedTasks', 'maxQueuedTasks'],
 ] as const;
 
 function parseSettingsJson(content: string, source: string): Partial<RuntimeConfig> {

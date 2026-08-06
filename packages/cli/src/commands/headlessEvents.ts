@@ -139,6 +139,15 @@ const TaskSessionEventSchema = event({
   base_commit: Type.Optional(Type.String()),
 });
 
+const TaskAdmissionEventSchema = event({
+  type: Type.Literal('task_admission'),
+  state: StringEnum(['queued', 'running']),
+  queue_position: Type.Optional(Type.Integer({ minimum: 1 })),
+  queue_depth: Type.Integer({ minimum: 0 }),
+  in_flight: Type.Integer({ minimum: 0 }),
+  max_concurrent_tasks: Type.Integer({ minimum: 1 }),
+});
+
 const OutputEventSchema = event({
   type: Type.Literal('output'),
   content: Type.String(),
@@ -167,6 +176,7 @@ export const HeadlessJsonlEventSchema = Runtime(
     CompactingEventSchema,
     TurnLimitEventSchema,
     TaskSessionEventSchema,
+    TaskAdmissionEventSchema,
     OutputEventSchema,
     ErrorEventSchema,
   ])

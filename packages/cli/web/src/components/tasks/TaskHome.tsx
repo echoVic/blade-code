@@ -1,5 +1,6 @@
 import {
   Box,
+  Gauge,
   GitBranch,
   Hammer,
   HardDrive,
@@ -177,6 +178,16 @@ export function TaskHome() {
               <GitBranch className="h-3 w-3" />
               {context.branch}
             </span>
+            {taskWorkspaceInfo?.taskAdmission && (
+              <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 font-mono text-[11px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
+                <Gauge className="h-3 w-3" />
+                {taskWorkspaceInfo.taskAdmission.inFlight}/
+                {taskWorkspaceInfo.taskAdmission.maxConcurrent} running
+                {taskWorkspaceInfo.taskAdmission.queued > 0
+                  ? ` · ${taskWorkspaceInfo.taskAdmission.queued} queued`
+                  : ''}
+              </span>
+            )}
             {isDispatchingTask && (
               <span className="ml-auto inline-flex items-center gap-2 font-mono text-[11px] text-emerald-700 dark:text-emerald-400">
                 <Loader2 className="h-3 w-3 animate-spin" />

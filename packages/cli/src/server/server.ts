@@ -38,6 +38,7 @@ export interface ServerOptions {
 }
 
 let corsWhitelist: string[] = [];
+let recoverQueuedTasksOnStart: (() => Promise<unknown>) | undefined;
 
 type Variables = {
   directory: string;
@@ -173,6 +174,7 @@ function createApp(): Hono<{ Variables: Variables }> {
   });
 
   const sessionController = createSessionRouteController();
+  recoverQueuedTasksOnStart = sessionController.recoverQueuedTasks;
   app.route('/global', GlobalRoutes());
   app.route('/events', EventRoutes());
   app.route('/sessions', sessionController.app);
@@ -542,6 +544,9 @@ export namespace BladeServer {
     }
 
     const handle = serverHandle;
+    void recoverQueuedTasksOnStart?.().catch((error) => {
+      logger.warn('[Server] Failed to recover queued tasks:', error);
+    });
 
     return {
       url: handle.url,
@@ -552,6 +557,7 @@ export namespace BladeServer {
           await serverHandle.stop();
           serverHandle = undefined;
           app = undefined;
+          recoverQueuedTasksOnStart = undefined;
           logger.info('[Server] Blade server stopped');
         }
       },
@@ -576,6 +582,11 @@ export namespace BladeServer {
     }
 
     const handle = serverHandle;
+    try {
+      await recoverQueuedTasksOnStart?.();
+    } catch (error) {
+      logger.warn('[Server] Failed to recover queued tasks:', error);
+    }
 
     return {
       url: handle.url,
@@ -586,6 +597,7 @@ export namespace BladeServer {
           await serverHandle.stop();
           serverHandle = undefined;
           app = undefined;
+          recoverQueuedTasksOnStart = undefined;
           logger.info('[Server] Blade server stopped');
         }
       },

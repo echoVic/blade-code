@@ -51,7 +51,14 @@ const ensureAssistantMessage = (
   const { currentAssistantMessageId, messages, addMessage, startAgentResponse } = get();
 
   // 验证 currentAssistantMessageId 是否是有效的消息 ID（不是 toolCallId）
-  if (currentAssistantMessageId && !currentAssistantMessageId.startsWith('call_')) {
+  if (
+    currentAssistantMessageId &&
+    !currentAssistantMessageId.startsWith('call_') &&
+    messages.some(
+      (message) =>
+        message.id === currentAssistantMessageId && message.role === 'assistant'
+    )
+  ) {
     return currentAssistantMessageId;
   }
 
@@ -702,26 +709,30 @@ const handleSubagentToolResult: EventHandler = (props, get, set) => {
   }));
 };
 
-const handlePermissionAsked: EventHandler = (props, get, _set) => {
-  const { currentSessionId, setConfirmation, messages } = get();
+const handlePermissionAsked: EventHandler = (props, get, set) => {
+  const { currentSessionId, setConfirmation } = get();
   if (props.sessionId !== currentSessionId) return;
 
-  // 直接找最后一条 assistant 消息（不依赖 currentAssistantMessageId，因为它可能被错误设置）
-  const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
-  if (!lastAssistant) return;
+  const requestId = (props.requestId as string) || '';
+  const assistantMessageId = ensureAssistantMessage(
+    get,
+    set,
+    requestId ? `assistant-permission-${requestId}` : undefined
+  );
+  if (!assistantMessageId) return;
 
   const details = props.details as Record<string, unknown> | undefined;
   const toolName =
     (props.toolName as string) || (details?.toolName as string) || 'Edit';
 
-  setConfirmation(lastAssistant.id, {
-    toolCallId: (props.requestId as string) || '',
+  setConfirmation(assistantMessageId, {
+    toolCallId: requestId,
     toolName,
     description: props.description as string,
     diff: (details?.details as string) || (details?.diff as string) || '',
     status: 'pending',
   });
-  _set({ agentPhase: 'waiting_permission' });
+  set({ agentPhase: 'waiting_permission', isStreaming: true });
 };
 
 const handlePermissionTimeout: EventHandler = (props, get, set) => {
@@ -761,17 +772,22 @@ const handleModelFallback: EventHandler = (props, get, set) => {
 };
 
 const handleQuestionRequired: EventHandler = (props, get, set) => {
-  const { currentSessionId, setQuestion, messages } = get();
+  const { currentSessionId, setQuestion } = get();
   if (props.sessionId !== currentSessionId) return;
-  const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
-  if (!lastAssistant) return;
+  const requestId = (props.requestId as string) || (props.toolCallId as string) || '';
+  const assistantMessageId = ensureAssistantMessage(
+    get,
+    set,
+    requestId ? `assistant-question-${requestId}` : undefined
+  );
+  if (!assistantMessageId) return;
 
-  setQuestion(lastAssistant.id, {
-    toolCallId: (props.requestId as string) || (props.toolCallId as string) || '',
+  setQuestion(assistantMessageId, {
+    toolCallId: requestId,
     questions: props.questions as QuestionInfo['questions'],
     status: 'pending',
   });
-  set({ agentPhase: 'waiting_permission' });
+  set({ agentPhase: 'waiting_permission', isStreaming: true });
 };
 
 interface QuestionInfo {

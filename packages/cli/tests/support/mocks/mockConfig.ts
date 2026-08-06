@@ -1,10 +1,10 @@
 import { vi } from 'vitest';
-import { PermissionMode } from '../../../src/config/types.js';
 import type {
   BladeConfig,
-  ModelConfig,
   McpServerConfig,
+  ModelConfig,
 } from '../../../src/config/types.js';
+import { PermissionMode } from '../../../src/config/types.js';
 
 export interface MockConfigOptions {
   currentModelId?: string;
@@ -62,6 +62,8 @@ export const createDefaultMockConfig = (
   disableAllHooks: false,
   maxTurns: 10,
   ...overrides,
+  maxConcurrentTasks: overrides?.maxConcurrentTasks ?? 3,
+  maxQueuedTasks: overrides?.maxQueuedTasks ?? 100,
 });
 
 export class MockConfigManager {

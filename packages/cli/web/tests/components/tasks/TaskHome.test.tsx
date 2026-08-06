@@ -25,6 +25,12 @@ describe('TaskHome', () => {
       taskWorkspaceInfo: {
         cwd: '/workspace/blade',
         gitBranch: 'main',
+        taskAdmission: {
+          inFlight: 1,
+          queued: 2,
+          maxConcurrent: 3,
+          maxQueued: 100,
+        },
       },
       isDispatchingTask: false,
       error: null,
@@ -53,6 +59,8 @@ describe('TaskHome', () => {
     expect(container.textContent).toContain('blade');
     expect(container.textContent).toContain('Isolated worktree');
     expect(container.textContent).toContain('main');
+    expect(container.textContent).toContain('1/3 running');
+    expect(container.textContent).toContain('2 queued');
     expect(loadSessions).toHaveBeenCalledOnce();
     expect(loadTaskWorkspaceInfo).toHaveBeenCalledOnce();
 

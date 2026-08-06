@@ -208,6 +208,14 @@ describe('Sidebar', () => {
           title: 'Running task',
           taskStatus: 'running',
         }),
+        createSession({
+          sessionId: 'queued-task',
+          title: 'Queued task',
+          taskStatus: 'queued',
+          taskQueuePosition: 2,
+          taskQueueDepth: 4,
+          taskConcurrencyLimit: 3,
+        }),
       ],
       taskEventsConnected: true,
     });
@@ -221,6 +229,7 @@ describe('Sidebar', () => {
     expect(content.indexOf('FAILED')).toBeLessThan(content.indexOf('DONE'));
     expect(content).toContain('New Task');
     expect(content).toContain('Task feed live');
+    expect(content).toContain('#2/4 queued');
     expect(container.querySelector('[title="running"]')).not.toBeNull();
     expect(container.querySelector('[title="failed"]')).not.toBeNull();
     expect(container.querySelector('[title="completed"]')).not.toBeNull();

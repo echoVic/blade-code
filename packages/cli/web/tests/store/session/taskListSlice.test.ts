@@ -83,6 +83,85 @@ describe('taskListSlice', () => {
     });
   });
 
+  it('projects queue position and clears it when admission starts', () => {
+    useSessionStore.setState({
+      taskWorkspaceInfo: {
+        cwd: '/workspace/a',
+        taskAdmission: {
+          inFlight: 1,
+          queued: 0,
+          maxConcurrent: 3,
+          maxQueued: 100,
+        },
+      },
+    });
+    useSessionStore.getState().handleTaskEvent({
+      type: 'task.status',
+      properties: {
+        sessionId: 'shared-session',
+        projectPath: '/workspace/a',
+        taskStatus: 'queued',
+        taskQueuePosition: 2,
+        taskQueueDepth: 4,
+        taskConcurrencyLimit: 3,
+        taskInFlight: 1,
+      },
+    });
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      taskStatus: 'queued',
+      taskQueuePosition: 2,
+      taskQueueDepth: 4,
+      taskConcurrencyLimit: 3,
+    });
+    expect(useSessionStore.getState().taskWorkspaceInfo?.taskAdmission).toMatchObject({
+      inFlight: 1,
+      queued: 4,
+      maxConcurrent: 3,
+    });
+
+    useSessionStore.getState().handleTaskEvent({
+      type: 'task.status',
+      properties: {
+        sessionId: 'shared-session',
+        projectPath: '/workspace/a',
+        taskStatus: 'running',
+        taskQueueDepth: 3,
+        taskConcurrencyLimit: 3,
+        taskInFlight: 2,
+      },
+    });
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      taskStatus: 'running',
+      taskConcurrencyLimit: 3,
+    });
+    expect(useSessionStore.getState().sessions[0]?.taskQueuePosition).toBeUndefined();
+    expect(useSessionStore.getState().sessions[0]?.taskQueueDepth).toBeUndefined();
+    expect(useSessionStore.getState().taskWorkspaceInfo?.taskAdmission).toMatchObject({
+      inFlight: 2,
+      queued: 3,
+      maxConcurrent: 3,
+    });
+  });
+
+  it('preserves terminal timestamps across capacity-only task updates', () => {
+    useSessionStore.getState().handleTaskEvent({
+      type: 'task.status',
+      properties: {
+        sessionId: 'shared-session',
+        projectPath: '/workspace/a',
+        taskStatus: 'completed',
+        taskQueueDepth: 0,
+        taskConcurrencyLimit: 3,
+        taskInFlight: 0,
+      },
+    });
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      taskStatus: 'completed',
+      taskCompletedAt: '2026-08-05T10:00:00.000Z',
+    });
+  });
+
   it('reloads the catalog when an event references an unknown task', () => {
     useSessionStore.getState().handleTaskEvent({
       type: 'task.status',

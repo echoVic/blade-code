@@ -297,6 +297,9 @@ describe('BladeAgent', () => {
               deletions: 1,
               commits: 0,
             },
+            taskQueuePosition: 2,
+            taskQueueDepth: 4,
+            taskConcurrencyLimit: 3,
             lastMessageTime: '2026-08-04T01:02:03.000Z',
           },
           {
@@ -341,6 +344,9 @@ describe('BladeAgent', () => {
                 deletions: 1,
                 commits: 0,
               },
+              'blade/taskQueuePosition': 2,
+              'blade/taskQueueDepth': 4,
+              'blade/taskConcurrencyLimit': 3,
             },
           },
           {
@@ -893,6 +899,7 @@ describe('BladeAgent', () => {
         undefined,
         {
           mcpServers: [],
+          taskIsolation: 'worktree',
           taskWorktree: expect.objectContaining({
             sessionId: response.sessionId,
             branch: 'blade-worktree-acp-task',

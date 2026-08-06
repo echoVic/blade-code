@@ -373,11 +373,23 @@ const EXPLICIT_WORKTREE_EXIT_PATTERNS = [
   /(?:退出|离开).{0,30}(?:worktree|工作树)/i,
 ];
 
-export function isExplicitWorktreeRequest(userRequest: string | undefined): boolean {
-  return (
-    typeof userRequest === 'string' &&
-    EXPLICIT_WORKTREE_PATTERNS.some((pattern) => pattern.test(userRequest))
+const NEGATED_WORKTREE_PATTERNS = [
+  /\b(?:do not|don't|never|must not|should not)\b[^.!?;\n]{0,80}\b(?:git\s+)?worktree\b/gi,
+  /\bwithout\b[^.!?;\n]{0,60}\b(?:git\s+)?worktree\b/gi,
+  /(?:不要|禁止|不得|无需)[^。！？；\n]{0,50}(?:worktree|工作树)/gi,
+];
+
+function positiveWorktreeRequest(userRequest: string): string {
+  return NEGATED_WORKTREE_PATTERNS.reduce(
+    (request, pattern) => request.replace(pattern, ' '),
+    userRequest
   );
+}
+
+export function isExplicitWorktreeRequest(userRequest: string | undefined): boolean {
+  if (typeof userRequest !== 'string') return false;
+  const positiveRequest = positiveWorktreeRequest(userRequest);
+  return EXPLICIT_WORKTREE_PATTERNS.some((pattern) => pattern.test(positiveRequest));
 }
 
 export const WORKTREE_ENTER_RETRY_PROMPT =
@@ -410,12 +422,16 @@ export function checkWorktreeRequirement(
   successfulTools: ReadonlySet<string>,
   retryCount: number
 ): WorktreeRequirementAction {
-  if (!userRequest || !isExplicitWorktreeRequest(userRequest)) {
+  if (!userRequest) {
+    return { action: 'none' };
+  }
+  const positiveRequest = positiveWorktreeRequest(userRequest);
+  if (!isExplicitWorktreeRequest(positiveRequest)) {
     return { action: 'none' };
   }
 
   const requiresExit = EXPLICIT_WORKTREE_EXIT_PATTERNS.some((pattern) =>
-    pattern.test(userRequest)
+    pattern.test(positiveRequest)
   );
   if (successfulTools.has('TaskWorktree')) {
     return { action: 'none' };

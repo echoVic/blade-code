@@ -30,6 +30,8 @@ export function projectPublicConfig(config: BladeConfig) {
     notifySounds: config.notifySounds,
     privacyTelemetry: config.privacyTelemetry,
     privacyCrash: config.privacyCrash,
+    maxConcurrentTasks: config.maxConcurrentTasks,
+    maxQueuedTasks: config.maxQueuedTasks,
   };
 }
 

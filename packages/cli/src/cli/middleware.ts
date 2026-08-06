@@ -1,6 +1,7 @@
-import { ConfigManager } from '../config/index.js';
+import { ConfigManager, mergeRuntimeConfig } from '../config/index.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { getState } from '../store/vanilla.js';
+import type { GlobalOptions } from './types.js';
 
 const logger = createLogger(LogCategory.GENERAL);
 
@@ -79,7 +80,11 @@ export const loadConfiguration: MiddlewareFunction = async (argv) => {
   // 1. 初始化 ConfigManager 和 Store（所有命令共用）
   try {
     const configManager = ConfigManager.getInstance();
-    const config = await configManager.initialize(cliSettings);
+    const baseConfig = await configManager.initialize(cliSettings);
+    const config = mergeRuntimeConfig(
+      baseConfig,
+      argv as unknown as Partial<GlobalOptions>
+    );
     getState().config.actions.setConfig(config);
 
     if (argv.debug) {

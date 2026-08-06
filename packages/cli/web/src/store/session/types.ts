@@ -209,7 +209,10 @@ export interface StreamingSlice {
   setStreaming: (streaming: boolean) => void;
   setAgentPhase: (phase: AgentPhase) => void;
   setRunId: (runId: string | null) => void;
-  prepareEventSubscription: (ref: SessionRef) => Promise<() => void>;
+  prepareEventSubscription: (
+    ref: SessionRef,
+    onEvent?: (event: StreamEvent) => void
+  ) => Promise<() => void>;
   replaceEventSubscription: (next: (() => void) | null) => void;
   subscribeToEvents: (ref: SessionRef) => Promise<void>;
   unsubscribeFromEvents: () => void;

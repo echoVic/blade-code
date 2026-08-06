@@ -227,15 +227,46 @@ describe('SessionRuntime', () => {
         events.push(event);
       }
     });
+    await SessionService.createSessionMetadata(sessionId, workspaceRoot, {
+      taskIsolation: 'local',
+      taskSourceProjectPath: workspaceRoot,
+    });
     const runtime = await SessionRuntime.create({
       sessionId,
       workspaceRoot,
+      taskIsolation: 'local',
     });
 
     try {
       await expect(
         SessionService.findSessionMetadata(sessionId, workspaceRoot)
       ).resolves.toMatchObject({ taskStatus: 'queued' });
+      const queued = await runtime.setTaskAdmission({
+        state: 'queued',
+        queuePosition: 2,
+        queueDepth: 4,
+        inFlight: 1,
+        maxConcurrent: 1,
+        maxQueued: 10,
+      });
+      expect(queued).toMatchObject({
+        taskStatus: 'queued',
+        taskQueuePosition: 2,
+        taskQueueDepth: 4,
+        taskConcurrencyLimit: 1,
+      });
+      const admitted = await runtime.setTaskAdmission({
+        state: 'running',
+        queueDepth: 3,
+        inFlight: 1,
+        maxConcurrent: 1,
+        maxQueued: 10,
+      });
+      expect(admitted).toMatchObject({
+        taskStatus: 'running',
+        taskConcurrencyLimit: 1,
+      });
+      expect(admitted?.taskQueuePosition).toBeUndefined();
 
       const running = await runtime.setTaskStatus('running');
       expect(running).toMatchObject({
@@ -266,6 +297,23 @@ describe('SessionRuntime', () => {
         taskCompletedAt: expect.any(String),
       });
       expect(events).toEqual([
+        expect.objectContaining({
+          type: 'task.status',
+          properties: expect.objectContaining({
+            taskStatus: 'queued',
+            taskQueuePosition: 2,
+            taskQueueDepth: 4,
+            taskConcurrencyLimit: 1,
+          }),
+        }),
+        expect.objectContaining({
+          type: 'task.status',
+          properties: expect.objectContaining({
+            taskStatus: 'running',
+            taskQueueDepth: 3,
+            taskConcurrencyLimit: 1,
+          }),
+        }),
         expect.objectContaining({
           type: 'task.status',
           properties: expect.objectContaining({

@@ -131,6 +131,34 @@ describe('配置系统', () => {
 
       expect(() => configManager.validateConfig(invalidConfig)).toThrow('maxTurns');
     });
+
+    it('应该拒绝无界或空的 task admission 配置', () => {
+      const base = {
+        ...DEFAULT_CONFIG,
+        models: [
+          {
+            id: 'test-model',
+            displayName: 'Test Model',
+            provider: 'openai',
+            model: 'gpt-4',
+          },
+        ],
+        currentModelId: 'test-model',
+      };
+
+      expect(() =>
+        configManager.validateConfig({
+          ...base,
+          maxConcurrentTasks: 0,
+        })
+      ).toThrow('maxConcurrentTasks');
+      expect(() =>
+        configManager.validateConfig({
+          ...base,
+          maxQueuedTasks: 10_001,
+        })
+      ).toThrow('maxQueuedTasks');
+    });
   });
 
   describe('错误处理', () => {

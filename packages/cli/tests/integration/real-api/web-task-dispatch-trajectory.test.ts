@@ -80,6 +80,8 @@ function createRuntimeConfig(modelConfig: TestModelConfig): RuntimeConfig {
     disableAllHooks: true,
     mcpEnabled: false,
     mcpServers: {},
+    maxConcurrentTasks: 1,
+    maxQueuedTasks: 100,
   };
 }
 
@@ -309,7 +311,7 @@ describeTaskDispatch('Web task dispatch trajectory (real API)', () => {
       let originalConfig: RuntimeConfig | null = null;
       let server: TestServer | undefined;
       let collector: TaskEventCollector | undefined;
-      let taskRef: { sessionId: string; projectPath: string } | undefined;
+      const taskRefs: Array<{ sessionId: string; projectPath: string }> = [];
 
       try {
         process.env.BLADE_STORAGE_ROOT = storageRoot;
@@ -345,10 +347,11 @@ describeTaskDispatch('Web task dispatch trajectory (real API)', () => {
         });
         expect(response.status).toBe(202);
         const accepted = CreateTaskResponseSchema.parse(await response.json());
-        taskRef = {
+        const taskRef = {
           sessionId: accepted.session.sessionId,
           projectPath: accepted.session.projectPath,
         };
+        taskRefs.push(taskRef);
         expect(accepted).toMatchObject({
           status: 'running',
           runId: expect.any(String),
@@ -363,6 +366,54 @@ describeTaskDispatch('Web task dispatch trajectory (real API)', () => {
           },
         });
         expect(accepted.session.projectPath).not.toBe(workspace);
+
+        const queuedResponse = await fetch(endpoint(server, '/tasks'), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            prompt: [
+              'Work only in the task workspace already selected for you.',
+              'Read package.json.',
+              'Reply with exactly blade-web-task-dispatch-fixture.',
+              'Do not edit files and do not enter a worktree.',
+            ].join(' '),
+            title: 'Read project identity',
+            projectPath: workspace,
+            isolation: 'local',
+            permissionMode: 'yolo',
+          }),
+        });
+        expect(queuedResponse.status).toBe(202);
+        const queuedTask = CreateTaskResponseSchema.parse(await queuedResponse.json());
+        taskRefs.push({
+          sessionId: queuedTask.session.sessionId,
+          projectPath: queuedTask.session.projectPath,
+        });
+        expect(queuedTask).toMatchObject({
+          status: 'queued',
+          queuePosition: 1,
+          queueDepth: 1,
+          maxConcurrentTasks: 1,
+          session: {
+            title: 'Read project identity',
+            projectPath: workspace,
+            taskStatus: 'queued',
+            taskIsolation: 'local',
+            taskSourceProjectPath: workspace,
+            taskQueuePosition: 1,
+            taskQueueDepth: 1,
+            taskConcurrencyLimit: 1,
+          },
+        });
+        await collector.waitFor(
+          (event) =>
+            event.type === 'task.status' &&
+            event.properties.sessionId === queuedTask.session.sessionId &&
+            event.properties.taskStatus === 'queued' &&
+            event.properties.taskQueuePosition === 1 &&
+            event.properties.taskQueueDepth === 1,
+          'queued task admission'
+        );
 
         const terminalEvent = await collector.waitFor(
           (event) =>
@@ -409,6 +460,65 @@ describeTaskDispatch('Web task dispatch trajectory (real API)', () => {
         expect(JSON.stringify(terminalEvent.properties)).not.toContain(
           'repositoryRoot'
         );
+        await collector.waitFor(
+          (event) =>
+            event.type === 'task.status' &&
+            event.properties.sessionId === queuedTask.session.sessionId &&
+            event.properties.projectPath === queuedTask.session.projectPath &&
+            event.properties.taskStatus === 'running' &&
+            event.properties.taskConcurrencyLimit === 1,
+          'queued task promotion',
+          300_000
+        );
+        const queuedTerminalEvent = await collector.waitFor(
+          (event) =>
+            event.type === 'task.status' &&
+            event.properties.sessionId === queuedTask.session.sessionId &&
+            event.properties.projectPath === queuedTask.session.projectPath &&
+            ['completed', 'failed', 'cancelled', 'interrupted'].includes(
+              String(event.properties.taskStatus)
+            ),
+          'queued task terminal status',
+          300_000
+        );
+        if (queuedTerminalEvent.properties.taskStatus !== 'completed') {
+          const failedTask = await listTask(
+            server,
+            queuedTask.session.sessionId,
+            queuedTask.session.projectPath
+          );
+          throw new Error(
+            `Queued Web task failed: ${JSON.stringify({
+              status: queuedTerminalEvent.properties.taskStatus,
+              reason:
+                queuedTerminalEvent.properties.taskStatusReason ??
+                failedTask.taskStatusReason,
+            })}`
+          );
+        }
+        const capacitySettledEvent = await collector.waitFor(
+          (event) =>
+            event.type === 'task.status' &&
+            event.properties.sessionId === queuedTask.session.sessionId &&
+            event.properties.taskStatus === 'completed' &&
+            event.properties.taskInFlight === 0 &&
+            event.properties.taskQueueDepth === 0,
+          'settled task admission capacity'
+        );
+        expect(capacitySettledEvent.properties).toMatchObject({
+          taskConcurrencyLimit: 1,
+          taskInFlight: 0,
+          taskQueueDepth: 0,
+        });
+        const queuedTaskEvents = collector.events.filter(
+          (event) =>
+            event.type === 'task.status' &&
+            event.properties.sessionId === queuedTask.session.sessionId &&
+            event.properties.projectPath === queuedTask.session.projectPath
+        );
+        expect(queuedTaskEvents.map((event) => event.properties.taskStatus)).toEqual(
+          expect.arrayContaining(['queued', 'running', 'completed'])
+        );
 
         const listed = await listTask(
           server,
@@ -429,6 +539,19 @@ describeTaskDispatch('Web task dispatch trajectory (real API)', () => {
         });
         expect(listed.taskDiffStat?.additions).toBeGreaterThan(0);
         expect(listed.taskDiffStat?.deletions).toBeGreaterThan(0);
+        const listedQueuedTask = await listTask(
+          server,
+          queuedTask.session.sessionId,
+          queuedTask.session.projectPath
+        );
+        expect(listedQueuedTask).toMatchObject({
+          taskStatus: 'completed',
+          taskIsolation: 'local',
+          taskSourceProjectPath: workspace,
+          taskConcurrencyLimit: 1,
+        });
+        expect(listedQueuedTask.taskQueuePosition).toBeUndefined();
+        expect(listedQueuedTask.taskQueueDepth).toBeUndefined();
         const artifact = await getTaskDiff(
           server,
           accepted.session.sessionId,
@@ -475,15 +598,29 @@ describeTaskDispatch('Web task dispatch trajectory (real API)', () => {
             )
           )
         ).rejects.toThrow();
-        assertNoSecrets({ accepted, taskEvents, terminalEvent, listed, artifact }, [
-          modelConfig.apiKey,
-        ]);
+        assertNoSecrets(
+          {
+            accepted,
+            queuedTask,
+            taskEvents,
+            queuedTaskEvents,
+            terminalEvent,
+            queuedTerminalEvent,
+            capacitySettledEvent,
+            listed,
+            listedQueuedTask,
+            artifact,
+          },
+          [modelConfig.apiKey]
+        );
       } finally {
         await collector?.close().catch(() => undefined);
-        if (server && taskRef) {
-          await deleteTask(server, taskRef.sessionId, taskRef.projectPath).catch(
-            () => undefined
-          );
+        if (server) {
+          for (const taskRef of taskRefs) {
+            await deleteTask(server, taskRef.sessionId, taskRef.projectPath).catch(
+              () => undefined
+            );
+          }
         }
         await server?.stop().catch(() => undefined);
         if (originalConfig) getState().config.actions.setConfig(originalConfig);

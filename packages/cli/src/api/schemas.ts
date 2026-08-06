@@ -119,6 +119,9 @@ export const SessionSchema = Runtime(
     taskWorktreeBranch: Type.Optional(Type.String()),
     taskBaseCommit: Type.Optional(Type.String()),
     taskDiffStat: Type.Optional(SessionTaskDiffStatSchema),
+    taskQueuePosition: Type.Optional(Type.Integer({ minimum: 1 })),
+    taskQueueDepth: Type.Optional(Type.Integer({ minimum: 0 })),
+    taskConcurrencyLimit: Type.Optional(Type.Integer({ minimum: 1 })),
     messageCount: Type.Number(),
     firstMessageTime: Type.String(),
     lastMessageTime: Type.String(),
@@ -306,7 +309,10 @@ export const CreateTaskResponseSchema = Runtime(
     session: SessionSchema,
     runId: Type.String(),
     messageId: Type.String(),
-    status: Type.Literal('running'),
+    status: StringEnum(['queued', 'running']),
+    queuePosition: Type.Optional(Type.Integer({ minimum: 1 })),
+    queueDepth: Type.Optional(Type.Integer({ minimum: 0 })),
+    maxConcurrentTasks: Type.Optional(Type.Integer({ minimum: 1 })),
   })
 );
 export type CreateTaskResponse = Static<typeof CreateTaskResponseSchema>;

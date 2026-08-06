@@ -6,6 +6,18 @@ import { getOriginalCwd, setOriginalCwd } from '../../../src/bootstrap/state.js'
 
 const configState = vi.hoisted(() => ({
   initialize: vi.fn(),
+  mergeRuntimeConfig: vi.fn(
+    (baseConfig: Record<string, unknown>, cliOptions: Record<string, unknown>) => ({
+      ...baseConfig,
+      ...(cliOptions.maxConcurrentTasks !== undefined
+        ? { maxConcurrentTasks: cliOptions.maxConcurrentTasks }
+        : {}),
+      ...(cliOptions.maxQueuedTasks !== undefined
+        ? { maxQueuedTasks: cliOptions.maxQueuedTasks }
+        : {}),
+      ...(cliOptions.maxTurns !== undefined ? { maxTurns: cliOptions.maxTurns } : {}),
+    })
+  ),
   setConfig: vi.fn(),
 }));
 
@@ -13,6 +25,7 @@ vi.mock('../../../src/config/index.js', () => ({
   ConfigManager: {
     getInstance: () => ({ initialize: configState.initialize }),
   },
+  mergeRuntimeConfig: configState.mergeRuntimeConfig,
 }));
 
 vi.mock('../../../src/store/vanilla.js', () => ({
@@ -45,6 +58,8 @@ describe('--settings middleware', () => {
       settings: JSON.stringify({
         appendSystemPrompt: 'INLINE_SETTINGS_RULE',
         maxTurns: 7,
+        maxConcurrentTasks: 2,
+        maxQueuedTasks: 40,
         allowedTools: ['Read', 'Edit', 'Bash'],
       }),
     };
@@ -56,12 +71,16 @@ describe('--settings middleware', () => {
       expect.objectContaining({
         appendSystemPrompt: 'INLINE_SETTINGS_RULE',
         maxTurns: 7,
+        maxConcurrentTasks: 2,
+        maxQueuedTasks: 40,
         allowedTools: ['Read', 'Edit', 'Bash'],
       })
     );
     expect(argv).toMatchObject({
       appendSystemPrompt: 'INLINE_SETTINGS_RULE',
       maxTurns: 7,
+      maxConcurrentTasks: 2,
+      maxQueuedTasks: 40,
       allowedTools: ['Read', 'Edit', 'Bash'],
     });
   });
@@ -92,9 +111,11 @@ describe('--settings middleware', () => {
       settings: JSON.stringify({
         appendSystemPrompt: 'SETTINGS_RULE',
         maxTurns: 3,
+        maxConcurrentTasks: 2,
       }),
       appendSystemPrompt: 'EXPLICIT_CLI_RULE',
       maxTurns: 9,
+      maxConcurrentTasks: 1,
     };
     const { loadConfiguration } = await import('../../../src/cli/middleware.js');
 
@@ -102,6 +123,19 @@ describe('--settings middleware', () => {
 
     expect(argv.appendSystemPrompt).toBe('EXPLICIT_CLI_RULE');
     expect(argv.maxTurns).toBe(9);
+    expect(configState.mergeRuntimeConfig).toHaveBeenCalledWith(
+      { currentModelId: 'model' },
+      expect.objectContaining({
+        maxTurns: 9,
+        maxConcurrentTasks: 1,
+      })
+    );
+    expect(configState.setConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        maxTurns: 9,
+        maxConcurrentTasks: 1,
+      })
+    );
   });
 
   it('lets the explicit yolo shortcut override the settings permission mode', async () => {

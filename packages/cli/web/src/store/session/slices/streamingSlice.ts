@@ -19,8 +19,8 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
 
   setRunId: (runId) => set({ currentRunId: runId }),
 
-  prepareEventSubscription: async (ref) => {
-    const dispatch = createEventDispatcher(get, set);
+  prepareEventSubscription: async (ref, onEvent) => {
+    const dispatch = onEvent ?? createEventDispatcher(get, set);
     return sessionService.openEventSubscription(ref, dispatch);
   },
 

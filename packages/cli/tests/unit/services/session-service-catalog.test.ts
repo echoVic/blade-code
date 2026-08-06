@@ -928,11 +928,28 @@ describe('SessionService strict session catalog', () => {
       SessionService.findSessionTaskWorktree('artifact-session', workspaceA)
     ).resolves.toEqual(taskWorktree);
 
+    const queued = await SessionService.updateSessionMetadata(
+      'artifact-session',
+      workspaceA,
+      {
+        taskQueuePosition: 2,
+        taskQueueDepth: 5,
+        taskConcurrencyLimit: 3,
+      }
+    );
+    expect(queued).toMatchObject({
+      taskQueuePosition: 2,
+      taskQueueDepth: 5,
+      taskConcurrencyLimit: 3,
+    });
+
     const completed = await SessionService.updateSessionMetadata(
       'artifact-session',
       workspaceA,
       {
         taskStatus: 'completed',
+        taskQueuePosition: null,
+        taskQueueDepth: null,
         taskDiffStat: {
           changedFiles: 2,
           additions: 8,
@@ -947,6 +964,8 @@ describe('SessionService strict session catalog', () => {
       deletions: 3,
       commits: 1,
     });
+    expect(completed.taskQueuePosition).toBeUndefined();
+    expect(completed.taskQueueDepth).toBeUndefined();
     expect(completed).not.toHaveProperty('taskWorktree');
   });
 
@@ -1050,6 +1069,12 @@ describe('SessionService strict session catalog', () => {
   });
 
   it('fails closed when metadata update input is invalid or the transcript is missing or mismatched', async () => {
+    await expect(
+      SessionService.updateSessionMetadata('invalid-queue', workspaceA, {
+        taskQueuePosition: 3,
+        taskQueueDepth: 2,
+      })
+    ).rejects.toThrow('Session task queue position exceeds queue depth');
     await expect(
       SessionService.updateSessionMetadata('invalid-owner-pid', workspaceA, {
         taskOwnerPid: 0,

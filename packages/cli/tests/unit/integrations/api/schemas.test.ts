@@ -428,7 +428,7 @@ describe('API Schemas', () => {
           sessionId: 'task-1',
           projectPath: '/workspace/worktree',
           rootId: 'task-1',
-          taskStatus: 'running',
+          taskStatus: 'queued',
           taskIsolation: 'worktree',
           taskSourceProjectPath: '/workspace/source',
           taskWorktreePath: '/workspace/worktree',
@@ -440,6 +440,9 @@ describe('API Schemas', () => {
             deletions: 1,
             commits: 0,
           },
+          taskQueuePosition: 2,
+          taskQueueDepth: 4,
+          taskConcurrencyLimit: 3,
           taskWorktree: { private: true },
           messageCount: 0,
           firstMessageTime: '2026-08-06T00:00:00.000Z',
@@ -448,10 +451,18 @@ describe('API Schemas', () => {
         },
         runId: 'run-1',
         messageId: 'message-1',
-        status: 'running',
+        status: 'queued',
+        queuePosition: 2,
+        queueDepth: 4,
+        maxConcurrentTasks: 3,
       });
 
       expect(response.session.taskDiffStat?.additions).toBe(4);
+      expect(response).toMatchObject({
+        status: 'queued',
+        queuePosition: 2,
+        maxConcurrentTasks: 3,
+      });
       expect(response.session).not.toHaveProperty('taskWorktree');
     });
   });

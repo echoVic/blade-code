@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Agent } from '../../../../src/agent/Agent.js';
+import { taskRunScheduler } from '../../../../src/agent/runtime/TaskRunScheduler.js';
 import { type BladeConfig, PermissionMode } from '../../../../src/config/types.js';
 
 function createConfig(overrides: Partial<BladeConfig> = {}): BladeConfig {
@@ -36,6 +37,8 @@ function createConfig(overrides: Partial<BladeConfig> = {}): BladeConfig {
     disableAllHooks: false,
     maxTurns: 20,
     ...overrides,
+    maxConcurrentTasks: overrides.maxConcurrentTasks ?? 3,
+    maxQueuedTasks: overrides.maxQueuedTasks ?? 100,
   };
 }
 
@@ -153,6 +156,119 @@ describe('Agent runLoop system prompt injection', () => {
     expect(runtime.acknowledgeTurn).toHaveBeenCalledWith(turnHandle);
     expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(1, 'running');
     expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(2, 'completed', undefined);
+  });
+
+  it('serializes task sessions through the shared admission gate', async () => {
+    taskRunScheduler.resetForTests();
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const started: string[] = [];
+    const createTaskAgent = (sessionId: string) => {
+      const turnHandle = { id: `turn-${sessionId}` };
+      const runtime = {
+        ...createGoalRuntimeMocks(),
+        sessionId,
+        workspaceRoot: process.cwd(),
+        isTaskSession: vi.fn(() => true),
+        getTaskAdmissionLimits: vi.fn(() => ({
+          maxConcurrent: 1,
+          maxQueued: 10,
+        })),
+        setTaskAdmission: vi.fn().mockResolvedValue(undefined),
+        publishTaskAdmissionCapacity: vi.fn(),
+        prepareInputTurn: vi.fn(async () => ({
+          accepted: true,
+          handle: turnHandle,
+          messageId: `input-${sessionId}`,
+          queued: 1,
+          mode: 'direct',
+        })),
+        drainSteering: vi.fn(async () => []),
+        drainSteeringOrSeal: vi.fn(async () => ({
+          messages: [],
+          sealed: true,
+        })),
+        acknowledgeTurn: vi.fn().mockResolvedValue(undefined),
+        finishTurn: vi.fn().mockResolvedValue(undefined),
+      };
+      const agent = new Agent(
+        createConfig(),
+        {},
+        { getRegistry: () => ({ getAll: () => [] }) } as any,
+        runtime as any
+      );
+      (agent as any).isInitialized = true;
+      (agent as any).processAtMentionsForContent = vi.fn().mockResolvedValue('run');
+      (agent as any).runLoop = vi.fn(async function* () {
+        if (Date.now() < 0) yield undefined;
+        started.push(sessionId);
+        if (sessionId === 'task-first') await firstGate;
+        return {
+          success: true,
+          finalMessage: 'done',
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      });
+      return { agent, runtime };
+    };
+    const first = createTaskAgent('task-first');
+    const second = createTaskAgent('task-second');
+
+    try {
+      const firstResult = first.agent
+        .chatStream('run', {
+          messages: [],
+          userId: 'user-1',
+          sessionId: 'task-first',
+          workspaceRoot: process.cwd(),
+        })
+        .next();
+      await vi.waitFor(() => expect(started).toEqual(['task-first']));
+
+      const secondResult = second.agent
+        .chatStream('run', {
+          messages: [],
+          userId: 'user-1',
+          sessionId: 'task-second',
+          workspaceRoot: process.cwd(),
+        })
+        .next();
+      await vi.waitFor(() =>
+        expect(second.runtime.setTaskAdmission).toHaveBeenCalledWith(
+          expect.objectContaining({
+            state: 'queued',
+            queuePosition: 1,
+          })
+        )
+      );
+      expect(started).toEqual(['task-first']);
+
+      releaseFirst();
+      await expect(firstResult).resolves.toMatchObject({
+        done: true,
+        value: { success: true },
+      });
+      await expect(secondResult).resolves.toMatchObject({
+        done: true,
+        value: { success: true },
+      });
+      expect(started).toEqual(['task-first', 'task-second']);
+      expect(first.runtime.publishTaskAdmissionCapacity).toHaveBeenCalledWith(
+        'completed'
+      );
+      expect(second.runtime.publishTaskAdmissionCapacity).toHaveBeenCalledWith(
+        'completed'
+      );
+      expect(taskRunScheduler.getStats()).toMatchObject({
+        inFlight: 0,
+        queued: 0,
+      });
+    } finally {
+      releaseFirst();
+      taskRunScheduler.resetForTests();
+    }
   });
 
   it('uses a caller-prepared durable input without enqueueing it twice', async () => {

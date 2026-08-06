@@ -9,6 +9,7 @@ import {
   SessionRuntime,
   type SessionRuntimeOptions,
 } from '../../../../src/agent/runtime/SessionRuntime.js';
+import { taskRunScheduler } from '../../../../src/agent/runtime/TaskRunScheduler.js';
 import { PermissionMode } from '../../../../src/config/types.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import type {
@@ -94,6 +95,9 @@ const makeSessionMetadata = (
   taskWorktreeBranch: overrides.taskWorktreeBranch,
   taskBaseCommit: overrides.taskBaseCommit,
   taskDiffStat: overrides.taskDiffStat,
+  taskQueuePosition: overrides.taskQueuePosition,
+  taskQueueDepth: overrides.taskQueueDepth,
+  taskConcurrencyLimit: overrides.taskConcurrencyLimit,
   messageCount: overrides.messageCount ?? 0,
   firstMessageTime: overrides.firstMessageTime ?? new Date(0).toISOString(),
   lastMessageTime: overrides.lastMessageTime ?? new Date(1).toISOString(),
@@ -114,6 +118,12 @@ const runtimeState = vi.hoisted(() => ({
     getAttachmentCollector: vi.fn(),
     getCurrentModelId: vi.fn(() => 'model-1'),
     getCurrentModelMaxContextTokens: vi.fn(() => 128000),
+    getTaskAdmissionLimits: vi.fn(() => ({
+      maxConcurrent: 3,
+      maxQueued: 100,
+    })),
+    setTaskAdmission: vi.fn().mockResolvedValue(undefined),
+    setTaskStatus: vi.fn().mockResolvedValue(undefined),
     prepareInputTurn: vi.fn(
       async (): Promise<InputTurnPreparation> => makePreparedInputTurn()
     ),
@@ -185,6 +195,7 @@ const busState = vi.hoisted(() => ({
 
 const worktreeState = vi.hoisted(() => ({
   enter: vi.fn(),
+  restoreSession: vi.fn(async (session) => session),
   exit: vi.fn().mockResolvedValue({
     action: 'remove',
     workspaceRoot: '/tmp/source',
@@ -338,6 +349,7 @@ function createSseCollector(response: Response) {
 describe('SessionRoutes runtime reuse', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    taskRunScheduler.resetForTests();
     busState.subscribers.clear();
     runtimeState.runtime.dispose.mockClear();
     runtimeState.runtime.refresh.mockClear();
@@ -346,6 +358,12 @@ describe('SessionRoutes runtime reuse', () => {
       makePreparedInputTurn()
     );
     runtimeState.runtime.enqueueSteering.mockClear();
+    runtimeState.runtime.setTaskAdmission.mockClear();
+    runtimeState.runtime.setTaskStatus.mockClear();
+    runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
+      maxConcurrent: 3,
+      maxQueued: 100,
+    });
     runtimeState.runtime.enqueueSteering.mockResolvedValue(makeSteeringEnqueueResult());
     runtimeState.runtime.finishTurn.mockClear();
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
@@ -357,6 +375,8 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.listSubagents.mockReturnValue([]);
     runtimeState.runtime.resumeSubagent.mockReset();
     worktreeState.enter.mockReset();
+    worktreeState.restoreSession.mockReset();
+    worktreeState.restoreSession.mockImplementation(async (session) => session);
     worktreeState.exit.mockReset().mockResolvedValue({
       action: 'remove',
       workspaceRoot: '/tmp/source',
@@ -372,6 +392,7 @@ describe('SessionRoutes runtime reuse', () => {
     vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(false);
     vi.mocked(SessionService.listSessions).mockResolvedValue([]);
     vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(undefined);
+    vi.mocked(SessionService.findSessionTaskWorktree).mockResolvedValue(undefined);
     vi.mocked(SessionService.loadSession).mockResolvedValue(makeMessages());
     vi.mocked(SessionService.createSessionMetadata).mockImplementation(
       async (sessionId: string, projectPath: string, initial?: CreateMetadataInitial) =>
@@ -1292,6 +1313,7 @@ describe('SessionRoutes runtime reuse', () => {
     expect(SessionRuntime.create).toHaveBeenCalledWith({
       sessionId,
       workspaceRoot: executionPath,
+      taskIsolation: isolation,
       ...(isolation === 'worktree'
         ? {
             taskWorktree: expect.objectContaining({
@@ -1320,6 +1342,474 @@ describe('SessionRoutes runtime reuse', () => {
           expect.any(Object)
         );
       });
+    }
+  });
+
+  it('persists a task failure when the agent cannot be created after admission', async () => {
+    const { Agent } = await import('../../../../src/agent/Agent.js');
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    vi.mocked(Agent.createWithRuntime).mockRejectedValueOnce(
+      new Error('agent initialization failed')
+    );
+    const controller = createSessionRouteController();
+    const dispatched = await controller.dispatchTask({
+      prompt: 'Fail after admission',
+      sourceProjectPath: '/tmp/task-source',
+      isolation: 'local',
+      permissionMode: PermissionMode.YOLO,
+    });
+
+    expect(dispatched.status).toBe('running');
+    await vi.waitFor(() =>
+      expect(runtimeState.runtime.setTaskStatus).toHaveBeenCalledWith(
+        'failed',
+        'Agent execution failed'
+      )
+    );
+    await vi.waitFor(() =>
+      expect(
+        busState.publish.mock.calls.some(
+          ([ref, type, properties]) =>
+            ref.sessionId === dispatched.session.sessionId &&
+            type === 'task.status' &&
+            properties.taskStatus === 'failed' &&
+            properties.taskInFlight === 0 &&
+            properties.taskQueueDepth === 0
+        )
+      ).toBe(true)
+    );
+    await vi.waitFor(async () => {
+      const response = await controller.app.request('/');
+      const projected = (await response.json()) as Array<{
+        sessionId: string;
+        taskQueuePosition?: number;
+        taskQueueDepth?: number;
+      }>;
+      const failed = projected.find(
+        (session) => session.sessionId === dispatched.session.sessionId
+      );
+      expect(failed?.taskQueuePosition).toBeUndefined();
+      expect(failed?.taskQueueDepth).toBeUndefined();
+    });
+  });
+
+  it('admits task runs through the process-wide FIFO limit', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
+      maxConcurrent: 1,
+      maxQueued: 10,
+    });
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const started: string[] = [];
+    agentState.chatStream.mockImplementation(async function* (
+      _content: unknown,
+      context: { sessionId: string }
+    ) {
+      if (Date.now() < 0) yield undefined;
+      started.push(context.sessionId);
+      if (started.length === 1) await firstGate;
+      return {
+        success: true,
+        finalMessage: 'done',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+    const controller = createSessionRouteController();
+
+    const first = await controller.dispatchTask({
+      prompt: 'First task',
+      sourceProjectPath: '/tmp/task-source',
+      isolation: 'local',
+      permissionMode: PermissionMode.YOLO,
+    });
+    await vi.waitFor(() => expect(started).toHaveLength(1));
+    const second = await controller.dispatchTask({
+      prompt: 'Second task',
+      sourceProjectPath: '/tmp/task-source',
+      isolation: 'local',
+      permissionMode: PermissionMode.YOLO,
+    });
+
+    expect(first.status).toBe('running');
+    expect(second).toMatchObject({
+      status: 'queued',
+      queuePosition: 1,
+      queueDepth: 1,
+      maxConcurrentTasks: 1,
+      session: {
+        taskStatus: 'queued',
+        taskQueuePosition: 1,
+        taskConcurrencyLimit: 1,
+      },
+    });
+    expect(started).toHaveLength(1);
+    expect(
+      busState.publish.mock.calls.some(
+        ([ref, type, properties]) =>
+          ref.sessionId === second.session.sessionId &&
+          type === 'session.status' &&
+          properties.status === 'running'
+      )
+    ).toBe(false);
+
+    releaseFirst();
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    expect(runtimeState.runtime.setTaskAdmission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: 'queued',
+        queuePosition: 1,
+        maxConcurrent: 1,
+      })
+    );
+    expect(runtimeState.runtime.setTaskAdmission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: 'running',
+        maxConcurrent: 1,
+      })
+    );
+    await vi.waitFor(() =>
+      expect(
+        busState.publish.mock.calls.some(
+          ([ref, type, properties]) =>
+            ref.sessionId === second.session.sessionId &&
+            type === 'session.status' &&
+            properties.status === 'running'
+        )
+      ).toBe(true)
+    );
+    await vi.waitFor(() =>
+      expect(
+        busState.publish.mock.calls.some(
+          ([ref, type, properties]) =>
+            ref.sessionId === second.session.sessionId &&
+            type === 'task.status' &&
+            properties.taskInFlight === 0 &&
+            properties.taskQueueDepth === 0
+        )
+      ).toBe(true)
+    );
+  });
+
+  it('keeps every admitted run active beyond the recent-run retention limit', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
+      maxConcurrent: 1,
+      maxQueued: 101,
+    });
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const started: string[] = [];
+    agentState.chatStream.mockImplementation(async function* (
+      _content: unknown,
+      context: { sessionId: string }
+    ) {
+      if (Date.now() < 0) yield undefined;
+      started.push(context.sessionId);
+      if (started.length === 1) await firstGate;
+      return {
+        success: true,
+        finalMessage: 'done',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+    const controller = createSessionRouteController();
+
+    const dispatches = [];
+    for (let index = 0; index < 102; index++) {
+      dispatches.push(
+        await controller.dispatchTask({
+          prompt: `Task ${index}`,
+          sourceProjectPath: '/tmp/task-source',
+          isolation: 'local',
+          permissionMode: PermissionMode.YOLO,
+        })
+      );
+    }
+
+    expect(dispatches[0]?.status).toBe('running');
+    expect(dispatches.at(-1)).toMatchObject({
+      status: 'queued',
+      queuePosition: 101,
+      queueDepth: 101,
+    });
+    expect(started).toHaveLength(1);
+
+    releaseFirst();
+    await vi.waitFor(
+      () => {
+        expect(started).toHaveLength(102);
+        expect(
+          busState.publish.mock.calls.some(
+            ([, type, properties]) =>
+              type === 'task.status' &&
+              properties.taskInFlight === 0 &&
+              properties.taskQueueDepth === 0
+          )
+        ).toBe(true);
+      },
+      { timeout: 5000 }
+    );
+  });
+
+  it('cancels a queued run durably and immediately reuses its queue slot', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
+      maxConcurrent: 1,
+      maxQueued: 1,
+    });
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const started: string[] = [];
+    agentState.chatStream.mockImplementation(async function* (
+      _content: unknown,
+      context: { sessionId: string }
+    ) {
+      if (Date.now() < 0) yield undefined;
+      started.push(context.sessionId);
+      if (started.length === 1) await firstGate;
+      return {
+        success: true,
+        finalMessage: 'done',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+    const controller = createSessionRouteController();
+    const first = await controller.dispatchTask({
+      prompt: 'Hold the only execution slot',
+      sourceProjectPath: '/tmp/task-source',
+      isolation: 'local',
+      permissionMode: PermissionMode.YOLO,
+    });
+    const cancelled = await controller.dispatchTask({
+      prompt: 'Cancel this queued task',
+      sourceProjectPath: '/tmp/task-source',
+      isolation: 'local',
+      permissionMode: PermissionMode.YOLO,
+    });
+
+    expect(cancelled.status).toBe('queued');
+    const response = await controller.app.request(
+      `/${cancelled.session.sessionId}/abort?projectPath=${encodeURIComponent(cancelled.session.projectPath)}`,
+      { method: 'POST' }
+    );
+    expect(response.status).toBe(200);
+    expect(runtimeState.runtime.setTaskStatus).toHaveBeenCalledWith(
+      'cancelled',
+      'user-cancel'
+    );
+
+    const replacement = await controller.dispatchTask({
+      prompt: 'Reuse the released queue slot',
+      sourceProjectPath: '/tmp/task-source',
+      isolation: 'local',
+      permissionMode: PermissionMode.YOLO,
+    });
+    expect(replacement).toMatchObject({
+      status: 'queued',
+      queuePosition: 1,
+      queueDepth: 1,
+    });
+
+    releaseFirst();
+    await vi.waitFor(() => {
+      expect(started).toContain(first.session.sessionId);
+      expect(started).toContain(replacement.session.sessionId);
+      expect(started).not.toContain(cancelled.session.sessionId);
+    });
+  });
+
+  it('rejects overflow with 429 semantics and removes the unaccepted task', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
+      maxConcurrent: 1,
+      maxQueued: 1,
+    });
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    agentState.chatStream.mockImplementation(async function* () {
+      if (Date.now() < 0) yield undefined;
+      await firstGate;
+      return {
+        success: true,
+        finalMessage: 'done',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+    const controller = createSessionRouteController();
+    const first = await controller.dispatchTask({
+      prompt: 'Hold the only slot',
+      sourceProjectPath: '/tmp/task-source',
+      isolation: 'local',
+      permissionMode: PermissionMode.YOLO,
+    });
+    const second = await controller.dispatchTask({
+      prompt: 'Fill the queue',
+      sourceProjectPath: '/tmp/task-source',
+      isolation: 'local',
+      permissionMode: PermissionMode.YOLO,
+    });
+
+    await expect(
+      controller.dispatchTask({
+        prompt: 'Overflow',
+        sourceProjectPath: '/tmp/task-source',
+        isolation: 'local',
+        permissionMode: PermissionMode.YOLO,
+      })
+    ).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      statusCode: 429,
+    });
+    expect(second.status).toBe('queued');
+    const deleted = vi.mocked(SessionService.deleteSession).mock.calls.at(-1);
+    expect(deleted?.[0]).not.toBe(first.session.sessionId);
+    expect(deleted?.[0]).not.toBe(second.session.sessionId);
+
+    releaseFirst();
+    await vi.waitFor(() =>
+      expect(taskRunScheduler.getStats()).toMatchObject({
+        inFlight: 0,
+        queued: 0,
+      })
+    );
+  });
+
+  it('recovers durable queued tasks and fails half-created entries without input', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const recoverable = makeSessionMetadata({
+      sessionId: 'task-recoverable',
+      projectPath: '/tmp/recoverable',
+      taskStatus: 'queued',
+      taskIsolation: 'local',
+      taskSourceProjectPath: '/tmp/recoverable',
+      firstMessageTime: '2026-08-06T00:00:01.000Z',
+    });
+    const missingInput = makeSessionMetadata({
+      sessionId: 'task-missing-input',
+      projectPath: '/tmp/missing-input',
+      taskStatus: 'queued',
+      taskIsolation: 'local',
+      taskSourceProjectPath: '/tmp/missing-input',
+      firstMessageTime: '2026-08-06T00:00:00.000Z',
+    });
+    vi.mocked(SessionService.listSessions).mockResolvedValueOnce([
+      recoverable,
+      missingInput,
+    ]);
+    vi.mocked(SessionRuntime.hasPendingInbox).mockImplementation(
+      async (_workspaceRoot, sessionId) => sessionId === recoverable.sessionId
+    );
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId) =>
+        sessionId === recoverable.sessionId ? recoverable : undefined
+    );
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    const controller = createSessionRouteController();
+
+    const result = await controller.recoverQueuedTasks();
+
+    expect(result).toEqual({ scheduled: 1, failed: 1, deferred: 0 });
+    expect(SessionService.updateSessionMetadata).toHaveBeenCalledWith(
+      missingInput.sessionId,
+      missingInput.projectPath,
+      expect.objectContaining({
+        taskStatus: 'failed',
+        taskStatusReason: 'Queued task input is missing',
+        taskQueuePosition: null,
+        taskQueueDepth: null,
+      })
+    );
+    await vi.waitFor(() =>
+      expect(agentState.chatStream).toHaveBeenCalledWith(
+        '',
+        expect.objectContaining({
+          sessionId: recoverable.sessionId,
+          workspaceRoot: recoverable.projectPath,
+        }),
+        expect.objectContaining({
+          pendingInputOnly: true,
+          taskAdmission: expect.any(Object),
+        })
+      )
+    );
+  });
+
+  it('counts only the unvisited suffix when recovery reaches a full queue', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const metadata = ['broken', 'running', 'queued', 'overflow'].map((suffix, index) =>
+      makeSessionMetadata({
+        sessionId: `task-${suffix}`,
+        projectPath: `/tmp/${suffix}`,
+        taskStatus: 'queued',
+        taskIsolation: 'local',
+        taskSourceProjectPath: `/tmp/${suffix}`,
+        firstMessageTime: `2026-08-06T00:00:0${index}.000Z`,
+      })
+    );
+    vi.mocked(SessionService.listSessions).mockResolvedValueOnce(metadata);
+    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId) => {
+        if (sessionId === 'task-broken') {
+          throw new Error('transcript temporarily unavailable');
+        }
+        return metadata.find((entry) => entry.sessionId === sessionId);
+      }
+    );
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
+      maxConcurrent: 1,
+      maxQueued: 1,
+    });
+    let releaseRunning!: () => void;
+    const runningGate = new Promise<void>((resolve) => {
+      releaseRunning = resolve;
+    });
+    agentState.chatStream.mockImplementation(async function* (
+      _content: unknown,
+      context: { sessionId: string }
+    ) {
+      if (Date.now() < 0) yield undefined;
+      if (context.sessionId === 'task-running') await runningGate;
+      return {
+        success: true,
+        finalMessage: 'done',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+    const controller = createSessionRouteController();
+
+    try {
+      await expect(controller.recoverQueuedTasks()).resolves.toEqual({
+        scheduled: 2,
+        failed: 0,
+        deferred: 2,
+      });
+    } finally {
+      releaseRunning();
     }
   });
 
@@ -2313,6 +2803,63 @@ describe('SessionRoutes runtime reuse', () => {
       error: { code: 'AMBIGUOUS_SESSION' },
     });
     expect(SessionService.updateSessionMetadata).not.toHaveBeenCalled();
+  });
+
+  it('removes a deleted task worktree after durable session deletion', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const taskWorktree = {
+      sessionId: '',
+      name: 'delete-task-worktree',
+      branch: '',
+      baseCommit: 'abc123',
+      originalBranch: 'main',
+      repositoryRoot: '/tmp/repo',
+      originalWorkspaceRoot: '/tmp/task-source',
+      worktreeRoot: '/tmp/task-delete-worktree',
+      workspaceRoot: '/tmp/task-delete-worktree',
+      sourceHadChanges: false,
+    };
+    worktreeState.enter.mockImplementationOnce(
+      async (input: { sessionId: string; name: string }) => ({
+        ...taskWorktree,
+        sessionId: input.sessionId,
+        name: input.name,
+        branch: `blade-worktree-${input.sessionId}`,
+      })
+    );
+    const controller = createSessionRouteController();
+    const dispatched = await controller.dispatchTask({
+      prompt: 'Create an isolated disposable task',
+      sourceProjectPath: '/tmp/task-source',
+      isolation: 'worktree',
+      permissionMode: PermissionMode.YOLO,
+    });
+    const expectedWorktree = expect.objectContaining({
+      sessionId: dispatched.session.sessionId,
+      workspaceRoot: '/tmp/task-delete-worktree',
+    });
+
+    const response = await controller.app.request(
+      `/${dispatched.session.sessionId}?projectPath=${encodeURIComponent(dispatched.session.projectPath)}`,
+      { method: 'DELETE' }
+    );
+
+    expect(response.status).toBe(200);
+    expect(SessionService.deleteSession).toHaveBeenCalledWith(
+      dispatched.session.sessionId,
+      dispatched.session.projectPath
+    );
+    expect(worktreeState.restoreSession).toHaveBeenCalledWith(expectedWorktree);
+    expect(worktreeState.exit).toHaveBeenCalledWith({
+      sessionId: dispatched.session.sessionId,
+      action: 'remove',
+      discardChanges: true,
+    });
+    expect(
+      vi.mocked(SessionService.deleteSession).mock.invocationCallOrder.at(-1)
+    ).toBeLessThan(worktreeState.restoreSession.mock.invocationCallOrder.at(-1)!);
   });
 
   it('deletes only the exact same-id workspace and rejects duplicate no-path delete requests', async () => {

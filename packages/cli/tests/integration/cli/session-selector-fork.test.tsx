@@ -525,10 +525,13 @@ describe('session selector fork integration', () => {
       rootId: 'root-fork',
       relationType: 'fork',
       title: 'Forked Session',
-      taskStatus: 'running',
+      taskStatus: 'queued',
       taskIsolation: 'worktree',
       taskSourceProjectPath: getCwd(),
       taskWorktreeBranch: 'blade-worktree-task-demo',
+      taskQueuePosition: 2,
+      taskQueueDepth: 4,
+      taskConcurrencyLimit: 3,
       taskDiffStat: {
         changedFiles: 2,
         additions: 7,
@@ -576,7 +579,7 @@ describe('session selector fork integration', () => {
           expect(output).toContain('Enter to confirm');
           expect(output).toContain(workspaceLabel);
           expect(output).toContain('[DONE]');
-          expect(output).toContain('[RUNNING]');
+          expect(output).toContain('[QUEUED]');
           expect(output).toContain('wt:blade-worktree-task-demo');
           expect(output).toContain('2 files +7 -1');
           expect(output).toContain('↳ fork');
@@ -593,10 +596,10 @@ describe('session selector fork integration', () => {
           expect(stdout.output.length).toBeGreaterThan(outputLengthBeforeMove);
           expect(selectedChunk).toContain('> ');
           expect(selectedChunk).toContain(workspaceLabel);
-          expect(selectedChunk).toContain('[RUNNING]');
+          expect(selectedChunk).toContain('[QUEUED]');
           expect(selectedChunk).toContain('wt:blade-worktree-task-demo');
           expect(selectedChunk).toContain(
-            '(main) | 12 条消息 | wt:blade-worktree-task-demo | 2 files +7 -1 ↳ fork'
+            '(main) | 12 条消息 | wt:blade-worktree-task-demo | queue:2/4 | 2 files +7 -1 ↳ fork'
           );
         },
         () => `output=${JSON.stringify(stdout.output)}`

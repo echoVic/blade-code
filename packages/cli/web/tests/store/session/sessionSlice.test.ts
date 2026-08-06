@@ -1,6 +1,10 @@
 import type { Goal, Session, SessionRef } from '@api/schemas';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentPhase, SendMessagePayload } from '../../../src/store/session/types';
+import type {
+  AgentPhase,
+  SendMessagePayload,
+  StreamEvent,
+} from '../../../src/store/session/types';
 
 vi.mock('../../../src/services', () => ({
   sessionService: {
@@ -257,12 +261,64 @@ describe('sessionSlice multimodal sendMessage', () => {
       .selectSession(createRef('persisted-session', '/tmp/a'));
 
     expect(prepareEventSubscription).toHaveBeenCalledWith(
-      createRef('persisted-session', '/tmp/a')
+      createRef('persisted-session', '/tmp/a'),
+      expect.any(Function)
     );
     expect(replaceEventSubscription).toHaveBeenCalled();
     expect(useSessionStore.getState().messages).toEqual([
       expect.objectContaining({ role: 'user', content: 'persisted' }),
     ]);
+  });
+
+  it('buffers replayed permission events until the selected session is committed', async () => {
+    const sourceRef = createRef('source-session', '/tmp/source');
+    const targetRef = createRef('target-session', '/tmp/target');
+    const replacementUnsubscribe = vi.fn();
+    const prepareEventSubscription = vi.fn(
+      async (_ref: SessionRef, onEvent?: (event: StreamEvent) => void) => {
+        onEvent?.({
+          type: 'permission.asked',
+          properties: {
+            sessionId: targetRef.sessionId,
+            projectPath: targetRef.projectPath,
+            requestId: 'permission-replay',
+            toolName: 'Write',
+            description: 'Write the queued proof',
+            replayed: true,
+          },
+        });
+        return replacementUnsubscribe;
+      }
+    );
+    useSessionStore.setState({
+      currentSessionId: sourceRef.sessionId,
+      currentSessionRef: sourceRef,
+      messages: [],
+      prepareEventSubscription,
+      replaceEventSubscription: actualReplaceEventSubscription,
+    });
+    vi.mocked(sessionService.getMessages).mockResolvedValue([]);
+
+    await useSessionStore.getState().selectSession(targetRef);
+
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionId: targetRef.sessionId,
+      currentSessionRef: targetRef,
+      agentPhase: 'waiting_permission',
+      isStreaming: true,
+      messages: [
+        expect.objectContaining({
+          id: 'assistant-permission-permission-replay',
+          agentContent: expect.objectContaining({
+            confirmation: expect.objectContaining({
+              toolCallId: 'permission-replay',
+              status: 'pending',
+            }),
+          }),
+        }),
+      ],
+    });
+    expect(useSessionStore.getState().eventUnsubscribe).toBe(replacementUnsubscribe);
   });
 
   it('adds optimistic image-only user messages without fabricating text content', async () => {
@@ -1247,7 +1303,10 @@ describe('sessionSlice multimodal sendMessage', () => {
     await useSessionStore.getState().selectSession(targetRef);
 
     expect(sessionService.getMessages).toHaveBeenCalledWith(targetRef);
-    expect(prepareEventSubscription).toHaveBeenCalledWith(targetRef);
+    expect(prepareEventSubscription).toHaveBeenCalledWith(
+      targetRef,
+      expect.any(Function)
+    );
     expect(useSessionStore.getState().currentSessionRef).toEqual(sourceRef);
     expect(useSessionStore.getState().currentSessionId).toBe(source.sessionId);
     expect(useSessionStore.getState().messages).toEqual([
@@ -1308,7 +1367,10 @@ describe('sessionSlice multimodal sendMessage', () => {
     try {
       await useSessionStore.getState().selectSession(targetRef);
 
-      expect(prepareEventSubscription).toHaveBeenCalledWith(targetRef);
+      expect(prepareEventSubscription).toHaveBeenCalledWith(
+        targetRef,
+        expect.any(Function)
+      );
       expect(useSessionStore.getState().currentSessionRef).toEqual(targetRef);
       expect(useSessionStore.getState().currentSessionId).toBe(target.sessionId);
       expect(useSessionStore.getState().messages).toEqual([
@@ -1352,7 +1414,7 @@ describe('sessionSlice multimodal sendMessage', () => {
     const selectA = useSessionStore.getState().selectSession(refA);
     messagesA.resolve([createMessage({ id: 'message-a', role: 'user', content: 'A' })]);
     await flushMicrotasks();
-    expect(prepareEventSubscription).toHaveBeenCalledWith(refA);
+    expect(prepareEventSubscription).toHaveBeenCalledWith(refA, expect.any(Function));
 
     const selectB = useSessionStore.getState().selectSession(refB);
     await selectB;

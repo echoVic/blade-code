@@ -57,6 +57,10 @@ describe('EventRoutes global task feed', () => {
             deletions: 1,
             commits: 0,
           },
+          taskQueuePosition: 2,
+          taskQueueDepth: 4,
+          taskConcurrencyLimit: 3,
+          taskInFlight: 1,
           prompt: 'private prompt in task event',
           arguments: { secret: 'private task arguments' },
         }
@@ -70,6 +74,10 @@ describe('EventRoutes global task feed', () => {
       expect(taskEvent).toContain(
         '"taskDiffStat":{"changedFiles":2,"additions":7,"deletions":1,"commits":0}'
       );
+      expect(taskEvent).toContain('"taskQueuePosition":2');
+      expect(taskEvent).toContain('"taskQueueDepth":4');
+      expect(taskEvent).toContain('"taskConcurrencyLimit":3');
+      expect(taskEvent).toContain('"taskInFlight":1');
       expect(taskEvent).not.toContain('private prompt');
       expect(taskEvent).not.toContain('private tool arguments');
       expect(taskEvent).not.toContain('private task arguments');

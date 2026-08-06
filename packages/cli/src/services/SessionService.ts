@@ -163,6 +163,9 @@ export interface SessionMetadata {
   taskWorktreeBranch?: string;
   taskBaseCommit?: string;
   taskDiffStat?: SessionTaskDiffStat;
+  taskQueuePosition?: number;
+  taskQueueDepth?: number;
+  taskConcurrencyLimit?: number;
   messageCount: number;
   firstMessageTime: string;
   lastMessageTime: string;
@@ -187,6 +190,9 @@ export interface SessionMetadataUpdate {
   taskSourceProjectPath?: string | null;
   taskWorktree?: SessionTaskWorktree | null;
   taskDiffStat?: SessionTaskDiffStat | null;
+  taskQueuePosition?: number | null;
+  taskQueueDepth?: number | null;
+  taskConcurrencyLimit?: number | null;
 }
 
 export interface SessionPage {
@@ -560,6 +566,9 @@ export class SessionService {
       taskSourceProjectPath: _sourceTaskSourceProjectPath,
       taskWorktree: _sourceTaskWorktree,
       taskDiffStat: _sourceTaskDiffStat,
+      taskQueuePosition: _sourceTaskQueuePosition,
+      taskQueueDepth: _sourceTaskQueueDepth,
+      taskConcurrencyLimit: _sourceTaskConcurrencyLimit,
       ...sourceCreatedData
     } = sourceCreated.data;
     const childCreated: Extract<SessionEvent, { type: 'session_created' }> = {
@@ -611,6 +620,9 @@ export class SessionService {
             taskSourceProjectPath: _taskSourceProjectPath,
             taskWorktree: _taskWorktree,
             taskDiffStat: _taskDiffStat,
+            taskQueuePosition: _taskQueuePosition,
+            taskQueueDepth: _taskQueueDepth,
+            taskConcurrencyLimit: _taskConcurrencyLimit,
             ...updatedData
           } = entry.data;
           return {
@@ -657,6 +669,9 @@ export class SessionService {
         taskSourceProjectPath: targetProjectPath,
         taskWorktree: null,
         taskDiffStat: null,
+        taskQueuePosition: null,
+        taskQueueDepth: null,
+        taskConcurrencyLimit: null,
         updatedAt: now,
       },
     };
@@ -805,6 +820,35 @@ export class SessionService {
       !parseTaskDiffStat(update.taskDiffStat)
     ) {
       throw new Error('Invalid session task diff stat');
+    }
+    if (
+      update.taskQueuePosition !== undefined &&
+      update.taskQueuePosition !== null &&
+      (!Number.isInteger(update.taskQueuePosition) || update.taskQueuePosition < 1)
+    ) {
+      throw new Error('Invalid session task queue position');
+    }
+    if (
+      update.taskQueueDepth !== undefined &&
+      update.taskQueueDepth !== null &&
+      (!Number.isInteger(update.taskQueueDepth) || update.taskQueueDepth < 0)
+    ) {
+      throw new Error('Invalid session task queue depth');
+    }
+    if (
+      update.taskConcurrencyLimit !== undefined &&
+      update.taskConcurrencyLimit !== null &&
+      (!Number.isInteger(update.taskConcurrencyLimit) ||
+        update.taskConcurrencyLimit < 1)
+    ) {
+      throw new Error('Invalid session task concurrency limit');
+    }
+    if (
+      typeof update.taskQueuePosition === 'number' &&
+      typeof update.taskQueueDepth === 'number' &&
+      update.taskQueuePosition > update.taskQueueDepth
+    ) {
+      throw new Error('Session task queue position exceeds queue depth');
     }
   }
 
@@ -959,6 +1003,15 @@ export class SessionService {
               : {}),
             ...(update.taskDiffStat !== undefined
               ? { taskDiffStat: update.taskDiffStat }
+              : {}),
+            ...(update.taskQueuePosition !== undefined
+              ? { taskQueuePosition: update.taskQueuePosition }
+              : {}),
+            ...(update.taskQueueDepth !== undefined
+              ? { taskQueueDepth: update.taskQueueDepth }
+              : {}),
+            ...(update.taskConcurrencyLimit !== undefined
+              ? { taskConcurrencyLimit: update.taskConcurrencyLimit }
               : {}),
             updatedAt: now,
           },
@@ -1313,6 +1366,9 @@ export class SessionService {
               taskStatus: 'interrupted',
               taskStatusReason: 'Task owner process exited before completion',
               taskCompletedAt: now,
+              taskOwnerPid: null,
+              taskQueuePosition: null,
+              taskQueueDepth: null,
               updatedAt: now,
             },
           };
@@ -1405,6 +1461,24 @@ export class SessionService {
         ? parsedTaskWorktree
         : undefined;
     const taskDiffStat = parseTaskDiffStat(durable.taskDiffStat);
+    const taskQueuePosition =
+      typeof durable.taskQueuePosition === 'number' &&
+      Number.isInteger(durable.taskQueuePosition) &&
+      durable.taskQueuePosition > 0
+        ? durable.taskQueuePosition
+        : undefined;
+    const taskQueueDepth =
+      typeof durable.taskQueueDepth === 'number' &&
+      Number.isInteger(durable.taskQueueDepth) &&
+      durable.taskQueueDepth >= 0
+        ? durable.taskQueueDepth
+        : undefined;
+    const taskConcurrencyLimit =
+      typeof durable.taskConcurrencyLimit === 'number' &&
+      Number.isInteger(durable.taskConcurrencyLimit) &&
+      durable.taskConcurrencyLimit > 0
+        ? durable.taskConcurrencyLimit
+        : undefined;
 
     return {
       sessionId,
@@ -1440,6 +1514,9 @@ export class SessionService {
       taskWorktreeBranch: taskWorktree?.branch,
       taskBaseCommit: taskWorktree?.baseCommit,
       taskDiffStat,
+      taskQueuePosition,
+      taskQueueDepth,
+      taskConcurrencyLimit,
       taskOwnerPid,
       taskWorktree,
       messageCount,

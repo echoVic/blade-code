@@ -42,6 +42,12 @@ export class ConflictError extends BladeServerError {
   }
 }
 
+export class TooManyRequestsError extends BladeServerError {
+  constructor(message: string) {
+    super('TOO_MANY_REQUESTS', message, 429);
+  }
+}
+
 export class AmbiguousSessionError extends BladeServerError {
   constructor() {
     super(

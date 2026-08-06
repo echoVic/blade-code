@@ -11,6 +11,7 @@ import type { McpServerConfig, ModelConfig } from '../../config/types.js';
 import { getSessionInboxFilePath } from '../../context/storage/pathUtils.js';
 import type {
   SessionTaskDiffStat,
+  SessionTaskIsolation,
   SessionTaskStatus,
   SessionTaskWorktree,
 } from '../../context/types.js';
@@ -74,6 +75,7 @@ import {
   type SteeringMessage,
 } from './ActiveTurnMailbox.js';
 import { SessionInUseError, SessionLease } from './SessionLease.js';
+import { type TaskAdmissionSnapshot, taskRunScheduler } from './TaskRunScheduler.js';
 
 const logger = createLogger(LogCategory.AGENT);
 const staleWorktreeCleanupRuns = new Map<string, Promise<void>>();
@@ -119,6 +121,7 @@ export interface SessionRuntimeOptions {
   agents?: SubagentConfig[];
   subagentInfo?: SubagentInfoForContext;
   taskWorktree?: SessionTaskWorktree;
+  taskIsolation?: SessionTaskIsolation;
 }
 
 export interface ResumeSubagentOptions {
@@ -164,14 +167,21 @@ export class SessionRuntime {
   static async create(options: SessionRuntimeOptions): Promise<SessionRuntime> {
     const workspaceRoot = options.workspaceRoot ?? getCwd();
     let taskWorktree = options.taskWorktree;
+    let taskIsolation = options.taskIsolation;
     try {
       await ensureStoreInitialized();
       await cleanupStaleWorktreesOnce(workspaceRoot);
-      if (!options.subagentInfo && !taskWorktree) {
-        taskWorktree = await SessionService.findSessionTaskWorktree(
-          options.sessionId,
-          workspaceRoot
-        );
+      if (!options.subagentInfo && (!taskWorktree || !taskIsolation)) {
+        const [storedWorktree, metadata] = await Promise.all([
+          taskWorktree
+            ? undefined
+            : SessionService.findSessionTaskWorktree(options.sessionId, workspaceRoot),
+          taskIsolation
+            ? undefined
+            : SessionService.findSessionMetadata(options.sessionId, workspaceRoot),
+        ]);
+        taskWorktree ??= storedWorktree;
+        taskIsolation ??= metadata?.taskIsolation;
       }
       if (taskWorktree) {
         if (path.resolve(taskWorktree.workspaceRoot) !== path.resolve(workspaceRoot)) {
@@ -209,6 +219,7 @@ export class SessionRuntime {
       const runtime = new SessionRuntime(runtimeConfig, {
         ...options,
         ...(taskWorktree ? { taskWorktree } : {}),
+        ...(taskIsolation ? { taskIsolation } : {}),
       });
       await runtime.initialize();
       return runtime;
@@ -267,6 +278,82 @@ export class SessionRuntime {
 
   getConfig(): BladeConfig {
     return this.config;
+  }
+
+  isTaskSession(): boolean {
+    return !this.options.subagentInfo && this.options.taskIsolation !== undefined;
+  }
+
+  getTaskAdmissionLimits(): {
+    maxConcurrent: number;
+    maxQueued: number;
+  } {
+    return {
+      maxConcurrent: this.config.maxConcurrentTasks,
+      maxQueued: this.config.maxQueuedTasks,
+    };
+  }
+
+  async setTaskAdmission(
+    snapshot: TaskAdmissionSnapshot
+  ): Promise<SessionMetadata | undefined> {
+    if (!this.isTaskSession()) return undefined;
+    const now = new Date().toISOString();
+    const queued = snapshot.state === 'queued';
+    const metadata = await SessionService.updateSessionMetadata(
+      this.sessionId,
+      this.workspaceRoot,
+      {
+        taskStatus: snapshot.state,
+        taskStatusReason: null,
+        taskQueuePosition: queued ? (snapshot.queuePosition ?? 1) : null,
+        taskQueueDepth: queued ? snapshot.queueDepth : null,
+        taskConcurrencyLimit: snapshot.maxConcurrent,
+        ...(queued
+          ? {
+              taskStartedAt: null,
+              taskCompletedAt: null,
+              taskOwnerPid: null,
+            }
+          : {
+              taskStartedAt: now,
+              taskCompletedAt: null,
+              taskOwnerPid: process.pid,
+            }),
+      }
+    );
+    Bus.publish(
+      { sessionId: this.sessionId, projectPath: this.workspaceRoot },
+      'task.status',
+      {
+        taskStatus: metadata.taskStatus,
+        ...(metadata.taskStartedAt ? { taskStartedAt: metadata.taskStartedAt } : {}),
+        ...(snapshot.queuePosition
+          ? { taskQueuePosition: snapshot.queuePosition }
+          : {}),
+        taskQueueDepth: snapshot.queueDepth,
+        taskConcurrencyLimit: snapshot.maxConcurrent,
+        taskInFlight: snapshot.inFlight,
+        updatedAt: metadata.lastMessageTime,
+      }
+    );
+    return metadata;
+  }
+
+  publishTaskAdmissionCapacity(taskStatus: SessionTaskStatus): void {
+    if (!this.isTaskSession()) return;
+    const stats = taskRunScheduler.getStats();
+    Bus.publish(
+      { sessionId: this.sessionId, projectPath: this.workspaceRoot },
+      'task.status',
+      {
+        taskStatus,
+        taskQueueDepth: stats.queued,
+        taskConcurrencyLimit: stats.maxConcurrent,
+        taskInFlight: stats.inFlight,
+        updatedAt: new Date().toISOString(),
+      }
+    );
   }
 
   getChatService(): IChatService {
@@ -340,6 +427,12 @@ export class SessionRuntime {
           : taskStatus === 'running'
             ? { taskDiffStat: null }
             : {}),
+        ...(taskStatus !== 'queued'
+          ? {
+              taskQueuePosition: null,
+              taskQueueDepth: null,
+            }
+          : {}),
         ...(taskStatus === 'running'
           ? {
               taskStartedAt: now,
@@ -363,6 +456,15 @@ export class SessionRuntime {
         ? { taskCompletedAt: metadata.taskCompletedAt }
         : {}),
       ...(metadata.taskDiffStat ? { taskDiffStat: metadata.taskDiffStat } : {}),
+      ...(metadata.taskQueuePosition
+        ? { taskQueuePosition: metadata.taskQueuePosition }
+        : {}),
+      ...(metadata.taskQueueDepth !== undefined
+        ? { taskQueueDepth: metadata.taskQueueDepth }
+        : {}),
+      ...(metadata.taskConcurrencyLimit !== undefined
+        ? { taskConcurrencyLimit: metadata.taskConcurrencyLimit }
+        : {}),
       updatedAt: metadata.lastMessageTime,
     });
     return metadata;

@@ -78,6 +78,12 @@ export interface TaskDispatchInput {
 export interface WorkspaceInfo {
   cwd: string;
   gitBranch?: string;
+  taskAdmission?: {
+    inFlight: number;
+    queued: number;
+    maxConcurrent: number;
+    maxQueued: number;
+  };
 }
 
 export interface Message extends Omit<ApiMessage, 'content'> {
@@ -96,6 +102,14 @@ const SubagentSessionArraySchema = Type.Array(SubagentSessionSchema);
 const WorkspaceInfoSchema = Type.Object({
   cwd: Type.String(),
   gitBranch: Type.Optional(Type.String()),
+  taskAdmission: Type.Optional(
+    Type.Object({
+      inFlight: Type.Integer({ minimum: 0 }),
+      queued: Type.Integer({ minimum: 0 }),
+      maxConcurrent: Type.Integer({ minimum: 1 }),
+      maxQueued: Type.Integer({ minimum: 1 }),
+    })
+  ),
 });
 
 const normalizeContent = (content: unknown): MessageContent => {

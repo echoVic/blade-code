@@ -28,7 +28,7 @@ import type { LoopEvent } from '../agent/loop/types.js';
 import { SessionRuntime } from '../agent/runtime/SessionRuntime.js';
 import type { ChatContext } from '../agent/types.js';
 import { type McpServerConfig, PermissionMode } from '../config/types.js';
-import type { SessionTaskWorktree } from '../context/types.js';
+import type { SessionTaskIsolation, SessionTaskWorktree } from '../context/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { Bus } from '../server/bus.js';
 import type { Message } from '../services/ChatServiceInterface.js';
@@ -67,6 +67,7 @@ export interface AcpSessionOptions {
   initialMessages?: Message[];
   mcpServers?: McpServer[];
   taskWorktree?: SessionTaskWorktree;
+  taskIsolation?: SessionTaskIsolation;
 }
 
 function entriesToRecord(
@@ -180,6 +181,9 @@ export class AcpSession {
       workspaceRoot: this.cwd,
       ...(mcpServers ? { mcpServers } : {}),
       ...(this.options.taskWorktree ? { taskWorktree: this.options.taskWorktree } : {}),
+      ...(this.options.taskIsolation
+        ? { taskIsolation: this.options.taskIsolation }
+        : {}),
     });
     this.agent = await this.createAgent();
 
@@ -217,6 +221,22 @@ export class AcpSession {
           ...(event.properties.taskDiffStat &&
           typeof event.properties.taskDiffStat === 'object'
             ? { 'blade/taskDiffStat': event.properties.taskDiffStat }
+            : {}),
+          ...(typeof event.properties.taskQueuePosition === 'number'
+            ? {
+                'blade/taskQueuePosition': event.properties.taskQueuePosition,
+              }
+            : {}),
+          ...(typeof event.properties.taskQueueDepth === 'number'
+            ? { 'blade/taskQueueDepth': event.properties.taskQueueDepth }
+            : {}),
+          ...(typeof event.properties.taskConcurrencyLimit === 'number'
+            ? {
+                'blade/taskConcurrencyLimit': event.properties.taskConcurrencyLimit,
+              }
+            : {}),
+          ...(typeof event.properties.taskInFlight === 'number'
+            ? { 'blade/taskInFlight': event.properties.taskInFlight }
             : {}),
         },
       });

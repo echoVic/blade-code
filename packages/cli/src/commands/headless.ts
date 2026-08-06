@@ -30,6 +30,7 @@ import {
   safeParseSchema,
   Type,
 } from '../schema/index.js';
+import { Bus } from '../server/bus.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import { SessionTaskService } from '../services/SessionTaskService.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
@@ -677,6 +678,30 @@ function createEventWriter(io: HeadlessIO, outputFormat: HeadlessOutputFormat) {
         `[task:${task.isolation}] ${task.sessionId} ${task.sourceProjectPath} -> ${task.projectPath}${task.worktreeBranch ? ` (${task.worktreeBranch})` : ''}`
       );
     },
+    taskAdmission(admission: {
+      state: 'queued' | 'running';
+      queuePosition?: number;
+      queueDepth: number;
+      inFlight: number;
+      maxConcurrentTasks: number;
+    }) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('task_admission', {
+          state: admission.state,
+          queue_position: admission.queuePosition,
+          queue_depth: admission.queueDepth,
+          in_flight: admission.inFlight,
+          max_concurrent_tasks: admission.maxConcurrentTasks,
+        });
+        return;
+      }
+      writeLine(
+        io.stderr,
+        admission.state === 'queued'
+          ? `[task:queued] position ${admission.queuePosition ?? 1}/${admission.queueDepth} (running ${admission.inFlight}/${admission.maxConcurrentTasks})`
+          : `[task:running] admitted (running ${admission.inFlight}/${admission.maxConcurrentTasks})`
+      );
+    },
     output(content: string, exitCode = 0) {
       if (outputFormat === 'jsonl') {
         writeJsonl('output', { content, exit_code: exitCode });
@@ -704,6 +729,7 @@ export async function runHeadless(
   const streamState = new HeadlessStreamState();
   const phaseState: HeadlessPhaseState = { targetLocked: false };
   let runtime: SessionRuntime | undefined;
+  let taskAdmissionUnsubscribe: (() => void) | undefined;
   const abortControl = createHeadlessAbortSignal(control);
 
   try {
@@ -760,6 +786,29 @@ export async function runHeadless(
         worktreeBranch: createdTask.metadata.taskWorktreeBranch,
         baseCommit: createdTask.metadata.taskBaseCommit,
       });
+      taskAdmissionUnsubscribe = Bus.subscribe((event) => {
+        if (
+          event.type !== 'task.status' ||
+          event.sessionId !== sessionId ||
+          event.projectPath !== workspaceRoot ||
+          !['queued', 'running'].includes(String(event.properties.taskStatus)) ||
+          typeof event.properties.taskQueueDepth !== 'number' ||
+          typeof event.properties.taskInFlight !== 'number' ||
+          typeof event.properties.taskConcurrencyLimit !== 'number'
+        ) {
+          return;
+        }
+        eventWriter.taskAdmission({
+          state: event.properties.taskStatus as 'queued' | 'running',
+          queuePosition:
+            typeof event.properties.taskQueuePosition === 'number'
+              ? event.properties.taskQueuePosition
+              : undefined,
+          queueDepth: event.properties.taskQueueDepth,
+          inFlight: event.properties.taskInFlight,
+          maxConcurrentTasks: event.properties.taskConcurrencyLimit,
+        });
+      });
     }
     const contextMessages: Message[] = [...messages];
     const chatContext: ChatContext = {
@@ -783,6 +832,9 @@ export async function runHeadless(
         ? parseCliAgents(validatedOptions.agents)
         : undefined,
       ...(createdTask?.taskWorktree ? { taskWorktree: createdTask.taskWorktree } : {}),
+      ...(createdTask?.metadata.taskIsolation
+        ? { taskIsolation: createdTask.metadata.taskIsolation }
+        : {}),
     });
     const effectiveMaxTurns = validatedOptions.maxTurns ?? runtime.getConfig().maxTurns;
     const toolBlacklist = createdTask?.taskWorktree
@@ -998,6 +1050,7 @@ export async function runHeadless(
     eventWriter.error(`Error: ${extractHeadlessErrorMessage(error)}`);
     return 1;
   } finally {
+    taskAdmissionUnsubscribe?.();
     try {
       await runtime?.dispose();
     } finally {

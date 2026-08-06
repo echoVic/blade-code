@@ -12,6 +12,7 @@ import type {
   SendMessagePayload,
   SessionSlice,
   SliceCreator,
+  StreamEvent,
 } from '../types';
 import { aggregateMessages } from '../utils/aggregateMessages';
 
@@ -165,7 +166,15 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         ]);
         if (!isCurrentNavigation(generation)) return;
         const messages = aggregateMessages(rawMessages);
-        const unsubscribe = await get().prepareEventSubscription(ref);
+        const pendingEvents: StreamEvent[] = [];
+        let subscriptionCommitted = false;
+        const unsubscribe = await get().prepareEventSubscription(ref, (event) => {
+          if (subscriptionCommitted) {
+            get().handleEvent(event);
+          } else {
+            pendingEvents.push(event);
+          }
+        });
         if (!isCurrentNavigation(generation)) {
           closePreparedSubscription(unsubscribe);
           return;
@@ -179,7 +188,11 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           isLoading: false,
           tokenUsage: { ...initialTokenUsage },
         });
+        subscriptionCommitted = true;
         get().replaceEventSubscription(unsubscribe);
+        for (const event of pendingEvents) {
+          get().handleEvent(event);
+        }
       } catch (err) {
         if (!isCurrentNavigation(generation)) return;
         set({ error: (err as Error).message, isLoading: false });

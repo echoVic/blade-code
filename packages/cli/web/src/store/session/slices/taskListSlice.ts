@@ -41,6 +41,12 @@ function taskDiffStat(value: unknown): Session['taskDiffStat'] {
   };
 }
 
+function taskInteger(value: unknown, minimum: number): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= minimum
+    ? value
+    : undefined;
+}
+
 export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
   let subscriptionPromise: Promise<void> | null = null;
   let subscriptionRequested = false;
@@ -64,6 +70,31 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
         return;
       }
       const ref = { sessionId, projectPath };
+      const taskInFlight = taskInteger(event.properties.taskInFlight, 0);
+      const taskQueueDepth = taskInteger(event.properties.taskQueueDepth, 0);
+      const taskConcurrencyLimit = taskInteger(
+        event.properties.taskConcurrencyLimit,
+        1
+      );
+      if (
+        taskInFlight !== undefined &&
+        taskQueueDepth !== undefined &&
+        taskConcurrencyLimit !== undefined
+      ) {
+        set((state) => ({
+          taskWorkspaceInfo: state.taskWorkspaceInfo
+            ? {
+                ...state.taskWorkspaceInfo,
+                taskAdmission: {
+                  inFlight: taskInFlight,
+                  queued: taskQueueDepth,
+                  maxConcurrent: taskConcurrencyLimit,
+                  maxQueued: state.taskWorkspaceInfo.taskAdmission?.maxQueued ?? 100,
+                },
+              }
+            : null,
+        }));
+      }
       const matched = get().sessions.some((session) =>
         sameSessionRef(
           { sessionId: session.sessionId, projectPath: session.projectPath },
@@ -91,13 +122,30 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
                 taskStartedAt:
                   typeof event.properties.taskStartedAt === 'string'
                     ? event.properties.taskStartedAt
-                    : session.taskStartedAt,
+                    : taskStatus === 'queued'
+                      ? undefined
+                      : session.taskStartedAt,
                 taskCompletedAt:
                   typeof event.properties.taskCompletedAt === 'string'
                     ? event.properties.taskCompletedAt
-                    : undefined,
+                    : taskStatus === 'queued' || taskStatus === 'running'
+                      ? undefined
+                      : session.taskCompletedAt,
                 taskDiffStat:
                   taskDiffStat(event.properties.taskDiffStat) ?? session.taskDiffStat,
+                taskQueuePosition:
+                  taskStatus === 'queued'
+                    ? (taskInteger(event.properties.taskQueuePosition, 1) ??
+                      session.taskQueuePosition)
+                    : undefined,
+                taskQueueDepth:
+                  taskStatus === 'queued'
+                    ? (taskInteger(event.properties.taskQueueDepth, 0) ??
+                      session.taskQueueDepth)
+                    : undefined,
+                taskConcurrencyLimit:
+                  taskInteger(event.properties.taskConcurrencyLimit, 1) ??
+                  session.taskConcurrencyLimit,
                 lastMessageTime:
                   typeof event.properties.updatedAt === 'string'
                     ? event.properties.updatedAt

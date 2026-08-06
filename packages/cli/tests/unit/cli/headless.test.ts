@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Bus } from '../../../src/server/bus.js';
 
 const agentState = vi.hoisted(() => ({
   createWithRuntime: vi.fn(),
@@ -143,6 +144,44 @@ describe('headless runner', () => {
     });
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    agentState.chatStream.mockImplementationOnce(async function* (
+      _message: unknown,
+      context: { sessionId: string; workspaceRoot: string }
+    ) {
+      if (Date.now() < 0) yield undefined;
+      Bus.publish(
+        {
+          sessionId: context.sessionId,
+          projectPath: context.workspaceRoot,
+        },
+        'task.status',
+        {
+          taskStatus: 'queued',
+          taskQueuePosition: 1,
+          taskQueueDepth: 1,
+          taskInFlight: 1,
+          taskConcurrencyLimit: 1,
+        }
+      );
+      Bus.publish(
+        {
+          sessionId: context.sessionId,
+          projectPath: context.workspaceRoot,
+        },
+        'task.status',
+        {
+          taskStatus: 'running',
+          taskQueueDepth: 0,
+          taskInFlight: 1,
+          taskConcurrencyLimit: 1,
+        }
+      );
+      return {
+        success: true,
+        finalMessage: 'done',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
     const { runHeadless } = await import('../../../src/commands/headless.js');
 
     const exitCode = await runHeadless(
@@ -195,6 +234,21 @@ describe('headless runner', () => {
         isolation: 'worktree',
         worktree_branch: 'blade-worktree-headless',
       })
+    );
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'task_admission',
+          state: 'queued',
+          queue_position: 1,
+          max_concurrent_tasks: 1,
+        }),
+        expect.objectContaining({
+          type: 'task_admission',
+          state: 'running',
+          max_concurrent_tasks: 1,
+        }),
+      ])
     );
   });
 

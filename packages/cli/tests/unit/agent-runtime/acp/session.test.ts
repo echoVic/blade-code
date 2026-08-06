@@ -235,6 +235,9 @@ describe('AcpSession', () => {
         {
           taskStatus: 'running',
           taskStartedAt: updatedAt,
+          taskQueueDepth: 0,
+          taskConcurrencyLimit: 3,
+          taskInFlight: 1,
           updatedAt,
         }
       );
@@ -247,6 +250,9 @@ describe('AcpSession', () => {
             _meta: {
               'blade/taskStatus': 'running',
               'blade/taskStartedAt': updatedAt,
+              'blade/taskQueueDepth': 0,
+              'blade/taskConcurrencyLimit': 3,
+              'blade/taskInFlight': 1,
             },
           },
         });

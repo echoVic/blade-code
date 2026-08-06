@@ -30,6 +30,8 @@ export interface GlobalOptions {
   agents?: string;
   settingSources?: string;
   maxTurns?: number;
+  maxConcurrentTasks?: number;
+  maxQueuedTasks?: number;
   pluginDir?: string[];
 }
 

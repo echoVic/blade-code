@@ -121,6 +121,9 @@ export class BladeAgent implements AcpAgentInterface {
         ...(createdTask?.taskWorktree
           ? { taskWorktree: createdTask.taskWorktree }
           : {}),
+        ...(createdTask?.metadata.taskIsolation
+          ? { taskIsolation: createdTask.metadata.taskIsolation }
+          : {}),
       }
     );
 
@@ -190,6 +193,17 @@ export class BladeAgent implements AcpAgentInterface {
             : {}),
           ...(session.taskDiffStat
             ? { 'blade/taskDiffStat': session.taskDiffStat }
+            : {}),
+          ...(session.taskQueuePosition
+            ? { 'blade/taskQueuePosition': session.taskQueuePosition }
+            : {}),
+          ...(session.taskQueueDepth !== undefined
+            ? { 'blade/taskQueueDepth': session.taskQueueDepth }
+            : {}),
+          ...(session.taskConcurrencyLimit !== undefined
+            ? {
+                'blade/taskConcurrencyLimit': session.taskConcurrencyLimit,
+              }
             : {}),
         },
       })),

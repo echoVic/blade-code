@@ -105,6 +105,20 @@ export const globalOptions = {
     group: 'AI Options:',
     default: undefined, // 不设置默认值，优先使用配置文件
   },
+  'max-concurrent-tasks': {
+    alias: ['maxConcurrentTasks'],
+    type: 'number',
+    describe: 'Maximum top-level tasks running concurrently in this process',
+    group: 'AI Options:',
+    default: undefined,
+  },
+  'max-queued-tasks': {
+    alias: ['maxQueuedTasks'],
+    type: 'number',
+    describe: 'Maximum top-level tasks waiting for an admission slot',
+    group: 'AI Options:',
+    default: undefined,
+  },
   'permission-mode': {
     alias: ['permissionMode'],
     type: 'string',

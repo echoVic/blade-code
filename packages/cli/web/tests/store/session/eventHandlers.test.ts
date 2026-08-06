@@ -695,6 +695,97 @@ describe('eventHandlers', () => {
     });
   });
 
+  test('replays permission and question requests into an empty active session', () => {
+    const state = createState({
+      messages: [],
+      currentAssistantMessageId: 'assistant-from-previous-session',
+    });
+    const set = vi.fn(
+      (
+        update:
+          | Partial<SessionStoreState>
+          | ((current: SessionStoreState) => Partial<SessionStoreState>)
+      ) => {
+        Object.assign(state, typeof update === 'function' ? update(state) : update);
+      }
+    );
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'permission.asked',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        requestId: 'permission-replay',
+        toolName: 'Write',
+        description: 'Write the queued proof',
+        replayed: true,
+      },
+    });
+    expect(state.messages).toEqual([
+      expect.objectContaining({
+        id: 'assistant-permission-permission-replay',
+        role: 'assistant',
+        agentContent: expect.objectContaining({
+          confirmation: expect.objectContaining({
+            toolCallId: 'permission-replay',
+            toolName: 'Write',
+            status: 'pending',
+          }),
+        }),
+      }),
+    ]);
+    expect(state.agentPhase).toBe('waiting_permission');
+    expect(state.isStreaming).toBe(true);
+
+    state.messages = [];
+    state.currentAssistantMessageId = 'assistant-from-previous-session';
+    state.setQuestion = vi.fn((id, question) => {
+      state.messages = state.messages.map((message) =>
+        message.id === id
+          ? {
+              ...message,
+              agentContent: {
+                ...(message.agentContent ?? createEmptyAgentContent()),
+                question,
+              },
+            }
+          : message
+      );
+    });
+    dispatch({
+      type: 'question.required',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        requestId: 'question-replay',
+        questions: [
+          {
+            question: 'Proceed?',
+            header: 'Confirm',
+            options: [
+              { label: 'Yes', description: 'Continue' },
+              { label: 'No', description: 'Stop' },
+            ],
+            multiSelect: false,
+          },
+        ],
+        replayed: true,
+      },
+    });
+    expect(state.messages).toEqual([
+      expect.objectContaining({
+        id: 'assistant-question-question-replay',
+        agentContent: expect.objectContaining({
+          question: expect.objectContaining({
+            toolCallId: 'question-replay',
+            status: 'pending',
+          }),
+        }),
+      }),
+    ]);
+  });
+
   test('flushes buffered message deltas to the message that received them', () => {
     vi.useFakeTimers();
     const state = createState({

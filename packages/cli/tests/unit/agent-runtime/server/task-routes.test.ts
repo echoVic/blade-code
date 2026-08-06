@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
+import { TooManyRequestsError } from '../../../../src/server/error.js';
 import type { SessionRouteController } from '../../../../src/server/routes/session.js';
 import { TaskRoutes } from '../../../../src/server/routes/task.js';
 
@@ -11,6 +12,11 @@ function createController(
     app: new Hono(),
     dispatchTask,
     getTaskDiff,
+    recoverQueuedTasks: vi.fn(async () => ({
+      scheduled: 0,
+      failed: 0,
+      deferred: 0,
+    })),
   };
 }
 
@@ -103,6 +109,30 @@ describe('TaskRoutes', () => {
     expect(body).toContain('Failed to dispatch task');
     expect(body).not.toContain('/private/path');
     expect(body).not.toContain('provider-key-value');
+  });
+
+  it('returns a retryable 429 when admission is full', async () => {
+    const dispatchTask = vi.fn<SessionRouteController['dispatchTask']>(async () => {
+      throw new TooManyRequestsError('Task admission queue is full');
+    });
+    const app = TaskRoutes(createController(dispatchTask));
+
+    const response = await app.request('/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        prompt: 'Queue this task',
+        projectPath: '/tmp/source',
+      }),
+    });
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'TOO_MANY_REQUESTS',
+        message: 'Task admission queue is full',
+      },
+    });
   });
 
   it('returns a bounded task diff artifact for the exact execution workspace', async () => {

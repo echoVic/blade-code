@@ -13,6 +13,11 @@ import {
   SessionRuntime,
 } from '../../agent/runtime/SessionRuntime.js';
 import {
+  type TaskAdmissionHandle,
+  TaskAdmissionQueueFullError,
+  taskRunScheduler,
+} from '../../agent/runtime/TaskRunScheduler.js';
+import {
   type AgentSession,
   toPublicAgentSession,
 } from '../../agent/subagents/AgentSessionStore.js';
@@ -59,6 +64,7 @@ import {
   ConflictError,
   InternalServerError,
   NotFoundError,
+  TooManyRequestsError,
 } from '../error.js';
 import { normalizeSessionRef, type SessionRef, sessionRefKey } from '../sessionRef.js';
 
@@ -99,7 +105,13 @@ export interface RunState {
   id: string;
   sessionId: string;
   projectPath: string;
-  status: 'running' | 'waiting_permission' | 'completed' | 'failed' | 'cancelled';
+  status:
+    | 'queued'
+    | 'running'
+    | 'waiting_permission'
+    | 'completed'
+    | 'failed'
+    | 'cancelled';
   abortController: AbortController;
   pendingPermission?: {
     permissionId: string;
@@ -107,6 +119,11 @@ export interface RunState {
     details: ConfirmationDetails;
   };
   pendingFollowUpRequested?: boolean;
+  taskAdmission?: TaskAdmissionHandle;
+  taskQueuePosition?: number;
+  taskQueueDepth?: number;
+  taskConcurrencyLimit?: number;
+  taskAdmissionUpdate?: Promise<void>;
   completion?: Promise<void>;
   createdAt: Date;
 }
@@ -133,24 +150,46 @@ interface SessionInfo {
   taskWorktreeBranch?: string;
   taskBaseCommit?: string;
   taskDiffStat?: SessionMetadata['taskDiffStat'];
+  taskQueuePosition?: number;
+  taskQueueDepth?: number;
+  taskConcurrencyLimit?: number;
   taskWorktree?: SessionTaskWorktree;
 }
 
 const sessions = new Map<string, SessionInfo>();
 
-const activeRuns = new LRUCache<string, RunState>({
+const activeRuns = new Map<string, RunState>();
+const recentRuns = new LRUCache<string, RunState>({
   max: 100,
   ttl: 30 * 60 * 1000,
-  dispose: (run: RunState, runId: string) => {
-    if (run.status === 'running' || run.status === 'waiting_permission') {
-      run.abortController.abort();
-      logger.debug(`[SessionRoutes] Run ${runId} disposed due to cache eviction`);
-    }
-  },
 });
 
 function runRef(run: RunState): SessionRef {
   return { sessionId: run.sessionId, projectPath: run.projectPath };
+}
+
+function getRun(runId: string | undefined): RunState | undefined {
+  if (!runId) return undefined;
+  return activeRuns.get(runId) ?? recentRuns.get(runId);
+}
+
+function settleRun(run: RunState): void {
+  if (activeRuns.get(run.id) !== run) return;
+  activeRuns.delete(run.id);
+  recentRuns.set(run.id, run);
+}
+
+function forgetRun(runId: string): void {
+  activeRuns.delete(runId);
+  recentRuns.delete(runId);
+}
+
+function isActiveRun(run: RunState | undefined): run is RunState {
+  return (
+    run?.status === 'queued' ||
+    run?.status === 'running' ||
+    run?.status === 'waiting_permission'
+  );
 }
 
 function cancelRun(run: RunState, reason = 'user-cancel'): boolean {
@@ -210,6 +249,7 @@ function resetSharedSessionRouteState(): void {
     cancelRun(run, 'route-reset');
   }
   activeRuns.clear();
+  recentRuns.clear();
   sessions.clear();
 }
 
@@ -344,6 +384,9 @@ function sessionInfoFromMetadata(
     taskWorktreeBranch: metadata.taskWorktreeBranch,
     taskBaseCommit: metadata.taskBaseCommit,
     taskDiffStat: metadata.taskDiffStat,
+    taskQueuePosition: metadata.taskQueuePosition,
+    taskQueueDepth: metadata.taskQueueDepth,
+    taskConcurrencyLimit: metadata.taskConcurrencyLimit,
     taskWorktree,
     messages,
   };
@@ -364,6 +407,9 @@ function syncSessionTaskMetadata(
   session.taskWorktreeBranch = metadata.taskWorktreeBranch;
   session.taskBaseCommit = metadata.taskBaseCommit;
   session.taskDiffStat = metadata.taskDiffStat;
+  session.taskQueuePosition = metadata.taskQueuePosition;
+  session.taskQueueDepth = metadata.taskQueueDepth;
+  session.taskConcurrencyLimit = metadata.taskConcurrencyLimit;
   session.updatedAt = new Date(metadata.lastMessageTime);
 }
 
@@ -376,7 +422,7 @@ async function refreshSessionTaskMetadata(session: SessionInfo): Promise<void> {
 }
 
 function projectActiveSession(session: SessionInfo) {
-  const run = session.currentRunId ? activeRuns.get(session.currentRunId) : undefined;
+  const run = getRun(session.currentRunId);
   const taskStatus =
     run?.status === 'waiting_permission'
       ? 'running'
@@ -400,6 +446,19 @@ function projectActiveSession(session: SessionInfo) {
     taskWorktreeBranch: session.taskWorktreeBranch,
     taskBaseCommit: session.taskBaseCommit,
     taskDiffStat: session.taskDiffStat,
+    taskQueuePosition:
+      run?.status === 'queued'
+        ? run.taskQueuePosition
+        : taskStatus === 'queued'
+          ? session.taskQueuePosition
+          : undefined,
+    taskQueueDepth:
+      run?.status === 'queued'
+        ? run.taskQueueDepth
+        : taskStatus === 'queued'
+          ? session.taskQueueDepth
+          : undefined,
+    taskConcurrencyLimit: run?.taskConcurrencyLimit ?? session.taskConcurrencyLimit,
     agentType: undefined,
     model: undefined,
     messageCount: session.messages.length,
@@ -523,7 +582,16 @@ export interface DispatchTaskResult {
   session: SessionMetadata & { isActive: boolean };
   runId: string;
   messageId: string;
-  status: 'running';
+  status: 'queued' | 'running';
+  queuePosition?: number;
+  queueDepth?: number;
+  maxConcurrentTasks?: number;
+}
+
+export interface TaskRecoveryResult {
+  scheduled: number;
+  failed: number;
+  deferred: number;
 }
 
 export interface SessionRouteController {
@@ -533,6 +601,7 @@ export interface SessionRouteController {
     sessionId: string,
     projectPath?: string
   ): Promise<SessionTaskDiffArtifact>;
+  recoverQueuedTasks(): Promise<TaskRecoveryResult>;
 }
 
 export const createSessionRouteController = (): SessionRouteController => {
@@ -540,7 +609,7 @@ export const createSessionRouteController = (): SessionRouteController => {
   const app = new Hono<{ Variables: Variables }>();
   app.onError((err, c) => {
     if (err instanceof BladeServerError) {
-      return c.json(err.toObject(), err.statusCode as 400 | 404 | 409 | 500);
+      return c.json(err.toObject(), err.statusCode as 400 | 404 | 409 | 429 | 500);
     }
     logger.error('[SessionRoutes] Unhandled route error:', err);
     return c.json(
@@ -579,6 +648,7 @@ export const createSessionRouteController = (): SessionRouteController => {
         sessionId: session.id,
         workspaceRoot: session.projectPath,
         ...(session.taskWorktree ? { taskWorktree: session.taskWorktree } : {}),
+        ...(session.taskIsolation ? { taskIsolation: session.taskIsolation } : {}),
       });
       runtimeInitializations.set(key, initialization);
     }
@@ -645,6 +715,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       pendingInputOnly?: boolean;
       preparedInputTurn?: PreparedInputTurn;
       goalContinuationOnly?: boolean;
+      taskRuntime?: SessionRuntime;
     } = {}
   ): RunState => {
     const runId = nanoid(12);
@@ -656,6 +727,40 @@ export const createSessionRouteController = (): SessionRouteController => {
       abortController: new AbortController(),
       createdAt: new Date(),
     };
+    if (options.taskRuntime) {
+      const runtime = options.taskRuntime;
+      const admission = taskRunScheduler.admit({
+        key: `${session.projectPath}\0${session.id}`,
+        ...runtime.getTaskAdmissionLimits(),
+        signal: run.abortController.signal,
+        onUpdate: (snapshot) => {
+          run.status = snapshot.state;
+          run.taskQueuePosition = snapshot.queuePosition;
+          run.taskQueueDepth = snapshot.queueDepth;
+          run.taskConcurrencyLimit = snapshot.maxConcurrent;
+          session.taskStatus = snapshot.state;
+          session.taskQueuePosition = snapshot.queuePosition;
+          session.taskQueueDepth = snapshot.queueDepth;
+          session.taskConcurrencyLimit = snapshot.maxConcurrent;
+          run.taskAdmissionUpdate = (run.taskAdmissionUpdate ?? Promise.resolve())
+            .then(async () => {
+              await runtime.setTaskAdmission(snapshot);
+            })
+            .catch((error) => {
+              logger.warn(
+                `[SessionRoutes] Failed to persist admission for ${session.id}:`,
+                error
+              );
+            });
+        },
+      });
+      run.taskAdmission = admission;
+      const snapshot = admission.getSnapshot();
+      run.status = snapshot.state;
+      run.taskQueuePosition = snapshot.queuePosition;
+      run.taskQueueDepth = snapshot.queueDepth;
+      run.taskConcurrencyLimit = snapshot.maxConcurrent;
+    }
     activeRuns.set(runId, run);
     session.currentRunId = runId;
     run.completion = executeRunAsync(
@@ -668,6 +773,7 @@ export const createSessionRouteController = (): SessionRouteController => {
         pendingInputOnly: options.pendingInputOnly,
         preparedInputTurn: options.preparedInputTurn,
         goalContinuationOnly: options.goalContinuationOnly,
+        taskAdmission: run.taskAdmission,
       }
     ).catch((error) => {
       logger.error(`[SessionRoutes] Run ${runId} failed:`, error);
@@ -709,14 +815,42 @@ export const createSessionRouteController = (): SessionRouteController => {
       }
       const run = startRun(session, userContent, input.permissionMode, {
         preparedInputTurn: preparation,
+        taskRuntime: runtime,
       });
+      await run.taskAdmissionUpdate;
       return {
         session: projectActiveSession(session),
         runId: run.id,
         messageId: preparation.messageId,
-        status: 'running',
+        status: run.status === 'queued' ? 'queued' : 'running',
+        queuePosition: run.taskQueuePosition,
+        queueDepth: run.taskQueueDepth,
+        maxConcurrentTasks: run.taskConcurrencyLimit,
       };
     } catch (error) {
+      if (error instanceof TaskAdmissionQueueFullError && session) {
+        const ref = sessionRefFromSession(session);
+        const key = sessionRefKey(ref);
+        if (taskWorktree) {
+          await worktreeManager
+            .exit({
+              sessionId: session.id,
+              action: 'remove',
+              discardChanges: true,
+            })
+            .catch(() => undefined);
+        }
+        await runtimes
+          .get(key)
+          ?.dispose()
+          .catch(() => undefined);
+        runtimes.delete(key);
+        await SessionService.deleteSession(session.id, session.projectPath).catch(
+          () => undefined
+        );
+        sessions.delete(key);
+        throw new TooManyRequestsError('Task admission queue is full');
+      }
       if (session) {
         const latest = await SessionService.findSessionMetadata(
           session.id,
@@ -773,24 +907,13 @@ export const createSessionRouteController = (): SessionRouteController => {
   };
 
   const resumePendingSession = async (session: SessionInfo): Promise<void> => {
-    const currentRun = session.currentRunId
-      ? activeRuns.get(session.currentRunId)
-      : undefined;
-    if (
-      currentRun &&
-      (currentRun.status === 'running' || currentRun.status === 'waiting_permission')
-    ) {
+    const currentRun = getRun(session.currentRunId);
+    if (isActiveRun(currentRun)) {
       return;
     }
     const runtime = await getOrCreateRuntime(session);
-    const initializedRun = session.currentRunId
-      ? activeRuns.get(session.currentRunId)
-      : undefined;
-    if (
-      initializedRun &&
-      (initializedRun.status === 'running' ||
-        initializedRun.status === 'waiting_permission')
-    ) {
+    const initializedRun = getRun(session.currentRunId);
+    if (isActiveRun(initializedRun)) {
       return;
     }
     const hasPending = runtime.getPendingSteeringCount() > 0;
@@ -802,7 +925,72 @@ export const createSessionRouteController = (): SessionRouteController => {
     startRun(session, '', PermissionMode.DEFAULT, {
       pendingInputOnly: hasPending,
       goalContinuationOnly: hasActiveGoal,
+      ...(session.taskIsolation ? { taskRuntime: runtime } : {}),
     });
+  };
+
+  const recoverQueuedTasks = async (): Promise<TaskRecoveryResult> => {
+    const result: TaskRecoveryResult = {
+      scheduled: 0,
+      failed: 0,
+      deferred: 0,
+    };
+    const queued = (await SessionService.listSessions())
+      .filter(
+        (metadata) =>
+          metadata.taskStatus === 'queued' && metadata.taskIsolation !== undefined
+      )
+      .sort(
+        (left, right) =>
+          left.firstMessageTime.localeCompare(right.firstMessageTime) ||
+          left.projectPath.localeCompare(right.projectPath) ||
+          left.sessionId.localeCompare(right.sessionId)
+      );
+
+    for (const [index, metadata] of queued.entries()) {
+      const ref = {
+        sessionId: metadata.sessionId,
+        projectPath: metadata.projectPath,
+      };
+      try {
+        if (
+          !(await SessionRuntime.hasPendingInbox(
+            metadata.projectPath,
+            metadata.sessionId
+          ))
+        ) {
+          await SessionService.updateSessionMetadata(
+            metadata.sessionId,
+            metadata.projectPath,
+            {
+              taskStatus: 'failed',
+              taskStatusReason: 'Queued task input is missing',
+              taskCompletedAt: new Date().toISOString(),
+              taskOwnerPid: null,
+              taskQueuePosition: null,
+              taskQueueDepth: null,
+            }
+          );
+          result.failed++;
+          continue;
+        }
+
+        const session = await getOrHydrateSession(ref);
+        await resumePendingSession(session);
+        if (session.currentRunId) result.scheduled++;
+      } catch (error) {
+        if (error instanceof TaskAdmissionQueueFullError) {
+          result.deferred += queued.length - index;
+          break;
+        }
+        logger.warn(
+          `[SessionRoutes] Failed to recover queued task ${metadata.sessionId}:`,
+          error
+        );
+        result.deferred++;
+      }
+    }
+    return result;
   };
 
   app.get('/', async (c) => {
@@ -1040,13 +1228,8 @@ export const createSessionRouteController = (): SessionRouteController => {
     const ref = sessionRefFromSession(session);
 
     return getMessageSubmissionLock(ref).runExclusive(async () => {
-      const currentRun = session.currentRunId
-        ? activeRuns.get(session.currentRunId)
-        : undefined;
-      if (
-        currentRun &&
-        (currentRun.status === 'running' || currentRun.status === 'waiting_permission')
-      ) {
+      const currentRun = getRun(session.currentRunId);
+      if (isActiveRun(currentRun)) {
         throw new ConflictError('Cannot rewind while a run is active');
       }
 
@@ -1097,13 +1280,8 @@ export const createSessionRouteController = (): SessionRouteController => {
     const ref = sessionRefFromSession(session);
 
     return getMessageSubmissionLock(ref).runExclusive(async () => {
-      const currentRun = session.currentRunId
-        ? activeRuns.get(session.currentRunId)
-        : undefined;
-      if (
-        currentRun &&
-        (currentRun.status === 'running' || currentRun.status === 'waiting_permission')
-      ) {
+      const currentRun = getRun(session.currentRunId);
+      if (isActiveRun(currentRun)) {
         throw new ConflictError(
           'Cannot resume a subagent while a parent run is active'
         );
@@ -1186,13 +1364,8 @@ export const createSessionRouteController = (): SessionRouteController => {
     const ref = sessionRefFromSession(session);
 
     return getMessageSubmissionLock(ref).runExclusive(async () => {
-      const currentRun = session.currentRunId
-        ? activeRuns.get(session.currentRunId)
-        : undefined;
-      if (
-        currentRun &&
-        (currentRun.status === 'running' || currentRun.status === 'waiting_permission')
-      ) {
+      const currentRun = getRun(session.currentRunId);
+      if (isActiveRun(currentRun)) {
         return c.json({ status: 'rejected', reason: 'run_active' }, 409);
       }
 
@@ -1204,8 +1377,20 @@ export const createSessionRouteController = (): SessionRouteController => {
         PermissionMode.DEFAULT;
       const run = startRun(session, '', permissionMode, {
         goalContinuationOnly: true,
+        ...(session.taskIsolation ? { taskRuntime: runtime } : {}),
       });
-      return c.json({ status: 'running', runId: run.id, goal }, 202);
+      await run.taskAdmissionUpdate;
+      return c.json(
+        {
+          status: run.status === 'queued' ? 'queued' : 'running',
+          runId: run.id,
+          goal,
+          queuePosition: run.taskQueuePosition,
+          queueDepth: run.taskQueueDepth,
+          maxConcurrentTasks: run.taskConcurrencyLimit,
+        },
+        202
+      );
     });
   });
 
@@ -1230,17 +1415,23 @@ export const createSessionRouteController = (): SessionRouteController => {
       }
       Bus.publish(ref, 'goal.updated', { goal });
 
-      if (
-        goal.status === 'active' &&
-        (!session.currentRunId ||
-          !['running', 'waiting_permission'].includes(
-            activeRuns.get(session.currentRunId)?.status ?? ''
-          ))
-      ) {
+      if (goal.status === 'active' && !isActiveRun(getRun(session.currentRunId))) {
         const run = startRun(session, '', PermissionMode.DEFAULT, {
           goalContinuationOnly: true,
+          ...(session.taskIsolation ? { taskRuntime: runtime } : {}),
         });
-        return c.json({ status: 'running', runId: run.id, goal }, 202);
+        await run.taskAdmissionUpdate;
+        return c.json(
+          {
+            status: run.status === 'queued' ? 'queued' : 'running',
+            runId: run.id,
+            goal,
+            queuePosition: run.taskQueuePosition,
+            queueDepth: run.taskQueueDepth,
+            maxConcurrentTasks: run.taskConcurrencyLimit,
+          },
+          202
+        );
       }
       return c.json({ status: goal.status, goal });
     });
@@ -1267,9 +1458,12 @@ export const createSessionRouteController = (): SessionRouteController => {
       const key = sessionRefKey(ref);
       const session = sessions.get(key);
       const runtime = runtimes.get(key);
+      const taskWorktree =
+        session?.taskWorktree ??
+        (await SessionService.findSessionTaskWorktree(ref.sessionId, ref.projectPath));
       let cancelledRunId: string | undefined;
       if (session?.currentRunId) {
-        const run = activeRuns.get(session.currentRunId);
+        const run = getRun(session.currentRunId);
         if (run) {
           cancelRun(run);
           await run.completion;
@@ -1283,7 +1477,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       }
       await SessionService.deleteSession(ref.sessionId, ref.projectPath);
       if (cancelledRunId) {
-        activeRuns.delete(cancelledRunId);
+        forgetRun(cancelledRunId);
       }
       sessions.delete(key);
       sessionHydrations.delete(key);
@@ -1294,6 +1488,21 @@ export const createSessionRouteController = (): SessionRouteController => {
         runtimes.delete(key);
         if (runtimes.size === 0) {
           await McpRegistry.getInstance().disconnectAll();
+        }
+      }
+      if (taskWorktree) {
+        try {
+          await worktreeManager.restoreSession(taskWorktree);
+          await worktreeManager.exit({
+            sessionId: ref.sessionId,
+            action: 'remove',
+            discardChanges: true,
+          });
+        } catch (error) {
+          logger.warn(
+            `[SessionRoutes] Failed to remove deleted task worktree ${ref.sessionId}:`,
+            error
+          );
         }
       }
 
@@ -1409,9 +1618,7 @@ export const createSessionRouteController = (): SessionRouteController => {
           });
         if (stream.aborted || terminated) return;
 
-        const currentRun = session.currentRunId
-          ? activeRuns.get(session.currentRunId)
-          : undefined;
+        const currentRun = getRun(session.currentRunId);
         const pendingInteraction = currentRun?.pendingPermission;
         if (pendingInteraction) {
           deliveredInteractionIds.add(pendingInteraction.permissionId);
@@ -1483,13 +1690,8 @@ export const createSessionRouteController = (): SessionRouteController => {
     const sessionRef = sessionRefFromSession(session);
 
     return getMessageSubmissionLock(sessionRef).runExclusive(async () => {
-      const currentRun = session.currentRunId
-        ? activeRuns.get(session.currentRunId)
-        : undefined;
-      if (
-        currentRun &&
-        (currentRun.status === 'running' || currentRun.status === 'waiting_permission')
-      ) {
+      const currentRun = getRun(session.currentRunId);
+      if (isActiveRun(currentRun)) {
         const runtime = await getOrCreateRuntime(session);
         const steering = await runtime.enqueueSteering(userContent, {
           allowBeforeTurn: true,
@@ -1555,12 +1757,17 @@ export const createSessionRouteController = (): SessionRouteController => {
 
       const run = startRun(session, userContent, permissionMode, {
         preparedInputTurn: preparation,
+        ...(session.taskIsolation ? { taskRuntime: runtime } : {}),
       });
+      await run.taskAdmissionUpdate;
       return c.json(
         {
           runId: run.id,
           messageId: preparation.messageId,
-          status: 'running',
+          status: run.status === 'queued' ? 'queued' : 'running',
+          queuePosition: run.taskQueuePosition,
+          queueDepth: run.taskQueueDepth,
+          maxConcurrentTasks: run.taskConcurrencyLimit,
         },
         202
       );
@@ -1572,7 +1779,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
     const session = sessions.get(sessionRefKey(ref));
     if (session?.currentRunId) {
-      const run = activeRuns.get(session.currentRunId);
+      const run = getRun(session.currentRunId);
       if (run) {
         cancelRun(run);
         await run.completion;
@@ -1590,7 +1797,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       return c.json({ sessionId, projectPath: ref.projectPath, status: 'idle' });
     }
 
-    const run = activeRuns.get(session.currentRunId);
+    const run = getRun(session.currentRunId);
     return c.json({
       sessionId,
       projectPath: ref.projectPath,
@@ -1599,7 +1806,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     });
   });
 
-  return { app, dispatchTask, getTaskDiff };
+  return { app, dispatchTask, getTaskDiff, recoverQueuedTasks };
 };
 
 export const SessionRoutes = () => createSessionRouteController().app;
@@ -1614,6 +1821,7 @@ async function executeRunAsync(
     pendingInputOnly?: boolean;
     preparedInputTurn?: PreparedInputTurn;
     goalContinuationOnly?: boolean;
+    taskAdmission?: TaskAdmissionHandle;
   } = {}
 ): Promise<void> {
   const { abortController, sessionId, id: runId } = run;
@@ -1633,6 +1841,14 @@ async function executeRunAsync(
   };
 
   try {
+    if (options.taskAdmission) {
+      await options.taskAdmission.ready;
+      await run.taskAdmissionUpdate;
+      if (abortController.signal.aborted) {
+        throw new Error(String(abortController.signal.reason || 'Task run cancelled'));
+      }
+    }
+
     session.taskStatus = 'running';
     session.taskStatusReason = undefined;
     session.taskStartedAt = new Date().toISOString();
@@ -1855,6 +2071,7 @@ async function executeRunAsync(
         pendingInputOnly: options.pendingInputOnly,
         preparedInputTurn: options.preparedInputTurn,
         goalContinuationOnly: options.goalContinuationOnly,
+        taskAdmission: options.taskAdmission,
       }),
       handleLoopEvent
     );
@@ -1874,6 +2091,7 @@ async function executeRunAsync(
         agent.chatStream('', chatContext, {
           stream: true,
           pendingInputOnly: true,
+          taskAdmission: options.taskAdmission,
         }),
         handleLoopEvent
       );
@@ -1913,23 +2131,70 @@ async function executeRunAsync(
     if (runtime && options.preparedInputTurn) {
       await runtime.finishTurn(options.preparedInputTurn.handle).catch(() => undefined);
     }
-    await refreshSessionTaskMetadata(session).catch(() => undefined);
     if (abortController.signal.aborted || run.status === 'cancelled') {
       cancelRun(run, 'runtime-abort');
+      if (session.taskIsolation) {
+        const taskRuntime =
+          runtime ?? (await getOrCreateRuntime(session).catch(() => undefined));
+        await taskRuntime
+          ?.setTaskStatus(
+            'cancelled',
+            String(abortController.signal.reason || 'Task run cancelled')
+          )
+          .catch(() => undefined);
+      }
+      await refreshSessionTaskMetadata(session).catch(() => undefined);
       session.taskStatus = 'cancelled';
       session.taskCompletedAt ??= new Date().toISOString();
       emit('session.status', { status: 'idle' });
       return;
     }
+    await refreshSessionTaskMetadata(session).catch(() => undefined);
     logger.error('[SessionRoutes] Agent execution error:', error);
     run.status = 'failed';
     session.taskStatus = 'failed';
     session.taskStatusReason ??= 'Agent execution failed';
     session.taskCompletedAt ??= new Date().toISOString();
+    if (session.taskIsolation) {
+      const failedMetadata = runtime
+        ? await runtime
+            .setTaskStatus('failed', session.taskStatusReason)
+            .catch(() => undefined)
+        : await SessionService.updateSessionMetadata(session.id, session.projectPath, {
+            taskStatus: 'failed',
+            taskStatusReason: session.taskStatusReason,
+            taskCompletedAt: session.taskCompletedAt,
+            taskOwnerPid: null,
+            taskQueuePosition: null,
+            taskQueueDepth: null,
+          }).catch(() => undefined);
+      if (failedMetadata) syncSessionTaskMetadata(session, failedMetadata);
+    }
     emit('session.error', {
       error: error instanceof Error ? error.message : 'Unknown error',
     });
     emit('session.status', { status: 'error' });
+  } finally {
+    options.taskAdmission?.release();
+    if (options.taskAdmission) {
+      const stats = taskRunScheduler.getStats();
+      emit('task.status', {
+        taskStatus: session.taskStatus,
+        ...(session.taskStatusReason
+          ? { taskStatusReason: session.taskStatusReason }
+          : {}),
+        ...(session.taskStartedAt ? { taskStartedAt: session.taskStartedAt } : {}),
+        ...(session.taskCompletedAt
+          ? { taskCompletedAt: session.taskCompletedAt }
+          : {}),
+        ...(session.taskDiffStat ? { taskDiffStat: session.taskDiffStat } : {}),
+        taskQueueDepth: stats.queued,
+        taskConcurrencyLimit: stats.maxConcurrent,
+        taskInFlight: stats.inFlight,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    settleRun(run);
   }
 }
 

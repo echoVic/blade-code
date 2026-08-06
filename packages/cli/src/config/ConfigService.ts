@@ -182,6 +182,18 @@ const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     mergeStrategy: 'replace',
     persistable: true,
   },
+  maxConcurrentTasks: {
+    target: 'settings',
+    defaultScope: 'local',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
+  maxQueuedTasks: {
+    target: 'settings',
+    defaultScope: 'local',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
   mcpServers: {
     target: 'config',
     defaultScope: 'global', // MCP 服务器配置存储在用户全局配置中

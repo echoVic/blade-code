@@ -59,6 +59,11 @@ import type {
   SteeringMessage,
 } from './runtime/ActiveTurnMailbox.js';
 import { SessionRuntime } from './runtime/SessionRuntime.js';
+import {
+  TaskAdmissionCancelledError,
+  type TaskRunPermit,
+  taskRunScheduler,
+} from './runtime/TaskRunScheduler.js';
 import { subagentRegistry } from './subagents/SubagentRegistry.js';
 import type {
   AgentOptions,
@@ -407,9 +412,75 @@ export class Agent {
       return yield* this.chatStreamInternal(message, context, options);
     }
 
-    await runtime.setTaskStatus('running');
+    let admissionPermit: TaskRunPermit | undefined;
+    let ownsAdmission = false;
     let settled = false;
+    const releaseOwnedAdmission = (
+      taskStatus: 'completed' | 'failed' | 'cancelled' | 'interrupted'
+    ): void => {
+      if (!ownsAdmission || !admissionPermit) return;
+      admissionPermit.release();
+      admissionPermit = undefined;
+      try {
+        runtime.publishTaskAdmissionCapacity(taskStatus);
+      } catch (error) {
+        logger.warn('[Agent] Failed to publish task admission capacity:', error);
+      }
+    };
     try {
+      if (runtime.isTaskSession?.() === true) {
+        ownsAdmission = options?.taskAdmission === undefined;
+        const admission =
+          options?.taskAdmission ??
+          taskRunScheduler.admit({
+            key: `${runtime.workspaceRoot}\0${runtime.sessionId}`,
+            ...runtime.getTaskAdmissionLimits(),
+            signal: context.signal,
+            onUpdate: (snapshot) => {
+              void runtime.setTaskAdmission(snapshot).catch((error) => {
+                logger.warn('[Agent] Failed to persist task admission update:', error);
+              });
+            },
+          });
+        try {
+          admissionPermit = await admission.ready;
+        } catch (error) {
+          if (error instanceof TaskAdmissionCancelledError || context.signal?.aborted) {
+            const reason = taskStatusReason(error);
+            await runtime.setTaskStatus('cancelled', reason);
+            settled = true;
+            return {
+              success: false,
+              error: { type: 'aborted', message: reason },
+              metadata: {
+                turnsCount: 0,
+                toolCallsCount: 0,
+                duration: 0,
+              },
+            };
+          }
+          throw error;
+        }
+        if (context.signal?.aborted) {
+          const reason = String(
+            context.signal.reason || 'Task admission was cancelled'
+          );
+          await runtime.setTaskStatus('cancelled', reason);
+          settled = true;
+          releaseOwnedAdmission('cancelled');
+          return {
+            success: false,
+            error: { type: 'aborted', message: reason },
+            metadata: {
+              turnsCount: 0,
+              toolCallsCount: 0,
+              duration: 0,
+            },
+          };
+        }
+      }
+
+      await runtime.setTaskStatus('running');
       const result = yield* this.chatStreamInternal(message, context, options);
       const status = context.signal?.aborted
         ? 'cancelled'
@@ -421,6 +492,7 @@ export class Agent {
         status === 'failed' && result.error ? taskStatusReason(result.error) : undefined
       );
       settled = true;
+      releaseOwnedAdmission(status);
       return result;
     } catch (error) {
       const status = context.signal?.aborted ? 'cancelled' : 'failed';
@@ -430,6 +502,7 @@ export class Agent {
         logger.warn('[Agent] Failed to persist terminal task status:', statusError);
       }
       settled = true;
+      releaseOwnedAdmission(status);
       throw error;
     } finally {
       if (!settled) {
@@ -438,7 +511,9 @@ export class Agent {
           .catch((error) => {
             logger.warn('[Agent] Failed to persist interrupted task status:', error);
           });
+        releaseOwnedAdmission('interrupted');
       }
+      if (ownsAdmission) admissionPermit?.release();
     }
   }
 

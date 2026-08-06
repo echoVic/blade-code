@@ -30,6 +30,12 @@ function projectTaskDiffStat(value: unknown): Record<string, number> | undefined
   return Object.fromEntries(fields.map((field) => [field, stat[field] as number]));
 }
 
+function projectInteger(value: unknown, minimum: number): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= minimum
+    ? value
+    : undefined;
+}
+
 export const EventRoutes = () => {
   const app = new Hono();
 
@@ -58,6 +64,13 @@ export const EventRoutes = () => {
         const taskStatus = event.properties.taskStatus;
         if (typeof taskStatus !== 'string' || !TASK_STATUSES.has(taskStatus)) return;
         const taskDiffStat = projectTaskDiffStat(event.properties.taskDiffStat);
+        const taskQueuePosition = projectInteger(event.properties.taskQueuePosition, 1);
+        const taskQueueDepth = projectInteger(event.properties.taskQueueDepth, 0);
+        const taskConcurrencyLimit = projectInteger(
+          event.properties.taskConcurrencyLimit,
+          1
+        );
+        const taskInFlight = projectInteger(event.properties.taskInFlight, 0);
         stream
           .writeSSE({
             data: JSON.stringify({
@@ -81,6 +94,10 @@ export const EventRoutes = () => {
                   ? { updatedAt: event.properties.updatedAt }
                   : {}),
                 ...(taskDiffStat ? { taskDiffStat } : {}),
+                ...(taskQueuePosition !== undefined ? { taskQueuePosition } : {}),
+                ...(taskQueueDepth !== undefined ? { taskQueueDepth } : {}),
+                ...(taskConcurrencyLimit !== undefined ? { taskConcurrencyLimit } : {}),
+                ...(taskInFlight !== undefined ? { taskInFlight } : {}),
               },
             }),
           })

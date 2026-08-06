@@ -218,10 +218,14 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
       const diffStr = session.taskDiffStat
         ? ` | ${session.taskDiffStat.changedFiles} files +${session.taskDiffStat.additions} -${session.taskDiffStat.deletions}`
         : '';
+      const queueStr =
+        session.taskStatus === 'queued' && session.taskQueuePosition
+          ? ` | queue:${session.taskQueuePosition}/${session.taskQueueDepth ?? session.taskQueuePosition}`
+          : '';
 
       return {
         key: getSessionCandidateKey(session),
-        label: `${statusStr} ${timeStr} | ${projectName}${branchStr} | ${session.messageCount} 条消息${isolationStr}${diffStr}${errorStr}${relationStr}`,
+        label: `${statusStr} ${timeStr} | ${projectName}${branchStr} | ${session.messageCount} 条消息${isolationStr}${queueStr}${diffStr}${errorStr}${relationStr}`,
         value: session,
       };
     });

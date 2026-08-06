@@ -184,6 +184,9 @@ export interface SessionInfo {
   taskSourceProjectPath?: string | null;
   taskWorktree?: SessionTaskWorktree | null;
   taskDiffStat?: SessionTaskDiffStat | null;
+  taskQueuePosition?: number | null;
+  taskQueueDepth?: number | null;
+  taskConcurrencyLimit?: number | null;
   agentType?: string;
   model?: string;
   permission?: JsonValue;

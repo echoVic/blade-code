@@ -225,4 +225,6 @@ export const DEFAULT_CONFIG: BladeConfig = {
 
   // Agentic Loop 配置
   maxTurns: -1, // 默认无限制（受安全上限 100 保护）
+  maxConcurrentTasks: 3,
+  maxQueuedTasks: 100,
 };
