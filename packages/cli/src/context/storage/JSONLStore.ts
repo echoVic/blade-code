@@ -78,15 +78,16 @@ export class JSONLStore {
   }
 
   /**
-   * Stamps a monotonic seq onto entries that lack one, continuing after the
-   * committed tail. Assigning inside the per-file write lock keeps seq
-   * consistent with on-disk order across every JSONLStore instance.
+   * Stamps a monotonic seq onto entries that lack one, continuing after
+   * `baseSeq` (the highest committed seq). Assigning inside the per-file write
+   * lock keeps seq consistent with on-disk order across every JSONLStore
+   * instance.
    */
-  private static stampSeq(
+  private static stampSeqFrom(
     entries: readonly SessionEvent[],
-    committed: readonly SessionEvent[]
+    baseSeq: number
   ): SessionEvent[] {
-    let next = JSONLStore.maxSeq(committed);
+    let next = baseSeq;
     return entries.map((entry) => {
       if (typeof entry.seq === 'number') {
         if (entry.seq > next) next = entry.seq;
@@ -95,6 +96,13 @@ export class JSONLStore {
       next += 1;
       return { ...entry, seq: next } as SessionEvent;
     });
+  }
+
+  private static stampSeq(
+    entries: readonly SessionEvent[],
+    committed: readonly SessionEvent[]
+  ): SessionEvent[] {
+    return JSONLStore.stampSeqFrom(entries, JSONLStore.maxSeq(committed));
   }
 
   /**
@@ -127,8 +135,11 @@ export class JSONLStore {
   }
 
   /**
-   * 在 per-file 写锁内读取已提交尾部、分配 seq、序列化并落盘。
-   * 是所有追加写入分配序列号的唯一入口。
+   * 在 per-file 写锁内分配 seq、序列化并落盘。是所有追加写入分配序列号的唯一入口。
+   *
+   * seq 基准通过只读文件尾部的最后一条 committed 记录获得（O(tail)），避免每次
+   * append 都全量解析整个 transcript（否则单会话累计写入为 O(N²)）。旧 transcript
+   * 若尾部缺失 seq，回退一次全量解析（其后新写入即带 seq，恢复 O(tail)）。
    */
   private async appendEntries(entries: SessionEvent[]): Promise<SessionEvent[]> {
     if (entries.length === 0) return [];
@@ -136,8 +147,9 @@ export class JSONLStore {
       await fs.mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o755 });
       const handle = await fs.open(this.filePath, 'a+', 0o600);
       try {
-        const { separator, entries: committed } = await this.readCommittedState(handle);
-        const stamped = JSONLStore.stampSeq(entries, committed);
+        const separator = await this.repairIncompleteTail(handle);
+        const baseSeq = await this.readTailSeq(handle);
+        const stamped = JSONLStore.stampSeqFrom(entries, baseSeq);
         const content = `${stamped.map((entry) => JSON.stringify(entry)).join('\n')}\n`;
         await handle.appendFile(separator + content, 'utf8');
         await handle.sync();
@@ -429,6 +441,44 @@ export class JSONLStore {
     const entries = parseSessionJSONL(content, source);
     const { size } = await handle.stat();
     return { entries, separator, size };
+  }
+
+  /**
+   * Reads the highest committed seq by scanning only the file tail. Assumes the
+   * incomplete tail has already been repaired (so the file ends on a newline).
+   * Falls back to a full parse only for legacy transcripts whose last record
+   * predates seq numbers — the very next append stamps a seq, restoring O(tail).
+   */
+  private async readTailSeq(handle: fs.FileHandle): Promise<number> {
+    const { size } = await handle.stat();
+    if (size === 0) return 0;
+
+    // Read a bounded tail window and take the last non-empty line. One window
+    // covers the final record unless a single record exceeds the chunk size.
+    const start = Math.max(0, size - TAIL_SCAN_CHUNK_SIZE);
+    const window = Buffer.allocUnsafe(size - start);
+    await handle.read(window, 0, window.length, start);
+    const lines = window.toString('utf8').split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      // A partial first line (record larger than the window) is ambiguous;
+      // only trust it when the window starts at the file head.
+      if (i === 0 && start > 0) break;
+      try {
+        const seq = (JSON.parse(line) as SessionEvent).seq;
+        if (typeof seq === 'number') return seq;
+      } catch {
+        // fall through to full-parse fallback
+      }
+      break;
+    }
+
+    // Legacy transcript without a tail seq (or an oversized final record):
+    // parse fully to backfill the base. The next append stamps seq, so this
+    // fallback is one-time per legacy file.
+    const content = await handle.readFile('utf8');
+    return JSONLStore.maxSeq(parseSessionJSONL(content, this.filePath));
   }
 
   private async repairIncompleteTail(handle: fs.FileHandle): Promise<string> {

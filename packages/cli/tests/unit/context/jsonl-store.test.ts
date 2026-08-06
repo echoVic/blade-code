@@ -501,4 +501,41 @@ describe('JSONLStore sequence numbers', () => {
     expect((await store.readFromSeq(1)).map((e) => e.seq)).toEqual([1, 2, 3]);
     expect(await store.readFromSeq(4)).toEqual([]);
   });
+
+  it('assigns gapless monotonic seq across many sequential appends (tail-based base)', async () => {
+    const store = new JSONLStore(filePath);
+    for (let i = 0; i < 50; i++) {
+      const event = await store.append(
+        createSessionUpdated('s', '/w', `2024-01-01T00:00:${String(i).padStart(2, '0')}.000Z`, `t${i}`)
+      );
+      expect(event.seq).toBe(i + 1);
+    }
+    const entries = await store.readAll();
+    expect(entries.map((e) => e.seq)).toEqual(
+      Array.from({ length: 50 }, (_, i) => i + 1)
+    );
+  });
+
+  it('continues seq after a legacy tail that lacks a seq, then stays tail-based', async () => {
+    // Legacy transcript: two records written without seq.
+    const created = createSessionCreated('s', '/w', '2024-01-01T00:00:00.000Z');
+    const legacy = createSessionUpdated('s', '/w', '2024-01-01T00:00:01.000Z', 'legacy');
+    await writeFile(
+      filePath,
+      `${JSON.stringify(created)}\n${JSON.stringify(legacy)}\n`,
+      'utf8'
+    );
+
+    const store = new JSONLStore(filePath);
+    // First append: legacy tail lacks seq → full-parse fallback backfills base=2.
+    const first = await store.append(
+      createSessionUpdated('s', '/w', '2024-01-01T00:00:02.000Z', 'new-1')
+    );
+    expect(first.seq).toBe(3);
+    // Second append: tail now carries seq=3 → pure tail-based continuation.
+    const second = await store.append(
+      createSessionUpdated('s', '/w', '2024-01-01T00:00:03.000Z', 'new-2')
+    );
+    expect(second.seq).toBe(4);
+  });
 });
