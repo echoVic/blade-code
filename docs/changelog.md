@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-08-06
+
+### ✨ 新功能
+
+- 新增顶层 `POST /tasks` durable dispatch：一次完成 session 创建、可选 worktree
+  隔离、prompt fsync 与后台 Agent 启动
+- task session 以实际执行 workspace 作为复合身份，私有持久化完整 worktree lease，
+  公共 API 仅投影 source workspace、branch、base commit 与 diffStat
+- Web 新增 Task Home composer、Explore/Build/Review/Fix 模板、local/worktree
+  上下文切换、任务 Sidebar 状态和详情 artifact bar
+- 新增有界 `GET /tasks/:sessionId/diff` Review artifact，支持 tracked/untracked
+  unified patch，限制文件数与字节数，并保护 symlink、二进制和大文件
+- Headless CLI 新增 `--task-isolation local|worktree` 与稳定 `task_session` JSONL
+  事件；TUI 显示隔离分支和 diffStat
+- ACP `session/new` 支持 namespaced task isolation metadata，`session/list` 和 live
+  update 返回 source workspace、worktree identity 与终态 diffStat
+
+### 🐛 问题修复
+
+- 预隔离 task worktree 现在被 Runtime 识别为外部托管生命周期，不再错误要求模型
+  重复调用 `EnterWorktree` / `ExitWorktree`
+- Web、Headless 与 ACP 在预隔离会话中隐藏 worktree lifecycle 工具，并统一启用
+  workspace 边界保护
+- Web Review 不再依赖瞬时 tool message；进程恢复或刷新后仍能从 durable lease
+  加载真实 patch
+- worktree 创建或 durable metadata 写入失败时回滚干净 workspace；fork 不再继承
+  parent task owner、lease 或 artifact
+
+### ✅ 测试相关
+
+- CLI deterministic suite：2010 passed，56 skipped；Web suite：125 passed
+- DeepSeek v4 Flash/Pro 的 Web `/tasks` + SSE + Review artifact、Headless
+  `--task-isolation` 与 ACP `_meta` worktree 真实 API 资格 6/6 通过
+- 浏览器 GUI 验证模板、隔离切换、真实 dispatch、DONE 分组、artifact bar、
+  unified patch Review 面板，以及稳定态 console/network 无应用错误
+
 ## [0.8.1] - 2026-08-05
 
 ### ✨ 新功能
