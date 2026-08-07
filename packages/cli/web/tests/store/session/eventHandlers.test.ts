@@ -8,9 +8,15 @@ import type {
   SessionStoreState,
   ToolCallInfo,
 } from '../../../src/store/session/types';
+import {
+  appendTimelineText,
+  appendTimelineThinking,
+  appendTimelineToolCall,
+} from '../../../src/store/session/utils/agentTimeline';
 
 function createEmptyAgentContent() {
   return {
+    timeline: [],
     textBefore: '',
     toolCalls: [] as ToolCallInfo[],
     textAfter: '',
@@ -125,7 +131,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
           return {
             ...message,
             agentContent: {
-              ...agentContent,
+              ...appendTimelineText(agentContent, delta),
               textBefore:
                 position === 'before'
                   ? agentContent.textBefore + delta
@@ -144,16 +150,43 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
         message.id === messageId
           ? {
               ...message,
-              agentContent: {
-                ...(message.agentContent ?? createEmptyAgentContent()),
-                toolCalls: [...(message.agentContent?.toolCalls ?? []), toolCall],
-              },
+              agentContent: appendTimelineToolCall(
+                message.agentContent ?? createEmptyAgentContent(),
+                toolCall
+              ),
             }
           : message
       );
     }),
-    updateToolCall: vi.fn(),
-    appendThinking: vi.fn(),
+    updateToolCall: vi.fn((messageId, toolCallId, updates) => {
+      state.messages = state.messages.map((message) => {
+        if (message.id !== messageId || !message.agentContent) return message;
+        return {
+          ...message,
+          agentContent: {
+            ...message.agentContent,
+            toolCalls: message.agentContent.toolCalls.map((toolCall) =>
+              toolCall.toolCallId === toolCallId
+                ? { ...toolCall, ...updates }
+                : toolCall
+            ),
+          },
+        };
+      });
+    }),
+    appendThinking: vi.fn((messageId, delta) => {
+      state.messages = state.messages.map((message) => {
+        if (message.id !== messageId) return message;
+        const agentContent = message.agentContent ?? createEmptyAgentContent();
+        return {
+          ...message,
+          agentContent: {
+            ...appendTimelineThinking(agentContent, delta),
+            thinkingContent: agentContent.thinkingContent + delta,
+          },
+        };
+      });
+    }),
     setConfirmation: vi.fn((id, confirmation) => {
       state.messages = state.messages.map((message) => {
         if (message.id !== id) return message;
@@ -446,6 +479,69 @@ describe('eventHandlers', () => {
     });
 
     expect(state.messages[0]?.content).toBe('hello');
+  });
+
+  test('preserves realtime thinking, text, and repeated tool groups in arrival order', () => {
+    vi.useFakeTimers();
+    const state = createState();
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+    const ref = { sessionId: 'session-1', projectPath: '/workspace/a' };
+
+    dispatch({
+      type: 'thinking.delta',
+      properties: { ...ref, messageId: 'assistant-1', delta: 'plan' },
+    });
+    dispatch({
+      type: 'message.delta',
+      properties: { ...ref, messageId: 'assistant-1', delta: 'first' },
+    });
+    dispatch({
+      type: 'tool.start',
+      properties: {
+        ...ref,
+        messageId: 'assistant-1',
+        toolCallId: 'read-1',
+        toolName: 'Read',
+        arguments: '{}',
+      },
+    });
+    dispatch({
+      type: 'tool.result',
+      properties: {
+        ...ref,
+        messageId: 'assistant-1',
+        toolCallId: 'read-1',
+        success: true,
+        output: 'done',
+      },
+    });
+    dispatch({
+      type: 'message.delta',
+      properties: { ...ref, messageId: 'assistant-1', delta: 'second' },
+    });
+    dispatch({
+      type: 'tool.start',
+      properties: {
+        ...ref,
+        messageId: 'assistant-1',
+        toolCallId: 'bash-1',
+        toolName: 'Bash',
+        arguments: '{}',
+      },
+    });
+    dispatch({
+      type: 'message.complete',
+      properties: { ...ref, messageId: 'assistant-1' },
+    });
+
+    expect(state.messages[0]?.agentContent?.timeline).toEqual([
+      expect.objectContaining({ type: 'thinking', content: 'plan' }),
+      expect.objectContaining({ type: 'text', content: 'first' }),
+      expect.objectContaining({ type: 'tool_group', toolCallIds: ['read-1'] }),
+      expect.objectContaining({ type: 'text', content: 'second' }),
+      expect.objectContaining({ type: 'tool_group', toolCallIds: ['bash-1'] }),
+    ]);
+    expect(state.messages[0]?.content).toBe('first\n\nsecond');
   });
 
   test('applies task.updated events to the current assistant message', () => {

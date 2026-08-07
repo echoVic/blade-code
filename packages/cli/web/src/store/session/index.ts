@@ -19,6 +19,7 @@ export const useSessionStore = create<SessionStoreState>()((...a) => ({
 export { TEMP_SESSION_ID } from './constants';
 export type {
   AgentResponseContent,
+  AgentTimelineBlock,
   BoundProject,
   CatalogLoadState,
   ConfirmationInfo,

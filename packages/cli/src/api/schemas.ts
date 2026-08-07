@@ -351,6 +351,19 @@ export const BoundProjectSchema = Runtime(
 );
 export type BoundProject = Static<typeof BoundProjectSchema>;
 
+export const ProjectDirectorySelectionSchema = Runtime(
+  Type.Union([
+    Type.Object({
+      cancelled: Type.Literal(true),
+    }),
+    Type.Object({
+      cancelled: Type.Literal(false),
+      path: Type.String({ minLength: 1 }),
+    }),
+  ])
+);
+export type ProjectDirectorySelection = Static<typeof ProjectDirectorySelectionSchema>;
+
 export const BusEventSchema = Runtime(
   Type.Object({
     type: Type.String(),

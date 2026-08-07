@@ -261,7 +261,8 @@ export class ContextManager {
       usage?: { input_tokens: number; output_tokens: number };
       inboxMessageId?: string;
     },
-    subagentInfo?: SubagentInfoForContext
+    subagentInfo?: SubagentInfoForContext,
+    reasoningContent?: string
   ): Promise<string> {
     return this.persistent.saveMessage(
       sessionId,
@@ -269,7 +270,8 @@ export class ContextManager {
       content,
       parentUuid,
       metadata,
-      subagentInfo
+      subagentInfo,
+      reasoningContent
     );
   }
 

@@ -16,10 +16,9 @@ import {
   FolderPlus,
   Plus,
   Search,
-  Server,
   Settings,
   Sparkles,
-  Terminal,
+  Terminal
 } from 'lucide-react';
 import { useState } from 'react';
 import { BladeMark } from './BladeMark';
@@ -42,8 +41,6 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
     isSidebarOpen,
     isTerminalOpen,
     toggleTerminal,
-    toggleMcp,
-    toggleSkills,
     sidebarView,
     setSidebarView,
     setTaskSwitcherOpen,
@@ -176,8 +173,6 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
         onNewChat={handleNewChat}
         onOpenTaskSwitcher={() => runSidebarAction(() => setTaskSwitcherOpen(true))}
         onToggleTerminal={() => runSidebarAction(toggleTerminal)}
-        onToggleSkills={() => runSidebarAction(toggleSkills)}
-        onToggleMcp={() => runSidebarAction(toggleMcp)}
         onToggleSettings={() => runSidebarAction(toggleSettings)}
         isTerminalOpen={isTerminalOpen}
         taskEventsConnected={taskEventsConnected}
@@ -384,16 +379,6 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
       <div className="flex flex-col gap-3 px-5 pt-3 pb-5">
         <div className="flex flex-col gap-0.5 border-t border-[hsl(var(--deck-hairline))] pt-3">
           {[
-            {
-              icon: Sparkles,
-              action: () => runSidebarAction(toggleSkills),
-              labelKey: 'sidebar.section.skills' as const,
-            },
-            {
-              icon: Server,
-              action: () => runSidebarAction(toggleMcp),
-              labelKey: 'sidebar.section.mcp' as const,
-            },
             {
               icon: Settings,
               action: () => runSidebarAction(toggleSettings),

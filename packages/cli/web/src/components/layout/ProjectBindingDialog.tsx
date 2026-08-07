@@ -1,5 +1,12 @@
-import { FolderGit2, FolderPlus, GitBranch, Loader2, Trash2 } from 'lucide-react';
-import { type FormEvent, useEffect, useState } from 'react';
+import {
+  FolderGit2,
+  FolderOpen,
+  FolderPlus,
+  GitBranch,
+  Loader2,
+  Trash2,
+} from 'lucide-react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -10,6 +17,7 @@ import {
 import { useT } from '@/i18n';
 import { restoreFocusToSelector } from '@/lib/mobileNavigationFocus';
 import { cn } from '@/lib/utils';
+import { sessionService } from '@/services';
 import { useSessionStore } from '@/store/session';
 
 interface ProjectBindingDialogProps {
@@ -34,22 +42,54 @@ export function ProjectBindingDialog({
   } = useSessionStore();
   const [projectPath, setProjectPath] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
+  const [isPickingDirectory, setIsPickingDirectory] = useState(false);
+  const pickerRequestRef = useRef(0);
 
   useEffect(() => {
-    if (open) void loadBoundProjects();
+    if (open) {
+      void loadBoundProjects();
+      return;
+    }
+    pickerRequestRef.current += 1;
+    setIsPickingDirectory(false);
   }, [loadBoundProjects, open]);
+
+  const bindAndOpenProject = async (path: string) => {
+    await bindProject(path);
+    setProjectPath('');
+    startTemporarySession();
+    onOpenChange(false);
+  };
 
   const handleBind = async (event: FormEvent) => {
     event.preventDefault();
-    if (!projectPath.trim() || isBindingProject) return;
+    if (!projectPath.trim() || isBindingProject || isPickingDirectory) return;
     setLocalError(null);
     try {
-      await bindProject(projectPath.trim());
-      setProjectPath('');
-      startTemporarySession();
-      onOpenChange(false);
+      await bindAndOpenProject(projectPath.trim());
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : t('projects.bind.failed'));
+    }
+  };
+
+  const handlePickDirectory = async () => {
+    if (isPickingDirectory || isBindingProject) return;
+    const requestId = ++pickerRequestRef.current;
+    setLocalError(null);
+    setIsPickingDirectory(true);
+    try {
+      const selection = await sessionService.pickProjectDirectory();
+      if (requestId !== pickerRequestRef.current) return;
+      if (selection.cancelled) return;
+      setProjectPath(selection.path);
+      await bindAndOpenProject(selection.path);
+    } catch (error) {
+      if (requestId !== pickerRequestRef.current) return;
+      setLocalError(error instanceof Error ? error.message : t('projects.pick.failed'));
+    } finally {
+      if (requestId === pickerRequestRef.current) {
+        setIsPickingDirectory(false);
+      }
     }
   };
 
@@ -81,13 +121,35 @@ export function ProjectBindingDialog({
           <input
             value={projectPath}
             onChange={(event) => setProjectPath(event.target.value)}
+            disabled={isBindingProject}
             placeholder={t('projects.bind.placeholder')}
             aria-label={t('projects.bind.pathLabel')}
             className="h-9 min-w-0 flex-1 rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] px-3 font-mono text-[12px] outline-none placeholder:text-[hsl(var(--deck-ink-faint))] focus:border-[hsl(var(--deck-accent)/0.65)]"
           />
           <button
+            type="button"
+            onClick={() => void handlePickDirectory()}
+            disabled={isPickingDirectory || isBindingProject}
+            title={t('projects.pick.action')}
+            aria-label={t('projects.pick.action')}
+            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] px-2.5 font-mono text-[12px] text-[hsl(var(--deck-ink-muted))] transition-colors hover:border-[hsl(var(--deck-border-strong))] hover:text-[hsl(var(--deck-ink))] disabled:cursor-wait disabled:opacity-50"
+          >
+            {isPickingDirectory ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <FolderOpen className="h-3.5 w-3.5" />
+            )}
+            <span className="hidden sm:inline">
+              {t(
+                isPickingDirectory
+                  ? 'projects.pick.picking'
+                  : 'projects.pick.actionShort'
+              )}
+            </span>
+          </button>
+          <button
             type="submit"
-            disabled={!projectPath.trim() || isBindingProject}
+            disabled={!projectPath.trim() || isBindingProject || isPickingDirectory}
             className="inline-flex h-9 items-center gap-2 rounded-md bg-[hsl(var(--deck-ink))] px-3 font-mono text-[12px] text-[hsl(var(--deck-canvas))] transition-opacity disabled:opacity-40"
           >
             {isBindingProject ? (

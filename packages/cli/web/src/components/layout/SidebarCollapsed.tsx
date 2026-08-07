@@ -1,15 +1,13 @@
+import { type TranslationKey, useT } from '@/i18n';
+import { shortcutHint } from '@/lib/keyboardShortcuts';
+import { cn } from '@/lib/utils';
 import {
   type LucideIcon,
   Plus,
   Search,
-  Server,
   Settings,
-  Sparkles,
-  Terminal,
+  Terminal
 } from 'lucide-react';
-import { type TranslationKey, useT } from '@/i18n';
-import { shortcutHint } from '@/lib/keyboardShortcuts';
-import { cn } from '@/lib/utils';
 import { BladeMark } from './BladeMark';
 import { LanguageSwitcher } from './LanguageSwitcher';
 
@@ -18,8 +16,6 @@ interface SidebarCollapsedProps {
   onNewChat: () => void;
   onOpenTaskSwitcher: () => void;
   onToggleTerminal: () => void;
-  onToggleSkills: () => void;
-  onToggleMcp: () => void;
   onToggleSettings: () => void;
   isTerminalOpen: boolean;
   taskEventsConnected: boolean;
@@ -36,8 +32,6 @@ export function SidebarCollapsed({
   onNewChat,
   onOpenTaskSwitcher,
   onToggleTerminal,
-  onToggleSkills,
-  onToggleMcp,
   onToggleSettings,
   isTerminalOpen,
   taskEventsConnected,
@@ -50,8 +44,6 @@ export function SidebarCollapsed({
     action: () => void;
     labelKey: TranslationKey;
   }> = [
-    { icon: Sparkles, action: onToggleSkills, labelKey: 'sidebar.section.skills' },
-    { icon: Server, action: onToggleMcp, labelKey: 'sidebar.section.mcp' },
     { icon: Settings, action: onToggleSettings, labelKey: 'sidebar.section.settings' },
   ];
 

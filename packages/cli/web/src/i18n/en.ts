@@ -79,6 +79,10 @@ export const en = {
   'projects.bind.pathLabel': 'Project path',
   'projects.bind.action': 'Bind',
   'projects.bind.failed': 'Failed to bind project',
+  'projects.pick.action': 'Choose project folder',
+  'projects.pick.actionShort': 'Choose',
+  'projects.pick.picking': 'Choosing…',
+  'projects.pick.failed': 'Failed to choose a project folder',
   'projects.unbind.action': 'Unbind project',
   'projects.unavailable': 'unavailable',
   // Language switcher
@@ -308,6 +312,14 @@ export const en = {
   'chat.list.showEarlierWithRemaining':
     'Show {count} earlier messages, {remaining} hidden',
   'chat.list.jumpLatest': 'Jump to latest',
+  'chat.timeline.thinking': 'Thought process',
+  'chat.timeline.tools.runningOne': 'Running 1 command',
+  'chat.timeline.tools.running': 'Running {count} commands',
+  'chat.timeline.tools.completedOne': 'Executed 1 command',
+  'chat.timeline.tools.completed': 'Executed {count} commands',
+  'chat.timeline.tools.completedOneWithError': 'Executed 1 command · failed',
+  'chat.timeline.tools.completedWithErrors':
+    'Executed {count} commands · {errors} failed',
   'chat.error.dismiss': 'Dismiss error',
   'chat.error.queueFull':
     'The guidance queue is full. Wait for pending instructions to start, then retry.',

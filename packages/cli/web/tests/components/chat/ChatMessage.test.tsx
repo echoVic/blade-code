@@ -120,14 +120,19 @@ describe('ChatMessage', () => {
       root.render(<ChatMessage message={firstMessage} />);
     });
 
-    const toggle = Array.from(container.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('Read')
+    const groupToggle = container.querySelector<HTMLButtonElement>(
+      '[data-agent-tool-group] > button'
     );
-
-    expect(toggle).toBeTruthy();
+    expect(groupToggle).toBeTruthy();
 
     act(() => {
-      toggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      groupToggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const toolToggle =
+      container.querySelector<HTMLButtonElement>('[data-tool-call-id]');
+    expect(toolToggle).toBeTruthy();
+    act(() => {
+      toolToggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
     expect(container.textContent).toContain('Arguments');
@@ -139,6 +144,81 @@ describe('ChatMessage', () => {
 
     expect(container.textContent).toContain('Arguments');
     expect(container.textContent).toContain('/tmp/demo.ts');
+  });
+
+  test('renders the assistant timeline chronologically with two-level collapsed tools', () => {
+    const message: Message = {
+      id: 'assistant-timeline',
+      role: 'assistant',
+      content: 'first\nsecond',
+      timestamp: 1700000000000,
+      agentContent: {
+        timeline: [
+          { id: 'thinking-0', type: 'thinking', content: 'private plan' },
+          { id: 'text-1', type: 'text', content: 'first explanation' },
+          {
+            id: 'tool-group-2',
+            type: 'tool_group',
+            toolCallIds: ['read-1'],
+          },
+          { id: 'text-3', type: 'text', content: 'second explanation' },
+          {
+            id: 'tool-group-4',
+            type: 'tool_group',
+            toolCallIds: ['bash-1'],
+          },
+        ],
+        textBefore: 'first explanation',
+        toolCalls: [
+          {
+            toolCallId: 'read-1',
+            toolName: 'Read',
+            arguments: '{"file_path":"README.md"}',
+            status: 'success',
+            startTime: 1,
+          },
+          {
+            toolCallId: 'bash-1',
+            toolName: 'Bash',
+            arguments: '{"command":"bun test"}',
+            status: 'running',
+            startTime: 2,
+          },
+        ],
+        textAfter: 'second explanation',
+        thinkingContent: 'private plan',
+        tasks: [],
+        subagent: null,
+        confirmation: null,
+        question: null,
+      },
+    };
+
+    act(() => root.render(<ChatMessage message={message} />));
+
+    expect(
+      Array.from(container.querySelectorAll('[data-agent-timeline-block]')).map(
+        (element) => element.getAttribute('data-agent-timeline-block')
+      )
+    ).toEqual(['thinking', 'text', 'tool_group', 'text', 'tool_group']);
+    expect(container.textContent).not.toContain('private plan');
+    expect(container.textContent).not.toContain('README.md');
+    expect(container.querySelectorAll('[data-agent-tool-group-details]')).toHaveLength(
+      0
+    );
+
+    const firstGroup = container.querySelector<HTMLButtonElement>(
+      '[data-agent-tool-group] > button'
+    );
+    act(() => firstGroup?.click());
+
+    expect(container.textContent).toContain('Read');
+    expect(container.textContent).not.toContain('README.md');
+    const toolToggle = container.querySelector<HTMLButtonElement>(
+      '[data-tool-call-id="read-1"]'
+    );
+    act(() => toolToggle?.click());
+    expect(container.textContent).toContain('README.md');
   });
 
   test('renders user text and image previews from multimodal content', () => {

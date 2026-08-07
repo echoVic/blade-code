@@ -1189,7 +1189,8 @@ export async function* executeLoopGenerator(
             deps,
             context,
             turnResult.content || '',
-            lastMessageUuid
+            lastMessageUuid,
+            turnResult.reasoningContent
           );
           if (recoveryAssistantUuid) lastMessageUuid = recoveryAssistantUuid;
 
@@ -1232,7 +1233,8 @@ export async function* executeLoopGenerator(
             deps,
             context,
             turnResult.content || '',
-            lastMessageUuid
+            lastMessageUuid,
+            turnResult.reasoningContent
           );
           if (uuid) lastMessageUuid = uuid;
 
@@ -1267,7 +1269,8 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid
+              lastMessageUuid,
+              turnResult.reasoningContent
             );
             if (steeringAssistantUuid) {
               lastMessageUuid = steeringAssistantUuid;
@@ -1318,7 +1321,8 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid
+              lastMessageUuid,
+              turnResult.reasoningContent
             );
             if (retryAssistantUuid) lastMessageUuid = retryAssistantUuid;
 
@@ -1358,7 +1362,8 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid
+              lastMessageUuid,
+              turnResult.reasoningContent
             );
             if (delegationAssistantUuid) {
               lastMessageUuid = delegationAssistantUuid;
@@ -1393,7 +1398,8 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid
+              lastMessageUuid,
+              turnResult.reasoningContent
             );
             if (delegationAssistantUuid) {
               lastMessageUuid = delegationAssistantUuid;
@@ -1432,7 +1438,8 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid
+              lastMessageUuid,
+              turnResult.reasoningContent
             );
             if (worktreeAssistantUuid) {
               lastMessageUuid = worktreeAssistantUuid;
@@ -1467,7 +1474,8 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid
+              lastMessageUuid,
+              turnResult.reasoningContent
             );
             if (worktreeAssistantUuid) {
               lastMessageUuid = worktreeAssistantUuid;
@@ -1507,7 +1515,8 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid
+              lastMessageUuid,
+              turnResult.reasoningContent
             );
             if (verificationAssistantUuid) {
               lastMessageUuid = verificationAssistantUuid;
@@ -1542,7 +1551,8 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid
+              lastMessageUuid,
+              turnResult.reasoningContent
             );
             if (verificationAssistantUuid) {
               lastMessageUuid = verificationAssistantUuid;
@@ -1585,7 +1595,8 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid
+              lastMessageUuid,
+              turnResult.reasoningContent
             );
             if (continueAssistantUuid) lastMessageUuid = continueAssistantUuid;
 
@@ -1618,7 +1629,8 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid
+              lastMessageUuid,
+              turnResult.reasoningContent
             );
             if (steeringAssistantUuid) {
               lastMessageUuid = steeringAssistantUuid;
@@ -1643,7 +1655,8 @@ export async function* executeLoopGenerator(
             deps,
             context,
             turnResult.content || '',
-            lastMessageUuid
+            lastMessageUuid,
+            turnResult.reasoningContent
           );
           if (uuid) lastMessageUuid = uuid;
 
@@ -1679,7 +1692,8 @@ export async function* executeLoopGenerator(
             deps,
             context,
             turnResult.content || '',
-            lastMessageUuid
+            lastMessageUuid,
+            turnResult.reasoningContent
           );
           if (uuid) lastMessageUuid = uuid;
         }

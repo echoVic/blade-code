@@ -11,6 +11,8 @@ import {
   MessageRole,
   PermissionMode,
   type PermissionResponse,
+  type ProjectDirectorySelection,
+  ProjectDirectorySelectionSchema,
   parseSchema,
   type ResumeSubagentResponse,
   ResumeSubagentResponseSchema,
@@ -199,6 +201,13 @@ export const sessionService = {
       throw new Error(body?.error?.message || 'Failed to bind project');
     }
     return BoundProjectSchema.parse(await res.json());
+  },
+
+  pickProjectDirectory: async (): Promise<ProjectDirectorySelection> => {
+    return parseSchema(
+      ProjectDirectorySelectionSchema,
+      await requestJson<unknown>(`${API_BASE}/projects/pick`, { method: 'POST' })
+    );
   },
 
   unbindProject: async (projectPath: string): Promise<void> => {

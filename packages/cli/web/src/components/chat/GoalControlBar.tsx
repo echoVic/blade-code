@@ -37,7 +37,7 @@ const STATUS_PRESENTATION: Record<
 > = {
   active: {
     labelKey: 'goal.status.active',
-    dot: 'bg-[hsl(var(--deck-accent))] shadow-[0_0_10px_hsl(var(--deck-accent-glow)/0.65)]',
+    dot: 'bg-[hsl(var(--deck-accent))] shadow-[0_0_6px_hsl(var(--deck-accent-glow)/0.5)]',
     accent: 'text-[hsl(var(--deck-accent))]',
   },
   paused: {
@@ -147,57 +147,58 @@ export function GoalControlBar() {
   return (
     <>
       <TooltipProvider delayDuration={250}>
-        <section
-          aria-label={t('goal.aria.section')}
-          className="mx-3 mt-3 shrink-0 overflow-hidden rounded-xl border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] shadow-[0_1px_2px_hsl(var(--deck-hairline))]"
-        >
-          <div className="flex min-h-[62px] items-stretch">
-            <div className="flex w-[62px] shrink-0 items-center justify-center border-r border-[hsl(var(--deck-hairline))]">
-              <div
-                className={cn(
-                  'flex h-10 w-10 items-center justify-center rounded-lg border bg-[hsl(var(--deck-canvas))] shadow-sm',
-                  goal.status === 'active'
-                    ? 'border-[hsl(var(--deck-accent)/0.35)]'
-                    : 'border-[hsl(var(--deck-border))]'
-                )}
-              >
-                {goal.status === 'complete' ? (
-                  <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                ) : (
-                  <Target className={cn('h-5 w-5', presentation.accent)} />
-                )}
-              </div>
-            </div>
+        <section aria-label={t('goal.aria.section')} className="mx-3 mb-1 shrink-0">
+          {/* Compact strip */}
+          <div
+            className={cn(
+              'flex h-9 items-center gap-2 rounded-lg border px-3 transition-colors',
+              'border-[hsl(var(--deck-border))]/60 bg-[hsl(var(--deck-surface))]/80 backdrop-blur-sm',
+              expanded && 'rounded-b-none border-b-0'
+            )}
+          >
+            {goal.status === 'complete' ? (
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+            ) : (
+              <Target className={cn('h-3.5 w-3.5 shrink-0', presentation.accent)} />
+            )}
+
+            <span
+              className={cn('h-1.5 w-1.5 shrink-0 rounded-full', presentation.dot)}
+            />
+            <span
+              className={cn(
+                'shrink-0 text-[10px] font-medium leading-none',
+                presentation.accent
+              )}
+            >
+              {t(presentation.labelKey)}
+            </span>
+
+            <span className="h-3 w-px shrink-0 bg-[hsl(var(--deck-hairline))]" />
 
             <button
               type="button"
-              className="min-w-0 flex-1 px-5 py-3 text-left outline-none transition-colors hover:bg-[hsl(var(--deck-hairline))]/40 focus-visible:ring-2 focus-visible:ring-[hsl(var(--deck-accent-glow))]/50 focus-visible:ring-inset"
-              onClick={() => setExpanded((value) => !value)}
+              aria-label={
+                expanded ? t('goal.action.collapse') : t('goal.action.expand')
+              }
+              className="min-w-0 flex-1 truncate text-left text-[12px] leading-5 text-[hsl(var(--deck-ink))]/85 outline-none transition-colors hover:text-[hsl(var(--deck-ink))]"
+              onClick={() => setExpanded((v) => !v)}
               aria-expanded={expanded}
+              title={goal.objective}
             >
-              <div className="flex items-center gap-2 text-[13px] font-medium leading-5">
-                <span className={cn('h-1.5 w-1.5 rounded-full', presentation.dot)} />
-                <span className={presentation.accent}>{t(presentation.labelKey)}</span>
-              </div>
-              <div
-                className="mt-0.5 truncate text-[15px] leading-6 text-[hsl(var(--deck-ink))]"
-                title={goal.objective}
-              >
-                {goal.objective}
-              </div>
+              {goal.objective}
             </button>
 
-            <div className="flex shrink-0 items-center gap-1 border-l border-[hsl(var(--deck-hairline))] px-3">
-              <ToolbarButton
-                label={t('goal.action.edit')}
-                disabled={!canEdit || busy}
-                onClick={beginEditing}
-              >
-                <Pencil />
-              </ToolbarButton>
+            {goal.tokensUsed > 0 && (
+              <span className="hidden shrink-0 text-[10px] tabular-nums text-[hsl(var(--deck-ink-muted))] sm:inline">
+                {formatTokens(goal.tokensUsed)}
+                {goal.tokenBudget !== undefined && `/${formatTokens(goal.tokenBudget)}`}
+              </span>
+            )}
 
+            <div className="flex shrink-0 items-center">
               {canPause && (
-                <ToolbarButton
+                <CompactButton
                   label={t('goal.action.pause')}
                   disabled={busy}
                   onClick={() => void runAction('pause', pauseGoal)}
@@ -207,11 +208,11 @@ export function GoalControlBar() {
                   ) : (
                     <Pause />
                   )}
-                </ToolbarButton>
+                </CompactButton>
               )}
 
               {canResume && (
-                <ToolbarButton
+                <CompactButton
                   label={t('goal.action.resume')}
                   disabled={busy}
                   onClick={() => void runAction('resume', resumeGoal)}
@@ -221,37 +222,33 @@ export function GoalControlBar() {
                   ) : (
                     <Play />
                   )}
-                </ToolbarButton>
+                </CompactButton>
               )}
 
-              <ToolbarButton
+              <CompactButton
+                label={canEdit ? t('goal.action.edit') : t('goal.action.expand')}
+                disabled={!canEdit && !expanded}
+                onClick={canEdit ? beginEditing : () => setExpanded((v) => !v)}
+              >
+                {canEdit ? <Pencil /> : <ChevronsUpDown />}
+              </CompactButton>
+
+              <CompactButton
                 label={t('goal.action.delete')}
                 disabled={busy}
                 destructive
                 onClick={() => setDeleteOpen(true)}
               >
                 <Trash2 />
-              </ToolbarButton>
-
-              <div className="mx-1 h-6 w-px bg-[hsl(var(--deck-hairline))]" />
-
-              <ToolbarButton
-                label={expanded ? t('goal.action.collapse') : t('goal.action.expand')}
-                onClick={() => setExpanded((value) => !value)}
-                pressed={expanded}
-              >
-                <ChevronsUpDown />
-              </ToolbarButton>
+              </CompactButton>
             </div>
           </div>
 
+          {/* Expanded detail panel */}
           {expanded && (
-            <div className="border-t border-[hsl(var(--deck-hairline))] bg-[hsl(var(--deck-canvas))]/70 px-5 py-4">
+            <div className="rounded-b-lg border border-t-0 border-[hsl(var(--deck-border))]/60 bg-[hsl(var(--deck-surface))]/80 px-4 py-3 backdrop-blur-sm">
               {editing ? (
                 <form onSubmit={submitEdit}>
-                  <label htmlFor="goal-objective" className="block mb-2 deck-eyebrow">
-                    {t('goal.field.objective')}
-                  </label>
                   <textarea
                     id="goal-objective"
                     value={draft}
@@ -261,26 +258,26 @@ export function GoalControlBar() {
                     }}
                     rows={3}
                     autoFocus
-                    className="w-full resize-none rounded-lg border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-canvas))] px-3 py-2 text-[13px] leading-5 text-[hsl(var(--deck-ink))] outline-none transition-shadow focus:border-[hsl(var(--deck-accent))] focus:ring-2 focus:ring-[hsl(var(--deck-accent-glow))]"
+                    className="w-full resize-none rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-canvas))] px-3 py-2 text-[12px] leading-5 text-[hsl(var(--deck-ink))] outline-none transition-shadow focus:border-[hsl(var(--deck-accent))] focus:ring-1 focus:ring-[hsl(var(--deck-accent-glow))]"
                   />
-                  <div className="flex gap-2 justify-end mt-3">
+                  <div className="mt-2 flex items-center justify-end gap-2">
                     <button
                       type="button"
                       onClick={() => setEditing(false)}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-[12px] text-[hsl(var(--deck-ink-muted))] transition-colors hover:bg-[hsl(var(--deck-hairline))]/60"
+                      className="inline-flex h-7 items-center gap-1 rounded-md px-2.5 text-[11px] text-[hsl(var(--deck-ink-muted))] transition-colors hover:bg-[hsl(var(--deck-hairline))]/60"
                     >
-                      <X className="h-3.5 w-3.5" />
+                      <X className="h-3 w-3" />
                       {t('goal.action.cancel')}
                     </button>
                     <button
                       type="submit"
                       disabled={!draft.trim() || pendingAction === 'edit'}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[hsl(var(--deck-accent))] px-3 text-[12px] font-medium text-white transition-colors hover:bg-[hsl(var(--deck-accent))]/90 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex h-7 items-center gap-1 rounded-md bg-[hsl(var(--deck-accent))] px-2.5 text-[11px] font-medium text-white transition-colors hover:bg-[hsl(var(--deck-accent))]/90 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {pendingAction === 'edit' ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <Loader2 className="h-3 w-3 animate-spin" />
                       ) : (
-                        <Check className="h-3.5 w-3.5" />
+                        <Check className="h-3 w-3" />
                       )}
                       {t('goal.action.save')}
                     </button>
@@ -288,23 +285,23 @@ export function GoalControlBar() {
                 </form>
               ) : (
                 <>
-                  <p className="max-w-4xl whitespace-pre-wrap text-[13px] leading-6 text-[hsl(var(--deck-ink))]">
+                  <p className="whitespace-pre-wrap text-[12px] leading-5 text-[hsl(var(--deck-ink))]/90">
                     {goal.objective}
                   </p>
-                  <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] text-[hsl(var(--deck-ink-muted))]">
-                    <span className="inline-flex items-center gap-1.5">
-                      <Gauge className="h-3.5 w-3.5" />
+                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[10px] text-[hsl(var(--deck-ink-muted))]">
+                    <span className="inline-flex items-center gap-1">
+                      <Gauge className="h-3 w-3" />
                       {formatTokens(goal.tokensUsed)}
                       {goal.tokenBudget !== undefined &&
                         ` / ${formatTokens(goal.tokenBudget)}`}{' '}
                       {t('goal.metrics.tokens')}
                     </span>
-                    <span className="inline-flex items-center gap-1.5">
-                      <Timer className="h-3.5 w-3.5" />
+                    <span className="inline-flex items-center gap-1">
+                      <Timer className="h-3 w-3" />
                       {formatDuration(goal.timeUsedSeconds)}
                     </span>
-                    <span className="inline-flex items-center gap-1.5">
-                      <RotateCcw className="h-3.5 w-3.5" />
+                    <span className="inline-flex items-center gap-1">
+                      <RotateCcw className="h-3 w-3" />
                       {goal.continuationCount === 1
                         ? t('goal.metrics.continuationOne', {
                             n: goal.continuationCount,
@@ -315,7 +312,7 @@ export function GoalControlBar() {
                     </span>
                   </div>
                   {goal.statusReason && (
-                    <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800 dark:border-amber-400/15 dark:bg-amber-400/[0.06] dark:text-amber-200">
+                    <div className="mt-2 rounded-md border border-amber-200/50 bg-amber-50/60 px-2.5 py-1.5 text-[11px] text-amber-800 dark:border-amber-400/15 dark:bg-amber-400/[0.05] dark:text-amber-200">
                       {goal.statusReason}
                     </div>
                   )}
@@ -327,14 +324,14 @@ export function GoalControlBar() {
       </TooltipProvider>
 
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent className="max-w-[420px] border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))]">
+        <DialogContent className="max-w-[400px] border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))]">
           <DialogTitle>{t('goal.dialog.title')}</DialogTitle>
           <DialogDescription>{t('goal.dialog.description')}</DialogDescription>
           <DialogFooter className="mt-2">
             <button
               type="button"
               onClick={() => setDeleteOpen(false)}
-              className="inline-flex h-9 items-center justify-center rounded-md border border-[hsl(var(--deck-border))] px-4 text-sm text-[hsl(var(--deck-ink))] hover:bg-[hsl(var(--deck-hairline))]/60"
+              className="inline-flex h-8 items-center justify-center rounded-md border border-[hsl(var(--deck-border))] px-3 text-[12px] text-[hsl(var(--deck-ink))] hover:bg-[hsl(var(--deck-hairline))]/60"
             >
               {t('goal.action.cancel')}
             </button>
@@ -342,10 +339,10 @@ export function GoalControlBar() {
               type="button"
               disabled={pendingAction === 'delete'}
               onClick={() => void confirmDelete()}
-              className="inline-flex gap-2 justify-center items-center px-4 h-9 text-sm font-medium text-white bg-rose-600 rounded-md hover:bg-rose-500 disabled:opacity-50"
+              className="inline-flex gap-1.5 justify-center items-center px-3 h-8 text-[12px] font-medium text-white bg-rose-600 rounded-md hover:bg-rose-500 disabled:opacity-50"
             >
               {pendingAction === 'delete' && (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
               )}
               {t('goal.action.delete')}
             </button>
@@ -356,44 +353,40 @@ export function GoalControlBar() {
   );
 }
 
-interface ToolbarButtonProps {
+interface CompactButtonProps {
   label: string;
   children: ReactNode;
   disabled?: boolean;
   destructive?: boolean;
-  pressed?: boolean;
   onClick: () => void;
 }
 
-function ToolbarButton({
+function CompactButton({
   label,
   children,
   disabled,
   destructive,
-  pressed,
   onClick,
-}: ToolbarButtonProps) {
+}: CompactButtonProps) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <button
           type="button"
           aria-label={label}
-          aria-pressed={pressed}
           disabled={disabled}
           onClick={onClick}
           className={cn(
-            'flex h-9 w-9 items-center justify-center rounded-lg text-[hsl(var(--deck-ink-muted))] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[hsl(var(--deck-accent-glow))]/45 disabled:cursor-not-allowed disabled:opacity-35 [&_svg]:h-[18px] [&_svg]:w-[18px]',
+            'flex h-6 w-6 items-center justify-center rounded-md text-[hsl(var(--deck-ink-muted))] outline-none transition-colors focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent-glow))]/50 disabled:cursor-not-allowed disabled:opacity-35 [&_svg]:h-3.5 [&_svg]:w-3.5',
             destructive
               ? 'hover:bg-rose-500/10 hover:text-rose-500'
-              : 'hover:bg-[hsl(var(--deck-hairline))]/60 hover:text-[hsl(var(--deck-ink))]',
-            pressed && 'bg-[hsl(var(--deck-hairline))]/70 text-[hsl(var(--deck-ink))]'
+              : 'hover:bg-[hsl(var(--deck-hairline))]/60 hover:text-[hsl(var(--deck-ink))]'
           )}
         >
           {children}
         </button>
       </TooltipTrigger>
-      <TooltipContent side="bottom" className="text-xs">
+      <TooltipContent side="top" className="text-[10px]">
         {label}
       </TooltipContent>
     </Tooltip>

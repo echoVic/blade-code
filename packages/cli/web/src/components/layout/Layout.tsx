@@ -36,17 +36,6 @@ const TerminalPanel = lazy(() =>
     default: module.TerminalPanel,
   }))
 );
-const McpModal = lazy(() =>
-  import('@/components/mcp/McpModal').then((module) => ({
-    default: module.McpModal,
-  }))
-);
-const SkillsModal = lazy(() =>
-  import('@/components/skills/SkillsModal').then((module) => ({
-    default: module.SkillsModal,
-  }))
-);
-
 const formatPath = (path: string): string => {
   if (path.startsWith('/Users/')) {
     const parts = path.split('/');
@@ -74,8 +63,6 @@ export function Layout({ children }: LayoutProps) {
     isSidebarOpen,
     isFilePreviewOpen,
     isSettingsOpen,
-    isMcpOpen,
-    isSkillsOpen,
     isTerminalOpen,
     isTaskSwitcherOpen,
     toggleFilePreview,
@@ -420,7 +407,13 @@ export function Layout({ children }: LayoutProps) {
             inert={previewModalOpen || undefined}
             className="flex relative flex-col flex-1 min-w-0"
           >
-            {children}
+            {isSettingsOpen ? (
+              <Suspense fallback={null}>
+                <SettingsModal />
+              </Suspense>
+            ) : (
+              children
+            )}
           </div>
           {isFilePreviewOpen && (
             <Suspense fallback={null}>
@@ -432,21 +425,6 @@ export function Layout({ children }: LayoutProps) {
           )}
         </main>
       </div>
-      {isSettingsOpen && (
-        <Suspense fallback={null}>
-          <SettingsModal />
-        </Suspense>
-      )}
-      {isMcpOpen && (
-        <Suspense fallback={null}>
-          <McpModal />
-        </Suspense>
-      )}
-      {isSkillsOpen && (
-        <Suspense fallback={null}>
-          <SkillsModal />
-        </Suspense>
-      )}
       {isTerminalOpen && (
         <Suspense fallback={null}>
           <TerminalPanel

@@ -1,27 +1,17 @@
 import type { Message as RawMessage } from '@/services';
-import type {
-  AgentResponseContent,
-  Message,
-  SubagentProgress,
-  ToolCallInfo,
-} from '../types';
+import type { Message, SubagentProgress, ToolCallInfo } from '../types';
+import {
+  appendTimelineText,
+  appendTimelineThinking,
+  appendTimelineToolCall,
+  createEmptyAgentContent,
+} from './agentTimeline';
 import {
   makeSubagentId,
   makeToolCallId,
   normalizeSubagentStatus,
   normalizeToolArguments,
 } from './messageIdentity';
-
-const createEmptyAgentContent = (): AgentResponseContent => ({
-  textBefore: '',
-  toolCalls: [],
-  textAfter: '',
-  thinkingContent: '',
-  tasks: [],
-  subagent: null,
-  confirmation: null,
-  question: null,
-});
 
 const parseSubtaskRef = (
   messageId: string,
@@ -85,10 +75,15 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
         result.push(currentAssistant);
       }
       const metadata = raw.metadata as Record<string, unknown> | undefined;
-      const agentContent = createEmptyAgentContent();
-      agentContent.textBefore = getTextContent(raw.content);
+      let agentContent = createEmptyAgentContent();
       if (raw.thinkingContent) {
+        agentContent = appendTimelineThinking(agentContent, raw.thinkingContent);
         agentContent.thinkingContent = raw.thinkingContent;
+      }
+      const textContent = getTextContent(raw.content);
+      if (textContent) {
+        agentContent = appendTimelineText(agentContent, textContent);
+        agentContent.textBefore = textContent;
       }
 
       agentContent.subagent = parseSubtaskRef(raw.id, metadata);
@@ -109,7 +104,7 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
             status: 'running',
             startTime: Date.now(),
           };
-          agentContent.toolCalls.push(toolCall);
+          agentContent = appendTimelineToolCall(agentContent, toolCall);
         }
       }
 
@@ -153,23 +148,26 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
             existingTool.toolName = toolName;
           }
         } else {
-          currentAssistant.agentContent.toolCalls.push({
-            toolCallId: makeToolCallId({
-              explicitId: toolCallId,
-              messageId: currentAssistant.id,
+          currentAssistant.agentContent = appendTimelineToolCall(
+            currentAssistant.agentContent,
+            {
+              toolCallId: makeToolCallId({
+                explicitId: toolCallId,
+                messageId: currentAssistant.id,
+                toolName,
+                output: getTextContent(raw.content),
+              }),
               toolName,
               output: getTextContent(raw.content),
-            }),
-            toolName,
-            output: getTextContent(raw.content),
-            status: failed ? 'error' : 'success',
-            startTime: Date.now(),
-            metadata: toolMetadata,
-            summary:
-              typeof toolMetadata?.summary === 'string'
-                ? toolMetadata.summary
-                : undefined,
-          });
+              status: failed ? 'error' : 'success',
+              startTime: Date.now(),
+              metadata: toolMetadata,
+              summary:
+                typeof toolMetadata?.summary === 'string'
+                  ? toolMetadata.summary
+                  : undefined,
+            }
+          );
         }
       }
     }

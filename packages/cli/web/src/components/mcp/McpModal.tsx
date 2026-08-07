@@ -1,3 +1,11 @@
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { requestJson } from '@/lib/http';
+import {
+  restoreFocusToSelector,
+  restoreMobileNavigationFocus,
+} from '@/lib/mobileNavigationFocus';
+import { cn } from '@/lib/utils';
+import { useAppStore } from '@/store/AppStore';
 import { useDebounceFn, useInfiniteScroll, useRequest } from 'ahooks';
 import {
   AlertCircle,
@@ -11,14 +19,6 @@ import {
   X,
 } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import { requestJson } from '@/lib/http';
-import {
-  restoreFocusToSelector,
-  restoreMobileNavigationFocus,
-} from '@/lib/mobileNavigationFocus';
-import { cn } from '@/lib/utils';
-import { useAppStore } from '@/store/AppStore';
 
 interface McpServer {
   id: string;
@@ -255,12 +255,12 @@ export function McpModal() {
         >
           <DialogTitle className="sr-only">MCP</DialogTitle>
           <div className="flex flex-1 min-h-0">
-            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 sm:gap-5 sm:p-8">
-              <div className="flex items-center justify-between shrink-0">
+            <div className="flex overflow-hidden flex-col flex-1 gap-4 p-4 min-h-0 sm:gap-5 sm:p-8">
+              <div className="flex justify-between items-center shrink-0">
                 <h2 className="text-lg font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">
                   MCP
                 </h2>
-                <div className="flex items-center gap-2">
+                <div className="flex gap-2 items-center">
                   <button
                     onClick={loadServers}
                     aria-label="Refresh MCP servers"
@@ -282,7 +282,7 @@ export function McpModal() {
                     aria-label="Close MCP"
                     className="h-8 w-8 rounded-md text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] transition-colors flex items-center justify-center"
                   >
-                    <X className="h-4 w-4" />
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
               </div>
@@ -311,11 +311,11 @@ export function McpModal() {
                   className="flex shrink-0 items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-mono text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
                 >
                   <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span className="min-w-0 flex-1">{serverActionError}</span>
+                  <span className="flex-1 min-w-0">{serverActionError}</span>
                   <button
                     type="button"
                     onClick={() => setServerActionError(null)}
-                    className="shrink-0 underline"
+                    className="underline shrink-0"
                   >
                     Dismiss
                   </button>
@@ -323,7 +323,7 @@ export function McpModal() {
               )}
 
               {tab === 'installed' ? (
-                <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden sm:flex-row sm:gap-5">
+                <div className="flex overflow-hidden flex-col flex-1 gap-3 min-h-0 sm:flex-row sm:gap-5">
                   <div className="flex h-[180px] w-full shrink-0 flex-col gap-3 overflow-hidden sm:h-auto sm:w-[220px]">
                     <span className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5] shrink-0">
                       Servers
@@ -336,20 +336,20 @@ export function McpModal() {
                       placeholder="Search servers..."
                       className="h-8 shrink-0 rounded-md border border-transparent bg-[#F3F4F6] px-3 text-[12px] font-mono text-[#111827] outline-none placeholder:text-[#9CA3AF] focus:border-[#D1D5DB] dark:bg-[#18181b] dark:text-[#E5E5E5] dark:placeholder:text-[#71717a] dark:focus:border-[#3f3f46]"
                     />
-                    <div className="flex flex-col gap-2 overflow-y-auto flex-1 min-h-0 pr-1">
+                    <div className="flex overflow-y-auto flex-col flex-1 gap-2 pr-1 min-h-0">
                       {loading && servers.length === 0 && (
                         <div
                           role="status"
                           className="flex items-center justify-center gap-2 py-8 text-sm font-mono text-[#9CA3AF] dark:text-[#71717a]"
                         >
-                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <Loader2 className="w-4 h-4 animate-spin" />
                           Loading servers...
                         </div>
                       )}
                       {serversError && !loading && (
                         <div
                           role="alert"
-                          className="flex flex-col items-center gap-2 py-6 text-center text-xs font-mono text-red-600 dark:text-red-400"
+                          className="flex flex-col gap-2 items-center py-6 font-mono text-xs text-center text-red-600 dark:text-red-400"
                         >
                           <span>{serversError.message}</span>
                           <button
@@ -383,7 +383,7 @@ export function McpModal() {
                               : 'bg-white dark:bg-[#0C0C0C] hover:bg-[#F3F4F6] dark:hover:bg-[#18181b]'
                           )}
                         >
-                          <div className="flex items-center justify-between">
+                          <div className="flex justify-between items-center">
                             <span className="text-[13px] font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">
                               {server.name}
                             </span>
@@ -405,8 +405,8 @@ export function McpModal() {
                   </div>
 
                   {selectedServer ? (
-                    <div className="flex-1 flex flex-col gap-3 overflow-y-auto pr-2 min-h-0">
-                      <div className="flex items-center justify-between shrink-0">
+                    <div className="flex overflow-y-auto flex-col flex-1 gap-3 pr-2 min-h-0">
+                      <div className="flex justify-between items-center shrink-0">
                         <span className="text-base font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">
                           {selectedServer.name}
                         </span>
@@ -428,7 +428,7 @@ export function McpModal() {
                         </p>
                       )}
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex gap-2 items-center">
                         {selectedServer.status === 'connected' ? (
                           <button
                             onClick={() =>
@@ -469,12 +469,12 @@ export function McpModal() {
                         <div
                           role="alertdialog"
                           aria-label={`Delete ${selectedServer.name}`}
-                          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 dark:border-red-900/60 dark:bg-red-950/30"
+                          className="flex flex-wrap gap-2 justify-between items-center px-3 py-2 bg-red-50 rounded-md border border-red-200 dark:border-red-900/60 dark:bg-red-950/30"
                         >
                           <span className="text-[11px] font-mono text-red-700 dark:text-red-300">
                             Remove this server and its saved configuration?
                           </span>
-                          <div className="flex items-center gap-2">
+                          <div className="flex gap-2 items-center">
                             <button
                               type="button"
                               onClick={() => setDeleteConfirmName(null)}
@@ -519,7 +519,7 @@ export function McpModal() {
                       </div>
                     </div>
                   ) : (
-                    <div className="flex-1 flex items-center justify-center">
+                    <div className="flex flex-1 justify-center items-center">
                       <span className="text-[#9CA3AF] dark:text-[#71717a] text-sm font-mono">
                         Select a server to view details
                       </span>
@@ -527,8 +527,8 @@ export function McpModal() {
                   )}
                 </div>
               ) : (
-                <div className="flex flex-col gap-4 flex-1 min-h-0">
-                  <div className="flex items-center gap-3 shrink-0">
+                <div className="flex flex-col flex-1 gap-4 min-h-0">
+                  <div className="flex gap-3 items-center shrink-0">
                     <div className="flex-1 h-8 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] flex items-center px-3 gap-2">
                       <Search className="h-3.5 w-3.5 text-[#9CA3AF] dark:text-[#71717a]" />
                       <input
@@ -545,13 +545,13 @@ export function McpModal() {
                     </div>
                   </div>
 
-                  <div ref={catalogRef} className="flex-1 overflow-y-auto min-h-0">
+                  <div ref={catalogRef} className="overflow-y-auto flex-1 min-h-0">
                     {catalogError ? (
                       <div
                         role="alert"
-                        className="flex flex-col items-center gap-3 py-12 text-center font-mono"
+                        className="flex flex-col gap-3 items-center py-12 font-mono text-center"
                       >
-                        <AlertCircle className="h-6 w-6 text-red-500" />
+                        <AlertCircle className="w-6 h-6 text-red-500" />
                         <span className="text-xs text-red-600 dark:text-red-400">
                           {catalogError.message}
                         </span>
@@ -564,7 +564,7 @@ export function McpModal() {
                         </button>
                       </div>
                     ) : catalogLoading && !catalogData ? (
-                      <div className="flex items-center justify-center py-12">
+                      <div className="flex justify-center items-center py-12">
                         <Loader2 className="h-6 w-6 text-[#9CA3AF] dark:text-[#71717a] animate-spin" />
                       </div>
                     ) : (
@@ -580,7 +580,7 @@ export function McpModal() {
                               key={pkg.name}
                               className="rounded-lg bg-white dark:bg-[#0C0C0C] p-4 flex flex-col gap-2"
                             >
-                              <div className="flex items-center justify-between gap-2">
+                              <div className="flex gap-2 justify-between items-center">
                                 <span className="text-[13px] font-mono font-semibold text-[#111827] dark:text-[#E5E5E5] truncate">
                                   {pkg.name}
                                 </span>
@@ -607,7 +607,7 @@ export function McpModal() {
                                   </>
                                 )}
                               </div>
-                              <div className="flex items-center justify-between mt-auto pt-2">
+                              <div className="flex justify-between items-center pt-2 mt-auto">
                                 <a
                                   href={
                                     pkg.links?.npm ||
@@ -617,12 +617,12 @@ export function McpModal() {
                                   rel="noopener noreferrer"
                                   className="text-[10px] font-mono text-[#9CA3AF] dark:text-[#71717a] hover:text-[#111827] dark:hover:text-[#E5E5E5] flex items-center gap-1"
                                 >
-                                  <ExternalLink className="h-3 w-3" />
+                                  <ExternalLink className="w-3 h-3" />
                                   npm
                                 </a>
                                 {isInstalled ? (
                                   <span className="text-[11px] font-mono text-[#16A34A] dark:text-[#22C55E] flex items-center gap-1">
-                                    <Check className="h-3 w-3" />
+                                    <Check className="w-3 h-3" />
                                     Installed
                                   </span>
                                 ) : (
@@ -653,7 +653,7 @@ export function McpModal() {
                     )}
 
                     {loadingMore && (
-                      <div className="flex items-center justify-center py-4">
+                      <div className="flex justify-center items-center py-4">
                         <Loader2 className="h-5 w-5 text-[#9CA3AF] dark:text-[#71717a] animate-spin" />
                       </div>
                     )}
@@ -676,7 +676,7 @@ export function McpModal() {
                       className="text-[11px] font-mono text-[#3b82f6] hover:underline flex items-center gap-1"
                     >
                       Browse more on Glama
-                      <ExternalLink className="h-3 w-3" />
+                      <ExternalLink className="w-3 h-3" />
                     </a>
                   </div>
                 </div>
@@ -810,7 +810,7 @@ function McpAddServerModal({
       >
         <DialogTitle className="sr-only">Add MCP Server</DialogTitle>
         <div className="flex flex-col gap-4 p-4 sm:p-6">
-          <div className="flex items-center justify-between">
+          <div className="flex justify-between items-center">
             <h3 className="text-base font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">
               Add MCP Server
             </h3>
@@ -819,7 +819,7 @@ function McpAddServerModal({
               aria-label="Close add MCP server"
               className="h-8 w-8 rounded-md text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] transition-colors flex items-center justify-center"
             >
-              <X className="h-4 w-4" />
+              <X className="w-4 h-4" />
             </button>
           </div>
 
@@ -897,7 +897,7 @@ function McpAddServerModal({
             </div>
           )}
 
-          <div className="flex items-center justify-end gap-2 pt-2">
+          <div className="flex gap-2 justify-end items-center pt-2">
             <button
               onClick={() => onOpenChange(false)}
               className="h-7 px-3 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] text-[#111827] dark:text-[#E5E5E5] text-[11px] font-mono font-semibold"
@@ -963,7 +963,7 @@ function McpInstallModal({
       >
         <DialogTitle className="sr-only">Install {pkg.name}</DialogTitle>
         <div className="flex flex-col gap-4 p-4 sm:p-6">
-          <div className="flex items-center justify-between">
+          <div className="flex justify-between items-center">
             <h3 className="text-base font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">
               Install MCP Server
             </h3>
@@ -972,7 +972,7 @@ function McpInstallModal({
               aria-label="Close MCP installation"
               className="h-8 w-8 rounded-md text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] transition-colors flex items-center justify-center"
             >
-              <X className="h-4 w-4" />
+              <X className="w-4 h-4" />
             </button>
           </div>
 
@@ -1028,7 +1028,7 @@ function McpInstallModal({
             </div>
           )}
 
-          <div className="flex items-center justify-end gap-2 pt-2">
+          <div className="flex gap-2 justify-end items-center pt-2">
             <button
               onClick={onClose}
               className="h-7 px-3 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] text-[#111827] dark:text-[#E5E5E5] text-[11px] font-mono font-semibold"

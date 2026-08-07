@@ -140,7 +140,8 @@ export class PersistentStore {
       usage?: { input_tokens: number; output_tokens: number };
       inboxMessageId?: string;
     },
-    subagentInfo?: SubagentInfoForContext
+    subagentInfo?: SubagentInfoForContext,
+    reasoningContent?: string
   ): Promise<string> {
     try {
       await this.ensureSessionCreated(sessionId, subagentInfo);
@@ -156,6 +157,18 @@ export class PersistentStore {
         usage: metadata?.usage,
       };
       const messageEntry = this.createEvent('message_created', sessionId, messageInfo);
+      const reasoningEntries =
+        messageRole === 'assistant' && reasoningContent?.trim()
+          ? [
+              this.createEvent('part_created', sessionId, {
+                partId: nanoid(),
+                messageId,
+                partType: 'reasoning',
+                payload: { text: reasoningContent },
+                createdAt: now,
+              }),
+            ]
+          : [];
       const partEntries =
         typeof content === 'string'
           ? [
@@ -183,7 +196,11 @@ export class PersistentStore {
                 createdAt: now,
               })
             );
-      await this.log(sessionId).commitBatch([messageEntry, ...partEntries]);
+      await this.log(sessionId).commitBatch([
+        messageEntry,
+        ...reasoningEntries,
+        ...partEntries,
+      ]);
       return messageId;
     } catch (error) {
       console.error(`[PersistentStore] 保存消息失败 (session: ${sessionId}):`, error);

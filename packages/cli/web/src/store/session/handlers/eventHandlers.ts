@@ -1,7 +1,6 @@
 import { taskFailureCode } from '@/lib/taskFailure';
 import type { Message as ServiceMessage, StreamEvent } from '@/services';
 import type {
-  AgentResponseContent,
   Message,
   SessionStoreState,
   SubagentProgress,
@@ -9,6 +8,7 @@ import type {
   ToolCallInfo,
 } from '../types';
 import { aggregateMessages } from '../utils/aggregateMessages';
+import { createEmptyAgentContent, getTimelineText } from '../utils/agentTimeline';
 import { makeSubagentId, makeToolCallId } from '../utils/messageIdentity';
 import { globalStreamingBuffer } from './streamingBuffer';
 
@@ -32,17 +32,6 @@ type EventHandler = (
   get: GetState,
   set: SetState
 ) => void;
-
-const createEmptyAgentContent = (): AgentResponseContent => ({
-  textBefore: '',
-  toolCalls: [],
-  textAfter: '',
-  thinkingContent: '',
-  tasks: [],
-  subagent: null,
-  confirmation: null,
-  question: null,
-});
 
 const ensureAssistantMessage = (
   get: GetState,
@@ -134,7 +123,7 @@ const handleMessageCreated: EventHandler = (props, get, _set) => {
   }
 };
 
-const handleMessageDelta: EventHandler = (props, get, set) => {
+const handleMessageDelta: EventHandler = (props, get, _set) => {
   const {
     currentSessionId,
     appendDelta,
@@ -158,19 +147,7 @@ const handleMessageDelta: EventHandler = (props, get, set) => {
     };
     addMessage(newMessage);
     startAgentResponse(messageId);
-    set((state) => ({
-      messages: state.messages.map((m) =>
-        m.id === messageId
-          ? {
-              ...m,
-              agentContent: {
-                ...(m.agentContent || createEmptyAgentContent()),
-                textBefore: delta,
-              },
-            }
-          : m
-      ),
-    }));
+    get().appendDelta(messageId, delta, 'before');
     return;
   }
 
@@ -185,19 +162,22 @@ const handleMessageComplete: EventHandler = (props, get) => {
   const messageId = props.messageId as string;
   const message = messages.find((m) => m.id === messageId);
   if (message?.agentContent) {
-    const { textBefore, textAfter } = message.agentContent;
     updateMessage(messageId, {
-      content: textBefore + textAfter,
+      content: getTimelineText(message.agentContent),
     });
   }
 };
 
-const handleThinkingDelta: EventHandler = (props, get) => {
-  const { currentSessionId, appendThinking, currentAssistantMessageId } = get();
+const handleThinkingDelta: EventHandler = (props, get, set) => {
+  const { currentSessionId, appendThinking } = get();
   if (props.sessionId !== currentSessionId) return;
-  if (!currentAssistantMessageId) return;
-
-  appendThinking(currentAssistantMessageId, props.delta as string);
+  const targetMessageId = ensureAssistantMessage(
+    get,
+    set,
+    props.messageId as string | undefined
+  );
+  if (!targetMessageId) return;
+  appendThinking(targetMessageId, props.delta as string);
 };
 
 const handleThinkingCompleted: EventHandler = () => {
@@ -286,23 +266,12 @@ const handleToolResult: EventHandler = (props, get, set) => {
     m.agentContent?.toolCalls.some((tc) => tc.toolCallId === toolCallId)
   );
 
-  console.log('[handleToolResult]', {
-    toolCallId,
-    foundMessage: !!messageWithTool,
-    messageId: messageWithTool?.id,
-    toolCallsInMessage: messageWithTool?.agentContent?.toolCalls.map(
-      (tc) => tc.toolCallId
-    ),
-    success: props.success,
-  });
-
   const targetMessageId =
     (props.messageId as string) ||
     messageWithTool?.id ||
     [...messages].reverse().find((m) => m.role === 'assistant')?.id;
 
   if (!targetMessageId) {
-    console.log('[handleToolResult] No targetMessageId found!');
     return;
   }
 
@@ -315,11 +284,6 @@ const handleToolResult: EventHandler = (props, get, set) => {
         ? '执行成功'
         : '执行失败');
 
-  console.log('[handleToolResult] Updating tool call', {
-    targetMessageId,
-    toolCallId,
-    status: props.success ? 'success' : 'error',
-  });
   updateToolCall(targetMessageId, toolCallId, {
     status: props.success ? 'success' : 'error',
     summary,
@@ -1173,6 +1137,12 @@ export const createEventDispatcher = (get: GetState, set: SetState) => {
       return;
     }
 
+    // A tool group is a structural boundary in the assistant timeline. Flush
+    // pending prose/reasoning first so an 80ms text buffer cannot reorder it.
+    if (event.type === 'tool.start') {
+      globalStreamingBuffer.drainAll();
+    }
+
     // message.delta 走 buffer
     if (event.type === 'message.delta') {
       const { currentSessionId, currentAssistantMessageId, hasToolCalls } = get();
@@ -1190,6 +1160,7 @@ export const createEventDispatcher = (get: GetState, set: SetState) => {
 
       const position = hasToolCalls ? 'after' : 'before';
       const channelKey = `content:${targetMessageId}:${position}`;
+      globalStreamingBuffer.drainAllExcept(channelKey);
 
       globalStreamingBuffer.append(channelKey, delta, (bufferedDelta) => {
         const { appendDelta } = get();
@@ -1204,11 +1175,17 @@ export const createEventDispatcher = (get: GetState, set: SetState) => {
     if (event.type === 'thinking.delta') {
       const { currentSessionId, currentAssistantMessageId } = get();
       if (props.sessionId !== currentSessionId) return;
-      if (!currentAssistantMessageId) return;
+      if (!currentAssistantMessageId) {
+        const handler = eventHandlers['thinking.delta'];
+        if (handler) handler(props, get, set);
+        return;
+      }
 
       const delta = props.delta as string;
-      const targetMessageId = currentAssistantMessageId;
+      const targetMessageId =
+        (props.messageId as string | undefined) || currentAssistantMessageId;
       const channelKey = `thinking:${targetMessageId}`;
+      globalStreamingBuffer.drainAllExcept(channelKey);
 
       globalStreamingBuffer.append(channelKey, delta, (bufferedDelta) => {
         const { appendThinking } = get();

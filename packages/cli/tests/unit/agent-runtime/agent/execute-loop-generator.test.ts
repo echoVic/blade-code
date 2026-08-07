@@ -2674,7 +2674,12 @@ describe('executeLoopGenerator', () => {
   // ------------------------------------------------------------------
   describe('event protocol: delta-only content signals', () => {
     it('non-streaming turn emits content_delta but NOT content_complete', async () => {
-      const deps = createMockDeps();
+      const contextManager = createMockContextManager();
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: () => contextManager,
+        } as any,
+      });
       (deps.chatService.chat as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         content: 'Hello world',
         reasoningContent: 'I should greet',
@@ -2702,6 +2707,15 @@ describe('executeLoopGenerator', () => {
       const thinkingDeltas = events.filter((e) => e.kind === 'thinking_delta');
       expect(thinkingDeltas.length).toBe(1);
       expect((thinkingDeltas[0] as { delta: string }).delta).toBe('I should greet');
+      expect(contextManager.saveMessage).toHaveBeenCalledWith(
+        'test-session',
+        'assistant',
+        'Hello world',
+        expect.any(String),
+        undefined,
+        undefined,
+        'I should greet'
+      );
 
       // stream_end 必须存在
       expect(events.filter((e) => e.kind === 'stream_end')).toHaveLength(1);

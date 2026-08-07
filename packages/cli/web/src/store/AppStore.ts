@@ -2,7 +2,7 @@ import { create } from 'zustand';
 
 export type SidebarView = 'project' | 'status';
 export type PreviewTab = 'diff' | 'files' | 'logs';
-export type SettingsSection = 'general' | 'models' | 'shortcuts';
+export type SettingsSection = 'general' | 'models' | 'mcp' | 'skills' | 'shortcuts';
 export type TaskSwitcherMode = 'tasks' | 'commands';
 
 const SIDEBAR_VIEW_KEY = 'blade.sidebar.view';
@@ -107,9 +107,11 @@ export const useAppStore = create<AppState>((set) => ({
       settingsSection: section,
     }),
   isMcpOpen: false,
-  toggleMcp: () => set((state) => ({ isMcpOpen: !state.isMcpOpen })),
+  toggleMcp: () =>
+    set({ isSettingsOpen: true, settingsSection: 'mcp' }),
   isSkillsOpen: false,
-  toggleSkills: () => set((state) => ({ isSkillsOpen: !state.isSkillsOpen })),
+  toggleSkills: () =>
+    set({ isSettingsOpen: true, settingsSection: 'skills' }),
   isTerminalOpen: false,
   toggleTerminal: () => set((state) => ({ isTerminalOpen: !state.isTerminalOpen })),
   isTaskSwitcherOpen: false,

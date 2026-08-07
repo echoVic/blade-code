@@ -77,6 +77,16 @@ export class StreamingBuffer {
     this.channels.clear();
   }
 
+  /** Flush pending channels before switching presentation channels. */
+  drainAllExcept(channelKey: string): void {
+    for (const [key] of this.channels) {
+      if (key !== channelKey) this.flushChannel(key);
+    }
+    for (const [key, channel] of this.channels) {
+      if (key !== channelKey && !channel.buffer) this.channels.delete(key);
+    }
+  }
+
   /** 重置所有通道和 timer */
   reset(): void {
     for (const [, channel] of this.channels) {

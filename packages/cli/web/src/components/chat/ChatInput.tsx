@@ -644,7 +644,7 @@ export function ChatInput({
       className={
         variant === 'task'
           ? 'bg-transparent'
-          : 'py-4 border-t border-[hsl(var(--deck-hairline))] bg-[hsl(var(--deck-canvas))]'
+          : 'py-2.5 border-t border-[hsl(var(--deck-hairline))] bg-[hsl(var(--deck-canvas))]'
       }
     >
       <div className={variant === 'task' ? 'w-full' : 'px-4 w-full md:px-6'}>
@@ -652,7 +652,7 @@ export function ChatInput({
           className={`relative border rounded-lg bg-[hsl(var(--deck-surface))] transition-all duration-200 flex flex-col ${
             variant === 'task'
               ? 'min-h-[148px] border-[hsl(var(--deck-border))] shadow-[0_18px_60px_-24px_hsl(var(--deck-accent)/0.4)] focus-within:border-[hsl(var(--deck-accent)/0.6)] focus-within:ring-1 focus-within:ring-[hsl(var(--deck-accent)/0.25)]'
-              : 'min-h-[88px] border-[hsl(var(--deck-border))] shadow-sm focus-within:border-[hsl(var(--deck-border-strong))] focus-within:ring-1 focus-within:ring-[hsl(var(--deck-border-strong))]'
+              : 'min-h-[56px] border-[hsl(var(--deck-border))] shadow-sm focus-within:border-[hsl(var(--deck-border-strong))] focus-within:ring-1 focus-within:ring-[hsl(var(--deck-border-strong))]'
           }`}
         >
           <SuggestionPopover
@@ -691,7 +691,7 @@ export function ChatInput({
                 : t('chat.input.placeholder.default'))
             }
             className={`flex-1 w-full resize-none border-0 bg-transparent px-4 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none text-[#111827] dark:text-zinc-300 placeholder:text-[#9CA3AF] dark:placeholder:text-zinc-600 ${
-              variant === 'task' ? 'min-h-[84px] py-4 text-[15px]' : 'py-4'
+              variant === 'task' ? 'min-h-[84px] py-4 text-[15px]' : 'py-2.5 text-[14px]'
             }`}
             disabled={disabled || isSubmitting}
             aria-busy={isSubmitting}
@@ -804,7 +804,7 @@ export function ChatInput({
             </div>
           )}
 
-          <div className="flex justify-between items-center p-3 mt-auto">
+          <div className="flex justify-between items-center px-3 py-2 mt-auto">
             <div className="flex gap-2 items-center">
               {attachmentControlDisabled ? (
                 <button

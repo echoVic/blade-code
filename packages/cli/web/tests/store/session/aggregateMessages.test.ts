@@ -109,6 +109,44 @@ describe('aggregateMessages', () => {
     });
   });
 
+  test('projects durable reasoning, text, and tools into an ordered timeline', () => {
+    const [message] = aggregateMessages([
+      {
+        id: 'assistant-timeline',
+        role: 'assistant',
+        content: 'explanation',
+        thinkingContent: 'reasoning',
+        timestamp: 1700000000000,
+        tool_calls: [
+          {
+            id: 'read-timeline',
+            function: {
+              name: 'Read',
+              arguments: '{"file_path":"README.md"}',
+            },
+          },
+        ],
+      },
+      {
+        id: 'tool-timeline',
+        role: 'tool',
+        content: 'README',
+        timestamp: 1700000000001,
+        tool_call_id: 'read-timeline',
+        name: 'Read',
+      },
+    ] as never);
+
+    expect(message?.agentContent?.timeline).toEqual([
+      expect.objectContaining({ type: 'thinking', content: 'reasoning' }),
+      expect.objectContaining({ type: 'text', content: 'explanation' }),
+      expect.objectContaining({
+        type: 'tool_group',
+        toolCallIds: ['read-timeline'],
+      }),
+    ]);
+  });
+
   test('defaults subagent status to running when metadata status is absent', () => {
     const rawMessages = [
       {

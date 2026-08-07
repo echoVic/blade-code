@@ -1,3 +1,10 @@
+import { TaskArtifactBar } from '@/components/tasks/TaskArtifactBar';
+import { useT } from '@/i18n';
+import { focusBladeComposer } from '@/lib/composerFocus';
+import { taskFailureIsRetryable, taskFailureMessageKey } from '@/lib/taskFailure';
+import { useAppStore } from '@/store/AppStore';
+import { useSessionStore } from '@/store/session';
+import { sameSessionRef, sessionRefKey } from '@/store/session/sessionIdentity';
 import {
   AlertCircle,
   Loader2,
@@ -7,13 +14,6 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { TaskArtifactBar } from '@/components/tasks/TaskArtifactBar';
-import { useT } from '@/i18n';
-import { focusBladeComposer } from '@/lib/composerFocus';
-import { taskFailureIsRetryable, taskFailureMessageKey } from '@/lib/taskFailure';
-import { useAppStore } from '@/store/AppStore';
-import { useSessionStore } from '@/store/session';
-import { sameSessionRef, sessionRefKey } from '@/store/session/sessionIdentity';
 import type { ComposerImageAttachment } from './ChatInput';
 import { ChatInput } from './ChatInput';
 import { ChatList } from './ChatList';
@@ -282,13 +282,13 @@ export function ChatView() {
         </div>
       )}
       <TaskArtifactBar />
-      <GoalControlBar />
       <ChatList
         key={currentSessionRef ? sessionRefKey(currentSessionRef) : 'temporary-session'}
         messages={messages}
         isLoading={isLoading}
       />
       <PendingInteractionBar />
+      <GoalControlBar />
       <ChatInput
         key={composerDraftKey}
         draftKey={composerDraftKey}

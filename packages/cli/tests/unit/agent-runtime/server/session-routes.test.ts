@@ -1398,6 +1398,7 @@ describe('SessionRoutes runtime reuse', () => {
       yield { kind: 'compaction', phase: 'start' };
       yield { kind: 'compaction', phase: 'end' };
       yield { kind: 'model_fallback' };
+      yield { kind: 'thinking_delta', delta: 'inspect the failure' };
       yield {
         kind: 'follow_up_started',
         queued: 2,
@@ -1480,6 +1481,14 @@ describe('SessionRoutes runtime reuse', () => {
       refFor('surface-events'),
       'model.fallback',
       {}
+    );
+    expect(Bus.publish).toHaveBeenCalledWith(
+      refFor('surface-events'),
+      'thinking.delta',
+      expect.objectContaining({
+        messageId: expect.any(String),
+        delta: 'inspect the failure',
+      })
     );
     expect(Bus.publish).not.toHaveBeenCalledWith(
       refFor('surface-events'),

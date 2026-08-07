@@ -1,9 +1,9 @@
-import path from 'node:path';
 import { Mutex } from 'async-mutex';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { LRUCache } from 'lru-cache';
 import { nanoid } from 'nanoid';
+import path from 'node:path';
 import { Agent } from '../../agent/Agent.js';
 import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
@@ -43,7 +43,7 @@ import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
-import { StringEnum, safeParseSchema, Type } from '../../schema/index.js';
+import { safeParseSchema, StringEnum, Type } from '../../schema/index.js';
 import type { ContentPart, Message } from '../../services/ChatServiceInterface.js';
 import type { RewoundSession, SessionMetadata } from '../../services/SessionService.js';
 import {
@@ -2430,7 +2430,10 @@ async function executeRunAsync(
           });
           break;
         case 'thinking_delta':
-          emit('thinking.delta', { delta: event.delta });
+          emit('thinking.delta', {
+            messageId: ensureAssistantMessage(),
+            delta: event.delta,
+          });
           break;
 
         // --- 工具事件 ---

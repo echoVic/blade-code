@@ -26,7 +26,15 @@ describe('committed result events (tool history)', () => {
 
   it('persists a tool call + result and replays them from JSONL with monotonic seq', async () => {
     const store = new PersistentStore(projectPath);
-    const messageId = await store.saveMessage(sessionId, 'assistant', 'running a tool');
+    const messageId = await store.saveMessage(
+      sessionId,
+      'assistant',
+      'running a tool',
+      null,
+      undefined,
+      undefined,
+      'inspect before running'
+    );
     const toolCallId = await store.saveToolUse(
       sessionId,
       'Read',
@@ -66,6 +74,11 @@ describe('committed result events (tool history)', () => {
       (e): e is Extract<SessionEvent, { type: 'part_created' }> =>
         e.type === 'part_created' && e.data.partType === 'tool_result'
     );
+    const reasoning = entries.find(
+      (e): e is Extract<SessionEvent, { type: 'part_created' }> =>
+        e.type === 'part_created' && e.data.partType === 'reasoning'
+    );
+    expect(reasoning?.data.payload).toEqual({ text: 'inspect before running' });
     expect(toolCall?.data.payload).toMatchObject({ toolName: 'Read' });
     expect(toolResult?.data.payload).toMatchObject({
       toolName: 'Read',

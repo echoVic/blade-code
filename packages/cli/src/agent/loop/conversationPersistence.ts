@@ -122,18 +122,24 @@ export async function saveAssistantMessage(
   deps: LoopDependencies,
   context: ChatContext,
   content: string,
-  parentUuid: string | null
+  parentUuid: string | null,
+  reasoningContent?: string
 ): Promise<string | null> {
   try {
     const contextMgr = getContextMgr(deps);
-    if (contextMgr && context.sessionId && content.trim()) {
+    if (
+      contextMgr &&
+      context.sessionId &&
+      (content.trim() || reasoningContent?.trim())
+    ) {
       return await contextMgr.saveMessage(
         context.sessionId,
         'assistant',
         content,
         parentUuid,
         undefined,
-        context.subagentInfo
+        context.subagentInfo,
+        reasoningContent
       );
     }
   } catch (error) {

@@ -1,13 +1,3 @@
-import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Copy,
-  FileText,
-  Loader2,
-  RotateCcw,
-} from 'lucide-react';
-import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
 import { BladeMark } from '@/components/layout/BladeMark';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -20,7 +10,18 @@ import type {
   ToolCallInfo,
 } from '@/store/session';
 import { useSessionStore } from '@/store/session';
+import { getAgentTimeline, getTimelineText } from '@/store/session/utils/agentTimeline';
 import { aggregateMessages } from '@/store/session/utils/aggregateMessages';
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  FileText,
+  Loader2,
+  RotateCcw,
+} from 'lucide-react';
+import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
 
 export type { Message };
 
@@ -136,7 +137,7 @@ function getTextContent(content: MessageContent): string {
 function getAssistantCopyText(message: Message): string {
   const agent = message.agentContent;
   if (agent) {
-    return [agent.textBefore, agent.textAfter].filter(Boolean).join('\n\n');
+    return getTimelineText(agent);
   }
   return getTextContent(message.content);
 }
@@ -209,6 +210,9 @@ function ToolCallItem({ tool }: { tool: ToolCallInfo }) {
   return (
     <div className="bg-white dark:bg-[#18181b] border border-[hsl(var(--deck-border))] rounded-lg overflow-hidden">
       <button
+        type="button"
+        aria-expanded={expanded}
+        data-tool-call-id={tool.toolCallId}
         onClick={() => setExpanded((prev) => !prev)}
         className="w-full flex items-center justify-between px-3 py-2 bg-[hsl(var(--deck-surface-2))] hover:bg-[hsl(var(--deck-surface))] transition-colors"
       >
@@ -272,28 +276,102 @@ function ToolCallsList({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
   );
 }
 
+function ToolCallsGroup({
+  toolCalls,
+  toolCallIds,
+}: {
+  toolCalls: ToolCallInfo[];
+  toolCallIds: string[];
+}) {
+  const t = useT();
+  const [expanded, setExpanded] = useState(false);
+  const toolsById = useMemo(
+    () => new Map(toolCalls.map((tool) => [tool.toolCallId, tool])),
+    [toolCalls]
+  );
+  const groupedTools = toolCallIds.flatMap((toolCallId) => {
+    const tool = toolsById.get(toolCallId);
+    return tool ? [tool] : [];
+  });
+  if (groupedTools.length === 0) return null;
+
+  const running = groupedTools.filter((tool) => tool.status === 'running').length;
+  const errors = groupedTools.filter((tool) => tool.status === 'error').length;
+  const label =
+    running > 0
+      ? t(
+          groupedTools.length === 1
+            ? 'chat.timeline.tools.runningOne'
+            : 'chat.timeline.tools.running',
+          { count: groupedTools.length }
+        )
+      : errors > 0
+        ? t(
+            groupedTools.length === 1
+              ? 'chat.timeline.tools.completedOneWithError'
+              : 'chat.timeline.tools.completedWithErrors',
+            {
+              count: groupedTools.length,
+              errors,
+            }
+          )
+        : t(
+            groupedTools.length === 1
+              ? 'chat.timeline.tools.completedOne'
+              : 'chat.timeline.tools.completed',
+            { count: groupedTools.length }
+          );
+
+  return (
+    <div data-agent-tool-group className="py-0.5">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((current) => !current)}
+        className="group flex min-h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left font-mono text-[11.5px] text-[hsl(var(--deck-ink-faint))] transition-colors hover:bg-[hsl(var(--deck-surface))]/65 hover:text-[hsl(var(--deck-ink-muted))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))]"
+      >
+        {expanded ? (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+        )}
+        {running > 0 && (
+          <Loader2 className="h-3 w-3 shrink-0 animate-spin text-[hsl(var(--deck-accent))]" />
+        )}
+        <span>{label}</span>
+      </button>
+      {expanded && (
+        <div data-agent-tool-group-details className="mt-2 space-y-2 pl-1">
+          <ToolCallsList toolCalls={groupedTools} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ThinkingSection({ content }: { content: string }) {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
   if (!content) return null;
 
   return (
-    <div className="bg-[hsl(var(--deck-surface-2))] border border-[hsl(var(--deck-border))] rounded-lg overflow-hidden">
+    <div data-agent-thinking className="py-0.5">
       <button
+        type="button"
+        aria-expanded={expanded}
         onClick={() => setExpanded((prev) => !prev)}
-        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[hsl(var(--deck-surface))] transition-colors"
+        className="flex min-h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left font-mono text-[11.5px] text-[hsl(var(--deck-ink-faint))] transition-colors hover:bg-[hsl(var(--deck-surface))]/65 hover:text-[hsl(var(--deck-ink-muted))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))]"
       >
         {expanded ? (
           <ChevronDown className="h-4 w-4 text-[hsl(var(--deck-ink-faint))]" />
         ) : (
           <ChevronRight className="h-4 w-4 text-[hsl(var(--deck-ink-faint))]" />
         )}
-        <span className="text-[12px] text-[hsl(var(--deck-ink-muted))] font-mono">
-          Thought
-        </span>
+        <span>{t('chat.timeline.thinking')}</span>
       </button>
       {expanded && (
-        <div className="px-3 py-2 border-t border-[hsl(var(--deck-border))]">
-          <pre className="text-[11px] text-[hsl(var(--deck-ink-muted))] whitespace-pre-wrap font-mono">
+        <div className="ml-1 mt-1 border-l border-[hsl(var(--deck-border))] py-1 pl-3">
+          <pre className="whitespace-pre-wrap font-mono text-[11px] leading-5 text-[hsl(var(--deck-ink-muted))]">
             {content}
           </pre>
         </div>
@@ -944,25 +1022,10 @@ function AgentMessageContent({ message }: { message: Message }) {
     return content ? <MarkdownBlock content={content} /> : null;
   }
 
-  const {
-    textBefore,
-    toolCalls,
-    textAfter,
-    thinkingContent,
-    tasks,
-    subagent,
-    confirmation,
-    question,
-  } = agentContent;
+  const { toolCalls, tasks, subagent, confirmation, question } = agentContent;
+  const timeline = getAgentTimeline(agentContent);
   const hasContent =
-    textBefore ||
-    toolCalls.length > 0 ||
-    textAfter ||
-    thinkingContent ||
-    tasks.length > 0 ||
-    subagent ||
-    confirmation ||
-    question;
+    timeline.length > 0 || tasks.length > 0 || subagent || confirmation || question;
 
   if (!hasContent && isCurrentStreamingMessage) {
     return (
@@ -981,21 +1044,37 @@ function AgentMessageContent({ message }: { message: Message }) {
 
   return (
     <div className="space-y-3">
-      {thinkingContent && <ThinkingSection content={thinkingContent} />}
-      {textBefore && (
-        <MarkdownBlock content={textBefore} syntaxHighlight={syntaxHighlight} />
-      )}
+      {timeline.map((block) => {
+        if (block.type === 'thinking') {
+          return (
+            <div key={block.id} data-agent-timeline-block="thinking">
+              <ThinkingSection content={block.content} />
+            </div>
+          );
+        }
+        if (block.type === 'text') {
+          return (
+            <div key={block.id} data-agent-timeline-block="text">
+              <MarkdownBlock
+                content={block.content}
+                syntaxHighlight={syntaxHighlight}
+              />
+            </div>
+          );
+        }
+        return (
+          <div key={block.id} data-agent-timeline-block="tool_group">
+            <ToolCallsGroup toolCalls={toolCalls} toolCallIds={block.toolCallIds} />
+          </div>
+        );
+      })}
       {tasks.length > 0 && <TaskSection tasks={tasks} />}
       {subagent && <SubagentSection subagent={subagent} />}
-      <ToolCallsList toolCalls={toolCalls} />
       {confirmation && (
         <ConfirmationSection confirmation={confirmation} messageId={message.id} />
       )}
       {question && <QuestionSection question={question} messageId={message.id} />}
       {showChangedFiles && <ChangedFilesSection toolCalls={toolCalls} />}
-      {textAfter && (
-        <MarkdownBlock content={textAfter} syntaxHighlight={syntaxHighlight} />
-      )}
     </div>
   );
 }

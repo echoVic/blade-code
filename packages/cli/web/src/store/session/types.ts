@@ -96,7 +96,26 @@ export interface ToolCallInfo {
   metadata?: Record<string, unknown>;
 }
 
+export type AgentTimelineBlock =
+  | {
+      id: string;
+      type: 'thinking';
+      content: string;
+    }
+  | {
+      id: string;
+      type: 'text';
+      content: string;
+    }
+  | {
+      id: string;
+      type: 'tool_group';
+      toolCallIds: string[];
+    };
+
 export interface AgentResponseContent {
+  /** Ordered presentation projection. Legacy fields below remain for compatibility. */
+  timeline?: AgentTimelineBlock[];
   textBefore: string;
   toolCalls: ToolCallInfo[];
   textAfter: string;

@@ -1,16 +1,11 @@
-import { AlertCircle, ChevronDown, Loader2, Pencil, Trash2, X } from 'lucide-react';
+import { AlertCircle, ArrowLeft, ChevronDown, Loader2, Pencil, Trash2 } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useMemo, useState } from 'react';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { requestJson } from '@/lib/http';
 import {
   KEYBOARD_SHORTCUTS,
   type ShortcutId,
   shortcutKeyLabels,
 } from '@/lib/keyboardShortcuts';
-import {
-  restoreFocusToSelector,
-  restoreMobileNavigationFocus,
-} from '@/lib/mobileNavigationFocus';
 import { cn } from '@/lib/utils';
 import { type SettingsSection, useAppStore } from '@/store/AppStore';
 import { type ModelConfig, useConfigStore } from '@/store/ConfigStore';
@@ -67,10 +62,12 @@ export function SettingsModal() {
     NotificationPermission | 'unsupported'
   >(typeof Notification === 'undefined' ? 'unsupported' : Notification.permission);
 
-  const tabs: { value: TabValue; label: string }[] = [
-    { value: 'general', label: 'General' },
-    { value: 'models', label: 'Models' },
-    { value: 'shortcuts', label: 'Shortcuts' },
+  const tabs: { value: TabValue; label: string; category: string }[] = [
+    { value: 'general', label: 'General', category: 'Settings' },
+    { value: 'models', label: 'Models', category: 'Settings' },
+    { value: 'shortcuts', label: 'Shortcuts', category: 'Settings' },
+    { value: 'mcp', label: 'MCP', category: 'Integrations' },
+    { value: 'skills', label: 'Skills', category: 'Integrations' },
   ];
 
   const shortcuts = useMemo(
@@ -210,60 +207,72 @@ export function SettingsModal() {
 
   return (
     <>
-      <Dialog open={isSettingsOpen} onOpenChange={toggleSettings}>
-        <DialogContent
-          onCloseAutoFocus={(event) => {
-            if (restoreFocusToSelector('[data-model-setup-trigger]', event)) return;
-            restoreMobileNavigationFocus(event);
-          }}
-          className="flex h-[min(600px,calc(100dvh-24px))] flex-col gap-0 overflow-hidden rounded-xl border border-[#E5E7EB] bg-white p-0 dark:border-zinc-800 dark:bg-[#09090b] sm:max-w-[800px]"
-          aria-describedby={undefined}
-          hideCloseButton
+      <div className="flex h-full min-h-0 bg-white dark:bg-[#09090b]">
+        {/* Left navigation sidebar */}
+        <nav
+          role="tablist"
+          aria-label="Settings sections"
+          className="flex h-full w-[220px] shrink-0 flex-col border-r border-[#E5E7EB] bg-[#F9FAFB] dark:border-zinc-800 dark:bg-[#111113]"
         >
-          <DialogTitle className="sr-only">Settings</DialogTitle>
-          <div className="flex h-full min-h-0 flex-col sm:flex-row">
-            <div
-              role="tablist"
-              aria-label="Settings sections"
-              className="flex w-full shrink-0 gap-1 overflow-x-auto border-b border-[#E5E7EB] bg-[#F3F4F6] p-2 dark:border-zinc-800 dark:bg-[#18181b] sm:h-full sm:w-[200px] sm:flex-col sm:gap-2 sm:border-b-0 sm:p-6"
+          <div className="shrink-0 p-4">
+            <button
+              type="button"
+              onClick={toggleSettings}
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12px] font-mono text-[#6B7280] transition-colors hover:bg-[#E5E7EB] hover:text-[#111827] dark:text-[#a1a1aa] dark:hover:bg-[#27272a] dark:hover:text-[#E5E5E5]"
             >
-              {tabs.map((tab, index) => (
-                <button
-                  key={tab.value}
-                  onClick={() => setActiveTab(tab.value)}
-                  onKeyDown={(event) => handleTabKeyDown(event, index)}
-                  role="tab"
-                  id={`settings-tab-${tab.value}`}
-                  aria-controls={`settings-panel-${tab.value}`}
-                  aria-selected={activeTab === tab.value}
-                  tabIndex={activeTab === tab.value ? 0 : -1}
-                  className={cn(
-                    'shrink-0 rounded-md px-3 py-2 text-left font-mono text-sm transition-colors sm:w-full',
-                    activeTab === tab.value
-                      ? 'bg-[#E5E7EB] dark:bg-[#27272a] text-[#111827] dark:text-[#E5E5E5] font-medium'
-                      : 'text-[#6B7280] hover:text-[#111827] hover:bg-[#E5E7EB]/60 dark:text-[#a1a1aa] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a]/50'
-                  )}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 sm:gap-6 sm:p-8">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">
-                  {activeTab === 'general'
-                    ? 'Settings'
-                    : tabs.find((tab) => tab.value === activeTab)?.label}
-                </h2>
-                <button
-                  onClick={toggleSettings}
-                  aria-label="Close settings"
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[#9CA3AF] transition-colors hover:bg-[#E5E7EB] hover:text-[#111827] dark:text-[#71717a] dark:hover:bg-[#27272a] dark:hover:text-[#E5E5E5]"
-                >
-                  <X className="h-4 w-4" />
-                </button>
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Back
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto px-3 pb-4">
+            {Object.entries(
+              tabs.reduce(
+                (acc, tab) => {
+                  if (!acc[tab.category]) acc[tab.category] = [];
+                  acc[tab.category].push(tab);
+                  return acc;
+                },
+                {} as Record<string, typeof tabs>
+              )
+            ).map(([category, categoryTabs]) => (
+              <div key={category} className="mb-4">
+                <div className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-[#9CA3AF] dark:text-[#71717a]">
+                  {category}
+                </div>
+                {categoryTabs.map((tab, index) => (
+                  <button
+                    key={tab.value}
+                    onClick={() => setActiveTab(tab.value)}
+                    onKeyDown={(event) =>
+                      handleTabKeyDown(event, tabs.indexOf(tab))
+                    }
+                    role="tab"
+                    id={`settings-tab-${tab.value}`}
+                    aria-controls={`settings-panel-${tab.value}`}
+                    aria-selected={activeTab === tab.value}
+                    tabIndex={activeTab === tab.value ? 0 : -1}
+                    className={cn(
+                      'w-full rounded-md px-3 py-1.5 text-left text-[13px] transition-colors',
+                      activeTab === tab.value
+                        ? 'bg-[#E5E7EB] font-medium text-[#111827] dark:bg-[#27272a] dark:text-[#E5E5E5]'
+                        : 'text-[#6B7280] hover:bg-[#E5E7EB]/60 hover:text-[#111827] dark:text-[#a1a1aa] dark:hover:bg-[#27272a]/50 dark:hover:text-[#E5E5E5]'
+                    )}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
               </div>
+            ))}
+          </div>
+        </nav>
+
+        {/* Right content panel */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="flex-1 overflow-y-auto p-6 sm:p-10">
+            <div className="mx-auto max-w-2xl">
+              <h1 className="mb-6 text-xl font-semibold text-[#111827] dark:text-[#E5E5E5]">
+                {tabs.find((tab) => tab.value === activeTab)?.label ?? 'Settings'}
+              </h1>
 
               {settings.isLoading && activeTab === 'general' && (
                 <div
@@ -777,10 +786,52 @@ export function SettingsModal() {
                   </div>
                 </div>
               )}
+
+              {activeTab === 'mcp' && (
+                <div
+                  id="settings-panel-mcp"
+                  role="tabpanel"
+                  aria-labelledby="settings-tab-mcp"
+                  className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa]"
+                >
+                  <p>MCP server configuration is available via the MCP panel.</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      toggleSettings();
+                      useAppStore.getState().toggleMcp();
+                    }}
+                    className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-md border border-[#E5E7EB] px-3 text-[12px] font-medium text-[#111827] transition-colors hover:bg-[#F3F4F6] dark:border-zinc-700 dark:text-[#E5E5E5] dark:hover:bg-[#27272a]"
+                  >
+                    Open MCP Panel
+                  </button>
+                </div>
+              )}
+
+              {activeTab === 'skills' && (
+                <div
+                  id="settings-panel-skills"
+                  role="tabpanel"
+                  aria-labelledby="settings-tab-skills"
+                  className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa]"
+                >
+                  <p>Skills configuration is available via the Skills panel.</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      toggleSettings();
+                      useAppStore.getState().toggleSkills();
+                    }}
+                    className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-md border border-[#E5E7EB] px-3 text-[12px] font-medium text-[#111827] transition-colors hover:bg-[#F3F4F6] dark:border-zinc-700 dark:text-[#E5E5E5] dark:hover:bg-[#27272a]"
+                  >
+                    Open Skills Panel
+                  </button>
+                </div>
+              )}
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
+        </div>
+      </div>
 
       <AddModelModal
         open={addModelOpen}

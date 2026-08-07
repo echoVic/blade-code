@@ -1,5 +1,4 @@
 import type {
-  AgentResponseContent,
   ConfirmationInfo,
   MessageSlice,
   QuestionInfo,
@@ -7,17 +6,12 @@ import type {
   SubagentProgress,
   TaskItem,
 } from '../types';
-
-const createEmptyAgentContent = (): AgentResponseContent => ({
-  textBefore: '',
-  toolCalls: [],
-  textAfter: '',
-  thinkingContent: '',
-  tasks: [],
-  subagent: null,
-  confirmation: null,
-  question: null,
-});
+import {
+  appendTimelineText,
+  appendTimelineThinking,
+  appendTimelineToolCall,
+  createEmptyAgentContent,
+} from '../utils/agentTimeline';
 
 export const createMessageSlice: SliceCreator<MessageSlice> = (set, _get) => ({
   messages: [],
@@ -43,7 +37,7 @@ export const createMessageSlice: SliceCreator<MessageSlice> = (set, _get) => ({
           return {
             ...m,
             agentContent: {
-              ...agentContent,
+              ...appendTimelineText(agentContent, delta),
               textBefore: agentContent.textBefore + delta,
             },
           };
@@ -51,7 +45,7 @@ export const createMessageSlice: SliceCreator<MessageSlice> = (set, _get) => ({
           return {
             ...m,
             agentContent: {
-              ...agentContent,
+              ...appendTimelineText(agentContent, delta),
               textAfter: agentContent.textAfter + delta,
             },
           };
@@ -66,10 +60,7 @@ export const createMessageSlice: SliceCreator<MessageSlice> = (set, _get) => ({
         const agentContent = m.agentContent || createEmptyAgentContent();
         return {
           ...m,
-          agentContent: {
-            ...agentContent,
-            toolCalls: [...agentContent.toolCalls, toolCall],
-          },
+          agentContent: appendTimelineToolCall(agentContent, toolCall),
         };
       }),
     })),
@@ -100,7 +91,7 @@ export const createMessageSlice: SliceCreator<MessageSlice> = (set, _get) => ({
         return {
           ...m,
           agentContent: {
-            ...agentContent,
+            ...appendTimelineThinking(agentContent, delta),
             thinkingContent: agentContent.thinkingContent + delta,
           },
         };

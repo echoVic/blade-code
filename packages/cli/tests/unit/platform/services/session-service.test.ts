@@ -280,6 +280,21 @@ describe('SessionService with mocked filesystem', () => {
         cwd: '/project/demo',
         version: '0.0.0',
         data: {
+          partId: 'reasoning-1',
+          messageId: 'm1',
+          partType: 'reasoning',
+          payload: { text: 'inspect first' },
+          createdAt: '2024-01-01T00:00:01Z',
+        },
+      },
+      {
+        id: 'e2-text',
+        sessionId: 'session-y',
+        type: 'part_created',
+        timestamp: '2024-01-01T00:00:01Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
           partId: 'p1',
           messageId: 'm1',
           partType: 'text',
@@ -327,6 +342,7 @@ describe('SessionService with mocked filesystem', () => {
       {
         role: 'assistant',
         content: 'latest',
+        reasoningContent: 'inspect first',
         tool_calls: [
           {
             id: 'call',
