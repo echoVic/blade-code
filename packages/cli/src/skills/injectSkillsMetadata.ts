@@ -24,9 +24,10 @@ const AVAILABLE_SKILLS_REGEX = /<available_skills>\s*<\/available_skills>/;
  * @returns 注入后的工具函数声明列表（新数组，不修改原数组）
  */
 export function injectSkillsMetadata(
-  tools: FunctionDeclaration[]
+  tools: FunctionDeclaration[],
+  workspaceRoot?: string
 ): FunctionDeclaration[] {
-  const registry = getSkillRegistry();
+  const registry = getSkillRegistry(workspaceRoot ? { cwd: workspaceRoot } : undefined);
   const skillsList = registry.generateAvailableSkillsList();
 
   // 如果没有发现任何 skills，返回原数组

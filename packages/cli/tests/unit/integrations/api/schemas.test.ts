@@ -4,6 +4,10 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_INLINE_ATTACHMENT_COUNT,
+  MAX_USER_MESSAGE_TEXT_CHARS,
+} from '../../../../src/api/attachmentLimits.js';
+import {
   type BusEvent,
   BusEventSchema,
   CreateTaskRequestSchema,
@@ -153,6 +157,7 @@ describe('API Schemas', () => {
         parentId: 'parent-session',
         relationType: 'fork',
         taskStatus: 'running',
+        selectedModelId: 'model-2',
         messageCount: 10,
         firstMessageTime: '2024-01-01T00:00:00Z',
         lastMessageTime: '2024-01-01T01:00:00Z',
@@ -485,6 +490,18 @@ describe('API Schemas', () => {
       expect(() => SendMessageRequestSchema.parse(requestWithPermission)).not.toThrow();
     });
 
+    it('应该保留消息选择的模型', () => {
+      const parsed = SendMessageRequestSchema.parse({
+        content: 'Use this model',
+        modelId: 'vision-model',
+      });
+
+      expect(parsed).toMatchObject({
+        content: 'Use this model',
+        modelId: 'vision-model',
+      });
+    });
+
     it('应该保留用于区分同 ID 跨 workspace 会话的 projectPath', () => {
       const request: SendMessageRequest = {
         content: 'Send to workspace B',
@@ -529,6 +546,23 @@ describe('API Schemas', () => {
       expect(() =>
         SendMessageRequestSchema.parse(requestWithImageMetadata)
       ).not.toThrow();
+    });
+
+    it('应该拒绝超过共享数量或文本预算的消息', () => {
+      expect(() =>
+        SendMessageRequestSchema.parse({
+          content: 'too many',
+          attachments: Array.from({ length: MAX_INLINE_ATTACHMENT_COUNT + 1 }, () => ({
+            type: 'image',
+            content: 'data:image/png;base64,abc',
+          })),
+        })
+      ).toThrow();
+      expect(() =>
+        SendMessageRequestSchema.parse({
+          content: 'x'.repeat(MAX_USER_MESSAGE_TEXT_CHARS + 1),
+        })
+      ).toThrow();
     });
   });
 

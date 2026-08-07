@@ -1,14 +1,8 @@
 import type { Monaco } from '@monaco-editor/react';
-import {
-  ChevronDown,
-  ChevronRight,
-  FileText,
-  Folder,
-  FolderOpen,
-  X,
-} from 'lucide-react';
+import { Loader2, Search, X } from 'lucide-react';
 import {
   lazy,
+  type PointerEvent as ReactPointerEvent,
   Suspense,
   useEffect,
   useLayoutEffect,
@@ -17,7 +11,13 @@ import {
   useState,
 } from 'react';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/SegmentedTabs';
+import { useT } from '@/i18n';
 import { registerMonacoTheme } from '@/lib/monacoTheme';
 import { cn } from '@/lib/utils';
 import {
@@ -27,43 +27,97 @@ import {
 } from '@/services/sessionService';
 import { useAppStore } from '@/store/AppStore';
 import { useSettingsStore } from '@/store/SettingsStore';
-import { useSessionStore } from '@/store/session';
+import { type Session, useSessionStore } from '@/store/session';
 import { sameSessionRef } from '@/store/session/sessionIdentity';
-
-type DiffData = {
-  patch: string;
-  startLine?: number;
-  matchLine?: number;
-};
+import { type PreviewDiffData, PreviewDiffList } from './PreviewDiffList';
+import {
+  type DirectoryLoadState,
+  PreviewFileTree,
+  type PreviewTreeNode,
+} from './PreviewFileTree';
+import { PreviewLogList } from './PreviewLogList';
+import {
+  fileNameFromPath,
+  nextSearchResultIndex,
+  type PreviewLogEntry,
+} from './previewFilters';
 
 type FullDiffPayload = {
-  diff: DiffData;
+  diff: PreviewDiffData;
   filePath?: string;
   summary?: string;
   oldContent?: string;
   newContent?: string;
 };
 
-type LogEntry = {
-  id: string;
-  title: string;
-  subtitle?: string;
-  status?: 'success' | 'error' | 'running';
-  content?: string;
-  timestamp?: number;
-};
+const DEFAULT_PREVIEW_WIDTH = 640;
+const MIN_PREVIEW_WIDTH = 360;
+const MAX_PREVIEW_WIDTH = 960;
 
-type TreeNode = {
-  name: string;
-  path: string;
-  type: 'file' | 'dir';
-  children?: TreeNode[];
-};
+function clampPanelWidth(width: number): number {
+  const viewportLimit =
+    typeof window === 'undefined'
+      ? MAX_PREVIEW_WIDTH
+      : Math.max(280, Math.floor(window.innerWidth * 0.72));
+  return Math.min(
+    MAX_PREVIEW_WIDTH,
+    viewportLimit,
+    Math.max(MIN_PREVIEW_WIDTH, Math.round(width))
+  );
+}
 
-const MonacoDiffEditor = lazy(async () => {
-  const module = await import('@monaco-editor/react');
-  return { default: module.DiffEditor };
-});
+function previewWorkspaceRef(
+  currentSessionRef: SessionRef | null,
+  selectedProjectPath: string | null,
+  currentSession?: Session
+): SessionRef | null {
+  if (currentSessionRef) {
+    const deliveryStatus = currentSession?.taskDelivery?.status;
+    if (
+      currentSession?.taskIsolation === 'worktree' &&
+      currentSession.taskSourceProjectPath &&
+      (deliveryStatus === 'applied' || deliveryStatus === 'discarded')
+    ) {
+      return {
+        sessionId: currentSessionRef.sessionId,
+        projectPath: currentSession.taskSourceProjectPath,
+      };
+    }
+    return currentSessionRef;
+  }
+  return selectedProjectPath
+    ? {
+        sessionId: `project:${selectedProjectPath}`,
+        projectPath: selectedProjectPath,
+      }
+    : null;
+}
+
+function currentPreviewWorkspaceRef(): SessionRef | null {
+  const state = useSessionStore.getState();
+  const currentSession = state.sessions.find((session) =>
+    sameSessionRef(
+      { sessionId: session.sessionId, projectPath: session.projectPath },
+      state.currentSessionRef
+    )
+  );
+  return previewWorkspaceRef(
+    state.currentSessionRef,
+    state.selectedProjectPath,
+    currentSession
+  );
+}
+
+function sameFilePath(left: string, right: string): boolean {
+  const normalize = (value: string) =>
+    value
+      .replace(/\\/g, '/')
+      .replace(/^\.?\//, '')
+      .replace(/\/+/g, '/');
+  const a = normalize(left);
+  const b = normalize(right);
+  return a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`);
+}
 
 const MonacoEditorLazy = lazy(async () => {
   const module = await import('@monaco-editor/react');
@@ -74,44 +128,157 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-export function FilePreview() {
-  const { toggleFilePreview } = useAppStore();
-  const { messages, currentSessionRef, sessions } = useSessionStore();
-  const [activeTab, setActiveTab] = useState<'diff' | 'files' | 'logs'>('diff');
-  const [rootNodes, setRootNodes] = useState<TreeNode[]>([]);
-  const [childrenCache, setChildrenCache] = useState<Record<string, TreeNode[]>>({});
+interface FilePreviewProps {
+  returnFocusElement?: HTMLElement | null;
+}
+
+export function FilePreview({ returnFocusElement }: FilePreviewProps = {}) {
+  const t = useT();
+  const {
+    toggleFilePreview,
+    previewWidth,
+    setPreviewWidth,
+    previewTab,
+    setPreviewTab,
+    previewTargetPath,
+    previewRequestId,
+  } = useAppStore();
+  const messages = useSessionStore((state) => state.messages);
+  const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
+  const sessions = useSessionStore((state) => state.sessions);
+  const selectedProjectPath = useSessionStore((state) => state.selectedProjectPath);
+  const currentSession = useMemo(
+    () =>
+      sessions.find((session) =>
+        sameSessionRef(
+          { sessionId: session.sessionId, projectPath: session.projectPath },
+          currentSessionRef
+        )
+      ),
+    [currentSessionRef, sessions]
+  );
+  const workspaceRef = useMemo(
+    () => previewWorkspaceRef(currentSessionRef, selectedProjectPath, currentSession),
+    [currentSession, currentSessionRef, selectedProjectPath]
+  );
+  const [activeTab, setActiveTab] = useState<'diff' | 'files' | 'logs'>(previewTab);
+  const [isCompact, setIsCompact] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(max-width: 1023px)').matches
+  );
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
+  const [isResizing, setIsResizing] = useState(false);
+  const [rootNodes, setRootNodes] = useState<PreviewTreeNode[]>([]);
+  const [childrenCache, setChildrenCache] = useState<Record<string, PreviewTreeNode[]>>(
+    {}
+  );
+  const [directoryStates, setDirectoryStates] = useState<
+    Record<string, DirectoryLoadState>
+  >({});
+  const [rootReloadToken, setRootReloadToken] = useState(0);
   const [fileLoading, setFileLoading] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [fileQuery, setFileQuery] = useState('');
+  const [fileSearchResults, setFileSearchResults] = useState<string[]>([]);
+  const [fileSearchLoading, setFileSearchLoading] = useState(false);
+  const [fileSearchError, setFileSearchError] = useState(false);
+  const [fileSearchRetryToken, setFileSearchRetryToken] = useState(0);
+  const [fileSearchIndex, setFileSearchIndex] = useState(0);
   const [expandedDirs, setExpandedDirs] = useState<Record<string, boolean>>({});
-  const [expandedLogs, setExpandedLogs] = useState<Record<string, boolean>>({});
+  const [expandedDiffs, setExpandedDiffs] = useState<Record<string, boolean>>({});
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string>('');
   const [filePreviewLoading, setFilePreviewLoading] = useState(false);
   const [filePreviewError, setFilePreviewError] = useState<string | null>(null);
   const [filePreviewTruncated, setFilePreviewTruncated] = useState(false);
-  const latestSessionRef = useRef<SessionRef | null>(currentSessionRef);
+  const latestSessionRef = useRef<SessionRef | null>(workspaceRef);
   const sessionGeneration = useRef(0);
   const rootRequestGeneration = useRef(0);
   const directoryRequestGenerations = useRef<Record<string, number>>({});
   const fileRequestGeneration = useRef(0);
+  const fileSearchRequestGeneration = useRef(0);
   const taskDiffRequestGeneration = useRef(0);
   const expandedDirsRef = useRef<Record<string, boolean>>({});
-  const childrenCacheRef = useRef<Record<string, TreeNode[]>>({});
+  const childrenCacheRef = useRef<Record<string, PreviewTreeNode[]>>({});
+  const directoryStatesRef = useRef<Record<string, DirectoryLoadState>>({});
   const selectedFileRef = useRef<string | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const dragWidthRef = useRef(previewWidth);
+  const previousSessionRef = useRef<SessionRef | null>(currentSessionRef);
 
   useLayoutEffect(() => {
-    if (!sameSessionRef(latestSessionRef.current, currentSessionRef)) {
+    if (!sameSessionRef(latestSessionRef.current, workspaceRef)) {
       sessionGeneration.current += 1;
     }
-    latestSessionRef.current = currentSessionRef;
-  }, [currentSessionRef]);
+    latestSessionRef.current = workspaceRef;
+  }, [workspaceRef]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(max-width: 1023px)');
+    const update = () => setIsCompact(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+
+  useEffect(() => {
+    previousFocusRef.current =
+      returnFocusElement ??
+      (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    return () => {
+      const previousFocus = previousFocusRef.current;
+      requestAnimationFrame(() => {
+        if (previousFocus?.isConnected) {
+          previousFocus.focus({ preventScroll: true });
+        }
+      });
+    };
+  }, [returnFocusElement]);
+
+  useEffect(() => {
+    if (!isCompact) return;
+    closeButtonRef.current?.focus({ preventScroll: true });
+  }, [isCompact]);
+
+  const handlePanelKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!isCompact) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      toggleFilePreview();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = Array.from(
+      panelRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+      ) ?? []
+    ).filter((element) => !element.hasAttribute('hidden'));
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last?.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first?.focus();
+    }
+  };
 
   const isCurrentSessionRequest = (
     requestSessionRef: SessionRef,
     requestSessionGeneration: number
-  ) =>
-    requestSessionGeneration === sessionGeneration.current &&
-    sameSessionRef(useSessionStore.getState().currentSessionRef, requestSessionRef);
+  ) => {
+    return (
+      requestSessionGeneration === sessionGeneration.current &&
+      sameSessionRef(currentPreviewWorkspaceRef(), requestSessionRef)
+    );
+  };
 
   const loadTreeNodes = async (requestSessionRef: SessionRef, dirPath = '') => {
     const url = dirPath
@@ -120,7 +287,7 @@ export function FilePreview() {
     const response = await fetch(url, {
       headers: sessionDirectoryHeaders(requestSessionRef),
     });
-    if (!response.ok) throw new Error('Failed to load tree');
+    if (!response.ok) throw new Error(t('preview.files.treeFailed'));
     const data = (await response.json()) as Array<{
       name: string;
       path: string;
@@ -135,13 +302,13 @@ export function FilePreview() {
   useEffect(() => {
     const requestGeneration = ++rootRequestGeneration.current;
     const loadRoot = async () => {
-      if (!currentSessionRef) {
+      if (!workspaceRef) {
         setRootNodes([]);
         setFileLoading(false);
         setFileError(null);
         return;
       }
-      const requestSessionRef = { ...currentSessionRef };
+      const requestSessionRef = { ...workspaceRef };
       const requestSessionGeneration = sessionGeneration.current;
       const requestIsCurrent = () =>
         requestGeneration === rootRequestGeneration.current &&
@@ -156,7 +323,7 @@ export function FilePreview() {
         if (requestIsCurrent()) setRootNodes(nodes);
       } catch (err) {
         if (requestIsCurrent()) {
-          setFileError(errorMessage(err, 'Failed to load tree'));
+          setFileError(errorMessage(err, t('preview.files.treeFailed')));
         }
       } finally {
         if (requestIsCurrent()) setFileLoading(false);
@@ -168,12 +335,13 @@ export function FilePreview() {
         rootRequestGeneration.current += 1;
       }
     };
-  }, [currentSessionRef?.projectPath, currentSessionRef?.sessionId]);
+  }, [rootReloadToken, workspaceRef?.projectPath, workspaceRef?.sessionId]);
 
   useEffect(() => {
     selectedFileRef.current = null;
     expandedDirsRef.current = {};
     childrenCacheRef.current = {};
+    directoryStatesRef.current = {};
     directoryRequestGenerations.current = {};
     fileRequestGeneration.current += 1;
     setSelectedFile(null);
@@ -183,37 +351,150 @@ export function FilePreview() {
     setFilePreviewTruncated(false);
     setExpandedDirs({});
     setChildrenCache({});
-  }, [currentSessionRef?.projectPath, currentSessionRef?.sessionId]);
+    setDirectoryStates({});
+    setFileQuery('');
+    setFileSearchResults([]);
+    setFileSearchLoading(false);
+    setFileSearchError(false);
+    setFileSearchIndex(0);
+    setExpandedDiffs({});
+  }, [workspaceRef?.projectPath, workspaceRef?.sessionId]);
 
-  const currentSession = useMemo(
-    () =>
-      sessions.find((session) =>
-        sameSessionRef(
-          { sessionId: session.sessionId, projectPath: session.projectPath },
-          currentSessionRef
-        )
-      ),
-    [currentSessionRef, sessions]
-  );
   const messageDiffs = useMemo(() => findAllDiffs(messages), [messages]);
   const [taskDiffs, setTaskDiffs] = useState<FullDiffPayload[] | null>(null);
   const [taskDiffLoading, setTaskDiffLoading] = useState(false);
   const [taskDiffError, setTaskDiffError] = useState<string | null>(null);
-  const allDiffs = taskDiffs ?? messageDiffs;
+  const [taskDiffRetryToken, setTaskDiffRetryToken] = useState(0);
+  const taskChangesDiscarded =
+    currentSession?.taskIsolation === 'worktree' &&
+    currentSession.taskDelivery?.status === 'discarded';
+  const usesDurableTaskDiff =
+    currentSession?.taskIsolation === 'worktree' &&
+    Boolean(currentSession.taskDiffStat) &&
+    !taskChangesDiscarded;
+  const taskArtifactExpected =
+    usesDurableTaskDiff &&
+    Boolean(
+      currentSession?.taskDiffStat && currentSession.taskDiffStat.changedFiles > 0
+    );
+  const allDiffs = taskChangesDiscarded
+    ? []
+    : usesDurableTaskDiff
+      ? (taskDiffs ?? [])
+      : messageDiffs;
   const logs = useMemo(() => buildLogs(messages), [messages]);
-  const [expandedDiffs, setExpandedDiffs] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    const query = fileQuery.trim();
+    const requestGeneration = ++fileSearchRequestGeneration.current;
+    setFileSearchIndex(0);
+    setFileSearchError(false);
+    if (!query || activeTab !== 'files' || !workspaceRef) {
+      setFileSearchResults([]);
+      setFileSearchLoading(false);
+      return;
+    }
+
+    const requestSessionRef = { ...workspaceRef };
+    const requestSessionGeneration = sessionGeneration.current;
+    setFileSearchLoading(true);
+    const timeout = window.setTimeout(() => {
+      void fetch(
+        `/suggestions/files?q=${encodeURIComponent(query)}&limit=100&type=file`,
+        { headers: sessionDirectoryHeaders(requestSessionRef) }
+      )
+        .then(async (response) => {
+          if (!response.ok) throw new Error(t('preview.files.searchFailed'));
+          return (await response.json()) as string[];
+        })
+        .then((paths) => {
+          if (
+            requestGeneration === fileSearchRequestGeneration.current &&
+            isCurrentSessionRequest(requestSessionRef, requestSessionGeneration)
+          ) {
+            setFileSearchResults(paths.filter((path) => !path.endsWith('/')));
+            setFileSearchError(false);
+          }
+        })
+        .catch(() => {
+          if (
+            requestGeneration === fileSearchRequestGeneration.current &&
+            isCurrentSessionRequest(requestSessionRef, requestSessionGeneration)
+          ) {
+            setFileSearchResults([]);
+            setFileSearchError(true);
+          }
+        })
+        .finally(() => {
+          if (requestGeneration === fileSearchRequestGeneration.current) {
+            setFileSearchLoading(false);
+          }
+        });
+    }, 160);
+
+    return () => window.clearTimeout(timeout);
+  }, [
+    activeTab,
+    fileQuery,
+    fileSearchRetryToken,
+    workspaceRef?.projectPath,
+    workspaceRef?.sessionId,
+  ]);
+
+  useEffect(() => {
+    setActiveTab(useAppStore.getState().previewTab);
+  }, [previewRequestId]);
+
+  useEffect(() => {
+    const previous = previousSessionRef.current;
+    previousSessionRef.current = currentSessionRef;
+    if (
+      !currentSessionRef &&
+      selectedProjectPath &&
+      (previous || activeTab !== 'files')
+    ) {
+      setActiveTab('files');
+      setPreviewTab('files');
+    }
+  }, [
+    activeTab,
+    currentSessionRef?.projectPath,
+    currentSessionRef?.sessionId,
+    selectedProjectPath,
+    setPreviewTab,
+  ]);
+
+  useEffect(() => {
+    if (!previewTargetPath || activeTab !== 'diff') return;
+    const target = allDiffs.find(
+      (item) => item.filePath && sameFilePath(item.filePath, previewTargetPath)
+    )?.filePath;
+    if (!target) return;
+
+    setExpandedDiffs((previous) => ({ ...previous, [target]: true }));
+    const frame = requestAnimationFrame(() => {
+      const element = Array.from(
+        panelRef.current?.querySelectorAll<HTMLElement>('[data-preview-diff-path]') ??
+          []
+      ).find((candidate) =>
+        sameFilePath(candidate.dataset.previewDiffPath ?? '', previewTargetPath)
+      );
+      if (typeof element?.scrollIntoView === 'function') {
+        element.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+      element
+        ?.querySelector<HTMLButtonElement>('button')
+        ?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeTab, allDiffs, previewRequestId, previewTargetPath]);
 
   useEffect(() => {
     const requestGeneration = ++taskDiffRequestGeneration.current;
     setTaskDiffs(null);
     setTaskDiffError(null);
     setTaskDiffLoading(false);
-    if (
-      !currentSessionRef ||
-      currentSession?.taskIsolation !== 'worktree' ||
-      !currentSession.taskDiffStat ||
-      currentSession.taskDiffStat.changedFiles === 0
-    ) {
+    if (!currentSessionRef || !taskArtifactExpected) {
       return;
     }
 
@@ -245,7 +526,7 @@ export function FilePreview() {
       })
       .catch((error) => {
         if (requestGeneration === taskDiffRequestGeneration.current) {
-          setTaskDiffError(errorMessage(error, 'Failed to load task diff'));
+          setTaskDiffError(errorMessage(error, t('preview.diff.failedTitle')));
         }
       })
       .finally(() => {
@@ -261,17 +542,26 @@ export function FilePreview() {
     };
   }, [
     currentSession?.taskCompletedAt,
+    currentSession?.taskDelivery?.status,
     currentSession?.taskDiffStat,
     currentSession?.taskIsolation,
     currentSessionRef,
+    taskArtifactExpected,
+    taskDiffRetryToken,
   ]);
 
   const toggleDiffExpand = (filePath: string) => {
     setExpandedDiffs((prev) => ({ ...prev, [filePath]: !prev[filePath] }));
   };
 
+  const setAllDiffsExpanded = (expanded: boolean) => {
+    setExpandedDiffs(
+      Object.fromEntries(allDiffs.map((item) => [item.filePath || 'unknown', expanded]))
+    );
+  };
+
   const openFile = async (path: string) => {
-    const requestSessionRef = useSessionStore.getState().currentSessionRef;
+    const requestSessionRef = currentPreviewWorkspaceRef();
     if (!requestSessionRef) return;
     const requestSessionGeneration = sessionGeneration.current;
     const requestGeneration = ++fileRequestGeneration.current;
@@ -294,7 +584,7 @@ export function FilePreview() {
         }
       );
       if (!response.ok) {
-        throw new Error('Failed to load file');
+        throw new Error(t('preview.files.contentFailed'));
       }
       const data = (await response.json()) as { content: string; truncated?: boolean };
       if (requestIsCurrent()) {
@@ -303,27 +593,53 @@ export function FilePreview() {
       }
     } catch (err) {
       if (requestIsCurrent()) {
-        setFilePreviewError(errorMessage(err, 'Failed to load file'));
+        setFilePreviewError(errorMessage(err, t('preview.files.contentFailed')));
       }
     } finally {
       if (requestIsCurrent()) setFilePreviewLoading(false);
     }
   };
 
-  const toggleDir = async (dirPath: string) => {
+  const handleFileSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      setFileSearchIndex((current) =>
+        nextSearchResultIndex(
+          current,
+          fileSearchResults.length,
+          event.key === 'ArrowDown' ? 1 : -1
+        )
+      );
+      return;
+    }
+    if (event.key === 'Enter') {
+      const path = fileSearchResults[fileSearchIndex];
+      if (!path) return;
+      event.preventDefault();
+      void openFile(path);
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setFileQuery('');
+    }
+  };
+
+  const setDirectoryState = (dirPath: string, state: DirectoryLoadState) => {
+    const next = {
+      ...directoryStatesRef.current,
+      [dirPath]: state,
+    };
+    directoryStatesRef.current = next;
+    setDirectoryStates(next);
+  };
+
+  const loadDirectory = async (dirPath: string) => {
     const requestGeneration = (directoryRequestGenerations.current[dirPath] ?? 0) + 1;
     directoryRequestGenerations.current[dirPath] = requestGeneration;
-    const isExpanding = !expandedDirsRef.current[dirPath];
-    const nextExpandedDirs = {
-      ...expandedDirsRef.current,
-      [dirPath]: isExpanding,
-    };
-    expandedDirsRef.current = nextExpandedDirs;
-    setExpandedDirs(nextExpandedDirs);
+    setDirectoryState(dirPath, { status: 'loading' });
 
-    if (!isExpanding || childrenCacheRef.current[dirPath]) return;
-
-    const requestSessionRef = useSessionStore.getState().currentSessionRef;
+    const requestSessionRef = currentPreviewWorkspaceRef();
     if (!requestSessionRef) return;
     const requestSessionGeneration = sessionGeneration.current;
     const requestIsCurrent = () =>
@@ -340,34 +656,134 @@ export function FilePreview() {
         };
         childrenCacheRef.current = nextChildrenCache;
         setChildrenCache(nextChildrenCache);
+        setDirectoryState(dirPath, { status: 'loaded' });
       }
-    } catch {
+    } catch (error) {
       if (requestIsCurrent()) {
-        const nextChildrenCache = {
-          ...childrenCacheRef.current,
-          [dirPath]: [],
-        };
-        childrenCacheRef.current = nextChildrenCache;
-        setChildrenCache(nextChildrenCache);
+        setDirectoryState(dirPath, {
+          status: 'error',
+          message: errorMessage(error, t('preview.files.treeFailed')),
+        });
       }
     }
   };
 
-  const toggleLog = (id: string) => {
-    setExpandedLogs((prev) => ({ ...prev, [id]: !prev[id] }));
+  const toggleDir = (dirPath: string) => {
+    const isExpanding = !expandedDirsRef.current[dirPath];
+    const nextExpandedDirs = {
+      ...expandedDirsRef.current,
+      [dirPath]: isExpanding,
+    };
+    expandedDirsRef.current = nextExpandedDirs;
+    setExpandedDirs(nextExpandedDirs);
+
+    if (!isExpanding) {
+      directoryRequestGenerations.current[dirPath] =
+        (directoryRequestGenerations.current[dirPath] ?? 0) + 1;
+      return;
+    }
+    if (!childrenCacheRef.current[dirPath]) void loadDirectory(dirPath);
   };
 
+  const retryDirectory = (dirPath: string) => {
+    if (!expandedDirsRef.current[dirPath]) {
+      const nextExpandedDirs = {
+        ...expandedDirsRef.current,
+        [dirPath]: true,
+      };
+      expandedDirsRef.current = nextExpandedDirs;
+      setExpandedDirs(nextExpandedDirs);
+    }
+    void loadDirectory(dirPath);
+  };
+
+  const handleResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragWidthRef.current = previewWidth;
+    setIsResizing(true);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+
+  const handleResizeMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!isResizing) return;
+    const next = clampPanelWidth(window.innerWidth - event.clientX);
+    dragWidthRef.current = next;
+    setDragWidth(next);
+  };
+
+  const handleResizeEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!isResizing) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setIsResizing(false);
+    setDragWidth(null);
+    setPreviewWidth(dragWidthRef.current);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  };
+
+  useEffect(
+    () => () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    },
+    []
+  );
+
+  const displayedWidth = clampPanelWidth(dragWidth ?? previewWidth);
+
   return (
-    <div className="w-[55%] min-w-[420px] max-w-[860px] border-l border-[#E5E7EB] dark:border-zinc-800 bg-white dark:bg-[#09090b] flex flex-col h-full shadow-xl shrink-0">
-      <div className="flex items-center justify-between px-4 h-12 border-b border-[#E5E7EB] dark:border-zinc-800 shrink-0">
-        <span className="font-normal text-[13px] text-[#6B7280] dark:text-zinc-400 font-mono">
-          Preview
+    <div
+      ref={panelRef}
+      data-testid="file-preview"
+      role={isCompact ? 'dialog' : 'complementary'}
+      aria-modal={isCompact || undefined}
+      aria-label={t('preview.title')}
+      onKeyDown={handlePanelKeyDown}
+      style={{ width: displayedWidth, maxWidth: '72vw' }}
+      className="relative flex h-full min-w-[360px] shrink-0 flex-col border-l border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-canvas))] shadow-xl max-lg:fixed max-lg:inset-0 max-lg:z-[60] max-lg:!h-dvh max-lg:!w-full max-lg:!max-w-full max-lg:min-w-0 max-lg:border-l-0"
+    >
+      <div
+        role="separator"
+        aria-label={t('preview.action.resize')}
+        aria-orientation="vertical"
+        aria-valuemin={MIN_PREVIEW_WIDTH}
+        aria-valuemax={MAX_PREVIEW_WIDTH}
+        aria-valuenow={displayedWidth}
+        aria-hidden={isCompact || undefined}
+        tabIndex={isCompact ? -1 : 0}
+        onPointerDown={handleResizeStart}
+        onPointerMove={handleResizeMove}
+        onPointerUp={handleResizeEnd}
+        onPointerCancel={handleResizeEnd}
+        onDoubleClick={() => setPreviewWidth(DEFAULT_PREVIEW_WIDTH)}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+          event.preventDefault();
+          setPreviewWidth(displayedWidth + (event.key === 'ArrowLeft' ? 24 : -24));
+        }}
+        className={cn(
+          'absolute inset-y-0 -left-1 z-20 w-2 cursor-col-resize touch-none outline-none max-lg:hidden',
+          'after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-transparent after:transition-colors',
+          'hover:after:bg-[hsl(var(--deck-accent)/0.6)] focus-visible:after:bg-[hsl(var(--deck-accent))]',
+          isResizing && 'after:bg-[hsl(var(--deck-accent))]'
+        )}
+      />
+      <div className="flex items-center justify-between px-4 h-12 border-b border-[hsl(var(--deck-border))] shrink-0">
+        <span className="font-normal text-[13px] text-[hsl(var(--deck-ink-muted))] font-mono">
+          {t('preview.title')}
         </span>
         <Button
+          ref={closeButtonRef}
           variant="ghost"
           size="icon"
           onClick={toggleFilePreview}
-          className="h-8 w-8 text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB]/60 dark:text-zinc-500 dark:hover:text-zinc-300 dark:hover:bg-zinc-800/50"
+          aria-label={t('preview.action.close')}
+          title={t('preview.action.close')}
+          className="h-8 w-8 text-[hsl(var(--deck-ink-faint))] hover:text-[hsl(var(--deck-ink))] hover:bg-[hsl(var(--deck-surface))]"
         >
           <X className="w-4 h-4" />
         </Button>
@@ -375,90 +791,70 @@ export function FilePreview() {
 
       <Tabs
         value={activeTab}
-        onValueChange={(value: string) => setActiveTab(value as typeof activeTab)}
+        onValueChange={(value: string) => {
+          const tab = value as typeof activeTab;
+          setActiveTab(tab);
+          setPreviewTab(tab);
+        }}
         className="flex flex-col flex-1 min-h-0"
       >
-        <div className="px-4 py-3 border-b border-[#E5E7EB] dark:border-zinc-800">
-          <TabsList className="bg-white dark:bg-[#111113] border border-[#E5E7EB] dark:border-[#27272a] h-9 p-1 rounded-md w-full justify-start">
+        <div className="px-4 py-3 border-b border-[hsl(var(--deck-border))]">
+          <TabsList className="bg-[hsl(var(--deck-surface))] border border-[hsl(var(--deck-border))] h-9 p-1 rounded-md w-full justify-start">
             <TabsTrigger
               value="diff"
-              className="text-[12px] font-mono px-3 text-[#6B7280] dark:text-[#a1a1aa] data-[state=active]:bg-[#E5E7EB] data-[state=active]:text-[#111827] dark:data-[state=active]:bg-[#27272a] dark:data-[state=active]:text-white"
+              className="text-[12px] font-mono px-3 text-[hsl(var(--deck-ink-muted))] data-[state=active]:bg-[hsl(var(--deck-canvas-veil))] data-[state=active]:text-[hsl(var(--deck-ink))]"
             >
-              Diff
+              {t('preview.tab.diff')}
             </TabsTrigger>
             <TabsTrigger
               value="files"
-              className="text-[12px] font-mono px-3 text-[#6B7280] dark:text-[#a1a1aa] data-[state=active]:bg-[#E5E7EB] data-[state=active]:text-[#111827] dark:data-[state=active]:bg-[#27272a] dark:data-[state=active]:text-white"
+              className="text-[12px] font-mono px-3 text-[hsl(var(--deck-ink-muted))] data-[state=active]:bg-[hsl(var(--deck-canvas-veil))] data-[state=active]:text-[hsl(var(--deck-ink))]"
             >
-              Files
+              {t('preview.tab.files')}
             </TabsTrigger>
             <TabsTrigger
               value="logs"
-              className="text-[12px] font-mono px-3 text-[#6B7280] dark:text-[#a1a1aa] data-[state=active]:bg-[#E5E7EB] data-[state=active]:text-[#111827] dark:data-[state=active]:bg-[#27272a] dark:data-[state=active]:text-white"
+              className="text-[12px] font-mono px-3 text-[hsl(var(--deck-ink-muted))] data-[state=active]:bg-[hsl(var(--deck-canvas-veil))] data-[state=active]:text-[hsl(var(--deck-ink))]"
             >
-              Logs
+              {t('preview.tab.logs')}
             </TabsTrigger>
           </TabsList>
         </div>
 
         <TabsContent value="diff" className="overflow-hidden flex-1 mt-0">
           <div className="overflow-y-auto px-4 py-4 space-y-3 h-full">
-            {taskDiffLoading && allDiffs.length === 0 ? (
+            {taskChangesDiscarded ? (
               <EmptyState
-                title="Loading task diff…"
-                subtitle="Reading the durable worktree artifact."
+                title={t('preview.diff.discardedTitle')}
+                subtitle={t('preview.diff.discardedHint')}
+                role="status"
+              />
+            ) : taskDiffLoading && allDiffs.length === 0 ? (
+              <EmptyState
+                title={t('preview.diff.loadingTitle')}
+                subtitle={t('preview.diff.loadingHint')}
               />
             ) : taskDiffError && allDiffs.length === 0 ? (
-              <EmptyState title="Failed to load task diff" subtitle={taskDiffError} />
+              <EmptyState
+                title={t('preview.diff.failedTitle')}
+                subtitle={taskDiffError}
+                actionLabel={t('preview.action.retry')}
+                onAction={() => setTaskDiffRetryToken((value) => value + 1)}
+                role="alert"
+              />
             ) : allDiffs.length === 0 ? (
               <EmptyState
-                title="No patch yet"
-                subtitle="Run a tool that changes files to see diffs here."
+                title={t('preview.diff.emptyTitle')}
+                subtitle={t('preview.diff.emptyHint')}
               />
             ) : (
-              <>
-                <div className="text-[12px] text-[#6B7280] dark:text-[#71717a] font-mono mb-2">
-                  {allDiffs.length} changed file{allDiffs.length > 1 ? 's' : ''}
-                </div>
-                {allDiffs.map((diffItem) => {
-                  const fileName = diffItem.filePath?.split('/').pop() || 'unknown';
-                  const isExpanded = expandedDiffs[diffItem.filePath || ''] !== false;
-                  return (
-                    <div
-                      key={diffItem.filePath}
-                      className="border border-[#E5E7EB] dark:border-[#27272a] rounded-lg overflow-hidden"
-                    >
-                      <button
-                        onClick={() => toggleDiffExpand(diffItem.filePath || '')}
-                        className="w-full flex items-center gap-2 px-3 py-2 bg-[#F9FAFB] dark:bg-[#111113] hover:bg-[#F3F4F6] dark:hover:bg-[#18181b] transition-colors"
-                      >
-                        {isExpanded ? (
-                          <ChevronDown className="w-4 h-4 text-[#6B7280] dark:text-[#71717a]" />
-                        ) : (
-                          <ChevronRight className="w-4 h-4 text-[#6B7280] dark:text-[#71717a]" />
-                        )}
-                        <FileText className="w-4 h-4 text-[#6B7280] dark:text-[#71717a]" />
-                        <span className="text-[13px] text-[#111827] dark:text-[#E5E5E5] font-mono flex-1 text-left truncate">
-                          {fileName}
-                        </span>
-                        {diffItem.summary && (
-                          <span className="text-[11px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
-                            {diffItem.summary}
-                          </span>
-                        )}
-                      </button>
-                      {isExpanded && (
-                        <div className="border-t border-[#E5E7EB] dark:border-[#27272a]">
-                          <div className="px-3 py-1 text-[11px] text-[#9CA3AF] dark:text-[#52525b] font-mono truncate">
-                            {diffItem.filePath}
-                          </div>
-                          <DiffViewer diff={diffItem.diff} />
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </>
+              <PreviewDiffList
+                diffs={allDiffs}
+                expanded={expandedDiffs}
+                targetPath={previewTargetPath}
+                onToggle={toggleDiffExpand}
+                onSetAllExpanded={setAllDiffsExpanded}
+              />
             )}
           </div>
         </TabsContent>
@@ -466,60 +862,155 @@ export function FilePreview() {
         <TabsContent value="files" className="overflow-hidden flex-1 mt-0">
           <div className="px-4 py-4 h-full">
             {fileLoading && (
-              <EmptyState title="Loading files…" subtitle="Fetching workspace tree." />
+              <EmptyState
+                title={t('preview.files.loadingTitle')}
+                subtitle={t('preview.files.loadingHint')}
+              />
             )}
             {!fileLoading && fileError && (
-              <EmptyState title="Failed to load files" subtitle={fileError} />
+              <EmptyState
+                title={t('preview.files.failedTitle')}
+                subtitle={fileError}
+                actionLabel={t('preview.action.retry')}
+                onAction={() => setRootReloadToken((value) => value + 1)}
+                role="alert"
+              />
             )}
             {!fileLoading && !fileError && rootNodes.length === 0 && (
               <EmptyState
-                title="No files yet"
-                subtitle="Start a session to load the workspace tree."
+                title={t('preview.files.emptyTitle')}
+                subtitle={t('preview.files.emptyHint')}
               />
             )}
             {!fileLoading && !fileError && rootNodes.length > 0 && (
-              <div className="h-full grid grid-cols-[220px_1fr] gap-4 min-h-0">
-                <div className="border border-[#E5E7EB] dark:border-[#27272a] rounded-lg p-2 overflow-y-auto min-h-0">
-                  {rootNodes.map((node) => (
-                    <LazyTreeNode
-                      key={node.path}
-                      node={node}
-                      depth={0}
-                      expandedDirs={expandedDirs}
-                      childrenCache={childrenCache}
-                      toggleDir={toggleDir}
-                      selectedPath={selectedFile}
-                      onSelectFile={openFile}
-                    />
-                  ))}
+              <div className="grid h-full min-h-0 grid-cols-[minmax(170px,220px)_minmax(0,1fr)] gap-3 max-sm:grid-cols-1 max-sm:grid-rows-[180px_minmax(0,1fr)]">
+                <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-[hsl(var(--deck-border))]">
+                  <div className="border-b border-[hsl(var(--deck-border))] p-2">
+                    <div className="flex h-8 items-center gap-2 rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] px-2 focus-within:border-[hsl(var(--deck-accent)/0.6)]">
+                      <Search className="h-3.5 w-3.5 shrink-0 text-[hsl(var(--deck-ink-faint))]" />
+                      <input
+                        type="search"
+                        aria-label={t('preview.files.searchAria')}
+                        placeholder={t('preview.files.searchPlaceholder')}
+                        value={fileQuery}
+                        onChange={(event) => setFileQuery(event.target.value)}
+                        onKeyDown={handleFileSearchKeyDown}
+                        className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-[hsl(var(--deck-ink))] outline-none placeholder:text-[hsl(var(--deck-ink-faint))]"
+                      />
+                      {fileSearchLoading && (
+                        <Loader2 className="h-3 w-3 shrink-0 animate-spin text-[hsl(var(--deck-accent))]" />
+                      )}
+                    </div>
+                  </div>
+                  <div
+                    role={fileQuery ? 'listbox' : undefined}
+                    aria-label={
+                      fileQuery ? t('preview.files.searchResultsAria') : undefined
+                    }
+                    className="min-h-0 flex-1 overflow-y-auto p-2"
+                  >
+                    {fileQuery ? (
+                      fileSearchError ? (
+                        <div
+                          role="alert"
+                          className="px-2 py-5 text-center font-mono text-[10.5px] text-red-700 dark:text-red-300"
+                        >
+                          <div>{t('preview.files.searchFailed')}</div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setFileSearchRetryToken((value) => value + 1)
+                            }
+                            className="mt-1 underline underline-offset-2"
+                          >
+                            {t('preview.action.retry')}
+                          </button>
+                        </div>
+                      ) : fileSearchResults.length > 0 ? (
+                        fileSearchResults.map((path, index) => (
+                          <button
+                            key={path}
+                            type="button"
+                            role="option"
+                            aria-selected={index === fileSearchIndex}
+                            data-preview-file-result={index}
+                            onMouseEnter={() => setFileSearchIndex(index)}
+                            onClick={() => void openFile(path)}
+                            className={cn(
+                              'mb-0.5 flex w-full min-w-0 flex-col rounded-md px-2 py-1.5 text-left font-mono transition-colors',
+                              index === fileSearchIndex
+                                ? 'bg-[hsl(var(--deck-accent-soft))] text-[hsl(var(--deck-ink))]'
+                                : 'text-[hsl(var(--deck-ink-muted))] hover:bg-[hsl(var(--deck-surface))]'
+                            )}
+                          >
+                            <span className="truncate text-[11.5px]">
+                              {fileNameFromPath(path)}
+                            </span>
+                            <span className="truncate text-[9px] text-[hsl(var(--deck-ink-faint))]">
+                              {path}
+                            </span>
+                          </button>
+                        ))
+                      ) : (
+                        !fileSearchLoading && (
+                          <div className="px-2 py-5 text-center font-mono text-[10.5px] text-[hsl(var(--deck-ink-faint))]">
+                            {t('preview.files.noMatches')}
+                          </div>
+                        )
+                      )
+                    ) : (
+                      <PreviewFileTree
+                        nodes={rootNodes}
+                        expandedDirs={expandedDirs}
+                        childrenCache={childrenCache}
+                        directoryStates={directoryStates}
+                        selectedPath={selectedFile}
+                        onToggleDir={toggleDir}
+                        onRetryDir={retryDirectory}
+                        onSelectFile={openFile}
+                      />
+                    )}
+                  </div>
                 </div>
-                <div className="border border-[#E5E7EB] dark:border-[#27272a] rounded-lg overflow-hidden flex flex-col min-h-0">
-                  <div className="px-3 py-2 bg-[#F9FAFB] dark:bg-[#111113] border-b border-[#E5E7EB] dark:border-[#27272a] text-[12px] text-[#6B7280] dark:text-[#71717a] font-mono flex items-center justify-between">
-                    <span>{selectedFile || 'Select a file to preview'}</span>
+                <div className="border border-[hsl(var(--deck-border))] rounded-lg overflow-hidden flex flex-col min-h-0">
+                  <div className="px-3 py-2 bg-[hsl(var(--deck-surface-2))] border-b border-[hsl(var(--deck-border))] text-[12px] text-[hsl(var(--deck-ink-muted))] font-mono flex items-center justify-between">
+                    <span className="min-w-0 truncate">
+                      {selectedFile || t('preview.files.selectTitle')}
+                    </span>
                     {selectedFile && (
-                      <span className="text-[11px] text-[#9CA3AF] dark:text-[#a1a1aa] font-mono">
+                      <span className="ml-2 shrink-0 text-[11px] text-[hsl(var(--deck-ink-faint))] font-mono">
                         {filePreviewLoading
-                          ? 'Loading…'
+                          ? t('preview.files.status.loading')
                           : filePreviewTruncated
-                            ? 'Truncated'
-                            : 'Ready'}
+                            ? t('preview.files.status.truncated')
+                            : t('preview.files.status.ready')}
                       </span>
                     )}
                   </div>
                   {filePreviewTruncated && !filePreviewLoading && (
-                    <div className="px-3 py-2 bg-[#FEF3C7] dark:bg-[#111113] border-b border-[#E5E7EB] dark:border-[#27272a] text-[11px] text-[#b45309] dark:text-[#facc15] font-mono">
-                      Preview truncated to 200k characters.
+                    <div className="px-3 py-2 bg-[#FEF3C7] dark:bg-[#111113] border-b border-[hsl(var(--deck-border))] text-[11px] text-[#b45309] dark:text-[#facc15] font-mono">
+                      {t('preview.files.truncatedNotice')}
                     </div>
                   )}
                   <div className="flex-1 min-h-0">
                     {!selectedFile && (
-                      <div className="h-full flex items-center justify-center text-[12px] text-[#6B7280] dark:text-[#71717a] font-mono">
-                        Pick a file from the tree to preview.
+                      <div className="h-full flex items-center justify-center text-[12px] text-[hsl(var(--deck-ink-muted))] font-mono">
+                        {t('preview.files.pickHint')}
                       </div>
                     )}
                     {selectedFile && filePreviewError && (
-                      <div className="h-full flex items-center justify-center text-[12px] text-[#DC2626] dark:text-[#fca5a5] font-mono">
-                        {filePreviewError}
+                      <div
+                        role="alert"
+                        className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center font-mono text-[12px] text-[#DC2626] dark:text-[#fca5a5]"
+                      >
+                        <span>{filePreviewError}</span>
+                        <button
+                          type="button"
+                          onClick={() => void openFile(selectedFile)}
+                          className="underline underline-offset-2"
+                        >
+                          {t('preview.action.retry')}
+                        </button>
                       </div>
                     )}
                     {selectedFile && !filePreviewError && (
@@ -544,173 +1035,43 @@ export function FilePreview() {
         </TabsContent>
 
         <TabsContent value="logs" className="overflow-hidden flex-1 mt-0">
-          <div className="overflow-y-auto px-4 py-4 space-y-3 h-full">
-            {logs.length === 0 ? (
-              <EmptyState title="No logs yet" subtitle="Tool runs will appear here." />
-            ) : (
-              logs.map((log) => {
-                const isExpanded = expandedLogs[log.id];
-                const contentLines = (log.content || '').split('\n');
-                const isLong =
-                  contentLines.length > 10 || (log.content?.length || 0) > 800;
-                const visible =
-                  isExpanded || !isLong ? contentLines : contentLines.slice(0, 8);
-                return (
-                  <div
-                    key={log.id}
-                    className="border border-[#E5E7EB] dark:border-[#27272a] rounded-lg overflow-hidden"
-                  >
-                    <div className="flex items-center justify-between px-3 py-2 bg-[#F9FAFB] dark:bg-[#111113] border-b border-[#E5E7EB] dark:border-[#27272a]">
-                      <div className="space-y-0.5">
-                        <div className="text-[12px] text-[#111827] dark:text-[#E5E5E5] font-mono">
-                          {log.title}
-                        </div>
-                        {log.subtitle && (
-                          <div className="text-[11px] text-[#6B7280] dark:text-[#71717a] font-mono">
-                            {log.subtitle}
-                          </div>
-                        )}
-                      </div>
-                      <StatusPill status={log.status} />
-                    </div>
-                    {log.content && (
-                      <div className="px-3 py-3 space-y-2">
-                        <pre className="text-[12px] text-[#374151] dark:text-[#d4d4d8] bg-[#F3F4F6] dark:bg-[#09090b] border border-[#E5E7EB] dark:border-[#27272a] rounded-md p-3 overflow-x-auto whitespace-pre-wrap font-mono">
-                          {visible.join('\n')}
-                          {!isExpanded && isLong && '\n…'}
-                        </pre>
-                        {isLong && (
-                          <button
-                            onClick={() => toggleLog(log.id)}
-                            className="flex items-center gap-1 text-[12px] text-[#6B7280] dark:text-[#a1a1aa] font-mono hover:text-[#111827] dark:hover:text-[#E5E5E5] transition-colors"
-                          >
-                            {isExpanded ? (
-                              <ChevronDown className="w-3 h-3" />
-                            ) : (
-                              <ChevronRight className="w-3 h-3" />
-                            )}
-                            {isExpanded ? 'Collapse' : 'Expand'}
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            )}
-          </div>
+          <PreviewLogList logs={logs} />
         </TabsContent>
       </Tabs>
     </div>
   );
 }
 
-function EmptyState({ title, subtitle }: { title: string; subtitle: string }) {
+function EmptyState({
+  title,
+  subtitle,
+  actionLabel,
+  onAction,
+  role,
+}: {
+  title: string;
+  subtitle: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  role?: 'alert' | 'status';
+}) {
   return (
-    <div className="border border-dashed border-[#E5E7EB] dark:border-[#27272a] rounded-lg p-6 text-center">
-      <div className="text-[13px] text-[#111827] dark:text-[#E5E5E5] font-mono">
-        {title}
-      </div>
-      <div className="text-[12px] text-[#6B7280] dark:text-[#71717a] font-mono mt-1">
+    <div
+      role={role}
+      className="border border-dashed border-[hsl(var(--deck-border))] rounded-lg p-6 text-center"
+    >
+      <div className="text-[13px] text-[hsl(var(--deck-ink))] font-mono">{title}</div>
+      <div className="text-[12px] text-[hsl(var(--deck-ink-muted))] font-mono mt-1">
         {subtitle}
       </div>
-    </div>
-  );
-}
-
-function StatusPill({ status }: { status?: 'success' | 'error' | 'running' }) {
-  const label =
-    status === 'success' ? 'Success' : status === 'error' ? 'Failed' : 'Running';
-  const className =
-    status === 'success'
-      ? 'bg-[#22C55E] text-white'
-      : status === 'error'
-        ? 'bg-[#FEE2E2] text-[#b91c1c] dark:bg-[#EF4444]/20 dark:text-[#fca5a5]'
-        : 'bg-[#E5E7EB] text-[#6B7280] dark:bg-[#27272a] dark:text-[#a1a1aa]';
-  return (
-    <span className={cn('text-[11px] px-2 py-0.5 rounded-full font-mono', className)}>
-      {label}
-    </span>
-  );
-}
-
-function LazyTreeNode({
-  node,
-  depth,
-  expandedDirs,
-  childrenCache,
-  toggleDir,
-  onSelectFile,
-  selectedPath,
-}: {
-  node: TreeNode;
-  depth: number;
-  expandedDirs: Record<string, boolean>;
-  childrenCache: Record<string, TreeNode[]>;
-  toggleDir: (path: string) => void;
-  onSelectFile: (path: string) => void;
-  selectedPath: string | null;
-}) {
-  const isDir = node.type === 'dir';
-  const isExpanded = expandedDirs[node.path];
-  const isSelected = !isDir && selectedPath === node.path;
-  const children = childrenCache[node.path] || [];
-
-  return (
-    <div>
-      <button
-        onClick={() => {
-          if (isDir) {
-            toggleDir(node.path);
-          } else {
-            onSelectFile(node.path);
-          }
-        }}
-        className={cn(
-          'flex items-center gap-2 w-full text-left text-[12px] font-mono px-2 py-1 rounded-md transition-colors',
-          isSelected
-            ? 'bg-[#16A34A]/10 text-[#111827] dark:bg-[#22C55E]/10 dark:text-[#E5E5E5]'
-            : 'hover:bg-[#F3F4F6] text-[#6B7280] dark:hover:bg-[#111113] dark:text-[#a1a1aa]',
-          isDir && 'cursor-pointer',
-          isSelected && 'border border-[#16A34A]/30 dark:border-[#22C55E]/30'
-        )}
-        style={{ paddingLeft: depth * 14 + 8 }}
-      >
-        {isDir ? (
-          <>
-            {isExpanded ? (
-              <FolderOpen className="h-3.5 w-3.5 shrink-0 text-[#111827] dark:text-[#E5E5E5]" />
-            ) : (
-              <Folder className="h-3.5 w-3.5 shrink-0 text-[#6B7280] dark:text-[#a1a1aa]" />
-            )}
-            <span className="text-[#111827] dark:text-[#E5E5E5] truncate">
-              {node.name}
-            </span>
-          </>
-        ) : (
-          <>
-            <FileText className="h-3.5 w-3.5 shrink-0 text-[#9CA3AF] dark:text-[#71717a]" />
-            <span className="text-[#111827] dark:text-[#E5E5E5] truncate">
-              {node.name}
-            </span>
-          </>
-        )}
-      </button>
-      {isDir && isExpanded && (
-        <div>
-          {children.map((child) => (
-            <LazyTreeNode
-              key={child.path}
-              node={child}
-              depth={depth + 1}
-              expandedDirs={expandedDirs}
-              childrenCache={childrenCache}
-              toggleDir={toggleDir}
-              onSelectFile={onSelectFile}
-              selectedPath={selectedPath}
-            />
-          ))}
-        </div>
+      {actionLabel && onAction && (
+        <button
+          type="button"
+          onClick={onAction}
+          className="mt-3 rounded-md border border-[hsl(var(--deck-border))] px-2.5 py-1 font-mono text-[11px] text-[hsl(var(--deck-ink-muted))] transition-colors hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))]"
+        >
+          {actionLabel}
+        </button>
       )}
     </div>
   );
@@ -733,9 +1094,9 @@ function buildLogs(
       }>;
     };
   }>
-): LogEntry[] {
+): PreviewLogEntry[] {
   return messages.flatMap((message) => {
-    const logs: LogEntry[] = [];
+    const logs: PreviewLogEntry[] = [];
 
     if (message.agentContent?.toolCalls) {
       for (const toolCall of message.agentContent.toolCalls) {
@@ -899,13 +1260,13 @@ function findAllDiffs(
   return diffs.reverse();
 }
 
-function extractDiffBlock(output: string): { diff?: DiffData } | null {
+function extractDiffBlock(output: string): { diff?: PreviewDiffData } | null {
   if (!output) return null;
   const regex = /<<<DIFF>>>\s*([\s\S]*?)\s*<<<\/DIFF>>>/m;
   const match = output.match(regex);
   if (!match) return null;
   try {
-    const diff = JSON.parse(match[1]) as DiffData;
+    const diff = JSON.parse(match[1]) as PreviewDiffData;
     return { diff };
   } catch {
     return null;
@@ -930,9 +1291,10 @@ function formatArguments(args?: string | Record<string, unknown>): string {
 }
 
 function MonacoFallback() {
+  const t = useT();
   return (
-    <div className="h-full flex items-center justify-center text-[12px] text-[#6B7280] dark:text-[#71717a] font-mono">
-      Loading editor…
+    <div className="h-full flex items-center justify-center text-[12px] text-[hsl(var(--deck-ink-muted))] font-mono">
+      {t('preview.files.editorLoading')}
     </div>
   );
 }
@@ -983,52 +1345,6 @@ function MonacoEditorView({
   );
 }
 
-function _MonacoDiffView({
-  original,
-  modified,
-}: {
-  original: string;
-  modified: string;
-}) {
-  const { theme } = useSettingsStore();
-  const monacoRef = useRef<Monaco | null>(null);
-  const [monacoTheme, setMonacoTheme] = useState('vs-dark');
-
-  const handleEditorWillMount = (monaco: Monaco) => {
-    monacoRef.current = monaco;
-    const registeredTheme = registerMonacoTheme(monaco, theme);
-    setMonacoTheme(registeredTheme);
-  };
-
-  useEffect(() => {
-    if (monacoRef.current) {
-      const registeredTheme = registerMonacoTheme(monacoRef.current, theme);
-      setMonacoTheme(registeredTheme);
-    }
-  }, [theme]);
-
-  return (
-    <MonacoDiffEditor
-      key={`${original.length}-${modified.length}`}
-      original={original}
-      modified={modified}
-      theme={monacoTheme}
-      height="100%"
-      beforeMount={handleEditorWillMount}
-      options={{
-        readOnly: true,
-        renderSideBySide: false,
-        minimap: { enabled: false },
-        fontSize: 12,
-        lineNumbers: 'on',
-        wordWrap: 'on',
-        scrollBeyondLastLine: false,
-        automaticLayout: true,
-      }}
-    />
-  );
-}
-
 function getLanguageFromFilename(filename: string): string {
   const ext = filename.split('.').pop()?.toLowerCase() || '';
   const map: Record<string, string> = {
@@ -1057,126 +1373,4 @@ function getLanguageFromFilename(filename: string): string {
     xml: 'xml',
   };
   return map[ext] || 'plaintext';
-}
-
-function DiffViewer({ diff }: { diff: DiffData }) {
-  const lines = diff.patch.split('\n');
-  let oldLine = 0;
-  let newLine = 0;
-
-  return (
-    <div className="border border-[#E5E7EB] dark:border-[#27272a] rounded-md overflow-hidden bg-white dark:bg-[#111113]">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[#E5E7EB] dark:border-[#27272a] bg-[#F9FAFB] dark:bg-[#111113] text-[12px] text-[#6B7280] dark:text-[#71717a] font-mono">
-        <span>Patch</span>
-        {diff.matchLine && <span>Line {diff.matchLine}</span>}
-      </div>
-      <div className="text-[12px] font-mono">
-        {lines.map((line, index) => {
-          if (line.startsWith('@@')) {
-            const match =
-              /@@ -(?<old>\d+),?(?<oldCount>\d*) \+(?<new>\d+),?(?<newCount>\d*) @@/.exec(
-                line
-              );
-            if (match?.groups) {
-              oldLine = parseInt(match.groups.old, 10);
-              newLine = parseInt(match.groups.new, 10);
-            }
-            return <DiffLine key={`${line}-${index}`} line={line} />;
-          }
-
-          if (
-            line.startsWith('---') ||
-            line.startsWith('+++') ||
-            line.startsWith('Index:') ||
-            line.startsWith('===')
-          ) {
-            return <DiffLine key={`${line}-${index}`} line={line} />;
-          }
-
-          if (line.startsWith('+')) {
-            const currentNew = newLine;
-            newLine += 1;
-            return (
-              <DiffLine
-                key={`${line}-${index}`}
-                line={line}
-                oldLine={null}
-                newLine={currentNew}
-              />
-            );
-          }
-
-          if (line.startsWith('-')) {
-            const currentOld = oldLine;
-            oldLine += 1;
-            return (
-              <DiffLine
-                key={`${line}-${index}`}
-                line={line}
-                oldLine={currentOld}
-                newLine={null}
-              />
-            );
-          }
-
-          if (line.startsWith(' ')) {
-            const currentOld = oldLine;
-            const currentNew = newLine;
-            oldLine += 1;
-            newLine += 1;
-            return (
-              <DiffLine
-                key={`${line}-${index}`}
-                line={line}
-                oldLine={currentOld}
-                newLine={currentNew}
-              />
-            );
-          }
-
-          return <DiffLine key={`${line}-${index}`} line={line} />;
-        })}
-      </div>
-    </div>
-  );
-}
-
-function DiffLine({
-  line,
-  oldLine,
-  newLine,
-}: {
-  line: string;
-  oldLine?: number | null;
-  newLine?: number | null;
-}) {
-  const isMeta =
-    line.startsWith('---') ||
-    line.startsWith('+++') ||
-    line.startsWith('Index:') ||
-    line.startsWith('===');
-  const isHunk = line.startsWith('@@');
-  const sign = line[0];
-  const content = isMeta || isHunk ? line : line.slice(1);
-  const lineStyle = isMeta
-    ? 'text-[#6B7280] dark:text-[#a1a1aa]'
-    : sign === '+'
-      ? 'text-[#166534] bg-[#22C55E]/10 dark:text-[#86efac] dark:bg-[#22C55E]/10'
-      : sign === '-'
-        ? 'text-[#b91c1c] bg-[#EF4444]/10 dark:text-[#fca5a5] dark:bg-[#EF4444]/10'
-        : isHunk
-          ? 'text-[#1d4ed8] bg-[#DBEAFE] dark:text-[#93c5fd] dark:bg-[#1e3a8a]/30'
-          : 'text-[#374151] dark:text-[#d4d4d8]';
-
-  return (
-    <div className={cn('grid grid-cols-[40px_40px_1fr] gap-2 px-3 py-0.5', lineStyle)}>
-      <span className="text-right text-[#9CA3AF] dark:text-[#71717a]">
-        {oldLine ? String(oldLine).padStart(2, ' ') : ''}
-      </span>
-      <span className="text-right text-[#9CA3AF] dark:text-[#71717a]">
-        {newLine ? String(newLine).padStart(2, ' ') : ''}
-      </span>
-      <span className="whitespace-pre">{content}</span>
-    </div>
-  );
 }

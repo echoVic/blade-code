@@ -591,7 +591,7 @@ async function listUntilParent(
   let cursor: string | undefined;
 
   while (true) {
-    const response = await connection.unstable_listSessions({ cwd, cursor });
+    const response = await connection.listSessions({ cwd, cursor });
     responses.push(response);
     for (const session of response.sessions) sessions.set(session.sessionId, session);
     const parent = sessions.get(parentId);

@@ -1,17 +1,22 @@
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
+import { MAX_INLINE_ATTACHMENT_BYTES } from '../../../../src/api/attachmentLimits.js';
 import { TooManyRequestsError } from '../../../../src/server/error.js';
 import type { SessionRouteController } from '../../../../src/server/routes/session.js';
 import { TaskRoutes } from '../../../../src/server/routes/task.js';
 
 function createController(
   dispatchTask: SessionRouteController['dispatchTask'],
-  getTaskDiff: SessionRouteController['getTaskDiff'] = vi.fn()
+  getTaskDiff: SessionRouteController['getTaskDiff'] = vi.fn(),
+  retryTask: SessionRouteController['retryTask'] = vi.fn(),
+  deliverTask: SessionRouteController['deliverTask'] = vi.fn()
 ): SessionRouteController {
   return {
     app: new Hono(),
     dispatchTask,
+    retryTask,
     getTaskDiff,
+    deliverTask,
     recoverQueuedTasks: vi.fn(async () => ({
       scheduled: 0,
       failed: 0,
@@ -61,6 +66,7 @@ describe('TaskRoutes', () => {
       sourceProjectPath: '/tmp/source',
       isolation: 'worktree',
       permissionMode: 'default',
+      modelId: undefined,
       attachments: undefined,
     });
     await expect(response.json()).resolves.toMatchObject({
@@ -85,6 +91,32 @@ describe('TaskRoutes', () => {
     });
 
     expect(response.status).toBe(400);
+    expect(dispatchTask).not.toHaveBeenCalled();
+  });
+
+  it('rejects task attachments above the shared inline budget', async () => {
+    const dispatchTask = vi.fn<SessionRouteController['dispatchTask']>();
+    const app = TaskRoutes(createController(dispatchTask));
+    const halfBudget = 'x'.repeat(Math.floor(MAX_INLINE_ATTACHMENT_BYTES / 2) + 1);
+
+    const response = await app.request('/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        prompt: 'Inspect these screenshots',
+        attachments: [
+          { type: 'image', content: halfBudget },
+          { type: 'image', content: halfBudget },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        message: 'Task attachments exceed the 5 MiB limit',
+      },
+    });
     expect(dispatchTask).not.toHaveBeenCalled();
   });
 
@@ -135,6 +167,50 @@ describe('TaskRoutes', () => {
     });
   });
 
+  it('retries the exact compound task and returns the new accepted run', async () => {
+    const retryTask = vi.fn<SessionRouteController['retryTask']>(async () => ({
+      session: {
+        sessionId: 'task-retry',
+        projectPath: '/tmp/retry-worktree',
+        title: 'Retried task',
+        rootId: 'task-retry',
+        taskStatus: 'running',
+        taskRetryAvailable: true,
+        taskRetriedFrom: {
+          sessionId: 'task-source',
+          projectPath: '/tmp/source-worktree',
+        },
+        messageCount: 0,
+        firstMessageTime: '2026-08-06T00:00:00.000Z',
+        lastMessageTime: '2026-08-06T00:00:00.000Z',
+        hasErrors: false,
+        isActive: true,
+      },
+      runId: 'run-retry',
+      messageId: 'message-retry',
+      status: 'running',
+    }));
+    const app = TaskRoutes(createController(vi.fn(), vi.fn(), retryTask));
+
+    const response = await app.request(
+      '/task-source/retry?projectPath=%2Ftmp%2Fsource-worktree',
+      { method: 'POST' }
+    );
+
+    expect(response.status).toBe(202);
+    expect(retryTask).toHaveBeenCalledWith('task-source', '/tmp/source-worktree');
+    await expect(response.json()).resolves.toMatchObject({
+      session: {
+        sessionId: 'task-retry',
+        taskRetriedFrom: {
+          sessionId: 'task-source',
+          projectPath: '/tmp/source-worktree',
+        },
+      },
+      runId: 'run-retry',
+    });
+  });
+
   it('returns a bounded task diff artifact for the exact execution workspace', async () => {
     const getTaskDiff = vi.fn<SessionRouteController['getTaskDiff']>(async () => ({
       sessionId: 'task-1',
@@ -174,5 +250,61 @@ describe('TaskRoutes', () => {
       ],
       truncated: false,
     });
+  });
+
+  it('delivers an exact task workspace and returns its durable session state', async () => {
+    const deliverTask = vi.fn<SessionRouteController['deliverTask']>(
+      async (sessionId, action, projectPath) => ({
+        sessionId,
+        projectPath: projectPath ?? '/tmp/worktree',
+        title: 'Task one',
+        rootId: sessionId,
+        taskStatus: 'completed',
+        taskDelivery: {
+          status: action === 'apply' ? 'applied' : 'discarded',
+          updatedAt: '2026-08-07T00:00:00.000Z',
+          changedFiles: 2,
+        },
+        messageCount: 2,
+        firstMessageTime: '2026-08-07T00:00:00.000Z',
+        lastMessageTime: '2026-08-07T00:00:00.000Z',
+        hasErrors: false,
+        isActive: true,
+      })
+    );
+    const app = TaskRoutes(createController(vi.fn(), vi.fn(), vi.fn(), deliverTask));
+
+    const response = await app.request(
+      '/task-1/delivery?projectPath=%2Ftmp%2Fworktree',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'apply' }),
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(deliverTask).toHaveBeenCalledWith('task-1', 'apply', '/tmp/worktree');
+    await expect(response.json()).resolves.toMatchObject({
+      sessionId: 'task-1',
+      taskDelivery: {
+        status: 'applied',
+        changedFiles: 2,
+      },
+    });
+  });
+
+  it('rejects malformed task delivery actions before invoking the controller', async () => {
+    const deliverTask = vi.fn<SessionRouteController['deliverTask']>();
+    const app = TaskRoutes(createController(vi.fn(), vi.fn(), vi.fn(), deliverTask));
+
+    const response = await app.request('/task-1/delivery', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'merge' }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(deliverTask).not.toHaveBeenCalled();
   });
 });

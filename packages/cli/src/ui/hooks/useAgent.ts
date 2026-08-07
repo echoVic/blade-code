@@ -15,16 +15,18 @@ import {
 import type { AgentSession } from '../../agent/subagents/AgentSessionStore.js';
 import type { UserMessageContent } from '../../agent/types.js';
 import { registerCleanup } from '../../services/GracefulShutdown.js';
-import type {
-  RewindSessionOptions,
-  RewoundSession,
-  SessionRewindCheckpoint,
+import {
+  type RewindSessionOptions,
+  type RewoundSession,
+  type SessionRewindCheckpoint,
+  SessionService,
 } from '../../services/SessionService.js';
 import { vanillaStore } from '../../store/vanilla.js';
 import { getCwd } from '../../utils/cwd.js';
 
 export interface AgentOptions {
   sessionId?: string;
+  workspaceRoot?: string;
   systemPrompt?: string;
   appendSystemPrompt?: string;
   maxTurns?: number;
@@ -44,6 +46,13 @@ export interface AgentOptions {
 export function useAgent(options: AgentOptions) {
   const agentRef = useRef<Agent | undefined>(undefined);
   const runtimeRef = useRef<SessionRuntime | undefined>(undefined);
+  const persistedModelRef = useRef<
+    | {
+        sessionId: string;
+        modelId?: string;
+      }
+    | undefined
+  >(undefined);
   const cleanupPromiseRef = useRef<Promise<void> | undefined>(undefined);
 
   /**
@@ -61,6 +70,7 @@ export function useAgent(options: AgentOptions) {
 
     agentRef.current = undefined;
     runtimeRef.current = undefined;
+    persistedModelRef.current = undefined;
 
     const cleanupPromise = (async () => {
       try {
@@ -82,15 +92,35 @@ export function useAgent(options: AgentOptions) {
 
   const getOrCreateSessionRuntime = useMemoizedFn(
     async (sessionId: string): Promise<SessionRuntime> => {
-      if (runtimeRef.current && runtimeRef.current.sessionId !== sessionId) {
+      const workspaceRoot = options.workspaceRoot ?? getCwd();
+      if (
+        runtimeRef.current &&
+        (runtimeRef.current.sessionId !== sessionId ||
+          runtimeRef.current.workspaceRoot !== workspaceRoot)
+      ) {
         await cleanupAgent();
       }
       if (!runtimeRef.current) {
         runtimeRef.current = await SessionRuntime.create({
           sessionId,
-          workspaceRoot: getCwd(),
+          workspaceRoot,
           modelId: options.modelId,
         });
+        try {
+          const metadata = await SessionService.findSessionMetadata(
+            sessionId,
+            runtimeRef.current.workspaceRoot
+          );
+          persistedModelRef.current = {
+            sessionId,
+            modelId: metadata?.selectedModelId,
+          };
+        } catch (error) {
+          const runtime = runtimeRef.current;
+          runtimeRef.current = undefined;
+          await runtime.dispose().catch(() => undefined);
+          throw error;
+        }
       }
       return runtimeRef.current;
     }
@@ -108,9 +138,36 @@ export function useAgent(options: AgentOptions) {
       let agent: Agent;
       if (!shouldUseEphemeralRuntime && sessionId) {
         const runtime = await getOrCreateSessionRuntime(sessionId);
+        const requestedModelId = overrides?.modelId ?? options.modelId;
+        const previousModelId = runtime.getCurrentModelId();
         await runtime.refresh({
-          modelId: overrides?.modelId ?? options.modelId,
+          modelId: requestedModelId,
         });
+        if (
+          requestedModelId &&
+          requestedModelId !== 'inherit' &&
+          (persistedModelRef.current?.sessionId !== sessionId ||
+            persistedModelRef.current.modelId !== requestedModelId)
+        ) {
+          try {
+            const metadata = await SessionService.updateSessionMetadata(
+              sessionId,
+              runtime.workspaceRoot,
+              { selectedModelId: requestedModelId }
+            );
+            persistedModelRef.current = {
+              sessionId,
+              modelId: metadata.selectedModelId,
+            };
+          } catch (error) {
+            if (previousModelId && previousModelId !== requestedModelId) {
+              await runtime
+                .refresh({ modelId: previousModelId })
+                .catch(() => undefined);
+            }
+            throw error;
+          }
+        }
 
         agent = await Agent.createWithRuntime(runtime, {
           sessionId,

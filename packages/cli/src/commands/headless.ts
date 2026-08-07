@@ -33,6 +33,7 @@ import {
 import { Bus } from '../server/bus.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import { SessionTaskService } from '../services/SessionTaskService.js';
+import { getCurrentModel } from '../store/vanilla.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
 import type {
   ConfirmationDetails,
@@ -768,12 +769,24 @@ export async function runHeadless(
       forkSession: validatedOptions.forkSession,
       fallbackSessionPrefix: 'headless',
     });
+    const taskModelId =
+      validatedOptions.model && validatedOptions.model !== 'inherit'
+        ? validatedOptions.model
+        : getCurrentModel()?.id;
     const createdTask = validatedOptions.taskIsolation
       ? await SessionTaskService.createSessionTask({
           sessionId,
           prompt: normalized.content,
           sourceProjectPath: getCwd(),
           isolation: validatedOptions.taskIsolation,
+          dispatch: {
+            version: 1,
+            prompt: normalized.content,
+            sourceProjectPath: getCwd(),
+            isolation: validatedOptions.taskIsolation,
+            permissionMode,
+            ...(taskModelId ? { modelId: taskModelId } : {}),
+          },
         })
       : undefined;
     const workspaceRoot = createdTask?.metadata.projectPath ?? getCwd();

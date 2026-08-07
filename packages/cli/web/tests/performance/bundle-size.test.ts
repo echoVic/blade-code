@@ -5,8 +5,9 @@ import { describe, expect, it } from 'vitest';
 
 const DIST_DIR = path.resolve(process.cwd(), '../dist/web');
 const ASSETS_DIR = path.join(DIST_DIR, 'assets');
-const MAX_ENTRY_GZIP_BYTES = 220 * 1024;
-const MAX_TOTAL_JS_GZIP_BYTES = 900 * 1024;
+const MAX_ENTRY_GZIP_BYTES = 140 * 1024;
+const MAX_INITIAL_JS_GZIP_BYTES = 240 * 1024;
+const MAX_TOTAL_JS_GZIP_BYTES = 650 * 1024;
 
 function gzipSize(filePath: string): number {
   return gzipSync(readFileSync(filePath)).byteLength;
@@ -26,6 +27,29 @@ describe('web bundle size', () => {
     const entryPath = path.join(DIST_DIR, entryMatch?.[1] ?? '');
     const entryGzipBytes = gzipSize(entryPath);
     expect(entryGzipBytes).toBeLessThanOrEqual(MAX_ENTRY_GZIP_BYTES);
+
+    const initialJsPaths = [
+      ...Array.from(
+        indexHtml.matchAll(/<script[^>]+src="([^"]+\.js)"/g),
+        (match) => match[1]
+      ),
+      ...Array.from(
+        indexHtml.matchAll(/<link[^>]+rel="modulepreload"[^>]+href="([^"]+\.js)"/g),
+        (match) => match[1]
+      ),
+    ];
+    const initialJsNames = initialJsPaths.map((assetPath) => path.basename(assetPath));
+    expect(
+      initialJsNames.some((name) =>
+        /^(MarkdownRenderer|CodeBlockHighlighter|vendor-xterm)-/.test(name)
+      )
+    ).toBe(false);
+    const initialJsGzipBytes = initialJsPaths.reduce(
+      (total, assetPath) =>
+        total + gzipSize(path.join(DIST_DIR, assetPath.replace(/^\//, ''))),
+      0
+    );
+    expect(initialJsGzipBytes).toBeLessThanOrEqual(MAX_INITIAL_JS_GZIP_BYTES);
 
     const totalJsGzipBytes = readdirSync(ASSETS_DIR)
       .filter((file) => file.endsWith('.js'))

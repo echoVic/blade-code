@@ -1,5 +1,9 @@
 import { Mutex } from 'async-mutex';
 import { nanoid } from 'nanoid';
+import {
+  MAX_INLINE_ATTACHMENT_BYTES,
+  MAX_USER_MESSAGE_TEXT_CHARS,
+} from '../../api/attachmentLimits.js';
 import type { UserMessageContent } from '../types.js';
 import {
   DurableSteeringInbox,
@@ -7,7 +11,8 @@ import {
 } from './DurableSteeringInbox.js';
 
 export const MAX_PENDING_STEERS = 20;
-export const MAX_PENDING_STEER_CHARS = 5_000_000;
+export const MAX_PENDING_STEER_CHARS =
+  MAX_INLINE_ATTACHMENT_BYTES + MAX_USER_MESSAGE_TEXT_CHARS;
 
 export type SteeringMessage = DurableSteeringMessage;
 

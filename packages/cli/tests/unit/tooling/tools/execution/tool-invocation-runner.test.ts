@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { executeToolInvocation } from '../../../../../src/tools/execution/ToolInvocationRunner.js';
 import type { ToolInvocation } from '../../../../../src/tools/types/index.js';
 
-function createInvocation(execute: ReturnType<typeof vi.fn>): ToolInvocation<unknown> {
+function createInvocation(execute: (...args: any[]) => any): ToolInvocation<unknown> {
   return {
     toolName: 'TestTool',
     params: {},

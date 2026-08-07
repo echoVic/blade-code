@@ -2,6 +2,7 @@ import type { SessionRef } from '@api/schemas';
 import type { StateCreator } from 'zustand';
 import type {
   Message as BaseMessage,
+  BoundProject,
   Goal,
   ImageAttachmentInput,
   MessageContent,
@@ -12,10 +13,12 @@ import type {
   SessionRewindMode,
   StreamEvent,
   TaskDispatchInput,
+  TaskEventConnectionState,
   WorkspaceInfo,
 } from '@/services';
 
 export type {
+  BoundProject,
   Goal,
   ImageAttachmentInput,
   MessageContent,
@@ -27,6 +30,7 @@ export type {
   SessionRewindMode,
   StreamEvent,
   TaskDispatchInput,
+  TaskEventConnectionState,
   WorkspaceInfo,
 };
 
@@ -128,6 +132,22 @@ export interface Message extends Omit<BaseMessage, 'metadata'> {
   agentContent?: AgentResponseContent;
 }
 
+export type CatalogLoadState = 'idle' | 'loading' | 'hydrating' | 'ready' | 'error';
+
+export type SessionErrorKind =
+  | 'submission'
+  | 'execution'
+  | 'interaction'
+  | 'task_action'
+  | 'navigation'
+  | 'generic';
+
+export interface SessionErrorContext {
+  kind: SessionErrorKind;
+  sessionRef?: SessionRef;
+  failureCode?: NonNullable<Session['taskFailure']>['code'];
+}
+
 export interface SessionSlice {
   sessions: Session[];
   currentSessionId: string | null;
@@ -135,7 +155,10 @@ export interface SessionSlice {
   forkingSessionRef: SessionRef | null;
   isTemporarySession: boolean;
   isLoading: boolean;
+  catalogLoadState: CatalogLoadState;
+  catalogError: string | null;
   error: string | null;
+  errorContext: SessionErrorContext | null;
   goal: Goal | null;
 
   setSessions: (sessions: Session[]) => void;
@@ -145,7 +168,8 @@ export interface SessionSlice {
   setTemporarySession: (isTemp: boolean) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
-  startTemporarySession: () => void;
+  getNavigationVersion: () => number;
+  startTemporarySession: (projectPath?: string) => void;
   clearError: () => void;
   setGoal: (goal: Goal | null) => void;
   loadSessions: () => Promise<void>;
@@ -154,8 +178,8 @@ export interface SessionSlice {
   updateSession: (ref: SessionRef, title: string) => Promise<void>;
   forkSession: (session: Session) => Promise<void>;
   rewindSession: (targetMessageId: string, mode: SessionRewindMode) => Promise<boolean>;
-  sendMessage: (payload: SendMessagePayload) => Promise<void>;
-  abortSession: () => Promise<void>;
+  sendMessage: (payload: SendMessagePayload) => Promise<boolean>;
+  abortSession: () => Promise<boolean>;
   pauseGoal: () => Promise<void>;
   resumeGoal: () => Promise<void>;
   editGoal: (objective: string) => Promise<void>;
@@ -164,14 +188,34 @@ export interface SessionSlice {
 
 export interface TaskListSlice {
   taskEventsConnected: boolean;
+  taskEventConnectionState: TaskEventConnectionState;
   taskEventUnsubscribe: (() => void) | null;
   taskWorkspaceInfo: WorkspaceInfo | null;
+  isTaskWorkspaceLoading: boolean;
+  taskWorkspaceError: string | null;
+  boundProjects: BoundProject[];
+  selectedProjectPath: string | null;
   isDispatchingTask: boolean;
+  isBindingProject: boolean;
+  cancellingTaskKeys: string[];
+  retryingTaskKeys: string[];
+  taskDeliveryActions: Record<string, 'apply' | 'discard'>;
+  unreadTaskKeys: string[];
 
   subscribeToTaskEvents: () => Promise<void>;
+  reconnectTaskEvents: () => Promise<void>;
   unsubscribeFromTaskEvents: () => void;
   handleTaskEvent: (event: StreamEvent) => void;
   loadTaskWorkspaceInfo: () => Promise<void>;
+  loadBoundProjects: () => Promise<void>;
+  bindProject: (projectPath: string) => Promise<void>;
+  unbindProject: (projectPath: string) => Promise<void>;
+  selectProject: (projectPath: string) => void;
+  cancelTask: (ref: SessionRef) => Promise<void>;
+  retryTask: (ref: SessionRef) => Promise<void>;
+  deliverTask: (ref: SessionRef, action: 'apply' | 'discard') => Promise<void>;
+  markTaskRead: (ref: SessionRef) => void;
+  clearUnreadTasks: () => void;
   dispatchTask: (input: TaskDispatchInput) => Promise<void>;
 }
 
@@ -198,9 +242,12 @@ export interface MessageSlice {
 
 export interface StreamingSlice {
   isStreaming: boolean;
+  isStopping: boolean;
   agentPhase: AgentPhase;
+  sessionEventConnectionState: TaskEventConnectionState | 'idle';
   currentRunId: string | null;
   pendingSteeringCount: number;
+  pendingInputDelivery: 'current_turn' | 'next_turn' | null;
   recoveredSteeringCount: number;
   eventUnsubscribe: (() => void) | null;
   currentAssistantMessageId: string | null;
@@ -215,6 +262,7 @@ export interface StreamingSlice {
   ) => Promise<() => void>;
   replaceEventSubscription: (next: (() => void) | null) => void;
   subscribeToEvents: (ref: SessionRef) => Promise<void>;
+  reconnectSessionEvents: () => Promise<void>;
   unsubscribeFromEvents: () => void;
   handleEvent: (event: StreamEvent) => void;
   setCurrentAssistantMessageId: (id: string | null) => void;

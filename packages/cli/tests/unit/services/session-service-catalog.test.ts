@@ -263,6 +263,34 @@ describe('SessionService strict session catalog', () => {
     ).rejects.toThrow('Invalid session cursor');
   });
 
+  it('serves projected pages without falling back to a JSONL catalog scan', async () => {
+    await writeTranscript(workspaceA, 'projected-newer', [
+      makeCreatedEvent('projected-newer', workspaceA, '2024-01-02T00:00:00.000Z'),
+    ]);
+    await writeTranscript(workspaceA, 'projected-older', [
+      makeCreatedEvent('projected-older', workspaceA, '2024-01-01T00:00:00.000Z'),
+    ]);
+
+    const internals = SessionService as unknown as {
+      scanStoredSessions: (...args: unknown[]) => Promise<unknown[]>;
+    };
+    const fallback = vi.spyOn(internals, 'scanStoredSessions');
+    try {
+      const page = await SessionService.listSessionPage({
+        cwd: workspaceA,
+        limit: 1,
+      });
+
+      expect(page.sessions.map((session) => session.sessionId)).toEqual([
+        'projected-newer',
+      ]);
+      expect(page.nextCursor).toEqual(expect.any(String));
+      expect(fallback).not.toHaveBeenCalled();
+    } finally {
+      fallback.mockRestore();
+    }
+  });
+
   it('projects only public metadata fields and applies latest session_updated metadata', async () => {
     await writeTranscript(workspaceA, 'metadata-session', [
       makeCreatedEvent('metadata-session', workspaceA, '2024-01-01T00:00:00.000Z'),
@@ -862,6 +890,20 @@ describe('SessionService strict session catalog', () => {
       },
     });
 
+    const ordinary = await SessionService.createSessionMetadata(
+      'ordinary-session',
+      workspaceA,
+      {
+        title: 'Ordinary chat',
+        taskStatus: 'completed',
+      }
+    );
+    expect(ordinary).toMatchObject({
+      sessionId: 'ordinary-session',
+      taskStatus: 'completed',
+      messageCount: 0,
+    });
+
     await expect(
       Promise.all([
         SessionService.createSessionMetadata('collision-session', workspaceA, {
@@ -889,6 +931,31 @@ describe('SessionService strict session catalog', () => {
     ).rejects.toThrow('Session catalog cwd must be absolute');
   });
 
+  it('projects legacy task failure reasons through the safe durable contract', async () => {
+    const sessionId = 'legacy-task-failure';
+    const timestamp = '2026-08-07T10:00:00.000Z';
+    await writeTranscript(workspaceA, sessionId, [
+      makeCreatedEvent(sessionId, workspaceA, timestamp, {
+        taskStatus: 'failed',
+        taskStatusReason:
+          'Timeout at /Users/alice/private/config.json api_key=sk-secret-value',
+      }),
+    ]);
+
+    const metadata = await SessionService.findSessionMetadata(sessionId, workspaceA);
+    expect(metadata).toMatchObject({
+      taskStatus: 'failed',
+      taskStatusReason: 'Provider authentication failed. Check model credentials.',
+      taskFailure: {
+        code: 'authentication',
+        message: 'Provider authentication failed. Check model credentials.',
+        retryable: false,
+      },
+    });
+    expect(JSON.stringify(metadata)).not.toContain('/Users/alice');
+    expect(JSON.stringify(metadata)).not.toContain('sk-secret-value');
+  });
+
   it('keeps the durable worktree lease private while projecting task artifacts', async () => {
     const taskWorktree = {
       sessionId: 'artifact-session',
@@ -901,6 +968,8 @@ describe('SessionService strict session catalog', () => {
       worktreeRoot: workspaceA,
       workspaceRoot: workspaceA,
       sourceHadChanges: false,
+      sourceStateFingerprint:
+        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
     };
     const created = await SessionService.createSessionMetadata(
       'artifact-session',
@@ -969,15 +1038,80 @@ describe('SessionService strict session catalog', () => {
     expect(completed).not.toHaveProperty('taskWorktree');
   });
 
+  it('persists delivery outcomes while keeping the worktree lease private', async () => {
+    const taskWorktree = {
+      sessionId: 'delivery-session',
+      name: 'task/delivery-session',
+      branch: 'blade-worktree-task-delivery',
+      baseCommit: 'abc123',
+      originalBranch: 'main',
+      repositoryRoot: workspaceB,
+      originalWorkspaceRoot: workspaceB,
+      worktreeRoot: workspaceA,
+      workspaceRoot: workspaceA,
+      sourceHadChanges: false,
+      sourceStateFingerprint:
+        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+    };
+    await SessionService.createSessionMetadata('delivery-session', workspaceA, {
+      taskIsolation: 'worktree',
+      taskSourceProjectPath: workspaceB,
+      taskWorktree,
+    });
+
+    const conflicted = await SessionService.updateSessionMetadata(
+      'delivery-session',
+      workspaceA,
+      {
+        taskDelivery: {
+          status: 'conflicted',
+          updatedAt: '2026-08-07T12:00:00.000Z',
+          message: 'Source workspace changed after this task started',
+        },
+      }
+    );
+    expect(conflicted.taskDelivery).toEqual({
+      status: 'conflicted',
+      updatedAt: '2026-08-07T12:00:00.000Z',
+      message: 'Source workspace changed after this task started',
+    });
+    expect(conflicted).not.toHaveProperty('taskWorktree');
+
+    const discarded = await SessionService.updateSessionMetadata(
+      'delivery-session',
+      workspaceA,
+      {
+        taskDelivery: {
+          status: 'discarded',
+          updatedAt: '2026-08-07T12:01:00.000Z',
+          changedFiles: 2,
+        },
+        taskWorktree: null,
+      }
+    );
+    expect(discarded).toMatchObject({
+      taskDelivery: {
+        status: 'discarded',
+        changedFiles: 2,
+      },
+    });
+    expect(discarded.taskWorktreePath).toBeUndefined();
+    await expect(
+      SessionService.findSessionTaskWorktree('delivery-session', workspaceA)
+    ).resolves.toBeUndefined();
+  });
+
   it('updates existing metadata with exactly one durable session_updated and hides private fields', async () => {
     await SessionService.createSessionMetadata('update-session', workspaceA, {
       title: 'Initial',
+      selectedModelId: 'model-1',
     });
     const updated = await SessionService.updateSessionMetadata(
       'update-session',
       workspaceA,
       {
         title: 'Updated',
+        selectedModelId: 'model-2',
       }
     );
 
@@ -986,6 +1120,7 @@ describe('SessionService strict session catalog', () => {
       projectPath: workspaceA,
       rootId: 'update-session',
       title: 'Updated',
+      selectedModelId: 'model-2',
       messageCount: 0,
     });
     expect(updated).not.toHaveProperty('filePath');
@@ -1004,7 +1139,58 @@ describe('SessionService strict session catalog', () => {
     });
     await expect(
       SessionService.findSessionMetadata('update-session', workspaceA)
-    ).resolves.toMatchObject({ title: 'Updated' });
+    ).resolves.toMatchObject({
+      title: 'Updated',
+      selectedModelId: 'model-2',
+    });
+  });
+
+  it('keeps the exact retry dispatch private while projecting retry capability', async () => {
+    const dispatch = {
+      version: 1 as const,
+      prompt: 'Fix the failing release with the attached screenshot',
+      title: 'Fix release',
+      sourceProjectPath: workspaceA,
+      isolation: 'local' as const,
+      permissionMode: 'autoEdit' as const,
+      modelId: 'model-snapshot',
+      attachments: [
+        {
+          type: 'image' as const,
+          content: 'data:image/png;base64,exact-payload',
+          mimeType: 'image/png',
+          name: 'failure.png',
+        },
+      ],
+    };
+    const created = await SessionService.createSessionMetadata(
+      'retry-source',
+      workspaceA,
+      {
+        title: 'Fix release',
+        taskPromptSummary: 'Fix the failing release',
+        taskDispatch: dispatch,
+        taskModelId: dispatch.modelId,
+      }
+    );
+
+    expect(created).toMatchObject({
+      taskModelId: 'model-snapshot',
+      taskRetryAvailable: true,
+    });
+    expect(created).not.toHaveProperty('taskDispatch');
+    await expect(
+      SessionService.findSessionTaskDispatch('retry-source', workspaceA)
+    ).resolves.toEqual(dispatch);
+    const listed = await SessionService.listSessions({ cwd: workspaceA });
+    expect(
+      listed.find((session) => session.sessionId === 'retry-source')
+    ).toMatchObject({
+      taskRetryAvailable: true,
+      taskModelId: 'model-snapshot',
+      selectedModelId: 'model-snapshot',
+    });
+    expect(JSON.stringify(listed)).not.toContain('exact-payload');
   });
 
   it('reconciles only a dead exact-workspace task owner and appends interrupted once', async () => {

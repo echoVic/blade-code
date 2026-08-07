@@ -10,18 +10,25 @@ interface SettingsState extends GeneralSettings {
 
 const getIsDark = (uiTheme: UiTheme): boolean => {
   if (uiTheme === 'system') {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return (
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches
+    );
   }
   return uiTheme === 'dark';
 };
 
 const applyThemeToDOM = (uiTheme: UiTheme) => {
+  if (typeof document === 'undefined') return;
   const root = document.documentElement;
   root.classList.remove('light', 'dark');
   if (uiTheme === 'system') {
-    const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches
-      ? 'dark'
-      : 'light';
+    const prefersDark =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const systemTheme = prefersDark ? 'dark' : 'light';
     root.classList.add(systemTheme);
   } else {
     root.classList.add(uiTheme);

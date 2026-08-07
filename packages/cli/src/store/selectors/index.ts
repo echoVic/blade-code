@@ -25,6 +25,9 @@ const EMPTY_MODELS: ModelConfig[] = [];
  */
 export const useSessionId = () => useBladeStore((state) => state.session.sessionId);
 
+export const useWorkspaceRoot = () =>
+  useBladeStore((state) => state.session.workspaceRoot);
+
 /**
  * 获取消息列表
  */

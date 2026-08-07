@@ -303,7 +303,8 @@ export class ContextManager {
     parentUuid: string | null = null,
     error?: string,
     subagentInfo?: SubagentInfoForContext,
-    subagentRef?: SubagentRunRef
+    subagentRef?: SubagentRunRef,
+    toolMetadata?: JsonValue
   ): Promise<string> {
     return this.persistent.saveToolResult(
       sessionId,
@@ -313,7 +314,8 @@ export class ContextManager {
       parentUuid,
       error,
       subagentInfo,
-      subagentRef
+      subagentRef,
+      toolMetadata
     );
   }
 

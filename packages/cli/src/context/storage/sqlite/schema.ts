@@ -8,7 +8,7 @@
  */
 
 /** schema 版本；不兼容变更时递增，落后版本直接 drop 重建（缓存可弃）。 */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS projection_state (
@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   model              TEXT,
   task_status        TEXT,
   last_message_time  TEXT,
+  project_sort_key   TEXT NOT NULL,
+  session_sort_key   TEXT NOT NULL,
   first_message_time TEXT,
   message_count      INTEGER NOT NULL DEFAULT 0,
   has_errors         INTEGER NOT NULL DEFAULT 0,
@@ -39,7 +41,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   metadata_json      TEXT NOT NULL,
   PRIMARY KEY (project_path, session_id)
 );
-CREATE INDEX IF NOT EXISTS idx_sessions_last ON sessions(last_message_time DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_catalog ON sessions(
+  last_message_time DESC,
+  project_sort_key ASC,
+  session_sort_key ASC
+);
 
 CREATE TABLE IF NOT EXISTS parts (
   project_path TEXT NOT NULL,

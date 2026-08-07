@@ -1,8 +1,8 @@
 import type { Api, Model, MutableModels } from '@earendil-works/pi-ai';
-import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { abortableSleep } from '../utils/abort.js';
 import type {
+  ChatCompletionMessageToolCall,
   ChatConfig,
   ChatRequestOptions,
   ChatResponse,
@@ -22,6 +22,15 @@ import { streamPiModel } from './pi/streamAdapter.js';
 
 const logger = createLogger(LogCategory.CHAT);
 type ToolDefinition = { name: string; description: string; parameters: unknown };
+
+function hasImageContent(message: Message | undefined): boolean {
+  return Boolean(
+    message &&
+      message.role === 'user' &&
+      Array.isArray(message.content) &&
+      message.content.some((part) => part.type === 'image_url')
+  );
+}
 
 export class PiAIChatService implements IChatService {
   private config: ChatConfig;
@@ -94,6 +103,10 @@ export class PiAIChatService implements IChatService {
     }
 
     const filtered = filterOrphanToolMessages(messages);
+    const latestUserMessage = filtered.findLast((message) => message.role === 'user');
+    if (hasImageContent(latestUserMessage) && !this.model.input.includes('image')) {
+      throw new Error(`${this.model.name} does not support image input`);
+    }
     const disableThinking =
       Boolean(requiredTool) || hasNonThinkingToolHistory(filtered);
     const context = await createPiContext(

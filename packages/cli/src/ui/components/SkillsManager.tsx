@@ -6,6 +6,7 @@
 
 import { Box, Text, useInput } from 'ink';
 import { getSkillRegistry } from '../../skills/index.js';
+import { useWorkspaceRoot } from '../../store/selectors/index.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 
 export interface SkillsManagerProps {
@@ -19,7 +20,8 @@ export interface SkillsManagerProps {
  * Skills 查看器主组件
  */
 export function SkillsManager({ onCancel }: SkillsManagerProps) {
-  const registry = getSkillRegistry();
+  const workspaceRoot = useWorkspaceRoot();
+  const registry = getSkillRegistry({ cwd: workspaceRoot });
   const skills = registry.getAll();
 
   // 按来源分组

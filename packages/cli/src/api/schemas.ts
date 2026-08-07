@@ -1,4 +1,9 @@
 import { Default, Runtime, type Static, StringEnum, Type } from '../schema/index.js';
+import {
+  MAX_INLINE_ATTACHMENT_BYTES,
+  MAX_INLINE_ATTACHMENT_COUNT,
+  MAX_USER_MESSAGE_TEXT_CHARS,
+} from './attachmentLimits.js';
 
 export { parseSchema } from '../schema/index.js';
 export { Type };
@@ -63,6 +68,22 @@ export type SessionTaskStatus = Static<typeof SessionTaskStatusSchema>;
 export const SessionTaskIsolationSchema = Runtime(StringEnum(['local', 'worktree']));
 export type SessionTaskIsolation = Static<typeof SessionTaskIsolationSchema>;
 
+export const SessionTaskDeliveryStatusSchema = Runtime(
+  StringEnum(['applied', 'discarded', 'conflicted'])
+);
+export type SessionTaskDeliveryStatus = Static<typeof SessionTaskDeliveryStatusSchema>;
+
+export const SessionTaskDeliverySchema = Runtime(
+  Type.Object({
+    status: SessionTaskDeliveryStatusSchema,
+    updatedAt: Type.String(),
+    sourceCommit: Type.Optional(Type.String()),
+    changedFiles: Type.Optional(Type.Integer({ minimum: 0 })),
+    message: Type.Optional(Type.String()),
+  })
+);
+export type SessionTaskDelivery = Static<typeof SessionTaskDeliverySchema>;
+
 export const SessionTaskDiffStatSchema = Runtime(
   Type.Object({
     changedFiles: Type.Integer({ minimum: 0 }),
@@ -96,6 +117,33 @@ export const SessionTaskDiffArtifactSchema = Runtime(
 );
 export type SessionTaskDiffArtifact = Static<typeof SessionTaskDiffArtifactSchema>;
 
+export const SessionPendingInteractionSchema = Runtime(
+  Type.Object({
+    type: StringEnum(['permission', 'question']),
+    requestId: Type.String(),
+  })
+);
+export type SessionPendingInteraction = Static<typeof SessionPendingInteractionSchema>;
+
+export const SessionTaskFailureSchema = Runtime(
+  Type.Object({
+    code: StringEnum([
+      'authentication',
+      'permission',
+      'rate_limit',
+      'timeout',
+      'network',
+      'model_unavailable',
+      'context_limit',
+      'unsupported_input',
+      'runtime',
+    ]),
+    message: Type.String({ minLength: 1, maxLength: 500 }),
+    retryable: Type.Boolean(),
+  })
+);
+export type SessionTaskFailure = Static<typeof SessionTaskFailureSchema>;
+
 export const SessionSchema = Runtime(
   Type.Object({
     sessionId: Type.String(),
@@ -110,9 +158,20 @@ export const SessionSchema = Runtime(
     resumeDepth: Type.Optional(Type.Integer({ minimum: 0 })),
     taskStatus: Default(SessionTaskStatusSchema, 'completed'),
     taskStatusReason: Type.Optional(Type.String()),
+    taskFailure: Type.Optional(SessionTaskFailureSchema),
     taskStartedAt: Type.Optional(Type.String()),
     taskCompletedAt: Type.Optional(Type.String()),
     taskPromptSummary: Type.Optional(Type.String()),
+    taskModelId: Type.Optional(Type.String()),
+    selectedModelId: Type.Optional(Type.String()),
+    taskRetryAvailable: Type.Optional(Type.Boolean()),
+    taskRetriedFrom: Type.Optional(
+      Type.Object({
+        sessionId: Type.String(),
+        projectPath: Type.String(),
+      })
+    ),
+    taskDelivery: Type.Optional(SessionTaskDeliverySchema),
     taskIsolation: Type.Optional(SessionTaskIsolationSchema),
     taskSourceProjectPath: Type.Optional(Type.String()),
     taskWorktreePath: Type.Optional(Type.String()),
@@ -122,6 +181,7 @@ export const SessionSchema = Runtime(
     taskQueuePosition: Type.Optional(Type.Integer({ minimum: 1 })),
     taskQueueDepth: Type.Optional(Type.Integer({ minimum: 0 })),
     taskConcurrencyLimit: Type.Optional(Type.Integer({ minimum: 1 })),
+    pendingInteraction: Type.Optional(SessionPendingInteractionSchema),
     messageCount: Type.Number(),
     firstMessageTime: Type.String(),
     lastMessageTime: Type.String(),
@@ -129,6 +189,14 @@ export const SessionSchema = Runtime(
   })
 );
 export type Session = Static<typeof SessionSchema>;
+
+export const SessionCatalogPageSchema = Runtime(
+  Type.Object({
+    sessions: Type.Array(SessionSchema),
+    nextCursor: Type.Optional(Type.String()),
+  })
+);
+export type SessionCatalogPage = Static<typeof SessionCatalogPageSchema>;
 
 export const GoalSchema = Runtime(
   Type.Object({
@@ -271,6 +339,18 @@ export const SessionRefSchema = Runtime(
 );
 export type SessionRef = Static<typeof SessionRefSchema>;
 
+export const BoundProjectSchema = Runtime(
+  Type.Object({
+    path: Type.String(),
+    name: Type.String(),
+    gitBranch: Type.Optional(Type.String()),
+    available: Type.Boolean(),
+    isCurrent: Type.Boolean(),
+    boundAt: Type.String(),
+  })
+);
+export type BoundProject = Static<typeof BoundProjectSchema>;
+
 export const BusEventSchema = Runtime(
   Type.Object({
     type: Type.String(),
@@ -285,7 +365,7 @@ export const TaskAttachmentSchema = Type.Object({
   type: StringEnum(['file', 'image', 'url']),
   path: Type.Optional(Type.String()),
   url: Type.Optional(Type.String()),
-  content: Type.Optional(Type.String()),
+  content: Type.Optional(Type.String({ maxLength: MAX_INLINE_ATTACHMENT_BYTES })),
   mimeType: Type.Optional(Type.String()),
   name: Type.Optional(Type.String()),
 });
@@ -299,9 +379,12 @@ export const CreateTaskRequestSchema = Runtime(
     }),
     title: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
     projectPath: Type.Optional(Type.String()),
+    modelId: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
     isolation: Default(SessionTaskIsolationSchema, 'worktree'),
     permissionMode: Default(PermissionModeSchema, 'default'),
-    attachments: Type.Optional(Type.Array(TaskAttachmentSchema)),
+    attachments: Type.Optional(
+      Type.Array(TaskAttachmentSchema, { maxItems: MAX_INLINE_ATTACHMENT_COUNT })
+    ),
   })
 );
 export type CreateTaskRequest = Static<typeof CreateTaskRequestSchema>;
@@ -319,12 +402,24 @@ export const CreateTaskResponseSchema = Runtime(
 );
 export type CreateTaskResponse = Static<typeof CreateTaskResponseSchema>;
 
+export const SessionTaskDeliveryRequestSchema = Runtime(
+  Type.Object({
+    action: StringEnum(['apply', 'discard']),
+  })
+);
+export type SessionTaskDeliveryRequest = Static<
+  typeof SessionTaskDeliveryRequestSchema
+>;
+
 export const SendMessageRequestSchema = Runtime(
   Type.Object({
-    content: Type.String(),
+    content: Type.String({ maxLength: MAX_USER_MESSAGE_TEXT_CHARS }),
     projectPath: Type.Optional(Type.String()),
+    modelId: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
     permissionMode: Type.Optional(PermissionModeSchema),
-    attachments: Type.Optional(Type.Array(TaskAttachmentSchema)),
+    attachments: Type.Optional(
+      Type.Array(TaskAttachmentSchema, { maxItems: MAX_INLINE_ATTACHMENT_COUNT })
+    ),
   })
 );
 export type SendMessageRequest = Static<typeof SendMessageRequestSchema>;

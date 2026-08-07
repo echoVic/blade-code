@@ -40,6 +40,21 @@
 
     --subtle: 240 3.8% 46.1%;
     --subtle-foreground: 240 5.9% 10%;
+
+    /* Blade surfaces — used by the redesigned command deck */
+    --deck-canvas: 0 0% 99%;
+    --deck-canvas-veil: 220 15% 96%;
+    --deck-surface: 0 0% 100%;
+    --deck-surface-2: 220 20% 98.5%;
+    --deck-border: 220 13% 91%;
+    --deck-border-strong: 220 13% 82%;
+    --deck-hairline: 220 15% 94%;
+    --deck-ink: 222 22% 11%;
+    --deck-ink-muted: 220 9% 46%;
+    --deck-ink-faint: 220 9% 62%;
+    --deck-accent: 152 62% 36%;
+    --deck-accent-soft: 152 55% 92%;
+    --deck-accent-glow: 152 82% 55%;
   }
 
   .dark {
@@ -78,6 +93,21 @@
 
     --subtle: 240 5% 65%;
     --subtle-foreground: 0 0% 98%;
+
+    /* Blade surfaces (dark) */
+    --deck-canvas: 240 8% 5%;
+    --deck-canvas-veil: 240 10% 7%;
+    --deck-surface: 240 8% 8%;
+    --deck-surface-2: 240 7% 10%;
+    --deck-border: 240 5% 16%;
+    --deck-border-strong: 240 5% 24%;
+    --deck-hairline: 240 6% 13%;
+    --deck-ink: 0 0% 96%;
+    --deck-ink-muted: 240 5% 65%;
+    --deck-ink-faint: 240 5% 42%;
+    --deck-accent: 152 68% 48%;
+    --deck-accent-soft: 152 30% 15%;
+    --deck-accent-glow: 152 82% 60%;
   }
 }
 
@@ -87,5 +117,112 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@layer components {
+  /* Ambient canvas used by the TaskHome command deck */
+  .deck-canvas {
+    background-color: hsl(var(--deck-canvas));
+    background-image:
+      radial-gradient(
+        1200px 600px at 12% -10%,
+        hsl(var(--deck-accent) / 0.06),
+        transparent 60%
+      ),
+      radial-gradient(
+        900px 500px at 100% 0%,
+        hsl(var(--deck-accent) / 0.04),
+        transparent 55%
+      ),
+      radial-gradient(circle at 1px 1px, hsl(var(--deck-ink) / 0.05) 1px, transparent 0);
+    background-size:
+      auto,
+      auto,
+      22px 22px;
+    background-position:
+      0 0,
+      0 0,
+      0 0;
+  }
+  .dark .deck-canvas {
+    background-image:
+      radial-gradient(
+        1200px 600px at 12% -10%,
+        hsl(var(--deck-accent) / 0.12),
+        transparent 60%
+      ),
+      radial-gradient(
+        900px 500px at 100% 0%,
+        hsl(var(--deck-accent) / 0.06),
+        transparent 55%
+      ),
+      radial-gradient(circle at 1px 1px, hsl(var(--deck-ink) / 0.06) 1px, transparent 0);
+  }
+
+  .deck-hairline {
+    border-color: hsl(var(--deck-hairline));
+  }
+
+  .deck-eyebrow {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    font-weight: 500;
+  }
+
+  /* Small pulsing status dot used across chrome */
+  .deck-pulse-dot {
+    position: relative;
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    background-color: hsl(var(--deck-accent));
+    box-shadow: 0 0 0 2px hsl(var(--deck-accent) / 0.18);
+  }
+  .deck-pulse-dot::after {
+    content: "";
+    position: absolute;
+    inset: -4px;
+    border-radius: 9999px;
+    border: 1px solid hsl(var(--deck-accent) / 0.55);
+    animation: deck-pulse 1.8s ease-out infinite;
+  }
+  @keyframes deck-pulse {
+    0% {
+      transform: scale(0.6);
+      opacity: 0.9;
+    }
+    100% {
+      transform: scale(1.9);
+      opacity: 0;
+    }
+  }
+
+  /* Chrome-style small key hint (used for ⌘1..4 on templates) */
+  .deck-kbd {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10px;
+    line-height: 1;
+    padding: 3px 5px;
+    border-radius: 4px;
+    border: 1px solid hsl(var(--deck-border));
+    background: hsl(var(--deck-surface));
+    color: hsl(var(--deck-ink-muted));
+    box-shadow: 0 1px 0 hsl(var(--deck-border));
   }
 }

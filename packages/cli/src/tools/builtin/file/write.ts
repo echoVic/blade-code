@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs';
 import { basename, dirname, extname } from 'path';
-import { isAcpMode } from '../../../acp/AcpServiceContext.js';
+import { getAcpFileSystemService, isAcpMode } from '../../../acp/AcpServiceContext.js';
 import { Default, Type } from '../../../schema/index.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { createTool } from '../../core/createTool.js';
@@ -64,8 +64,10 @@ export const writeTool = createTool({
       updateOutput?.('开始写入文件...');
 
       // 获取文件系统服务（ACP 或本地）
-      const fsService = getFileSystemService();
-      const useAcp = isAcpMode();
+      const useAcp = isAcpMode(sessionId);
+      const fsService = useAcp
+        ? getAcpFileSystemService(sessionId)
+        : getFileSystemService();
 
       // 检查并创建目录（统一使用 FileSystemService）
       if (create_directories) {

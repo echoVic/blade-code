@@ -25,7 +25,7 @@ export interface NormalizedSessionListOptions {
   includeSubagents: boolean;
 }
 
-interface SessionCursorV1 {
+export interface SessionCursorBoundary {
   version: 1;
   cwd: string | null;
   includeSubagents: boolean;
@@ -50,11 +50,11 @@ function isValidAbsolutePath(value: unknown): value is string {
   return typeof value === 'string' && path.isAbsolute(value);
 }
 
-function encodeCursor(cursor: SessionCursorV1): string {
+function encodeCursor(cursor: SessionCursorBoundary): string {
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
 }
 
-function parseCursor(cursor: string): SessionCursorV1 {
+function parseCursor(cursor: string): SessionCursorBoundary {
   try {
     if (!BASE64URL_UNPADDED_PATTERN.test(cursor)) {
       throw new Error('invalid');
@@ -63,7 +63,7 @@ function parseCursor(cursor: string): SessionCursorV1 {
     if (Buffer.from(decoded, 'utf8').toString('base64url') !== cursor) {
       throw new Error('invalid');
     }
-    const parsed = JSON.parse(decoded) as Partial<SessionCursorV1>;
+    const parsed = JSON.parse(decoded) as Partial<SessionCursorBoundary>;
     if (
       parsed.version !== 1 ||
       typeof parsed.includeSubagents !== 'boolean' ||
@@ -85,6 +85,28 @@ function parseCursor(cursor: string): SessionCursorV1 {
   } catch {
     throw new Error('Invalid session cursor');
   }
+}
+
+export function sessionCatalogSortKey(value: string): string {
+  let key = '';
+  for (let index = 0; index < value.length; index += 1) {
+    key += value.charCodeAt(index).toString(16).padStart(4, '0');
+  }
+  return key;
+}
+
+export function resolveSessionCursorBoundary(
+  options: NormalizedSessionListOptions
+): SessionCursorBoundary | undefined {
+  if (!options.cursor) return undefined;
+  const decoded = parseCursor(options.cursor);
+  if (
+    decoded.cwd !== options.cwd ||
+    decoded.includeSubagents !== options.includeSubagents
+  ) {
+    throw new Error('Session cursor scope does not match this query');
+  }
+  return decoded;
 }
 
 export function normalizeSessionListOptions(
@@ -132,14 +154,8 @@ export function paginateSessionCatalog<T extends SessionCatalogItem>(
 ): { sessions: T[]; nextCursor?: string } {
   let filtered = [...items];
 
-  if (options.cursor) {
-    const decoded = parseCursor(options.cursor);
-    if (
-      decoded.cwd !== options.cwd ||
-      decoded.includeSubagents !== options.includeSubagents
-    ) {
-      throw new Error('Session cursor scope does not match this query');
-    }
+  const decoded = resolveSessionCursorBoundary(options);
+  if (decoded) {
     filtered = filtered.filter(
       (item) =>
         compareSessionCatalogItems(item, {

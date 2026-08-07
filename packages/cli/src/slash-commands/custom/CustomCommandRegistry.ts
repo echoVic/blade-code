@@ -5,7 +5,9 @@
  * 单例模式
  */
 
+import path from 'node:path';
 import type { PluginCommand } from '../../plugins/types.js';
+import { getCwd } from '../../utils/cwd.js';
 import { CustomCommandExecutor } from './CustomCommandExecutor.js';
 import { CustomCommandLoader } from './CustomCommandLoader.js';
 import type {
@@ -15,11 +17,10 @@ import type {
 } from './types.js';
 
 export class CustomCommandRegistry {
-  private static instance: CustomCommandRegistry;
+  private static instances = new Map<string, CustomCommandRegistry>();
+  private static pluginCommands = new Map<string, PluginCommand>();
 
   private commands: Map<string, CustomCommand> = new Map();
-  /** Plugin commands stored separately with namespaced names */
-  private pluginCommands: Map<string, PluginCommand> = new Map();
   private loader = new CustomCommandLoader();
   private executor = new CustomCommandExecutor();
   private initialized = false;
@@ -29,18 +30,22 @@ export class CustomCommandRegistry {
   /**
    * 获取单例实例
    */
-  static getInstance(): CustomCommandRegistry {
-    if (!CustomCommandRegistry.instance) {
-      CustomCommandRegistry.instance = new CustomCommandRegistry();
+  static getInstance(workspaceRoot: string = getCwd()): CustomCommandRegistry {
+    const key = path.resolve(workspaceRoot);
+    let instance = CustomCommandRegistry.instances.get(key);
+    if (!instance) {
+      instance = new CustomCommandRegistry();
+      CustomCommandRegistry.instances.set(key, instance);
     }
-    return CustomCommandRegistry.instance;
+    return instance;
   }
 
   /**
    * 重置实例（用于测试）
    */
   static resetInstance(): void {
-    CustomCommandRegistry.instance = new CustomCommandRegistry();
+    CustomCommandRegistry.instances.clear();
+    CustomCommandRegistry.pluginCommands.clear();
   }
 
   private constructor() {
@@ -286,7 +291,7 @@ export class CustomCommandRegistry {
    * @param cmd - Plugin command to register
    */
   registerPluginCommand(cmd: PluginCommand): void {
-    this.pluginCommands.set(cmd.namespacedName, cmd);
+    CustomCommandRegistry.pluginCommands.set(cmd.namespacedName, cmd);
   }
 
   /**
@@ -301,12 +306,12 @@ export class CustomCommandRegistry {
    */
   findPluginCommand(name: string): PluginCommand | undefined {
     // Try exact namespaced match first
-    const exact = this.pluginCommands.get(name);
+    const exact = CustomCommandRegistry.pluginCommands.get(name);
     if (exact) return exact;
 
     // Try short name match (if unique)
     const matches: PluginCommand[] = [];
-    for (const cmd of this.pluginCommands.values()) {
+    for (const cmd of CustomCommandRegistry.pluginCommands.values()) {
       if (cmd.originalName === name) {
         matches.push(cmd);
       }
@@ -331,7 +336,7 @@ export class CustomCommandRegistry {
    * 获取所有插件命令
    */
   getAllPluginCommands(): PluginCommand[] {
-    return Array.from(this.pluginCommands.values());
+    return Array.from(CustomCommandRegistry.pluginCommands.values());
   }
 
   /**
@@ -366,14 +371,14 @@ export class CustomCommandRegistry {
    * Called when refreshing plugins
    */
   clearPluginCommands(): void {
-    this.pluginCommands.clear();
+    CustomCommandRegistry.pluginCommands.clear();
   }
 
   /**
    * 获取插件命令数量
    */
   getPluginCommandCount(): number {
-    return this.pluginCommands.size;
+    return CustomCommandRegistry.pluginCommands.size;
   }
 
   /**
@@ -381,7 +386,7 @@ export class CustomCommandRegistry {
    */
   hasPluginCommandConflict(shortName: string): boolean {
     let count = 0;
-    for (const cmd of this.pluginCommands.values()) {
+    for (const cmd of CustomCommandRegistry.pluginCommands.values()) {
       if (cmd.originalName === shortName) {
         count++;
         if (count > 1) return true;
@@ -395,7 +400,7 @@ export class CustomCommandRegistry {
    */
   getPluginCommandProviders(shortName: string): string[] {
     const providers: string[] = [];
-    for (const cmd of this.pluginCommands.values()) {
+    for (const cmd of CustomCommandRegistry.pluginCommands.values()) {
       if (cmd.originalName === shortName) {
         providers.push(cmd.pluginName);
       }

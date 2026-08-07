@@ -9,10 +9,10 @@ import {
   useCurrentFocus,
   useCurrentModel,
   useSessionActions,
+  useWorkspaceRoot,
 } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
-import { getCwd } from '../../utils/cwd.js';
 import { endsWithSeparator } from '../../utils/pathHelpers.js';
 import { applySuggestion, useAtCompletion } from './useAtCompletion.js';
 import type { HistoryEntry, PasteMappings } from './useCommandHistory.js';
@@ -49,6 +49,7 @@ export const useMainInput = (
 
   // 使用 Zustand store 的 session actions
   const sessionActions = useSessionActions();
+  const workspaceRoot = useWorkspaceRoot();
 
   // 使用 Zustand store 的 app actions (for thinking mode toggle)
   const appActions = useAppActions();
@@ -63,7 +64,7 @@ export const useMainInput = (
 
   // @ 文件自动补全（使用真实光标位置）
   const atCompletion = useAtCompletion(input, cursorPosition, {
-    cwd: getCwd(),
+    cwd: workspaceRoot,
     maxSuggestions: 10,
   });
 
@@ -107,7 +108,7 @@ export const useMainInput = (
         setShowSuggestions(false);
         setSuggestions([]);
       } else {
-        const newSuggestions = getFuzzyCommandSuggestions(input);
+        const newSuggestions = getFuzzyCommandSuggestions(input, workspaceRoot);
         setSuggestions(newSuggestions);
         setShowSuggestions(newSuggestions.length > 0);
         setSelectedSuggestionIndex(0);
@@ -116,7 +117,7 @@ export const useMainInput = (
       setShowSuggestions(false);
       setSuggestions([]);
     }
-  }, [input, atCompletion.hasQuery, atCompletion.suggestions]);
+  }, [input, atCompletion.hasQuery, atCompletion.suggestions, workspaceRoot]);
 
   // 处理清屏
   const handleClear = useMemoizedFn(() => {

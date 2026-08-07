@@ -49,12 +49,29 @@ describe('FilePreview', () => {
     root = ReactDOM.createRoot(container);
     fetchMock.mockReset();
     vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockImplementation(() => ({
+        matches: false,
+        media: '',
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }))
+    );
 
     const { useAppStore } = await import('../../../src/store/AppStore');
 
     useAppStore.setState({
       isSidebarOpen: true,
       isFilePreviewOpen: true,
+      previewWidth: 640,
+      previewTab: 'diff',
+      previewTargetPath: null,
+      previewRequestId: 0,
       isSettingsOpen: false,
       isMcpOpen: false,
       isSkillsOpen: false,
@@ -65,6 +82,7 @@ describe('FilePreview', () => {
       ...state,
       currentSessionId: 'shared-id',
       currentSessionRef: { sessionId: 'shared-id', projectPath: '/workspace/a' },
+      selectedProjectPath: null,
       sessions: [],
       messages: [],
     }));
@@ -185,6 +203,361 @@ describe('FilePreview', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       '/tasks/shared-id/diff?projectPath=%2Fworkspace%2Fa'
     );
+  });
+
+  test('does not replace a failed durable artifact with stale message diffs', async () => {
+    const { FilePreview } = await import('../../../src/components/preview/FilePreview');
+    useSessionStore.setState({
+      sessions: [
+        {
+          sessionId: 'shared-id',
+          projectPath: '/workspace/a',
+          rootId: 'shared-id',
+          title: 'Task artifact',
+          taskStatus: 'completed',
+          taskIsolation: 'worktree',
+          taskSourceProjectPath: '/source',
+          taskDiffStat: {
+            changedFiles: 1,
+            additions: 1,
+            deletions: 0,
+            commits: 0,
+          },
+          messageCount: 1,
+          firstMessageTime: '2026-08-06T00:00:00.000Z',
+          lastMessageTime: '2026-08-06T00:01:00.000Z',
+          hasErrors: false,
+        },
+      ],
+      messages: [
+        {
+          id: 'stale-diff',
+          role: 'assistant',
+          content: '',
+          timestamp: 1,
+          metadata: {
+            kind: 'tool_result',
+            toolName: 'Edit',
+            output:
+              '<<<DIFF>>>' +
+              JSON.stringify({ patch: '+STALE_MESSAGE_DIFF' }) +
+              '<<</Diff>>>'.toUpperCase(),
+            metadata: { file_path: 'stale-message.ts' },
+          },
+        },
+      ],
+    });
+    let diffAttempts = 0;
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith('/tasks/shared-id/diff')) {
+        diffAttempts += 1;
+        if (diffAttempts === 1) {
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: 'ARTIFACT_UNAVAILABLE',
+                message: 'Durable artifact unavailable',
+              },
+            }),
+            { status: 409, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        return createJsonResponse({
+          sessionId: 'shared-id',
+          projectPath: '/workspace/a',
+          baseCommit: 'abc123',
+          files: [
+            {
+              path: 'durable.ts',
+              patch: '+DURABLE_DIFF',
+              additions: 1,
+              deletions: 0,
+              binary: false,
+              truncated: false,
+            },
+          ],
+          truncated: false,
+        });
+      }
+      return createJsonResponse([]);
+    });
+
+    await act(async () => {
+      root.render(<FilePreview />);
+    });
+
+    await vi.waitFor(() =>
+      expect(container.textContent).toContain('Failed to load task diff')
+    );
+    expect(container.textContent).toContain('Durable artifact unavailable');
+    expect(container.textContent).not.toContain('stale-message.ts');
+
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Retry'
+    );
+    expect(retry).toBeTruthy();
+    await act(async () => {
+      retry?.click();
+    });
+
+    await vi.waitFor(() => expect(container.textContent).toContain('durable.ts'));
+    expect(diffAttempts).toBe(2);
+  });
+
+  test('hides discarded task diffs and browses the source project', async () => {
+    const { FilePreview } = await import('../../../src/components/preview/FilePreview');
+    useSessionStore.setState({
+      sessions: [
+        {
+          sessionId: 'shared-id',
+          projectPath: '/workspace/a',
+          rootId: 'shared-id',
+          title: 'Discarded task',
+          taskStatus: 'completed',
+          taskIsolation: 'worktree',
+          taskSourceProjectPath: '/source',
+          taskDiffStat: {
+            changedFiles: 1,
+            additions: 1,
+            deletions: 0,
+            commits: 0,
+          },
+          taskDelivery: {
+            status: 'discarded',
+            updatedAt: '2026-08-06T00:02:00.000Z',
+          },
+          messageCount: 1,
+          firstMessageTime: '2026-08-06T00:00:00.000Z',
+          lastMessageTime: '2026-08-06T00:02:00.000Z',
+          hasErrors: false,
+        },
+      ],
+      messages: [
+        {
+          id: 'discarded-diff',
+          role: 'assistant',
+          content: '',
+          timestamp: 1,
+          metadata: {
+            kind: 'tool_result',
+            toolName: 'Edit',
+            output:
+              '<<<DIFF>>>' +
+              JSON.stringify({ patch: '+DISCARDED_DIFF' }) +
+              '<<</DIFF>>>',
+            metadata: { file_path: 'discarded.ts' },
+          },
+        },
+      ],
+    });
+    fetchMock.mockResolvedValue(createJsonResponse([]));
+
+    await act(async () => {
+      root.render(<FilePreview />);
+    });
+
+    await vi.waitFor(() =>
+      expect(container.textContent).toContain('Changes discarded')
+    );
+    expect(container.textContent).not.toContain('discarded.ts');
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining('/tasks/shared-id/diff')
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/suggestions/files/tree',
+      expect.objectContaining({
+        headers: { 'x-blade-directory': '/source' },
+      })
+    );
+  });
+
+  test('browses the source project after applying while retaining the durable diff', async () => {
+    const { FilePreview } = await import('../../../src/components/preview/FilePreview');
+    useSessionStore.setState({
+      sessions: [
+        {
+          sessionId: 'shared-id',
+          projectPath: '/workspace/a',
+          rootId: 'shared-id',
+          title: 'Applied task',
+          taskStatus: 'completed',
+          taskIsolation: 'worktree',
+          taskSourceProjectPath: '/source',
+          taskDiffStat: {
+            changedFiles: 1,
+            additions: 1,
+            deletions: 0,
+            commits: 0,
+          },
+          taskDelivery: {
+            status: 'applied',
+            updatedAt: '2026-08-06T00:02:00.000Z',
+          },
+          messageCount: 1,
+          firstMessageTime: '2026-08-06T00:00:00.000Z',
+          lastMessageTime: '2026-08-06T00:02:00.000Z',
+          hasErrors: false,
+        },
+      ],
+    });
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith('/tasks/shared-id/diff')) {
+        return createJsonResponse({
+          sessionId: 'shared-id',
+          projectPath: '/workspace/a',
+          baseCommit: 'abc123',
+          files: [
+            {
+              path: 'applied.ts',
+              patch: '+APPLIED_DIFF',
+              additions: 1,
+              deletions: 0,
+              binary: false,
+              truncated: false,
+            },
+          ],
+          truncated: false,
+        });
+      }
+      return createJsonResponse([]);
+    });
+
+    await act(async () => {
+      root.render(<FilePreview />);
+    });
+
+    await vi.waitFor(() => expect(container.textContent).toContain('applied.ts'));
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/tasks/shared-id/diff?projectPath=%2Fworkspace%2Fa'
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/suggestions/files/tree',
+      expect.objectContaining({
+        headers: { 'x-blade-directory': '/source' },
+      })
+    );
+  });
+
+  test('uses the selected project as a file workspace when no session is open', async () => {
+    const { FilePreview } = await import('../../../src/components/preview/FilePreview');
+    useSessionStore.setState({
+      currentSessionId: null,
+      currentSessionRef: null,
+      selectedProjectPath: '/workspace/project',
+    });
+    fetchMock.mockResolvedValueOnce(
+      createJsonResponse([{ name: 'package.json', path: 'package.json', type: 'file' }])
+    );
+
+    await act(async () => {
+      root.render(<FilePreview />);
+    });
+
+    await vi.waitFor(() => expect(container.textContent).toContain('package.json'));
+    expect(
+      Array.from(container.querySelectorAll('[role="tab"]')).find(
+        (tab) => tab.getAttribute('aria-selected') === 'true'
+      )?.textContent
+    ).toContain('Files');
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/suggestions/files/tree',
+      expect.objectContaining({
+        headers: { 'x-blade-directory': '/workspace/project' },
+      })
+    );
+  });
+
+  test('honors a preview intent and focuses the requested durable diff', async () => {
+    const { FilePreview } = await import('../../../src/components/preview/FilePreview');
+    const { useAppStore } = await import('../../../src/store/AppStore');
+    useSessionStore.setState({
+      sessions: [
+        {
+          sessionId: 'shared-id',
+          projectPath: '/workspace/a',
+          rootId: 'shared-id',
+          taskStatus: 'completed',
+          taskIsolation: 'worktree',
+          taskDiffStat: {
+            changedFiles: 2,
+            additions: 2,
+            deletions: 0,
+            commits: 0,
+          },
+          messageCount: 1,
+          firstMessageTime: '2026-08-06T00:00:00.000Z',
+          lastMessageTime: '2026-08-06T00:01:00.000Z',
+          hasErrors: false,
+        },
+      ],
+    });
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input).startsWith('/tasks/shared-id/diff')) {
+        return createJsonResponse({
+          sessionId: 'shared-id',
+          projectPath: '/workspace/a',
+          baseCommit: 'abc123',
+          files: ['src/first.ts', 'src/target.ts'].map((path) => ({
+            path,
+            patch: `diff --git a/${path} b/${path}\n+changed\n`,
+            additions: 1,
+            deletions: 0,
+            binary: false,
+            truncated: false,
+          })),
+          truncated: false,
+        });
+      }
+      return createJsonResponse([]);
+    });
+
+    await act(async () => {
+      root.render(<FilePreview />);
+    });
+    await vi.waitFor(() => expect(container.textContent).toContain('target.ts'));
+
+    await act(async () => {
+      useAppStore.getState().openFilePreview({
+        tab: 'diff',
+        targetPath: '/workspace/a/src/target.ts',
+      });
+    });
+
+    await vi.waitFor(() => {
+      const target = container.querySelector<HTMLElement>(
+        '[data-preview-diff-path="src/target.ts"]'
+      );
+      expect(target?.querySelector('button')).toBe(document.activeElement);
+    });
+  });
+
+  test('resizes the preview from the keyboard and persists the width', async () => {
+    const { FilePreview } = await import('../../../src/components/preview/FilePreview');
+    const { useAppStore } = await import('../../../src/store/AppStore');
+    fetchMock.mockResolvedValue(createJsonResponse([]));
+
+    await act(async () => {
+      root.render(<FilePreview />);
+    });
+    const separator = await vi.waitFor(() => {
+      const element = container.querySelector<HTMLElement>('[role="separator"]');
+      expect(element).toBeTruthy();
+      if (!element) throw new Error('Resize separator was not rendered');
+      return element;
+    });
+    await act(async () => {
+      separator.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })
+      );
+    });
+
+    expect(useAppStore.getState().previewWidth).toBe(664);
+    expect(localStorage.getItem('blade.preview.width')).toBe('664');
+    expect(
+      container.querySelector<HTMLElement>('[data-testid="file-preview"]')?.style.width
+    ).toBe('664px');
   });
 
   test('reloads the tree when only the current session projectPath changes and sends exact directory headers', async () => {
@@ -389,6 +762,79 @@ describe('FilePreview', () => {
     });
     expect(container.textContent).toContain('workspace B unavailable');
     expect(container.textContent).not.toContain('stale workspace A error');
+  });
+
+  test('acts as a focus-contained dialog on compact viewports', async () => {
+    const { FilePreview } = await import('../../../src/components/preview/FilePreview');
+    const { useAppStore } = await import('../../../src/store/AppStore');
+    const trigger = document.createElement('button');
+    trigger.textContent = 'Open preview';
+    document.body.appendChild(trigger);
+    const decoy = document.createElement('button');
+    decoy.textContent = 'Current focus after background isolation';
+    document.body.appendChild(decoy);
+    decoy.focus();
+    const compactMedia = {
+      matches: true,
+      media: '(max-width: 1023px)',
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    };
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => compactMedia)
+    );
+    fetchMock.mockResolvedValue(createJsonResponse([]));
+
+    await act(async () => {
+      root.render(<FilePreview returnFocusElement={trigger} />);
+    });
+
+    const dialog = await vi.waitFor(() => {
+      const element = container.querySelector<HTMLElement>('[role="dialog"]');
+      expect(element?.getAttribute('aria-modal')).toBe('true');
+      if (!element) throw new Error('Compact preview dialog was not rendered');
+      return element;
+    });
+    expect(dialog.className).toContain('max-lg:fixed');
+    expect(dialog.className).toContain('max-lg:inset-0');
+    const close = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Close preview"]'
+    );
+    expect(document.activeElement).toBe(close);
+
+    await act(async () => {
+      close?.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Tab',
+          shiftKey: true,
+          bubbles: true,
+        })
+      );
+    });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).not.toBe(close);
+
+    await act(async () => {
+      dialog.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+      );
+    });
+    expect(useAppStore.getState().isFilePreviewOpen).toBe(false);
+
+    act(() => {
+      root.render(null);
+    });
+    await act(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
+    expect(document.activeElement).toBe(trigger);
+    decoy.remove();
+    trigger.remove();
   });
 
   test('does not write late directory children into the cache for another session ref', async () => {

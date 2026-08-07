@@ -1,14 +1,20 @@
-import { cn } from '@/lib/utils';
-import { useAppStore } from '@/store/AppStore';
-import { useIsDark } from '@/store/SettingsStore';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
+import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
+import { useAppStore } from '@/store/AppStore';
+import { useIsDark } from '@/store/SettingsStore';
 import '@xterm/xterm/css/xterm.css';
 import { Minus, Terminal as TerminalIcon, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-export const TerminalPanel = () => {
+interface TerminalPanelProps {
+  workspacePath?: string | null;
+}
+
+export const TerminalPanel = ({ workspacePath }: TerminalPanelProps) => {
+  const t = useT();
   const { isTerminalOpen, toggleTerminal } = useAppStore();
   const [isMinimized, setIsMinimized] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
@@ -17,13 +23,17 @@ export const TerminalPanel = () => {
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-    const wsUrl = import.meta.env.DEV
+    const baseUrl = import.meta.env.DEV
       ? 'ws://localhost:4097/terminal/ws'
       : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/terminal/ws`;
+    const wsUrl = workspacePath
+      ? `${baseUrl}?cwd=${encodeURIComponent(workspacePath)}`
+      : baseUrl;
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -43,7 +53,7 @@ export const TerminalPanel = () => {
     ws.onerror = () => {
       setIsConnected(false);
     };
-  }, []);
+  }, [workspacePath]);
 
   const disconnect = useCallback(() => {
     if (wsRef.current) {
@@ -57,6 +67,12 @@ export const TerminalPanel = () => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(data);
     }
+  }, []);
+
+  useEffect(() => {
+    previousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    return () => previousFocusRef.current?.focus({ preventScroll: true });
   }, []);
 
   useEffect(() => {
@@ -128,6 +144,7 @@ export const TerminalPanel = () => {
     term.open(terminalRef.current);
 
     fitAddon.fit();
+    const focusFrame = requestAnimationFrame(() => term.focus());
 
     term.onData((data: string) => {
       sendInput(data);
@@ -139,6 +156,7 @@ export const TerminalPanel = () => {
     connect();
 
     return () => {
+      cancelAnimationFrame(focusFrame);
       disconnect();
       term.dispose();
       xtermRef.current = null;
@@ -218,16 +236,26 @@ export const TerminalPanel = () => {
 
   return (
     <div
+      role="region"
+      aria-label={t('terminal.title')}
       className={cn(
         'fixed bottom-0 left-0 right-0 z-40 bg-white dark:bg-[#0a0a0a] border-t border-[#E5E7EB] dark:border-zinc-800 transition-all duration-200',
-        isMinimized ? 'h-10' : 'h-72'
+        isMinimized ? 'h-10' : 'h-[min(18rem,45dvh)]'
       )}
     >
       <div className="flex items-center justify-between h-10 px-3 border-b border-[#E5E7EB] dark:border-zinc-800 bg-[#F9FAFB] dark:bg-zinc-900/50">
         <div className="flex items-center gap-2">
           <TerminalIcon className="h-4 w-4 text-[#9CA3AF] dark:text-zinc-400" />
-          <span className="text-sm text-[#6B7280] dark:text-zinc-400">Terminal</span>
+          <span className="text-sm text-[#6B7280] dark:text-zinc-400">
+            {t('terminal.title')}
+          </span>
           <span
+            role="status"
+            aria-label={
+              isConnected
+                ? t('terminal.status.connected')
+                : t('terminal.status.disconnected')
+            }
             className={cn(
               'w-2 h-2 rounded-full',
               isConnected ? 'bg-green-500' : 'bg-zinc-600'
@@ -236,16 +264,22 @@ export const TerminalPanel = () => {
         </div>
         <div className="flex items-center gap-1">
           <button
+            type="button"
             onClick={() => setIsMinimized(!isMinimized)}
+            aria-label={
+              isMinimized ? t('terminal.action.restore') : t('terminal.action.minimize')
+            }
             className="p-1.5 rounded hover:bg-[#E5E7EB] text-[#9CA3AF] hover:text-[#111827] dark:hover:bg-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors"
           >
             <Minus className="h-4 w-4" />
           </button>
           <button
+            type="button"
             onClick={() => {
               disconnect();
               toggleTerminal();
             }}
+            aria-label={t('terminal.action.close')}
             className="p-1.5 rounded hover:bg-[#E5E7EB] text-[#9CA3AF] hover:text-[#111827] dark:hover:bg-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors"
           >
             <X className="h-4 w-4" />

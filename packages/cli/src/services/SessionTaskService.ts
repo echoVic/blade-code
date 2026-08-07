@@ -1,5 +1,10 @@
 import path from 'node:path';
-import type { SessionTaskIsolation, SessionTaskWorktree } from '../context/types.js';
+import type {
+  SessionTaskDispatch,
+  SessionTaskIsolation,
+  SessionTaskRetryRef,
+  SessionTaskWorktree,
+} from '../context/types.js';
 import { worktreeManager } from '../worktree/WorktreeManager.js';
 import { type SessionMetadata, SessionService } from './SessionService.js';
 
@@ -9,6 +14,8 @@ export interface CreateSessionTaskInput {
   title?: string;
   sourceProjectPath: string;
   isolation: SessionTaskIsolation;
+  dispatch?: SessionTaskDispatch;
+  retriedFrom?: SessionTaskRetryRef;
 }
 
 export interface CreatedSessionTask {
@@ -57,6 +64,10 @@ export class SessionTaskService {
         {
           title: input.title?.trim() || taskTitle(input.prompt),
           taskPromptSummary: taskPromptSummary(input.prompt),
+          taskDispatch: input.dispatch,
+          taskModelId: input.dispatch?.modelId,
+          selectedModelId: input.dispatch?.modelId,
+          taskRetriedFrom: input.retriedFrom,
           taskIsolation: input.isolation,
           taskSourceProjectPath: sourceProjectPath,
           taskWorktree,

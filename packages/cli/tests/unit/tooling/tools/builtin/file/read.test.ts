@@ -45,7 +45,7 @@ const executeRead = async (
   }
 ) => {
   const invocation = readTool.build({ encoding: 'utf8', ...params });
-  return invocation.execute(context.signal, context.updateOutput, {
+  return invocation.execute(context.signal, context.updateOutput as any, {
     sessionId: context.sessionId,
   });
 };

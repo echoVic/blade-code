@@ -4,13 +4,18 @@
  * 用于测试 BladeAgent 和 Session，模拟 Agent 类
  */
 
+import { vi } from 'vitest';
 import type { Agent } from '../../../src/agent/Agent.js';
 import type { LoopEvent } from '../../../src/agent/loop/index.js';
-import type { ChatContext, LoopOptions, LoopResult } from '../../../src/agent/types.js';
-import { vi } from 'vitest';
+import type {
+  ChatContext,
+  LoopOptions,
+  LoopResult,
+  UserMessageContent,
+} from '../../../src/agent/types.js';
 
 export interface MockAgentCall {
-  message: string;
+  message: UserMessageContent;
   context: ChatContext;
   options?: LoopOptions;
 }
@@ -28,7 +33,7 @@ export class MockAgent implements Partial<Agent> {
 
   // 模拟 chatStream 方法 — 事件流唯一入口
   async *chatStream(
-    message: string,
+    message: UserMessageContent,
     context: ChatContext,
     options?: LoopOptions
   ): AsyncGenerator<LoopEvent, LoopResult, void> {
@@ -43,7 +48,8 @@ export class MockAgent implements Partial<Agent> {
     }
 
     // 检查是否有预设响应
-    const key = `${message}-${context.sessionId}`;
+    const messageKey = typeof message === 'string' ? message : JSON.stringify(message);
+    const key = `${messageKey}-${context.sessionId}`;
     if (this.chatResponses.has(key)) {
       return {
         success: true,
@@ -75,7 +81,7 @@ export class MockAgent implements Partial<Agent> {
    * 高层 API：消费 chatStream() 并返回 LoopResult。
    */
   async chat(
-    message: string,
+    message: UserMessageContent,
     context: ChatContext,
     options?: LoopOptions
   ): Promise<LoopResult> {

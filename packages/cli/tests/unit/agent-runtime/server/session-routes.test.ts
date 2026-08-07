@@ -10,6 +10,7 @@ import {
   type SessionRuntimeOptions,
 } from '../../../../src/agent/runtime/SessionRuntime.js';
 import { taskRunScheduler } from '../../../../src/agent/runtime/TaskRunScheduler.js';
+import { MAX_INLINE_ATTACHMENT_BYTES } from '../../../../src/api/attachmentLimits.js';
 import { PermissionMode } from '../../../../src/config/types.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import type {
@@ -24,10 +25,15 @@ const DEFAULT_PROJECT_PATH =
 type CreateMetadataInitial = Pick<
   SessionMetadataUpdate,
   | 'title'
+  | 'taskStatus'
   | 'taskPromptSummary'
+  | 'taskDispatch'
+  | 'taskModelId'
+  | 'taskRetriedFrom'
   | 'taskIsolation'
   | 'taskSourceProjectPath'
   | 'taskWorktree'
+  | 'selectedModelId'
 >;
 
 const makePreparedInputTurn = (): InputTurnPreparation => ({
@@ -86,9 +92,14 @@ const makeSessionMetadata = (
   title: overrides.title ?? `Session ${overrides.sessionId}`,
   taskStatus: overrides.taskStatus ?? 'completed',
   taskStatusReason: overrides.taskStatusReason,
+  taskFailure: overrides.taskFailure,
   taskStartedAt: overrides.taskStartedAt,
   taskCompletedAt: overrides.taskCompletedAt,
   taskPromptSummary: overrides.taskPromptSummary,
+  taskModelId: overrides.taskModelId,
+  taskRetryAvailable: overrides.taskRetryAvailable,
+  taskRetriedFrom: overrides.taskRetriedFrom,
+  taskDelivery: overrides.taskDelivery,
   taskIsolation: overrides.taskIsolation,
   taskSourceProjectPath: overrides.taskSourceProjectPath,
   taskWorktreePath: overrides.taskWorktreePath,
@@ -124,6 +135,7 @@ const runtimeState = vi.hoisted(() => ({
     })),
     setTaskAdmission: vi.fn().mockResolvedValue(undefined),
     setTaskStatus: vi.fn().mockResolvedValue(undefined),
+    discardPendingInput: vi.fn().mockResolvedValue(undefined),
     prepareInputTurn: vi.fn(
       async (): Promise<InputTurnPreparation> => makePreparedInputTurn()
     ),
@@ -132,6 +144,8 @@ const runtimeState = vi.hoisted(() => ({
     ),
     finishTurn: vi.fn().mockResolvedValue(undefined),
     getPendingSteeringCount: vi.fn(() => 0),
+    getRecoveredSteeringCount: vi.fn(() => 0),
+    hasActiveTurn: vi.fn(() => false),
     hasTurnOwner: vi.fn(() => false),
     getGoal: vi.fn().mockResolvedValue(null),
     createGoal: vi.fn(),
@@ -148,6 +162,14 @@ const runtimeState = vi.hoisted(() => ({
 
 const agentState = vi.hoisted(() => ({
   chatStream: vi.fn(),
+}));
+
+const modelState = vi.hoisted(() => ({
+  current: {
+    id: 'model-1',
+    provider: 'openai',
+    model: 'gpt-4',
+  } as { id: string; provider: string; model: string } | undefined,
 }));
 
 const busState = vi.hoisted(() => ({
@@ -196,6 +218,7 @@ const busState = vi.hoisted(() => ({
 const worktreeState = vi.hoisted(() => ({
   enter: vi.fn(),
   restoreSession: vi.fn(async (session) => session),
+  apply: vi.fn(),
   exit: vi.fn().mockResolvedValue({
     action: 'remove',
     workspaceRoot: '/tmp/source',
@@ -225,15 +248,31 @@ vi.mock('../../../../src/server/bus.js', () => ({
   },
 }));
 
+vi.mock('../../../../src/store/vanilla.js', () => ({
+  getCurrentModel: () => modelState.current,
+  getModelById: (modelId: string) =>
+    modelState.current?.id === modelId ? modelState.current : undefined,
+}));
+
 vi.mock('../../../../src/worktree/WorktreeManager.js', () => ({
+  WorktreeDeliveryConflict: class WorktreeDeliveryConflict extends Error {
+    constructor(
+      public readonly reason: string,
+      message: string
+    ) {
+      super(message);
+    }
+  },
   worktreeManager: worktreeState,
 }));
 
 vi.mock('../../../../src/services/SessionService.js', () => ({
   SessionService: {
     listSessions: vi.fn(async () => []),
+    listSessionPage: vi.fn(async () => ({ sessions: [] })),
     findSessionMetadata: vi.fn(async () => undefined),
     findSessionTaskWorktree: vi.fn(async () => undefined),
+    findSessionTaskDispatch: vi.fn(async () => undefined),
     loadSession: vi.fn(async () => []),
     createSessionMetadata: vi.fn(
       async (sessionId: string, projectPath: string, initial?: CreateMetadataInitial) =>
@@ -241,8 +280,13 @@ vi.mock('../../../../src/services/SessionService.js', () => ({
           sessionId,
           projectPath,
           title: initial?.title,
-          taskStatus: 'queued',
+          taskStatus: initial?.taskStatus ?? 'queued',
           taskPromptSummary: initial?.taskPromptSummary ?? undefined,
+          taskModelId: initial?.taskModelId ?? undefined,
+          selectedModelId:
+            initial?.selectedModelId ?? initial?.taskModelId ?? undefined,
+          taskRetryAvailable: initial?.taskDispatch !== undefined,
+          taskRetriedFrom: initial?.taskRetriedFrom ?? undefined,
           taskIsolation: initial?.taskIsolation ?? undefined,
           taskSourceProjectPath: initial?.taskSourceProjectPath ?? undefined,
           taskWorktreePath: initial?.taskWorktree?.worktreeRoot,
@@ -252,11 +296,12 @@ vi.mock('../../../../src/services/SessionService.js', () => ({
         })
     ),
     updateSessionMetadata: vi.fn(
-      async (sessionId: string, projectPath: string, update: { title?: string }) =>
+      async (sessionId: string, projectPath: string, update: SessionMetadataUpdate) =>
         makeSessionMetadata({
           sessionId,
           projectPath,
           title: update.title,
+          selectedModelId: update.selectedModelId ?? undefined,
         })
     ),
     forkSession: vi.fn(
@@ -351,6 +396,11 @@ describe('SessionRoutes runtime reuse', () => {
     vi.clearAllMocks();
     taskRunScheduler.resetForTests();
     busState.subscribers.clear();
+    modelState.current = {
+      id: 'model-1',
+      provider: 'openai',
+      model: 'gpt-4',
+    };
     runtimeState.runtime.dispose.mockClear();
     runtimeState.runtime.refresh.mockClear();
     runtimeState.runtime.prepareInputTurn.mockReset();
@@ -360,6 +410,7 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.enqueueSteering.mockClear();
     runtimeState.runtime.setTaskAdmission.mockClear();
     runtimeState.runtime.setTaskStatus.mockClear();
+    runtimeState.runtime.discardPendingInput.mockClear();
     runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
       maxConcurrent: 3,
       maxQueued: 100,
@@ -367,6 +418,8 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.enqueueSteering.mockResolvedValue(makeSteeringEnqueueResult());
     runtimeState.runtime.finishTurn.mockClear();
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+    runtimeState.runtime.getRecoveredSteeringCount.mockReturnValue(0);
+    runtimeState.runtime.hasActiveTurn.mockReturnValue(false);
     runtimeState.runtime.hasTurnOwner.mockReturnValue(false);
     runtimeState.runtime.listRewindCheckpoints.mockReset();
     runtimeState.runtime.listRewindCheckpoints.mockResolvedValue([]);
@@ -377,6 +430,7 @@ describe('SessionRoutes runtime reuse', () => {
     worktreeState.enter.mockReset();
     worktreeState.restoreSession.mockReset();
     worktreeState.restoreSession.mockImplementation(async (session) => session);
+    worktreeState.apply.mockReset();
     worktreeState.exit.mockReset().mockResolvedValue({
       action: 'remove',
       workspaceRoot: '/tmp/source',
@@ -391,8 +445,10 @@ describe('SessionRoutes runtime reuse', () => {
     );
     vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(false);
     vi.mocked(SessionService.listSessions).mockResolvedValue([]);
+    vi.mocked(SessionService.listSessionPage).mockResolvedValue({ sessions: [] });
     vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(undefined);
     vi.mocked(SessionService.findSessionTaskWorktree).mockResolvedValue(undefined);
+    vi.mocked(SessionService.findSessionTaskDispatch).mockResolvedValue(undefined);
     vi.mocked(SessionService.loadSession).mockResolvedValue(makeMessages());
     vi.mocked(SessionService.createSessionMetadata).mockImplementation(
       async (sessionId: string, projectPath: string, initial?: CreateMetadataInitial) =>
@@ -400,8 +456,13 @@ describe('SessionRoutes runtime reuse', () => {
           sessionId,
           projectPath,
           title: initial?.title,
-          taskStatus: 'queued',
+          taskStatus: initial?.taskStatus ?? 'queued',
           taskPromptSummary: initial?.taskPromptSummary ?? undefined,
+          taskModelId: initial?.taskModelId ?? undefined,
+          selectedModelId:
+            initial?.selectedModelId ?? initial?.taskModelId ?? undefined,
+          taskRetryAvailable: initial?.taskDispatch !== undefined,
+          taskRetriedFrom: initial?.taskRetriedFrom ?? undefined,
           taskIsolation: initial?.taskIsolation ?? undefined,
           taskSourceProjectPath: initial?.taskSourceProjectPath ?? undefined,
           taskWorktreePath: initial?.taskWorktree?.worktreeRoot,
@@ -411,11 +472,12 @@ describe('SessionRoutes runtime reuse', () => {
         })
     );
     vi.mocked(SessionService.updateSessionMetadata).mockImplementation(
-      async (sessionId: string, projectPath: string, update: { title?: string }) =>
+      async (sessionId: string, projectPath: string, update: SessionMetadataUpdate) =>
         makeSessionMetadata({
           sessionId,
           projectPath,
           title: update.title,
+          selectedModelId: update.selectedModelId ?? undefined,
         })
     );
     agentState.chatStream.mockImplementation(async function* () {
@@ -563,6 +625,42 @@ describe('SessionRoutes runtime reuse', () => {
     return metadata;
   };
 
+  it('returns a cursor-based public session catalog page', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const metadata = metadataFor('catalog-session', '/tmp/catalog-workspace');
+    vi.mocked(SessionService.listSessionPage).mockResolvedValue({
+      sessions: [metadata],
+      nextCursor: 'next-cursor',
+    });
+
+    const app = SessionRoutes();
+    const response = await app.request(
+      `/catalog?limit=25&cursor=${encodeURIComponent('current-cursor')}`
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      sessions: [metadata],
+      nextCursor: 'next-cursor',
+    });
+    expect(SessionService.listSessionPage).toHaveBeenCalledWith({
+      cursor: 'current-cursor',
+      limit: 25,
+      includeSubagents: false,
+    });
+  });
+
+  it('rejects invalid session catalog pagination input', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    vi.mocked(SessionService.listSessionPage).mockRejectedValue(
+      new Error('Session catalog limit must be an integer from 1 to 100')
+    );
+
+    const response = await SessionRoutes().request('/catalog?limit=0');
+
+    expect(response.status).toBe(400);
+  });
+
   it('reuses one SessionRuntime for repeated messages in the same session', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     const { SessionRuntime } = await import(
@@ -665,10 +763,97 @@ describe('SessionRoutes runtime reuse', () => {
       expect.objectContaining({ queued: 1 })
     );
 
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    runtimeState.runtime.hasActiveTurn.mockReturnValue(true);
+    runtimeState.runtime.getRecoveredSteeringCount.mockReturnValue(1);
+    const eventsAbort = new AbortController();
+    const events = await app.request('/steering-session/events', {
+      signal: eventsAbort.signal,
+    });
+    const collector = createSseCollector(events);
+    expect(await collector.next()).toMatchObject({
+      type: 'connected',
+      properties: {
+        status: 'running',
+        runId: expect.any(String),
+        queued: 1,
+        pendingInputDelivery: 'current_turn',
+        recovered: 1,
+      },
+    });
+    eventsAbort.abort();
+    await collector.cancel();
+
     releaseRun();
     await vi.waitFor(() => {
       expect(Bus.publish).toHaveBeenCalledWith(
         refFor('steering-session'),
+        'session.completed',
+        expect.any(Object)
+      );
+    });
+  });
+
+  it('rejects changing models while a turn is active', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
+    mockResolvedSession('active-model-session');
+    let releaseRun: () => void = () => undefined;
+    const runGate = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
+      await runGate;
+      return {
+        success: true,
+        finalMessage: 'done',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const app = SessionRoutes();
+    const first = await app.request('/active-model-session/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'start with model one' }),
+    });
+    expect(first.status).toBe(202);
+    await vi.waitFor(() => {
+      expect(Bus.publish).toHaveBeenCalledWith(
+        refFor('active-model-session'),
+        'turn.started',
+        expect.any(Object)
+      );
+    });
+
+    modelState.current = {
+      id: 'model-2',
+      provider: 'openai',
+      model: 'gpt-4.1',
+    };
+    runtimeState.runtime.getCurrentModelId.mockReturnValueOnce('model-1');
+    const second = await app.request('/active-model-session/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: 'switch too early',
+        modelId: 'model-2',
+      }),
+    });
+
+    expect(second.status).toBe(409);
+    await expect(second.json()).resolves.toMatchObject({
+      error: {
+        message: 'Wait for the active turn to finish before switching models',
+      },
+    });
+    expect(runtimeState.runtime.enqueueSteering).not.toHaveBeenCalled();
+
+    releaseRun();
+    await vi.waitFor(() => {
+      expect(Bus.publish).toHaveBeenCalledWith(
+        refFor('active-model-session'),
         'session.completed',
         expect.any(Object)
       );
@@ -941,6 +1126,34 @@ describe('SessionRoutes runtime reuse', () => {
     ]);
   });
 
+  it('does not wake residual inbox input for a terminal task on Web SSE reconnect', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const terminalMetadata = makeSessionMetadata({
+      sessionId: 'cancelled-web-task',
+      projectPath: '/cancelled-task-workspace',
+      taskStatus: 'cancelled',
+      taskStatusReason: 'user-cancel',
+      taskCompletedAt: new Date().toISOString(),
+      taskIsolation: 'local',
+      taskSourceProjectPath: '/task-source',
+    });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([terminalMetadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(terminalMetadata);
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+
+    const controller = new AbortController();
+    const response = await SessionRoutes().request('/cancelled-web-task/events', {
+      signal: controller.signal,
+    });
+    expect(response.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(agentState.chatStream).not.toHaveBeenCalled();
+
+    controller.abort();
+    await response.body?.cancel().catch(() => undefined);
+  });
+
   it('builds multimodal user content from image attachments', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     mockResolvedSession('session-2');
@@ -992,6 +1205,103 @@ describe('SessionRoutes runtime reuse', () => {
       expect.any(Object),
       expect.any(Object)
     );
+  });
+
+  it('refreshes an idle session runtime to the model selected for the message', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('model-selected-session');
+    modelState.current = {
+      id: 'model-2',
+      provider: 'openai',
+      model: 'gpt-4.1',
+    };
+
+    const app = SessionRoutes();
+    const response = await app.request('/model-selected-session/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: 'use the selected model',
+        modelId: 'model-2',
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(runtimeState.runtime.refresh).toHaveBeenCalledWith({
+      modelId: 'model-2',
+    });
+    expect(SessionService.updateSessionMetadata).toHaveBeenCalledWith(
+      'model-selected-session',
+      expect.any(String),
+      { selectedModelId: 'model-2' }
+    );
+    expect(runtimeState.runtime.prepareInputTurn).toHaveBeenCalledWith(
+      'use the selected model'
+    );
+  });
+
+  it('rolls back an idle runtime switch when the selected model cannot be persisted', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('model-persistence-failure');
+    modelState.current = {
+      id: 'model-2',
+      provider: 'openai',
+      model: 'gpt-4.1',
+    };
+    runtimeState.runtime.getCurrentModelId.mockReturnValueOnce('model-1');
+    vi.mocked(SessionService.updateSessionMetadata).mockRejectedValueOnce(
+      new Error('disk unavailable')
+    );
+
+    const response = await SessionRoutes().request(
+      '/model-persistence-failure/message',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          content: 'do not accept a volatile model switch',
+          modelId: 'model-2',
+        }),
+      }
+    );
+
+    expect(response.status).toBe(500);
+    expect(runtimeState.runtime.refresh).toHaveBeenNthCalledWith(1, {
+      modelId: 'model-2',
+    });
+    expect(runtimeState.runtime.refresh).toHaveBeenNthCalledWith(2, {
+      modelId: 'model-1',
+    });
+    expect(runtimeState.runtime.prepareInputTurn).not.toHaveBeenCalled();
+  });
+
+  it('rejects message attachments above the shared inline budget', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('oversized-message-session');
+    const halfBudget = 'x'.repeat(Math.floor(MAX_INLINE_ATTACHMENT_BYTES / 2) + 1);
+
+    const response = await SessionRoutes().request(
+      '/oversized-message-session/message',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          content: 'inspect these screenshots',
+          attachments: [
+            { type: 'image', content: halfBudget },
+            { type: 'image', content: halfBudget },
+          ],
+        }),
+      }
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        message: 'Message attachments exceed the 5 MiB limit',
+      },
+    });
+    expect(agentState.chatStream).not.toHaveBeenCalled();
   });
 
   it('hydrates persisted session history before sending a follow-up message', async () => {
@@ -1059,7 +1369,12 @@ describe('SessionRoutes runtime reuse', () => {
         refFor('failed-prepared-run'),
         'session.error',
         {
-          error: 'upstream unavailable',
+          error: 'Agent execution failed.',
+          taskFailure: {
+            code: 'runtime',
+            message: 'Agent execution failed.',
+            retryable: true,
+          },
         }
       );
     });
@@ -1220,25 +1535,22 @@ describe('SessionRoutes runtime reuse', () => {
     expect(SessionService.createSessionMetadata).toHaveBeenCalledWith(
       expect.any(String),
       '/tmp/task4-create-workspace',
-      { title: 'Created from web' }
+      { title: 'Created from web', taskStatus: 'completed' }
     );
     const body = await response.json();
     expect(body).toMatchObject({
       sessionId: expect.any(String),
       projectPath: '/tmp/task4-create-workspace',
       rootId: expect.any(String),
-      taskStatus: 'queued',
+      taskStatus: 'completed',
     });
     expect(Bus.publish).toHaveBeenCalledWith(
       {
         sessionId: body.sessionId,
         projectPath: '/tmp/task4-create-workspace',
       },
-      'task.status',
-      {
-        taskStatus: 'queued',
-        updatedAt: new Date(0).toISOString(),
-      }
+      'session.created',
+      {}
     );
   });
 
@@ -1313,6 +1625,7 @@ describe('SessionRoutes runtime reuse', () => {
     expect(SessionRuntime.create).toHaveBeenCalledWith({
       sessionId,
       workspaceRoot: executionPath,
+      modelId: 'model-1',
       taskIsolation: isolation,
       ...(isolation === 'worktree'
         ? {
@@ -1344,6 +1657,94 @@ describe('SessionRoutes runtime reuse', () => {
       });
     }
   });
+  it('rejects task dispatch before durable creation when no model is configured', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    modelState.current = undefined;
+    const controller = createSessionRouteController();
+
+    await expect(
+      controller.dispatchTask({
+        prompt: 'Do not persist this task',
+        sourceProjectPath: '/tmp/task-source',
+        isolation: 'worktree',
+        permissionMode: PermissionMode.DEFAULT,
+      })
+    ).rejects.toThrow(
+      'No model is configured. Add or select a model before dispatching a task.'
+    );
+
+    expect(SessionService.createSessionMetadata).not.toHaveBeenCalled();
+    expect(worktreeState.enter).not.toHaveBeenCalled();
+    expect(SessionRuntime.create).not.toHaveBeenCalled();
+  });
+
+  it('retries from the exact durable dispatch into a new linked session', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const source = makeSessionMetadata({
+      sessionId: 'retry-source',
+      projectPath: '/tmp/retry-source',
+      taskStatus: 'failed',
+      taskRetryAvailable: true,
+    });
+    const dispatch = {
+      version: 1 as const,
+      prompt: 'Retry this exact prompt',
+      title: 'Retry source',
+      sourceProjectPath: '/tmp/retry-source',
+      isolation: 'local' as const,
+      permissionMode: 'autoEdit' as const,
+      attachments: [
+        {
+          type: 'image' as const,
+          content: 'data:image/png;base64,retry-exact',
+          mimeType: 'image/png',
+          name: 'retry.png',
+        },
+      ],
+    };
+    vi.mocked(SessionService.listSessions).mockResolvedValue([source]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(source);
+    vi.mocked(SessionService.findSessionTaskDispatch).mockResolvedValue(dispatch);
+    const controller = createSessionRouteController();
+
+    const result = await controller.retryTask(source.sessionId, source.projectPath);
+
+    expect(result.session).toMatchObject({
+      sessionId: expect.not.stringMatching(source.sessionId),
+      taskStatus: 'running',
+      taskRetryAvailable: true,
+      taskRetriedFrom: {
+        sessionId: source.sessionId,
+        projectPath: source.projectPath,
+      },
+    });
+    expect(SessionService.createSessionMetadata).toHaveBeenLastCalledWith(
+      result.session.sessionId,
+      '/tmp/retry-source',
+      expect.objectContaining({
+        title: 'Retry source',
+        taskDispatch: {
+          ...dispatch,
+          modelId: 'model-1',
+        },
+        taskRetriedFrom: {
+          sessionId: source.sessionId,
+          projectPath: source.projectPath,
+        },
+      })
+    );
+    expect(runtimeState.runtime.prepareInputTurn).toHaveBeenCalledWith([
+      { type: 'text', text: 'Retry this exact prompt' },
+      {
+        type: 'image_url',
+        image_url: { url: 'data:image/png;base64,retry-exact' },
+      },
+    ]);
+  });
 
   it('persists a task failure when the agent cannot be created after admission', async () => {
     const { Agent } = await import('../../../../src/agent/Agent.js');
@@ -1365,7 +1766,7 @@ describe('SessionRoutes runtime reuse', () => {
     await vi.waitFor(() =>
       expect(runtimeState.runtime.setTaskStatus).toHaveBeenCalledWith(
         'failed',
-        'Agent execution failed'
+        expect.objectContaining({ message: 'agent initialization failed' })
       )
     );
     await vi.waitFor(() =>
@@ -1633,6 +2034,44 @@ describe('SessionRoutes runtime reuse', () => {
     });
   });
 
+  it('discards durable input when a running task ends normally after user abort', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    agentState.chatStream.mockImplementationOnce(async function* (
+      _content: unknown,
+      context: { signal: AbortSignal }
+    ) {
+      if (Date.now() < 0) yield undefined;
+      await waitForGateOrAbort(new Promise<void>(() => undefined), context.signal);
+      return {
+        success: true,
+        finalMessage: 'cancelled cleanly',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const controller = createSessionRouteController();
+    const dispatched = await controller.dispatchTask({
+      prompt: 'Cancel without replaying this input',
+      sourceProjectPath: '/tmp/task-source',
+      isolation: 'local',
+      permissionMode: PermissionMode.YOLO,
+    });
+    expect(dispatched.status).toBe('running');
+
+    const response = await controller.app.request(
+      `/${dispatched.session.sessionId}/abort?projectPath=${encodeURIComponent(dispatched.session.projectPath)}`,
+      { method: 'POST' }
+    );
+    expect(response.status).toBe(200);
+    expect(runtimeState.runtime.discardPendingInput).toHaveBeenCalledOnce();
+    expect(runtimeState.runtime.setTaskStatus).toHaveBeenCalledWith(
+      'cancelled',
+      'user-cancel'
+    );
+  });
+
   it('rejects overflow with 429 semantics and removes the unaccepted task', async () => {
     const { createSessionRouteController } = await import(
       '../../../../src/server/routes/session.js'
@@ -1735,7 +2174,12 @@ describe('SessionRoutes runtime reuse', () => {
       missingInput.projectPath,
       expect.objectContaining({
         taskStatus: 'failed',
-        taskStatusReason: 'Queued task input is missing',
+        taskStatusReason: 'Agent execution failed.',
+        taskFailure: {
+          code: 'runtime',
+          message: 'Agent execution failed.',
+          retryable: true,
+        },
         taskQueuePosition: null,
         taskQueueDepth: null,
       })
@@ -2238,6 +2682,8 @@ describe('SessionRoutes runtime reuse', () => {
       properties: {
         sessionId: 'shared-session',
         projectPath: '/tmp/workspace-a',
+        status: 'idle',
+        queued: 0,
       },
     });
     expect(await secondCollector.next()).toMatchObject({
@@ -2245,6 +2691,8 @@ describe('SessionRoutes runtime reuse', () => {
       properties: {
         sessionId: 'shared-session',
         projectPath: '/tmp/workspace-b',
+        status: 'idle',
+        queued: 0,
       },
     });
 
@@ -2851,6 +3299,14 @@ describe('SessionRoutes runtime reuse', () => {
       dispatched.session.sessionId,
       dispatched.session.projectPath
     );
+    expect(busState.publish).toHaveBeenCalledWith(
+      {
+        sessionId: dispatched.session.sessionId,
+        projectPath: dispatched.session.projectPath,
+      },
+      'session.deleted',
+      {}
+    );
     expect(worktreeState.restoreSession).toHaveBeenCalledWith(expectedWorktree);
     expect(worktreeState.exit).toHaveBeenCalledWith({
       sessionId: dispatched.session.sessionId,
@@ -2860,6 +3316,221 @@ describe('SessionRoutes runtime reuse', () => {
     expect(
       vi.mocked(SessionService.deleteSession).mock.invocationCallOrder.at(-1)
     ).toBeLessThan(worktreeState.restoreSession.mock.invocationCallOrder.at(-1)!);
+  });
+
+  it('applies a terminal task once and persists its delivery projection', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const taskWorktree = {
+      sessionId: 'delivery-task',
+      name: 'task/delivery-task',
+      branch: 'blade-worktree-delivery-task',
+      baseCommit: 'a'.repeat(40),
+      originalBranch: 'main',
+      repositoryRoot: '/tmp/repo',
+      originalWorkspaceRoot: '/tmp/source',
+      worktreeRoot: '/tmp/delivery-task',
+      workspaceRoot: '/tmp/delivery-task',
+      sourceHadChanges: false,
+      sourceStateFingerprint: 'b'.repeat(64),
+    };
+    let metadata = makeSessionMetadata({
+      sessionId: 'delivery-task',
+      projectPath: '/tmp/delivery-task',
+      taskStatus: 'completed',
+      taskIsolation: 'worktree',
+      taskSourceProjectPath: '/tmp/source',
+      taskWorktreePath: taskWorktree.worktreeRoot,
+      taskWorktreeBranch: taskWorktree.branch,
+      taskBaseCommit: taskWorktree.baseCommit,
+      taskDiffStat: {
+        changedFiles: 2,
+        additions: 4,
+        deletions: 1,
+        commits: 1,
+      },
+    });
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionService.findSessionTaskWorktree).mockResolvedValue(taskWorktree);
+    vi.mocked(SessionService.updateSessionMetadata).mockImplementation(
+      async (_sessionId, _projectPath, update) => {
+        metadata = makeSessionMetadata({
+          ...metadata,
+          taskDelivery: update.taskDelivery ?? metadata.taskDelivery,
+        });
+        return metadata;
+      }
+    );
+    worktreeState.apply.mockResolvedValueOnce({
+      action: 'apply',
+      workspaceRoot: '/tmp/source',
+      worktreeRoot: taskWorktree.worktreeRoot,
+      branch: taskWorktree.branch,
+      sourceCommit: taskWorktree.baseCommit,
+      changedFiles: 2,
+      additions: 4,
+      deletions: 1,
+    });
+    const controller = createSessionRouteController();
+
+    const delivered = await controller.deliverTask(
+      'delivery-task',
+      'apply',
+      '/tmp/delivery-task'
+    );
+
+    expect(worktreeState.restoreSession).toHaveBeenCalledWith(taskWorktree);
+    expect(worktreeState.apply).toHaveBeenCalledWith('delivery-task');
+    expect(delivered.taskDelivery).toMatchObject({
+      status: 'applied',
+      sourceCommit: taskWorktree.baseCommit,
+      changedFiles: 2,
+    });
+    await expect(
+      controller.deliverTask('delivery-task', 'apply', '/tmp/delivery-task')
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'Task changes have already been applied',
+    });
+    expect(worktreeState.apply).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists a safe conflict reason without removing the task worktree', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const { WorktreeDeliveryConflict } = await import(
+      '../../../../src/worktree/WorktreeManager.js'
+    );
+    const taskWorktree = {
+      sessionId: 'conflicted-task',
+      name: 'task/conflicted-task',
+      branch: 'blade-worktree-conflicted-task',
+      baseCommit: 'a'.repeat(40),
+      originalBranch: 'main',
+      repositoryRoot: '/tmp/repo',
+      originalWorkspaceRoot: '/tmp/source',
+      worktreeRoot: '/tmp/conflicted-task',
+      workspaceRoot: '/tmp/conflicted-task',
+      sourceHadChanges: false,
+      sourceStateFingerprint: 'b'.repeat(64),
+    };
+    let metadata = makeSessionMetadata({
+      sessionId: 'conflicted-task',
+      projectPath: '/tmp/conflicted-task',
+      taskStatus: 'completed',
+      taskIsolation: 'worktree',
+      taskWorktreePath: taskWorktree.worktreeRoot,
+    });
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionService.findSessionTaskWorktree).mockResolvedValue(taskWorktree);
+    vi.mocked(SessionService.updateSessionMetadata).mockImplementation(
+      async (_sessionId, _projectPath, update) => {
+        metadata = makeSessionMetadata({
+          ...metadata,
+          taskDelivery: update.taskDelivery ?? metadata.taskDelivery,
+        });
+        return metadata;
+      }
+    );
+    worktreeState.apply.mockRejectedValueOnce(
+      new WorktreeDeliveryConflict(
+        'source_state_changed',
+        'Source workspace changed after this task started'
+      )
+    );
+    const controller = createSessionRouteController();
+
+    await expect(
+      controller.deliverTask('conflicted-task', 'apply', '/tmp/conflicted-task')
+    ).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'Source workspace changed after this task started',
+    });
+    expect(metadata.taskDelivery).toMatchObject({
+      status: 'conflicted',
+      message: 'Source workspace changed after this task started',
+    });
+    expect(worktreeState.exit).not.toHaveBeenCalled();
+  });
+
+  it('lets an explicit discard abandon an unavailable task worktree', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const taskWorktree = {
+      sessionId: 'missing-artifact-task',
+      name: 'task/missing-artifact-task',
+      branch: 'blade-worktree-missing-artifact-task',
+      baseCommit: 'a'.repeat(40),
+      originalBranch: 'main',
+      repositoryRoot: '/tmp/repo',
+      originalWorkspaceRoot: '/tmp/source',
+      worktreeRoot: '/tmp/missing-artifact-task',
+      workspaceRoot: '/tmp/missing-artifact-task',
+      sourceHadChanges: false,
+      sourceStateFingerprint: 'b'.repeat(64),
+    };
+    let metadata = makeSessionMetadata({
+      sessionId: 'missing-artifact-task',
+      projectPath: '/tmp/missing-artifact-task',
+      taskStatus: 'completed',
+      taskIsolation: 'worktree',
+      taskWorktreePath: taskWorktree.worktreeRoot,
+      taskDiffStat: {
+        changedFiles: 2,
+        additions: 4,
+        deletions: 1,
+        commits: 0,
+      },
+    });
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionService.findSessionTaskWorktree).mockResolvedValue(taskWorktree);
+    vi.mocked(SessionService.updateSessionMetadata).mockImplementation(
+      async (_sessionId, _projectPath, update) => {
+        metadata = makeSessionMetadata({
+          ...metadata,
+          taskDelivery: update.taskDelivery ?? metadata.taskDelivery,
+          taskWorktreePath:
+            update.taskWorktree === null ? undefined : metadata.taskWorktreePath,
+        });
+        return metadata;
+      }
+    );
+    worktreeState.restoreSession.mockRejectedValueOnce(
+      new Error('Persisted worktree is missing')
+    );
+    const controller = createSessionRouteController();
+
+    const discarded = await controller.deliverTask(
+      'missing-artifact-task',
+      'discard',
+      '/tmp/missing-artifact-task'
+    );
+
+    expect(worktreeState.exit).not.toHaveBeenCalled();
+    expect(discarded.taskDelivery).toMatchObject({
+      status: 'discarded',
+      changedFiles: 2,
+      message: 'Task artifact discarded; worktree was unavailable',
+    });
+    expect(SessionService.updateSessionMetadata).toHaveBeenCalledWith(
+      'missing-artifact-task',
+      '/tmp/missing-artifact-task',
+      expect.objectContaining({ taskWorktree: null })
+    );
+    expect(busState.publish).toHaveBeenCalledWith(
+      {
+        sessionId: 'missing-artifact-task',
+        projectPath: '/tmp/missing-artifact-task',
+      },
+      'task.delivery',
+      expect.objectContaining({
+        taskWorktreeRemoved: true,
+        taskDelivery: expect.objectContaining({ status: 'discarded' }),
+      })
+    );
   });
 
   it('deletes only the exact same-id workspace and rejects duplicate no-path delete requests', async () => {
@@ -3532,6 +4203,29 @@ describe('SessionRoutes runtime reuse', () => {
     const firstPermissionId = String(firstPermissionCall?.[2].requestId);
     const secondPermissionId = String(secondPermissionCall?.[2].requestId);
 
+    const pendingSessionsResponse = await app.request('/sessions');
+    expect(pendingSessionsResponse.status).toBe(200);
+    const pendingSessions = (await pendingSessionsResponse.json()) as Array<{
+      projectPath: string;
+      pendingInteraction?: { type: string; requestId: string };
+    }>;
+    expect(
+      pendingSessions.find((session) => session.projectPath === '/tmp/workspace-a')
+    ).toMatchObject({
+      pendingInteraction: {
+        type: 'permission',
+        requestId: firstPermissionId,
+      },
+    });
+    expect(
+      pendingSessions.find((session) => session.projectPath === '/tmp/workspace-b')
+    ).toMatchObject({
+      pendingInteraction: {
+        type: 'permission',
+        requestId: secondPermissionId,
+      },
+    });
+
     const firstPermissionResponse = await app.request(
       `/permissions/${firstPermissionId}?sessionId=shared-session&projectPath=${encodeURIComponent('/tmp/workspace-a')}`,
       {
@@ -3544,6 +4238,11 @@ describe('SessionRoutes runtime reuse', () => {
 
     await vi.waitFor(() => {
       expect(resolvedPermissions).toEqual(['/tmp/workspace-a']);
+      expect(busState.publish).toHaveBeenCalledWith(
+        { sessionId: 'shared-session', projectPath: '/tmp/workspace-a' },
+        'interaction.resolved',
+        { requestId: firstPermissionId }
+      );
     });
 
     const secondPermissionResponse = await app.request(
@@ -3802,7 +4501,7 @@ describe('SessionRoutes runtime reuse', () => {
     const resumeB = vi.fn();
     const runtimeA = await createRuntimeDouble({
       workspaceRoot: '/tmp/workspace-a',
-      listSubagents: listA,
+      listSubagents: listA as any,
       resumeSubagent: resumeA,
     });
     const runtimeB = await createRuntimeDouble({

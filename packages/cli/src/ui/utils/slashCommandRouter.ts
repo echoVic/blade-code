@@ -358,7 +358,8 @@ export async function processSlashCommand(
   sessionId?: string,
   messages?: Message[],
   rewind?: SlashCommandContext['rewind'],
-  subagents?: SlashCommandContext['subagents']
+  subagents?: SlashCommandContext['subagents'],
+  workspaceRoot: string = getCwd()
 ): Promise<SlashRouteResult> {
   const { text: command } = resolved;
 
@@ -367,8 +368,8 @@ export async function processSlashCommand(
   }
 
   const slashContext: SlashCommandContext = {
-    cwd: getCwd(),
-    workspaceRoot: getCwd(),
+    cwd: workspaceRoot,
+    workspaceRoot,
     sessionId,
     messages,
     rewind,
@@ -389,7 +390,7 @@ export async function processSlashCommand(
 
     await activateSessionSelection(
       slashResult.data,
-      getCwd(),
+      workspaceRoot,
       sessionActions,
       cleanupAgent
     );

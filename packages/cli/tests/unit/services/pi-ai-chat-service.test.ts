@@ -1,6 +1,9 @@
 import type { Api, Model } from '@earendil-works/pi-ai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatConfig, StreamChunk } from '../../../src/services/ChatServiceInterface.js';
+import type {
+  ChatConfig,
+  StreamChunk,
+} from '../../../src/services/ChatServiceInterface.js';
 
 // pi-ai runtime metadata fixture, not Blade's persisted ModelConfig.
 const piModelFixture: Model<Api> = {
@@ -98,6 +101,61 @@ describe('PiAIChatService', () => {
       })
     ).rejects.toThrow('Required tool is unavailable: Task');
     expect(streamPiModel).not.toHaveBeenCalled();
+  });
+
+  it('rejects a new image before calling a text-only model', async () => {
+    const chat = await service();
+    await expect(
+      chat.chat([
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'describe this' },
+            {
+              type: 'image_url',
+              image_url: { url: 'data:image/png;base64,abc' },
+            },
+          ],
+        },
+      ])
+    ).rejects.toThrow('Test Model does not support image input');
+
+    expect(createPiContext).not.toHaveBeenCalled();
+    expect(streamPiModel).not.toHaveBeenCalled();
+  });
+
+  it('accepts image input when the active model advertises vision', async () => {
+    const visionModel = {
+      ...piModelFixture,
+      name: 'Vision Model',
+      input: ['text', 'image'] as Array<'text' | 'image'>,
+    };
+    createPiRuntime.mockReturnValue({
+      models: {},
+      model: visionModel,
+    });
+    streamPiModel.mockReturnValue(chunks([{ content: 'described' }]));
+
+    const result = await (await service()).chat([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            image_url: { url: 'data:image/png;base64,abc' },
+          },
+        ],
+      },
+    ]);
+
+    expect(result.content).toBe('described');
+    expect(createPiContext).toHaveBeenCalledWith(
+      expect.any(Array),
+      visionModel,
+      undefined,
+      undefined,
+      undefined
+    );
   });
 
   it('passes the exact tool requirement to context and request adapters', async () => {

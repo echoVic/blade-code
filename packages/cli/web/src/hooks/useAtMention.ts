@@ -59,9 +59,13 @@ const extractAtMention = (input: string, cursorPosition: number): AtMentionMatch
 export const useAtMention = (
   input: string,
   cursorPosition: number | undefined,
-  options: { debounceDelay?: number; maxSuggestions?: number } = {}
+  options: {
+    debounceDelay?: number;
+    maxSuggestions?: number;
+    workspacePath?: string | null;
+  } = {}
 ): UseAtMentionResult => {
-  const { debounceDelay = 200, maxSuggestions = 15 } = options;
+  const { debounceDelay = 200, maxSuggestions = 15, workspacePath } = options;
 
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -93,7 +97,10 @@ export const useAtMention = (
     const fetchSuggestions = async () => {
       try {
         const response = await fetch(
-          `/suggestions/files?q=${encodeURIComponent(match.query)}&limit=${maxSuggestions}`
+          `/suggestions/files?q=${encodeURIComponent(match.query)}&limit=${maxSuggestions}`,
+          workspacePath
+            ? { headers: { 'x-blade-directory': workspacePath } }
+            : undefined
         );
         if (!response.ok) throw new Error('Failed to fetch suggestions');
         const data = await response.json();
@@ -118,7 +125,7 @@ export const useAtMention = (
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [match.hasQuery, match.query, debounceDelay, maxSuggestions]);
+  }, [match.hasQuery, match.query, debounceDelay, maxSuggestions, workspacePath]);
 
   useEffect(() => {
     setSelectedIndex(0);

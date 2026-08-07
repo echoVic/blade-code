@@ -90,11 +90,12 @@ Notes:
 ${generateAvailableCommandsDescription()}`,
   },
 
-  async execute(params, _context): Promise<ToolResult> {
+  async execute(params, context): Promise<ToolResult> {
     const { command, arguments: args } = params;
 
     // 获取 CustomCommandRegistry
-    const registry = CustomCommandRegistry.getInstance();
+    const workspaceRoot = context.workspaceRoot ?? getCwd();
+    const registry = CustomCommandRegistry.getInstance(workspaceRoot);
 
     // 检查是否已初始化
     if (!registry.isInitialized()) {
@@ -160,7 +161,7 @@ ${generateAvailableCommandsDescription()}`,
     try {
       const processedContent = await registry.executeCommand(command, {
         args: parsedArgs,
-        workspaceRoot: getCwd(),
+        workspaceRoot,
       });
 
       if (!processedContent) {

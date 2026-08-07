@@ -1,86 +1,137 @@
 import { sessionService } from '@/services';
 import { createEventDispatcher } from '../handlers/eventHandlers';
 import { globalStreamingBuffer } from '../handlers/streamingBuffer';
-import type { SliceCreator, StreamingSlice } from '../types';
+import type {
+  SliceCreator,
+  StreamingSlice,
+  TaskEventConnectionState,
+} from '../types';
 
-export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => ({
-  isStreaming: false,
-  agentPhase: 'idle',
-  currentRunId: null,
-  pendingSteeringCount: 0,
-  recoveredSteeringCount: 0,
-  eventUnsubscribe: null,
-  currentAssistantMessageId: null,
-  hasToolCalls: false,
+export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => {
+  const connectionStates = new WeakMap<
+    () => void,
+    TaskEventConnectionState
+  >();
+  let activeConnection: (() => void) | null = null;
 
-  setStreaming: (streaming) => set({ isStreaming: streaming }),
+  return {
+    isStreaming: false,
+    isStopping: false,
+    agentPhase: 'idle',
+    sessionEventConnectionState: 'idle',
+    currentRunId: null,
+    pendingSteeringCount: 0,
+    pendingInputDelivery: null,
+    recoveredSteeringCount: 0,
+    eventUnsubscribe: null,
+    currentAssistantMessageId: null,
+    hasToolCalls: false,
 
-  setAgentPhase: (phase) => set({ agentPhase: phase }),
+    setStreaming: (streaming) => set({ isStreaming: streaming }),
 
-  setRunId: (runId) => set({ currentRunId: runId }),
+    setAgentPhase: (phase) => set({ agentPhase: phase }),
 
-  prepareEventSubscription: async (ref, onEvent) => {
-    const dispatch = onEvent ?? createEventDispatcher(get, set);
-    return sessionService.openEventSubscription(ref, dispatch);
-  },
+    setRunId: (runId) => set({ currentRunId: runId }),
 
-  replaceEventSubscription: (next) => {
-    const previous = get().eventUnsubscribe;
-    set({ eventUnsubscribe: next });
-    globalStreamingBuffer.reset();
-    if (previous && previous !== next) {
-      try {
-        previous();
-      } catch (error) {
-        console.warn('Failed to clean up previous event subscription', error);
-      }
-    }
-  },
+    prepareEventSubscription: async (ref, onEvent) => {
+      const dispatch = onEvent ?? createEventDispatcher(get, set);
+      let connection: (() => void) | null = null;
+      let connectionState: TaskEventConnectionState = 'connecting';
+      connection = await sessionService.openEventSubscription(ref, dispatch, {
+        onConnectionStateChange: (nextState) => {
+          connectionState = nextState;
+          if (connection && activeConnection === connection) {
+            set({ sessionEventConnectionState: nextState });
+          }
+        },
+      });
+      connectionStates.set(connection, connectionState);
+      return connection;
+    },
 
-  setCurrentAssistantMessageId: (id) => set({ currentAssistantMessageId: id }),
-
-  setHasToolCalls: (has) => set({ hasToolCalls: has }),
-
-  startAgentResponse: (messageId) => {
-    set({
-      currentAssistantMessageId: messageId,
-      hasToolCalls: false,
-      isStreaming: true,
-      agentPhase: 'running',
-    });
-  },
-
-  endAgentResponse: () => {
-    globalStreamingBuffer.drainAll();
-    set({
-      currentAssistantMessageId: null,
-      hasToolCalls: false,
-      isStreaming: false,
-      agentPhase: 'idle',
-      currentRunId: null,
-      pendingSteeringCount: 0,
-    });
-  },
-
-  subscribeToEvents: async (ref) => {
-    const unsubscribe = await get().prepareEventSubscription(ref);
-    get().replaceEventSubscription(unsubscribe);
-  },
-
-  unsubscribeFromEvents: () => {
-    const { eventUnsubscribe } = get();
-    set({ eventUnsubscribe: null });
-    try {
-      eventUnsubscribe?.();
-    } catch (error) {
-      console.warn('Failed to clean up event subscription', error);
-    } finally {
+    replaceEventSubscription: (next) => {
+      const previous = get().eventUnsubscribe;
+      activeConnection = next;
+      set({
+        eventUnsubscribe: next,
+        sessionEventConnectionState: next
+          ? (connectionStates.get(next) ?? 'connected')
+          : 'idle',
+      });
       globalStreamingBuffer.reset();
-    }
-  },
+      if (previous && previous !== next) {
+        try {
+          previous();
+        } catch (error) {
+          console.warn('Failed to clean up previous event subscription', error);
+        }
+      }
+    },
 
-  handleEvent: (event) => {
-    const dispatch = createEventDispatcher(get, set);
-    dispatch(event);
-  },
-});
+    setCurrentAssistantMessageId: (id) => set({ currentAssistantMessageId: id }),
+
+    setHasToolCalls: (has) => set({ hasToolCalls: has }),
+
+    startAgentResponse: (messageId) => {
+      set({
+        currentAssistantMessageId: messageId,
+        hasToolCalls: false,
+        isStreaming: true,
+        agentPhase: 'running',
+      });
+    },
+
+    endAgentResponse: () => {
+      globalStreamingBuffer.drainAll();
+      set({
+        currentAssistantMessageId: null,
+        hasToolCalls: false,
+        isStreaming: false,
+        isStopping: false,
+        agentPhase: 'idle',
+        currentRunId: null,
+        pendingSteeringCount: 0,
+        pendingInputDelivery: null,
+      });
+    },
+
+    subscribeToEvents: async (ref) => {
+      const unsubscribe = await get().prepareEventSubscription(ref);
+      get().replaceEventSubscription(unsubscribe);
+    },
+
+    reconnectSessionEvents: async () => {
+      const ref = get().currentSessionRef;
+      if (!ref) return;
+      get().unsubscribeFromEvents();
+      set({ sessionEventConnectionState: 'connecting' });
+      try {
+        await get().subscribeToEvents(ref);
+      } catch (error) {
+        set({ sessionEventConnectionState: 'offline' });
+        throw error;
+      }
+    },
+
+    unsubscribeFromEvents: () => {
+      const { eventUnsubscribe } = get();
+      activeConnection = null;
+      set({
+        eventUnsubscribe: null,
+        sessionEventConnectionState: 'idle',
+      });
+      try {
+        eventUnsubscribe?.();
+      } catch (error) {
+        console.warn('Failed to clean up event subscription', error);
+      } finally {
+        globalStreamingBuffer.reset();
+      }
+    },
+
+    handleEvent: (event) => {
+      const dispatch = createEventDispatcher(get, set);
+      dispatch(event);
+    },
+  };
+};

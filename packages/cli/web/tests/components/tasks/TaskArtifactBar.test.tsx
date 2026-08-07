@@ -2,10 +2,12 @@
 
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TaskArtifactBar } from '../../../src/components/tasks/TaskArtifactBar';
 import { useAppStore } from '../../../src/store/AppStore';
 import { useSessionStore } from '../../../src/store/session';
+
+const defaultDeliverTask = useSessionStore.getState().deliverTask;
 
 describe('TaskArtifactBar', () => {
   let container: HTMLDivElement;
@@ -17,6 +19,7 @@ describe('TaskArtifactBar', () => {
     root = ReactDOM.createRoot(container);
     useAppStore.setState({ isFilePreviewOpen: false });
     useSessionStore.setState({
+      deliverTask: defaultDeliverTask,
       currentSessionId: 'task-1',
       currentSessionRef: {
         sessionId: 'task-1',
@@ -66,5 +69,46 @@ describe('TaskArtifactBar', () => {
     if (!review) throw new Error('Review changes button was not rendered');
     act(() => review.click());
     expect(useAppStore.getState().isFilePreviewOpen).toBe(true);
+  });
+
+  it('exposes review, retry, and discard recovery actions after a conflict', async () => {
+    const deliverTask = vi.fn(async () => undefined);
+    useSessionStore.setState((state) => ({
+      deliverTask,
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        taskDelivery: {
+          status: 'conflicted',
+          updatedAt: '2026-08-07T12:00:00.000Z',
+          message: 'Source workspace changed after this task started',
+        },
+      })),
+    }));
+
+    await act(async () => {
+      root.render(<TaskArtifactBar />);
+    });
+
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain(
+      'Source workspace changed after this task started'
+    );
+    expect(alert?.textContent).toContain('The isolated changes are preserved');
+    expect(container.textContent).toContain('Review changes');
+    expect(
+      container.querySelector('button[aria-label="Discard task changes"]')
+    ).toBeTruthy();
+
+    const retryApply = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Retry apply')
+    );
+    expect(retryApply).toBeTruthy();
+    await act(async () => {
+      retryApply?.click();
+    });
+    expect(deliverTask).toHaveBeenCalledWith(
+      { sessionId: 'task-1', projectPath: '/storage/worktree' },
+      'apply'
+    );
   });
 });

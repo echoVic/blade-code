@@ -5,14 +5,67 @@
  * 统一 contextMgr 获取与错误日志处理。
  */
 
+import { deriveSessionTitleFromContent } from '../../api/sessionTitle.js';
 import type { SubagentRunRef } from '../../context/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { Bus } from '../../server/bus.js';
 import type { ContentPart } from '../../services/ChatServiceInterface.js';
+import { SessionService } from '../../services/SessionService.js';
 import type { JsonValue } from '../../store/types.js';
 import type { ChatContext, UserMessageContent } from '../types.js';
 import type { LoopDependencies } from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
+
+/**
+ * Sessions we've already attempted to auto-title this process. Keeps the
+ * backfill to a single metadata read per session and never re-derives once a
+ * title exists. Cleared naturally on process restart (idempotent by design:
+ * we only ever write when the persisted title is still blank).
+ */
+const autoTitledSessions = new Set<string>();
+
+/**
+ * Best-effort semantic title backfill for the first user message.
+ *
+ * Runs on the shared agent loop, so CLI and ACP sessions get the same
+ * intent-derived titles the Web surface applies at creation time. Fire-and-forget
+ * and fully guarded: any failure is swallowed, and we only ever write when the
+ * persisted title is still empty.
+ */
+async function maybeBackfillSessionTitle(
+  context: ChatContext,
+  message: UserMessageContent
+): Promise<void> {
+  const sessionId = context.sessionId;
+  // Subagent turns and continuations should never rename the parent session.
+  if (!sessionId || context.subagentInfo) return;
+  if (autoTitledSessions.has(sessionId)) return;
+  // Bound the guard set for long-lived servers; the persisted-title check below
+  // keeps behavior correct even if an entry is later evicted.
+  if (autoTitledSessions.size >= 5000) autoTitledSessions.clear();
+  autoTitledSessions.add(sessionId);
+
+  try {
+    const projectPath = context.workspaceRoot;
+    const metadata = await SessionService.findSessionMetadata(sessionId, projectPath);
+    if (!metadata) return;
+    if (metadata.title && metadata.title.trim()) return; // respect existing titles
+
+    const title = deriveSessionTitleFromContent(message);
+    if (!title) return;
+    await SessionService.updateSessionMetadata(sessionId, metadata.projectPath, {
+      title,
+    });
+    // Broadcast so every connected surface (Web sidebar, other tabs) reflects
+    // the freshly derived title without a manual refresh.
+    Bus.publish({ sessionId, projectPath: metadata.projectPath }, 'session.updated', {
+      title,
+    });
+  } catch (error) {
+    logger.debug?.('[Loop] 自动生成会话标题失败:', error);
+  }
+}
 
 export const INTERRUPTED_TURN_MARKER = `<turn_aborted>
 The previous turn was interrupted. Commands or tool calls may have partially completed; inspect the workspace and running processes before retrying.
@@ -43,7 +96,7 @@ export async function saveUserMessage(
             part.type === 'text' ? part.text.trim() !== '' : true
           );
     if (contextMgr && context.sessionId && hasPersistableContent) {
-      return await contextMgr.saveMessage(
+      const uuid = await contextMgr.saveMessage(
         context.sessionId,
         'user',
         message,
@@ -51,6 +104,9 @@ export async function saveUserMessage(
         metadata,
         context.subagentInfo
       );
+      // Backfill a semantic title from the first user message (best-effort).
+      void maybeBackfillSessionTitle(context, message);
+      return uuid;
     }
   } catch (error) {
     logger.warn('[Loop] 保存用户消息失败:', error);
@@ -148,7 +204,8 @@ export async function saveToolResult(
   toolOutput: JsonValue,
   parentUuid: string | null,
   error?: string,
-  subagentRef?: SubagentRunRef
+  subagentRef?: SubagentRunRef,
+  toolMetadata?: JsonValue
 ): Promise<string | null> {
   try {
     const contextMgr = getContextMgr(deps);
@@ -161,7 +218,8 @@ export async function saveToolResult(
         parentUuid,
         error,
         context.subagentInfo,
-        subagentRef
+        subagentRef,
+        toolMetadata
       );
     }
   } catch (error_) {

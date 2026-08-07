@@ -1,10 +1,41 @@
+import { t } from '@/i18n';
+import {
+  taskFailureCode,
+  taskFailureIsRetryable,
+  taskFailureMessageKey,
+} from '@/lib/taskFailure';
 import { sessionService } from '@/services';
+import { useConfigStore } from '@/store/ConfigStore';
+import { useSettingsStore } from '@/store/SettingsStore';
 import {
   sameSessionRef,
   sessionRefFromSession,
+  sessionRefKey,
   upsertSessionByRef,
 } from '../sessionIdentity';
-import type { Session, SliceCreator, TaskListSlice } from '../types';
+import {
+  isAttentionTaskStatus,
+  persistUnreadTaskKeys,
+  playTaskAttentionSound,
+  readUnreadTaskKeys,
+  shouldMarkTaskUnread,
+  showTaskNotification,
+  TASK_NOTIFICATION_OPEN_EVENT,
+} from '../taskAttention';
+import type { Session, SessionRef, SliceCreator, TaskListSlice } from '../types';
+
+const SELECTED_PROJECT_KEY = 'blade.projects.selected';
+
+function readSelectedProject(): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  return localStorage.getItem(SELECTED_PROJECT_KEY);
+}
+
+function persistSelectedProject(projectPath: string): void {
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem(SELECTED_PROJECT_KEY, projectPath);
+  }
+}
 
 const TASK_STATUSES = new Set<Session['taskStatus']>([
   'queued',
@@ -41,6 +72,48 @@ function taskDiffStat(value: unknown): Session['taskDiffStat'] {
   };
 }
 
+function taskFailure(value: unknown): Session['taskFailure'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const failure = value as Record<string, unknown>;
+  const code = taskFailureCode(failure.code);
+  if (
+    !code ||
+    typeof failure.message !== 'string' ||
+    typeof failure.retryable !== 'boolean'
+  ) {
+    return undefined;
+  }
+  return {
+    code,
+    message: t(taskFailureMessageKey(code)),
+    retryable: taskFailureIsRetryable(code),
+  };
+}
+
+function taskDelivery(value: unknown): Session['taskDelivery'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const delivery = value as Record<string, unknown>;
+  if (
+    !['applied', 'discarded', 'conflicted'].includes(String(delivery.status)) ||
+    typeof delivery.updatedAt !== 'string'
+  ) {
+    return undefined;
+  }
+  return {
+    status: delivery.status as NonNullable<Session['taskDelivery']>['status'],
+    updatedAt: delivery.updatedAt,
+    ...(typeof delivery.sourceCommit === 'string'
+      ? { sourceCommit: delivery.sourceCommit }
+      : {}),
+    ...(typeof delivery.changedFiles === 'number' &&
+    Number.isInteger(delivery.changedFiles) &&
+    delivery.changedFiles >= 0
+      ? { changedFiles: delivery.changedFiles }
+      : {}),
+    ...(typeof delivery.message === 'string' ? { message: delivery.message } : {}),
+  };
+}
+
 function taskInteger(value: unknown, minimum: number): number | undefined {
   return typeof value === 'number' && Number.isInteger(value) && value >= minimum
     ? value
@@ -50,14 +123,248 @@ function taskInteger(value: unknown, minimum: number): number | undefined {
 export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
   let subscriptionPromise: Promise<void> | null = null;
   let subscriptionRequested = false;
+  let taskEventsNeedResync = false;
+  let sessionLifecycleVersion = 0;
+  const exactSessionSyncVersions = new Map<string, number>();
+
+  const syncExactSession = (ref: SessionRef): void => {
+    const key = sessionRefKey(ref);
+    const version = ++sessionLifecycleVersion;
+    exactSessionSyncVersions.set(key, version);
+    void sessionService
+      .getSession(ref)
+      .then((session) => {
+        if (exactSessionSyncVersions.get(key) !== version) return;
+        set((state) => ({
+          sessions: upsertSessionByRef(state.sessions, session),
+        }));
+      })
+      .catch(() => {
+        if (exactSessionSyncVersions.get(key) !== version) return;
+        void get().loadSessions();
+      })
+      .finally(() => {
+        if (exactSessionSyncVersions.get(key) === version) {
+          exactSessionSyncVersions.delete(key);
+        }
+      });
+  };
+
+  const invalidateExactSessionSync = (ref: SessionRef): void => {
+    const key = sessionRefKey(ref);
+    const version = ++sessionLifecycleVersion;
+    exactSessionSyncVersions.set(key, version);
+    queueMicrotask(() => {
+      if (exactSessionSyncVersions.get(key) === version) {
+        exactSessionSyncVersions.delete(key);
+      }
+    });
+  };
 
   return {
     taskEventsConnected: false,
+    taskEventConnectionState: 'connecting',
     taskEventUnsubscribe: null,
     taskWorkspaceInfo: null,
+    isTaskWorkspaceLoading: false,
+    taskWorkspaceError: null,
+    boundProjects: [],
+    selectedProjectPath: readSelectedProject(),
     isDispatchingTask: false,
+    isBindingProject: false,
+    cancellingTaskKeys: [],
+    retryingTaskKeys: [],
+    taskDeliveryActions: {},
+    unreadTaskKeys: readUnreadTaskKeys(),
 
     handleTaskEvent: (event) => {
+      if (event.type === 'session.created') {
+        const sessionId = event.properties.sessionId;
+        const projectPath = event.properties.projectPath;
+        if (typeof sessionId !== 'string' || typeof projectPath !== 'string') {
+          return;
+        }
+        syncExactSession({ sessionId, projectPath });
+        return;
+      }
+      if (event.type === 'session.deleted') {
+        const sessionId = event.properties.sessionId;
+        const projectPath = event.properties.projectPath;
+        if (typeof sessionId !== 'string' || typeof projectPath !== 'string') {
+          return;
+        }
+        const ref = { sessionId, projectPath };
+        invalidateExactSessionSync(ref);
+        get().removeSession(ref);
+        return;
+      }
+      // Session metadata updates (e.g. auto-derived titles) patch the matching
+      // session in place so the sidebar reflects renames without a full reload.
+      if (event.type === 'session.updated') {
+        const sessionId = event.properties.sessionId;
+        const projectPath = event.properties.projectPath;
+        const title = event.properties.title;
+        const selectedModelId = event.properties.selectedModelId;
+        if (
+          typeof sessionId !== 'string' ||
+          typeof projectPath !== 'string' ||
+          !(
+            (typeof title === 'string' && title.trim()) ||
+            (typeof selectedModelId === 'string' && selectedModelId.trim())
+          )
+        ) {
+          return;
+        }
+        const ref = { sessionId, projectPath };
+        const hasSession = get().sessions.some((session) =>
+          sameSessionRef(sessionRefFromSession(session), ref)
+        );
+        if (!hasSession) {
+          syncExactSession(ref);
+          return;
+        }
+        set((state) => ({
+          sessions: state.sessions.map((session) =>
+            sameSessionRef(
+              { sessionId: session.sessionId, projectPath: session.projectPath },
+              ref
+            )
+              ? {
+                  ...session,
+                  ...(typeof title === 'string' && title.trim() ? { title } : {}),
+                  ...(typeof selectedModelId === 'string' && selectedModelId.trim()
+                    ? { selectedModelId }
+                    : {}),
+                }
+              : session
+          ),
+        }));
+        return;
+      }
+      if (event.type === 'task.delivery') {
+        const sessionId = event.properties.sessionId;
+        const projectPath = event.properties.projectPath;
+        const delivery = taskDelivery(event.properties.taskDelivery);
+        if (
+          typeof sessionId !== 'string' ||
+          typeof projectPath !== 'string' ||
+          !delivery
+        ) {
+          return;
+        }
+        const ref = { sessionId, projectPath };
+        const worktreeRemoved = event.properties.taskWorktreeRemoved === true;
+        set((state) => ({
+          sessions: state.sessions.map((session) =>
+            sameSessionRef(sessionRefFromSession(session), ref)
+              ? {
+                  ...session,
+                  taskDelivery: delivery,
+                  ...(worktreeRemoved
+                    ? {
+                        taskWorktreePath: undefined,
+                        taskWorktreeBranch: undefined,
+                      }
+                    : {}),
+                  lastMessageTime:
+                    typeof event.properties.updatedAt === 'string'
+                      ? event.properties.updatedAt
+                      : session.lastMessageTime,
+                }
+              : session
+          ),
+        }));
+        return;
+      }
+      if (event.type === 'interaction.pending') {
+        const sessionId = event.properties.sessionId;
+        const projectPath = event.properties.projectPath;
+        const interactionType = event.properties.interactionType;
+        const requestId = event.properties.requestId;
+        if (
+          typeof sessionId !== 'string' ||
+          typeof projectPath !== 'string' ||
+          (interactionType !== 'permission' && interactionType !== 'question') ||
+          typeof requestId !== 'string' ||
+          !requestId
+        ) {
+          return;
+        }
+        const ref = { sessionId, projectPath };
+        const previousSession = get().sessions.find((session) =>
+          sameSessionRef(sessionRefFromSession(session), ref)
+        );
+        if (!previousSession) {
+          void get().loadSessions();
+          return;
+        }
+        set((state) => ({
+          sessions: state.sessions.map((session) =>
+            sameSessionRef(sessionRefFromSession(session), ref)
+              ? {
+                  ...session,
+                  pendingInteraction: {
+                    type: interactionType,
+                    requestId,
+                  },
+                }
+              : session
+          ),
+        }));
+
+        const isCurrentVisible =
+          typeof document !== 'undefined' &&
+          document.visibilityState === 'visible' &&
+          sameSessionRef(get().currentSessionRef, ref);
+        if (!isCurrentVisible) {
+          const settings = useSettingsStore.getState();
+          if (settings.notifyErrors) {
+            const displayTitle =
+              previousSession.title ?? previousSession.sessionId ?? sessionId;
+            showTaskNotification({
+              ref,
+              title: `Blade · ${t(
+                interactionType === 'question'
+                  ? 'attention.notification.question'
+                  : 'attention.notification.permission'
+              )}`,
+              body: displayTitle,
+              onOpen: (notificationRef) => {
+                if (typeof window === 'undefined') return;
+                window.focus();
+                window.dispatchEvent(
+                  new CustomEvent(TASK_NOTIFICATION_OPEN_EVENT, {
+                    detail: notificationRef,
+                  })
+                );
+              },
+            });
+          }
+        }
+        return;
+      }
+      if (event.type === 'interaction.resolved') {
+        const sessionId = event.properties.sessionId;
+        const projectPath = event.properties.projectPath;
+        const requestId = event.properties.requestId;
+        if (
+          typeof sessionId !== 'string' ||
+          typeof projectPath !== 'string' ||
+          typeof requestId !== 'string'
+        ) {
+          return;
+        }
+        const ref = { sessionId, projectPath };
+        set((state) => ({
+          sessions: state.sessions.map((session) =>
+            sameSessionRef(sessionRefFromSession(session), ref) &&
+            session.pendingInteraction?.requestId === requestId
+              ? { ...session, pendingInteraction: undefined }
+              : session
+          ),
+        }));
+        return;
+      }
       if (event.type !== 'task.status') return;
       const sessionId = event.properties.sessionId;
       const projectPath = event.properties.projectPath;
@@ -95,14 +402,66 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
             : null,
         }));
       }
-      const matched = get().sessions.some((session) =>
-        sameSessionRef(
-          { sessionId: session.sessionId, projectPath: session.projectPath },
-          ref
-        )
+      const previousSession = get().sessions.find((session) =>
+        sameSessionRef(sessionRefFromSession(session), ref)
       );
-      if (!matched) {
-        void get().loadSessions();
+      const isCurrentVisible =
+        typeof document !== 'undefined' &&
+        document.visibilityState === 'visible' &&
+        sameSessionRef(get().currentSessionRef, ref);
+      const isNewAttention = shouldMarkTaskUnread(
+        previousSession?.taskStatus,
+        taskStatus,
+        isCurrentVisible
+      );
+      const key = sessionRefKey(ref);
+      const isFirstUnread = !get().unreadTaskKeys.includes(key);
+      if (isNewAttention && isFirstUnread) {
+        set((state) => {
+          const unreadTaskKeys = [...state.unreadTaskKeys, key];
+          persistUnreadTaskKeys(unreadTaskKeys);
+          return { unreadTaskKeys };
+        });
+
+        const settings = useSettingsStore.getState();
+        if (settings.notifySounds && isAttentionTaskStatus(taskStatus)) {
+          playTaskAttentionSound(taskStatus);
+        }
+        const shouldNotify =
+          taskStatus === 'completed' ? settings.notifyBuild : settings.notifyErrors;
+        if (shouldNotify) {
+          const notificationTitle =
+            taskStatus === 'completed'
+              ? t('attention.notification.completed')
+              : taskStatus === 'failed'
+                ? t('attention.notification.failed')
+                : t('attention.notification.interrupted');
+          const reason =
+            taskFailure(event.properties.taskFailure)?.message ??
+            (typeof event.properties.taskStatusReason === 'string'
+              ? event.properties.taskStatusReason
+              : (previousSession?.taskFailure?.message ??
+                previousSession?.taskStatusReason));
+          const displayTitle =
+            previousSession?.title ?? previousSession?.sessionId ?? sessionId;
+          showTaskNotification({
+            ref,
+            title: `Blade · ${notificationTitle}`,
+            body: reason ? `${displayTitle} · ${reason}` : displayTitle,
+            onOpen: (notificationRef) => {
+              if (typeof window === 'undefined') return;
+              window.focus();
+              window.dispatchEvent(
+                new CustomEvent(TASK_NOTIFICATION_OPEN_EVENT, {
+                  detail: notificationRef,
+                })
+              );
+            },
+          });
+        }
+      }
+      if (!previousSession) {
+        syncExactSession(ref);
         return;
       }
 
@@ -118,6 +477,10 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
                 taskStatusReason:
                   typeof event.properties.taskStatusReason === 'string'
                     ? event.properties.taskStatusReason
+                    : undefined,
+                taskFailure:
+                  taskStatus === 'failed'
+                    ? (taskFailure(event.properties.taskFailure) ?? session.taskFailure)
                     : undefined,
                 taskStartedAt:
                   typeof event.properties.taskStartedAt === 'string'
@@ -161,20 +524,54 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
       if (get().taskEventUnsubscribe) return;
       if (subscriptionPromise) return subscriptionPromise;
 
+      set({
+        taskEventsConnected: false,
+        taskEventConnectionState: 'connecting',
+      });
       subscriptionPromise = (async () => {
-        const unsubscribe = await sessionService.openTaskEventSubscription(
-          (event) => get().handleTaskEvent(event),
-          {
-            onConnectionChange: (connected) => {
-              set({ taskEventsConnected: connected });
-            },
+        try {
+          const unsubscribe = await sessionService.openTaskEventSubscription(
+            (event) => get().handleTaskEvent(event),
+            {
+              onConnectionChange: (connected) => {
+                set({ taskEventsConnected: connected });
+              },
+              onConnectionStateChange: (connectionState) => {
+                if (
+                  subscriptionRequested &&
+                  (connectionState === 'reconnecting' || connectionState === 'offline')
+                ) {
+                  taskEventsNeedResync = true;
+                }
+                set({
+                  taskEventsConnected: connectionState === 'connected',
+                  taskEventConnectionState: connectionState,
+                });
+                if (connectionState === 'connected' && taskEventsNeedResync) {
+                  taskEventsNeedResync = false;
+                  void Promise.all([
+                    get().loadSessions(),
+                    get().loadTaskWorkspaceInfo(),
+                    get().loadBoundProjects(),
+                    useConfigStore.getState().loadModels(),
+                  ]);
+                }
+              },
+            }
+          );
+          if (!subscriptionRequested || get().taskEventUnsubscribe) {
+            unsubscribe();
+            return;
           }
-        );
-        if (!subscriptionRequested || get().taskEventUnsubscribe) {
-          unsubscribe();
-          return;
+          set({ taskEventUnsubscribe: unsubscribe });
+        } catch (error) {
+          taskEventsNeedResync = true;
+          set({
+            taskEventsConnected: false,
+            taskEventConnectionState: 'offline',
+          });
+          throw error;
         }
-        set({ taskEventUnsubscribe: unsubscribe });
       })();
 
       try {
@@ -184,40 +581,295 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
       }
     },
 
+    reconnectTaskEvents: async () => {
+      taskEventsNeedResync = true;
+      get().unsubscribeFromTaskEvents();
+      await get().subscribeToTaskEvents();
+    },
+
     unsubscribeFromTaskEvents: () => {
       subscriptionRequested = false;
       get().taskEventUnsubscribe?.();
       set({
         taskEventUnsubscribe: null,
         taskEventsConnected: false,
+        taskEventConnectionState: 'offline',
       });
     },
 
     loadTaskWorkspaceInfo: async () => {
+      set({
+        isTaskWorkspaceLoading: true,
+        taskWorkspaceError: null,
+      });
       try {
         const taskWorkspaceInfo = await sessionService.getWorkspaceInfo();
-        set({ taskWorkspaceInfo });
+        set({
+          taskWorkspaceInfo,
+          isTaskWorkspaceLoading: false,
+        });
       } catch (error) {
         set({
-          error:
+          isTaskWorkspaceLoading: false,
+          taskWorkspaceError:
             error instanceof Error ? error.message : 'Failed to load task workspace',
         });
       }
     },
 
-    dispatchTask: async (input) => {
-      set({ isDispatchingTask: true, error: null });
+    loadBoundProjects: async () => {
       try {
-        const result = await sessionService.createTask(input);
+        const boundProjects = await sessionService.listProjects();
+        const stored = readSelectedProject();
+        const selected =
+          boundProjects.find(
+            (project) => project.available && project.path === stored
+          ) ??
+          boundProjects.find((project) => project.isCurrent) ??
+          boundProjects.find((project) => project.available);
+        if (selected) persistSelectedProject(selected.path);
+        set({
+          boundProjects,
+          selectedProjectPath: selected?.path ?? null,
+        });
+      } catch (error) {
+        set({
+          error: error instanceof Error ? error.message : 'Failed to load projects',
+        });
+      }
+    },
+
+    bindProject: async (projectPath) => {
+      set({ isBindingProject: true, error: null });
+      try {
+        const project = await sessionService.bindProject(projectPath);
+        persistSelectedProject(project.path);
+        set((state) => ({
+          boundProjects: [
+            ...state.boundProjects.filter((item) => item.path !== project.path),
+            project,
+          ].sort((left, right) => {
+            if (left.isCurrent !== right.isCurrent) return left.isCurrent ? -1 : 1;
+            return left.name.localeCompare(right.name);
+          }),
+          selectedProjectPath: project.path,
+          isBindingProject: false,
+        }));
+      } catch (error) {
+        set({
+          isBindingProject: false,
+          error: error instanceof Error ? error.message : 'Failed to bind project',
+        });
+        throw error;
+      }
+    },
+
+    unbindProject: async (projectPath) => {
+      try {
+        await sessionService.unbindProject(projectPath);
+        set((state) => {
+          const boundProjects = state.boundProjects.filter(
+            (project) => project.path !== projectPath || project.isCurrent
+          );
+          const selected =
+            state.selectedProjectPath === projectPath
+              ? (boundProjects.find((project) => project.isCurrent) ??
+                boundProjects.find((project) => project.available))
+              : undefined;
+          if (selected) persistSelectedProject(selected.path);
+          return {
+            boundProjects,
+            ...(selected ? { selectedProjectPath: selected.path } : {}),
+          };
+        });
+      } catch (error) {
+        set({
+          error: error instanceof Error ? error.message : 'Failed to unbind project',
+        });
+        throw error;
+      }
+    },
+
+    selectProject: (projectPath) => {
+      persistSelectedProject(projectPath);
+      set({ selectedProjectPath: projectPath });
+    },
+
+    markTaskRead: (ref) => {
+      const key = sessionRefKey(ref);
+      set((state) => {
+        const unreadTaskKeys = state.unreadTaskKeys.filter(
+          (candidate) => candidate !== key
+        );
+        persistUnreadTaskKeys(unreadTaskKeys);
+        return { unreadTaskKeys };
+      });
+    },
+
+    clearUnreadTasks: () => {
+      persistUnreadTaskKeys([]);
+      set({ unreadTaskKeys: [] });
+    },
+
+    cancelTask: async (ref) => {
+      const key = sessionRefKey(ref);
+      if (get().cancellingTaskKeys.includes(key)) return;
+      set((state) => ({
+        cancellingTaskKeys: [...state.cancellingTaskKeys, key],
+        error: null,
+        errorContext: null,
+      }));
+      try {
+        await sessionService.abortSession(ref);
+        const isCurrent = sameSessionRef(get().currentSessionRef, ref);
+        if (isCurrent) get().unsubscribeFromEvents();
+        set((state) => ({
+          sessions: state.sessions.map((session) =>
+            sameSessionRef(sessionRefFromSession(session), ref)
+              ? {
+                  ...session,
+                  taskStatus: 'cancelled' as const,
+                  taskQueuePosition: undefined,
+                  taskQueueDepth: undefined,
+                  taskCompletedAt: session.taskCompletedAt ?? new Date().toISOString(),
+                }
+              : session
+          ),
+          ...(isCurrent
+            ? {
+                isStreaming: false,
+                isStopping: false,
+                agentPhase: 'idle' as const,
+                currentRunId: null,
+                pendingSteeringCount: 0,
+                pendingInputDelivery: null,
+                recoveredSteeringCount: 0,
+                currentAssistantMessageId: null,
+                hasToolCalls: false,
+                eventUnsubscribe: null,
+              }
+            : {}),
+        }));
+      } catch (error) {
+        set({
+          error: error instanceof Error ? error.message : 'Failed to stop task',
+          errorContext: { kind: 'task_action', sessionRef: ref },
+        });
+        throw error;
+      } finally {
+        set((state) => ({
+          cancellingTaskKeys: state.cancellingTaskKeys.filter(
+            (candidate) => candidate !== key
+          ),
+        }));
+      }
+    },
+
+    retryTask: async (ref) => {
+      const key = sessionRefKey(ref);
+      if (get().retryingTaskKeys.includes(key)) return;
+      const navigationVersion = get().getNavigationVersion();
+      const selectedProjectPath = get().selectedProjectPath;
+      const ownsNavigation = (): boolean =>
+        get().getNavigationVersion() === navigationVersion &&
+        get().selectedProjectPath === selectedProjectPath;
+      set((state) => ({
+        retryingTaskKeys: [...state.retryingTaskKeys, key],
+        error: null,
+        errorContext: null,
+      }));
+      try {
+        const result = await sessionService.retryTask(ref);
+        set((state) => ({
+          sessions: upsertSessionByRef(state.sessions, result.session),
+        }));
+        get().markTaskRead(ref);
+        if (ownsNavigation()) {
+          await get().selectSession(sessionRefFromSession(result.session));
+        }
+      } catch (error) {
+        if (ownsNavigation()) {
+          set({
+            error: error instanceof Error ? error.message : 'Failed to retry task',
+            errorContext: { kind: 'task_action', sessionRef: ref },
+          });
+        }
+        throw error;
+      } finally {
+        set((state) => ({
+          retryingTaskKeys: state.retryingTaskKeys.filter(
+            (candidate) => candidate !== key
+          ),
+        }));
+      }
+    },
+
+    deliverTask: async (ref, action) => {
+      const key = sessionRefKey(ref);
+      if (get().taskDeliveryActions[key]) return;
+      set((state) => ({
+        taskDeliveryActions: {
+          ...state.taskDeliveryActions,
+          [key]: action,
+        },
+        error: null,
+        errorContext: null,
+      }));
+      try {
+        const session = await sessionService.deliverTask(ref, action);
+        set((state) => ({
+          sessions: upsertSessionByRef(state.sessions, session),
+        }));
+        get().markTaskRead(ref);
+      } catch (error) {
+        set({
+          error:
+            error instanceof Error ? error.message : 'Failed to deliver task changes',
+          errorContext: { kind: 'task_action', sessionRef: ref },
+        });
+        throw error;
+      } finally {
+        set((state) => {
+          const { [key]: _completed, ...taskDeliveryActions } =
+            state.taskDeliveryActions;
+          return { taskDeliveryActions };
+        });
+      }
+    },
+
+    dispatchTask: async (input) => {
+      const navigationVersion = get().getNavigationVersion();
+      const selectedProjectPath = get().selectedProjectPath;
+      const projectPath = input.projectPath ?? selectedProjectPath ?? undefined;
+      const ownsNavigation = (): boolean =>
+        get().getNavigationVersion() === navigationVersion &&
+        get().selectedProjectPath === selectedProjectPath;
+      set({
+        isDispatchingTask: true,
+        error: null,
+        errorContext: null,
+      });
+      try {
+        const result = await sessionService.createTask({
+          ...input,
+          projectPath,
+        });
         set((state) => ({
           sessions: upsertSessionByRef(state.sessions, result.session),
           isDispatchingTask: false,
         }));
-        await get().selectSession(sessionRefFromSession(result.session));
+        if (ownsNavigation()) {
+          await get().selectSession(sessionRefFromSession(result.session));
+        }
       } catch (error) {
         set({
           isDispatchingTask: false,
-          error: error instanceof Error ? error.message : 'Failed to dispatch task',
+          ...(ownsNavigation()
+            ? {
+                error:
+                  error instanceof Error ? error.message : 'Failed to dispatch task',
+              }
+            : {}),
         });
         throw error;
       }

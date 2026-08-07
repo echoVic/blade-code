@@ -11,10 +11,11 @@ import { type SessionMetadata, SessionService } from '../../services/SessionServ
 import type { SessionSelectionIntent } from '../../slash-commands/types.js';
 import { useCurrentFocus } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
-import { getCwd } from '../../utils/cwd.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 import {
   getSessionCandidateKey,
+  getSessionDeliveryLabel,
+  getSessionDisplayTitle,
   getSessionSelectorCopy,
   getVisibleSessionCandidates,
 } from './sessionSelectorModel.js';
@@ -172,7 +173,6 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
       setLoading(true);
       try {
         const sessions = await SessionService.listSessions({
-          cwd: getCwd(),
           includeSubagents: false,
         });
         setLoadedSessions(sessions);
@@ -200,11 +200,13 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
         session.taskSourceProjectPath ?? session.projectPath
       );
       const timeStr = formatTimestamp(session.lastMessageTime);
+      const title = getSessionDisplayTitle(session);
       const statusStr = `[${formatTaskStatus(session.taskStatus)}]`;
       const branchStr = session.gitBranch ? ` (${session.gitBranch})` : '';
       const errorStr = session.hasErrors ? ' [!]' : '';
-      const relationStr =
-        session.relationType === 'subagent'
+      const relationStr = session.taskRetriedFrom
+        ? ` ↻ retry:${session.taskRetriedFrom.sessionId.slice(0, 6)}`
+        : session.relationType === 'subagent'
           ? ' ↳ subagent'
           : session.relationType === 'fork'
             ? ' ↳ fork'
@@ -222,10 +224,11 @@ export const SessionSelector: React.FC<SessionSelectorProps> = ({
         session.taskStatus === 'queued' && session.taskQueuePosition
           ? ` | queue:${session.taskQueuePosition}/${session.taskQueueDepth ?? session.taskQueuePosition}`
           : '';
+      const deliveryStr = getSessionDeliveryLabel(session);
 
       return {
         key: getSessionCandidateKey(session),
-        label: `${statusStr} ${timeStr} | ${projectName}${branchStr} | ${session.messageCount} 条消息${isolationStr}${queueStr}${diffStr}${errorStr}${relationStr}`,
+        label: `${statusStr} ${title} · ${timeStr} | ${projectName}${branchStr} | ${session.messageCount} 条消息${isolationStr}${queueStr}${diffStr}${deliveryStr}${errorStr}${relationStr}`,
         value: session,
       };
     });

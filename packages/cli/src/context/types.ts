@@ -144,11 +144,65 @@ export type SessionTaskStatus =
 
 export type SessionTaskIsolation = 'local' | 'worktree';
 
+export type SessionTaskFailureCode =
+  | 'authentication'
+  | 'permission'
+  | 'rate_limit'
+  | 'timeout'
+  | 'network'
+  | 'model_unavailable'
+  | 'context_limit'
+  | 'unsupported_input'
+  | 'runtime';
+
+export interface SessionTaskFailure {
+  code: SessionTaskFailureCode;
+  message: string;
+  retryable: boolean;
+}
+
 export interface SessionTaskDiffStat {
   changedFiles: number;
   additions: number;
   deletions: number;
   commits: number;
+}
+
+export type SessionTaskPermissionMode = 'default' | 'autoEdit' | 'yolo' | 'plan';
+
+export interface SessionTaskAttachment {
+  type: 'file' | 'image' | 'url';
+  path?: string;
+  url?: string;
+  content?: string;
+  mimeType?: string;
+  name?: string;
+}
+
+export interface SessionTaskDispatch {
+  version: 1;
+  prompt: string;
+  title?: string;
+  sourceProjectPath: string;
+  isolation: SessionTaskIsolation;
+  permissionMode: SessionTaskPermissionMode;
+  modelId?: string;
+  attachments?: SessionTaskAttachment[];
+}
+
+export interface SessionTaskRetryRef {
+  sessionId: string;
+  projectPath: string;
+}
+
+export type SessionTaskDeliveryStatus = 'applied' | 'discarded' | 'conflicted';
+
+export interface SessionTaskDelivery {
+  status: SessionTaskDeliveryStatus;
+  updatedAt: string;
+  sourceCommit?: string;
+  changedFiles?: number;
+  message?: string;
 }
 
 export interface SessionTaskWorktree {
@@ -162,6 +216,7 @@ export interface SessionTaskWorktree {
   worktreeRoot: string;
   workspaceRoot: string;
   sourceHadChanges: boolean;
+  sourceStateFingerprint?: string;
 }
 
 export interface SessionInfo {
@@ -176,10 +231,15 @@ export interface SessionInfo {
   status?: 'running' | 'completed' | 'failed';
   taskStatus?: SessionTaskStatus;
   taskStatusReason?: string | null;
+  taskFailure?: SessionTaskFailure | null;
   taskStartedAt?: string | null;
   taskCompletedAt?: string | null;
   taskOwnerPid?: number | null;
   taskPromptSummary?: string | null;
+  taskDispatch?: SessionTaskDispatch | null;
+  taskModelId?: string | null;
+  taskRetriedFrom?: SessionTaskRetryRef | null;
+  taskDelivery?: SessionTaskDelivery | null;
   taskIsolation?: SessionTaskIsolation | null;
   taskSourceProjectPath?: string | null;
   taskWorktree?: SessionTaskWorktree | null;
@@ -187,6 +247,7 @@ export interface SessionInfo {
   taskQueuePosition?: number | null;
   taskQueueDepth?: number | null;
   taskConcurrencyLimit?: number | null;
+  selectedModelId?: string | null;
   agentType?: string;
   model?: string;
   permission?: JsonValue;

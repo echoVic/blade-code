@@ -28,15 +28,16 @@ import { createLogger, LogCategory } from '../../logging/Logger.js';
 import {
   useAppActions,
   useCommandActions,
+  useCurrentModelId,
   useIsProcessing,
   usePermissionMode,
   useSessionActions,
   useSessionId,
   useThinkingModeEnabled,
+  useWorkspaceRoot,
 } from '../../store/selectors/index.js';
 import { ensureStoreInitialized, getState } from '../../store/vanilla.js';
 import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
-import { getCwd } from '../../utils/cwd.js';
 import { classifyError } from '../utils/errorExtractor.js';
 import { createLoopEventHandler } from '../utils/loopEventHandler.js';
 import {
@@ -69,6 +70,8 @@ export const useCommandHandler = (
   // ==================== Store 选择器 ====================
   const isProcessing = useIsProcessing();
   const sessionId = useSessionId();
+  const workspaceRoot = useWorkspaceRoot();
+  const currentModelId = useCurrentModelId();
   const permissionMode = usePermissionMode();
   const thinkingModeEnabled = useThinkingModeEnabled();
 
@@ -92,9 +95,11 @@ export const useCommandHandler = (
     resumeSubagent,
   } = useAgent({
     sessionId,
+    workspaceRoot,
     systemPrompt: replaceSystemPrompt,
     appendSystemPrompt: appendSystemPrompt,
     maxTurns: maxTurns,
+    modelId: currentModelId,
   });
 
   const streamingBuffer = useStreamingBuffer(sessionActions);
@@ -201,7 +206,8 @@ export const useCommandHandler = (
           {
             list: listSubagents,
             resume: resumeSubagent,
-          }
+          },
+          workspaceRoot
         );
 
         if (slashResult.type === 'handled') {
@@ -223,7 +229,7 @@ export const useCommandHandler = (
           const hookResult = await hookManager.executeUserPromptSubmitHooks(
             agentInput.text,
             {
-              projectDir: getCwd(),
+              projectDir: workspaceRoot,
               sessionId: sessionId,
               permissionMode: permissionMode,
               hasImages: agentInput.images.length > 0,
@@ -286,7 +292,7 @@ export const useCommandHandler = (
           messages: contextMessages,
           userId: 'cli-user',
           sessionId: sessionId,
-          workspaceRoot: getCwd(),
+          workspaceRoot,
           signal: abortController.signal,
           confirmationHandler,
           permissionMode: permissionMode,
@@ -372,9 +378,9 @@ export const useCommandHandler = (
       pendingResumeRequestedRef.current = true;
       return;
     }
-    const hasPending = await SessionRuntime.hasPendingInbox(getCwd(), sessionId);
+    const hasPending = await SessionRuntime.hasPendingInbox(workspaceRoot, sessionId);
     const hasActiveGoal =
-      !hasPending && (await SessionRuntime.hasActiveGoal(getCwd(), sessionId));
+      !hasPending && (await SessionRuntime.hasActiveGoal(workspaceRoot, sessionId));
     if (!hasPending && !hasActiveGoal) {
       pendingResumeRequestedRef.current = false;
       return;
@@ -399,7 +405,7 @@ export const useCommandHandler = (
         messages: buildContextMessagesFromSession(getState().session),
         userId: 'cli-user',
         sessionId,
-        workspaceRoot: getCwd(),
+        workspaceRoot,
         signal: abortController.signal,
         confirmationHandler,
         permissionMode,
@@ -464,7 +470,11 @@ export const useCommandHandler = (
             sessionActions,
             abortController.signal,
             cleanupAgent,
-            sessionId
+            sessionId,
+            undefined,
+            undefined,
+            undefined,
+            workspaceRoot
           );
           return;
         }
@@ -478,7 +488,7 @@ export const useCommandHandler = (
       const hookResult = await HookManager.getInstance().executeUserPromptSubmitHooks(
         resolved.text,
         {
-          projectDir: getCwd(),
+          projectDir: workspaceRoot,
           sessionId,
           permissionMode,
           hasImages: resolved.images.length > 0,
@@ -591,8 +601,8 @@ export const useCommandHandler = (
   useEffect(() => {
     let cancelled = false;
     void Promise.all([
-      SessionRuntime.hasPendingInbox(getCwd(), sessionId),
-      SessionRuntime.hasActiveGoal(getCwd(), sessionId),
+      SessionRuntime.hasPendingInbox(workspaceRoot, sessionId),
+      SessionRuntime.hasActiveGoal(workspaceRoot, sessionId),
     ])
       .then(([hasPending, hasActiveGoal]) => {
         if (!cancelled && (hasPending || hasActiveGoal)) {
@@ -607,7 +617,7 @@ export const useCommandHandler = (
     return () => {
       cancelled = true;
     };
-  }, [resumePendingInput, sessionId]);
+  }, [resumePendingInput, sessionId, workspaceRoot]);
 
   return {
     executeCommand,

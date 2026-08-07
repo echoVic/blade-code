@@ -203,7 +203,7 @@ export async function buildSystemPrompt(
   let prompt = parts.join('\n\n---\n\n');
 
   // 注入 Skills 元数据到 <available_skills> 占位符
-  prompt = injectSkillsToPrompt(prompt);
+  prompt = injectSkillsToPrompt(prompt, projectPath);
 
   // 注入语言指令
   prompt = injectLanguageInstruction(prompt, language);
@@ -214,8 +214,8 @@ export async function buildSystemPrompt(
 /**
  * 注入 Skills 列表到系统提示的 <available_skills> 占位符
  */
-function injectSkillsToPrompt(prompt: string): string {
-  const registry = getSkillRegistry();
+function injectSkillsToPrompt(prompt: string, projectPath?: string): string {
+  const registry = getSkillRegistry(projectPath ? { cwd: projectPath } : undefined);
   const skillsList = registry.generateAvailableSkillsList();
 
   // 如果没有 skills，保持占位符为空（但保留标签结构）

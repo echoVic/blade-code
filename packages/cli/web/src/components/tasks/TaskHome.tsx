@@ -1,224 +1,627 @@
 import {
-  Box,
-  Gauge,
+  AlertCircle,
+  Bot,
+  CheckCircle2,
+  ChevronDown,
+  Command,
+  FolderGit2,
+  FolderPlus,
   GitBranch,
   Hammer,
   HardDrive,
   Loader2,
+  Package,
+  RefreshCw,
   ScanSearch,
   Search,
+  Sparkles,
+  WifiOff,
   Wrench,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChatInput, type ComposerImageAttachment } from '@/components/chat/ChatInput';
+import { BladeMark } from '@/components/layout/BladeMark';
+import { ProjectBindingDialog } from '@/components/layout/ProjectBindingDialog';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { type TranslationKey, useT } from '@/i18n';
+import { sessionsForProject } from '@/lib/projectIdentity';
 import { cn } from '@/lib/utils';
+import { useAppStore } from '@/store/AppStore';
 import { useConfigStore } from '@/store/ConfigStore';
 import { useSessionStore } from '@/store/session';
+import { sessionRefFromSession } from '@/store/session/sessionIdentity';
+import { CapacityMeter } from './CapacityMeter';
+import { RecentTasksStrip } from './RecentTasksStrip';
+import { TemplateCard } from './TemplateCard';
 
+// Templates are declared with translation keys; both title/description/hint
+// are resolved inside the render pass so switching locale re-renders them.
 const TASK_TEMPLATES = [
   {
-    title: 'Explore',
-    description: 'Trace behavior and explain the system',
+    key: 'explore',
+    titleKey: 'taskHome.template.explore.title' as const,
+    descriptionKey: 'taskHome.template.explore.description' as const,
     icon: Search,
     prompt: 'Explore this codebase and explain ',
+    hintKey: 'taskHome.template.explore.hint' as const,
   },
   {
-    title: 'Build',
-    description: 'Implement a production-ready feature',
+    key: 'build',
+    titleKey: 'taskHome.template.build.title' as const,
+    descriptionKey: 'taskHome.template.build.description' as const,
     icon: Hammer,
     prompt: 'Build a production-ready ',
+    hintKey: 'taskHome.template.build.hint' as const,
   },
   {
-    title: 'Review',
-    description: 'Find correctness and regression risks',
+    key: 'review',
+    titleKey: 'taskHome.template.review.title' as const,
+    descriptionKey: 'taskHome.template.review.description' as const,
     icon: ScanSearch,
     prompt: 'Review the current changes for bugs, regressions, and missing tests. ',
+    hintKey: 'taskHome.template.review.hint' as const,
   },
   {
-    title: 'Fix',
-    description: 'Diagnose and repair a concrete failure',
+    key: 'fix',
+    titleKey: 'taskHome.template.fix.title' as const,
+    descriptionKey: 'taskHome.template.fix.description' as const,
     icon: Wrench,
     prompt: 'Investigate and fix ',
+    hintKey: 'taskHome.template.fix.hint' as const,
   },
-] as const;
+] as const satisfies ReadonlyArray<{
+  key: string;
+  titleKey: TranslationKey;
+  descriptionKey: TranslationKey;
+  hintKey: TranslationKey;
+  icon: typeof Search;
+  prompt: string;
+}>;
 
-function projectName(path: string | undefined): string {
-  if (!path) return 'current workspace';
+function projectFallback(t: (k: TranslationKey) => string, path?: string): string {
+  if (!path) return t('taskHome.hero.projectFallback');
   return path.split('/').filter(Boolean).at(-1) || path;
 }
 
 export function TaskHome() {
+  const t = useT();
   const {
     taskWorkspaceInfo,
+    isTaskWorkspaceLoading,
+    taskWorkspaceError,
     isDispatchingTask,
+    sessions,
+    boundProjects,
+    selectedProjectPath,
     error,
-    loadSessions,
-    loadTaskWorkspaceInfo,
+    selectProject,
     dispatchTask,
+    selectSession,
+    cancelTask,
+    cancellingTaskKeys,
+    retryTask,
+    retryingTaskKeys,
+    unreadTaskKeys,
+    taskEventConnectionState,
+    catalogLoadState,
+    reconnectTaskEvents,
     clearError,
+    loadTaskWorkspaceInfo,
+    loadBoundProjects,
   } = useSessionStore();
+  const openSettings = useAppStore((state) => state.openSettings);
   const currentMode = useConfigStore((state) => state.currentMode);
+  const currentModelId = useConfigStore((state) => state.currentModelId);
+  const configuredModels = useConfigStore((state) => state.configuredModels);
+  const modelsLoading = useConfigStore((state) => state.isLoading);
+  const modelsLoaded = useConfigStore((state) => state.hasLoaded);
+  const modelsError = useConfigStore((state) => state.error);
+  const loadModels = useConfigStore((state) => state.loadModels);
   const [isolation, setIsolation] = useState<'local' | 'worktree'>('worktree');
-  const [draft, setDraft] = useState<string | undefined>();
+  const [draft, setDraft] = useState<{ key: string; content: string } | undefined>();
+  const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+  const feedLabel =
+    taskEventConnectionState === 'connected'
+      ? t('taskHome.eyebrow')
+      : taskEventConnectionState === 'reconnecting'
+        ? t('taskHome.feed.reconnecting')
+        : taskEventConnectionState === 'offline'
+          ? t('taskHome.feed.offline')
+          : t('taskHome.feed.connecting');
 
-  useEffect(() => {
-    void Promise.all([loadSessions(), loadTaskWorkspaceInfo()]);
-  }, [loadSessions, loadTaskWorkspaceInfo]);
+  const selectedProject = useMemo(
+    () =>
+      boundProjects.find((project) => project.path === selectedProjectPath) ??
+      boundProjects.find((project) => project.isCurrent),
+    [boundProjects, selectedProjectPath]
+  );
+  const projectSessions = useMemo(
+    () =>
+      sessionsForProject(sessions, selectedProjectPath, taskWorkspaceInfo?.cwd ?? null),
+    [selectedProjectPath, sessions, taskWorkspaceInfo?.cwd]
+  );
+  const targetProjectPath =
+    (selectedProject?.available ? selectedProject.path : undefined) ??
+    taskWorkspaceInfo?.cwd;
+  const composerDraftKey = `task:${targetProjectPath ?? 'unavailable'}`;
+  const workspaceReadinessPending =
+    !selectedProject?.available && isTaskWorkspaceLoading;
+  const workspaceReadinessError = selectedProject?.available
+    ? null
+    : taskWorkspaceError;
+  const workspaceReady = Boolean(
+    targetProjectPath && !workspaceReadinessPending && !workspaceReadinessError
+  );
+  const modelReady = Boolean(
+    currentModelId && configuredModels.some((model) => model.id === currentModelId)
+  );
+  const modelReadinessPending = !modelsLoaded || modelsLoading;
+  const canDispatch =
+    workspaceReady && modelReady && !modelReadinessPending && modelsError === null;
 
   const context = useMemo(
     () => ({
-      project: projectName(taskWorkspaceInfo?.cwd),
-      branch: taskWorkspaceInfo?.gitBranch || 'no branch',
+      project: projectFallback(t, selectedProject?.path ?? taskWorkspaceInfo?.cwd),
+      branch:
+        selectedProject?.gitBranch ??
+        taskWorkspaceInfo?.gitBranch ??
+        t('taskHome.context.branchFallback'),
     }),
-    [taskWorkspaceInfo]
+    [selectedProject, taskWorkspaceInfo, t]
   );
 
-  const handleDispatch = async (payload: {
-    content: string;
-    attachments: ComposerImageAttachment[];
-  }) => {
-    await dispatchTask({
-      prompt: payload.content,
-      projectPath: taskWorkspaceInfo?.cwd,
-      isolation,
-      permissionMode: currentMode,
-      attachments: payload.attachments.map((attachment) => ({
-        type: 'image' as const,
-        content: attachment.dataUrl,
-        mimeType: attachment.mimeType,
-        name: attachment.name,
-      })),
-    });
-  };
+  const handleDispatch = useCallback(
+    async (payload: {
+      content: string;
+      modelId?: string;
+      attachments: ComposerImageAttachment[];
+    }) => {
+      await dispatchTask({
+        prompt: payload.content,
+        projectPath: targetProjectPath,
+        isolation,
+        permissionMode: currentMode,
+        modelId: payload.modelId ?? currentModelId ?? undefined,
+        attachments: payload.attachments.map((attachment) => ({
+          type: 'image' as const,
+          content: attachment.dataUrl,
+          mimeType: attachment.mimeType,
+          name: attachment.name,
+        })),
+      });
+    },
+    [currentMode, currentModelId, dispatchTask, isolation, targetProjectPath]
+  );
+
+  // Keyboard shortcuts: ⌘1..⌘4 (or Ctrl on non-mac) drops a template prompt.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const num = Number.parseInt(e.key, 10);
+      if (Number.isNaN(num) || num < 1 || num > TASK_TEMPLATES.length) return;
+      const tpl = TASK_TEMPLATES[num - 1];
+      if (!tpl) return;
+      e.preventDefault();
+      setDraft({ key: composerDraftKey, content: tpl.prompt });
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [composerDraftKey]);
 
   return (
-    <main
-      className="relative flex-1 overflow-y-auto bg-[#fafafa] text-zinc-950 dark:bg-[#09090b] dark:text-zinc-100"
-      style={{
-        backgroundImage:
-          'linear-gradient(rgba(113,113,122,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(113,113,122,0.06) 1px, transparent 1px)',
-        backgroundSize: '32px 32px',
-      }}
-    >
-      <div className="mx-auto flex min-h-full w-full max-w-[920px] flex-col justify-center px-8 py-16">
-        <div className="mb-9">
-          <div className="mb-4 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            Task dispatcher
+    <main className="deck-canvas relative flex-1 overflow-y-auto text-[hsl(var(--deck-ink))]">
+      <div className="mx-auto flex min-h-full w-full max-w-[960px] flex-col px-6 py-8 md:px-8 md:py-10">
+        {/* Hero */}
+        <div className="mb-6 flex items-start gap-4">
+          <BladeMark size={36} className="mt-1 hidden sm:inline-flex" />
+          <div className="flex-1">
+            <div
+              className={cn(
+                'deck-eyebrow flex items-center gap-2',
+                taskEventConnectionState === 'offline'
+                  ? 'text-amber-700 dark:text-amber-400'
+                  : 'text-[hsl(var(--deck-accent))]'
+              )}
+            >
+              {taskEventConnectionState === 'offline' ? (
+                <WifiOff className="h-3 w-3" />
+              ) : (
+                <span className="deck-pulse-dot" />
+              )}
+              {feedLabel}
+            </div>
+            <h1 className="mt-2.5 max-w-3xl text-balance text-[clamp(28px,3vw,34px)] font-medium leading-[1.12] tracking-[-0.028em] text-[hsl(var(--deck-ink))]">
+              {t('taskHome.hero.prefix')}{' '}
+              <span className="whitespace-nowrap font-mono text-[0.82em] text-[hsl(var(--deck-accent))]">
+                {context.project}
+              </span>
+              <span className="text-[hsl(var(--deck-ink-muted))]">?</span>
+            </h1>
+            <p className="mt-2 max-w-[46rem] text-[13px] leading-[1.55] text-[hsl(var(--deck-ink-muted))]">
+              {t('taskHome.hero.subtitle')}
+            </p>
           </div>
-          <h1 className="max-w-3xl text-balance text-[34px] font-medium leading-[1.16] tracking-[-0.035em] text-zinc-950 dark:text-zinc-50">
-            What should Blade build in{' '}
-            <span className="font-mono text-[0.88em] text-emerald-700 dark:text-emerald-400">
-              {context.project}
+        </div>
+
+        {/* Template grid */}
+        <div className="mb-4">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="deck-eyebrow text-[hsl(var(--deck-ink-faint))]">
+              {t('taskHome.templates.title')}
             </span>
-            ?
-          </h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-500 dark:text-zinc-500">
-            Dispatch a task and keep moving. It runs independently, persists its state,
-            and returns with a reviewable workspace.
-          </p>
+            <span className="inline-flex items-center gap-1.5 font-mono text-[10.5px] text-[hsl(var(--deck-ink-faint))]">
+              <Command className="h-3 w-3" />
+              <span>{t('taskHome.templates.hint')}</span>
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {TASK_TEMPLATES.map((template, index) => (
+              <TemplateCard
+                key={template.key}
+                index={index}
+                title={t(template.titleKey)}
+                description={t(template.descriptionKey)}
+                icon={template.icon}
+                hint={t(template.hintKey)}
+                onClick={() =>
+                  setDraft({ key: composerDraftKey, content: template.prompt })
+                }
+              />
+            ))}
+          </div>
         </div>
 
-        <div className="mb-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
-          {TASK_TEMPLATES.map((template) => {
-            const Icon = template.icon;
-            return (
+        {/* Composer console */}
+        <div className="rounded-xl border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] shadow-[0_28px_80px_-32px_hsl(var(--deck-accent)/0.28),0_2px_0_hsl(var(--deck-hairline))]">
+          {/* Context ribbon — unified pill bar */}
+          <div className="flex items-center gap-0 border-b border-[hsl(var(--deck-hairline))] bg-[hsl(var(--deck-surface-2))]/50">
+            {/* Left: project + isolation */}
+            <div className="flex min-w-0 flex-1 items-center">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={t('taskHome.context.projectSelect')}
+                    disabled={boundProjects.length === 0}
+                    className="group flex h-9 min-w-0 items-center gap-2 border-r border-[hsl(var(--deck-hairline))] px-3 font-mono text-[11.5px] text-[hsl(var(--deck-ink))] transition-colors hover:bg-[hsl(var(--deck-surface))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[hsl(var(--deck-accent))] disabled:opacity-50"
+                  >
+                    <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-[hsl(var(--deck-accent))]" />
+                    <span className="truncate font-medium">
+                      {selectedProject?.name ?? context.project}
+                    </span>
+                    <ChevronDown className="h-3 w-3 shrink-0 text-[hsl(var(--deck-ink-faint))] transition-transform group-data-[state=open]:rotate-180" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  sideOffset={4}
+                  className="w-56 rounded-lg border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] p-1 shadow-xl"
+                >
+                  <div className="flex flex-col">
+                    {boundProjects.map((project) => (
+                      <button
+                        key={project.path}
+                        type="button"
+                        disabled={!project.available}
+                        onClick={() => {
+                          selectProject(project.path);
+                        }}
+                        className={cn(
+                          'flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left font-mono text-[12px] transition-colors',
+                          project.path === selectedProjectPath
+                            ? 'bg-[hsl(var(--deck-accent-soft))] text-[hsl(var(--deck-accent))]'
+                            : 'text-[hsl(var(--deck-ink-muted))] hover:bg-[hsl(var(--deck-surface-2))] hover:text-[hsl(var(--deck-ink))]',
+                          !project.available && 'opacity-40'
+                        )}
+                      >
+                        <FolderGit2 className="h-3 w-3 shrink-0" />
+                        <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                        {project.path === selectedProjectPath && (
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[hsl(var(--deck-accent))]" />
+                        )}
+                      </button>
+                    ))}
+                    {boundProjects.length === 0 && (
+                      <span className="px-2.5 py-2 text-center font-mono text-[11px] text-[hsl(var(--deck-ink-faint))]">
+                        {t('taskHome.setup.workspace.empty')}
+                      </span>
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
+
               <button
-                key={template.title}
                 type="button"
-                onClick={() => setDraft(template.prompt)}
-                className="group min-h-[92px] rounded-lg border border-zinc-200 bg-white/85 p-3 text-left transition hover:-translate-y-0.5 hover:border-zinc-400 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-zinc-800 dark:bg-zinc-950/80 dark:hover:border-zinc-600"
+                aria-pressed={isolation === 'worktree'}
+                onClick={() =>
+                  setIsolation((current) =>
+                    current === 'worktree' ? 'local' : 'worktree'
+                  )
+                }
+                className={cn(
+                  'flex h-9 shrink-0 items-center gap-1.5 border-r border-[hsl(var(--deck-hairline))] px-3 font-mono text-[11px] transition-colors',
+                  isolation === 'worktree'
+                    ? 'text-[hsl(var(--deck-accent))]'
+                    : 'text-[hsl(var(--deck-ink-muted))] hover:text-[hsl(var(--deck-ink))]'
+                )}
+                title={t('taskHome.context.isolationToggleTitle')}
               >
-                <div className="mb-3 flex items-center justify-between">
-                  <Icon className="h-4 w-4 text-zinc-400 transition-colors group-hover:text-emerald-600 dark:group-hover:text-emerald-400" />
-                  <span className="font-mono text-[10px] text-zinc-300 dark:text-zinc-700">
-                    0{TASK_TEMPLATES.indexOf(template) + 1}
-                  </span>
-                </div>
-                <div className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">
-                  {template.title}
-                </div>
-                <div className="mt-1 text-[11px] leading-4 text-zinc-500">
-                  {template.description}
-                </div>
+                {isolation === 'worktree' ? (
+                  <Package className="h-3 w-3" />
+                ) : (
+                  <HardDrive className="h-3 w-3" />
+                )}
+                <span className="hidden sm:inline">
+                  {isolation === 'worktree'
+                    ? t('taskHome.context.isolation.worktree')
+                    : t('taskHome.context.isolation.local')}
+                </span>
               </button>
-            );
-          })}
+
+              <span className="flex h-9 shrink-0 items-center gap-1.5 border-r border-[hsl(var(--deck-hairline))] px-3 font-mono text-[11px] text-[hsl(var(--deck-ink-muted))]">
+                <GitBranch className="h-3 w-3" />
+                <span className="hidden sm:inline">{context.branch}</span>
+              </span>
+            </div>
+
+            {/* Right: capacity + status */}
+            <div className="flex shrink-0 items-center gap-2 px-3">
+              {taskWorkspaceInfo?.taskAdmission && (
+                <CapacityMeter
+                  inFlight={taskWorkspaceInfo.taskAdmission.inFlight}
+                  queued={taskWorkspaceInfo.taskAdmission.queued}
+                  maxConcurrent={taskWorkspaceInfo.taskAdmission.maxConcurrent}
+                  compact
+                />
+              )}
+              {isDispatchingTask && (
+                <span className="inline-flex items-center gap-1.5 font-mono text-[10.5px] text-[hsl(var(--deck-accent))]">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <span className="hidden sm:inline">{t('taskHome.context.preparing')}</span>
+                </span>
+              )}
+            </div>
+          </div>
+
+          {!canDispatch && (
+            <section
+              aria-label={t('taskHome.setup.aria')}
+              className="border-b border-[hsl(var(--deck-hairline))] bg-[hsl(var(--deck-canvas-veil))] px-3 py-3"
+            >
+              <div className="mb-2.5">
+                <h2 className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-[hsl(var(--deck-ink))]">
+                  {t('taskHome.setup.title')}
+                </h2>
+                <p className="mt-0.5 text-[11px] text-[hsl(var(--deck-ink-faint))]">
+                  {t('taskHome.setup.description')}
+                </p>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div className="flex min-w-0 items-center gap-2.5 rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] px-3 py-2.5">
+                  <span
+                    className={cn(
+                      'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border',
+                      workspaceReady
+                        ? 'border-emerald-300/70 bg-emerald-50 text-emerald-700 dark:border-emerald-800/70 dark:bg-emerald-950/40 dark:text-emerald-300'
+                        : workspaceReadinessError
+                          ? 'border-red-300/70 bg-red-50 text-red-700 dark:border-red-900/70 dark:bg-red-950/40 dark:text-red-300'
+                          : 'border-amber-300/70 bg-amber-50 text-amber-700 dark:border-amber-800/70 dark:bg-amber-950/40 dark:text-amber-300'
+                    )}
+                  >
+                    {workspaceReadinessPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : workspaceReady ? (
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    ) : workspaceReadinessError ? (
+                      <AlertCircle className="h-3.5 w-3.5" />
+                    ) : (
+                      <FolderGit2 className="h-3.5 w-3.5" />
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-mono text-[11px] font-medium text-[hsl(var(--deck-ink))]">
+                      {t('taskHome.setup.workspace.title')}
+                    </span>
+                    <span className="mt-0.5 block truncate text-[10.5px] text-[hsl(var(--deck-ink-faint))]">
+                      {workspaceReadinessPending
+                        ? t('taskHome.setup.workspace.loading')
+                        : workspaceReadinessError
+                          ? workspaceReadinessError
+                          : workspaceReady
+                            ? t('taskHome.setup.workspace.ready', {
+                                project: context.project,
+                              })
+                            : t('taskHome.setup.workspace.required')}
+                    </span>
+                  </span>
+                  {!workspaceReady && (
+                    <div className="flex shrink-0 items-center gap-1">
+                      {workspaceReadinessError && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void Promise.all([
+                              loadTaskWorkspaceInfo(),
+                              loadBoundProjects(),
+                            ]);
+                          }}
+                          aria-label={t('taskHome.setup.workspace.retry')}
+                          title={t('taskHome.setup.workspace.retry')}
+                          className="flex h-8 w-8 items-center justify-center rounded-md text-[hsl(var(--deck-ink-muted))] hover:bg-[hsl(var(--deck-canvas))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))]"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        data-project-setup-trigger
+                        onClick={() => setProjectDialogOpen(true)}
+                        className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-canvas))] px-2.5 font-mono text-[10.5px] text-[hsl(var(--deck-ink))] hover:border-[hsl(var(--deck-accent)/0.55)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))]"
+                      >
+                        <FolderPlus className="h-3 w-3" />
+                        {t('taskHome.setup.workspace.action')}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex min-w-0 items-center gap-2.5 rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] px-3 py-2.5">
+                  <span
+                    className={cn(
+                      'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border',
+                      modelReady && !modelsError
+                        ? 'border-emerald-300/70 bg-emerald-50 text-emerald-700 dark:border-emerald-800/70 dark:bg-emerald-950/40 dark:text-emerald-300'
+                        : modelsError
+                          ? 'border-red-300/70 bg-red-50 text-red-700 dark:border-red-900/70 dark:bg-red-950/40 dark:text-red-300'
+                          : 'border-amber-300/70 bg-amber-50 text-amber-700 dark:border-amber-800/70 dark:bg-amber-950/40 dark:text-amber-300'
+                    )}
+                  >
+                    {modelReadinessPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : modelReady && !modelsError ? (
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    ) : modelsError ? (
+                      <AlertCircle className="h-3.5 w-3.5" />
+                    ) : (
+                      <Bot className="h-3.5 w-3.5" />
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-mono text-[11px] font-medium text-[hsl(var(--deck-ink))]">
+                      {t('taskHome.setup.model.title')}
+                    </span>
+                    <span
+                      title={modelsError ?? undefined}
+                      className={cn(
+                        'mt-0.5 block truncate text-[10.5px]',
+                        modelsError
+                          ? 'text-red-600 dark:text-red-400'
+                          : 'text-[hsl(var(--deck-ink-faint))]'
+                      )}
+                    >
+                      {modelReadinessPending
+                        ? t('taskHome.setup.model.loading')
+                        : modelsError
+                          ? modelsError
+                          : modelReady
+                            ? t('taskHome.setup.model.ready')
+                            : t('taskHome.setup.model.required')}
+                    </span>
+                  </span>
+                  {!modelReadinessPending && (!modelReady || modelsError) && (
+                    <button
+                      type="button"
+                      data-model-setup-trigger
+                      onClick={() => {
+                        if (modelsError) {
+                          void loadModels();
+                        } else {
+                          openSettings('models');
+                        }
+                      }}
+                      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-canvas))] px-2.5 font-mono text-[10.5px] text-[hsl(var(--deck-ink))] hover:border-[hsl(var(--deck-accent)/0.55)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))]"
+                    >
+                      {modelsError ? (
+                        <RefreshCw className="h-3 w-3" />
+                      ) : (
+                        <Bot className="h-3 w-3" />
+                      )}
+                      {modelsError
+                        ? t('taskHome.setup.model.retry')
+                        : t('taskHome.setup.model.action')}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* Input */}
+          <div className="px-3 pb-3 pt-3">
+            <ChatInput
+              key={composerDraftKey}
+              variant="task"
+              draft={draft?.key === composerDraftKey ? draft.content : undefined}
+              draftKey={composerDraftKey}
+              placeholder={t('taskHome.composer.placeholder')}
+              onSend={async (payload) => {
+                try {
+                  await handleDispatch(payload);
+                  setDraft(undefined);
+                  return true;
+                } catch {
+                  return false;
+                }
+              }}
+              disabled={isDispatchingTask}
+              submitDisabled={!canDispatch}
+              workspacePath={targetProjectPath}
+            />
+          </div>
         </div>
 
-        <div className="rounded-xl border border-zinc-200/80 bg-white/55 p-3 shadow-[0_24px_80px_rgba(0,0,0,0.06)] backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/40">
-          <div className="mb-3 flex flex-wrap items-center gap-2 px-1">
-            <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 font-mono text-[11px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
-              <HardDrive className="h-3 w-3" />
-              {context.project}
+        {taskEventConnectionState === 'offline' && (
+          <div
+            role="alert"
+            className="mt-4 flex flex-wrap items-center gap-3 rounded-md border border-amber-300/70 bg-amber-50/80 px-3 py-2 text-amber-900 dark:border-amber-800/70 dark:bg-amber-950/35 dark:text-amber-200"
+          >
+            <WifiOff className="h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 flex-1 text-[12px]">
+              {t('taskHome.feed.offlineDescription')}
             </span>
             <button
               type="button"
-              aria-pressed={isolation === 'worktree'}
-              onClick={() =>
-                setIsolation((current) =>
-                  current === 'worktree' ? 'local' : 'worktree'
-                )
-              }
-              className={cn(
-                'inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 font-mono text-[11px] transition-colors',
-                isolation === 'worktree'
-                  ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300'
-                  : 'border-zinc-200 bg-white text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400'
-              )}
+              onClick={() => void reconnectTaskEvents().catch(() => undefined)}
+              className="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-amber-400/70 bg-white/60 px-2.5 font-mono text-[10.5px] font-medium transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:border-amber-700 dark:bg-amber-950/50 dark:hover:bg-amber-900/50"
             >
-              {isolation === 'worktree' ? (
-                <Box className="h-3 w-3" />
-              ) : (
-                <HardDrive className="h-3 w-3" />
-              )}
-              {isolation === 'worktree' ? 'Isolated worktree' : 'Local workspace'}
-            </button>
-            <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 font-mono text-[11px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
-              <GitBranch className="h-3 w-3" />
-              {context.branch}
-            </span>
-            {taskWorkspaceInfo?.taskAdmission && (
-              <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 font-mono text-[11px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
-                <Gauge className="h-3 w-3" />
-                {taskWorkspaceInfo.taskAdmission.inFlight}/
-                {taskWorkspaceInfo.taskAdmission.maxConcurrent} running
-                {taskWorkspaceInfo.taskAdmission.queued > 0
-                  ? ` · ${taskWorkspaceInfo.taskAdmission.queued} queued`
-                  : ''}
-              </span>
-            )}
-            {isDispatchingTask && (
-              <span className="ml-auto inline-flex items-center gap-2 font-mono text-[11px] text-emerald-700 dark:text-emerald-400">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Preparing workspace
-              </span>
-            )}
-          </div>
-          <ChatInput
-            variant="task"
-            draft={draft}
-            placeholder="Describe the outcome, constraints, and verification you expect..."
-            onSend={(payload) => {
-              setDraft(undefined);
-              void handleDispatch(payload).catch(() => undefined);
-            }}
-            disabled={isDispatchingTask || !taskWorkspaceInfo}
-          />
-        </div>
-
-        {error && (
-          <div className="mt-4 flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-3 py-2 font-mono text-xs text-red-700 dark:border-red-950 dark:bg-red-950/30 dark:text-red-300">
-            <span>{error}</span>
-            <button type="button" onClick={clearError} className="underline">
-              Dismiss
+              <RefreshCw className="h-3 w-3" />
+              {t('taskHome.feed.retry')}
             </button>
           </div>
         )}
 
-        <p className="mt-4 text-center font-mono text-[10px] uppercase tracking-[0.12em] text-zinc-400 dark:text-zinc-700">
-          Worktree isolation keeps parallel tasks from touching your active checkout
-        </p>
+        {/* Error surface */}
+        {error && (
+          <div
+            role="alert"
+            className="mt-4 flex items-center justify-between rounded-md border border-red-200 bg-red-50/80 px-3 py-2 font-mono text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
+          >
+            <span>{error}</span>
+            <button type="button" onClick={clearError} className="underline">
+              {t('taskHome.error.dismiss')}
+            </button>
+          </div>
+        )}
+
+        {/* Recent tasks */}
+        <RecentTasksStrip
+          sessions={projectSessions}
+          catalogLoadState={catalogLoadState}
+          cancellingTaskKeys={cancellingTaskKeys}
+          retryingTaskKeys={retryingTaskKeys}
+          unreadTaskKeys={unreadTaskKeys}
+          onSelect={(session) => {
+            void selectSession(sessionRefFromSession(session));
+          }}
+          onCancel={(session) => {
+            void cancelTask(sessionRefFromSession(session)).catch(() => undefined);
+          }}
+          onRetry={(session) => {
+            void retryTask(sessionRefFromSession(session)).catch(() => undefined);
+          }}
+        />
+
+        {/* Footer note */}
+        <div className="mt-6 flex items-center justify-center gap-2 text-[10.5px] text-[hsl(var(--deck-ink-faint))]">
+          <Sparkles className="h-3 w-3" />
+          <span className="font-mono uppercase tracking-[0.14em]">
+            {t('taskHome.footer.note')}
+          </span>
+        </div>
+        <ProjectBindingDialog
+          open={projectDialogOpen}
+          onOpenChange={setProjectDialogOpen}
+        />
       </div>
     </main>
   );

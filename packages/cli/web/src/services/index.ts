@@ -1,4 +1,5 @@
 export type {
+  BoundProject,
   Goal,
   GoalRunResponse,
   ImageAttachmentInput,
@@ -17,6 +18,7 @@ export type {
   StreamEvent,
   SubagentSession,
   TaskDispatchInput,
+  TaskEventConnectionState,
   WorkspaceInfo,
 } from './sessionService';
 export { sessionService } from './sessionService';

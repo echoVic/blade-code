@@ -538,6 +538,10 @@ describe('session selector fork integration', () => {
         deletions: 1,
         commits: 0,
       },
+      taskDelivery: {
+        status: 'applied',
+        updatedAt: '2026-08-07T12:00:00.000Z',
+      },
     });
     const selections: SessionMetadata[] = [];
     const stdin = new TestInputStream();
@@ -582,10 +586,12 @@ describe('session selector fork integration', () => {
           expect(output).toContain('[QUEUED]');
           expect(output).toContain('wt:blade-worktree-task-demo');
           expect(output).toContain('2 files +7 -1');
+          expect(output).toContain('delivery:applied');
           expect(output).toContain('↳ fork');
           expect(output).not.toContain('↳ subagent');
         },
-        () => `output=${JSON.stringify(stdout.output)}`
+        () =>
+          `output=${JSON.stringify(stdout.output)} stderr=${JSON.stringify(stderr.output)}`
       );
 
       const outputLengthBeforeMove = stdout.output.length;
@@ -594,15 +600,16 @@ describe('session selector fork integration', () => {
         () => {
           const selectedChunk = stdout.output.slice(outputLengthBeforeMove);
           expect(stdout.output.length).toBeGreaterThan(outputLengthBeforeMove);
-          expect(selectedChunk).toContain('> ');
+          expect(selectedChunk).toContain('>[QUEUED]');
           expect(selectedChunk).toContain(workspaceLabel);
           expect(selectedChunk).toContain('[QUEUED]');
           expect(selectedChunk).toContain('wt:blade-worktree-task-demo');
-          expect(selectedChunk).toContain(
-            '(main) | 12 条消息 | wt:blade-worktree-task-demo | queue:2/4 | 2 files +7 -1 ↳ fork'
+          expect(selectedChunk.replace(/\s+/g, ' ')).toContain(
+            '(main) | 12 条消息 | wt:blade-worktree-task-demo | queue:2/4 | 2 files +7 -1 | delivery:applied ↳ fork'
           );
         },
-        () => `output=${JSON.stringify(stdout.output)}`
+        () =>
+          `output=${JSON.stringify(stdout.output)} stderr=${JSON.stringify(stderr.output)}`
       );
 
       await waitForNextTick();
@@ -718,7 +725,8 @@ describe('session selector fork integration', () => {
           expect(output).toContain(workspaceLabel);
           expect(output).toContain('↳ fork');
         },
-        () => `output=${JSON.stringify(stdout.output)}`
+        () =>
+          `output=${JSON.stringify(stdout.output)} stderr=${JSON.stringify(stderr.output)}`
       );
 
       const outputLengthBeforeMove = stdout.output.length;
@@ -731,7 +739,8 @@ describe('session selector fork integration', () => {
           expect(selectedChunk).toContain(workspaceLabel);
           expect(selectedChunk).toContain('(main) | 12 条消息 ↳ fork');
         },
-        () => `output=${JSON.stringify(stdout.output)}`
+        () =>
+          `output=${JSON.stringify(stdout.output)} stderr=${JSON.stringify(stderr.output)}`
       );
 
       await waitForNextTick();

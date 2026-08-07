@@ -94,6 +94,7 @@ describe('WorktreeManager integration', () => {
     expect(session.originalWorkspaceRoot).toBe(await realpath(sourceCwd));
     expect(session.workspaceRoot).toBe(join(session.worktreeRoot, 'packages/demo'));
     expect(session.branch).toMatch(/^blade-worktree-/);
+    expect(session.sourceStateFingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(await readFile(join(session.workspaceRoot, 'value.txt'), 'utf-8')).toBe(
       'original\n'
     );
@@ -154,6 +155,109 @@ describe('WorktreeManager integration', () => {
     expect(artifact?.files[0]?.patch).toContain('+first');
     expect(artifact?.files[1]?.patch).toContain('-original');
     expect(artifact?.files[1]?.patch).toContain('+updated');
+  });
+
+  it('applies committed and uncommitted task changes without committing the source', async () => {
+    const session = await manager.enter({
+      sessionId: 'task-apply',
+      workspaceRoot: sourceCwd,
+      name: 'task/task-apply',
+    });
+    await writeFile(join(session.workspaceRoot, 'value.txt'), 'committed\n');
+    await git(session.worktreeRoot, 'add', '.');
+    await git(session.worktreeRoot, 'commit', '-m', 'task commit');
+    await writeFile(join(session.workspaceRoot, 'value.txt'), 'final\n');
+    await writeFile(join(session.workspaceRoot, 'new-file.txt'), 'new\n');
+
+    await expect(manager.getChangeSummary(session.sessionId)).resolves.toMatchObject({
+      changedFiles: 2,
+      commits: 1,
+    });
+    await expect(manager.apply(session.sessionId)).resolves.toMatchObject({
+      action: 'apply',
+      workspaceRoot: await realpath(sourceCwd),
+      changedFiles: 2,
+    });
+
+    expect(await readFile(join(sourceCwd, 'value.txt'), 'utf-8')).toBe('final\n');
+    expect(await readFile(join(sourceCwd, 'new-file.txt'), 'utf-8')).toBe('new\n');
+    expect(await git(repoRoot, 'rev-parse', 'HEAD')).toBe(session.baseCommit);
+    expect(await git(repoRoot, 'status', '--porcelain')).toContain(
+      'packages/demo/value.txt'
+    );
+  });
+
+  it('applies over an unchanged dirty source state when patches do not overlap', async () => {
+    await writeFile(join(repoRoot, 'local.txt'), 'user change\n');
+    const session = await manager.enter({
+      sessionId: 'task-dirty-source',
+      workspaceRoot: sourceCwd,
+      name: 'task/task-dirty-source',
+    });
+    await writeFile(join(session.workspaceRoot, 'value.txt'), 'task change\n');
+
+    await expect(manager.apply(session.sessionId)).resolves.toMatchObject({
+      action: 'apply',
+      changedFiles: 1,
+    });
+    expect(await readFile(join(repoRoot, 'local.txt'), 'utf-8')).toBe('user change\n');
+    expect(await readFile(join(sourceCwd, 'value.txt'), 'utf-8')).toBe('task change\n');
+  });
+
+  it('refuses delivery after the source state changes and preserves both workspaces', async () => {
+    const session = await manager.enter({
+      sessionId: 'task-source-drift',
+      workspaceRoot: sourceCwd,
+      name: 'task/task-source-drift',
+    });
+    await writeFile(join(session.workspaceRoot, 'value.txt'), 'task change\n');
+    await writeFile(join(repoRoot, 'local.txt'), 'later user change\n');
+
+    const delivery = manager.apply(session.sessionId);
+    await expect(delivery).rejects.toMatchObject({
+      reason: 'source_state_changed',
+    });
+    expect(await readFile(join(sourceCwd, 'value.txt'), 'utf-8')).toBe('original\n');
+    expect(await readFile(join(session.workspaceRoot, 'value.txt'), 'utf-8')).toBe(
+      'task change\n'
+    );
+    expect(await readFile(join(repoRoot, 'local.txt'), 'utf-8')).toBe(
+      'later user change\n'
+    );
+  });
+
+  it('preflights overlapping dirty-source changes without partial writes', async () => {
+    await writeFile(join(sourceCwd, 'value.txt'), 'user change\n');
+    const session = await manager.enter({
+      sessionId: 'task-source-conflict',
+      workspaceRoot: sourceCwd,
+      name: 'task/task-source-conflict',
+    });
+    await writeFile(join(session.workspaceRoot, 'value.txt'), 'task change\n');
+    await writeFile(join(session.workspaceRoot, 'new-file.txt'), 'must not leak\n');
+
+    await expect(manager.apply(session.sessionId)).rejects.toMatchObject({
+      reason: 'patch_conflict',
+    });
+    expect(await readFile(join(sourceCwd, 'value.txt'), 'utf-8')).toBe('user change\n');
+    await expect(readFile(join(sourceCwd, 'new-file.txt'))).rejects.toThrow();
+  });
+
+  it('refuses delivery after the source branch advances', async () => {
+    const session = await manager.enter({
+      sessionId: 'task-head-drift',
+      workspaceRoot: sourceCwd,
+      name: 'task/task-head-drift',
+    });
+    await writeFile(join(session.workspaceRoot, 'value.txt'), 'task change\n');
+    await writeFile(join(repoRoot, 'source.txt'), 'new source commit\n');
+    await git(repoRoot, 'add', '.');
+    await git(repoRoot, 'commit', '-m', 'advance source');
+
+    await expect(manager.apply(session.sessionId)).rejects.toMatchObject({
+      reason: 'source_head_changed',
+    });
+    expect(await readFile(join(sourceCwd, 'value.txt'), 'utf-8')).toBe('original\n');
   });
 
   it('refuses to remove dirty work unless discard_changes is explicit', async () => {
@@ -295,30 +399,30 @@ describe('WorktreeManager integration', () => {
     });
   });
 
-  it.each([
-    'agent',
-    'task',
-  ] as const)('removes stale clean %s worktrees after an interrupted process', async (kind) => {
-    await publishMainBranch();
-    const session = await manager.enter({
-      sessionId: `${kind}-clean`,
-      workspaceRoot: repoRoot,
-      name: `${kind}/${kind}-clean`,
-    });
-    manager.releaseSession(session.sessionId);
-    await makeStale(session.worktreeRoot);
+  it.each(['agent', 'task'] as const)(
+    'removes stale clean %s worktrees after an interrupted process',
+    async (kind) => {
+      await publishMainBranch();
+      const session = await manager.enter({
+        sessionId: `${kind}-clean`,
+        workspaceRoot: repoRoot,
+        name: `${kind}/${kind}-clean`,
+      });
+      manager.releaseSession(session.sessionId);
+      await makeStale(session.worktreeRoot);
 
-    const result = await manager.cleanupStaleAgentWorktrees({
-      workspaceRoot: repoRoot,
-      maxAgeMs: 1_000,
-    });
+      const result = await manager.cleanupStaleAgentWorktrees({
+        workspaceRoot: repoRoot,
+        maxAgeMs: 1_000,
+      });
 
-    expect(result.removed).toBe(1);
-    expect(result.preserved).toBe(0);
-    expect(result.errors).toEqual([]);
-    await expect(access(session.worktreeRoot)).rejects.toThrow();
-    expect(await git(repoRoot, 'branch', '--list', session.branch)).toBe('');
-  });
+      expect(result.removed).toBe(1);
+      expect(result.preserved).toBe(0);
+      expect(result.errors).toEqual([]);
+      await expect(access(session.worktreeRoot)).rejects.toThrow();
+      expect(await git(repoRoot, 'branch', '--list', session.branch)).toBe('');
+    }
+  );
 
   it('preserves stale agent worktrees with dirty or unpushed work', async () => {
     await publishMainBranch();

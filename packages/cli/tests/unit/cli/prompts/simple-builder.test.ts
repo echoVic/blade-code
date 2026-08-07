@@ -28,9 +28,9 @@ vi.mock('fs', async () => {
 });
 
 vi.mock('../../../../src/memory/AutoMemoryManager.js', () => ({
-  AutoMemoryManager: vi.fn().mockImplementation(() => ({
-    loadIndex: loadIndexMock,
-  })),
+  AutoMemoryManager: class MockAutoMemoryManager {
+    loadIndex = loadIndexMock;
+  },
 }));
 
 // Mock environment

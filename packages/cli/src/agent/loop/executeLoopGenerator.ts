@@ -697,7 +697,7 @@ export async function* executeLoopGenerator(
     const registry = deps.toolExecutor.getRegistry();
     const permissionMode = context.permissionMode as PermissionMode | undefined;
     let rawTools = registry.getFunctionDeclarationsByMode(permissionMode);
-    rawTools = injectSkillsMetadata(rawTools);
+    rawTools = injectSkillsMetadata(rawTools, context.workspaceRoot);
     const tools = deps.applySkillToolRestrictions(rawTools);
     const failureTracker = createToolFailureTracker();
     const staleDetector = createStaleLoopDetector();
@@ -1960,6 +1960,16 @@ export async function* executeLoopGenerator(
                         : undefined,
                   }
                 : undefined;
+            const durableMetadata = metadata
+              ? (() => {
+                  const {
+                    oldContent: _oldContent,
+                    newContent: _newContent,
+                    ...rest
+                  } = metadata;
+                  return toJsonValue(rest);
+                })()
+              : undefined;
             const uuid = await persistToolResult(
               deps,
               context,
@@ -1968,7 +1978,8 @@ export async function* executeLoopGenerator(
               result.success ? toJsonValue(result.llmContent) : null,
               toolUseUuid,
               result.success ? undefined : result.error?.message,
-              subagentRef
+              subagentRef,
+              durableMetadata
             );
             if (uuid) lastMessageUuid = uuid;
           }

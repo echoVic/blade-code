@@ -9,9 +9,11 @@
 
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
+import { createLogger, LogCategory } from '../../../logging/Logger.js';
+import { sessionCatalogSortKey } from '../../../services/sessionCatalog.js';
+import { materializeSessionEvents } from '../../../services/sessionRewind.js';
 import type { SessionEvent } from '../../types.js';
 import { JSONLStore } from '../JSONLStore.js';
-import { createLogger, LogCategory } from '../../../logging/Logger.js';
 import {
   getBladeStorageRoot,
   getSessionFilePath,
@@ -22,7 +24,6 @@ import {
 import type { SqliteDb } from './driver.js';
 import { openDb } from './driver.js';
 import { migrate } from './schema.js';
-import { materializeSessionEvents } from '../../../services/sessionRewind.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -151,26 +152,34 @@ function writeParts(
     );
     // 仅对用户/助手可见文本建全文索引（与 TranscriptSearch 现有语义一致）。
     if (role === 'user' || role === 'assistant') {
-      insertFts.run(text, projectPath, sessionId, event.data.partId, role, event.timestamp, seq);
+      insertFts.run(
+        text,
+        projectPath,
+        sessionId,
+        event.data.partId,
+        role,
+        event.timestamp,
+        seq
+      );
     }
   }
 }
 
-function upsertSession(
-  db: SqliteDb,
-  meta: ProjectedSession['metadata']
-): void {
+function upsertSession(db: SqliteDb, meta: ProjectedSession['metadata']): void {
   db.prepare(
     `INSERT INTO sessions
        (project_path, session_id, root_id, parent_id, relation_type, title,
-        agent_type, model, task_status, last_message_time, first_message_time,
-        message_count, has_errors, is_subagent, metadata_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        agent_type, model, task_status, last_message_time, project_sort_key,
+        session_sort_key, first_message_time, message_count, has_errors,
+        is_subagent, metadata_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(project_path, session_id) DO UPDATE SET
        root_id=excluded.root_id, parent_id=excluded.parent_id,
        relation_type=excluded.relation_type, title=excluded.title,
        agent_type=excluded.agent_type, model=excluded.model,
        task_status=excluded.task_status, last_message_time=excluded.last_message_time,
+       project_sort_key=excluded.project_sort_key,
+       session_sort_key=excluded.session_sort_key,
        first_message_time=excluded.first_message_time, message_count=excluded.message_count,
        has_errors=excluded.has_errors, is_subagent=excluded.is_subagent,
        metadata_json=excluded.metadata_json`
@@ -185,6 +194,8 @@ function upsertSession(
     meta.model ?? null,
     meta.taskStatus,
     meta.lastMessageTime,
+    sessionCatalogSortKey(meta.projectPath),
+    sessionCatalogSortKey(meta.sessionId),
     meta.firstMessageTime,
     meta.messageCount,
     meta.hasErrors ? 1 : 0,
@@ -193,12 +204,12 @@ function upsertSession(
   );
 }
 
-function deleteSessionRows(
+function deleteSessionContentRows(
   db: SqliteDb,
   projectPath: string,
   sessionId: string
 ): void {
-  for (const table of ['sessions', 'parts', 'parts_fts', 'projection_state']) {
+  for (const table of ['sessions', 'parts', 'parts_fts']) {
     db.prepare(`DELETE FROM ${table} WHERE project_path=? AND session_id=?`).run(
       projectPath,
       sessionId
@@ -206,10 +217,41 @@ function deleteSessionRows(
   }
 }
 
+function deleteSessionRows(db: SqliteDb, projectPath: string, sessionId: string): void {
+  deleteSessionContentRows(db, projectPath, sessionId);
+  db.prepare('DELETE FROM projection_state WHERE project_path=? AND session_id=?').run(
+    projectPath,
+    sessionId
+  );
+}
+
+function upsertProjectionState(
+  db: SqliteDb,
+  projectPath: string,
+  sessionId: string,
+  lastSeq: number,
+  fileSize: number,
+  mtimeMs: number
+): void {
+  db.prepare(
+    `INSERT INTO projection_state
+       (project_path, session_id, last_seq, file_size, mtime_ms)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(project_path, session_id) DO UPDATE SET
+       last_seq=excluded.last_seq, file_size=excluded.file_size,
+       mtime_ms=excluded.mtime_ms`
+  ).run(projectPath, sessionId, lastSeq, fileSize, mtimeMs);
+}
+
 interface StateRow {
   last_seq: number;
   file_size: number;
   mtime_ms: number;
+}
+
+interface ProjectionStateRow extends StateRow {
+  project_path: string;
+  session_id: string;
 }
 
 /**
@@ -252,16 +294,33 @@ export async function syncSession(
   // 整条重物化：始终正确（含 rewind seq 截断 / 文件重写），只对已变更的会话执行。
   const store = new JSONLStore(filePath);
   const raw = await store.readAll();
-  if (raw.length === 0) return false;
+  const lastSeq = raw.reduce(
+    (max, e) => (typeof e.seq === 'number' && e.seq > max ? e.seq : max),
+    0
+  );
   const events = materializeSessionEvents(raw);
   const meta = derive(raw, sessionId, projectPath);
-  if (!meta) return false;
-  const lastSeq = raw.reduce((max, e) => (typeof e.seq === 'number' && e.seq > max ? e.seq : max), 0);
+  if (raw.length === 0 || !meta) {
+    db.transaction(() => {
+      deleteSessionContentRows(db, projectPath, sessionId);
+      upsertProjectionState(
+        db,
+        projectPath,
+        sessionId,
+        lastSeq,
+        fileStat.size,
+        Math.floor(fileStat.mtimeMs)
+      );
+    });
+    return true;
+  }
 
   // 去重：同一 (projectPath, sessionId) 可能来自多个存储目录，保留 lastMessageTime
   // 更新的一条（与 JSONL 扫描 + compareSessionCatalogItems 的择新语义一致）。
   const existing = db
-    .prepare('SELECT last_message_time FROM sessions WHERE project_path=? AND session_id=?')
+    .prepare(
+      'SELECT last_message_time FROM sessions WHERE project_path=? AND session_id=?'
+    )
     .get<{ last_message_time: string | null }>(meta.projectPath, meta.sessionId);
   if (
     existing &&
@@ -269,24 +328,28 @@ export async function syncSession(
     existing.last_message_time > meta.lastMessageTime
   ) {
     // 已有更新的一条：仅登记同步游标，避免用较旧数据覆盖。
-    db.prepare(
-      `INSERT INTO projection_state (project_path, session_id, last_seq, file_size, mtime_ms)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(project_path, session_id) DO UPDATE SET
-         last_seq=excluded.last_seq, file_size=excluded.file_size, mtime_ms=excluded.mtime_ms`
-    ).run(projectPath, sessionId, lastSeq, fileStat.size, Math.floor(fileStat.mtimeMs));
+    upsertProjectionState(
+      db,
+      projectPath,
+      sessionId,
+      lastSeq,
+      fileStat.size,
+      Math.floor(fileStat.mtimeMs)
+    );
     return true;
   }
 
   db.transaction(() => {
     upsertSession(db, meta);
     writeParts(db, meta.projectPath, meta.sessionId, events);
-    db.prepare(
-      `INSERT INTO projection_state (project_path, session_id, last_seq, file_size, mtime_ms)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(project_path, session_id) DO UPDATE SET
-         last_seq=excluded.last_seq, file_size=excluded.file_size, mtime_ms=excluded.mtime_ms`
-    ).run(projectPath, sessionId, lastSeq, fileStat.size, Math.floor(fileStat.mtimeMs));
+    upsertProjectionState(
+      db,
+      projectPath,
+      sessionId,
+      lastSeq,
+      fileStat.size,
+      Math.floor(fileStat.mtimeMs)
+    );
   });
   return true;
 }
@@ -294,49 +357,135 @@ export async function syncSession(
 /**
  * 全量同步：枚举所有项目/会话文件逐个 syncSession，并 GC 掉 JSONL 已不存在的行。
  */
-export async function syncAll(db: SqliteDb, derive: MetadataDeriver): Promise<void> {
+const syncAllState = new WeakMap<
+  SqliteDb,
+  { inFlight?: Promise<void>; lastCompletedAt?: number }
+>();
+
+export async function syncAll(
+  db: SqliteDb,
+  derive: MetadataDeriver,
+  maxAgeMs = 0
+): Promise<void> {
+  const state = syncAllState.get(db) ?? {};
+  syncAllState.set(db, state);
+  if (state.inFlight) return state.inFlight;
+  if (
+    maxAgeMs > 0 &&
+    state.lastCompletedAt !== undefined &&
+    Date.now() - state.lastCompletedAt <= maxAgeMs
+  ) {
+    return;
+  }
+
+  const inFlight = syncAllUncached(db, derive);
+  state.inFlight = inFlight;
+  try {
+    await inFlight;
+    state.lastCompletedAt = Date.now();
+  } finally {
+    if (state.inFlight === inFlight) state.inFlight = undefined;
+  }
+}
+
+async function syncAllUncached(db: SqliteDb, derive: MetadataDeriver): Promise<void> {
   const { readdir } = await import('node:fs/promises');
   const dirs = await listProjectDirectories();
   const seen = new Set<string>();
-
-  for (const dir of dirs) {
-    const projectPath = unescapeProjectPath(dir);
-    const projectDir = path.join(getBladeStorageRoot(), 'projects', dir);
-    let files: string[];
-    try {
-      files = await readdir(projectDir);
-    } catch {
-      continue;
-    }
-    for (const file of files) {
-      if (!file.endsWith('.jsonl')) continue;
-      const sessionId = file.slice(0, -'.jsonl'.length);
-      if (!isValidSessionId(sessionId)) continue;
-      seen.add(`${projectPath}\u0000${sessionId}`);
+  const projectFiles = await Promise.all(
+    dirs.map(async (dir) => {
+      const projectPath = unescapeProjectPath(dir);
+      const projectDir = path.join(getBladeStorageRoot(), 'projects', dir);
       try {
-        await syncSession(
-          db,
-          sessionId,
-          projectPath,
-          derive,
-          path.join(projectDir, file)
-        );
-      } catch (error) {
-        // 与 JSONL 扫描保持一致的诊断：损坏 transcript 记一次告警（不含路径）。
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code !== 'ENOENT') {
-          logger.warn(
-            `[SessionService] Skipping invalid session transcript: ${sessionId}`
-          );
-        }
+        const files = await readdir(projectDir);
+        return files.flatMap((file) => {
+          if (!file.endsWith('.jsonl')) return [];
+          const sessionId = file.slice(0, -'.jsonl'.length);
+          if (!isValidSessionId(sessionId)) return [];
+          return [
+            {
+              filePath: path.join(projectDir, file),
+              projectPath,
+              sessionId,
+            },
+          ];
+        });
+      } catch {
+        return [];
       }
-    }
+    })
+  );
+  const candidates = projectFiles.flat();
+  for (const candidate of candidates) {
+    seen.add(`${candidate.projectPath}\u0000${candidate.sessionId}`);
   }
 
-  // GC：projection_state 中 JSONL 已不存在的行。
   const known = db
-    .prepare('SELECT project_path, session_id FROM projection_state')
-    .all<{ project_path: string; session_id: string }>();
+    .prepare(
+      `SELECT project_path, session_id, last_seq, file_size, mtime_ms
+       FROM projection_state`
+    )
+    .all<ProjectionStateRow>();
+  const stateBySession = new Map(
+    known.map((row) => [`${row.project_path}\u0000${row.session_id}`, row])
+  );
+  const staleCandidates: typeof candidates = [];
+  const statConcurrency = Math.min(128, candidates.length);
+  let nextStatIndex = 0;
+  await Promise.all(
+    Array.from({ length: statConcurrency }, async () => {
+      while (nextStatIndex < candidates.length) {
+        const candidate = candidates[nextStatIndex++];
+        if (!candidate) continue;
+        try {
+          const fileStat = await stat(candidate.filePath);
+          const state = stateBySession.get(
+            `${candidate.projectPath}\u0000${candidate.sessionId}`
+          );
+          if (
+            state &&
+            state.file_size === fileStat.size &&
+            state.mtime_ms === Math.floor(fileStat.mtimeMs)
+          ) {
+            continue;
+          }
+        } catch {
+          // Let syncSession handle a file removed after directory enumeration.
+        }
+        staleCandidates.push(candidate);
+      }
+    })
+  );
+
+  const syncConcurrency = Math.min(32, staleCandidates.length);
+  let nextSyncIndex = 0;
+  await Promise.all(
+    Array.from({ length: syncConcurrency }, async () => {
+      while (nextSyncIndex < staleCandidates.length) {
+        const candidate = staleCandidates[nextSyncIndex++];
+        if (!candidate) continue;
+        try {
+          await syncSession(
+            db,
+            candidate.sessionId,
+            candidate.projectPath,
+            derive,
+            candidate.filePath
+          );
+        } catch (error) {
+          // 与 JSONL 扫描保持一致的诊断：损坏 transcript 记一次告警（不含路径）。
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code !== 'ENOENT') {
+            logger.warn(
+              `[SessionService] Skipping invalid session transcript: ${candidate.sessionId}`
+            );
+          }
+        }
+      }
+    })
+  );
+
+  // GC：projection_state 中 JSONL 已不存在的行。
   for (const row of known) {
     if (!seen.has(`${row.project_path}\u0000${row.session_id}`)) {
       db.transaction(() => deleteSessionRows(db, row.project_path, row.session_id));

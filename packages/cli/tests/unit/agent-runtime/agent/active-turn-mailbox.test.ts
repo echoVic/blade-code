@@ -3,7 +3,10 @@ import { mkdir, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ActiveTurnMailbox } from '../../../../src/agent/runtime/ActiveTurnMailbox.js';
+import {
+  ActiveTurnMailbox,
+  MAX_PENDING_STEER_CHARS,
+} from '../../../../src/agent/runtime/ActiveTurnMailbox.js';
 import { PersistentStore } from '../../../../src/context/storage/PersistentStore.js';
 import { getSessionInboxFilePath } from '../../../../src/context/storage/pathUtils.js';
 
@@ -162,6 +165,25 @@ describe('ActiveTurnMailbox', () => {
       reason: 'queue_full',
       queued: 20,
     });
+  });
+
+  it('rejects one multimodal message above the durable content budget', async () => {
+    const mailbox = await createMailbox('oversized-multimodal-session');
+    mailbox.beginTurn();
+
+    await expect(
+      mailbox.enqueue([
+        {
+          type: 'image_url',
+          image_url: { url: 'x'.repeat(MAX_PENDING_STEER_CHARS + 1) },
+        },
+      ])
+    ).resolves.toMatchObject({
+      accepted: false,
+      reason: 'queue_full',
+      queued: 0,
+    });
+    expect(mailbox.pendingCount()).toBe(0);
   });
 
   it('enforces the pending limit under concurrent enqueue calls', async () => {

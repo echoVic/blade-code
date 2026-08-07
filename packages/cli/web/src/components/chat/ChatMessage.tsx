@@ -1,5 +1,15 @@
-import { ChevronDown, ChevronRight, FileText, Loader2, RotateCcw } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  FileText,
+  Loader2,
+  RotateCcw,
+} from 'lucide-react';
 import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
+import { BladeMark } from '@/components/layout/BladeMark';
+import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { type SubagentSession, sessionService } from '@/services';
 import { useAppStore } from '@/store/AppStore';
@@ -25,18 +35,56 @@ const MarkdownRenderer = lazy(() =>
   }))
 );
 
+/**
+ * Hover-revealed copy affordance for a message. Mirrors the pattern used by
+ * production coding agents (Claude Code, ChatGPT): unobtrusive until hover,
+ * with a transient checkmark confirming the copy.
+ */
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  if (!text.trim()) return null;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      // Clipboard may be unavailable (insecure context); fail silently.
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={handleCopy}
+      className="flex h-6 w-6 items-center justify-center rounded-md text-[hsl(var(--deck-ink-faint))] transition-colors hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))]"
+    >
+      {copied ? (
+        <Check className="h-3.5 w-3.5 text-[hsl(var(--deck-accent))]" />
+      ) : (
+        <Copy className="h-3.5 w-3.5" />
+      )}
+    </button>
+  );
+}
+
 function AIAvatar() {
   return (
-    <div className="flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-lg bg-[#22C55E]">
-      <span className="text-sm font-bold text-black">B</span>
+    <div className="flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-lg border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] shadow-[0_1px_0_hsl(var(--deck-hairline))]">
+      <BladeMark size={20} pulse={false} />
     </div>
   );
 }
 
 function UserAvatar() {
   return (
-    <div className="flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-full bg-[#E5E7EB] dark:bg-white">
-      <span className="text-sm font-medium text-[#111827] dark:text-zinc-800">U</span>
+    <div className="flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-full border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-canvas-veil))]">
+      <span className="font-mono text-[11px] font-medium text-[hsl(var(--deck-ink))]">
+        U
+      </span>
     </div>
   );
 }
@@ -84,6 +132,15 @@ function getTextContent(content: MessageContent): string {
     .join('\n');
 }
 
+/** Assemble the copyable prose of an assistant message (excludes tool noise). */
+function getAssistantCopyText(message: Message): string {
+  const agent = message.agentContent;
+  if (agent) {
+    return [agent.textBefore, agent.textAfter].filter(Boolean).join('\n\n');
+  }
+  return getTextContent(message.content);
+}
+
 function MarkdownBlock({
   content,
   syntaxHighlight = true,
@@ -94,7 +151,7 @@ function MarkdownBlock({
   return (
     <Suspense
       fallback={
-        <pre className="text-[14px] text-[#111827] dark:text-[#E5E5E5] font-mono whitespace-pre-wrap">
+        <pre className="text-[14px] text-[hsl(var(--deck-ink))] font-mono whitespace-pre-wrap">
           {content}
         </pre>
       }
@@ -150,22 +207,22 @@ function ToolCallItem({ tool }: { tool: ToolCallInfo }) {
   const args = formatToolArguments(tool.arguments);
 
   return (
-    <div className="bg-white dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-lg overflow-hidden">
+    <div className="bg-white dark:bg-[#18181b] border border-[hsl(var(--deck-border))] rounded-lg overflow-hidden">
       <button
         onClick={() => setExpanded((prev) => !prev)}
-        className="w-full flex items-center justify-between px-3 py-2 bg-[#F9FAFB] dark:bg-transparent hover:bg-[#F3F4F6] dark:hover:bg-[#1f1f23] transition-colors"
+        className="w-full flex items-center justify-between px-3 py-2 bg-[hsl(var(--deck-surface-2))] hover:bg-[hsl(var(--deck-surface))] transition-colors"
       >
         <div className="flex gap-2 items-center min-w-0">
           {expanded ? (
-            <ChevronDown className="h-4 w-4 text-[#9CA3AF] dark:text-[#71717a] shrink-0" />
+            <ChevronDown className="h-4 w-4 text-[hsl(var(--deck-ink-faint))] shrink-0" />
           ) : (
-            <ChevronRight className="h-4 w-4 text-[#9CA3AF] dark:text-[#71717a] shrink-0" />
+            <ChevronRight className="h-4 w-4 text-[hsl(var(--deck-ink-faint))] shrink-0" />
           )}
-          <span className="text-[12px] text-[#111827] dark:text-[#E5E5E5] font-mono shrink-0">
+          <span className="text-[12px] text-[hsl(var(--deck-ink))] font-mono shrink-0">
             {tool.toolName}
           </span>
           {tool.summary && (
-            <span className="text-[11px] text-[#6B7280] dark:text-[#71717a] font-mono truncate">
+            <span className="text-[11px] text-[hsl(var(--deck-ink-muted))] font-mono truncate">
               {tool.summary}
             </span>
           )}
@@ -174,23 +231,23 @@ function ToolCallItem({ tool }: { tool: ToolCallInfo }) {
       </button>
 
       {expanded && (
-        <div className="px-3 py-2 space-y-2 border-t border-[#E5E7EB] dark:border-[#27272a]">
+        <div className="px-3 py-2 space-y-2 border-t border-[hsl(var(--deck-border))]">
           {args && (
             <div className="space-y-1">
-              <div className="text-[11px] text-[#6B7280] dark:text-[#71717a] font-mono">
+              <div className="text-[11px] text-[hsl(var(--deck-ink-muted))] font-mono">
                 Arguments
               </div>
-              <pre className="text-[11px] text-[#374151] dark:text-[#d4d4d8] bg-[#F3F4F6] dark:bg-[#111113] border border-[#E5E7EB] dark:border-[#27272a] rounded-md p-2 overflow-x-auto whitespace-pre-wrap font-mono max-h-[120px] overflow-y-auto">
+              <pre className="text-[11px] text-[hsl(var(--deck-ink))] bg-[hsl(var(--deck-surface-2))] border border-[hsl(var(--deck-border))] rounded-md p-2 overflow-x-auto whitespace-pre-wrap font-mono max-h-[120px] overflow-y-auto">
                 {args}
               </pre>
             </div>
           )}
           {tool.output && (
             <div className="space-y-1">
-              <div className="text-[11px] text-[#6B7280] dark:text-[#71717a] font-mono">
+              <div className="text-[11px] text-[hsl(var(--deck-ink-muted))] font-mono">
                 Output
               </div>
-              <pre className="text-[11px] text-[#374151] dark:text-[#d4d4d8] bg-[#F3F4F6] dark:bg-[#111113] border border-[#E5E7EB] dark:border-[#27272a] rounded-md p-2 overflow-x-auto whitespace-pre-wrap font-mono max-h-[120px] overflow-y-auto">
+              <pre className="text-[11px] text-[hsl(var(--deck-ink))] bg-[hsl(var(--deck-surface-2))] border border-[hsl(var(--deck-border))] rounded-md p-2 overflow-x-auto whitespace-pre-wrap font-mono max-h-[120px] overflow-y-auto">
                 {tool.output.length > 500
                   ? tool.output.slice(0, 500) + '...'
                   : tool.output}
@@ -220,23 +277,23 @@ function ThinkingSection({ content }: { content: string }) {
   if (!content) return null;
 
   return (
-    <div className="bg-[#F9FAFB] dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-lg overflow-hidden">
+    <div className="bg-[hsl(var(--deck-surface-2))] border border-[hsl(var(--deck-border))] rounded-lg overflow-hidden">
       <button
         onClick={() => setExpanded((prev) => !prev)}
-        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#F3F4F6] dark:hover:bg-[#1f1f23] transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[hsl(var(--deck-surface))] transition-colors"
       >
         {expanded ? (
-          <ChevronDown className="h-4 w-4 text-[#9CA3AF] dark:text-[#71717a]" />
+          <ChevronDown className="h-4 w-4 text-[hsl(var(--deck-ink-faint))]" />
         ) : (
-          <ChevronRight className="h-4 w-4 text-[#9CA3AF] dark:text-[#71717a]" />
+          <ChevronRight className="h-4 w-4 text-[hsl(var(--deck-ink-faint))]" />
         )}
-        <span className="text-[12px] text-[#6B7280] dark:text-[#71717a] font-mono">
+        <span className="text-[12px] text-[hsl(var(--deck-ink-muted))] font-mono">
           Thought
         </span>
       </button>
       {expanded && (
-        <div className="px-3 py-2 border-t border-[#E5E7EB] dark:border-[#27272a]">
-          <pre className="text-[11px] text-[#6B7280] dark:text-[#a1a1aa] whitespace-pre-wrap font-mono">
+        <div className="px-3 py-2 border-t border-[hsl(var(--deck-border))]">
+          <pre className="text-[11px] text-[hsl(var(--deck-ink-muted))] whitespace-pre-wrap font-mono">
             {content}
           </pre>
         </div>
@@ -252,9 +309,9 @@ function TaskSection({ tasks }: { tasks: AgentResponseContent['tasks'] }) {
   const allDone = completedCount === tasks.length;
 
   return (
-    <div className="bg-[#F9FAFB] dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-lg px-3 py-2">
+    <div className="bg-[hsl(var(--deck-surface-2))] border border-[hsl(var(--deck-border))] rounded-lg px-3 py-2">
       <div className="flex gap-2 items-center">
-        <span className="text-[12px] text-[#6B7280] dark:text-[#71717a] font-mono">
+        <span className="text-[12px] text-[hsl(var(--deck-ink-muted))] font-mono">
           {allDone ? '✓ All tasks done' : `Tasks: ${completedCount}/${tasks.length}`}
         </span>
       </div>
@@ -263,7 +320,7 @@ function TaskSection({ tasks }: { tasks: AgentResponseContent['tasks'] }) {
 }
 
 function ChangedFilesSection({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
-  const { setFilePreviewOpen } = useAppStore();
+  const openFilePreview = useAppStore((state) => state.openFilePreview);
 
   const changedFiles = useMemo(() => {
     const files = new Map<string, { path: string; toolName: string }>();
@@ -281,13 +338,9 @@ function ChangedFilesSection({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
 
   if (changedFiles.length === 0) return null;
 
-  const handleFileClick = () => {
-    setFilePreviewOpen(true);
-  };
-
   return (
-    <div className="bg-[#F9FAFB] dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-lg px-3 py-2">
-      <div className="text-[11px] text-[#6B7280] dark:text-[#71717a] font-mono mb-1.5">
+    <div className="bg-[hsl(var(--deck-surface-2))] border border-[hsl(var(--deck-border))] rounded-lg px-3 py-2">
+      <div className="text-[11px] text-[hsl(var(--deck-ink-muted))] font-mono mb-1.5">
         Changed files ({changedFiles.length})
       </div>
       <div className="flex flex-wrap gap-1.5">
@@ -296,8 +349,8 @@ function ChangedFilesSection({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
           return (
             <button
               key={path}
-              onClick={handleFileClick}
-              className="flex items-center gap-1 px-2 py-1 text-[11px] font-mono bg-[#E5E7EB] dark:bg-[#27272a] text-[#374151] dark:text-[#d4d4d8] rounded hover:bg-[#D1D5DB] dark:hover:bg-[#3f3f46] transition-colors"
+              onClick={() => openFilePreview({ tab: 'diff', targetPath: path })}
+              className="flex items-center gap-1 px-2 py-1 text-[11px] font-mono bg-[#E5E7EB] dark:bg-[#27272a] text-[hsl(var(--deck-ink))] rounded hover:bg-[#D1D5DB] dark:hover:bg-[#3f3f46] transition-colors"
               title={path}
             >
               <FileText className="w-3 h-3" />
@@ -319,7 +372,9 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
   const [resumeSubmitting, setResumeSubmitting] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [resumedChild, setResumedChild] = useState<SubagentSession | null>(null);
-  const { currentSessionRef, isStreaming, isTemporarySession } = useSessionStore();
+  const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
+  const isStreaming = useSessionStore((state) => state.isStreaming);
+  const isTemporarySession = useSessionStore((state) => state.isTemporarySession);
 
   if (!subagent) return null;
 
@@ -475,15 +530,17 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
   };
 
   return (
-    <div className="bg-[#F9FAFB] dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-lg px-3 py-2">
+    <div className="bg-[hsl(var(--deck-surface-2))] border border-[hsl(var(--deck-border))] rounded-lg px-3 py-2">
       <button
         type="button"
         onClick={() => setManualToggle(!expanded)}
         className="flex gap-2 justify-between items-center w-full transition-opacity cursor-pointer hover:opacity-80"
       >
         <div className="flex gap-2 items-center">
-          {isRunning && <Loader2 className="h-3 w-3 animate-spin text-[#6B7280]" />}
-          <span className="text-[12px] text-[#6B7280] dark:text-[#71717a] font-mono">
+          {isRunning && (
+            <Loader2 className="h-3 w-3 animate-spin text-[hsl(var(--deck-ink-muted))]" />
+          )}
+          <span className="text-[12px] text-[hsl(var(--deck-ink-muted))] font-mono">
             {subagent.type}: {subagent.description}
           </span>
           <StatusPill
@@ -507,7 +564,7 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
         {hasContent && (
           <ChevronDown
             className={cn(
-              'h-3.5 w-3.5 text-[#6B7280] transition-transform',
+              'h-3.5 w-3.5 text-[hsl(var(--deck-ink-muted))] transition-transform',
               expanded && 'rotate-180'
             )}
           />
@@ -518,19 +575,19 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
           {(subagent.output || subagent.thinking) && (
             <>
               {subagent.output && (
-                <pre className="text-[11px] text-[#374151] dark:text-[#d4d4d8] bg-[#F3F4F6] dark:bg-[#111113] border border-[#E5E7EB] dark:border-[#27272a] rounded-md p-2 overflow-x-auto whitespace-pre-wrap font-mono max-h-[160px] overflow-y-auto">
+                <pre className="text-[11px] text-[hsl(var(--deck-ink))] bg-[hsl(var(--deck-surface-2))] border border-[hsl(var(--deck-border))] rounded-md p-2 overflow-x-auto whitespace-pre-wrap font-mono max-h-[160px] overflow-y-auto">
                   {subagent.output}
                 </pre>
               )}
               {subagent.thinking && (
-                <pre className="text-[11px] text-[#6B7280] dark:text-[#a1a1aa] bg-[#F3F4F6] dark:bg-[#111113] border border-[#E5E7EB] dark:border-[#27272a] rounded-md p-2 overflow-x-auto whitespace-pre-wrap font-mono max-h-[120px] overflow-y-auto">
+                <pre className="text-[11px] text-[hsl(var(--deck-ink-muted))] bg-[hsl(var(--deck-surface-2))] border border-[hsl(var(--deck-border))] rounded-md p-2 overflow-x-auto whitespace-pre-wrap font-mono max-h-[120px] overflow-y-auto">
                   {subagent.thinking}
                 </pre>
               )}
             </>
           )}
           {loading && (
-            <div className="flex items-center gap-2 text-[11px] text-[#6B7280] dark:text-[#71717a] font-mono">
+            <div className="flex items-center gap-2 text-[11px] text-[hsl(var(--deck-ink-muted))] font-mono">
               <Loader2 className="w-3 h-3 animate-spin" />
               Loading subagent logs...
             </div>
@@ -543,7 +600,7 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
                 {resumedChild.resumeDepth}
               </div>
               {(resumedChild.result?.message || resumedChild.result?.error) && (
-                <div className="mt-1 whitespace-pre-wrap text-[#374151] dark:text-[#d4d4d8]">
+                <div className="mt-1 whitespace-pre-wrap text-[hsl(var(--deck-ink))]">
                   {resumedChild.result.message || resumedChild.result.error}
                 </div>
               )}
@@ -558,7 +615,7 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
                   onClick={() => setResumeOpen(true)}
                   className="flex items-center gap-1.5 rounded-md border border-[#D1D5DB] px-2 py-1 text-[11px] font-medium text-[#374151] transition-colors hover:bg-[#F3F4F6] dark:border-[#3f3f46] dark:text-[#d4d4d8] dark:hover:bg-[#27272a]"
                 >
-                  <RotateCcw className="h-3 w-3" />
+                  <RotateCcw className="w-3 h-3" />
                   Resume
                 </button>
               ) : (
@@ -571,7 +628,7 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
                     rows={3}
                     className="w-full resize-y rounded border border-[#D1D5DB] bg-white p-2 text-[11px] text-[#111827] outline-none focus:border-[#8B5CF6] dark:border-[#3f3f46] dark:bg-[#18181b] dark:text-[#f4f4f5]"
                   />
-                  <div className="flex justify-end gap-2">
+                  <div className="flex gap-2 justify-end">
                     <button
                       type="button"
                       onClick={() => {
@@ -588,7 +645,7 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
                       disabled={!resumePrompt.trim() || resumeSubmitting}
                       className="flex items-center gap-1 rounded bg-[#7C3AED] px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
                     >
-                      {resumeSubmitting && <Loader2 className="h-3 w-3 animate-spin" />}
+                      {resumeSubmitting && <Loader2 className="w-3 h-3 animate-spin" />}
                       Resume agent
                     </button>
                   </div>
@@ -614,8 +671,11 @@ function ConfirmationSection({
   confirmation: AgentResponseContent['confirmation'];
   messageId: string;
 }) {
+  const t = useT();
   const [submitting, setSubmitting] = useState(false);
-  const { currentSessionRef, setConfirmation } = useSessionStore();
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
+  const setConfirmation = useSessionStore((state) => state.setConfirmation);
 
   if (!confirmation) return null;
 
@@ -625,6 +685,7 @@ function ConfirmationSection({
   ) => {
     if (!currentSessionRef || submitting) return;
     setSubmitting(true);
+    setSubmitError(null);
     try {
       await sessionService.respondPermission(
         currentSessionRef,
@@ -635,11 +696,10 @@ function ConfirmationSection({
         ...confirmation,
         status: approved ? 'approved' : 'denied',
       });
-    } catch (_error) {
-      setConfirmation(messageId, {
-        ...confirmation,
-        status: approved ? 'approved' : 'denied',
-      });
+    } catch (error) {
+      setSubmitError(
+        error instanceof Error ? error.message : t('interaction.permission.failed')
+      );
     } finally {
       setSubmitting(false);
     }
@@ -650,46 +710,67 @@ function ConfirmationSection({
   }
 
   return (
-    <div className="bg-white dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-lg p-4 space-y-3">
-      <div className="text-[13px] text-[#111827] dark:text-[#E5E5E5] font-mono">
-        Permission required: {confirmation.toolName}
+    <div
+      data-pending-interaction="permission"
+      tabIndex={-1}
+      role="alert"
+      className="space-y-3 rounded-lg border border-amber-300/70 bg-amber-50/70 p-4 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:border-amber-800/70 dark:bg-amber-950/25"
+    >
+      <div className="text-[13px] text-[hsl(var(--deck-ink))] font-mono">
+        {t('interaction.permission.title', { tool: confirmation.toolName })}
       </div>
-      <div className="text-[12px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
+      <div className="text-[12px] text-[hsl(var(--deck-ink-muted))] font-mono">
         {confirmation.description}
       </div>
       {confirmation.diff && (
-        <pre className="text-[11px] text-[#374151] dark:text-[#d4d4d8] bg-[#F3F4F6] dark:bg-[#111113] border border-[#E5E7EB] dark:border-[#27272a] rounded-md p-2 overflow-x-auto whitespace-pre-wrap font-mono max-h-[200px] overflow-y-auto">
+        <pre className="text-[11px] text-[hsl(var(--deck-ink))] bg-[hsl(var(--deck-surface-2))] border border-[hsl(var(--deck-border))] rounded-md p-2 overflow-x-auto whitespace-pre-wrap font-mono max-h-[200px] overflow-y-auto">
           {confirmation.diff}
         </pre>
       )}
-      <div className="flex gap-2">
-        <button
-          onClick={() => handleResponse(true, 'once')}
-          disabled={submitting}
-          className="px-3 py-1.5 text-[12px] font-mono bg-[#22C55E] text-white rounded-md hover:bg-[#16A34A] disabled:opacity-50"
+      {submitError && (
+        <div
+          role="alert"
+          className="rounded-md border border-red-300/70 bg-red-50 px-2.5 py-2 font-mono text-[11px] text-red-700 dark:border-red-900/70 dark:bg-red-950/35 dark:text-red-300"
         >
-          Once
+          {submitError}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => void handleResponse(true, 'once')}
+          disabled={submitting}
+          className="min-h-8 px-3 py-1.5 text-[12px] font-mono bg-[#22C55E] text-white rounded-md hover:bg-[#16A34A] disabled:cursor-wait disabled:opacity-50"
+        >
+          {submitting ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            t('interaction.permission.once')
+          )}
         </button>
         <button
-          onClick={() => handleResponse(true, 'session')}
+          type="button"
+          onClick={() => void handleResponse(true, 'session')}
           disabled={submitting}
-          className="px-3 py-1.5 text-[12px] font-mono bg-[#3B82F6] text-white rounded-md hover:bg-[#2563EB] disabled:opacity-50"
+          className="min-h-8 px-3 py-1.5 text-[12px] font-mono bg-[#3B82F6] text-white rounded-md hover:bg-[#2563EB] disabled:cursor-wait disabled:opacity-50"
         >
-          Session
+          {t('interaction.permission.session')}
         </button>
         <button
-          onClick={() => handleResponse(true, 'project')}
+          type="button"
+          onClick={() => void handleResponse(true, 'project')}
           disabled={submitting}
-          className="px-3 py-1.5 text-[12px] font-mono bg-[#6366F1] text-white rounded-md hover:bg-[#4F46E5] disabled:opacity-50"
+          className="min-h-8 px-3 py-1.5 text-[12px] font-mono bg-[#6366F1] text-white rounded-md hover:bg-[#4F46E5] disabled:cursor-wait disabled:opacity-50"
         >
-          Project
+          {t('interaction.permission.project')}
         </button>
         <button
-          onClick={() => handleResponse(false)}
+          type="button"
+          onClick={() => void handleResponse(false)}
           disabled={submitting}
-          className="px-3 py-1.5 text-[12px] font-mono bg-[#EF4444] text-white rounded-md hover:bg-[#DC2626] disabled:opacity-50"
+          className="min-h-8 px-3 py-1.5 text-[12px] font-mono bg-[#EF4444] text-white rounded-md hover:bg-[#DC2626] disabled:cursor-wait disabled:opacity-50"
         >
-          Deny
+          {t('interaction.permission.deny')}
         </button>
       </div>
     </div>
@@ -703,10 +784,13 @@ function QuestionSection({
   question: AgentResponseContent['question'];
   messageId: string;
 }) {
+  const t = useT();
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
   const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
-  const { currentSessionRef, setQuestion, setError } = useSessionStore();
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
+  const setQuestion = useSessionStore((state) => state.setQuestion);
 
   const resolvedAnswers = useMemo<Record<string, string | string[]>>(() => {
     if (!question) return {};
@@ -735,6 +819,7 @@ function QuestionSection({
   const handleSubmit = async () => {
     if (!currentSessionRef || submitting || !allAnswered) return;
     setSubmitting(true);
+    setSubmitError(null);
     try {
       await sessionService.respondToQuestion(
         currentSessionRef,
@@ -747,7 +832,9 @@ function QuestionSection({
         answers: resolvedAnswers,
       });
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to submit answers');
+      setSubmitError(
+        error instanceof Error ? error.message : t('interaction.question.failed')
+      );
     } finally {
       setSubmitting(false);
     }
@@ -755,25 +842,31 @@ function QuestionSection({
 
   if (question.status !== 'pending') {
     return (
-      <div className="bg-[#F9FAFB] dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-lg px-3 py-2">
-        <div className="text-[12px] text-[#6B7280] dark:text-[#71717a] font-mono">
-          Questions answered
+      <div className="bg-[hsl(var(--deck-surface-2))] border border-[hsl(var(--deck-border))] rounded-lg px-3 py-2">
+        <div className="text-[12px] text-[hsl(var(--deck-ink-muted))] font-mono">
+          {t('interaction.question.answered')}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-white dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-lg p-4 space-y-4">
+    <div
+      data-pending-interaction="question"
+      tabIndex={-1}
+      role="alert"
+      className="space-y-4 rounded-lg border border-amber-300/70 bg-amber-50/70 p-4 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:border-amber-800/70 dark:bg-amber-950/25"
+    >
       {question.questions.map((q, idx) => (
         <div key={idx} className="space-y-2">
-          <div className="text-[13px] text-[#111827] dark:text-[#E5E5E5] font-mono">
+          <div className="text-[13px] text-[hsl(var(--deck-ink))] font-mono">
             {q.question}
           </div>
           <div className="space-y-1">
             {q.options.map((opt, optIdx) => (
               <button
                 key={optIdx}
+                type="button"
                 onClick={() => {
                   if (q.multiSelect) {
                     const current = (answers[q.header] as string[]) || [];
@@ -788,18 +881,18 @@ function QuestionSection({
                 }}
                 className={cn(
                   'w-full text-left px-3 py-2 rounded-md border text-[12px] font-mono transition-colors',
-                  'border-[#E5E7EB] dark:border-[#27272a]',
+                  'border-[hsl(var(--deck-border))]',
                   (
                     q.multiSelect
                       ? ((answers[q.header] as string[]) || []).includes(opt.label)
                       : answers[q.header] === opt.label
                   )
                     ? 'bg-[#DCFCE7] text-[#166534] dark:bg-[#22C55E]/20 dark:text-[#E5E5E5]'
-                    : 'bg-[#F9FAFB] text-[#6B7280] dark:bg-[#111113] dark:text-[#a1a1aa]'
+                    : 'bg-[hsl(var(--deck-surface-2))] text-[hsl(var(--deck-ink-muted))]'
                 )}
               >
                 <div>{opt.label}</div>
-                <div className="text-[11px] text-[#9CA3AF] dark:text-[#71717a] mt-1">
+                <div className="text-[11px] text-[hsl(var(--deck-ink-faint))] mt-1">
                   {opt.description}
                 </div>
               </button>
@@ -813,18 +906,28 @@ function QuestionSection({
                   [q.header]: event.target.value,
                 })
               }
-              placeholder="Other"
+              placeholder={t('interaction.question.other')}
               className="w-full rounded-md border border-[#E5E7EB] bg-white px-3 py-2 text-[12px] text-[#111827] outline-none focus:border-[#22C55E] dark:border-[#27272a] dark:bg-[#111113] dark:text-[#E5E5E5]"
             />
           </div>
         </div>
       ))}
+      {submitError && (
+        <div
+          role="alert"
+          className="rounded-md border border-red-300/70 bg-red-50 px-2.5 py-2 font-mono text-[11px] text-red-700 dark:border-red-900/70 dark:bg-red-950/35 dark:text-red-300"
+        >
+          {submitError}
+        </div>
+      )}
       <button
-        onClick={handleSubmit}
+        type="button"
+        onClick={() => void handleSubmit()}
         disabled={submitting || !allAnswered}
-        className="px-3 py-1.5 text-[12px] font-mono bg-[#22C55E] text-white rounded-md hover:bg-[#16A34A] disabled:opacity-50"
+        className="inline-flex min-h-8 items-center gap-1.5 px-3 py-1.5 text-[12px] font-mono bg-[#22C55E] text-white rounded-md hover:bg-[#16A34A] disabled:cursor-wait disabled:opacity-50"
       >
-        Submit
+        {submitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+        {t('interaction.question.submit')}
       </button>
     </div>
   );
@@ -832,8 +935,9 @@ function QuestionSection({
 
 function AgentMessageContent({ message }: { message: Message }) {
   const agentContent = message.agentContent;
-  const { isStreaming, currentAssistantMessageId } = useSessionStore();
-  const isCurrentMessage = currentAssistantMessageId === message.id;
+  const isCurrentStreamingMessage = useSessionStore(
+    (state) => state.isStreaming && state.currentAssistantMessageId === message.id
+  );
 
   if (!agentContent) {
     const content = getTextContent(message.content);
@@ -860,9 +964,9 @@ function AgentMessageContent({ message }: { message: Message }) {
     confirmation ||
     question;
 
-  if (!hasContent && isCurrentMessage && isStreaming) {
+  if (!hasContent && isCurrentStreamingMessage) {
     return (
-      <div className="flex items-center gap-2 text-[#6B7280] dark:text-[#71717a]">
+      <div className="flex items-center gap-2 text-[hsl(var(--deck-ink-muted))]">
         <Loader2 className="w-4 h-4 animate-spin" />
         <span className="text-[12px] font-mono">Thinking...</span>
       </div>
@@ -872,8 +976,8 @@ function AgentMessageContent({ message }: { message: Message }) {
   const allToolsCompleted =
     toolCalls.length > 0 &&
     toolCalls.every((tc) => tc.status === 'success' || tc.status === 'error');
-  const showChangedFiles = allToolsCompleted && (!isCurrentMessage || !isStreaming);
-  const syntaxHighlight = !isCurrentMessage || !isStreaming;
+  const showChangedFiles = allToolsCompleted && !isCurrentStreamingMessage;
+  const syntaxHighlight = !isCurrentStreamingMessage;
 
   return (
     <div className="space-y-3">
@@ -903,8 +1007,8 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
   if (isSystem) {
     const content = getTextContent(message.content);
     return (
-      <div className="flex justify-center p-2 w-full">
-        <div className="text-xs text-[#6B7280] dark:text-[#71717a] bg-[#F3F4F6] dark:bg-[#18181b] px-3 py-1 rounded-full font-mono">
+      <div data-chat-message-id={message.id} className="flex justify-center p-2 w-full">
+        <div className="text-xs text-[hsl(var(--deck-ink-muted))] bg-[#F3F4F6] dark:bg-[#18181b] px-3 py-1 rounded-full font-mono">
           {content}
         </div>
       </div>
@@ -914,10 +1018,16 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
   if (isUser) {
     const { text, images } = getUserMessageParts(message.content);
     return (
-      <div className="flex gap-4 justify-end p-4 w-full">
-        <div className="bg-[#F3F4F6] dark:bg-[#27272a] rounded-lg px-4 py-3 max-w-[85%]">
+      <div
+        data-chat-message-id={message.id}
+        className="group flex gap-2 justify-end p-4 w-full items-start"
+      >
+        <div className="mt-1 flex shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          <CopyButton text={text} label="Copy message" />
+        </div>
+        <div className="bg-[hsl(var(--deck-surface-2))] rounded-lg px-4 py-3 max-w-[85%]">
           {text && (
-            <p className="text-[14px] text-[#111827] dark:text-[#E5E5E5] font-mono leading-relaxed whitespace-pre-wrap">
+            <p className="text-[14px] text-[hsl(var(--deck-ink))] font-mono leading-relaxed whitespace-pre-wrap">
               {text}
             </p>
           )}
@@ -933,7 +1043,7 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
                   key={`${src}-${index}`}
                   src={src}
                   alt={`attachment-${index + 1}`}
-                  className="max-h-64 w-full rounded-md object-cover"
+                  className="object-cover w-full max-h-64 rounded-md"
                 />
               ))}
             </div>
@@ -944,16 +1054,23 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
     );
   }
 
+  const assistantText = getAssistantCopyText(message);
   return (
     <div
+      data-chat-message-id={message.id}
       className={cn(
-        'flex gap-4 justify-start w-full',
+        'group flex gap-4 justify-start w-full',
         showAvatar ? 'p-4' : 'px-4 pt-0 pb-3'
       )}
     >
       {showAvatar ? <AIAvatar /> : <div className="w-8 shrink-0" />}
       <div className="overflow-hidden flex-1 min-w-0">
         <AgentMessageContent message={message} />
+        {assistantText.trim() && (
+          <div className="mt-1.5 flex opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+            <CopyButton text={assistantText} label="Copy response" />
+          </div>
+        )}
       </div>
     </div>
   );

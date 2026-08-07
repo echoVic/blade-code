@@ -206,7 +206,7 @@ Before executing commands:
       }
 
       // 检查是否在 ACP 模式下运行
-      const useAcp = isAcpMode() && !sandboxedCommand;
+      const useAcp = isAcpMode(context.sessionId) && !sandboxedCommand;
       if (useAcp) {
         // ACP 模式：通过 IDE 终端执行命令
         updateOutput?.('通过 IDE 终端执行命令...');
@@ -216,6 +216,7 @@ Before executing commands:
           env,
           timeout,
           signal,
+          context.sessionId,
           updateOutput
         );
       } else {
@@ -426,12 +427,13 @@ async function executeWithAcpTerminal(
   env: Record<string, string> | undefined,
   timeout: number,
   signal: AbortSignal,
+  sessionId?: string,
   updateOutput?: (output: string) => void
 ): Promise<ToolResult> {
   const startTime = Date.now();
 
   try {
-    const terminalService = getTerminalService();
+    const terminalService = getTerminalService(sessionId);
     const result = await terminalService.execute(command, {
       cwd: cwd || getCwd(),
       env,

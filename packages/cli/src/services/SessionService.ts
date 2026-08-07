@@ -8,13 +8,11 @@ import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import * as path from 'node:path';
 import { nanoid } from 'nanoid';
 import { SessionInUseError, SessionLease } from '../agent/runtime/SessionLease.js';
-import { JSONLStore, parseSessionJSONL } from '../context/storage/JSONLStore.js';
 import {
-  getProjectionDb,
-  syncAll,
-  removeSessionFromProjection,
-  type MetadataDeriver,
-} from '../context/storage/sqlite/projection.js';
+  MAX_INLINE_ATTACHMENT_BYTES,
+  MAX_INLINE_ATTACHMENT_COUNT,
+} from '../api/attachmentLimits.js';
+import { JSONLStore, parseSessionJSONL } from '../context/storage/JSONLStore.js';
 import {
   assertValidSessionId,
   detectGitBranch,
@@ -24,11 +22,22 @@ import {
   getSessionGoalFilePath,
   unescapeProjectPath,
 } from '../context/storage/pathUtils.js';
+import {
+  getProjectionDb,
+  type MetadataDeriver,
+  removeSessionFromProjection,
+  syncAll,
+} from '../context/storage/sqlite/projection.js';
+import { isSessionTaskFailure, toTaskFailure } from '../context/taskFailure.js';
 import type {
   SessionEvent,
   SessionRewindMode,
+  SessionTaskDelivery,
   SessionTaskDiffStat,
+  SessionTaskDispatch,
+  SessionTaskFailure,
   SessionTaskIsolation,
+  SessionTaskRetryRef,
   SessionTaskStatus,
   SessionTaskWorktree,
 } from '../context/types.js';
@@ -40,9 +49,12 @@ import { getVersion } from '../utils/packageInfo.js';
 import type { ContentPart, Message } from './ChatServiceInterface.js';
 import {
   compareSessionCatalogItems,
+  type NormalizedSessionListOptions,
   normalizeSessionListOptions,
   paginateSessionCatalog,
+  resolveSessionCursorBoundary,
   type SessionListOptions,
+  sessionCatalogSortKey,
 } from './sessionCatalog.js';
 import {
   listSessionRewindCheckpoints as listProjectedRewindCheckpoints,
@@ -61,6 +73,8 @@ const SESSION_TASK_STATUSES = new Set<SessionTaskStatus>([
   'interrupted',
 ]);
 const SESSION_TASK_ISOLATION = new Set<SessionTaskIsolation>(['local', 'worktree']);
+const SESSION_TASK_PERMISSION_MODES = new Set(['default', 'autoEdit', 'yolo', 'plan']);
+const SESSION_TASK_DELIVERY_STATUSES = new Set(['applied', 'discarded', 'conflicted']);
 
 class SessionTaskReconciliationSkipped extends Error {}
 
@@ -95,11 +109,48 @@ function parseTaskWorktree(value: unknown): SessionTaskWorktree | undefined {
     stringFields.some(
       (field) => typeof worktree[field] !== 'string' || !worktree[field]
     ) ||
-    typeof worktree.sourceHadChanges !== 'boolean'
+    typeof worktree.sourceHadChanges !== 'boolean' ||
+    (worktree.sourceStateFingerprint !== undefined &&
+      (typeof worktree.sourceStateFingerprint !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(worktree.sourceStateFingerprint)))
   ) {
     return undefined;
   }
   return worktree as unknown as SessionTaskWorktree;
+}
+
+function parseTaskDelivery(value: unknown): SessionTaskDelivery | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const delivery = value as Record<string, unknown>;
+  if (
+    !SESSION_TASK_DELIVERY_STATUSES.has(String(delivery.status)) ||
+    typeof delivery.updatedAt !== 'string' ||
+    !Number.isFinite(Date.parse(delivery.updatedAt)) ||
+    (delivery.sourceCommit !== undefined &&
+      (typeof delivery.sourceCommit !== 'string' ||
+        !/^[a-f0-9]{40,64}$/.test(delivery.sourceCommit))) ||
+    (delivery.changedFiles !== undefined &&
+      (typeof delivery.changedFiles !== 'number' ||
+        !Number.isInteger(delivery.changedFiles) ||
+        delivery.changedFiles < 0)) ||
+    (delivery.message !== undefined &&
+      (typeof delivery.message !== 'string' ||
+        !delivery.message.trim() ||
+        delivery.message.length > 500))
+  ) {
+    return undefined;
+  }
+  return {
+    status: delivery.status as SessionTaskDelivery['status'],
+    updatedAt: delivery.updatedAt,
+    ...(typeof delivery.sourceCommit === 'string'
+      ? { sourceCommit: delivery.sourceCommit }
+      : {}),
+    ...(typeof delivery.changedFiles === 'number'
+      ? { changedFiles: delivery.changedFiles }
+      : {}),
+    ...(typeof delivery.message === 'string' ? { message: delivery.message } : {}),
+  };
 }
 
 function parseTaskDiffStat(value: unknown): SessionTaskDiffStat | undefined {
@@ -117,6 +168,96 @@ function parseTaskDiffStat(value: unknown): SessionTaskDiffStat | undefined {
     return undefined;
   }
   return stat as unknown as SessionTaskDiffStat;
+}
+
+function parseTaskDispatch(value: unknown): SessionTaskDispatch | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const dispatch = value as Record<string, unknown>;
+  if (
+    dispatch.version !== 1 ||
+    typeof dispatch.prompt !== 'string' ||
+    !dispatch.prompt.trim() ||
+    dispatch.prompt.length > 32_000 ||
+    typeof dispatch.sourceProjectPath !== 'string' ||
+    !path.isAbsolute(dispatch.sourceProjectPath) ||
+    !SESSION_TASK_ISOLATION.has(dispatch.isolation as SessionTaskIsolation) ||
+    !SESSION_TASK_PERMISSION_MODES.has(String(dispatch.permissionMode)) ||
+    (dispatch.title !== undefined &&
+      (typeof dispatch.title !== 'string' ||
+        !dispatch.title.trim() ||
+        dispatch.title.length > 200)) ||
+    (dispatch.modelId !== undefined &&
+      (typeof dispatch.modelId !== 'string' ||
+        !dispatch.modelId.trim() ||
+        dispatch.modelId.length > 500))
+  ) {
+    return undefined;
+  }
+  let attachments: SessionTaskDispatch['attachments'];
+  if (dispatch.attachments !== undefined) {
+    if (
+      !Array.isArray(dispatch.attachments) ||
+      dispatch.attachments.length > MAX_INLINE_ATTACHMENT_COUNT
+    ) {
+      return undefined;
+    }
+    let contentBytes = 0;
+    for (const value of dispatch.attachments) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+      const attachment = value as Record<string, unknown>;
+      if (!['file', 'image', 'url'].includes(String(attachment.type))) {
+        return undefined;
+      }
+      for (const field of ['path', 'url', 'content', 'mimeType', 'name']) {
+        if (attachment[field] !== undefined && typeof attachment[field] !== 'string') {
+          return undefined;
+        }
+      }
+      contentBytes +=
+        typeof attachment.content === 'string'
+          ? Buffer.byteLength(attachment.content)
+          : 0;
+    }
+    if (contentBytes > MAX_INLINE_ATTACHMENT_BYTES) return undefined;
+    attachments = dispatch.attachments.map((value) => {
+      const attachment = value as Record<string, string | undefined>;
+      return {
+        type: attachment.type as 'file' | 'image' | 'url',
+        ...(attachment.path !== undefined ? { path: attachment.path } : {}),
+        ...(attachment.url !== undefined ? { url: attachment.url } : {}),
+        ...(attachment.content !== undefined ? { content: attachment.content } : {}),
+        ...(attachment.mimeType !== undefined ? { mimeType: attachment.mimeType } : {}),
+        ...(attachment.name !== undefined ? { name: attachment.name } : {}),
+      };
+    });
+  }
+  return {
+    version: 1,
+    prompt: dispatch.prompt as string,
+    ...(typeof dispatch.title === 'string' ? { title: dispatch.title } : {}),
+    sourceProjectPath: path.resolve(dispatch.sourceProjectPath as string),
+    isolation: dispatch.isolation as SessionTaskIsolation,
+    permissionMode: dispatch.permissionMode as SessionTaskDispatch['permissionMode'],
+    ...(typeof dispatch.modelId === 'string' ? { modelId: dispatch.modelId } : {}),
+    ...(attachments ? { attachments } : {}),
+  };
+}
+
+function parseTaskRetryRef(value: unknown): SessionTaskRetryRef | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const ref = value as Record<string, unknown>;
+  if (
+    typeof ref.sessionId !== 'string' ||
+    !ref.sessionId ||
+    typeof ref.projectPath !== 'string' ||
+    !path.isAbsolute(ref.projectPath)
+  ) {
+    return undefined;
+  }
+  return {
+    sessionId: ref.sessionId,
+    projectPath: path.resolve(ref.projectPath),
+  };
 }
 
 type SessionSnapshotBigIntStats = BigIntStats;
@@ -158,11 +299,17 @@ export interface SessionMetadata {
   title?: string;
   agentType?: string;
   model?: string;
+  selectedModelId?: string;
   taskStatus: SessionTaskStatus;
   taskStatusReason?: string;
+  taskFailure?: SessionTaskFailure;
   taskStartedAt?: string;
   taskCompletedAt?: string;
   taskPromptSummary?: string;
+  taskModelId?: string;
+  taskRetryAvailable?: boolean;
+  taskRetriedFrom?: SessionTaskRetryRef;
+  taskDelivery?: SessionTaskDelivery;
   taskIsolation?: SessionTaskIsolation;
   taskSourceProjectPath?: string;
   taskWorktreePath?: string;
@@ -182,16 +329,22 @@ interface StoredSessionMetadata extends SessionMetadata {
   filePath: string;
   taskOwnerPid?: number;
   taskWorktree?: SessionTaskWorktree;
+  taskDispatch?: SessionTaskDispatch;
 }
 
 export interface SessionMetadataUpdate {
   title?: string;
   taskStatus?: SessionTaskStatus;
   taskStatusReason?: string | null;
+  taskFailure?: SessionTaskFailure | null;
   taskStartedAt?: string | null;
   taskCompletedAt?: string | null;
   taskOwnerPid?: number | null;
   taskPromptSummary?: string | null;
+  taskDispatch?: SessionTaskDispatch | null;
+  taskModelId?: string | null;
+  taskRetriedFrom?: SessionTaskRetryRef | null;
+  taskDelivery?: SessionTaskDelivery | null;
   taskIsolation?: SessionTaskIsolation | null;
   taskSourceProjectPath?: string | null;
   taskWorktree?: SessionTaskWorktree | null;
@@ -199,6 +352,7 @@ export interface SessionMetadataUpdate {
   taskQueuePosition?: number | null;
   taskQueueDepth?: number | null;
   taskConcurrencyLimit?: number | null;
+  selectedModelId?: string | null;
 }
 
 export interface SessionPage {
@@ -301,9 +455,12 @@ export class SessionService {
 
   static async listSessionPage(options: SessionListOptions = {}): Promise<SessionPage> {
     const normalized = normalizeSessionListOptions(options);
+    const projected = await this.listSessionPageFromProjection(normalized);
+    if (projected) return projected;
     const stored = await this.scanStoredSessions(
       normalized.cwd ?? undefined,
-      normalized.includeSubagents
+      normalized.includeSubagents,
+      normalized.cursor ? 5_000 : 0
     );
     const filtered = stored.sort(compareSessionCatalogItems);
     const page = paginateSessionCatalog(filtered, normalized);
@@ -311,6 +468,67 @@ export class SessionService {
       sessions: page.sessions.map((session) => this.toPublicMetadata(session)),
       nextCursor: page.nextCursor,
     };
+  }
+
+  private static async listSessionPageFromProjection(
+    options: NormalizedSessionListOptions
+  ): Promise<SessionPage | null> {
+    const boundary = resolveSessionCursorBoundary(options);
+    try {
+      const db = await getProjectionDb();
+      if (!db) return null;
+      await syncAll(db, this.projectionDeriver(), options.cursor ? 5_000 : 0);
+
+      const filters: string[] = [];
+      const parameters: unknown[] = [];
+      if (options.cwd) {
+        filters.push('project_path = ?');
+        parameters.push(options.cwd);
+      }
+      if (!options.includeSubagents) {
+        filters.push('is_subagent = 0');
+      }
+      if (boundary) {
+        filters.push(`(
+          last_message_time < ?
+          OR (
+            last_message_time = ?
+            AND (
+              project_sort_key > ?
+              OR (project_sort_key = ? AND session_sort_key > ?)
+            )
+          )
+        )`);
+        const projectSortKey = sessionCatalogSortKey(boundary.projectPath);
+        parameters.push(
+          boundary.lastMessageTime,
+          boundary.lastMessageTime,
+          projectSortKey,
+          projectSortKey,
+          sessionCatalogSortKey(boundary.sessionId)
+        );
+      }
+
+      const rows = db
+        .prepare(
+          `SELECT metadata_json
+           FROM sessions
+           ${filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : ''}
+           ORDER BY last_message_time DESC, project_sort_key ASC, session_sort_key ASC
+           LIMIT ?`
+        )
+        .all<{ metadata_json: string }>(...parameters, options.limit + 1);
+      const sessions = rows.map(
+        (row) => JSON.parse(row.metadata_json) as StoredSessionMetadata
+      );
+      const page = paginateSessionCatalog(sessions, options);
+      return {
+        sessions: page.sessions.map((session) => this.toPublicMetadata(session)),
+        nextCursor: page.nextCursor,
+      };
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -564,10 +782,15 @@ export class SessionService {
       status: _sourceStatus,
       taskStatus: _sourceTaskStatus,
       taskStatusReason: _sourceTaskStatusReason,
+      taskFailure: _sourceTaskFailure,
       taskStartedAt: _sourceTaskStartedAt,
       taskCompletedAt: _sourceTaskCompletedAt,
       taskOwnerPid: _sourceTaskOwnerPid,
       taskPromptSummary: _sourceTaskPromptSummary,
+      taskDispatch: _sourceTaskDispatch,
+      taskModelId: _sourceTaskModelId,
+      taskRetriedFrom: _sourceTaskRetriedFrom,
+      taskDelivery: _sourceTaskDelivery,
       taskIsolation: _sourceTaskIsolation,
       taskSourceProjectPath: _sourceTaskSourceProjectPath,
       taskWorktree: _sourceTaskWorktree,
@@ -618,10 +841,15 @@ export class SessionService {
             status: _status,
             taskStatus: _taskStatus,
             taskStatusReason: _taskStatusReason,
+            taskFailure: _taskFailure,
             taskStartedAt: _taskStartedAt,
             taskCompletedAt: _taskCompletedAt,
             taskOwnerPid: _taskOwnerPid,
             taskPromptSummary: _taskPromptSummary,
+            taskDispatch: _taskDispatch,
+            taskModelId: _taskModelId,
+            taskRetriedFrom: _taskRetriedFrom,
+            taskDelivery: _taskDelivery,
             taskIsolation: _taskIsolation,
             taskSourceProjectPath: _taskSourceProjectPath,
             taskWorktree: _taskWorktree,
@@ -668,6 +896,7 @@ export class SessionService {
         relationType: 'fork',
         taskStatus: 'completed',
         taskStatusReason: null,
+        taskFailure: null,
         taskStartedAt: null,
         taskCompletedAt: now,
         taskOwnerPid: null,
@@ -675,6 +904,7 @@ export class SessionService {
         taskSourceProjectPath: targetProjectPath,
         taskWorktree: null,
         taskDiffStat: null,
+        taskDelivery: null,
         taskQueuePosition: null,
         taskQueueDepth: null,
         taskConcurrencyLimit: null,
@@ -805,6 +1035,48 @@ export class SessionService {
       throw new Error('Session task prompt summary must contain 1-1000 characters');
     }
     if (
+      update.taskFailure !== undefined &&
+      update.taskFailure !== null &&
+      !isSessionTaskFailure(update.taskFailure)
+    ) {
+      throw new Error('Invalid session task failure');
+    }
+    if (
+      update.taskDispatch !== undefined &&
+      update.taskDispatch !== null &&
+      !parseTaskDispatch(update.taskDispatch)
+    ) {
+      throw new Error('Invalid durable task dispatch');
+    }
+    if (
+      update.taskModelId !== undefined &&
+      update.taskModelId !== null &&
+      (!update.taskModelId.trim() || update.taskModelId.length > 500)
+    ) {
+      throw new Error('Invalid session task model ID');
+    }
+    if (
+      update.selectedModelId !== undefined &&
+      update.selectedModelId !== null &&
+      (!update.selectedModelId.trim() || update.selectedModelId.length > 500)
+    ) {
+      throw new Error('Invalid selected session model ID');
+    }
+    if (
+      update.taskRetriedFrom !== undefined &&
+      update.taskRetriedFrom !== null &&
+      !parseTaskRetryRef(update.taskRetriedFrom)
+    ) {
+      throw new Error('Invalid session task retry source');
+    }
+    if (
+      update.taskDelivery !== undefined &&
+      update.taskDelivery !== null &&
+      !parseTaskDelivery(update.taskDelivery)
+    ) {
+      throw new Error('Invalid session task delivery');
+    }
+    if (
       update.taskIsolation !== undefined &&
       update.taskIsolation !== null &&
       !SESSION_TASK_ISOLATION.has(update.taskIsolation)
@@ -879,10 +1151,15 @@ export class SessionService {
     initial: Pick<
       SessionMetadataUpdate,
       | 'title'
+      | 'taskStatus'
       | 'taskPromptSummary'
+      | 'taskDispatch'
+      | 'taskModelId'
+      | 'taskRetriedFrom'
       | 'taskIsolation'
       | 'taskSourceProjectPath'
       | 'taskWorktree'
+      | 'selectedModelId'
     > = {}
   ): Promise<SessionMetadata> {
     assertValidSessionId(sessionId);
@@ -907,9 +1184,18 @@ export class SessionService {
         sessionId,
         rootId: sessionId,
         ...(initial.title !== undefined ? { title: initial.title } : {}),
-        taskStatus: 'queued',
+        taskStatus: initial.taskStatus ?? 'queued',
         ...(initial.taskPromptSummary !== undefined
           ? { taskPromptSummary: initial.taskPromptSummary }
+          : {}),
+        ...(initial.taskDispatch !== undefined
+          ? { taskDispatch: initial.taskDispatch }
+          : {}),
+        ...(initial.taskModelId !== undefined
+          ? { taskModelId: initial.taskModelId }
+          : {}),
+        ...(initial.taskRetriedFrom !== undefined
+          ? { taskRetriedFrom: initial.taskRetriedFrom }
           : {}),
         ...(initial.taskIsolation !== undefined
           ? { taskIsolation: initial.taskIsolation }
@@ -919,6 +1205,9 @@ export class SessionService {
           : {}),
         ...(initial.taskWorktree !== undefined
           ? { taskWorktree: initial.taskWorktree }
+          : {}),
+        ...(initial.selectedModelId !== undefined
+          ? { selectedModelId: initial.selectedModelId }
           : {}),
         createdAt: now,
         updatedAt: now,
@@ -1001,6 +1290,9 @@ export class SessionService {
             ...(update.taskStatusReason !== undefined
               ? { taskStatusReason: update.taskStatusReason }
               : {}),
+            ...(update.taskFailure !== undefined
+              ? { taskFailure: update.taskFailure }
+              : {}),
             ...(update.taskStartedAt !== undefined
               ? { taskStartedAt: update.taskStartedAt }
               : {}),
@@ -1012,6 +1304,18 @@ export class SessionService {
               : {}),
             ...(update.taskPromptSummary !== undefined
               ? { taskPromptSummary: update.taskPromptSummary }
+              : {}),
+            ...(update.taskDispatch !== undefined
+              ? { taskDispatch: update.taskDispatch }
+              : {}),
+            ...(update.taskModelId !== undefined
+              ? { taskModelId: update.taskModelId }
+              : {}),
+            ...(update.taskRetriedFrom !== undefined
+              ? { taskRetriedFrom: update.taskRetriedFrom }
+              : {}),
+            ...(update.taskDelivery !== undefined
+              ? { taskDelivery: update.taskDelivery }
               : {}),
             ...(update.taskIsolation !== undefined
               ? { taskIsolation: update.taskIsolation }
@@ -1033,6 +1337,9 @@ export class SessionService {
               : {}),
             ...(update.taskConcurrencyLimit !== undefined
               ? { taskConcurrencyLimit: update.taskConcurrencyLimit }
+              : {}),
+            ...(update.selectedModelId !== undefined
+              ? { selectedModelId: update.selectedModelId }
               : {}),
             updatedAt: now,
           },
@@ -1069,6 +1376,27 @@ export class SessionService {
           resolvedProjectPath
         )
       ).taskWorktree;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw SessionService.sanitizeStoredSessionError(error, sessionId);
+    }
+  }
+
+  static async findSessionTaskDispatch(
+    sessionId: string,
+    projectPath: string
+  ): Promise<SessionTaskDispatch | undefined> {
+    assertValidSessionId(sessionId);
+    const resolvedProjectPath = SessionService.resolveCatalogWorkspace(projectPath);
+    const filePath = SessionService.getSessionFilePath(resolvedProjectPath, sessionId);
+    try {
+      return (
+        await SessionService.readStoredSessionMetadata(
+          filePath,
+          sessionId,
+          resolvedProjectPath
+        )
+      ).taskDispatch;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
       throw SessionService.sanitizeStoredSessionError(error, sessionId);
@@ -1262,12 +1590,13 @@ export class SessionService {
    */
   private static async scanStoredSessionsFromProjection(
     scopedProjectPath: string | undefined,
-    includeSubagents: boolean
+    includeSubagents: boolean,
+    projectionSyncMaxAgeMs = 0
   ): Promise<StoredSessionMetadata[] | null> {
     try {
       const db = await getProjectionDb();
       if (!db) return null;
-      await syncAll(db, this.projectionDeriver());
+      await syncAll(db, this.projectionDeriver(), projectionSyncMaxAgeMs);
 
       const rows = scopedProjectPath
         ? db
@@ -1303,7 +1632,8 @@ export class SessionService {
 
   private static async scanStoredSessions(
     cwd?: string,
-    includeSubagents = false
+    includeSubagents = false,
+    projectionSyncMaxAgeMs = 0
   ): Promise<StoredSessionMetadata[]> {
     const scopedProjectPath = cwd ? path.resolve(cwd) : undefined;
 
@@ -1312,7 +1642,8 @@ export class SessionService {
     // authoritative JSONL scan below, so SQLite stays an optional accelerator.
     const projected = await this.scanStoredSessionsFromProjection(
       scopedProjectPath,
-      includeSubagents
+      includeSubagents,
+      projectionSyncMaxAgeMs
     );
     if (projected) return projected;
 
@@ -1562,6 +1893,17 @@ export class SessionService {
         ? parsedTaskWorktree
         : undefined;
     const taskDiffStat = parseTaskDiffStat(durable.taskDiffStat);
+    const taskDispatch = parseTaskDispatch(durable.taskDispatch);
+    const taskModelId =
+      typeof durable.taskModelId === 'string' && durable.taskModelId.trim()
+        ? durable.taskModelId
+        : taskDispatch?.modelId;
+    const selectedModelId =
+      typeof durable.selectedModelId === 'string' && durable.selectedModelId.trim()
+        ? durable.selectedModelId
+        : taskModelId;
+    const taskRetriedFrom = parseTaskRetryRef(durable.taskRetriedFrom);
+    const taskDelivery = parseTaskDelivery(durable.taskDelivery);
     const taskQueuePosition =
       typeof durable.taskQueuePosition === 'number' &&
       Number.isInteger(durable.taskQueuePosition) &&
@@ -1580,6 +1922,11 @@ export class SessionService {
       durable.taskConcurrencyLimit > 0
         ? durable.taskConcurrencyLimit
         : undefined;
+    const taskFailure = isSessionTaskFailure(durable.taskFailure)
+      ? durable.taskFailure
+      : taskStatus === 'failed' && typeof durable.taskStatusReason === 'string'
+        ? toTaskFailure(durable.taskStatusReason)
+        : undefined;
 
     return {
       sessionId,
@@ -1594,11 +1941,14 @@ export class SessionService {
       title: durable.title,
       agentType: durable.agentType,
       model: durable.model,
+      selectedModelId,
       taskStatus,
       taskStatusReason:
-        typeof durable.taskStatusReason === 'string'
+        taskFailure?.message ??
+        (typeof durable.taskStatusReason === 'string'
           ? durable.taskStatusReason
-          : undefined,
+          : undefined),
+      taskFailure,
       taskStartedAt:
         typeof durable.taskStartedAt === 'string' ? durable.taskStartedAt : undefined,
       taskCompletedAt:
@@ -1609,6 +1959,10 @@ export class SessionService {
         typeof durable.taskPromptSummary === 'string'
           ? durable.taskPromptSummary
           : undefined,
+      taskModelId,
+      taskRetryAvailable: taskDispatch !== undefined,
+      taskRetriedFrom,
+      taskDelivery,
       taskIsolation,
       taskSourceProjectPath,
       taskWorktreePath: taskWorktree?.worktreeRoot,
@@ -1620,6 +1974,7 @@ export class SessionService {
       taskConcurrencyLimit,
       taskOwnerPid,
       taskWorktree,
+      taskDispatch,
       messageCount,
       firstMessageTime: entries[0]!.timestamp,
       lastMessageTime: entries.at(-1)!.timestamp,
@@ -1633,6 +1988,7 @@ export class SessionService {
       filePath: _filePath,
       taskOwnerPid: _taskOwnerPid,
       taskWorktree: _taskWorktree,
+      taskDispatch: _taskDispatch,
       ...publicSession
     } = session;
     return publicSession;

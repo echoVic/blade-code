@@ -47,7 +47,7 @@ const executeEdit = async (
   }
 ) => {
   const invocation = editTool.build({ replace_all: false, ...params });
-  return invocation.execute(context.signal, context.updateOutput, {
+  return invocation.execute(context.signal, context.updateOutput as any, {
     sessionId: context.sessionId,
     messageId: context.messageId,
   });

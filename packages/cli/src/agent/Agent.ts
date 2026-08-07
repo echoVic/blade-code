@@ -78,26 +78,6 @@ import type {
 // 创建 Agent 专用 Logger
 const logger = createLogger(LogCategory.AGENT);
 
-function taskStatusReason(error: unknown): string {
-  const message =
-    error instanceof Error
-      ? error.message
-      : error !== null &&
-          typeof error === 'object' &&
-          'message' in error &&
-          typeof error.message === 'string'
-        ? error.message
-        : String(error);
-  return message
-    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[REDACTED]')
-    .replace(/Bearer\s+[A-Za-z0-9._-]{12,}/gi, 'Bearer [REDACTED]')
-    .replace(
-      /((?:api[_-]?key|token|secret|password)["']?\s*[:=]\s*["']?)[^\s"',;}\]]+/gi,
-      '$1[REDACTED]'
-    )
-    .slice(0, 1000);
-}
-
 /**
  * Skill 执行上下文
  * 用于跟踪当前活动的 Skill 及其工具限制
@@ -446,7 +426,7 @@ export class Agent {
           admissionPermit = await admission.ready;
         } catch (error) {
           if (error instanceof TaskAdmissionCancelledError || context.signal?.aborted) {
-            const reason = taskStatusReason(error);
+            const reason = 'Task admission was cancelled';
             await runtime.setTaskStatus('cancelled', reason);
             settled = true;
             return {
@@ -462,9 +442,7 @@ export class Agent {
           throw error;
         }
         if (context.signal?.aborted) {
-          const reason = String(
-            context.signal.reason || 'Task admission was cancelled'
-          );
+          const reason = 'Task admission was cancelled';
           await runtime.setTaskStatus('cancelled', reason);
           settled = true;
           releaseOwnedAdmission('cancelled');
@@ -489,7 +467,7 @@ export class Agent {
           : 'failed';
       await runtime.setTaskStatus(
         status,
-        status === 'failed' && result.error ? taskStatusReason(result.error) : undefined
+        status === 'failed' && result.error ? result.error : undefined
       );
       settled = true;
       releaseOwnedAdmission(status);
@@ -497,7 +475,7 @@ export class Agent {
     } catch (error) {
       const status = context.signal?.aborted ? 'cancelled' : 'failed';
       try {
-        await runtime.setTaskStatus(status, taskStatusReason(error));
+        await runtime.setTaskStatus(status, error);
       } catch (statusError) {
         logger.warn('[Agent] Failed to persist terminal task status:', statusError);
       }

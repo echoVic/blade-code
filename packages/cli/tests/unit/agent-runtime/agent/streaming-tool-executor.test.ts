@@ -44,7 +44,7 @@ async function collectAsync<T>(gen: AsyncGenerator<T>): Promise<T[]> {
 }
 
 describe('StreamingToolExecutor', () => {
-  let pipeline: { execute: ReturnType<typeof vi.fn> };
+  let pipeline: { execute: ReturnType<typeof vi.fn<(...args: any[]) => any>> };
   let execContext: ExecutionContext;
   let registry: { get: ReturnType<typeof vi.fn> };
   let executor: StreamingToolExecutor;
@@ -76,9 +76,9 @@ describe('StreamingToolExecutor', () => {
       execContext,
       registry as unknown as ToolRegistry
     );
-    executor.setAdmissionPolicy(admitWithPolicy);
-    executor.setAdmissionRollback(rollbackAdmission);
-    executor.setExecutionPolicy(executeWithPolicy);
+    executor.setAdmissionPolicy(admitWithPolicy as any);
+    executor.setAdmissionRollback(rollbackAdmission as any);
+    executor.setExecutionPolicy(executeWithPolicy as any);
   });
 
   // ----------------------------------------------------------------

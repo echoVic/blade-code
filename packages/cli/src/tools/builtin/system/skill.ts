@@ -50,11 +50,13 @@ Important:
 `,
   },
 
-  async execute(params, _context): Promise<ToolResult> {
+  async execute(params, context): Promise<ToolResult> {
     const { skill } = params;
 
     // 获取 SkillRegistry
-    const registry = getSkillRegistry();
+    const registry = getSkillRegistry(
+      context.workspaceRoot ? { cwd: context.workspaceRoot } : undefined
+    );
 
     // 检查 skill 是否存在
     if (!registry.has(skill)) {

@@ -43,19 +43,35 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     forkingSessionRef: null,
     isTemporarySession: false,
     isLoading: false,
+    catalogLoadState: 'ready' as const,
+    catalogError: null,
     error: null,
+    errorContext: null,
     goal: null,
     messages,
     isStreaming: false,
+    isStopping: false,
     agentPhase: 'idle',
+    sessionEventConnectionState: 'idle',
     currentRunId: null,
     pendingSteeringCount: 0,
+    pendingInputDelivery: null,
     recoveredSteeringCount: 0,
     eventUnsubscribe: null,
     taskEventsConnected: false,
+    taskEventConnectionState: 'offline',
     taskEventUnsubscribe: null,
     taskWorkspaceInfo: null,
+    isTaskWorkspaceLoading: false,
+    taskWorkspaceError: null,
+    boundProjects: [],
+    selectedProjectPath: null,
     isDispatchingTask: false,
+    isBindingProject: false,
+    cancellingTaskKeys: [],
+    retryingTaskKeys: [],
+    taskDeliveryActions: {},
+    unreadTaskKeys: [],
     currentAssistantMessageId: 'assistant-1',
     hasToolCalls: false,
     tokenUsage: {
@@ -86,8 +102,8 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     updateSession: vi.fn(),
     forkSession: vi.fn(async () => undefined),
     rewindSession: vi.fn(async () => true),
-    sendMessage: vi.fn(async () => undefined),
-    abortSession: vi.fn(async () => undefined),
+    sendMessage: vi.fn(async () => true),
+    abortSession: vi.fn(async () => true),
     pauseGoal: vi.fn(async () => undefined),
     resumeGoal: vi.fn(async () => undefined),
     editGoal: vi.fn(async () => undefined),
@@ -182,8 +198,20 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     setAgentPhase: vi.fn(),
     setRunId: vi.fn(),
     subscribeToEvents: vi.fn(async () => undefined),
+    reconnectSessionEvents: vi.fn(async () => undefined),
     subscribeToTaskEvents: vi.fn(async () => undefined),
+    reconnectTaskEvents: vi.fn(async () => undefined),
     loadTaskWorkspaceInfo: vi.fn(async () => undefined),
+    loadBoundProjects: vi.fn(async () => undefined),
+    bindProject: vi.fn(async () => undefined),
+    unbindProject: vi.fn(async () => undefined),
+    selectProject: vi.fn(),
+    getNavigationVersion: vi.fn(() => 0),
+    cancelTask: vi.fn(async () => undefined),
+    retryTask: vi.fn(async () => undefined),
+    deliverTask: vi.fn(async () => undefined),
+    markTaskRead: vi.fn(),
+    clearUnreadTasks: vi.fn(),
     dispatchTask: vi.fn(async () => undefined),
     prepareEventSubscription: vi.fn(async () => () => undefined),
     replaceEventSubscription: vi.fn(),
@@ -610,13 +638,19 @@ describe('eventHandlers', () => {
       type: 'steering.queued',
       properties: { sessionId: 'session-1', projectPath: '/workspace/a', queued: 2 },
     });
-    expect(set).toHaveBeenLastCalledWith({ pendingSteeringCount: 2 });
+    expect(set).toHaveBeenLastCalledWith({
+      pendingSteeringCount: 2,
+      pendingInputDelivery: 'current_turn',
+    });
 
     dispatch({
       type: 'follow_up.queued',
       properties: { sessionId: 'session-1', projectPath: '/workspace/a', queued: 3 },
     });
-    expect(set).toHaveBeenLastCalledWith({ pendingSteeringCount: 3 });
+    expect(set).toHaveBeenLastCalledWith({
+      pendingSteeringCount: 3,
+      pendingInputDelivery: 'next_turn',
+    });
 
     dispatch({
       type: 'follow_up.started',
@@ -624,6 +658,8 @@ describe('eventHandlers', () => {
     });
     expect(set).toHaveBeenLastCalledWith({
       agentPhase: 'running',
+      pendingSteeringCount: 0,
+      pendingInputDelivery: null,
       recoveredSteeringCount: 2,
     });
 
@@ -633,6 +669,7 @@ describe('eventHandlers', () => {
     });
     expect(set).toHaveBeenLastCalledWith({
       pendingSteeringCount: 0,
+      pendingInputDelivery: null,
       recoveredSteeringCount: 0,
     });
 
@@ -647,7 +684,54 @@ describe('eventHandlers', () => {
     });
     expect(set).toHaveBeenLastCalledWith({
       pendingSteeringCount: 0,
+      pendingInputDelivery: null,
       recoveredSteeringCount: 1,
+    });
+  });
+
+  test('restores the complete active run snapshot from session status', () => {
+    const state = createState();
+    const set = vi.fn();
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'session.status',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        status: 'waiting_permission',
+        runId: 'run-restored',
+        queued: 2,
+        pendingInputDelivery: 'next_turn',
+        recovered: 1,
+      },
+    });
+
+    expect(set).toHaveBeenLastCalledWith({
+      isStreaming: true,
+      agentPhase: 'waiting_permission',
+      currentRunId: 'run-restored',
+      pendingSteeringCount: 2,
+      pendingInputDelivery: 'next_turn',
+      recoveredSteeringCount: 1,
+    });
+
+    dispatch({
+      type: 'session.status',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        status: 'idle',
+      },
+    });
+    expect(set).toHaveBeenLastCalledWith({
+      isStreaming: false,
+      isStopping: false,
+      agentPhase: 'idle',
+      currentRunId: null,
+      pendingSteeringCount: 0,
+      pendingInputDelivery: null,
+      recoveredSteeringCount: 0,
     });
   });
 
@@ -692,7 +776,100 @@ describe('eventHandlers', () => {
     expect(set).toHaveBeenCalledWith({
       agentPhase: 'running',
       error: 'Permission request timed out',
+      errorContext: {
+        kind: 'interaction',
+        sessionRef: {
+          sessionId: 'session-1',
+          projectPath: '/workspace/a',
+        },
+      },
     });
+  });
+
+  test('scopes a run failure to the exact active session', () => {
+    const state = createState();
+    const set = vi.fn(
+      (
+        update:
+          | Partial<SessionStoreState>
+          | ((current: SessionStoreState) => Partial<SessionStoreState>)
+      ) => {
+        Object.assign(state, typeof update === 'function' ? update(state) : update);
+      }
+    );
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'session.error',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        error: 'Provider request timed out.',
+        taskFailure: {
+          code: 'timeout',
+          message: 'Provider request timed out.',
+          retryable: true,
+        },
+      },
+    });
+
+    expect(state).toMatchObject({
+      agentPhase: 'error',
+      error: 'Provider request timed out.',
+      errorContext: {
+        kind: 'execution',
+        failureCode: 'timeout',
+        sessionRef: {
+          sessionId: 'session-1',
+          projectPath: '/workspace/a',
+        },
+      },
+    });
+    expect(state.endAgentResponse).toHaveBeenCalledOnce();
+  });
+
+  test('returns the current run to running when an interaction resolves', () => {
+    const state = createState({
+      agentPhase: 'waiting_permission',
+      sessions: [
+        {
+          sessionId: 'session-1',
+          projectPath: '/workspace/a',
+          rootId: 'session-1',
+          taskStatus: 'running',
+          pendingInteraction: {
+            type: 'permission',
+            requestId: 'permission-1',
+          },
+          messageCount: 1,
+          firstMessageTime: '2026-08-07T09:00:00.000Z',
+          lastMessageTime: '2026-08-07T10:00:00.000Z',
+          hasErrors: false,
+        },
+      ],
+    });
+    const set = vi.fn(
+      (
+        update:
+          | Partial<SessionStoreState>
+          | ((current: SessionStoreState) => Partial<SessionStoreState>)
+      ) => {
+        Object.assign(state, typeof update === 'function' ? update(state) : update);
+      }
+    );
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'interaction.resolved',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        requestId: 'permission-1',
+      },
+    });
+
+    expect(state.agentPhase).toBe('running');
+    expect(state.sessions[0]?.pendingInteraction).toBeUndefined();
   });
 
   test('replays permission and question requests into an empty active session', () => {

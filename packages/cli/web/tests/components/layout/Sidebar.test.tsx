@@ -13,6 +13,8 @@ const sessionActionMocks = vi.hoisted(() => ({
   loadSessions: vi.fn(),
   forkSession: vi.fn(),
   updateSession: vi.fn(),
+  bindProject: vi.fn(),
+  selectProject: vi.fn(),
 }));
 
 vi.mock('../../../src/store/session', async () => {
@@ -37,8 +39,10 @@ vi.mock('../../../src/store/session', async () => {
 });
 
 import { Sidebar } from '../../../src/components/layout/Sidebar';
+import { PROJECT_ORDER_STORAGE_KEY } from '../../../src/lib/projectOrder';
 import { useAppStore } from '../../../src/store/AppStore';
 import { useSessionStore } from '../../../src/store/session';
+import { sessionRefKey } from '../../../src/store/session/sessionIdentity';
 
 function createSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -130,12 +134,14 @@ describe('Sidebar', () => {
 
   beforeEach(() => {
     Object.values(sessionActionMocks).forEach((mock) => mock.mockReset());
+    window.localStorage.removeItem(PROJECT_ORDER_STORAGE_KEY);
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
 
     useAppStore.setState({
       isSidebarOpen: true,
+      sidebarView: 'project',
       isFilePreviewOpen: false,
       isSettingsOpen: false,
       isMcpOpen: false,
@@ -146,12 +152,18 @@ describe('Sidebar', () => {
     useSessionStore.setState((state) => ({
       ...state,
       sessions: [],
+      catalogLoadState: 'ready',
+      catalogError: null,
       currentSessionId: null,
       currentSessionRef: null,
       forkingSessionRef: null,
       isTemporarySession: false,
       messages: [],
       error: null,
+      boundProjects: [],
+      selectedProjectPath: null,
+      taskWorkspaceInfo: null,
+      unreadTaskKeys: [],
     }));
   });
 
@@ -163,6 +175,7 @@ describe('Sidebar', () => {
   });
 
   test('renders same-id sessions from different workspaces separately and marks the exact active ref', () => {
+    useAppStore.setState({ sidebarView: 'status' });
     const sessionA = createSession({
       sessionId: 'shared-id',
       projectPath: '/workspace/a',
@@ -191,6 +204,7 @@ describe('Sidebar', () => {
   });
 
   test('groups sessions as tasks by durable status and exposes feed health', () => {
+    useAppStore.setState({ sidebarView: 'status' });
     useSessionStore.setState({
       sessions: [
         createSession({
@@ -235,7 +249,331 @@ describe('Sidebar', () => {
     expect(container.querySelector('[title="completed"]')).not.toBeNull();
   });
 
-  test('tabs to the fork action without hover and activates it without selecting the row', async () => {
+  test('marks project counts as partial while catalog history is hydrating', () => {
+    useSessionStore.setState({
+      sessions: [
+        createSession({
+          sessionId: 'task-a',
+          projectPath: '/workspace/blade',
+        }),
+        createSession({
+          sessionId: 'task-b',
+          projectPath: '/workspace/blade',
+        }),
+      ],
+      boundProjects: [
+        {
+          path: '/workspace/blade',
+          name: 'blade',
+          available: true,
+          isCurrent: true,
+          boundAt: '2026-08-07T00:00:00.000Z',
+        },
+      ],
+      selectedProjectPath: '/workspace/blade',
+      catalogLoadState: 'hydrating',
+    });
+
+    act(() => {
+      root.render(<Sidebar />);
+    });
+
+    expect(container.textContent).toContain('Syncing task history');
+    expect(container.textContent).toContain('2 loaded');
+    expect(container.textContent).toContain('02+');
+  });
+
+  test('creates a task from the focused workspace and from a project header', async () => {
+    useSessionStore.setState({
+      boundProjects: [
+        {
+          path: '/workspace/a',
+          name: 'a',
+          available: true,
+          isCurrent: true,
+          boundAt: '2026-08-01T00:00:00.000Z',
+        },
+        {
+          path: '/workspace/b',
+          name: 'b',
+          available: true,
+          isCurrent: false,
+          boundAt: '2026-08-02T00:00:00.000Z',
+        },
+      ],
+      selectedProjectPath: '/workspace/b',
+    });
+
+    await act(async () => {
+      root.render(<Sidebar />);
+    });
+
+    const topNewTask = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('New Task')
+    );
+    await act(async () => topNewTask?.click());
+    expect(sessionActionMocks.startTemporarySession).toHaveBeenLastCalledWith(
+      '/workspace/b'
+    );
+
+    const projectNewTask = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="New task in a"]'
+    );
+    await act(async () => projectNewTask?.click());
+    expect(sessionActionMocks.startTemporarySession).toHaveBeenLastCalledWith(
+      '/workspace/a'
+    );
+    expect(sessionActionMocks.selectSession).not.toHaveBeenCalled();
+  });
+
+  test('reorders projects by drag and drop and persists the explicit order', async () => {
+    useSessionStore.setState({
+      boundProjects: [
+        {
+          path: '/workspace/a',
+          name: 'a',
+          available: true,
+          isCurrent: true,
+          boundAt: '2026-08-01T00:00:00.000Z',
+        },
+        {
+          path: '/workspace/b',
+          name: 'b',
+          available: true,
+          isCurrent: false,
+          boundAt: '2026-08-02T00:00:00.000Z',
+        },
+      ],
+      selectedProjectPath: '/workspace/a',
+    });
+    await act(async () => root.render(<Sidebar />));
+
+    const transferData = new Map<string, string>();
+    const dataTransfer = {
+      effectAllowed: 'none',
+      dropEffect: 'none',
+      setData: (type: string, value: string) => transferData.set(type, value),
+      getData: (type: string) => transferData.get(type) ?? '',
+    };
+    const dispatchDrag = (element: Element, type: string) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'dataTransfer', { value: dataTransfer });
+      element.dispatchEvent(event);
+    };
+    const handleA = container.querySelector(
+      '[data-project-drag-handle="/workspace/a"]'
+    );
+    const groupB = container.querySelector('[data-project-group="/workspace/b"]');
+    if (!handleA || !groupB) throw new Error('Project drag controls were not rendered');
+
+    await act(async () => dispatchDrag(handleA, 'dragstart'));
+    await act(async () => dispatchDrag(groupB, 'dragenter'));
+    await act(async () => dispatchDrag(groupB, 'drop'));
+
+    const orderedProjects = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('button[title^="/workspace/"]')
+    ).map((button) => button.title);
+    expect(orderedProjects).toEqual(['/workspace/b', '/workspace/a']);
+    expect(JSON.parse(localStorage.getItem(PROJECT_ORDER_STORAGE_KEY) ?? '[]')).toEqual(
+      ['/workspace/b', '/workspace/a']
+    );
+    expect(sessionActionMocks.selectProject).not.toHaveBeenCalled();
+  });
+
+  test('moves a focused project handle with arrow keys', async () => {
+    useSessionStore.setState({
+      boundProjects: [
+        {
+          path: '/workspace/a',
+          name: 'a',
+          available: true,
+          isCurrent: true,
+          boundAt: '2026-08-01T00:00:00.000Z',
+        },
+        {
+          path: '/workspace/b',
+          name: 'b',
+          available: true,
+          isCurrent: false,
+          boundAt: '2026-08-02T00:00:00.000Z',
+        },
+      ],
+      selectedProjectPath: '/workspace/a',
+    });
+    await act(async () => root.render(<Sidebar />));
+
+    const handleB = container.querySelector<HTMLButtonElement>(
+      '[data-project-drag-handle="/workspace/b"]'
+    );
+    if (!handleB) throw new Error('Project keyboard reorder control was not rendered');
+    await act(async () => {
+      handleB.focus();
+      handleB.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'ArrowUp',
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+    });
+
+    const orderedProjects = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('button[title^="/workspace/"]')
+    ).map((button) => button.title);
+    expect(orderedProjects).toEqual(['/workspace/b', '/workspace/a']);
+    expect(document.activeElement).toBe(handleB);
+  });
+
+  test('keeps partial history visible and retries a failed catalog hydration', () => {
+    useSessionStore.setState({
+      sessions: [createSession({ sessionId: 'partial-task' })],
+      catalogLoadState: 'error',
+      catalogError: 'history unavailable',
+    });
+
+    act(() => {
+      root.render(<Sidebar />);
+    });
+    const retry = container.querySelector<HTMLButtonElement>('[role="alert"] button');
+    expect(container.textContent).toContain('Task history is incomplete');
+    expect(retry).toBeTruthy();
+    expect(retry?.textContent).toContain('Retry');
+
+    act(() => {
+      retry?.click();
+    });
+    expect(sessionActionMocks.loadSessions).toHaveBeenCalledOnce();
+  });
+
+  test('renders discovered projects at the same level and binds them on selection', async () => {
+    useAppStore.setState({ sidebarView: 'project' });
+    useSessionStore.setState({
+      sessions: [
+        createSession({
+          sessionId: 'workspace-task',
+          projectPath: '/workspace/a',
+          title: 'Workspace task',
+        }),
+        createSession({
+          sessionId: 'history-task',
+          projectPath: '/history/legacy',
+          title: 'Historical task',
+        }),
+      ],
+      boundProjects: [
+        {
+          path: '/workspace/a',
+          name: 'a',
+          available: true,
+          isCurrent: true,
+          boundAt: '2026-08-01T00:00:00.000Z',
+        },
+      ],
+      selectedProjectPath: '/workspace/a',
+      currentSessionId: null,
+      currentSessionRef: null,
+    });
+
+    await act(async () => {
+      root.render(<Sidebar />);
+    });
+
+    expect(container.textContent).toContain('Projects');
+    expect(container.textContent).not.toContain('Other history');
+    expect(container.textContent).toContain('legacy');
+    expect(container.textContent).not.toContain('Historical task');
+
+    const discoveredProject = container.querySelector<HTMLButtonElement>(
+      'button[title="/history/legacy"]'
+    );
+    if (!discoveredProject) throw new Error('Discovered project was not rendered');
+    await act(async () => discoveredProject.click());
+
+    expect(sessionActionMocks.bindProject).toHaveBeenCalledWith('/history/legacy');
+    expect(sessionActionMocks.startTemporarySession).toHaveBeenCalledWith(
+      '/history/legacy'
+    );
+    expect(sessionActionMocks.selectProject).not.toHaveBeenCalled();
+  });
+
+  test('keeps a discovered project with running work expanded', async () => {
+    useAppStore.setState({ sidebarView: 'project' });
+    useSessionStore.setState({
+      sessions: [
+        createSession({
+          sessionId: 'running-history',
+          projectPath: '/history/active',
+          title: 'Running history task',
+          taskStatus: 'running',
+        }),
+        createSession({
+          sessionId: 'completed-history',
+          projectPath: '/history/active',
+          title: 'Completed history task',
+          taskStatus: 'completed',
+        }),
+      ],
+      currentSessionId: null,
+      currentSessionRef: null,
+    });
+
+    await act(async () => {
+      root.render(<Sidebar />);
+    });
+
+    expect(container.textContent).toContain('Running history task');
+    expect(container.textContent).toContain('Completed history task');
+    expect(container.textContent).not.toContain('Other history');
+  });
+
+  test('limits each workspace to a compact initial task window', async () => {
+    useAppStore.setState({ sidebarView: 'project' });
+    useSessionStore.setState({
+      sessions: Array.from({ length: 15 }, (_, index) =>
+        createSession({
+          sessionId: `workspace-task-${index}`,
+          projectPath: '/workspace/a',
+          title: `Workspace task ${index}`,
+          lastMessageTime: new Date(Date.UTC(2026, 7, 1, 0, 0, index)).toISOString(),
+        })
+      ),
+      boundProjects: [
+        {
+          path: '/workspace/a',
+          name: 'a',
+          available: true,
+          isCurrent: true,
+          boundAt: '2026-08-01T00:00:00.000Z',
+        },
+      ],
+      selectedProjectPath: '/workspace/a',
+      unreadTaskKeys: [
+        sessionRefKey({
+          sessionId: 'workspace-task-0',
+          projectPath: '/workspace/a',
+        }),
+      ],
+    });
+
+    await act(async () => {
+      root.render(<Sidebar />);
+    });
+
+    expect(
+      container.querySelectorAll('button[aria-label^="Select Workspace task"]')
+    ).toHaveLength(13);
+    expect(container.textContent).toContain('Workspace task 0');
+    const showMore = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Show 2 more')
+    );
+    if (!showMore) throw new Error('Show more action was not rendered');
+    await act(async () => showMore.click());
+    expect(
+      container.querySelectorAll('button[aria-label^="Select Workspace task"]')
+    ).toHaveLength(15);
+  });
+
+  test('opens row actions by keyboard and forks without selecting the row', async () => {
     const source = createSession({
       sessionId: 'shared-id',
       projectPath: '/workspace/a',
@@ -253,10 +591,15 @@ describe('Sidebar', () => {
     });
 
     const user = userEvent.setup();
-    const forkButton = await tabToElement(
+    const actionsButton = await tabToElement(
       user,
-      (element) => element?.getAttribute('aria-label') === 'Fork Session A'
+      (element) => element?.getAttribute('aria-label') === 'More actions for Session A'
     );
+    expect(document.activeElement).toBe(actionsButton);
+    await user.keyboard('{Enter}');
+
+    const forkButton = document.querySelector('button[aria-label="Fork Session A"]');
+    expect(forkButton).toBeInstanceOf(HTMLButtonElement);
     expect(document.activeElement).toBe(forkButton);
     await user.keyboard('{Enter}');
 
@@ -264,7 +607,36 @@ describe('Sidebar', () => {
     expect(sessionActionMocks.selectSession).not.toHaveBeenCalled();
   });
 
+  test('closes row actions with Escape and restores focus to the trigger', async () => {
+    useAppStore.setState({ sidebarView: 'status' });
+    useSessionStore.setState({
+      sessions: [createSession({ title: 'Escape Actions' })],
+    });
+
+    await act(async () => {
+      root.render(<Sidebar />);
+    });
+
+    const user = userEvent.setup();
+    const actionsButton = await tabToElement(
+      user,
+      (element) =>
+        element?.getAttribute('aria-label') === 'More actions for Escape Actions'
+    );
+    await user.keyboard('{Enter}');
+    expect(document.querySelector('[role="menu"]')).toBeTruthy();
+
+    await user.keyboard('{Escape}');
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+
+    expect(document.querySelector('[role="menu"]')).toBe(null);
+    expect(document.activeElement).toBe(actionsButton);
+  });
+
   test('tabs to the session row and selects it with Enter and Space', async () => {
+    useAppStore.setState({ sidebarView: 'status' });
     const session = createSession({ title: 'Keyboard Session' });
     useSessionStore.setState({ sessions: [session] });
 
@@ -291,7 +663,8 @@ describe('Sidebar', () => {
     );
   });
 
-  test('renders selection and row actions as sibling native buttons', async () => {
+  test('renders one sibling action trigger and exposes secondary actions as a menu', async () => {
+    useAppStore.setState({ sidebarView: 'status' });
     const session = createSession({ title: 'Semantic Session' });
     useSessionStore.setState({ sessions: [session] });
 
@@ -302,17 +675,29 @@ describe('Sidebar', () => {
     const selectButton = container.querySelector(
       'button[aria-label="Select Semantic Session"]'
     );
-    const forkButton = container.querySelector(
-      'button[aria-label="Fork Semantic Session"]'
-    );
-    const renameButton = container.querySelector(
-      'button[aria-label="Rename Semantic Session"]'
-    );
-    const deleteButton = container.querySelector(
-      'button[aria-label="Delete Semantic Session"]'
+    const actionsButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="More actions for Semantic Session"]'
     );
 
     expect(selectButton).toBeInstanceOf(HTMLButtonElement);
+    expect(actionsButton).toBeInstanceOf(HTMLButtonElement);
+    expect(selectButton?.contains(actionsButton)).toBe(false);
+    expect(container.querySelector('button[aria-label="Fork Semantic Session"]')).toBe(
+      null
+    );
+
+    await act(async () => actionsButton?.click());
+
+    const forkButton = document.querySelector(
+      'button[aria-label="Fork Semantic Session"]'
+    );
+    const renameButton = document.querySelector(
+      'button[aria-label="Rename Semantic Session"]'
+    );
+    const deleteButton = document.querySelector(
+      'button[aria-label="Delete Semantic Session"]'
+    );
+
     expect(forkButton).toBeInstanceOf(HTMLButtonElement);
     expect(renameButton).toBeInstanceOf(HTMLButtonElement);
     expect(deleteButton).toBeInstanceOf(HTMLButtonElement);
@@ -321,7 +706,8 @@ describe('Sidebar', () => {
     expect(selectButton?.contains(deleteButton)).toBe(false);
   });
 
-  test('tabs to rename and delete actions without hover and activates each by keyboard', async () => {
+  test('reaches rename and delete through the row action menu by keyboard', async () => {
+    useAppStore.setState({ sidebarView: 'status' });
     const session = createSession({ title: 'Keyboard Actions' });
     useSessionStore.setState({ sessions: [session] });
 
@@ -330,19 +716,37 @@ describe('Sidebar', () => {
     });
 
     const user = userEvent.setup();
-    const renameButton = await tabToElement(
+    const actionsButton = await tabToElement(
       user,
-      (element) => element?.getAttribute('aria-label') === 'Rename Keyboard Actions'
+      (element) =>
+        element?.getAttribute('aria-label') === 'More actions for Keyboard Actions'
     );
+    expect(document.activeElement).toBe(actionsButton);
+    await user.keyboard('{Enter}');
+
+    const renameButton = document.querySelector(
+      'button[aria-label="Rename Keyboard Actions"]'
+    );
+    expect(document.activeElement?.getAttribute('aria-label')).toBe(
+      'Fork Keyboard Actions'
+    );
+    await user.tab();
     expect(document.activeElement).toBe(renameButton);
     await user.keyboard('{Enter}');
     expect(document.activeElement).toBe(container.querySelector('input'));
     expect(sessionActionMocks.selectSession).not.toHaveBeenCalled();
 
     await user.keyboard('{Escape}');
-    const deleteButton = await tabToElement(
+    await tabToElement(
       user,
-      (element) => element?.getAttribute('aria-label') === 'Delete Keyboard Actions'
+      (element) =>
+        element?.getAttribute('aria-label') === 'More actions for Keyboard Actions'
+    );
+    await user.keyboard('{Enter}');
+    await user.tab();
+    await user.tab();
+    const deleteButton = document.querySelector(
+      'button[aria-label="Delete Keyboard Actions"]'
     );
     expect(document.activeElement).toBe(deleteButton);
     await user.keyboard('{Enter}');
@@ -353,7 +757,8 @@ describe('Sidebar', () => {
     expect(sessionActionMocks.selectSession).not.toHaveBeenCalled();
   });
 
-  test('disables all fork buttons while any fork is pending and only marks the source row busy', async () => {
+  test('disables fork menu items while any fork is pending and only marks the source row busy', async () => {
+    useAppStore.setState({ sidebarView: 'status' });
     const source = createSession({
       sessionId: 'shared-id',
       projectPath: '/workspace/a',
@@ -378,14 +783,24 @@ describe('Sidebar', () => {
     const rows = Array.from(container.querySelectorAll('[aria-busy]'));
     expect(rows).toHaveLength(1);
     expect(rows[0]?.getAttribute('aria-busy')).toBe('true');
-    const forkButtons = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('button[aria-label^="Fork "]')
+    const actionsButtons = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(
+        'button[aria-label^="More actions for "]'
+      )
     );
-    expect(forkButtons).toHaveLength(2);
-    expect(forkButtons.every((button) => button.disabled)).toBe(true);
+    expect(actionsButtons).toHaveLength(2);
+    const otherActions = actionsButtons.find(
+      (button) => button.getAttribute('aria-label') === 'More actions for Session B'
+    );
+    await act(async () => otherActions?.click());
+    expect(
+      document.querySelector<HTMLButtonElement>('button[aria-label="Fork Session B"]')
+        ?.disabled
+    ).toBe(true);
   });
 
   test('shows fork lineage marker and uses rename/delete actions without raw fetches', async () => {
+    useAppStore.setState({ sidebarView: 'status' });
     const child = createSession({
       sessionId: 'child-id',
       projectPath: '/workspace/a',

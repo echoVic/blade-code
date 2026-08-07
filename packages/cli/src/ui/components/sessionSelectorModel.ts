@@ -5,6 +5,15 @@ export function getSessionCandidateKey(session: SessionMetadata): string {
   return `${session.projectPath}\0${session.sessionId}`;
 }
 
+export function getSessionDisplayTitle(session: SessionMetadata): string {
+  const title = session.title?.trim();
+  return title || `Session ${session.sessionId.slice(0, 8)}`;
+}
+
+export function getSessionDeliveryLabel(session: SessionMetadata): string {
+  return session.taskDelivery ? ` | delivery:${session.taskDelivery.status}` : '';
+}
+
 export function getVisibleSessionCandidates(
   sessions: readonly SessionMetadata[],
   intent: SessionSelectionIntent

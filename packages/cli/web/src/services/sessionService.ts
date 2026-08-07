@@ -1,5 +1,7 @@
 import {
   type Message as ApiMessage,
+  type BoundProject,
+  BoundProjectSchema,
   BusEventSchema,
   type CreateTaskResponse,
   CreateTaskResponseSchema,
@@ -13,6 +15,8 @@ import {
   type ResumeSubagentResponse,
   ResumeSubagentResponseSchema,
   type Session,
+  type SessionCatalogPage,
+  SessionCatalogPageSchema,
   type SessionHistoryMessage,
   SessionHistoryMessageSchema,
   type SessionRef,
@@ -30,11 +34,18 @@ import {
   SubagentSessionSchema,
   Type,
 } from '@api/schemas';
+import { requestJson } from '@/lib/http';
 
 export interface StreamEvent {
   type: string;
   properties: Record<string, unknown>;
 }
+
+export type TaskEventConnectionState =
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'offline';
 
 export interface SendMessageResponse {
   runId: string;
@@ -63,6 +74,7 @@ export interface ImageAttachmentInput {
 
 export interface SendMessagePayload {
   content: string;
+  modelId?: string;
   attachments?: ImageAttachmentInput[];
 }
 
@@ -70,6 +82,7 @@ export interface TaskDispatchInput {
   prompt: string;
   title?: string;
   projectPath?: string;
+  modelId?: string;
   isolation: SessionTaskIsolation;
   permissionMode?: PermissionMode;
   attachments?: ImageAttachmentInput[];
@@ -96,6 +109,7 @@ const API_BASE = '';
 const SESSION_EVENT_READY_TIMEOUT_MS = 10000;
 
 const SessionArraySchema = Type.Array(SessionSchema);
+const BoundProjectArraySchema = Type.Array(BoundProjectSchema);
 const SessionHistoryMessageArraySchema = Type.Array(SessionHistoryMessageSchema);
 const SessionRewindCheckpointArraySchema = Type.Array(SessionRewindCheckpointSchema);
 const SubagentSessionArraySchema = Type.Array(SubagentSessionSchema);
@@ -166,10 +180,55 @@ const normalizeHistoryMessage = (
 });
 
 export const sessionService = {
+  listProjects: async (): Promise<BoundProject[]> => {
+    const res = await fetch(`${API_BASE}/projects`);
+    if (!res.ok) throw new Error('Failed to load projects');
+    return parseSchema(BoundProjectArraySchema, await res.json());
+  },
+
+  bindProject: async (projectPath: string): Promise<BoundProject> => {
+    const res = await fetch(`${API_BASE}/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: projectPath }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message || 'Failed to bind project');
+    }
+    return BoundProjectSchema.parse(await res.json());
+  },
+
+  unbindProject: async (projectPath: string): Promise<void> => {
+    const res = await fetch(
+      `${API_BASE}/projects?path=${encodeURIComponent(projectPath)}`,
+      { method: 'DELETE' }
+    );
+    if (!res.ok) throw new Error('Failed to unbind project');
+  },
+
   listSessions: async (): Promise<Session[]> => {
     const res = await fetch(`${API_BASE}/sessions`);
     if (!res.ok) throw new Error('Failed to load sessions');
     return parseSchema(SessionArraySchema, await res.json());
+  },
+
+  listSessionPage: async (cursor?: string, limit = 50): Promise<SessionCatalogPage> => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set('cursor', cursor);
+    const res = await fetch(`${API_BASE}/sessions/catalog?${params.toString()}`);
+    if (!res.ok) throw new Error('Failed to load session catalog');
+    return SessionCatalogPageSchema.parse(await res.json());
+  },
+
+  getSession: async (ref: SessionRef): Promise<Session> => {
+    return SessionSchema.parse(
+      await requestJson<unknown>(
+        withSessionRef(`${API_BASE}/sessions/${ref.sessionId}`, ref)
+      )
+    );
   },
 
   createSession: async (projectPath?: string, title?: string): Promise<Session> => {
@@ -183,9 +242,10 @@ export const sessionService = {
   },
 
   getWorkspaceInfo: async (): Promise<WorkspaceInfo> => {
-    const res = await fetch(`${API_BASE}/global/info`);
-    if (!res.ok) throw new Error('Failed to load workspace info');
-    return parseSchema(WorkspaceInfoSchema, await res.json());
+    return parseSchema(
+      WorkspaceInfoSchema,
+      await requestJson<unknown>(`${API_BASE}/global/info`)
+    );
   },
 
   createTask: async (input: TaskDispatchInput): Promise<CreateTaskResponse> => {
@@ -203,11 +263,51 @@ export const sessionService = {
     return CreateTaskResponseSchema.parse(await res.json());
   },
 
+  retryTask: async (ref: SessionRef): Promise<CreateTaskResponse> => {
+    const res = await fetch(
+      withSessionRef(`${API_BASE}/tasks/${ref.sessionId}/retry`, ref),
+      { method: 'POST' }
+    );
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message || 'Failed to retry task');
+    }
+    return CreateTaskResponseSchema.parse(await res.json());
+  },
+
+  deliverTask: async (
+    ref: SessionRef,
+    action: 'apply' | 'discard'
+  ): Promise<Session> => {
+    const res = await fetch(
+      withSessionRef(`${API_BASE}/tasks/${ref.sessionId}/delivery`, ref),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      }
+    );
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message || 'Failed to deliver task changes');
+    }
+    return SessionSchema.parse(await res.json());
+  },
+
   getTaskDiff: async (ref: SessionRef): Promise<SessionTaskDiffArtifact> => {
     const res = await fetch(
       withSessionRef(`${API_BASE}/tasks/${ref.sessionId}/diff`, ref)
     );
-    if (!res.ok) throw new Error('Failed to load task diff');
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message || 'Failed to load task diff');
+    }
     return SessionTaskDiffArtifactSchema.parse(await res.json());
   },
 
@@ -254,14 +354,29 @@ export const sessionService = {
         projectPath: ref.projectPath,
       }),
     });
-    if (!res.ok) throw new Error('Failed to send message');
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { reason?: string; error?: { message?: string } }
+        | undefined;
+      const reason = body?.error?.message ?? body?.reason;
+      throw new Error(reason || 'Failed to send message');
+    }
     return res.json();
   },
 
   abortSession: async (ref: SessionRef): Promise<void> => {
-    await fetch(withSessionRef(`${API_BASE}/sessions/${ref.sessionId}/abort`, ref), {
-      method: 'POST',
-    });
+    const res = await fetch(
+      withSessionRef(`${API_BASE}/sessions/${ref.sessionId}/abort`, ref),
+      {
+        method: 'POST',
+      }
+    );
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message || 'Failed to stop task');
+    }
   },
 
   getGoal: async (ref: SessionRef): Promise<Goal | null> => {
@@ -414,10 +529,15 @@ export const sessionService = {
   openEventSubscription: async (
     ref: SessionRef,
     onEvent: (event: StreamEvent) => void,
-    options?: { maxRetries?: number; onConnectionChange?: (connected: boolean) => void }
+    options?: {
+      maxRetries?: number;
+      onConnectionChange?: (connected: boolean) => void;
+      onConnectionStateChange?: (state: TaskEventConnectionState) => void;
+    }
   ): Promise<() => void> => {
     const maxRetries = options?.maxRetries ?? 5;
     const onConnectionChange = options?.onConnectionChange;
+    const onConnectionStateChange = options?.onConnectionStateChange;
     let eventSource: EventSource | null = null;
     let retryCount = 0;
     let retryTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -486,18 +606,24 @@ export const sessionService = {
       if (isManualClose || retryCount >= maxRetries) {
         if (retryCount >= maxRetries) {
           console.error(`SSE max retries (${maxRetries}) reached, giving up`);
+          onConnectionStateChange?.('offline');
         }
         return;
       }
 
       retryCount++;
+      onConnectionStateChange?.('reconnecting');
       const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 30000);
       console.log(
         `SSE reconnecting in ${delay}ms (attempt ${retryCount}/${maxRetries})`
       );
 
       retryTimeout = setTimeout(() => {
-        void connect();
+        void connect().catch((error) => {
+          console.error('SSE reconnect failed', error);
+          onConnectionChange?.(false);
+          scheduleReconnect();
+        });
       }, delay);
     };
 
@@ -505,6 +631,7 @@ export const sessionService = {
       retryCount = 0;
       lastHeartbeat = Date.now();
       onConnectionChange?.(true);
+      onConnectionStateChange?.('connected');
       clearHeartbeatMonitor();
       heartbeatCheckInterval = setInterval(() => {
         if (Date.now() - lastHeartbeat > 45000) {
@@ -512,6 +639,7 @@ export const sessionService = {
           clearHeartbeatMonitor();
           closeCurrentConnection();
           onConnectionChange?.(false);
+          onConnectionStateChange?.('reconnecting');
           scheduleReconnect();
         }
       }, 15000);
@@ -539,6 +667,7 @@ export const sessionService = {
       if (!isSubscriptionReady) {
         clearReadinessTimeout();
         readinessTimeout = setTimeout(() => {
+          onConnectionStateChange?.('offline');
           failReady(new Error('Timed out waiting for event subscription readiness'));
         }, SESSION_EVENT_READY_TIMEOUT_MS);
       }
@@ -557,6 +686,12 @@ export const sessionService = {
               event.properties.sessionId === ref.sessionId &&
               event.properties.projectPath === ref.projectPath
             ) {
+              if (typeof event.properties.status === 'string') {
+                onEvent({
+                  type: 'session.status',
+                  properties: event.properties,
+                });
+              }
               markReady();
             }
             return;
@@ -573,6 +708,7 @@ export const sessionService = {
         clearHeartbeatMonitor();
         closeCurrentConnection();
         if (!isSubscriptionReady) {
+          onConnectionStateChange?.('offline');
           failReady(new Error('Failed to open event subscription'));
           return;
         }
@@ -582,7 +718,9 @@ export const sessionService = {
       };
     };
 
+    onConnectionStateChange?.('connecting');
     void connect().catch((error) => {
+      onConnectionStateChange?.('offline');
       failReady(
         error instanceof Error ? error : new Error('Failed to open event subscription')
       );
@@ -602,9 +740,13 @@ export const sessionService = {
 
   openTaskEventSubscription: async (
     onEvent: (event: StreamEvent) => void,
-    options?: { onConnectionChange?: (connected: boolean) => void }
+    options?: {
+      onConnectionChange?: (connected: boolean) => void;
+      onConnectionStateChange?: (state: TaskEventConnectionState) => void;
+    }
   ): Promise<() => void> => {
     const onConnectionChange = options?.onConnectionChange;
+    const onConnectionStateChange = options?.onConnectionStateChange;
     const eventSource = new EventSource(`${API_BASE}/events`);
     let isClosed = false;
     let isReady = false;
@@ -624,8 +766,10 @@ export const sessionService = {
       }
       eventSource.close();
       onConnectionChange?.(false);
+      onConnectionStateChange?.('offline');
     };
 
+    onConnectionStateChange?.('connecting');
     readinessTimeout = setTimeout(() => {
       if (isReady || isClosed) return;
       close();
@@ -645,6 +789,7 @@ export const sessionService = {
             resolveReady();
           }
           onConnectionChange?.(true);
+          onConnectionStateChange?.('connected');
           return;
         }
         if (event.type === 'heartbeat') return;
@@ -655,6 +800,7 @@ export const sessionService = {
     };
     eventSource.onerror = () => {
       onConnectionChange?.(false);
+      onConnectionStateChange?.(isReady ? 'reconnecting' : 'offline');
       if (!isReady && !isClosed) {
         close();
         rejectReady(new Error('Failed to open global task events'));
@@ -682,7 +828,12 @@ export const sessionService = {
         body: JSON.stringify(payload),
       }
     );
-    if (!res.ok) throw new Error('Failed to respond to permission');
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message || 'Failed to respond to permission');
+    }
   },
 
   respondToConfirmation: async (
@@ -720,7 +871,12 @@ export const sessionService = {
         body: JSON.stringify({ answers }),
       }
     );
-    if (!res.ok) throw new Error('Failed to respond to question');
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message || 'Failed to respond to question');
+    }
   },
 
   getGitInfo: async (ref: SessionRef): Promise<{ branch: string | null }> => {
@@ -733,6 +889,7 @@ export const sessionService = {
 };
 
 export type {
+  BoundProject,
   Goal,
   MessageRole,
   PermissionMode,

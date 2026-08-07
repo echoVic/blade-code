@@ -7,19 +7,21 @@ import { McpRegistry } from '../../../../src/mcp/McpRegistry.js';
 import { McpConnectionStatus } from '../../../../src/mcp/types.js';
 
 // Mock McpClient
-const mockConnect = vi.fn();
-const mockDisconnect = vi.fn();
-const mockListTools = vi.fn();
+const { mockConnect, mockDisconnect, mockListTools } = vi.hoisted(() => ({
+  mockConnect: vi.fn(),
+  mockDisconnect: vi.fn(),
+  mockListTools: vi.fn(),
+}));
 
 vi.mock('../../../../src/mcp/McpClient.js', () => {
   return {
-    McpClient: vi.fn().mockImplementation(() => ({
-      connect: mockConnect,
-      disconnect: mockDisconnect,
-      listTools: mockListTools,
-      on: vi.fn(),
-      off: vi.fn(),
-    })),
+    McpClient: class MockMcpClient {
+      connect = mockConnect;
+      disconnect = mockDisconnect;
+      listTools = mockListTools;
+      on = vi.fn();
+      off = vi.fn();
+    },
   };
 });
 

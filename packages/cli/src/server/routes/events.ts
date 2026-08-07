@@ -3,7 +3,16 @@ import { streamSSE } from 'hono/streaming';
 import { Bus } from '../bus.js';
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
-const GLOBAL_TASK_EVENT_TYPES = new Set(['task.status']);
+const GLOBAL_TASK_EVENT_TYPES = new Set([
+  'task.status',
+  'task.delivery',
+  'session.created',
+  'session.updated',
+  'session.deleted',
+  'permission.asked',
+  'question.required',
+  'interaction.resolved',
+]);
 const TASK_STATUSES = new Set([
   'queued',
   'running',
@@ -36,6 +45,28 @@ function projectInteger(value: unknown, minimum: number): number | undefined {
     : undefined;
 }
 
+function projectTaskDelivery(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const delivery = value as Record<string, unknown>;
+  if (
+    !['applied', 'discarded', 'conflicted'].includes(String(delivery.status)) ||
+    typeof delivery.updatedAt !== 'string'
+  ) {
+    return undefined;
+  }
+  return {
+    status: delivery.status,
+    updatedAt: delivery.updatedAt,
+    ...(typeof delivery.sourceCommit === 'string'
+      ? { sourceCommit: delivery.sourceCommit }
+      : {}),
+    ...(projectInteger(delivery.changedFiles, 0) !== undefined
+      ? { changedFiles: delivery.changedFiles }
+      : {}),
+    ...(typeof delivery.message === 'string' ? { message: delivery.message } : {}),
+  };
+}
+
 export const EventRoutes = () => {
   const app = new Hono();
 
@@ -61,6 +92,104 @@ export const EventRoutes = () => {
       stream.onAbort(terminate);
       unsubscribe = Bus.subscribe((event) => {
         if (!GLOBAL_TASK_EVENT_TYPES.has(event.type)) return;
+
+        if (event.type === 'permission.asked' || event.type === 'question.required') {
+          const requestId = event.properties.requestId;
+          if (typeof requestId !== 'string' || !requestId) return;
+          stream
+            .writeSSE({
+              data: JSON.stringify({
+                type: 'interaction.pending',
+                properties: {
+                  sessionId: event.sessionId,
+                  projectPath: event.projectPath,
+                  interactionType:
+                    event.type === 'question.required' ? 'question' : 'permission',
+                  requestId,
+                },
+              }),
+            })
+            .catch(terminate);
+          return;
+        }
+
+        if (event.type === 'interaction.resolved') {
+          const requestId = event.properties.requestId;
+          if (typeof requestId !== 'string' || !requestId) return;
+          stream
+            .writeSSE({
+              data: JSON.stringify({
+                type: event.type,
+                properties: {
+                  sessionId: event.sessionId,
+                  projectPath: event.projectPath,
+                  requestId,
+                },
+              }),
+            })
+            .catch(terminate);
+          return;
+        }
+
+        if (event.type === 'session.created' || event.type === 'session.deleted') {
+          stream
+            .writeSSE({
+              data: JSON.stringify({
+                type: event.type,
+                properties: {
+                  sessionId: event.sessionId,
+                  projectPath: event.projectPath,
+                },
+              }),
+            })
+            .catch(terminate);
+          return;
+        }
+
+        // Session metadata updates (e.g. auto-derived titles) — forward the
+        // minimal payload so the sidebar can patch the session in place.
+        if (event.type === 'session.updated') {
+          const title = event.properties.title;
+          if (typeof title !== 'string' || !title.trim()) return;
+          stream
+            .writeSSE({
+              data: JSON.stringify({
+                type: event.type,
+                properties: {
+                  sessionId: event.sessionId,
+                  projectPath: event.projectPath,
+                  title,
+                },
+              }),
+            })
+            .catch(terminate);
+          return;
+        }
+
+        if (event.type === 'task.delivery') {
+          const taskDelivery = projectTaskDelivery(event.properties.taskDelivery);
+          if (!taskDelivery) return;
+          stream
+            .writeSSE({
+              data: JSON.stringify({
+                type: event.type,
+                properties: {
+                  sessionId: event.sessionId,
+                  projectPath: event.projectPath,
+                  taskDelivery,
+                  ...(event.properties.taskWorktreeRemoved === true
+                    ? { taskWorktreeRemoved: true }
+                    : {}),
+                  ...(typeof event.properties.updatedAt === 'string'
+                    ? { updatedAt: event.properties.updatedAt }
+                    : {}),
+                },
+              }),
+            })
+            .catch(terminate);
+          return;
+        }
+
         const taskStatus = event.properties.taskStatus;
         if (typeof taskStatus !== 'string' || !TASK_STATUSES.has(taskStatus)) return;
         const taskDiffStat = projectTaskDiffStat(event.properties.taskDiffStat);
@@ -83,6 +212,10 @@ export const EventRoutes = () => {
                   ? {
                       taskStatusReason: event.properties.taskStatusReason,
                     }
+                  : {}),
+                ...(event.properties.taskFailure &&
+                typeof event.properties.taskFailure === 'object'
+                  ? { taskFailure: event.properties.taskFailure }
                   : {}),
                 ...(typeof event.properties.taskStartedAt === 'string'
                   ? { taskStartedAt: event.properties.taskStartedAt }

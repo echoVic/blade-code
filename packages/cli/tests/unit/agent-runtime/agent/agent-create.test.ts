@@ -383,7 +383,7 @@ describe('Agent runLoop system prompt injection', () => {
     expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(
       2,
       'failed',
-      'attachment unavailable'
+      expect.objectContaining({ message: 'attachment unavailable' })
     );
   });
 
@@ -447,7 +447,10 @@ describe('Agent runLoop system prompt injection', () => {
     expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(
       2,
       'failed',
-      'temporary outage apiKey=[REDACTED]'
+      expect.objectContaining({
+        type: 'api_error',
+        message: 'temporary outage apiKey=supersecretvalue123',
+      })
     );
   });
 

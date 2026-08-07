@@ -18,8 +18,6 @@ import { spawnOwnedProcess } from '../utils/process/OwnedProcessTree.js';
 import {
   type FileSystemService,
   LocalFileSystemService,
-  resetFileSystemService,
-  setFileSystemService,
 } from '../services/FileSystemService.js';
 import { AcpFileSystemService } from './AcpFileSystemService.js';
 
@@ -421,9 +419,6 @@ export class AcpServiceContext {
     // 设置当前会话（用于便捷函数）
     AcpServiceContext.currentSessionId = sessionId;
 
-    // 更新全局文件系统服务（供工具层使用）
-    setFileSystemService(fileSystemService);
-
     logger.debug(`[AcpServiceContext:${sessionId}] Initialized with capabilities:`, {
       fs: !!clientCapabilities?.fs,
       readTextFile: clientCapabilities?.fs?.readTextFile,
@@ -445,19 +440,6 @@ export class AcpServiceContext {
       // 切换到另一个活跃会话，或者清空
       const remainingSessions = Array.from(AcpServiceContext.sessions.keys());
       AcpServiceContext.currentSessionId = remainingSessions[0] || null;
-
-      // 如果没有剩余会话，重置文件系统服务为本地
-      if (!AcpServiceContext.currentSessionId) {
-        resetFileSystemService();
-      } else {
-        // 切换到下一个会话的文件系统服务
-        const nextSession = AcpServiceContext.sessions.get(
-          AcpServiceContext.currentSessionId
-        );
-        if (nextSession) {
-          setFileSystemService(nextSession.fileSystemService);
-        }
-      }
     }
 
     logger.debug(`[AcpServiceContext:${sessionId}] Session destroyed`);
@@ -476,12 +458,6 @@ export class AcpServiceContext {
   static setCurrentSession(sessionId: string): void {
     if (AcpServiceContext.sessions.has(sessionId)) {
       AcpServiceContext.currentSessionId = sessionId;
-
-      // 更新全局文件系统服务
-      const session = AcpServiceContext.sessions.get(sessionId);
-      if (session) {
-        setFileSystemService(session.fileSystemService);
-      }
     }
   }
 
@@ -533,11 +509,10 @@ export class AcpServiceContext {
   /**
    * 获取文件系统服务（当前会话）
    */
-  getFileSystemService(): FileSystemService {
-    if (AcpServiceContext.currentSessionId) {
-      const services = AcpServiceContext.sessions.get(
-        AcpServiceContext.currentSessionId
-      );
+  getFileSystemService(sessionId?: string): FileSystemService {
+    const targetSessionId = sessionId ?? AcpServiceContext.currentSessionId;
+    if (targetSessionId) {
+      const services = AcpServiceContext.sessions.get(targetSessionId);
       if (services) return services.fileSystemService;
     }
     return new LocalFileSystemService();
@@ -546,11 +521,10 @@ export class AcpServiceContext {
   /**
    * 获取终端服务（当前会话）
    */
-  getTerminalService(): TerminalService {
-    if (AcpServiceContext.currentSessionId) {
-      const services = AcpServiceContext.sessions.get(
-        AcpServiceContext.currentSessionId
-      );
+  getTerminalService(sessionId?: string): TerminalService {
+    const targetSessionId = sessionId ?? AcpServiceContext.currentSessionId;
+    if (targetSessionId) {
+      const services = AcpServiceContext.sessions.get(targetSessionId);
       if (services) return services.terminalService;
     }
     return new LocalTerminalService();
@@ -626,13 +600,19 @@ export class AcpServiceContext {
 /**
  * 便捷函数：获取终端服务
  */
-export function getTerminalService(): TerminalService {
-  return AcpServiceContext.getInstance().getTerminalService();
+export function getAcpFileSystemService(sessionId?: string): FileSystemService {
+  return AcpServiceContext.getInstance().getFileSystemService(sessionId);
+}
+
+export function getTerminalService(sessionId?: string): TerminalService {
+  return AcpServiceContext.getInstance().getTerminalService(sessionId);
 }
 
 /**
  * 便捷函数：检查是否在 ACP 模式
  */
-export function isAcpMode(): boolean {
-  return AcpServiceContext.getInstance().isAcpMode();
+export function isAcpMode(sessionId?: string): boolean {
+  return sessionId
+    ? AcpServiceContext.getSessionServices(sessionId) !== null
+    : AcpServiceContext.getInstance().isAcpMode();
 }

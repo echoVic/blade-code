@@ -10,8 +10,8 @@ const executionState = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../../src/agent/subagents/SubagentExecutor.js', () => ({
-  SubagentExecutor: vi.fn(() => ({
-    execute: vi.fn(async (context: SubagentContext) => {
+  SubagentExecutor: class MockSubagentExecutor {
+    execute = vi.fn(async (context: SubagentContext) => {
       executionState.contexts.push(context);
       const messages = [
         ...(context.existingMessages ?? []),
@@ -28,8 +28,8 @@ vi.mock('../../../../src/agent/subagents/SubagentExecutor.js', () => ({
         messages,
         stats: { tokens: 10, toolCalls: 0, duration: 1 },
       };
-    }),
-  })),
+    });
+  },
 }));
 
 vi.mock('../../../../src/agent/subagents/SubagentWorktreeLifecycle.js', () => ({

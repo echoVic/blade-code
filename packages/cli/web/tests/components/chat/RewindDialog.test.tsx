@@ -27,7 +27,8 @@ vi.mock('@/services', () => ({
 }));
 
 vi.mock('@/store/session', () => ({
-  useSessionStore: () => sessionState,
+  useSessionStore: (selector: (state: typeof sessionState) => unknown) =>
+    selector(sessionState),
 }));
 
 import { RewindDialog } from '../../../src/components/chat/RewindDialog';

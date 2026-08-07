@@ -4,7 +4,7 @@ import type { SessionRef } from '@api/schemas';
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-
+import { useAppStore } from '../../../src/store/AppStore';
 import { type Message, useSessionStore } from '../../../src/store/session';
 import { aggregateMessages } from '../../../src/store/session/utils/aggregateMessages';
 
@@ -49,6 +49,12 @@ describe('ChatMessage', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
+    useAppStore.setState({
+      isFilePreviewOpen: false,
+      previewTab: 'diff',
+      previewTargetPath: null,
+      previewRequestId: 0,
+    });
 
     useSessionStore.setState({
       messages: [],
@@ -202,7 +208,7 @@ describe('ChatMessage', () => {
     });
 
     const onceButton = Array.from(container.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('Once')
+      button.textContent?.includes('Allow once')
     );
     expect(onceButton).toBeTruthy();
 
@@ -215,6 +221,58 @@ describe('ChatMessage', () => {
       'permission-1',
       { approved: true, scope: 'once' }
     );
+  });
+
+  test('keeps a permission request pending and retryable when the response fails', async () => {
+    serviceMocks.respondPermission.mockRejectedValueOnce(
+      new Error('Permission owner unavailable')
+    );
+    const message: Message = {
+      id: 'assistant-confirmation',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000002,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: null,
+        confirmation: {
+          toolCallId: 'permission-1',
+          toolName: 'Write',
+          description: 'Allow write',
+          status: 'pending',
+        },
+        question: null,
+      },
+    };
+
+    await act(async () => {
+      root.render(<ChatMessage message={message} />);
+    });
+    const onceButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Allow once')
+    );
+
+    await act(async () => {
+      onceButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Permission owner unavailable'
+    );
+    expect(container.textContent).toContain('Permission required: Write');
+    expect(onceButton?.disabled).toBe(false);
+
+    serviceMocks.respondPermission.mockResolvedValueOnce(undefined);
+    await act(async () => {
+      onceButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(serviceMocks.respondPermission).toHaveBeenCalledTimes(2);
   });
 
   test('responds to questions with the full current session ref instead of a bare session id', async () => {
@@ -498,5 +556,53 @@ describe('ChatMessage', () => {
     });
 
     expect(container.querySelector('button[aria-label="Resume subagent"]')).toBeNull();
+  });
+
+  test('opens the diff preview at the changed file selected from a message', async () => {
+    const message: Message = {
+      id: 'assistant-changed-file',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000007,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [
+          {
+            toolCallId: 'edit-1',
+            toolName: 'Edit',
+            status: 'success',
+            startTime: 1,
+            metadata: {
+              file_path: '/workspace/a/src/target.ts',
+            },
+          },
+        ],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: null,
+        confirmation: null,
+        question: null,
+      },
+    };
+
+    await act(async () => {
+      root.render(<ChatMessage message={message} />);
+    });
+    const fileButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'target.ts'
+    );
+    expect(fileButton).toBeTruthy();
+
+    await act(async () => {
+      fileButton?.click();
+    });
+
+    expect(useAppStore.getState()).toMatchObject({
+      isFilePreviewOpen: true,
+      previewTab: 'diff',
+      previewTargetPath: '/workspace/a/src/target.ts',
+      previewRequestId: 1,
+    });
   });
 });

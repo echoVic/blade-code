@@ -5,7 +5,7 @@ import type { SlashCommandContext } from '../../../../src/slash-commands/types.j
 const contextManagerState = vi.hoisted(
   (): {
     constructorOptions: Array<Partial<ContextManagerOptions> | undefined>;
-    saveCompaction: ReturnType<typeof vi.fn>;
+    saveCompaction: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
   } => ({
     constructorOptions: [],
     saveCompaction: vi.fn(),

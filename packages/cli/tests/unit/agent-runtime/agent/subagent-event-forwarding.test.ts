@@ -442,9 +442,9 @@ describe('Task tool subagent event publishing', () => {
       },
     }));
     vi.doMock('../../../../src/agent/subagents/SubagentExecutor.js', () => ({
-      SubagentExecutor: vi.fn(() => ({
-        execute: subagentExecutorState.execute,
-      })),
+      SubagentExecutor: class MockSubagentExecutor {
+        execute = subagentExecutorState.execute;
+      },
     }));
     vi.doMock('../../../../src/agent/subagents/AgentSessionStore.js', () => ({
       AgentSessionStore: {

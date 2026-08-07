@@ -1,7 +1,10 @@
 import { Hono } from 'hono';
+import { MAX_INLINE_ATTACHMENT_BYTES } from '../../api/attachmentLimits.js';
 import {
   CreateTaskRequestSchema,
   CreateTaskResponseSchema,
+  SessionSchema,
+  SessionTaskDeliveryRequestSchema,
   SessionTaskDiffArtifactSchema,
 } from '../../api/schemas.js';
 import { PermissionMode } from '../../config/types.js';
@@ -46,6 +49,17 @@ export const TaskRoutes = (controller: SessionRouteController) => {
     if (!parsed.success) {
       throw new BadRequestError('Invalid task request');
     }
+    const attachmentBytes = (parsed.data.attachments ?? []).reduce(
+      (total, attachment) =>
+        total +
+        (typeof attachment.content === 'string'
+          ? Buffer.byteLength(attachment.content)
+          : 0),
+      0
+    );
+    if (attachmentBytes > MAX_INLINE_ATTACHMENT_BYTES) {
+      throw new BadRequestError('Task attachments exceed the 5 MiB limit');
+    }
 
     try {
       const result = await controller.dispatchTask({
@@ -54,6 +68,7 @@ export const TaskRoutes = (controller: SessionRouteController) => {
         sourceProjectPath: parsed.data.projectPath || c.get('directory') || getCwd(),
         isolation: parsed.data.isolation,
         permissionMode: parsed.data.permissionMode as PermissionMode,
+        modelId: parsed.data.modelId,
         attachments: parsed.data.attachments,
       });
       return c.json(CreateTaskResponseSchema.parse(result), 202);
@@ -67,6 +82,27 @@ export const TaskRoutes = (controller: SessionRouteController) => {
       }
       logger.error('[TaskRoutes] Failed to dispatch task:', error);
       throw new InternalServerError('Failed to dispatch task');
+    }
+  });
+
+  app.post('/:sessionId/retry', async (c) => {
+    try {
+      const result = await controller.retryTask(
+        c.req.param('sessionId'),
+        c.req.query('projectPath')
+      );
+      return c.json(CreateTaskResponseSchema.parse(result), 202);
+    } catch (error) {
+      if (
+        error instanceof BadRequestError ||
+        error instanceof NotFoundError ||
+        error instanceof ConflictError ||
+        error instanceof TooManyRequestsError
+      ) {
+        throw error;
+      }
+      logger.error('[TaskRoutes] Failed to retry task:', error);
+      throw new InternalServerError('Failed to retry task');
     }
   });
 
@@ -87,6 +123,37 @@ export const TaskRoutes = (controller: SessionRouteController) => {
       }
       logger.error('[TaskRoutes] Failed to load task diff:', error);
       throw new InternalServerError('Failed to load task diff');
+    }
+  });
+
+  app.post('/:sessionId/delivery', async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      throw new BadRequestError('Invalid request body');
+    }
+    const parsed = safeParseSchema(SessionTaskDeliveryRequestSchema, body);
+    if (!parsed.success) {
+      throw new BadRequestError('Invalid task delivery request');
+    }
+    try {
+      const session = await controller.deliverTask(
+        c.req.param('sessionId'),
+        parsed.data.action,
+        c.req.query('projectPath')
+      );
+      return c.json(SessionSchema.parse(session));
+    } catch (error) {
+      if (
+        error instanceof BadRequestError ||
+        error instanceof NotFoundError ||
+        error instanceof ConflictError
+      ) {
+        throw error;
+      }
+      logger.error('[TaskRoutes] Failed to deliver task:', error);
+      throw new InternalServerError('Failed to deliver task');
     }
   });
 

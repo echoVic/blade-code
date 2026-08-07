@@ -1,12 +1,17 @@
+import { deriveSessionTitle } from '@api/sessionTitle';
+import { projectPathOf } from '@/lib/projectIdentity';
 import { sessionService } from '@/services';
 import { useConfigStore } from '@/store/ConfigStore';
 import { initialTokenUsage, TEMP_SESSION_ID } from '../constants';
 import {
+  findSessionByRef,
   removeSessionByRef,
   sameSessionRef,
   sessionRefFromSession,
+  sessionRefKey,
   upsertSessionByRef,
 } from '../sessionIdentity';
+import { persistUnreadTaskKeys, pruneUnreadTaskKeys } from '../taskAttention';
 import type {
   MessageContentPart,
   SendMessagePayload,
@@ -42,17 +47,35 @@ const buildOptimisticUserContent = (payload: SendMessagePayload) => {
 
 const resetStreamingState = () => ({
   eventUnsubscribe: null,
+  sessionEventConnectionState: 'idle' as const,
   isStreaming: false,
+  isStopping: false,
   agentPhase: 'idle' as const,
   currentRunId: null,
   pendingSteeringCount: 0,
+  pendingInputDelivery: null,
   recoveredSteeringCount: 0,
   currentAssistantMessageId: null,
   hasToolCalls: false,
 });
 
+const waitForCatalogContinuation = (): Promise<void> =>
+  new Promise((resolve) => {
+    globalThis.setTimeout(() => {
+      if (
+        typeof window !== 'undefined' &&
+        typeof window.requestIdleCallback === 'function'
+      ) {
+        window.requestIdleCallback(() => resolve(), { timeout: 750 });
+        return;
+      }
+      resolve();
+    }, 350);
+  });
+
 export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
   let navigationGeneration = 0;
+  let catalogGeneration = 0;
 
   const beginNavigation = (): number => {
     navigationGeneration += 1;
@@ -77,7 +100,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     forkingSessionRef: null,
     isTemporarySession: false,
     isLoading: false,
+    catalogLoadState: 'idle',
+    catalogError: null,
     error: null,
+    errorContext: null,
     goal: null,
 
     setSessions: (sessions) => set({ sessions }),
@@ -89,6 +115,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
 
     removeSession: (ref) => {
       const state = get();
+      state.markTaskRead(ref);
       const isCurrent = sameSessionRef(state.currentSessionRef, ref);
       const cancelsFork = sameSessionRef(state.forkingSessionRef, ref);
       if (isCurrent || cancelsFork) {
@@ -123,15 +150,20 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
 
     setLoading: (loading) => set({ isLoading: loading }),
 
-    setError: (error) => set({ error }),
+    setError: (error) => set({ error, errorContext: null }),
 
-    clearError: () => set({ error: null }),
+    getNavigationVersion: () => navigationGeneration,
+
+    clearError: () => set({ error: null, errorContext: null }),
 
     setGoal: (goal) => set({ goal }),
 
-    startTemporarySession: () => {
+    startTemporarySession: (projectPath) => {
       beginNavigation();
       get().unsubscribeFromEvents();
+      if (projectPath) {
+        get().selectProject(projectPath);
+      }
       set({
         currentSessionId: TEMP_SESSION_ID,
         currentSessionRef: null,
@@ -142,27 +174,96 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         goal: null,
         tokenUsage: { ...initialTokenUsage },
         error: null,
+        errorContext: null,
         ...resetStreamingState(),
       });
     },
 
     loadSessions: async () => {
-      set({ isLoading: true, error: null });
+      const generation = ++catalogGeneration;
+      const initialSessionKeys = new Set(
+        get().sessions.map((session) => sessionRefKey(sessionRefFromSession(session)))
+      );
+      const catalogSessionKeys = new Set<string>();
+      set({ catalogLoadState: 'loading', catalogError: null });
       try {
-        const sessions = await sessionService.listSessions();
-        set({ sessions, isLoading: false });
+        let cursor: string | undefined;
+        let firstPage = true;
+        do {
+          const page = await sessionService.listSessionPage(cursor);
+          if (generation !== catalogGeneration) return;
+          for (const session of page.sessions) {
+            catalogSessionKeys.add(sessionRefKey(sessionRefFromSession(session)));
+          }
+          set((state) => {
+            const incomingKeys = new Set(
+              page.sessions.map((session) =>
+                sessionRefKey(sessionRefFromSession(session))
+              )
+            );
+            const sessions = firstPage
+              ? [
+                  ...page.sessions,
+                  ...state.sessions.filter(
+                    (session) =>
+                      !incomingKeys.has(sessionRefKey(sessionRefFromSession(session)))
+                  ),
+                ]
+              : page.sessions.reduce(
+                  (current, session) => upsertSessionByRef(current, session),
+                  state.sessions
+                );
+            return {
+              sessions,
+              catalogLoadState: page.nextCursor ? 'hydrating' : 'ready',
+            };
+          });
+          firstPage = false;
+          cursor = page.nextCursor;
+          if (cursor) {
+            await waitForCatalogContinuation();
+            if (generation !== catalogGeneration) return;
+          }
+        } while (cursor);
+
+        if (generation !== catalogGeneration) return;
+        const sessions = get().sessions.filter((session) => {
+          const key = sessionRefKey(sessionRefFromSession(session));
+          return catalogSessionKeys.has(key) || !initialSessionKeys.has(key);
+        });
+        const unreadTaskKeys = pruneUnreadTaskKeys(get().unreadTaskKeys, sessions);
+        persistUnreadTaskKeys(unreadTaskKeys);
+        set({
+          sessions,
+          unreadTaskKeys,
+          catalogLoadState: 'ready',
+          catalogError: null,
+        });
       } catch (err) {
-        set({ error: (err as Error).message, isLoading: false });
+        if (generation !== catalogGeneration) return;
+        set({
+          catalogLoadState: 'error',
+          catalogError: (err as Error).message,
+        });
       }
     },
 
     selectSession: async (ref) => {
       const generation = beginNavigation();
-      set({ isLoading: true, error: null, forkingSessionRef: null });
+      set({
+        isLoading: true,
+        error: null,
+        errorContext: null,
+        forkingSessionRef: null,
+      });
       try {
-        const [rawMessages, goal] = await Promise.all([
+        const existingSession = findSessionByRef(get().sessions, ref);
+        const [rawMessages, goal, exactSession] = await Promise.all([
           sessionService.getMessages(ref),
           sessionService.getGoal(ref).catch(() => null),
+          existingSession
+            ? Promise.resolve(existingSession)
+            : sessionService.getSession(ref),
         ]);
         if (!isCurrentNavigation(generation)) return;
         const messages = aggregateMessages(rawMessages);
@@ -179,7 +280,18 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           closePreparedSubscription(unsubscribe);
           return;
         }
-        set({
+        const displayProjectPath = projectPathOf(
+          exactSession,
+          get().selectedProjectPath ?? get().taskWorkspaceInfo?.cwd ?? null
+        );
+        if (
+          get().boundProjects.some(
+            (project) => project.available && project.path === displayProjectPath
+          )
+        ) {
+          get().selectProject(displayProjectPath);
+        }
+        set((state) => ({
           currentSessionId: ref.sessionId,
           currentSessionRef: ref,
           isTemporarySession: false,
@@ -187,7 +299,30 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           goal,
           isLoading: false,
           tokenUsage: { ...initialTokenUsage },
-        });
+          isStreaming: false,
+          isStopping: false,
+          agentPhase: 'idle',
+          currentRunId: null,
+          pendingSteeringCount: 0,
+          pendingInputDelivery: null,
+          recoveredSteeringCount: 0,
+          currentAssistantMessageId: null,
+          hasToolCalls: false,
+          error:
+            exactSession.taskStatus === 'failed'
+              ? (exactSession.taskFailure?.message ?? null)
+              : null,
+          errorContext:
+            exactSession.taskStatus === 'failed' && exactSession.taskFailure
+              ? {
+                  kind: 'execution',
+                  sessionRef: ref,
+                  failureCode: exactSession.taskFailure.code,
+                }
+              : null,
+          sessions: upsertSessionByRef(state.sessions, exactSession),
+        }));
+        get().markTaskRead(ref);
         subscriptionCommitted = true;
         get().replaceEventSubscription(unsubscribe);
         for (const event of pendingEvents) {
@@ -195,7 +330,11 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         }
       } catch (err) {
         if (!isCurrentNavigation(generation)) return;
-        set({ error: (err as Error).message, isLoading: false });
+        set({
+          error: (err as Error).message,
+          errorContext: { kind: 'navigation', sessionRef: ref },
+          isLoading: false,
+        });
       }
     },
 
@@ -211,6 +350,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
       }
       try {
         await sessionService.deleteSession(ref);
+        get().markTaskRead(ref);
         const state = get();
         const shouldClearCurrent =
           sameSessionRef(state.currentSessionRef, ref) &&
@@ -332,6 +472,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           currentRunId: null,
           agentPhase: 'idle',
           pendingSteeringCount: 0,
+          pendingInputDelivery: null,
           recoveredSteeringCount: 0,
           currentAssistantMessageId: null,
           hasToolCalls: false,
@@ -366,20 +507,30 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
       } = get();
       const generation = navigationGeneration;
       const originRef = currentSessionRef;
+      const originalStreamingState = {
+        isStreaming,
+        agentPhase: get().agentPhase,
+        currentRunId: get().currentRunId,
+      };
 
       let sessionRef = currentSessionRef;
       let sessionId = currentSessionId;
       let expectedRef = originRef;
       let preparedUnsubscribe: (() => void) | null = null;
+      let optimisticMessageId: string | null = null;
       const isCurrentSend = (): boolean =>
         isCurrentNavigation(generation) &&
         sameSessionRef(get().currentSessionRef, expectedRef);
 
       if (isTemporarySession || !sessionId || sessionId === TEMP_SESSION_ID) {
         try {
-          const session = await sessionService.createSession();
+          const derivedTitle = deriveSessionTitle(payload.content);
+          const session = await sessionService.createSession(
+            get().selectedProjectPath ?? get().taskWorkspaceInfo?.cwd ?? undefined,
+            derivedTitle || undefined
+          );
           addSession(session);
-          if (!isCurrentSend()) return;
+          if (!isCurrentSend()) return false;
           sessionRef = sessionRefFromSession(session);
           sessionId = session.sessionId;
           set({
@@ -389,16 +540,16 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           });
           expectedRef = sessionRef;
         } catch (err) {
-          if (!isCurrentSend()) return;
+          if (!isCurrentSend()) return false;
           set({ error: (err as Error).message });
-          return;
+          return false;
         }
       }
 
       if (!sessionRef || !sessionId || sessionId === TEMP_SESSION_ID) {
-        if (!isCurrentSend()) return;
+        if (!isCurrentSend()) return false;
         set({ error: 'Failed to create session' });
-        return;
+        return false;
       }
 
       try {
@@ -407,20 +558,21 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           if (!isCurrentSend()) {
             closePreparedSubscription(preparedUnsubscribe);
             preparedUnsubscribe = null;
-            return;
+            return false;
           }
           get().replaceEventSubscription(preparedUnsubscribe);
           preparedUnsubscribe = null;
         }
 
-        if (!isCurrentSend()) return;
+        if (!isCurrentSend()) return false;
         const trimmedInput = payload.content.trim();
         if (
           (payload.attachments?.length ?? 0) === 0 &&
           (trimmedInput === '/goal' || trimmedInput.startsWith('/goal '))
         ) {
+          optimisticMessageId = `goal-command-${Date.now()}`;
           addMessage({
-            id: `goal-command-${Date.now()}`,
+            id: optimisticMessageId,
             role: 'user',
             content: trimmedInput,
             timestamp: Date.now(),
@@ -434,12 +586,12 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           if (!subcommand || subcommand === 'status') {
             const goal = await sessionService.getGoal(sessionRef);
             if (isCurrentSend()) set({ goal });
-            return;
+            return isCurrentSend();
           }
           if (subcommand === 'clear') {
             await sessionService.clearGoal(sessionRef);
             if (isCurrentSend()) set({ goal: null });
-            return;
+            return isCurrentSend();
           }
 
           let response;
@@ -480,7 +632,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
             );
           }
 
-          if (!isCurrentSend()) return;
+          if (!isCurrentSend()) return false;
           set({
             goal: response.goal,
             ...(response.runId
@@ -491,11 +643,14 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
                 }
               : {}),
           });
-          return;
+          return true;
         }
 
+        optimisticMessageId = `temp-${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2, 8)}`;
         addMessage({
-          id: `temp-${Date.now()}`,
+          id: optimisticMessageId,
           role: 'user',
           content: buildOptimisticUserContent(payload),
           timestamp: Date.now(),
@@ -504,16 +659,23 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         set({
           isStreaming: true,
           error: null,
+          errorContext: null,
           recoveredSteeringCount: isStreaming ? get().recoveredSteeringCount : 0,
         });
 
-        const { currentMode } = useConfigStore.getState();
+        const { currentMode, currentModelId } = useConfigStore.getState();
+        const { modelId: payloadModelId, ...payloadWithoutModel } = payload;
+        const selectedModelId = payloadModelId ?? currentModelId ?? undefined;
+        const requestPayload =
+          selectedModelId && !isStreaming
+            ? { ...payloadWithoutModel, modelId: selectedModelId }
+            : payloadWithoutModel;
         const response = await sessionService.sendMessage(
           sessionRef,
-          payload,
+          requestPayload,
           currentMode
         );
-        if (!isCurrentSend()) return;
+        if (!isCurrentSend()) return false;
         set({
           currentRunId: response.runId,
           pendingSteeringCount:
@@ -521,32 +683,75 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
             response.status === 'follow_up_queued'
               ? Math.max(0, response.queued ?? 1)
               : get().pendingSteeringCount,
+          pendingInputDelivery:
+            response.status === 'steering_queued'
+              ? 'current_turn'
+              : response.status === 'follow_up_queued'
+                ? 'next_turn'
+                : get().pendingInputDelivery,
+          sessions:
+            selectedModelId && !isStreaming
+              ? get().sessions.map((session) =>
+                  session.sessionId === sessionRef.sessionId &&
+                  session.projectPath === sessionRef.projectPath
+                    ? { ...session, selectedModelId }
+                    : session
+                )
+              : get().sessions,
         });
+        return true;
       } catch (err) {
         if (preparedUnsubscribe) {
           closePreparedSubscription(preparedUnsubscribe);
         }
-        if (!isCurrentSend()) return;
-        set({ error: (err as Error).message, isStreaming: false });
+        if (!isCurrentSend()) return false;
+        if (
+          optimisticMessageId &&
+          !get().messages.some((message) => message.id === optimisticMessageId)
+        ) {
+          return true;
+        }
+        set((state) => ({
+          error: (err as Error).message,
+          errorContext: { kind: 'submission', sessionRef },
+          messages: optimisticMessageId
+            ? state.messages.filter((message) => message.id !== optimisticMessageId)
+            : state.messages,
+          ...originalStreamingState,
+        }));
+        return false;
       }
     },
 
     abortSession: async () => {
-      const { currentSessionRef, unsubscribeFromEvents } = get();
+      const { currentSessionRef, isStopping } = get();
+      if (!currentSessionRef || isStopping) return false;
 
-      unsubscribeFromEvents();
-      set({
-        isStreaming: false,
-        currentRunId: null,
-        pendingSteeringCount: 0,
-      });
-
-      if (currentSessionRef) {
-        try {
-          await sessionService.abortSession(currentSessionRef);
-        } catch {
-          // Ignore abort errors
-        }
+      set({ isStopping: true, error: null, errorContext: null });
+      try {
+        await sessionService.abortSession(currentSessionRef);
+        if (!sameSessionRef(get().currentSessionRef, currentSessionRef)) return false;
+        get().unsubscribeFromEvents();
+        set({
+          isStreaming: false,
+          isStopping: false,
+          agentPhase: 'idle',
+          currentRunId: null,
+          pendingSteeringCount: 0,
+          pendingInputDelivery: null,
+          recoveredSteeringCount: 0,
+          currentAssistantMessageId: null,
+          hasToolCalls: false,
+        });
+        return true;
+      } catch (error) {
+        if (!sameSessionRef(get().currentSessionRef, currentSessionRef)) return false;
+        set({
+          isStopping: false,
+          error: error instanceof Error ? error.message : 'Failed to stop task',
+          errorContext: { kind: 'task_action', sessionRef: currentSessionRef },
+        });
+        return false;
       }
     },
 

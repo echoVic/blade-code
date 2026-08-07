@@ -22,11 +22,11 @@ import {
   useSessionActions,
   useSessionSelectorState,
   useThemeName,
+  useWorkspaceRoot,
 } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
 import { configActions, getMessages } from '../../store/vanilla.js';
 import type { ConfirmationResponse } from '../../tools/types/ExecutionTypes.js';
-import { getCwd } from '../../utils/cwd.js';
 import type { AppProps } from '../App.js';
 import { useCommandHandler } from '../hooks/useCommandHandler.js';
 import { useCommandHistory } from '../hooks/useCommandHistory.js';
@@ -102,6 +102,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   // Session actions
   const sessionActions = useSessionActions();
+  const workspaceRoot = useWorkspaceRoot();
 
   // Focus
   const focusActions = useFocusActions();
@@ -223,7 +224,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
           newSessionId: options?.newSessionId,
           announceFork: options?.announceFork,
         },
-        getCwd(),
+        workspaceRoot,
         sessionActions,
         cleanupAgent
       );
@@ -235,15 +236,20 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       sourceSessionId: string,
       intent: SessionSelectionIntent
     ): Promise<SessionMetadata> => {
-      const workspace = getCwd();
+      const workspace = workspaceRoot;
       const sessions = await listSessionCandidatesForIntent(intent, workspace);
-      const session = sessions.find(
+      const matches = sessions.filter(
         (candidate) => candidate.sessionId === sourceSessionId
       );
-      if (!session) {
+      if (matches.length === 0) {
         throw new Error(`Session not found: ${sourceSessionId}`);
       }
-      return session;
+      if (matches.length > 1) {
+        throw new Error(
+          `Multiple workspaces contain session ${sourceSessionId}; use the session selector`
+        );
+      }
+      return matches[0]!;
     }
   );
 
@@ -271,7 +277,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     readyAnnouncementSent.current = true;
     try {
       const intent: SessionSelectionIntent = otherProps.forkSession ? 'fork' : 'resume';
-      const sessions = await listSessionCandidatesForIntent(intent, getCwd());
+      const sessions = await listSessionCandidatesForIntent(intent, workspaceRoot);
 
       if (sessions.length === 0) {
         if (otherProps.forkSession) {
@@ -314,7 +320,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       }
 
       const intent: SessionSelectionIntent = otherProps.forkSession ? 'fork' : 'resume';
-      const sessions = await listSessionCandidatesForIntent(intent, getCwd());
+      const sessions = await listSessionCandidatesForIntent(intent, workspaceRoot);
 
       if (sessions.length === 0) {
         logger.error('没有找到历史会话');

@@ -43,7 +43,17 @@ const DEFAULT_CONFIG_BASE = {
 /**
  * SkillRegistry 单例
  */
-let instance: SkillRegistry | null = null;
+const instances = new Map<string, SkillRegistry>();
+
+function registryKey(config?: SkillRegistryConfig): string {
+  return JSON.stringify({
+    cwd: path.resolve(config?.cwd ?? getCwd()),
+    userSkillsDir: config?.userSkillsDir,
+    projectSkillsDir: config?.projectSkillsDir,
+    claudeUserSkillsDir: config?.claudeUserSkillsDir,
+    claudeProjectSkillsDir: config?.claudeProjectSkillsDir,
+  });
+}
 
 /**
  * Skill 注册表
@@ -63,8 +73,14 @@ export class SkillRegistry {
    * 获取单例实例
    */
   static getInstance(config?: SkillRegistryConfig): SkillRegistry {
+    const key = registryKey(config);
+    let instance = instances.get(key);
     if (!instance) {
-      instance = new SkillRegistry(config);
+      instance = new SkillRegistry({
+        ...config,
+        cwd: path.resolve(config?.cwd ?? getCwd()),
+      });
+      instances.set(key, instance);
     }
     return instance;
   }
@@ -73,7 +89,7 @@ export class SkillRegistry {
    * 重置单例（用于测试）
    */
   static resetInstance(): void {
-    instance = null;
+    instances.clear();
   }
 
   /**

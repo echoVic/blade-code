@@ -256,15 +256,23 @@ describe.skipIf(!enabled)('ACP session model switch trajectory (real API)', () =
           cwd: workspace,
           mcpServers: [],
         });
-        expect(session.models?.currentModelId).toBe(flashModelId);
+        const modelConfig = session.configOptions?.find(
+          (o) => o.id === 'model'
+        );
+        expect(
+          modelConfig && 'currentValue' in modelConfig
+            ? modelConfig.currentValue
+            : undefined
+        ).toBe(flashModelId);
 
         await harness.connection.setSessionMode({
           sessionId: session.sessionId,
           modeId: 'yolo',
         });
-        await harness.connection.unstable_setSessionModel({
+        await harness.connection.setSessionConfigOption({
           sessionId: session.sessionId,
-          modelId: proModelId,
+          configId: 'model',
+          value: proModelId,
         });
         const result = await harness.connection.prompt({
           sessionId: session.sessionId,

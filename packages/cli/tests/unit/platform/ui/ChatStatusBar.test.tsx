@@ -29,6 +29,7 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
   useSessionCost: () => null,
   useSessionId: () => 'status-bar-session',
   useThinkingModeEnabled: () => false,
+  useWorkspaceRoot: () => '/active-workspace',
 }));
 
 vi.mock('../../../../src/ui/hooks/useGitBranch.js', () => ({
@@ -46,15 +47,15 @@ describe('ChatStatusBar', () => {
     mockRecoveredSteeringCount.mockReturnValue(0);
   });
 
-  it('应该使用稳定 projectRoot 获取分支', async () => {
+  it('应该使用当前会话的 active workspace 获取分支', async () => {
     const { ChatStatusBar } = await import(
       '../../../../src/ui/components/ChatStatusBar.js'
     );
 
     renderToStaticMarkup(React.createElement(ChatStatusBar));
 
-    expect(mockGetProjectRoot).toHaveBeenCalledTimes(1);
-    expect(mockUseGitBranch).toHaveBeenCalledWith('/repo-root');
+    expect(mockGetProjectRoot).not.toHaveBeenCalled();
+    expect(mockUseGitBranch).toHaveBeenCalledWith('/active-workspace');
   });
 
   it('应该显示崩溃后恢复的 steering 指令数量', async () => {

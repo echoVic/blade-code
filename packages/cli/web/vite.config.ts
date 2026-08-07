@@ -5,40 +5,27 @@ import { defineConfig, loadEnv } from "vite"
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const apiTarget = env.VITE_API_TARGET || 'http://localhost:4097'
+  const rootNodeModules = path.resolve(__dirname, '../../../node_modules')
 
   return {
     plugins: [react()],
     build: {
       outDir: '../dist/web',
       emptyOutDir: true,
-      modulePreload: false,
       rollupOptions: {
         output: {
           manualChunks(id) {
             if (!id.includes('node_modules')) return undefined
 
-            if (id.includes('/react/') || id.includes('/react-dom/')) {
+            if (
+              /\/node_modules\/react\//.test(id) ||
+              /\/node_modules\/react-dom\//.test(id)
+            ) {
               return 'vendor-react'
             }
 
             if (id.includes('/@xterm/')) {
               return 'vendor-xterm'
-            }
-
-            if (id.includes('/@monaco-editor/') || id.includes('/monaco-editor/')) {
-              return 'vendor-monaco'
-            }
-
-            if (
-              id.includes('/react-markdown/') ||
-              id.includes('/react-syntax-highlighter/') ||
-              id.includes('/remark-') ||
-              id.includes('/rehype-') ||
-              id.includes('/micromark') ||
-              id.includes('/unified/') ||
-              id.includes('/prismjs/')
-            ) {
-              return 'vendor-markdown'
             }
 
             if (id.includes('/@radix-ui/')) {
@@ -55,10 +42,35 @@ export default defineConfig(({ mode }) => {
       },
     },
     resolve: {
-      alias: {
-        "@": path.resolve(__dirname, "./src"),
-        "@api": path.resolve(__dirname, "../src/api"),
-      },
+      dedupe: ['react', 'react-dom', 'zustand'],
+      alias: [
+        {
+          find: /^react$/,
+          replacement: path.join(rootNodeModules, 'react/index.js'),
+        },
+        {
+          find: /^react\/jsx-runtime$/,
+          replacement: path.join(rootNodeModules, 'react/jsx-runtime.js'),
+        },
+        {
+          find: /^react\/jsx-dev-runtime$/,
+          replacement: path.join(rootNodeModules, 'react/jsx-dev-runtime.js'),
+        },
+        {
+          find: /^react-dom$/,
+          replacement: path.join(rootNodeModules, 'react-dom/index.js'),
+        },
+        {
+          find: /^react-dom\/client$/,
+          replacement: path.join(rootNodeModules, 'react-dom/client.js'),
+        },
+        {
+          find: /^react-dom\/test-utils$/,
+          replacement: path.join(rootNodeModules, 'react-dom/test-utils.js'),
+        },
+        { find: '@api', replacement: path.resolve(__dirname, '../src/api') },
+        { find: '@', replacement: path.resolve(__dirname, './src') },
+      ],
     },
     server: {
       port: 5174,
@@ -97,6 +109,10 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
         },
         '/global': {
+          target: apiTarget,
+          changeOrigin: true,
+        },
+        '/projects': {
           target: apiTarget,
           changeOrigin: true,
         },

@@ -12,6 +12,9 @@ const serviceMocks = vi.hoisted(() => ({
   loadSession: vi.fn(),
   toUISafeMessages: vi.fn(),
 }));
+const modelMocks = vi.hoisted(() => ({
+  setCurrentModel: vi.fn(),
+}));
 
 vi.mock('../../../../../src/services/SessionService.js', async () => {
   const actual = await vi.importActual<
@@ -28,6 +31,14 @@ vi.mock('../../../../../src/services/SessionService.js', async () => {
     },
   };
 });
+
+vi.mock('../../../../../src/store/vanilla.js', () => ({
+  configActions: () => ({
+    setCurrentModel: modelMocks.setCurrentModel,
+  }),
+  getModelById: (modelId: string) =>
+    modelId === 'model-2' ? { id: modelId } : undefined,
+}));
 
 function createSessionMetadata(
   overrides: Partial<SessionMetadata> = {}
@@ -89,10 +100,19 @@ describe('activateSessionSelection', () => {
   const actions = {
     restoreSession:
       vi.fn<
-        (sessionId: string, messages: SessionMessage[], rawMessages: Message[]) => void
+        (
+          sessionId: string,
+          messages: SessionMessage[],
+          rawMessages: Message[],
+          workspaceRoot?: string
+        ) => void
       >(),
     addAssistantMessage: vi.fn<(message: string) => void>(),
   };
+
+  beforeEach(() => {
+    modelMocks.setCurrentModel.mockReset().mockResolvedValue(undefined);
+  });
   const cleanupAgent = vi.fn<() => Promise<void>>();
 
   beforeEach(() => {
@@ -188,11 +208,13 @@ describe('activateSessionSelection', () => {
     expect(actions.addAssistantMessage).not.toHaveBeenCalled();
   });
 
-  it('rejects resume selections outside the current workspace before durable load', async () => {
+  it('activates resume selections from another workspace', async () => {
     const resumeMetadata = createSessionMetadata({
       sessionId: 'resume-session-12345678',
       projectPath: '/workspace/elsewhere',
     });
+    serviceMocks.loadSession.mockResolvedValue(childMessages);
+    serviceMocks.toUISafeMessages.mockReturnValue(safeMessages);
     const { activateSessionSelection } = await import(
       '../../../../../src/ui/utils/sessionActivation.js'
     );
@@ -204,11 +226,21 @@ describe('activateSessionSelection', () => {
         actions,
         cleanupAgent
       )
-    ).rejects.toThrow('current workspace');
+    ).resolves.toEqual({
+      sessionId: 'resume-session-12345678',
+      messages: childMessages,
+    });
 
-    expect(serviceMocks.loadSession).not.toHaveBeenCalled();
-    expect(cleanupAgent).not.toHaveBeenCalled();
-    expect(actions.restoreSession).not.toHaveBeenCalled();
+    expect(serviceMocks.loadSession).toHaveBeenCalledWith(
+      'resume-session-12345678',
+      '/workspace/elsewhere'
+    );
+    expect(actions.restoreSession).toHaveBeenCalledWith(
+      'resume-session-12345678',
+      safeMessages,
+      childMessages,
+      '/workspace/elsewhere'
+    );
   });
 
   it('forks inside the current workspace and restores child messages with a visible announcement', async () => {
@@ -256,15 +288,29 @@ describe('activateSessionSelection', () => {
           content: 'Forked parent-s… → child-se…',
         }),
       ],
-      childMessages
+      childMessages,
+      '/workspace/parent'
     );
     expect(actions.addAssistantMessage).not.toHaveBeenCalled();
   });
 
-  it('throws before service calls when interactive fork crosses workspaces', async () => {
+  it('forks in the selected session workspace when it differs from the launch workspace', async () => {
     const parentMetadata = createSessionMetadata({
       projectPath: '/workspace/other/../other',
     });
+    serviceMocks.forkSession.mockResolvedValue({
+      sessionId: 'child-session-abcdefgh',
+      parentSessionId: parentMetadata.sessionId,
+      projectPath: '/workspace/other',
+      messages: childMessages,
+      metadata: createSessionMetadata({
+        sessionId: 'child-session-abcdefgh',
+        projectPath: '/workspace/other',
+        relationType: 'fork',
+        parentId: parentMetadata.sessionId,
+      }),
+    });
+    serviceMocks.toUISafeMessages.mockReturnValue(safeMessages);
     const { activateSessionSelection } = await import(
       '../../../../../src/ui/utils/sessionActivation.js'
     );
@@ -276,13 +322,18 @@ describe('activateSessionSelection', () => {
         actions,
         cleanupAgent
       )
-    ).rejects.toThrow(
-      'Interactive session activation is limited to the current workspace'
-    );
+    ).resolves.toMatchObject({ sessionId: 'child-session-abcdefgh' });
 
-    expect(serviceMocks.forkSession).not.toHaveBeenCalled();
-    expect(actions.restoreSession).not.toHaveBeenCalled();
-    expect(actions.addAssistantMessage).not.toHaveBeenCalled();
+    expect(serviceMocks.forkSession).toHaveBeenCalledWith('parent-session-12345678', {
+      sourceProjectPath: '/workspace/other',
+      targetProjectPath: '/workspace/other',
+    });
+    expect(actions.restoreSession).toHaveBeenCalledWith(
+      'child-session-abcdefgh',
+      expect.any(Array),
+      childMessages,
+      '/workspace/other'
+    );
   });
 
   it('passes through newSessionId and skips announcement when announceFork is false', async () => {
@@ -351,6 +402,7 @@ describe('activateSessionSelection', () => {
     const resumeMetadata = createSessionMetadata({
       sessionId: 'resume-session-12345678',
       projectPath: '/workspace/parent',
+      selectedModelId: 'model-2',
     });
     serviceMocks.loadSession.mockResolvedValue(childMessages);
     serviceMocks.toUISafeMessages.mockReturnValue(safeMessages);
@@ -380,8 +432,10 @@ describe('activateSessionSelection', () => {
     expect(actions.restoreSession).toHaveBeenCalledWith(
       'resume-session-12345678',
       safeMessages,
-      childMessages
+      childMessages,
+      '/workspace/parent'
     );
+    expect(modelMocks.setCurrentModel).toHaveBeenCalledWith('model-2');
     expect(actions.addAssistantMessage).not.toHaveBeenCalled();
   });
 
@@ -436,7 +490,7 @@ describe('listSessionCandidatesForIntent', () => {
     serviceMocks.listSessions.mockReset();
   });
 
-  it('lists fork candidates from the resolved workspace only and excludes subagents', async () => {
+  it('lists fork candidates across workspaces and excludes subagents', async () => {
     const candidates = [
       createSessionMetadata({
         sessionId: 'fork-source-1',
@@ -454,12 +508,11 @@ describe('listSessionCandidatesForIntent', () => {
     ).resolves.toEqual(candidates);
 
     expect(serviceMocks.listSessions).toHaveBeenCalledWith({
-      cwd: '/workspace/project',
       includeSubagents: false,
     });
   });
 
-  it('lists resume candidates from the resolved workspace only and excludes subagents', async () => {
+  it('lists resume candidates across workspaces and excludes subagents', async () => {
     const candidates = [
       createSessionMetadata({
         sessionId: 'resume-source-1',
@@ -477,7 +530,6 @@ describe('listSessionCandidatesForIntent', () => {
     ).resolves.toEqual(candidates);
 
     expect(serviceMocks.listSessions).toHaveBeenCalledWith({
-      cwd: '/workspace/project',
       includeSubagents: false,
     });
   });

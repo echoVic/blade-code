@@ -45,17 +45,23 @@ describe('AddModelModal', () => {
   });
 
   test('submits a pi provider/model reference with a separate credential', async () => {
-    const onSave = vi.fn();
+    const onSave = vi.fn().mockResolvedValue(true);
+    const onOpenChange = vi.fn();
     await act(async () => {
-      root.render(<AddModelModal open onOpenChange={vi.fn()} onSave={onSave} />);
+      root.render(
+        <AddModelModal
+          open
+          onOpenChange={onOpenChange}
+          onSave={onSave}
+          saveError={null}
+        />
+      );
       await Promise.resolve();
     });
 
-    await click('Select provider');
-    await click('DeepSeek (2)');
+    await selectOption('Provider', 'deepseek');
     await act(async () => await Promise.resolve());
-    await click('Select model');
-    await click('DeepSeek V4 Pro');
+    await selectOption('Model', 'deepseek-v4-pro');
 
     const saveButton = [...document.querySelectorAll('button')].find((entry) =>
       entry.textContent?.includes('Save Model')
@@ -75,16 +81,20 @@ describe('AddModelModal', () => {
       displayName: 'DeepSeek V4 Pro',
       apiKey: 'test-key',
     });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   test('resets stale provider state when reopened', async () => {
-    const props = { onOpenChange: vi.fn(), onSave: vi.fn() };
+    const props = {
+      onOpenChange: vi.fn(),
+      onSave: vi.fn().mockResolvedValue(true),
+      saveError: null,
+    };
     await act(async () => {
       root.render(<AddModelModal open {...props} />);
       await Promise.resolve();
     });
-    await click('Select provider');
-    await click('DeepSeek (2)');
+    await selectOption('Provider', 'deepseek');
     expect(
       document.querySelector('input[placeholder="Stored separately in auth.json"]')
     ).not.toBeNull();
@@ -99,10 +109,8 @@ describe('AddModelModal', () => {
     });
 
     expect(
-      [...document.querySelectorAll('button')].some(
-        (entry) => entry.textContent?.trim() === 'Select provider'
-      )
-    ).toBe(true);
+      (document.querySelector('[aria-label="Provider"]') as HTMLSelectElement).value
+    ).toBe('');
     expect(
       document.querySelector('input[placeholder="Stored separately in auth.json"]')
     ).toBeNull();
@@ -128,6 +136,22 @@ describe('AddModelModal', () => {
       setter?.call(input, value);
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+
+  async function selectOption(label: string, value: string) {
+    const select = document.querySelector(
+      `[aria-label="${label}"]`
+    ) as HTMLSelectElement;
+    expect(select).toBeTruthy();
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLSelectElement.prototype,
+      'value'
+    )?.set;
+    await act(async () => {
+      setter?.call(select, value);
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await Promise.resolve();
     });
   }
 });

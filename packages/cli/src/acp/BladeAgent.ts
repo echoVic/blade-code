@@ -145,10 +145,14 @@ export class BladeAgent implements AcpAgentInterface {
     // 延迟发送 available_commands_update，确保在响应后
     session.sendAvailableCommandsDelayed();
 
-    return this.buildChildSessionResponse(sessionId, createdTask?.metadata);
+    return this.buildChildSessionResponse(
+      sessionId,
+      createdTask?.metadata,
+      session.getCurrentModelId()
+    );
   }
 
-  async unstable_listSessions(
+  async listSessions(
     params: acp.ListSessionsRequest
   ): Promise<acp.ListSessionsResponse> {
     if (params.cwd != null && !path.isAbsolute(params.cwd)) {
@@ -173,11 +177,20 @@ export class BladeAgent implements AcpAgentInterface {
           ...(session.taskStatusReason
             ? { 'blade/taskStatusReason': session.taskStatusReason }
             : {}),
+          ...(session.taskFailure ? { 'blade/taskFailure': session.taskFailure } : {}),
           ...(session.taskStartedAt
             ? { 'blade/taskStartedAt': session.taskStartedAt }
             : {}),
           ...(session.taskCompletedAt
             ? { 'blade/taskCompletedAt': session.taskCompletedAt }
+            : {}),
+          ...(session.taskModelId ? { 'blade/taskModelId': session.taskModelId } : {}),
+          ...(session.taskRetryAvailable ? { 'blade/taskRetryAvailable': true } : {}),
+          ...(session.taskRetriedFrom
+            ? { 'blade/taskRetriedFrom': session.taskRetriedFrom }
+            : {}),
+          ...(session.taskDelivery
+            ? { 'blade/taskDelivery': session.taskDelivery }
             : {}),
           ...(session.taskIsolation
             ? { 'blade/taskIsolation': session.taskIsolation }
@@ -242,7 +255,11 @@ export class BladeAgent implements AcpAgentInterface {
 
     this.sessions.set(fork.sessionId, session);
     session.sendAvailableCommandsDelayed();
-    return this.buildChildSessionResponse(fork.sessionId);
+    return this.buildChildSessionResponse(
+      fork.sessionId,
+      fork.metadata,
+      session.getCurrentModelId()
+    );
   }
 
   /**
@@ -306,22 +323,35 @@ export class BladeAgent implements AcpAgentInterface {
     this.sessions.set(params.sessionId, session);
     session.sendAvailableCommandsDelayed();
 
-    return this.buildSessionSetup();
+    return this.buildSessionSetup(session.getCurrentModelId());
   }
 
   private buildChildSessionResponse(
     sessionId: string,
-    taskMetadata?: SessionMetadata
+    taskMetadata?: SessionMetadata,
+    selectedModelId?: string
   ): acp.NewSessionResponse & acp.ForkSessionResponse {
     return {
       sessionId,
-      ...this.buildSessionSetup(),
+      ...this.buildSessionSetup(selectedModelId),
       ...(taskMetadata
         ? {
             _meta: {
               'blade/taskIsolation': taskMetadata.taskIsolation,
               'blade/taskSourceProjectPath': taskMetadata.taskSourceProjectPath,
               'blade/taskProjectPath': taskMetadata.projectPath,
+              ...(taskMetadata.taskModelId
+                ? { 'blade/taskModelId': taskMetadata.taskModelId }
+                : {}),
+              ...(taskMetadata.taskRetryAvailable
+                ? { 'blade/taskRetryAvailable': true }
+                : {}),
+              ...(taskMetadata.taskRetriedFrom
+                ? { 'blade/taskRetriedFrom': taskMetadata.taskRetriedFrom }
+                : {}),
+              ...(taskMetadata.taskDelivery
+                ? { 'blade/taskDelivery': taskMetadata.taskDelivery }
+                : {}),
               ...(taskMetadata.taskWorktreeBranch
                 ? {
                     'blade/taskWorktreeBranch': taskMetadata.taskWorktreeBranch,
@@ -340,20 +370,16 @@ export class BladeAgent implements AcpAgentInterface {
     if (this.destroyed) throw new Error('BladeAgent is destroyed');
   }
 
-  private buildSessionSetup(): acp.LoadSessionResponse {
-    // 获取配置中的模型列表
+  private buildSessionSetup(selectedModelId?: string): acp.LoadSessionResponse {
     const config = getConfig();
     const models = config?.models || [];
-    const currentModelId = config?.currentModelId || models[0]?.id;
+    const currentModelId =
+      (selectedModelId && models.some((model) => model.id === selectedModelId)
+        ? selectedModelId
+        : undefined) ??
+      config?.currentModelId ??
+      models[0]?.id;
 
-    // 构建可用模型列表（不稳定 API）
-    const availableModels: acp.ModelInfo[] = models.map((m) => ({
-      modelId: m.id,
-      name: getModelDisplayName(m),
-      description: `${m.provider}/${m.model}`,
-    }));
-
-    // 构建可用模式列表（权限模式）
     const availableModes: acp.SessionMode[] = [
       {
         id: 'default',
@@ -377,20 +403,29 @@ export class BladeAgent implements AcpAgentInterface {
       },
     ];
 
+    const configOptions: acp.SessionConfigOption[] = [];
+    if (models.length > 0) {
+      configOptions.push({
+        type: 'select',
+        id: 'model',
+        name: 'Model',
+        description: 'Active language model',
+        category: 'model',
+        currentValue: currentModelId,
+        options: models.map((m) => ({
+          value: m.id,
+          name: getModelDisplayName(m),
+          description: `${m.provider}/${m.model}`,
+        })),
+      });
+    }
+
     return {
-      // 返回可用模式（权限控制）
       modes: {
         availableModes,
         currentModeId: 'default',
       },
-      // 返回可用模型（不稳定 API）
-      models:
-        availableModels.length > 0
-          ? {
-              availableModels,
-              currentModelId,
-            }
-          : undefined,
+      configOptions: configOptions.length > 0 ? configOptions : undefined,
     };
   }
 
@@ -437,18 +472,24 @@ export class BladeAgent implements AcpAgentInterface {
   }
 
   /**
-   * 设置会话模型（不稳定 API）
+   * 设置会话配置选项（如模型切换）
    */
-  async unstable_setSessionModel?(
-    params: acp.SetSessionModelRequest
-  ): Promise<acp.SetSessionModelResponse> {
-    logger.info(`[BladeAgent] Setting session model: ${params.modelId}`);
+  async setSessionConfigOption?(
+    params: acp.SetSessionConfigOptionRequest
+  ): Promise<acp.SetSessionConfigOptionResponse> {
     const session = this.sessions.get(params.sessionId);
     if (!session) {
       throw new Error(`Session not found: ${params.sessionId}`);
     }
-    await session.setModel(params.modelId);
-    return {};
+    if (
+      params.configId === 'model' &&
+      'value' in params &&
+      typeof params.value === 'string'
+    ) {
+      logger.info(`[BladeAgent] Setting session model: ${params.value}`);
+      await session.setModel(params.value);
+    }
+    return { configOptions: [] };
   }
 
   /**

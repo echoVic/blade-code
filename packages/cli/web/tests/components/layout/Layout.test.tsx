@@ -23,7 +23,21 @@ vi.mock('../../../src/services', async () => {
 });
 
 vi.mock('../../../src/components/layout/Sidebar', () => ({
-  Sidebar: () => <div data-testid="sidebar">Sidebar</div>,
+  Sidebar: ({ onNavigate }: { onNavigate?: () => void }) => (
+    <div data-testid="sidebar">
+      <button type="button" onClick={onNavigate}>
+        Mock navigation
+      </button>
+    </div>
+  ),
+}));
+
+vi.mock('../../../src/components/preview/FilePreview', () => ({
+  FilePreview: () => (
+    <div data-testid="mock-file-preview" role="dialog" aria-modal="true">
+      Preview
+    </div>
+  ),
 }));
 
 describe('Layout', () => {
@@ -34,6 +48,19 @@ describe('Layout', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockImplementation(() => ({
+        matches: false,
+        media: '',
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }))
+    );
 
     const { useAppStore } = await import('../../../src/store/AppStore');
     const { useSessionStore } = await import('../../../src/store/session');
@@ -56,7 +83,7 @@ describe('Layout', () => {
     }));
 
     serviceMocks.getGitInfo.mockReset();
-  });
+  }, 30_000);
 
   afterEach(() => {
     act(() => {
@@ -164,5 +191,118 @@ describe('Layout', () => {
       await Promise.resolve();
     });
     expect(rewind?.disabled).toBe(true);
+  });
+
+  test('uses a focus-contained navigation drawer without reserving a mobile rail', async () => {
+    const mobileMedia = {
+      matches: true,
+      media: '',
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    };
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => mobileMedia)
+    );
+    const { Layout } = await import('../../../src/components/layout/Layout');
+    const { useAppStore } = await import('../../../src/store/AppStore');
+    useAppStore.setState({ isSidebarOpen: false });
+
+    await act(async () => {
+      root.render(
+        <Layout>
+          <div>content</div>
+        </Layout>
+      );
+    });
+
+    const open = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open navigation"]'
+    );
+    expect(open).toBeTruthy();
+    const closedShell = container.querySelector<HTMLElement>('[data-testid="sidebar"]')
+      ?.parentElement?.parentElement;
+    expect(closedShell?.className).toContain('fixed');
+    expect(closedShell?.className).toContain('-translate-x-full');
+    expect(closedShell?.hasAttribute('inert')).toBe(true);
+    expect(closedShell?.getAttribute('aria-hidden')).toBe('true');
+
+    await act(async () => open?.click());
+    const dialog = container.querySelector<HTMLElement>(
+      '[role="dialog"][aria-label="Task navigation"]'
+    );
+    expect(dialog?.getAttribute('aria-modal')).toBe('true');
+    expect(dialog?.hasAttribute('inert')).toBe(false);
+    await vi.waitFor(() => {
+      expect(document.activeElement?.textContent).toBe('Mock navigation');
+    });
+
+    await act(async () => {
+      dialog?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+      );
+    });
+    expect(useAppStore.getState().isSidebarOpen).toBe(false);
+    expect(document.activeElement).toBe(open);
+
+    await act(async () => open?.click());
+    const navigation = container.querySelector<HTMLButtonElement>(
+      '[data-testid="sidebar"] button'
+    );
+    await act(async () => navigation?.click());
+    expect(useAppStore.getState().isSidebarOpen).toBe(false);
+  });
+
+  test('hides and inerts all background regions for a compact preview modal', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockImplementation((query: string) => ({
+        matches: query === '(max-width: 1023px)',
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }))
+    );
+    const { Layout } = await import('../../../src/components/layout/Layout');
+    const { useAppStore } = await import('../../../src/store/AppStore');
+    useAppStore.setState({ isFilePreviewOpen: true, isSidebarOpen: true });
+
+    await act(async () => {
+      root.render(
+        <Layout>
+          <button type="button">Background action</button>
+        </Layout>
+      );
+    });
+
+    const sidebarShell = container.querySelector<HTMLElement>('[data-testid="sidebar"]')
+      ?.parentElement?.parentElement;
+    const header = container.querySelector('header');
+    const content = container.querySelector<HTMLElement>(
+      '[data-preview-background="content"]'
+    );
+    const preview = await vi.waitFor(() => {
+      const element = container.querySelector<HTMLElement>(
+        '[data-testid="mock-file-preview"]'
+      );
+      expect(element).toBeTruthy();
+      return element;
+    });
+    if (!preview) throw new Error('Preview was not rendered');
+
+    for (const background of [sidebarShell, header, content]) {
+      expect(background?.hasAttribute('inert')).toBe(true);
+      expect(background?.getAttribute('aria-hidden')).toBe('true');
+    }
+    expect(preview.hasAttribute('inert')).toBe(false);
+    expect(preview.getAttribute('aria-modal')).toBe('true');
   });
 });

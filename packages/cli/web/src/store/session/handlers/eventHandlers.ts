@@ -1,3 +1,4 @@
+import { taskFailureCode } from '@/lib/taskFailure';
 import type { Message as ServiceMessage, StreamEvent } from '@/services';
 import type {
   AgentResponseContent,
@@ -732,11 +733,25 @@ const handlePermissionAsked: EventHandler = (props, get, set) => {
     diff: (details?.details as string) || (details?.diff as string) || '',
     status: 'pending',
   });
-  set({ agentPhase: 'waiting_permission', isStreaming: true });
+  set((state) => ({
+    agentPhase: 'waiting_permission',
+    isStreaming: true,
+    sessions: state.sessions.map((session) =>
+      session.sessionId === props.sessionId && session.projectPath === props.projectPath
+        ? {
+            ...session,
+            pendingInteraction: {
+              type: 'permission' as const,
+              requestId,
+            },
+          }
+        : session
+    ),
+  }));
 };
 
 const handlePermissionTimeout: EventHandler = (props, get, set) => {
-  const { currentSessionId, messages, setConfirmation } = get();
+  const { currentSessionId, currentSessionRef, messages, setConfirmation } = get();
   if (props.sessionId !== currentSessionId) return;
 
   const requestId = props.requestId as string;
@@ -747,7 +762,14 @@ const handlePermissionTimeout: EventHandler = (props, get, set) => {
   if (message && confirmation?.status === 'pending') {
     setConfirmation(message.id, { ...confirmation, status: 'denied' });
   }
-  set({ agentPhase: 'running', error: 'Permission request timed out' });
+  set({
+    agentPhase: 'running',
+    error: 'Permission request timed out',
+    errorContext: {
+      kind: 'interaction',
+      ...(currentSessionRef ? { sessionRef: currentSessionRef } : {}),
+    },
+  });
 };
 
 const handleTurnStarted: EventHandler = (props, get, set) => {
@@ -787,7 +809,21 @@ const handleQuestionRequired: EventHandler = (props, get, set) => {
     questions: props.questions as QuestionInfo['questions'],
     status: 'pending',
   });
-  set({ agentPhase: 'waiting_permission', isStreaming: true });
+  set((state) => ({
+    agentPhase: 'waiting_permission',
+    isStreaming: true,
+    sessions: state.sessions.map((session) =>
+      session.sessionId === props.sessionId && session.projectPath === props.projectPath
+        ? {
+            ...session,
+            pendingInteraction: {
+              type: 'question' as const,
+              requestId,
+            },
+          }
+        : session
+    ),
+  }));
 };
 
 interface QuestionInfo {
@@ -802,6 +838,22 @@ interface QuestionInfo {
   answers?: Record<string, string | string[]>;
 }
 
+const handleInteractionResolved: EventHandler = (props, get, set) => {
+  const { currentSessionId } = get();
+  if (props.sessionId !== currentSessionId) return;
+  const requestId = props.requestId as string;
+  set((state) => ({
+    agentPhase: 'running',
+    sessions: state.sessions.map((session) =>
+      session.sessionId === props.sessionId &&
+      session.projectPath === props.projectPath &&
+      session.pendingInteraction?.requestId === requestId
+        ? { ...session, pendingInteraction: undefined }
+        : session
+    ),
+  }));
+};
+
 const handleSessionCompleted: EventHandler = (props, get) => {
   const { currentSessionId, endAgentResponse } = get();
   if (props.sessionId !== currentSessionId) return;
@@ -809,12 +861,24 @@ const handleSessionCompleted: EventHandler = (props, get) => {
 };
 
 const handleSessionError: EventHandler = (props, get, set) => {
-  const { currentSessionId, endAgentResponse } = get();
+  const { currentSessionId, currentSessionRef, endAgentResponse } = get();
   if (props.sessionId !== currentSessionId) return;
 
+  const failure =
+    props.taskFailure &&
+    typeof props.taskFailure === 'object' &&
+    !Array.isArray(props.taskFailure)
+      ? (props.taskFailure as Record<string, unknown>)
+      : undefined;
+  const failureCode = taskFailureCode(failure?.code);
   set({
     agentPhase: 'error',
     error: (props.error as string) || 'An error occurred',
+    errorContext: {
+      kind: 'execution',
+      ...(currentSessionRef ? { sessionRef: currentSessionRef } : {}),
+      ...(failureCode ? { failureCode } : {}),
+    },
   });
   endAgentResponse();
 };
@@ -824,11 +888,47 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
   if (props.sessionId !== currentSessionId) return;
 
   if (props.status === 'idle') {
-    set({ isStreaming: false, agentPhase: 'idle' });
-  } else if (props.status === 'running') {
-    set({ agentPhase: 'running' });
+    set({
+      isStreaming: false,
+      isStopping: false,
+      agentPhase: 'idle',
+      currentRunId: null,
+      pendingSteeringCount: 0,
+      pendingInputDelivery: null,
+      recoveredSteeringCount: 0,
+    });
+  } else if (
+    props.status === 'queued' ||
+    props.status === 'running' ||
+    props.status === 'waiting_permission'
+  ) {
+    const queued = typeof props.queued === 'number' ? Math.max(0, props.queued) : 0;
+    set({
+      isStreaming: true,
+      agentPhase:
+        props.status === 'waiting_permission' ? 'waiting_permission' : 'running',
+      currentRunId: typeof props.runId === 'string' ? props.runId : get().currentRunId,
+      pendingSteeringCount: queued,
+      pendingInputDelivery:
+        queued > 0 &&
+        (props.pendingInputDelivery === 'current_turn' ||
+          props.pendingInputDelivery === 'next_turn')
+          ? props.pendingInputDelivery
+          : null,
+      recoveredSteeringCount:
+        typeof props.recovered === 'number'
+          ? Math.max(0, props.recovered)
+          : get().recoveredSteeringCount,
+    });
   } else if (props.status === 'error') {
-    set({ agentPhase: 'error' });
+    set({
+      isStreaming: false,
+      isStopping: false,
+      agentPhase: 'error',
+      currentRunId: null,
+      pendingSteeringCount: 0,
+      pendingInputDelivery: null,
+    });
   }
 };
 
@@ -862,14 +962,25 @@ const handleSteeringQueued: EventHandler = (props, get, set) => {
   set({
     pendingSteeringCount:
       typeof props.queued === 'number' ? Math.max(0, props.queued) : 1,
+    pendingInputDelivery: 'current_turn',
+  });
+};
+
+const handleFollowUpQueued: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  set({
+    pendingSteeringCount:
+      typeof props.queued === 'number' ? Math.max(0, props.queued) : 1,
+    pendingInputDelivery: 'next_turn',
   });
 };
 
 const handleSteeringApplied: EventHandler = (props, get, set) => {
   if (props.sessionId !== get().currentSessionId) return;
+  const queued = typeof props.queued === 'number' ? Math.max(0, props.queued) : 0;
   set({
-    pendingSteeringCount:
-      typeof props.queued === 'number' ? Math.max(0, props.queued) : 0,
+    pendingSteeringCount: queued,
+    pendingInputDelivery: queued > 0 ? get().pendingInputDelivery : null,
     recoveredSteeringCount:
       typeof props.recovered === 'number'
         ? Math.max(0, props.recovered)
@@ -879,8 +990,11 @@ const handleSteeringApplied: EventHandler = (props, get, set) => {
 
 const handleFollowUpStarted: EventHandler = (props, get, set) => {
   if (props.sessionId !== get().currentSessionId) return;
+  const queued = typeof props.queued === 'number' ? Math.max(0, props.queued) : 0;
   set({
     agentPhase: 'running',
+    pendingSteeringCount: queued,
+    pendingInputDelivery: queued > 0 ? 'current_turn' : null,
     recoveredSteeringCount:
       typeof props.recovered === 'number'
         ? Math.max(0, props.recovered)
@@ -947,9 +1061,11 @@ const handleSessionRewound: EventHandler = (props, get, set) => {
   set({
     messages: aggregateMessages(rawMessages),
     isStreaming: false,
+    isStopping: false,
     agentPhase: 'idle',
     currentRunId: null,
     pendingSteeringCount: 0,
+    pendingInputDelivery: null,
     recoveredSteeringCount: 0,
     currentAssistantMessageId: null,
     hasToolCalls: false,
@@ -980,12 +1096,13 @@ const eventHandlers: Record<string, EventHandler> = {
   'compaction.completed': handleCompactionCompleted,
   'model.fallback': handleModelFallback,
   'question.required': handleQuestionRequired,
+  'interaction.resolved': handleInteractionResolved,
   'session.completed': handleSessionCompleted,
   'session.error': handleSessionError,
   'session.status': handleSessionStatus,
   'run.cancelled': handleRunCancelled,
   'steering.queued': handleSteeringQueued,
-  'follow_up.queued': handleSteeringQueued,
+  'follow_up.queued': handleFollowUpQueued,
   'follow_up.started': handleFollowUpStarted,
   'steering.applied': handleSteeringApplied,
   'goal.updated': handleGoalUpdated,

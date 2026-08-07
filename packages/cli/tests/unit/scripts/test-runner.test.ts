@@ -1,9 +1,10 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { testTypes } from '../../../scripts/test-config.js';
 import { runOwnedCommand } from '../../../scripts/test-runner.js';
+import { resolveVitestCli } from '../../../scripts/vitest-cli.js';
 
 vi.unmock('node:child_process');
 
@@ -56,6 +57,12 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
 
   it('keeps wall-clock performance tests out of the coverage matrix', () => {
     expect(testTypes.all.coverageExcludedProjects).toEqual(['performance']);
+  });
+
+  it('resolves the Vitest CLI through its public package metadata', async () => {
+    const cliPath = resolveVitestCli();
+    expect(path.basename(cliPath)).toBe('vitest.mjs');
+    await expect(access(cliPath)).resolves.toBeUndefined();
   });
 
   it('returns a normal exit without reporting timeout or abort', async () => {

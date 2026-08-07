@@ -28,7 +28,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
 
   const components: Components = useMemo(
     () => ({
-      code({ className, children, ...props }) {
+      code({ className, children }) {
         const match = /language-(\w+)/.exec(className || '');
         const isInline = !match;
         const language = match ? match[1] : '';
@@ -41,7 +41,6 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
                 'bg-[#F3F4F6] dark:bg-[#27272a] px-1.5 py-0.5 rounded text-[#111827] dark:text-[#E5E5E5] font-mono text-[13px]',
                 className
               )}
-              {...props}
             >
               {children}
             </code>
@@ -49,9 +48,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
         }
 
         if (!syntaxHighlight) {
-          return (
-            <PlainCodeBlock className={className} code={codeString} props={props} />
-          );
+          return <PlainCodeBlock className={className} code={codeString} />;
         }
 
         return (
@@ -63,9 +60,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
               <CopyButton content={codeString} />
             </div>
             <Suspense
-              fallback={
-                <PlainCodeBlock className={className} code={codeString} props={props} />
-              }
+              fallback={<PlainCodeBlock className={className} code={codeString} />}
             >
               <LazyCodeBlockHighlighter
                 code={codeString}
@@ -187,20 +182,10 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
   );
 });
 
-function PlainCodeBlock({
-  className,
-  code,
-  props,
-}: {
-  className?: string;
-  code: string;
-  props: React.HTMLAttributes<HTMLElement>;
-}) {
+function PlainCodeBlock({ className, code }: { className?: string; code: string }) {
   return (
     <pre className="my-4 overflow-x-auto rounded-lg border border-[#E5E7EB] dark:border-[#27272a] bg-[#F9FAFB] dark:bg-[#1e1e1e] p-4 text-[13px] leading-normal">
-      <code className={className} {...props}>
-        {code}
-      </code>
+      <code className={className}>{code}</code>
     </pre>
   );
 }

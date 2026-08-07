@@ -51,7 +51,7 @@ const executeWrite = async (
     create_directories: false,
     ...params,
   });
-  return invocation.execute(context.signal, context.updateOutput, {
+  return invocation.execute(context.signal, context.updateOutput as any, {
     sessionId: context.sessionId,
     messageId: context.messageId,
   });

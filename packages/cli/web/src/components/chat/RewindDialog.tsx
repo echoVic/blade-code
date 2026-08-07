@@ -31,8 +31,10 @@ function formatCheckpointTime(value: string): string {
 }
 
 export function RewindDialog({ open, onOpenChange }: RewindDialogProps) {
-  const { currentSessionRef, isStreaming, isTemporarySession, rewindSession } =
-    useSessionStore();
+  const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
+  const isStreaming = useSessionStore((state) => state.isStreaming);
+  const isTemporarySession = useSessionStore((state) => state.isTemporarySession);
+  const rewindSession = useSessionStore((state) => state.rewindSession);
   const [checkpoints, setCheckpoints] = useState<SessionRewindCheckpoint[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [restoreCode, setRestoreCode] = useState(false);

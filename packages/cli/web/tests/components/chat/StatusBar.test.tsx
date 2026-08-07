@@ -22,7 +22,8 @@ const sessionState = vi.hoisted(() => ({
 }));
 
 vi.mock('@/store/session', () => ({
-  useSessionStore: () => sessionState,
+  useSessionStore: (selector: (state: typeof sessionState) => unknown) =>
+    selector(sessionState),
 }));
 
 import { StatusBar } from '../../../src/components/chat/StatusBar';

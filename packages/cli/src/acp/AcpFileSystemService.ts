@@ -7,7 +7,7 @@
 
 import type {
   AgentSideConnection,
-  FileSystemCapability,
+  FileSystemCapabilities
 } from '@agentclientprotocol/sdk';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import {
@@ -28,7 +28,7 @@ export class AcpFileSystemService implements FileSystemService {
   constructor(
     private readonly connection: AgentSideConnection,
     private readonly sessionId: string,
-    private readonly capabilities: FileSystemCapability,
+    private readonly capabilities: FileSystemCapabilities,
     private readonly fallback: FileSystemService = new LocalFileSystemService()
   ) {}
 
@@ -182,7 +182,7 @@ export class AcpFileSystemService implements FileSystemService {
   /**
    * 获取 IDE 支持的文件系统能力
    */
-  getCapabilities(): FileSystemCapability {
+  getCapabilities(): FileSystemCapabilities {
     return this.capabilities;
   }
 

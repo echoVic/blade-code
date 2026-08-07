@@ -111,7 +111,7 @@ describe('ACP session list and durable fork NDJSON integration', () => {
   });
 
   async function expectValidListAfterFailure(): Promise<void> {
-    const listed = await harness.clientConnection.unstable_listSessions({
+    const listed = await harness.clientConnection.listSessions({
       cwd: workspaceA,
     });
     expect(listed.sessions).toContainEqual(
@@ -125,7 +125,7 @@ describe('ACP session list and durable fork NDJSON integration', () => {
 
   it('keeps paired SDK connections usable after list and fork JSON-RPC errors', async () => {
     await expect(
-      harness.clientConnection.unstable_listSessions({
+      harness.clientConnection.listSessions({
         cwd: workspaceA,
         cursor: 'not-base64url-json',
       })

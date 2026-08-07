@@ -3,9 +3,9 @@ import type {
   Context,
   ImageContent,
   Model,
+  Tool as PiTool,
   TextContent,
   ThinkingContent,
-  Tool as PiTool,
   ToolCall,
   TSchema,
 } from '@earendil-works/pi-ai';
@@ -92,6 +92,7 @@ export async function createPiContext(
   for (const message of messages) {
     if (message.role === 'system') continue;
     if (message.role === 'user') {
+      const supportsImages = model.input.includes('image');
       const content =
         typeof message.content === 'string'
           ? message.content
@@ -102,7 +103,12 @@ export async function createPiContext(
                       type: 'text',
                       text: part.text,
                     })
-                  : imageContent(part.image_url.url, signal)
+                  : supportsImages
+                    ? imageContent(part.image_url.url, signal)
+                    : Promise.resolve<TextContent>({
+                        type: 'text',
+                        text: '[Image omitted: current model does not support image input]',
+                      })
               )
             );
       contextMessages.push({ role: 'user', content, timestamp: Date.now() });

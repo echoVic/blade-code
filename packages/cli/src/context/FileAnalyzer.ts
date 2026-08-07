@@ -5,8 +5,10 @@
 
 import { readFile } from 'node:fs/promises';
 import { basename, isAbsolute, resolve } from 'node:path';
-import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
-import type { Message } from '../services/ChatServiceInterface.js';
+import type {
+  ChatCompletionMessageToolCall,
+  Message,
+} from '../services/ChatServiceInterface.js';
 import { PathSecurity } from '../utils/pathSecurity.js';
 
 /**

@@ -4,8 +4,10 @@
  */
 
 import { encodingForModel } from 'js-tiktoken';
-import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
-import type { Message } from '../services/ChatServiceInterface.js';
+import type {
+  ChatCompletionMessageToolCall,
+  Message,
+} from '../services/ChatServiceInterface.js';
 
 interface Encoding {
   encode: (text: string) => number[];

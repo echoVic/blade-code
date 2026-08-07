@@ -344,7 +344,7 @@ function createTaskLoopDependencies(
       isConcurrencySafe: false,
       description: { short: 'Delegate work' },
       schema: Type.Unknown(),
-      execute: taskExecution,
+      execute: taskExecution as any,
     })
   );
   return {
@@ -375,7 +375,7 @@ function createVerificationLoopDependencies(
       isConcurrencySafe: false,
       description: { short: 'Run a command' },
       schema: Type.Unknown(),
-      execute: bashExecution,
+      execute: bashExecution as any,
     })
   );
   return {

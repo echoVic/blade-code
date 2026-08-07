@@ -3,6 +3,7 @@ import { createServer, type Server as NodeServer } from 'node:http';
 import { networkInterfaces } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { brotliCompressSync, gzipSync, constants as zlibConstants } from 'node:zlib';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { WebSocketServer } from 'ws';
@@ -16,6 +17,7 @@ import { GlobalRoutes } from './routes/global.js';
 import { McpRoutes } from './routes/mcp.js';
 import { ModelsRoutes } from './routes/models.js';
 import { PermissionRoutes } from './routes/permission.js';
+import { ProjectRoutes } from './routes/projects.js';
 import { ProviderRoutes } from './routes/provider.js';
 import { createSessionRouteController } from './routes/session.js';
 import { SkillsRoutes } from './routes/skills.js';
@@ -39,10 +41,89 @@ export interface ServerOptions {
 
 let corsWhitelist: string[] = [];
 let recoverQueuedTasksOnStart: (() => Promise<unknown>) | undefined;
+const staticAssetContentCache = new Map<string, Buffer>();
+const staticAssetCompressionCache = new Map<string, Buffer>();
+const COMPRESSIBLE_ASSET_EXTENSIONS = new Set([
+  '.css',
+  '.html',
+  '.js',
+  '.json',
+  '.svg',
+]);
+const STATIC_COMPRESSION_MIN_BYTES = 1024;
 
 type Variables = {
   directory: string;
 };
+
+export type StaticContentEncoding = 'br' | 'gzip';
+
+function acceptedEncodingQuality(
+  acceptEncoding: string | undefined,
+  encoding: StaticContentEncoding
+): number {
+  if (!acceptEncoding) return 0;
+  const entries = acceptEncoding.split(',').map((entry) => {
+    const [name, ...parameters] = entry.trim().toLowerCase().split(';');
+    const qualityParameter = parameters.find((parameter) =>
+      parameter.trim().startsWith('q=')
+    );
+    const quality = qualityParameter ? Number(qualityParameter.trim().slice(2)) : 1;
+    return {
+      name,
+      quality: Number.isFinite(quality) ? Math.max(0, Math.min(1, quality)) : 0,
+    };
+  });
+  return (
+    entries.find((entry) => entry.name === encoding)?.quality ??
+    entries.find((entry) => entry.name === '*')?.quality ??
+    0
+  );
+}
+
+export function selectStaticContentEncoding(
+  acceptEncoding: string | undefined
+): StaticContentEncoding | undefined {
+  const candidates = (['br', 'gzip'] as const)
+    .map((encoding) => ({
+      encoding,
+      quality: acceptedEncodingQuality(acceptEncoding, encoding),
+    }))
+    .filter((candidate) => candidate.quality > 0)
+    .sort(
+      (left, right) => right.quality - left.quality || (left.encoding === 'br' ? -1 : 1)
+    );
+  return candidates[0]?.encoding;
+}
+
+function readStaticAsset(filePath: string): Buffer {
+  const cached = staticAssetContentCache.get(filePath);
+  if (cached) return cached;
+  const content = readFileSync(filePath);
+  staticAssetContentCache.set(filePath, content);
+  return content;
+}
+
+function compressStaticAsset(
+  filePath: string,
+  content: Buffer,
+  encoding: StaticContentEncoding
+): Buffer {
+  const cacheKey = `${encoding}:${filePath}`;
+  const cached = staticAssetCompressionCache.get(cacheKey);
+  if (cached) return cached;
+
+  const compressed =
+    encoding === 'br'
+      ? brotliCompressSync(content, {
+          params: {
+            [zlibConstants.BROTLI_PARAM_QUALITY]: 5,
+          },
+        })
+      : gzipSync(content, { level: 6 });
+  staticAssetCompressionCache.set(cacheKey, compressed);
+  return compressed;
+}
 
 function getWebDistPath(): string | null {
   const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -93,6 +174,7 @@ function createApp(): Hono<{ Variables: Variables }> {
     const path = c.req.path;
     if (
       path === '/' ||
+      path === '/favicon.svg' ||
       path.startsWith('/assets/') ||
       path.endsWith('.html') ||
       path.endsWith('.js') ||
@@ -183,6 +265,7 @@ function createApp(): Hono<{ Variables: Variables }> {
   app.route('/permissions', PermissionRoutes());
   app.route('/providers', ProviderRoutes());
   app.route('/models', ModelsRoutes());
+  app.route('/projects', ProjectRoutes());
   app.route('/suggestions', SuggestionsRoutes());
   app.route('/terminal', TerminalRoutes());
   app.route('/mcp', McpRoutes());
@@ -197,6 +280,19 @@ function createApp(): Hono<{ Variables: Variables }> {
   if (webDistPath) {
     logger.info(`[Server] Serving static files from ${webDistPath}`);
 
+    app.get('/favicon.svg', () => {
+      const filePath = join(webDistPath, 'favicon.svg');
+      if (!existsSync(filePath)) {
+        return new Response(null, { status: 404 });
+      }
+      return new Response(readFileSync(filePath), {
+        headers: {
+          'Content-Type': 'image/svg+xml',
+          'Cache-Control': 'public, max-age=86400',
+        },
+      });
+    });
+
     app.get('/assets/*', (c) => {
       const filePath = join(webDistPath, c.req.path);
 
@@ -207,7 +303,7 @@ function createApp(): Hono<{ Variables: Variables }> {
         );
       }
 
-      const content = readFileSync(filePath);
+      const content = readStaticAsset(filePath);
       const ext = extname(filePath).toLowerCase();
 
       const mimeTypes: Record<string, string> = {
@@ -228,11 +324,22 @@ function createApp(): Hono<{ Variables: Variables }> {
       };
 
       const contentType = mimeTypes[ext] || 'application/octet-stream';
+      const contentEncoding =
+        COMPRESSIBLE_ASSET_EXTENSIONS.has(ext) &&
+        content.byteLength >= STATIC_COMPRESSION_MIN_BYTES
+          ? selectStaticContentEncoding(c.req.header('Accept-Encoding'))
+          : undefined;
+      const responseContent = contentEncoding
+        ? compressStaticAsset(filePath, content, contentEncoding)
+        : content;
 
-      return new Response(content, {
+      return new Response(new Uint8Array(responseContent), {
         headers: {
           'Content-Type': contentType,
+          'Content-Length': String(responseContent.byteLength),
           'Cache-Control': 'public, max-age=31536000, immutable',
+          Vary: 'Accept-Encoding',
+          ...(contentEncoding ? { 'Content-Encoding': contentEncoding } : {}),
         },
       });
     });
@@ -240,7 +347,7 @@ function createApp(): Hono<{ Variables: Variables }> {
     app.get('/', (c) => {
       const indexPath = join(webDistPath, 'index.html');
       const html = readFileSync(indexPath, 'utf-8');
-      return c.html(html);
+      return c.html(html, 200, { 'Cache-Control': 'no-cache' });
     });
 
     app.get('*', (c) => {
@@ -255,7 +362,7 @@ function createApp(): Hono<{ Variables: Variables }> {
 
       const indexPath = join(webDistPath, 'index.html');
       const html = readFileSync(indexPath, 'utf-8');
-      return c.html(html);
+      return c.html(html, 200, { 'Cache-Control': 'no-cache' });
     });
   } else {
     logger.warn(

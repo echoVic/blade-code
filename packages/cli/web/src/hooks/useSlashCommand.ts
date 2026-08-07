@@ -49,9 +49,9 @@ const extractSlashCommand = (
 export const useSlashCommand = (
   input: string,
   cursorPosition: number | undefined,
-  options: { debounceDelay?: number } = {}
+  options: { debounceDelay?: number; workspacePath?: string | null } = {}
 ): UseSlashCommandResult => {
-  const { debounceDelay = 150 } = options;
+  const { debounceDelay = 150, workspacePath } = options;
 
   const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -77,7 +77,10 @@ export const useSlashCommand = (
     const fetchSuggestions = async () => {
       try {
         const response = await fetch(
-          `/suggestions/commands?q=${encodeURIComponent(match.query)}`
+          `/suggestions/commands?q=${encodeURIComponent(match.query)}`,
+          workspacePath
+            ? { headers: { 'x-blade-directory': workspacePath } }
+            : undefined
         );
         if (!response.ok) throw new Error('Failed to fetch suggestions');
         const data = await response.json();
@@ -102,7 +105,7 @@ export const useSlashCommand = (
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [match.hasQuery, match.query, debounceDelay]);
+  }, [match.hasQuery, match.query, debounceDelay, workspacePath]);
 
   useEffect(() => {
     setSelectedIndex(0);

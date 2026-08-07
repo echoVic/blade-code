@@ -1,5 +1,5 @@
 import { basename, extname } from 'path';
-import { isAcpMode } from '../../../acp/AcpServiceContext.js';
+import { getAcpFileSystemService, isAcpMode } from '../../../acp/AcpServiceContext.js';
 import { Default, Type } from '../../../schema/index.js';
 import { getFileSystemService } from '../../../services/FileSystemService.js';
 import { createTool } from '../../core/createTool.js';
@@ -79,8 +79,10 @@ export const editTool = createTool({
       updateOutput?.('Starting to read file...');
 
       // 获取文件系统服务（ACP 或本地）
-      const fsService = getFileSystemService();
-      const useAcp = isAcpMode();
+      const useAcp = isAcpMode(sessionId);
+      const fsService = useAcp
+        ? getAcpFileSystemService(sessionId)
+        : getFileSystemService();
 
       // 读取文件内容（统一使用 FileSystemService）
       let content: string;

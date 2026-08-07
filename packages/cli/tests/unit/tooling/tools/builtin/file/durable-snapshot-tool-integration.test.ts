@@ -36,12 +36,12 @@ vi.mock('../../../../../../src/tools/builtin/file/FileAccessTracker.js', () => (
 }));
 
 vi.mock('../../../../../../src/tools/builtin/file/SnapshotManager.js', () => ({
-  SnapshotManager: vi.fn(() => ({
-    initialize: mocks.initialize,
-    createSnapshot: mocks.createSnapshot,
-    recordPostEditState: mocks.recordPostEditState,
-    discardSnapshot: mocks.discardSnapshot,
-  })),
+  SnapshotManager: class MockSnapshotManager {
+    initialize = mocks.initialize;
+    createSnapshot = mocks.createSnapshot;
+    recordPostEditState = mocks.recordPostEditState;
+    discardSnapshot = mocks.discardSnapshot;
+  },
 }));
 
 describe('文件工具持久化快照接入', () => {

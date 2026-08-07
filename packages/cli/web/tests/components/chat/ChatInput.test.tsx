@@ -1,5 +1,9 @@
 // @vitest-environment jsdom
 
+import {
+  MAX_INLINE_ATTACHMENT_BYTES,
+  MAX_INLINE_ATTACHMENT_COUNT,
+} from '@api/attachmentLimits';
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -12,12 +16,15 @@ describe('ChatInput', () => {
   let container: HTMLDivElement;
   let root: ReactDOM.Root;
   let originalFileReader: typeof FileReader;
+  let readAsDataUrl: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
     originalFileReader = globalThis.FileReader;
+    readAsDataUrl = vi.fn();
+    sessionStorage.clear();
 
     class MockFileReader {
       result: string | ArrayBuffer | null = null;
@@ -27,6 +34,7 @@ describe('ChatInput', () => {
         null;
 
       readAsDataURL(file: File) {
+        readAsDataUrl(file);
         this.result = `data:${file.type};base64,mock-data`;
         this.onload?.call(
           this as unknown as FileReader,
@@ -47,6 +55,7 @@ describe('ChatInput', () => {
           provider: 'openai',
           model: 'gpt-4',
           contextWindow: 128000,
+          input: ['text', 'image'],
         },
       ],
       availableModels: [],
@@ -59,6 +68,10 @@ describe('ChatInput', () => {
 
     useSessionStore.setState((state) => ({
       ...state,
+      sessions: [],
+      currentSessionId: null,
+      currentSessionRef: null,
+      isTemporarySession: true,
       tokenUsage: {
         inputTokens: 0,
         outputTokens: 0,
@@ -113,7 +126,7 @@ describe('ChatInput', () => {
     expect(container.querySelector('img')).toBeTruthy();
 
     const removeButton = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent?.toLowerCase().includes('remove')
+      (button) => button.getAttribute('aria-label') === 'Remove pasted.png'
     );
 
     expect(removeButton).toBeTruthy();
@@ -124,6 +137,236 @@ describe('ChatInput', () => {
     });
 
     expect(container.querySelector('img')).toBeNull();
+  });
+
+  test('rejects oversized images before reading them and keeps the composer usable', async () => {
+    const onSend = vi.fn();
+    act(() => {
+      root.render(<ChatInput onSend={onSend} />);
+    });
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const oversized = new File(['x'], 'oversized.png', { type: 'image/png' });
+    Object.defineProperty(oversized, 'size', {
+      configurable: true,
+      value: Math.ceil((MAX_INLINE_ATTACHMENT_BYTES * 3) / 4),
+    });
+
+    await act(async () => {
+      Object.defineProperty(fileInput, 'files', {
+        configurable: true,
+        value: [oversized],
+      });
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(readAsDataUrl).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'must stay under 5.0 MiB total'
+    );
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('textarea')?.disabled).toBe(false);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  test('rejects attachment batches above the shared count before reading them', async () => {
+    act(() => {
+      root.render(<ChatInput onSend={vi.fn()} />);
+    });
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const files = Array.from(
+      { length: MAX_INLINE_ATTACHMENT_COUNT + 1 },
+      (_, index) =>
+        new File(['x'], `image-${index}.png`, {
+          type: 'image/png',
+        })
+    );
+
+    await act(async () => {
+      Object.defineProperty(fileInput, 'files', {
+        configurable: true,
+        value: files,
+      });
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(readAsDataUrl).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      `up to ${MAX_INLINE_ATTACHMENT_COUNT} images`
+    );
+    expect(container.querySelectorAll('img')).toHaveLength(0);
+  });
+
+  test('rejects pasted images for text-only models before reading them', async () => {
+    useConfigStore.setState({
+      configuredModels: [
+        {
+          id: 'model-1',
+          displayName: 'Text only',
+          provider: 'openai',
+          model: 'text-model',
+          input: ['text'],
+        },
+      ],
+    });
+    act(() => {
+      root.render(<ChatInput onSend={vi.fn()} />);
+    });
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const attachmentButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label*="does not support images"]'
+    );
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+    expect(attachmentButton?.getAttribute('aria-disabled')).toBe('true');
+    expect(attachmentButton?.disabled).toBe(false);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+
+    await act(async () => {
+      attachmentButton?.focus();
+      attachmentButton?.click();
+      await Promise.resolve();
+    });
+    expect(document.activeElement).toBe(attachmentButton);
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      'Text only does not support images'
+    );
+
+    const image = new File(['image'], 'unsupported.png', {
+      type: 'image/png',
+    });
+    const pasteEvent = new Event('paste', {
+      bubbles: true,
+      cancelable: true,
+    }) as Event & {
+      clipboardData: {
+        items: Array<{ type: string; getAsFile: () => File }>;
+      };
+    };
+    pasteEvent.clipboardData = {
+      items: [{ type: 'image/png', getAsFile: () => image }],
+    };
+
+    await act(async () => {
+      textarea.dispatchEvent(pasteEvent);
+      await Promise.resolve();
+    });
+
+    expect(readAsDataUrl).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Text only does not support images'
+    );
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(container.querySelector('img')).toBeNull();
+    expect(textarea.disabled).toBe(false);
+  });
+
+  test('opens model choices from an unavailable attachment control when vision is available', async () => {
+    useConfigStore.setState({
+      configuredModels: [
+        {
+          id: 'model-1',
+          displayName: 'Text only',
+          provider: 'openai',
+          model: 'text-model',
+          input: ['text'],
+        },
+        {
+          id: 'model-2',
+          displayName: 'Vision model',
+          provider: 'openai',
+          model: 'vision-model',
+          input: ['text', 'image'],
+        },
+      ],
+    });
+    act(() => {
+      root.render(<ChatInput onSend={vi.fn()} />);
+    });
+
+    const attachmentButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label*="does not support images"]'
+    );
+    await act(async () => {
+      attachmentButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      'Text only does not support images'
+    );
+    expect(document.body.textContent).toContain('Vision model');
+    expect(document.body.textContent).toContain('Vision');
+  });
+
+  test('preserves attachments but blocks sending when switching to a text-only model', async () => {
+    useConfigStore.setState({
+      configuredModels: [
+        {
+          id: 'model-1',
+          displayName: 'Vision model',
+          provider: 'openai',
+          model: 'vision-model',
+          input: ['text', 'image'],
+        },
+        {
+          id: 'model-2',
+          displayName: 'Text model',
+          provider: 'openai',
+          model: 'text-model',
+          input: ['text'],
+        },
+      ],
+    });
+    act(() => {
+      root.render(<ChatInput onSend={vi.fn()} />);
+    });
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const image = new File(['image'], 'kept.png', { type: 'image/png' });
+    await act(async () => {
+      Object.defineProperty(fileInput, 'files', {
+        configurable: true,
+        value: [image],
+      });
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(container.querySelector('img[alt="kept.png"]')).toBeTruthy();
+
+    act(() => {
+      useConfigStore.setState({ currentModelId: 'model-2' });
+    });
+
+    expect(container.querySelector('img[alt="kept.png"]')).toBeTruthy();
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+    expect(
+      container.querySelector(
+        'button[aria-label="Text model does not support images. Choose a vision model or remove the images."]'
+      )
+    ).toBeTruthy();
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="Send message"]')
+        ?.disabled
+    ).toBe(true);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Text model does not support images'
+    );
+
+    act(() => {
+      useConfigStore.setState({ currentModelId: 'model-1' });
+    });
+
+    expect(container.querySelector('img[alt="kept.png"]')).toBeTruthy();
+    expect(container.querySelector('input[type="file"]')).toBeTruthy();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="Send message"]')
+        ?.disabled
+    ).toBe(false);
   });
 
   test('sends image-only messages collected from the paperclip input', async () => {
@@ -159,6 +402,7 @@ describe('ChatInput', () => {
 
     expect(onSend).toHaveBeenCalledWith({
       content: '',
+      modelId: 'model-1',
       attachments: [
         expect.objectContaining({
           name: 'picked.png',
@@ -205,6 +449,7 @@ describe('ChatInput', () => {
 
     expect(onSend).toHaveBeenCalledWith({
       content: '',
+      modelId: 'model-1',
       attachments: [
         expect.objectContaining({
           name: 'picked-a.png',
@@ -216,6 +461,30 @@ describe('ChatInput', () => {
         }),
       ],
     });
+  });
+
+  test('deduplicates repeated file input events for the same image', async () => {
+    act(() => {
+      root.render(<ChatInput onSend={vi.fn()} />);
+    });
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['same-image'], 'same.png', { type: 'image/png' });
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await act(async () => {
+        Object.defineProperty(fileInput, 'files', {
+          configurable: true,
+          value: [file],
+        });
+        fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+        await Promise.resolve();
+      });
+    }
+
+    expect(readAsDataUrl).toHaveBeenCalledTimes(2);
+    expect(container.querySelectorAll('img')).toHaveLength(1);
+    expect(container.textContent).toContain('1/20 images');
   });
 
   test('ignores non-image clipboard items when pasting', async () => {
@@ -257,6 +526,7 @@ describe('ChatInput', () => {
           onAbort={vi.fn()}
           isStreaming
           pendingSteeringCount={2}
+          pendingInputDelivery="current_turn"
           recoveredSteeringCount={1}
         />
       );
@@ -265,13 +535,343 @@ describe('ChatInput', () => {
     const textarea = container.querySelector('textarea');
     expect(textarea?.disabled).toBe(false);
     expect(textarea?.placeholder).toContain('steer the active turn');
-    expect(container.textContent).toContain('Active turn is steerable');
-    expect(container.textContent).toContain('2 queued');
+    expect(container.textContent).toContain('Guidance accepted · 2 pending');
     expect(container.textContent).toContain(
       'Recovered 1 queued instruction after restart'
     );
     expect(container.querySelector('[title="Stop active turn"]')).toBeTruthy();
     expect(container.querySelector('[title="Steer active turn"]')).toBeTruthy();
+    const modelButton = container.querySelector<HTMLButtonElement>(
+      'button[title="Wait for the active turn to finish before switching models"]'
+    );
+    expect(modelButton?.disabled).toBe(true);
+  });
+
+  test('distinguishes a next-turn follow-up from current-turn steering', () => {
+    act(() => {
+      root.render(
+        <ChatInput
+          onSend={vi.fn()}
+          isStreaming
+          pendingSteeringCount={1}
+          pendingInputDelivery="next_turn"
+        />
+      );
+    });
+
+    expect(container.textContent).toContain(
+      'Follow-up accepted · 1 queued for the next turn'
+    );
+    expect(container.textContent).not.toContain('Active turn is steerable');
+  });
+
+  test('shows an exclusive stopping state while preserving the composer', () => {
+    act(() => {
+      root.render(
+        <ChatInput onSend={vi.fn()} onAbort={vi.fn()} isStreaming isStopping />
+      );
+    });
+
+    const stopButton = container.querySelector(
+      'button[aria-label="Stopping active turn"]'
+    ) as HTMLButtonElement | null;
+    expect(stopButton?.disabled).toBe(true);
+    expect(container.querySelector('textarea')?.disabled).toBe(false);
+  });
+
+  test('keeps drafts editable while readiness blocks submission', () => {
+    const onSend = vi.fn();
+    act(() => {
+      root.render(<ChatInput onSend={onSend} submitDisabled />);
+    });
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    act(() => {
+      valueSetter?.call(textarea, 'Draft while configuring');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    const sendButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Send message"]'
+    );
+    expect(textarea.disabled).toBe(false);
+    expect(textarea.value).toBe('Draft while configuring');
+    expect(sendButton?.disabled).toBe(true);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  test('isolates and restores drafts by compound composer key', () => {
+    const onSend = vi.fn();
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    const renderComposer = (draftKey: string) => {
+      act(() => {
+        root.render(<ChatInput key={draftKey} draftKey={draftKey} onSend={onSend} />);
+      });
+      return container.querySelector('textarea') as HTMLTextAreaElement;
+    };
+
+    const workspaceA = renderComposer('session:["/workspace/a","shared"]');
+    act(() => {
+      valueSetter?.call(workspaceA, 'Draft for workspace A');
+      workspaceA.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    const workspaceB = renderComposer('session:["/workspace/b","shared"]');
+    expect(workspaceB.value).toBe('');
+    act(() => {
+      valueSetter?.call(workspaceB, 'Draft for workspace B');
+      workspaceB.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    expect(renderComposer('session:["/workspace/a","shared"]').value).toBe(
+      'Draft for workspace A'
+    );
+    expect(renderComposer('session:["/workspace/b","shared"]').value).toBe(
+      'Draft for workspace B'
+    );
+  });
+
+  test('clears only the accepted composer draft', async () => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    const draftKey = 'session:["/workspace/accepted","task"]';
+    act(() => {
+      root.render(<ChatInput key={draftKey} draftKey={draftKey} onSend={onSend} />);
+    });
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    act(() => {
+      valueSetter?.call(textarea, 'Accepted scoped draft');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    await act(async () => {
+      container
+        .querySelector('button[aria-label="Send message"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    act(() => {
+      root.render(<ChatInput key="other" draftKey="other" onSend={onSend} />);
+    });
+    act(() => {
+      root.render(<ChatInput key={draftKey} draftKey={draftKey} onSend={onSend} />);
+    });
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('');
+  });
+
+  test('retains the draft and prevents duplicate submission until acceptance', async () => {
+    let resolveSubmission!: (accepted: boolean) => void;
+    const submission = new Promise<boolean>((resolve) => {
+      resolveSubmission = resolve;
+    });
+    const onSend = vi.fn(() => submission);
+
+    act(() => {
+      root.render(<ChatInput onSend={onSend} isStreaming />);
+    });
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    act(() => {
+      valueSetter?.call(textarea, 'Keep this guidance');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    const sendButton = container.querySelector(
+      'button[aria-label="Steer active turn"]'
+    );
+    act(() => {
+      sendButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      sendButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onSend).toHaveBeenCalledOnce();
+    expect(textarea.disabled).toBe(true);
+    expect(textarea.value).toBe('Keep this guidance');
+    expect(
+      container.querySelector('button[aria-label="Submitting message"]')
+    ).toBeTruthy();
+
+    await act(async () => {
+      resolveSubmission(false);
+      await submission;
+    });
+
+    expect(textarea.disabled).toBe(false);
+    expect(textarea.value).toBe('Keep this guidance');
+  });
+
+  test('clears the draft only after the message is accepted', async () => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    act(() => {
+      root.render(<ChatInput onSend={onSend} />);
+    });
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    act(() => {
+      valueSetter?.call(textarea, 'Accepted message');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    await act(async () => {
+      container
+        .querySelector('button[aria-label="Send message"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(onSend).toHaveBeenCalledOnce();
+    expect(textarea.value).toBe('');
+  });
+
+  test('restores a failed multimodal request into the composer', async () => {
+    const onSend = vi.fn().mockResolvedValue(false);
+    const restoredAttachment = {
+      id: 'restored-image',
+      name: 'attachment-1',
+      mimeType: 'image/png',
+      dataUrl: 'data:image/png;base64,restored',
+    };
+
+    act(() => {
+      root.render(
+        <ChatInput
+          onSend={onSend}
+          draft="Edit this request"
+          draftAttachments={[restoredAttachment]}
+          draftRevision={1}
+        />
+      );
+    });
+
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe(
+      'Edit this request'
+    );
+    expect(container.querySelector('img[alt="attachment-1"]')).toBeTruthy();
+    expect(container.textContent).toContain('1/20 images');
+
+    await act(async () => {
+      container
+        .querySelector('button[aria-label="Send message"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(onSend).toHaveBeenCalledWith({
+      content: 'Edit this request',
+      modelId: 'model-1',
+      attachments: [restoredAttachment],
+    });
+  });
+
+  test('restores and changes an existing session model without mutating the global default', async () => {
+    const setCurrentModel = vi.fn().mockResolvedValue(undefined);
+    useConfigStore.setState({
+      configuredModels: [
+        {
+          id: 'model-1',
+          displayName: 'Global default',
+          provider: 'openai',
+          model: 'gpt-4',
+          contextWindow: 128000,
+          input: ['text'],
+        },
+        {
+          id: 'model-2',
+          displayName: 'Session model',
+          provider: 'openai',
+          model: 'gpt-4.1',
+          contextWindow: 256000,
+          input: ['text'],
+        },
+      ],
+      setCurrentModel,
+    });
+    useSessionStore.setState({
+      sessions: [
+        {
+          sessionId: 'session-model',
+          projectPath: '/tmp/project',
+          title: 'Model session',
+          rootId: 'session-model',
+          taskStatus: 'completed',
+          selectedModelId: 'model-2',
+          messageCount: 1,
+          firstMessageTime: '2026-08-07T00:00:00.000Z',
+          lastMessageTime: '2026-08-07T00:00:00.000Z',
+          hasErrors: false,
+        },
+      ],
+      currentSessionId: 'session-model',
+      currentSessionRef: {
+        sessionId: 'session-model',
+        projectPath: '/tmp/project',
+      },
+      isTemporarySession: false,
+    });
+    const onSend = vi.fn().mockResolvedValue(false);
+
+    act(() => {
+      root.render(<ChatInput onSend={onSend} />);
+    });
+    expect(container.textContent).toContain('Session model');
+    expect(useSessionStore.getState().tokenUsage.maxContextTokens).toBe(256000);
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    act(() => {
+      valueSetter?.call(textarea, 'Use the session choice');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    await act(async () => {
+      container
+        .querySelector('button[title="Change model"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    const globalModelOption = Array.from(document.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Global default'
+    );
+    await act(async () => {
+      globalModelOption?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(setCurrentModel).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().tokenUsage.maxContextTokens).toBe(128000);
+    await act(async () => {
+      container
+        .querySelector('button[aria-label="Send message"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(onSend).toHaveBeenCalledWith({
+      content: 'Use the session choice',
+      modelId: 'model-1',
+      attachments: [],
+    });
   });
 
   test('uses the configured display name in the model selector', () => {

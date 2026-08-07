@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vite
 import { AcpSession } from '../../../../src/acp/Session.js';
 import type { LoopEvent } from '../../../../src/agent/loop/types.js';
 import type { LoopResult } from '../../../../src/agent/types.js';
+import { MAX_INLINE_ATTACHMENT_BYTES } from '../../../../src/api/attachmentLimits.js';
 import { Bus } from '../../../../src/server/bus.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import { createMockACPClient } from '../../../support/mocks/mockACPClient.js';
@@ -35,6 +36,7 @@ const runtimeState = vi.hoisted(() => ({
       queued: 1,
     })),
     getPendingSteeringCount: vi.fn(() => 0),
+    getCurrentModelId: vi.fn(() => 'model-1'),
     getGoal: vi.fn().mockResolvedValue(null),
     listRewindCheckpoints: vi.fn().mockResolvedValue([]),
     rewindSession: vi.fn(),
@@ -67,6 +69,20 @@ vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
   },
 }));
 
+const sessionServiceState = vi.hoisted(() => ({
+  updateSessionMetadata: vi.fn().mockResolvedValue({
+    selectedModelId: 'model-1',
+  }),
+  createSessionMetadata: vi.fn().mockResolvedValue({
+    selectedModelId: 'model-1',
+  }),
+}));
+
+vi.mock('../../../../src/services/SessionService.js', () => ({
+  SessionMissingCreationError: class SessionMissingCreationError extends Error {},
+  SessionService: sessionServiceState,
+}));
+
 // Mock AcpServiceContext
 vi.mock('../../../../src/acp/AcpServiceContext.js', () => ({
   isAcpMode: vi.fn(() => true),
@@ -92,6 +108,11 @@ vi.mock('../../../../src/slash-commands/index.js', () => ({
       aliases: ['t'],
     },
   ]),
+  initializeCustomCommands: vi.fn().mockResolvedValue({
+    commands: [],
+    scannedDirs: [],
+    errors: [],
+  }),
   isSlashCommand: vi.fn((msg) => msg.startsWith('/')),
 }));
 
@@ -105,6 +126,7 @@ describe('AcpSession', () => {
   beforeEach(() => {
     agentMockState.current = null;
     runtimeState.runtime.dispose.mockReset().mockResolvedValue(undefined);
+    runtimeState.runtime.getCurrentModelId.mockReturnValue('model-1');
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
     runtimeState.runtime.listRewindCheckpoints.mockReset().mockResolvedValue([]);
     runtimeState.runtime.rewindSession.mockReset();
@@ -257,6 +279,37 @@ describe('AcpSession', () => {
           },
         });
       });
+      const taskFailure = {
+        code: 'timeout',
+        message: 'Provider request timed out.',
+        retryable: true,
+      };
+      Bus.publish(
+        { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+        'task.status',
+        {
+          taskStatus: 'failed',
+          taskStatusReason: taskFailure.message,
+          taskFailure,
+          taskCompletedAt: updatedAt,
+          updatedAt,
+        }
+      );
+      await vi.waitFor(() => {
+        expect(mockConnection.sessionUpdates).toContainEqual({
+          sessionId: 'test-session-id',
+          update: {
+            sessionUpdate: 'session_info_update',
+            updatedAt,
+            _meta: {
+              'blade/taskStatus': 'failed',
+              'blade/taskStatusReason': taskFailure.message,
+              'blade/taskFailure': taskFailure,
+              'blade/taskCompletedAt': updatedAt,
+            },
+          },
+        });
+      });
       const taskDiffStat = {
         changedFiles: 2,
         additions: 7,
@@ -283,6 +336,34 @@ describe('AcpSession', () => {
               'blade/taskStatus': 'completed',
               'blade/taskCompletedAt': updatedAt,
               'blade/taskDiffStat': taskDiffStat,
+            },
+          },
+        });
+      });
+      const taskDelivery = {
+        status: 'applied',
+        updatedAt,
+        sourceCommit: 'abc123',
+        changedFiles: 2,
+      };
+      Bus.publish(
+        { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+        'task.delivery',
+        {
+          taskDelivery,
+          taskWorktreeRemoved: true,
+          updatedAt,
+        }
+      );
+      await vi.waitFor(() => {
+        expect(mockConnection.sessionUpdates).toContainEqual({
+          sessionId: 'test-session-id',
+          update: {
+            sessionUpdate: 'session_info_update',
+            updatedAt,
+            _meta: {
+              'blade/taskDelivery': taskDelivery,
+              'blade/taskWorktreeRemoved': true,
             },
           },
         });
@@ -504,6 +585,46 @@ describe('AcpSession', () => {
       expect(response.stopReason).toBe('end_turn');
     });
 
+    it('应该把 ACP 图片作为真正的多模态内容传给 Agent', async () => {
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [
+          { type: 'text', text: 'Describe this image' },
+          {
+            type: 'image',
+            mimeType: 'image/png',
+            data: 'base64-image',
+          },
+        ],
+      });
+
+      expect(getMockAgent().getLastCall()?.message).toEqual([
+        { type: 'text', text: 'Describe this image' },
+        { type: 'text', text: '\n' },
+        {
+          type: 'image_url',
+          image_url: { url: 'data:image/png;base64,base64-image' },
+        },
+      ]);
+    });
+
+    it('应该在进入 Agent 前拒绝超过共享预算的 ACP 图片', async () => {
+      await expect(
+        session.prompt({
+          sessionId: 'test-session-id',
+          prompt: [
+            {
+              type: 'image',
+              mimeType: 'image/png',
+              data: 'x'.repeat(MAX_INLINE_ATTACHMENT_BYTES),
+            },
+          ],
+        })
+      ).rejects.toThrow('ACP prompt images exceed the 5 MiB limit');
+
+      expect(getMockAgent().calls).toHaveLength(0);
+    });
+
     it('活动回合中的第二个 prompt 应转为 steering 而不是中止前一个回合', async () => {
       const activeController = new AbortController();
       (session as any).pendingPrompt = activeController;
@@ -520,6 +641,34 @@ describe('AcpSession', () => {
         { allowBeforeTurn: true }
       );
       expect((session as any).pendingPrompt).toBe(activeController);
+    });
+
+    it('活动回合中的 ACP 图片应以多模态 steering 入队', async () => {
+      const activeController = new AbortController();
+      (session as any).pendingPrompt = activeController;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [
+          {
+            type: 'image',
+            mimeType: 'image/jpeg',
+            data: 'steering-image',
+          },
+        ],
+      });
+
+      expect(runtimeState.runtime.enqueueSteering).toHaveBeenCalledWith(
+        [
+          {
+            type: 'image_url',
+            image_url: {
+              url: 'data:image/jpeg;base64,steering-image',
+            },
+          },
+        ],
+        { allowBeforeTurn: true }
+      );
     });
 
     it('应该处理 slash command', async () => {
@@ -941,6 +1090,11 @@ describe('AcpSession', () => {
       await session.setModel('gpt-4');
 
       expect(getMockAgent().switchModel).toHaveBeenCalledWith('gpt-4');
+      expect(sessionServiceState.updateSessionMetadata).toHaveBeenCalledWith(
+        'test-session-id',
+        '/tmp/test',
+        { selectedModelId: 'gpt-4' }
+      );
     });
 
     it('活动回合期间应该拒绝切换模型', async () => {
@@ -948,6 +1102,36 @@ describe('AcpSession', () => {
 
       await expect(session.setModel('gpt-4')).rejects.toThrow(
         'Cannot switch models while a prompt is active'
+      );
+    });
+
+    it('持久化失败时应该回滚运行时模型', async () => {
+      sessionServiceState.updateSessionMetadata.mockRejectedValueOnce(
+        new Error('disk unavailable')
+      );
+
+      await expect(session.setModel('gpt-4')).rejects.toThrow('disk unavailable');
+      expect(getMockAgent().switchModel).toHaveBeenNthCalledWith(1, 'gpt-4');
+      expect(getMockAgent().switchModel).toHaveBeenNthCalledWith(2, 'model-1');
+    });
+
+    it('首次选择模型时应该创建 durable ACP 会话元数据', async () => {
+      const { SessionMissingCreationError } = await import(
+        '../../../../src/services/SessionService.js'
+      );
+      sessionServiceState.updateSessionMetadata.mockRejectedValueOnce(
+        new SessionMissingCreationError('test-session-id')
+      );
+
+      await session.setModel('gpt-4');
+
+      expect(sessionServiceState.createSessionMetadata).toHaveBeenCalledWith(
+        'test-session-id',
+        '/tmp/test',
+        {
+          taskStatus: 'completed',
+          selectedModelId: 'gpt-4',
+        }
       );
     });
   });

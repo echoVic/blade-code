@@ -72,7 +72,7 @@ describe('/fork slash command', () => {
     storeMocks.sessionActions.mockClear();
   });
 
-  it('returns a select_session action with only current-workspace forkable sessions', async () => {
+  it('returns forkable sessions across workspaces', async () => {
     const parentMetadata = createSessionMetadata();
     const otherWorkspaceMetadata = createSessionMetadata({
       sessionId: 'workspace-b-session',
@@ -98,12 +98,11 @@ describe('/fork slash command', () => {
       data: {
         action: 'select_session',
         intent: 'fork',
-        sessions: [parentMetadata],
+        sessions: [parentMetadata, otherWorkspaceMetadata],
       },
     });
 
     expect(sessionServiceMocks.listSessions).toHaveBeenCalledWith({
-      cwd: context.cwd,
       includeSubagents: false,
     });
     expect(storeMocks.restoreSession).not.toHaveBeenCalled();
@@ -135,7 +134,7 @@ describe('/fork slash command', () => {
     });
   });
 
-  it('rejects missing sessions, subagent sessions, and cross-workspace sessions', async () => {
+  it('rejects missing and subagent sessions while allowing another workspace', async () => {
     const ordinary = createSessionMetadata();
     const workspaceB = createSessionMetadata({
       sessionId: 'workspace-b-session',
@@ -162,8 +161,12 @@ describe('/fork slash command', () => {
     await expect(
       forkCommand.handler(['workspace-b-session'], context)
     ).resolves.toEqual({
-      success: false,
-      error: 'Session not found: workspace-b-session',
+      success: true,
+      data: {
+        action: 'activate_session',
+        intent: 'fork',
+        session: workspaceB,
+      },
     });
     await expect(forkCommand.handler(['subagent-session'], context)).resolves.toEqual({
       success: false,
@@ -181,6 +184,24 @@ describe('/fork slash command', () => {
       error: 'Usage: /fork [sessionId]',
     });
     expect(sessionServiceMocks.listSessions).not.toHaveBeenCalled();
+  });
+
+  it('requires the selector when a session ID exists in multiple workspaces', async () => {
+    sessionServiceMocks.listSessions.mockResolvedValue([
+      createSessionMetadata({ sessionId: 'shared-session' }),
+      createSessionMetadata({
+        sessionId: 'shared-session',
+        projectPath: '/workspace/b',
+        rootId: 'root-b',
+      }),
+    ]);
+    const { forkCommand } = await import('../../../../src/slash-commands/fork.js');
+
+    await expect(forkCommand.handler(['shared-session'], context)).resolves.toEqual({
+      success: false,
+      error:
+        'Multiple workspaces contain session shared-session; use /fork to select one',
+    });
   });
 
   it('registers /fork in builtin commands, updates /help copy, and does not import store', async () => {

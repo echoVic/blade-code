@@ -37,6 +37,7 @@ interface MockAcpSessionInstance {
   cancel: ReturnType<typeof vi.fn<AcpSession['cancel']>>;
   setMode: ReturnType<typeof vi.fn<AcpSession['setMode']>>;
   setModel: ReturnType<typeof vi.fn<AcpSession['setModel']>>;
+  getCurrentModelId: ReturnType<typeof vi.fn<AcpSession['getCurrentModelId']>>;
   destroy: ReturnType<typeof vi.fn<AcpSession['destroy']>>;
   replayHistory: ReturnType<typeof vi.fn<AcpSession['replayHistory']>>;
   sendAvailableCommandsDelayed: ReturnType<
@@ -65,12 +66,15 @@ const acpSessionMocks = vi.hoisted(() => ({
   initializeGates: [] as DeferredGate[],
   nextInitializeError: null as Error | null,
   nextReplayError: null as Error | null,
+  currentModelId: 'model-1',
 }));
 const mcpRegistryMocks = vi.hoisted(() => ({
   disconnectAll: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock AcpSession
+// Vitest 4: vi.fn().mockImplementation(arrowFn) is not constructable with `new`.
+// Use a class wrapper delegating to the mock implementation to ensure constructability.
 vi.mock('../../../../src/acp/Session.js', () => {
   const mockAcpSessionImpl = (
     ...[id, cwd, connection, clientCapabilities, options]: AcpSessionConstructorArgs
@@ -93,6 +97,7 @@ vi.mock('../../../../src/acp/Session.js', () => {
       cancel: vi.fn(),
       setMode: vi.fn().mockResolvedValue(undefined),
       setModel: vi.fn().mockResolvedValue(undefined),
+      getCurrentModelId: vi.fn(() => acpSessionMocks.currentModelId),
       destroy: vi.fn().mockImplementation(async () => {
         const error = acpSessionMocks.destroyErrors.shift();
         if (error) throw error;
@@ -109,10 +114,19 @@ vi.mock('../../../../src/acp/Session.js', () => {
     return session;
   };
 
-  const MockAcpSession = vi.fn().mockImplementation(mockAcpSessionImpl);
+  class AcpSessionMock {
+    constructor(...args: AcpSessionConstructorArgs) {
+      const session = mockAcpSessionImpl(...args);
+      Object.assign(this, session);
+    }
+  }
 
   return {
-    AcpSession: MockAcpSession,
+    AcpSession: vi.fn(
+      AcpSessionMock as unknown as (
+        ...args: AcpSessionConstructorArgs
+      ) => MockAcpSessionInstance
+    ),
   };
 });
 
@@ -213,6 +227,7 @@ describe('BladeAgent', () => {
     acpSessionMocks.initializeGates = [];
     acpSessionMocks.nextInitializeError = null;
     acpSessionMocks.nextReplayError = null;
+    acpSessionMocks.currentModelId = 'model-1';
   });
 
   afterEach(() => {
@@ -277,7 +292,7 @@ describe('BladeAgent', () => {
     });
   });
 
-  describe('unstable_listSessions', () => {
+  describe('listSessions', () => {
     it('应该分页列出非 subagent 会话并映射 ACP metadata', async () => {
       sessionServiceMocks.listSessionPage.mockResolvedValueOnce({
         sessions: [
@@ -286,7 +301,23 @@ describe('BladeAgent', () => {
             projectPath: '/tmp/project',
             title: 'Persisted title',
             taskStatus: 'running',
+            taskFailure: {
+              code: 'timeout',
+              message: 'Provider request timed out.',
+              retryable: true,
+            },
             taskStartedAt: '2026-08-04T01:02:00.000Z',
+            taskModelId: 'model-snapshot',
+            taskRetryAvailable: true,
+            taskRetriedFrom: {
+              sessionId: 'failed-source',
+              projectPath: '/tmp/source-worktree',
+            },
+            taskDelivery: {
+              status: 'conflicted',
+              updatedAt: '2026-08-04T01:02:02.000Z',
+              message: 'Source workspace changed after this task started',
+            },
             taskIsolation: 'worktree',
             taskSourceProjectPath: '/tmp/source',
             taskWorktreeBranch: 'blade-worktree-task',
@@ -313,7 +344,7 @@ describe('BladeAgent', () => {
         nextCursor: 'next-page',
       });
 
-      const response = await agent.unstable_listSessions({
+      const response = await agent.listSessions({
         cwd: '/tmp/project',
         cursor: 'current-page',
       });
@@ -333,7 +364,23 @@ describe('BladeAgent', () => {
             updatedAt: '2026-08-04T01:02:03.000Z',
             _meta: {
               'blade/taskStatus': 'running',
+              'blade/taskFailure': {
+                code: 'timeout',
+                message: 'Provider request timed out.',
+                retryable: true,
+              },
               'blade/taskStartedAt': '2026-08-04T01:02:00.000Z',
+              'blade/taskModelId': 'model-snapshot',
+              'blade/taskRetryAvailable': true,
+              'blade/taskRetriedFrom': {
+                sessionId: 'failed-source',
+                projectPath: '/tmp/source-worktree',
+              },
+              'blade/taskDelivery': {
+                status: 'conflicted',
+                updatedAt: '2026-08-04T01:02:02.000Z',
+                message: 'Source workspace changed after this task started',
+              },
               'blade/taskIsolation': 'worktree',
               'blade/taskSourceProjectPath': '/tmp/source',
               'blade/taskWorktreeBranch': 'blade-worktree-task',
@@ -365,7 +412,7 @@ describe('BladeAgent', () => {
     });
 
     it('应该把 null filter 转为 undefined', async () => {
-      await agent.unstable_listSessions({ cwd: null, cursor: null });
+      await agent.listSessions({ cwd: null, cursor: null });
 
       expect(sessionServiceMocks.listSessionPage).toHaveBeenCalledWith({
         cwd: undefined,
@@ -378,7 +425,7 @@ describe('BladeAgent', () => {
     it('应该在读取 catalog 前拒绝相对 cwd', async () => {
       const request: ListSessionsRequest = { cwd: 'relative/project' };
 
-      await expect(agent.unstable_listSessions(request)).rejects.toThrow(
+      await expect(agent.listSessions(request)).rejects.toThrow(
         'ACP session list cwd must be absolute'
       );
       expect(sessionServiceMocks.listSessionPage).not.toHaveBeenCalled();
@@ -388,9 +435,9 @@ describe('BladeAgent', () => {
       const cursorError = new Error('Invalid session cursor');
       sessionServiceMocks.listSessionPage.mockRejectedValueOnce(cursorError);
 
-      await expect(
-        agent.unstable_listSessions({ cursor: 'not-base64url-json' })
-      ).rejects.toBe(cursorError);
+      await expect(agent.listSessions({ cursor: 'not-base64url-json' })).rejects.toBe(
+        cursorError
+      );
       expect(createdSessions).toHaveLength(0);
     });
   });
@@ -432,8 +479,13 @@ describe('BladeAgent', () => {
       expect(response).toMatchObject({
         sessionId: 'forked-session',
         modes: { currentModeId: 'default' },
-        models: { currentModelId: 'gpt-4' },
       });
+      const forkModelCfg = response.configOptions?.find((o: any) => o.id === 'model');
+      expect(
+        forkModelCfg && 'currentValue' in forkModelCfg
+          ? forkModelCfg.currentValue
+          : undefined
+      ).toBe('gpt-4');
 
       await agent.prompt({
         sessionId: 'forked-session',
@@ -539,6 +591,7 @@ describe('BladeAgent', () => {
         { role: 'assistant' as const, content: 'Original answer' },
       ];
       sessionServiceMocks.loadSession.mockResolvedValue(history);
+      acpSessionMocks.currentModelId = 'gpt-3.5';
 
       const response = await loadSession({
         sessionId: 'persisted-session',
@@ -564,7 +617,10 @@ describe('BladeAgent', () => {
         loadedSession.replayHistory.mock.invocationCallOrder[0]
       );
       expect(response?.modes?.currentModeId).toBe('default');
-      expect(response?.models?.currentModelId).toBe('gpt-4');
+      const modelOpt = response?.configOptions?.find((o: any) => o.id === 'model');
+      expect(
+        modelOpt && 'currentValue' in modelOpt ? modelOpt.currentValue : undefined
+      ).toBe('gpt-3.5');
     });
 
     it('应该拒绝不存在的项目会话且不注册空 session', async () => {
@@ -778,9 +834,14 @@ describe('BladeAgent', () => {
         },
       ]);
       expect(modes.currentModeId).toBe('default');
-      expect(response.models).toBeDefined();
-      expect(response.models?.availableModels).toHaveLength(2);
-      expect(response.models?.currentModelId).toBe('gpt-4');
+      const modelCfg = response.configOptions?.find((o: any) => o.id === 'model');
+      expect(modelCfg).toBeDefined();
+      expect(
+        modelCfg && 'options' in modelCfg ? (modelCfg as any).options : []
+      ).toHaveLength(2);
+      expect(
+        modelCfg && 'currentValue' in modelCfg ? modelCfg.currentValue : undefined
+      ).toBe('gpt-4');
     });
 
     it('应该使用默认 cwd（当未提供时）', async () => {
@@ -804,20 +865,25 @@ describe('BladeAgent', () => {
 
       const response = await agent.newSession(params);
 
-      expect(response.models).toBeDefined();
-      expect(response.models?.availableModels).toEqual([
+      const modelCfg2 = response.configOptions?.find((o: any) => o.id === 'model');
+      expect(modelCfg2).toBeDefined();
+      expect(
+        modelCfg2 && 'options' in modelCfg2 ? (modelCfg2 as any).options : []
+      ).toEqual([
         {
-          modelId: 'gpt-4',
+          value: 'gpt-4',
           name: 'GPT-4',
           description: 'openai/gpt-4',
         },
         {
-          modelId: 'gpt-3.5',
+          value: 'gpt-3.5',
           name: 'GPT-3.5',
           description: 'openai/gpt-4.1-mini',
         },
       ]);
-      expect(response.models?.currentModelId).toBe('gpt-4');
+      expect(
+        modelCfg2 && 'currentValue' in modelCfg2 ? modelCfg2.currentValue : undefined
+      ).toBe('gpt-4');
     });
 
     it('应该把客户端 MCP 配置交给 session runtime', async () => {
@@ -1034,7 +1100,7 @@ describe('BladeAgent', () => {
     });
   });
 
-  describe('unstable_setSessionModel', () => {
+  describe('setSessionConfigOption (model switch)', () => {
     it('应该设置会话模型', async () => {
       // 先创建会话
       const newSessionResponse = await agent.newSession({
@@ -1043,14 +1109,13 @@ describe('BladeAgent', () => {
       });
       const sessionId = newSessionResponse.sessionId;
 
-      const params = {
+      const response = await agent.setSessionConfigOption?.({
         sessionId,
-        modelId: 'gpt-3.5',
-      };
+        configId: 'model',
+        value: 'gpt-3.5',
+      });
 
-      const response = await agent.unstable_setSessionModel?.(params);
-
-      expect(response).toEqual({});
+      expect(response).toEqual({ configOptions: [] });
 
       // 验证会话的 setModel 方法被调用
       const sessions = createdSessions;
@@ -1060,9 +1125,10 @@ describe('BladeAgent', () => {
 
     it('应该拒绝为不存在的会话切换模型', async () => {
       await expect(
-        agent.unstable_setSessionModel?.({
+        agent.setSessionConfigOption?.({
           sessionId: 'nonexistent-session',
-          modelId: 'gpt-3.5',
+          configId: 'model',
+          value: 'gpt-3.5',
         })
       ).rejects.toThrow('Session not found: nonexistent-session');
     });

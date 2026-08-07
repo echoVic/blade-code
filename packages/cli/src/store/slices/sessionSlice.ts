@@ -20,6 +20,7 @@ import type { SessionEvent } from '../../context/types.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import { estimateCostUsd } from '../../services/pricing.js';
 import { clearAllMarkdownCache } from '../../ui/utils/markdownIncremental.js';
+import { getCwd } from '../../utils/cwd.js';
 import { createSessionId } from '../../utils/sessionId.js';
 import type {
   BladeStore,
@@ -82,6 +83,7 @@ const initialTokenUsage: TokenUsage = {
  */
 const initialSessionState: SessionState = {
   sessionId: createSessionId('tui'),
+  workspaceRoot: getCwd(),
   messages: [],
   restoredContextMessages: null,
   restoredVisibleMessageCount: 0,
@@ -274,13 +276,15 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
     restoreSession: (
       sessionId: string,
       messages: SessionMessage[],
-      restoredContextMessages?: Message[]
+      restoredContextMessages?: Message[],
+      workspaceRoot?: string
     ) => {
       clearAllMarkdownCache();
       set((state) => ({
         session: {
           ...state.session,
           sessionId,
+          workspaceRoot: workspaceRoot ?? state.session.workspaceRoot,
           messages,
           restoredContextMessages: restoredContextMessages ?? null,
           restoredVisibleMessageCount: restoredContextMessages ? messages.length : 0,

@@ -38,7 +38,12 @@ export const McpRoutes = () => {
       return c.json(result);
     } catch (error) {
       logger.error('[McpRoutes] Failed to get MCP servers:', error);
-      return c.json([]);
+      return c.json(
+        {
+          error: error instanceof Error ? error.message : 'Failed to get MCP servers',
+        },
+        500
+      );
     }
   });
 

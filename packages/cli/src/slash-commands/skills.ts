@@ -15,11 +15,13 @@ const skillsCommand: SlashCommand = {
   category: 'system',
   examples: ['/skills'],
 
-  handler: async (_args, _context): Promise<SlashCommandResult> => {
+  handler: async (_args, context): Promise<SlashCommandResult> => {
     try {
       // 刷新 SkillRegistry，重新扫描所有 skills 目录
       // 这样新创建的 Skill 会被发现
-      const registry = getSkillRegistry();
+      const registry = getSkillRegistry({
+        cwd: context.workspaceRoot ?? context.cwd,
+      });
       await registry.refresh();
 
       // 显示 Skills 管理面板

@@ -25,11 +25,11 @@ vi.mock('../../../../src/slash-commands/types.js', async () => {
 });
 
 vi.mock('../../../../src/tools/builtin/file/SnapshotManager.js', () => ({
-  SnapshotManager: vi.fn(() => ({
-    initialize: mocks.initialize,
-    listAllSnapshots: mocks.listAllSnapshots,
-    rewindLatest: mocks.rewindLatest,
-  })),
+  SnapshotManager: class MockSnapshotManager {
+    initialize = mocks.initialize;
+    listAllSnapshots = mocks.listAllSnapshots;
+    rewindLatest = mocks.rewindLatest;
+  },
 }));
 
 import rewindCommand from '../../../../src/slash-commands/rewind.js';

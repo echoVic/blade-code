@@ -62,6 +62,53 @@ describe('aggregateMessages', () => {
     expect(message?.agentContent?.toolCalls[0]?.status).toBe('running');
   });
 
+  test('restores durable tool metadata and failure status from a result', () => {
+    const [message] = aggregateMessages([
+      {
+        id: 'assistant-edit',
+        role: 'assistant',
+        content: '',
+        timestamp: 1700000000000,
+        tool_calls: [
+          {
+            id: 'edit-1',
+            function: {
+              name: 'Edit',
+              arguments: '{"file_path":"src/example.ts"}',
+            },
+          },
+        ],
+      },
+      {
+        id: 'tool-edit',
+        role: 'tool',
+        content: 'Edited src/example.ts',
+        timestamp: 1700000000001,
+        tool_call_id: 'edit-1',
+        name: 'Edit',
+        metadata: {
+          toolCallId: 'edit-1',
+          toolName: 'Edit',
+          error: null,
+          metadata: {
+            file_path: 'src/example.ts',
+            summary: 'Replaced one match',
+            diff_snippet: '+updated',
+          },
+        },
+      },
+    ] as never);
+
+    expect(message?.agentContent?.toolCalls[0]).toMatchObject({
+      status: 'success',
+      summary: 'Replaced one match',
+      metadata: {
+        file_path: 'src/example.ts',
+        diff_snippet: '+updated',
+      },
+    });
+  });
+
   test('defaults subagent status to running when metadata status is absent', () => {
     const rawMessages = [
       {

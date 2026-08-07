@@ -14,14 +14,16 @@ vi.mock('../../../../src/context/CompactionService.js', () => ({
   CompactionService: { compact: vi.fn() },
 }));
 
-const reactiveCompactionState = vi.hoisted(() => ({
-  tryReactiveCompact: vi.fn(),
-  reset: vi.fn(),
-}));
-
-vi.mock('../../../../src/context/ReactiveCompaction.js', () => ({
-  ReactiveCompaction: vi.fn().mockImplementation(() => reactiveCompactionState),
-}));
+vi.mock('../../../../src/context/ReactiveCompaction.js', () => {
+  const tryReactiveCompact = vi.fn();
+  const reset = vi.fn();
+  return {
+    ReactiveCompaction: class MockReactiveCompaction {
+      tryReactiveCompact = tryReactiveCompact;
+      reset = reset;
+    },
+  };
+});
 
 vi.mock('../../../../src/context/SnipCompaction.js', () => ({
   snipCompact: vi.fn().mockReturnValue({ messages: [], snippedCount: 0 }),
@@ -81,7 +83,7 @@ vi.mock('../../../../src/logging/Logger.js', () => ({
 }));
 
 vi.mock('../../../../src/agent/loop/StreamingToolExecutor.js', () => ({
-  StreamingToolExecutor: vi.fn(),
+  StreamingToolExecutor: class MockStreamingToolExecutor {},
 }));
 
 // ===== Imports (after mocks) =====
@@ -101,6 +103,15 @@ import type {
 import { PermissionMode } from '../../../../src/config/types.js';
 import { CompactionService } from '../../../../src/context/CompactionService.js';
 import { ContextManager } from '../../../../src/context/ContextManager.js';
+import { ReactiveCompaction } from '../../../../src/context/ReactiveCompaction.js';
+
+// Access the shared mock functions via a probe instance of the mocked class
+const reactiveCompactionState = new (
+  ReactiveCompaction as unknown as new () => {
+    tryReactiveCompact: ReturnType<typeof vi.fn>;
+    reset: ReturnType<typeof vi.fn>;
+  }
+)();
 
 // ===== Helpers =====
 
@@ -1181,6 +1192,7 @@ describe('executeLoopGenerator', () => {
         'durable-tool-id',
         undefined,
         undefined,
+        undefined,
         undefined
       );
       expect(context.messages).toContainEqual(
@@ -1238,6 +1250,7 @@ describe('executeLoopGenerator', () => {
         'Read',
         'file content',
         null,
+        undefined,
         undefined,
         undefined,
         undefined
@@ -2388,7 +2401,11 @@ describe('executeLoopGenerator', () => {
         'durable-tool-id',
         '用户拒绝授权',
         undefined,
-        undefined
+        undefined,
+        {
+          summary: '已取消工具执行',
+          shouldExitLoop: true,
+        }
       );
       expect(context.messages).toContainEqual({
         role: 'tool',
@@ -2461,6 +2478,7 @@ describe('executeLoopGenerator', () => {
         null,
         'durable-aborted-tool-id',
         '任务已被用户中止',
+        undefined,
         undefined,
         undefined
       );
@@ -2803,7 +2821,7 @@ describe('executeLoopGenerator', () => {
     it('stop-hook continue preserves assistant-before-control order in history', async () => {
       // 覆盖 HookManager mock：第一次 shouldStop=false（continue），第二次 shouldStop=true
       const { HookManager } = await import('../../../../src/hooks/HookManager.js');
-      const mockHookMgr = (HookManager.getInstance as ReturnType<typeof vi.fn>)();
+      const mockHookMgr = (HookManager.getInstance as any)();
       (mockHookMgr.executeStopHooks as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce({ shouldStop: false, reason: 'keep going' })
         .mockResolvedValueOnce({ shouldStop: true });
@@ -2934,7 +2952,7 @@ describe('executeLoopGenerator', () => {
 
     it('persists stop-hook continue messages with a continuous parent UUID chain', async () => {
       const { HookManager } = await import('../../../../src/hooks/HookManager.js');
-      const mockHookMgr = (HookManager.getInstance as ReturnType<typeof vi.fn>)();
+      const mockHookMgr = (HookManager.getInstance as any)();
       (mockHookMgr.executeStopHooks as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce({ shouldStop: false, continueReason: 'keep going' })
         .mockResolvedValueOnce({ shouldStop: true });

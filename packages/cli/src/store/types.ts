@@ -81,6 +81,7 @@ export interface TokenUsageUpdate extends Partial<TokenUsage> {
  */
 export interface SessionState {
   sessionId: string;
+  workspaceRoot: string;
   messages: SessionMessage[];
   restoredContextMessages: Message[] | null; // resume 时保留的原始上下文（含 summary / multimodal）
   restoredVisibleMessageCount: number; // messages 中来自 restoreSession 的可见消息数
@@ -124,7 +125,8 @@ export interface SessionActions {
   restoreSession: (
     sessionId: string,
     messages: SessionMessage[],
-    restoredContextMessages?: Message[]
+    restoredContextMessages?: Message[],
+    workspaceRoot?: string
   ) => void;
   updateTokenUsage: (usage: TokenUsageUpdate) => void;
   resetContextUsage: () => void;

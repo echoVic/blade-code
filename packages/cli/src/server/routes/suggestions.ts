@@ -1,11 +1,14 @@
-import fg from 'fast-glob';
-import { Hono } from 'hono';
 import { execSync } from 'node:child_process';
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
+import fg from 'fast-glob';
+import { Hono } from 'hono';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { getFileSystemService } from '../../services/FileSystemService.js';
-import { getFuzzyCommandSuggestions } from '../../slash-commands/index.js';
+import {
+  getFuzzyCommandSuggestions,
+  initializeCustomCommands,
+} from '../../slash-commands/index.js';
 import { getCwd } from '../../utils/cwd.js';
 import {
   DEFAULT_EXCLUDE_DIRS,
@@ -34,6 +37,8 @@ type Variables = {
 const DEFAULT_IGNORE_PATTERNS = [
   ...DEFAULT_EXCLUDE_DIRS.map((dir) => `${dir}/**`),
   ...DEFAULT_EXCLUDE_DIRS,
+  ...DEFAULT_EXCLUDE_DIRS.map((dir) => `**/${dir}/**`),
+  ...DEFAULT_EXCLUDE_DIRS.map((dir) => `**/${dir}`),
   ...DEFAULT_EXCLUDE_FILE_PATTERNS.map((pattern) => `**/${pattern}`),
 ];
 
@@ -56,7 +61,9 @@ export const SuggestionsRoutes = () => {
   app.get('/commands', async (c) => {
     try {
       const query = c.req.query('q') || '';
-      const suggestions = getFuzzyCommandSuggestions(query).filter(
+      const directory = c.get('directory') || getCwd();
+      await initializeCustomCommands(directory);
+      const suggestions = getFuzzyCommandSuggestions(query, directory).filter(
         (s) => !WEB_EXCLUDED_COMMANDS.has(s.command)
       );
       return c.json(suggestions);
@@ -71,12 +78,13 @@ export const SuggestionsRoutes = () => {
       const query = c.req.query('q') || '';
       const directory = c.get('directory') || getCwd();
       const limit = Math.min(Number(c.req.query('limit')) || 100, 1000);
+      const filesOnly = c.req.query('type') === 'file';
 
       const files = await fg('**/*', {
         cwd: directory,
         dot: false,
         followSymbolicLinks: false,
-        onlyFiles: false,
+        onlyFiles: filesOnly,
         markDirectories: true,
         unique: true,
         ignore: DEFAULT_IGNORE_PATTERNS,

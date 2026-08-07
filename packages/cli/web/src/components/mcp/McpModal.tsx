@@ -1,8 +1,6 @@
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import { cn } from '@/lib/utils';
-import { useAppStore } from '@/store/AppStore';
 import { useDebounceFn, useInfiniteScroll, useRequest } from 'ahooks';
 import {
+  AlertCircle,
   Check,
   Download,
   ExternalLink,
@@ -12,7 +10,15 @@ import {
   Search,
   X,
 } from 'lucide-react';
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { requestJson } from '@/lib/http';
+import {
+  restoreFocusToSelector,
+  restoreMobileNavigationFocus,
+} from '@/lib/mobileNavigationFocus';
+import { cn } from '@/lib/utils';
+import { useAppStore } from '@/store/AppStore';
 
 interface McpServer {
   id: string;
@@ -44,9 +50,6 @@ interface NpmSearchResult {
   total: number;
 }
 
-type PermissionKey = 'read' | 'write' | 'shell';
-type ServerPermissions = Record<PermissionKey, boolean>;
-
 const STATUS_STYLES: Record<McpServer['status'], string> = {
   connected: 'text-[#16A34A] dark:text-[#22C55E]',
   connecting: 'text-[#2563eb] dark:text-[#3b82f6]',
@@ -64,13 +67,17 @@ const STATUS_LABELS: Record<McpServer['status'], string> = {
 const PAGE_SIZE = 20;
 
 const fetchServers = async (): Promise<McpServer[]> => {
-  const response = await fetch('/mcp');
-  if (!response.ok) throw new Error('Failed to fetch servers');
-  return response.json();
+  return requestJson<McpServer[]>('/mcp');
 };
 
 const DEFAULT_SEARCH_QUERY = 'mcp server @modelcontextprotocol';
 const MIN_SEARCH_LENGTH = 3;
+
+const packageServerName = (packageName: string): string =>
+  packageName
+    .split('/')
+    .pop()
+    ?.replace(/^server-/, '') || packageName;
 
 const fetchNpmPackages = async (
   query: string,
@@ -79,9 +86,7 @@ const fetchNpmPackages = async (
   const searchQuery =
     query && query.length >= MIN_SEARCH_LENGTH ? query : DEFAULT_SEARCH_QUERY;
   const url = `https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(searchQuery)}&size=${PAGE_SIZE}&from=${from}`;
-  const response = await fetch(url);
-  if (!response.ok) throw new Error('Failed to fetch packages');
-  const data: NpmSearchResult = await response.json();
+  const data = await requestJson<NpmSearchResult>(url);
   return {
     list: data.objects.map((obj) => obj.package),
     total: data.total,
@@ -94,9 +99,13 @@ export function McpModal() {
   const [tab, setTab] = useState<'installed' | 'catalog'>('installed');
   const [addServerOpen, setAddServerOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [permissionOverrides, setPermissionOverrides] = useState<
-    Record<string, ServerPermissions>
-  >({});
+  const [serverSearch, setServerSearch] = useState('');
+  const [serverActionError, setServerActionError] = useState<string | null>(null);
+  const [pendingServerAction, setPendingServerAction] = useState<{
+    type: 'connect' | 'disconnect' | 'delete';
+    name: string;
+  } | null>(null);
+  const [deleteConfirmName, setDeleteConfirmName] = useState<string | null>(null);
   const [catalogSearchInput, setCatalogSearchInput] = useState('');
   const [catalogSearch, setCatalogSearch] = useState('');
   const [installingName, setInstallingName] = useState<string | null>(null);
@@ -113,7 +122,9 @@ export function McpModal() {
   const {
     data: servers = [],
     loading,
+    error: serversError,
     run: loadServers,
+    runAsync: loadServersAsync,
   } = useRequest(fetchServers, {
     refreshDeps: [isMcpOpen],
     ready: isMcpOpen,
@@ -129,6 +140,7 @@ export function McpModal() {
     loading: catalogLoading,
     loadingMore,
     noMore,
+    error: catalogError,
     reload: reloadCatalog,
   } = useInfiniteScroll(
     async (d) => {
@@ -143,28 +155,11 @@ export function McpModal() {
     }
   );
 
-  const { runAsync: connectServer } = useRequest(
-    async (name: string) => {
-      await fetch(`/mcp/${encodeURIComponent(name)}/connect`, { method: 'POST' });
-    },
-    { manual: true, onSuccess: loadServers }
-  );
-
-  const { runAsync: disconnectServer } = useRequest(
-    async (name: string) => {
-      await fetch(`/mcp/${encodeURIComponent(name)}/disconnect`, { method: 'POST' });
-    },
-    { manual: true, onSuccess: loadServers }
-  );
-
-  const { runAsync: deleteServer } = useRequest(
-    async (name: string) => {
-      await fetch(`/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' });
-    },
-    { manual: true, onSuccess: loadServers }
-  );
-
-  const { runAsync: addServer } = useRequest(
+  const {
+    runAsync: addServer,
+    loading: addingServer,
+    error: addServerError,
+  } = useRequest(
     async (config: {
       name: string;
       command?: string;
@@ -172,7 +167,7 @@ export function McpModal() {
       url?: string;
       env?: Record<string, string>;
     }) => {
-      await fetch('/mcp', {
+      await requestJson<{ success: boolean }>('/mcp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: config.name, config }),
@@ -181,7 +176,7 @@ export function McpModal() {
     {
       manual: true,
       onSuccess: () => {
-        loadServers();
+        void loadServersAsync();
         setAddServerOpen(false);
         setInstallPackage(null);
         setInstallingName(null);
@@ -192,28 +187,46 @@ export function McpModal() {
     }
   );
 
+  const filteredServers = useMemo(() => {
+    const query = serverSearch.trim().toLowerCase();
+    if (!query) return servers;
+    return servers.filter((server) =>
+      [server.name, server.endpoint, server.description].some((value) =>
+        value.toLowerCase().includes(query)
+      )
+    );
+  }, [serverSearch, servers]);
+
   const selectedServer = useMemo(
-    () => servers.find((server) => server.id === selectedId) ?? servers[0],
-    [servers, selectedId]
+    () =>
+      filteredServers.find((server) => server.id === selectedId) ?? filteredServers[0],
+    [filteredServers, selectedId]
   );
 
-  const selectedPermissions = selectedServer
-    ? (permissionOverrides[selectedServer.id] ?? {
-        read: true,
-        write: false,
-        shell: false,
-      })
-    : { read: true, write: false, shell: false };
-
-  const updatePermission = (key: PermissionKey) => {
-    if (!selectedServer) return;
-    setPermissionOverrides((prev) => ({
-      ...prev,
-      [selectedServer.id]: {
-        ...selectedPermissions,
-        [key]: !selectedPermissions[key],
-      },
-    }));
+  const runServerAction = async (
+    type: 'connect' | 'disconnect' | 'delete',
+    name: string
+  ) => {
+    setPendingServerAction({ type, name });
+    setServerActionError(null);
+    try {
+      const suffix = type === 'delete' ? '' : `/${type}`;
+      await requestJson<{ success: boolean }>(
+        `/mcp/${encodeURIComponent(name)}${suffix}`,
+        { method: type === 'delete' ? 'DELETE' : 'POST' }
+      );
+      await loadServersAsync();
+      if (type === 'delete') {
+        setDeleteConfirmName(null);
+        setSelectedId(null);
+      }
+    } catch (error) {
+      setServerActionError(
+        error instanceof Error ? error.message : `Failed to ${type} server`
+      );
+    } finally {
+      setPendingServerAction(null);
+    }
   };
 
   const installedPackages = useMemo(() => {
@@ -235,13 +248,14 @@ export function McpModal() {
     <>
       <Dialog open={isMcpOpen} onOpenChange={toggleMcp}>
         <DialogContent
-          className="sm:max-w-[900px] h-[680px] p-0 overflow-hidden gap-0 bg-white dark:bg-[#09090b] border border-[#E5E7EB] dark:border-zinc-800 rounded-xl flex flex-col"
+          onCloseAutoFocus={restoreMobileNavigationFocus}
+          className="flex h-[min(680px,calc(100dvh-24px))] flex-col gap-0 overflow-hidden rounded-xl border border-[#E5E7EB] bg-white p-0 dark:border-zinc-800 dark:bg-[#09090b] sm:max-w-[900px]"
           aria-describedby={undefined}
           hideCloseButton
         >
           <DialogTitle className="sr-only">MCP</DialogTitle>
           <div className="flex flex-1 min-h-0">
-            <div className="flex-1 p-8 flex flex-col gap-5 min-h-0 overflow-hidden">
+            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4 sm:gap-5 sm:p-8">
               <div className="flex items-center justify-between shrink-0">
                 <h2 className="text-lg font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">
                   MCP
@@ -249,12 +263,14 @@ export function McpModal() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={loadServers}
+                    aria-label="Refresh MCP servers"
                     className="h-8 w-8 rounded-md text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] transition-colors flex items-center justify-center"
                     disabled={loading}
                   >
                     <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
                   </button>
                   <button
+                    data-mcp-add-server-trigger
                     onClick={() => setAddServerOpen(true)}
                     className="h-8 px-3 rounded-md bg-[#E5E7EB] text-[#111827] dark:bg-[#27272a] dark:text-[#E5E5E5] text-xs font-mono font-semibold flex items-center gap-1 hover:bg-[#D1D5DB] dark:hover:bg-[#32323a]"
                   >
@@ -263,6 +279,7 @@ export function McpModal() {
                   </button>
                   <button
                     onClick={toggleMcp}
+                    aria-label="Close MCP"
                     className="h-8 w-8 rounded-md text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] transition-colors flex items-center justify-center"
                   >
                     <X className="h-4 w-4" />
@@ -288,28 +305,80 @@ export function McpModal() {
                 </TabButton>
               </div>
 
+              {serverActionError && (
+                <div
+                  role="alert"
+                  className="flex shrink-0 items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-mono text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
+                >
+                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span className="min-w-0 flex-1">{serverActionError}</span>
+                  <button
+                    type="button"
+                    onClick={() => setServerActionError(null)}
+                    className="shrink-0 underline"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
               {tab === 'installed' ? (
-                <div className="flex gap-5 flex-1 min-h-0 overflow-hidden">
-                  <div className="w-[220px] flex flex-col gap-3 min-h-0 overflow-hidden">
+                <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden sm:flex-row sm:gap-5">
+                  <div className="flex h-[180px] w-full shrink-0 flex-col gap-3 overflow-hidden sm:h-auto sm:w-[220px]">
                     <span className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5] shrink-0">
                       Servers
                     </span>
-                    <div className="h-8 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] flex items-center px-3 text-[12px] text-[#9CA3AF] dark:text-[#71717a] font-mono shrink-0">
-                      Search servers...
-                    </div>
+                    <input
+                      type="search"
+                      aria-label="Search installed MCP servers"
+                      value={serverSearch}
+                      onChange={(event) => setServerSearch(event.target.value)}
+                      placeholder="Search servers..."
+                      className="h-8 shrink-0 rounded-md border border-transparent bg-[#F3F4F6] px-3 text-[12px] font-mono text-[#111827] outline-none placeholder:text-[#9CA3AF] focus:border-[#D1D5DB] dark:bg-[#18181b] dark:text-[#E5E5E5] dark:placeholder:text-[#71717a] dark:focus:border-[#3f3f46]"
+                    />
                     <div className="flex flex-col gap-2 overflow-y-auto flex-1 min-h-0 pr-1">
-                      {servers.length === 0 && !loading && (
-                        <div className="text-center py-8 text-[#9CA3AF] dark:text-[#71717a] text-sm font-mono">
-                          No MCP servers configured
+                      {loading && servers.length === 0 && (
+                        <div
+                          role="status"
+                          className="flex items-center justify-center gap-2 py-8 text-sm font-mono text-[#9CA3AF] dark:text-[#71717a]"
+                        >
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Loading servers...
                         </div>
                       )}
-                      {servers.map((server) => (
+                      {serversError && !loading && (
+                        <div
+                          role="alert"
+                          className="flex flex-col items-center gap-2 py-6 text-center text-xs font-mono text-red-600 dark:text-red-400"
+                        >
+                          <span>{serversError.message}</span>
+                          <button
+                            type="button"
+                            onClick={loadServers}
+                            className="rounded-md border border-red-200 px-2.5 py-1 text-[11px] dark:border-red-900"
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      )}
+                      {!serversError && !loading && filteredServers.length === 0 && (
+                        <div className="text-center py-8 text-[#9CA3AF] dark:text-[#71717a] text-sm font-mono">
+                          {serverSearch
+                            ? 'No servers match your search'
+                            : 'No MCP servers configured'}
+                        </div>
+                      )}
+                      {filteredServers.map((server) => (
                         <button
                           key={server.id}
-                          onClick={() => setSelectedId(server.id)}
+                          onClick={() => {
+                            setSelectedId(server.id);
+                            setDeleteConfirmName(null);
+                            setServerActionError(null);
+                          }}
                           className={cn(
                             'text-left rounded-lg px-3 py-2 flex flex-col gap-1 transition-colors shrink-0',
-                            server.id === selectedId
+                            server.id === selectedServer?.id
                               ? 'bg-[#E5E7EB] dark:bg-[#111827]'
                               : 'bg-white dark:bg-[#0C0C0C] hover:bg-[#F3F4F6] dark:hover:bg-[#18181b]'
                           )}
@@ -362,47 +431,72 @@ export function McpModal() {
                       <div className="flex items-center gap-2">
                         {selectedServer.status === 'connected' ? (
                           <button
-                            onClick={() => disconnectServer(selectedServer.name)}
+                            onClick={() =>
+                              void runServerAction('disconnect', selectedServer.name)
+                            }
+                            disabled={pendingServerAction !== null}
                             className="h-7 px-3 rounded-md bg-[#E5E7EB] text-[#111827] dark:bg-[#27272a] dark:text-[#E5E5E5] text-[11px] font-mono font-semibold"
                           >
-                            Disconnect
+                            {pendingServerAction?.type === 'disconnect' &&
+                            pendingServerAction.name === selectedServer.name
+                              ? 'Disconnecting...'
+                              : 'Disconnect'}
                           </button>
                         ) : (
                           <button
-                            onClick={() => connectServer(selectedServer.name)}
+                            onClick={() =>
+                              void runServerAction('connect', selectedServer.name)
+                            }
+                            disabled={pendingServerAction !== null}
                             className="h-7 px-3 rounded-md bg-[#16A34A] dark:bg-[#22C55E] text-white dark:text-[#0C0C0C] text-[11px] font-mono font-semibold"
                           >
-                            Connect
+                            {pendingServerAction?.type === 'connect' &&
+                            pendingServerAction.name === selectedServer.name
+                              ? 'Connecting...'
+                              : 'Connect'}
                           </button>
                         )}
                         <button
-                          onClick={() => deleteServer(selectedServer.name)}
+                          onClick={() => setDeleteConfirmName(selectedServer.name)}
+                          disabled={pendingServerAction !== null}
                           className="h-7 px-3 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] text-[#ef4444] text-[11px] font-mono font-semibold"
                         >
                           Delete
                         </button>
                       </div>
 
-                      <div className="h-px bg-[#E5E7EB] dark:bg-[#1f2937]" />
-
-                      <span className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">
-                        Permissions
-                      </span>
-                      <PermissionRow
-                        label="File read"
-                        enabled={selectedPermissions.read}
-                        onToggle={() => updatePermission('read')}
-                      />
-                      <PermissionRow
-                        label="File write"
-                        enabled={selectedPermissions.write}
-                        onToggle={() => updatePermission('write')}
-                      />
-                      <PermissionRow
-                        label="Shell exec"
-                        enabled={selectedPermissions.shell}
-                        onToggle={() => updatePermission('shell')}
-                      />
+                      {deleteConfirmName === selectedServer.name && (
+                        <div
+                          role="alertdialog"
+                          aria-label={`Delete ${selectedServer.name}`}
+                          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 dark:border-red-900/60 dark:bg-red-950/30"
+                        >
+                          <span className="text-[11px] font-mono text-red-700 dark:text-red-300">
+                            Remove this server and its saved configuration?
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setDeleteConfirmName(null)}
+                              className="h-7 rounded-md px-2.5 text-[11px] font-mono text-[#6B7280] dark:text-[#a1a1aa]"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void runServerAction('delete', selectedServer.name)
+                              }
+                              disabled={pendingServerAction !== null}
+                              className="h-7 rounded-md bg-red-600 px-2.5 text-[11px] font-mono font-semibold text-white disabled:opacity-60"
+                            >
+                              {pendingServerAction?.type === 'delete'
+                                ? 'Deleting...'
+                                : 'Delete server'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
 
                       <span className="text-sm font-mono font-semibold text-[#111827] dark:text-[#E5E5E5]">
                         Tools ({selectedServer.tools.length})
@@ -439,6 +533,7 @@ export function McpModal() {
                       <Search className="h-3.5 w-3.5 text-[#9CA3AF] dark:text-[#71717a]" />
                       <input
                         type="text"
+                        aria-label="Search MCP server catalog"
                         value={catalogSearchInput}
                         onChange={(e) => {
                           setCatalogSearchInput(e.target.value);
@@ -451,15 +546,32 @@ export function McpModal() {
                   </div>
 
                   <div ref={catalogRef} className="flex-1 overflow-y-auto min-h-0">
-                    {catalogLoading && !catalogData ? (
+                    {catalogError ? (
+                      <div
+                        role="alert"
+                        className="flex flex-col items-center gap-3 py-12 text-center font-mono"
+                      >
+                        <AlertCircle className="h-6 w-6 text-red-500" />
+                        <span className="text-xs text-red-600 dark:text-red-400">
+                          {catalogError.message}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={reloadCatalog}
+                          className="rounded-md border border-[#E5E7EB] px-3 py-1.5 text-[11px] text-[#6B7280] dark:border-[#27272a] dark:text-[#a1a1aa]"
+                        >
+                          Retry catalog
+                        </button>
+                      </div>
+                    ) : catalogLoading && !catalogData ? (
                       <div className="flex items-center justify-center py-12">
                         <Loader2 className="h-6 w-6 text-[#9CA3AF] dark:text-[#71717a] animate-spin" />
                       </div>
                     ) : (
-                      <div className="grid grid-cols-2 gap-3 pb-4">
+                      <div className="grid grid-cols-1 gap-3 pb-4 sm:grid-cols-2">
                         {catalogData?.list.map((pkg) => {
                           const isInstalled = installedPackages.has(
-                            pkg.name.toLowerCase().replace(/\s+/g, '-')
+                            packageServerName(pkg.name).toLowerCase()
                           );
                           const isInstalling = installingName === pkg.name;
                           const tag = getPackageTag(pkg);
@@ -532,6 +644,11 @@ export function McpModal() {
                             </div>
                           );
                         })}
+                        {catalogData?.list.length === 0 && (
+                          <div className="col-span-full py-12 text-center text-xs font-mono text-[#9CA3AF] dark:text-[#71717a]">
+                            No packages found
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -573,15 +690,19 @@ export function McpModal() {
         open={addServerOpen}
         onOpenChange={setAddServerOpen}
         onAdd={addServer}
+        saving={addingServer}
+        error={addServerError?.message ?? null}
       />
 
       {installPackage && (
         <McpInstallModal
           pkg={installPackage}
           onClose={() => setInstallPackage(null)}
+          installing={addingServer}
+          error={addServerError?.message ?? null}
           onInstall={(config) => {
             setInstallingName(installPackage.name);
-            addServer(config);
+            return addServer(config);
           }}
         />
       )}
@@ -613,51 +734,12 @@ function TabButton({
   );
 }
 
-function PermissionRow({
-  label,
-  enabled,
-  onToggle,
-}: {
-  label: string;
-  enabled: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-[13px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">
-        {label}
-      </span>
-      <ToggleSwitch enabled={enabled} onChange={onToggle} />
-    </div>
-  );
-}
-
-function ToggleSwitch({
-  enabled,
-  onChange,
-}: {
-  enabled: boolean;
-  onChange: () => void;
-}) {
-  return (
-    <button
-      onClick={onChange}
-      className={cn(
-        'w-9 h-5 rounded-full px-0.5 flex items-center transition-colors',
-        enabled
-          ? 'bg-[#16A34A] dark:bg-[#22C55E] justify-end'
-          : 'bg-[#E5E7EB] dark:bg-[#27272a] justify-start'
-      )}
-    >
-      <span className="h-4 w-4 rounded-full bg-white" />
-    </button>
-  );
-}
-
 function McpAddServerModal({
   open,
   onOpenChange,
   onAdd,
+  saving,
+  error,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -668,53 +750,73 @@ function McpAddServerModal({
     url?: string;
     env?: Record<string, string>;
   }) => Promise<void>;
+  saving: boolean;
+  error: string | null;
 }) {
   const [mode, setMode] = useState<'form' | 'json'>('form');
   const [name, setName] = useState('');
   const [command, setCommand] = useState('');
   const [args, setArgs] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
   const [jsonConfig, setJsonConfig] = useState(`{
   "name": "my-server",
   "command": "npx",
   "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
 }`);
 
-  const handleSubmit = () => {
+  useEffect(() => {
+    if (open) setValidationError(null);
+  }, [open]);
+
+  const handleSubmit = async () => {
+    setValidationError(null);
     if (mode === 'json') {
+      let config: {
+        name: string;
+        command?: string;
+        args?: string[];
+        url?: string;
+        env?: Record<string, string>;
+      };
       try {
-        const config = JSON.parse(jsonConfig);
-        onAdd(config);
+        config = JSON.parse(jsonConfig);
       } catch {
-        alert('Invalid JSON');
-      }
-    } else {
-      if (!name || !command) {
-        alert('Name and command are required');
+        setValidationError('Enter valid JSON with a server name and transport.');
         return;
       }
-      onAdd({
+      await onAdd(config).catch(() => undefined);
+    } else {
+      if (!name || !command) {
+        setValidationError('Name and command are required.');
+        return;
+      }
+      await onAdd({
         name,
         command,
         args: args.split(' ').filter(Boolean),
-      });
+      }).catch(() => undefined);
     }
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="sm:max-w-[540px] p-0 overflow-hidden gap-0 bg-white dark:bg-[#09090b] border border-[#E5E7EB] dark:border-zinc-800 rounded-xl"
+        onCloseAutoFocus={(event) =>
+          restoreFocusToSelector('[data-mcp-add-server-trigger]', event)
+        }
+        className="gap-0 overflow-y-auto rounded-xl border border-[#E5E7EB] bg-white p-0 dark:border-zinc-800 dark:bg-[#09090b] sm:max-w-[540px]"
         aria-describedby={undefined}
         hideCloseButton
       >
         <DialogTitle className="sr-only">Add MCP Server</DialogTitle>
-        <div className="p-6 flex flex-col gap-4">
+        <div className="flex flex-col gap-4 p-4 sm:p-6">
           <div className="flex items-center justify-between">
             <h3 className="text-base font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">
               Add MCP Server
             </h3>
             <button
               onClick={() => onOpenChange(false)}
+              aria-label="Close add MCP server"
               className="h-8 w-8 rounded-md text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] transition-colors flex items-center justify-center"
             >
               <X className="h-4 w-4" />
@@ -736,6 +838,7 @@ function McpAddServerModal({
                 JSON config
               </span>
               <textarea
+                aria-label="JSON configuration"
                 className="min-h-[140px] rounded-md bg-white dark:bg-[#0C0C0C] text-[#111827] dark:text-[#E5E5E5] font-mono text-[12px] p-3 border border-transparent focus:outline-none focus:border-[#E5E7EB] dark:border-[#27272a]"
                 value={jsonConfig}
                 onChange={(e) => setJsonConfig(e.target.value)}
@@ -748,6 +851,7 @@ function McpAddServerModal({
                   Server name
                 </span>
                 <input
+                  aria-label="Server name"
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
@@ -760,6 +864,7 @@ function McpAddServerModal({
                   Command
                 </span>
                 <input
+                  aria-label="Server command"
                   type="text"
                   value={command}
                   onChange={(e) => setCommand(e.target.value)}
@@ -772,6 +877,7 @@ function McpAddServerModal({
                   Arguments (space separated)
                 </span>
                 <input
+                  aria-label="Server arguments"
                   type="text"
                   value={args}
                   onChange={(e) => setArgs(e.target.value)}
@@ -779,6 +885,15 @@ function McpAddServerModal({
                   className="h-8 rounded-md bg-[#F3F4F6] dark:bg-[#18181b] px-3 text-[12px] font-mono text-[#111827] dark:text-[#E5E5E5] border border-transparent focus:outline-none focus:border-[#E5E7EB] dark:border-[#27272a]"
                 />
               </div>
+            </div>
+          )}
+
+          {(validationError || error) && (
+            <div
+              role="alert"
+              className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-mono text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
+            >
+              {validationError || error}
             </div>
           )}
 
@@ -790,10 +905,11 @@ function McpAddServerModal({
               Cancel
             </button>
             <button
-              onClick={handleSubmit}
-              className="h-7 px-3 rounded-md bg-[#16A34A] dark:bg-[#22C55E] text-white dark:text-[#0C0C0C] text-[11px] font-mono font-semibold"
+              onClick={() => void handleSubmit()}
+              disabled={saving}
+              className="h-7 px-3 rounded-md bg-[#16A34A] dark:bg-[#22C55E] text-white dark:text-[#0C0C0C] text-[11px] font-mono font-semibold disabled:opacity-60"
             >
-              Add Server
+              {saving ? 'Adding...' : 'Add Server'}
             </button>
           </div>
         </div>
@@ -806,6 +922,8 @@ function McpInstallModal({
   pkg,
   onClose,
   onInstall,
+  installing,
+  error,
 }: {
   pkg: NpmPackage;
   onClose: () => void;
@@ -814,43 +932,44 @@ function McpInstallModal({
     command: string;
     args: string[];
     env?: Record<string, string>;
-  }) => void;
+  }) => Promise<void>;
+  installing: boolean;
+  error: string | null;
 }) {
-  const serverName =
-    pkg.name
-      .split('/')
-      .pop()
-      ?.replace(/^server-/, '') || pkg.name;
+  const serverName = packageServerName(pkg.name);
   const [name, setName] = useState(serverName);
   const [args, setArgs] = useState(`-y ${pkg.name}`);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
-  const handleInstall = () => {
+  const handleInstall = async () => {
+    setValidationError(null);
     if (!name.trim()) {
-      alert('Server name is required');
+      setValidationError('Server name is required.');
       return;
     }
-    onInstall({
+    await onInstall({
       name: name.trim(),
       command: 'npx',
       args: args.split(' ').filter(Boolean),
-    });
+    }).catch(() => undefined);
   };
 
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent
-        className="sm:max-w-[480px] p-0 overflow-hidden gap-0 bg-white dark:bg-[#09090b] border border-[#E5E7EB] dark:border-zinc-800 rounded-xl"
+        className="gap-0 overflow-y-auto rounded-xl border border-[#E5E7EB] bg-white p-0 dark:border-zinc-800 dark:bg-[#09090b] sm:max-w-[480px]"
         aria-describedby={undefined}
         hideCloseButton
       >
         <DialogTitle className="sr-only">Install {pkg.name}</DialogTitle>
-        <div className="p-6 flex flex-col gap-4">
+        <div className="flex flex-col gap-4 p-4 sm:p-6">
           <div className="flex items-center justify-between">
             <h3 className="text-base font-semibold text-[#111827] dark:text-[#E5E5E5] font-mono">
               Install MCP Server
             </h3>
             <button
               onClick={onClose}
+              aria-label="Close MCP installation"
               className="h-8 w-8 rounded-md text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] transition-colors flex items-center justify-center"
             >
               <X className="h-4 w-4" />
@@ -874,6 +993,7 @@ function McpInstallModal({
                 Server name
               </span>
               <input
+                aria-label="Server name"
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -886,6 +1006,7 @@ function McpInstallModal({
                 Arguments
               </span>
               <input
+                aria-label="Server arguments"
                 type="text"
                 value={args}
                 onChange={(e) => setArgs(e.target.value)}
@@ -898,6 +1019,15 @@ function McpInstallModal({
             </div>
           </div>
 
+          {(validationError || error) && (
+            <div
+              role="alert"
+              className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-mono text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
+            >
+              {validationError || error}
+            </div>
+          )}
+
           <div className="flex items-center justify-end gap-2 pt-2">
             <button
               onClick={onClose}
@@ -906,10 +1036,11 @@ function McpInstallModal({
               Cancel
             </button>
             <button
-              onClick={handleInstall}
-              className="h-7 px-3 rounded-md bg-[#16A34A] dark:bg-[#22C55E] text-white dark:text-[#0C0C0C] text-[11px] font-mono font-semibold"
+              onClick={() => void handleInstall()}
+              disabled={installing}
+              className="h-7 px-3 rounded-md bg-[#16A34A] dark:bg-[#22C55E] text-white dark:text-[#0C0C0C] text-[11px] font-mono font-semibold disabled:opacity-60"
             >
-              Install
+              {installing ? 'Installing...' : 'Install'}
             </button>
           </div>
         </div>

@@ -197,6 +197,59 @@ describe('SessionRuntime', () => {
     await runtime.dispose();
   });
 
+  it('restores the task model snapshot from durable metadata', async () => {
+    const workspaceRoot = path.join(storageRoot, 'task-model-project');
+    await SessionService.createSessionMetadata('task-model-session', workspaceRoot, {
+      taskIsolation: 'local',
+      taskSourceProjectPath: workspaceRoot,
+      taskModelId: 'model-2',
+    });
+
+    const runtime = await SessionRuntime.create({
+      sessionId: 'task-model-session',
+      workspaceRoot,
+    });
+
+    expect(runtime.getCurrentModelId()).toBe('model-2');
+    await runtime.dispose();
+  });
+
+  it('restores the selected model for a regular session after runtime reconstruction', async () => {
+    const workspaceRoot = path.join(storageRoot, 'selected-model-project');
+    await SessionService.createSessionMetadata(
+      'selected-model-session',
+      workspaceRoot,
+      {
+        taskStatus: 'completed',
+        selectedModelId: 'model-2',
+      }
+    );
+
+    const runtime = await SessionRuntime.create({
+      sessionId: 'selected-model-session',
+      workspaceRoot,
+    });
+
+    expect(runtime.getCurrentModelId()).toBe('model-2');
+    await runtime.dispose();
+  });
+
+  it('falls back to the current model when a durable selection was removed', async () => {
+    const workspaceRoot = path.join(storageRoot, 'removed-model-project');
+    await SessionService.createSessionMetadata('removed-model-session', workspaceRoot, {
+      taskStatus: 'completed',
+      selectedModelId: 'removed-model',
+    });
+
+    const runtime = await SessionRuntime.create({
+      sessionId: 'removed-model-session',
+      workspaceRoot,
+    });
+
+    expect(runtime.getCurrentModelId()).toBe('model-1');
+    await runtime.dispose();
+  });
+
   it('owns the explicit workspace root across runtime initialization', async () => {
     const workspaceRoot = path.join(storageRoot, 'project');
     const runtime = await SessionRuntime.create({
@@ -275,10 +328,20 @@ describe('SessionRuntime', () => {
       });
       expect(running).not.toHaveProperty('taskOwnerPid');
 
-      const failed = await runtime.setTaskStatus('failed', 'Model unavailable');
+      const failed = await runtime.setTaskStatus(
+        'failed',
+        new Error(
+          'Model unavailable at /Users/alice/private/config.json token=secret-value'
+        )
+      );
       expect(failed).toMatchObject({
         taskStatus: 'failed',
-        taskStatusReason: 'Model unavailable',
+        taskStatusReason: 'The selected model is unavailable.',
+        taskFailure: {
+          code: 'model_unavailable',
+          message: 'The selected model is unavailable.',
+          retryable: true,
+        },
         taskCompletedAt: expect.any(String),
       });
 
@@ -288,6 +351,7 @@ describe('SessionRuntime', () => {
         taskStartedAt: expect.any(String),
       });
       expect(rerunning?.taskStatusReason).toBeUndefined();
+      expect(rerunning?.taskFailure).toBeUndefined();
       expect(rerunning?.taskCompletedAt).toBeUndefined();
 
       const completed = await runtime.setTaskStatus('completed');
@@ -324,7 +388,11 @@ describe('SessionRuntime', () => {
           type: 'task.status',
           properties: expect.objectContaining({
             taskStatus: 'failed',
-            taskStatusReason: 'Model unavailable',
+            taskStatusReason: 'The selected model is unavailable.',
+            taskFailure: expect.objectContaining({
+              code: 'model_unavailable',
+              retryable: true,
+            }),
           }),
         }),
         expect.objectContaining({
@@ -488,6 +556,32 @@ describe('SessionRuntime', () => {
     await runtime.dispose();
   });
 
+  it('durably discards pending input after explicit cancellation', async () => {
+    const workspaceRoot = path.join(storageRoot, 'cancelled-input-project');
+    const sessionId = 'runtime-cancelled-input';
+    const runtime = await SessionRuntime.create({
+      sessionId,
+      workspaceRoot,
+    });
+    const prepared = await runtime.prepareInputTurn('do not replay this input');
+    expect(prepared.accepted).toBe(true);
+    expect(runtime.getPendingSteeringCount()).toBe(1);
+    await expect(
+      SessionRuntime.hasPendingInbox(workspaceRoot, sessionId)
+    ).resolves.toBe(true);
+
+    await runtime.discardPendingInput();
+
+    expect(runtime.getPendingSteeringCount()).toBe(0);
+    await expect(
+      SessionRuntime.hasPendingInbox(workspaceRoot, sessionId)
+    ).resolves.toBe(false);
+    if (prepared.accepted) {
+      await runtime.finishTurn(prepared.handle);
+    }
+    await runtime.dispose();
+  });
+
   it('lists and resumes subagents through the exact runtime owner', async () => {
     const workspaceRoot = path.join(storageRoot, 'subagent-project');
     const runtime = await SessionRuntime.create({
@@ -644,7 +738,12 @@ describe('SessionRuntime', () => {
         SessionService.findSessionMetadata(sessionId, workspaceRoot)
       ).resolves.toMatchObject({
         taskStatus: 'failed',
-        taskStatusReason: 'Session runtime initialization failed',
+        taskStatusReason: 'Agent execution failed.',
+        taskFailure: {
+          code: 'runtime',
+          message: 'Agent execution failed.',
+          retryable: true,
+        },
         taskCompletedAt: expect.any(String),
       });
       expect(events).toEqual(['failed']);
@@ -782,6 +881,28 @@ describe('SessionRuntime', () => {
 
     await runtime.dispose();
     expect(secondDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an explicitly selected session model when refreshed without a model', async () => {
+    const modelService = {
+      chat: vi.fn(),
+      streamChat: vi.fn(),
+      getConfig: vi.fn(),
+      updateConfig: vi.fn(),
+      dispose: vi.fn(),
+    };
+    vi.mocked(createChatServiceAsync).mockResolvedValue(modelService as any);
+    const runtime = await SessionRuntime.create({
+      sessionId: 'pinned-model',
+      modelId: 'model-2',
+    });
+
+    await runtime.refresh({});
+
+    expect(runtime.getCurrentModelId()).toBe('model-2');
+    expect(createChatServiceAsync).toHaveBeenCalledTimes(1);
+
+    await runtime.dispose();
   });
 
   it('keeps the previous model active when the replacement service cannot initialize', async () => {

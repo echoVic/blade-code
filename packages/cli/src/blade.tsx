@@ -123,6 +123,7 @@ export async function main() {
     { doctorCommands },
     { installCommands },
     { mcpCommands },
+    { projectsCommands },
     { serveCommand },
     { updateCommands },
     { webCommand },
@@ -134,6 +135,7 @@ export async function main() {
     import('./commands/doctor.js'),
     import('./commands/install.js'),
     import('./commands/mcp.js'),
+    import('./commands/projects.js'),
     import('./commands/serve.js'),
     import('./commands/update.js'),
     import('./commands/web.js'),
@@ -158,6 +160,7 @@ export async function main() {
 
     // 注册命令
     .command(mcpCommands)
+    .command(projectsCommands)
     .command(doctorCommands)
     .command(updateCommands)
     .command(installCommands)

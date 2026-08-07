@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   createAgent: vi.fn(),
   registerCleanup: vi.fn(),
   unregisterCleanup: vi.fn(),
+  findSessionMetadata: vi.fn(),
+  updateSessionMetadata: vi.fn(),
 }));
 
 vi.mock('../../../../../src/agent/runtime/SessionRuntime.js', () => ({
@@ -27,6 +29,13 @@ vi.mock('../../../../../src/services/GracefulShutdown.js', () => ({
   registerCleanup: mocks.registerCleanup,
 }));
 
+vi.mock('../../../../../src/services/SessionService.js', () => ({
+  SessionService: {
+    findSessionMetadata: mocks.findSessionMetadata,
+    updateSessionMetadata: mocks.updateSessionMetadata,
+  },
+}));
+
 import { useAgent } from '../../../../../src/ui/hooks/useAgent.js';
 
 describe('useAgent runtime ownership', () => {
@@ -35,6 +44,8 @@ describe('useAgent runtime ownership', () => {
   let hook: ReturnType<typeof useAgent> | undefined;
   let runtime: {
     sessionId: string;
+    workspaceRoot: string;
+    getCurrentModelId: ReturnType<typeof vi.fn>;
     refresh: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
     enqueueSteering: ReturnType<typeof vi.fn>;
@@ -46,13 +57,29 @@ describe('useAgent runtime ownership', () => {
   let agent: { destroy: ReturnType<typeof vi.fn> };
 
   function Harness() {
-    hook = useAgent({ sessionId: 'session-1' });
+    hook = useAgent({ sessionId: 'session-1', workspaceRoot: '/tmp/project' });
+    return null;
+  }
+
+  function ModelHarness() {
+    hook = useAgent({
+      sessionId: 'session-1',
+      workspaceRoot: '/tmp/project',
+      modelId: 'model-2',
+    });
+    return null;
+  }
+
+  function WorkspaceHarness({ workspaceRoot }: { workspaceRoot: string }) {
+    hook = useAgent({ sessionId: 'session-1', workspaceRoot });
     return null;
   }
 
   beforeEach(() => {
     runtime = {
       sessionId: 'session-1',
+      workspaceRoot: '/tmp/project',
+      getCurrentModelId: vi.fn(() => 'model-1'),
       refresh: vi.fn().mockResolvedValue(undefined),
       dispose: vi.fn().mockResolvedValue(undefined),
       enqueueSteering: vi.fn(() => ({
@@ -100,6 +127,12 @@ describe('useAgent runtime ownership', () => {
     mocks.createWithRuntime.mockResolvedValue(agent);
     mocks.createAgent.mockResolvedValue(agent);
     mocks.registerCleanup.mockReturnValue(mocks.unregisterCleanup);
+    mocks.findSessionMetadata.mockResolvedValue({
+      selectedModelId: undefined,
+    });
+    mocks.updateSessionMetadata.mockResolvedValue({
+      selectedModelId: 'model-2',
+    });
 
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -148,6 +181,8 @@ describe('useAgent runtime ownership', () => {
   it('releases the previous runtime before creating an Agent for another session', async () => {
     const nextRuntime = {
       sessionId: 'session-2',
+      workspaceRoot: '/tmp/project',
+      getCurrentModelId: vi.fn(() => 'model-1'),
       refresh: vi.fn().mockResolvedValue(undefined),
       dispose: vi.fn().mockResolvedValue(undefined),
     };
@@ -175,6 +210,41 @@ describe('useAgent runtime ownership', () => {
     await hook?.cleanupAgent();
     expect(nextAgent.destroy).toHaveBeenCalledTimes(1);
     expect(nextRuntime.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('recreates the runtime when the active session workspace changes', async () => {
+    const nextRuntime = {
+      ...runtime,
+      workspaceRoot: '/tmp/project-b',
+      getCurrentModelId: vi.fn(() => 'model-1'),
+      refresh: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn().mockResolvedValue(undefined),
+    };
+    mocks.createRuntime
+      .mockResolvedValueOnce(runtime)
+      .mockResolvedValueOnce(nextRuntime);
+
+    await act(async () => {
+      root.render(<WorkspaceHarness workspaceRoot="/tmp/project-a" />);
+      await Promise.resolve();
+    });
+    await hook?.createAgent();
+
+    await act(async () => {
+      root.render(<WorkspaceHarness workspaceRoot="/tmp/project-b" />);
+      await Promise.resolve();
+    });
+    await hook?.createAgent();
+
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+    expect(mocks.createRuntime).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        sessionId: 'session-1',
+        workspaceRoot: '/tmp/project-b',
+      })
+    );
+    await hook?.cleanupAgent();
   });
 
   it('still disposes the runtime when Agent destruction fails', async () => {
@@ -262,5 +332,36 @@ describe('useAgent runtime ownership', () => {
     );
     expect(agent.destroy).not.toHaveBeenCalled();
     expect(runtime.dispose).not.toHaveBeenCalled();
+  });
+
+  it('persists an explicit TUI model selection before creating the Agent', async () => {
+    await act(async () => {
+      root.render(<ModelHarness />);
+      await Promise.resolve();
+    });
+
+    await hook?.createAgent();
+
+    expect(runtime.refresh).toHaveBeenCalledWith({ modelId: 'model-2' });
+    expect(mocks.updateSessionMetadata).toHaveBeenCalledWith(
+      'session-1',
+      '/tmp/project',
+      { selectedModelId: 'model-2' }
+    );
+    expect(mocks.createWithRuntime).toHaveBeenCalledOnce();
+  });
+
+  it('rolls back a TUI model switch when durable persistence fails', async () => {
+    mocks.updateSessionMetadata.mockRejectedValueOnce(new Error('disk unavailable'));
+    await act(async () => {
+      root.render(<ModelHarness />);
+      await Promise.resolve();
+    });
+
+    await expect(hook?.createAgent()).rejects.toThrow('disk unavailable');
+
+    expect(runtime.refresh).toHaveBeenNthCalledWith(1, { modelId: 'model-2' });
+    expect(runtime.refresh).toHaveBeenNthCalledWith(2, { modelId: 'model-1' });
+    expect(mocks.createWithRuntime).not.toHaveBeenCalled();
   });
 });

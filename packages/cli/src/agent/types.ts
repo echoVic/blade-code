@@ -2,10 +2,13 @@
  * Agent核心类型定义
  */
 
-import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import type { PermissionConfig } from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
-import type { ContentPart, Message } from '../services/ChatServiceInterface.js';
+import type {
+  ChatCompletionMessageToolCall,
+  ContentPart,
+  Message,
+} from '../services/ChatServiceInterface.js';
 import type { ConfirmationHandler } from '../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../tools/types/ToolTypes.js';
 import type {

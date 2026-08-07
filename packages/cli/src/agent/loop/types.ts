@@ -4,10 +4,12 @@
  * 用于将 Agent.executeLoop() 重构为 AsyncGenerator 模式
  */
 
-import type { ChatCompletionMessageToolCall } from 'openai/resources/chat';
 import type { BladeConfig } from '../../config/index.js';
 import type { GoalSnapshot } from '../../goals/types.js';
-import type { IChatService } from '../../services/ChatServiceInterface.js';
+import type {
+  ChatCompletionMessageToolCall,
+  IChatService,
+} from '../../services/ChatServiceInterface.js';
 import type { TaskListItem } from '../../tools/builtin/task/taskListTypes.js';
 import type { ToolExecutor } from '../../tools/execution/ToolExecutor.js';
 import type { ToolResult } from '../../tools/types/index.js';

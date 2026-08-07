@@ -3,12 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SessionEventLog } from '../../../src/context/events/SessionEventLog.js';
-import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
 import { JSONLStore } from '../../../src/context/storage/JSONLStore.js';
+import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
 import { getSessionFilePath } from '../../../src/context/storage/pathUtils.js';
-import { Bus } from '../../../src/server/bus.js';
-import type { BusEvent } from '../../../src/server/bus.js';
 import type { SessionEvent } from '../../../src/context/types.js';
+import type { BusEvent } from '../../../src/server/bus.js';
+import { Bus } from '../../../src/server/bus.js';
 
 const sessionId = 'tool-history-session';
 
@@ -38,7 +38,14 @@ describe('committed result events (tool history)', () => {
       toolCallId,
       'Read',
       { text: 'file contents' },
-      messageId
+      messageId,
+      undefined,
+      undefined,
+      undefined,
+      {
+        file_path: '/tmp/x',
+        summary: 'Read x',
+      }
     );
 
     const entries = await new JSONLStore(
@@ -60,7 +67,13 @@ describe('committed result events (tool history)', () => {
         e.type === 'part_created' && e.data.partType === 'tool_result'
     );
     expect(toolCall?.data.payload).toMatchObject({ toolName: 'Read' });
-    expect(toolResult?.data.payload).toMatchObject({ toolName: 'Read' });
+    expect(toolResult?.data.payload).toMatchObject({
+      toolName: 'Read',
+      metadata: {
+        file_path: '/tmp/x',
+        summary: 'Read x',
+      },
+    });
   });
 
   it('fans committed events onto the Bus carrying their seq', async () => {

@@ -9,8 +9,10 @@ import {
 } from '../../config/index.js';
 import type { McpServerConfig, ModelConfig } from '../../config/types.js';
 import { getSessionInboxFilePath } from '../../context/storage/pathUtils.js';
+import { toTaskFailure } from '../../context/taskFailure.js';
 import type {
   SessionTaskDiffStat,
+  SessionTaskFailure,
   SessionTaskIsolation,
   SessionTaskStatus,
   SessionTaskWorktree,
@@ -145,6 +147,7 @@ export class SessionRuntime {
 
   private chatService?: IChatService;
   private executionEngine?: ExecutionEngine;
+  private selectedModelId?: string;
   private currentModelId?: string;
   private currentModelMaxContextTokens?: number;
   private initialized = false;
@@ -155,6 +158,8 @@ export class SessionRuntime {
     private readonly config: BladeConfig,
     private readonly options: SessionRuntimeOptions
   ) {
+    this.selectedModelId =
+      options.modelId && options.modelId !== 'inherit' ? options.modelId : undefined;
     this.goalStore = new GoalStore(this.workspaceRoot, this.sessionId);
     this.attachmentCollector = new AttachmentCollector({
       cwd: this.workspaceRoot,
@@ -168,20 +173,26 @@ export class SessionRuntime {
     const workspaceRoot = options.workspaceRoot ?? getCwd();
     let taskWorktree = options.taskWorktree;
     let taskIsolation = options.taskIsolation;
+    let selectedModelId = options.modelId;
+    const hasExplicitModel = selectedModelId !== undefined;
     try {
       await ensureStoreInitialized();
       await cleanupStaleWorktreesOnce(workspaceRoot);
-      if (!options.subagentInfo && (!taskWorktree || !taskIsolation)) {
+      if (
+        !options.subagentInfo &&
+        (!taskWorktree || !taskIsolation || !selectedModelId)
+      ) {
         const [storedWorktree, metadata] = await Promise.all([
           taskWorktree
             ? undefined
             : SessionService.findSessionTaskWorktree(options.sessionId, workspaceRoot),
-          taskIsolation
+          taskIsolation && selectedModelId
             ? undefined
             : SessionService.findSessionMetadata(options.sessionId, workspaceRoot),
         ]);
         taskWorktree ??= storedWorktree;
         taskIsolation ??= metadata?.taskIsolation;
+        selectedModelId ??= metadata?.selectedModelId ?? metadata?.taskModelId;
       }
       if (taskWorktree) {
         if (path.resolve(taskWorktree.workspaceRoot) !== path.resolve(workspaceRoot)) {
@@ -199,6 +210,14 @@ export class SessionRuntime {
             '或运行初始化向导：\n' +
             '  /init'
         );
+      }
+      if (
+        !hasExplicitModel &&
+        selectedModelId &&
+        selectedModelId !== 'inherit' &&
+        !getModelById(selectedModelId)
+      ) {
+        selectedModelId = undefined;
       }
 
       const config = getConfig();
@@ -218,6 +237,7 @@ export class SessionRuntime {
 
       const runtime = new SessionRuntime(runtimeConfig, {
         ...options,
+        ...(selectedModelId ? { modelId: selectedModelId } : {}),
         ...(taskWorktree ? { taskWorktree } : {}),
         ...(taskIsolation ? { taskIsolation } : {}),
       });
@@ -306,6 +326,7 @@ export class SessionRuntime {
       {
         taskStatus: snapshot.state,
         taskStatusReason: null,
+        taskFailure: null,
         taskQueuePosition: queued ? (snapshot.queuePosition ?? 1) : null,
         taskQueueDepth: queued ? snapshot.queueDepth : null,
         taskConcurrencyLimit: snapshot.maxConcurrent,
@@ -391,7 +412,7 @@ export class SessionRuntime {
 
   async setTaskStatus(
     taskStatus: SessionTaskStatus,
-    taskStatusReason?: string
+    taskStatusReason?: unknown
   ): Promise<SessionMetadata | undefined> {
     if (this.options.subagentInfo) return undefined;
 
@@ -412,16 +433,26 @@ export class SessionRuntime {
     sessionId: string,
     workspaceRoot: string,
     taskStatus: SessionTaskStatus,
-    taskStatusReason?: string,
+    taskStatusReason?: unknown,
     taskDiffStat?: SessionTaskDiffStat
   ): Promise<SessionMetadata> {
     const now = new Date().toISOString();
+    const taskFailure: SessionTaskFailure | undefined =
+      taskStatus === 'failed' && taskStatusReason !== undefined
+        ? toTaskFailure(taskStatusReason)
+        : undefined;
+    const safeTaskStatusReason =
+      taskFailure?.message ??
+      (typeof taskStatusReason === 'string'
+        ? taskStatusReason.slice(0, 500)
+        : undefined);
     const metadata = await SessionService.updateSessionMetadata(
       sessionId,
       workspaceRoot,
       {
         taskStatus,
-        taskStatusReason: taskStatusReason ?? null,
+        taskStatusReason: safeTaskStatusReason ?? null,
+        taskFailure: taskFailure ?? null,
         ...(taskDiffStat !== undefined
           ? { taskDiffStat }
           : taskStatus === 'running'
@@ -450,7 +481,8 @@ export class SessionRuntime {
     );
     Bus.publish({ sessionId, projectPath: workspaceRoot }, 'task.status', {
       taskStatus: metadata.taskStatus,
-      ...(taskStatusReason ? { taskStatusReason } : {}),
+      ...(safeTaskStatusReason ? { taskStatusReason: safeTaskStatusReason } : {}),
+      ...(taskFailure ? { taskFailure } : {}),
       ...(metadata.taskStartedAt ? { taskStartedAt: metadata.taskStartedAt } : {}),
       ...(metadata.taskCompletedAt
         ? { taskCompletedAt: metadata.taskCompletedAt }
@@ -592,6 +624,16 @@ export class SessionRuntime {
     await mailbox.acknowledge(ids);
   }
 
+  async discardPendingInput(): Promise<void> {
+    const mailbox = this.getActiveTurnMailbox();
+    const ids = mailbox.pendingMessages().map((message) => message.id);
+    if (ids.length === 0) return;
+    await this.getExecutionEngine()
+      .getContextManager()
+      .persistentStore.acknowledgeInboxMessages(this.sessionId, ids);
+    await mailbox.acknowledge(ids);
+  }
+
   async finishTurn(
     handle: ActiveTurnHandle,
     options?: { continuePending?: boolean }
@@ -639,7 +681,7 @@ export class SessionRuntime {
       await this.loadSubagents();
       await this.discoverSkills();
       await this.applyModelConfig(
-        this.resolveModelConfig(this.options.modelId),
+        this.resolveModelConfig(this.selectedModelId),
         '使用模型:'
       );
       await this.getExecutionEngine()
@@ -669,14 +711,19 @@ export class SessionRuntime {
       return;
     }
 
-    // 显式传入 modelId 时使用它；否则从 store 读取最新的 currentModelId
-    // 这确保了用户在 UI 中切换模型后，下一条命令能立即生效
-    const nextModelId =
-      options.modelId && options.modelId !== 'inherit'
-        ? options.modelId
-        : getCurrentModel()?.id;
+    const clearsSelection = options.modelId === 'inherit';
+    const requestedModelId =
+      options.modelId && !clearsSelection ? options.modelId : undefined;
+    const nextModelId = clearsSelection
+      ? getCurrentModel()?.id
+      : (requestedModelId ?? this.selectedModelId ?? getCurrentModel()?.id);
     if (nextModelId && nextModelId !== this.currentModelId) {
       await this.applyModelConfig(this.resolveModelConfig(nextModelId), '切换模型');
+    }
+    if (clearsSelection) {
+      this.selectedModelId = undefined;
+    } else if (requestedModelId) {
+      this.selectedModelId = requestedModelId;
     }
   }
 

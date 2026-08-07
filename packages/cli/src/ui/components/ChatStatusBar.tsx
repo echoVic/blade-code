@@ -1,6 +1,5 @@
 import { Box, Text } from 'ink';
 import React, { useEffect, useState } from 'react';
-import { getProjectRoot } from '../../bootstrap/state.js';
 import { PermissionMode } from '../../config/types.js';
 import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalSnapshot } from '../../goals/types.js';
@@ -17,9 +16,9 @@ import {
   useSessionCost,
   useSessionId,
   useThinkingModeEnabled,
+  useWorkspaceRoot,
 } from '../../store/selectors/index.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
-import { getCwd } from '../../utils/cwd.js';
 import { useGitBranch } from '../hooks/useGitBranch.js';
 
 /**
@@ -36,7 +35,8 @@ export const ChatStatusBar: React.FC = React.memo(() => {
   const activeModal = useActiveModal();
   const showShortcuts = activeModal === 'shortcuts';
   const awaitingSecondCtrlC = useAwaitingSecondCtrlC();
-  const { branch } = useGitBranch(getProjectRoot());
+  const workspaceRoot = useWorkspaceRoot();
+  const { branch } = useGitBranch(workspaceRoot);
   const currentModel = useCurrentModel();
   const contextRemaining = useContextRemaining();
   const isCompacting = useIsCompacting();
@@ -49,7 +49,7 @@ export const ChatStatusBar: React.FC = React.memo(() => {
 
   useEffect(() => {
     let cancelled = false;
-    const store = new GoalStore(getCwd(), sessionId);
+    const store = new GoalStore(workspaceRoot, sessionId);
     void store
       .get()
       .then((snapshot) => {
@@ -62,7 +62,7 @@ export const ChatStatusBar: React.FC = React.memo(() => {
       if (
         !cancelled &&
         event.sessionId === sessionId &&
-        event.workspaceRoot === getCwd()
+        event.workspaceRoot === workspaceRoot
       ) {
         setGoal(event.goal);
       }
@@ -71,7 +71,7 @@ export const ChatStatusBar: React.FC = React.memo(() => {
       cancelled = true;
       unsubscribe();
     };
-  }, [sessionId]);
+  }, [sessionId, workspaceRoot]);
 
   // 检查当前模型是否支持 thinking
   const supportsThinking = currentModel ? isThinkingModel(currentModel) : false;

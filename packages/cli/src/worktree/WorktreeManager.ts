@@ -1,7 +1,19 @@
 import { type ExecFileException, execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import type { Dirent } from 'node:fs';
-import { lstat, mkdir, readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  readlink,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { Mutex } from 'async-mutex';
 import { basename, isAbsolute, join, relative, resolve } from 'pathe';
 import { getBladeStorageRoot } from '../context/storage/pathUtils.js';
@@ -14,11 +26,19 @@ const DEFAULT_STALE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_DIFF_FILES = 100;
 const MAX_DIFF_FILE_BYTES = 1024 * 1024;
 const MAX_DIFF_TOTAL_BYTES = 2 * 1024 * 1024;
+const MAX_DELIVERY_PATCH_BYTES = 50 * 1024 * 1024;
+const EMPTY_STATE_HASH =
+  'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
 interface GitResult {
   code: number;
   stdout: string;
   stderr: string;
+}
+
+interface RunGitOptions {
+  env?: NodeJS.ProcessEnv;
+  maxBuffer?: number;
 }
 
 export interface WorktreeSession extends SessionTaskWorktree {}
@@ -49,6 +69,36 @@ export interface WorktreeDiffArtifact {
   baseCommit: string;
   files: WorktreeDiffFile[];
   truncated: boolean;
+}
+
+export type WorktreeDeliveryConflictReason =
+  | 'source_unavailable'
+  | 'source_head_changed'
+  | 'source_state_changed'
+  | 'legacy_dirty_source'
+  | 'artifact_unavailable'
+  | 'no_changes'
+  | 'patch_conflict';
+
+export class WorktreeDeliveryConflict extends Error {
+  constructor(
+    public readonly reason: WorktreeDeliveryConflictReason,
+    message: string
+  ) {
+    super(message);
+    this.name = 'WorktreeDeliveryConflict';
+  }
+}
+
+export interface WorktreeApplyResult {
+  action: 'apply';
+  workspaceRoot: string;
+  worktreeRoot: string;
+  branch: string;
+  sourceCommit: string;
+  changedFiles: number;
+  additions: number;
+  deletions: number;
 }
 
 export interface WorktreeCleanupOptions {
@@ -138,7 +188,11 @@ function truncatePatch(
   };
 }
 
-async function runGit(cwd: string, args: string[]): Promise<GitResult> {
+async function runGit(
+  cwd: string,
+  args: string[],
+  options: RunGitOptions = {}
+): Promise<GitResult> {
   return new Promise((resolvePromise) => {
     execFile(
       'git',
@@ -146,9 +200,10 @@ async function runGit(cwd: string, args: string[]): Promise<GitResult> {
       {
         cwd,
         encoding: 'utf-8',
-        maxBuffer: 10 * 1024 * 1024,
+        maxBuffer: options.maxBuffer ?? 10 * 1024 * 1024,
         env: {
           ...process.env,
+          ...options.env,
           GIT_TERMINAL_PROMPT: '0',
           GIT_ASKPASS: '',
         },
@@ -162,6 +217,62 @@ async function runGit(cwd: string, args: string[]): Promise<GitResult> {
       }
     );
   });
+}
+
+function updateHashFromFile(hash: ReturnType<typeof createHash>, filePath: string) {
+  return new Promise<void>((resolvePromise, reject) => {
+    const stream = createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', resolvePromise);
+  });
+}
+
+async function fingerprintWorkingState(repositoryRoot: string): Promise<string> {
+  const status = await runGit(repositoryRoot, [
+    '--no-optional-locks',
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '--untracked-files=all',
+  ]);
+  requireGitSuccess(status, 'Inspect source worktree');
+
+  const hash = createHash('sha256');
+  hash.update(status.stdout);
+  const tokens = status.stdout.split('\0').filter(Boolean);
+  const paths = new Set<string>();
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index]!;
+    if (token.length < 4) continue;
+    const state = token.slice(0, 2);
+    const filePath = token.slice(3);
+    if (isSafeRelativePath(filePath)) paths.add(filePath);
+    if (/[RC]/.test(state)) {
+      const originalPath = tokens[++index];
+      if (originalPath && isSafeRelativePath(originalPath)) {
+        paths.add(originalPath);
+      }
+    }
+  }
+
+  for (const filePath of [...paths].sort()) {
+    hash.update(`\0${filePath}\0`);
+    const absolutePath = join(repositoryRoot, filePath);
+    try {
+      const fileStat = await lstat(absolutePath);
+      hash.update(`${fileStat.mode}:${fileStat.size}:`);
+      if (fileStat.isSymbolicLink()) {
+        hash.update(await readlink(absolutePath));
+      } else if (fileStat.isFile()) {
+        await updateHashFromFile(hash, absolutePath);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      hash.update('missing');
+    }
+  }
+  return hash.digest('hex');
 }
 
 function requireGitSuccess(result: GitResult, operation: string): string {
@@ -221,11 +332,13 @@ export class WorktreeManager {
         `session-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
       validateWorktreeName(name);
 
-      const [baseCommitResult, branchResult, statusResult] = await Promise.all([
-        runGit(repositoryRoot, ['rev-parse', 'HEAD']),
-        runGit(repositoryRoot, ['branch', '--show-current']),
-        runGit(repositoryRoot, ['status', '--porcelain']),
-      ]);
+      const [baseCommitResult, branchResult, statusResult, sourceStateFingerprint] =
+        await Promise.all([
+          runGit(repositoryRoot, ['rev-parse', 'HEAD']),
+          runGit(repositoryRoot, ['branch', '--show-current']),
+          runGit(repositoryRoot, ['status', '--porcelain']),
+          fingerprintWorkingState(repositoryRoot),
+        ]);
       const baseCommit = requireGitSuccess(
         baseCommitResult,
         'Resolve worktree base commit'
@@ -260,6 +373,7 @@ export class WorktreeManager {
         worktreeRoot,
         workspaceRoot: subdirectory ? join(worktreeRoot, subdirectory) : worktreeRoot,
         sourceHadChanges: statusResult.stdout.trim().length > 0,
+        sourceStateFingerprint,
       };
       this.sessions.set(input.sessionId, session);
       return session;
@@ -329,6 +443,168 @@ export class WorktreeManager {
     const session = this.sessions.get(sessionId);
     if (!session) return undefined;
     return this.inspectDiffArtifact(session);
+  }
+
+  async apply(sessionId: string): Promise<WorktreeApplyResult> {
+    return this.getSessionLock(sessionId).runExclusive(async () => {
+      const session = this.sessions.get(sessionId);
+      if (!session) {
+        throw new WorktreeDeliveryConflict(
+          'artifact_unavailable',
+          'Task worktree is unavailable'
+        );
+      }
+
+      let sourceRoot: string;
+      try {
+        sourceRoot = await realpath(session.repositoryRoot);
+      } catch {
+        throw new WorktreeDeliveryConflict(
+          'source_unavailable',
+          'Source workspace is unavailable'
+        );
+      }
+      if (sourceRoot !== session.repositoryRoot) {
+        throw new WorktreeDeliveryConflict(
+          'source_unavailable',
+          'Source workspace identity changed'
+        );
+      }
+
+      const headResult = await runGit(sourceRoot, ['rev-parse', 'HEAD']);
+      const sourceCommit = requireGitSuccess(headResult, 'Resolve source HEAD');
+      if (sourceCommit !== session.baseCommit) {
+        throw new WorktreeDeliveryConflict(
+          'source_head_changed',
+          'Source branch advanced after this task started'
+        );
+      }
+
+      if (!session.sourceStateFingerprint && session.sourceHadChanges) {
+        throw new WorktreeDeliveryConflict(
+          'legacy_dirty_source',
+          'This older task started from a modified source workspace and cannot be applied automatically'
+        );
+      }
+      const sourceStateFingerprint = await fingerprintWorkingState(sourceRoot);
+      if (
+        session.sourceStateFingerprint &&
+        sourceStateFingerprint !== session.sourceStateFingerprint
+      ) {
+        throw new WorktreeDeliveryConflict(
+          'source_state_changed',
+          'Source workspace changed after this task started'
+        );
+      }
+      if (
+        !session.sourceStateFingerprint &&
+        sourceStateFingerprint !== EMPTY_STATE_HASH
+      ) {
+        throw new WorktreeDeliveryConflict(
+          'source_state_changed',
+          'Source workspace has local changes'
+        );
+      }
+
+      const changeSummary = await this.inspectChanges(session);
+      if (!changeSummary) {
+        throw new WorktreeDeliveryConflict(
+          'artifact_unavailable',
+          'Task changes could not be inspected'
+        );
+      }
+      if (changeSummary.changedFiles === 0) {
+        throw new WorktreeDeliveryConflict(
+          'no_changes',
+          'Task has no changes to apply'
+        );
+      }
+
+      await mkdir(this.storageRoot, { recursive: true });
+      const temporaryRoot = await mkdtemp(join(this.storageRoot, 'delivery-'));
+      const indexPath = join(temporaryRoot, 'index');
+      const patchPath = join(temporaryRoot, 'changes.patch');
+      const gitOptions = { env: { GIT_INDEX_FILE: indexPath } };
+      try {
+        requireGitSuccess(
+          await runGit(session.worktreeRoot, ['read-tree', 'HEAD'], gitOptions),
+          'Prepare task delivery index'
+        );
+        requireGitSuccess(
+          await runGit(session.worktreeRoot, ['add', '-A', '--'], gitOptions),
+          'Collect task changes'
+        );
+        const tree = requireGitSuccess(
+          await runGit(session.worktreeRoot, ['write-tree'], gitOptions),
+          'Create task delivery tree'
+        );
+        const patchResult = await runGit(
+          session.worktreeRoot,
+          [
+            'diff',
+            '--binary',
+            '--full-index',
+            '--no-ext-diff',
+            session.baseCommit,
+            tree,
+            '--',
+          ],
+          { maxBuffer: MAX_DELIVERY_PATCH_BYTES + 1024 }
+        );
+        requireGitSuccess(patchResult, 'Generate task delivery patch');
+        const patch = patchResult.stdout;
+        if (!patch) {
+          throw new WorktreeDeliveryConflict(
+            'no_changes',
+            'Task has no changes to apply'
+          );
+        }
+        if (Buffer.byteLength(patch) > MAX_DELIVERY_PATCH_BYTES) {
+          throw new WorktreeDeliveryConflict(
+            'artifact_unavailable',
+            'Task changes exceed the 50 MiB delivery limit'
+          );
+        }
+        await writeFile(patchPath, patch, { mode: 0o600 });
+
+        const check = await runGit(sourceRoot, [
+          'apply',
+          '--check',
+          '--binary',
+          '--whitespace=nowarn',
+          patchPath,
+        ]);
+        if (check.code !== 0) {
+          throw new WorktreeDeliveryConflict(
+            'patch_conflict',
+            'Task changes conflict with the source workspace'
+          );
+        }
+        const applied = await runGit(sourceRoot, [
+          'apply',
+          '--binary',
+          '--whitespace=nowarn',
+          patchPath,
+        ]);
+        if (applied.code !== 0) {
+          throw new WorktreeDeliveryConflict(
+            'patch_conflict',
+            'Task changes could not be applied'
+          );
+        }
+      } finally {
+        await rm(temporaryRoot, { recursive: true, force: true });
+      }
+
+      return {
+        action: 'apply',
+        workspaceRoot: session.originalWorkspaceRoot,
+        worktreeRoot: session.worktreeRoot,
+        branch: session.branch,
+        sourceCommit,
+        ...changeSummary,
+      };
+    });
   }
 
   async cleanupStaleAgentWorktrees(
@@ -733,9 +1009,15 @@ export class WorktreeManager {
   private async inspectChanges(
     session: WorktreeSession
   ): Promise<WorktreeChangeSummary | null> {
-    const [statusResult, commitsResult, diffResult, untrackedResult] =
+    const [changedResult, commitsResult, diffResult, untrackedResult] =
       await Promise.all([
-        runGit(session.worktreeRoot, ['status', '--porcelain']),
+        runGit(session.worktreeRoot, [
+          'diff',
+          '--name-only',
+          '-z',
+          session.baseCommit,
+          '--',
+        ]),
         runGit(session.worktreeRoot, [
           'rev-list',
           '--count',
@@ -750,7 +1032,7 @@ export class WorktreeManager {
         ]),
       ]);
     if (
-      statusResult.code !== 0 ||
+      changedResult.code !== 0 ||
       commitsResult.code !== 0 ||
       diffResult.code !== 0 ||
       untrackedResult.code !== 0
@@ -782,9 +1064,10 @@ export class WorktreeManager {
     }
 
     return {
-      changedFiles: statusResult.stdout
-        .split('\n')
-        .filter((line) => line.trim().length > 0).length,
+      changedFiles: new Set([
+        ...changedResult.stdout.split('\0').filter(Boolean),
+        ...untrackedResult.stdout.split('\0').filter(Boolean),
+      ]).size,
       additions,
       deletions,
       commits: Number.parseInt(commitsResult.stdout.trim(), 10) || 0,

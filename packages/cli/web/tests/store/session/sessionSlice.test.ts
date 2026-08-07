@@ -9,9 +9,11 @@ import type {
 vi.mock('../../../src/services', () => ({
   sessionService: {
     listSessions: vi.fn(),
+    listSessionPage: vi.fn(),
     createSession: vi.fn(),
     deleteSession: vi.fn(),
     updateSession: vi.fn(),
+    getSession: vi.fn(),
     getMessages: vi.fn(),
     getGoal: vi.fn(),
     createGoal: vi.fn(),
@@ -38,7 +40,10 @@ import type { Message } from '../../../src/store/session/types';
 
 const actualReplaceEventSubscription =
   useSessionStore.getState().replaceEventSubscription;
+const actualPrepareEventSubscription =
+  useSessionStore.getState().prepareEventSubscription;
 const actualSubscribeToEvents = useSessionStore.getState().subscribeToEvents;
+const actualReconnectSessionEvents = useSessionStore.getState().reconnectSessionEvents;
 const actualUnsubscribeFromEvents = useSessionStore.getState().unsubscribeFromEvents;
 
 function createSession(overrides: Partial<Session> = {}): Session {
@@ -104,9 +109,11 @@ function activeStreamingState(
     currentSessionRef: ref,
     isTemporarySession: false,
     isStreaming: true,
+    isStopping: false,
     agentPhase,
     currentRunId: 'run-active',
     pendingSteeringCount: 2,
+    pendingInputDelivery: 'current_turn' as const,
     recoveredSteeringCount: 1,
     currentAssistantMessageId: 'assistant-active',
     hasToolCalls: true,
@@ -117,9 +124,11 @@ function activeStreamingState(
 function expectStreamingStateReset(): void {
   expect(useSessionStore.getState()).toMatchObject({
     isStreaming: false,
+    isStopping: false,
     agentPhase: 'idle',
     currentRunId: null,
     pendingSteeringCount: 0,
+    pendingInputDelivery: null,
     recoveredSteeringCount: 0,
     currentAssistantMessageId: null,
     hasToolCalls: false,
@@ -169,12 +178,18 @@ describe('sessionSlice multimodal sendMessage', () => {
       forkingSessionRef: null,
       isTemporarySession: true,
       isLoading: false,
+      catalogLoadState: 'idle',
+      catalogError: null,
       error: null,
+      errorContext: null,
       messages: [],
       isStreaming: false,
+      isStopping: false,
       agentPhase: 'idle',
+      sessionEventConnectionState: 'idle',
       currentRunId: null,
       pendingSteeringCount: 0,
+      pendingInputDelivery: null,
       recoveredSteeringCount: 0,
       currentAssistantMessageId: null,
       hasToolCalls: false,
@@ -194,11 +209,13 @@ describe('sessionSlice multimodal sendMessage', () => {
       prepareEventSubscription: vi.fn().mockResolvedValue(() => undefined),
       replaceEventSubscription: vi.fn(),
       subscribeToEvents: vi.fn(),
+      reconnectSessionEvents: actualReconnectSessionEvents,
       unsubscribeFromEvents: vi.fn(),
     }));
   });
 
   it('adds optimistic multimodal user messages and forwards image attachments', async () => {
+    useConfigStore.setState({ currentModelId: 'vision-model' });
     vi.mocked(sessionService.createSession).mockResolvedValue(
       createSession({ sessionId: 'session-1', projectPath: '/tmp/project' })
     );
@@ -230,9 +247,15 @@ describe('sessionSlice multimodal sendMessage', () => {
     });
     expect(sessionService.sendMessage).toHaveBeenCalledWith(
       createRef('session-1', '/tmp/project'),
-      payload,
+      { ...payload, modelId: 'vision-model' },
       'default'
     );
+    expect(useSessionStore.getState().sessions).toEqual([
+      expect.objectContaining({
+        sessionId: 'session-1',
+        selectedModelId: 'vision-model',
+      }),
+    ]);
   });
 
   it('subscribes after persisted history is loaded', async () => {
@@ -268,6 +291,80 @@ describe('sessionSlice multimodal sendMessage', () => {
     expect(useSessionStore.getState().messages).toEqual([
       expect.objectContaining({ role: 'user', content: 'persisted' }),
     ]);
+  });
+
+  it('restores durable task failure diagnostics when selecting after refresh', async () => {
+    const ref = createRef('failed-task', '/tmp/failed-task');
+    const failedSession = createSession({
+      ...ref,
+      taskStatus: 'failed',
+      taskRetryAvailable: true,
+      taskFailure: {
+        code: 'timeout',
+        message: 'Provider request timed out.',
+        retryable: true,
+      },
+    });
+    useSessionStore.setState({
+      sessions: [failedSession],
+      error: null,
+      errorContext: null,
+    });
+    vi.mocked(sessionService.getMessages).mockResolvedValue([]);
+
+    await useSessionStore.getState().selectSession(ref);
+
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionRef: ref,
+      error: 'Provider request timed out.',
+      errorContext: {
+        kind: 'execution',
+        failureCode: 'timeout',
+        sessionRef: ref,
+      },
+    });
+  });
+
+  it('hydrates an unknown worktree deep link and selects its bound source project', async () => {
+    const ref = createRef('task-worktree', '/workspace/internal-worktree');
+    const exactSession = createSession({
+      sessionId: ref.sessionId,
+      projectPath: ref.projectPath,
+      taskSourceProjectPath: '/workspace/source',
+      taskWorktreePath: '/workspace/internal-worktree',
+    });
+    const prepareEventSubscription = vi.fn().mockResolvedValue(() => undefined);
+    useSessionStore.setState({
+      sessions: [],
+      boundProjects: [
+        {
+          path: '/workspace/source',
+          name: 'source',
+          available: true,
+          isCurrent: true,
+          boundAt: '2026-08-07T00:00:00.000Z',
+        },
+      ],
+      selectedProjectPath: null,
+      prepareEventSubscription,
+    });
+    vi.mocked(sessionService.getSession).mockResolvedValue(exactSession);
+    vi.mocked(sessionService.getMessages).mockResolvedValue([]);
+
+    await useSessionStore.getState().selectSession(ref);
+
+    expect(sessionService.getSession).toHaveBeenCalledWith(ref);
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionRef: ref,
+      selectedProjectPath: '/workspace/source',
+      sessions: [
+        expect.objectContaining({
+          sessionId: ref.sessionId,
+          projectPath: ref.projectPath,
+          taskSourceProjectPath: '/workspace/source',
+        }),
+      ],
+    });
   });
 
   it('buffers replayed permission events until the selected session is committed', async () => {
@@ -321,6 +418,53 @@ describe('sessionSlice multimodal sendMessage', () => {
     expect(useSessionStore.getState().eventUnsubscribe).toBe(replacementUnsubscribe);
   });
 
+  it('replaces stale run state with the selected session status snapshot', async () => {
+    const sourceRef = createRef('source-session', '/tmp/source');
+    const targetRef = createRef('target-session', '/tmp/target');
+    const oldUnsubscribe = vi.fn();
+    const nextUnsubscribe = vi.fn();
+    const prepareEventSubscription = vi.fn(
+      async (_ref: SessionRef, onEvent?: (event: StreamEvent) => void) => {
+        onEvent?.({
+          type: 'session.status',
+          properties: {
+            sessionId: targetRef.sessionId,
+            projectPath: targetRef.projectPath,
+            status: 'running',
+            runId: 'target-run',
+            queued: 1,
+            pendingInputDelivery: 'next_turn',
+            recovered: 1,
+          },
+        });
+        return nextUnsubscribe;
+      }
+    );
+    useSessionStore.setState({
+      ...activeStreamingState(sourceRef, oldUnsubscribe),
+      currentRunId: 'source-run',
+      pendingSteeringCount: 4,
+      pendingInputDelivery: 'current_turn',
+      prepareEventSubscription,
+      replaceEventSubscription: actualReplaceEventSubscription,
+    });
+    vi.mocked(sessionService.getMessages).mockResolvedValue([]);
+
+    await useSessionStore.getState().selectSession(targetRef);
+
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionRef: targetRef,
+      isStreaming: true,
+      agentPhase: 'running',
+      currentRunId: 'target-run',
+      pendingSteeringCount: 1,
+      pendingInputDelivery: 'next_turn',
+      recoveredSteeringCount: 1,
+      eventUnsubscribe: nextUnsubscribe,
+    });
+    expect(oldUnsubscribe).toHaveBeenCalledOnce();
+  });
+
   it('adds optimistic image-only user messages without fabricating text content', async () => {
     vi.mocked(sessionService.createSession).mockResolvedValue(
       createSession({ sessionId: 'session-2', projectPath: '/tmp/project' })
@@ -358,6 +502,7 @@ describe('sessionSlice multimodal sendMessage', () => {
   });
 
   it('keeps the active SSE subscription and records queued steering depth', async () => {
+    useConfigStore.setState({ currentModelId: 'model-next-turn' });
     const subscribeToEvents = vi.fn();
     useSessionStore.setState({
       currentSessionId: 'session-active',
@@ -376,13 +521,20 @@ describe('sessionSlice multimodal sendMessage', () => {
 
     await useSessionStore.getState().sendMessage({
       content: 'Use the updated requirement.',
+      modelId: 'model-next-turn',
     });
 
+    expect(sessionService.sendMessage).toHaveBeenLastCalledWith(
+      createRef('session-active', '/tmp/project-active'),
+      { content: 'Use the updated requirement.' },
+      'default'
+    );
     expect(subscribeToEvents).not.toHaveBeenCalled();
     expect(useSessionStore.getState()).toMatchObject({
       currentRunId: 'run-active',
       isStreaming: true,
       pendingSteeringCount: 2,
+      pendingInputDelivery: 'current_turn',
     });
 
     vi.mocked(sessionService.sendMessage).mockResolvedValue({
@@ -393,7 +545,129 @@ describe('sessionSlice multimodal sendMessage', () => {
     await useSessionStore.getState().sendMessage({
       content: 'Run this after the current answer.',
     });
-    expect(useSessionStore.getState().pendingSteeringCount).toBe(1);
+    expect(useSessionStore.getState()).toMatchObject({
+      pendingSteeringCount: 1,
+      pendingInputDelivery: 'next_turn',
+    });
+  });
+
+  it('rolls back rejected steering without stopping the active run', async () => {
+    const currentRef = createRef('session-active', '/tmp/project-active');
+    const unsubscribe = vi.fn();
+    const existingMessage = createMessage({
+      id: 'assistant-active',
+      role: 'assistant',
+      content: 'Still working',
+    });
+    useSessionStore.setState({
+      ...activeStreamingState(currentRef, unsubscribe, 'compacting'),
+      messages: [existingMessage],
+      error: null,
+    });
+    vi.mocked(sessionService.sendMessage).mockRejectedValue(new Error('queue_full'));
+
+    const accepted = await useSessionStore.getState().sendMessage({
+      content: 'Do this next',
+    });
+
+    expect(accepted).toBe(false);
+    expect(useSessionStore.getState()).toMatchObject({
+      isStreaming: true,
+      agentPhase: 'compacting',
+      currentRunId: 'run-active',
+      pendingSteeringCount: 2,
+      error: 'queue_full',
+      errorContext: { kind: 'submission', sessionRef: currentRef },
+      messages: [existingMessage],
+    });
+    expect(unsubscribe).not.toHaveBeenCalled();
+  });
+
+  it('rolls back a rejected initial message and reports that it was not accepted', async () => {
+    const currentRef = createRef('session-idle', '/tmp/project-idle');
+    const existingMessage = createMessage({
+      id: 'existing-message',
+      role: 'assistant',
+      content: 'Previous answer',
+    });
+    useSessionStore.setState({
+      currentSessionId: currentRef.sessionId,
+      currentSessionRef: currentRef,
+      isTemporarySession: false,
+      isStreaming: false,
+      messages: [existingMessage],
+    });
+    vi.mocked(sessionService.sendMessage).mockRejectedValue(
+      new Error('turn_unavailable')
+    );
+
+    const accepted = await useSessionStore.getState().sendMessage({
+      content: 'Try this request',
+    });
+
+    expect(accepted).toBe(false);
+    expect(useSessionStore.getState()).toMatchObject({
+      isStreaming: false,
+      agentPhase: 'idle',
+      currentRunId: null,
+      error: 'turn_unavailable',
+      errorContext: { kind: 'submission', sessionRef: currentRef },
+      messages: [existingMessage],
+    });
+  });
+
+  it('keeps the run connected until stopping is confirmed and deduplicates stop requests', async () => {
+    const currentRef = createRef('session-active', '/tmp/project-active');
+    const unsubscribeFromEvents = vi.fn();
+    const stopGate = deferred<void>();
+    useSessionStore.setState({
+      ...activeStreamingState(currentRef, vi.fn()),
+      unsubscribeFromEvents,
+    });
+    vi.mocked(sessionService.abortSession).mockReturnValue(stopGate.promise);
+
+    const stopping = useSessionStore.getState().abortSession();
+    const duplicate = useSessionStore.getState().abortSession();
+    await expect(duplicate).resolves.toBe(false);
+    expect(useSessionStore.getState()).toMatchObject({
+      isStreaming: true,
+      isStopping: true,
+      currentRunId: 'run-active',
+    });
+    expect(unsubscribeFromEvents).not.toHaveBeenCalled();
+    expect(sessionService.abortSession).toHaveBeenCalledOnce();
+
+    stopGate.resolve();
+    await expect(stopping).resolves.toBe(true);
+    expect(unsubscribeFromEvents).toHaveBeenCalledOnce();
+    expect(useSessionStore.getState()).toMatchObject({
+      isStreaming: false,
+      isStopping: false,
+      currentRunId: null,
+      pendingSteeringCount: 0,
+      pendingInputDelivery: null,
+    });
+  });
+
+  it('keeps the active run and event stream when stopping fails', async () => {
+    const currentRef = createRef('session-active', '/tmp/project-active');
+    const unsubscribeFromEvents = vi.fn();
+    useSessionStore.setState({
+      ...activeStreamingState(currentRef, vi.fn()),
+      unsubscribeFromEvents,
+    });
+    vi.mocked(sessionService.abortSession).mockRejectedValue(
+      new Error('stop unavailable')
+    );
+
+    await expect(useSessionStore.getState().abortSession()).resolves.toBe(false);
+    expect(unsubscribeFromEvents).not.toHaveBeenCalled();
+    expect(useSessionStore.getState()).toMatchObject({
+      isStreaming: true,
+      isStopping: false,
+      currentRunId: 'run-active',
+      error: 'stop unavailable',
+    });
   });
 
   it('rolls back optimistic send state when initial subscription startup fails', async () => {
@@ -620,6 +894,25 @@ describe('sessionSlice multimodal sendMessage', () => {
       createRef('created-1', '/tmp/project-created')
     );
     expect(useSessionStore.getState().currentSessionId).toBe('created-1');
+  });
+
+  it('creates a temporary session in the explicitly focused workspace', async () => {
+    vi.mocked(sessionService.createSession).mockResolvedValue(
+      createSession({ sessionId: 'created-focused', projectPath: '/workspace/focused' })
+    );
+    vi.mocked(sessionService.sendMessage).mockResolvedValue({
+      runId: 'run-focused',
+      status: 'running',
+    });
+
+    useSessionStore.getState().startTemporarySession('/workspace/focused');
+    await useSessionStore.getState().sendMessage({ content: 'inspect this workspace' });
+
+    expect(useSessionStore.getState().selectedProjectPath).toBe('/workspace/focused');
+    expect(sessionService.createSession).toHaveBeenCalledWith(
+      '/workspace/focused',
+      'inspect this workspace'
+    );
   });
 
   it('closes the active subscription and resets streaming state when starting a temporary session', () => {
@@ -1032,6 +1325,35 @@ describe('sessionSlice multimodal sendMessage', () => {
     await expect(actualSessionService.listSessions()).rejects.toThrow();
   });
 
+  it('loads one exact session with its compound workspace identity', async () => {
+    const session = createSession({
+      sessionId: 'shared-id',
+      projectPath: '/tmp/project-b',
+    });
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify(session), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { sessionService: actualSessionService } = await vi.importActual<
+      typeof import('../../../src/services/sessionService')
+    >('../../../src/services/sessionService');
+
+    await expect(
+      actualSessionService.getSession({
+        sessionId: 'shared-id',
+        projectPath: '/tmp/project-b',
+      })
+    ).resolves.toEqual(session);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/sessions/shared-id?projectPath=%2Ftmp%2Fproject-b',
+      undefined
+    );
+  });
+
   it('keeps fork pending state isolated until the child subscription is ready', async () => {
     const source = createSession({
       sessionId: 'shared-id',
@@ -1244,7 +1566,9 @@ describe('sessionSlice multimodal sendMessage', () => {
       session: child,
       messages: [],
     });
-    vi.mocked(sessionService.listSessions).mockResolvedValue([source, child]);
+    vi.mocked(sessionService.listSessionPage).mockResolvedValue({
+      sessions: [source, child],
+    });
 
     await useSessionStore.getState().forkSession(source);
 
@@ -1255,6 +1579,98 @@ describe('sessionSlice multimodal sendMessage', () => {
 
     await useSessionStore.getState().loadSessions();
     expect(useSessionStore.getState().sessions).toEqual([source, child]);
+  });
+
+  it('renders the first catalog page while loading remaining sessions', async () => {
+    const first = createSession({
+      sessionId: 'first-page',
+      title: 'First page',
+    });
+    const second = createSession({
+      sessionId: 'second-page',
+      title: 'Second page',
+    });
+    const remainingPage = deferred<{
+      sessions: Session[];
+      nextCursor?: string;
+    }>();
+    vi.mocked(sessionService.listSessionPage)
+      .mockResolvedValueOnce({
+        sessions: [first],
+        nextCursor: 'next-page',
+      })
+      .mockReturnValueOnce(remainingPage.promise);
+
+    const loading = useSessionStore.getState().loadSessions();
+
+    await vi.waitFor(() => {
+      expect(useSessionStore.getState().sessions).toEqual([first]);
+    });
+    expect(useSessionStore.getState().isLoading).toBe(false);
+    expect(useSessionStore.getState().catalogLoadState).toBe('hydrating');
+    expect(sessionService.listSessionPage).toHaveBeenCalledTimes(1);
+
+    remainingPage.resolve({ sessions: [second] });
+    await loading;
+
+    expect(useSessionStore.getState().sessions).toEqual([first, second]);
+    expect(useSessionStore.getState().catalogLoadState).toBe('ready');
+    expect(useSessionStore.getState().catalogError).toBeNull();
+    expect(sessionService.listSessionPage).toHaveBeenNthCalledWith(1, undefined);
+    expect(sessionService.listSessionPage).toHaveBeenNthCalledWith(2, 'next-page');
+  });
+
+  it('keeps the first catalog page visible when background hydration fails', async () => {
+    const first = createSession({
+      sessionId: 'first-page',
+      title: 'First page',
+    });
+    vi.mocked(sessionService.listSessionPage)
+      .mockResolvedValueOnce({
+        sessions: [first],
+        nextCursor: 'next-page',
+      })
+      .mockRejectedValueOnce(new Error('history unavailable'));
+
+    await useSessionStore.getState().loadSessions();
+
+    expect(useSessionStore.getState()).toMatchObject({
+      sessions: [first],
+      catalogLoadState: 'error',
+      catalogError: 'history unavailable',
+      error: null,
+      isLoading: false,
+    });
+  });
+
+  it('does not let catalog completion clear an active session navigation', async () => {
+    const target = createSession({
+      sessionId: 'navigation-target',
+      projectPath: '/tmp/navigation-target',
+    });
+    const targetRef = createRef(target.sessionId, target.projectPath);
+    const messages = deferred<Message[]>();
+    useSessionStore.setState({
+      sessions: [target],
+      prepareEventSubscription: vi.fn().mockResolvedValue(() => undefined),
+    });
+    vi.mocked(sessionService.getMessages).mockReturnValue(messages.promise);
+    vi.mocked(sessionService.listSessionPage).mockResolvedValue({
+      sessions: [target],
+    });
+
+    const selection = useSessionStore.getState().selectSession(targetRef);
+    expect(useSessionStore.getState().isLoading).toBe(true);
+
+    await useSessionStore.getState().loadSessions();
+    expect(useSessionStore.getState()).toMatchObject({
+      isLoading: true,
+      catalogLoadState: 'ready',
+    });
+
+    messages.resolve([]);
+    await selection;
+    expect(useSessionStore.getState().isLoading).toBe(false);
   });
 
   it('does not commit selectSession state until messages and subscription readiness both succeed', async () => {
@@ -1538,6 +1954,63 @@ describe('sessionSlice multimodal sendMessage', () => {
     expect(replaceEventSubscription).toHaveBeenCalledTimes(1);
     expect(replaceEventSubscription).toHaveBeenCalledWith(unsubscribeTarget);
     expect(unsubscribeChild).toHaveBeenCalledTimes(1);
+  });
+
+  it('tracks the committed session event connection and reconnects the exact session ref', async () => {
+    const ref = createRef('session-live', '/tmp/project-live');
+    const closes = [vi.fn(), vi.fn()];
+    const connectionCallbacks: Array<
+      (state: 'connecting' | 'connected' | 'reconnecting' | 'offline') => void
+    > = [];
+
+    vi.mocked(sessionService.openEventSubscription).mockImplementation(
+      async (_ref, _onEvent, options) => {
+        const onState = options?.onConnectionStateChange;
+        if (onState) connectionCallbacks.push(onState);
+        onState?.('connecting');
+        onState?.('connected');
+        return closes[connectionCallbacks.length - 1] ?? vi.fn();
+      }
+    );
+
+    useSessionStore.setState({
+      currentSessionId: ref.sessionId,
+      currentSessionRef: ref,
+      isTemporarySession: false,
+      eventUnsubscribe: null,
+      sessionEventConnectionState: 'idle',
+      prepareEventSubscription: actualPrepareEventSubscription,
+      replaceEventSubscription: actualReplaceEventSubscription,
+      subscribeToEvents: actualSubscribeToEvents,
+      reconnectSessionEvents: actualReconnectSessionEvents,
+      unsubscribeFromEvents: actualUnsubscribeFromEvents,
+    });
+    useSessionStore.getState().unsubscribeFromEvents();
+
+    await useSessionStore.getState().subscribeToEvents(ref);
+    expect(useSessionStore.getState().sessionEventConnectionState).toBe('connected');
+
+    connectionCallbacks[0]?.('reconnecting');
+    expect(useSessionStore.getState().sessionEventConnectionState).toBe('reconnecting');
+    connectionCallbacks[0]?.('offline');
+    expect(useSessionStore.getState().sessionEventConnectionState).toBe('offline');
+
+    await useSessionStore.getState().reconnectSessionEvents();
+
+    expect(closes[0]).toHaveBeenCalledTimes(1);
+    expect(sessionService.openEventSubscription).toHaveBeenNthCalledWith(
+      2,
+      ref,
+      expect.any(Function),
+      expect.objectContaining({
+        onConnectionStateChange: expect.any(Function),
+      })
+    );
+    expect(useSessionStore.getState().sessionEventConnectionState).toBe('connected');
+
+    useSessionStore.getState().unsubscribeFromEvents();
+    expect(closes[1]).toHaveBeenCalledTimes(1);
+    expect(useSessionStore.getState().sessionEventConnectionState).toBe('idle');
   });
 
   it('replaces subscriptions fail-safely after setting next and resetting the global buffer', () => {
@@ -1963,10 +2436,14 @@ describe('sessionSlice multimodal sendMessage', () => {
         typeof import('../../../src/services/sessionService')
       >('../../../src/services/sessionService');
       const actualService = actual.sessionService;
+      const connectionStates: string[] = [];
 
       const readyPromise = actualService.openEventSubscription(
         createRef('shared-id', '/tmp/project-a'),
-        onEvent
+        onEvent,
+        {
+          onConnectionStateChange: (state) => connectionStates.push(state),
+        }
       );
       let readiness: 'pending' | 'resolved' = 'pending';
       void readyPromise.then(() => {
@@ -2007,11 +2484,25 @@ describe('sessionSlice multimodal sendMessage', () => {
           properties: {
             sessionId: 'shared-id',
             projectPath: '/tmp/project-a',
+            status: 'running',
+            runId: 'run-restored',
+            queued: 1,
+            pendingInputDelivery: 'next_turn',
           },
         }),
       });
       const unsubscribe = await readyPromise;
       expect(typeof unsubscribe).toBe('function');
+      expect(connectionStates).toEqual(['connecting', 'connected']);
+      expect(onEvent).toHaveBeenCalledWith({
+        type: 'session.status',
+        properties: expect.objectContaining({
+          status: 'running',
+          runId: 'run-restored',
+          queued: 1,
+          pendingInputDelivery: 'next_turn',
+        }),
+      });
 
       const preReadyError = actualService.openEventSubscription(
         createRef('shared-id', '/tmp/project-c'),
@@ -2031,6 +2522,42 @@ describe('sessionSlice multimodal sendMessage', () => {
       vi.advanceTimersByTime(10001);
       await expect(timeoutPromise).rejects.toThrow();
       expect(FakeEventSource.instances[2]?.closed).toBe(true);
+
+      const exhaustedStates: string[] = [];
+      const exhaustedPromise = actualService.openEventSubscription(
+        createRef('shared-id', '/tmp/project-e'),
+        onEvent,
+        {
+          maxRetries: 2,
+          onConnectionStateChange: (state) => exhaustedStates.push(state),
+        }
+      );
+      const exhaustedInitial = FakeEventSource.instances[3];
+      exhaustedInitial?.onmessage?.({
+        data: JSON.stringify({
+          type: 'connected',
+          properties: {
+            sessionId: 'shared-id',
+            projectPath: '/tmp/project-e',
+            status: 'running',
+          },
+        }),
+      });
+      const exhaustedUnsubscribe = await exhaustedPromise;
+      exhaustedInitial?.onerror?.();
+      vi.advanceTimersByTime(1000);
+      FakeEventSource.instances[4]?.onerror?.();
+      vi.advanceTimersByTime(2000);
+      FakeEventSource.instances[5]?.onerror?.();
+
+      expect(exhaustedStates).toEqual([
+        'connecting',
+        'connected',
+        'reconnecting',
+        'reconnecting',
+        'offline',
+      ]);
+      exhaustedUnsubscribe();
     } finally {
       vi.useRealTimers();
       if (previousDescriptor) {

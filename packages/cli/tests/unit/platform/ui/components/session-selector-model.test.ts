@@ -95,4 +95,43 @@ describe('sessionSelectorModel', () => {
     ).toBe(ordinaryKey);
     expect(new Set([ordinaryKey, otherWorkspaceKey, otherIdKey]).size).toBe(3);
   });
+
+  it('uses durable semantic titles with a stable legacy fallback', async () => {
+    const { getSessionDisplayTitle } = await import(
+      '../../../../../src/ui/components/sessionSelectorModel.js'
+    );
+
+    expect(
+      getSessionDisplayTitle(
+        createSessionMetadata({ title: 'Implement project navigation' })
+      )
+    ).toBe('Implement project navigation');
+    expect(
+      getSessionDisplayTitle(
+        createSessionMetadata({
+          sessionId: 'legacy-session-id',
+          title: '   ',
+        })
+      )
+    ).toBe('Session legacy-s');
+  });
+
+  it('projects durable delivery outcomes into the compact TUI label', async () => {
+    const { getSessionDeliveryLabel } = await import(
+      '../../../../../src/ui/components/sessionSelectorModel.js'
+    );
+
+    expect(getSessionDeliveryLabel(createSessionMetadata())).toBe('');
+    expect(
+      getSessionDeliveryLabel(
+        createSessionMetadata({
+          taskDelivery: {
+            status: 'conflicted',
+            updatedAt: '2026-08-07T12:00:00.000Z',
+            message: 'Source workspace changed',
+          },
+        })
+      )
+    ).toBe(' | delivery:conflicted');
+  });
 });

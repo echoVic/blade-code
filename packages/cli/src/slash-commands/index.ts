@@ -127,8 +127,11 @@ function createSkillSlashCommand(skill: SkillMetadata): SlashCommand {
  * 查找 User-invocable Skill
  * 注意：调用前需确保 registry 已初始化
  */
-function findUserInvocableSkill(name: string): SkillMetadata | undefined {
-  const registry = getSkillRegistry();
+function findUserInvocableSkill(
+  name: string,
+  workspaceRoot: string
+): SkillMetadata | undefined {
+  const registry = getSkillRegistry({ cwd: workspaceRoot });
   const skills = registry.getUserInvocableSkills();
   return skills.find((s) => s.name === name);
 }
@@ -136,8 +139,8 @@ function findUserInvocableSkill(name: string): SkillMetadata | undefined {
 /**
  * 确保 SkillRegistry 已初始化
  */
-async function ensureSkillsInitialized(): Promise<void> {
-  await discoverSkills();
+async function ensureSkillsInitialized(workspaceRoot: string): Promise<void> {
+  await discoverSkills({ cwd: workspaceRoot });
 }
 
 /**
@@ -149,7 +152,9 @@ async function ensureSkillsInitialized(): Promise<void> {
 export async function initializeCustomCommands(
   workspaceRoot: string
 ): Promise<CustomCommandDiscoveryResult> {
-  const registry = CustomCommandRegistry.getInstance();
+  const registry = CustomCommandRegistry.getInstance(workspaceRoot);
+  const cached = registry.getLastDiscoveryResult();
+  if (registry.isInitialized() && cached) return cached;
   return await registry.initialize(workspaceRoot);
 }
 
@@ -170,12 +175,14 @@ export async function executeSlashCommand(
     }
 
     // 2. 查找自定义命令
-    const customRegistry = CustomCommandRegistry.getInstance();
+    const workspaceRoot = context.workspaceRoot || context.cwd || getCwd();
+    const customRegistry = CustomCommandRegistry.getInstance(workspaceRoot);
+    if (!customRegistry.isInitialized()) {
+      await initializeCustomCommands(workspaceRoot);
+    }
     if (customRegistry.hasCommand(command)) {
       const customCommand = customRegistry.getCommand(command);
       if (customCommand) {
-        const workspaceRoot = context.workspaceRoot || getCwd();
-
         // 执行命令内容处理（参数插值、Bash 嵌入、文件引用）
         const processedContent = await customRegistry.executeCommand(command, {
           args,
@@ -203,8 +210,6 @@ export async function executeSlashCommand(
     const pluginRegistry = getPluginRegistry();
     const pluginCommand = pluginRegistry.findCommand(command);
     if (pluginCommand) {
-      const workspaceRoot = context.workspaceRoot || getCwd();
-
       // 执行插件命令
       const processedContent = await customRegistry.executePluginCommand(
         pluginCommand.namespacedName,
@@ -231,8 +236,8 @@ export async function executeSlashCommand(
     }
 
     // 4. 确保 SkillRegistry 已初始化，再查找 User-invocable Skill
-    await ensureSkillsInitialized();
-    const skill = findUserInvocableSkill(command);
+    await ensureSkillsInitialized(workspaceRoot);
+    const skill = findUserInvocableSkill(command, workspaceRoot);
     if (skill) {
       const skillCommand = createSkillSlashCommand(skill);
       return await skillCommand.handler(args, context);
@@ -254,11 +259,13 @@ export async function executeSlashCommand(
 /**
  * 获取所有注册的命令（包括自定义命令、插件命令和 User-invocable Skills）
  */
-export function getRegisteredCommands(): SlashCommand[] {
+export function getRegisteredCommands(
+  workspaceRoot: string = getCwd()
+): SlashCommand[] {
   const builtinCmds = Object.values(slashCommands);
 
   // 获取自定义命令并转换为 SlashCommand
-  const customRegistry = CustomCommandRegistry.getInstance();
+  const customRegistry = CustomCommandRegistry.getInstance(workspaceRoot);
   const customCmds = customRegistry.getAllCommands().map((cmd) => ({
     name: cmd.name,
     description: cmd.config.description || cmd.content.slice(0, 50),
@@ -282,7 +289,7 @@ export function getRegisteredCommands(): SlashCommand[] {
   }));
 
   // 获取 User-invocable Skills 并转换为 SlashCommand
-  const skillRegistry = getSkillRegistry();
+  const skillRegistry = getSkillRegistry({ cwd: workspaceRoot });
   const skillCmds = skillRegistry.getUserInvocableSkills().map(createSkillSlashCommand);
 
   return [...builtinCmds, ...customCmds, ...pluginCmds, ...skillCmds];
@@ -291,7 +298,10 @@ export function getRegisteredCommands(): SlashCommand[] {
 /**
  * 获取模糊匹配的命令建议（使用 fuse.js）
  */
-export function getFuzzyCommandSuggestions(input: string): CommandSuggestion[] {
+export function getFuzzyCommandSuggestions(
+  input: string,
+  workspaceRoot: string = getCwd()
+): CommandSuggestion[] {
   // 移除前导斜杠，并 trim 掉空格（用户可能输入 "/init " 然后按 Tab）
   const query = (input.startsWith('/') ? input.slice(1) : input).trim();
 
@@ -308,7 +318,7 @@ export function getFuzzyCommandSuggestions(input: string): CommandSuggestion[] {
   }));
 
   // 添加自定义命令
-  const customRegistry = CustomCommandRegistry.getInstance();
+  const customRegistry = CustomCommandRegistry.getInstance(workspaceRoot);
   const customSearchable = customRegistry.getAllCommands().map((cmd) => ({
     name: cmd.name,
     description: cmd.config.description || cmd.content.slice(0, 50),
@@ -334,7 +344,7 @@ export function getFuzzyCommandSuggestions(input: string): CommandSuggestion[] {
   }));
 
   // 添加 User-invocable Skills
-  const skillRegistry = getSkillRegistry();
+  const skillRegistry = getSkillRegistry({ cwd: workspaceRoot });
   const skillSearchable = skillRegistry.getUserInvocableSkills().map((skill) => ({
     name: skill.name,
     description: skill.description,

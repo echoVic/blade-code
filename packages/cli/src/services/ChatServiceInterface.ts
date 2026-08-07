@@ -3,10 +3,26 @@
  * 定义统一的聊天服务接口，支持多种 API 提供商
  */
 
-import type {
-  ChatCompletionChunk,
-  ChatCompletionMessageToolCall,
-} from 'openai/resources/chat';
+/** OpenAI-compatible tool call (function variant only — custom tools not used) */
+export interface ToolCallFunction {
+  arguments: string;
+  name: string;
+}
+
+export interface ChatCompletionMessageToolCall {
+  id: string;
+  function: ToolCallFunction;
+  type: 'function';
+}
+
+/** Partial tool call received during streaming (fields optional) */
+export interface StreamToolCallDelta {
+  index: number;
+  id?: string;
+  function?: { arguments?: string; name?: string };
+  type?: 'function';
+}
+
 import type { ModelRef, ProviderType } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { JsonValue, MessageRole } from '../store/types.js';
@@ -127,7 +143,7 @@ export interface ChatRequestOptions {
  */
 export type StreamToolCall =
   | ChatCompletionMessageToolCall
-  | ChatCompletionChunk.Choice.Delta.ToolCall;
+  | StreamToolCallDelta;
 
 /**
  * 流式响应块

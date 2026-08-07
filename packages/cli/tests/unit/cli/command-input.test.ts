@@ -92,6 +92,7 @@ vi.mock('../../../src/store/selectors/index.js', () => ({
     toggleThinkingMode: vi.fn(),
   }),
   useCurrentModel: () => undefined,
+  useWorkspaceRoot: () => '/repo-root',
 }));
 
 vi.mock('../../../src/ui/hooks/useAtCompletion.js', () => ({

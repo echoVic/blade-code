@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { testTypes } from './test-config.js';
 import { runOwnedCommand } from './test-runner.js';
+import { resolveVitestCli } from './vitest-cli.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -104,7 +105,7 @@ async function runTest(testType, options = {}) {
     process.env.VERBOSE_TESTS = 'true';
   }
 
-  const vitestPath = fileURLToPath(import.meta.resolve('vitest/vitest.mjs'));
+  const vitestPath = resolveVitestCli();
   const displayCommand = ['vitest', ...baseArgs].join(' ');
   const controller = new AbortController();
   let interruptedBy;

@@ -1,15 +1,15 @@
-import { mkdtemp, rm, writeFile, mkdir, utimes } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SqliteDb } from '../../../../src/context/storage/sqlite/driver.js';
 import { openDb } from '../../../../src/context/storage/sqlite/driver.js';
-import { migrate } from '../../../../src/context/storage/sqlite/schema.js';
 import {
+  type MetadataDeriver,
   syncAll,
   syncSession,
-  type MetadataDeriver,
 } from '../../../../src/context/storage/sqlite/projection.js';
+import { migrate } from '../../../../src/context/storage/sqlite/schema.js';
 import type { SessionEvent } from '../../../../src/context/types.js';
 
 const ts = '2024-01-01T00:00:00.000Z';
@@ -118,6 +118,51 @@ describe('SQLite projection sync', () => {
 
     expect(await syncSession(db, sessionId, projectPath, derive)).toBe(true);
     expect(await syncSession(db, sessionId, projectPath, derive)).toBe(false);
+  });
+
+  it('caches invalid transcripts and removes stale projected content', async () => {
+    const trackedDerive = vi.fn(derive);
+    await writeTranscript(sessionFile(), [
+      ev(1, 'message_created', {
+        messageId: 'orphan',
+        role: 'user',
+        createdAt: ts,
+      }),
+    ]);
+
+    expect(
+      await syncSession(db, sessionId, projectPath, trackedDerive)
+    ).toBe(true);
+    expect(
+      await syncSession(db, sessionId, projectPath, trackedDerive)
+    ).toBe(false);
+    expect(trackedDerive).toHaveBeenCalledTimes(1);
+    expect(
+      db.prepare('SELECT COUNT(*) c FROM sessions').get<{ c: number }>()?.c
+    ).toBe(0);
+
+    await writeTranscript(sessionFile(), [
+      ev(1, 'session_created', {
+        sessionId,
+        rootId: sessionId,
+        createdAt: ts,
+        updatedAt: ts,
+      }),
+    ]);
+    expect(
+      await syncSession(db, sessionId, projectPath, trackedDerive)
+    ).toBe(true);
+    expect(
+      db.prepare('SELECT COUNT(*) c FROM sessions').get<{ c: number }>()?.c
+    ).toBe(1);
+
+    await writeTranscript(sessionFile(), []);
+    expect(
+      await syncSession(db, sessionId, projectPath, trackedDerive)
+    ).toBe(true);
+    expect(
+      db.prepare('SELECT COUNT(*) c FROM sessions').get<{ c: number }>()?.c
+    ).toBe(0);
   });
 
   it('re-materializes on rewind (seq truncation) without duplicating parts', async () => {

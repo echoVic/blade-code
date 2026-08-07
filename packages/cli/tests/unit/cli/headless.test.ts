@@ -200,6 +200,13 @@ describe('headless runner', () => {
       prompt: 'Implement isolated task dispatch',
       sourceProjectPath: expect.any(String),
       isolation: 'worktree',
+      dispatch: {
+        version: 1,
+        prompt: 'Implement isolated task dispatch',
+        sourceProjectPath: expect.any(String),
+        isolation: 'worktree',
+        permissionMode: 'yolo',
+      },
     });
     expect(runtimeState.create).toHaveBeenCalledWith(
       expect.objectContaining({

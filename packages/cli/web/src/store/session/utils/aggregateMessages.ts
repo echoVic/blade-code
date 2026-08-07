@@ -129,6 +129,13 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
           (rawAny.tool_call_id as string) || (metadata?.toolCallId as string);
         const toolName =
           (rawAny.name as string) || (metadata?.toolName as string) || 'Tool';
+        const toolMetadata =
+          metadata?.metadata &&
+          typeof metadata.metadata === 'object' &&
+          !Array.isArray(metadata.metadata)
+            ? (metadata.metadata as Record<string, unknown>)
+            : undefined;
+        const failed = typeof metadata?.error === 'string' && metadata.error.length > 0;
 
         const existingTool = currentAssistant.agentContent.toolCalls.find(
           (tc) => tc.toolCallId === toolCallId
@@ -136,7 +143,12 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
 
         if (existingTool) {
           existingTool.output = getTextContent(raw.content);
-          existingTool.status = 'success';
+          existingTool.status = failed ? 'error' : 'success';
+          existingTool.metadata = toolMetadata;
+          existingTool.summary =
+            typeof toolMetadata?.summary === 'string'
+              ? toolMetadata.summary
+              : existingTool.summary;
           if (!existingTool.toolName || existingTool.toolName === 'Unknown') {
             existingTool.toolName = toolName;
           }
@@ -150,8 +162,13 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
             }),
             toolName,
             output: getTextContent(raw.content),
-            status: 'success',
+            status: failed ? 'error' : 'success',
             startTime: Date.now(),
+            metadata: toolMetadata,
+            summary:
+              typeof toolMetadata?.summary === 'string'
+                ? toolMetadata.summary
+                : undefined,
           });
         }
       }

@@ -1,15 +1,17 @@
 import path from 'node:path';
-import { SessionService } from '../../services/SessionService.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import type { SessionMetadata } from '../../services/SessionService.js';
-import type { SessionMessage } from '../../store/types.js';
+import { SessionService } from '../../services/SessionService.js';
 import type { SessionSelectionIntent } from '../../slash-commands/types.js';
+import type { SessionMessage } from '../../store/types.js';
+import { configActions, getModelById } from '../../store/vanilla.js';
 
 export interface SessionActivationActions {
   restoreSession: (
     sessionId: string,
     messages: SessionMessage[],
-    rawMessages: Message[]
+    rawMessages: Message[],
+    workspaceRoot?: string
   ) => void;
 }
 
@@ -35,29 +37,21 @@ function resolveWorkspace(workspace: string): string {
 
 export async function listSessionCandidatesForIntent(
   _intent: SessionSelectionIntent,
-  workspaceRoot: string
+  _workspaceRoot: string
 ): Promise<SessionMetadata[]> {
   return SessionService.listSessions({
-    cwd: resolveWorkspace(workspaceRoot),
     includeSubagents: false,
   });
 }
 
 export async function activateSessionSelection(
   selection: SessionSelectionInput,
-  workspaceRoot: string,
+  _workspaceRoot: string,
   actions: SessionActivationActions,
   cleanupAgent: CleanupAgent
 ): Promise<{ sessionId: string; messages: Message[] }> {
   const { intent, session, newSessionId, announceFork } = selection;
-  const resolvedWorkspace = resolveWorkspace(workspaceRoot);
-
-  const sourceWorkspace = resolveWorkspace(session.projectPath);
-  if (sourceWorkspace !== resolvedWorkspace) {
-    throw new Error(
-      'Interactive session activation is limited to the current workspace'
-    );
-  }
+  const resolvedWorkspace = resolveWorkspace(session.projectPath);
 
   if (intent === 'fork') {
     const forked = await SessionService.forkSession(session.sessionId, {
@@ -80,7 +74,18 @@ export async function activateSessionSelection(
       });
     }
     await cleanupAgent();
-    actions.restoreSession(forked.sessionId, visibleMessages, forked.messages);
+    if (
+      forked.metadata.selectedModelId &&
+      getModelById(forked.metadata.selectedModelId)
+    ) {
+      await configActions().setCurrentModel(forked.metadata.selectedModelId);
+    }
+    actions.restoreSession(
+      forked.sessionId,
+      visibleMessages,
+      forked.messages,
+      forked.metadata.projectPath
+    );
     return {
       sessionId: forked.sessionId,
       messages: forked.messages,
@@ -93,7 +98,10 @@ export async function activateSessionSelection(
   );
   const uiMessages = SessionService.toUISafeMessages(messages);
   await cleanupAgent();
-  actions.restoreSession(session.sessionId, uiMessages, messages);
+  if (session.selectedModelId && getModelById(session.selectedModelId)) {
+    await configActions().setCurrentModel(session.selectedModelId);
+  }
+  actions.restoreSession(session.sessionId, uiMessages, messages, session.projectPath);
   return {
     sessionId: session.sessionId,
     messages,

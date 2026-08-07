@@ -5,24 +5,14 @@ const isCI = process.env.CI === 'true';
 const threadPool = {
   pool: 'threads' as const,
   fileParallelism: !isCI,
-  poolOptions: {
-    threads: {
-      singleThread: isCI,
-      maxThreads: isCI ? 1 : 4,
-      minThreads: 1,
-    },
-  },
+  maxWorkers: isCI ? 1 : 4,
+  minWorkers: 1,
 };
 const forkPool = {
   pool: 'forks' as const,
   fileParallelism: !isCI,
-  poolOptions: {
-    forks: {
-      singleFork: isCI,
-      maxForks: isCI ? 1 : 4,
-      minForks: 1,
-    },
-  },
+  maxWorkers: isCI ? 1 : 4,
+  minWorkers: 1,
 };
 
 export default defineConfig({
@@ -85,13 +75,8 @@ export default defineConfig({
           name: 'integration',
           ...forkPool,
           fileParallelism: false,
-          poolOptions: {
-            forks: {
-              singleFork: true,
-              maxForks: 1,
-              minForks: 1,
-            },
-          },
+          maxWorkers: 1,
+          minWorkers: 1,
           include: ['tests/integration/**/*.{test,spec}.{js,ts,jsx,tsx}'],
           exclude: ['tests/integration/real-api/**', 'tests/integration/cli/**'],
           setupFiles: ['./tests/support/setup.ts'],
@@ -154,13 +139,8 @@ export default defineConfig({
           name: 'real-api',
           ...forkPool,
           fileParallelism: false,
-          poolOptions: {
-            forks: {
-              singleFork: true,
-              maxForks: 1,
-              minForks: 1,
-            },
-          },
+          maxWorkers: 1,
+          minWorkers: 1,
           include: ['tests/integration/real-api/**/*.{test,spec}.{js,ts,jsx,tsx}'],
           setupFiles: ['./tests/support/setup.real-api.ts'],
           testTimeout: 300000,
@@ -171,13 +151,13 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@': resolve(__dirname, 'src'),
-      '@tests': resolve(__dirname, 'tests'),
-      '@fixtures': resolve(__dirname, 'tests/support/fixtures'),
-      '@mocks': resolve(__dirname, 'tests/support/mocks'),
-      '@helpers': resolve(__dirname, 'tests/support/helpers'),
-      '@factories': resolve(__dirname, 'tests/support/factories'),
-      '@support': resolve(__dirname, 'tests/support'),
+      '@': resolve(import.meta.dirname, 'src'),
+      '@tests': resolve(import.meta.dirname, 'tests'),
+      '@fixtures': resolve(import.meta.dirname, 'tests/support/fixtures'),
+      '@mocks': resolve(import.meta.dirname, 'tests/support/mocks'),
+      '@helpers': resolve(import.meta.dirname, 'tests/support/helpers'),
+      '@factories': resolve(import.meta.dirname, 'tests/support/factories'),
+      '@support': resolve(import.meta.dirname, 'tests/support'),
     },
   },
 });

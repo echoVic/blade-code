@@ -1,13 +1,14 @@
-import { Hono } from 'hono';
 import * as fs from 'node:fs/promises';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
+import { Hono } from 'hono';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { getSkillRegistry } from '../../skills/index.js';
 import { getSkillInstaller } from '../../skills/SkillInstaller.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
+const USER_SKILLS_ROOT = path.join(homedir(), '.blade', 'skills');
 const SKILLS_CONFIG_PATH = path.join(homedir(), '.blade', 'skills-config.json');
 
 interface SkillsConfig {
@@ -55,6 +56,7 @@ interface GitHubContent {
 
 let catalogCache: { data: CatalogSkill[]; timestamp: number } | null = null;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const CATALOG_DESCRIPTION_CONCURRENCY = 6;
 
 async function fetchOfficialSkillsCatalog(): Promise<CatalogSkill[]> {
   if (catalogCache && Date.now() - catalogCache.timestamp < CACHE_TTL) {
@@ -74,54 +76,65 @@ async function fetchOfficialSkillsCatalog(): Promise<CatalogSkill[]> {
 
     if (!response.ok) {
       logger.warn(`GitHub API returned ${response.status}`);
-      return catalogCache?.data || [];
+      if (catalogCache) return catalogCache.data;
+      throw new Error(`GitHub skills catalog returned ${response.status}`);
     }
 
     const contents: GitHubContent[] = await response.json();
-    const skills: CatalogSkill[] = [];
+    const directories = contents.filter((item) => item.type === 'dir');
+    const skills = new Array<CatalogSkill>(directories.length);
+    let nextIndex = 0;
+    const concurrency = Math.min(CATALOG_DESCRIPTION_CONCURRENCY, directories.length);
 
-    for (const item of contents) {
-      if (item.type !== 'dir') continue;
+    await Promise.all(
+      Array.from({ length: concurrency }, async () => {
+        while (nextIndex < directories.length) {
+          const index = nextIndex++;
+          const item = directories[index];
+          if (!item) continue;
 
-      let description = `Official ${item.name} skill`;
-      try {
-        const skillMdResponse = await fetch(
-          `https://raw.githubusercontent.com/anthropics/skills/main/skills/${item.name}/SKILL.md`,
-          { headers: { 'User-Agent': 'Blade-Skills-Catalog' } }
-        );
-        if (skillMdResponse.ok) {
-          const content = await skillMdResponse.text();
-          const descMatch = content.match(/^#[^\n]*\n+([^\n#]+)/);
-          if (descMatch) {
-            description = descMatch[1].trim().slice(0, 100);
+          let description = `Official ${item.name} skill`;
+          try {
+            const skillMdResponse = await fetch(
+              `https://raw.githubusercontent.com/anthropics/skills/main/skills/${item.name}/SKILL.md`,
+              { headers: { 'User-Agent': 'Blade-Skills-Catalog' } }
+            );
+            if (skillMdResponse.ok) {
+              const content = await skillMdResponse.text();
+              const descMatch = content.match(/^#[^\n]*\n+([^\n#]+)/);
+              if (descMatch) {
+                description = descMatch[1].trim().slice(0, 100);
+              }
+            }
+          } catch {
+            // Ignore individual description failures and keep the fallback.
           }
-        }
-      } catch {
-        // ignore, use default description
-      }
 
-      skills.push({
-        name: item.name,
-        description,
-        tag: 'Official',
-        author: 'Anthropic',
-      });
-    }
+          skills[index] = {
+            name: item.name,
+            description,
+            tag: 'Official',
+            author: 'Anthropic',
+          };
+        }
+      })
+    );
 
     catalogCache = { data: skills, timestamp: Date.now() };
     return skills;
   } catch (error) {
     logger.warn('Failed to fetch skills catalog from GitHub:', error);
-    return catalogCache?.data || [];
+    if (catalogCache) return catalogCache.data;
+    throw error;
   }
 }
 
 export const SkillsRoutes = () => {
-  const app = new Hono();
+  const app = new Hono<{ Variables: { directory: string } }>();
 
   app.get('/', async (c) => {
     try {
-      const registry = getSkillRegistry();
+      const registry = getSkillRegistry({ cwd: c.get('directory') });
       await registry.initialize();
       const skills = registry.getAll();
       const config = await loadSkillsConfig();
@@ -134,6 +147,9 @@ export const SkillsRoutes = () => {
         version: skill.version || '1.0.0',
         provider: 'Local',
         location: skill.source === 'builtin' ? 'Built-in' : skill.basePath,
+        removable:
+          skill.source === 'user' &&
+          path.dirname(path.resolve(skill.basePath)) === path.resolve(USER_SKILLS_ROOT),
         capabilities: ['prompts'],
         allowedTools: skill.allowedTools || [],
       }));
@@ -141,7 +157,12 @@ export const SkillsRoutes = () => {
       return c.json(result);
     } catch (error) {
       logger.error('[SkillsRoutes] Failed to get skills:', error);
-      return c.json([]);
+      return c.json(
+        {
+          error: error instanceof Error ? error.message : 'Failed to get skills',
+        },
+        500
+      );
     }
   });
 
@@ -162,11 +183,26 @@ export const SkillsRoutes = () => {
   app.delete('/:name', async (c) => {
     try {
       const name = c.req.param('name');
-      const skillPath = `${process.env.HOME}/.blade/skills/${name}`;
+      const registry = getSkillRegistry({ cwd: c.get('directory') });
+      await registry.initialize();
+      const skill = registry.get(name);
+      if (!skill) {
+        return c.json({ success: false, error: 'Skill not found' }, 404);
+      }
+
+      const skillPath = path.resolve(skill.basePath);
+      const userSkillsRoot = path.resolve(USER_SKILLS_ROOT);
+      if (skill.source !== 'user' || path.dirname(skillPath) !== userSkillsRoot) {
+        return c.json(
+          {
+            success: false,
+            error: 'Only Blade user skills can be uninstalled',
+          },
+          400
+        );
+      }
 
       await fs.rm(skillPath, { recursive: true, force: true });
-
-      const registry = getSkillRegistry();
       await registry.refresh();
 
       return c.json({ success: true });
@@ -186,7 +222,7 @@ export const SkillsRoutes = () => {
       };
 
       const installer = getSkillInstaller();
-      const registry = getSkillRegistry();
+      const registry = getSkillRegistry({ cwd: c.get('directory') });
       let success = false;
 
       if (body.source === 'catalog' && body.name) {
@@ -246,7 +282,13 @@ export const SkillsRoutes = () => {
       return c.json(catalog);
     } catch (error) {
       logger.error('[SkillsRoutes] Failed to get catalog:', error);
-      return c.json([]);
+      return c.json(
+        {
+          error:
+            error instanceof Error ? error.message : 'Failed to get skills catalog',
+        },
+        502
+      );
     }
   });
 

@@ -9,7 +9,7 @@ import {
   getCurrentModel,
   getModelById,
 } from '../../store/vanilla.js';
-import { BadRequestError } from '../error.js';
+import { BadRequestError, InternalServerError } from '../error.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -60,7 +60,8 @@ export const ModelsRoutes = () => {
       });
     } catch (error) {
       logger.error('[ModelsRoutes] Failed to get models:', error);
-      return c.json({ configured: [], current: null });
+      const failure = new InternalServerError('Failed to get models');
+      return c.json(failure.toObject(), 500);
     }
   });
 

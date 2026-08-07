@@ -7,8 +7,12 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { buildUserMessageContent } from '../../../../../src/ui/utils/messageContent.js';
+import {
+  MAX_INLINE_ATTACHMENT_BYTES,
+  MAX_INLINE_ATTACHMENT_COUNT,
+} from '../../../../../src/api/attachmentLimits.js';
 import type { ResolvedInput } from '../../../../../src/ui/hooks/useInputBuffer.js';
+import { buildUserMessageContent } from '../../../../../src/ui/utils/messageContent.js';
 
 describe('buildUserMessageContent', () => {
   // ==================== 纯文本 ====================
@@ -131,6 +135,42 @@ describe('buildUserMessageContent', () => {
         type: 'image_url',
         image_url: { url: 'data:image/webp;base64,onlyimg' },
       });
+    });
+
+    it('应该拒绝超过共享数量或大小预算的图片', () => {
+      const tooManyParts: ResolvedInput['parts'] = Array.from(
+        { length: MAX_INLINE_ATTACHMENT_COUNT + 1 },
+        (_, index) => ({
+          type: 'image' as const,
+          id: index,
+          base64: 'x',
+          mimeType: 'image/png',
+        })
+      );
+      expect(() =>
+        buildUserMessageContent({
+          displayText: 'too many images',
+          text: '',
+          images: [],
+          parts: tooManyParts,
+        })
+      ).toThrow(`最多只能发送 ${MAX_INLINE_ATTACHMENT_COUNT} 张图片`);
+
+      expect(() =>
+        buildUserMessageContent({
+          displayText: 'oversized image',
+          text: '',
+          images: [],
+          parts: [
+            {
+              type: 'image',
+              id: 1,
+              base64: 'x'.repeat(MAX_INLINE_ATTACHMENT_BYTES),
+              mimeType: 'image/png',
+            },
+          ],
+        })
+      ).toThrow('图片编码后总大小不能超过 5 MiB');
     });
   });
 });

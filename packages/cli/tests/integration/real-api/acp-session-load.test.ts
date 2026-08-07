@@ -316,7 +316,7 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
               )
               .map((notification) => notification.update._meta?.['blade/taskStatus'])
           ).toEqual(expect.arrayContaining(['running', 'completed']));
-          const listed = await harness.connection.unstable_listSessions({
+          const listed = await harness.connection.listSessions({
             cwd: taskProjectPath,
             cursor: undefined,
           });
@@ -693,7 +693,8 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
             cwd: workspace,
             mcpServers: [],
           });
-          expect(loaded.models?.currentModelId).toBe(modelId);
+          const modelCfg = loaded.configOptions?.find((o: any) => o.id === 'model');
+          expect(modelCfg && 'currentValue' in modelCfg ? modelCfg.currentValue : undefined).toBe(modelId);
           expect(replayedText(secondClient.updates)).toContain(
             'Read branch-marker.txt'
           );
@@ -826,7 +827,8 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
             cwd: workspace,
             mcpServers: [],
           });
-          expect(loaded.models?.currentModelId).toBe(modelId);
+          const modelCfg = loaded.configOptions?.find((o: any) => o.id === 'model');
+          expect(modelCfg && 'currentValue' in modelCfg ? modelCfg.currentValue : undefined).toBe(modelId);
           expect(replayedText(secondClient.updates)).toContain('Read marker.txt');
 
           await second.connection.setSessionMode?.({

@@ -1,5 +1,9 @@
 import { useMemoizedFn } from 'ahooks';
 import { useRef, useState } from 'react';
+import {
+  MAX_INLINE_ATTACHMENT_BYTES,
+  MAX_INLINE_ATTACHMENT_COUNT,
+} from '../../api/attachmentLimits.js';
 
 /**
  * 粘贴标记分隔符，用于在输入中标识粘贴内容
@@ -187,6 +191,22 @@ export function useInputBuffer(
   // 添加图片粘贴映射，返回生成的标记 ID
   const addImagePasteMapping = useMemoizedFn(
     (base64: string, mimeType: string): number => {
+      const existingImages = [...pasteMapRef.current.values()].filter(
+        (content): content is ImagePasteContent => content.type === 'image'
+      );
+      if (existingImages.length >= MAX_INLINE_ATTACHMENT_COUNT) {
+        throw new Error(`最多只能粘贴 ${MAX_INLINE_ATTACHMENT_COUNT} 张图片`);
+      }
+      const existingBytes = existingImages.reduce(
+        (total, image) =>
+          total + `data:${image.mimeType};base64,`.length + image.data.length,
+        0
+      );
+      const nextBytes = `data:${mimeType};base64,`.length + base64.length;
+      if (existingBytes + nextBytes > MAX_INLINE_ATTACHMENT_BYTES) {
+        throw new Error('图片编码后总大小不能超过 5 MiB');
+      }
+
       pasteIdCounterRef.current += 1;
       const id = pasteIdCounterRef.current;
       pasteMapRef.current.set(id, { type: 'image', data: base64, mimeType });

@@ -88,6 +88,7 @@ export class PersistentStore {
       title: undefined,
       status: 'running',
       taskStatus: subagentInfo ? 'running' : 'queued',
+      taskFailure: null,
       agentType: subagentInfo?.subagentType,
       model: undefined,
       permission: undefined,
@@ -290,7 +291,8 @@ export class PersistentStore {
     parentUuid: string | null = null,
     error?: string,
     subagentInfo?: SubagentInfoForContext,
-    subagentRef?: SubagentRunRef
+    subagentRef?: SubagentRunRef,
+    toolMetadata?: JsonValue
   ): Promise<string> {
     try {
       await this.ensureSessionCreated(sessionId, subagentInfo);
@@ -315,6 +317,7 @@ export class PersistentStore {
           toolName,
           output: toolOutput,
           error: error ?? null,
+          ...(toolMetadata === undefined ? {} : { metadata: toolMetadata }),
         },
         createdAt: now,
       };
