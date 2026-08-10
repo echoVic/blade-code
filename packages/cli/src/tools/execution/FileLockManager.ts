@@ -7,6 +7,8 @@
  * 3. 使用 Promise 队列实现顺序执行
  */
 
+import { realpathSync } from 'node:fs';
+import path from 'node:path';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 
 const logger = createLogger(LogCategory.EXECUTION);
@@ -39,24 +41,40 @@ export class FileLockManager {
    * @returns 操作结果
    */
   async acquireLock<T>(filePath: string, operation: () => Promise<T>): Promise<T> {
-    // 等待该文件的前一个操作完成
-    const previousLock = this.locks.get(filePath);
-    if (previousLock) {
-      try {
-        await previousLock;
-      } catch {
-        // 忽略前一个操作的错误
+    const lockKey = normalizeLockKey(filePath);
+    const previousLock = this.locks.get(lockKey);
+    let release!: () => void;
+    const reservation = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.locks.set(lockKey, reservation);
+
+    if (previousLock) await previousLock;
+    try {
+      return await this.executeWithLock(lockKey, operation);
+    } finally {
+      release();
+      if (this.locks.get(lockKey) === reservation) {
+        this.locks.delete(lockKey);
       }
     }
+  }
 
-    // 创建新的锁 Promise
-    const currentLock = this.executeWithLock(filePath, operation);
-    this.locks.set(
-      filePath,
-      currentLock.then(() => undefined)
+  /**
+   * 按稳定顺序持有多个路径锁，避免多文件事务之间死锁。
+   */
+  acquireLocks<T>(
+    filePaths: readonly string[],
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const paths = [...new Set(filePaths.map(normalizeLockKey))].sort((left, right) =>
+      left.localeCompare(right)
     );
-
-    return currentLock;
+    const acquire = (index: number): Promise<T> =>
+      index >= paths.length
+        ? operation()
+        : this.acquireLock(paths[index], () => acquire(index + 1));
+    return acquire(0);
   }
 
   /**
@@ -84,7 +102,7 @@ export class FileLockManager {
    * @returns 是否被锁定
    */
   isLocked(filePath: string): boolean {
-    return this.locks.has(filePath);
+    return this.locks.has(normalizeLockKey(filePath));
   }
 
   /**
@@ -93,7 +111,7 @@ export class FileLockManager {
    * @param filePath 文件绝对路径
    */
   clearLock(filePath: string): void {
-    this.locks.delete(filePath);
+    this.locks.delete(normalizeLockKey(filePath));
   }
 
   /**
@@ -122,5 +140,23 @@ export class FileLockManager {
    */
   static resetInstance(): void {
     FileLockManager.instance = null;
+  }
+}
+
+function normalizeLockKey(filePath: string): string {
+  const resolved = path.resolve(filePath);
+  const missing: string[] = [];
+  let current = resolved;
+  while (true) {
+    try {
+      return path.join(realpathSync.native(current), ...missing.reverse());
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') return resolved;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return resolved;
+    missing.push(path.basename(current));
+    current = parent;
   }
 }

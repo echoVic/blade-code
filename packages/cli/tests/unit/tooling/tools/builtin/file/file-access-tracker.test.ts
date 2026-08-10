@@ -2,10 +2,10 @@
  * FileAccessTracker 测试
  */
 
-import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
 import * as os from 'node:os';
+import * as path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FileAccessTracker } from '../../../../../../src/tools/builtin/file/FileAccessTracker.js';
 
 describe('FileAccessTracker', () => {
@@ -69,6 +69,23 @@ describe('FileAccessTracker', () => {
       await expect(
         tracker.recordFileRead(filePath, 'session-123')
       ).resolves.not.toThrow();
+    });
+
+    it('应该把符号链接别名和 canonical path 识别为同一文件', async () => {
+      const realDir = path.join(testDir, 'real');
+      const aliasDir = path.join(testDir, 'alias');
+      await fs.mkdir(realDir);
+      await fs.symlink(realDir, aliasDir);
+      const realFile = path.join(realDir, 'source.ts');
+      const aliasFile = path.join(aliasDir, 'source.ts');
+      await fs.writeFile(realFile, 'content');
+
+      await tracker.recordFileRead(aliasFile, 'session-alias');
+
+      expect(tracker.hasFileBeenRead(realFile, 'session-alias')).toBe(true);
+      expect(tracker.getFileRecord(realFile, 'session-alias')?.filePath).toBe(
+        aliasFile
+      );
     });
   });
 
@@ -307,6 +324,18 @@ describe('FileAccessTracker', () => {
 
       const record = tracker.getFileRecord(filePath);
       expect(record).toBeUndefined();
+    });
+
+    it('应该只清除指定会话的文件记录', async () => {
+      const filePath = path.join(testDir, 'shared.txt');
+      await fs.writeFile(filePath, 'content');
+      await tracker.recordFileRead(filePath, 'session-a');
+      await tracker.recordFileRead(filePath, 'session-b');
+
+      tracker.clearFileRecord(filePath, 'session-a');
+
+      expect(tracker.hasFileBeenRead(filePath, 'session-a')).toBe(false);
+      expect(tracker.hasFileBeenRead(filePath, 'session-b')).toBe(true);
     });
   });
 

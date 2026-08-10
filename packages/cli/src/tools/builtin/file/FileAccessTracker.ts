@@ -1,4 +1,5 @@
-import { promises as fs } from 'node:fs';
+import { promises as fs, realpathSync } from 'node:fs';
+import path from 'node:path';
 import { createLogger, LogCategory } from '../../../logging/Logger.js';
 import { PathSecurity } from '../../../utils/pathSecurity.js';
 import { NodeError } from '../../types/index.js';
@@ -30,6 +31,7 @@ export class FileAccessTracker {
 
   // 已读文件映射: filePath -> sessionId -> FileAccessRecord
   private accessedFiles: Map<string, Map<string, FileAccessRecord>> = new Map();
+  private pathAliases = new Map<string, string>();
 
   // 私有构造函数（单例模式）
   private constructor() {}
@@ -56,7 +58,7 @@ export class FileAccessTracker {
       const stats = await fs.stat(filePath);
 
       const record: FileAccessRecord = {
-        filePath,
+        filePath: path.resolve(filePath),
         accessTime: Date.now(),
         mtime: stats.mtimeMs,
         sessionId,
@@ -64,6 +66,7 @@ export class FileAccessTracker {
       };
 
       this.setRecord(record);
+      await this.recordAliases(filePath, record.filePath);
 
       logger.debug(`记录文件读取: ${filePath}`);
     } catch (error) {
@@ -89,7 +92,7 @@ export class FileAccessTracker {
       const stats = await fs.stat(filePath);
 
       const record: FileAccessRecord = {
-        filePath,
+        filePath: path.resolve(filePath),
         accessTime: Date.now(),
         mtime: stats.mtimeMs,
         sessionId,
@@ -97,6 +100,7 @@ export class FileAccessTracker {
       };
 
       this.setRecord(record);
+      await this.recordAliases(filePath, record.filePath);
 
       logger.debug(`记录文件${operation === 'edit' ? '编辑' : '写入'}: ${filePath}`);
     } catch (error) {
@@ -115,7 +119,7 @@ export class FileAccessTracker {
    * @returns 是否已读取
    */
   hasFileBeenRead(filePath: string, sessionId?: string): boolean {
-    const sessionRecords = this.accessedFiles.get(filePath);
+    const sessionRecords = this.accessedFiles.get(this.resolveTrackedPath(filePath));
     if (!sessionRecords) return false;
     return sessionId ? sessionRecords.has(sessionId) : sessionRecords.size > 0;
   }
@@ -230,7 +234,7 @@ export class FileAccessTracker {
    * @returns 访问记录或 undefined
    */
   getFileRecord(filePath: string, sessionId?: string): FileAccessRecord | undefined {
-    const sessionRecords = this.accessedFiles.get(filePath);
+    const sessionRecords = this.accessedFiles.get(this.resolveTrackedPath(filePath));
     if (!sessionRecords) return undefined;
     if (sessionId) return sessionRecords.get(sessionId);
 
@@ -251,8 +255,19 @@ export class FileAccessTracker {
    *
    * @param filePath 文件绝对路径
    */
-  clearFileRecord(filePath: string): void {
-    this.accessedFiles.delete(filePath);
+  clearFileRecord(filePath: string, sessionId?: string): void {
+    const trackedPath = this.resolveTrackedPath(filePath);
+    if (!sessionId) {
+      this.accessedFiles.delete(trackedPath);
+      this.removeAliases(trackedPath);
+      return;
+    }
+    const records = this.accessedFiles.get(trackedPath);
+    records?.delete(sessionId);
+    if (records?.size === 0) {
+      this.accessedFiles.delete(trackedPath);
+      this.removeAliases(trackedPath);
+    }
   }
 
   /**
@@ -260,6 +275,7 @@ export class FileAccessTracker {
    */
   clearAll(): void {
     this.accessedFiles.clear();
+    this.pathAliases.clear();
   }
 
   /**
@@ -275,6 +291,7 @@ export class FileAccessTracker {
       records.delete(sessionId);
       if (records.size === 0) {
         this.accessedFiles.delete(filePath);
+        this.removeAliases(filePath);
       }
     }
   }
@@ -307,5 +324,30 @@ export class FileAccessTracker {
       this.accessedFiles.set(record.filePath, sessionRecords);
     }
     sessionRecords.set(record.sessionId, record);
+  }
+
+  private async recordAliases(inputPath: string, trackedPath: string): Promise<void> {
+    this.pathAliases.set(path.resolve(inputPath), trackedPath);
+    const canonical = await fs.realpath(inputPath).catch(() => undefined);
+    if (canonical) this.pathAliases.set(canonical, trackedPath);
+  }
+
+  private resolveTrackedPath(filePath: string): string {
+    const resolved = path.resolve(filePath);
+    if (this.accessedFiles.has(resolved)) return resolved;
+    const directAlias = this.pathAliases.get(resolved);
+    if (directAlias) return directAlias;
+    try {
+      const canonical = realpathSync.native(resolved);
+      return this.pathAliases.get(canonical) ?? canonical;
+    } catch {
+      return resolved;
+    }
+  }
+
+  private removeAliases(trackedPath: string): void {
+    for (const [alias, target] of this.pathAliases) {
+      if (target === trackedPath) this.pathAliases.delete(alias);
+    }
   }
 }

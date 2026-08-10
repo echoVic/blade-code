@@ -7,6 +7,8 @@ import {
   getBladeStorageRoot,
 } from '../../../context/storage/pathUtils.js';
 
+const MISSING_FILE_HASH = 'missing';
+
 export interface SnapshotMetadata {
   backupFileName: string;
   version: number;
@@ -284,9 +286,10 @@ export class SnapshotManager {
     );
     if (snapshot.existedBefore) {
       const content = await fs.readFile(snapshotPath);
+      await fs.mkdir(path.dirname(resolvedPath), { recursive: true });
       await fs.writeFile(resolvedPath, content);
     } else {
-      await fs.unlink(resolvedPath);
+      await fs.rm(resolvedPath, { force: true });
     }
 
     this.removeSnapshot(snapshot);
@@ -313,8 +316,13 @@ export class SnapshotManager {
       snapshot.backupFileName,
       snapshot.version
     );
-    const content = await fs.readFile(snapshotPath);
-    await fs.writeFile(resolvedPath, content);
+    if (snapshot.existedBefore) {
+      const content = await fs.readFile(snapshotPath);
+      await fs.mkdir(path.dirname(resolvedPath), { recursive: true });
+      await fs.writeFile(resolvedPath, content);
+    } else {
+      await fs.rm(resolvedPath, { force: true });
+    }
   }
 
   async listSnapshots(filePath: string): Promise<Snapshot[]> {
@@ -342,20 +350,21 @@ export class SnapshotManager {
 
     const currentStates = new Map<string, { existed: boolean; content?: Buffer }>();
     for (const item of plan) {
-      let content: Buffer;
+      let content: Buffer | undefined;
+      let existed = true;
       try {
         content = await fs.readFile(item.filePath);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        throw new Error(`文件在 Blade 编辑后已被修改，拒绝覆盖: ${item.filePath}`, {
-          cause: error,
-        });
+        existed = false;
       }
-      const currentHash = crypto.createHash('sha256').update(content).digest('hex');
+      const currentHash = content
+        ? crypto.createHash('sha256').update(content).digest('hex')
+        : MISSING_FILE_HASH;
       if (currentHash !== item.latest.postEditHash) {
         throw new Error(`文件在 Blade 编辑后已被修改，拒绝覆盖: ${item.filePath}`);
       }
-      currentStates.set(item.filePath, { existed: true, content });
+      currentStates.set(item.filePath, { existed, content });
       if (item.target.existedBefore) {
         await fs.access(
           this.getSnapshotPath(item.target.backupFileName, item.target.version)
@@ -594,8 +603,15 @@ export class SnapshotManager {
   }
 
   private async hashFile(filePath: string): Promise<string> {
-    const content = await fs.readFile(filePath);
-    return crypto.createHash('sha256').update(content).digest('hex');
+    try {
+      const content = await fs.readFile(filePath);
+      return crypto.createHash('sha256').update(content).digest('hex');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return MISSING_FILE_HASH;
+      }
+      throw error;
+    }
   }
 
   private removeSnapshot(snapshot: Snapshot): void {

@@ -239,6 +239,20 @@ describe('SnapshotManager', () => {
       );
     });
 
+    it('应该在管理器重建后恢复由 Blade 删除的文件', async () => {
+      const metadata = await snapshotManager.createSnapshot(testFile, messageId);
+
+      await fs.rm(testFile);
+      await snapshotManager.recordPostEditState(testFile, metadata);
+
+      const restartedManager = new SnapshotManager({ sessionId });
+      await restartedManager.initialize();
+      await restartedManager.rewindLatest(testFile);
+
+      await expect(fs.readFile(testFile, 'utf8')).resolves.toBe('Original content');
+      await expect(restartedManager.listSnapshots(testFile)).resolves.toHaveLength(0);
+    });
+
     it('应该在管理器重建后恢复 Blade 最后一次写入前的内容', async () => {
       const metadata = await snapshotManager.createSnapshot(testFile, messageId);
 

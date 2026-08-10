@@ -35,6 +35,8 @@ export const editTool = createTool({
   kind: ToolKind.Write,
   strict: true, // 启用 OpenAI Structured Outputs
   isConcurrencySafe: false, // 文件编辑不支持并发
+  parallelism: 'shared', // 不同路径并行；同路径由 FileLockManager 串行
+  affectedPaths: (params) => [params.file_path],
 
   schema: Type.Object({
     file_path: ToolSchemas.filePath({

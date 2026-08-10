@@ -493,6 +493,7 @@ describe('WriteTool', () => {
 
     it('应该不支持并发', () => {
       expect(writeTool.isConcurrencySafe).toBe(false);
+      expect(writeTool.parallelism).toBe('shared');
     });
 
     it('应该有 extractSignatureContent 方法', () => {

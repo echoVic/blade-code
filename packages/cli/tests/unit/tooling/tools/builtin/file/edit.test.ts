@@ -619,6 +619,7 @@ describe('EditTool', () => {
 
     it('应该不支持并发', () => {
       expect(editTool.isConcurrencySafe).toBe(false);
+      expect(editTool.parallelism).toBe('shared');
     });
 
     it('应该有 extractSignatureContent 方法', () => {
