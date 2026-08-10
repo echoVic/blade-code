@@ -8,11 +8,36 @@ Blade 会遍历 `lastError` 和 `cause` 错误链，并把以下错误视为瞬�
 
 - HTTP `408`、`409`、`429` 和 `5xx`；
 - 连接超时、DNS 暂时失败、连接重置或拒绝、socket 中断等网络错误；
+- 网关明确返回的 `upstream_error` 或 `temporarily unavailable`；
 - 错误消息或结构化字段中携带的同类状态和错误码。
 
 `maxRetries` 表示首次请求之后最多追加的尝试次数。重试使用有界指数退避，等待期间响应当前 turn 的 `AbortSignal`，取消后不会再启动新请求。
 
+真实 API 协议测试使用与产品一致的默认重试次数，不再强制 `maxRetries: 0`。因此资格
+结果同时验证协议兼容性和生产恢复策略；首个对外 chunk 之后仍受下述重放边界约束。
+
 上下文超限属于确定性错误。`prompt_too_long`、`maximum context length`、`context_length_exceeded` 等标记即使被网关包装成 HTTP `500`，也不会进入传输重试或模型 fallback，而是返回 Agent loop 触发反应式压缩。
+
+## 流活性保护
+
+HTTP 请求超时不等于流活性超时。部分 SDK 在响应头到达后不再用请求 timeout
+约束响应体，因此连接静默断开时，消费端可能永久阻塞在下一条 SSE 事件。
+
+Blade 在 pi-ai adapter 边界为每次模型尝试设置逐事件 watchdog：
+
+- 默认 `300000ms`，可通过模型的 `overrides.streamIdleTimeout` 调整；
+- 首条 provider 事件和任意两条事件之间都不能超过该时限；
+- timeout 会主动中止当前 provider 请求，并产生可分类的 timeout 错误；
+- provider 未发送 `done` 就关闭流时，按不完整传输处理，而不是误报成功；
+- 最小配置值为 `1000ms`，防止误配置造成即时重试风暴。
+
+watchdog 观察 pi-ai 的语义事件，而不是原始 socket 字节。空 keepalive 或无内容的
+传输帧不会无限延长一个没有模型进展的请求。
+
+主动 idle timeout 不会在同一 turn 自动重试。部分 Provider SDK 在响应头到达后
+不能保证 abort 立即释放响应体；立即重试可能让多个失联请求重叠。Blade 将其投影为
+可手动重试的标准 timeout task failure。相反，Provider 已明确关闭且没有交付任何
+输出的 EOF 可以安全进入传输重试。
 
 ## 流式重放边界
 

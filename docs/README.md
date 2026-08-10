@@ -80,6 +80,7 @@ blade web
 
 - [配置系统](configuration/config-system.md) - pi-ai 模型与凭证配置
 - [权限控制](configuration/permissions.md)
+- [Workspace Trust](guides/workspace-trust.md)
 - [主题配置](configuration/themes.md)
 
 ### 使用指南
@@ -96,6 +97,34 @@ blade web
 
 - [CLI 命令](reference/cli-commands.md)
 - [工具列表](reference/tool-list.md)
+- [Atomic ApplyPatch](reference/atomic-apply-patch.md)
+- [Durable Session Archive](reference/session-archive.md)
+- [Portable Session Markdown Export](reference/session-markdown-export.md)
+- [Session Reasoning Effort](reference/session-reasoning-effort.md)
+- [Session Service Tier](reference/session-service-tier.md)
+- [Session Response Verbosity](reference/session-response-verbosity.md)
+- [Session Communication Style](reference/session-communication-style.md)
+- [Trusted Custom Output Styles](reference/trusted-output-styles.md)
+- [Trusted Contextual Project Rules](reference/trusted-contextual-project-rules.md)
+- [工具并发模型](reference/tool-concurrency.md)
+- [Session-scoped LSP](reference/lsp-session-intelligence.md)
+- [MCP Elicitation](reference/mcp-elicitation.md)
+- [MCP Roots 与 Sampling](reference/mcp-roots-sampling.md)
+- [MCP Tool Call 生命周期](reference/mcp-call-lifecycle.md)
+- [MCP Tool Result 安全边界](reference/mcp-tool-result-safety.md)
+- [MCP Logging 与诊断](reference/mcp-logging.md)
+- [MCP Server Instructions](reference/mcp-server-instructions.md)
+- [MCP Completion](reference/mcp-completion.md)
+- [MCP Async Tasks](reference/mcp-tasks.md)
+- [MCP OAuth 生命周期](reference/mcp-oauth-lifecycle.md)
+- [MCP 动态工具目录](reference/mcp-dynamic-catalog.md)
+- [MCP Resources、Prompts 与订阅](reference/mcp-resources-prompts.md)
+- [MCP 故障恢复](reference/mcp-fault-recovery.md)
+- [MCP Session 隔离](reference/mcp-session-isolation.md)
+- [Workspace Agent 资源隔离](reference/workspace-agent-resources.md)
+- [Workspace Plugin 生命周期](reference/workspace-plugin-lifecycle.md)
+- [Workspace 模型与 Provider 隔离](reference/workspace-model-resources.md)
+- [Workspace Runtime 设置与环境隔离](reference/workspace-runtime-environment.md)
 - [模型传输恢复](reference/model-transport-recovery.md)
 
 ### 其他

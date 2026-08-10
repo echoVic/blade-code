@@ -18,12 +18,17 @@ Blade Code 把自己启动的命令视为一棵 owned process tree。超时、�
 - 后台 Bash 的单任务终止和应用退出清理；
 - ACP 本地 terminal fallback 的 timeout 和 abort；
 - command hook 的 timeout、abort 和输入写入失败。
+- trusted+YOLO Session 的 post-edit `type-check` 自动验证。
+- Session 私有 LSP server 的 startup、request、shutdown、crash restart 和 dispose。
 
 PTY terminal 和只启动单个固定二进制的内部查询工具使用各自的生命周期协议，不属于这一 ChildProcess 包装器的覆盖范围。
 
 ## Session 所有权
 
 - 同一项目中的同一 session 同时只能由一个 `SessionRuntime` 持有。运行时使用原子创建的 session lease 阻止第二个 CLI、TUI、ACP 或 server runtime 向同一 JSONL 父链并发写入。
+- Session archive 会按稳定 ID 顺序获取根及全部 fork/subagent 后代的 lease；任一 owner
+  或 queued/running 后代都会使操作零写入失败。归档后所有 Runtime 入口在恢复资源前
+  fail closed，详见 [Durable Session Archive](session-archive.md)。
 - 活 owner 存在时创建 runtime 会 fail closed，并返回 `BLADE_SESSION_IN_USE`；被拒绝的输入不会写入 transcript，也不会发起模型请求。
 - runtime 初始化失败或 `dispose()` 完成时只释放 owner token 与自身匹配的 lease。进程异常退出留下的 lease 会在确认 PID 已不存在后由下一 owner 回收。
 - 后台 Bash 在启动时绑定当前 session。`WriteStdin`、`TaskOutput`、`KillShell` 和 `/tasks` 只能读取或操作该 session 的 shell；对其他 session 的 ID 按不存在处理。
@@ -31,6 +36,13 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
 - 每个后台 Bash 的 stdout 和 stderr 分别只保留自上次 `TaskOutput` 消费以来最近 1 MiB 的原始字节，持续输出不会让 runtime 内存无界增长。被丢弃的更早输出按 stream 累计字节数，保留内容从合法 UTF-8 边界开始。
 - `TaskOutput` 会在 1 MiB 运行时边界之上再次按命令类型限制模型和事件表面的文本（3,000-20,000 字符，默认 15,000），保留头尾并返回 `output_truncated`、`stdout_omitted_bytes`、`stderr_omitted_bytes` 和 `truncation_info`。TUI、headless、Web SSE 与 ACP 使用同一结果和展示摘要。
 - `SessionRuntime.dispose()` 会等待当前 session 的所有后台 shell 进程树完成回收，不影响其他活跃 session。
+- post-edit 自动验证使用 Session 私有队列和冻结环境。只有显式通过 Workspace Trust
+  且处于 `yolo` 的本地 Session 才能执行项目 `type-check` script；turn abort、
+  timeout 或 runtime dispose 都会终止并等待其 owned process tree。ACP、未信任项目、
+  `default`/`autoEdit` 和未声明 script 的项目零执行。
+- LSP server 使用同一冻结环境与 owned process tree。每个 Session 独占连接；
+  `shutdown` / `exit` 超时后升级为进程树终止。Web task、TUI、headless、Task/Team
+  child 和异常初始化都必须等待自己的 LSP PID 回收。
 - foreground 与后台 agent 都会写入 durable sidecar。sidecar 通过原子 rename、
   `fsync` 和 `0600` 文件权限提交，存储目录使用 `0700`；公开 API 不返回 prompt、
   messages、配置快照、workspace 或 owner PID。

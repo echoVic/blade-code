@@ -15,7 +15,7 @@
 | `limit` | number | | 读取行数（默认 2000） |
 | `encoding` | string | | 文件编码（默认 utf-8） |
 
-**类型**: ReadOnly  
+**类型**: ReadOnly
 **返回**: 带行号的文件内容
 
 ### Write
@@ -30,7 +30,7 @@
 | `mode` | string | | 写入模式：overwrite / append |
 | `mkdirs` | boolean | | 是否自动创建目录 |
 
-**类型**: Write  
+**类型**: Write
 **特性**: 支持备份、权限检查、目录自动创建
 
 ### Edit
@@ -47,6 +47,24 @@
 **类型**: Write  
 **特性**: 支持回滚、预览、并发文件锁  
 **注意**: 使用前必须先用 Read 工具读取文件
+
+### ApplyPatch
+
+使用严格的 Codex-style patch grammar 原子修改多个 UTF-8 文本文件。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `patch` | string | ✅ | 完整的 `*** Begin Patch` / `*** End Patch` 文档 |
+
+支持 `Add File`、`Update File`、`Delete File`、`Move to`、多 hunk、semantic locator
+和 `End of File`。路径必须相对 workspace。
+
+**类型**: Write
+**特性**: 完整 preflight、canonical containment、多路径锁、staging/backup、
+fsync、失败全量 rollback、Session Snapshot、LSP/Hook/AutoVerify 多文件集成
+**ACP**: 远端 filesystem 仅支持带 read-back 和补偿回滚的多文件 Update；协议没有
+delete/rename 时 Add/Delete/Move fail closed
+**详情**: [Atomic ApplyPatch](atomic-apply-patch.md)
 
 ### NotebookEdit
 
@@ -165,6 +183,25 @@
 **类型**: ReadOnly  
 **返回**: 搜索结果摘要  
 **特性**: 使用 Exa MCP 公开端点，无需 API key，自动故障转移
+
+## Code Intelligence
+
+### LSP
+
+通过当前 Session 私有的 Language Server 查询语义代码信息。该工具默认 deferred，
+先使用 `ToolSearch` 加载 schema。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `operation` | string | ✅ | definition、references、hover、symbols、implementation、call hierarchy 或 diagnostics |
+| `filePath` | string | ✅ | 当前 Session workspace 内的绝对文件路径 |
+| `line` | number | | 1-based 行号 |
+| `character` | number | | 1-based 字符位置 |
+| `query` | string | | `workspaceSymbol` 搜索文本 |
+
+**类型**: ReadOnly
+**安全边界**: 只访问 Session workspace；服务器按 Workspace Trust 配置并由 Session
+独占；ACP remote session 不启动本地 LSP。
 
 ## 任务管理
 
@@ -378,11 +415,43 @@ background 运行都会持久化；每次 resume 创建新的不可变 child ID�
 
 ## MCP 工具
 
-通过 `blade mcp add` 注册的 MCP 服务器会在运行时加载，其工具按原始名称加入工具列表。
+通过 `blade mcp add` 注册的 MCP 服务器会在运行时加载，其工具按
+`mcp__<server>__<tool>` 稳定名称加入工具列表。
+MCP tools 默认 deferred，需要先通过 `ToolSearch` 激活 schema。工具执行期间的
+Form/URL `elicitation/create` 会投影到 TUI、Web 和 ACP；无交互面或客户端无法表达
+请求字段时 fail closed。MCP server 可读取当前 Session 执行 workspace roots；
+`sampling/createMessage` 默认关闭，显式启用后每次仍要求 one-shot 用户批准。详情见
+[MCP Elicitation](mcp-elicitation.md)和
+[MCP Roots 与 Sampling](mcp-roots-sampling.md)。MCP tools 继承 Session cancel，
+支持 idle/hard timeout 和实时 progress，详见
+[MCP Tool Call 生命周期](mcp-call-lifecycle.md)。普通 `tools/call` 结果在进入模型前
+执行 text/structured/binary 预算、0600 Session artifact 和 metadata allowlist，详见
+[MCP Tool Result 安全边界](mcp-tool-result-safety.md)。远程 OAuth server 只消费显式
+登录后的 endpoint/client/scopes 凭证，Session 不会自行打开浏览器；详见
+[MCP OAuth 生命周期](mcp-oauth-lifecycle.md)。server 可通过 `list_changed` 原子更新
+目录，详见 [MCP 动态工具目录](mcp-dynamic-catalog.md)。Resources、Resource
+Templates、Prompts 和显式 Subscription 通过 `ListMcpResources`、
+`ListMcpResourceTemplates`、`ReadMcpResource`、`ListMcpPrompts`、
+`CompleteMcpArgument`、`GetMcpPrompt`、`ManageMcpResourceSubscription` 暴露，
+完整约束见 [MCP Resources、Prompts 与订阅](mcp-resources-prompts.md) 和
+[MCP Completion](mcp-completion.md)。Completion 只接受当前 Session catalog 中声明的
+参数，并执行候选 Unicode、bytes、并发、超时和 provenance 边界。transport 异常会先撤销
+旧目录，再执行 Session 私有的可取消有界恢复并重建订阅；详见
+[MCP 故障恢复](mcp-fault-recovery.md)。标准 `notifications/message` 日志按 Session
+协商级别、脱敏和限流，只投影给用户而不进入模型；详见
+[MCP Logging 与诊断](mcp-logging.md)。InitializeResult instructions 经过隐藏 Unicode、
+单 server/Session 累计预算和 provenance 包装后，作为对应 server 的外部不可信工具
+文档进入本地模型上下文；详见
+[MCP Server Instructions](mcp-server-instructions.md)。
+实验性 task-capable tools 只有在 server 的 `tasks.enabled` 显式开启后可用：
+`required` 工具自动返回 opaque `mcp_task_*`，`optional` 工具可通过
+`StartMcpTask` 后台化，并统一用 `TaskOutput`、`ListMcpTasks` 和
+`CancelMcpTask` 管理。完整 ownership、恢复与结果安全边界见
+[MCP Async Tasks](mcp-tasks.md)。
 
 ```bash
 # 添加 MCP 服务器
-blade mcp add github -- npx -y @modelcontextprotocol/server-github
+blade mcp add local -- node ./path/to/mcp-server.mjs
 
 # 查看已注册的服务器
 blade mcp list

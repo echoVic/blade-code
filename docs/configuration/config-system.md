@@ -2,6 +2,55 @@
 
 Blade 使用 `@earendil-works/pi-ai` 作为唯一模型目录和 Provider 运行时。
 
+## 配置来源与 Folder Trust
+
+用户级 `~/.blade/config.json` 和显式 CLI `--settings` 始终由用户控制。项目级
+`.blade/config.json`、`.blade/settings.json` 与 `.blade/settings.local.json`
+只有在 [Workspace Trust](../guides/workspace-trust.md) 通过后才会合并。
+
+未信任项目不能覆盖模型/Provider endpoint、添加 MCP、放宽权限、切换 yolo 或注入
+环境变量。项目 Hook 字段单独投影给 Hook 摘要审阅，其余项目字段保持不可见。
+Folder Trust 通过后仍遵循：
+
+```text
+CLI 显式设置 > 项目 local settings > 项目 shared settings > 用户配置 > 默认值
+```
+
+MCP 不直接使用这个进程级合并结果执行。每个 Session 会按自己的 source project
+重新解析用户层、可信项目层、plugin、ACP 和 CLI 来源，并使用独立连接生命周期。
+Sampling 必须在对应 server 上显式启用，项目层仍受 Workspace Trust 保护。详见
+[MCP Session 隔离](../reference/mcp-session-isolation.md)和
+[MCP Roots 与 Sampling](../reference/mcp-roots-sampling.md)。每个 server 的
+`timeout` 是 hard total timeout，`idleTimeout` 是可由 progress 刷新的 idle timeout，
+详见 [MCP Tool Call 生命周期](../reference/mcp-call-lifecycle.md)。
+实验性 MCP Tasks 默认关闭；可在单个 server 的 `tasks.enabled` 显式启用，并配置
+`defaultTtlMs`、`pollIntervalMs`、`maxTasksPerSession` 和 `maxLifetimeMs`。
+required task tool 会返回 Session 私有 `mcp_task_*`，optional tool 默认仍以前台方式
+执行。详见 [MCP Async Tasks](../reference/mcp-tasks.md)。
+`logging.level` 默认 `warning`，在每个 Session 连接后通过标准
+`logging/setLevel` 协商；日志使用独立安全预算且不会进入模型上下文，详见
+[MCP Logging 与诊断](../reference/mcp-logging.md)。
+server 在 initialize 中返回的 instructions 使用独立 Unicode/bytes/Session 预算，
+只作为有来源的外部工具文档进入本地 provider context；ACP 只保留 hash。详见
+[MCP Server Instructions](../reference/mcp-server-instructions.md)。
+远程 HTTP/SSE server 可配置标准 OAuth discovery；连接只消费已有凭证，登录必须由
+CLI/TUI/Web 显式启动，ACP 不读取宿主 token。OAuth 凭证使用独立 0600 原子账本，
+详见 [MCP OAuth 生命周期](../reference/mcp-oauth-lifecycle.md)。
+
+LSP 同样不使用进程全局单例。`lspServers` 从用户层、可信 source project 和活动插件
+解析为不可变 Session 快照；服务器在执行 workspace 中懒启动，并由 Session 回收。
+项目 LSP command 会进入 Workspace Trust review。详见
+[Session-scoped LSP](../reference/lsp-session-intelligence.md)。
+
+插件启停使用 `enabledPlugins` 映射，并按 local > project > user 合并。未信任项目
+只能写入 `false` 收紧插件集合，不能启用插件。详见
+[Workspace Plugin 生命周期](../reference/workspace-plugin-lifecycle.md)。
+
+插件来源策略使用 `pluginSourcePolicy`。用户层可配置 Git host、Marketplace 和本地
+根目录 allowlist，以及完整 commit SHA 要求。项目和 local 层采用 tighten-only 合并：
+布尔限制只能从 `false` 变为 `true`，allowlist 只能取交集，不能通过更具体配置放宽
+用户策略。`BLADE_PLUGIN_REQUIRE_SHA=1` 是不可覆盖的宿主级收紧。
+
 ## 模型配置
 
 `~/.blade/config.json` 只保存模型引用和用户覆盖项：
@@ -9,6 +58,14 @@ Blade 使用 `@earendil-works/pi-ai` 作为唯一模型目录和 Provider 运行
 ```json
 {
   "currentModelId": "primary",
+  "modelProviders": {
+    "team-claude": {
+      "name": "Team Claude Gateway",
+      "baseUrl": "https://gateway.example.com",
+      "wireApi": "anthropic-messages",
+      "apiKeyEnv": "TEAM_CLAUDE_API_KEY"
+    }
+  },
   "models": [
     {
       "id": "primary",
@@ -18,18 +75,19 @@ Blade 使用 `@earendil-works/pi-ai` 作为唯一模型目录和 Provider 运行
     },
     {
       "id": "fallback",
-      "provider": "anthropic",
+      "provider": "team-claude",
       "model": "claude-sonnet-4-5",
       "overrides": {
         "maxOutputTokens": 8192,
-        "timeout": 180000
+        "timeout": 180000,
+        "streamIdleTimeout": 300000
       }
     }
   ]
 }
 ```
 
-模型的以下信息不写入配置：
+内置模型的以下信息不写入配置：
 
 - 默认 Base URL
 - 上下文窗口
@@ -39,7 +97,8 @@ Blade 使用 `@earendil-works/pi-ai` 作为唯一模型目录和 Provider 运行
 - 输入、输出和缓存价格
 - Provider API 协议
 
-这些字段全部来自 pi-ai catalog，升级 pi-ai 后自动更新。
+这些字段全部来自 pi-ai catalog，升级 pi-ai 后自动更新。自定义渠道会复用匹配模型的
+能力元数据，完全未知的模型使用保守默认值。
 
 ## 凭证
 
@@ -49,18 +108,29 @@ API Key 和 OAuth 凭证存储在：
 ~/.blade/auth.json
 ```
 
-文件权限为 `0600`。凭证以 pi-ai Provider ID 为键，与模型配置分离：
+文件权限为 `0600`。凭证以具体渠道 ID 为键，与模型配置分离：
 
 ```json
 {
   "deepseek": {
     "type": "api_key",
     "key": "..."
+  },
+  "team-claude": {
+    "type": "api_key",
+    "key": "..."
   }
 }
 ```
 
-Blade 也支持 pi-ai Provider 原生环境变量。环境变量和凭证解析规则由 pi-ai 管理。
+内置 Provider 继续使用其 pi-ai ID。自定义渠道可通过 `apiKeyEnv` 指定环境变量；
+`auth.json` 中同渠道的凭证与该环境变量都由 pi-ai 统一解析。API key 不能出现在
+`modelProviders` 或 `models` 中。
+
+MCP OAuth access/refresh token 不保存在 `auth.json` 或 `mcpServers`。它们按
+endpoint/client/scopes 身份保存在
+`${BLADE_STORAGE_ROOT:-~/.blade}/mcp/oauth-credentials.json`，并遵循独立的
+0600、原子写和跨进程锁契约。
 
 ## Provider 与模型目录
 
@@ -78,6 +148,9 @@ Provider 返回：
 - 默认 endpoint
 - API Key / OAuth 能力
 - 当前是否已配置凭证
+- 是否为自定义渠道或渠道创建入口
+- 自定义渠道使用的 wire API
+- 自定义渠道的 `apiKeyEnv` 名称（不含环境变量值）
 
 模型返回：
 
@@ -87,6 +160,76 @@ Provider 返回：
 - context window 和 max tokens
 - reasoning 和 vision 能力
 - 价格
+
+## 自定义 Provider 渠道
+
+每个兼容网关都必须拥有独立渠道 ID。渠道 ID 同时是模型的 `provider`、pi-ai runtime
+provider ID 和 `auth.json` 凭据键：
+
+```json
+{
+  "modelProviders": {
+    "company-gateway": {
+      "name": "Company Gateway",
+      "baseUrl": "https://gateway.example.com/v1",
+      "wireApi": "openai-completions",
+      "apiKeyEnv": "COMPANY_GATEWAY_API_KEY"
+    }
+  },
+  "models": [
+    {
+      "id": "company-model",
+      "displayName": "Company Gateway Model",
+      "provider": "company-gateway",
+      "model": "vendor-model-2026",
+      "overrides": {
+        "maxOutputTokens": 8192
+      }
+    }
+  ]
+}
+```
+
+`wireApi` 支持：
+
+- `openai-completions`：OpenAI Chat Completions 兼容接口；
+- `anthropic-messages`：Anthropic Messages 兼容接口。
+
+若模型 ID 能在其他 pi-ai Provider 中找到，Blade 会复用其 context window、
+reasoning 和输入能力，但不会复用渠道价格。完全未知的模型使用 128K context、
+32K 最大输出、文本输入、reasoning 关闭和零价格。
+
+TUI 与 Web 都能创建两类自定义渠道。配置、模型和凭据在一次操作中写入；持久化失败
+会清理新凭据并恢复 catalog。多个同协议渠道不会共享 endpoint 或 API key。
+
+`openai-compatible + overrides.baseUrl` 仍作为旧配置兼容层，但其凭据键固定为
+`openai-compatible`，不适合多渠道。新配置必须使用 `modelProviders`。
+
+## 渠道生命周期与健康检查
+
+Web Settings 的渠道卡片支持：
+
+- `Test`：通过渠道的首个配置模型发送最多 8 tokens 的真实请求；
+- `Edit`：原子更新名称、wire API、endpoint、`apiKeyEnv` 和可选的新 API key；
+- `Delete`：二次确认后级联删除渠道模型、fallback 引用和渠道凭据。
+
+默认删除 API 会在仍有模型或 fallback 引用时返回 `409`。只有显式
+`removeModels=true` 才允许级联，而且不能删除最后一个可用模型。配置持久化失败会恢复
+原渠道和凭据。
+
+TUI 使用相同的服务：
+
+```text
+/doctor
+/model provider list
+/model provider test <channel-id>
+/model provider set <channel-id> <base-url>
+/model provider remove <channel-id> --with-models
+```
+
+健康检查仅返回渠道 ID、模型 ID、wire API、耗时和 canonical failure code/message，
+不会返回模型回复、原始 Provider 异常、endpoint 错误正文或凭据。Web 和 ACP 使用同一
+安全投影。
 
 ## 高级覆盖
 
@@ -102,6 +245,7 @@ Provider 返回：
     "temperature": 0,
     "maxOutputTokens": 8192,
     "timeout": 180000,
+    "streamIdleTimeout": 300000,
     "maxRetries": 2,
     "enablePromptCaching": true,
     "customHeaders": {
@@ -112,6 +256,10 @@ Provider 返回：
 ```
 
 覆盖 endpoint 不改变 pi-ai 为该 Provider 选择的协议。
+
+Anthropic SDK 会自行追加 `/v1/messages`。若 Anthropic 的 `baseUrl` 以 `/v1`
+结尾，Blade 会在运行时移除该尾段，避免产生 `/v1/v1/messages`。其他路径前缀保持
+不变。OpenAI-compatible endpoint 不做该移除。
 
 ## Fallback
 

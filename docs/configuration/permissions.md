@@ -20,7 +20,7 @@ Blade 提供五种权限模式，可通过 `Shift+Tab` 循环切换（UI 中）�
 
 ```
 ✅ 自动批准: 只读工具（Read、Glob、Grep、WebFetch、WebSearch、TaskCreate/TaskGet/TaskUpdate/TaskList、Task、Plan 工具）
-❌ 需要确认: Write 工具（Edit、Write、NotebookEdit）、Execute 工具（Bash、Skill、SlashCommand）
+❌ 需要确认: Write 工具（Edit、Write、ApplyPatch、NotebookEdit）、Execute 工具（Bash、Skill、SlashCommand）
 ```
 
 适用场景：日常使用，平衡安全与效率。
@@ -178,7 +178,7 @@ Tool(param1:value1, param2:value2)
 | 工具 | 抽象规则示例 |
 |------|-------------|
 | Bash | `Bash(command:npm *)` |
-| Edit/Write | `Edit(file_path:**/*.ts)` |
+| Edit/Write/ApplyPatch | `Edit(file_path:**/*.ts)` |
 | WebFetch | `WebFetch(url:https://api.github.com/**)` |
 | WebSearch | `WebSearch(query:*)` |
 | Task/SlashCommand | 不自动生成规则 |

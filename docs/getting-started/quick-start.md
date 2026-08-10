@@ -73,14 +73,11 @@ blade serve --port 3000 --hostname 0.0.0.0
 
 ### 自定义 Provider
 
-如果你的 Provider 不在列表中，选择 **🔧 自定义 OpenAI Compatible**：
-
-1. 选择 "🔧 自定义 OpenAI Compatible"
-2. 输入 API Key
-3. 尚未配置时输入 Provider 凭证
-4. 输入模型名称
-
-适用于任何兼容 OpenAI API 格式的服务。
+TUI 和 Web 的 Add Model 都提供 `Custom OpenAI Endpoint` 与
+`Custom Anthropic Endpoint`。依次填写稳定的 Channel ID、名称、Base URL 和 Model ID
+即可创建独立渠道。每个渠道拥有自己的 endpoint 与凭据，不会因协议相同而串用 API
+key。完整格式见[模型与配置系统](../configuration/config-system.md)；API key 始终由
+`~/.blade/auth.json` 单独保存。
 
 ## 基本交互
 

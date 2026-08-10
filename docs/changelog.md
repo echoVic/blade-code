@@ -4,6 +4,258 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### ✨ 新功能
+
+- 同一模型响应中的工具调用统一使用 shared/exclusive FIFO gate：纯读、不同路径写入、
+  独立 Bash 和 durable Task 可并行，共享状态操作保持独占
+- Web 与 TUI 支持同时展示多个 subagent 进度；Web 按 child session/tool-call ID
+  独立更新并从 durable transcript 重建，ACP 保持独立 tool-call 投影
+- 配置型 Hooks 新增 canonical project path + SHA-256 摘要信任；信任记录使用
+  `0600` 原子存储，Git linked worktree 共享 common checkout 身份，配置变化自动失效
+- Web Settings 新增 Hooks review/trust/revoke 面板；TUI、headless 与 ACP 统一支持
+  `/hooks status|list|trust|revoke`
+- 新增统一 Workspace Trust：未信任项目不能覆盖模型 endpoint、启动 MCP、放宽权限、
+  注入环境变量或加载 project plugins/commands/skills/agents/instructions
+- TUI 启动前提供 Trust/Continue safely 决策，Web Settings 新增 Security review，
+  CLI/ACP 支持 `/trust` 与 `--trust-workspace`
+- MCP 改为按 source project 解析并由每个 Session 独占连接；workspace、plugin、
+  ACP 和 `--mcp-config` 使用统一优先级，stdio 默认在目标项目 cwd 启动
+- 新增 Session-scoped MCP Form/URL Elicitation：TUI/Web 提供结构化输入和安全外链
+  确认，ACP 对可表达字段使用标准 choices、其余 fail closed；支持
+  Elicitation/ElicitationResult trusted Hooks
+- 新增 Session-scoped MCP Roots 与受控 Sampling：roots 返回 canonical execution
+  workspace，ACP remote 不暴露宿主路径；Sampling 默认关闭，显式启用后按请求限制
+  token/输入/次数并在 TUI、Web、ACP 强制 one-shot 审批
+- 新增 MCP Tool Call 生命周期：Session abort 直达 SDK/server，idle progress 可续期但
+  hard timeout 不可突破；统一 `tool_progress` 投影到 TUI、Web、headless、ACP 和
+  subagent
+- 远程 MCP OAuth 收口到 SDK 标准 discovery/DCR/PKCE：连接只消费已有凭证，
+  CLI/TUI/Web 显式登录，Web 支持刷新后恢复授权，token 使用 endpoint/client/scopes
+  隔离的 0600 原子账本
+- 新增 Dynamic MCP Catalog：`list_changed` 经过有界分页、通知合并和 provider
+  boundary barrier 后发布单调 revision；Session/Agent 原子替换
+  `mcp__<server>__<tool>` 投影，CLI/Web/ACP 统一展示 delta，非法目录保留上一版本
+- 新增 Session-scoped MCP Resources、Resource Templates、Prompts 与 Subscription：
+  完整分页目录、deferred list/read/get 工具、角色化 prompt、blob 摘要化和显式资源
+  更新订阅统一投影到 TUI、headless、Web、subagent 与 ACP
+- 新增 Session-safe MCP Fault Recovery：stdio/remote transport 关闭、Session 过期和
+  真实 ping 失败统一进入 generation-fenced single-flight 状态机；旧目录先撤销，
+  desired subscription 在新目录提交后恢复，TUI/Web/headless/ACP 展示恢复 revision
+- 新增 MCP Tool Result 安全边界：text/structured/binary 使用硬累计预算，base64
+  转为 SHA-256 与 0600 Session 私有 artifact，大文本返回首尾预览；Web metadata
+  使用严格 allowlist，ACP remote 不暴露宿主 artifact 路径
+- 新增 Session-scoped MCP Logging：标准 `logging/setLevel` 协商与运行时调级，
+  notification 经过深度/bytes/rate/ring 预算和凭证脱敏后统一投影到
+  TUI/headless/Web/subagent/ACP；日志不进入 provider context，ACP 只显示 opaque hash
+- 新增 Session-safe MCP Server Instructions：initialize instructions 经过 NFKC、
+  隐藏 Unicode、单 server/Session bytes 预算和 JSON/XML 边界处理后，按连接
+  generation 动态加入/撤销 provider context；ACP 只保留 provenance hash
+- 新增 Session-scoped MCP Completion：prompt 参数与 resource template 变量可通过
+  `CompleteMcpArgument`、`/mcp complete` 和 Web 面板补全；候选具备 catalog
+  ownership、Unicode/bytes/并发/超时预算和 raw SHA-256 provenance
+- 新增 opt-in Session-safe MCP Async Tasks：required/optional task tools 统一使用
+  opaque `mcp_task_*`、`TaskOutput`、取消和全端生命周期投影；Session dispose 负责
+  回收，`tasks/get`/`tasks/result` 断流可在 generation fence 下恢复
+- 新增 Durable Session Archive：JSONL 根事件与 fork/subagent lineage 原子投影整棵
+  归档子树，active/archived catalog 使用独立 cursor；TUI、Web 和 HTTP 支持归档/恢复，
+  ACP/Runtime 在初始化 owner 前拒绝归档 Session
+- Web Sidebar 新增高密度 Archive Popover；Session 行支持键盘可达的 Archive，
+  inherited child 显示归档根且不能错误局部恢复，跨 tab 通过 lifecycle Bus 即时收敛
+- 新增 Portable Session Markdown Export：从 rewind 后 durable JSONL 投影
+  user/assistant、summary 与安全化 activity；reasoning 显式 opt-in，正文携带
+  SHA-256，TUI 使用 0600 no-clobber，Web 支持 active/archived 下载，ACP bounded inline
+- 新增 Session-scoped Reasoning Effort：`auto/off/minimal/low/medium/high/xhigh/max`
+  按模型能力协商并持久化；TUI `/effort`、Web Composer 与 ACP config option 共享
+  Runtime 原子切换、active-turn 防护和 metadata 失败补偿回滚
+- 新增 Session-scoped Service Tier：`auto/standard/fast/flex` 按模型能力协商并
+  持久化；OpenAI 映射 `default/priority/flex`，Claude Opus 4.6 映射 Fast Mode；
+  TUI `/speed`/`/fast`、Web Composer 与 ACP config option 共享原子切换与继承语义
+- 新增 Session-scoped Response Verbosity：`auto/low/medium/high` 按模型原生能力
+  协商并持久化；OpenAI Chat/Responses/Codex 分别投影 `verbosity`、
+  `text.verbosity` 与 `textVerbosity`；TUI `/verbosity`/`/detail`、Web Composer
+  和 ACP config option 共享五元 Session 设置组的原子切换、回滚与继承语义
+- 新增 Session-scoped Communication Style：`auto/pragmatic/friendly/explanatory`
+  与 Provider verbosity 正交；受限 prompt section 不能覆盖安全、权限、工具或任务
+  规则；TUI `/style`/`/personality`、Web Composer 与 ACP config option 共享 durable
+  恢复、active-turn 防护和子 Session 继承
+- 新增 Trusted Custom Output Styles：从 user、受信 project 与 active plugin 的固定
+  Markdown 目录加载 namespaced style；symlink/path/Unicode/bytes/count 预算
+  fail closed，Session 快照与 durable SHA-256 provenance 阻止重建时内容漂移，
+  Web/ACP 只投影安全摘要
+- 新增 Trusted Contextual Project Rules：支持 `CLAUDE.local.md`、
+  `AGENTS.override.md`、`.claude/rules`、`.blade/rules` 和 `paths` frontmatter；
+  Session catalog 冻结后按工具触达路径增量加载，首次写入先阻断再重试，JSONL 只保存
+  relative path 与 SHA-256 provenance
+- Subagents、skills、custom commands 与 plugins 改为按 canonical workspace 持有；
+  Session 创建不可变资源快照，Task/Team 的前后台与 resume 子 Session 显式继承
+- `--agents` 只覆盖当前 Session，`--plugin-dir` 在 CLI 模式分流前统一传播到
+  TUI、print、headless、serve 与 ACP
+- 模型配置与 PiModelCatalog 改为 source-project Session 快照；Task/Team 子 Session、
+  fallback 与 Prompt Hook 显式继承，Web/ACP 模型选项按精确 workspace 投影
+- `env`、`maxTurns`、`permissionMode` 与 `disableAllHooks` 改为 source-project
+  Session 快照；SessionStart 输出在初始化期校验并冻结，CLI/TUI、Web、ACP、
+  Bash、Hooks、stdio MCP 与子 Session 共享同一环境契约
+- Plugin enable/disable 改为 user/project/local 分层持久化；TUI 支持交互启停，
+  Web Settings 新增 Plugins 面板，CLI/headless/ACP 共用 `/plugins --scope` 语义
+- Plugin Hooks 新增来源归属、plugin root 环境和 Session 私有快照；同事件多插件
+  使用一次原子集合替换，不再互相覆盖
+- 新增 Plugin Marketplace 与受管包账本；Git/本地来源经过显式 trust、路径与
+  symlink 限制、内容摘要校验后发布到不可变版本目录，更新原子切换且保留活动
+  Session 的旧根
+- TUI、CLI/headless/ACP、Web Settings 与 HTTP API 统一支持插件安装、更新、卸载
+  和 Marketplace add/list/update/remove；卸载及 Marketplace 删除要求显式确认和
+  依赖级联保护
+- Plugin manifest 的 `bladeVersion` 与 semver dependencies 进入生产门禁；同
+  Marketplace 传递依赖按拓扑顺序一次提交，运行时固定点降级缺失、版本不符或禁用
+  依赖，卸载拒绝破坏反向依赖
+- 新增 tighten-only `pluginSourcePolicy`：Git host、Marketplace、本地根目录 allowlist
+  与完整 commit SHA pinning 由 CLI/TUI、Web、ACP 共用，项目层不能放宽用户策略
+- `package.json` scripts 进入 Workspace Trust review；post-edit `type-check` 改为
+  trusted+YOLO 本地 Session 私有能力，使用冻结环境和 owned process tree
+- 新增 Session-scoped LSP code intelligence：支持用户/可信项目/plugin `.lsp.json`
+  来源、不可变子 Session 快照、deferred LSP 工具和 Edit/Write 增量诊断
+- 新增原子多文件 ApplyPatch：严格 grammar、完整 preflight、canonical path containment、
+  多路径/跨进程锁、同目录 staging/backup、fsync、crash journal、失败 rollback 和
+  Add/Delete/Move rewind
+
+### 🐛 问题修复
+
+- 修复生产默认 streaming 路径把多个 Task 串行执行，而非流式 fallback 又无条件并行
+  副作用工具的语义分裂
+- 修复并行 Task 在 Web/TUI 中互相覆盖、后一个 child 的 delta/完成状态污染前一个卡片
+- 修复 Web/ACP 多 workspace Hook 配置回退到进程 cwd 或最近加载项目，以及
+  Pre/Post/Permission/Stop 快速路径使用全局 `isEnabled()` 导致跳过正确 workspace
+- 未信任、已修改或信任存储异常的 command/http/prompt Hook 现在统一 fail closed；
+  进程内 managed Function Hook 保持跨 workspace 生效且不进入项目摘要
+- Folder Trust 使用 canonical source project identity、父目录继承与最具体子目录 deny；
+  revoke 会立即重载过滤配置、断开 MCP 并清理项目资源 registry
+- 修复 Web/TUI 多项目 Session 继承服务器启动项目 MCP、builtin tools 混入全局 MCP
+  工具，以及 foreground subagent 绕过 SessionRuntime 资源边界
+- 修复 Web terminal task 进入完成/失败状态后继续缓存 runtime 和 stdio MCP 进程；
+  修复项目绑定弹窗关闭后残留 modal portal 并锁死页面交互
+- 修复 MCP client 宣称 sampling/roots 能力却没有 request handler，以及 Web
+  AskUserQuestion 仍调用不存在旧路由；交互响应现在统一按精确 Session ref 返回
+- 修复外层 MCP tool call 忽略 Session abort、配置 timeout 未生效、长调用无 progress，
+  以及 SDK 将用户取消包装成 timeout 导致终态误分类
+- 修复 MCP error/critical 日志在 Web 中被统计为失败工具调用；日志现在始终使用完成态
+  诊断卡并保留独立 severity 标签
+- 修复 Blade 忽略 MCP initialize instructions，导致模型缺失 server-specific 工具
+  参数约束；旧 generation instructions 现在会在断连时同步撤销
+- 修复 MCP prompt/template 缺少标准 `completion/complete` 客户端路径；未知引用和
+  context 现在会在协议请求前 fail closed，取消后连接保持可复用
+- 修复 MCP task Web 卡片忽略同一 task 的终态更新并把 working 误显示为 success；
+  `tasks/result` 断流现在会在剩余 local lifetime 内恢复，而非误标失败
+- 修复 SQLite 同步在权威 JSONL 时间戳早于旧投影时误保留 stale metadata；规范
+  transcript 现在始终覆盖自身派生行，只有非规范 alias 来源才按时间择新
+- 修复 Web 初始窄视口后变宽时 mobile sidebar transform transition 可冻结在屏幕外；
+  移动端抽屉改为即时 transform，桌面仅过渡宽度
+- 修复 MCP OAuth 连接时隐式打开浏览器、固定手写 authorization/token endpoint、
+  同名 server 跨项目复用 token、非原子凭证写入和 ACP 读取宿主凭证；修复 Web
+  `Open MCP Panel` 死循环及异步 popup 被拦截后无法继续授权
+- 修复 TUI 启动阶段把 `--agents` 写入共享 registry、worktree child 重新按执行目录
+  查找资源，以及模型工具描述在回合中二次读取全局 SkillRegistry
+- 修复 Web 工具审批事件遗漏 `toolName` 与 `args`，导致 SlashCommand 等请求错误显示为
+  `Edit`
+- 修复 Web 多项目和 ACP 多 cwd Session 从启动 Store 查找模型、共享可变 Provider
+  catalog，以及项目切换时迟到 `/models` 响应覆盖当前模型列表
+- 修复 TUI SessionStart 把项目环境写入 `process.env`、非启动 workspace 继承启动项目
+  执行设置，以及项目配置重写进程级 Task scheduler 并发策略
+- 修复 plugin refresh 丢失内存态禁用、禁用后旧 Hook 继续触发或活动 Session 立即失去
+  Hook，以及 install/update/uninstall 需要手动刷新并遗留启停 tombstone
+- 修复插件安装通过 shell 字符串执行 Git、原地 `git pull` 失败后破坏当前版本、
+  URL 可嵌入凭据，以及受管包被修改后仍静默加载
+- 修复 manifest 已声明依赖和 Blade 版本却从未校验、禁用依赖后 dependent 资源仍
+  进入新 Session，以及 full-SHA 来源未复核 checkout HEAD
+- 修复 AutoVerify 在未信任项目、`default`/`autoEdit` 与 ACP 远端写入后绕过权限
+  执行 package scripts，跨 Session 共享缓存，并通过 `npx` 隐式下载 lint/test 工具
+- 修复 ToolSearch 激活 deferred schema 后 provider 工具列表冻结，导致模型拿到 LSP
+  schema 仍无法调用；每轮 provider boundary 现在重新解析已加载工具
+- 修复 FileLockManager 等待后才登记锁导致三方排队可并发穿透并永久保留已完成 lock；
+  修复 FileAccessTracker 把 `/var`/`/private/var` 和 symlink alias 误判为不同文件
+- 修复 ACP Client 已声明远端 filesystem 后 read/write 失败回退同名本地路径的
+  split-brain 风险；远端 ApplyPatch 现在只允许可验证补偿回滚的 Update
+
+### ✅ 测试相关
+
+- 新增真实 GPT production tool-call 资格，证明未信任 Hook 零副作用、信任当前摘要后
+  才执行；生产 Web GUI 覆盖 review、trust、modified、re-trust、revoke 与焦点恢复
+- 新增信任文件 owner/mode/symlink、stale digest `409`、worktree identity、跨项目配置
+  隔离、ACP callback 和 managed Function Hook 回归
+- 新增真实 GPT Workspace Trust 轨迹，证明恶意 endpoint 和 MCP marker 零命中；补齐
+  project config、permissions、plugins、commands、skills、agents 和 instructions 门禁
+- 新增真实 GPT 双 workspace MCP 轨迹，证明只启动目标项目 server、目标 cwd 正确且
+  source project marker 保持零命中
+- 新增真实 stdio MCP Elicitation、TUI/Web/ACP、Hook、abort、重叠调用与 schema
+  安全测试；真实 GPT 和生产 DeepSeek GUI 覆盖 ToolSearch → Form → 后续执行
+- 新增真实 stdio MCP Roots/Sampling、能力协商、text/image、并发、abort 和 ACP
+  host-root 隔离测试；真实 GPT 与生产 DeepSeek GUI 覆盖 nested sampling、逐次审批、
+  fresh-tab 恢复和 stdio PID 回收
+- 新增真实 OAuth + Streamable HTTP MCP 集成，覆盖 discovery/DCR/PKCE、refresh、
+  persistence/logout、ACP 隔离与 PID/端口回收；真实 GPT 和生产 DeepSeek GUI 覆盖
+  ToolSearch → OAuth MCP → Write、授权恢复、自动重连和 fresh-tab
+- 新增真实 stdio MCP progress/cancel/idle/hard-timeout 测试；真实 GPT 覆盖
+  ToolSearch → progressive MCP → Write，生产 DeepSeek GUI 覆盖折叠组实时进度、
+  fresh-tab 恢复和 PID 回收
+- 新增真实 stdio MCP logging 协商、动态级别、限流、脱敏和 ACP 隐藏测试；真实 GPT
+  证明日志 marker 不进入模型上下文，生产 DeepSeek GUI 覆盖诊断卡、管理面板和
+  error 日志不污染 failed tool count
+- 新增真实 stdio MCP instructions V1/crash/V2 生命周期、隐藏 Unicode 和伪 reminder
+  边界测试；真实 GPT 与生产 DeepSeek GUI 均从 server-only code 完成工具调用，
+  Web 展示 instruction 卡片与管理面板安全预览
+- 新增真实 stdio MCP Completion prompt/resource、并发、取消、Session 隔离与 PID
+  回收测试；真实 GPT 与 production DeepSeek GUI 均从安全候选完成 MCP → Write，
+  Web 管理面板覆盖 target、partial value、候选 hash 和 truncation
+- 新增真实 stdio MCP Tasks required/optional/disabled、ownership、取消、Session
+  cleanup、`tasks/get`/`tasks/result` 双断流恢复测试；真实 GPT 与 production
+  DeepSeek GUI 完成 opaque task → TaskOutput → Write，并验证终态卡和管理面板
+- 新增 Session Archive 子树 lease、递归 CQRS、cursor scope、Runtime/Web/TUI/ACP
+  写入栅栏测试；真实 GPT 与 production DeepSeek GUI 均完成归档前后两次真实回合，
+  Web 额外验证 archived write `409`、Archive Popover、fresh-tab 和资源归零
+- 新增 Session Markdown Export rewind/orphan activity、reasoning visibility、
+  credential/path/binary redaction、预算、hash、no-clobber 和跨端测试；真实 GPT 与
+  production DeepSeek GUI 均验证 Read 证据保留、敏感值消失及 active/archived 下载
+- 新增 Response Verbosity capability、payload hook 合并、fallback fail closed、
+  durable 恢复、Task/Team 继承和跨端回归；真实 GPT 与 production Web GUI 直接验证
+  `low/high` 请求、两次 streaming 响应、fresh-load 四元组恢复和零应用 console error
+- 新增 Communication Style prompt guard、顺序、JSONL/fork、无 Provider 重建、
+  Task/Team/background/resume 和跨端回归；真实 GPT 与 production Web GUI 直接验证
+  `pragmatic → explanatory` system/developer message、fresh-load 恢复和零应用
+  console error
+- 新增 custom output style 的 Trust、plugin lifecycle、snapshot、digest drift、
+  TUI/Web/ACP catalog 与 prompt boundary 回归；真实 GPT 和 production Web GUI 验证
+  project/plugin marker、namespaced durable metadata 与 fresh-load 恢复
+- 新增 contextual rules 的 Git-root discovery、Trust/symlink/Unicode/glob/bytes
+  预算、nested/conditional 去重、write-before-rule 防护和跨端事件回归；真实 API 与
+  production Web GUI 验证规则只在 Read 命中后进入 provider context，fresh-load
+  transcript 不包含规则正文
+- 新增真实 GPT Runtime/ACP 双 workspace plugin command 轨迹、DeepSeek Flash/Pro
+  CLI `--agents` 轨迹，以及 production Web GUI 双项目 worktree、Security trust、
+  marker 隔离、回切恢复和 fresh-tab console 资格
+- 新增真实 GPT 双代理 workspace endpoint 轨迹，以及 production Web GUI A/B
+  model/provider 列表切换、乱序响应与零 console error 资格
+- 新增真实 GPT A/B workspace Bash 环境冻结轨迹、Web/ACP 精确 workspace 环境轨迹；
+  production Web GUI 通过真实 DeepSeek、Bash 审批与落盘 marker 验证 Session env
+- 新增真实 GPT Web-disable/ACP-enable plugin 状态机，证明活动 Session 快照稳定、新
+  Session 资源与 Hook 立即收敛；production Web GUI 覆盖插件持久开关、Hook 来源审查、
+  真实 DeepSeek SlashCommand 回合与 fresh-tab console
+- 新增 Plugin Marketplace、source trust、原子失败回滚、旧版本保留、内容篡改、
+  路径逃逸、symlink、凭据 URL 和级联删除保护测试
+- 新增真实 GPT ACP-install/Web-update Marketplace 轨迹，证明活动 Session 保留 v1、
+  新 Session 获得 v2、卸载后资源收敛；生产 DeepSeek Web GUI 覆盖目录选源、可信安装、
+  工具调用、双确认更新/卸载、依赖删除保护及 fresh-tab 零 console error
+- 新增依赖循环/缺失/版本/固定点、原子 closure、反向依赖、来源 allowlist、环境
+  SHA 锁、pin mismatch 和策略跨 workspace 收紧测试
+- 生产 DeepSeek GUI 进一步覆盖 project policy 保存、allowlist 下根+依赖安装、
+  依赖禁用诊断与恢复、未 pin 远程来源提前拒绝、反向依赖卸载保护和 fresh-tab
+  零 console error
+- 新增 AutoVerify Trust/ACP/权限模式、Session 队列、取消与 dispose 等待测试；
+  真实 GPT 验证未信任零副作用与 trusted+YOLO 类型诊断；生产 DeepSeek Web GUI
+  验证 script 安全投影，以及未信任 Default、已信任 Auto Edit 都保持零隐式执行
+- 新增真实 stdio LSP 协议、双 Session、ACP、崩溃重启、取消、诊断去重与 PID
+  回收测试；真实 GPT 覆盖 ToolSearch/LSP/Write，生产 DeepSeek Web GUI 覆盖完整轨迹
+- 新增 ApplyPatch parser/engine、发布故障回滚、symlink、并发、远端模糊失败、
+  Snapshot、Hook、LSP、ACP/Web 多 diff 测试；真实 GPT 与 DeepSeek GUI 覆盖三文件轨迹
+
 ## [0.8.3] - 2026-08-06
 
 ### ✨ 新功能

@@ -241,6 +241,14 @@ blade mcp add-json <name> '<json>'
 blade mcp add-json api '{"type":"http","url":"https://api.example.com"}'
 ```
 
+OAuth server 使用标准 discovery，不在配置中写 token、client secret 或 endpoint：
+
+```bash
+blade mcp add-json remote \
+  '{"type":"http","url":"https://mcp.example.com/rpc","oauth":{"enabled":true,"scopes":["mcp:tools"]}}'
+blade mcp login remote
+```
+
 #### mcp remove / mcp rm
 
 移除 MCP 服务器。
@@ -257,13 +265,18 @@ blade mcp remove <name>
 blade mcp get <name>
 ```
 
-#### mcp reset-project-choices
+#### mcp login / logout
 
-清除项目级 MCP 批准/拒绝记录。
+显式启动 OAuth browser flow，或清除该 endpoint/client/scopes 身份的凭证。普通
+`mcp list`、连接和 Session 启动不会隐式打开浏览器。
 
 ```bash
-blade mcp reset-project-choices
+blade mcp login <name>
+blade mcp logout <name>
 ```
+
+TUI 对应 `/mcp login <name>` 和 `/mcp logout <name>`；headless 与 ACP 会拒绝宿主
+OAuth 交互。完整安全契约见 [MCP OAuth 生命周期](mcp-oauth-lifecycle.md)。
 
 ## 交互界面
 
@@ -287,6 +300,86 @@ blade mcp reset-project-choices
 
 ### 会话 Slash 命令
 
+#### `/effort [level]`
+
+查看或切换当前 Session 的推理强度：
+
+```bash
+/effort
+/effort auto
+/effort off
+/effort minimal
+/effort low
+/effort medium
+/effort high
+/effort xhigh
+/effort max
+```
+
+显式级别必须由当前模型支持；`auto` 保持为 durable 策略并在 Provider 创建时解析
+effective level。活动回合期间拒绝切换，Runtime 替换或 metadata 写入失败时保持或
+恢复原 model/effort/tier/verbosity/style 五元设置。详见
+[Session Reasoning Effort](session-reasoning-effort.md)。
+
+#### `/speed [tier]` 与 `/fast [on|off]`
+
+查看或切换当前 Session 的 Provider 服务等级：
+
+```bash
+/speed
+/speed auto
+/speed standard
+/speed fast
+/speed flex
+/fast
+/fast on
+/fast off
+```
+
+`auto` 不覆盖 Provider 默认值；`standard`、`fast` 与 `flex` 是显式价格/延迟
+语义，模型不支持时 fail closed。`/fast on` 选择 `fast`，`/fast off` 选择
+`standard`。活动回合期间拒绝切换，Runtime 替换或 metadata 写入失败时保持或恢复
+原 model/effort/tier/verbosity/style 五元设置。详见
+[Session Service Tier](session-service-tier.md)。
+
+#### `/verbosity [level]` 与 `/detail [level]`
+
+查看或切换当前 Session 的 Provider 原生响应详略：
+
+```bash
+/verbosity
+/verbosity auto
+/verbosity low
+/verbosity medium
+/verbosity high
+/detail high
+```
+
+`auto` 不覆盖 Provider 默认值；显式 `low`、`medium` 与 `high` 必须由当前模型支持。
+`/detail` 是完整别名。活动回合期间拒绝切换，Runtime 替换或 metadata 写入失败时保持
+或恢复原 model/effort/tier/verbosity/style 五元设置。详见
+[Session Response Verbosity](session-response-verbosity.md)。
+
+#### `/style [name]` 与 `/personality [name]`
+
+查看或切换当前 Session 的沟通风格：
+
+```bash
+/style
+/style auto
+/style pragmatic
+/style friendly
+/style explanatory
+/style project:review:strict
+/personality friendly
+```
+
+风格只控制语气和解释框架，与 Provider 原生 `responseVerbosity` 正交。
+`/personality` 是完整别名。活动回合期间拒绝切换；metadata 写入失败时恢复之前的
+五元 Session 设置。详见
+[Session Communication Style](session-communication-style.md) 和
+[Trusted Custom Output Styles](trusted-output-styles.md)。
+
 #### `/resume [sessionId]`
 
 恢复历史会话。不带 ID 时打开会话选择器。
@@ -298,6 +391,36 @@ blade mcp reset-project-choices
 # 恢复已知会话
 /resume parent-session-id
 ```
+
+#### `/archive [sessionId]` 与 `/unarchive <sessionId>`
+
+无参 `/archive` 释放当前 TUI 的 idle Runtime、归档当前 Session 并退出。指定 ID 时
+归档另一个未被 CLI/Web/ACP owner 占用的 Session tree。恢复必须指向直接归档根：
+
+```bash
+/archive
+/archive parent-session-id
+/unarchive parent-session-id
+```
+
+归档保留 transcript 和所有任务/lineage 证据，并使该 Session 及其后代退出默认
+catalog。queued/running 后代、活动 turn 或任一 Session lease 会使整次操作 fail
+closed。详见 [Durable Session Archive](session-archive.md)。
+
+#### `/export [path] [--reasoning]`
+
+从当前 Session 的稳定 JSONL 快照导出 materialized Markdown：
+
+```bash
+/export
+/export reports/conversation.md
+/export --reasoning
+```
+
+默认包含 user/assistant、图片标签、summary 和清理后的 activity；reasoning 需要显式
+opt-in。输出使用 `0600` exclusive create，不覆盖已有文件。ACP `/export` 返回 bounded
+inline Markdown，不接受宿主 path。详见
+[Portable Session Markdown Export](session-markdown-export.md)。
 
 #### `/fork [sessionId]`
 
