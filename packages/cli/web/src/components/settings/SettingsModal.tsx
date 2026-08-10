@@ -17,7 +17,7 @@ import {
   useState,
 } from 'react';
 import { Select } from '@/components/ui/select';
-import { type TranslationKey, useT } from '@/i18n';
+import { type TranslationKey, useLocale, useT } from '@/i18n';
 import { DEFAULT_COMMUNICATION_STYLES } from '@/lib/communicationStyles';
 import { requestJson } from '@/lib/http';
 import {
@@ -83,6 +83,7 @@ const SHORTCUT_SCOPE_LABEL_KEYS: Record<string, TranslationKey> = {
 
 export function SettingsModal() {
   const t = useT();
+  const { locale } = useLocale();
   const {
     isSettingsOpen,
     settingsSection,
@@ -178,7 +179,10 @@ export function SettingsModal() {
         combo: shortcutKeyLabels(shortcut),
         scope: shortcut.scope,
       })),
-    [t]
+    // `t` is a stable module-level reference, so depend on `locale` to
+    // recompute translated labels when the UI language changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [locale]
   );
 
   const filteredShortcuts = shortcuts.filter((shortcut) => {

@@ -4,6 +4,7 @@ import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsModal } from '../../../src/components/settings/SettingsModal';
+import { setLocale } from '../../../src/i18n';
 import { useAppStore } from '../../../src/store/AppStore';
 import { useConfigStore } from '../../../src/store/ConfigStore';
 import { useSettingsStore } from '../../../src/store/SettingsStore';
@@ -31,6 +32,7 @@ describe('SettingsModal', () => {
   const loadSettings = vi.fn().mockResolvedValue(undefined);
 
   beforeEach(() => {
+    setLocale('en');
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -62,6 +64,7 @@ describe('SettingsModal', () => {
 
   afterEach(() => {
     act(() => root.unmount());
+    setLocale('en');
     container.remove();
     useAppStore.setState({ isSettingsOpen: false, isMcpOpen: false });
     vi.unstubAllGlobals();
@@ -103,6 +106,10 @@ describe('SettingsModal', () => {
     const pluginsTab = document.body.querySelector<HTMLButtonElement>(
       '#settings-tab-plugins'
     );
+    const backButton = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('[data-settings-panel] button')
+    ).find((button) => button.textContent?.trim() === 'Back');
+    await vi.waitFor(() => expect(document.activeElement).toBe(backButton));
     generalTab?.focus();
 
     await act(async () => {
@@ -120,6 +127,22 @@ describe('SettingsModal', () => {
     });
     expect(pluginsTab?.getAttribute('aria-selected')).toBe('true');
     expect(document.activeElement).toBe(pluginsTab);
+  });
+
+  it('recomputes shortcut labels when the locale changes while open', async () => {
+    useAppStore.getState().openSettings('shortcuts');
+
+    await act(async () => {
+      root.render(<SettingsModal />);
+      await Promise.resolve();
+    });
+    expect(document.body.textContent).toContain('Search tasks');
+
+    await act(async () => setLocale('zh'));
+
+    expect(document.body.textContent).toContain('快捷键');
+    expect(document.body.textContent).toContain('搜索任务');
+    expect(document.body.textContent).not.toContain('Search tasks');
   });
 
   it('opens the mounted MCP panel instead of looping back to settings', async () => {
