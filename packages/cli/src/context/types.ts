@@ -126,6 +126,9 @@ export type JSONLEventType =
   | 'session_updated'
   | 'session_rewound'
   | 'inbox_acknowledged'
+  | 'interaction_requested'
+  | 'interaction_responded'
+  | 'interaction_recovered'
   | 'message_created'
   | 'part_created'
   | 'part_updated';
@@ -177,6 +180,34 @@ export interface SessionTaskDiffStat {
 
 export type SessionPermissionMode = 'default' | 'autoEdit' | 'yolo' | 'plan';
 export type SessionTaskPermissionMode = SessionPermissionMode;
+
+export type SessionInteractionType = 'permission' | 'question' | 'elicitation';
+
+export interface SessionPendingInteraction {
+  type: SessionInteractionType;
+  requestId: string;
+}
+
+export interface SessionInteractionRequestInfo {
+  requestId: string;
+  toolCallId: string;
+  toolName: string;
+  interactionType: SessionInteractionType;
+  details: JsonValue;
+  requestedAt: string;
+}
+
+export interface SessionInteractionResponseInfo {
+  requestId: string;
+  response: JsonValue;
+  respondedAt: string;
+}
+
+export interface SessionInteractionRecoveryInfo {
+  requestId: string;
+  inboxMessageId: string;
+  recoveredAt: string;
+}
 
 export interface SessionTaskAttachment {
   type: 'file' | 'image' | 'url';
@@ -269,6 +300,7 @@ export interface SessionInfo {
   communicationStyle?: CommunicationStyleSelection | null;
   communicationStyleDigest?: string | null;
   projectInstructionsDigest?: string | null;
+  pendingInteraction?: SessionPendingInteraction | null;
   archivedAt?: string | null;
   agentType?: string;
   model?: string;
@@ -360,6 +392,18 @@ export type SessionEvent =
   | (SessionEventBase & {
       type: 'inbox_acknowledged';
       data: InboxAcknowledgementInfo;
+    })
+  | (SessionEventBase & {
+      type: 'interaction_requested';
+      data: SessionInteractionRequestInfo;
+    })
+  | (SessionEventBase & {
+      type: 'interaction_responded';
+      data: SessionInteractionResponseInfo;
+    })
+  | (SessionEventBase & {
+      type: 'interaction_recovered';
+      data: SessionInteractionRecoveryInfo;
     })
   | (SessionEventBase & { type: 'message_created'; data: MessageInfo })
   | (SessionEventBase & { type: 'part_created'; data: PartInfo })

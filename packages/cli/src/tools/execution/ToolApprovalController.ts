@@ -68,6 +68,7 @@ export class ToolApprovalController {
         }
 
         const details = {
+          type: 'permission' as const,
           title: tool.extractSignatureContent
             ? tool.extractSignatureContent(params)
             : tool.name,

@@ -378,14 +378,14 @@ export class JSONLStore {
 
   async appendValidated(
     buildEntry: (entries: readonly SessionEvent[]) => SessionEvent
-  ): Promise<void> {
-    await this.appendValidatedAsync(async (entries) => buildEntry(entries));
+  ): Promise<SessionEvent> {
+    return this.appendValidatedAsync(async (entries) => buildEntry(entries));
   }
 
   async appendValidatedAsync(
     buildEntry: (entries: readonly SessionEvent[]) => Promise<SessionEvent>
-  ): Promise<void> {
-    await this.enqueue(async () => {
+  ): Promise<SessionEvent> {
+    return this.enqueue(async () => {
       const handle = await fs.open(this.filePath, 'r+');
       try {
         const { entries, separator, size } = await this.readCommittedState(
@@ -397,6 +397,7 @@ export class JSONLStore {
         const line = `${separator}${JSON.stringify(stamped)}\n`;
         await handle.write(line, size, 'utf8');
         await handle.sync();
+        return stamped;
       } finally {
         await handle.close();
       }

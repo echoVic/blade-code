@@ -27,6 +27,7 @@ import type { LoopResult } from '../../agent/types.js';
 import type { PermissionMode } from '../../config/types.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { SessionInteractionService } from '../../services/SessionInteractionService.js';
 import { renderUserShellCommandForDisplay } from '../../services/UserShellCommandService.js';
 import {
   useAppActions,
@@ -742,24 +743,39 @@ export const useCommandHandler = (
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.all([
-      SessionRuntime.hasPendingInbox(workspaceRoot, sessionId),
-      SessionRuntime.hasActiveGoal(workspaceRoot, sessionId),
-    ])
-      .then(([hasPending, hasActiveGoal]) => {
-        if (!cancelled && (hasPending || hasActiveGoal)) {
-          return resumePendingInput();
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          logger.warn('[useCommandHandler] Failed to inspect pending inbox', error);
-        }
-      });
+    void (async () => {
+      if (confirmationHandler) {
+        await SessionInteractionService.resolvePendingWithHandler(
+          workspaceRoot,
+          sessionId,
+          confirmationHandler
+        );
+      } else {
+        await SessionInteractionService.cancelPendingNonInteractive(
+          workspaceRoot,
+          sessionId
+        );
+      }
+      if (cancelled) return;
+      const [hasPending, hasActiveGoal] = await Promise.all([
+        SessionRuntime.hasPendingInbox(workspaceRoot, sessionId),
+        SessionRuntime.hasActiveGoal(workspaceRoot, sessionId),
+      ]);
+      if (hasPending || hasActiveGoal) {
+        await resumePendingInput();
+      }
+    })().catch((error) => {
+      if (!cancelled) {
+        logger.warn(
+          '[useCommandHandler] Failed to recover pending interaction or inbox',
+          error
+        );
+      }
+    });
     return () => {
       cancelled = true;
     };
-  }, [resumePendingInput, sessionId, workspaceRoot]);
+  }, [confirmationHandler, resumePendingInput, sessionId, workspaceRoot]);
 
   return {
     executeCommand,

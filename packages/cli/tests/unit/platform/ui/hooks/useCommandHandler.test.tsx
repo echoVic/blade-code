@@ -34,6 +34,8 @@ const mocks = vi.hoisted(() => {
     abort: vi.fn(),
     hasPendingInbox: vi.fn(),
     hasActiveGoal: vi.fn(),
+    resolvePendingWithHandler: vi.fn(),
+    cancelPendingNonInteractive: vi.fn(),
     enqueueCommand: vi.fn(),
     addUserMessage: vi.fn(),
     addAssistantMessage: vi.fn(),
@@ -53,6 +55,13 @@ vi.mock('../../../../../src/agent/runtime/SessionRuntime.js', () => ({
   SessionRuntime: {
     hasPendingInbox: mocks.hasPendingInbox,
     hasActiveGoal: mocks.hasActiveGoal,
+  },
+}));
+
+vi.mock('../../../../../src/services/SessionInteractionService.js', () => ({
+  SessionInteractionService: {
+    resolvePendingWithHandler: mocks.resolvePendingWithHandler,
+    cancelPendingNonInteractive: mocks.cancelPendingNonInteractive,
   },
 }));
 
@@ -170,9 +179,12 @@ describe('useCommandHandler durable recovery', () => {
   let container: HTMLDivElement;
   let root: ReactDOM.Root;
   let hook: ReturnType<typeof useCommandHandler> | undefined;
+  const confirmationHandler = {
+    requestConfirmation: vi.fn(),
+  };
 
   function Harness() {
-    hook = useCommandHandler();
+    hook = useCommandHandler(undefined, undefined, confirmationHandler as never);
     return null;
   }
 
@@ -190,6 +202,8 @@ describe('useCommandHandler durable recovery', () => {
     });
     mocks.hasPendingInbox.mockResolvedValue(true);
     mocks.hasActiveGoal.mockResolvedValue(false);
+    mocks.resolvePendingWithHandler.mockResolvedValue(true);
+    mocks.cancelPendingNonInteractive.mockResolvedValue(false);
     mocks.createAgent.mockResolvedValue({
       chatStream: vi.fn(async function* (
         _message: string,
@@ -243,6 +257,14 @@ describe('useCommandHandler durable recovery', () => {
     );
     expect(mocks.setProcessing).toHaveBeenNthCalledWith(1, true);
     expect(mocks.setProcessing).toHaveBeenLastCalledWith(false);
+    expect(mocks.resolvePendingWithHandler).toHaveBeenCalledWith(
+      '/active-workspace',
+      'recovered-cli-session',
+      confirmationHandler
+    );
+    expect(mocks.resolvePendingWithHandler.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.hasPendingInbox.mock.invocationCallOrder[0]!
+    );
   });
 
   it('routes bang input to the Session shell without creating an Agent', async () => {

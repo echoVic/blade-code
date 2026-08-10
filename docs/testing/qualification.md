@@ -271,6 +271,18 @@ archived Popover 和 fresh tab 下载 exact Session；HTTP 响应需为 `no-stor
 正文 hash 匹配，fresh tab 无 application console error。测试结束后端口、临时根和
 下载验证产物必须归零。
 
+Durable Pending Interaction 资格必须证明权限、`AskUserQuestion`、MCP Elicitation
+与 Sampling 请求在 surface 可见前写入 JSONL，用户响应在解除工具阻塞前写入。确定性
+测试覆盖大小预算、同 Session 单 pending、响应幂等、fork/rewind 隔离、HTTP schema、
+TUI/ACP 启动顺序和 Runtime mailbox 重载。进程重启后不得自动重放原工具副作用；必须
+关闭原 tool call、写入带 provenance 的恢复结果，再通过 durable inbox 启动
+pending-only turn。
+
+真实 GPT 必须从预置 pending Session 分别经 Web response、ACP `session/load` 和 TUI
+Runtime hook 回答结构化问题并实际调用 `Write`。Production DeepSeek GUI 必须在 fresh
+load 显示问题与 pending badge，回答后自动继续、产生精确 changed file，fresh tab 不得
+再次显示问题，browser console 不得有 application error。
+
 Session Permission Mode 资格必须证明权限策略属于 durable Session，而非进程全局或
 单一 UI Store。确定性测试覆盖 `default/autoEdit/yolo/plan`、latest update wins、
 legacy fallback、fork/task 继承、非法值 fail closed、SessionStart Hook snapshot、

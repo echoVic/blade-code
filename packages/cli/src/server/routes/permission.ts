@@ -18,9 +18,16 @@ const PermissionResponseSchema = Type.Object({
   remember: Type.Optional(Type.Boolean()),
   scope: Type.Optional(StringEnum(['once', 'session', 'project'])),
   targetMode: Type.Optional(StringEnum(['default', 'autoEdit', 'plan', 'yolo'])),
-  feedback: Type.Optional(Type.String()),
+  feedback: Type.Optional(Type.String({ maxLength: 4_000 })),
   answers: Type.Optional(
-    Type.Record(Type.String(), Type.Union([Type.String(), Type.Array(Type.String())]))
+    Type.Record(
+      Type.String({ maxLength: 80 }),
+      Type.Union([
+        Type.String({ maxLength: 4_000 }),
+        Type.Array(Type.String({ maxLength: 1_000 }), { maxItems: 4 }),
+      ]),
+      { maxProperties: 4 }
+    )
   ),
   elicitation: Type.Optional(
     Type.Object({
@@ -79,7 +86,7 @@ export const PermissionRoutes = () => {
         elicitation,
       };
 
-      const success = respondToPermission(ref, permissionId, response);
+      const success = await respondToPermission(ref, permissionId, response);
 
       if (!success) {
         throw new NotFoundError('Permission request', permissionId);

@@ -25,6 +25,7 @@ import type {
   StreamToolCall,
   UsageInfo,
 } from '../../services/ChatServiceInterface.js';
+import { SessionInteractionService } from '../../services/SessionInteractionService.js';
 import type { JsonValue } from '../../store/types.js';
 import { ToolErrorType } from '../../tools/types/index.js';
 import { isAbortError } from '../../utils/abort.js';
@@ -2413,7 +2414,17 @@ export async function* executeLoopGenerator(
                   !successfulTools.has('ExitWorktree'),
                 subagentType: context.subagentInfo?.subagentType,
                 signal: options?.signal,
-                confirmationHandler: context.confirmationHandler,
+                confirmationHandler: context.sessionId
+                  ? SessionInteractionService.createConfirmationHandler(
+                      context.confirmationHandler,
+                      {
+                        sessionId: context.sessionId,
+                        projectPath: context.workspaceRoot || getCwd(),
+                        toolCallId: toolUseUuid ?? toolCall.id,
+                        toolName: toolCall.function.name,
+                      }
+                    )
+                  : context.confirmationHandler,
                 permissionMode: context.permissionMode,
                 toolRegistry: registry,
                 deferredToolManager: registry.deferredToolManager,

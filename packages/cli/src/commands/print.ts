@@ -12,6 +12,7 @@ import {
   validatePermissions,
 } from '../cli/middleware.js';
 import { PermissionMode } from '../config/types.js';
+import { SessionInteractionService } from '../services/SessionInteractionService.js';
 import { SessionService } from '../services/SessionService.js';
 import { renderUserShellCommandForDisplay } from '../services/UserShellCommandService.js';
 import { getConfig } from '../store/vanilla.js';
@@ -154,6 +155,14 @@ export async function runPrint(
       workspaceRoot,
       permissionMode
     );
+    const recoveredInteraction =
+      await SessionInteractionService.cancelPendingNonInteractive(
+        workspaceRoot,
+        sessionId
+      );
+    const contextMessages = recoveredInteraction
+      ? await SessionService.loadSession(sessionId, workspaceRoot)
+      : messages;
 
     runtime = await SessionRuntime.create({
       sessionId,
@@ -163,7 +172,7 @@ export async function runPrint(
       mcpConfig: options.mcpConfig,
       strictMcpConfig: options.strictMcpConfig,
       agents: options.agents ? parseCliAgents(options.agents) : undefined,
-      ...(messages.length > 0
+      ...(contextMessages.length > 0
         ? {
             sessionStart: {
               isResume: true,
@@ -209,7 +218,7 @@ export async function runPrint(
 
     const loopResult = await drainLoop(
       agent.chatStream(input, {
-        messages: [...messages],
+        messages: [...contextMessages],
         userId: 'cli-user',
         sessionId,
         workspaceRoot,

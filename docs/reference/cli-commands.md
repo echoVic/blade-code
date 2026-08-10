@@ -399,6 +399,11 @@ effective level。活动回合期间拒绝切换，Runtime 替换或 metadata �
 
 恢复历史会话。不带 ID 时打开会话选择器。
 
+若 Session 在权限确认、`AskUserQuestion` 或 MCP 输入期间退出，TUI resume 会先恢复
+原交互再继续 durable inbox。print/headless 无法收集交互输入，会 fail closed 地拒绝
+请求并让模型基于恢复结果继续。完整契约见
+[Durable Pending Interactions](durable-pending-interactions.md)。
+
 ```bash
 # 交互选择历史会话
 /resume

@@ -16,6 +16,9 @@ import type {
   SessionContext,
   SessionEvent,
   SessionInfo,
+  SessionInteractionRecoveryInfo,
+  SessionInteractionRequestInfo,
+  SessionInteractionResponseInfo,
   SubagentRunRef,
 } from '../types.js';
 import { JSONLStore } from './JSONLStore.js';
@@ -221,6 +224,76 @@ export class PersistentStore {
         acknowledgedAt,
       })
     );
+  }
+
+  async saveInteractionRequest(
+    sessionId: string,
+    request: SessionInteractionRequestInfo
+  ): Promise<void> {
+    await this.ensureSessionCreated(sessionId);
+    await this.log(sessionId).commitValidated((events) => {
+      const duplicate = events.some(
+        (event) =>
+          event.type === 'interaction_requested' &&
+          event.data.requestId === request.requestId
+      );
+      if (duplicate) {
+        throw new Error(`Interaction request already exists: ${request.requestId}`);
+      }
+      return this.createEvent('interaction_requested', sessionId, request);
+    });
+  }
+
+  async saveInteractionResponse(
+    sessionId: string,
+    response: SessionInteractionResponseInfo
+  ): Promise<void> {
+    await this.ensureSessionCreated(sessionId);
+    await this.log(sessionId).commitValidated((events) => {
+      const requested = events.some(
+        (event) =>
+          event.type === 'interaction_requested' &&
+          event.data.requestId === response.requestId
+      );
+      if (!requested) {
+        throw new Error(`Interaction request not found: ${response.requestId}`);
+      }
+      const duplicate = events.some(
+        (event) =>
+          event.type === 'interaction_responded' &&
+          event.data.requestId === response.requestId
+      );
+      if (duplicate) {
+        throw new Error(`Interaction already responded: ${response.requestId}`);
+      }
+      return this.createEvent('interaction_responded', sessionId, response);
+    });
+  }
+
+  async saveInteractionRecovery(
+    sessionId: string,
+    recovery: SessionInteractionRecoveryInfo
+  ): Promise<void> {
+    await this.ensureSessionCreated(sessionId);
+    await this.log(sessionId).commitValidated((events) => {
+      const responded = events.some(
+        (event) =>
+          event.type === 'interaction_responded' &&
+          event.data.requestId === recovery.requestId
+      );
+      if (!responded) {
+        throw new Error(`Interaction response not found: ${recovery.requestId}`);
+      }
+      const duplicate = events.some(
+        (event) =>
+          event.type === 'interaction_recovered' &&
+          event.data.requestId === recovery.requestId
+      );
+      if (duplicate) {
+        throw new Error(`Interaction already recovered: ${recovery.requestId}`);
+      }
+      return this.createEvent('interaction_recovered', sessionId, recovery);
+    });
   }
 
   /**

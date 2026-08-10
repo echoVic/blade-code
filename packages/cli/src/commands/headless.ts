@@ -32,6 +32,7 @@ import {
 } from '../schema/index.js';
 import { Bus } from '../server/bus.js';
 import type { Message } from '../services/ChatServiceInterface.js';
+import { SessionInteractionService } from '../services/SessionInteractionService.js';
 import { SessionService } from '../services/SessionService.js';
 import { SessionTaskService } from '../services/SessionTaskService.js';
 import { getCurrentModel } from '../store/vanilla.js';
@@ -1052,6 +1053,12 @@ export async function runHeadless(
         permissionMode
       );
     }
+    const recoveredInteraction = createdTask
+      ? false
+      : await SessionInteractionService.cancelPendingNonInteractive(
+          workspaceRoot,
+          sessionId
+        );
     if (createdTask) {
       eventWriter.taskSession({
         sessionId,
@@ -1085,7 +1092,9 @@ export async function runHeadless(
         });
       });
     }
-    const contextMessages: Message[] = [...messages];
+    const contextMessages: Message[] = recoveredInteraction
+      ? await SessionService.loadSession(sessionId, workspaceRoot)
+      : [...messages];
     const chatContext: ChatContext = {
       messages: contextMessages,
       userId: 'cli-user',

@@ -24,6 +24,8 @@ interface Question {
 }
 
 export interface ConfirmationDetails {
+  interactionRequestId?: string;
+  toolCallId?: string;
   type?:
     | 'permission'
     | 'enterPlanMode'

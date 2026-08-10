@@ -49,6 +49,7 @@ import type {
 } from '../mcp/McpElicitation.js';
 import { Bus } from '../server/bus.js';
 import type { ContentPart, Message } from '../services/ChatServiceInterface.js';
+import { SessionInteractionService } from '../services/SessionInteractionService.js';
 import {
   SessionMissingCreationError,
   SessionService,
@@ -256,6 +257,13 @@ export class AcpSession {
       this.cwd
     );
     logger.debug(`[AcpSession ${this.id}] ACP service context initialized`);
+    const recoveredInteraction =
+      await SessionInteractionService.resolvePendingWithHandler(this.cwd, this.id, {
+        requestConfirmation: (details) => this.requestPermission(details),
+      });
+    if (recoveredInteraction) {
+      this.messages = await SessionService.loadSession(this.id, this.cwd);
+    }
 
     const mcpServers = this.options.mcpServers
       ? toMcpServers(this.options.mcpServers)

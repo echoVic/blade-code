@@ -19,7 +19,10 @@ function isConversationEvent(event: SessionEvent): boolean {
   return (
     event.type === 'message_created' ||
     event.type === 'part_created' ||
-    event.type === 'part_updated'
+    event.type === 'part_updated' ||
+    event.type === 'interaction_requested' ||
+    event.type === 'interaction_responded' ||
+    event.type === 'interaction_recovered'
   );
 }
 

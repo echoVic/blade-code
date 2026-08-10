@@ -8,10 +8,12 @@ import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
  */
 const optionSchema = Type.Object({
   label: Type.String({
+    maxLength: 80,
     description:
       'The display text for this option that the user will see and select. Should be concise (1-5 words).',
   }),
   description: Type.String({
+    maxLength: 1_000,
     description: 'Explanation of what this option means or what will happen if chosen.',
   }),
 });
@@ -21,6 +23,7 @@ const optionSchema = Type.Object({
  */
 const questionSchema = Type.Object({
   question: Type.String({
+    maxLength: 2_000,
     description:
       'The complete, clear question to ask the user. End it with a question mark.',
   }),

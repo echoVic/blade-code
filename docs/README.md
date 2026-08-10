@@ -100,6 +100,7 @@ blade web
 - [Atomic ApplyPatch](reference/atomic-apply-patch.md)
 - [Durable Session Archive](reference/session-archive.md)
 - [Portable Session Markdown Export](reference/session-markdown-export.md)
+- [Durable Pending Interactions](reference/durable-pending-interactions.md)
 - [Session Reasoning Effort](reference/session-reasoning-effort.md)
 - [Session Permission Mode](reference/session-permission-mode.md)
 - [Session Service Tier](reference/session-service-tier.md)

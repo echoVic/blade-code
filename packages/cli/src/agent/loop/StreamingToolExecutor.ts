@@ -15,6 +15,7 @@
 
 import type { ContextManager } from '../../context/ContextManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { SessionInteractionService } from '../../services/SessionInteractionService.js';
 import type { JsonValue } from '../../store/types.js';
 import type { ToolExecutor } from '../../tools/execution/ToolExecutor.js';
 import type { ToolRegistry } from '../../tools/registry/ToolRegistry.js';
@@ -368,6 +369,18 @@ export class StreamingToolExecutor {
         ...this.execContext,
         messageId: toolUseUuid ?? toolCall.id,
         signal: combinedSignal,
+        confirmationHandler:
+          this.execContext.sessionId && this.execContext.workspaceRoot
+            ? SessionInteractionService.createConfirmationHandler(
+                this.execContext.confirmationHandler,
+                {
+                  sessionId: this.execContext.sessionId,
+                  projectPath: this.execContext.workspaceRoot,
+                  toolCallId: toolUseUuid ?? toolCall.id,
+                  toolName: toolCall.function.name,
+                }
+              )
+            : this.execContext.confirmationHandler,
         onProgress: (message) => {
           this.execContext.onProgress?.(message);
           this.progressSink?.(toolCall, {

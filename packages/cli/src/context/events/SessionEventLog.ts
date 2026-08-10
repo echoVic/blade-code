@@ -85,6 +85,18 @@ export class SessionEventLog {
     return stamped;
   }
 
+  /**
+   * Persist one event after validating the latest committed transcript under
+   * the same per-file lock. This is used for single-winner durable decisions.
+   */
+  async commitValidated(
+    buildEvent: (events: readonly SessionEvent[]) => SessionEvent
+  ): Promise<SessionEvent> {
+    const stamped = await this.store.appendValidated(buildEvent);
+    this.record(stamped);
+    return stamped;
+  }
+
   /** Fan out an ephemeral delta. Not persisted, not sequenced. */
   emitDelta(delta: EphemeralDelta): void {
     for (const subscriber of this.subscribers) {

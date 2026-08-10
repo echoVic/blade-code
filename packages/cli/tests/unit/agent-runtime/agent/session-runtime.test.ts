@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProjectRuleCatalog } from '../../../../src/agent/resources/WorkspaceProjectRules.js';
+import { DurableSteeringInbox } from '../../../../src/agent/runtime/DurableSteeringInbox.js';
 import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
 import type { AgentSession } from '../../../../src/agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../../src/agent/subagents/BackgroundAgentManager.js';
@@ -423,6 +424,38 @@ describe('SessionRuntime', () => {
 
     expect(runtime.sessionId).toBe('session-1');
 
+    await runtime.dispose();
+  });
+
+  it('reloads a recovered durable inbox into an idle cached runtime', async () => {
+    const workspaceRoot = path.join(storageRoot, 'recovered-inbox-workspace');
+    mkdirSync(workspaceRoot, { recursive: true });
+    const runtime = await SessionRuntime.create({
+      sessionId: 'recovered-inbox-session',
+      workspaceRoot,
+    });
+    expect(runtime.getPendingSteeringCount()).toBe(0);
+
+    const inbox = await DurableSteeringInbox.open(
+      workspaceRoot,
+      'recovered-inbox-session'
+    );
+    await inbox.enqueue({
+      id: 'recovered-interaction',
+      content: 'Recovered user decision',
+      queuedAt: Date.now(),
+    });
+    expect(runtime.getPendingSteeringCount()).toBe(0);
+
+    await runtime.reloadPendingInbox();
+    expect(runtime.getPendingSteeringCount()).toBe(1);
+    expect(runtime.getPendingSteeringMessages()).toEqual([
+      expect.objectContaining({
+        id: 'recovered-interaction',
+        content: 'Recovered user decision',
+        recovered: true,
+      }),
+    ]);
     await runtime.dispose();
   });
 

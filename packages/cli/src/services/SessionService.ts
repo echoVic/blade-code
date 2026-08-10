@@ -18,6 +18,10 @@ import type {
   ResponseVerbositySelection,
   ServiceTierSelection,
 } from '../config/types.js';
+import {
+  findPendingSessionInteraction,
+  toPendingInteraction,
+} from '../context/interactions.js';
 import { JSONLStore, parseSessionJSONL } from '../context/storage/JSONLStore.js';
 import {
   assertValidSessionId,
@@ -37,6 +41,7 @@ import {
 import { isSessionTaskFailure, toTaskFailure } from '../context/taskFailure.js';
 import type {
   SessionEvent,
+  SessionPendingInteraction,
   SessionPermissionMode,
   SessionRewindMode,
   SessionTaskDelivery,
@@ -371,6 +376,7 @@ export interface SessionMetadata {
   communicationStyle?: CommunicationStyleSelection;
   communicationStyleDigest?: string;
   projectInstructionsDigest?: string;
+  pendingInteraction?: SessionPendingInteraction;
   taskStatus: SessionTaskStatus;
   taskStatusReason?: string;
   taskFailure?: SessionTaskFailure;
@@ -1088,6 +1094,7 @@ export class SessionService {
       taskQueuePosition: _sourceTaskQueuePosition,
       taskQueueDepth: _sourceTaskQueueDepth,
       taskConcurrencyLimit: _sourceTaskConcurrencyLimit,
+      pendingInteraction: _sourcePendingInteraction,
       ...sourceCreatedData
     } = sourceCreated.data;
     const childCreated: Extract<SessionEvent, { type: 'session_created' }> = {
@@ -1115,7 +1122,11 @@ export class SessionService {
     const copiedEntries = sourceEntries
       .filter(
         (entry) =>
-          entry.type !== 'session_created' && entry.type !== 'inbox_acknowledged'
+          entry.type !== 'session_created' &&
+          entry.type !== 'inbox_acknowledged' &&
+          entry.type !== 'interaction_requested' &&
+          entry.type !== 'interaction_responded' &&
+          entry.type !== 'interaction_recovered'
       )
       .map((entry): SessionEvent => {
         const base = {
@@ -1147,6 +1158,7 @@ export class SessionService {
             taskQueuePosition: _taskQueuePosition,
             taskQueueDepth: _taskQueueDepth,
             taskConcurrencyLimit: _taskConcurrencyLimit,
+            pendingInteraction: _pendingInteraction,
             ...updatedData
           } = entry.data;
           return {
@@ -2562,6 +2574,9 @@ export class SessionService {
       { ...created.data }
     );
     const projected = materializeSessionEvents(entries);
+    const pendingInteraction = toPendingInteraction(
+      findPendingSessionInteraction(projected)
+    );
 
     const messageCount = projected.filter(
       (entry) =>
@@ -2702,6 +2717,7 @@ export class SessionService {
       communicationStyle,
       communicationStyleDigest,
       projectInstructionsDigest,
+      pendingInteraction,
       taskStatus,
       taskStatusReason:
         taskFailure?.message ??

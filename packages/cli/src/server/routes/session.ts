@@ -1,9 +1,9 @@
+import path from 'node:path';
 import { Mutex } from 'async-mutex';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { LRUCache } from 'lru-cache';
 import { nanoid } from 'nanoid';
-import path from 'node:path';
 import { Agent } from '../../agent/Agent.js';
 import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
@@ -52,7 +52,7 @@ import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
-import { safeParseSchema, StringEnum, Type } from '../../schema/index.js';
+import { StringEnum, safeParseSchema, Type } from '../../schema/index.js';
 import type { ContentPart, Message } from '../../services/ChatServiceInterface.js';
 import {
   type CommunicationStyleConfiguration,
@@ -61,6 +61,7 @@ import {
 import { resolveReasoningEffort } from '../../services/pi/reasoningEffort.js';
 import { resolveResponseVerbosity } from '../../services/pi/responseVerbosity.js';
 import { resolveServiceTier } from '../../services/pi/serviceTier.js';
+import { SessionInteractionService } from '../../services/SessionInteractionService.js';
 import type { RewoundSession, SessionMetadata } from '../../services/SessionService.js';
 import {
   SessionArchiveConflictError,
@@ -189,6 +190,7 @@ interface SessionInfo {
   communicationStyle?: CommunicationStyleSelection;
   communicationStyleDigest?: string;
   projectInstructionsDigest?: string;
+  pendingInteraction?: SessionMetadata['pendingInteraction'];
   taskRetryAvailable?: boolean;
   taskRetriedFrom?: SessionTaskRetryRef;
   taskDelivery?: SessionTaskDelivery;
@@ -207,6 +209,7 @@ interface SessionInfo {
 }
 
 const sessions = new Map<string, SessionInfo>();
+let resumeRecoveredInteraction: ((session: SessionInfo) => Promise<void>) | undefined;
 
 const activeRuns = new Map<string, RunState>();
 const activeUserShellRuns = new Map<
@@ -285,7 +288,7 @@ function buildPendingInteractionEvent(
       type: 'question.required',
       properties: {
         requestId: permissionId,
-        toolCallId: permissionId,
+        toolCallId: details.toolCallId ?? permissionId,
         questions: details.questions,
         details,
         ...(replayed ? { replayed: true } : {}),
@@ -297,7 +300,7 @@ function buildPendingInteractionEvent(
       type: 'elicitation.required',
       properties: {
         requestId: permissionId,
-        toolCallId: permissionId,
+        toolCallId: details.toolCallId ?? permissionId,
         elicitation: details.mcpElicitation,
         ...(replayed ? { replayed: true } : {}),
       },
@@ -327,6 +330,7 @@ function resetSharedSessionRouteState(): void {
   }
   activeUserShellRuns.clear();
   recentRuns.clear();
+  resumeRecoveredInteraction = undefined;
   sessions.clear();
 }
 
@@ -635,6 +639,7 @@ function sessionInfoFromMetadata(
     communicationStyle: metadata.communicationStyle,
     communicationStyleDigest: metadata.communicationStyleDigest,
     projectInstructionsDigest: metadata.projectInstructionsDigest,
+    pendingInteraction: metadata.pendingInteraction,
     taskRetryAvailable: metadata.taskRetryAvailable,
     taskRetriedFrom: metadata.taskRetriedFrom,
     taskDelivery: metadata.taskDelivery,
@@ -687,6 +692,7 @@ function syncSessionTaskMetadata(
   session.communicationStyle = metadata.communicationStyle;
   session.communicationStyleDigest = metadata.communicationStyleDigest;
   session.projectInstructionsDigest = metadata.projectInstructionsDigest;
+  session.pendingInteraction = metadata.pendingInteraction;
   session.taskRetryAvailable = metadata.taskRetryAvailable;
   session.taskRetriedFrom = metadata.taskRetriedFrom;
   session.taskDelivery = metadata.taskDelivery;
@@ -775,7 +781,7 @@ function projectActiveSession(session: SessionInfo) {
                 : ('permission' as const),
           requestId: run.pendingPermission.permissionId,
         }
-      : undefined,
+      : session.pendingInteraction,
     agentType: undefined,
     model: undefined,
     messageCount: session.messages.length,
@@ -1595,14 +1601,27 @@ export const createSessionRouteController = (): SessionRouteController => {
     ) {
       return;
     }
+    const hasPendingOnDisk = await SessionRuntime.hasPendingInbox(
+      session.projectPath,
+      session.id
+    );
+    const hasActiveGoalOnDisk =
+      !hasPendingOnDisk &&
+      (await SessionRuntime.hasActiveGoal(session.projectPath, session.id));
+    if (!hasPendingOnDisk && !hasActiveGoalOnDisk) {
+      return;
+    }
     const runtime = await getOrCreateRuntime(session);
     const initializedRun = getRun(session.currentRunId);
     if (isActiveRun(initializedRun)) {
       return;
     }
+    if (hasPendingOnDisk && runtime.getPendingSteeringCount() === 0) {
+      await runtime.reloadPendingInbox();
+    }
     const hasPending = runtime.getPendingSteeringCount() > 0;
     const goal = hasPending ? null : await runtime.getGoal();
-    const hasActiveGoal = goal?.status === 'active';
+    const hasActiveGoal = goal?.status === 'active' || hasActiveGoalOnDisk;
     if ((!hasPending && !hasActiveGoal) || runtime.hasTurnOwner()) {
       return;
     }
@@ -1612,6 +1631,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       ...(session.taskIsolation ? { taskRuntime: runtime } : {}),
     });
   };
+  resumeRecoveredInteraction = resumePendingSession;
 
   const recoverQueuedTasks = async (): Promise<TaskRecoveryResult> => {
     const result: TaskRecoveryResult = {
@@ -2616,7 +2636,24 @@ export const createSessionRouteController = (): SessionRouteController => {
           if (stream.aborted || terminated) return;
         }
 
-        const pendingInteraction = currentRun?.pendingPermission;
+        if (!currentRun) {
+          await SessionInteractionService.recoverResponded(
+            ref.projectPath,
+            ref.sessionId
+          );
+        }
+        const durablePending = currentRun
+          ? undefined
+          : await SessionInteractionService.findPending(ref.projectPath, ref.sessionId);
+        const pendingInteraction =
+          currentRun?.pendingPermission ??
+          (durablePending
+            ? {
+                permissionId: durablePending.request.requestId,
+                details: SessionInteractionService.confirmationDetails(durablePending),
+                resolve: () => undefined,
+              }
+            : undefined);
         if (pendingInteraction) {
           deliveredInteractionIds.add(pendingInteraction.permissionId);
           const replay = buildPendingInteractionEvent(pendingInteraction, true);
@@ -3216,7 +3253,7 @@ async function executeRunAsync(
     const requestConfirmation = async (
       details: ConfirmationDetails
     ): Promise<ConfirmationResponse> => {
-      const permissionId = nanoid(12);
+      const permissionId = details.interactionRequestId ?? nanoid(12);
       const PERMISSION_TIMEOUT = 5 * 60 * 1000;
 
       run.status = 'waiting_permission';
@@ -3648,11 +3685,11 @@ async function executeRunAsync(
   }
 }
 
-export function respondToPermission(
+export async function respondToPermission(
   ref: SessionRef,
   permissionId: string,
   response: ConfirmationResponse
-): boolean {
+): Promise<boolean> {
   logger.info(
     `[SessionRoutes] Looking for permission ${permissionId} in session ${ref.sessionId}`
   );
@@ -3667,6 +3704,14 @@ export function respondToPermission(
       run.projectPath === ref.projectPath &&
       run.pendingPermission?.permissionId === permissionId
     ) {
+      if (run.pendingPermission.details.interactionRequestId) {
+        await SessionInteractionService.respond(
+          ref.projectPath,
+          ref.sessionId,
+          permissionId,
+          response
+        );
+      }
       run.pendingPermission.resolve(response);
       logger.info(
         `[SessionRoutes] Permission ${permissionId} responded, runId: ${run.id}`
@@ -3675,6 +3720,45 @@ export function respondToPermission(
     }
   }
 
-  logger.error(`[SessionRoutes] Permission not found: ${permissionId}`);
-  return false;
+  const durablePending = await SessionInteractionService.findPending(
+    ref.projectPath,
+    ref.sessionId
+  );
+  if (!durablePending || durablePending.request.requestId !== permissionId) {
+    logger.error(`[SessionRoutes] Permission not found: ${permissionId}`);
+    return false;
+  }
+
+  await SessionInteractionService.respondAndRecover(
+    ref.projectPath,
+    ref.sessionId,
+    permissionId,
+    response
+  );
+  let session = sessions.get(sessionRefKey(ref));
+  if (!session) {
+    const metadata = await SessionService.findSessionMetadata(
+      ref.sessionId,
+      ref.projectPath
+    );
+    if (!metadata) return false;
+    const [messages, taskWorktree] = await Promise.all([
+      SessionService.loadSession(ref.sessionId, ref.projectPath),
+      SessionService.findSessionTaskWorktree(ref.sessionId, ref.projectPath),
+    ]);
+    session = sessionInfoFromMetadata(metadata, messages, taskWorktree);
+    sessions.set(sessionRefKey(ref), session);
+  } else {
+    await refreshSessionTaskMetadata(session);
+  }
+  Bus.publish(ref, 'interaction.resolved', { requestId: permissionId });
+  if (resumeRecoveredInteraction) {
+    void resumeRecoveredInteraction(session).catch((error: unknown) => {
+      logger.error(
+        `[SessionRoutes] Failed to resume recovered interaction ${permissionId}:`,
+        error
+      );
+    });
+  }
+  return true;
 }

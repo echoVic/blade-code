@@ -1226,6 +1226,16 @@ export class SessionRuntime {
     return this.activeTurnMailbox?.recoveredCount() ?? 0;
   }
 
+  async reloadPendingInbox(): Promise<void> {
+    if (this.hasTurnOwner()) {
+      throw new Error('Cannot reload the pending inbox during an active turn');
+    }
+    this.activeTurnMailbox = await ActiveTurnMailbox.create(
+      this.workspaceRoot,
+      this.sessionId
+    );
+  }
+
   async executeUserShellCommand(
     command: string,
     options: {
