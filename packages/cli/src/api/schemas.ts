@@ -716,6 +716,7 @@ export const GeneralSettingsSchema = Runtime(
     notifySounds: Type.Boolean(),
     privacyTelemetry: Type.Boolean(),
     privacyCrash: Type.Boolean(),
+    communicationStyle: Type.Optional(CommunicationStyleSchema),
   })
 );
 export type GeneralSettings = Static<typeof GeneralSettingsSchema>;

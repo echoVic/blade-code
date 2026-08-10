@@ -1038,93 +1038,50 @@ describe('ChatInput', () => {
     });
   });
 
-  test('selects a Session communication style and includes it in submission', async () => {
-    const onSend = vi.fn().mockResolvedValue(true);
-    await act(async () => {
-      root.render(<ChatInput onSend={onSend} />);
-    });
-
-    await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>(
-          'button[aria-label="Change communication style"]'
-        )
-        ?.click();
-    });
-    const explanatory = document.querySelector<HTMLButtonElement>(
-      'button[aria-label="Use explanatory communication style"]'
-    );
-    expect(explanatory).toBeInstanceOf(HTMLButtonElement);
-    await act(async () => explanatory?.click());
-
-    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
-    const valueSetter = Object.getOwnPropertyDescriptor(
-      HTMLTextAreaElement.prototype,
-      'value'
-    )?.set;
-    await act(async () => {
-      valueSetter?.call(textarea, 'Explain the implementation choices');
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>('button[aria-label="Send message"]')
-        ?.click();
-      await Promise.resolve();
-    });
-    expect(onSend).toHaveBeenCalledWith({
-      content: 'Explain the implementation choices',
-      modelId: 'model-1',
-      reasoningEffort: 'off',
-      serviceTier: 'auto',
-      responseVerbosity: 'auto',
-      communicationStyle: 'explanatory',
-      attachments: [],
-    });
-  });
-
-  test('renders safe custom style summaries and submits only the namespaced id', async () => {
-    const configured = useConfigStore.getState().configuredModels[0];
+  test('hides reasoning, service tier, and verbosity controls when the model offers no choice', async () => {
     useConfigStore.setState({
+      currentModelId: 'basic-model',
+      currentMode: 'autoEdit',
       configuredModels: [
         {
-          ...configured,
-          communicationStyles: [
-            {
-              id: 'auto',
-              name: 'Auto',
-              description: 'Use the Blade default communication style',
-              source: 'built-in',
-            },
-            {
-              id: 'project:security-review',
-              name: 'Security Review',
-              description: 'Prioritize concrete security findings',
-              source: 'project',
-              contentSha256: 'a'.repeat(64),
-            },
-          ],
+          id: 'basic-model',
+          displayName: 'DeepSeek V4 Flash',
+          provider: 'deepseek',
+          model: 'deepseek-v4-flash',
+          contextWindow: 128000,
+          reasoning: false,
+          supportedReasoningEfforts: [],
+          supportedServiceTiers: ['standard'],
+          supportedResponseVerbosities: [],
+          input: ['text'],
         },
       ],
+      availableModels: [],
+      isLoading: false,
+      error: null,
+      loadModels: vi.fn().mockResolvedValue(undefined),
+      setCurrentModel: vi.fn().mockResolvedValue(undefined),
+      setMode: vi.fn(),
     });
+
     const onSend = vi.fn().mockResolvedValue(true);
     await act(async () => {
       root.render(<ChatInput onSend={onSend} />);
     });
 
-    await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>(
-          'button[aria-label="Change communication style"]'
-        )
-        ?.click();
-    });
-    const customStyle = document.querySelector<HTMLButtonElement>(
-      'button[aria-label="Use project:security-review communication style"]'
-    );
-    expect(customStyle?.title).toBe('Prioritize concrete security findings');
-    expect(customStyle?.textContent).toContain('project');
-    await act(async () => customStyle?.click());
+    expect(
+      container.querySelector('button[aria-label="Change reasoning effort"]')
+    ).toBeNull();
+    expect(
+      container.querySelector('button[aria-label="Change provider service tier"]')
+    ).toBeNull();
+    expect(
+      container.querySelector('button[aria-label="Change response verbosity"]')
+    ).toBeNull();
+    // Communication style is a global Settings preference, not a composer control.
+    expect(
+      container.querySelector('button[aria-label="Change communication style"]')
+    ).toBeNull();
 
     const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
     const valueSetter = Object.getOwnPropertyDescriptor(
@@ -1132,21 +1089,25 @@ describe('ChatInput', () => {
       'value'
     )?.set;
     await act(async () => {
-      valueSetter?.call(textarea, 'Review this change');
+      valueSetter?.call(textarea, 'Ship it');
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
       container
         .querySelector<HTMLButtonElement>('button[aria-label="Send message"]')
         ?.click();
       await Promise.resolve();
     });
-
+    // Model-defaulted dimensions still submit their effective value, even
+    // without a visible control.
     expect(onSend).toHaveBeenCalledWith(
       expect.objectContaining({
-        communicationStyle: 'project:security-review',
+        content: 'Ship it',
+        modelId: 'basic-model',
+        serviceTier: 'auto',
+        responseVerbosity: 'auto',
+        communicationStyle: 'auto',
       })
-    );
-    expect(JSON.stringify(onSend.mock.calls)).not.toContain(
-      'Prioritize concrete security findings'
     );
   });
 });

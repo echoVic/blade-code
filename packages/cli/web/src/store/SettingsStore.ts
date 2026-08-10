@@ -45,6 +45,7 @@ const DEFAULT_SETTINGS: GeneralSettings = {
   notifySounds: false,
   privacyTelemetry: false,
   privacyCrash: true,
+  communicationStyle: 'auto',
 };
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -70,6 +71,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         notifySounds: config.notifySounds ?? DEFAULT_SETTINGS.notifySounds,
         privacyTelemetry: config.privacyTelemetry ?? DEFAULT_SETTINGS.privacyTelemetry,
         privacyCrash: config.privacyCrash ?? DEFAULT_SETTINGS.privacyCrash,
+        communicationStyle:
+          config.communicationStyle ?? DEFAULT_SETTINGS.communicationStyle,
         isLoading: false,
       });
       applyThemeToDOM(newUiTheme);
@@ -107,6 +110,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         notifySounds: prevState.notifySounds,
         privacyTelemetry: prevState.privacyTelemetry,
         privacyCrash: prevState.privacyCrash,
+        communicationStyle: prevState.communicationStyle,
         error: (err as Error).message,
       });
       if (updates.uiTheme) {

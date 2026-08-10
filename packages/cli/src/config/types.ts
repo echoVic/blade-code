@@ -171,6 +171,9 @@ export interface BladeConfig {
   notifySounds: boolean;
   privacyTelemetry: boolean;
   privacyCrash: boolean;
+  // Default communication style selection applied to new turns (e.g. 'auto',
+  // a built-in id, or a 'project:<id>' reference). Optional for backward compat.
+  communicationStyle?: string;
 
   // 核心
   // debug 支持 boolean 或字符串过滤器（如 "agent,ui" 或 "!chat,!loop"）
