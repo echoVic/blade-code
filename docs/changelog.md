@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.6] - 2026-08-11
+
+### ✨ 新功能
+
+- 权限确认、`AskUserQuestion`、MCP Elicitation 与 Sampling 请求升级为 Session-owned
+  durable interaction ledger；request 在 surface 可见前落盘，response 在工具继续前
+  落盘，CLI/TUI、Web、ACP、headless 与 print 共用同一恢复协议
+- 进程在用户回答后、原工具结束前退出时不重放不确定副作用；Blade 会关闭原 tool
+  call、将决定写入 durable inbox，并以 pending-only turn 让模型检查当前状态后继续
+- Web fresh load、TUI resume 与 ACP `session/load` 可恢复未回答交互；fork 不继承
+  live pending state，rewind 会移除 checkpoint 后的 interaction 生命周期
+- 交互请求和响应使用 128 KiB 上限并绑定已提交 tool call；MCP Elicitation 表单
+  content 永不写入 transcript，崩溃后需要敏感字段时必须重新请求
+
+### ✅ 测试相关
+
+- 新增 request-before-surface、response-before-continuation、fail-closed 副作用、
+  schema/size 边界、MCP 表单脱敏、fork/rewind、HTTP cold response、Runtime mailbox
+  reload 及 TUI 启动顺序回归
+- 真实 GPT API 分别从 Web、ACP 与 React Ink/TUI 恢复结构化问题，并实际执行一次
+  `Write`；production DeepSeek Web GUI 验证 fresh-load 问题卡片、Canary 回答、
+  `Canary\n` 精确文件、changed files、fresh tab 不重复提问和零 application error
+- 最终 feature commit 在 detached clean worktree 通过 14/14 qualification，包括
+  2570 个 unit、372 个 Web、integration/security、production build、bundle 和
+  performance 门禁
+
 ## [0.10.5] - 2026-08-10
 
 ### ✨ 新功能
