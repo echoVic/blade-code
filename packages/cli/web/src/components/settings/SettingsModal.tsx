@@ -16,6 +16,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { DEFAULT_COMMUNICATION_STYLES } from '@/lib/communicationStyles';
 import { requestJson } from '@/lib/http';
 import {
   KEYBOARD_SHORTCUTS,
@@ -854,7 +855,7 @@ export function SettingsModal() {
                         onChange={(e) =>
                           settings.updateSettings({ language: e.target.value })
                         }
-                        className="h-8 bg-[#F3F4F6] dark:bg-[#18181b] text-[#111827] dark:text-[#E5E5E5] text-[12px] font-mono rounded-md px-3 border border-[#E5E7EB] dark:border-[#27272a]"
+                        className="field h-8 w-auto min-w-[120px] text-[12px]"
                       >
                         <option value="en-US">English (US)</option>
                         <option value="zh-CN">简体中文</option>
@@ -879,6 +880,32 @@ export function SettingsModal() {
                           settings.updateSettings({ autoSaveSessions: v })
                         }
                       />
+                    </div>
+                    <div className="flex items-center justify-between py-2">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
+                          Communication Style
+                        </span>
+                        <span className="text-[11px] text-[#9CA3AF] dark:text-[#71717a] font-mono">
+                          How the agent phrases its replies across every session
+                        </span>
+                      </div>
+                      <select
+                        aria-label="Communication style"
+                        value={settings.communicationStyle ?? 'auto'}
+                        onChange={(e) =>
+                          settings.updateSettings({
+                            communicationStyle: e.target.value,
+                          })
+                        }
+                        className="h-8 bg-[#F3F4F6] dark:bg-[#18181b] text-[#111827] dark:text-[#E5E5E5] text-[12px] font-mono rounded-md px-3 border border-[#E5E7EB] dark:border-[#27272a]"
+                      >
+                        {DEFAULT_COMMUNICATION_STYLES.map((style) => (
+                          <option key={style.id} value={style.id}>
+                            {style.name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
 
@@ -936,7 +963,7 @@ export function SettingsModal() {
                         onChange={(e) =>
                           settings.updateSettings({ theme: e.target.value })
                         }
-                        className="h-8 bg-[#F3F4F6] dark:bg-[#18181b] text-[#111827] dark:text-[#E5E5E5] text-[12px] font-mono rounded-md px-3 border border-[#E5E7EB] dark:border-[#27272a]"
+                        className="field h-8 w-auto min-w-[120px] text-[12px]"
                       >
                         <option value="dracula">Dracula</option>
                         <option value="monokai">Monokai</option>
@@ -1055,7 +1082,7 @@ export function SettingsModal() {
                       value={shortcutQuery}
                       onChange={(event) => setShortcutQuery(event.target.value)}
                       placeholder="Search actions..."
-                      className="flex-1 h-9 bg-[#F3F4F6] dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-md px-3 text-[12px] text-[#111827] dark:text-[#E5E5E5] font-mono"
+                      className="field flex-1 text-[12px]"
                     />
                     <select
                       aria-label="Shortcut scope"
@@ -1063,7 +1090,7 @@ export function SettingsModal() {
                       onChange={(event) =>
                         setShortcutScope(event.target.value as typeof shortcutScope)
                       }
-                      className="h-9 bg-[#F3F4F6] dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-md px-3 text-[12px] text-[#111827] dark:text-[#E5E5E5] font-mono"
+                      className="field w-auto min-w-[120px] text-[12px]"
                     >
                       <option value="all">All scopes</option>
                       <option value="global">Global</option>
@@ -1135,7 +1162,6 @@ export function SettingsModal() {
                   <button
                     type="button"
                     onClick={() => {
-                      toggleSettings();
                       useAppStore.getState().toggleMcp();
                     }}
                     className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-md border border-[#E5E7EB] px-3 text-[12px] font-medium text-[#111827] transition-colors hover:bg-[#F3F4F6] dark:border-zinc-700 dark:text-[#E5E5E5] dark:hover:bg-[#27272a]"
@@ -1156,7 +1182,6 @@ export function SettingsModal() {
                   <button
                     type="button"
                     onClick={() => {
-                      toggleSettings();
                       useAppStore.getState().toggleSkills();
                     }}
                     className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-md border border-[#E5E7EB] px-3 text-[12px] font-medium text-[#111827] transition-colors hover:bg-[#F3F4F6] dark:border-zinc-700 dark:text-[#E5E5E5] dark:hover:bg-[#27272a]"

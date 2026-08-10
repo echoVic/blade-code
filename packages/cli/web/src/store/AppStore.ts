@@ -117,7 +117,7 @@ export const useAppStore = create<AppState>((set) => ({
   isMcpOpen: false,
   toggleMcp: () => set((state) => ({ isMcpOpen: !state.isMcpOpen })),
   isSkillsOpen: false,
-  toggleSkills: () => set({ isSettingsOpen: true, settingsSection: 'skills' }),
+  toggleSkills: () => set((state) => ({ isSkillsOpen: !state.isSkillsOpen })),
   isTerminalOpen: false,
   toggleTerminal: () => set((state) => ({ isTerminalOpen: !state.isTerminalOpen })),
   isTaskSwitcherOpen: false,

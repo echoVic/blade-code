@@ -104,7 +104,7 @@ describe('SettingsModal', () => {
     });
 
     expect(useAppStore.getState()).toMatchObject({
-      isSettingsOpen: false,
+      isSettingsOpen: true,
       isMcpOpen: true,
     });
   });
@@ -357,5 +357,44 @@ describe('SettingsModal', () => {
         { method: 'DELETE' }
       )
     );
+  });
+
+  it('exposes the global communication style selector on the General tab', async () => {
+    const updateSettings = vi.fn().mockResolvedValue(undefined);
+    useSettingsStore.setState({
+      communicationStyle: 'auto',
+      loadSettings,
+      updateSettings,
+    });
+    useAppStore.getState().openSettings('general');
+
+    await act(async () => {
+      root.render(<SettingsModal />);
+      await Promise.resolve();
+    });
+
+    const styleSelect = document.body.querySelector<HTMLSelectElement>(
+      'select[aria-label="Communication style"]'
+    );
+    expect(styleSelect).toBeInstanceOf(HTMLSelectElement);
+    expect(styleSelect?.value).toBe('auto');
+    // The built-in catalog is offered as options.
+    expect(document.body.textContent).toContain('Explanatory');
+
+    await act(async () => {
+      if (styleSelect) {
+        const setter = Object.getOwnPropertyDescriptor(
+          HTMLSelectElement.prototype,
+          'value'
+        )?.set;
+        setter?.call(styleSelect, 'explanatory');
+        styleSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      await Promise.resolve();
+    });
+
+    expect(updateSettings).toHaveBeenCalledWith({
+      communicationStyle: 'explanatory',
+    });
   });
 });

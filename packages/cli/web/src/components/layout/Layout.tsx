@@ -1,5 +1,3 @@
-import { FileCode, GitBranch, Menu, RotateCcw } from 'lucide-react';
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { RewindDialog } from '@/components/chat/RewindDialog';
 import { CapacityMeter } from '@/components/tasks/CapacityMeter';
 import { Button } from '@/components/ui/button';
@@ -10,6 +8,8 @@ import { sessionService } from '@/services';
 import { useAppStore } from '@/store/AppStore';
 import { useSessionStore } from '@/store/session';
 import { sameSessionRef, sessionRefKey } from '@/store/session/sessionIdentity';
+import { FileCode, GitBranch, Menu, RotateCcw } from 'lucide-react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Sidebar } from './Sidebar';
 
 interface LayoutProps {
@@ -24,6 +24,11 @@ const SettingsModal = lazy(() =>
 const McpModal = lazy(() =>
   import('@/components/mcp/McpModal').then((module) => ({
     default: module.McpModal,
+  }))
+);
+const SkillsModal = lazy(() =>
+  import('@/components/skills/SkillsModal').then((module) => ({
+    default: module.SkillsModal,
   }))
 );
 const loadTaskSwitcher = () =>
@@ -68,6 +73,7 @@ export function Layout({ children }: LayoutProps) {
     isSidebarOpen,
     isFilePreviewOpen,
     isMcpOpen,
+    isSkillsOpen,
     isSettingsOpen,
     isTerminalOpen,
     isTaskSwitcherOpen,
@@ -448,6 +454,11 @@ export function Layout({ children }: LayoutProps) {
       {isMcpOpen && (
         <Suspense fallback={null}>
           <McpModal />
+        </Suspense>
+      )}
+      {isSkillsOpen && (
+        <Suspense fallback={null}>
+          <SkillsModal />
         </Suspense>
       )}
       <RewindDialog open={isRewindOpen} onOpenChange={setIsRewindOpen} />
