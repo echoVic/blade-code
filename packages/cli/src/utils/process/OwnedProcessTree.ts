@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn, type SpawnOptions } from 'node:child_process';
+import { type ChildProcess, type SpawnOptions, spawn } from 'node:child_process';
 
 const DEFAULT_TERM_GRACE_MS = 500;
 
@@ -10,6 +10,7 @@ type Wait = (milliseconds: number) => Promise<void>;
 export interface OwnedProcessTreeOptions {
   platform?: NodeJS.Platform;
   gracePeriodMs?: number;
+  releaseOnExit?: boolean;
   killProcess?: KillProcess;
   taskkill?: Taskkill;
   wait?: Wait;
@@ -81,11 +82,13 @@ export class OwnedProcessTree {
     this.taskkill = options.taskkill ?? runTaskkill;
     this.wait = options.wait ?? wait;
 
-    const releaseAfterNaturalExit = () => {
-      if (this.state === 'owned') this.state = 'released';
-    };
-    child.once('close', releaseAfterNaturalExit);
-    child.once('error', releaseAfterNaturalExit);
+    if (options.releaseOnExit !== false) {
+      const releaseAfterNaturalExit = () => {
+        if (this.state === 'owned') this.state = 'released';
+      };
+      child.once('close', releaseAfterNaturalExit);
+      child.once('error', releaseAfterNaturalExit);
+    }
   }
 
   release(): void {
@@ -168,7 +171,8 @@ export class OwnedProcessTree {
 export function spawnOwnedProcess(
   command: string,
   args: readonly string[],
-  options: SpawnOptions = {}
+  options: SpawnOptions = {},
+  processTreeOptions: OwnedProcessTreeOptions = {}
 ): SpawnedOwnedProcess {
   const child = spawn(command, args, {
     ...options,
@@ -177,6 +181,6 @@ export function spawnOwnedProcess(
   });
   return {
     child,
-    processTree: new OwnedProcessTree(child),
+    processTree: new OwnedProcessTree(child, processTreeOptions),
   };
 }

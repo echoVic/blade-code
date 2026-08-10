@@ -82,7 +82,9 @@ export class FileAnalyzer {
           // 检查工具调用类型，确保有 function 属性
           const functionName =
             call.type === 'function' && 'function' in call ? call.function?.name : '';
-          const wasModified = ['Write', 'Edit'].includes(functionName || '');
+          const wasModified = ['Write', 'Edit', 'ApplyPatch'].includes(
+            functionName || ''
+          );
 
           toolFiles.forEach((path) => {
             this.updateFileReference(fileMap, path, index, wasModified);
@@ -256,6 +258,7 @@ export class FileAnalyzer {
         'Read',
         'Write',
         'Edit',
+        'ApplyPatch',
         'Glob',
         'Grep',
         'NotebookEdit',
@@ -268,6 +271,16 @@ export class FileAnalyzer {
         for (const key of pathKeys) {
           if (args[key] && typeof args[key] === 'string') {
             paths.push(args[key]);
+          }
+        }
+        if (functionName === 'ApplyPatch' && typeof args.patch === 'string') {
+          for (const match of args.patch.matchAll(
+            /^\*\*\* (?:Add|Delete|Update) File: (.+)$/gm
+          )) {
+            if (match[1]) paths.push(match[1]);
+          }
+          for (const match of args.patch.matchAll(/^\*\*\* Move to: (.+)$/gm)) {
+            if (match[1]) paths.push(match[1]);
           }
         }
       }

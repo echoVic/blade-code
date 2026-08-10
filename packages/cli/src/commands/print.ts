@@ -145,6 +145,14 @@ export async function runPrint(
       mcpConfig: options.mcpConfig,
       strictMcpConfig: options.strictMcpConfig,
       agents: options.agents ? parseCliAgents(options.agents) : undefined,
+      ...(messages.length > 0
+        ? {
+            sessionStart: {
+              isResume: true,
+              resumeSessionId: sessionId,
+            },
+          }
+        : {}),
     });
 
     const agent = await Agent.createWithRuntime(runtime, {

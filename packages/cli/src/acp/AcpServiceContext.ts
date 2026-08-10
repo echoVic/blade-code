@@ -13,12 +13,12 @@ import type {
   ToolKind,
 } from '@agentclientprotocol/sdk';
 import { createLogger, LogCategory } from '../logging/Logger.js';
-import { getCwd } from '../utils/cwd.js';
-import { spawnOwnedProcess } from '../utils/process/OwnedProcessTree.js';
 import {
   type FileSystemService,
   LocalFileSystemService,
 } from '../services/FileSystemService.js';
+import { getCwd } from '../utils/cwd.js';
+import { spawnOwnedProcess } from '../utils/process/OwnedProcessTree.js';
 import { AcpFileSystemService } from './AcpFileSystemService.js';
 
 const logger = createLogger(LogCategory.AGENT);
@@ -44,15 +44,16 @@ export interface TerminalService {
   isAvailable(): boolean;
 }
 
-interface TerminalExecuteOptions {
+export interface TerminalExecuteOptions {
   cwd?: string;
   env?: Record<string, string>;
   timeout?: number;
   signal?: AbortSignal;
   onOutput?: (output: string) => void;
+  allowLocalFallback?: boolean;
 }
 
-interface TerminalExecuteResult {
+export interface TerminalExecuteResult {
   success: boolean;
   stdout: string;
   stderr: string;
@@ -334,6 +335,18 @@ class AcpTerminalService implements TerminalService {
           };
       }
     } catch (error) {
+      if (options?.allowLocalFallback === false) {
+        return {
+          success: false,
+          stdout: '',
+          stderr: '',
+          exitCode: null,
+          error:
+            error instanceof Error
+              ? `ACP terminal unavailable: ${error.message}`
+              : 'ACP terminal unavailable',
+        };
+      }
       logger.warn(`[AcpTerminal] ACP terminal failed, using fallback:`, error);
       return this.fallback.execute(command, options);
     }

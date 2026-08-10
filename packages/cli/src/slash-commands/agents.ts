@@ -4,7 +4,8 @@
 
 import os from 'node:os';
 import path from 'node:path';
-import { subagentRegistry } from '../agent/subagents/SubagentRegistry.js';
+import { resolveWorkspaceAgentResources } from '../agent/resources/WorkspaceAgentResources.js';
+import { getSubagentRegistry } from '../agent/subagents/SubagentRegistry.js';
 import { getCwd } from '../utils/cwd.js';
 import {
   getUI,
@@ -28,6 +29,9 @@ export const agentsCommand: SlashCommand = {
   ): Promise<SlashCommandResult> {
     const subcommand = args[0];
     const ui = getUI(context);
+    const workspaceRoot = context.workspaceRoot || context.cwd || getCwd();
+    await resolveWorkspaceAgentResources(workspaceRoot);
+    const subagentRegistry = getSubagentRegistry(workspaceRoot);
 
     // 无参数 - 显示 agents 管理对话框
     if (!subcommand) {
@@ -59,7 +63,7 @@ export const agentsCommand: SlashCommand = {
       }
 
       // 按位置分组
-      const projectPath = path.join(getCwd(), '.blade', 'agents');
+      const projectPath = path.join(workspaceRoot, '.blade', 'agents');
       const userPath = path.join(os.homedir(), '.blade', 'agents');
 
       const projectAgents = allAgents.filter((a) =>

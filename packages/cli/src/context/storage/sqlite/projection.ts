@@ -39,6 +39,7 @@ export interface ProjectedSession {
     model?: string;
     parentId?: string;
     taskStatus: string;
+    archivedAt?: string;
     messageCount: number;
     firstMessageTime: string;
     lastMessageTime: string;
@@ -169,15 +170,16 @@ function upsertSession(db: SqliteDb, meta: ProjectedSession['metadata']): void {
   db.prepare(
     `INSERT INTO sessions
        (project_path, session_id, root_id, parent_id, relation_type, title,
-        agent_type, model, task_status, last_message_time, project_sort_key,
+        agent_type, model, task_status, archived_at, last_message_time, project_sort_key,
         session_sort_key, first_message_time, message_count, has_errors,
         is_subagent, metadata_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(project_path, session_id) DO UPDATE SET
        root_id=excluded.root_id, parent_id=excluded.parent_id,
        relation_type=excluded.relation_type, title=excluded.title,
        agent_type=excluded.agent_type, model=excluded.model,
-       task_status=excluded.task_status, last_message_time=excluded.last_message_time,
+       task_status=excluded.task_status, archived_at=excluded.archived_at,
+       last_message_time=excluded.last_message_time,
        project_sort_key=excluded.project_sort_key,
        session_sort_key=excluded.session_sort_key,
        first_message_time=excluded.first_message_time, message_count=excluded.message_count,
@@ -193,6 +195,7 @@ function upsertSession(db: SqliteDb, meta: ProjectedSession['metadata']): void {
     meta.agentType ?? null,
     meta.model ?? null,
     meta.taskStatus,
+    meta.archivedAt ?? null,
     meta.lastMessageTime,
     sessionCatalogSortKey(meta.projectPath),
     sessionCatalogSortKey(meta.sessionId),
@@ -322,8 +325,12 @@ export async function syncSession(
       'SELECT last_message_time FROM sessions WHERE project_path=? AND session_id=?'
     )
     .get<{ last_message_time: string | null }>(meta.projectPath, meta.sessionId);
+  const isCanonicalSource =
+    path.resolve(filePath) ===
+    path.resolve(getSessionFilePath(meta.projectPath, meta.sessionId));
   if (
     existing &&
+    !isCanonicalSource &&
     typeof existing.last_message_time === 'string' &&
     existing.last_message_time > meta.lastMessageTime
   ) {

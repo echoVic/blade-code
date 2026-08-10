@@ -1,4 +1,4 @@
-import type { ContextMessage, CompressedContext } from '../types.js';
+import type { CompressedContext, ContextMessage } from '../types.js';
 
 export interface CacheItem<T> {
   data: T;

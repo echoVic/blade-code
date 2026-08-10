@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -17,16 +18,19 @@ import {
   parseHeadlessJsonl,
   redactSecrets,
 } from './codingTaskHarness.js';
-import { isRealApiTestEnabled } from './testConfig.js';
+import {
+  isRealApiTestEnabled,
+  resolveDeepSeekQualificationSettings,
+} from './testConfig.js';
 
 const cliEntry = path.resolve('dist', 'blade.js');
-const apiKey = process.env.DEEPSEEK_API_KEY ?? '';
-const upstreamBaseUrl = process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com';
-const models = (process.env.DEEPSEEK_MODELS ?? 'deepseek-v4-flash,deepseek-v4-pro')
-  .split(',')
-  .map((model) => model.trim())
-  .filter(Boolean);
-const enabled = isRealApiTestEnabled() && Boolean(apiKey);
+const qualification = isRealApiTestEnabled()
+  ? resolveDeepSeekQualificationSettings()
+  : undefined;
+const apiKey = qualification?.apiKey ?? '';
+const upstreamBaseUrl = qualification?.baseURL ?? 'https://api.deepseek.com';
+const models = qualification?.models ?? [];
+const enabled = Boolean(qualification);
 
 interface CommandResult {
   status: number | null;
@@ -44,6 +48,21 @@ interface RecordingProxy {
 interface InstructionFixture {
   path: string;
   content: string;
+}
+
+function collectJsonlFiles(root: string): string[] {
+  const files: string[] = [];
+  const visit = (directory: string) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const candidate = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(candidate);
+      else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+        files.push(candidate);
+      }
+    }
+  };
+  if (existsSync(root)) visit(root);
+  return files;
 }
 
 function runGit(cwd: string, args: string[]): void {
@@ -85,7 +104,29 @@ function createWorkspace(): {
       content: [
         '# Service policy',
         "For this service, src/policy.js must export exactly 'SCOPED_POLICY_VALUE'.",
-        'This service rule overrides the repository policy.',
+        'A path-specific rule may override this service default.',
+        '',
+      ].join('\n'),
+    },
+    {
+      path: path.join(workingDirectory, '.claude', 'rules', 'source-policy.md'),
+      content: [
+        '---',
+        'paths: src/**/*.js',
+        '---',
+        '# Source policy',
+        "For matching source files, export exactly 'CONTEXTUAL_POLICY_VALUE'.",
+        'CONTEXTUAL_SOURCE_RULE_MARKER',
+        '',
+      ].join('\n'),
+    },
+    {
+      path: path.join(workingDirectory, '.claude', 'rules', 'test-only.md'),
+      content: [
+        '---',
+        'paths: test/**/*.js',
+        '---',
+        'NON_MATCHING_TEST_RULE_MARKER',
         '',
       ].join('\n'),
     },
@@ -93,6 +134,7 @@ function createWorkspace(): {
   mkdirSync(path.join(workingDirectory, 'src'), { recursive: true });
   mkdirSync(path.join(workingDirectory, 'test'), { recursive: true });
   for (const instruction of instructionFiles) {
+    mkdirSync(path.dirname(instruction.path), { recursive: true });
     writeFileSync(instruction.path, instruction.content);
   }
   writeFileSync(
@@ -244,6 +286,7 @@ function runBlade(
       [
         cliEntry,
         '--headless',
+        '--trust-workspace',
         '--output-format',
         'jsonl',
         '--permission-mode',
@@ -322,6 +365,21 @@ function extractInstructionPayload(requestBody: string): string {
   );
 }
 
+function extractSystemPayload(requestBody: string): string {
+  if (!requestBody) return '';
+  const parsed = JSON.parse(requestBody) as {
+    messages?: Array<{ role?: string; content?: unknown }>;
+  };
+  return (parsed.messages ?? [])
+    .filter((message) => message.role === 'system' || message.role === 'developer')
+    .map((message) =>
+      typeof message.content === 'string'
+        ? message.content
+        : JSON.stringify(message.content)
+    )
+    .join('\n');
+}
+
 describe.skipIf(!enabled)('project instruction trajectory (real API)', () => {
   describe.each(models)('%s', (model) => {
     it('injects scoped rules into the real coding loop with deterministic precedence', async () => {
@@ -352,11 +410,15 @@ describe.skipIf(!enabled)('project instruction trajectory (real API)', () => {
         const instructionPayload = extractInstructionPayload(
           proxy.requestBodies[0] ?? ''
         );
+        const systemPayloads = proxy.requestBodies.map(extractSystemPayload);
         const rootRuleIndex = instructionPayload.indexOf('ROOT_POLICY_VALUE');
         const scopedRuleIndex = instructionPayload.indexOf('SCOPED_POLICY_VALUE');
         const instructionsRecreatedByAgent = instructionFiles.some((instruction) =>
           existsSync(instruction.path)
         );
+        const durableTranscript = collectJsonlFiles(path.join(home, '.blade'))
+          .map((filePath) => readFileSync(filePath, 'utf8'))
+          .join('\n');
         for (const instruction of instructionFiles) {
           writeFileSync(instruction.path, instruction.content);
         }
@@ -372,6 +434,18 @@ describe.skipIf(!enabled)('project instruction trajectory (real API)', () => {
           'utf8'
         );
         expect(result.error).toBeUndefined();
+        if (result.status !== 0) {
+          throw new Error(
+            redactSecrets(
+              [
+                `Blade exited with status ${result.status}`,
+                `stdout:\n${result.stdout.slice(-8_000)}`,
+                `stderr:\n${result.stderr.slice(-8_000)}`,
+              ].join('\n\n'),
+              [apiKey]
+            )
+          );
+        }
         expect(result.status, redactSecrets(result.stderr, [apiKey])).toBe(0);
         expect(parsed.nonJsonLines).toEqual([]);
         expect(parsed.events.filter((event) => event.type === 'error')).toEqual([]);
@@ -382,13 +456,35 @@ describe.skipIf(!enabled)('project instruction trajectory (real API)', () => {
         expect(scopedRuleIndex).toBeGreaterThan(rootRuleIndex);
         expect(instructionPayload).toContain('path="AGENTS.md"');
         expect(instructionPayload).toContain('path="packages/service/BLADE.md"');
+        expect(systemPayloads[0]).not.toContain('CONTEXTUAL_SOURCE_RULE_MARKER');
+        expect(
+          systemPayloads
+            .slice(1)
+            .some((payload) => payload.includes('CONTEXTUAL_SOURCE_RULE_MARKER'))
+        ).toBe(true);
+        expect(systemPayloads.join('\n')).not.toContain(
+          'NON_MATCHING_TEST_RULE_MARKER'
+        );
+        expect(durableTranscript).toContain('contextual-project-instructions-ref');
+        expect(durableTranscript).not.toContain('CONTEXTUAL_SOURCE_RULE_MARKER');
+        expect(
+          parsed.events.some(
+            (event) =>
+              event.type === 'project_rules_loaded' &&
+              event.files?.some(
+                (file: { relative_path?: string }) =>
+                  file.relative_path ===
+                  'packages/service/.claude/rules/source-policy.md'
+              )
+          )
+        ).toBe(true);
         expect(toolStarts.some((name) => ['Read', 'Glob', 'Grep'].includes(name))).toBe(
           true
         );
         expect(toolStarts).toContain('Edit');
         expect(toolStarts).toContain('Bash');
         expect(changedPaths).toEqual(['packages/service/src/policy.js']);
-        expect(finalSource).toContain("'SCOPED_POLICY_VALUE'");
+        expect(finalSource).toContain("'CONTEXTUAL_POLICY_VALUE'");
         expect(`${result.stdout}\n${result.stderr}`).not.toContain(apiKey);
       } finally {
         await proxy.close();

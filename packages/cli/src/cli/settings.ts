@@ -44,6 +44,17 @@ const StringArray = Type.Array(Type.String());
 
 const RuntimeSettingsSchema = Type.Object({
   currentModelId: Type.Optional(Type.String()),
+  modelProviders: Type.Optional(
+    Type.Record(
+      NonEmptyString,
+      Type.Object({
+        name: NonEmptyString,
+        baseUrl: NonEmptyString,
+        wireApi: StringEnum(['openai-completions', 'anthropic-messages']),
+        apiKeyEnv: Type.Optional(NonEmptyString),
+      })
+    )
+  ),
   models: Type.Optional(
     Type.Array(
       Type.Object({
@@ -57,6 +68,7 @@ const RuntimeSettingsSchema = Type.Object({
             temperature: Type.Optional(Type.Number()),
             maxOutputTokens: Type.Optional(PositiveNumber),
             timeout: Type.Optional(PositiveNumber),
+            streamIdleTimeout: Type.Optional(Type.Number({ minimum: 1_000 })),
             apiVersion: Type.Optional(Type.String()),
             customHeaders: Type.Optional(Type.Record(Type.String(), Type.String())),
             maxRetries: Type.Optional(Type.Integer({ minimum: 0 })),
@@ -94,6 +106,26 @@ const RuntimeSettingsSchema = Type.Object({
   mcpEnabled: Type.Optional(Type.Boolean()),
   mcpServers: Type.Optional(
     Type.Record(Type.String(), Type.Record(Type.String(), Type.Unknown()))
+  ),
+  lspServers: Type.Optional(
+    Type.Record(
+      NonEmptyString,
+      Type.Object({
+        command: NonEmptyString,
+        args: Type.Optional(Type.Array(Type.String())),
+        extensionToLanguage: Type.Record(NonEmptyString, NonEmptyString),
+        env: Type.Optional(Type.Record(Type.String(), Type.String())),
+        initializationOptions: Type.Optional(Type.Unknown()),
+        settings: Type.Optional(Type.Unknown()),
+        enabled: Type.Optional(Type.Boolean()),
+        priority: Type.Optional(Type.Integer()),
+        startupTimeout: Type.Optional(Type.Integer({ minimum: 100 })),
+        shutdownTimeout: Type.Optional(Type.Integer({ minimum: 100 })),
+        requestTimeout: Type.Optional(Type.Integer({ minimum: 100 })),
+        diagnosticWaitTimeout: Type.Optional(Type.Integer({ minimum: 0 })),
+        maxRestarts: Type.Optional(Type.Integer({ minimum: 0, maximum: 10 })),
+      })
+    )
   ),
   permissionMode: Type.Optional(Type.Enum(PermissionMode)),
   maxTurns: Type.Optional(Type.Integer({ minimum: -1, maximum: MAX_AGENT_TURNS })),
@@ -136,6 +168,16 @@ const RuntimeSettingsSchema = Type.Object({
   ),
   env: Type.Optional(Type.Record(Type.String(), Type.String())),
   hooks: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  enabledPlugins: Type.Optional(Type.Record(NonEmptyString, Type.Boolean())),
+  pluginSourcePolicy: Type.Optional(
+    Type.Object({
+      restrictToAllowedSources: Type.Optional(Type.Boolean()),
+      requireGitCommitSha: Type.Optional(Type.Boolean()),
+      allowedGitHosts: Type.Optional(Type.Array(NonEmptyString)),
+      allowedMarketplaces: Type.Optional(Type.Array(NonEmptyString)),
+      allowedLocalRoots: Type.Optional(Type.Array(NonEmptyString)),
+    })
+  ),
   disableAllHooks: Type.Optional(Type.Boolean()),
 });
 

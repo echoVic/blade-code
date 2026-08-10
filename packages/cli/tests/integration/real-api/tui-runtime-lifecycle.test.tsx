@@ -20,17 +20,20 @@ import {
   createBoundedOutputFixture,
   INTERACTIVE_SHELL_INPUT,
 } from './interactiveShellFixture.js';
-import { isRealApiTestEnabled } from './testConfig.js';
+import {
+  isRealApiTestEnabled,
+  resolveDeepSeekQualificationSettings,
+} from './testConfig.js';
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
-const enabled = isRealApiTestEnabled() && Boolean(process.env.DEEPSEEK_API_KEY);
-const apiKey = process.env.DEEPSEEK_API_KEY ?? '';
-const baseUrl = process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com';
-const models = (process.env.DEEPSEEK_MODELS ?? 'deepseek-v4-flash,deepseek-v4-pro')
-  .split(',')
-  .map((model) => model.trim())
-  .filter(Boolean);
+const qualification = isRealApiTestEnabled()
+  ? resolveDeepSeekQualificationSettings()
+  : undefined;
+const enabled = Boolean(qualification);
+const apiKey = qualification?.apiKey ?? '';
+const baseUrl = qualification?.baseURL ?? 'https://api.deepseek.com';
+const models = qualification?.models ?? [];
 let originalConfig: RuntimeConfig | null = null;
 
 function setRuntimeModel(model: string): string {

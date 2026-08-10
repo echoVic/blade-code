@@ -7,6 +7,7 @@
 
 import path from 'node:path';
 import type { PluginCommand } from '../../plugins/types.js';
+import { WorkspaceTrustService } from '../../security/WorkspaceTrustService.js';
 import { getCwd } from '../../utils/cwd.js';
 import { CustomCommandExecutor } from './CustomCommandExecutor.js';
 import { CustomCommandLoader } from './CustomCommandLoader.js';
@@ -18,9 +19,9 @@ import type {
 
 export class CustomCommandRegistry {
   private static instances = new Map<string, CustomCommandRegistry>();
-  private static pluginCommands = new Map<string, PluginCommand>();
 
   private commands: Map<string, CustomCommand> = new Map();
+  private pluginCommands = new Map<string, PluginCommand>();
   private loader = new CustomCommandLoader();
   private executor = new CustomCommandExecutor();
   private initialized = false;
@@ -45,7 +46,6 @@ export class CustomCommandRegistry {
    */
   static resetInstance(): void {
     CustomCommandRegistry.instances.clear();
-    CustomCommandRegistry.pluginCommands.clear();
   }
 
   private constructor() {
@@ -60,7 +60,16 @@ export class CustomCommandRegistry {
   async initialize(workspaceRoot: string): Promise<CustomCommandDiscoveryResult> {
     this.workspaceRoot = workspaceRoot;
 
-    const result = await this.loader.discover(workspaceRoot);
+    const discovered = await this.loader.discover(workspaceRoot);
+    const workspaceTrusted =
+      (await WorkspaceTrustService.getInstance().getStatus(workspaceRoot)).state ===
+      'trusted';
+    const result: CustomCommandDiscoveryResult = {
+      ...discovered,
+      commands: discovered.commands.filter(
+        (command) => command.source !== 'project' || workspaceTrusted
+      ),
+    };
     this.lastDiscoveryResult = result;
 
     // 清空现有命令
@@ -90,6 +99,10 @@ export class CustomCommandRegistry {
    */
   isInitialized(): boolean {
     return this.initialized;
+  }
+
+  getWorkspaceRoot(): string {
+    return this.workspaceRoot;
   }
 
   /**
@@ -129,6 +142,12 @@ export class CustomCommandRegistry {
    */
   getModelInvocableCommands(): CustomCommand[] {
     return this.getAllCommands().filter(
+      (cmd) => cmd.config.description && !cmd.config.disableModelInvocation
+    );
+  }
+
+  getModelInvocablePluginCommands(): PluginCommand[] {
+    return this.getAllPluginCommands().filter(
       (cmd) => cmd.config.description && !cmd.config.disableModelInvocation
     );
   }
@@ -242,7 +261,20 @@ export class CustomCommandRegistry {
     includedCount: number;
     totalCount: number;
   } {
-    const commands = this.getModelInvocableCommands();
+    const commands = [
+      ...this.getModelInvocableCommands().map((command) => ({
+        name: command.name,
+        description: command.config.description,
+        argumentHint: command.config.argumentHint,
+        label: this.getCommandLabel(command),
+      })),
+      ...this.getModelInvocablePluginCommands().map((command) => ({
+        name: command.namespacedName,
+        description: command.config.description,
+        argumentHint: command.config.argumentHint,
+        label: `(plugin:${command.pluginName})`,
+      })),
+    ];
     const totalCount = commands.length;
 
     if (totalCount === 0) {
@@ -258,9 +290,8 @@ export class CustomCommandRegistry {
     let includedCount = 0;
 
     for (const cmd of commands) {
-      const label = this.getCommandLabel(cmd);
-      const argHint = cmd.config.argumentHint ? ` ${cmd.config.argumentHint}` : '';
-      const line = `- /${cmd.name}${argHint}: ${cmd.config.description} ${label}\n`;
+      const argHint = cmd.argumentHint ? ` ${cmd.argumentHint}` : '';
+      const line = `- /${cmd.name}${argHint}: ${cmd.description} ${cmd.label}\n`;
 
       if (charCount + line.length > charBudget) {
         break;
@@ -278,6 +309,52 @@ export class CustomCommandRegistry {
     return { text, includedCount, totalCount };
   }
 
+  /**
+   * Create a session-owned command view. Plugin refreshes and project switches
+   * may update the workspace registry without changing an active Session.
+   */
+  snapshot(): CustomCommandRegistry {
+    const snapshot = new CustomCommandRegistry();
+    snapshot.workspaceRoot = this.workspaceRoot;
+    snapshot.commands = new Map(
+      Array.from(this.commands, ([name, command]) => [
+        name,
+        {
+          ...command,
+          config: {
+            ...command.config,
+            ...(command.config.allowedTools
+              ? { allowedTools: [...command.config.allowedTools] }
+              : {}),
+          },
+        },
+      ])
+    );
+    snapshot.pluginCommands = new Map(
+      Array.from(this.pluginCommands, ([name, command]) => [
+        name,
+        {
+          ...command,
+          config: {
+            ...command.config,
+            ...(command.config.allowedTools
+              ? { allowedTools: [...command.config.allowedTools] }
+              : {}),
+          },
+        },
+      ])
+    );
+    snapshot.initialized = this.initialized;
+    snapshot.lastDiscoveryResult = this.lastDiscoveryResult
+      ? {
+          commands: Array.from(snapshot.commands.values()),
+          scannedDirs: [...this.lastDiscoveryResult.scannedDirs],
+          errors: this.lastDiscoveryResult.errors.map((error) => ({ ...error })),
+        }
+      : null;
+    return snapshot;
+  }
+
   // ============================================================
   // Plugin Command Methods
   // ============================================================
@@ -291,7 +368,7 @@ export class CustomCommandRegistry {
    * @param cmd - Plugin command to register
    */
   registerPluginCommand(cmd: PluginCommand): void {
-    CustomCommandRegistry.pluginCommands.set(cmd.namespacedName, cmd);
+    this.pluginCommands.set(cmd.namespacedName, cmd);
   }
 
   /**
@@ -306,12 +383,12 @@ export class CustomCommandRegistry {
    */
   findPluginCommand(name: string): PluginCommand | undefined {
     // Try exact namespaced match first
-    const exact = CustomCommandRegistry.pluginCommands.get(name);
+    const exact = this.pluginCommands.get(name);
     if (exact) return exact;
 
     // Try short name match (if unique)
     const matches: PluginCommand[] = [];
-    for (const cmd of CustomCommandRegistry.pluginCommands.values()) {
+    for (const cmd of this.pluginCommands.values()) {
       if (cmd.originalName === name) {
         matches.push(cmd);
       }
@@ -336,7 +413,7 @@ export class CustomCommandRegistry {
    * 获取所有插件命令
    */
   getAllPluginCommands(): PluginCommand[] {
-    return Array.from(CustomCommandRegistry.pluginCommands.values());
+    return Array.from(this.pluginCommands.values());
   }
 
   /**
@@ -371,14 +448,14 @@ export class CustomCommandRegistry {
    * Called when refreshing plugins
    */
   clearPluginCommands(): void {
-    CustomCommandRegistry.pluginCommands.clear();
+    this.pluginCommands.clear();
   }
 
   /**
    * 获取插件命令数量
    */
   getPluginCommandCount(): number {
-    return CustomCommandRegistry.pluginCommands.size;
+    return this.pluginCommands.size;
   }
 
   /**
@@ -386,7 +463,7 @@ export class CustomCommandRegistry {
    */
   hasPluginCommandConflict(shortName: string): boolean {
     let count = 0;
-    for (const cmd of CustomCommandRegistry.pluginCommands.values()) {
+    for (const cmd of this.pluginCommands.values()) {
       if (cmd.originalName === shortName) {
         count++;
         if (count > 1) return true;
@@ -400,7 +477,7 @@ export class CustomCommandRegistry {
    */
   getPluginCommandProviders(shortName: string): string[] {
     const providers: string[] = [];
-    for (const cmd of CustomCommandRegistry.pluginCommands.values()) {
+    for (const cmd of this.pluginCommands.values()) {
       if (cmd.originalName === shortName) {
         providers.push(cmd.pluginName);
       }

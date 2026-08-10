@@ -9,35 +9,36 @@ import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
 import type { PreparedInputTurn } from '../../agent/runtime/ActiveTurnMailbox.js';
 import {
-  type ResumedSubagent,
-  SessionRuntime,
+    type ResumedSubagent,
+    SessionRuntime,
 } from '../../agent/runtime/SessionRuntime.js';
 import {
-  type TaskAdmissionHandle,
-  TaskAdmissionQueueFullError,
-  taskRunScheduler,
+    type TaskAdmissionHandle,
+    TaskAdmissionQueueFullError,
+    taskRunScheduler,
 } from '../../agent/runtime/TaskRunScheduler.js';
 import {
-  type AgentSession,
-  toPublicAgentSession,
+    type AgentSession,
+    toPublicAgentSession,
 } from '../../agent/subagents/AgentSessionStore.js';
 import type { ChatContext, UserMessageContent } from '../../agent/types.js';
 import { MAX_INLINE_ATTACHMENT_BYTES } from '../../api/attachmentLimits.js';
 import {
-  ResumeSubagentRequestSchema,
-  SendMessageRequestSchema,
-  SessionRewindRequestSchema,
-  type SessionTaskDiffArtifact,
+    ResumeSubagentRequestSchema,
+    SendMessageRequestSchema,
+    SessionRewindRequestSchema,
+    type SessionTaskDiffArtifact,
+    UserShellCommandRequestSchema,
 } from '../../api/schemas.js';
 import { PermissionMode } from '../../config/types.js';
 import { SessionEventLog } from '../../context/events/SessionEventLog.js';
 import { assertValidSessionId } from '../../context/storage/pathUtils.js';
 import { toTaskFailure } from '../../context/taskFailure.js';
 import type {
-  SessionTaskDelivery,
-  SessionTaskDispatch,
-  SessionTaskRetryRef,
-  SessionTaskWorktree,
+    SessionTaskDelivery,
+    SessionTaskDispatch,
+    SessionTaskRetryRef,
+    SessionTaskWorktree,
 } from '../../context/types.js';
 import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalSnapshot } from '../../goals/types.js';
@@ -47,36 +48,36 @@ import { safeParseSchema, StringEnum, Type } from '../../schema/index.js';
 import type { ContentPart, Message } from '../../services/ChatServiceInterface.js';
 import type { RewoundSession, SessionMetadata } from '../../services/SessionService.js';
 import {
-  SessionMissingCreationError,
-  SessionService,
+    SessionMissingCreationError,
+    SessionService,
 } from '../../services/SessionService.js';
 import { SessionTaskService } from '../../services/SessionTaskService.js';
 import { getCurrentModel, getModelById } from '../../store/vanilla.js';
 import {
-  CONFIRMATION_ABORTED_REASON,
-  type ConfirmationDetails,
-  type ConfirmationResponse,
+    CONFIRMATION_ABORTED_REASON,
+    type ConfirmationDetails,
+    type ConfirmationResponse,
 } from '../../tools/types/ExecutionTypes.js';
 import type { ToolResultMetadata } from '../../tools/types/ToolTypes.js';
 import {
-  formatToolDisplay,
-  renderToolDisplayToString,
+    formatToolDisplay,
+    renderToolDisplayToString,
 } from '../../ui/utils/toolFormatters.js';
 import { getCwd } from '../../utils/cwd.js';
 import { createSessionId } from '../../utils/sessionId.js';
 import {
-  WorktreeDeliveryConflict,
-  worktreeManager,
+    WorktreeDeliveryConflict,
+    worktreeManager,
 } from '../../worktree/WorktreeManager.js';
 import { Bus } from '../bus.js';
 import {
-  AmbiguousSessionError,
-  BadRequestError,
-  BladeServerError,
-  ConflictError,
-  InternalServerError,
-  NotFoundError,
-  TooManyRequestsError,
+    AmbiguousSessionError,
+    BadRequestError,
+    BladeServerError,
+    ConflictError,
+    InternalServerError,
+    NotFoundError,
+    TooManyRequestsError,
 } from '../error.js';
 import { normalizeSessionRef, type SessionRef, sessionRefKey } from '../sessionRef.js';
 
@@ -177,6 +178,13 @@ interface SessionInfo {
 const sessions = new Map<string, SessionInfo>();
 
 const activeRuns = new Map<string, RunState>();
+const activeUserShellRuns = new Map<
+  string,
+  {
+    controller: AbortController;
+    completion: Promise<void>;
+  }
+>();
 const recentRuns = new LRUCache<string, RunState>({
   max: 100,
   ttl: 30 * 60 * 1000,
@@ -272,6 +280,10 @@ function resetSharedSessionRouteState(): void {
     cancelRun(run, 'route-reset');
   }
   activeRuns.clear();
+  for (const run of activeUserShellRuns.values()) {
+    run.controller.abort('route-reset');
+  }
+  activeUserShellRuns.clear();
   recentRuns.clear();
   sessions.clear();
 }
@@ -2204,6 +2216,67 @@ export const createSessionRouteController = (): SessionRouteController => {
     });
   });
 
+  app.post('/:sessionId/shell', async (c) => {
+    const sessionId = c.req.param('sessionId');
+    const parsed = safeParseSchema(
+      UserShellCommandRequestSchema,
+      await c.req.json()
+    );
+    if (!parsed.success) {
+      throw new BadRequestError('Invalid user shell command');
+    }
+    const session = await resolveSessionForWrite(
+      sessionId,
+      parsed.data.projectPath ?? c.req.query('projectPath')
+    );
+    const ref = sessionRefFromSession(session);
+    const key = sessionRefKey(ref);
+
+    return getMessageSubmissionLock(ref).runExclusive(async () => {
+      if (activeUserShellRuns.has(key)) {
+        throw new ConflictError(
+          'A user shell command is already running in this Session'
+        );
+      }
+      const runtime = await getOrCreateRuntime(session);
+      const controller = new AbortController();
+      let resolveCompletion!: () => void;
+      const completion = new Promise<void>((resolve) => {
+        resolveCompletion = resolve;
+      });
+      activeUserShellRuns.set(key, { controller, completion });
+      try {
+        const result = await runtime.executeUserShellCommand(
+          parsed.data.command,
+          { signal: controller.signal }
+        );
+        session.messages = await SessionService.loadSession(
+          session.id,
+          session.projectPath
+        );
+        session.updatedAt = new Date();
+        const currentRun = getRun(session.currentRunId);
+        if (
+          result.delivery === 'next_turn' &&
+          isActiveRun(currentRun)
+        ) {
+          currentRun.pendingFollowUpRequested = true;
+        }
+        return c.json({
+          executionId: result.executionId,
+          messageId: result.messageId,
+          record: result.record,
+          auxiliary: result.auxiliary,
+          ...(result.delivery ? { delivery: result.delivery } : {}),
+          ...(result.queued !== undefined ? { queued: result.queued } : {}),
+        });
+      } finally {
+        activeUserShellRuns.delete(key);
+        resolveCompletion();
+      }
+    });
+  });
+
   app.post('/:sessionId/abort', async (c) => {
     const sessionId = c.req.param('sessionId');
     const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
@@ -2214,6 +2287,11 @@ export const createSessionRouteController = (): SessionRouteController => {
         cancelRun(run);
         await run.completion;
       }
+    }
+    const shellRun = activeUserShellRuns.get(sessionRefKey(ref));
+    if (shellRun) {
+      shellRun.controller.abort('user-cancel');
+      await shellRun.completion;
     }
 
     return c.json({ success: true });
@@ -2430,10 +2508,7 @@ async function executeRunAsync(
           });
           break;
         case 'thinking_delta':
-          emit('thinking.delta', {
-            messageId: ensureAssistantMessage(),
-            delta: event.delta,
-          });
+          emit('thinking.delta', { delta: event.delta });
           break;
 
         // --- 工具事件 ---

@@ -3,12 +3,10 @@ import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import fg from 'fast-glob';
 import { Hono } from 'hono';
+import { resolveWorkspaceAgentResources } from '../../agent/resources/WorkspaceAgentResources.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { getFileSystemService } from '../../services/FileSystemService.js';
-import {
-  getFuzzyCommandSuggestions,
-  initializeCustomCommands,
-} from '../../slash-commands/index.js';
+import { getFuzzyCommandSuggestions } from '../../slash-commands/index.js';
 import { getCwd } from '../../utils/cwd.js';
 import {
   DEFAULT_EXCLUDE_DIRS,
@@ -62,7 +60,7 @@ export const SuggestionsRoutes = () => {
     try {
       const query = c.req.query('q') || '';
       const directory = c.get('directory') || getCwd();
-      await initializeCustomCommands(directory);
+      await resolveWorkspaceAgentResources(directory);
       const suggestions = getFuzzyCommandSuggestions(query, directory).filter(
         (s) => !WEB_EXCLUDED_COMMANDS.has(s.command)
       );

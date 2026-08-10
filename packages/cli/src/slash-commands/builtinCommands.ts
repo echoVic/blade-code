@@ -5,29 +5,36 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { TokenCounter } from '../context/TokenCounter.js';
-import { getConfig, getCurrentModel, getState } from '../store/vanilla.js';
+import { probeModelProvider } from '../services/ProviderHealthService.js';
 import {
   getModelDisplayName,
   resolveModelConfig,
 } from '../services/pi/resolveModelConfig.js';
+import { getConfig, getCurrentModel, getState } from '../store/vanilla.js';
 import { getCwd } from '../utils/cwd.js';
 import { getVersion } from '../utils/packageInfo.js';
 import { agentsCommand } from './agents.js';
+import { archiveCommand, unarchiveCommand } from './archive.js';
 import branchCommand from './branch.js';
 import compactCommand from './compact.js';
 import { CustomCommandRegistry } from './custom/index.js';
+import effortCommand from './effort.js';
+import exportCommand from './export.js';
 import forkCommand from './fork.js';
 import mcpCommand from './mcp.js';
 import memoryCommand from './memory.js';
 import permissionsCommand from './permissions.js';
 import resumeCommand from './resume.js';
 import rewindCommand from './rewind.js';
+import speedCommand from './speed.js';
+import styleCommand from './style.js';
 import {
   getUI,
   type SlashCommand,
   type SlashCommandContext,
   type SlashCommandResult,
 } from './types.js';
+import verbosityCommand from './verbosity.js';
 
 const helpCommand: SlashCommand = {
   name: 'help',
@@ -52,6 +59,13 @@ const helpCommand: SlashCommand = {
 **/resume** - 恢复历史会话
 **/branch** - 从当前会话创建独立分支
 **/fork [sessionId]** - 从历史会话创建独立分支
+**/archive [sessionId]** - 归档当前或指定的已停止会话树
+**/unarchive <sessionId>** - 恢复归档会话树
+**/export [path] [--reasoning]** - 导出当前 durable 会话为安全 Markdown
+**/effort [level]** - 查看或设置当前 Session 的推理强度
+**/speed [tier]** - 查看或设置当前 Session 的 provider 服务等级（别名 /fast）
+**/verbosity [level]** - 查看或设置当前 Session 的响应详略（别名 /detail）
+**/style [name]** - 查看或设置当前 Session 的沟通风格（别名 /personality）
 **/compact** - 手动压缩上下文，生成总结并节省 token
 **/cost** - 显示当前会话 token 消耗和费用估算
 **/doctor** - 诊断 API 连通性和配置健康状况
@@ -61,7 +75,8 @@ const helpCommand: SlashCommand = {
 **/permissions** - 管理本地权限规则`;
 
     // 添加自定义命令列表
-    const customRegistry = CustomCommandRegistry.getInstance();
+    const workspaceRoot = context.workspaceRoot || context.cwd || getCwd();
+    const customRegistry = CustomCommandRegistry.getInstance(workspaceRoot);
     if (customRegistry.isInitialized()) {
       const customCommands = customRegistry.getAllCommands();
       if (customCommands.length > 0) {
@@ -295,7 +310,7 @@ const contextCommand: SlashCommand = {
       messages.length > 0 ? TokenCounter.countTokens(messages, modelName) : 0;
     const maxTokens =
       currentModel && config
-        ? resolveModelConfig(currentModel, config, false).model.contextWindow
+        ? resolveModelConfig(currentModel, config, 'off').model.contextWindow
         : 128000;
     const usagePercent =
       maxTokens > 0 ? ((totalTokens / maxTokens) * 100).toFixed(1) : '0';
@@ -401,46 +416,44 @@ const doctorCommand: SlashCommand = {
     }
 
     const results: string[] = ['**API Connectivity Diagnosis**\n'];
+    let healthy = true;
 
     for (const model of models) {
-      const startTime = Date.now();
-      try {
-        const { createChatServiceAsync } = await import(
-          '../services/ChatServiceInterface.js'
-        );
-        const resolved = resolveModelConfig(model, config!, false);
-        const service = await createChatServiceAsync({
-          ...resolved.chat,
-          maxOutputTokens: 10,
-          timeout: 10000,
-        });
-        const response = await service.chat(
-          [{ role: 'user', content: 'hi' }],
-          undefined,
-          AbortSignal.timeout(10000)
-        );
-        const latency = Date.now() - startTime;
-        const hasContent = !!response.content;
+      const probe = await probeModelProvider(model, config!, {
+        timeoutMs: 10_000,
+      });
+      healthy &&= probe.ok;
+      if (probe.ok) {
         results.push(
-          `✅ **${getModelDisplayName(model)}** (${model.model}) — ${latency}ms${hasContent ? '' : ' ⚠️ empty response'}`
+          `✅ **${getModelDisplayName(model)}** (${model.provider}/${model.model}) — ${probe.latencyMs}ms · ${probe.wireApi}`
         );
-      } catch (error) {
-        const latency = Date.now() - startTime;
-        const msg =
-          error instanceof Error ? error.message.slice(0, 80) : 'Unknown error';
+      } else {
         results.push(
-          `❌ **${getModelDisplayName(model)}** (${model.model}) — ${latency}ms — ${msg}`
+          `❌ **${getModelDisplayName(model)}** (${model.provider}/${model.model}) — ${probe.latencyMs}ms — ${probe.message} [${probe.code}]`
         );
       }
     }
 
     ui.sendMessage(results.join('\n'));
-    return { success: true, message: 'Doctor diagnosis complete' };
+    return {
+      success: healthy,
+      message: healthy
+        ? 'Doctor diagnosis complete'
+        : 'Doctor found unhealthy model providers',
+      content: results.join('\n'),
+    };
   },
 };
 
 export const builtinCommands = {
   help: helpCommand,
+  archive: archiveCommand,
+  unarchive: unarchiveCommand,
+  export: exportCommand,
+  effort: effortCommand,
+  speed: speedCommand,
+  verbosity: verbosityCommand,
+  style: styleCommand,
   branch: branchCommand,
   clear: clearCommand,
   version: versionCommand,

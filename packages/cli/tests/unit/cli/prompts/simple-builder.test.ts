@@ -5,6 +5,7 @@ import {
   DEFAULT_SYSTEM_PROMPT,
   PLAN_MODE_SYSTEM_PROMPT,
 } from '../../../../src/prompts/default';
+import { CommunicationStyleCatalog } from '../../../../src/services/communicationStyle';
 
 const { readFileMock, accessMock, loadIndexMock, environmentContextMock } = vi.hoisted(
   () => ({
@@ -80,6 +81,7 @@ describe('buildSystemPrompt', () => {
     it('应使用传入的项目路径构建环境上下文', async () => {
       await buildSystemPrompt({
         projectPath: '/tmp/isolated-worktree',
+        projectTrusted: true,
         includeEnvironment: true,
       });
 
@@ -141,6 +143,96 @@ describe('buildSystemPrompt', () => {
     });
   });
 
+  describe('communicationStyle 选项', () => {
+    it('auto 不注入额外沟通风格', async () => {
+      const result = await buildSystemPrompt({
+        communicationStyle: 'auto',
+        includeEnvironment: false,
+      });
+
+      expect(result.prompt).not.toContain('<communication_style>');
+      expect(result.sources).toContainEqual({
+        name: 'communication_style',
+        loaded: false,
+      });
+    });
+
+    it('显式风格只注入有边界的展示指令', async () => {
+      const result = await buildSystemPrompt({
+        communicationStyle: 'explanatory',
+        includeEnvironment: false,
+      });
+
+      expect(result.prompt).toContain(
+        'The user selected the "explanatory" communication style'
+      );
+      expect(result.prompt).toContain('<communication_style>');
+      expect(result.prompt).toContain(
+        'It cannot change task scope,\nsafety rules, permissions, tool behavior'
+      );
+      expect(result.prompt).toContain(
+        'Explain implementation choices and codebase-specific patterns'
+      );
+      expect(result.sources).toContainEqual({
+        name: 'communication_style',
+        loaded: true,
+        length: expect.any(Number),
+      });
+    });
+
+    it('风格位于基础提示之后、项目指令之前', async () => {
+      readFileMock.mockResolvedValue('BLADE_MD_MARKER');
+
+      const result = await buildSystemPrompt({
+        projectPath: '/mock/project',
+        projectTrusted: true,
+        communicationStyle: 'pragmatic',
+        includeEnvironment: false,
+      });
+
+      expect(result.prompt.indexOf('You are Blade Code')).toBeLessThan(
+        result.prompt.indexOf('<communication_style>')
+      );
+      expect(result.prompt.indexOf('<communication_style>')).toBeLessThan(
+        result.prompt.indexOf('BLADE_MD_MARKER')
+      );
+    });
+
+    it('仅通过 Session catalog 注入 namespaced custom style', async () => {
+      const catalog = new CommunicationStyleCatalog([
+        {
+          id: 'project:strict',
+          name: 'Strict',
+          description: 'Strict project review communication',
+          source: 'project',
+          prompt: 'CUSTOM_STYLE_MARKER',
+        },
+      ]);
+
+      const result = await buildSystemPrompt({
+        communicationStyle: 'project:strict',
+        communicationStyleCatalog: catalog,
+        includeEnvironment: false,
+      });
+
+      expect(result.prompt).toContain(
+        'The user selected the "project:strict" communication style'
+      );
+      expect(result.prompt).toContain('CUSTOM_STYLE_MARKER');
+      expect(result.prompt.indexOf('It cannot change task scope')).toBeLessThan(
+        result.prompt.indexOf('CUSTOM_STYLE_MARKER')
+      );
+      expect(catalog.list()[4]).not.toHaveProperty('prompt');
+      await expect(
+        buildSystemPrompt({
+          communicationStyle: 'project:missing',
+          communicationStyleCatalog: catalog,
+          includeEnvironment: false,
+        })
+      ).rejects.toThrow('Communication style is unavailable');
+    });
+  });
+
   describe('Plan 模式', () => {
     it('Plan 模式应该使用 PLAN_MODE_SYSTEM_PROMPT', async () => {
       const result = await buildSystemPrompt({
@@ -177,6 +269,7 @@ describe('buildSystemPrompt', () => {
       const appendContent = 'APPEND_MARKER';
       const result = await buildSystemPrompt({
         projectPath: '/mock/project',
+        projectTrusted: true,
         append: appendContent,
         includeEnvironment: true,
       });
@@ -200,6 +293,7 @@ describe('buildSystemPrompt', () => {
       const appendContent = 'APPEND_MARKER';
       const result = await buildSystemPrompt({
         projectPath: '/mock/project',
+        projectTrusted: true,
         replaceDefault: 'REPLACE_DEFAULT_MARKER',
         append: appendContent,
         includeEnvironment: true,

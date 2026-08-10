@@ -11,6 +11,7 @@ const GLOBAL_TASK_EVENT_TYPES = new Set([
   'session.deleted',
   'permission.asked',
   'question.required',
+  'elicitation.required',
   'interaction.resolved',
 ]);
 const TASK_STATUSES = new Set([
@@ -93,7 +94,11 @@ export const EventRoutes = () => {
       unsubscribe = Bus.subscribe((event) => {
         if (!GLOBAL_TASK_EVENT_TYPES.has(event.type)) return;
 
-        if (event.type === 'permission.asked' || event.type === 'question.required') {
+        if (
+          event.type === 'permission.asked' ||
+          event.type === 'question.required' ||
+          event.type === 'elicitation.required'
+        ) {
           const requestId = event.properties.requestId;
           if (typeof requestId !== 'string' || !requestId) return;
           stream
@@ -104,7 +109,11 @@ export const EventRoutes = () => {
                   sessionId: event.sessionId,
                   projectPath: event.projectPath,
                   interactionType:
-                    event.type === 'question.required' ? 'question' : 'permission',
+                    event.type === 'question.required'
+                      ? 'question'
+                      : event.type === 'elicitation.required'
+                        ? 'elicitation'
+                        : 'permission',
                   requestId,
                 },
               }),

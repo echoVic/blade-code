@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-    JSONLStore,
-    parseSessionJSONL,
+  JSONLStore,
+  parseSessionJSONL,
 } from '../../../src/context/storage/JSONLStore.js';
 import type { SessionEvent } from '../../../src/context/types.js';
 
@@ -506,7 +506,12 @@ describe('JSONLStore sequence numbers', () => {
     const store = new JSONLStore(filePath);
     for (let i = 0; i < 50; i++) {
       const event = await store.append(
-        createSessionUpdated('s', '/w', `2024-01-01T00:00:${String(i).padStart(2, '0')}.000Z`, `t${i}`)
+        createSessionUpdated(
+          's',
+          '/w',
+          `2024-01-01T00:00:${String(i).padStart(2, '0')}.000Z`,
+          `t${i}`
+        )
       );
       expect(event.seq).toBe(i + 1);
     }
@@ -519,7 +524,12 @@ describe('JSONLStore sequence numbers', () => {
   it('continues seq after a legacy tail that lacks a seq, then stays tail-based', async () => {
     // Legacy transcript: two records written without seq.
     const created = createSessionCreated('s', '/w', '2024-01-01T00:00:00.000Z');
-    const legacy = createSessionUpdated('s', '/w', '2024-01-01T00:00:01.000Z', 'legacy');
+    const legacy = createSessionUpdated(
+      's',
+      '/w',
+      '2024-01-01T00:00:01.000Z',
+      'legacy'
+    );
     await writeFile(
       filePath,
       `${JSON.stringify(created)}\n${JSON.stringify(legacy)}\n`,

@@ -29,11 +29,6 @@ import {
 
 const execFileAsync = promisify(execFile);
 const enabled = isRealApiTestEnabled();
-if (enabled && !process.env.DEEPSEEK_API_KEY?.trim()) {
-  throw new Error(
-    'Web task dispatch qualification requires DeepSeek credentials from the process environment'
-  );
-}
 const modelConfigs = enabled
   ? resolveForkQualificationModels(process.env, { requiredDeepSeek: true }).filter(
       (config) =>

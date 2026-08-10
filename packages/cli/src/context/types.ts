@@ -126,7 +126,6 @@ export type JSONLEventType =
 
 export type PartType =
   | 'text'
-  | 'reasoning'
   | 'image'
   | 'tool_call'
   | 'tool_result'

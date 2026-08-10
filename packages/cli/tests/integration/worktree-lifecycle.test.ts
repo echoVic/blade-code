@@ -399,30 +399,30 @@ describe('WorktreeManager integration', () => {
     });
   });
 
-  it.each(['agent', 'task'] as const)(
-    'removes stale clean %s worktrees after an interrupted process',
-    async (kind) => {
-      await publishMainBranch();
-      const session = await manager.enter({
-        sessionId: `${kind}-clean`,
-        workspaceRoot: repoRoot,
-        name: `${kind}/${kind}-clean`,
-      });
-      manager.releaseSession(session.sessionId);
-      await makeStale(session.worktreeRoot);
+  it.each([
+    'agent',
+    'task',
+  ] as const)('removes stale clean %s worktrees after an interrupted process', async (kind) => {
+    await publishMainBranch();
+    const session = await manager.enter({
+      sessionId: `${kind}-clean`,
+      workspaceRoot: repoRoot,
+      name: `${kind}/${kind}-clean`,
+    });
+    manager.releaseSession(session.sessionId);
+    await makeStale(session.worktreeRoot);
 
-      const result = await manager.cleanupStaleAgentWorktrees({
-        workspaceRoot: repoRoot,
-        maxAgeMs: 1_000,
-      });
+    const result = await manager.cleanupStaleAgentWorktrees({
+      workspaceRoot: repoRoot,
+      maxAgeMs: 1_000,
+    });
 
-      expect(result.removed).toBe(1);
-      expect(result.preserved).toBe(0);
-      expect(result.errors).toEqual([]);
-      await expect(access(session.worktreeRoot)).rejects.toThrow();
-      expect(await git(repoRoot, 'branch', '--list', session.branch)).toBe('');
-    }
-  );
+    expect(result.removed).toBe(1);
+    expect(result.preserved).toBe(0);
+    expect(result.errors).toEqual([]);
+    await expect(access(session.worktreeRoot)).rejects.toThrow();
+    expect(await git(repoRoot, 'branch', '--list', session.branch)).toBe('');
+  });
 
   it('preserves stale agent worktrees with dirty or unpushed work', async () => {
     await publishMainBranch();

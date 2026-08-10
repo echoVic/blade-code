@@ -11,6 +11,9 @@ const mockSendMessage = vi.fn();
 const mockUI = {
   sendMessage: mockSendMessage,
 };
+const { mockProbeModelProvider } = vi.hoisted(() => ({
+  mockProbeModelProvider: vi.fn(),
+}));
 
 // Mock getUI helper
 vi.mock('../../../../src/slash-commands/types.js', async () => {
@@ -52,6 +55,10 @@ vi.mock('../../../../src/utils/packageInfo.js', () => ({
   getVersion: () => '1.0.0',
 }));
 
+vi.mock('../../../../src/services/ProviderHealthService.js', () => ({
+  probeModelProvider: mockProbeModelProvider,
+}));
+
 describe('Builtin Slash Commands', () => {
   const mockContext = {
     cwd: '/test/project',
@@ -59,6 +66,7 @@ describe('Builtin Slash Commands', () => {
 
   beforeEach(() => {
     mockSendMessage.mockReset();
+    mockProbeModelProvider.mockReset();
   });
 
   describe('help command', () => {
@@ -111,6 +119,30 @@ describe('Builtin Slash Commands', () => {
       expect(message).toContain('模型配置');
       expect(message).toContain('会话统计');
       expect(message).toContain('配置状态');
+    });
+  });
+
+  describe('doctor command', () => {
+    it('只显示 canonical provider failure', async () => {
+      mockProbeModelProvider.mockResolvedValueOnce({
+        ok: false,
+        providerId: 'test-provider',
+        modelConfigId: 'test-model',
+        model: 'test-model-v1',
+        wireApi: 'openai-completions',
+        latencyMs: 15,
+        code: 'authentication',
+        message: 'Provider authentication failed. Check model credentials.',
+      });
+
+      const result = await builtinCommands.doctor.handler([], mockContext);
+
+      expect(result.success).toBe(false);
+      expect(result.content).toContain(
+        'Provider authentication failed. Check model credentials.'
+      );
+      expect(result.content).not.toContain('sk-');
+      expect(mockSendMessage).toHaveBeenCalledWith(result.content);
     });
   });
 });

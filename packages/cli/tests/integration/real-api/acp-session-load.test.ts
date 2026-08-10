@@ -16,7 +16,6 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { BladeAgent } from '../../../src/acp/BladeAgent.js';
 import { AcpSession } from '../../../src/acp/Session.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
-import { DEFAULT_CONFIG } from '../../../src/config/defaults.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
 import { getSessionInboxFilePath } from '../../../src/context/storage/pathUtils.js';
 import { SessionService } from '../../../src/services/SessionService.js';
@@ -31,6 +30,7 @@ import {
   INTERACTIVE_SHELL_INPUT,
 } from './interactiveShellFixture.js';
 import {
+  buildRealApiRuntimeConfig,
   expandDeepSeekModelMatrix,
   getEnabledModelConfigs,
   isRealApiTestEnabled,
@@ -136,25 +136,9 @@ function createHarness(client: RecordingClient): PairedAcpHarness {
 }
 
 function configureModel(modelConfig: TestModelConfig): string {
-  const modelId = `acp-load-${modelConfig.id}`;
-  getState().config.actions.setConfig({
-    ...DEFAULT_CONFIG,
-    currentModelId: modelId,
-    models: [
-      {
-        id: modelId,
-        displayName: modelConfig.name,
-        provider: modelConfig.provider,
-        model: modelConfig.model,
-        overrides: {
-          baseUrl: modelConfig.baseURL,
-          maxOutputTokens: 4_096,
-          timeout: 180_000,
-        },
-      },
-    ],
-  });
-  return modelId;
+  const config = buildRealApiRuntimeConfig(modelConfig);
+  getState().config.actions.setConfig(config);
+  return config.currentModelId;
 }
 
 async function initializeGitWorkspace(workspace: string): Promise<void> {
@@ -694,7 +678,9 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
             mcpServers: [],
           });
           const modelCfg = loaded.configOptions?.find((o: any) => o.id === 'model');
-          expect(modelCfg && 'currentValue' in modelCfg ? modelCfg.currentValue : undefined).toBe(modelId);
+          expect(
+            modelCfg && 'currentValue' in modelCfg ? modelCfg.currentValue : undefined
+          ).toBe(modelId);
           expect(replayedText(secondClient.updates)).toContain(
             'Read branch-marker.txt'
           );
@@ -828,7 +814,9 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
             mcpServers: [],
           });
           const modelCfg = loaded.configOptions?.find((o: any) => o.id === 'model');
-          expect(modelCfg && 'currentValue' in modelCfg ? modelCfg.currentValue : undefined).toBe(modelId);
+          expect(
+            modelCfg && 'currentValue' in modelCfg ? modelCfg.currentValue : undefined
+          ).toBe(modelId);
           expect(replayedText(secondClient.updates)).toContain('Read marker.txt');
 
           await second.connection.setSessionMode?.({

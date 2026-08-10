@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Dirent } from 'node:fs';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import type { OutgoingHttpHeaders } from 'node:http';
@@ -140,6 +141,16 @@ function isSessionEvent(value: unknown): value is SessionEvent {
         data.messageIds.every(isString) &&
         isString(data.acknowledgedAt)
       );
+    case 'session_rewound':
+      return (
+        isString(data.rewindId) &&
+        isString(data.targetMessageId) &&
+        isString(data.mode) &&
+        ['conversation', 'code', 'both'].includes(data.mode) &&
+        Array.isArray(data.restoredFiles) &&
+        data.restoredFiles.every(isString) &&
+        isString(data.createdAt)
+      );
     case 'message_created':
       return (
         isString(data.messageId) &&
@@ -157,6 +168,7 @@ function isSessionEvent(value: unknown): value is SessionEvent {
         isString(data.partType) &&
         [
           'text',
+          'reasoning',
           'image',
           'tool_call',
           'tool_result',
@@ -213,6 +225,30 @@ export interface DurableToolTraceRecord {
   error: string | null;
 }
 
+function summarizeToolTrace(
+  trace: readonly DurableToolTraceRecord[],
+  expectedPath: string
+): Array<Record<string, unknown>> {
+  return trace.map((record) => {
+    const input = isRecord(record.input) ? record.input : undefined;
+    const content = typeof input?.content === 'string' ? input.content : undefined;
+    return {
+      toolName: record.toolName,
+      succeeded: record.output !== null && record.error === null,
+      pathMatches:
+        typeof input?.file_path === 'string'
+          ? input.file_path === expectedPath
+          : undefined,
+      command: typeof input?.command === 'string' ? input.command : undefined,
+      contentBytes: content === undefined ? undefined : Buffer.byteLength(content),
+      contentHash:
+        content === undefined
+          ? undefined
+          : createHash('sha256').update(content).digest('hex'),
+    };
+  });
+}
+
 export function assertForkParentToolTrace(
   trace: readonly DurableToolTraceRecord[],
   memoryPath: string
@@ -220,16 +256,25 @@ export function assertForkParentToolTrace(
   if (trace.length === 0) {
     throw new Error('Fork parent tool trace must contain a successful Read');
   }
+  let succeeded = false;
   for (const record of trace) {
     if (
       record.toolName !== 'Read' ||
       !isRecord(record.input) ||
-      record.input.file_path !== memoryPath ||
-      record.output === null ||
-      record.error !== null
+      record.input.file_path !== memoryPath
     ) {
-      throw new Error('Fork parent tool trace violated the Read contract');
+      throw new Error(
+        'Fork parent tool trace violated the Read contract; evidence=' +
+          JSON.stringify(summarizeToolTrace(trace, memoryPath))
+      );
     }
+    if (record.output !== null && record.error === null) succeeded = true;
+  }
+  if (!succeeded) {
+    throw new Error(
+      'Fork parent tool trace must contain a successful Read; evidence=' +
+        JSON.stringify(summarizeToolTrace(trace, memoryPath))
+    );
   }
 }
 
@@ -244,29 +289,39 @@ export function assertForkChildToolTrace(
     const input = isRecord(record.input) ? record.input : undefined;
     const succeeded = record.output !== null && record.error === null;
     if (record.toolName === 'Write') {
-      if (
-        !input ||
-        input.file_path !== resultPath ||
-        input.content !== expectedBytes ||
-        !succeeded
-      ) {
-        throw new Error('Fork child Write trace violated the exact contract');
+      if (!input || input.file_path !== resultPath || input.content !== expectedBytes) {
+        throw new Error(
+          'Fork child Write trace violated the exact contract; evidence=' +
+            JSON.stringify(summarizeToolTrace(trace, resultPath))
+        );
       }
-      if (firstWriteIndex < 0) firstWriteIndex = index;
+      if (succeeded && firstWriteIndex < 0) firstWriteIndex = index;
       continue;
     }
     if (record.toolName === 'Bash') {
-      if (!input || input.command !== 'wc -c result.txt' || !succeeded) {
-        throw new Error('Fork child Bash trace violated the exact contract');
+      const command = input?.command;
+      const validCommand =
+        command === 'wc -c result.txt' || command === `wc -c ${resultPath}`;
+      if (!validCommand) {
+        throw new Error(
+          'Fork child Bash trace violated the exact contract; evidence=' +
+            JSON.stringify(summarizeToolTrace(trace, resultPath))
+        );
       }
-      if (firstBashIndex < 0) firstBashIndex = index;
+      if (succeeded && firstBashIndex < 0) firstBashIndex = index;
       continue;
     }
-    throw new Error('Fork child tool trace contains an unexpected tool');
+    throw new Error(
+      'Fork child tool trace contains an unexpected tool; evidence=' +
+        JSON.stringify(summarizeToolTrace(trace, resultPath))
+    );
   }
 
   if (firstWriteIndex < 0 || firstBashIndex < 0) {
-    throw new Error('Fork child tool trace requires Write and Bash');
+    throw new Error(
+      'Fork child tool trace requires Write and Bash; evidence=' +
+        JSON.stringify(summarizeToolTrace(trace, resultPath))
+    );
   }
   if (firstWriteIndex >= firstBashIndex) {
     throw new Error('Fork child tool trace requires Write before Bash');

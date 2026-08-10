@@ -26,25 +26,15 @@ import { Agent } from '../agent/Agent.js';
 import { drainLoop } from '../agent/loop/index.js';
 import type { LoopEvent } from '../agent/loop/types.js';
 import { SessionRuntime } from '../agent/runtime/SessionRuntime.js';
-import type { ChatContext, UserMessageContent } from '../agent/types.js';
-import {
-  MAX_INLINE_ATTACHMENT_BYTES,
-  MAX_INLINE_ATTACHMENT_COUNT,
-  MAX_USER_MESSAGE_TEXT_CHARS,
-} from '../api/attachmentLimits.js';
+import type { ChatContext } from '../agent/types.js';
 import { type McpServerConfig, PermissionMode } from '../config/types.js';
 import type { SessionTaskIsolation, SessionTaskWorktree } from '../context/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { Bus } from '../server/bus.js';
-import type { ContentPart, Message } from '../services/ChatServiceInterface.js';
-import {
-  SessionMissingCreationError,
-  SessionService,
-} from '../services/SessionService.js';
+import type { Message } from '../services/ChatServiceInterface.js';
 import {
   executeSlashCommand,
   getRegisteredCommands,
-  initializeCustomCommands,
   isSlashCommand,
   type SlashCommandContext,
 } from '../slash-commands/index.js';
@@ -73,11 +63,6 @@ const logger = createLogger(LogCategory.AGENT);
  */
 type AcpModeId = 'default' | 'auto-edit' | 'yolo' | 'plan';
 
-interface ResolvedAcpPrompt {
-  content: UserMessageContent;
-  displayText: string;
-}
-
 export interface AcpSessionOptions {
   initialMessages?: Message[];
   mcpServers?: McpServer[];
@@ -86,13 +71,12 @@ export interface AcpSessionOptions {
 }
 
 function entriesToRecord(
-  entries: Array<{ name: string; value: string }> | undefined
+  entries: Array<{ name: string; value: string }>
 ): Record<string, string> {
-  if (!entries) return {};
   return Object.fromEntries(entries.map((entry) => [entry.name, entry.value]));
 }
 
-function toMcpServerConfig(server: McpServer): McpServerConfig | null {
+function toMcpServerConfig(server: McpServer): McpServerConfig {
   if ('command' in server) {
     return {
       type: 'stdio',
@@ -102,28 +86,17 @@ function toMcpServerConfig(server: McpServer): McpServerConfig | null {
     };
   }
 
-  if ('url' in server) {
-    return {
-      type: server.type as 'http' | 'sse',
-      url: server.url,
-      headers: entriesToRecord(
-        'headers' in server
-          ? (server.headers as Array<{ name: string; value: string }>)
-          : undefined
-      ),
-    };
-  }
-
-  return null;
+  return {
+    type: server.type,
+    url: server.url,
+    headers: entriesToRecord(server.headers),
+  };
 }
 
 function toMcpServers(servers: McpServer[]): Record<string, McpServerConfig> {
-  const result: Record<string, McpServerConfig> = {};
-  for (const server of servers) {
-    const config = toMcpServerConfig(server);
-    if (config) result[server.name] = config;
-  }
-  return result;
+  return Object.fromEntries(
+    servers.map((server) => [server.name, toMcpServerConfig(server)])
+  );
 }
 
 function historyContentBlocks(content: Message['content']): ContentBlock[] {
@@ -213,37 +186,17 @@ export class AcpSession {
         : {}),
     });
     this.agent = await this.createAgent();
-    await initializeCustomCommands(this.cwd);
 
     logger.debug(`[AcpSession ${this.id}] Agent created successfully`);
     this.taskStatusUnsubscribe?.();
     this.taskStatusUnsubscribe = Bus.subscribe((event) => {
-      if (event.sessionId !== this.id || event.projectPath !== this.cwd) {
+      if (
+        event.type !== 'task.status' ||
+        event.sessionId !== this.id ||
+        event.projectPath !== this.cwd
+      ) {
         return;
       }
-      if (event.type === 'task.delivery') {
-        if (
-          !event.properties.taskDelivery ||
-          typeof event.properties.taskDelivery !== 'object'
-        ) {
-          return;
-        }
-        this.sendUpdate({
-          sessionUpdate: 'session_info_update',
-          updatedAt:
-            typeof event.properties.updatedAt === 'string'
-              ? event.properties.updatedAt
-              : new Date().toISOString(),
-          _meta: {
-            'blade/taskDelivery': event.properties.taskDelivery,
-            ...(event.properties.taskWorktreeRemoved === true
-              ? { 'blade/taskWorktreeRemoved': true }
-              : {}),
-          },
-        });
-        return;
-      }
-      if (event.type !== 'task.status') return;
       this.sendUpdate({
         sessionUpdate: 'session_info_update',
         updatedAt:
@@ -256,10 +209,6 @@ export class AcpSession {
             ? {
                 'blade/taskStatusReason': event.properties.taskStatusReason,
               }
-            : {}),
-          ...(event.properties.taskFailure &&
-          typeof event.properties.taskFailure === 'object'
-            ? { 'blade/taskFailure': event.properties.taskFailure }
             : {}),
           ...(typeof event.properties.taskStartedAt === 'string'
             ? { 'blade/taskStartedAt': event.properties.taskStartedAt }
@@ -548,7 +497,7 @@ export class AcpSession {
    */
   private async sendAvailableCommands(): Promise<void> {
     try {
-      const commands = getRegisteredCommands(this.cwd);
+      const commands = getRegisteredCommands();
 
       // 在 ACP 模式下过滤掉不需要的命令
       // - model/permissions/theme: Zed 已提供 UI
@@ -623,12 +572,10 @@ export class AcpSession {
       throw new Error('Session not initialized');
     }
 
-    const resolvedPrompt = this.resolvePrompt(params.prompt);
-    const message = resolvedPrompt.content;
-    const messageText = resolvedPrompt.displayText;
+    const message = this.resolvePrompt(params.prompt);
     if (this.pendingPrompt) {
-      if (/^\/goal(?:\s|$)/i.test(messageText.trim())) {
-        return this.handleSlashCommand(messageText, this.pendingPrompt.signal);
+      if (/^\/goal(?:\s|$)/i.test(message.trim())) {
+        return this.handleSlashCommand(message, this.pendingPrompt.signal);
       }
       const steering = await this.runtime.enqueueSteering(message, {
         allowBeforeTurn: true,
@@ -655,14 +602,14 @@ export class AcpSession {
     try {
       // 1. 解析 ACP prompt 为文本消息
       logger.debug(
-        `[AcpSession ${this.id}] Received prompt: ${messageText.slice(0, 100)}...`
+        `[AcpSession ${this.id}] Received prompt: ${message.slice(0, 100)}...`
       );
 
       // 2. 检查是否是 slash command
-      if (isSlashCommand(messageText)) {
+      if (isSlashCommand(message)) {
         // 重要：使用 await 确保 finally 块在 handleSlashCommand 完成后才执行
         // 否则 finally 会在返回 Promise 后立即执行，导致 pendingPrompt 被提前清空
-        return await this.handleSlashCommand(messageText, abortController.signal);
+        return await this.handleSlashCommand(message, abortController.signal);
       }
 
       // 3. 构建 ChatContext
@@ -711,7 +658,8 @@ export class AcpSession {
             // --- 工具事件 ---
             case 'tool_start': {
               const toolCall = event.toolCall;
-              const toolName = toolCall.function.name;
+              const toolName =
+                'function' in toolCall ? toolCall.function.name : toolCall.type;
               const acpKind = this.mapToolKind(event.toolKind);
               let title = `Executing ${toolName}`;
               if (toolName === 'Task' && 'function' in toolCall) {
@@ -759,7 +707,8 @@ export class AcpSession {
                   newText: (metadata.newContent as string) ?? null,
                 });
               } else {
-                const toolName = toolCall.function.name;
+                const toolName =
+                  'function' in toolCall ? toolCall.function.name : toolCall.type;
                 const displayText = renderToolDisplayToString(
                   formatToolDisplay(toolName, result)
                 );
@@ -983,44 +932,8 @@ export class AcpSession {
     if (!this.agent) {
       throw new Error('Session not initialized');
     }
-    if (!this.runtime) {
-      throw new Error('Session runtime is unavailable');
-    }
 
-    const previousModelId = this.runtime.getCurrentModelId();
     await this.agent.switchModel(modelId);
-    try {
-      try {
-        await SessionService.updateSessionMetadata(this.id, this.cwd, {
-          selectedModelId: modelId,
-        });
-      } catch (error) {
-        if (
-          !(error instanceof SessionMissingCreationError) &&
-          (error as NodeJS.ErrnoException).code !== 'ENOENT'
-        ) {
-          throw error;
-        }
-        await SessionService.createSessionMetadata(this.id, this.cwd, {
-          taskStatus: 'completed',
-          selectedModelId: modelId,
-        });
-      }
-    } catch (error) {
-      if (previousModelId && previousModelId !== modelId) {
-        await this.agent.switchModel(previousModelId).catch((rollbackError) => {
-          logger.error(
-            `[AcpSession ${this.id}] Failed to roll back a non-durable model switch:`,
-            rollbackError
-          );
-        });
-      }
-      throw error;
-    }
-  }
-
-  getCurrentModelId(): string | undefined {
-    return this.runtime?.getCurrentModelId();
   }
 
   /**
@@ -1064,65 +977,28 @@ export class AcpSession {
    * @param prompt - ACP prompt 数组
    * @returns 文本消息
    */
-  private resolvePrompt(prompt: ContentBlock[]): ResolvedAcpPrompt {
-    const displayParts: string[] = [];
-    const contentParts: ContentPart[] = [];
-    let imageCount = 0;
-    let imageBytes = 0;
-    let textChars = 0;
-
-    const appendContent = (part: ContentPart): void => {
-      if (contentParts.length > 0) {
-        contentParts.push({ type: 'text', text: '\n' });
-        textChars += 1;
-      }
-      contentParts.push(part);
-      if (part.type === 'text') textChars += part.text.length;
-    };
+  private resolvePrompt(prompt: ContentBlock[]): string {
+    const parts: string[] = [];
 
     for (const block of prompt) {
       if (block.type === 'text') {
-        displayParts.push(block.text);
-        appendContent({ type: 'text', text: block.text });
+        parts.push(block.text);
       } else if (block.type === 'image') {
-        const dataUrl = `data:${block.mimeType};base64,${block.data}`;
-        imageCount += 1;
-        imageBytes += dataUrl.length;
-        displayParts.push(`[Image: ${block.mimeType}]`);
-        appendContent({ type: 'image_url', image_url: { url: dataUrl } });
+        // 图片暂时用占位符表示
+        parts.push(`[Image: ${block.mimeType}]`);
       } else if (block.type === 'resource') {
+        // 嵌入资源（文件内容等）
         const resource = block.resource;
         if ('text' in resource) {
-          const text = `<file path="${resource.uri}">\n${resource.text}\n</file>`;
-          displayParts.push(text);
-          appendContent({ type: 'text', text });
+          parts.push(`<file path="${resource.uri}">\n${resource.text}\n</file>`);
         }
       } else if (block.type === 'resource_link') {
-        const text = `[Resource: ${block.uri}]`;
-        displayParts.push(text);
-        appendContent({ type: 'text', text });
+        // 资源链接
+        parts.push(`[Resource: ${block.uri}]`);
       }
     }
 
-    if (imageCount > MAX_INLINE_ATTACHMENT_COUNT) {
-      throw new Error(
-        `ACP prompt contains more than ${MAX_INLINE_ATTACHMENT_COUNT} images`
-      );
-    }
-    if (imageBytes > MAX_INLINE_ATTACHMENT_BYTES) {
-      throw new Error('ACP prompt images exceed the 5 MiB limit');
-    }
-    if (textChars > MAX_USER_MESSAGE_TEXT_CHARS) {
-      throw new Error(
-        `ACP prompt text exceeds ${MAX_USER_MESSAGE_TEXT_CHARS} characters`
-      );
-    }
-
-    const displayText = displayParts.join('\n');
-    return {
-      content: imageCount > 0 ? contentParts : displayText,
-      displayText,
-    };
+    return parts.join('\n');
   }
 
   /**

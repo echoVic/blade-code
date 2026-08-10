@@ -2,9 +2,36 @@
  * Slash Command 类型定义
  */
 
-import type { ResumedSubagent } from '../agent/runtime/SessionRuntime.js';
+import type {
+  ResumedSubagent,
+  SessionMcpContentSnapshot,
+} from '../agent/runtime/SessionRuntime.js';
 import type { AgentSession } from '../agent/subagents/AgentSessionStore.js';
+import type {
+  McpCompletionInput,
+  McpNormalizedCompletionResult,
+} from '../mcp/McpCompletion.js';
+import type { McpNormalizedPromptResult } from '../mcp/McpContentCatalog.js';
+import type { McpLogLevel } from '../mcp/McpLogging.js';
+import type { McpInstructionsSnapshot, McpLogSnapshot } from '../mcp/McpRegistry.js';
+import type { McpTaskSnapshot } from '../mcp/McpTasks.js';
 import type { Message } from '../services/ChatServiceInterface.js';
+import type {
+  CommunicationStyleConfiguration,
+  CommunicationStyleSelection,
+} from '../services/communicationStyle.js';
+import type {
+  ReasoningEffortConfiguration,
+  ReasoningEffortSelection,
+} from '../services/pi/reasoningEffort.js';
+import type {
+  ResponseVerbosityConfiguration,
+  ResponseVerbositySelection,
+} from '../services/pi/responseVerbosity.js';
+import type {
+  ServiceTierConfiguration,
+  ServiceTierSelection,
+} from '../services/pi/serviceTier.js';
 import type {
   RewindSessionOptions,
   RewoundSession,
@@ -40,8 +67,10 @@ export type SlashCommandAction =
   | 'invoke_skill'
   | 'invoke_custom_command'
   | 'invoke_plugin_command'
+  | 'invoke_mcp_prompt'
   | 'invoke_once_model'
   | 'restore_forked_session'
+  | 'session_exported'
   | 'start_goal'
   | 'resume_goal'
   | 'goal_cleared'
@@ -129,6 +158,8 @@ export interface AcpCallbacks {
  */
 export interface SlashCommandContext {
   cwd: string;
+  /** Owning user surface. Host interactions must fail closed when omitted. */
+  surface?: 'tui' | 'headless' | 'acp';
   /** 当前 Agent session，用于隔离 session-owned runtime resources */
   sessionId?: string;
   /** 工作目录（可选，默认为 cwd） */
@@ -140,10 +171,65 @@ export interface SlashCommandContext {
     listCheckpoints: () => Promise<SessionRewindCheckpoint[]>;
     execute: (options: RewindSessionOptions) => Promise<RewoundSession>;
   };
+  /** Current surface-owned session lifecycle boundary. */
+  lifecycle?: {
+    archiveCurrent: () => Promise<SessionMetadata>;
+  };
+  /** 当前表面拥有的 Session reasoning configuration boundary。 */
+  reasoning?: {
+    get: () => Promise<ReasoningEffortConfiguration>;
+    set: (selection: ReasoningEffortSelection) => Promise<ReasoningEffortConfiguration>;
+  };
+  /** 当前表面拥有的 Session provider service-tier boundary。 */
+  serviceTier?: {
+    get: () => Promise<ServiceTierConfiguration>;
+    set: (selection: ServiceTierSelection) => Promise<ServiceTierConfiguration>;
+  };
+  /** 当前表面拥有的 Session response verbosity boundary。 */
+  responseVerbosity?: {
+    get: () => Promise<ResponseVerbosityConfiguration>;
+    set: (
+      selection: ResponseVerbositySelection
+    ) => Promise<ResponseVerbosityConfiguration>;
+  };
+  /** 当前表面拥有的 Session communication-style boundary。 */
+  communicationStyle?: {
+    get: () => Promise<CommunicationStyleConfiguration>;
+    set: (
+      selection: CommunicationStyleSelection
+    ) => Promise<CommunicationStyleConfiguration>;
+  };
   /** 当前表面拥有的 durable subagent 控制边界 */
   subagents?: {
     list: () => Promise<AgentSession[]>;
     resume: (agentId: string, prompt: string) => Promise<ResumedSubagent>;
+  };
+  /** 当前 Session 私有 MCP content boundary。 */
+  mcp?: {
+    getCatalog: () => Promise<SessionMcpContentSnapshot>;
+    refresh: (serverName?: string) => Promise<void>;
+    getPrompt: (
+      serverName: string,
+      name: string,
+      arguments_: Record<string, string>
+    ) => Promise<McpNormalizedPromptResult>;
+    complete: (
+      serverName: string,
+      input: McpCompletionInput,
+      signal?: AbortSignal
+    ) => Promise<McpNormalizedCompletionResult>;
+    listTasks: (serverName?: string) => Promise<McpTaskSnapshot[]>;
+    getTask: (taskId: string) => Promise<McpTaskSnapshot | undefined>;
+    cancelTask: (
+      taskId: string,
+      signal?: AbortSignal
+    ) => Promise<McpTaskSnapshot | undefined>;
+    getLogs: (
+      serverName?: string,
+      options?: { afterRevision?: number; limit?: number }
+    ) => Promise<McpLogSnapshot>;
+    setLoggingLevel: (serverName: string, level: McpLogLevel) => Promise<void>;
+    getInstructions: () => Promise<McpInstructionsSnapshot>;
   };
   /** ACP 模式下的回调（可选） */
   acp?: AcpCallbacks;

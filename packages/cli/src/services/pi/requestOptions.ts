@@ -1,13 +1,45 @@
-import type { Api, Model, Usage } from '@earendil-works/pi-ai';
+import type { Api, Model, ThinkingLevel, Usage } from '@earendil-works/pi-ai';
 import type {
   ChatConfig,
   ChatRequestOptions,
   UsageInfo,
 } from '../ChatServiceInterface.js';
+import { resolveResponseVerbosity } from './responseVerbosity.js';
 
-function reasoningLevel(config: ChatConfig): 'low' | 'medium' | 'high' | undefined {
+type PayloadHook = (
+  payload: unknown,
+  model: Model<Api>
+) => unknown | undefined | Promise<unknown | undefined>;
+
+function addPayloadTransform(
+  options: Record<string, unknown>,
+  transform: (payload: unknown, model: Model<Api>) => unknown
+): void {
+  const previous = options.onPayload as PayloadHook | undefined;
+  options.onPayload = async (payload: unknown, model: Model<Api>) => {
+    const previousResult = previous ? await previous(payload, model) : payload;
+    return transform(previousResult === undefined ? payload : previousResult, model);
+  };
+}
+
+function reasoningLevel(config: ChatConfig): ThinkingLevel | undefined {
   if (!config.reasoningEnabled) return undefined;
-  return config.reasoningLevel ?? 'high';
+  return config.reasoningEffort ?? config.reasoningLevel ?? 'high';
+}
+
+function googleThinkingLevel(
+  reasoning: ThinkingLevel
+): 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' {
+  switch (reasoning) {
+    case 'minimal':
+      return 'MINIMAL';
+    case 'low':
+      return 'LOW';
+    case 'medium':
+      return 'MEDIUM';
+    default:
+      return 'HIGH';
+  }
 }
 
 function addThinkingOptions(
@@ -19,6 +51,9 @@ function addThinkingOptions(
   const reasoning = disabled ? undefined : reasoningLevel(config);
   if (!reasoning) {
     if (model.api === 'anthropic-messages') options.thinkingEnabled = false;
+    if (model.api === 'google-generative-ai' || model.api === 'google-vertex') {
+      options.thinking = { enabled: false };
+    }
     return;
   }
 
@@ -31,7 +66,11 @@ function addThinkingOptions(
     case 'google-vertex':
       options.thinking = {
         enabled: true,
+        level: googleThinkingLevel(reasoning),
       };
+      break;
+    case 'mistral-conversations':
+      options.reasoningEffort = 'high';
       break;
     case 'bedrock-converse-stream':
     case 'pi-messages':
@@ -73,6 +112,70 @@ function addToolChoice(
   }
 }
 
+function addServiceTierOptions(
+  options: Record<string, unknown>,
+  model: Model<Api>,
+  config: ChatConfig
+): void {
+  const serviceTier = config.serviceTier;
+  if (!serviceTier) return;
+  if (
+    model.api === 'openai-responses' ||
+    model.api === 'openai-codex-responses' ||
+    model.api === 'azure-openai-responses'
+  ) {
+    options.serviceTier = serviceTier;
+    return;
+  }
+  if (
+    model.api !== 'openai-completions' &&
+    !(model.api === 'anthropic-messages' && serviceTier === 'fast')
+  ) {
+    return;
+  }
+  addPayloadTransform(options, (payload) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return payload;
+    }
+    return model.api === 'anthropic-messages'
+      ? { ...payload, speed: 'fast' }
+      : { ...payload, service_tier: serviceTier };
+  });
+}
+
+function addResponseVerbosityOptions(
+  options: Record<string, unknown>,
+  model: Model<Api>,
+  config: ChatConfig
+): void {
+  const verbosity = config.responseVerbosity;
+  if (!verbosity) return;
+  resolveResponseVerbosity(model, verbosity);
+  if (model.api === 'openai-codex-responses') {
+    options.textVerbosity = verbosity;
+    return;
+  }
+  addPayloadTransform(options, (payload) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return payload;
+    }
+    if (model.api === 'openai-completions') {
+      return { ...payload, verbosity };
+    }
+    const currentText =
+      'text' in payload &&
+      payload.text &&
+      typeof payload.text === 'object' &&
+      !Array.isArray(payload.text)
+        ? payload.text
+        : {};
+    return {
+      ...payload,
+      text: { ...currentText, verbosity },
+    };
+  });
+}
+
 export function buildPiOptions(
   config: ChatConfig,
   model: Model<Api>,
@@ -84,14 +187,16 @@ export function buildPiOptions(
     apiKey: config.apiKey,
     headers: config.customHeaders,
     signal,
-    temperature: config.temperature ?? 0,
-    maxTokens: config.maxOutputTokens,
+    temperature: requestOptions?.temperature ?? config.temperature ?? 0,
+    maxTokens: requestOptions?.maxOutputTokens ?? config.maxOutputTokens,
     timeoutMs: config.timeout,
     maxRetries: 0,
     cacheRetention: config.enablePromptCaching ? 'short' : 'none',
   };
   addThinkingOptions(options, model, config, disableThinking);
   addToolChoice(options, model.api, requestOptions?.toolChoice?.toolName);
+  addServiceTierOptions(options, model, config);
+  addResponseVerbosityOptions(options, model, config);
 
   if (model.api === 'azure-openai-responses') {
     options.azureBaseUrl = config.baseUrl;
@@ -114,6 +219,14 @@ export function convertPiUsage(usage: Usage): UsageInfo {
 }
 
 export function isFallbackablePiError(error: unknown): boolean {
+  if (
+    error !== null &&
+    typeof error === 'object' &&
+    'code' in error &&
+    error.code === 'STREAM_IDLE_TIMEOUT'
+  ) {
+    return false;
+  }
   const message =
     error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
   const contextErrors = [
@@ -141,5 +254,8 @@ export function isFallbackablePiError(error: unknown): boolean {
     'fetch failed',
     'network error',
     'socket hang up',
+    'stream closed before completion',
+    'temporarily unavailable',
+    'upstream_error',
   ].some((marker) => message.includes(marker));
 }

@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createStore } from 'zustand/vanilla';
+import type { EphemeralDelta } from '../../../src/context/events/EphemeralDelta.js';
+import type { SessionEvent } from '../../../src/context/types.js';
 import { createSessionSlice } from '../../../src/store/slices/sessionSlice.js';
 import type { BladeStore } from '../../../src/store/types.js';
-import type { SessionEvent } from '../../../src/context/types.js';
-import type { EphemeralDelta } from '../../../src/context/events/EphemeralDelta.js';
 
 const ts = '2024-01-01T00:00:00.000Z';
 
@@ -42,7 +42,9 @@ describe('sessionSlice event-sourcing projection', () => {
 
   it('derives messages from committed events (store as read-model)', () => {
     const { actions } = store.getState().session;
-    actions.applyCommittedEvent(evt(1, 'message_created', { messageId: 'm1', role: 'user', createdAt: ts }));
+    actions.applyCommittedEvent(
+      evt(1, 'message_created', { messageId: 'm1', role: 'user', createdAt: ts })
+    );
     actions.applyCommittedEvent(
       evt(2, 'part_created', {
         partId: 'p1',
@@ -55,7 +57,11 @@ describe('sessionSlice event-sourcing projection', () => {
 
     const messages = store.getState().session.messages;
     expect(messages).toHaveLength(1);
-    expect(messages[0]).toMatchObject({ id: 'm1', role: 'user', content: 'hello world' });
+    expect(messages[0]).toMatchObject({
+      id: 'm1',
+      role: 'user',
+      content: 'hello world',
+    });
   });
 
   it('overlays streaming deltas and lets a committed part_updated supersede them', () => {

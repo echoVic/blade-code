@@ -9,6 +9,7 @@ import * as fs from 'node:fs/promises';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
 import type { PluginSkill } from '../plugins/types.js';
+import { WorkspaceTrustService } from '../security/WorkspaceTrustService.js';
 import { getCwd } from '../utils/cwd.js';
 import {
   getSkillCreatorContent,
@@ -46,13 +47,7 @@ const DEFAULT_CONFIG_BASE = {
 const instances = new Map<string, SkillRegistry>();
 
 function registryKey(config?: SkillRegistryConfig): string {
-  return JSON.stringify({
-    cwd: path.resolve(config?.cwd ?? getCwd()),
-    userSkillsDir: config?.userSkillsDir,
-    projectSkillsDir: config?.projectSkillsDir,
-    claudeUserSkillsDir: config?.claudeUserSkillsDir,
-    claudeProjectSkillsDir: config?.claudeProjectSkillsDir,
-  });
+  return path.resolve(config?.cwd ?? getCwd());
 }
 
 /**
@@ -144,21 +139,26 @@ export class SkillRegistry {
     discoveredSkills.push(...userResult.skills);
     errors.push(...userResult.errors);
 
-    // 4. 扫描 Claude Code 项目级 skills（.claude/skills/）
-    const claudeProjectDir = path.isAbsolute(this.config.claudeProjectSkillsDir)
-      ? this.config.claudeProjectSkillsDir
-      : path.join(this.config.cwd, this.config.claudeProjectSkillsDir);
-    const claudeProjectResult = await this.scanDirectory(claudeProjectDir, 'project');
-    discoveredSkills.push(...claudeProjectResult.skills);
-    errors.push(...claudeProjectResult.errors);
+    const workspaceTrusted =
+      (await WorkspaceTrustService.getInstance().getStatus(this.config.cwd)).state ===
+      'trusted';
+    if (workspaceTrusted) {
+      // 4. 扫描 Claude Code 项目级 skills（.claude/skills/）
+      const claudeProjectDir = path.isAbsolute(this.config.claudeProjectSkillsDir)
+        ? this.config.claudeProjectSkillsDir
+        : path.join(this.config.cwd, this.config.claudeProjectSkillsDir);
+      const claudeProjectResult = await this.scanDirectory(claudeProjectDir, 'project');
+      discoveredSkills.push(...claudeProjectResult.skills);
+      errors.push(...claudeProjectResult.errors);
 
-    // 5. 扫描 Blade 项目级 skills（.blade/skills/）- 优先级最高
-    const projectDir = path.isAbsolute(this.config.projectSkillsDir)
-      ? this.config.projectSkillsDir
-      : path.join(this.config.cwd, this.config.projectSkillsDir);
-    const projectResult = await this.scanDirectory(projectDir, 'project');
-    discoveredSkills.push(...projectResult.skills);
-    errors.push(...projectResult.errors);
+      // 5. 扫描 Blade 项目级 skills（.blade/skills/）- 优先级最高
+      const projectDir = path.isAbsolute(this.config.projectSkillsDir)
+        ? this.config.projectSkillsDir
+        : path.join(this.config.cwd, this.config.projectSkillsDir);
+      const projectResult = await this.scanDirectory(projectDir, 'project');
+      discoveredSkills.push(...projectResult.skills);
+      errors.push(...projectResult.errors);
+    }
 
     // 注册所有发现的 skills（后发现的覆盖先发现的）
     for (const skill of discoveredSkills) {
@@ -350,6 +350,41 @@ export class SkillRegistry {
     this.pluginSkills.clear();
     this.initialized = false;
     return this.initialize();
+  }
+
+  /**
+   * Create a session-owned copy. Later workspace refreshes must not change the
+   * tools or metadata already exposed to an active model turn.
+   */
+  snapshot(): SkillRegistry {
+    const snapshot = new SkillRegistry({ ...this.config });
+    snapshot.skills = new Map(
+      Array.from(this.skills, ([name, metadata]) => [
+        name,
+        {
+          ...metadata,
+          ...(metadata.allowedTools
+            ? { allowedTools: [...metadata.allowedTools] }
+            : {}),
+        },
+      ])
+    );
+    snapshot.pluginSkills = new Map(
+      Array.from(this.pluginSkills, ([name, skill]) => [
+        name,
+        {
+          ...skill,
+          metadata: {
+            ...skill.metadata,
+            ...(skill.metadata.allowedTools
+              ? { allowedTools: [...skill.metadata.allowedTools] }
+              : {}),
+          },
+        },
+      ])
+    );
+    snapshot.initialized = this.initialized;
+    return snapshot;
   }
 
   // ============================================================

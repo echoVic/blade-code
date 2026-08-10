@@ -619,6 +619,34 @@ describe('API Schemas', () => {
 
       expect(() => PermissionResponseSchema.parse(responseWithAnswers)).not.toThrow();
     });
+
+    it('应该保留 MCP elicitation 的结构化类型', () => {
+      expect(
+        PermissionResponseSchema.parse({
+          approved: true,
+          elicitation: {
+            action: 'accept',
+            content: {
+              channel: 'stable',
+              notifications: true,
+              retries: 2,
+              tags: ['api', 'web'],
+            },
+          },
+        })
+      ).toEqual({
+        approved: true,
+        elicitation: {
+          action: 'accept',
+          content: {
+            channel: 'stable',
+            notifications: true,
+            retries: 2,
+            tags: ['api', 'web'],
+          },
+        },
+      });
+    });
   });
 
   describe('ModelConfigSchema', () => {
@@ -628,7 +656,10 @@ describe('API Schemas', () => {
         displayName: 'GPT-4',
         provider: 'openai',
         model: 'gpt-4',
-        overrides: { baseUrl: 'https://gateway.example/v1' },
+        overrides: {
+          baseUrl: 'https://gateway.example/v1',
+          streamIdleTimeout: 300_000,
+        },
       };
 
       expect(() => ModelConfigSchema.parse(validConfig)).not.toThrow();
@@ -642,6 +673,17 @@ describe('API Schemas', () => {
       };
 
       expect(() => ModelConfigSchema.parse(minimalConfig)).not.toThrow();
+    });
+
+    it('应该拒绝小于一秒的流式 idle timeout', () => {
+      expect(() =>
+        ModelConfigSchema.parse({
+          id: 'local-model',
+          provider: 'deepseek',
+          model: 'deepseek-v4-pro',
+          overrides: { streamIdleTimeout: 999 },
+        })
+      ).toThrow();
     });
   });
 

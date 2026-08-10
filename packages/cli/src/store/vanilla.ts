@@ -19,8 +19,11 @@ import type {
   BladeConfig,
   McpServerConfig,
   ModelConfig,
+  ModelProviderConfig,
   PermissionMode,
 } from '../config/types.js';
+import { normalizeMcpOAuthConfig } from '../mcp/auth/index.js';
+import { getPiModelCatalog } from '../services/pi/PiModelCatalog.js';
 import { themeManager } from '../ui/themes/ThemeManager.js';
 import {
   createAppSlice,
@@ -185,6 +188,10 @@ export const getMcpServers = () => getState().config.config?.mcpServers ?? {};
  * 获取 Thinking 模式是否启用
  */
 export const getThinkingModeEnabled = () => getState().app.thinkingModeEnabled;
+export const getReasoningEffort = () => getState().app.reasoningEffort;
+export const getServiceTier = () => getState().app.serviceTier;
+export const getResponseVerbosity = () => getState().app.responseVerbosity;
+export const getCommunicationStyle = () => getState().app.communicationStyle;
 
 // ==================== Config Actions（带持久化）====================
 
@@ -414,6 +421,205 @@ export const configActions = () => ({
   },
 
   /**
+   * Atomically adds a custom provider channel and its first model.
+   */
+  addModelWithProvider: async (
+    modelData: ModelConfig | Omit<ModelConfig, 'id'>,
+    providerConfig: ModelProviderConfig,
+    options: SaveOptions = {}
+  ): Promise<ModelConfig> => {
+    const config = getConfig();
+    if (!config) throw new Error('Config not initialized');
+    const providerId = modelData.provider;
+    if (config.modelProviders[providerId]) {
+      throw new Error(`Model provider already configured: ${providerId}`);
+    }
+    const model: ModelConfig =
+      'id' in modelData ? modelData : { id: nanoid(), ...modelData };
+    const duplicate = config.models.find(
+      (entry) => entry.provider === providerId && entry.model === model.model
+    );
+    if (duplicate) {
+      throw new Error(`Model already configured: ${providerId}/${model.model}`);
+    }
+
+    const snapshot = config;
+    const newModels = [...config.models, model];
+    const updates: Partial<BladeConfig> = {
+      modelProviders: {
+        ...config.modelProviders,
+        [providerId]: providerConfig,
+      },
+      models: newModels,
+    };
+    if (config.models.length === 0) updates.currentModelId = model.id;
+
+    getPiModelCatalog().registerModelProvider(providerId, providerConfig, [
+      model.model,
+    ]);
+    getState().config.actions.updateConfig(updates);
+    try {
+      await getConfigService().save(updates, {
+        scope: 'global',
+        ...options,
+      });
+      return model;
+    } catch (error) {
+      getState().config.actions.setConfig(snapshot);
+      getPiModelCatalog().configureModelProviders(
+        snapshot.modelProviders,
+        snapshot.models
+      );
+      throw error;
+    }
+  },
+
+  /**
+   * Atomically moves an existing model to a newly-created provider channel.
+   */
+  updateModelWithProvider: async (
+    modelId: string,
+    updates: Partial<Omit<ModelConfig, 'id'>>,
+    providerConfig: ModelProviderConfig,
+    options: SaveOptions = {}
+  ): Promise<void> => {
+    const config = getConfig();
+    if (!config) throw new Error('Config not initialized');
+    const providerId = updates.provider;
+    if (!providerId) throw new Error('Model provider is required');
+    if (config.modelProviders[providerId]) {
+      throw new Error(`Model provider already configured: ${providerId}`);
+    }
+    const index = config.models.findIndex((model) => model.id === modelId);
+    if (index === -1) throw new Error(`Model not found: ${modelId}`);
+    const nextModel = { ...config.models[index], ...updates };
+    if (!nextModel.model) throw new Error('Model ID is required');
+
+    const snapshot = config;
+    const newModels = [...config.models];
+    newModels[index] = nextModel;
+    const configUpdates: Partial<BladeConfig> = {
+      modelProviders: {
+        ...config.modelProviders,
+        [providerId]: providerConfig,
+      },
+      models: newModels,
+    };
+
+    getPiModelCatalog().registerModelProvider(providerId, providerConfig, [
+      nextModel.model,
+    ]);
+    getState().config.actions.updateConfig(configUpdates);
+    try {
+      await getConfigService().save(configUpdates, {
+        scope: 'global',
+        ...options,
+      });
+    } catch (error) {
+      getState().config.actions.setConfig(snapshot);
+      getPiModelCatalog().configureModelProviders(
+        snapshot.modelProviders,
+        snapshot.models
+      );
+      throw error;
+    }
+  },
+
+  updateModelProvider: async (
+    providerId: string,
+    providerConfig: ModelProviderConfig,
+    options: SaveOptions = {}
+  ): Promise<void> => {
+    const config = getConfig();
+    if (!config) throw new Error('Config not initialized');
+    if (!config.modelProviders[providerId]) {
+      throw new Error(`Model provider not found: ${providerId}`);
+    }
+    const modelIds = config.models
+      .filter((model) => model.provider === providerId)
+      .map((model) => model.model);
+    getPiModelCatalog().registerModelProvider(providerId, providerConfig, modelIds);
+    await configActions().updateConfig(
+      {
+        modelProviders: {
+          ...config.modelProviders,
+          [providerId]: providerConfig,
+        },
+      },
+      { scope: 'global', immediate: true, ...options }
+    );
+  },
+
+  removeModelProvider: async (
+    providerId: string,
+    options: SaveOptions & { removeModels?: boolean } = {}
+  ): Promise<{ removedModelIds: string[] }> => {
+    const config = getConfig();
+    if (!config) throw new Error('Config not initialized');
+    if (!config.modelProviders[providerId]) {
+      throw new Error(`Model provider not found: ${providerId}`);
+    }
+
+    const directModels = config.models.filter((model) => model.provider === providerId);
+    const fallbackReferences = config.models.filter((model) =>
+      model.fallbackModels?.some((fallback) => fallback.provider === providerId)
+    );
+    if (
+      !options.removeModels &&
+      (directModels.length > 0 || fallbackReferences.length > 0)
+    ) {
+      throw new Error(
+        `Model provider is still referenced by ${directModels.length} model(s) ` +
+          `and ${fallbackReferences.length} fallback configuration(s)`
+      );
+    }
+
+    const removedModelIds = directModels.map((model) => model.id);
+    const nextModels = config.models
+      .filter((model) => model.provider !== providerId)
+      .map((model) => {
+        const fallbackModels = model.fallbackModels?.filter(
+          (fallback) => fallback.provider !== providerId
+        );
+        const { fallbackModels: _previousFallbacks, ...modelWithoutFallbacks } = model;
+        return fallbackModels?.length
+          ? { ...modelWithoutFallbacks, fallbackModels }
+          : modelWithoutFallbacks;
+      });
+    if (nextModels.length === 0) {
+      throw new Error('Cannot remove the provider that owns the only model');
+    }
+
+    const nextProviders = { ...config.modelProviders };
+    delete nextProviders[providerId];
+    const updates: Partial<BladeConfig> = {
+      modelProviders: nextProviders,
+      models: nextModels,
+    };
+    if (removedModelIds.includes(config.currentModelId)) {
+      updates.currentModelId = nextModels[0].id;
+    }
+
+    const catalog = getPiModelCatalog();
+    const previousCredential = await catalog.credentials.read(providerId);
+    await catalog.credentials.delete(providerId);
+    const { removeModels: _removeModels, ...saveOptions } = options;
+    try {
+      await configActions().updateConfig(updates, {
+        scope: 'global',
+        immediate: true,
+        ...saveOptions,
+      });
+      return { removedModelIds };
+    } catch (error) {
+      if (previousCredential) {
+        await catalog.credentials.modify(providerId, async () => previousCredential);
+      }
+      throw error;
+    }
+  },
+
+  /**
    * 更新模型配置
    */
   updateModel: async (
@@ -478,11 +684,16 @@ export const configActions = () => ({
     if (!config) throw new Error('Config not initialized');
 
     const currentServers = config.mcpServers ?? {};
+    const oauth = normalizeMcpOAuthConfig(serverConfig);
+    const normalizedServerConfig: McpServerConfig = {
+      ...serverConfig,
+      ...(oauth ? { oauth } : {}),
+    };
 
     // 2. 添加新服务器
     const updatedServers = {
       ...currentServers,
-      [name]: serverConfig,
+      [name]: normalizedServerConfig,
     };
 
     // 3. 更新 Store

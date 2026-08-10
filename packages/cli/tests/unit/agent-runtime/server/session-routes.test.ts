@@ -34,6 +34,10 @@ type CreateMetadataInitial = Pick<
   | 'taskSourceProjectPath'
   | 'taskWorktree'
   | 'selectedModelId'
+  | 'reasoningEffort'
+  | 'serviceTier'
+  | 'responseVerbosity'
+  | 'communicationStyle'
 >;
 
 const makePreparedInputTurn = (): InputTurnPreparation => ({
@@ -97,6 +101,11 @@ const makeSessionMetadata = (
   taskCompletedAt: overrides.taskCompletedAt,
   taskPromptSummary: overrides.taskPromptSummary,
   taskModelId: overrides.taskModelId,
+  selectedModelId: overrides.selectedModelId,
+  reasoningEffort: overrides.reasoningEffort,
+  serviceTier: overrides.serviceTier,
+  responseVerbosity: overrides.responseVerbosity,
+  communicationStyle: overrides.communicationStyle,
   taskRetryAvailable: overrides.taskRetryAvailable,
   taskRetriedFrom: overrides.taskRetriedFrom,
   taskDelivery: overrides.taskDelivery,
@@ -128,6 +137,47 @@ const runtimeState = vi.hoisted(() => ({
     getExecutionEngine: vi.fn(),
     getAttachmentCollector: vi.fn(),
     getCurrentModelId: vi.fn(() => 'model-1'),
+    getReasoningConfiguration: vi.fn(() => ({
+      selection: 'off' as const,
+      effective: 'off' as const,
+      supported: ['off' as const],
+    })),
+    resolveReasoningConfiguration: vi.fn((selection: string) => ({
+      selection,
+      effective: selection === 'auto' ? 'high' : selection,
+      supported: ['off', 'low', 'medium', 'high'],
+    })),
+    getServiceTierConfiguration: vi.fn(() => ({
+      selection: 'auto' as const,
+      effective: 'provider-default' as const,
+      supported: ['standard', 'fast', 'flex'] as const,
+    })),
+    resolveServiceTierConfiguration: vi.fn((selection: string) => ({
+      selection,
+      effective: selection === 'auto' ? 'provider-default' : selection,
+      supported: ['standard', 'fast', 'flex'],
+    })),
+    getResponseVerbosityConfiguration: vi.fn(() => ({
+      selection: 'auto' as const,
+      effective: 'provider-default' as const,
+      supported: ['low', 'medium', 'high'] as const,
+    })),
+    resolveResponseVerbosityConfiguration: vi.fn((selection: string) => ({
+      selection,
+      effective: selection === 'auto' ? 'provider-default' : selection,
+      supported: ['low', 'medium', 'high'],
+    })),
+    getCommunicationStyleConfiguration: vi.fn(() => ({
+      selection: 'auto' as const,
+      effective: 'blade-default' as const,
+    })),
+    resolveCommunicationStyleConfiguration: vi.fn((selection: string) => ({
+      selection,
+      effective: selection === 'auto' ? 'blade-default' : selection,
+    })),
+    getModelById: vi.fn((modelId: string) =>
+      modelState.current?.id === modelId ? modelState.current : undefined
+    ),
     getCurrentModelMaxContextTokens: vi.fn(() => 128000),
     getTaskAdmissionLimits: vi.fn(() => ({
       maxConcurrent: 3,
@@ -162,6 +212,7 @@ const runtimeState = vi.hoisted(() => ({
 
 const agentState = vi.hoisted(() => ({
   chatStream: vi.fn(),
+  destroy: vi.fn(async () => undefined),
 }));
 
 const modelState = vi.hoisted(() => ({
@@ -237,6 +288,7 @@ vi.mock('../../../../src/agent/Agent.js', () => ({
   Agent: {
     createWithRuntime: vi.fn(async () => ({
       chatStream: agentState.chatStream,
+      destroy: agentState.destroy,
     })),
   },
 }));
@@ -249,9 +301,56 @@ vi.mock('../../../../src/server/bus.js', () => ({
 }));
 
 vi.mock('../../../../src/store/vanilla.js', () => ({
+  getConfig: () => ({
+    currentModelId: modelState.current?.id ?? '',
+    models: modelState.current ? [modelState.current] : [],
+    modelProviders: {},
+  }),
   getCurrentModel: () => modelState.current,
   getModelById: (modelId: string) =>
     modelState.current?.id === modelId ? modelState.current : undefined,
+}));
+
+vi.mock('../../../../src/agent/resources/WorkspaceModelResources.js', () => ({
+  resolveWorkspaceModelResources: vi.fn(
+    async (projectRoot: string, startupConfig: Record<string, unknown>) => ({
+      projectRoot,
+      config: startupConfig,
+      catalog: {
+        resolveConfig: (config: { model: string; provider: string }) => ({
+          id: config.model,
+          name: config.model,
+          provider: config.provider,
+          api: 'openai-completions',
+          baseUrl: 'https://example.test/v1',
+          reasoning: false,
+          input: ['text'],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 128_000,
+          maxTokens: 16_000,
+        }),
+      },
+    })
+  ),
+}));
+
+vi.mock('../../../../src/agent/resources/WorkspaceAgentResources.js', () => ({
+  resolveWorkspaceAgentResources: vi.fn(async () => ({
+    communicationStyles: {
+      resolve: (selection: string) => ({
+        selection,
+        effective: selection === 'auto' ? 'blade-default' : selection,
+        name: selection,
+        description: `Use ${selection}`,
+        source: 'built-in',
+        supported: [],
+      }),
+      list: () => [],
+      snapshot() {
+        return this;
+      },
+    },
+  })),
 }));
 
 vi.mock('../../../../src/worktree/WorktreeManager.js', () => ({
@@ -267,6 +366,9 @@ vi.mock('../../../../src/worktree/WorktreeManager.js', () => ({
 }));
 
 vi.mock('../../../../src/services/SessionService.js', () => ({
+  SessionArchivedError: class SessionArchivedError extends Error {},
+  SessionArchiveConflictError: class SessionArchiveConflictError extends Error {},
+  SessionMissingCreationError: class SessionMissingCreationError extends Error {},
   SessionService: {
     listSessions: vi.fn(async () => []),
     listSessionPage: vi.fn(async () => ({ sessions: [] })),
@@ -274,6 +376,21 @@ vi.mock('../../../../src/services/SessionService.js', () => ({
     findSessionTaskWorktree: vi.fn(async () => undefined),
     findSessionTaskDispatch: vi.fn(async () => undefined),
     loadSession: vi.fn(async () => []),
+    exportSessionMarkdown: vi.fn(async () => ({
+      filename: 'blade-session-test.md',
+      markdown: '# Blade conversation\n',
+      contentSha256: 'a'.repeat(64),
+      contentBytes: 20,
+      messageCount: 1,
+      activityCount: 0,
+      reasoningIncluded: false,
+      reasoningCount: 0,
+      redactionCount: 0,
+    })),
+    assertSessionWritable: vi.fn(async () => undefined),
+    listSessionArchiveMembers: vi.fn(async () => []),
+    archiveSession: vi.fn(async () => undefined),
+    unarchiveSession: vi.fn(async () => undefined),
     createSessionMetadata: vi.fn(
       async (sessionId: string, projectPath: string, initial?: CreateMetadataInitial) =>
         makeSessionMetadata({
@@ -285,6 +402,10 @@ vi.mock('../../../../src/services/SessionService.js', () => ({
           taskModelId: initial?.taskModelId ?? undefined,
           selectedModelId:
             initial?.selectedModelId ?? initial?.taskModelId ?? undefined,
+          reasoningEffort: initial?.reasoningEffort ?? undefined,
+          serviceTier: initial?.serviceTier ?? undefined,
+          responseVerbosity: initial?.responseVerbosity ?? undefined,
+          communicationStyle: initial?.communicationStyle ?? undefined,
           taskRetryAvailable: initial?.taskDispatch !== undefined,
           taskRetriedFrom: initial?.taskRetriedFrom ?? undefined,
           taskIsolation: initial?.taskIsolation ?? undefined,
@@ -302,6 +423,10 @@ vi.mock('../../../../src/services/SessionService.js', () => ({
           projectPath,
           title: update.title,
           selectedModelId: update.selectedModelId ?? undefined,
+          reasoningEffort: update.reasoningEffort ?? undefined,
+          serviceTier: update.serviceTier ?? undefined,
+          responseVerbosity: update.responseVerbosity ?? undefined,
+          communicationStyle: update.communicationStyle ?? undefined,
         })
     ),
     forkSession: vi.fn(
@@ -403,6 +528,10 @@ describe('SessionRoutes runtime reuse', () => {
     };
     runtimeState.runtime.dispose.mockClear();
     runtimeState.runtime.refresh.mockClear();
+    runtimeState.runtime.getResponseVerbosityConfiguration.mockClear();
+    runtimeState.runtime.resolveResponseVerbosityConfiguration.mockClear();
+    runtimeState.runtime.getCommunicationStyleConfiguration.mockClear();
+    runtimeState.runtime.resolveCommunicationStyleConfiguration.mockClear();
     runtimeState.runtime.prepareInputTurn.mockReset();
     runtimeState.runtime.prepareInputTurn.mockImplementation(async () =>
       makePreparedInputTurn()
@@ -490,6 +619,7 @@ describe('SessionRoutes runtime reuse', () => {
         metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
       };
     });
+    agentState.destroy.mockClear();
   });
 
   afterEach(() => {
@@ -647,6 +777,7 @@ describe('SessionRoutes runtime reuse', () => {
       cursor: 'current-cursor',
       limit: 25,
       includeSubagents: false,
+      archived: false,
     });
   });
 
@@ -659,6 +790,148 @@ describe('SessionRoutes runtime reuse', () => {
     const response = await SessionRoutes().request('/catalog?limit=0');
 
     expect(response.status).toBe(400);
+  });
+
+  it('lists archived sessions in an independently scoped catalog', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    vi.mocked(SessionService.listSessionPage).mockResolvedValue({
+      sessions: [],
+      nextCursor: 'archived-next',
+    });
+
+    const response = await SessionRoutes().request('/catalog?archived=true&limit=10');
+
+    expect(response.status).toBe(200);
+    expect(SessionService.listSessionPage).toHaveBeenCalledWith({
+      archived: true,
+      includeSubagents: false,
+      limit: 10,
+    });
+  });
+
+  it('exports an exact active or archived session as non-cacheable Markdown', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const projectPath = '/tmp/export-workspace';
+    const metadata = metadataFor('export-session', projectPath, {
+      title: 'Export session',
+    });
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId, requestedProjectPath) =>
+        sessionId === metadata.sessionId && requestedProjectPath === projectPath
+          ? metadata
+          : undefined
+    );
+    vi.mocked(SessionService.exportSessionMarkdown).mockResolvedValue({
+      filename: 'blade-session-export-sessi.md',
+      markdown: '# Blade conversation\n\n## User\n\nhello\n',
+      contentSha256: 'b'.repeat(64),
+      contentBytes: 16,
+      messageCount: 1,
+      activityCount: 2,
+      reasoningIncluded: true,
+      reasoningCount: 1,
+      redactionCount: 3,
+    });
+
+    const response = await SessionRoutes().request(
+      `/${metadata.sessionId}/export?projectPath=${encodeURIComponent(
+        projectPath
+      )}&includeReasoning=true`
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/markdown');
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('content-disposition')).toContain(
+      'blade-session-export-sessi.md'
+    );
+    expect(response.headers.get('x-blade-content-sha256')).toBe('b'.repeat(64));
+    expect(response.headers.get('x-blade-export-redactions')).toBe('3');
+    await expect(response.text()).resolves.toContain('## User');
+    expect(SessionService.exportSessionMarkdown).toHaveBeenCalledWith(
+      metadata.sessionId,
+      projectPath,
+      { includeReasoning: true }
+    );
+  });
+
+  it('validates export visibility and maps empty conversations to conflict', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const invalid = await SessionRoutes().request(
+      '/missing/export?includeReasoning=maybe'
+    );
+    expect(invalid.status).toBe(400);
+
+    const projectPath = '/tmp/export-empty';
+    const metadata = metadataFor('export-empty', projectPath);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionService.exportSessionMarkdown).mockRejectedValueOnce(
+      new Error('No conversation content to export')
+    );
+    const empty = await SessionRoutes().request(
+      `/${metadata.sessionId}/export?projectPath=${encodeURIComponent(projectPath)}`
+    );
+    expect(empty.status).toBe(409);
+  });
+
+  it('archives and restores an inactive session tree through exact workspace routes', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const projectPath = '/tmp/archive-workspace';
+    const root = metadataFor('archive-root', projectPath);
+    const child = metadataFor('archive-child', projectPath, {
+      rootId: root.sessionId,
+      parentId: root.sessionId,
+      relationType: 'fork',
+    });
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId, requestedProjectPath) =>
+        requestedProjectPath === projectPath && sessionId === root.sessionId
+          ? root
+          : undefined
+    );
+    vi.mocked(SessionService.listSessionArchiveMembers).mockResolvedValue([
+      root,
+      child,
+    ]);
+    vi.mocked(SessionService.archiveSession).mockResolvedValue({
+      ...root,
+      archivedAt: '2026-08-09T00:00:00.000Z',
+      archivedBySessionId: root.sessionId,
+    });
+    vi.mocked(SessionService.unarchiveSession).mockResolvedValue(root);
+
+    const app = SessionRoutes();
+    const archiveResponse = await app.request(
+      `/${root.sessionId}/archive?projectPath=${encodeURIComponent(projectPath)}`,
+      { method: 'POST' }
+    );
+    expect(archiveResponse.status).toBe(200);
+    await expect(archiveResponse.json()).resolves.toMatchObject({
+      session: {
+        sessionId: root.sessionId,
+        archivedBySessionId: root.sessionId,
+      },
+      archivedSessionIds: [root.sessionId, child.sessionId],
+    });
+    expect(SessionService.archiveSession).toHaveBeenCalledWith(
+      root.sessionId,
+      projectPath
+    );
+    expect(busState.publish).toHaveBeenCalledWith(
+      { sessionId: child.sessionId, projectPath },
+      'session.archived',
+      expect.objectContaining({ archiveRootId: root.sessionId })
+    );
+
+    const unarchiveResponse = await app.request(
+      `/${root.sessionId}/unarchive?projectPath=${encodeURIComponent(projectPath)}`,
+      { method: 'POST' }
+    );
+    expect(unarchiveResponse.status).toBe(200);
+    expect(SessionService.unarchiveSession).toHaveBeenCalledWith(
+      root.sessionId,
+      projectPath
+    );
   });
 
   it('reuses one SessionRuntime for repeated messages in the same session', async () => {
@@ -849,6 +1122,68 @@ describe('SessionRoutes runtime reuse', () => {
       },
     });
     expect(runtimeState.runtime.enqueueSteering).not.toHaveBeenCalled();
+
+    const effortSwitch = await app.request('/active-model-session/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: 'switch effort too early',
+        reasoningEffort: 'low',
+      }),
+    });
+    expect(effortSwitch.status).toBe(409);
+    await expect(effortSwitch.json()).resolves.toMatchObject({
+      error: {
+        message: 'Wait for the active turn to finish before switching reasoning effort',
+      },
+    });
+
+    const tierSwitch = await app.request('/active-model-session/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: 'switch service tier too early',
+        serviceTier: 'fast',
+      }),
+    });
+    expect(tierSwitch.status).toBe(409);
+    await expect(tierSwitch.json()).resolves.toMatchObject({
+      error: {
+        message: 'Wait for the active turn to finish before switching service tier',
+      },
+    });
+
+    const verbositySwitch = await app.request('/active-model-session/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: 'switch response verbosity too early',
+        responseVerbosity: 'high',
+      }),
+    });
+    expect(verbositySwitch.status).toBe(409);
+    await expect(verbositySwitch.json()).resolves.toMatchObject({
+      error: {
+        message:
+          'Wait for the active turn to finish before switching response verbosity',
+      },
+    });
+
+    const styleSwitch = await app.request('/active-model-session/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: 'switch communication style too early',
+        communicationStyle: 'friendly',
+      }),
+    });
+    expect(styleSwitch.status).toBe(409);
+    await expect(styleSwitch.json()).resolves.toMatchObject({
+      error: {
+        message:
+          'Wait for the active turn to finish before switching communication style',
+      },
+    });
 
     releaseRun();
     await vi.waitFor(() => {
@@ -1240,6 +1575,142 @@ describe('SessionRoutes runtime reuse', () => {
     );
   });
 
+  it('validates, persists, and publishes an idle Session reasoning switch', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('reasoning-selected-session');
+
+    const response = await SessionRoutes().request(
+      '/reasoning-selected-session/message',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          content: 'use low reasoning',
+          reasoningEffort: 'low',
+        }),
+      }
+    );
+
+    expect(response.status).toBe(202);
+    expect(runtimeState.runtime.resolveReasoningConfiguration).toHaveBeenCalledWith(
+      'low',
+      undefined
+    );
+    expect(runtimeState.runtime.refresh).toHaveBeenCalledWith({
+      reasoningEffort: 'low',
+    });
+    expect(SessionService.updateSessionMetadata).toHaveBeenCalledWith(
+      'reasoning-selected-session',
+      expect.any(String),
+      { reasoningEffort: 'low' }
+    );
+    expect(busState.publish).toHaveBeenCalledWith(
+      refFor('reasoning-selected-session'),
+      'session.updated',
+      { reasoningEffort: 'low' }
+    );
+  });
+
+  it('validates, persists, and publishes an idle Session service-tier switch', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('tier-selected-session');
+
+    const response = await SessionRoutes().request('/tier-selected-session/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: 'use the priority provider tier',
+        serviceTier: 'fast',
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(runtimeState.runtime.resolveServiceTierConfiguration).toHaveBeenCalledWith(
+      'fast',
+      undefined
+    );
+    expect(runtimeState.runtime.refresh).toHaveBeenCalledWith({
+      serviceTier: 'fast',
+    });
+    expect(SessionService.updateSessionMetadata).toHaveBeenCalledWith(
+      'tier-selected-session',
+      expect.any(String),
+      { serviceTier: 'fast' }
+    );
+    expect(busState.publish).toHaveBeenCalledWith(
+      refFor('tier-selected-session'),
+      'session.updated',
+      { serviceTier: 'fast' }
+    );
+  });
+
+  it('validates, persists, and publishes an idle Session response-verbosity switch', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('verbosity-selected-session');
+
+    const response = await SessionRoutes().request(
+      '/verbosity-selected-session/message',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          content: 'use detailed responses',
+          responseVerbosity: 'high',
+        }),
+      }
+    );
+
+    expect(response.status).toBe(202);
+    expect(
+      runtimeState.runtime.resolveResponseVerbosityConfiguration
+    ).toHaveBeenCalledWith('high', undefined);
+    expect(runtimeState.runtime.refresh).toHaveBeenCalledWith({
+      responseVerbosity: 'high',
+    });
+    expect(SessionService.updateSessionMetadata).toHaveBeenCalledWith(
+      'verbosity-selected-session',
+      expect.any(String),
+      { responseVerbosity: 'high' }
+    );
+    expect(busState.publish).toHaveBeenCalledWith(
+      refFor('verbosity-selected-session'),
+      'session.updated',
+      { responseVerbosity: 'high' }
+    );
+  });
+
+  it('validates, persists, and publishes an idle Session communication-style switch', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('style-selected-session');
+
+    const response = await SessionRoutes().request('/style-selected-session/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: 'use an explanatory communication style',
+        communicationStyle: 'explanatory',
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(
+      runtimeState.runtime.resolveCommunicationStyleConfiguration
+    ).toHaveBeenCalledWith('explanatory');
+    expect(runtimeState.runtime.refresh).toHaveBeenCalledWith({
+      communicationStyle: 'explanatory',
+    });
+    expect(SessionService.updateSessionMetadata).toHaveBeenCalledWith(
+      'style-selected-session',
+      expect.any(String),
+      { communicationStyle: 'explanatory' }
+    );
+    expect(busState.publish).toHaveBeenCalledWith(
+      refFor('style-selected-session'),
+      'session.updated',
+      { communicationStyle: 'explanatory' }
+    );
+  });
+
   it('rolls back an idle runtime switch when the selected model cannot be persisted', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     mockResolvedSession('model-persistence-failure');
@@ -1271,6 +1742,10 @@ describe('SessionRoutes runtime reuse', () => {
     });
     expect(runtimeState.runtime.refresh).toHaveBeenNthCalledWith(2, {
       modelId: 'model-1',
+      reasoningEffort: 'off',
+      serviceTier: 'auto',
+      responseVerbosity: 'auto',
+      communicationStyle: 'auto',
     });
     expect(runtimeState.runtime.prepareInputTurn).not.toHaveBeenCalled();
   });
@@ -1618,6 +2093,7 @@ describe('SessionRoutes runtime reuse', () => {
         taskPromptSummary: 'Implement the durable task dispatcher',
         taskIsolation: isolation,
         taskSourceProjectPath: '/tmp/task-source',
+        reasoningEffort: 'off',
         ...(isolation === 'worktree'
           ? {
               taskWorktree: expect.objectContaining({
@@ -1666,6 +2142,35 @@ describe('SessionRoutes runtime reuse', () => {
       });
     }
   });
+
+  it('disposes a terminal task runtime after completion', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const controller = createSessionRouteController();
+
+    const dispatched = await controller.dispatchTask({
+      prompt: 'Complete and release the runtime',
+      sourceProjectPath: '/tmp/terminal-runtime',
+      isolation: 'local',
+      permissionMode: PermissionMode.DEFAULT,
+    });
+
+    expect(dispatched.session.taskIsolation).toBe('local');
+    await vi.waitFor(
+      () => {
+        expect(agentState.chatStream).toHaveBeenCalled();
+        expect(busState.publish).toHaveBeenCalledWith(
+          expect.objectContaining({ sessionId: dispatched.session.sessionId }),
+          'session.completed',
+          expect.any(Object)
+        );
+        expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 3_000 }
+    );
+  });
+
   it('rejects task dispatch before durable creation when no model is configured', async () => {
     const { createSessionRouteController } = await import(
       '../../../../src/server/routes/session.js'
@@ -1739,6 +2244,10 @@ describe('SessionRoutes runtime reuse', () => {
         taskDispatch: {
           ...dispatch,
           modelId: 'model-1',
+          reasoningEffort: 'off',
+          serviceTier: 'auto',
+          responseVerbosity: 'auto',
+          communicationStyle: 'auto',
         },
         taskRetriedFrom: {
           sessionId: source.sessionId,
@@ -2571,7 +3080,17 @@ describe('SessionRoutes runtime reuse', () => {
     vi.mocked(SessionService.loadSession).mockImplementation(
       async (sessionId: string, projectPath?: string) => {
         if (sessionId === 'shared-session' && projectPath === '/tmp/workspace-b') {
-          return makeMessages({ role: 'assistant', content: 'workspace-b-history' });
+          return [
+            {
+              role: 'system',
+              content: 'internal-contextual-project-rule',
+              metadata: { contextualProjectRules: true },
+            },
+            ...makeMessages({
+              role: 'assistant',
+              content: 'workspace-b-history',
+            }),
+          ];
         }
         return makeMessages();
       }

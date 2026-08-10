@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const pluginState = {
-  initialize: vi.fn(),
-  integrateAllPlugins: vi.fn(),
+  resolveWorkspaceAgentResources: vi.fn(),
 };
 
 const slashState = {
@@ -68,10 +67,12 @@ vi.mock('ink', () => ({
 }));
 
 vi.mock('../../../src/plugins/index.js', () => ({
-  getPluginRegistry: vi.fn(() => ({
-    initialize: pluginState.initialize,
-  })),
-  integrateAllPlugins: pluginState.integrateAllPlugins,
+  getPluginRegistry: vi.fn(),
+  integrateAllPlugins: vi.fn(),
+}));
+
+vi.mock('../../../src/agent/resources/WorkspaceAgentResources.js', () => ({
+  resolveWorkspaceAgentResources: pluginState.resolveWorkspaceAgentResources,
 }));
 
 vi.mock('../../../src/slash-commands/index.js', () => ({
@@ -107,8 +108,7 @@ vi.mock('../../../src/ui/hooks/useCtrlCHandler.js', () => ({
 describe('command input helpers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    pluginState.initialize.mockResolvedValue({ plugins: [] });
-    pluginState.integrateAllPlugins.mockResolvedValue(undefined);
+    pluginState.resolveWorkspaceAgentResources.mockResolvedValue(undefined);
     slashState.isSlashCommand.mockReturnValue(false);
     mainInputState.useInputHandler = undefined;
     mainInputState.suggestions = [
@@ -128,17 +128,13 @@ describe('command input helpers', () => {
     atCompletionState.applySuggestion.mockReset();
   });
 
-  it('initializes plugins and only integrates when plugins are present', async () => {
+  it('initializes workspace agent resources before CLI input handling', async () => {
     const { initializeCliPlugins } = await import(
       '../../../src/commands/shared/commandInput.js'
     );
 
     await initializeCliPlugins();
-    expect(pluginState.integrateAllPlugins).not.toHaveBeenCalled();
-
-    pluginState.initialize.mockResolvedValueOnce({ plugins: [{ name: 'demo' }] });
-    await initializeCliPlugins();
-    expect(pluginState.integrateAllPlugins).toHaveBeenCalledTimes(1);
+    expect(pluginState.resolveWorkspaceAgentResources).toHaveBeenCalledOnce();
   });
 
   it('normalizes slash command requests into agent prompts', async () => {

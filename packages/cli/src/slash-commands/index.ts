@@ -3,6 +3,7 @@
  */
 
 import Fuse from 'fuse.js';
+import { resolveWorkspaceAgentResources } from '../agent/resources/WorkspaceAgentResources.js';
 import { getPluginRegistry } from '../plugins/index.js';
 import { discoverSkills, getSkillRegistry } from '../skills/index.js';
 import type { SkillMetadata } from '../skills/types.js';
@@ -24,6 +25,7 @@ import searchCommand from './search.js';
 import skillsCommand from './skills.js';
 import tasksCommand from './tasks.js';
 import themeCommand from './theme.js';
+import trustCommand from './trust.js';
 import type {
   CommandSuggestion,
   SlashCommand,
@@ -47,6 +49,7 @@ const slashCommands: SlashCommandRegistry = {
   hooks: hooksCommand,
   tasks: tasksCommand,
   plugins: pluginsCommand,
+  trust: trustCommand,
 };
 
 /**
@@ -176,6 +179,7 @@ export async function executeSlashCommand(
 
     // 2. 查找自定义命令
     const workspaceRoot = context.workspaceRoot || context.cwd || getCwd();
+    await resolveWorkspaceAgentResources(workspaceRoot);
     const customRegistry = CustomCommandRegistry.getInstance(workspaceRoot);
     if (!customRegistry.isInitialized()) {
       await initializeCustomCommands(workspaceRoot);
@@ -207,7 +211,7 @@ export async function executeSlashCommand(
     }
 
     // 3. 查找插件命令（支持命名空间格式 /plugin:command）
-    const pluginRegistry = getPluginRegistry();
+    const pluginRegistry = getPluginRegistry(workspaceRoot);
     const pluginCommand = pluginRegistry.findCommand(command);
     if (pluginCommand) {
       // 执行插件命令
@@ -277,7 +281,7 @@ export function getRegisteredCommands(
   }));
 
   // 获取插件命令并转换为 SlashCommand
-  const pluginRegistry = getPluginRegistry();
+  const pluginRegistry = getPluginRegistry(workspaceRoot);
   const pluginCmds = pluginRegistry.getAllCommands().map((cmd) => ({
     name: cmd.namespacedName,
     description: cmd.config.description || cmd.content.slice(0, 50),
@@ -331,7 +335,7 @@ export function getFuzzyCommandSuggestions(
   }));
 
   // 添加插件命令
-  const pluginRegistry = getPluginRegistry();
+  const pluginRegistry = getPluginRegistry(workspaceRoot);
   const pluginSearchable = pluginRegistry.getAllCommands().map((cmd) => ({
     name: cmd.namespacedName,
     description: cmd.config.description || cmd.content.slice(0, 50),

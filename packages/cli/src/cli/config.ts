@@ -132,6 +132,13 @@ export const globalOptions = {
     describe: 'Auto-approve all tools (shortcut for --permission-mode=yolo)',
     group: 'Security Options:',
   },
+  'trust-workspace': {
+    alias: ['trustWorkspace'],
+    type: 'boolean',
+    describe:
+      'Trust the current workspace before loading project models, MCP, LSP, permissions, or plugins',
+    group: 'Security Options:',
+  },
   continue: {
     alias: 'c',
     type: 'boolean',

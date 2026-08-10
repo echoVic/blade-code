@@ -1,6 +1,7 @@
 import type { Api, Model, MutableModels } from '@earendil-works/pi-ai';
 import type { ModelRef } from '../../config/types.js';
 import type { ChatConfig } from '../ChatServiceInterface.js';
+import { normalizeProviderBaseUrl } from './endpoint.js';
 import { getPiModelCatalog } from './PiModelCatalog.js';
 
 export interface PiRuntime {
@@ -11,13 +12,15 @@ export interface PiRuntime {
 function applyOverrides(model: Model<Api>, config: ChatConfig): Model<Api> {
   return {
     ...model,
-    ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
+    ...(config.baseUrl
+      ? { baseUrl: normalizeProviderBaseUrl(model.api, config.baseUrl) }
+      : {}),
     ...(config.maxOutputTokens ? { maxTokens: config.maxOutputTokens } : {}),
   };
 }
 
 export function createPiRuntime(config: ChatConfig): PiRuntime {
-  const catalog = getPiModelCatalog();
+  const catalog = config.modelCatalog ?? getPiModelCatalog();
   return {
     models: catalog.models,
     model: applyOverrides(catalog.getModel(config.provider, config.model), config),
@@ -28,6 +31,6 @@ export function createFallbackModel(
   config: ChatConfig,
   fallback: ModelRef
 ): Model<Api> {
-  const catalog = getPiModelCatalog();
+  const catalog = config.modelCatalog ?? getPiModelCatalog();
   return applyOverrides(catalog.getModel(fallback.provider, fallback.model), config);
 }

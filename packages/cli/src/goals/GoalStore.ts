@@ -1,16 +1,16 @@
-import { Mutex } from 'async-mutex';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { Mutex } from 'async-mutex';
 import { nanoid } from 'nanoid';
 import writeFileAtomic from 'write-file-atomic';
 import { getSessionGoalFilePath } from '../context/storage/pathUtils.js';
-import { StringEnum, Type, parseSchema, safeParseSchema } from '../schema/index.js';
+import { parseSchema, StringEnum, safeParseSchema, Type } from '../schema/index.js';
 import {
+  GOAL_STATUSES,
   type GoalChangeEvent,
   type GoalCreateInput,
   type GoalProgress,
   type GoalSnapshot,
-  GOAL_STATUSES,
 } from './types.js';
 
 const MAX_GOAL_FILE_BYTES = 1024 * 1024;

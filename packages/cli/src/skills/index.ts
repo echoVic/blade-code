@@ -28,4 +28,8 @@
  */
 
 export { injectSkillsMetadata } from './injectSkillsMetadata.js';
-export { discoverSkills, getSkillRegistry } from './SkillRegistry.js';
+export {
+  discoverSkills,
+  getSkillRegistry,
+  SkillRegistry,
+} from './SkillRegistry.js';

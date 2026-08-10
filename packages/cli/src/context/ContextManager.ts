@@ -18,6 +18,7 @@ import {
   ContextManagerOptions,
   ContextMessage,
   ContextFilter as FilterOptions,
+  MessagePersistenceMetadata,
   SubagentRunRef,
   SystemContext,
   ToolCall,
@@ -256,11 +257,7 @@ export class ContextManager {
     role: 'user' | 'assistant' | 'system',
     content: string | ContentPart[],
     parentUuid: string | null = null,
-    metadata?: {
-      model?: string;
-      usage?: { input_tokens: number; output_tokens: number };
-      inboxMessageId?: string;
-    },
+    metadata?: MessagePersistenceMetadata,
     subagentInfo?: SubagentInfoForContext,
     reasoningContent?: string
   ): Promise<string> {

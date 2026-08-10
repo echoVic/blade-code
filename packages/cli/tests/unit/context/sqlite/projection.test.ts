@@ -47,7 +47,11 @@ const derive: MetadataDeriver = (entries, sessionId, projectPath) => {
 };
 
 function writeTranscript(file: string, events: SessionEvent[]): Promise<void> {
-  return writeFile(file, `${events.map((e) => JSON.stringify(e)).join('\n')}\n`, 'utf8');
+  return writeFile(
+    file,
+    `${events.map((e) => JSON.stringify(e)).join('\n')}\n`,
+    'utf8'
+  );
 }
 
 describe('SQLite projection sync', () => {
@@ -82,7 +86,12 @@ describe('SQLite projection sync', () => {
 
   it('projects a session and its searchable text', async () => {
     await writeTranscript(sessionFile(), [
-      ev(1, 'session_created', { sessionId, rootId: sessionId, createdAt: ts, updatedAt: ts }),
+      ev(1, 'session_created', {
+        sessionId,
+        rootId: sessionId,
+        createdAt: ts,
+        updatedAt: ts,
+      }),
       ev(2, 'message_created', { messageId: 'm1', role: 'user', createdAt: ts }),
       ev(3, 'part_created', {
         partId: 'p1',
@@ -110,7 +119,12 @@ describe('SQLite projection sync', () => {
 
   it('is mtime/size gated: unchanged session is skipped on second sync', async () => {
     await writeTranscript(sessionFile(), [
-      ev(1, 'session_created', { sessionId, rootId: sessionId, createdAt: ts, updatedAt: ts }),
+      ev(1, 'session_created', {
+        sessionId,
+        rootId: sessionId,
+        createdAt: ts,
+        updatedAt: ts,
+      }),
     ]);
     // Pin mtime so a second stat matches exactly.
     const fixed = new Date('2024-02-02T02:02:02.000Z');
@@ -130,16 +144,12 @@ describe('SQLite projection sync', () => {
       }),
     ]);
 
-    expect(
-      await syncSession(db, sessionId, projectPath, trackedDerive)
-    ).toBe(true);
-    expect(
-      await syncSession(db, sessionId, projectPath, trackedDerive)
-    ).toBe(false);
+    expect(await syncSession(db, sessionId, projectPath, trackedDerive)).toBe(true);
+    expect(await syncSession(db, sessionId, projectPath, trackedDerive)).toBe(false);
     expect(trackedDerive).toHaveBeenCalledTimes(1);
-    expect(
-      db.prepare('SELECT COUNT(*) c FROM sessions').get<{ c: number }>()?.c
-    ).toBe(0);
+    expect(db.prepare('SELECT COUNT(*) c FROM sessions').get<{ c: number }>()?.c).toBe(
+      0
+    );
 
     await writeTranscript(sessionFile(), [
       ev(1, 'session_created', {
@@ -149,35 +159,70 @@ describe('SQLite projection sync', () => {
         updatedAt: ts,
       }),
     ]);
-    expect(
-      await syncSession(db, sessionId, projectPath, trackedDerive)
-    ).toBe(true);
-    expect(
-      db.prepare('SELECT COUNT(*) c FROM sessions').get<{ c: number }>()?.c
-    ).toBe(1);
+    expect(await syncSession(db, sessionId, projectPath, trackedDerive)).toBe(true);
+    expect(db.prepare('SELECT COUNT(*) c FROM sessions').get<{ c: number }>()?.c).toBe(
+      1
+    );
 
     await writeTranscript(sessionFile(), []);
-    expect(
-      await syncSession(db, sessionId, projectPath, trackedDerive)
-    ).toBe(true);
-    expect(
-      db.prepare('SELECT COUNT(*) c FROM sessions').get<{ c: number }>()?.c
-    ).toBe(0);
+    expect(await syncSession(db, sessionId, projectPath, trackedDerive)).toBe(true);
+    expect(db.prepare('SELECT COUNT(*) c FROM sessions').get<{ c: number }>()?.c).toBe(
+      0
+    );
   });
 
   it('re-materializes on rewind (seq truncation) without duplicating parts', async () => {
     const file = sessionFile();
     // u1 (user checkpoint) → a1 answer, then u2 (user checkpoint) → a2 answer.
     const baseEvents: SessionEvent[] = [
-      ev(1, 'session_created', { sessionId, rootId: sessionId, createdAt: ts, updatedAt: ts }),
+      ev(1, 'session_created', {
+        sessionId,
+        rootId: sessionId,
+        createdAt: ts,
+        updatedAt: ts,
+      }),
       ev(2, 'message_created', { messageId: 'u1', role: 'user', createdAt: ts }),
-      ev(3, 'part_created', { partId: 'pu1', messageId: 'u1', partType: 'text', payload: { text: 'question one' }, createdAt: ts }),
-      ev(4, 'message_created', { messageId: 'a1', role: 'assistant', parentMessageId: 'u1', createdAt: ts }),
-      ev(5, 'part_created', { partId: 'pa1', messageId: 'a1', partType: 'text', payload: { text: 'first answer' }, createdAt: ts }),
+      ev(3, 'part_created', {
+        partId: 'pu1',
+        messageId: 'u1',
+        partType: 'text',
+        payload: { text: 'question one' },
+        createdAt: ts,
+      }),
+      ev(4, 'message_created', {
+        messageId: 'a1',
+        role: 'assistant',
+        parentMessageId: 'u1',
+        createdAt: ts,
+      }),
+      ev(5, 'part_created', {
+        partId: 'pa1',
+        messageId: 'a1',
+        partType: 'text',
+        payload: { text: 'first answer' },
+        createdAt: ts,
+      }),
       ev(6, 'message_created', { messageId: 'u2', role: 'user', createdAt: ts }),
-      ev(7, 'part_created', { partId: 'pu2', messageId: 'u2', partType: 'text', payload: { text: 'question two' }, createdAt: ts }),
-      ev(8, 'message_created', { messageId: 'a2', role: 'assistant', parentMessageId: 'u2', createdAt: ts }),
-      ev(9, 'part_created', { partId: 'pa2', messageId: 'a2', partType: 'text', payload: { text: 'second answer' }, createdAt: ts }),
+      ev(7, 'part_created', {
+        partId: 'pu2',
+        messageId: 'u2',
+        partType: 'text',
+        payload: { text: 'question two' },
+        createdAt: ts,
+      }),
+      ev(8, 'message_created', {
+        messageId: 'a2',
+        role: 'assistant',
+        parentMessageId: 'u2',
+        createdAt: ts,
+      }),
+      ev(9, 'part_created', {
+        partId: 'pa2',
+        messageId: 'a2',
+        partType: 'text',
+        payload: { text: 'second answer' },
+        createdAt: ts,
+      }),
     ];
     await writeTranscript(file, baseEvents);
     await syncSession(db, sessionId, projectPath, derive);
@@ -185,7 +230,13 @@ describe('SQLite projection sync', () => {
     // Rewind to u2 (conversation mode): truncates u2's turn onward.
     await writeTranscript(file, [
       ...baseEvents,
-      ev(10, 'session_rewound', { rewindId: 'r1', targetMessageId: 'u2', mode: 'conversation', restoredFiles: [], createdAt: ts }),
+      ev(10, 'session_rewound', {
+        rewindId: 'r1',
+        targetMessageId: 'u2',
+        mode: 'conversation',
+        restoredFiles: [],
+        createdAt: ts,
+      }),
     ]);
     await syncSession(db, sessionId, projectPath, derive);
 
@@ -198,18 +249,23 @@ describe('SQLite projection sync', () => {
 
   it('syncAll GCs rows whose JSONL no longer exists', async () => {
     await writeTranscript(sessionFile(), [
-      ev(1, 'session_created', { sessionId, rootId: sessionId, createdAt: ts, updatedAt: ts }),
+      ev(1, 'session_created', {
+        sessionId,
+        rootId: sessionId,
+        createdAt: ts,
+        updatedAt: ts,
+      }),
     ]);
     await syncAll(db, derive);
-    expect(
-      db.prepare('SELECT COUNT(*) c FROM sessions').get<{ c: number }>()?.c
-    ).toBe(1);
+    expect(db.prepare('SELECT COUNT(*) c FROM sessions').get<{ c: number }>()?.c).toBe(
+      1
+    );
 
     await rm(sessionFile());
     await syncAll(db, derive);
-    expect(
-      db.prepare('SELECT COUNT(*) c FROM sessions').get<{ c: number }>()?.c
-    ).toBe(0);
+    expect(db.prepare('SELECT COUNT(*) c FROM sessions').get<{ c: number }>()?.c).toBe(
+      0
+    );
     expect(
       db.prepare('SELECT COUNT(*) c FROM projection_state').get<{ c: number }>()?.c
     ).toBe(0);

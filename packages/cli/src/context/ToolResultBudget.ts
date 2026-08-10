@@ -6,9 +6,9 @@
  */
 
 import * as fs from 'fs';
+import { nanoid } from 'nanoid';
 import * as os from 'os';
 import * as path from 'path';
-import { nanoid } from 'nanoid';
 
 const DEFAULT_MAX_RESULT_CHARS = 100_000;
 const PREVIEW_CHARS = 2000;

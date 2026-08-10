@@ -3,6 +3,7 @@
  * Blade Code CLI
  */
 
+import path from 'node:path';
 import { setProjectRoot } from './bootstrap/state.js';
 import { Logger } from './logging/Logger.js';
 import { initializeGracefulShutdown } from './services/GracefulShutdown.js';
@@ -47,6 +48,27 @@ function hasFlag(args: string[], ...flags: string[]): boolean {
   );
 }
 
+function getOptionValues(args: string[], ...names: string[]): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const inlineName = names.find((name) => arg.startsWith(`${name}=`));
+    if (inlineName) {
+      const value = arg.slice(inlineName.length + 1);
+      if (value) values.push(value);
+      continue;
+    }
+    if (names.includes(arg)) {
+      const value = args[index + 1];
+      if (value && !value.startsWith('-')) {
+        values.push(value);
+        index += 1;
+      }
+    }
+  }
+  return values;
+}
+
 export async function main() {
   if (isPlainVersionRequest(rawArgs)) {
     const { getVersion } = await import('./utils/packageInfo.js');
@@ -57,9 +79,27 @@ export async function main() {
   // 初始化工作区根目录（必须在所有依赖 cwd 的代码之前）
   // originalCwd 保持为 process.cwd()（已在 bootstrap/state.ts initState 中设置），
   // 用于解析 CLI 参数中的相对路径（如 --mcp-config ./mcp.json）
-  const detectedRoot = findProjectRoot(process.cwd());
+  const invocationCwd = process.cwd();
+  const detectedRoot = findProjectRoot(invocationCwd);
   setCwd(detectedRoot);
   setProjectRoot(getCwd());
+
+  const pluginDirs = getOptionValues(rawArgs, '--plugin-dir', '--pluginDir');
+  if (pluginDirs.length > 0) {
+    const { configureInvocationPluginDirs } = await import(
+      './agent/resources/WorkspaceAgentResources.js'
+    );
+    configureInvocationPluginDirs(
+      pluginDirs.map((directory) => path.resolve(invocationCwd, directory))
+    );
+  }
+
+  if (hasFlag(rawArgs, '--trust-workspace', '--trustWorkspace')) {
+    const { WorkspaceTrustService } = await import(
+      './security/WorkspaceTrustService.js'
+    );
+    await WorkspaceTrustService.getInstance().trust(getCwd());
+  }
 
   // 防止使用 sudo 运行（避免创建 root 拥有的文件）
   // 但允许在容器/沙箱/CI 等天然 root 环境中运行

@@ -477,11 +477,6 @@ describe('ACP fork notification window', () => {
 });
 
 const enabled = isRealApiTestEnabled();
-if (enabled && !process.env.DEEPSEEK_API_KEY?.trim()) {
-  throw new Error(
-    'ACP fork qualification requires a DeepSeek key from the process environment'
-  );
-}
 const modelConfigs = enabled
   ? resolveForkQualificationModels(process.env, { requiredDeepSeek: true })
   : [];
@@ -666,14 +661,19 @@ describeTrajectory('ACP durable fork trajectory (real API)', () => {
                 expect.objectContaining({ id: 'yolo' }),
               ]),
             },
-            models: {
-              currentModelId: runtimeConfig.currentModelId,
-              availableModels: expect.arrayContaining([
-                expect.objectContaining({
-                  modelId: runtimeConfig.currentModelId,
-                }),
-              ]),
-            },
+            configOptions: expect.arrayContaining([
+              expect.objectContaining({
+                type: 'select',
+                id: 'model',
+                category: 'model',
+                currentValue: runtimeConfig.currentModelId,
+                options: expect.arrayContaining([
+                  expect.objectContaining({
+                    value: runtimeConfig.currentModelId,
+                  }),
+                ]),
+              }),
+            ]),
           });
           const parentId = created.sessionId;
           const parentCommands = await harness.client.waitForNotification(
@@ -727,7 +727,7 @@ describeTrajectory('ACP durable fork trajectory (real API)', () => {
           expect(listed.parent).toMatchObject({
             sessionId: parentId,
             cwd: fixture.workspace,
-            title: null,
+            title: expect.stringContaining('Use Read'),
           });
           expect(typeof listed.parent.updatedAt).toBe('string');
           expect(Number.isNaN(Date.parse(listed.parent.updatedAt ?? ''))).toBe(false);
@@ -758,7 +758,12 @@ describeTrajectory('ACP durable fork trajectory (real API)', () => {
           const { sessionId: _parentId, ...newSetup } = created;
           const { sessionId: childId, ...forkSetup } = forked;
           expect(childId).not.toBe(parentId);
-          expect(forkSetup).toEqual(newSetup);
+          expect(forkSetup).toMatchObject(newSetup);
+          expect(forkSetup._meta).toMatchObject({
+            'blade/taskIsolation': 'local',
+            'blade/taskSourceProjectPath': fixture.workspace,
+            'blade/taskProjectPath': fixture.workspace,
+          });
 
           getState().config.actions.updateConfig({
             allowedTools: ['Write', 'Bash'],
@@ -780,7 +785,7 @@ describeTrajectory('ACP durable fork trajectory (real API)', () => {
                 type: 'text',
                 text: [
                   'Recover the complete marker from the inherited Read result.',
-                  'Use Write to create result.txt with those exact bytes and exactly one trailing newline.',
+                  `Use Write on the exact absolute path ${resultPath} with those exact bytes and exactly one trailing newline.`,
                   'Then use Bash with exactly `wc -c result.txt`.',
                   'Use no other tools or commands, never repeat the marker in final prose, and briefly confirm completion.',
                 ].join(' '),

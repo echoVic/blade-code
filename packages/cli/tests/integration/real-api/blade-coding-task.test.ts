@@ -22,15 +22,18 @@ import {
   parseHeadlessJsonl,
   redactSecrets,
 } from './codingTaskHarness.js';
-import { isRealApiTestEnabled } from './testConfig.js';
+import {
+  isRealApiTestEnabled,
+  resolveDeepSeekQualificationSettings,
+} from './testConfig.js';
 
 const cliEntry = path.resolve('dist', 'blade.js');
-const apiKey = process.env.DEEPSEEK_API_KEY ?? '';
-const baseUrl = process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com';
-const models = (process.env.DEEPSEEK_MODELS ?? 'deepseek-v4-flash,deepseek-v4-pro')
-  .split(',')
-  .map((model) => model.trim())
-  .filter(Boolean);
+const qualification = isRealApiTestEnabled()
+  ? resolveDeepSeekQualificationSettings()
+  : undefined;
+const apiKey = qualification?.apiKey ?? '';
+const baseUrl = qualification?.baseURL ?? 'https://api.deepseek.com';
+const models = qualification?.models ?? [];
 
 let realSpawn: typeof spawn;
 
@@ -1026,7 +1029,7 @@ function createTranscriptInspectionPrompt(): string {
   ].join('\n');
 }
 
-const enabled = isRealApiTestEnabled() && apiKey.length > 0;
+const enabled = Boolean(qualification);
 
 describe.skipIf(!enabled)('Blade coding task (real API)', () => {
   describe.each(models)('%s', (model) => {

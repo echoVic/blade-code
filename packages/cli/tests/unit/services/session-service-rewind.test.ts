@@ -240,7 +240,11 @@ describe('SessionService durable rewind', () => {
     });
 
     expect(fork.messages).toEqual([
-      { role: 'user', content: 'keep this turn' },
+      {
+        role: 'user',
+        content: 'keep this turn',
+        metadata: { inboxMessageId: 'inbox-1' },
+      },
       { role: 'assistant', content: 'first complete' },
     ]);
     const childRaw = await readFile(

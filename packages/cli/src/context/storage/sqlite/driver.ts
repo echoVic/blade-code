@@ -43,11 +43,11 @@ function wrapBetterSqlite(db: BetterSqliteDatabase): SqliteDb {
         run: (...params) => {
           stmt.run(...params);
         },
-        get: <T,>(...params: unknown[]) => stmt.get(...params) as T | undefined,
-        all: <T,>(...params: unknown[]) => stmt.all(...params) as T[],
+        get: <T>(...params: unknown[]) => stmt.get(...params) as T | undefined,
+        all: <T>(...params: unknown[]) => stmt.all(...params) as T[],
       };
     },
-    transaction: <T,>(fn: () => T): T => db.transaction(fn)(),
+    transaction: <T>(fn: () => T): T => db.transaction(fn)(),
     pragma: (source) => db.pragma(source, { simple: true }),
     close: () => db.close(),
   };
@@ -63,12 +63,13 @@ function wrapBunSqlite(db: BunDatabase): SqliteDb {
         run: (...params) => {
           stmt.run(...(params as never[]));
         },
-        get: <T,>(...params: unknown[]) => stmt.get(...(params as never[])) as T | undefined,
-        all: <T,>(...params: unknown[]) => stmt.all(...(params as never[])) as T[],
+        get: <T>(...params: unknown[]) =>
+          stmt.get(...(params as never[])) as T | undefined,
+        all: <T>(...params: unknown[]) => stmt.all(...(params as never[])) as T[],
       };
     },
     // bun:sqlite 也提供 db.transaction(fn)，返回可调用的包装函数。
-    transaction: <T,>(fn: () => T): T => db.transaction(fn)(),
+    transaction: <T>(fn: () => T): T => db.transaction(fn)(),
     pragma: (source) => {
       const row = db.query(`PRAGMA ${source}`).get() as Record<string, unknown> | null;
       if (!row) return undefined;

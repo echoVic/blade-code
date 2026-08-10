@@ -10,12 +10,12 @@
  */
 
 import type { StateCreator } from 'zustand';
+import type { EphemeralDelta } from '../../context/events/EphemeralDelta.js';
 import {
   applyCommittedEvent,
   applyDelta,
   type ConversationState,
 } from '../../context/events/reducers/conversationReducer.js';
-import type { EphemeralDelta } from '../../context/events/EphemeralDelta.js';
 import type { SessionEvent } from '../../context/types.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import { estimateCostUsd } from '../../services/pricing.js';

@@ -3,11 +3,12 @@
  *
  * ## 构建顺序（固定）
  * 1. 默认提示（buildDefaultPrompt() 模块化组装）或 replaceDefault
- * 2. 项目指令（CLAUDE.md / AGENTS.md / BLADE.md）- 始终加载，不受 replaceDefault 影响
- * 3. Auto Memory（MEMORY.md 前 200 行）- 跨会话持久记忆
- * 4. 环境上下文（getEnvironmentContext）
- * 5. 追加内容（append）
- * 6. 模式特定提示（Plan 模式等）
+ * 2. Session communication style
+ * 3. 项目指令（CLAUDE.md / AGENTS.md / BLADE.md）- 始终加载，不受 replaceDefault 影响
+ * 4. Auto Memory（MEMORY.md 前 200 行）- 跨会话持久记忆
+ * 5. 环境上下文（getEnvironmentContext）
+ * 6. 追加内容（append）
+ * 7. 模式特定提示（Plan 模式等）
  *
  * 默认提示由 sections.ts 的 8 个模块化段函数组装
  *
@@ -17,8 +18,15 @@
  * - 各部分用 `\n\n---\n\n` 分隔
  */
 
+import type { ProjectRuleCatalog } from '../agent/resources/WorkspaceProjectRules.js';
+import type { CommunicationStyleSelection } from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
 import { AutoMemoryManager } from '../memory/AutoMemoryManager.js';
+import { WorkspaceTrustService } from '../security/WorkspaceTrustService.js';
+import {
+  type CommunicationStyleCatalog,
+  renderCommunicationStyleSection,
+} from '../services/communicationStyle.js';
 import { getSkillRegistry } from '../skills/index.js';
 import {
   type EnvironmentContextOptions,
@@ -68,6 +76,39 @@ export interface BuildSystemPromptOptions {
    * AI 回复语言（如 'zh-CN', 'en-US'）
    */
   language?: string;
+
+  /**
+   * Optional resolved folder-trust decision. Callers normally omit this and
+   * let the builder query WorkspaceTrustService.
+   */
+  projectTrusted?: boolean;
+
+  /**
+   * Immutable project-rule catalog owned by the current Session.
+   */
+  projectRuleCatalog?: ProjectRuleCatalog;
+
+  /**
+   * Source checkout path represented by the execution workspace.
+   */
+  projectInstructionSourcePath?: string;
+
+  /**
+   * Session-owned skill listing. When provided, the prompt must not consult a
+   * live workspace registry that may have changed after Session creation.
+   */
+  availableSkills?: string;
+
+  /**
+   * Session-owned communication style. This affects presentation only and is
+   * intentionally independent from provider-native response verbosity.
+   */
+  communicationStyle?: CommunicationStyleSelection;
+
+  /**
+   * Immutable style catalog owned by the current Session.
+   */
+  communicationStyleCatalog?: CommunicationStyleCatalog;
 }
 
 /**
@@ -118,6 +159,12 @@ export async function buildSystemPrompt(
     includeEnvironment = true,
     environmentOptions,
     language,
+    projectTrusted,
+    projectRuleCatalog,
+    projectInstructionSourcePath,
+    availableSkills,
+    communicationStyle = 'auto',
+    communicationStyleCatalog,
   } = options;
 
   const parts: string[] = [];
@@ -145,10 +192,34 @@ export async function buildSystemPrompt(
     length: basePrompt.length,
   });
 
-  // 2. 分层项目指令 - 始终加载，不受 replaceDefault 影响
-  if (projectPath) {
-    const projectInstructions = await loadProjectInstructions(projectPath);
-    if (projectInstructions) {
+  // 2. Session-owned communication style
+  const communicationStyleSection = renderCommunicationStyleSection(
+    communicationStyle,
+    communicationStyleCatalog
+  );
+  if (communicationStyleSection) {
+    parts.push(communicationStyleSection);
+    sources.push({
+      name: 'communication_style',
+      loaded: true,
+      length: communicationStyleSection.length,
+    });
+  } else {
+    sources.push({ name: 'communication_style', loaded: false });
+  }
+
+  const allowProjectInstructions =
+    projectPath !== undefined &&
+    (projectTrusted ??
+      (await WorkspaceTrustService.getInstance().getStatus(projectPath)).state ===
+        'trusted');
+
+  // 3. 分层项目指令 - 仅在 Folder Trust 通过后加载
+  if (projectPath && allowProjectInstructions) {
+    const projectInstructions = projectRuleCatalog
+      ? projectRuleCatalog.staticRules(projectInstructionSourcePath ?? projectPath)
+      : await loadProjectInstructions(projectPath);
+    if (projectInstructions && projectInstructions.files.length > 0) {
       parts.push(projectInstructions.content);
       sources.push({
         name: 'project_instructions',
@@ -158,9 +229,11 @@ export async function buildSystemPrompt(
     } else {
       sources.push({ name: 'project_instructions', loaded: false });
     }
+  } else if (projectPath) {
+    sources.push({ name: 'project_instructions', loaded: false });
   }
 
-  // 3. Auto Memory（MEMORY.md 前 N 行）- 跨会话持久记忆
+  // 4. Auto Memory（MEMORY.md 前 N 行）- 跨会话持久记忆
   if (projectPath && process.env.BLADE_AUTO_MEMORY !== '0') {
     try {
       const memoryManager = new AutoMemoryManager(projectPath);
@@ -180,7 +253,7 @@ export async function buildSystemPrompt(
     }
   }
 
-  // 4. 环境上下文
+  // 5. 环境上下文
   if (includeEnvironment) {
     const envContext = getEnvironmentContext(
       projectPath
@@ -193,7 +266,7 @@ export async function buildSystemPrompt(
     }
   }
 
-  // 5. 追加内容
+  // 6. 追加内容
   if (append?.trim()) {
     parts.push(append.trim());
     sources.push({ name: 'append', loaded: true, length: append.trim().length });
@@ -203,7 +276,7 @@ export async function buildSystemPrompt(
   let prompt = parts.join('\n\n---\n\n');
 
   // 注入 Skills 元数据到 <available_skills> 占位符
-  prompt = injectSkillsToPrompt(prompt, projectPath);
+  prompt = injectSkillsToPrompt(prompt, projectPath, availableSkills);
 
   // 注入语言指令
   prompt = injectLanguageInstruction(prompt, language);
@@ -214,9 +287,16 @@ export async function buildSystemPrompt(
 /**
  * 注入 Skills 列表到系统提示的 <available_skills> 占位符
  */
-function injectSkillsToPrompt(prompt: string, projectPath?: string): string {
-  const registry = getSkillRegistry(projectPath ? { cwd: projectPath } : undefined);
-  const skillsList = registry.generateAvailableSkillsList();
+function injectSkillsToPrompt(
+  prompt: string,
+  projectPath?: string,
+  availableSkills?: string
+): string {
+  const skillsList =
+    availableSkills ??
+    getSkillRegistry(
+      projectPath ? { cwd: projectPath } : undefined
+    ).generateAvailableSkillsList();
 
   // 如果没有 skills，保持占位符为空（但保留标签结构）
   if (!skillsList) {

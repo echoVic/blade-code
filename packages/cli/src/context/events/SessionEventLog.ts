@@ -1,6 +1,6 @@
-import { getSessionFilePath } from '../storage/pathUtils.js';
-import { JSONLStore } from '../storage/JSONLStore.js';
 import { Bus } from '../../server/bus.js';
+import { JSONLStore } from '../storage/JSONLStore.js';
+import { getSessionFilePath } from '../storage/pathUtils.js';
 import type { SessionEvent } from '../types.js';
 import type { EphemeralDelta } from './EphemeralDelta.js';
 
@@ -92,18 +92,19 @@ export class SessionEventLog {
     }
     // Ephemeral fan-out onto the Bus WITHOUT a seq, so it never advances a
     // consumer's Last-Event-ID cursor. Deltas are never replayed on reconnect.
-    Bus.publish(
-      { sessionId: this.sessionId, projectPath: this.projectPath },
-      'delta',
-      { delta }
-    );
+    Bus.publish({ sessionId: this.sessionId, projectPath: this.projectPath }, 'delta', {
+      delta,
+    });
   }
 
   /**
    * Subscribe to the stream. With {@link SubscribeOptions.fromSeq}, committed
    * events at or after the cursor are replayed before live delivery.
    */
-  subscribe(subscriber: SessionStreamSubscriber, options?: SubscribeOptions): () => void {
+  subscribe(
+    subscriber: SessionStreamSubscriber,
+    options?: SubscribeOptions
+  ): () => void {
     this.subscribers.add(subscriber);
     if (options?.fromSeq !== undefined) {
       void this.replay(subscriber, options.fromSeq);

@@ -24,6 +24,11 @@ describe('ModelsRoutes', () => {
       provider: 'deepseek',
       baseUrl: 'https://api.deepseek.com',
       reasoning: true,
+      thinkingLevelMap: {
+        off: null,
+        xhigh: 'xhigh',
+        max: null,
+      },
       input: ['text'],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 1_000_000,
@@ -41,6 +46,9 @@ describe('ModelsRoutes', () => {
       model: 'deepseek-v4-pro',
       contextWindow: 1_000_000,
       maxTokens: 384_000,
+      supportedReasoningEfforts: ['minimal', 'low', 'medium', 'high', 'xhigh'],
+      supportedServiceTiers: ['standard', 'fast', 'flex'],
+      supportedResponseVerbosities: [],
     });
   });
 
@@ -55,5 +63,51 @@ describe('ModelsRoutes', () => {
       overrides: { baseUrl: 'https://example.test/v1' },
     });
     expect(updates).not.toHaveProperty('model');
+  });
+
+  it('projects communication style summaries without prompt or host paths', () => {
+    const config = {
+      id: 'gpt',
+      provider: 'openai',
+      model: 'gpt-5',
+    } as ModelConfig;
+    const runtimeModel = {
+      id: 'gpt-5',
+      name: 'GPT-5',
+      api: 'openai-completions',
+      provider: 'openai',
+      baseUrl: 'https://api.openai.com',
+      reasoning: true,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128_000,
+      maxTokens: 32_000,
+    } satisfies Model<Api>;
+    const projected = projectModelConfig(config, runtimeModel, [
+      {
+        id: 'project:strict',
+        name: 'Strict',
+        description: 'Strict project communication',
+        source: 'project',
+        contentSha256: 'a'.repeat(64),
+      },
+    ]);
+
+    expect(projected.communicationStyles).toEqual([
+      expect.objectContaining({
+        id: 'project:strict',
+        contentSha256: 'a'.repeat(64),
+      }),
+    ]);
+    expect(JSON.stringify(projected)).not.toContain('CUSTOM_STYLE_MARKER');
+    expect(JSON.stringify(projected)).not.toContain('/Users/');
+  });
+
+  it('rejects a stream watchdog value that would cause a retry storm', () => {
+    expect(() =>
+      createModelUpdates({
+        overrides: { streamIdleTimeout: 999 },
+      })
+    ).toThrow('streamIdleTimeout must be at least 1000ms');
   });
 });

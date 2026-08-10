@@ -7,7 +7,10 @@ import {
   SessionTaskDeliveryRequestSchema,
   SessionTaskDiffArtifactSchema,
 } from '../../api/schemas.js';
-import { PermissionMode } from '../../config/types.js';
+import {
+  type CommunicationStyleSelection,
+  PermissionMode,
+} from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { safeParseSchema } from '../../schema/index.js';
 import { getCwd } from '../../utils/cwd.js';
@@ -69,6 +72,12 @@ export const TaskRoutes = (controller: SessionRouteController) => {
         isolation: parsed.data.isolation,
         permissionMode: parsed.data.permissionMode as PermissionMode,
         modelId: parsed.data.modelId,
+        reasoningEffort: parsed.data.reasoningEffort,
+        serviceTier: parsed.data.serviceTier,
+        responseVerbosity: parsed.data.responseVerbosity,
+        communicationStyle: parsed.data.communicationStyle as
+          | CommunicationStyleSelection
+          | undefined,
         attachments: parsed.data.attachments,
       });
       return c.json(CreateTaskResponseSchema.parse(result), 202);

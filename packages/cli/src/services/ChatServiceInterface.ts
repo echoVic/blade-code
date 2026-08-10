@@ -3,6 +3,8 @@
  * 定义统一的聊天服务接口，支持多种 API 提供商
  */
 
+import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
+
 /** OpenAI-compatible tool call (function variant only — custom tools not used) */
 export interface ToolCallFunction {
   arguments: string;
@@ -28,6 +30,7 @@ import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { JsonValue, MessageRole } from '../store/types.js';
 import { getProviderHeaders } from '../ui/components/model-config/types.js';
 import { PiAIChatService } from './PiAIChatService.js';
+import type { PiModelCatalog } from './pi/PiModelCatalog.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -99,13 +102,19 @@ export interface ChatConfig {
   maxContextTokens?: number;
   maxOutputTokens?: number;
   timeout?: number;
+  streamIdleTimeout?: number;
   apiVersion?: string;
   reasoningEnabled?: boolean;
+  reasoningEffort?: Exclude<ModelThinkingLevel, 'off'>;
   reasoningLevel?: 'low' | 'medium' | 'high';
+  serviceTier?: 'default' | 'priority' | 'flex' | 'fast';
+  responseVerbosity?: 'low' | 'medium' | 'high';
   customHeaders?: Record<string, string>;
   fallbackModels?: ModelRef[];
   enablePromptCaching?: boolean;
   maxRetries?: number;
+  /** Session-owned model/provider catalog. Never serialize this field. */
+  modelCatalog?: PiModelCatalog;
 }
 
 /**
@@ -134,6 +143,8 @@ export interface ChatRequestOptions {
     type: 'tool';
     toolName: string;
   };
+  maxOutputTokens?: number;
+  temperature?: number;
 }
 
 /**
@@ -141,9 +152,7 @@ export interface ChatRequestOptions {
  * - OpenAI/Azure 流式 delta 期间的 tool call（id 等字段可能是可选的）
  * - 以及收敛后的完整 tool call
  */
-export type StreamToolCall =
-  | ChatCompletionMessageToolCall
-  | StreamToolCallDelta;
+export type StreamToolCall = ChatCompletionMessageToolCall | StreamToolCallDelta;
 
 /**
  * 流式响应块

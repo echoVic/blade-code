@@ -9,6 +9,7 @@ export interface SessionListOptions {
   cursor?: string | null;
   limit?: number;
   includeSubagents?: boolean;
+  archived?: boolean;
 }
 
 export interface SessionCatalogItem {
@@ -23,12 +24,14 @@ export interface NormalizedSessionListOptions {
   cursor?: string;
   limit: number;
   includeSubagents: boolean;
+  archived: boolean;
 }
 
 export interface SessionCursorBoundary {
   version: 1;
   cwd: string | null;
   includeSubagents: boolean;
+  archived?: boolean;
   lastMessageTime: string;
   projectPath: string;
   sessionId: string;
@@ -67,6 +70,7 @@ function parseCursor(cursor: string): SessionCursorBoundary {
     if (
       parsed.version !== 1 ||
       typeof parsed.includeSubagents !== 'boolean' ||
+      (parsed.archived !== undefined && typeof parsed.archived !== 'boolean') ||
       !(parsed.cwd === null || isValidAbsolutePath(parsed.cwd)) ||
       !isValidIsoTime(parsed.lastMessageTime) ||
       !isValidAbsolutePath(parsed.projectPath) ||
@@ -78,6 +82,7 @@ function parseCursor(cursor: string): SessionCursorBoundary {
       version: 1,
       cwd: parsed.cwd === null ? null : path.resolve(parsed.cwd),
       includeSubagents: parsed.includeSubagents,
+      archived: parsed.archived ?? false,
       lastMessageTime: parsed.lastMessageTime,
       projectPath: path.resolve(parsed.projectPath),
       sessionId: parsed.sessionId,
@@ -102,7 +107,8 @@ export function resolveSessionCursorBoundary(
   const decoded = parseCursor(options.cursor);
   if (
     decoded.cwd !== options.cwd ||
-    decoded.includeSubagents !== options.includeSubagents
+    decoded.includeSubagents !== options.includeSubagents ||
+    (decoded.archived ?? false) !== options.archived
   ) {
     throw new Error('Session cursor scope does not match this query');
   }
@@ -112,7 +118,7 @@ export function resolveSessionCursorBoundary(
 export function normalizeSessionListOptions(
   options: SessionListOptions = {}
 ): NormalizedSessionListOptions {
-  const { cwd, cursor, limit, includeSubagents = false } = options;
+  const { cwd, cursor, limit, includeSubagents = false, archived = false } = options;
 
   if (cwd !== undefined && !path.isAbsolute(cwd)) {
     throw new Error('Session catalog cwd must be absolute');
@@ -132,6 +138,7 @@ export function normalizeSessionListOptions(
     cursor: cursor ?? undefined,
     limit: normalizedLimit,
     includeSubagents,
+    archived,
   };
 }
 
@@ -178,6 +185,7 @@ export function paginateSessionCatalog<T extends SessionCatalogItem>(
       version: 1,
       cwd: options.cwd,
       includeSubagents: options.includeSubagents,
+      archived: options.archived,
       lastMessageTime: last.lastMessageTime,
       projectPath: last.projectPath,
       sessionId: last.sessionId,

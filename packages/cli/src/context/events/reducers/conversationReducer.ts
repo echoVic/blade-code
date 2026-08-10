@@ -1,6 +1,6 @@
-import type { EphemeralDelta } from '../EphemeralDelta.js';
-import type { SessionEvent } from '../../types.js';
 import type { SessionMessage } from '../../../store/types.js';
+import type { SessionEvent } from '../../types.js';
+import type { EphemeralDelta } from '../EphemeralDelta.js';
 
 /**
  * Conversation read-model — the shared CQRS projection.
@@ -67,9 +67,7 @@ export function applyCommittedEvent(
         state.streamingText.delete(partId);
         message.content = text;
       } else if (partType === 'image') {
-        message.content = message.content
-          ? `${message.content}\n[Image]`
-          : '[Image]';
+        message.content = message.content ? `${message.content}\n[Image]` : '[Image]';
       }
       return state;
     }
@@ -99,7 +97,9 @@ export function applyDelta(
 }
 
 /** Fold an ordered committed event stream into a fresh conversation projection. */
-export function projectConversation(events: readonly SessionEvent[]): ConversationState {
+export function projectConversation(
+  events: readonly SessionEvent[]
+): ConversationState {
   const state = createConversationState();
   for (const event of events) applyCommittedEvent(state, event);
   return state;

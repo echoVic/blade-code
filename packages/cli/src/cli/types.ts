@@ -33,6 +33,7 @@ export interface GlobalOptions {
   maxConcurrentTasks?: number;
   maxQueuedTasks?: number;
   pluginDir?: string[];
+  trustWorkspace?: boolean;
 }
 
 export interface DoctorOptions extends GlobalOptions {

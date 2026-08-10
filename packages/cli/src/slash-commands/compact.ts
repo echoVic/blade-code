@@ -60,7 +60,7 @@ async function compactCommandHandler(
 
     // 显示压缩前信息
     const preTokens = TokenCounter.countTokens(messages, currentModel.model);
-    const resolvedModel = resolveModelConfig(currentModel, config, false);
+    const resolvedModel = resolveModelConfig(currentModel, config, 'off');
     const tokenLimit = resolvedModel.model.contextWindow;
     const usagePercent = ((preTokens / tokenLimit) * 100).toFixed(1);
 

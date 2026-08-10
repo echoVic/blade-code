@@ -13,6 +13,7 @@
 
 import type { StateCreator } from 'zustand';
 import type { RuntimeConfig } from '../../config/types.js';
+import { getPiModelCatalog } from '../../services/pi/PiModelCatalog.js';
 import type { BladeStore, ConfigSlice, ConfigState } from '../types.js';
 
 /**
@@ -26,7 +27,8 @@ const initialConfigState: ConfigState = {
  * 创建 Config Slice
  */
 export const createConfigSlice: StateCreator<BladeStore, [], [], ConfigSlice> = (
-  set
+  set,
+  get
 ) => ({
   ...initialConfigState,
 
@@ -35,6 +37,7 @@ export const createConfigSlice: StateCreator<BladeStore, [], [], ConfigSlice> = 
      * 设置完整配置
      */
     setConfig: (config: RuntimeConfig) => {
+      getPiModelCatalog().configureModelProviders(config.modelProviders, config.models);
       set((state) => ({
         config: { ...state.config, config },
       }));
@@ -45,21 +48,25 @@ export const createConfigSlice: StateCreator<BladeStore, [], [], ConfigSlice> = 
      * @throws {Error} 如果 config 未初始化
      */
     updateConfig: (partial: Partial<RuntimeConfig>) => {
-      set((state) => {
-        if (!state.config.config) {
-          // 配置未初始化时，抛出错误
-          throw new Error(
-            `[ConfigSlice] Config not initialized. Cannot update: ${JSON.stringify(partial)}`
-          );
-        }
-
-        return {
-          config: {
-            ...state.config,
-            config: { ...state.config.config, ...partial },
-          },
-        };
-      });
+      const current = get().config.config;
+      if (!current) {
+        throw new Error(
+          `[ConfigSlice] Config not initialized. Cannot update: ${JSON.stringify(partial)}`
+        );
+      }
+      const config = { ...current, ...partial };
+      if (partial.modelProviders || partial.models) {
+        getPiModelCatalog().configureModelProviders(
+          config.modelProviders,
+          config.models
+        );
+      }
+      set((state) => ({
+        config: {
+          ...state.config,
+          config,
+        },
+      }));
     },
   },
 });

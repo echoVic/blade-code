@@ -1,4 +1,4 @@
-import { getPluginRegistry, integrateAllPlugins } from '../../plugins/index.js';
+import { resolveWorkspaceAgentResources } from '../../agent/resources/WorkspaceAgentResources.js';
 import { executeSlashCommand, isSlashCommand } from '../../slash-commands/index.js';
 import { getCwd } from '../../utils/cwd.js';
 
@@ -13,11 +13,7 @@ interface ReadCliInputOptions extends MessageLikeOptions {
 }
 
 export async function initializeCliPlugins(): Promise<void> {
-  const pluginRegistry = getPluginRegistry();
-  const pluginResult = await pluginRegistry.initialize(getCwd(), []);
-  if (pluginResult.plugins.length > 0) {
-    await integrateAllPlugins();
-  }
+  await resolveWorkspaceAgentResources(getCwd());
 }
 
 export async function readCliInput(options: ReadCliInputOptions): Promise<string> {
@@ -53,6 +49,7 @@ export async function normalizeCliInput(input: string): Promise<{
 
   const result = await executeSlashCommand(input, {
     cwd: getCwd(),
+    surface: 'headless',
     workspaceRoot: getCwd(),
   });
 

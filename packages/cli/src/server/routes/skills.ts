@@ -2,9 +2,15 @@ import * as fs from 'node:fs/promises';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
 import { Hono } from 'hono';
+import { resolveWorkspaceAgentResources } from '../../agent/resources/WorkspaceAgentResources.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import {
+  clearAllPluginResources,
+  integrateAllPlugins,
+} from '../../plugins/PluginIntegrator.js';
 import { getSkillRegistry } from '../../skills/index.js';
 import { getSkillInstaller } from '../../skills/SkillInstaller.js';
+import { getCwd } from '../../utils/cwd.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -134,8 +140,8 @@ export const SkillsRoutes = () => {
 
   app.get('/', async (c) => {
     try {
-      const registry = getSkillRegistry({ cwd: c.get('directory') });
-      await registry.initialize();
+      const directory = c.get('directory') || getCwd();
+      const registry = (await resolveWorkspaceAgentResources(directory)).skills;
       const skills = registry.getAll();
       const config = await loadSkillsConfig();
 
@@ -183,8 +189,8 @@ export const SkillsRoutes = () => {
   app.delete('/:name', async (c) => {
     try {
       const name = c.req.param('name');
-      const registry = getSkillRegistry({ cwd: c.get('directory') });
-      await registry.initialize();
+      const directory = c.get('directory') || getCwd();
+      const registry = (await resolveWorkspaceAgentResources(directory)).skills;
       const skill = registry.get(name);
       if (!skill) {
         return c.json({ success: false, error: 'Skill not found' }, 404);
@@ -204,6 +210,8 @@ export const SkillsRoutes = () => {
 
       await fs.rm(skillPath, { recursive: true, force: true });
       await registry.refresh();
+      clearAllPluginResources(directory);
+      await integrateAllPlugins(directory);
 
       return c.json({ success: true });
     } catch (error) {
@@ -222,7 +230,8 @@ export const SkillsRoutes = () => {
       };
 
       const installer = getSkillInstaller();
-      const registry = getSkillRegistry({ cwd: c.get('directory') });
+      const directory = c.get('directory') || getCwd();
+      const registry = getSkillRegistry({ cwd: directory });
       let success = false;
 
       if (body.source === 'catalog' && body.name) {
@@ -269,6 +278,8 @@ export const SkillsRoutes = () => {
       }
 
       await registry.refresh();
+      clearAllPluginResources(directory);
+      await integrateAllPlugins(directory);
       return c.json({ success: true });
     } catch (error) {
       logger.error('[SkillsRoutes] Failed to install skill:', error);

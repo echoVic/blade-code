@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { EphemeralDelta } from '../../../../src/context/events/EphemeralDelta.js';
 import {
   applyCommittedEvent,
   applyDelta,
@@ -6,7 +7,6 @@ import {
   projectConversation,
 } from '../../../../src/context/events/reducers/conversationReducer.js';
 import type { SessionEvent } from '../../../../src/context/types.js';
-import type { EphemeralDelta } from '../../../../src/context/events/EphemeralDelta.js';
 
 const ts = '2024-01-01T00:00:00.000Z';
 
@@ -44,7 +44,12 @@ function textPart(
   });
 }
 
-function delta(partId: string, messageId: string, text: string, index: number): EphemeralDelta {
+function delta(
+  partId: string,
+  messageId: string,
+  text: string,
+  index: number
+): EphemeralDelta {
   return {
     sessionId: 's',
     projectPath: '/w',
@@ -60,10 +65,7 @@ function delta(partId: string, messageId: string, text: string, index: number): 
 
 describe('conversationReducer', () => {
   it('projects a committed message + text part into a rendered message', () => {
-    const events = [
-      messageCreated(1, 'm1', 'user'),
-      textPart(2, 'm1', 'p1', 'hello'),
-    ];
+    const events = [messageCreated(1, 'm1', 'user'), textPart(2, 'm1', 'p1', 'hello')];
     const state = projectConversation(events);
     expect(state.messages).toEqual([
       { id: 'm1', role: 'user', content: 'hello', timestamp: Date.parse(ts) },

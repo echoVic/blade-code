@@ -1,7 +1,7 @@
 import type { SubagentConfig } from '../agent/subagents/types.js';
 import { mapClaudeCodePermissionMode } from '../agent/subagents/types.js';
 import { MAX_AGENT_TURNS } from '../config/maxTurns.js';
-import { StringEnum, Type, safeParseSchema } from '../schema/index.js';
+import { StringEnum, safeParseSchema, Type } from '../schema/index.js';
 
 const AgentNameSchema = Type.String({
   minLength: 1,

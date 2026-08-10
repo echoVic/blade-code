@@ -1,5 +1,5 @@
-import type { ProjectDirectorySelection } from '../../api/schemas.js';
 import { Hono } from 'hono';
+import type { ProjectDirectorySelection } from '../../api/schemas.js';
 import { safeParseSchema, Type } from '../../schema/index.js';
 import { nativeDirectoryPicker } from '../../services/DirectoryPicker.js';
 import { projectRegistry } from '../../services/ProjectRegistry.js';

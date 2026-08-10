@@ -12,20 +12,20 @@ import { DEFAULT_CONFIG } from '../../../src/config/defaults.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
-import { isRealApiTestEnabled } from './testConfig.js';
+import {
+  isRealApiTestEnabled,
+  resolveDeepSeekQualificationSettings,
+} from './testConfig.js';
 
 const execFileAsync = promisify(execFile);
-const apiKey = process.env.DEEPSEEK_API_KEY ?? '';
-const upstreamBaseUrl = process.env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com';
-const configuredModels = (process.env.DEEPSEEK_MODELS ?? '')
-  .split(',')
-  .map((model) => model.trim())
-  .filter(Boolean);
-const flashModel =
-  configuredModels.find((model) => model === 'deepseek-v4-flash') ?? '';
-const proModel = configuredModels.find((model) => model === 'deepseek-v4-pro') ?? '';
-const enabled =
-  isRealApiTestEnabled() && Boolean(apiKey) && Boolean(flashModel) && Boolean(proModel);
+const qualification = isRealApiTestEnabled()
+  ? resolveDeepSeekQualificationSettings()
+  : undefined;
+const apiKey = qualification?.apiKey ?? '';
+const upstreamBaseUrl = qualification?.baseURL ?? 'https://api.deepseek.com';
+const flashModel = qualification?.models[0] ?? '';
+const proModel = qualification?.models[1] ?? '';
+const enabled = Boolean(qualification);
 const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
 let originalConfig: RuntimeConfig | null = null;
 
@@ -256,9 +256,7 @@ describe.skipIf(!enabled)('ACP session model switch trajectory (real API)', () =
           cwd: workspace,
           mcpServers: [],
         });
-        const modelConfig = session.configOptions?.find(
-          (o) => o.id === 'model'
-        );
+        const modelConfig = session.configOptions?.find((o) => o.id === 'model');
         expect(
           modelConfig && 'currentValue' in modelConfig
             ? modelConfig.currentValue

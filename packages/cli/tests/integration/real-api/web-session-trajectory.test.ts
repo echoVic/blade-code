@@ -48,11 +48,6 @@ import {
 } from './testConfig.js';
 
 const enabled = isRealApiTestEnabled();
-if (enabled && !process.env.DEEPSEEK_API_KEY?.trim()) {
-  throw new Error(
-    'Web fork qualification requires DeepSeek credentials from the process environment'
-  );
-}
 const modelConfigs = enabled
   ? resolveForkQualificationModels(process.env, { requiredDeepSeek: true })
   : [];
@@ -125,14 +120,32 @@ function createResolvedConfig(
   const modelId = overrides.idSuffix
     ? `${selected.id}-${overrides.idSuffix}`
     : selected.id;
+  const customProvider = base.modelProviders[selected.provider];
   return {
     ...base,
     currentModelId: modelId,
+    modelProviders:
+      overrides.baseURL && customProvider
+        ? {
+            ...base.modelProviders,
+            [selected.provider]: {
+              ...customProvider,
+              baseUrl: overrides.baseURL,
+            },
+          }
+        : base.modelProviders,
     models: [
       {
         ...selected,
         id: modelId,
-        ...(overrides.baseURL ? { baseUrl: overrides.baseURL } : {}),
+        ...(overrides.baseURL && !customProvider
+          ? {
+              overrides: {
+                ...selected.overrides,
+                baseUrl: overrides.baseURL,
+              },
+            }
+          : {}),
       },
     ],
     permissionMode: PermissionMode.YOLO,
@@ -562,9 +575,9 @@ function assertForkEventIdsAreIndependent(
   }
 }
 
-function parentPrompt(): string {
+function parentPrompt(memoryPath: string): string {
   return [
-    'Use the Read tool to read the workspace file memory.txt.',
+    `Use the Read tool on the exact absolute path ${memoryPath}.`,
     'Remember its complete contents for a later fork.',
     'Only Read is allowed. Exact retries are acceptable.',
     'Never repeat, quote, encode, summarize, or otherwise expose any file contents.',
@@ -1108,11 +1121,15 @@ describeWebTrajectory('Web durable fork trajectories (real API)', () => {
 
         parent = await createSession(activeServer, fixture.workspace);
         await expect(listSession(activeServer, parent)).resolves.toMatchObject({
-          taskStatus: 'queued',
+          taskStatus: 'completed',
         });
         parentCollector = await collectEvents(activeServer, parent);
         const parentEventBoundary = parentCollector.events.length;
-        const accepted = await sendMessage(activeServer, parent, parentPrompt());
+        const accepted = await sendMessage(
+          activeServer,
+          parent,
+          parentPrompt(memoryPath)
+        );
         await waitForRunCompletion(
           activeServer,
           parent,
@@ -1254,7 +1271,11 @@ describeWebTrajectory('Web durable fork trajectories (real API)', () => {
         await listSession(activeServer, parent);
         parentCollector = await collectEvents(activeServer, parent);
         const firstSseBoundary = parentCollector.events.length;
-        const firstAccepted = await sendMessage(activeServer, parent, parentPrompt());
+        const firstAccepted = await sendMessage(
+          activeServer,
+          parent,
+          parentPrompt(memoryPath)
+        );
         await waitForRunCompletion(
           activeServer,
           parent,

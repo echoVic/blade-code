@@ -14,9 +14,11 @@ import { BladeServerError } from './error.js';
 import { ConfigRoutes } from './routes/config.js';
 import { EventRoutes } from './routes/events.js';
 import { GlobalRoutes } from './routes/global.js';
+import { HookRoutes } from './routes/hooks.js';
 import { McpRoutes } from './routes/mcp.js';
 import { ModelsRoutes } from './routes/models.js';
 import { PermissionRoutes } from './routes/permission.js';
+import { PluginRoutes } from './routes/plugins.js';
 import { ProjectRoutes } from './routes/projects.js';
 import { ProviderRoutes } from './routes/provider.js';
 import { createSessionRouteController } from './routes/session.js';
@@ -28,6 +30,7 @@ import {
   TerminalRoutes,
   terminalWebSocket,
 } from './routes/terminal.js';
+import { WorkspaceTrustRoutes } from './routes/workspaceTrust.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -263,6 +266,9 @@ function createApp(): Hono<{ Variables: Variables }> {
   app.route('/tasks', TaskRoutes(sessionController));
   app.route('/configs', ConfigRoutes());
   app.route('/permissions', PermissionRoutes());
+  app.route('/plugins', PluginRoutes());
+  app.route('/hooks', HookRoutes());
+  app.route('/workspace-trust', WorkspaceTrustRoutes());
   app.route('/providers', ProviderRoutes());
   app.route('/models', ModelsRoutes());
   app.route('/projects', ProjectRoutes());

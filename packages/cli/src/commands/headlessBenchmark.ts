@@ -1,10 +1,10 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { parseSchema } from '../schema/index.js';
+import { getCwd } from '../utils/cwd.js';
 import { runHeadless } from './headless.js';
 import type { HeadlessJsonlEvent } from './headlessEvents.js';
 import { HeadlessJsonlEventSchema } from './headlessEvents.js';
-import { parseSchema } from '../schema/index.js';
-import { getCwd } from '../utils/cwd.js';
 
 export interface RealRepoBenchmarkCase {
   id: 'analysis_only' | 'narrow_fix' | 'cross_module_fix';

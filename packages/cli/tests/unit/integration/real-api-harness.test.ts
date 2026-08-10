@@ -37,7 +37,9 @@ import {
 import {
   buildRealApiRuntimeConfig,
   expandDeepSeekModelMatrix,
+  loadBladeCurrentModel,
   normalizeNewApiBaseURL,
+  resolveDeepSeekQualificationSettings,
   resolveForkQualificationModels,
   resolveModelSettings,
 } from '../../integration/real-api/testConfig.js';
@@ -249,6 +251,45 @@ describe('real API coding-task harness', () => {
     }
   });
 
+  it('loads model metadata and API credentials from the split Blade store', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'blade-real-api-config-'));
+    try {
+      writeFileSync(
+        path.join(root, 'config.json'),
+        JSON.stringify({
+          currentModelId: 'configured-deepseek',
+          models: [
+            {
+              id: 'configured-deepseek',
+              displayName: 'Configured DeepSeek',
+              provider: 'deepseek',
+              model: 'deepseek-v4-flash',
+              overrides: { baseUrl: 'https://gateway.invalid/v1' },
+            },
+          ],
+        })
+      );
+      writeFileSync(
+        path.join(root, 'auth.json'),
+        JSON.stringify({
+          deepseek: { type: 'api_key', key: 'stored-fake-secret' },
+        })
+      );
+
+      expect(loadBladeCurrentModel(root)).toEqual({
+        id: 'configured-deepseek',
+        displayName: 'Configured DeepSeek',
+        provider: 'deepseek',
+        model: 'deepseek-v4-flash',
+        apiKey: 'stored-fake-secret',
+        baseUrl: 'https://gateway.invalid/v1',
+        overrides: { baseUrl: 'https://gateway.invalid/v1' },
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('parses versioned JSONL events and reports malformed lines', () => {
     const parsed = parseHeadlessJsonl(
       [
@@ -412,6 +453,38 @@ describe('real API coding-task harness', () => {
     expect(runtimeConfig.models[0]).not.toHaveProperty('maxRetries');
   });
 
+  it('models gateway credentials as isolated provider channels', () => {
+    const runtimeConfig = buildRealApiRuntimeConfig({
+      id: 'gpt',
+      qualificationId: 'gpt:gpt-test-model',
+      name: 'GPT Gateway',
+      provider: 'openai-compatible',
+      model: 'gpt-test-model',
+      apiKey: 'channel-secret',
+      baseURL: 'https://gateway.example.test/v1',
+    });
+    const [providerId] = Object.keys(runtimeConfig.modelProviders);
+
+    expect(providerId).toMatch(/^real-api-gpt-channel-[a-f0-9]{12}$/);
+    expect(runtimeConfig.modelProviders[providerId!]).toEqual({
+      name: 'GPT Gateway',
+      baseUrl: 'https://gateway.example.test/v1',
+      wireApi: 'openai-completions',
+      apiKeyEnv: expect.stringMatching(/^BLADE_REAL_API_PROVIDER_KEY_[A-F0-9]{24}$/),
+    });
+    expect(runtimeConfig.models).toEqual([
+      expect.objectContaining({
+        provider: providerId,
+        model: 'gpt-test-model',
+        overrides: {
+          maxOutputTokens: 4_096,
+          timeout: 180_000,
+        },
+      }),
+    ]);
+    expect(JSON.stringify(runtimeConfig)).not.toContain('channel-secret');
+  });
+
   it('keeps real API product trajectories on the production retry default', () => {
     const relativeFiles = [
       'tests/integration/real-api/acp-session-load.test.ts',
@@ -469,6 +542,19 @@ describe('real API coding-task harness', () => {
         }))
       )
     ).not.toContain(secret);
+  });
+
+  it('projects one shared DeepSeek channel for legacy real API trajectories', () => {
+    expect(
+      resolveDeepSeekQualificationSettings({
+        DEEPSEEK_API_KEY: 'shared-fake-secret',
+        DEEPSEEK_BASE_URL: 'https://deepseek.invalid',
+      })
+    ).toEqual({
+      apiKey: 'shared-fake-secret',
+      baseURL: 'https://deepseek.invalid',
+      models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+    });
   });
 
   it('fails closed when either required DeepSeek model or its key is missing', () => {
@@ -755,6 +841,12 @@ describe('real API session-fork trajectory harness', () => {
     }));
 
     expect(() => assertForkParentToolTrace(reads, memoryPath)).not.toThrow();
+    expect(() =>
+      assertForkParentToolTrace(
+        [{ ...reads[0]!, output: null, error: 'temporary failure' }, reads[1]!],
+        memoryPath
+      )
+    ).not.toThrow();
   });
 
   it('rejects empty, wrong-path, unexpected, and failed parent traces', () => {
@@ -785,7 +877,7 @@ describe('real API session-fork trajectory harness', () => {
     ).toThrow();
   });
 
-  it('accepts repeated exact child Write and wc calls in required order', () => {
+  it('accepts relative or exact absolute wc calls after child Writes', () => {
     const resultPath = '/workspace/result.txt';
     const expectedBytes = 'fixture-marker\n';
     const write = (toolCallId: string) => ({
@@ -806,6 +898,30 @@ describe('real API session-fork trajectory harness', () => {
     expect(() =>
       assertForkChildToolTrace(
         [write('write-1'), write('write-2'), bash('bash-1'), bash('bash-2')],
+        resultPath,
+        expectedBytes
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertForkChildToolTrace(
+        [
+          write('write-1'),
+          { ...bash('bash-1'), output: null, error: 'temporary failure' },
+          bash('bash-2'),
+        ],
+        resultPath,
+        expectedBytes
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertForkChildToolTrace(
+        [
+          write('write-1'),
+          {
+            ...bash('bash-1'),
+            input: { command: `wc -c ${resultPath}` },
+          },
+        ],
         resultPath,
         expectedBytes
       )
@@ -1026,6 +1142,36 @@ describe('real API session-fork trajectory harness', () => {
       expect(() => readSessionEvents(transcriptPath)).toThrow(/line 2/i);
       writeFileSync(transcriptPath, '{"type":"session_created"}\n');
       expect(() => readSessionEvents(transcriptPath)).toThrow(/session event.*line 1/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts durable reasoning and rewind events from the current schema', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'blade-session-current-schema-'));
+    const transcriptPath = path.join(root, 'child-session.jsonl');
+    const reasoning = createPartEvent('child-session');
+    reasoning.data.partType = 'reasoning';
+    reasoning.data.payload = { text: 'private reasoning' };
+    const rewound: SessionEvent = {
+      ...createForkBoundaryEvent('child-session', 'parent-session', 'root-session'),
+      id: 'child-session-rewound',
+      type: 'session_rewound',
+      data: {
+        rewindId: 'rewind-1',
+        targetMessageId: 'message-1',
+        mode: 'both',
+        restoredFiles: ['/workspace/file.ts'],
+        createdAt: CREATED_AT,
+      },
+    };
+    writeFileSync(
+      transcriptPath,
+      `${JSON.stringify(reasoning)}\n${JSON.stringify(rewound)}\n`
+    );
+
+    try {
+      expect(readSessionEvents(transcriptPath)).toEqual([reasoning, rewound]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

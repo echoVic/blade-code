@@ -22,8 +22,8 @@ import { useCommandHandler } from '../../../src/ui/hooks/useCommandHandler.js';
 import type { ResolvedInput } from '../../../src/ui/hooks/useInputBuffer.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import {
-  assertForkLineage,
   assertForkChildToolTrace,
+  assertForkLineage,
   assertForkParentToolTrace,
   assertNoSecrets,
   assertParentUnchanged,
@@ -42,11 +42,6 @@ import {
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const enabled = isRealApiTestEnabled();
-if (enabled && !process.env.DEEPSEEK_API_KEY?.trim()) {
-  throw new Error(
-    'TUI fork qualification requires DeepSeek credentials from the process environment'
-  );
-}
 const modelConfigs = enabled
   ? resolveForkQualificationModels(process.env, { requiredDeepSeek: true })
   : [];
@@ -181,6 +176,7 @@ function resetStore(parentId: string): void {
       tasks: [],
       thinkingModeEnabled: false,
       subagentProgress: null,
+      subagentProgresses: {},
     },
   }));
 }
@@ -274,7 +270,7 @@ describeTuiTrajectory('TUI durable fork trajectory (real API)', () => {
             await latest?.hook.executeCommand(
               resolvedInput(
                 [
-                  'Use Read exactly once on the workspace file memory.txt.',
+                  `Use Read exactly once on the exact absolute path ${memoryPath}.`,
                   'Remember its complete content for a later fork.',
                   'Never repeat the file content in final prose; briefly confirm completion after Read succeeds.',
                 ].join(' ')
@@ -337,7 +333,7 @@ describeTuiTrajectory('TUI durable fork trajectory (real API)', () => {
               resolvedInput(
                 [
                   'Recover the complete marker from the inherited Read result.',
-                  'Use Write exactly once to create result.txt with that marker and exactly one trailing newline.',
+                  `Use Write exactly once on the exact absolute path ${resultPath} with that marker and exactly one trailing newline.`,
                   'Then use Bash exactly once with command `wc -c result.txt`.',
                   'Use no other command, never repeat the marker in final prose, and briefly confirm completion.',
                 ].join(' ')
@@ -347,6 +343,12 @@ describeTuiTrajectory('TUI durable fork trajectory (real API)', () => {
 
           const childEvents = readSessionEvents(childPath);
           const childRaw = readFileSync(childPath, 'utf8');
+          assertDurableChildTrace(
+            childEvents,
+            childSnapshot.length,
+            resultPath,
+            expectedBytes
+          );
           const uiMessages = getState().session.messages;
           assertNoSecrets(
             {
@@ -365,12 +367,6 @@ describeTuiTrajectory('TUI durable fork trajectory (real API)', () => {
             .filter((message) => message.role === 'assistant')
             .map((message) => message.content);
           assertUiFinal(childAssistantContents.at(-1), marker, fixture.nonce);
-          assertDurableChildTrace(
-            childEvents,
-            childSnapshot.length,
-            resultPath,
-            expectedBytes
-          );
           assertParentUnchanged(parentBeforeFork, parentPath);
           assertForkLineage(childEvents, {
             childId,

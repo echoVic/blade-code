@@ -7,7 +7,7 @@
 
 import type {
   AgentSideConnection,
-  FileSystemCapabilities
+  FileSystemCapabilities,
 } from '@agentclientprotocol/sdk';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import {
@@ -52,8 +52,8 @@ export class AcpFileSystemService implements FileSystemService {
       });
       return response.content;
     } catch (error) {
-      logger.warn(`[AcpFileSystem] readTextFile ACP failed, fallback: ${error}`);
-      return this.fallback.readTextFile(filePath);
+      logger.warn(`[AcpFileSystem] readTextFile ACP failed: ${error}`);
+      throw error;
     }
   }
 
@@ -77,8 +77,8 @@ export class AcpFileSystemService implements FileSystemService {
         sessionId: this.sessionId,
       });
     } catch (error) {
-      logger.warn(`[AcpFileSystem] writeTextFile ACP failed, fallback: ${error}`);
-      return this.fallback.writeTextFile(filePath, content);
+      logger.warn(`[AcpFileSystem] writeTextFile ACP failed: ${error}`);
+      throw error;
     }
   }
 
@@ -198,6 +198,10 @@ export class AcpFileSystemService implements FileSystemService {
    */
   canWriteTextFile(): boolean {
     return this.capabilities.writeTextFile ?? false;
+  }
+
+  usesRemoteFiles(): boolean {
+    return this.canReadTextFile() || this.canWriteTextFile();
   }
 }
 

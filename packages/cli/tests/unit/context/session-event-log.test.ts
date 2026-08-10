@@ -2,14 +2,18 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { EphemeralDelta } from '../../../src/context/events/EphemeralDelta.js';
 import { SessionEventLog } from '../../../src/context/events/SessionEventLog.js';
 import { JSONLStore } from '../../../src/context/storage/JSONLStore.js';
 import { getSessionFilePath } from '../../../src/context/storage/pathUtils.js';
-import { Bus } from '../../../src/server/bus.js';
-import type { EphemeralDelta } from '../../../src/context/events/EphemeralDelta.js';
 import type { SessionEvent } from '../../../src/context/types.js';
+import { Bus } from '../../../src/server/bus.js';
 
-function messageCreated(sessionId: string, projectPath: string, id: string): SessionEvent {
+function messageCreated(
+  sessionId: string,
+  projectPath: string,
+  id: string
+): SessionEvent {
   return {
     id,
     sessionId,

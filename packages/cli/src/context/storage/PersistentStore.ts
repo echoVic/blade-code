@@ -11,6 +11,7 @@ import { SessionEventLog } from '../events/SessionEventLog.js';
 import type {
   ConversationContext,
   MessageInfo,
+  MessagePersistenceMetadata,
   PartInfo,
   SessionContext,
   SessionEvent,
@@ -135,11 +136,7 @@ export class PersistentStore {
     messageRole: MessageRole,
     content: string | ContentPart[],
     parentUuid: string | null = null,
-    metadata?: {
-      model?: string;
-      usage?: { input_tokens: number; output_tokens: number };
-      inboxMessageId?: string;
-    },
+    metadata?: MessagePersistenceMetadata,
     subagentInfo?: SubagentInfoForContext,
     reasoningContent?: string
   ): Promise<string> {
@@ -155,6 +152,9 @@ export class PersistentStore {
         createdAt: now,
         model: metadata?.model,
         usage: metadata?.usage,
+        metadata: metadata
+          ? (JSON.parse(JSON.stringify(metadata)) as JsonValue)
+          : undefined,
       };
       const messageEntry = this.createEvent('message_created', sessionId, messageInfo);
       const reasoningEntries =

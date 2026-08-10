@@ -4,8 +4,12 @@
 
 import { HookManager } from '../hooks/HookManager.js';
 import { HookEvent } from '../hooks/types/HookTypes.js';
-import { sessionActions } from '../store/vanilla.js';
-import type { SlashCommand, SlashCommandResult } from './types.js';
+import {
+  getUI,
+  type SlashCommand,
+  type SlashCommandResult,
+  type SlashCommandUI,
+} from './types.js';
 
 const hooksCommand: SlashCommand = {
   name: 'hooks',
@@ -18,8 +22,10 @@ const hooksCommand: SlashCommand = {
   /hooks status   - 显示 hooks 启用状态和统计
   /hooks enable   - 启用当前会话的 hooks
   /hooks disable  - 禁用当前会话的 hooks
+  /hooks trust    - 信任当前项目的当前 Hook 配置摘要
+  /hooks revoke   - 撤销当前项目 Hook 信任
   /hooks list     - 列出所有配置的 hooks`,
-  usage: '/hooks [add|status|enable|disable|list]',
+  usage: '/hooks [add|status|enable|disable|trust|revoke|list]',
   category: 'system',
   examples: [
     '/hooks',
@@ -27,12 +33,15 @@ const hooksCommand: SlashCommand = {
     '/hooks status',
     '/hooks enable',
     '/hooks disable',
+    '/hooks trust',
+    '/hooks revoke',
     '/hooks list',
   ],
 
-  handler: async (args, _context): Promise<SlashCommandResult> => {
+  handler: async (args, context): Promise<SlashCommandResult> => {
     const subcommand = args[0]?.toLowerCase() || '';
     const hookManager = HookManager.getInstance();
+    const ui = getUI(context);
 
     switch (subcommand) {
       case '':
@@ -46,29 +55,41 @@ const hooksCommand: SlashCommand = {
       }
 
       case 'status': {
-        return showHooksStatus(hookManager);
+        return showHooksStatus(hookManager, context.cwd, ui);
       }
 
       case 'enable': {
         hookManager.enable();
-        sessionActions().addAssistantMessage('[OK] Hooks 已启用（当前会话）');
+        ui.sendMessage('[OK] Hooks 已启用（当前会话）');
         return { success: true, message: 'Hooks enabled' };
       }
 
       case 'disable': {
         hookManager.disable();
-        sessionActions().addAssistantMessage('Hooks 已禁用（当前会话）');
+        ui.sendMessage('Hooks 已禁用（当前会话）');
         return { success: true, message: 'Hooks disabled' };
       }
 
+      case 'trust': {
+        const status = await hookManager.trustProject(context.cwd);
+        ui.sendMessage(
+          `[OK] 已信任当前 Hook 配置\n\n摘要：\`${status.currentDigest}\``
+        );
+        return { success: true, message: 'Hook configuration trusted' };
+      }
+
+      case 'revoke': {
+        await hookManager.revokeProjectTrust(context.cwd);
+        ui.sendMessage('已撤销当前项目的 Hook 信任；配置型 Hooks 不再执行。');
+        return { success: true, message: 'Hook trust revoked' };
+      }
+
       case 'list': {
-        return listHooksConfig(hookManager);
+        return listHooksConfig(hookManager, context.cwd, ui);
       }
 
       default: {
-        sessionActions().addAssistantMessage(
-          `未知子命令: ${subcommand}\n使用 /hooks 查看帮助`
-        );
+        ui.sendMessage(`未知子命令: ${subcommand}\n使用 /hooks 查看帮助`);
         return { success: false, error: `Unknown subcommand: ${subcommand}` };
       }
     }
@@ -78,9 +99,14 @@ const hooksCommand: SlashCommand = {
 /**
  * 显示 hooks 状态
  */
-function showHooksStatus(hookManager: HookManager): SlashCommandResult {
-  const isEnabled = hookManager.isEnabled();
-  const config = hookManager.getConfig();
+async function showHooksStatus(
+  hookManager: HookManager,
+  projectDir: string,
+  ui: SlashCommandUI
+): Promise<SlashCommandResult> {
+  const isEnabled = hookManager.isEnabled(projectDir);
+  const config = hookManager.getConfig(projectDir);
+  const trust = await hookManager.getTrustStatus(projectDir);
 
   // 统计各类型配置的 hooks 数量
   const hookCounts: Record<string, number> = {};
@@ -98,6 +124,8 @@ function showHooksStatus(hookManager: HookManager): SlashCommandResult {
     '## Hooks 状态',
     '',
     `**状态**: ${isEnabled ? '[OK] 启用' : '禁用'}`,
+    `**信任**: ${trust.state}`,
+    `**配置摘要**: ${trust.currentDigest ? `\`${trust.currentDigest}\`` : '无'}`,
     '',
   ];
 
@@ -116,16 +144,21 @@ function showHooksStatus(hookManager: HookManager): SlashCommandResult {
   lines.push('使用 `/hooks list` 查看详细配置');
   lines.push('使用 `/hooks enable` 或 `/hooks disable` 切换状态');
 
-  sessionActions().addAssistantMessage(lines.join('\n'));
+  ui.sendMessage(lines.join('\n'));
   return { success: true, message: 'Hooks status displayed' };
 }
 
 /**
  * 列出详细的 hooks 配置
  */
-function listHooksConfig(hookManager: HookManager): SlashCommandResult {
-  const config = hookManager.getConfig();
-  const lines: string[] = ['## Hooks 配置详情', ''];
+async function listHooksConfig(
+  hookManager: HookManager,
+  projectDir: string,
+  ui: SlashCommandUI
+): Promise<SlashCommandResult> {
+  const config = hookManager.getConfig(projectDir);
+  const trust = await hookManager.getTrustStatus(projectDir);
+  const lines: string[] = ['## Hooks 配置详情', '', `信任状态：**${trust.state}**`, ''];
 
   let hasAnyHooks = false;
 
@@ -195,7 +228,7 @@ function listHooksConfig(hookManager: HookManager): SlashCommandResult {
     );
   }
 
-  sessionActions().addAssistantMessage(lines.join('\n'));
+  ui.sendMessage(lines.join('\n'));
   return { success: true, message: 'Hooks config listed' };
 }
 

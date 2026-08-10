@@ -1,6 +1,6 @@
 import type { Api, Model, MutableModels } from '@earendil-works/pi-ai';
 import { createLogger, LogCategory } from '../logging/Logger.js';
-import { abortableSleep } from '../utils/abort.js';
+import { abortableSleep, combineAbortSignals } from '../utils/abort.js';
 import type {
   ChatCompletionMessageToolCall,
   ChatConfig,
@@ -18,7 +18,7 @@ import {
 } from './pi/messageHistory.js';
 import { createFallbackModel, createPiRuntime } from './pi/modelRuntime.js';
 import { buildPiOptions, isFallbackablePiError } from './pi/requestOptions.js';
-import { streamPiModel } from './pi/streamAdapter.js';
+import { DEFAULT_STREAM_IDLE_TIMEOUT_MS, streamPiModel } from './pi/streamAdapter.js';
 
 const logger = createLogger(LogCategory.CHAT);
 type ToolDefinition = { name: string; description: string; parameters: unknown };
@@ -103,8 +103,10 @@ export class PiAIChatService implements IChatService {
     }
 
     const filtered = filterOrphanToolMessages(messages);
-    const latestUserMessage = filtered.findLast((message) => message.role === 'user');
-    if (hasImageContent(latestUserMessage) && !this.model.input.includes('image')) {
+    if (
+      filtered.some((message) => hasImageContent(message)) &&
+      !this.model.input.includes('image')
+    ) {
       throw new Error(`${this.model.name} does not support image input`);
     }
     const disableThinking =
@@ -116,13 +118,30 @@ export class PiAIChatService implements IChatService {
       signal,
       requiredTool
     );
-    const streamFrom = (model: Model<Api>) =>
-      streamPiModel(
+    const streamFrom = (model: Model<Api>) => {
+      const watchdogController = new AbortController();
+      const requestSignal = signal
+        ? combineAbortSignals(signal, watchdogController.signal)
+        : watchdogController.signal;
+      return streamPiModel(
         this.models,
         model,
         context,
-        buildPiOptions(this.config, model, signal, requestOptions, disableThinking)
+        buildPiOptions(
+          this.config,
+          model,
+          requestSignal,
+          requestOptions,
+          disableThinking
+        ),
+        {
+          idleTimeoutMs:
+            this.config.streamIdleTimeout ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+          signal: requestSignal,
+          abort: (reason) => watchdogController.abort(reason),
+        }
       );
+    };
 
     const maxRetries = this.config.maxRetries ?? 2;
     let lastError: unknown;
@@ -136,6 +155,7 @@ export class PiAIChatService implements IChatService {
         return;
       } catch (error) {
         lastError = error;
+        this.logIdleTimeout(error, emitted, this.model);
         await this.handleAbort(signal);
         if (emitted || !isFallbackablePiError(error)) throw error;
         if (attempt < maxRetries) {
@@ -149,8 +169,9 @@ export class PiAIChatService implements IChatService {
     for (const fallback of this.config.fallbackModels ?? []) {
       yield { modelFallback: true };
       let fallbackEmitted = false;
+      let fallbackModel: Model<Api> | undefined;
       try {
-        const fallbackModel = createFallbackModel(this.config, fallback);
+        fallbackModel = createFallbackModel(this.config, fallback);
         for await (const chunk of streamFrom(fallbackModel)) {
           fallbackEmitted = true;
           yield chunk;
@@ -158,6 +179,9 @@ export class PiAIChatService implements IChatService {
         return;
       } catch (error) {
         lastError = error;
+        if (fallbackModel) {
+          this.logIdleTimeout(error, fallbackEmitted, fallbackModel);
+        }
         await this.handleAbort(signal);
         if (fallbackEmitted || !isFallbackablePiError(error)) throw error;
       }
@@ -169,6 +193,25 @@ export class PiAIChatService implements IChatService {
     if (signal?.aborted) {
       await abortableSleep(0, signal, { throwOnAbort: true });
     }
+  }
+
+  private logIdleTimeout(error: unknown, emitted: boolean, model: Model<Api>): void {
+    if (
+      error === null ||
+      typeof error !== 'object' ||
+      !('code' in error) ||
+      error.code !== 'STREAM_IDLE_TIMEOUT' ||
+      !('timeoutMs' in error) ||
+      typeof error.timeoutMs !== 'number'
+    ) {
+      return;
+    }
+    logger.warn('[PiAIChatService] Provider stream idle timeout', {
+      provider: model.provider,
+      model: model.id,
+      timeoutMs: error.timeoutMs,
+      replayBoundaryCrossed: emitted,
+    });
   }
 
   getConfig(): ChatConfig {

@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { PermissionMode } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
-import { StringEnum, Type, safeParseSchema } from '../../schema/index.js';
+import { StringEnum, safeParseSchema, Type } from '../../schema/index.js';
 import type { ConfirmationResponse } from '../../tools/types/ExecutionTypes.js';
 import {
   AmbiguousSessionError,
@@ -21,6 +21,23 @@ const PermissionResponseSchema = Type.Object({
   feedback: Type.Optional(Type.String()),
   answers: Type.Optional(
     Type.Record(Type.String(), Type.Union([Type.String(), Type.Array(Type.String())]))
+  ),
+  elicitation: Type.Optional(
+    Type.Object({
+      action: StringEnum(['accept', 'decline', 'cancel']),
+      content: Type.Optional(
+        Type.Record(
+          Type.String(),
+          Type.Union([
+            Type.String({ maxLength: 4_000 }),
+            Type.Number(),
+            Type.Boolean(),
+            Type.Array(Type.String({ maxLength: 1_000 }), { maxItems: 100 }),
+          ]),
+          { maxProperties: 32 }
+        )
+      ),
+    })
   ),
 });
 
@@ -44,7 +61,8 @@ export const PermissionRoutes = () => {
         throw new BadRequestError('Invalid permission response format');
       }
 
-      const { approved, remember, scope, targetMode, feedback, answers } = parsed.data;
+      const { approved, remember, scope, targetMode, feedback, answers, elicitation } =
+        parsed.data;
 
       if (!sessionId) {
         throw new BadRequestError('sessionId query parameter is required');
@@ -58,6 +76,7 @@ export const PermissionRoutes = () => {
         targetMode: targetMode as PermissionMode | undefined,
         feedback,
         answers,
+        elicitation,
       };
 
       const success = respondToPermission(ref, permissionId, response);

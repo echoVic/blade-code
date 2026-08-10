@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -42,6 +42,7 @@ describe('project instructions', () => {
     const result = await buildSystemPrompt({
       projectPath: workingDirectory,
       includeEnvironment: false,
+      projectTrusted: true,
     });
 
     const markers = [
@@ -77,6 +78,7 @@ describe('project instructions', () => {
     const result = await buildSystemPrompt({
       projectPath: workingDirectory,
       includeEnvironment: false,
+      projectTrusted: true,
     });
     const source = result.sources.find((item) => item.name === 'project_instructions');
 
@@ -97,6 +99,7 @@ describe('project instructions', () => {
     const result = await buildSystemPrompt({
       projectPath: workingDirectory,
       includeEnvironment: false,
+      projectTrusted: true,
     });
 
     expect(result.prompt).toContain('path="packages/service &amp; api/BLADE.md"');
@@ -125,6 +128,7 @@ describe('project instructions', () => {
       const result = await buildSystemPrompt({
         projectPath: repository,
         includeEnvironment: false,
+        projectTrusted: true,
       });
 
       expect(result.prompt).toContain('BOOTSTRAP_ROOT_RULE');
@@ -133,5 +137,27 @@ describe('project instructions', () => {
       setCwdState(previousCwd);
       setOriginalCwd(previousOriginalCwd);
     }
+  });
+
+  it('does not inject project instructions before folder trust', async () => {
+    const repository = await mkdtemp(
+      path.join(tmpdir(), 'blade-untrusted-instructions-')
+    );
+    temporaryDirectories.push(repository);
+    await writeFile(
+      path.join(repository, 'CLAUDE.md'),
+      'UNTRUSTED_PROJECT_INSTRUCTION'
+    );
+
+    const result = await buildSystemPrompt({
+      projectPath: repository,
+      includeEnvironment: false,
+      projectTrusted: false,
+    });
+
+    expect(result.prompt).not.toContain('UNTRUSTED_PROJECT_INSTRUCTION');
+    expect(
+      result.sources.find((source) => source.name === 'project_instructions')
+    ).toEqual({ name: 'project_instructions', loaded: false });
   });
 });

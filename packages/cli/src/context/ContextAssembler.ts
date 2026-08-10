@@ -117,8 +117,17 @@ export class ContextAssembler {
           content: '',
           timestamp: new Date(event.timestamp).getTime(),
           metadata:
-            event.data.model || event.data.inboxMessageId
+            event.data.model ||
+            event.data.inboxMessageId ||
+            (event.data.metadata &&
+              typeof event.data.metadata === 'object' &&
+              !Array.isArray(event.data.metadata))
               ? {
+                  ...(event.data.metadata &&
+                  typeof event.data.metadata === 'object' &&
+                  !Array.isArray(event.data.metadata)
+                    ? event.data.metadata
+                    : {}),
                   ...(event.data.model ? { model: event.data.model } : {}),
                   ...(event.data.inboxMessageId
                     ? { inboxMessageId: event.data.inboxMessageId }

@@ -58,6 +58,7 @@ vi.mock('../../../src/services/pi/requestOptions.js', () => ({
 }));
 
 vi.mock('../../../src/services/pi/streamAdapter.js', () => ({
+  DEFAULT_STREAM_IDLE_TIMEOUT_MS: 300_000,
   streamPiModel,
 }));
 
@@ -124,6 +125,28 @@ describe('PiAIChatService', () => {
     expect(streamPiModel).not.toHaveBeenCalled();
   });
 
+  it('rejects image input anywhere in history for a text-only model', async () => {
+    const chat = await service();
+    await expect(
+      chat.chat([
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: { url: 'data:image/png;base64,abc' },
+            },
+          ],
+        },
+        { role: 'assistant', content: 'I saw an image.' },
+        { role: 'user', content: 'Continue without looking again.' },
+      ])
+    ).rejects.toThrow('Test Model does not support image input');
+
+    expect(createPiContext).not.toHaveBeenCalled();
+    expect(streamPiModel).not.toHaveBeenCalled();
+  });
+
   it('accepts image input when the active model advertises vision', async () => {
     const visionModel = {
       ...piModelFixture,
@@ -177,7 +200,7 @@ describe('PiAIChatService', () => {
     expect(buildPiOptions).toHaveBeenCalledWith(
       expect.any(Object),
       piModelFixture,
-      undefined,
+      expect.any(AbortSignal),
       expect.objectContaining({
         toolChoice: { type: 'tool', toolName: 'Task' },
       }),
@@ -233,6 +256,21 @@ describe('PiAIChatService', () => {
 
     expect(result.content).toBe('recovered');
     expect(streamPiModel).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not replay a provider failure after partial output was emitted', async () => {
+    isFallbackablePiError.mockReturnValue(true);
+    streamPiModel.mockReturnValue(
+      chunks([
+        { content: 'partial' },
+        new Error('Provider stream idle timeout after 20ms without an event'),
+      ])
+    );
+
+    await expect(
+      (await service({ maxRetries: 2 })).chat([{ role: 'user', content: 'hello' }])
+    ).rejects.toThrow('stream idle timeout');
+    expect(streamPiModel).toHaveBeenCalledOnce();
   });
 
   it('uses configured fallback models after primary retries fail', async () => {

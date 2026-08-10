@@ -220,6 +220,17 @@ export const useRecoveredSteeringCount = () =>
 export const useThinkingModeEnabled = () =>
   useBladeStore((state) => state.app.thinkingModeEnabled);
 
+export const useReasoningEffort = () =>
+  useBladeStore((state) => state.app.reasoningEffort);
+
+export const useServiceTier = () => useBladeStore((state) => state.app.serviceTier);
+
+export const useResponseVerbosity = () =>
+  useBladeStore((state) => state.app.responseVerbosity);
+
+export const useCommunicationStyle = () =>
+  useBladeStore((state) => state.app.communicationStyle);
+
 /**
  * 获取当前 Thinking 内容（流式接收中）
  */

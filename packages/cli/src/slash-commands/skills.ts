@@ -2,6 +2,7 @@
  * /skills 命令 - 查看所有可用的 Skills
  */
 
+import { clearAllPluginResources, integrateAllPlugins } from '../plugins/index.js';
 import { getSkillRegistry } from '../skills/index.js';
 import { sessionActions } from '../store/vanilla.js';
 import type { SlashCommand, SlashCommandResult } from './types.js';
@@ -23,6 +24,8 @@ const skillsCommand: SlashCommand = {
         cwd: context.workspaceRoot ?? context.cwd,
       });
       await registry.refresh();
+      clearAllPluginResources(context.workspaceRoot ?? context.cwd);
+      await integrateAllPlugins(context.workspaceRoot ?? context.cwd);
 
       // 显示 Skills 管理面板
       return {

@@ -301,12 +301,24 @@ function formatTask(task: TaskListItem): string {
 function createConfirmationHandler() {
   return {
     requestConfirmation: async (
-      _details: ConfirmationDetails
-    ): Promise<ConfirmationResponse> => ({
-      approved: true,
-      reason: 'headless-auto-approved',
-      scope: 'session',
-    }),
+      details: ConfirmationDetails
+    ): Promise<ConfirmationResponse> =>
+      details.type === 'mcpElicitation'
+        ? {
+            approved: false,
+            reason: 'headless-mcp-elicitation-unavailable',
+            elicitation: { action: 'cancel' },
+          }
+        : details.type === 'mcpSampling'
+          ? {
+              approved: false,
+              reason: 'headless-mcp-sampling-unavailable',
+            }
+          : {
+              approved: true,
+              reason: 'headless-auto-approved',
+              scope: 'session',
+            },
   };
 }
 
@@ -362,6 +374,8 @@ function extractToolTarget(
     case 'Write':
     case 'UndoEdit':
       return stringParam('file_path');
+    case 'ApplyPatch':
+      return 'multi-file patch';
     case 'NotebookEdit':
       return stringParam('notebook_path');
     case 'Grep':
@@ -403,6 +417,7 @@ function getPhaseForTool(
   const actionTools = new Set([
     'Edit',
     'Write',
+    'ApplyPatch',
     'NotebookEdit',
     'Bash',
     'LSP',
@@ -525,6 +540,18 @@ function createEventWriter(io: HeadlessIO, outputFormat: HeadlessOutputFormat) {
       }
       writeLine(io.stderr, `[tool:start] ${summary}`);
     },
+    toolProgress(toolName: string, message: string, progress?: number, total?: number) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('tool_progress', {
+          tool_name: toolName,
+          message,
+          progress,
+          total,
+        });
+        return;
+      }
+      writeLine(io.stderr, `[tool:progress] ${toolName}: ${message}`);
+    },
     toolResult(
       toolName: string,
       summary: string,
@@ -549,6 +576,173 @@ function createEventWriter(io: HeadlessIO, outputFormat: HeadlessOutputFormat) {
         return;
       }
       writeLine(io.stderr, `[tool:result] ${summary}`);
+    },
+    mcpCatalogChanged(event: Extract<LoopEvent, { kind: 'mcp_catalog_changed' }>) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('mcp_catalog_changed', {
+          revision: event.revision,
+          server_name: event.serverName,
+          added: event.added,
+          removed: event.removed,
+          updated: event.updated,
+        });
+        return;
+      }
+      writeLine(
+        io.stderr,
+        `[mcp:catalog] r${event.revision} ${event.serverName} ` +
+          `+${event.added.length} -${event.removed.length} ~${event.updated.length}`
+      );
+    },
+    mcpContentChanged(event: Extract<LoopEvent, { kind: 'mcp_content_changed' }>) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('mcp_content_changed', {
+          revision: event.revision,
+          server_name: event.serverName,
+          content_kind:
+            event.contentKind === 'resourceTemplates'
+              ? 'resource_templates'
+              : event.contentKind,
+          added: event.added,
+          removed: event.removed,
+          updated: event.updated,
+        });
+        return;
+      }
+      writeLine(
+        io.stderr,
+        `[mcp:${event.contentKind}] r${event.revision} ${event.serverName} ` +
+          `+${event.added.length} -${event.removed.length} ~${event.updated.length}`
+      );
+    },
+    mcpResourceUpdated(event: Extract<LoopEvent, { kind: 'mcp_resource_updated' }>) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('mcp_resource_updated', {
+          revision: event.revision,
+          server_name: event.serverName,
+          uri: event.uri,
+        });
+        return;
+      }
+      writeLine(
+        io.stderr,
+        `[mcp:resource] r${event.revision} ${event.serverName} updated ${event.uri}`
+      );
+    },
+    mcpConnectionChanged(
+      event: Extract<LoopEvent, { kind: 'mcp_connection_changed' }>
+    ) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('mcp_connection_changed', {
+          revision: event.revision,
+          server_name: event.serverName,
+          phase: event.phase,
+          reason: event.reason,
+          attempt: event.attempt,
+          max_attempts: event.maxAttempts,
+          ...(event.nextRetryAt !== undefined
+            ? { next_retry_at: event.nextRetryAt }
+            : {}),
+          ...(event.error ? { error: event.error } : {}),
+        });
+        return;
+      }
+      writeLine(
+        io.stderr,
+        `[mcp:connection] r${event.revision} ${event.serverName} ` +
+          `${event.phase} ${event.attempt}/${event.maxAttempts}`
+      );
+    },
+    mcpLog(event: Extract<LoopEvent, { kind: 'mcp_log' }>) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('mcp_log', {
+          revision: event.revision,
+          server_name: event.serverName,
+          level: event.level,
+          logger: event.logger,
+          message: event.message,
+          projected_bytes: event.projectedBytes,
+          data_sha256: event.dataSha256,
+          truncated: event.truncated,
+          details_omitted: event.detailsOmitted,
+          timestamp: event.timestamp,
+          synthetic: event.synthetic,
+        });
+        return;
+      }
+      writeLine(
+        io.stderr,
+        `[mcp:log] ${event.level} ${event.serverName}` +
+          `${event.logger ? ` logger=${event.logger}` : ''}: ${event.message}`
+      );
+    },
+    mcpInstructionsChanged(
+      event: Extract<LoopEvent, { kind: 'mcp_instructions_changed' }>
+    ) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('mcp_instructions_changed', {
+          revision: event.revision,
+          server_name: event.serverName,
+          action: event.action,
+          reason: event.reason,
+          text: event.text,
+          source_bytes: event.sourceBytes,
+          projected_bytes: event.projectedBytes,
+          sha256: event.sha256,
+          truncated: event.truncated,
+          details_omitted: event.detailsOmitted,
+        });
+        return;
+      }
+      writeLine(
+        io.stderr,
+        `[mcp:instructions] ${event.action} ${event.serverName}` +
+          `${event.truncated ? ' (truncated)' : ''}`
+      );
+    },
+    mcpTaskChanged(event: Extract<LoopEvent, { kind: 'mcp_task_changed' }>) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('mcp_task_changed', {
+          revision: event.revision,
+          task_id: event.taskId,
+          server_name: event.serverName,
+          tool_name: event.toolName,
+          status: event.status,
+          status_message: event.statusMessage,
+          created_at: event.createdAt,
+          updated_at: event.updatedAt,
+          completed_at: event.completedAt,
+          has_result: event.hasResult,
+          error: event.error,
+        });
+        return;
+      }
+      writeLine(
+        io.stderr,
+        `[mcp:task] ${event.taskId} ${event.serverName}/${event.toolName} ` +
+          event.status
+      );
+    },
+    projectRulesLoaded(event: Extract<LoopEvent, { kind: 'project_rules_loaded' }>) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('project_rules_loaded', {
+          files: event.files.map((file) => ({
+            id: file.id,
+            relative_path: file.relativePath,
+            source: file.source,
+            conditional: file.conditional,
+            content_sha256: file.contentSha256,
+          })),
+          trigger_paths: event.triggerPaths,
+          blocked_write: event.blockedWrite,
+        });
+        return;
+      }
+      writeLine(
+        io.stderr,
+        `[project-rules] loaded ${event.files.length} file(s)` +
+          `${event.blockedWrite ? ' before write' : ''}`
+      );
     },
     phase(
       phase: HeadlessPhaseName,
@@ -848,6 +1042,14 @@ export async function runHeadless(
       ...(createdTask?.metadata.taskIsolation
         ? { taskIsolation: createdTask.metadata.taskIsolation }
         : {}),
+      ...(messages.length > 0
+        ? {
+            sessionStart: {
+              isResume: true,
+              resumeSessionId: sessionId,
+            },
+          }
+        : {}),
     });
     const effectiveMaxTurns = validatedOptions.maxTurns ?? runtime.getConfig().maxTurns;
     const toolBlacklist = createdTask?.taskWorktree
@@ -961,6 +1163,17 @@ export async function runHeadless(
             }
             break;
           }
+          case 'tool_progress': {
+            const toolCall = event.toolCall;
+            if (!('function' in toolCall)) break;
+            eventWriter.toolProgress(
+              toolCall.function.name,
+              event.update.message,
+              event.update.progress,
+              event.update.total
+            );
+            break;
+          }
           case 'tool_result': {
             const toolCall = event.toolCall;
             if (!('function' in toolCall)) break;
@@ -1002,6 +1215,30 @@ export async function runHeadless(
           // --- 业务事件 ---
           case 'task_update':
             eventWriter.taskUpdate(event.tasks);
+            break;
+          case 'mcp_catalog_changed':
+            eventWriter.mcpCatalogChanged(event);
+            break;
+          case 'mcp_content_changed':
+            eventWriter.mcpContentChanged(event);
+            break;
+          case 'mcp_resource_updated':
+            eventWriter.mcpResourceUpdated(event);
+            break;
+          case 'mcp_connection_changed':
+            eventWriter.mcpConnectionChanged(event);
+            break;
+          case 'mcp_log':
+            eventWriter.mcpLog(event);
+            break;
+          case 'mcp_instructions_changed':
+            eventWriter.mcpInstructionsChanged(event);
+            break;
+          case 'mcp_task_changed':
+            eventWriter.mcpTaskChanged(event);
+            break;
+          case 'project_rules_loaded':
+            eventWriter.projectRulesLoaded(event);
             break;
 
           case 'steering_applied':

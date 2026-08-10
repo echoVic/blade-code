@@ -12,17 +12,41 @@ import {
   type AgentSideConnection,
   PROTOCOL_VERSION,
 } from '@agentclientprotocol/sdk';
+import type { BladeConfig } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
-import { getModelDisplayName } from '../services/pi/resolveModelConfig.js';
+import {
+  type CommunicationStyleConfiguration,
+  isCommunicationStyleSelection,
+} from '../services/communicationStyle.js';
+import {
+  isReasoningEffortSelection,
+  type ReasoningEffortConfiguration,
+} from '../services/pi/reasoningEffort.js';
+import {
+  isResponseVerbositySelection,
+  type ResponseVerbosityConfiguration,
+} from '../services/pi/responseVerbosity.js';
+import {
+  isServiceTierSelection,
+  type ServiceTierConfiguration,
+} from '../services/pi/serviceTier.js';
 import { type SessionMetadata, SessionService } from '../services/SessionService.js';
 import { SessionTaskService } from '../services/SessionTaskService.js';
-import { getConfig } from '../store/vanilla.js';
 import { getCwd } from '../utils/cwd.js';
 import { createSessionId } from '../utils/sessionId.js';
 import { AcpSession } from './Session.js';
 
 const logger = createLogger(LogCategory.AGENT);
+type AcpModelConfiguration = Pick<
+  BladeConfig,
+  'currentModelId' | 'models' | 'modelProviders'
+> & {
+  reasoning: ReasoningEffortConfiguration;
+  serviceTier: ServiceTierConfiguration;
+  responseVerbosity: ResponseVerbosityConfiguration;
+  communicationStyle: CommunicationStyleConfiguration;
+};
 
 /**
  * Blade ACP Agent
@@ -148,7 +172,7 @@ export class BladeAgent implements AcpAgentInterface {
     return this.buildChildSessionResponse(
       sessionId,
       createdTask?.metadata,
-      session.getCurrentModelId()
+      session.getModelConfiguration()
     );
   }
 
@@ -258,7 +282,7 @@ export class BladeAgent implements AcpAgentInterface {
     return this.buildChildSessionResponse(
       fork.sessionId,
       fork.metadata,
-      session.getCurrentModelId()
+      session.getModelConfiguration()
     );
   }
 
@@ -291,6 +315,7 @@ export class BladeAgent implements AcpAgentInterface {
     params: acp.LoadSessionRequest
   ): Promise<acp.LoadSessionResponse> {
     this.assertNotDestroyed();
+    await SessionService.assertSessionWritable(params.sessionId, params.cwd);
     const existingSession = this.sessions.get(params.sessionId);
     if (existingSession) {
       try {
@@ -323,17 +348,17 @@ export class BladeAgent implements AcpAgentInterface {
     this.sessions.set(params.sessionId, session);
     session.sendAvailableCommandsDelayed();
 
-    return this.buildSessionSetup(session.getCurrentModelId());
+    return this.buildSessionSetup(session.getModelConfiguration());
   }
 
   private buildChildSessionResponse(
     sessionId: string,
     taskMetadata?: SessionMetadata,
-    selectedModelId?: string
+    modelConfiguration?: AcpModelConfiguration
   ): acp.NewSessionResponse & acp.ForkSessionResponse {
     return {
       sessionId,
-      ...this.buildSessionSetup(selectedModelId),
+      ...this.buildSessionSetup(modelConfiguration),
       ...(taskMetadata
         ? {
             _meta: {
@@ -370,15 +395,15 @@ export class BladeAgent implements AcpAgentInterface {
     if (this.destroyed) throw new Error('BladeAgent is destroyed');
   }
 
-  private buildSessionSetup(selectedModelId?: string): acp.LoadSessionResponse {
-    const config = getConfig();
-    const models = config?.models || [];
+  private buildSessionSetup(
+    modelConfiguration?: AcpModelConfiguration
+  ): acp.LoadSessionResponse {
+    const models = modelConfiguration?.models ?? [];
     const currentModelId =
-      (selectedModelId && models.some((model) => model.id === selectedModelId)
-        ? selectedModelId
-        : undefined) ??
-      config?.currentModelId ??
-      models[0]?.id;
+      (modelConfiguration?.currentModelId &&
+      models.some((model) => model.id === modelConfiguration.currentModelId)
+        ? modelConfiguration.currentModelId
+        : undefined) ?? models[0]?.id;
 
     const availableModes: acp.SessionMode[] = [
       {
@@ -414,8 +439,99 @@ export class BladeAgent implements AcpAgentInterface {
         currentValue: currentModelId,
         options: models.map((m) => ({
           value: m.id,
-          name: getModelDisplayName(m),
-          description: `${m.provider}/${m.model}`,
+          name: m.displayName ?? m.model,
+          description: `${
+            modelConfiguration?.modelProviders[m.provider]?.name ?? m.provider
+          } · ${m.model}`,
+        })),
+      });
+    }
+    if (modelConfiguration?.reasoning) {
+      configOptions.push({
+        type: 'select',
+        id: 'reasoning_effort',
+        name: 'Reasoning effort',
+        description: 'Session-owned model reasoning intensity',
+        category: 'model',
+        currentValue: modelConfiguration.reasoning.selection,
+        options: [
+          {
+            value: 'auto',
+            name: 'Auto',
+            description: `Resolve near high for this model (currently ${modelConfiguration.reasoning.effective})`,
+          },
+          ...modelConfiguration.reasoning.supported.map((effort) => ({
+            value: effort,
+            name: effort[0]!.toUpperCase() + effort.slice(1),
+            description:
+              effort === 'off'
+                ? 'Disable model reasoning'
+                : `Use ${effort} reasoning effort`,
+          })),
+        ],
+      });
+    }
+    if (modelConfiguration?.serviceTier) {
+      configOptions.push({
+        type: 'select',
+        id: 'service_tier',
+        name: 'Service tier',
+        description: 'Session-owned provider latency and pricing tier',
+        category: 'model',
+        currentValue: modelConfiguration.serviceTier.selection,
+        options: [
+          {
+            value: 'auto',
+            name: 'Auto',
+            description: 'Use the provider or model default tier',
+          },
+          ...modelConfiguration.serviceTier.supported.map((tier) => ({
+            value: tier,
+            name: tier[0]!.toUpperCase() + tier.slice(1),
+            description:
+              tier === 'fast'
+                ? 'Use the provider priority tier'
+                : tier === 'flex'
+                  ? 'Use the lower-cost flexible tier'
+                  : 'Use the standard provider tier',
+          })),
+        ],
+      });
+    }
+    if (modelConfiguration?.responseVerbosity) {
+      configOptions.push({
+        type: 'select',
+        id: 'response_verbosity',
+        name: 'Response verbosity',
+        description: 'Session-owned model response detail',
+        category: 'model',
+        currentValue: modelConfiguration.responseVerbosity.selection,
+        options: [
+          {
+            value: 'auto',
+            name: 'Auto',
+            description: 'Use the provider or model default verbosity',
+          },
+          ...modelConfiguration.responseVerbosity.supported.map((verbosity) => ({
+            value: verbosity,
+            name: verbosity[0]!.toUpperCase() + verbosity.slice(1),
+            description: `Use ${verbosity} response verbosity`,
+          })),
+        ],
+      });
+    }
+    if (modelConfiguration?.communicationStyle) {
+      configOptions.push({
+        type: 'select',
+        id: 'communication_style',
+        name: 'Communication style',
+        description: 'Session-owned tone and explanatory framing',
+        category: 'model',
+        currentValue: modelConfiguration.communicationStyle.selection,
+        options: modelConfiguration.communicationStyle.supported.map((style) => ({
+          value: style.id,
+          name: style.name,
+          description: `${style.description} · ${style.source}`,
         })),
       });
     }
@@ -488,8 +604,41 @@ export class BladeAgent implements AcpAgentInterface {
     ) {
       logger.info(`[BladeAgent] Setting session model: ${params.value}`);
       await session.setModel(params.value);
+    } else if (
+      params.configId === 'reasoning_effort' &&
+      'value' in params &&
+      isReasoningEffortSelection(params.value)
+    ) {
+      logger.info(`[BladeAgent] Setting reasoning effort: ${params.value}`);
+      await session.setReasoningEffort(params.value);
+    } else if (
+      params.configId === 'service_tier' &&
+      'value' in params &&
+      isServiceTierSelection(params.value)
+    ) {
+      logger.info(`[BladeAgent] Setting service tier: ${params.value}`);
+      await session.setServiceTier(params.value);
+    } else if (
+      params.configId === 'response_verbosity' &&
+      'value' in params &&
+      isResponseVerbositySelection(params.value)
+    ) {
+      logger.info(`[BladeAgent] Setting response verbosity: ${params.value}`);
+      await session.setResponseVerbosity(params.value);
+    } else if (
+      params.configId === 'communication_style' &&
+      'value' in params &&
+      isCommunicationStyleSelection(params.value)
+    ) {
+      logger.info(`[BladeAgent] Setting communication style: ${params.value}`);
+      await session.setCommunicationStyle(params.value);
+    } else {
+      throw new Error(`Invalid session config option: ${params.configId}`);
     }
-    return { configOptions: [] };
+    return {
+      configOptions:
+        this.buildSessionSetup(session.getModelConfiguration()).configOptions ?? [],
+    };
   }
 
   /**

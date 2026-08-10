@@ -34,7 +34,12 @@ const initialAppState: AppState = {
   tasks: [],
   awaitingSecondCtrlC: false,
   thinkingModeEnabled: false, // Thinking 模式默认关闭
+  reasoningEffort: 'off',
+  serviceTier: 'auto',
+  responseVerbosity: 'auto',
+  communicationStyle: 'auto',
   subagentProgress: null, // 当前无 subagent 执行
+  subagentProgresses: {},
 };
 
 /**
@@ -149,12 +154,44 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
 
     // ==================== Thinking 模式相关 actions ====================
 
+    setReasoningEffort: (reasoningEffort) => {
+      set((state) => ({
+        app: {
+          ...state.app,
+          reasoningEffort,
+          thinkingModeEnabled: reasoningEffort !== 'off',
+        },
+      }));
+    },
+
+    setServiceTier: (serviceTier) => {
+      set((state) => ({
+        app: { ...state.app, serviceTier },
+      }));
+    },
+
+    setResponseVerbosity: (responseVerbosity) => {
+      set((state) => ({
+        app: { ...state.app, responseVerbosity },
+      }));
+    },
+
+    setCommunicationStyle: (communicationStyle) => {
+      set((state) => ({
+        app: { ...state.app, communicationStyle },
+      }));
+    },
+
     /**
      * 设置 Thinking 模式开关状态
      */
     setThinkingModeEnabled: (enabled: boolean) => {
       set((state) => ({
-        app: { ...state.app, thinkingModeEnabled: enabled },
+        app: {
+          ...state.app,
+          thinkingModeEnabled: enabled,
+          reasoningEffort: enabled ? 'auto' : 'off',
+        },
       }));
     },
 
@@ -163,7 +200,11 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
      */
     toggleThinkingMode: () => {
       set((state) => ({
-        app: { ...state.app, thinkingModeEnabled: !state.app.thinkingModeEnabled },
+        app: {
+          ...state.app,
+          thinkingModeEnabled: !state.app.thinkingModeEnabled,
+          reasoningEffort: state.app.thinkingModeEnabled ? 'off' : 'auto',
+        },
       }));
     },
 
@@ -176,6 +217,16 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
       set((state) => ({
         app: {
           ...state.app,
+          subagentProgresses: {
+            ...state.app.subagentProgresses,
+            [id]: {
+              id,
+              type,
+              description,
+              status: 'running',
+              startTime: Date.now(),
+            },
+          },
           subagentProgress: {
             id,
             type,
@@ -190,16 +241,25 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
     /**
      * 更新当前执行的工具名称
      */
-    updateSubagentTool: (toolName: string) => {
+    updateSubagentTool: (id: string, toolName: string) => {
       set((state) => {
-        if (!state.app.subagentProgress) return state;
+        const progress = state.app.subagentProgresses[id];
+        if (!progress) return state;
+        const updated = {
+          ...progress,
+          currentTool: toolName,
+        };
         return {
           app: {
             ...state.app,
-            subagentProgress: {
-              ...state.app.subagentProgress,
-              currentTool: toolName,
+            subagentProgresses: {
+              ...state.app.subagentProgresses,
+              [id]: updated,
             },
+            subagentProgress:
+              state.app.subagentProgress?.id === id
+                ? updated
+                : state.app.subagentProgress,
           },
         };
       });
@@ -208,24 +268,47 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
     /**
      * 完成 subagent 执行
      */
-    completeSubagentProgress: (success: boolean) => {
+    completeSubagentProgress: (id: string, success: boolean) => {
       set((state) => {
-        if (!state.app.subagentProgress) return state;
+        const progress = state.app.subagentProgresses[id];
+        if (!progress) return state;
+        const updated = {
+          ...progress,
+          status: success ? ('completed' as const) : ('failed' as const),
+          currentTool: undefined,
+        };
         return {
           app: {
             ...state.app,
-            subagentProgress: {
-              ...state.app.subagentProgress,
-              status: success ? 'completed' : 'failed',
-              currentTool: undefined,
+            subagentProgresses: {
+              ...state.app.subagentProgresses,
+              [id]: updated,
             },
+            subagentProgress:
+              state.app.subagentProgress?.id === id
+                ? updated
+                : state.app.subagentProgress,
           },
         };
       });
       setTimeout(() => {
-        set((state) => ({
-          app: { ...state.app, subagentProgress: null },
-        }));
+        set((state) => {
+          const current = state.app.subagentProgresses[id];
+          if (!current || current.status === 'running') return state;
+          const subagentProgresses = { ...state.app.subagentProgresses };
+          delete subagentProgresses[id];
+          const remaining = Object.values(subagentProgresses);
+          return {
+            app: {
+              ...state.app,
+              subagentProgresses,
+              subagentProgress:
+                state.app.subagentProgress?.id === id
+                  ? (remaining[remaining.length - 1] ?? null)
+                  : state.app.subagentProgress,
+            },
+          };
+        });
       }, 1500);
     },
   },

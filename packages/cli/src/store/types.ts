@@ -8,7 +8,14 @@
  * 4. vanilla store 对外 - 供 Agent 使用
  */
 
-import type { ModelConfig, RuntimeConfig } from '../config/types.js';
+import type {
+  CommunicationStyleSelection,
+  ModelConfig,
+  ReasoningEffortSelection,
+  ResponseVerbositySelection,
+  RuntimeConfig,
+  ServiceTierSelection,
+} from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
 import type { EphemeralDelta } from '../context/events/EphemeralDelta.js';
 import type { SessionEvent } from '../context/types.js';
@@ -34,8 +41,9 @@ export type JsonObject = { [key: string]: JsonValue };
  * 工具消息元数据
  */
 export interface ToolMessageMetadata {
+  toolCallId?: string;
   toolName: string;
-  phase: 'start' | 'complete';
+  phase: 'start' | 'progress' | 'complete';
   summary?: string;
   detail?: string;
   params?: Record<string, unknown>;
@@ -245,7 +253,12 @@ export interface AppState {
   tasks: TaskListItem[];
   awaitingSecondCtrlC: boolean; // 是否等待第二次 Ctrl+C 退出
   thinkingModeEnabled: boolean; // Thinking 模式是否启用（Tab 切换）
-  subagentProgress: SubagentProgress | null; // 当前 subagent 执行进度
+  reasoningEffort: ReasoningEffortSelection;
+  serviceTier: ServiceTierSelection;
+  responseVerbosity: ResponseVerbositySelection;
+  communicationStyle: CommunicationStyleSelection;
+  subagentProgress: SubagentProgress | null; // 兼容投影：最近一条 subagent
+  subagentProgresses: Record<string, SubagentProgress>;
 }
 
 /**
@@ -265,12 +278,16 @@ export interface AppActions {
   updateTask: (task: TaskListItem) => void;
   setAwaitingSecondCtrlC: (awaiting: boolean) => void;
   // Thinking 模式相关
+  setReasoningEffort: (effort: ReasoningEffortSelection) => void;
+  setServiceTier: (tier: ServiceTierSelection) => void;
+  setResponseVerbosity: (verbosity: ResponseVerbositySelection) => void;
+  setCommunicationStyle: (style: CommunicationStyleSelection) => void;
   setThinkingModeEnabled: (enabled: boolean) => void;
   toggleThinkingMode: () => void;
   // Subagent 进度相关
   startSubagentProgress: (id: string, type: string, description: string) => void;
-  updateSubagentTool: (toolName: string) => void;
-  completeSubagentProgress: (success: boolean) => void;
+  updateSubagentTool: (id: string, toolName: string) => void;
+  completeSubagentProgress: (id: string, success: boolean) => void;
 }
 
 /**

@@ -1,16 +1,21 @@
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SessionService } from '../../../../src/services/SessionService.js';
-import { searchTranscripts } from '../../../../src/services/TranscriptSearch.js';
 import { resetProjectionDbCache } from '../../../../src/context/storage/sqlite/projection.js';
 import type { SessionEvent } from '../../../../src/context/types.js';
+import { SessionService } from '../../../../src/services/SessionService.js';
+import { searchTranscripts } from '../../../../src/services/TranscriptSearch.js';
 
-const ts = (s: number) =>
-  new Date(Date.UTC(2024, 0, 1, 0, 0, s)).toISOString();
+const ts = (s: number) => new Date(Date.UTC(2024, 0, 1, 0, 0, s)).toISOString();
 
-function ev(seq: number, type: SessionEvent['type'], data: unknown, at: string, cwd: string): SessionEvent {
+function ev(
+  seq: number,
+  type: SessionEvent['type'],
+  data: unknown,
+  at: string,
+  cwd: string
+): SessionEvent {
   return {
     seq,
     id: `e${seq}-${Math.random()}`,
@@ -40,11 +45,53 @@ describe('SQLite read-model parity + FTS search', () => {
     const dir = path.join(root, 'projects', escaped(projectPath));
     await mkdir(dir, { recursive: true });
     const events: SessionEvent[] = [
-      ev(1, 'session_created', { sessionId, rootId: sessionId, createdAt: at, updatedAt: at }, at, projectPath),
-      ev(2, 'message_created', { messageId: 'u1', role: 'user', createdAt: at }, at, projectPath),
-      ev(3, 'part_created', { partId: 'pu1', messageId: 'u1', partType: 'text', payload: { text: userText }, createdAt: at }, at, projectPath),
-      ev(4, 'message_created', { messageId: 'a1', role: 'assistant', parentMessageId: 'u1', createdAt: at }, at, projectPath),
-      ev(5, 'part_created', { partId: 'pa1', messageId: 'a1', partType: 'text', payload: { text: assistantText }, createdAt: at }, at, projectPath),
+      ev(
+        1,
+        'session_created',
+        { sessionId, rootId: sessionId, createdAt: at, updatedAt: at },
+        at,
+        projectPath
+      ),
+      ev(
+        2,
+        'message_created',
+        { messageId: 'u1', role: 'user', createdAt: at },
+        at,
+        projectPath
+      ),
+      ev(
+        3,
+        'part_created',
+        {
+          partId: 'pu1',
+          messageId: 'u1',
+          partType: 'text',
+          payload: { text: userText },
+          createdAt: at,
+        },
+        at,
+        projectPath
+      ),
+      ev(
+        4,
+        'message_created',
+        { messageId: 'a1', role: 'assistant', parentMessageId: 'u1', createdAt: at },
+        at,
+        projectPath
+      ),
+      ev(
+        5,
+        'part_created',
+        {
+          partId: 'pa1',
+          messageId: 'a1',
+          partType: 'text',
+          payload: { text: assistantText },
+          createdAt: at,
+        },
+        at,
+        projectPath
+      ),
     ].map((e) => ({ ...e, sessionId }));
     await writeFile(
       path.join(dir, `${sessionId}.jsonl`),

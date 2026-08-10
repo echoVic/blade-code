@@ -1457,14 +1457,6 @@ export class SessionService {
         }
       }
       if (entry.type === 'part_created') {
-        if (entry.data.partType === 'reasoning') {
-          const message = messageMap.get(entry.data.messageId);
-          if (message) {
-            const payload = entry.data.payload as { text?: string };
-            message.reasoningContent =
-              (message.reasoningContent ?? '') + (payload.text ?? '');
-          }
-        }
         if (entry.data.partType === 'text') {
           const message = messageMap.get(entry.data.messageId);
           if (message) {

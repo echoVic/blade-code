@@ -5,10 +5,19 @@ import { SkillsRoutes } from '../../../../src/server/routes/skills.js';
 
 const mocks = vi.hoisted(() => ({
   getAllServers: vi.fn(),
+  getServerStatus: vi.fn(),
+  registerServer: vi.fn(),
+  beginOAuthLogin: vi.fn(),
+  logoutOAuth: vi.fn(),
+  getLogSnapshot: vi.fn(),
+  setServerLoggingLevel: vi.fn(),
+  complete: vi.fn(),
+  getConfig: vi.fn(),
   initializeSkills: vi.fn(),
   getAllSkills: vi.fn(),
   getSkill: vi.fn(),
   refreshSkills: vi.fn(),
+  resolveResources: vi.fn(),
   getAllModels: vi.fn(),
   getCurrentModel: vi.fn(),
   resolveModelConfig: vi.fn(),
@@ -18,6 +27,13 @@ vi.mock('../../../../src/mcp/McpRegistry.js', () => ({
   McpRegistry: {
     getInstance: () => ({
       getAllServers: mocks.getAllServers,
+      getServerStatus: mocks.getServerStatus,
+      registerServer: mocks.registerServer,
+      beginOAuthLogin: mocks.beginOAuthLogin,
+      logoutOAuth: mocks.logoutOAuth,
+      getLogSnapshot: mocks.getLogSnapshot,
+      setServerLoggingLevel: mocks.setServerLoggingLevel,
+      complete: mocks.complete,
     }),
   },
 }));
@@ -31,6 +47,10 @@ vi.mock('../../../../src/skills/index.js', () => ({
   }),
 }));
 
+vi.mock('../../../../src/agent/resources/WorkspaceAgentResources.js', () => ({
+  resolveWorkspaceAgentResources: mocks.resolveResources,
+}));
+
 vi.mock('../../../../src/store/vanilla.js', () => ({
   configActions: () => ({
     addModel: vi.fn(),
@@ -40,6 +60,7 @@ vi.mock('../../../../src/store/vanilla.js', () => ({
   getAllModels: mocks.getAllModels,
   getCurrentModel: mocks.getCurrentModel,
   getModelById: vi.fn(),
+  getConfig: mocks.getConfig,
 }));
 
 vi.mock('../../../../src/services/pi/PiModelCatalog.js', () => ({
@@ -53,18 +74,51 @@ vi.mock('../../../../src/services/pi/PiModelCatalog.js', () => ({
 describe('management routes', () => {
   beforeEach(() => {
     mocks.getAllServers.mockReset();
+    mocks.getServerStatus.mockReset();
+    mocks.registerServer.mockReset();
+    mocks.beginOAuthLogin.mockReset();
+    mocks.logoutOAuth.mockReset();
+    mocks.getLogSnapshot.mockReset();
+    mocks.setServerLoggingLevel.mockReset();
+    mocks.complete.mockReset();
+    mocks.getConfig.mockReset();
     mocks.initializeSkills.mockReset();
     mocks.getAllSkills.mockReset();
     mocks.getSkill.mockReset();
     mocks.refreshSkills.mockReset();
+    mocks.resolveResources.mockReset();
     mocks.getAllModels.mockReset();
     mocks.getCurrentModel.mockReset();
     mocks.resolveModelConfig.mockReset();
     mocks.getAllServers.mockReturnValue(new Map());
+    mocks.getServerStatus.mockReturnValue(null);
+    mocks.registerServer.mockResolvedValue(undefined);
+    mocks.getLogSnapshot.mockReturnValue({ revision: 0, entries: [] });
+    mocks.setServerLoggingLevel.mockResolvedValue(undefined);
+    mocks.complete.mockResolvedValue({
+      values: ['production'],
+      hasMore: false,
+      sourceValueCount: 1,
+      sourceBytes: 32,
+      projectedBytes: 10,
+      sha256: 'c'.repeat(64),
+      truncated: false,
+    });
+    mocks.getConfig.mockReturnValue({ mcpServers: {} });
     mocks.initializeSkills.mockResolvedValue(undefined);
     mocks.getAllSkills.mockReturnValue([]);
     mocks.getSkill.mockReturnValue(undefined);
     mocks.refreshSkills.mockResolvedValue(undefined);
+    mocks.resolveResources.mockImplementation(async () => {
+      await mocks.initializeSkills();
+      return {
+        skills: {
+          getAll: mocks.getAllSkills,
+          get: mocks.getSkill,
+          refresh: mocks.refreshSkills,
+        },
+      };
+    });
     mocks.getAllModels.mockReturnValue([]);
     mocks.getCurrentModel.mockReturnValue(undefined);
   });
@@ -80,6 +134,204 @@ describe('management routes', () => {
     await expect(response.json()).resolves.toEqual({
       error: 'MCP registry unavailable',
     });
+  });
+
+  it('projects OAuth status without exposing credentials', async () => {
+    mocks.getAllServers.mockReturnValue(
+      new Map([
+        [
+          'remote',
+          {
+            status: 'error',
+            config: {
+              type: 'http',
+              url: 'https://mcp.example.test/rpc',
+              oauth: { enabled: true },
+            },
+            tools: [],
+            contentCatalog: {
+              resources: [],
+              resourceTemplates: [],
+              prompts: [],
+            },
+            lastError: new Error('authorization required'),
+            instructions: {
+              text: 'Use INSTRUCTION_CODE_42',
+              sourceBytes: 23,
+              projectedBytes: 23,
+              sha256: 'b'.repeat(64),
+              truncated: false,
+              detailsOmitted: false,
+            },
+            client: {
+              completionSupported: false,
+              oauthEnabled: true,
+              getOAuthStatus: vi.fn().mockResolvedValue('unauthenticated'),
+            },
+          },
+        ],
+      ])
+    );
+
+    const response = await McpRoutes().request('/');
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual([
+      expect.objectContaining({
+        id: 'remote',
+        oauthEnabled: true,
+        oauthStatus: 'unauthenticated',
+        endpoint: 'https://mcp.example.test/rpc',
+        instructions: expect.objectContaining({
+          text: 'Use INSTRUCTION_CODE_42',
+          sha256: 'b'.repeat(64),
+        }),
+      }),
+    ]);
+    expect(JSON.stringify(body).toLowerCase()).not.toContain('token');
+  });
+
+  it('projects MCP recovery progress without exposing raw transport URLs', async () => {
+    mocks.getAllServers.mockReturnValue(
+      new Map([
+        [
+          'recovering',
+          {
+            status: 'reconnecting',
+            config: {
+              type: 'stdio',
+              command: 'node',
+              args: ['server.mjs'],
+            },
+            tools: [],
+            contentCatalog: {
+              resources: [],
+              resourceTemplates: [],
+              prompts: [],
+            },
+            lastError: new Error('Connection closed'),
+            recovery: {
+              phase: 'reconnecting',
+              reason: 'transport_closed',
+              attempt: 2,
+              maxAttempts: 5,
+              nextRetryAt: 1_000,
+              error: 'Connection closed',
+            },
+            client: {
+              completionSupported: false,
+              oauthEnabled: false,
+              getOAuthStatus: vi.fn().mockResolvedValue('disabled'),
+            },
+          },
+        ],
+      ])
+    );
+
+    const response = await McpRoutes().request('/');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual([
+      expect.objectContaining({
+        id: 'recovering',
+        status: 'reconnecting',
+        recovery: expect.objectContaining({
+          phase: 'reconnecting',
+          attempt: 2,
+          maxAttempts: 5,
+        }),
+      }),
+    ]);
+  });
+
+  it('starts and clears OAuth only through explicit endpoints', async () => {
+    mocks.getServerStatus.mockReturnValue({ config: { type: 'http' } });
+    mocks.beginOAuthLogin.mockResolvedValue({
+      flowId: 'flow-1',
+      authorizationUrl: 'https://auth.example.test/authorize',
+      callbackUrl: 'http://127.0.0.1:7777/oauth/callback',
+      completion: new Promise<void>(() => undefined),
+    });
+    mocks.logoutOAuth.mockResolvedValue(undefined);
+
+    const login = await McpRoutes().request('/remote/oauth/login', {
+      method: 'POST',
+    });
+    expect(login.status).toBe(202);
+    await expect(login.json()).resolves.toEqual({
+      success: true,
+      flowId: 'flow-1',
+      authorizationUrl: 'https://auth.example.test/authorize',
+    });
+    expect(mocks.beginOAuthLogin).toHaveBeenCalledWith('remote');
+
+    const logout = await McpRoutes().request('/remote/oauth/logout', {
+      method: 'POST',
+    });
+    expect(logout.status).toBe(200);
+    expect(mocks.logoutOAuth).toHaveBeenCalledWith('remote');
+  });
+
+  it('lists bounded MCP logs and validates explicit level changes', async () => {
+    mocks.getServerStatus.mockReturnValue({ config: { type: 'stdio' } });
+    mocks.getLogSnapshot.mockReturnValue({
+      revision: 3,
+      entries: [{ revision: 3, message: 'SAFE_LOG_MARKER' }],
+    });
+
+    const logs = await McpRoutes().request('/remote/logs?limit=10&afterRevision=1');
+    expect(logs.status).toBe(200);
+    expect(mocks.getLogSnapshot).toHaveBeenCalledWith('remote', {
+      limit: 10,
+      afterRevision: 1,
+    });
+    await expect(logs.json()).resolves.toMatchObject({ revision: 3 });
+
+    const level = await McpRoutes().request('/remote/logging-level', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ level: 'debug' }),
+    });
+    expect(level.status).toBe(200);
+    expect(mocks.setServerLoggingLevel).toHaveBeenCalledWith('remote', 'debug');
+
+    const invalid = await McpRoutes().request('/remote/logging-level', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ level: 'verbose' }),
+    });
+    expect(invalid.status).toBe(400);
+  });
+
+  it('completes MCP arguments only through the connected registry boundary', async () => {
+    mocks.getServerStatus.mockReturnValue({ config: { type: 'stdio' } });
+    const body = {
+      reference: { type: 'prompt', name: 'deploy' },
+      argument: { name: 'environment', value: 'pro' },
+      context: { region: 'us-east-1' },
+    };
+
+    const response = await McpRoutes().request('/remote/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.complete).toHaveBeenCalledWith('remote', body);
+    await expect(response.json()).resolves.toMatchObject({
+      values: ['production'],
+      sha256: 'c'.repeat(64),
+    });
+
+    const invalid = await McpRoutes().request('/remote/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reference: { type: 'prompt' } }),
+    });
+    expect(invalid.status).toBe(400);
+    expect(mocks.complete).toHaveBeenCalledTimes(1);
   });
 
   it('returns a non-success status when skill discovery fails', async () => {
