@@ -1,13 +1,25 @@
 import * as os from 'os';
 import * as path from 'path';
+import type { SessionAgentResources } from '../../../agent/resources/WorkspaceAgentResources.js';
+import type { SessionModelResources } from '../../../agent/resources/WorkspaceModelResources.js';
 import type { AgentSession } from '../../../agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../agent/subagents/BackgroundAgentManager.js';
-import { subagentRegistry } from '../../../agent/subagents/SubagentRegistry.js';
+import {
+  getSubagentRegistry,
+  type SubagentRegistry,
+} from '../../../agent/subagents/SubagentRegistry.js';
 import {
   type AgentTeam,
   type TeamMember,
   TeamStore,
 } from '../../../agent/teams/TeamStore.js';
+import type {
+  CommunicationStyleSelection,
+  ReasoningEffortSelection,
+  ResponseVerbositySelection,
+  ServiceTierSelection,
+} from '../../../config/types.js';
+import type { SessionLspResources } from '../../../lsp/WorkspaceLspResources.js';
 import { Default, Type } from '../../../schema/index.js';
 import { getCwd } from '../../../utils/cwd.js';
 import { createTool } from '../../core/createTool.js';
@@ -30,18 +42,52 @@ const memberSchema = Type.Object({
   }),
 });
 
-export function createTeamTools(opts?: { sessionId?: string; configDir?: string }) {
+export function createTeamTools(opts?: {
+  sessionId?: string;
+  configDir?: string;
+  subagentRegistry?: SubagentRegistry;
+  agentResources?: SessionAgentResources;
+  modelResources?: SessionModelResources;
+  lspResources?: SessionLspResources;
+  getReasoningEffort?: () => ReasoningEffortSelection;
+  getServiceTier?: () => ServiceTierSelection;
+  getResponseVerbosity?: () => ResponseVerbositySelection;
+  getCommunicationStyle?: () => CommunicationStyleSelection;
+}) {
   const sessionId = opts?.sessionId || `session_${Date.now()}`;
   const configDir = opts?.configDir || path.join(os.homedir(), '.blade');
+  const subagentRegistry = opts?.subagentRegistry ?? getSubagentRegistry();
 
   return [
-    createTeamCreateTool({ sessionId, configDir }),
+    createTeamCreateTool({
+      sessionId,
+      configDir,
+      subagentRegistry,
+      agentResources: opts?.agentResources,
+      modelResources: opts?.modelResources,
+      lspResources: opts?.lspResources,
+      getReasoningEffort: opts?.getReasoningEffort,
+      getServiceTier: opts?.getServiceTier,
+      getResponseVerbosity: opts?.getResponseVerbosity,
+      getCommunicationStyle: opts?.getCommunicationStyle,
+    }),
     createTeamStatusTool({ configDir }),
     createTeamDeleteTool({ configDir }),
   ];
 }
 
-function createTeamCreateTool(opts: { sessionId: string; configDir: string }) {
+function createTeamCreateTool(opts: {
+  sessionId: string;
+  configDir: string;
+  subagentRegistry: SubagentRegistry;
+  agentResources?: SessionAgentResources;
+  modelResources?: SessionModelResources;
+  lspResources?: SessionLspResources;
+  getReasoningEffort?: () => ReasoningEffortSelection;
+  getServiceTier?: () => ServiceTierSelection;
+  getResponseVerbosity?: () => ResponseVerbositySelection;
+  getCommunicationStyle?: () => CommunicationStyleSelection;
+}) {
   return createTool({
     name: 'TeamCreate',
     displayName: 'Team Create',
@@ -76,7 +122,7 @@ function createTeamCreateTool(opts: { sessionId: string; configDir: string }) {
     },
     async execute(params, context: ExecutionContext): Promise<ToolResult> {
       try {
-        ensureSubagentsLoaded();
+        ensureSubagentsLoaded(opts.subagentRegistry);
         const duplicate = findDuplicateMemberName(params.members.map((m) => m.name));
         if (duplicate) {
           return teamError(`Duplicate teammate name: ${duplicate}`, '创建团队失败');
@@ -84,10 +130,10 @@ function createTeamCreateTool(opts: { sessionId: string; configDir: string }) {
 
         const invalidTypes = params.members
           .map((member) => member.subagent_type)
-          .filter((type) => !subagentRegistry.getSubagent(type));
+          .filter((type) => !opts.subagentRegistry.getSubagent(type));
         if (invalidTypes.length > 0) {
           return teamError(
-            `Invalid subagent type(s): ${[...new Set(invalidTypes)].join(', ')}. Available: ${subagentRegistry.getAllNames().join(', ') || 'none'}`,
+            `Invalid subagent type(s): ${[...new Set(invalidTypes)].join(', ')}. Available: ${opts.subagentRegistry.getAllNames().join(', ') || 'none'}`,
             '创建团队失败'
           );
         }
@@ -105,7 +151,7 @@ function createTeamCreateTool(opts: { sessionId: string; configDir: string }) {
         const members: TeamMember[] = [];
 
         for (const member of params.members) {
-          const config = subagentRegistry.getSubagent(member.subagent_type);
+          const config = opts.subagentRegistry.getSubagent(member.subagent_type);
           if (!config) continue;
           const effectiveConfig = {
             ...config,
@@ -131,10 +177,17 @@ function createTeamCreateTool(opts: { sessionId: string; configDir: string }) {
             parentSessionId: context.sessionId || opts.sessionId,
             parentProjectPath: context.workspaceRoot || getCwd(),
             permissionMode: context.permissionMode,
+            reasoningEffort: opts.getReasoningEffort?.(),
+            serviceTier: opts.getServiceTier?.(),
+            responseVerbosity: opts.getResponseVerbosity?.(),
+            communicationStyle: opts.getCommunicationStyle?.(),
             agentId: memberId,
             taskListId: team.name,
             workspaceRoot: context.workspaceRoot || getCwd(),
             isolation: effectiveConfig.isolation,
+            agentResources: opts.agentResources,
+            modelResources: opts.modelResources,
+            lspResources: opts.lspResources,
           });
 
           members.push({
@@ -314,9 +367,9 @@ function createTeamDeleteTool(opts: { configDir: string }) {
   });
 }
 
-function ensureSubagentsLoaded(): void {
-  if (subagentRegistry.getAllNames().length === 0) {
-    subagentRegistry.loadFromStandardLocations();
+function ensureSubagentsLoaded(registry: SubagentRegistry): void {
+  if (registry.getAllNames().length === 0) {
+    registry.loadFromStandardLocations();
   }
 }
 

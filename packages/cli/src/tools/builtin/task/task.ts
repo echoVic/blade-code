@@ -12,6 +12,8 @@
 import path from 'node:path';
 import { nanoid } from 'nanoid';
 import type { LoopEvent } from '../../../agent/loop/types.js';
+import type { SessionAgentResources } from '../../../agent/resources/WorkspaceAgentResources.js';
+import type { SessionModelResources } from '../../../agent/resources/WorkspaceModelResources.js';
 import {
   type AgentSession,
   type AgentSessionOwner,
@@ -20,7 +22,11 @@ import {
 } from '../../../agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../agent/subagents/BackgroundAgentManager.js';
 import { SubagentExecutor } from '../../../agent/subagents/SubagentExecutor.js';
-import { subagentRegistry } from '../../../agent/subagents/SubagentRegistry.js';
+import {
+  getSubagentRegistry,
+  type SubagentRegistry,
+  subagentRegistry,
+} from '../../../agent/subagents/SubagentRegistry.js';
 import {
   type SubagentIsolationMode,
   SubagentWorktreeLease,
@@ -31,8 +37,15 @@ import type {
   SubagentContext,
   SubagentResult,
 } from '../../../agent/subagents/types.js';
-import { PermissionMode } from '../../../config/types.js';
+import {
+  type CommunicationStyleSelection,
+  PermissionMode,
+  type ReasoningEffortSelection,
+  type ResponseVerbositySelection,
+  type ServiceTierSelection,
+} from '../../../config/types.js';
 import { HookManager } from '../../../hooks/HookManager.js';
+import type { SessionLspResources } from '../../../lsp/WorkspaceLspResources.js';
 import { Default, StringEnum, Type } from '../../../schema/index.js';
 import { Bus } from '../../../server/bus.js';
 import { vanillaStore } from '../../../store/vanilla.js';
@@ -87,13 +100,13 @@ function extractUserFriendlyError(error: Error): string {
  * 验证 subagent 类型是否有效（运行时验证）
  * 不能使用静态 enum，因为 registry 在模块加载时尚未初始化
  */
-function isValidSubagentType(type: string): boolean {
-  const types = subagentRegistry.getAllNames();
+function isValidSubagentType(registry: SubagentRegistry, type: string): boolean {
+  const types = registry.getAllNames();
   return types.includes(type);
 }
 
-function getAvailableSubagentTypesMessage(): string {
-  const types = subagentRegistry.getAllNames();
+function getAvailableSubagentTypesMessage(registry: SubagentRegistry): string {
+  const types = registry.getAllNames();
   return types.length > 0 ? types.join(', ') : 'none (registry not initialized)';
 }
 
@@ -101,7 +114,7 @@ function getAvailableSubagentTypesMessage(): string {
  * 动态生成 Task 工具的完整描述
  * 必须是函数形式，因为 subagentRegistry 在模块加载时可能还未初始化
  */
-function getTaskDescription(): string {
+function getTaskDescription(registry: SubagentRegistry): string {
   return `
 ## Task
 
@@ -109,7 +122,7 @@ Launch a new agent to handle complex, multi-step tasks autonomously.
 
 The Task tool launches specialized agents (subprocesses) that autonomously handle complex tasks. Each agent type has specific capabilities and tools available to it.
 
-${subagentRegistry.getDescriptionsForPrompt()}
+${registry.getDescriptionsForPrompt()}
 
 For a fresh Task run, specify subagent_type. For resume_from, omit it or pass the exact source type; Blade inherits and validates the durable source identity.
 
@@ -145,252 +158,294 @@ Usage notes:
  * - 模型从 subagent 描述中选择合适的类型
  * - 每个 subagent 有独立的系统提示和工具配置
  */
-export const taskTool = createTool({
-  name: 'Task',
-  displayName: 'Subagent Scheduler',
-  kind: ToolKind.ReadOnly, // Plan 模式下允许：子 Agent 的工具使用受各自模式限制
-  isReadOnly: true,
-  isConcurrencySafe: false, // 开子代理，有副作用
+export function createTaskTool(
+  registry: SubagentRegistry = getSubagentRegistry(),
+  agentResources?: SessionAgentResources,
+  modelResources?: SessionModelResources,
+  lspResources?: SessionLspResources,
+  getReasoningEffort?: () => ReasoningEffortSelection,
+  getServiceTier?: () => ServiceTierSelection,
+  getResponseVerbosity?: () => ResponseVerbositySelection,
+  getCommunicationStyle?: () => CommunicationStyleSelection
+) {
+  return createTool({
+    name: 'Task',
+    displayName: 'Subagent Scheduler',
+    kind: ToolKind.ReadOnly, // Plan 模式下允许：子 Agent 的工具使用受各自模式限制
+    isReadOnly: true,
+    // Each Task owns an independent durable child session. Coding agents should
+    // still use worktree isolation, as required by the tool contract below.
+    isConcurrencySafe: false,
+    parallelism: 'shared',
 
-  schema: Type.Object({
-    subagent_type: Type.Optional(
-      Type.Refine(
+    schema: Type.Object({
+      subagent_type: Type.Optional(
+        Type.Refine(
+          Type.String({
+            description:
+              'Subagent type to use. Required for a fresh run; optional for resume_from.',
+          }),
+          (value) => isValidSubagentType(registry, value),
+          (value) =>
+            `Invalid subagent type: "${value}". Available: ${getAvailableSubagentTypesMessage(registry)}`
+        )
+      ),
+      description: Type.String({
+        minLength: 3,
+        maxLength: 100,
+        description: 'Short task description (3-5 words)',
+      }),
+      prompt: Type.String({
+        minLength: 10,
+        description: 'Detailed task instructions',
+      }),
+      run_in_background: Default(
+        Type.Boolean({
+          description:
+            'Set true to run in the background. Use TaskOutput to read output later.',
+        }),
+        false
+      ),
+      isolation: Type.Optional(
+        StringEnum(['none', 'worktree'], {
+          description:
+            'Filesystem isolation. Use worktree to prevent edits affecting the parent workspace.',
+        })
+      ),
+      resume: Type.Optional(
+        Type.String({
+          description: 'Deprecated alias for resume_from.',
+        })
+      ),
+      resume_from: Type.Optional(
         Type.String({
           description:
-            'Subagent type to use. Required for a fresh run; optional for resume_from.',
-        }),
-        isValidSubagentType,
-        (value) =>
-          `Invalid subagent type: "${value}". Available: ${getAvailableSubagentTypesMessage()}`
-      )
-    ),
-    description: Type.String({
-      minLength: 3,
-      maxLength: 100,
-      description: 'Short task description (3-5 words)',
+            'Completed agent ID to resume. The source type, model, permissions, workspace, and transcript are inherited.',
+        })
+      ),
+      subagent_session_id: Type.Optional(
+        Type.String({ description: 'Internal subagent session id for tracking' })
+      ),
     }),
-    prompt: Type.String({
-      minLength: 10,
-      description: 'Detailed task instructions',
-    }),
-    run_in_background: Default(
-      Type.Boolean({
-        description:
-          'Set true to run in the background. Use TaskOutput to read output later.',
-      }),
-      false
-    ),
-    isolation: Type.Optional(
-      StringEnum(['none', 'worktree'], {
-        description:
-          'Filesystem isolation. Use worktree to prevent edits affecting the parent workspace.',
-      })
-    ),
-    resume: Type.Optional(
-      Type.String({
-        description: 'Deprecated alias for resume_from.',
-      })
-    ),
-    resume_from: Type.Optional(
-      Type.String({
-        description:
-          'Completed agent ID to resume. The source type, model, permissions, workspace, and transcript are inherited.',
-      })
-    ),
-    subagent_session_id: Type.Optional(
-      Type.String({ description: 'Internal subagent session id for tracking' })
-    ),
-  }),
 
-  // 工具描述
-  description: {
-    short: 'Launch a new agent to handle complex, multi-step tasks autonomously',
-    // 使用 getter 动态生成描述，确保 subagentRegistry 已初始化
-    get long() {
-      return getTaskDescription();
+    // 工具描述
+    description: {
+      short: 'Launch a new agent to handle complex, multi-step tasks autonomously',
+      // 使用 getter 动态生成描述，确保 subagentRegistry 已初始化
+      get long() {
+        return getTaskDescription(registry);
+      },
+      usageNotes: [
+        'subagent_type is required - choose from available agent types',
+        'description should be 3-5 words (e.g., "Explore error handling")',
+        'prompt should contain a highly detailed task description and specify exactly what information to return',
+        'Launch multiple agents concurrently when possible for better performance',
+        'Use isolation="worktree" for parallel coding agents that may edit files',
+      ],
+      examples: [
+        {
+          description: 'Explore codebase for API endpoints',
+          params: {
+            subagent_type: 'Explore',
+            description: 'Find API endpoints',
+            prompt:
+              'Search the codebase for all API endpoint definitions. Look for route handlers, REST endpoints, and GraphQL resolvers. Return a structured list with file paths, endpoint URLs, HTTP methods, and descriptions.',
+          },
+        },
+        {
+          description: 'Plan authentication feature',
+          params: {
+            subagent_type: 'Plan',
+            description: 'Plan user auth',
+            prompt:
+              'Create a detailed implementation plan for adding user authentication to this project. Analyze the existing architecture, then provide step-by-step instructions including: 1) Database schema changes 2) API routes to create 3) Frontend components needed 4) Security considerations 5) Testing strategy. Be specific about file names and code locations.',
+          },
+        },
+      ],
     },
-    usageNotes: [
-      'subagent_type is required - choose from available agent types',
-      'description should be 3-5 words (e.g., "Explore error handling")',
-      'prompt should contain a highly detailed task description and specify exactly what information to return',
-      'Launch multiple agents concurrently when possible for better performance',
-      'Use isolation="worktree" for parallel coding agents that may edit files',
-    ],
-    examples: [
-      {
-        description: 'Explore codebase for API endpoints',
-        params: {
-          subagent_type: 'Explore',
-          description: 'Find API endpoints',
-          prompt:
-            'Search the codebase for all API endpoint definitions. Look for route handlers, REST endpoints, and GraphQL resolvers. Return a structured list with file paths, endpoint URLs, HTTP methods, and descriptions.',
-        },
-      },
-      {
-        description: 'Plan authentication feature',
-        params: {
-          subagent_type: 'Plan',
-          description: 'Plan user auth',
-          prompt:
-            'Create a detailed implementation plan for adding user authentication to this project. Analyze the existing architecture, then provide step-by-step instructions including: 1) Database schema changes 2) API routes to create 3) Frontend components needed 4) Security considerations 5) Testing strategy. Be specific about file names and code locations.',
-        },
-      },
-    ],
-  },
 
-  // 执行函数
-  async execute(params, context: ExecutionContext): Promise<ToolResult> {
-    const {
-      subagent_type,
-      description,
-      prompt,
-      run_in_background = false,
-      isolation,
-      resume,
-      resume_from,
-      subagent_session_id,
-    } = params;
-    const resumeFrom = resume_from ?? resume;
-    const owner = getTaskOwner(context);
-    if (!owner) {
-      return taskError(
-        'Task requires an active parent session and absolute workspace',
-        'Subagent 缺少 durable parent session owner'
-      );
-    }
-    const manager = BackgroundAgentManager.getInstance();
-    const source = resumeFrom ? manager.getAgent(resumeFrom, owner) : undefined;
-    if (resumeFrom && !source) {
-      return taskError(
-        `Cannot resume agent ${resumeFrom}: session not found in this workspace`,
-        `恢复 Agent 失败: 会话不存在 ${resumeFrom}`
-      );
-    }
-    if (source && (manager.isRunning(source.id) || source.status === 'running')) {
-      return taskError(
-        `Cannot resume agent ${source.id}: it is still running`,
-        `恢复 Agent 失败: 仍在运行 ${source.id}`
-      );
-    }
-    if (source && subagent_type && source.subagentType !== subagent_type) {
-      return taskError(
-        `Cannot resume with subagent_type "${subagent_type}": source agent used "${source.subagentType}"`,
-        '恢复 Agent 失败: subagent 类型与源运行不一致'
-      );
-    }
-
-    const effectiveType = source?.subagentType ?? subagent_type;
-    if (!effectiveType) {
-      return taskError(
-        'subagent_type is required for a fresh Task run',
-        '启动 Agent 失败: 缺少 subagent_type'
-      );
-    }
-
-    const registeredConfig = subagentRegistry.getSubagent(effectiveType);
-    const restoredConfig = source?.configSnapshot
-      ? ({ ...source.configSnapshot } as SubagentConfig)
-      : undefined;
-    const baseConfig = restoredConfig ?? registeredConfig;
-    if (!baseConfig) {
-      return taskError(
-        `Unknown subagent type: ${effectiveType}. Available types: ${subagentRegistry.getAllNames().join(', ') || 'none'}`,
-        `未知的 subagent 类型: ${effectiveType}`
-      );
-    }
-    const subagentConfig: SubagentConfig = {
-      ...baseConfig,
-      model:
-        baseConfig.model && baseConfig.model !== 'inherit'
-          ? baseConfig.model
-          : (context.modelId ?? baseConfig.model),
-      permissionMode: baseConfig.permissionMode ?? context.permissionMode,
-    };
-    const subagentSessionId =
-      typeof subagent_session_id === 'string' && subagent_session_id.length > 0
-        ? subagent_session_id
-        : createSessionId('agent');
-    const effectiveIsolation =
-      source?.isolation ??
-      (isolation as SubagentIsolationMode | undefined) ??
-      subagentConfig.isolation ??
-      'none';
-    const rootAgentId = source?.rootAgentId ?? subagentSessionId;
-    const resumeDepth = source ? source.resumeDepth + 1 : 0;
-    const eventBridge = createSubagentEventBridge({
-      owner,
-      subagentSessionId,
-      type: subagentConfig.name,
-      description,
-      resumedFrom: source?.id,
-      rootAgentId,
-      resumeDepth,
-    });
-
-    if (run_in_background) {
-      const startedId = source
-        ? manager.resumeAgent({
-            agentId: source.id,
-            prompt,
-            config: subagentConfig,
-            owner,
-            permissionMode: context.permissionMode,
-            newAgentId: subagentSessionId,
-            onEvent: eventBridge.onEvent,
-            onCompleted: eventBridge.onCompleted,
-          })?.agentId
-        : manager.startBackgroundAgent({
-            config: subagentConfig,
-            description,
-            prompt,
-            parentSessionId: owner.sessionId,
-            parentProjectPath: owner.projectPath,
-            permissionMode: context.permissionMode,
-            agentId: subagentSessionId,
-            workspaceRoot: owner.projectPath,
-            isolation: effectiveIsolation,
-            onEvent: eventBridge.onEvent,
-            onCompleted: eventBridge.onCompleted,
-          });
-      if (!startedId) {
+    // 执行函数
+    async execute(params, context: ExecutionContext): Promise<ToolResult> {
+      const {
+        subagent_type,
+        description,
+        prompt,
+        run_in_background = false,
+        isolation,
+        resume,
+        resume_from,
+        subagent_session_id,
+      } = params;
+      const resumeFrom = resume_from ?? resume;
+      const owner = getTaskOwner(context);
+      if (!owner) {
         return taskError(
-          `Failed to resume agent ${source?.id ?? subagentSessionId}`,
-          '恢复 Agent 失败'
+          'Task requires an active parent session and absolute workspace',
+          'Subagent 缺少 durable parent session owner'
         );
       }
-      eventBridge.onStarted();
-      return buildRunningTaskResult({
-        sessionId: startedId,
-        config: subagentConfig,
+      const reasoningEffort = getReasoningEffort?.();
+      const serviceTier = getServiceTier?.();
+      const responseVerbosity = getResponseVerbosity?.();
+      const communicationStyle = getCommunicationStyle?.();
+      const manager = BackgroundAgentManager.getInstance();
+      const source = resumeFrom ? manager.getAgent(resumeFrom, owner) : undefined;
+      if (resumeFrom && !source) {
+        return taskError(
+          `Cannot resume agent ${resumeFrom}: session not found in this workspace`,
+          `恢复 Agent 失败: 会话不存在 ${resumeFrom}`
+        );
+      }
+      if (source && (manager.isRunning(source.id) || source.status === 'running')) {
+        return taskError(
+          `Cannot resume agent ${source.id}: it is still running`,
+          `恢复 Agent 失败: 仍在运行 ${source.id}`
+        );
+      }
+      if (source && subagent_type && source.subagentType !== subagent_type) {
+        return taskError(
+          `Cannot resume with subagent_type "${subagent_type}": source agent used "${source.subagentType}"`,
+          '恢复 Agent 失败: subagent 类型与源运行不一致'
+        );
+      }
+
+      const effectiveType = source?.subagentType ?? subagent_type;
+      if (!effectiveType) {
+        return taskError(
+          'subagent_type is required for a fresh Task run',
+          '启动 Agent 失败: 缺少 subagent_type'
+        );
+      }
+
+      const registeredConfig = registry.getSubagent(effectiveType);
+      const restoredConfig = source?.configSnapshot
+        ? ({ ...source.configSnapshot } as SubagentConfig)
+        : undefined;
+      const baseConfig = restoredConfig ?? registeredConfig;
+      if (!baseConfig) {
+        return taskError(
+          `Unknown subagent type: ${effectiveType}. Available types: ${registry.getAllNames().join(', ') || 'none'}`,
+          `未知的 subagent 类型: ${effectiveType}`
+        );
+      }
+      const subagentConfig: SubagentConfig = {
+        ...baseConfig,
+        model:
+          baseConfig.model && baseConfig.model !== 'inherit'
+            ? baseConfig.model
+            : (context.modelId ?? baseConfig.model),
+        permissionMode: baseConfig.permissionMode ?? context.permissionMode,
+      };
+      const subagentSessionId =
+        typeof subagent_session_id === 'string' && subagent_session_id.length > 0
+          ? subagent_session_id
+          : createSessionId('agent');
+      const effectiveIsolation =
+        source?.isolation ??
+        (isolation as SubagentIsolationMode | undefined) ??
+        subagentConfig.isolation ??
+        'none';
+      const rootAgentId = source?.rootAgentId ?? subagentSessionId;
+      const resumeDepth = source ? source.resumeDepth + 1 : 0;
+      const eventBridge = createSubagentEventBridge({
+        owner,
+        subagentSessionId,
+        type: subagentConfig.name,
         description,
-        isolation: effectiveIsolation,
         resumedFrom: source?.id,
         rootAgentId,
         resumeDepth,
       });
-    }
 
-    return executeForegroundTask({
-      config: subagentConfig,
-      description,
-      prompt,
-      context,
-      owner,
-      subagentSessionId,
-      isolation: effectiveIsolation,
-      source,
-      eventBridge,
-    });
-  },
+      if (run_in_background) {
+        const startedId = source
+          ? manager.resumeAgent({
+              agentId: source.id,
+              prompt,
+              config: subagentConfig,
+              owner,
+              permissionMode: context.permissionMode,
+              reasoningEffort,
+              serviceTier,
+              responseVerbosity,
+              communicationStyle,
+              newAgentId: subagentSessionId,
+              agentResources,
+              modelResources,
+              lspResources,
+              onEvent: eventBridge.onEvent,
+              onCompleted: eventBridge.onCompleted,
+            })?.agentId
+          : manager.startBackgroundAgent({
+              config: subagentConfig,
+              description,
+              prompt,
+              parentSessionId: owner.sessionId,
+              parentProjectPath: owner.projectPath,
+              permissionMode: context.permissionMode,
+              reasoningEffort,
+              serviceTier,
+              responseVerbosity,
+              communicationStyle,
+              agentId: subagentSessionId,
+              workspaceRoot: owner.projectPath,
+              isolation: effectiveIsolation,
+              agentResources,
+              modelResources,
+              lspResources,
+              onEvent: eventBridge.onEvent,
+              onCompleted: eventBridge.onCompleted,
+            });
+        if (!startedId) {
+          return taskError(
+            `Failed to resume agent ${source?.id ?? subagentSessionId}`,
+            '恢复 Agent 失败'
+          );
+        }
+        eventBridge.onStarted();
+        return buildRunningTaskResult({
+          sessionId: startedId,
+          config: subagentConfig,
+          description,
+          isolation: effectiveIsolation,
+          resumedFrom: source?.id,
+          rootAgentId,
+          resumeDepth,
+        });
+      }
 
-  version: '5.0.0',
-  category: 'Subagent',
-  tags: ['task', 'subagent', 'delegation', 'explore', 'plan'],
+      return executeForegroundTask({
+        config: subagentConfig,
+        description,
+        prompt,
+        context,
+        owner,
+        subagentSessionId,
+        isolation: effectiveIsolation,
+        source,
+        eventBridge,
+        agentResources,
+        modelResources,
+        lspResources,
+        reasoningEffort,
+        serviceTier,
+        responseVerbosity,
+        communicationStyle,
+      });
+    },
 
-  extractSignatureContent: (params) =>
-    `${params.subagent_type || 'resume'}:${params.resume_from || params.resume || ''}:${params.description}`,
-  abstractPermissionRule: () => '',
-});
+    version: '5.0.0',
+    category: 'Subagent',
+    tags: ['task', 'subagent', 'delegation', 'explore', 'plan'],
+
+    extractSignatureContent: (params) =>
+      `${params.subagent_type || 'resume'}:${params.resume_from || params.resume || ''}:${params.description}`,
+    abstractPermissionRule: () => '',
+  });
+}
+
+/** @deprecated Use createTaskTool(registry). */
+export const taskTool = createTaskTool(subagentRegistry);
 
 interface SubagentEventBridge {
   onStarted: () => void;
@@ -408,6 +463,13 @@ interface ForegroundTaskInput {
   isolation: SubagentIsolationMode;
   source?: AgentSession;
   eventBridge: SubagentEventBridge;
+  agentResources?: SessionAgentResources;
+  modelResources?: SessionModelResources;
+  lspResources?: SessionLspResources;
+  reasoningEffort?: ReasoningEffortSelection;
+  serviceTier?: ServiceTierSelection;
+  responseVerbosity?: ResponseVerbositySelection;
+  communicationStyle?: CommunicationStyleSelection;
 }
 
 function getTaskOwner(context: ExecutionContext): AgentSessionOwner | undefined {
@@ -466,7 +528,7 @@ function createSubagentEventBridge(input: {
         case 'tool_start': {
           const toolCall = event.toolCall;
           const toolName = 'function' in toolCall ? toolCall.function.name : 'Unknown';
-          vanillaStore.getState().app.actions.updateSubagentTool(toolName);
+          vanillaStore.getState().app.actions.updateSubagentTool(progressId, toolName);
           Bus.publish(input.owner, 'subagent.update', {
             subagentSessionId: input.subagentSessionId,
             toolName,
@@ -498,6 +560,17 @@ function createSubagentEventBridge(input: {
           });
           break;
         }
+        case 'tool_progress': {
+          const toolCall = event.toolCall;
+          if (!('function' in toolCall)) break;
+          Bus.publish(input.owner, 'subagent.tool.progress', {
+            subagentSessionId: input.subagentSessionId,
+            toolCallId: toolCall.id,
+            toolName: toolCall.function.name,
+            ...event.update,
+          });
+          break;
+        }
         case 'content_delta':
           Bus.publish(input.owner, 'subagent.delta', {
             subagentSessionId: input.subagentSessionId,
@@ -524,7 +597,10 @@ function createSubagentEventBridge(input: {
       completed = true;
       vanillaStore
         .getState()
-        .app.actions.completeSubagentProgress(session.status === 'completed');
+        .app.actions.completeSubagentProgress(
+          progressId,
+          session.status === 'completed'
+        );
       Bus.publish(input.owner, 'subagent.complete', {
         subagentSessionId: input.subagentSessionId,
         success: session.status === 'completed',
@@ -547,6 +623,9 @@ async function executeForegroundTask(input: ForegroundTaskInput): Promise<ToolRe
     isolation,
     source,
     eventBridge,
+    agentResources,
+    modelResources,
+    lspResources,
   } = input;
   const sessionStore = AgentSessionStore.getInstance();
   const sourceWorkspaceRoot = source?.workspaceRoot ?? owner.projectPath;
@@ -601,11 +680,20 @@ async function executeForegroundTask(input: ForegroundTaskInput): Promise<ToolRe
       `${source ? '恢复' : '启动'} ${config.name} subagent: ${description}`
     );
 
-    const executor = new SubagentExecutor(config);
+    const executor = new SubagentExecutor(
+      config,
+      agentResources,
+      modelResources,
+      lspResources
+    );
     const subagentContext: SubagentContext = {
       prompt,
       parentSessionId: owner.sessionId,
       permissionMode: config.permissionMode ?? context.permissionMode,
+      reasoningEffort: input.reasoningEffort,
+      serviceTier: input.serviceTier,
+      responseVerbosity: input.responseVerbosity,
+      communicationStyle: input.communicationStyle,
       subagentSessionId,
       resumedFrom: source?.id,
       rootAgentId,

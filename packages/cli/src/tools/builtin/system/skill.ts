@@ -1,5 +1,5 @@
 import { Type } from '../../../schema/index.js';
-import { getSkillRegistry } from '../../../skills/index.js';
+import { getSkillRegistry, type SkillRegistry } from '../../../skills/index.js';
 import { createTool } from '../../core/createTool.js';
 import type { ToolResult } from '../../types/ToolTypes.js';
 import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
@@ -11,24 +11,26 @@ import { ToolErrorType, ToolKind } from '../../types/ToolTypes.js';
  * Skills 是动态 Prompt 扩展机制，允许 AI 根据用户请求自动调用专业能力。
  * 执行 Skill 时，返回完整的 Skill 指令（发送给 LLM）。
  */
-export const skillTool = createTool({
-  name: 'Skill',
-  displayName: 'Skill',
-  kind: ToolKind.Execute,
-  isConcurrencySafe: false, // 执行技能，可能有副作用
+export function createSkillTool(registry: SkillRegistry = getSkillRegistry()) {
+  const availableSkills = registry.generateAvailableSkillsList();
+  return createTool({
+    name: 'Skill',
+    displayName: 'Skill',
+    kind: ToolKind.Execute,
+    isConcurrencySafe: false, // 执行技能，可能有副作用
 
-  schema: Type.Object({
-    skill: Type.String({
-      description: 'The skill name. E.g., "commit-message" or "code-review"',
+    schema: Type.Object({
+      skill: Type.String({
+        description: 'The skill name. E.g., "commit-message" or "code-review"',
+      }),
+      args: Type.Optional(
+        Type.String({ description: 'Optional arguments for the skill' })
+      ),
     }),
-    args: Type.Optional(
-      Type.String({ description: 'Optional arguments for the skill' })
-    ),
-  }),
 
-  description: {
-    short: 'Execute a skill within the main conversation',
-    long: `Execute a skill within the main conversation
+    description: {
+      short: 'Execute a skill within the main conversation',
+      long: `Execute a skill within the main conversation
 
 <skills_instructions>
 When users ask you to perform tasks, check if any of the available skills below can help complete the task more effectively. Skills provide specialized capabilities and domain knowledge.
@@ -45,81 +47,80 @@ Important:
 </skills_instructions>
 
 <available_skills>
-
+${availableSkills}
 </available_skills>
 `,
-  },
+    },
 
-  async execute(params, context): Promise<ToolResult> {
-    const { skill } = params;
+    async execute(params, _context): Promise<ToolResult> {
+      const { skill } = params;
 
-    // 获取 SkillRegistry
-    const registry = getSkillRegistry(
-      context.workspaceRoot ? { cwd: context.workspaceRoot } : undefined
-    );
+      // 检查 skill 是否存在
+      if (!registry.has(skill)) {
+        return {
+          success: false,
+          llmContent: `Skill "${skill}" not found. Available skills: ${
+            registry
+              .getAll()
+              .map((s) => s.name)
+              .join(', ') || 'none'
+          }`,
+          error: {
+            type: ToolErrorType.VALIDATION_ERROR,
+            message: `Skill "${skill}" is not registered`,
+          },
+          metadata: { summary: `Skill 未找到: ${skill}` },
+        };
+      }
 
-    // 检查 skill 是否存在
-    if (!registry.has(skill)) {
+      // 加载完整的 Skill 内容
+      const content = await registry.loadContent(skill);
+      if (!content) {
+        return {
+          success: false,
+          llmContent: `Failed to load skill "${skill}" content`,
+          error: {
+            type: ToolErrorType.EXECUTION_ERROR,
+            message: `Could not read SKILL.md for "${skill}"`,
+          },
+          metadata: { summary: `加载 Skill 失败: ${skill}` },
+        };
+      }
+
+      // 构建完整的 Skill 指令（发送给 LLM）
+      const skillInstructions = buildSkillInstructions(
+        content.metadata.name,
+        content.instructions,
+        content.metadata.basePath
+      );
+      const requestedModelId =
+        typeof content.metadata.model === 'string' &&
+        content.metadata.model !== 'inherit' &&
+        content.metadata.model.trim() !== ''
+          ? content.metadata.model
+          : undefined;
+
+      // 返回双消息
       return {
-        success: false,
-        llmContent: `Skill "${skill}" not found. Available skills: ${
-          registry
-            .getAll()
-            .map((s) => s.name)
-            .join(', ') || 'none'
-        }`,
-        error: {
-          type: ToolErrorType.VALIDATION_ERROR,
-          message: `Skill "${skill}" is not registered`,
+        success: true,
+        // llmContent: 完整的 Skill 指令（发送给 LLM，用户不可见）
+        llmContent: skillInstructions,
+        metadata: {
+          summary: `加载 Skill: ${skill}`,
+          skillName: skill,
+          basePath: content.metadata.basePath,
+          version: content.metadata.version,
+          // allowed-tools: 限制 Skill 执行期间可用的工具
+          allowedTools: content.metadata.allowedTools,
+          modelId: requestedModelId,
         },
-        metadata: { summary: `Skill 未找到: ${skill}` },
       };
-    }
+    },
+  });
+}
 
-    // 加载完整的 Skill 内容
-    const content = await registry.loadContent(skill);
-    if (!content) {
-      return {
-        success: false,
-        llmContent: `Failed to load skill "${skill}" content`,
-        error: {
-          type: ToolErrorType.EXECUTION_ERROR,
-          message: `Could not read SKILL.md for "${skill}"`,
-        },
-        metadata: { summary: `加载 Skill 失败: ${skill}` },
-      };
-    }
-
-    // 构建完整的 Skill 指令（发送给 LLM）
-    const skillInstructions = buildSkillInstructions(
-      content.metadata.name,
-      content.instructions,
-      content.metadata.basePath
-    );
-    const requestedModelId =
-      typeof content.metadata.model === 'string' &&
-      content.metadata.model !== 'inherit' &&
-      content.metadata.model.trim() !== ''
-        ? content.metadata.model
-        : undefined;
-
-    // 返回双消息
-    return {
-      success: true,
-      // llmContent: 完整的 Skill 指令（发送给 LLM，用户不可见）
-      llmContent: skillInstructions,
-      metadata: {
-        summary: `加载 Skill: ${skill}`,
-        skillName: skill,
-        basePath: content.metadata.basePath,
-        version: content.metadata.version,
-        // allowed-tools: 限制 Skill 执行期间可用的工具
-        allowedTools: content.metadata.allowedTools,
-        modelId: requestedModelId,
-      },
-    };
-  },
-});
+/** @deprecated Use createSkillTool(registry). */
+export const skillTool = createSkillTool();
 
 /**
  * 构建完整的 Skill 指令

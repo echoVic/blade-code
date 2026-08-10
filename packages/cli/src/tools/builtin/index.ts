@@ -4,14 +4,30 @@
 
 import * as os from 'os';
 import * as path from 'path';
-import { McpRegistry } from '../../mcp/McpRegistry.js';
+import type { SessionAgentResources } from '../../agent/resources/WorkspaceAgentResources.js';
+import type { SessionModelResources } from '../../agent/resources/WorkspaceModelResources.js';
+import {
+  getSubagentRegistry,
+  type SubagentRegistry,
+} from '../../agent/subagents/SubagentRegistry.js';
+import type {
+  CommunicationStyleSelection,
+  ReasoningEffortSelection,
+  ResponseVerbositySelection,
+  ServiceTierSelection,
+} from '../../config/types.js';
+import type { LspSessionManager } from '../../lsp/LspSessionManager.js';
+import type { SessionLspResources } from '../../lsp/WorkspaceLspResources.js';
+import { getSkillRegistry, type SkillRegistry } from '../../skills/index.js';
+import { CustomCommandRegistry } from '../../slash-commands/custom/CustomCommandRegistry.js';
 import type { Tool } from '../types/index.js';
 // Config 工具
 import { configTool } from './config/index.js';
 // 文件操作工具
-import { editTool, readTool, writeTool } from './file/index.js';
+import { applyPatchTool, editTool, readTool, writeTool } from './file/index.js';
 // Goal 工具
 import { createGoalTools } from './goal/index.js';
+import { createLspTool } from './lsp/index.js';
 // Memory 工具
 import { memoryReadTool, memoryWriteTool } from './memory/index.js';
 // Notebook 工具
@@ -25,28 +41,18 @@ import { bashTool, killShellTool, writeStdinTool } from './shell/index.js';
 // System 工具
 import {
   askUserQuestionTool,
-  skillTool,
-  slashCommandTool,
+  createSkillTool,
+  createSlashCommandTool,
   toolSearchTool,
 } from './system/index.js';
 // 任务管理工具
-import { createTaskListTools, taskOutputTool, taskTool } from './task/index.js';
+import { createTaskListTools, createTaskTool, taskOutputTool } from './task/index.js';
 // Agent Team 工具
 import { createTeamTools } from './team/index.js';
 // 网络工具
 import { webFetchTool, webSearchTool } from './web/index.js';
 // Worktree 隔离工具
 import { createWorktreeTools } from './worktree/index.js';
-
-async function getMcpTools(): Promise<Tool[]> {
-  try {
-    const mcpRegistry = McpRegistry.getInstance();
-    return await mcpRegistry.getAvailableTools();
-  } catch (error) {
-    console.warn('MCP协议工具加载失败:', error);
-    return [];
-  }
-}
 
 /**
  * 获取所有内置工具
@@ -55,16 +61,42 @@ export async function getBuiltinTools(opts?: {
   sessionId?: string;
   configDir?: string;
   workspaceRoot?: string;
+  resourceRoot?: string;
+  subagentRegistry?: SubagentRegistry;
+  skillRegistry?: SkillRegistry;
+  commandRegistry?: CustomCommandRegistry;
+  agentResources?: SessionAgentResources;
+  modelResources?: SessionModelResources;
+  lspManager?: LspSessionManager;
+  lspResources?: SessionLspResources;
+  getReasoningEffort?: () => ReasoningEffortSelection;
+  getServiceTier?: () => ServiceTierSelection;
+  getResponseVerbosity?: () => ResponseVerbositySelection;
+  getCommunicationStyle?: () => CommunicationStyleSelection;
 }): Promise<Tool[]> {
   const sessionId = opts?.sessionId || `session_${Date.now()}`;
   const configDir = opts?.configDir || path.join(os.homedir(), '.blade');
   const workspaceRoot = opts?.workspaceRoot || process.cwd();
+  const resourceRoot = opts?.resourceRoot || workspaceRoot;
+  const subagentRegistry =
+    opts?.agentResources?.subagents ??
+    opts?.subagentRegistry ??
+    getSubagentRegistry(resourceRoot);
+  const skillRegistry =
+    opts?.agentResources?.skills ??
+    opts?.skillRegistry ??
+    getSkillRegistry({ cwd: resourceRoot });
+  const commandRegistry =
+    opts?.agentResources?.commands ??
+    opts?.commandRegistry ??
+    CustomCommandRegistry.getInstance(resourceRoot);
 
   const builtinTools = [
-    // 文件操作工具: Read, Edit, Write, NotebookEdit
+    // 文件操作工具: Read, Edit, Write, ApplyPatch, NotebookEdit
     readTool,
     editTool,
     writeTool,
+    applyPatchTool,
     notebookEditTool,
 
     // 搜索工具: Glob, Grep
@@ -81,7 +113,16 @@ export async function getBuiltinTools(opts?: {
     webSearchTool,
 
     // 子代理任务: Task, TaskOutput
-    taskTool,
+    createTaskTool(
+      subagentRegistry,
+      opts?.agentResources,
+      opts?.modelResources,
+      opts?.lspResources,
+      opts?.getReasoningEffort,
+      opts?.getServiceTier,
+      opts?.getResponseVerbosity,
+      opts?.getCommunicationStyle
+    ),
     taskOutputTool,
 
     // 会话任务列表: TaskCreate, TaskGet, TaskUpdate, TaskList
@@ -91,7 +132,18 @@ export async function getBuiltinTools(opts?: {
     ...createGoalTools({ sessionId, workspaceRoot }),
 
     // Agent Teams: TeamCreate, TeamStatus, TeamDelete
-    ...createTeamTools({ sessionId, configDir }),
+    ...createTeamTools({
+      sessionId,
+      configDir,
+      subagentRegistry,
+      agentResources: opts?.agentResources,
+      modelResources: opts?.modelResources,
+      lspResources: opts?.lspResources,
+      getReasoningEffort: opts?.getReasoningEffort,
+      getServiceTier: opts?.getServiceTier,
+      getResponseVerbosity: opts?.getResponseVerbosity,
+      getCommunicationStyle: opts?.getCommunicationStyle,
+    }),
 
     // Worktree isolation: EnterWorktree, ExitWorktree
     ...createWorktreeTools({ sessionId }),
@@ -102,8 +154,8 @@ export async function getBuiltinTools(opts?: {
 
     // System: AskUserQuestion, Skill, SlashCommand, ToolSearch
     askUserQuestionTool,
-    skillTool,
-    slashCommandTool,
+    createSkillTool(skillRegistry),
+    createSlashCommandTool(commandRegistry),
     toolSearchTool,
 
     // Memory: MemoryRead, MemoryWrite
@@ -112,10 +164,10 @@ export async function getBuiltinTools(opts?: {
 
     // Config: ConfigTool
     configTool,
+
+    // LSP: semantic code intelligence (only when this Session owns servers)
+    ...(opts?.lspManager?.available ? [createLspTool(opts.lspManager)] : []),
   ] as Tool[];
 
-  // 添加 MCP 协议工具
-  const mcpTools = await getMcpTools();
-
-  return [...builtinTools, ...mcpTools];
+  return builtinTools;
 }

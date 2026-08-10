@@ -9,6 +9,7 @@
 import path from 'node:path';
 import type { AgentSessionOwner } from '../../../agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../agent/subagents/BackgroundAgentManager.js';
+import { McpTaskManager } from '../../../mcp/McpTaskManager.js';
 import { Default, Type } from '../../../schema/index.js';
 import { getCwd } from '../../../utils/cwd.js';
 import { createTool } from '../../core/createTool.js';
@@ -94,6 +95,12 @@ export const taskOutputTool = createTool({
           projectPath: path.resolve(context.workspaceRoot || getCwd()),
         }
       : undefined;
+    if (owner) {
+      const mcpTask = McpTaskManager.getInstance().get(task_id, owner);
+      if (task_id.startsWith('mcp_task_') || mcpTask) {
+        return handleMcpTaskOutput(task_id, block, timeout, owner, context.signal);
+      }
+    }
 
     // 根据 task_id 前缀判断类型
     if (task_id.startsWith('bash_')) {
@@ -129,6 +136,66 @@ export const taskOutputTool = createTool({
   extractSignatureContent: (params) => params.task_id,
   abstractPermissionRule: () => '*',
 });
+
+async function handleMcpTaskOutput(
+  taskId: string,
+  block: boolean,
+  timeout: number,
+  owner: AgentSessionOwner,
+  signal?: AbortSignal
+): Promise<ToolResult> {
+  const manager = McpTaskManager.getInstance();
+  const task = block
+    ? await manager.wait(taskId, owner, timeout, signal)
+    : manager.get(taskId, owner);
+  if (!task) {
+    return {
+      success: false,
+      llmContent: `MCP task not found: ${taskId}`,
+      error: {
+        type: ToolErrorType.VALIDATION_ERROR,
+        message: 'MCP task does not exist in this Session',
+      },
+      metadata: {
+        summary: `获取 MCP 任务输出: ${taskId} (未找到)`,
+      },
+    };
+  }
+
+  const payload = {
+    task_id: task.taskId,
+    type: 'mcp',
+    server: task.serverName,
+    tool: task.toolName,
+    status: task.status,
+    status_message: task.statusMessage,
+    created_at: new Date(task.createdAt).toISOString(),
+    updated_at: new Date(task.updatedAt).toISOString(),
+    completed_at: task.completedAt
+      ? new Date(task.completedAt).toISOString()
+      : undefined,
+    result: task.result?.llmContent,
+    error: task.error,
+  };
+  return {
+    success: true,
+    llmContent: payload,
+    metadata: {
+      summary: `获取 MCP 任务输出: ${taskId} (${task.status})`,
+      ...payload,
+      taskType: 'mcp',
+      taskStatus: task.status,
+      ...(task.result
+        ? {
+            mcpResult: {
+              isError: task.result.isError,
+              ...task.result.metadata,
+            },
+          }
+        : {}),
+    },
+  };
+}
 
 /**
  * 处理后台 Shell 输出

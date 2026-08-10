@@ -99,11 +99,14 @@ User: "What files handle routing?"
     // Trigger UI confirmation flow
     if (context.confirmationHandler) {
       try {
-        const response = await context.confirmationHandler.requestConfirmation({
-          type: 'enterPlanMode',
-          message: '助手建议先制定实施方案再执行。',
-          details: '规划模式下仅使用只读工具进行调研，完成后提交方案供审核。',
-        });
+        const response = await context.confirmationHandler.requestConfirmation(
+          {
+            type: 'enterPlanMode',
+            message: '助手建议先制定实施方案再执行。',
+            details: '规划模式下仅使用只读工具进行调研，完成后提交方案供审核。',
+          },
+          context.signal
+        );
 
         if (response.approved) {
           return {
@@ -112,7 +115,7 @@ User: "What files handle routing?"
               '[OK] User approved entering Plan mode.\n\n' +
               'You are now in PLAN MODE. Remember:\n' +
               '- Use ONLY read-only tools: Read, Glob, Grep, WebFetch, WebSearch, Task\n' +
-              '- DO NOT use Edit, Write, Bash, or any file-modifying tools\n' +
+              '- DO NOT use Edit, Write, ApplyPatch, Bash, or any file-modifying tools\n' +
               '- When your research is complete, call ExitPlanMode with your implementation plan\n' +
               '- For pure research questions, answer directly without ExitPlanMode\n\n' +
               'Begin your research now.',

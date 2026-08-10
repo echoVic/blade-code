@@ -46,10 +46,11 @@ export function validateToolCall(
 export async function enforceWorktreeIsolation(
   tool: Tool,
   params: Record<string, unknown>,
-  context: ExecutionContext
+  context: ExecutionContext,
+  invocation?: ToolInvocation<unknown>
 ): Promise<ToolResult | undefined> {
   if (context.worktreeActive) {
-    return enforceActiveWorktreeBoundary(tool, params, context);
+    return enforceActiveWorktreeBoundary(tool, params, context, invocation);
   }
 
   const isolatedTask = tool.name === 'Task' && params.isolation === 'worktree';
@@ -77,7 +78,8 @@ export async function enforceWorktreeIsolation(
 async function enforceActiveWorktreeBoundary(
   tool: Tool,
   params: Record<string, unknown>,
-  context: ExecutionContext
+  context: ExecutionContext,
+  invocation?: ToolInvocation<unknown>
 ): Promise<ToolResult | undefined> {
   const pathKeys =
     tool.kind === ToolKind.Write
@@ -85,9 +87,12 @@ async function enforceActiveWorktreeBoundary(
       : tool.name === 'Bash'
         ? (['cwd'] as const)
         : [];
-  const targets = pathKeys
-    .map((key) => params[key])
-    .filter((value): value is string => typeof value === 'string');
+  const targets = [
+    ...pathKeys
+      .map((key) => params[key])
+      .filter((value): value is string => typeof value === 'string'),
+    ...(invocation?.getAffectedPaths() ?? []),
+  ];
 
   if (targets.length === 0) {
     return undefined;

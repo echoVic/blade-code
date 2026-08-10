@@ -1,3 +1,4 @@
+import { isPlainObject } from 'lodash-es';
 import { Default, StringEnum, Type } from '../../../schema/index.js';
 import { createTool } from '../../core/createTool.js';
 import type {
@@ -7,7 +8,6 @@ import type {
 } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/toolSchemas.js';
-import { isPlainObject } from 'lodash-es';
 
 function getErrorName(error: unknown): string | undefined {
   if (!isPlainObject(error)) return undefined;

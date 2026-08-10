@@ -13,6 +13,8 @@ export const notebookEditTool = createTool({
   displayName: 'Notebook Edit',
   kind: ToolKind.Write,
   isConcurrencySafe: false, // 文件写入操作
+  parallelism: 'shared', // 不同 notebook 并行；同路径由 FileLockManager 串行
+  affectedPaths: (params) => [params.notebook_path],
 
   schema: Type.Object({
     notebook_path: Type.String({

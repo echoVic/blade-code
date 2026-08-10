@@ -1,4 +1,9 @@
 import { PermissionMode } from '../../config/types.js';
+import type {
+  McpElicitationDetails,
+  McpElicitationResponse,
+} from '../../mcp/McpElicitation.js';
+import type { McpSamplingHandler } from '../../mcp/McpSampling.js';
 import type { DeferredToolManager } from '../registry/DeferredToolManager.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import type { ToolResult } from './ToolTypes.js';
@@ -24,7 +29,9 @@ export interface ConfirmationDetails {
     | 'enterPlanMode'
     | 'exitPlanMode'
     | 'maxTurnsExceeded'
-    | 'askUserQuestion'; // 确认类型
+    | 'askUserQuestion'
+    | 'mcpElicitation'
+    | 'mcpSampling'; // 确认类型
   kind?: ToolKind; // 工具类型（readonly, write, execute），用于 ACP 权限模式判断
   toolName?: string;
   args?: Record<string, unknown>;
@@ -35,6 +42,7 @@ export interface ConfirmationDetails {
   affectedFiles?: string[];
   planContent?: string; // Plan 模式的完整计划内容（Markdown 格式）
   questions?: Question[]; // NEW: AskUserQuestion 的问题列表
+  mcpElicitation?: McpElicitationDetails;
 }
 
 export type PermissionApprovalScope = 'once' | 'session' | 'project';
@@ -46,6 +54,8 @@ export interface ConfirmationResponse {
   targetMode?: PermissionMode; // Plan 模式退出后的目标权限模式
   feedback?: string; // NEW: 用户拒绝时的反馈意见（用于 Plan 模式调整）
   answers?: Record<string, string | string[]>; // NEW: AskUserQuestion 的用户答案
+  elicitation?: McpElicitationResponse;
+  openExternalUrl?: boolean;
 }
 
 /**
@@ -58,7 +68,16 @@ export interface ConfirmationHandler {
    * @param details 确认详情
    * @returns Promise<ConfirmationResponse> 用户的确认结果
    */
-  requestConfirmation(details: ConfirmationDetails): Promise<ConfirmationResponse>;
+  requestConfirmation(
+    details: ConfirmationDetails,
+    signal?: AbortSignal
+  ): Promise<ConfirmationResponse>;
+}
+
+export interface ToolProgressUpdate {
+  message: string;
+  progress?: number;
+  total?: number;
 }
 
 /**
@@ -71,12 +90,15 @@ export interface ExecutionContext {
   messageId?: string; // 对话消息 ID（用于快照管理）
   modelId?: string; // 当前父 Agent 模型，供子代理 identity 冻结
   workspaceRoot?: string;
+  environment?: Readonly<Record<string, string>>;
   worktreeIsolationRequired?: boolean;
   worktreeActive?: boolean;
   signal?: AbortSignal;
   onProgress?: (message: string) => void;
+  onProgressUpdate?: (update: ToolProgressUpdate) => void;
   updateOutput?: (output: string) => void; // 别名，与 onProgress 功能相同
   confirmationHandler?: ConfirmationHandler; // 用于处理需要用户确认的工具调用
+  mcpSamplingHandler?: McpSamplingHandler;
 
   // 权限模式（用于 Plan 模式判断）
   permissionMode?: PermissionMode;

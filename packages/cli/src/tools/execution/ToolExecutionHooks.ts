@@ -29,19 +29,20 @@ export async function runPreToolUseHooks<TParams>(
   ruleDecision: PermissionDecision,
   hookManager: HookManager = HookManager.getInstance()
 ): Promise<PreToolUseResult> {
+  const projectDir = context.workspaceRoot || getCwd();
   const unchanged: PreToolUseResult = {
     params,
     invocation,
     inputModified: false,
   };
-  if (!hookManager.isEnabled() || ruleDecision.behavior === 'deny') {
+  if (!hookManager.isEnabled(projectDir) || ruleDecision.behavior === 'deny') {
     return unchanged;
   }
 
   try {
     const toolUseId = context.messageId || `tool_${nanoid()}`;
     const result = await hookManager.executePreToolHooks(tool.name, toolUseId, params, {
-      projectDir: context.workspaceRoot || getCwd(),
+      projectDir,
       sessionId: context.sessionId || 'unknown',
       permissionMode: context.permissionMode ?? PermissionMode.DEFAULT,
       abortSignal: context.signal,
@@ -104,7 +105,8 @@ export async function runPostToolUseHooks<TParams>(
   toolUseId?: string,
   hookManager: HookManager = HookManager.getInstance()
 ): Promise<void> {
-  if (!hookManager.isEnabled()) {
+  const projectDir = context.workspaceRoot || getCwd();
+  if (!hookManager.isEnabled(projectDir)) {
     return;
   }
 
@@ -116,7 +118,7 @@ export async function runPostToolUseHooks<TParams>(
       params,
       result,
       {
-        projectDir: context.workspaceRoot || getCwd(),
+        projectDir,
         sessionId: context.sessionId || 'unknown',
         permissionMode: context.permissionMode ?? PermissionMode.DEFAULT,
         abortSignal: context.signal,

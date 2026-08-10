@@ -3,8 +3,8 @@
  * 使用 LRU + TTL 策略减少重复搜索请求
  */
 
-import { LRUCache } from 'lru-cache';
 import crypto from 'node:crypto';
+import { LRUCache } from 'lru-cache';
 import type { WebSearchResult } from './webSearch.js';
 
 /**

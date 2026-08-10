@@ -15,6 +15,7 @@ const ALWAYS_LOADED_TOOLS = new Set([
   'Read',
   'Edit',
   'Write',
+  'ApplyPatch',
   'Glob',
   'Grep',
   'Bash',
@@ -54,6 +55,27 @@ export class DeferredToolManager {
       this.loadedTools.add(toolName);
     } else {
       this.deferredTools.add(toolName);
+    }
+  }
+
+  unregister(toolName: string): void {
+    if (ALWAYS_LOADED_TOOLS.has(toolName)) return;
+    this.loadedTools.delete(toolName);
+    this.deferredTools.delete(toolName);
+  }
+
+  syncDynamicTools(
+    previousNames: readonly string[],
+    nextNames: readonly string[]
+  ): void {
+    const next = new Set(nextNames);
+    for (const name of previousNames) {
+      if (!next.has(name)) this.unregister(name);
+    }
+    for (const name of nextNames) {
+      if (!this.loadedTools.has(name) && !this.deferredTools.has(name)) {
+        this.register(name);
+      }
     }
   }
 

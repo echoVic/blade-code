@@ -30,8 +30,11 @@ export function createTool<T extends TSchema>(
 
     // isConcurrencySafe 字段
     // 优先使用 config 中的显式设置，否则默认 false
-    // 仅控制 ToolExecutor 中的文件锁语义，与流式预启动 allowlist 无关
+    // 控制同路径文件锁和流式预启动；批内 gate 由 parallelism 独立控制
     isConcurrencySafe: config.isConcurrencySafe ?? false,
+
+    parallelism:
+      config.parallelism ?? (config.isConcurrencySafe ? 'shared' : 'exclusive'),
 
     // strict 字段（OpenAI Structured Outputs）
     // 优先使用 config 中的显式设置，否则默认 false
@@ -81,6 +84,8 @@ export function createTool<T extends TSchema>(
         version: config.version || '1.0.0',
         category: config.category,
         tags: config.tags || [],
+        parallelism:
+          config.parallelism ?? (config.isConcurrencySafe ? 'shared' : 'exclusive'),
         description: config.description,
         schema: schemaToFunctionSchema(config.schema),
       };
@@ -95,7 +100,9 @@ export function createTool<T extends TSchema>(
       return new UnifiedToolInvocation<TParams>(
         config.name,
         validatedParams,
-        config.execute
+        config.execute,
+        undefined,
+        config.affectedPaths
       );
     },
 

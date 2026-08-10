@@ -94,6 +94,23 @@ interface EditMetadataFields extends DiffMetadataFields {
   diff_snippet?: string | null;
 }
 
+export interface ApplyPatchChangeMetadata {
+  kind: 'add' | 'update' | 'delete';
+  path: string;
+  oldContent: string | null;
+  newContent: string | null;
+  diff?: string;
+}
+
+interface ApplyPatchMetadataFields extends BaseMetadataFields {
+  kind: 'patch';
+  changes: ApplyPatchChangeMetadata[];
+  affected_paths: string[];
+  snapshot_created?: boolean;
+  session_id?: string;
+  message_id?: string;
+}
+
 /**
  * Edit 工具错误诊断的字段
  */
@@ -226,6 +243,7 @@ type DiffMetadata = Metadata<DiffMetadataFields>;
 export type ReadMetadata = Metadata<ReadMetadataFields>;
 export type WriteMetadata = Metadata<WriteMetadataFields>;
 export type EditMetadata = Metadata<EditMetadataFields>;
+export type ApplyPatchMetadata = Metadata<ApplyPatchMetadataFields>;
 export type EditErrorMetadata = Metadata<EditErrorMetadataFields>;
 export type GlobMetadata = Metadata<GlobMetadataFields>;
 export type GrepMetadata = Metadata<GrepMetadataFields>;
@@ -441,8 +459,10 @@ export interface ToolConfig<TSchema = unknown, TParams = unknown> {
   kind: ToolKind;
   /** 是否为只读工具（可选，默认根据 kind 推断） */
   isReadOnly?: boolean;
-  /** 是否支持并发安全（可选，默认 true） */
+  /** 是否可与同批其他并发安全工具共享执行（可选，默认 false） */
   isConcurrencySafe?: boolean;
+  /** 批内调度模式；shared 仍可由文件锁或 kind 配额进一步限流 */
+  parallelism?: 'shared' | 'exclusive';
   /** 是否启用 OpenAI Structured Outputs（可选，默认 false） */
   strict?: boolean;
   /** TypeBox Schema 定义 */
@@ -472,6 +492,11 @@ export interface ToolConfig<TSchema = unknown, TParams = unknown> {
   extractSignatureContent?: (params: TParams) => string;
 
   /**
+   * 返回调用可能读写的路径，用于权限、安全审阅和多路径工具。
+   */
+  affectedPaths?: (params: TParams) => string[];
+
+  /**
    * [OK] 新增：权限规则抽象器
    * 将具体参数抽象为通配符权限规则
    * @param params - 类型安全的参数对象
@@ -499,6 +524,8 @@ export interface Tool<TParams = unknown> {
   readonly isReadOnly: boolean;
   /** 是否支持并发安全 */
   readonly isConcurrencySafe: boolean;
+  /** 是否可与同批其他 shared 工具并发 */
+  readonly parallelism?: 'shared' | 'exclusive';
   /** 是否启用 OpenAI Structured Outputs */
   readonly strict: boolean;
   /** 工具描述 */

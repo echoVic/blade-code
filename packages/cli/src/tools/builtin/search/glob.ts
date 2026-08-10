@@ -1,8 +1,8 @@
-import type { Entry } from 'fast-glob';
-import fg from 'fast-glob';
 import type { Stats } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { Readable } from 'node:stream';
+import type { Entry } from 'fast-glob';
+import fg from 'fast-glob';
 import { join, resolve } from 'path';
 
 import { Default, Type } from '../../../schema/index.js';

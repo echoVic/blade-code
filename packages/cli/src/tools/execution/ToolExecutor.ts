@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import type { PermissionConfig } from '../../config/types.js';
 import { PermissionMode } from '../../config/types.js';
 import { HookManager } from '../../hooks/HookManager.js';
+import type { LspSessionManager } from '../../lsp/LspSessionManager.js';
 import { getCwd } from '../../utils/cwd.js';
 import type { ToolRegistry } from '../registry/ToolRegistry.js';
 import type {
@@ -11,7 +12,7 @@ import type {
   ToolResult,
 } from '../types/index.js';
 import { ToolErrorType } from '../types/index.js';
-import { runAutoVerify } from './AutoVerify.js';
+import type { AutoVerifyRuntime } from './AutoVerify.js';
 import {
   type ConcurrencyLimits,
   ConcurrencyScheduler,
@@ -23,6 +24,7 @@ import {
   type SessionApprovalStore,
 } from './SessionApprovalStore.js';
 import { ToolApprovalController } from './ToolApprovalController.js';
+import { ToolConcurrencyGate } from './ToolConcurrencyGate.js';
 import { enforceWorktreeIsolation, validateToolCall } from './ToolExecutionGuards.js';
 import { runPostToolUseHooks, runPreToolUseHooks } from './ToolExecutionHooks.js';
 import {
@@ -70,6 +72,12 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
   private readonly toolBlacklist: ReadonlySet<string> | null;
   private readonly permissionResolver: PermissionResolver;
   private readonly approvalController: ToolApprovalController;
+  private readonly concurrencyGate = new ToolConcurrencyGate();
+  private readonly contextDefaults: ExecutionContext;
+  private readonly autoVerifyRuntime?: AutoVerifyRuntime;
+  private readonly lspManager?: LspSessionManager;
+  private readonly onDispose?: () => void;
+  private disposed = false;
 
   constructor(
     private readonly registry: ToolRegistry,
@@ -78,6 +86,10 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
     super();
 
     this.maxHistorySize = config.maxHistorySize ?? 1000;
+    this.contextDefaults = config.contextDefaults ?? {};
+    this.autoVerifyRuntime = config.autoVerifyRuntime;
+    this.lspManager = config.lspManager;
+    this.onDispose = config.onDispose;
     this.toolWhitelist = config.toolWhitelist?.length
       ? new Set(config.toolWhitelist)
       : null;
@@ -109,9 +121,14 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
   ): Promise<ToolResult> {
     const startTime = Date.now();
     const executionId = `exec_${randomUUID()}`;
-    const executionContext = {
+    const executionContext: ExecutionContext = {
+      ...this.contextDefaults,
       ...context,
-      sessionId: context.sessionId || executionId,
+      sessionId: context.sessionId ?? this.contextDefaults.sessionId ?? executionId,
+      environment: {
+        ...this.contextDefaults.environment,
+        ...context.environment,
+      },
     };
 
     this.emit('executionStarted', {
@@ -192,109 +209,132 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
       return validation;
     }
 
-    let { params, invocation } = validation;
-    const isolationRejection = await enforceWorktreeIsolation(tool, params, context);
-    if (isolationRejection) {
-      return isolationRejection;
-    }
+    return this.concurrencyGate.run(
+      tool.parallelism === 'shared' ||
+        (tool.parallelism === undefined && tool.isConcurrencySafe),
+      async () => {
+        if (context.signal?.aborted) {
+          return createCancellationResult(true);
+        }
 
-    let rulePermission = this.permissionResolver.resolveRulePermission(
-      tool,
-      invocation,
-      params,
-      context
+        let { params, invocation } = validation;
+        const isolationRejection = await enforceWorktreeIsolation(
+          tool,
+          params,
+          context,
+          invocation
+        );
+        if (isolationRejection) {
+          return isolationRejection;
+        }
+
+        let rulePermission = this.permissionResolver.resolveRulePermission(
+          tool,
+          invocation,
+          params,
+          context
+        );
+        const hookResult = await runPreToolUseHooks(
+          tool,
+          params,
+          invocation,
+          context,
+          rulePermission.decision
+        );
+        if (hookResult.rejection) {
+          return hookResult.rejection;
+        }
+
+        params = hookResult.params;
+        invocation = hookResult.invocation;
+        onParamsResolved(params);
+        if (hookResult.inputModified) {
+          const modifiedInputIsolationRejection = await enforceWorktreeIsolation(
+            tool,
+            params,
+            context,
+            invocation
+          );
+          if (modifiedInputIsolationRejection) {
+            return modifiedInputIsolationRejection;
+          }
+          rulePermission = this.permissionResolver.resolveRulePermission(
+            tool,
+            invocation,
+            params,
+            context
+          );
+        }
+
+        const decision = resolvePermissionDecision(
+          rulePermission.decision,
+          hookResult.decision
+        );
+        if (decision.behavior === 'deny') {
+          return createRejectedResult(
+            decision.reason ||
+              `Tool invocation denied by ${decision.source}${
+                decision.matchedRule ? ` (${decision.matchedRule})` : ''
+              }`,
+            { errorType: ToolErrorType.PERMISSION_DENIED }
+          );
+        }
+
+        const approvalRejection = await this.approvalController.confirmIfNeeded(
+          tool,
+          invocation,
+          params,
+          decision,
+          rulePermission.signature,
+          context
+        );
+        if (approvalRejection) {
+          return approvalRejection;
+        }
+        if (context.signal?.aborted) {
+          return createCancellationResult(true);
+        }
+
+        let invocationStarted = false;
+        const executeInvocation = () => {
+          if (context.signal?.aborted) {
+            return Promise.resolve(createCancellationResult(true));
+          }
+          invocationStarted = true;
+          return executeToolInvocation(invocation, context);
+        };
+        const lockPath = params.file_path ?? params.notebook_path;
+        const executeWithLock =
+          !tool.isConcurrencySafe && lockPath
+            ? () =>
+                FileLockManager.getInstance().acquireLock(
+                  String(lockPath),
+                  executeInvocation
+                )
+            : executeInvocation;
+        const result = await this.scheduler.schedule(tool.kind, executeWithLock);
+        if (context.signal?.aborted) {
+          return createCancellationResult(!invocationStarted);
+        }
+
+        await runPostToolUseHooks(tool, params, result, context, hookResult.toolUseId);
+        if (context.signal?.aborted) {
+          return createCancellationResult(false);
+        }
+
+        await this.lspManager?.afterToolUse(tool.name, params, result, context);
+        if (context.signal?.aborted) {
+          return createCancellationResult(false);
+        }
+        await this.autoVerifyRuntime?.verify(tool.name, params, context, result);
+        if (context.signal?.aborted) {
+          return createCancellationResult(false);
+        }
+        return formatToolResult(result, executionId, tool.name);
+      },
+      context.signal,
+      () => createCancellationResult(true)
     );
-    const hookResult = await runPreToolUseHooks(
-      tool,
-      params,
-      invocation,
-      context,
-      rulePermission.decision
-    );
-    if (hookResult.rejection) {
-      return hookResult.rejection;
-    }
-
-    params = hookResult.params;
-    invocation = hookResult.invocation;
-    onParamsResolved(params);
-    if (hookResult.inputModified) {
-      const modifiedInputIsolationRejection = await enforceWorktreeIsolation(
-        tool,
-        params,
-        context
-      );
-      if (modifiedInputIsolationRejection) {
-        return modifiedInputIsolationRejection;
-      }
-      rulePermission = this.permissionResolver.resolveRulePermission(
-        tool,
-        invocation,
-        params,
-        context
-      );
-    }
-
-    const decision = resolvePermissionDecision(
-      rulePermission.decision,
-      hookResult.decision
-    );
-    if (decision.behavior === 'deny') {
-      return createRejectedResult(
-        decision.reason ||
-          `Tool invocation denied by ${decision.source}${
-            decision.matchedRule ? ` (${decision.matchedRule})` : ''
-          }`,
-        { errorType: ToolErrorType.PERMISSION_DENIED }
-      );
-    }
-
-    const approvalRejection = await this.approvalController.confirmIfNeeded(
-      tool,
-      invocation,
-      params,
-      decision,
-      rulePermission.signature,
-      context
-    );
-    if (approvalRejection) {
-      return approvalRejection;
-    }
-    if (context.signal?.aborted) {
-      return createCancellationResult(true);
-    }
-
-    let invocationStarted = false;
-    const executeInvocation = () => {
-      if (context.signal?.aborted) {
-        return Promise.resolve(createCancellationResult(true));
-      }
-      invocationStarted = true;
-      return executeToolInvocation(invocation, context);
-    };
-    const executeWithLock =
-      !tool.isConcurrencySafe && params.file_path
-        ? () =>
-            FileLockManager.getInstance().acquireLock(
-              String(params.file_path),
-              executeInvocation
-            )
-        : executeInvocation;
-    const result = await this.scheduler.schedule(tool.kind, executeWithLock);
-    if (context.signal?.aborted) {
-      return createCancellationResult(!invocationStarted);
-    }
-
-    await runPostToolUseHooks(tool, params, result, context, hookResult.toolUseId);
-    if (context.signal?.aborted) {
-      return createCancellationResult(false);
-    }
-
-    await runAutoVerify(tool.name, params, context, result);
-    if (context.signal?.aborted) {
-      return createCancellationResult(false);
-    }
-    return formatToolResult(result, executionId, tool.name);
   }
 
   private completeExecution(
@@ -490,6 +530,13 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
     return this.registry;
   }
 
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.onDispose?.();
+    this.removeAllListeners();
+  }
+
   private addToHistory(entry: ExecutionHistoryEntry): void {
     this.executionHistory.push(entry);
     if (this.executionHistory.length > this.maxHistorySize) {
@@ -510,6 +557,10 @@ export interface ToolExecutorConfig {
   toolBlacklist?: readonly string[];
   scheduler?: ConcurrencyScheduler;
   concurrencyLimits?: ConcurrencyLimits;
+  contextDefaults?: ExecutionContext;
+  autoVerifyRuntime?: AutoVerifyRuntime;
+  lspManager?: LspSessionManager;
+  onDispose?: () => void;
 }
 
 export interface ExecutionStats {

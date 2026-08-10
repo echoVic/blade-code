@@ -147,6 +147,117 @@ describe('ToolRegistry', () => {
     );
   });
 
+  it('原子替换 MCP catalog 并保留未删除工具的 deferred 状态', () => {
+    const stable = createMockTool('mcp__server__stable');
+    const removed = createMockTool('mcp__server__removed');
+    registry.replaceMcpTools([stable, removed]);
+    registry.deferredToolManager.markLoaded(stable.name);
+
+    const updatedStable = createMockTool('mcp__server__stable', {
+      description: { short: 'updated schema' },
+    });
+    const added = createMockTool('mcp__server__added');
+    registry.replaceMcpTools([updatedStable, added], {
+      revision: 2,
+      serverName: 'server',
+      reason: 'notification',
+      added: [added.name],
+      removed: [removed.name],
+      updated: [stable.name],
+    });
+
+    expect(registry.getAll().map((tool) => tool.name)).toEqual([
+      stable.name,
+      added.name,
+    ]);
+    expect(registry.deferredToolManager.isLoaded(stable.name)).toBe(true);
+    expect(registry.deferredToolManager.isLoaded(added.name)).toBe(false);
+    expect(registry.getDeferredToolsListing()).toContain(added.name);
+    expect(registry.getDeferredToolsListing()).not.toContain(removed.name);
+    expect(registry.drainMcpCatalogChanges()).toEqual([
+      {
+        revision: 2,
+        serverName: 'server',
+        reason: 'notification',
+        added: [added.name],
+        removed: [removed.name],
+        updated: [stable.name],
+      },
+    ]);
+    expect(registry.drainMcpCatalogChanges()).toEqual([]);
+  });
+
+  it('有界排队并一次性消费 MCP 日志事件', () => {
+    for (let revision = 1; revision <= 70; revision++) {
+      registry.queueMcpLog({
+        revision,
+        serverName: 'logging',
+        level: 'warning',
+        message: `log-${revision}`,
+        projectedBytes: 6,
+        dataSha256: 'a'.repeat(64),
+        truncated: false,
+        detailsOmitted: false,
+        timestamp: revision,
+      });
+    }
+
+    const entries = registry.drainMcpLogs();
+    expect(entries).toHaveLength(64);
+    expect(entries[0]?.revision).toBe(7);
+    expect(entries.at(-1)?.revision).toBe(70);
+    expect(registry.drainMcpLogs()).toEqual([]);
+  });
+
+  it('有界排队并一次性消费 MCP instruction lifecycle', () => {
+    for (let revision = 1; revision <= 40; revision++) {
+      registry.queueMcpInstructionsChange({
+        revision,
+        reason: 'connection',
+        replace: false,
+        instructions: [
+          {
+            serverName: `server-${revision}`,
+            text: `instruction-${revision}`,
+            sourceBytes: 16,
+            projectedBytes: 16,
+            sha256: 'b'.repeat(64),
+            truncated: false,
+            detailsOmitted: false,
+          },
+        ],
+        removed: [],
+      });
+    }
+
+    const changes = registry.drainMcpInstructionsChanges();
+    expect(changes).toHaveLength(32);
+    expect(changes[0]?.revision).toBe(9);
+    expect(changes.at(-1)?.revision).toBe(40);
+    expect(registry.drainMcpInstructionsChanges()).toEqual([]);
+  });
+
+  it('有界排队并一次性消费 MCP task lifecycle', () => {
+    for (let revision = 1; revision <= 70; revision++) {
+      registry.queueMcpTaskChange({
+        revision,
+        taskId: `mcp_task_${revision}`,
+        serverName: 'tasks',
+        toolName: 'long_task',
+        status: revision === 70 ? 'completed' : 'working',
+        createdAt: revision,
+        updatedAt: revision,
+        hasResult: revision === 70,
+      });
+    }
+
+    const changes = registry.drainMcpTaskChanges();
+    expect(changes).toHaveLength(64);
+    expect(changes[0]?.revision).toBe(7);
+    expect(changes.at(-1)?.revision).toBe(70);
+    expect(registry.drainMcpTaskChanges()).toEqual([]);
+  });
+
   it('搜索应根据名称、描述、分类和标签匹配', () => {
     const readTool = createMockTool('reader', {
       description: { short: 'Reads files' },

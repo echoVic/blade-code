@@ -1,5 +1,4 @@
 import { Type } from '../../../schema/index.js';
-import { getCwd } from '../../../utils/cwd.js';
 import { CustomCommandRegistry } from '../../../slash-commands/custom/index.js';
 import { createTool } from '../../core/createTool.js';
 import type { ToolResult } from '../../types/ToolTypes.js';
@@ -17,9 +16,7 @@ const CHAR_BUDGET = Number.parseInt(
 /**
  * 生成可用命令列表描述
  */
-function generateAvailableCommandsDescription(): string {
-  const registry = CustomCommandRegistry.getInstance();
-
+function generateAvailableCommandsDescription(registry: CustomCommandRegistry): string {
   if (!registry.isInitialized()) {
     return '\n(Custom commands not yet initialized)';
   }
@@ -44,27 +41,30 @@ function generateAvailableCommandsDescription(): string {
  * - 替换文件引用 (@path/to/file)
  * - 返回处理后的内容给 LLM
  */
-export const slashCommandTool = createTool({
-  name: 'SlashCommand',
-  displayName: 'Slash Command',
-  kind: ToolKind.Execute,
-  isConcurrencySafe: false, // 执行命令，可能有副作用
+export function createSlashCommandTool(
+  registry: CustomCommandRegistry = CustomCommandRegistry.getInstance()
+) {
+  return createTool({
+    name: 'SlashCommand',
+    displayName: 'Slash Command',
+    kind: ToolKind.Execute,
+    isConcurrencySafe: false, // 执行命令，可能有副作用
 
-  schema: Type.Object({
-    command: Type.String({
-      description:
-        'The command name without the leading slash, e.g., "review-pr" or "commit"',
+    schema: Type.Object({
+      command: Type.String({
+        description:
+          'The command name without the leading slash, e.g., "review-pr" or "commit"',
+      }),
+      arguments: Type.Optional(
+        Type.String({
+          description: 'Arguments to pass to the command, e.g., "123" or "fix bug"',
+        })
+      ),
     }),
-    arguments: Type.Optional(
-      Type.String({
-        description: 'Arguments to pass to the command, e.g., "123" or "fix bug"',
-      })
-    ),
-  }),
 
-  description: {
-    short: 'Execute a custom slash command within the main conversation',
-    long: `Execute a custom slash command within the main conversation
+    description: {
+      short: 'Execute a custom slash command within the main conversation',
+      long: `Execute a custom slash command within the main conversation
 
 How slash commands work:
 When you use this tool, the command's content (from .blade/commands/ or .claude/commands/) will be processed and returned. The content may include:
@@ -87,133 +87,141 @@ Notes:
 - Only custom slash commands with descriptions are listed in Available Commands
 - Commands with \`disable-model-invocation: true\` cannot be invoked by this tool
 - If a command is not listed, ask the user to check the slash command file
-${generateAvailableCommandsDescription()}`,
-  },
+${generateAvailableCommandsDescription(registry)}`,
+    },
 
-  async execute(params, context): Promise<ToolResult> {
-    const { command, arguments: args } = params;
+    async execute(params, context): Promise<ToolResult> {
+      const { command, arguments: args } = params;
 
-    // 获取 CustomCommandRegistry
-    const workspaceRoot = context.workspaceRoot ?? getCwd();
-    const registry = CustomCommandRegistry.getInstance(workspaceRoot);
+      const workspaceRoot = context.workspaceRoot || registry.getWorkspaceRoot();
 
-    // 检查是否已初始化
-    if (!registry.isInitialized()) {
-      return {
-        success: false,
-        llmContent: `Custom command system not initialized. Please wait for the application to fully initialize.`,
-        error: {
-          type: ToolErrorType.EXECUTION_ERROR,
-          message: 'CustomCommandRegistry not initialized',
-        },
-        metadata: { summary: '命令系统未初始化' },
-      };
-    }
-
-    // 查找命令
-    const cmd = registry.getCommand(command);
-    if (!cmd) {
-      const available = registry
-        .getModelInvocableCommands()
-        .map((c) => `/${c.name}`)
-        .join(', ');
-      return {
-        success: false,
-        llmContent: `Command "/${command}" not found. Available commands: ${available || 'none'}`,
-        error: {
-          type: ToolErrorType.VALIDATION_ERROR,
-          message: `Command "/${command}" is not registered`,
-        },
-        metadata: { summary: `命令未找到: /${command}` },
-      };
-    }
-
-    // 检查是否禁止 AI 调用
-    if (cmd.config.disableModelInvocation) {
-      return {
-        success: false,
-        llmContent: `Command "/${command}" has disabled model invocation. This command can only be executed by the user directly.`,
-        error: {
-          type: ToolErrorType.PERMISSION_DENIED,
-          message: `Command "/${command}" has disable-model-invocation: true`,
-        },
-        metadata: { summary: `命令禁止 AI 调用: /${command}` },
-      };
-    }
-
-    // 检查是否有 description（SlashCommand 工具要求）
-    if (!cmd.config.description) {
-      return {
-        success: false,
-        llmContent: `Command "/${command}" does not have a description and cannot be invoked by AI. Add a description in the command's frontmatter to enable AI invocation.`,
-        error: {
-          type: ToolErrorType.VALIDATION_ERROR,
-          message: `Command "/${command}" missing description for AI invocation`,
-        },
-        metadata: { summary: `命令缺少描述: /${command}` },
-      };
-    }
-
-    // 解析参数
-    const parsedArgs = args ? args.split(/\s+/).filter(Boolean) : [];
-
-    // 执行命令（参数插值、Bash 嵌入、文件引用）
-    try {
-      const processedContent = await registry.executeCommand(command, {
-        args: parsedArgs,
-        workspaceRoot,
-      });
-
-      if (!processedContent) {
+      // 检查是否已初始化
+      if (!registry.isInitialized()) {
         return {
           success: false,
-          llmContent: `Failed to execute command "/${command}"`,
+          llmContent: `Custom command system not initialized. Please wait for the application to fully initialize.`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
-            message: `Command execution returned null`,
+            message: 'CustomCommandRegistry not initialized',
           },
-          metadata: { summary: `执行命令失败: /${command}` },
+          metadata: { summary: '命令系统未初始化' },
         };
       }
 
-      // 构建完整的命令指令
-      const commandInstructions = buildCommandInstructions(
-        cmd.name,
-        processedContent,
-        cmd.config
-      );
+      // 查找命令
+      const cmd = registry.getCommand(command);
+      const pluginCommand = registry.findPluginCommand(command);
+      if (!cmd && !pluginCommand) {
+        const available = registry.generateCommandListDescription(CHAR_BUDGET).text;
+        return {
+          success: false,
+          llmContent: `Command "/${command}" not found.\n${available}`,
+          error: {
+            type: ToolErrorType.VALIDATION_ERROR,
+            message: `Command "/${command}" is not registered`,
+          },
+          metadata: { summary: `命令未找到: /${command}` },
+        };
+      }
 
-      // 返回双消息
-      return {
-        success: true,
-        // llmContent: 完整的命令指令（发送给 LLM）
-        llmContent: commandInstructions,
-        metadata: {
-          summary: `执行命令: /${command}`,
-          commandName: command,
-          // allowed-tools: 限制命令执行期间可用的工具
-          allowedTools: cmd.config.allowedTools,
-          // model: 指定执行模型
-          model: cmd.config.model,
-          // 命令来源
-          source: cmd.source,
-          namespace: cmd.namespace,
-        },
-      };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return {
-        success: false,
-        llmContent: `Error executing command "/${command}": ${errorMessage}`,
-        error: {
-          type: ToolErrorType.EXECUTION_ERROR,
-          message: errorMessage,
-        },
-        metadata: { summary: `命令执行出错: /${command}` },
-      };
-    }
-  },
-});
+      // 检查是否禁止 AI 调用
+      const commandConfig = cmd?.config ?? pluginCommand?.config;
+      if (!commandConfig) {
+        throw new Error(`Command configuration missing: ${command}`);
+      }
+      if (commandConfig.disableModelInvocation) {
+        return {
+          success: false,
+          llmContent: `Command "/${command}" has disabled model invocation. This command can only be executed by the user directly.`,
+          error: {
+            type: ToolErrorType.PERMISSION_DENIED,
+            message: `Command "/${command}" has disable-model-invocation: true`,
+          },
+          metadata: { summary: `命令禁止 AI 调用: /${command}` },
+        };
+      }
+
+      // 检查是否有 description（SlashCommand 工具要求）
+      if (!commandConfig.description) {
+        return {
+          success: false,
+          llmContent: `Command "/${command}" does not have a description and cannot be invoked by AI. Add a description in the command's frontmatter to enable AI invocation.`,
+          error: {
+            type: ToolErrorType.VALIDATION_ERROR,
+            message: `Command "/${command}" missing description for AI invocation`,
+          },
+          metadata: { summary: `命令缺少描述: /${command}` },
+        };
+      }
+
+      // 解析参数
+      const parsedArgs = args ? args.split(/\s+/).filter(Boolean) : [];
+
+      // 执行命令（参数插值、Bash 嵌入、文件引用）
+      try {
+        const executionContext = { args: parsedArgs, workspaceRoot };
+        const processedContent = pluginCommand
+          ? await registry.executePluginCommand(
+              pluginCommand.namespacedName,
+              executionContext
+            )
+          : await registry.executeCommand(command, executionContext);
+
+        if (!processedContent) {
+          return {
+            success: false,
+            llmContent: `Failed to execute command "/${command}"`,
+            error: {
+              type: ToolErrorType.EXECUTION_ERROR,
+              message: `Command execution returned null`,
+            },
+            metadata: { summary: `执行命令失败: /${command}` },
+          };
+        }
+
+        // 构建完整的命令指令
+        const commandInstructions = buildCommandInstructions(
+          cmd?.name ?? pluginCommand?.namespacedName ?? command,
+          processedContent,
+          commandConfig
+        );
+
+        // 返回双消息
+        return {
+          success: true,
+          // llmContent: 完整的命令指令（发送给 LLM）
+          llmContent: commandInstructions,
+          metadata: {
+            summary: `执行命令: /${command}`,
+            commandName: command,
+            // allowed-tools: 限制命令执行期间可用的工具
+            allowedTools: commandConfig.allowedTools,
+            // model: 指定执行模型
+            model: commandConfig.model,
+            // 命令来源
+            source: cmd?.source ?? 'plugin',
+            namespace: cmd?.namespace ?? pluginCommand?.pluginName,
+            ...(pluginCommand ? { pluginName: pluginCommand.pluginName } : {}),
+          },
+        };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+          success: false,
+          llmContent: `Error executing command "/${command}": ${errorMessage}`,
+          error: {
+            type: ToolErrorType.EXECUTION_ERROR,
+            message: errorMessage,
+          },
+          metadata: { summary: `命令执行出错: /${command}` },
+        };
+      }
+    },
+  });
+}
+
+/** @deprecated Use createSlashCommandTool(registry). */
+export const slashCommandTool = createSlashCommandTool();
 
 /**
  * 构建完整的命令指令

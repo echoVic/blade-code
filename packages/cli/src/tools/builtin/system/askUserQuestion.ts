@@ -80,12 +80,15 @@ Usage notes:
     // 触发 UI 确认流程
     if (context.confirmationHandler) {
       try {
-        const response = await context.confirmationHandler.requestConfirmation({
-          type: 'askUserQuestion',
-          kind: ToolKind.ReadOnly, // 显式标记为只读，避免在 Plan 模式下被拒绝
-          message: 'Please answer the following questions:',
-          questions: params.questions,
-        });
+        const response = await context.confirmationHandler.requestConfirmation(
+          {
+            type: 'askUserQuestion',
+            kind: ToolKind.ReadOnly, // 显式标记为只读，避免在 Plan 模式下被拒绝
+            message: 'Please answer the following questions:',
+            questions: params.questions,
+          },
+          context.signal
+        );
 
         // 检查是否被拒绝（用户取消或 ACP 权限拒绝）
         if (!response.approved) {

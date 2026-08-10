@@ -1,14 +1,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildTypeCheckArgs,
   resolveWorkspaceRoot,
   VerifyQueue,
 } from '../../../../../src/tools/execution/VerifyQueue.js';
 
-function makeTempWorkspace(withTsconfig = true, withTypeCheckScript = false) {
+function makeTempWorkspace(withTsconfig = true, withTypeCheckScript = true) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'verifyq-'));
   if (withTsconfig) {
     fs.writeFileSync(path.join(dir, 'tsconfig.json'), '{}');
@@ -16,17 +16,16 @@ function makeTempWorkspace(withTsconfig = true, withTypeCheckScript = false) {
   if (withTypeCheckScript) {
     fs.writeFileSync(
       path.join(dir, 'package.json'),
-      JSON.stringify({ scripts: { 'type-check': 'tsc --noEmit' } })
+      JSON.stringify({
+        packageManager: 'bun@1.3.11',
+        scripts: { 'type-check': 'tsc --noEmit' },
+      })
     );
   }
   return dir;
 }
 
 describe('VerifyQueue', () => {
-  afterEach(() => {
-    VerifyQueue.resetInstance();
-  });
-
   describe('resolveWorkspaceRoot', () => {
     it('返回含 tsconfig.json 的最近目录', () => {
       const ws = makeTempWorkspace();
@@ -65,13 +64,36 @@ describe('VerifyQueue', () => {
       });
     });
 
-    it('无脚本时用 tsc --noEmit --incremental', () => {
+    it('无脚本时不猜测或下载类型检查器', () => {
       const ws = makeTempWorkspace(true, false);
-      const { cmd, args } = buildTypeCheckArgs(ws);
-      expect(cmd).toBe('npx');
-      expect(args).toContain('--incremental');
-      expect(args).toContain('--tsBuildInfoFile');
-      expect(args).toContain('.blade-tsbuildinfo');
+      expect(buildTypeCheckArgs(ws)).toBeNull();
+    });
+
+    it.each([
+      ['npm@11.0.0', 'npm'],
+      ['pnpm@10.0.0', 'pnpm'],
+      ['yarn@4.0.0', 'yarn'],
+    ] as const)('尊重声明的包管理器 %s', (packageManager, command) => {
+      const ws = makeTempWorkspace();
+      fs.writeFileSync(
+        path.join(ws, 'package.json'),
+        JSON.stringify({
+          packageManager,
+          scripts: { 'type-check': 'tsc --noEmit' },
+        })
+      );
+
+      expect(buildTypeCheckArgs(ws)?.cmd).toBe(command);
+    });
+
+    it('未声明包管理器时不因 Blade 使用 Bun 而污染目标项目', () => {
+      const ws = makeTempWorkspace();
+      fs.writeFileSync(
+        path.join(ws, 'package.json'),
+        JSON.stringify({ scripts: { 'type-check': 'tsc --noEmit' } })
+      );
+
+      expect(buildTypeCheckArgs(ws)?.cmd).toBe('npm');
     });
   });
 
@@ -247,6 +269,14 @@ describe('VerifyQueue', () => {
       fs.mkdirSync(pkgB, { recursive: true });
       fs.writeFileSync(path.join(pkgA, 'tsconfig.json'), '{}');
       fs.writeFileSync(path.join(pkgB, 'tsconfig.json'), '{}');
+      fs.writeFileSync(
+        path.join(pkgA, 'package.json'),
+        JSON.stringify({ scripts: { 'type-check': 'tsc --noEmit' } })
+      );
+      fs.writeFileSync(
+        path.join(pkgB, 'package.json'),
+        JSON.stringify({ scripts: { 'type-check': 'tsc --noEmit' } })
+      );
       const fileA = path.join(pkgA, 'x.ts');
       const fileB = path.join(pkgB, 'x.ts');
       fs.writeFileSync(fileA, '');

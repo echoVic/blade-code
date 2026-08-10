@@ -1,7 +1,104 @@
 import { EventEmitter } from 'events';
 import { PermissionMode } from '../../config/types.js';
+import { createMcpProviderServerPrefix } from '../../mcp/McpToolCatalog.js';
 import type { FunctionDeclaration, Tool } from '../types/index.js';
 import { DeferredToolManager } from './DeferredToolManager.js';
+
+export interface McpCatalogProjectionChange {
+  revision: number;
+  serverName: string;
+  reason: string;
+  added: string[];
+  removed: string[];
+  updated: string[];
+}
+
+export interface McpContentProjectionChange {
+  revision: number;
+  serverName: string;
+  kind: 'resources' | 'resourceTemplates' | 'prompts';
+  reason: string;
+  added: string[];
+  removed: string[];
+  updated: string[];
+}
+
+export interface McpResourceUpdatedProjection {
+  revision: number;
+  serverName: string;
+  uri: string;
+}
+
+export interface McpConnectionProjectionChange {
+  revision: number;
+  serverName: string;
+  phase: 'reconnecting' | 'recovered' | 'failed';
+  reason: string;
+  attempt: number;
+  maxAttempts: number;
+  nextRetryAt?: number;
+  error?: string;
+}
+
+export interface McpLogProjection {
+  revision: number;
+  serverName: string;
+  level:
+    | 'debug'
+    | 'info'
+    | 'notice'
+    | 'warning'
+    | 'error'
+    | 'critical'
+    | 'alert'
+    | 'emergency';
+  logger?: string;
+  message: string;
+  projectedBytes: number;
+  dataSha256: string;
+  truncated: boolean;
+  detailsOmitted: boolean;
+  timestamp: number;
+  synthetic?: boolean;
+}
+
+export interface McpInstructionProjection {
+  serverName: string;
+  text?: string;
+  sourceBytes: number;
+  projectedBytes: number;
+  sha256: string;
+  truncated: boolean;
+  detailsOmitted: boolean;
+}
+
+export interface McpInstructionsProjectionChange {
+  revision: number;
+  reason: 'snapshot' | 'connection' | 'disconnection';
+  replace: boolean;
+  instructions: McpInstructionProjection[];
+  removed: string[];
+}
+
+export interface McpTaskProjectionChange {
+  revision: number;
+  taskId: string;
+  serverName: string;
+  toolName: string;
+  status:
+    | 'working'
+    | 'input_required'
+    | 'interrupted'
+    | 'completed'
+    | 'failed'
+    | 'cancelled';
+  statusMessage?: string;
+  createdAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  hasResult: boolean;
+  error?: string;
+}
 
 /**
  * 工具注册表
@@ -13,6 +110,14 @@ export class ToolRegistry extends EventEmitter {
   private categories = new Map<string, Set<string>>();
   private tags = new Map<string, Set<string>>();
   private _deferredManager = new DeferredToolManager();
+  private pendingMcpCatalogChanges: McpCatalogProjectionChange[] = [];
+  private pendingMcpContentChanges: McpContentProjectionChange[] = [];
+  private pendingMcpResourceUpdates: McpResourceUpdatedProjection[] = [];
+  private pendingMcpConnectionChanges: McpConnectionProjectionChange[] = [];
+  private pendingMcpLogs: McpLogProjection[] = [];
+  private pendingMcpInstructionChanges: McpInstructionsProjectionChange[] = [];
+  private pendingMcpTaskChanges: McpTaskProjectionChange[] = [];
+  private mcpCatalogBarrier: () => Promise<void> = async () => undefined;
 
   constructor() {
     super();
@@ -23,6 +128,14 @@ export class ToolRegistry extends EventEmitter {
    */
   get deferredToolManager(): DeferredToolManager {
     return this._deferredManager;
+  }
+
+  setMcpCatalogBarrier(barrier: () => Promise<void>): void {
+    this.mcpCatalogBarrier = barrier;
+  }
+
+  waitForMcpCatalogIdle(): Promise<void> {
+    return this.mcpCatalogBarrier();
   }
 
   /**
@@ -67,16 +180,18 @@ export class ToolRegistry extends EventEmitter {
    * 注销工具
    */
   unregister(name: string): boolean {
-    const tool = this.tools.get(name);
+    const tool = this.tools.get(name) ?? this.mcpTools.get(name);
     if (!tool) {
       return false;
     }
 
-    this.tools.delete(name);
+    const type = this.tools.delete(name) ? 'builtin' : 'mcp';
+    this.mcpTools.delete(name);
     this.removeFromIndexes(tool);
+    this._deferredManager.unregister(name);
 
     this.emit('toolUnregistered', {
-      type: 'builtin',
+      type,
       toolName: name,
       timestamp: Date.now(),
     });
@@ -257,6 +372,7 @@ export class ToolRegistry extends EventEmitter {
    */
   clone(): ToolRegistry {
     const cloned = new ToolRegistry();
+    cloned.setMcpCatalogBarrier(this.mcpCatalogBarrier);
     for (const tool of this.tools.values()) {
       cloned.register(tool);
     }
@@ -270,8 +386,11 @@ export class ToolRegistry extends EventEmitter {
    * 注册MCP工具
    */
   registerMcpTool(tool: Tool): void {
+    if (this.tools.has(tool.name)) {
+      throw new Error(`MCP 工具 '${tool.name}' 与内置工具冲突`);
+    }
     if (this.mcpTools.has(tool.name)) {
-      // MCP工具可以覆盖（支持热更新）
+      this.removeFromIndexes(this.mcpTools.get(tool.name)!);
       this.mcpTools.delete(tool.name);
     }
 
@@ -286,19 +405,139 @@ export class ToolRegistry extends EventEmitter {
     });
   }
 
+  replaceMcpTools(tools: readonly Tool[], change?: McpCatalogProjectionChange): void {
+    const next = new Map<string, Tool>();
+    for (const tool of tools) {
+      if (next.has(tool.name)) {
+        throw new Error(`MCP catalog contains duplicate tool '${tool.name}'`);
+      }
+      if (this.tools.has(tool.name)) {
+        throw new Error(`MCP tool '${tool.name}' conflicts with a builtin tool`);
+      }
+      next.set(tool.name, tool);
+    }
+
+    const previousNames = [...this.mcpTools.keys()];
+    for (const tool of this.mcpTools.values()) this.removeFromIndexes(tool);
+    this.mcpTools = next;
+    for (const tool of next.values()) this.updateIndexes(tool);
+    this._deferredManager.syncDynamicTools(previousNames, [...next.keys()]);
+
+    if (change) {
+      this.pendingMcpCatalogChanges.push(structuredClone(change));
+      if (this.pendingMcpCatalogChanges.length > 32) {
+        this.pendingMcpCatalogChanges.shift();
+      }
+    }
+    this.emit('mcpCatalogReplaced', {
+      toolCount: next.size,
+      change,
+      timestamp: Date.now(),
+    });
+  }
+
+  drainMcpCatalogChanges(): McpCatalogProjectionChange[] {
+    const changes = this.pendingMcpCatalogChanges;
+    this.pendingMcpCatalogChanges = [];
+    return changes;
+  }
+
+  queueMcpContentChange(change: McpContentProjectionChange): void {
+    this.pendingMcpContentChanges.push(structuredClone(change));
+    if (this.pendingMcpContentChanges.length > 32) {
+      this.pendingMcpContentChanges.shift();
+    }
+  }
+
+  drainMcpContentChanges(): McpContentProjectionChange[] {
+    const changes = this.pendingMcpContentChanges;
+    this.pendingMcpContentChanges = [];
+    return changes;
+  }
+
+  queueMcpResourceUpdated(update: McpResourceUpdatedProjection): void {
+    const duplicate = this.pendingMcpResourceUpdates.some(
+      (current) =>
+        current.serverName === update.serverName && current.uri === update.uri
+    );
+    if (!duplicate) this.pendingMcpResourceUpdates.push(structuredClone(update));
+    if (this.pendingMcpResourceUpdates.length > 32) {
+      this.pendingMcpResourceUpdates.shift();
+    }
+  }
+
+  drainMcpResourceUpdates(): McpResourceUpdatedProjection[] {
+    const updates = this.pendingMcpResourceUpdates;
+    this.pendingMcpResourceUpdates = [];
+    return updates;
+  }
+
+  queueMcpConnectionChange(change: McpConnectionProjectionChange): void {
+    this.pendingMcpConnectionChanges.push(structuredClone(change));
+    if (this.pendingMcpConnectionChanges.length > 32) {
+      this.pendingMcpConnectionChanges.shift();
+    }
+  }
+
+  drainMcpConnectionChanges(): McpConnectionProjectionChange[] {
+    const changes = this.pendingMcpConnectionChanges;
+    this.pendingMcpConnectionChanges = [];
+    return changes;
+  }
+
+  queueMcpLog(entry: McpLogProjection): void {
+    this.pendingMcpLogs.push(structuredClone(entry));
+    if (this.pendingMcpLogs.length > 64) {
+      this.pendingMcpLogs.shift();
+    }
+  }
+
+  drainMcpLogs(): McpLogProjection[] {
+    const entries = this.pendingMcpLogs;
+    this.pendingMcpLogs = [];
+    return entries;
+  }
+
+  queueMcpInstructionsChange(change: McpInstructionsProjectionChange): void {
+    this.pendingMcpInstructionChanges.push(structuredClone(change));
+    if (this.pendingMcpInstructionChanges.length > 32) {
+      this.pendingMcpInstructionChanges.shift();
+    }
+  }
+
+  drainMcpInstructionsChanges(): McpInstructionsProjectionChange[] {
+    const changes = this.pendingMcpInstructionChanges;
+    this.pendingMcpInstructionChanges = [];
+    return changes;
+  }
+
+  queueMcpTaskChange(change: McpTaskProjectionChange): void {
+    this.pendingMcpTaskChanges.push(structuredClone(change));
+    if (this.pendingMcpTaskChanges.length > 64) {
+      this.pendingMcpTaskChanges.shift();
+    }
+  }
+
+  drainMcpTaskChanges(): McpTaskProjectionChange[] {
+    const changes = this.pendingMcpTaskChanges;
+    this.pendingMcpTaskChanges = [];
+    return changes;
+  }
+
   /**
    * 移除MCP工具（通过名称前缀匹配）
    */
   removeMcpTools(serverName: string): number {
     let removedCount = 0;
-    const prefix = `mcp__${serverName}__`;
+    const prefix = createMcpProviderServerPrefix(serverName);
 
-    for (const [name, tool] of this.mcpTools.entries()) {
+    for (const name of this.mcpTools.keys()) {
       if (name.startsWith(prefix)) {
+        const tool = this.mcpTools.get(name)!;
         this.mcpTools.delete(name);
         this.removeFromIndexes(tool);
+        this._deferredManager.unregister(name);
         removedCount++;
-
         this.emit('toolUnregistered', {
           type: 'mcp',
           toolName: name,

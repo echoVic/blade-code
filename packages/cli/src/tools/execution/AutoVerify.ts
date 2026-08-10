@@ -1,220 +1,336 @@
-/**
- * 自动验证传感器
- *
- * 在 Edit/Write 工具执行后自动运行类型检查,
- * 将与修改文件相关的错误注入 LLM 上下文。
- *
- * 验证层级:
- * 1. TypeScript 类型检查 (via VerifyQueue)
- * 2. Lint 快速检查 (biome check, 仅对修改文件)
- */
-
-import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { promisify } from 'node:util';
+import { isAcpMode } from '../../acp/AcpServiceContext.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
-import { getCwd } from '../../utils/cwd.js';
+import { WorkspaceTrustService } from '../../security/WorkspaceTrustService.js';
+import {
+  type OwnedProcessTree,
+  spawnOwnedProcess,
+} from '../../utils/process/OwnedProcessTree.js';
 import type { ExecutionContext, ToolResult } from '../types/index.js';
-import { VerifyQueue, type VerifyResult } from './VerifyQueue.js';
+import {
+  type VerificationCommandResult,
+  type VerificationCommandRunner,
+  VerifyQueue,
+  type VerifyResult,
+} from './VerifyQueue.js';
 
-const execFileAsync = promisify(execFile);
 const logger = createLogger(LogCategory.EXECUTION);
-
-/** 触发自动验证的工具 */
-const TRIGGER_TOOLS = new Set(['Edit', 'Write']);
-
-/** 单次注入的最大错误行数 */
+const TRIGGER_TOOLS = new Set(['Edit', 'Write', 'ApplyPatch']);
 const MAX_ERROR_LINES = 15;
+const MAX_STREAM_CHARS = 256 * 1024;
 
-/** Lint 检查超时 */
-const LINT_TIMEOUT_MS = 5000;
-
-/** 单文件测试超时 */
-const TEST_TIMEOUT_MS = 15000;
-
-/** 测试输出最大行数 */
-const MAX_TEST_OUTPUT_LINES = 10;
-
-/**
- * 从类型检查输出中过滤与指定文件相关的错误
- */
-function filterErrorsForFile(output: string, filePath: string): string[] {
-  const lines = output.split('\n');
-  const fileName = path.basename(filePath);
-  const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
-
-  return lines.filter((line) => line.includes(fileName) || line.includes(absPath));
+export interface AutoVerifyRuntimeOptions {
+  sessionId: string;
+  workspaceRoot: string;
+  projectRoot: string;
+  environment: Readonly<Record<string, string>>;
+  resolveTrust?: () => Promise<boolean>;
+  isRemoteSession?: () => boolean;
+  runCommand?: VerificationCommandRunner;
 }
 
-/**
- * 对单个文件运行 biome lint（快速，不需要全项目扫描）
- */
-async function runLintCheck(filePath: string, cwd: string): Promise<string | null> {
-  try {
-    await execFileAsync('npx', ['biome', 'lint', '--max-diagnostics=5', filePath], {
-      cwd,
-      timeout: LINT_TIMEOUT_MS,
-      encoding: 'utf-8',
-    });
-    return null;
-  } catch (err: unknown) {
-    const execErr = err as { stdout?: string; stderr?: string; killed?: boolean };
-    if (execErr.killed) return null;
-    const output = (execErr.stdout || '') + (execErr.stderr || '');
-    if (output.includes('error')) return output.trim();
-    return null;
-  }
+interface ActiveCommand {
+  processTree: OwnedProcessTree;
+  settled: Promise<void>;
 }
 
-/**
- * Run a single test file and return failure output (if any)
- */
-async function runTestFile(testPath: string, cwd: string): Promise<string | null> {
-  try {
-    await execFileAsync('npx', ['vitest', 'run', '--reporter=dot', testPath], {
-      cwd,
-      timeout: TEST_TIMEOUT_MS,
-      encoding: 'utf-8',
-    });
-    return null;
-  } catch (err: unknown) {
-    const execErr = err as {
-      stdout?: string;
-      stderr?: string;
-      killed?: boolean;
-      code?: number;
-    };
-    if (execErr.killed) return null;
-    if (execErr.code === 0) return null;
-    const output = (execErr.stdout || '') + (execErr.stderr || '');
-    if (!output.trim()) return null;
-    const lines = output.split('\n');
-    const failLines = lines.filter(
-      (l) =>
-        l.includes('FAIL') ||
-        l.includes('Error') ||
-        l.includes('✗') ||
-        l.includes('expected')
+function appendBounded(current: string, chunk: string): string {
+  if (current.length >= MAX_STREAM_CHARS) return current;
+  return current + chunk.slice(0, MAX_STREAM_CHARS - current.length);
+}
+
+function filterErrorsForFiles(output: string, filePaths: readonly string[]): string[] {
+  const names = filePaths.map((filePath) => path.basename(filePath));
+  const absolutePaths = filePaths.map((filePath) => path.resolve(filePath));
+  return output
+    .split('\n')
+    .filter(
+      (line) =>
+        names.some((name) => line.includes(name)) ||
+        absolutePaths.some((filePath) => line.includes(filePath))
     );
-    if (failLines.length === 0) return null;
-    return failLines.slice(0, MAX_TEST_OUTPUT_LINES).join('\n');
-  }
+}
+
+function extractVerificationFiles(
+  params: Record<string, unknown>,
+  result: ToolResult
+): string[] {
+  const direct = (params.file_path as string) || (params.path as string);
+  if (direct) return [direct];
+  if (!Array.isArray(result.metadata?.changes)) return [];
+  return [
+    ...new Set(
+      result.metadata.changes
+        .filter((change): change is { path: string; newContent?: unknown } =>
+          Boolean(
+            change &&
+              typeof change === 'object' &&
+              'path' in change &&
+              typeof change.path === 'string' &&
+              (!('newContent' in change) || change.newContent !== null)
+          )
+        )
+        .map((change) => change.path)
+    ),
+  ];
 }
 
 /**
- * Find a related test file for the given source file.
- * Common patterns: foo.ts -> foo.test.ts, foo.spec.ts, __tests__/foo.test.ts
+ * Session-owned post-edit diagnostics.
+ *
+ * Project scripts are executable repository content. They are only eligible
+ * after an explicit Workspace Trust decision and when the caller already
+ * selected YOLO execution. ACP files are remote-owned and never verified by a
+ * local process.
  */
-function findRelatedTestFile(filePath: string): string | null {
-  if (
-    filePath.includes('.test.') ||
-    filePath.includes('.spec.') ||
-    filePath.includes('__tests__')
-  ) {
-    return null;
+export class AutoVerifyRuntime {
+  private readonly verifyQueue: VerifyQueue;
+  private readonly activeCommands = new Set<ActiveCommand>();
+  private readonly activeVerifications = new Set<Promise<void>>();
+  private readonly disposeController = new AbortController();
+  private disposed = false;
+
+  constructor(private readonly options: AutoVerifyRuntimeOptions) {
+    this.verifyQueue = new VerifyQueue({
+      runCommand:
+        options.runCommand ??
+        ((command, args, cwd, timeoutMs, signal) =>
+          this.runOwnedCommand(command, args, cwd, timeoutMs, signal)),
+    });
   }
 
-  const dir = path.dirname(filePath);
-  const ext = path.extname(filePath);
-  const base = path.basename(filePath, ext);
+  verify(
+    toolName: string,
+    params: Record<string, unknown>,
+    context: ExecutionContext,
+    result: ToolResult
+  ): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    const verification = this.verifyInternal(toolName, params, context, result).finally(
+      () => {
+        this.activeVerifications.delete(verification);
+      }
+    );
+    this.activeVerifications.add(verification);
+    return verification;
+  }
 
-  const candidates = [
-    path.join(dir, `${base}.test${ext}`),
-    path.join(dir, `${base}.spec${ext}`),
-    path.join(dir, '__tests__', `${base}.test${ext}`),
-    path.join(dir, '..', 'tests', `${base}.test${ext}`),
-  ];
+  async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.disposeController.abort();
 
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) {
-      return candidate;
+    const activeCommands = [...this.activeCommands];
+    const activeVerifications = [...this.activeVerifications];
+    await Promise.allSettled(
+      activeCommands.map((entry) => entry.processTree.terminate())
+    );
+    await Promise.allSettled(activeCommands.map((entry) => entry.settled));
+    await Promise.allSettled(activeVerifications);
+    this.activeCommands.clear();
+    this.activeVerifications.clear();
+    this.verifyQueue.clearCache();
+  }
+
+  private async verifyInternal(
+    toolName: string,
+    params: Record<string, unknown>,
+    context: ExecutionContext,
+    result: ToolResult
+  ): Promise<void> {
+    if (
+      this.disposed ||
+      !TRIGGER_TOOLS.has(toolName) ||
+      !result.success ||
+      this.isRemoteSession()
+    ) {
+      return;
     }
-  }
-  return null;
-}
 
-export async function runAutoVerify(
-  toolName: string,
-  params: Record<string, unknown>,
-  context: ExecutionContext,
-  result: ToolResult,
-  queue: VerifyQueue = VerifyQueue.getInstance()
-): Promise<void> {
-  if (!TRIGGER_TOOLS.has(toolName) || !result.success) return;
+    const filePaths = extractVerificationFiles(params, result);
+    if (filePaths.length === 0 || !(await this.isProjectExplicitlyTrusted())) return;
+    const absoluteFilePaths = filePaths
+      .map((filePath) =>
+        path.isAbsolute(filePath)
+          ? path.normalize(filePath)
+          : path.resolve(this.options.workspaceRoot, filePath)
+      )
+      .filter((filePath) => {
+        const relative = path.relative(this.options.workspaceRoot, filePath);
+        return (
+          relative !== '..' &&
+          !relative.startsWith(`..${path.sep}`) &&
+          !path.isAbsolute(relative)
+        );
+      });
+    if (absoluteFilePaths.length === 0) return;
 
-  const filePath = (params.file_path as string) || (params.path as string);
-  if (!filePath) return;
-
-  const searchRoot = context.workspaceRoot || getCwd();
-  const diagnostics: string[] = [];
-
-  // 1. Type check (via VerifyQueue)
-  try {
-    const verify: VerifyResult | null = await queue.verify(filePath, searchRoot);
-    if (verify && !verify.timedOut && verify.hasErrors) {
-      const relevantErrors = filterErrorsForFile(verify.rawOutput, filePath);
-      if (relevantErrors.length > 0) {
-        const truncated = relevantErrors.slice(0, MAX_ERROR_LINES);
-        diagnostics.push(
-          `Type errors:\n${truncated.join('\n')}` +
-            (relevantErrors.length > MAX_ERROR_LINES
-              ? `\n... (+${relevantErrors.length - MAX_ERROR_LINES} more)`
-              : '')
+    let verification: VerifyResult | null;
+    try {
+      const signal = context.signal
+        ? AbortSignal.any([context.signal, this.disposeController.signal])
+        : this.disposeController.signal;
+      verification = await this.verifyQueue.verify(
+        absoluteFilePaths[0],
+        this.options.workspaceRoot,
+        signal
+      );
+    } catch (error) {
+      if (!context.signal?.aborted && !this.disposeController.signal.aborted) {
+        logger.debug(
+          `[AutoVerify] type-check failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
         );
       }
+      return;
     }
-  } catch (err) {
-    logger.debug(
-      `[AutoVerify] type-check failed: ${err instanceof Error ? err.message : String(err)}`
+    if (!verification || verification.timedOut || !verification.hasErrors) return;
+
+    const relevantErrors = filterErrorsForFiles(
+      verification.rawOutput,
+      absoluteFilePaths
+    );
+    if (relevantErrors.length === 0) return;
+
+    const truncated = relevantErrors.slice(0, MAX_ERROR_LINES);
+    const diagnostics =
+      `Type errors:\n${truncated.join('\n')}` +
+      (relevantErrors.length > MAX_ERROR_LINES
+        ? `\n... (+${relevantErrors.length - MAX_ERROR_LINES} more)`
+        : '');
+    const currentContent =
+      typeof result.llmContent === 'string'
+        ? result.llmContent
+        : result.llmContent
+          ? JSON.stringify(result.llmContent)
+          : '';
+    result.llmContent =
+      `${currentContent}\n\n---\n` +
+      `**Auto-Verify: issues after ${
+        absoluteFilePaths.length === 1
+          ? path.basename(absoluteFilePaths[0])
+          : `${absoluteFilePaths.length} patched files`
+      }:**\n` +
+      `\`\`\`\n${diagnostics}\n\`\`\``;
+
+    logger.info(
+      `[AutoVerify] injected type diagnostics (${absoluteFilePaths.length} files)`
     );
   }
 
-  // 2. Lint check (biome, single file)
-  if (
-    filePath.endsWith('.ts') ||
-    filePath.endsWith('.tsx') ||
-    filePath.endsWith('.js')
-  ) {
-    const lintOutput = await runLintCheck(filePath, searchRoot);
-    if (lintOutput) {
-      const lines = lintOutput.split('\n').slice(0, 5);
-      diagnostics.push(`Lint errors:\n${lines.join('\n')}`);
-    }
+  private isRemoteSession(): boolean {
+    return this.options.isRemoteSession?.() ?? isAcpMode(this.options.sessionId);
   }
 
-  // 3. Test execution — run related test or self if editing a test file
-  const isTestFile = filePath.includes('.test.') || filePath.includes('.spec.');
-  const testFileToRun = isTestFile ? filePath : findRelatedTestFile(filePath);
-
-  if (testFileToRun) {
-    const testOutput = await runTestFile(testFileToRun, searchRoot);
-    if (testOutput) {
-      diagnostics.push(
-        `Test failures (${path.basename(testFileToRun)}):\n${testOutput}`
-      );
-    } else if (!isTestFile && testFileToRun) {
-      diagnostics.push(`Related test: ${testFileToRun}`);
-    }
+  private async isProjectExplicitlyTrusted(): Promise<boolean> {
+    if (this.options.resolveTrust) return this.options.resolveTrust();
+    const status = await WorkspaceTrustService.getInstance().getStatus(
+      this.options.projectRoot
+    );
+    return status.state === 'trusted';
   }
 
-  if (diagnostics.length === 0) return;
+  private runOwnedCommand(
+    command: string,
+    args: string[],
+    cwd: string,
+    timeoutMs: number,
+    turnSignal?: AbortSignal
+  ): Promise<VerificationCommandResult> {
+    if (this.disposed || turnSignal?.aborted) {
+      return Promise.resolve({
+        stdout: '',
+        stderr: '',
+        exitCode: 1,
+        timedOut: false,
+      });
+    }
 
-  const diagnosticsContext =
-    `\n\n---\n**Auto-Verify: issues in ${path.basename(filePath)}:**\n` +
-    '```\n' +
-    diagnostics.join('\n\n') +
-    '\n```';
+    const { child, processTree } = spawnOwnedProcess(command, args, {
+      cwd,
+      env: {
+        ...this.options.environment,
+        PATH: this.options.environment.PATH ?? process.env.PATH ?? '',
+        HOME: this.options.environment.HOME ?? process.env.HOME ?? '',
+        USER: this.options.environment.USER ?? process.env.USER ?? '',
+        SHELL: this.options.environment.SHELL ?? process.env.SHELL ?? '/bin/sh',
+        BLADE_CLI: '1',
+        BLADE_SESSION_ID: this.options.sessionId,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
 
-  const currentContent =
-    typeof result.llmContent === 'string'
-      ? result.llmContent
-      : result.llmContent
-        ? JSON.stringify(result.llmContent)
-        : '';
-  result.llmContent = `${currentContent}${diagnosticsContext}`;
+    let settleActive!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      settleActive = resolve;
+    });
+    const active: ActiveCommand = { processTree, settled };
+    this.activeCommands.add(active);
 
-  logger.info(
-    `[AutoVerify] injected ${diagnostics.length} diagnostic(s) (${path.basename(filePath)})`
-  );
+    return new Promise((resolve, reject) => {
+      let stdout = '';
+      let stderr = '';
+      let timedOut = false;
+      let completed = false;
+      let termination: ReturnType<OwnedProcessTree['terminate']> | undefined;
+      const terminate = () => {
+        termination ??= processTree.terminate();
+        return termination;
+      };
+
+      child.stdout?.setEncoding('utf8');
+      child.stderr?.setEncoding('utf8');
+      child.stdout?.on('data', (chunk: string) => {
+        stdout = appendBounded(stdout, chunk);
+      });
+      child.stderr?.on('data', (chunk: string) => {
+        stderr = appendBounded(stderr, chunk);
+      });
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        turnSignal?.removeEventListener('abort', abort);
+        this.disposeController.signal.removeEventListener('abort', abort);
+        this.activeCommands.delete(active);
+        settleActive();
+      };
+      const abort = () => {
+        void terminate();
+      };
+      const timer = setTimeout(() => {
+        timedOut = true;
+        void terminate();
+      }, timeoutMs);
+
+      turnSignal?.addEventListener('abort', abort, { once: true });
+      this.disposeController.signal.addEventListener('abort', abort, {
+        once: true,
+      });
+      if (turnSignal?.aborted || this.disposeController.signal.aborted) {
+        abort();
+      }
+
+      child.once('error', (error) => {
+        if (completed) return;
+        completed = true;
+        cleanup();
+        reject(error);
+      });
+      child.once('close', async (code) => {
+        if (completed) return;
+        completed = true;
+        if (timedOut || turnSignal?.aborted || this.disposeController.signal.aborted) {
+          await terminate();
+        }
+        cleanup();
+        resolve({
+          stdout,
+          stderr,
+          exitCode: code ?? 1,
+          timedOut,
+        });
+      });
+    });
+  }
 }

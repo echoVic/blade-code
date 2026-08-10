@@ -69,6 +69,13 @@ describe('tool approval scopes', () => {
     await executor.execute('ScopedTool', { value: 'same' }, context);
 
     expect(confirmation).toHaveBeenCalledTimes(1);
+    expect(confirmation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: 'ScopedTool',
+        args: { value: 'same' },
+        kind: ToolKind.Execute,
+      })
+    );
     expect(permissionPersistence.allow).not.toHaveBeenCalled();
   });
 

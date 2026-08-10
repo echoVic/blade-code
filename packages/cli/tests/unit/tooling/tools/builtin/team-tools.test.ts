@@ -139,6 +139,71 @@ describe('agent team tools', () => {
     }
   });
 
+  it('passes the parent Session resources to every teammate runtime', async () => {
+    const configDir = await createTempConfigDir();
+    const agentResources = {
+      projectRoot: '/workspace/source',
+      subagents: subagentRegistry,
+      skills: {},
+      commands: {},
+    } as never;
+    const modelResources = {
+      projectRoot: '/workspace/source',
+      config: {},
+      catalog: {},
+    } as never;
+    const lspResources = {
+      projectRoot: '/workspace/source',
+      servers: { typescript: { command: 'server' } },
+    } as never;
+    const tool = createTeamTools({
+      sessionId: 'session-a',
+      configDir,
+      subagentRegistry,
+      agentResources,
+      modelResources,
+      lspResources,
+      getReasoningEffort: () => 'high',
+      getServiceTier: () => 'fast',
+      getResponseVerbosity: () => 'high',
+      getCommunicationStyle: () => 'friendly',
+    }).find((candidate) => candidate.name === 'TeamCreate');
+    if (!tool) throw new Error('TeamCreate tool not found');
+    const teamCreateTool = tool as any;
+
+    try {
+      await teamCreateTool.execute(
+        {
+          team_name: 'Resource Team',
+          members: [
+            {
+              name: 'researcher',
+              subagent_type: 'Explore',
+              prompt: 'Inspect the inherited project resource snapshot.',
+            },
+          ],
+        },
+        undefined,
+        { sessionId: 'session-a', workspaceRoot: '/workspace/run' }
+      );
+
+      expect(mockManager.startBackgroundAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceRoot: '/workspace/run',
+          agentResources,
+          modelResources,
+          lspResources,
+          reasoningEffort: 'high',
+          serviceTier: 'fast',
+          responseVerbosity: 'high',
+          communicationStyle: 'friendly',
+        })
+      );
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
   it('reports teammate status and exposes TaskOutput IDs', async () => {
     const configDir = await createTempConfigDir();
 

@@ -41,6 +41,7 @@ export const bashTool = createTool({
   displayName: 'Bash Command',
   kind: ToolKind.Execute,
   isConcurrencySafe: false, // 命令执行，可能有副作用
+  parallelism: 'shared', // 独立命令并行；execute bucket 维持进程级上限
 
   schema: Type.Object({
     command: ToolSchemas.command({
@@ -175,6 +176,10 @@ Before executing commands:
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const { command, timeout = 30000, cwd, env, run_in_background = false } = params;
     const { updateOutput } = context;
+    const effectiveEnv = {
+      ...context.environment,
+      ...env,
+    };
     const signal = context.signal ?? new AbortController().signal;
     const workspaceRoot = context.workspaceRoot ?? getCwd();
     const effectiveCwd =
@@ -199,7 +204,7 @@ Before executing commands:
         return executeInBackground(
           command,
           effectiveCwd,
-          env,
+          effectiveEnv,
           context.sessionId,
           sandboxedCommand
         );
@@ -213,7 +218,7 @@ Before executing commands:
         return executeWithAcpTerminal(
           command,
           effectiveCwd,
-          env,
+          effectiveEnv,
           timeout,
           signal,
           context.sessionId,
@@ -223,7 +228,7 @@ Before executing commands:
         return executeWithTimeout(
           command,
           effectiveCwd,
-          env,
+          effectiveEnv,
           timeout,
           signal,
           updateOutput,

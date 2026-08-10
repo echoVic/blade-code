@@ -100,12 +100,15 @@ Before using this tool, ensure your plan is clear and unambiguous. If there are 
     // 触发 UI 确认流程
     if (context.confirmationHandler) {
       try {
-        const response = await context.confirmationHandler.requestConfirmation({
-          type: 'exitPlanMode',
-          message: '助手已完成方案规划，请审核后选择执行方式。',
-          details: '批准后将退出规划模式，开始实施。',
-          planContent: planContent || undefined,
-        });
+        const response = await context.confirmationHandler.requestConfirmation(
+          {
+            type: 'exitPlanMode',
+            message: '助手已完成方案规划，请审核后选择执行方式。',
+            details: '批准后将退出规划模式，开始实施。',
+            planContent: planContent || undefined,
+          },
+          context.signal
+        );
 
         if (response.approved) {
           return {
