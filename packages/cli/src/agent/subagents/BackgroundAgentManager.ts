@@ -22,6 +22,10 @@ import { createSessionId } from '../../utils/sessionId.js';
 import type { WorktreeSession } from '../../worktree/WorktreeManager.js';
 import { Agent } from '../Agent.js';
 import { recordVerificationEvidence } from '../loop/completionPolicy.js';
+import {
+  parseVerificationVerdict,
+  recordModifiedFiles,
+} from '../loop/independentVerification.js';
 import { drainLoop } from '../loop/index.js';
 import type { LoopEvent } from '../loop/types.js';
 import type { SessionAgentResources } from '../resources/WorkspaceAgentResources.js';
@@ -456,12 +460,18 @@ export class BackgroundAgentManager {
       };
 
       const verificationCommands = new Set<string>();
+      const modifiedFiles = new Set<string>();
       const loopResult = await drainLoop(
         agent.chatStream(prompt, context, {
           signal,
         }),
         async (event) => {
           if (event.kind === 'tool_result' && 'function' in event.toolCall) {
+            recordModifiedFiles(
+              modifiedFiles,
+              event.toolCall.function.name,
+              event.result
+            );
             recordVerificationEvidence(
               verificationCommands,
               event.toolCall.function.name,
@@ -487,6 +497,11 @@ export class BackgroundAgentManager {
             message: loopResult.finalMessage || '',
             agentId,
             verificationCommands: [...verificationCommands],
+            verificationVerdict:
+              config.name === 'verification'
+                ? parseVerificationVerdict(loopResult.finalMessage)
+                : undefined,
+            modifiedFiles: [...modifiedFiles],
             stats: {
               tokens: loopResult.metadata?.tokensUsed || 0,
               toolCalls: loopResult.metadata?.toolCallsCount || 0,
@@ -514,6 +529,8 @@ export class BackgroundAgentManager {
           message: result.message,
           error: result.error,
           verificationCommands: result.verificationCommands,
+          verificationVerdict: result.verificationVerdict,
+          modifiedFiles: result.modifiedFiles,
         },
         result.stats
       );

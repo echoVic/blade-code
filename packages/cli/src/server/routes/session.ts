@@ -2069,6 +2069,8 @@ export const createSessionRouteController = (): SessionRouteController => {
           success: child.status === 'completed',
           status: child.status,
           summary: child.result?.message?.slice(0, 500),
+          type: child.subagentType,
+          verificationVerdict: child.result?.verificationVerdict,
           resumedFrom: child.resumedFrom,
           rootAgentId: child.rootAgentId,
           resumeDepth: child.resumeDepth,

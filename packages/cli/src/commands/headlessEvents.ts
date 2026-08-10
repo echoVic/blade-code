@@ -251,6 +251,7 @@ const SubagentEventSchema = event({
   subagent_type: Type.Optional(Type.String()),
   success: Type.Optional(Type.Boolean()),
   summary: Type.Optional(Type.String()),
+  verification_verdict: Type.Optional(StringEnum(['pass', 'fail', 'partial'])),
   resumed_from: Type.Optional(Type.String()),
   root_agent_id: Type.Optional(Type.String()),
   resume_depth: Type.Optional(Type.Integer({ minimum: 0 })),

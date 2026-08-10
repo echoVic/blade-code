@@ -1,4 +1,5 @@
 import { mkdir, realpath } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import type { SandboxRuntimeConfig } from '@anthropic-ai/sandbox-runtime';
 import { Mutex } from 'async-mutex';
@@ -9,6 +10,7 @@ export interface WorkspaceSandboxInput {
   command: string;
   cwd: string;
   workspaceRoot: string;
+  access?: 'workspace-write' | 'workspace-read-only';
   signal?: AbortSignal;
 }
 
@@ -17,6 +19,7 @@ export interface SandboxedCommand {
   args: string[];
   env: NodeJS.ProcessEnv;
   sandboxed: true;
+  inheritProcessEnv?: boolean;
   cleanup: () => void;
 }
 
@@ -34,6 +37,7 @@ export interface WorkspaceSandboxRuntime {
   checkDependencies(): Promise<SandboxDependencyCheck>;
   getDefaultWritePaths(): Promise<string[]>;
   initialize(config: SandboxRuntimeConfig): Promise<void>;
+  updateConfig(config: SandboxRuntimeConfig): void;
   wrapWithSandboxArgv(
     command: string,
     binShell?: string,
@@ -77,6 +81,10 @@ const runtimeAdapter: WorkspaceSandboxRuntime = {
   getDefaultWritePaths: async () => (await loadSandboxRuntime()).getDefaultWritePaths(),
   initialize: async (config) =>
     (await loadSandboxRuntime()).SandboxManager.initialize(config),
+  updateConfig: (config) => {
+    if (!loadedRuntime) throw new Error('Sandbox runtime is not initialized');
+    loadedRuntime.SandboxManager.updateConfig(config);
+  },
   wrapWithSandboxArgv: async (command, binShell, customConfig, signal, cwd) =>
     (await loadSandboxRuntime()).SandboxManager.wrapWithSandboxArgv(
       command,
@@ -90,6 +98,23 @@ const runtimeAdapter: WorkspaceSandboxRuntime = {
     await loadedRuntime?.SandboxManager.reset();
   },
 };
+
+function createSandboxRuntimeConfig(allowedDomains: string[]): SandboxRuntimeConfig {
+  return {
+    network: {
+      allowedDomains,
+      deniedDomains: [],
+      strictAllowlist: true,
+    },
+    filesystem: {
+      denyRead: [],
+      allowRead: [],
+      allowWrite: [],
+      denyWrite: [],
+    },
+    enableWeakerNestedSandbox: true,
+  };
+}
 
 export class WorkspaceSandboxUnavailableError extends Error {
   constructor(message: string) {
@@ -176,39 +201,87 @@ export class AnthropicWorkspaceSandboxBackend implements WorkspaceSandboxBackend
     const deniedDefaultPaths = defaultWritePaths.filter(
       (candidate) => !candidate.startsWith('/dev/')
     );
+    const workspaceReadOnly = input.access === 'workspace-read-only';
+    const deniedReadPaths = workspaceReadOnly
+      ? [
+          os.homedir(),
+          getBladeStorageRoot(),
+          process.env.BLADE_REAL_API_CREDENTIALS_FILE,
+        ]
+          .filter(
+            (candidate): candidate is string =>
+              typeof candidate === 'string' && candidate.trim().length > 0
+          )
+          .map((candidate) => path.resolve(candidate))
+          .filter((candidate, index, values) => values.indexOf(candidate) === index)
+      : [];
     const shell = process.platform === 'win32' ? 'bash' : '/bin/bash';
     let wrapped: { argv: string[]; env: NodeJS.ProcessEnv };
-    try {
-      wrapped = await sandboxWrapMutex.runExclusive(async () => {
-        const previousTmpDir = process.env.CLAUDE_CODE_TMPDIR;
-        process.env.CLAUDE_CODE_TMPDIR = tmpDir;
-        try {
-          return await this.runtime.wrapWithSandboxArgv(
-            input.command,
-            shell,
-            {
-              filesystem: {
-                denyRead: [],
-                allowRead: [],
-                allowWrite: [input.workspaceRoot, tempRoot],
-                denyWrite: deniedDefaultPaths,
-              },
-              git: {
-                safeDirectories: [input.workspaceRoot],
-              },
+    let releaseNetworkFence: (() => void) | undefined;
+    const restoreNetworkAndRelease = () => {
+      if (!releaseNetworkFence) return;
+      const release = releaseNetworkFence;
+      releaseNetworkFence = undefined;
+      try {
+        this.runtime.updateConfig(createSandboxRuntimeConfig(['*']));
+      } finally {
+        release();
+      }
+    };
+    const wrap = async () => {
+      const previousTmpDir = process.env.CLAUDE_CODE_TMPDIR;
+      process.env.CLAUDE_CODE_TMPDIR = tmpDir;
+      try {
+        return await this.runtime.wrapWithSandboxArgv(
+          input.command,
+          shell,
+          {
+            network: workspaceReadOnly
+              ? {
+                  allowedDomains: [],
+                  deniedDomains: [],
+                  strictAllowlist: true,
+                }
+              : {
+                  allowedDomains: ['*'],
+                  deniedDomains: [],
+                  strictAllowlist: true,
+                },
+            filesystem: {
+              denyRead: deniedReadPaths,
+              allowRead: workspaceReadOnly ? [input.workspaceRoot] : [],
+              allowWrite: workspaceReadOnly
+                ? [tempRoot]
+                : [input.workspaceRoot, tempRoot],
+              denyWrite: workspaceReadOnly
+                ? [input.workspaceRoot, ...deniedDefaultPaths]
+                : deniedDefaultPaths,
             },
-            input.signal,
-            input.cwd
-          );
-        } finally {
-          if (previousTmpDir === undefined) {
-            delete process.env.CLAUDE_CODE_TMPDIR;
-          } else {
-            process.env.CLAUDE_CODE_TMPDIR = previousTmpDir;
-          }
+            git: {
+              safeDirectories: [input.workspaceRoot],
+            },
+          },
+          input.signal,
+          input.cwd
+        );
+      } finally {
+        if (previousTmpDir === undefined) {
+          delete process.env.CLAUDE_CODE_TMPDIR;
+        } else {
+          process.env.CLAUDE_CODE_TMPDIR = previousTmpDir;
         }
-      });
+      }
+    };
+    try {
+      if (workspaceReadOnly) {
+        releaseNetworkFence = await sandboxWrapMutex.acquire();
+        this.runtime.updateConfig(createSandboxRuntimeConfig([]));
+        wrapped = await wrap();
+      } else {
+        wrapped = await sandboxWrapMutex.runExclusive(wrap);
+      }
     } catch (error) {
+      restoreNetworkAndRelease();
       if (error instanceof Error && error.name === 'AbortError') {
         throw error;
       }
@@ -233,10 +306,15 @@ export class AnthropicWorkspaceSandboxBackend implements WorkspaceSandboxBackend
         BUN_INSTALL_CACHE_DIR: bunCacheDir,
       },
       sandboxed: true,
+      inheritProcessEnv: !workspaceReadOnly,
       cleanup: () => {
         if (cleaned) return;
         cleaned = true;
-        this.runtime.cleanupAfterCommand();
+        try {
+          this.runtime.cleanupAfterCommand();
+        } finally {
+          restoreNetworkAndRelease();
+        }
       },
     };
   }
@@ -273,20 +351,7 @@ export class AnthropicWorkspaceSandboxBackend implements WorkspaceSandboxBackend
     }
 
     try {
-      await this.runtime.initialize({
-        network: {
-          allowedDomains: ['*'],
-          deniedDomains: [],
-          strictAllowlist: true,
-        },
-        filesystem: {
-          denyRead: [],
-          allowRead: [],
-          allowWrite: [],
-          denyWrite: [],
-        },
-        enableWeakerNestedSandbox: true,
-      });
+      await this.runtime.initialize(createSandboxRuntimeConfig(['*']));
     } catch (error) {
       throw new WorkspaceSandboxUnavailableError(
         `Workspace sandbox failed to initialize: ${

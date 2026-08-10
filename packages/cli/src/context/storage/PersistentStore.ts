@@ -348,11 +348,13 @@ export class PersistentStore {
           payload: {
             childSessionId: subagentRef.subagentSessionId,
             agentType: subagentRef.subagentType,
+            description: subagentRef.subagentDescription ?? '',
             status: subagentRef.subagentStatus,
             summary: subagentRef.subagentSummary ?? '',
             resumedFrom: subagentRef.subagentResumedFrom ?? null,
             rootAgentId: subagentRef.subagentRootId ?? subagentRef.subagentSessionId,
             resumeDepth: subagentRef.subagentResumeDepth ?? 0,
+            verificationVerdict: subagentRef.verificationVerdict ?? null,
             startedAt: now,
             finishedAt,
           },

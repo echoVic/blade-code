@@ -488,6 +488,39 @@ describe('eventHandlers', () => {
     });
   });
 
+  test('projects a structured verification verdict onto the matching subagent', () => {
+    const state = createState();
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+
+    dispatch({
+      type: 'subagent.start',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        subagentSessionId: 'agent-verifier',
+        type: 'verification',
+        description: 'Verify implementation',
+      },
+    });
+    dispatch({
+      type: 'subagent.complete',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        subagentSessionId: 'agent-verifier',
+        success: true,
+        verificationVerdict: 'pass',
+      },
+    });
+
+    expect(state.messages[0]?.agentContent?.subagent).toMatchObject({
+      sessionId: 'agent-verifier',
+      type: 'verification',
+      status: 'completed',
+      verificationVerdict: 'pass',
+    });
+  });
+
   test('keeps parallel subagents isolated by child session', () => {
     const state = createState();
     const dispatch = createEventDispatcher(() => state, vi.fn());

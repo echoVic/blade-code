@@ -11,6 +11,7 @@ import {
 } from '../../config/types.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import type { WorktreeSession } from '../../worktree/WorktreeManager.js';
+import type { VerificationVerdict } from '../loop/independentVerification.js';
 import type { LoopEvent } from '../loop/types.js';
 import type { SubagentIsolationMode } from './SubagentWorktreeLifecycle.js';
 
@@ -215,6 +216,12 @@ export interface SubagentResult {
 
   /** 最后一次源码修改后成功执行的结构化验证命令 */
   verificationCommands?: string[];
+
+  /** verification subagent 的结构化最终判定 */
+  verificationVerdict?: VerificationVerdict;
+
+  /** 子代理执行期间成功修改的文件路径 */
+  modifiedFiles?: string[];
 
   /** 执行统计 */
   stats?: {

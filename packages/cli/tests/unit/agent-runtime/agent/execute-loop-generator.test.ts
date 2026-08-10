@@ -173,6 +173,15 @@ function createMockDeps(overrides: Partial<LoopDependencies> = {}): LoopDependen
   } as unknown as LoopDependencies;
 }
 
+function exposeIndependentVerificationTools(deps: LoopDependencies): void {
+  const registry = deps.toolExecutor.getRegistry();
+  vi.mocked(registry.getFunctionDeclarationsByMode).mockReturnValue([
+    { name: 'ApplyPatch', description: 'Apply patch', parameters: {} },
+    { name: 'Edit', description: 'Edit file', parameters: {} },
+    { name: 'Task', description: 'Delegate work', parameters: {} },
+  ]);
+}
+
 function createMockContext(overrides: Partial<ChatContext> = {}): ChatContext {
   return {
     messages: [],
@@ -1061,6 +1070,42 @@ describe('executeLoopGenerator', () => {
     expect(chatMock).toHaveBeenCalledTimes(1);
   });
 
+  it('lets the built-in verifier own its structured completion contract', async () => {
+    const deps = createMockDeps();
+    const context = createMockContext({
+      permissionMode: 'yolo' as any,
+      subagentInfo: {
+        parentSessionId: 'parent-session',
+        subagentType: 'verification',
+        isSidechain: true,
+      },
+    });
+    const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+    chatMock.mockResolvedValueOnce({
+      content: 'Tool-backed evidence collected.\n\n## Verification Result: PASS',
+      finishReason: 'stop',
+    });
+
+    const { result } = await drainGenerator(
+      executeLoopGenerator(
+        deps,
+        'Run all applicable test, lint, type-check, and build checks.',
+        context,
+        { stream: false } as LoopOptions,
+        undefined
+      )
+    );
+
+    expect(result.success).toBe(true);
+    expect(chatMock).toHaveBeenCalledOnce();
+    expect(context.messages).not.toContainEqual(
+      expect.objectContaining({
+        role: 'user',
+        content: expect.stringContaining('Missing successful verification categories'),
+      })
+    );
+  });
+
   it('enforces an explicit turn limit for the main agent in yolo mode', async () => {
     const deps = createMockDeps({
       runtimeOptions: { maxTurns: 1 } as any,
@@ -1814,6 +1859,272 @@ describe('executeLoopGenerator', () => {
         role: 'user',
         content: expect.stringContaining('explicitly required verification'),
       });
+    });
+
+    it('requires a fresh built-in verification Task after a non-trivial change', async () => {
+      const deps = createMockDeps();
+      exposeIndependentVerificationTools(deps);
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'non-trivial-patch',
+              type: 'function',
+              function: {
+                name: 'ApplyPatch',
+                arguments: '{"patch":"*** Begin Patch\\n*** End Patch"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Implementation complete.',
+          toolCalls: undefined,
+          finishReason: 'stop',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'independent-verifier',
+              type: 'function',
+              function: {
+                name: 'Task',
+                arguments:
+                  '{"subagent_type":"verification","description":"Verify implementation","prompt":"Independently verify the original request and changed files.","run_in_background":false,"isolation":"none"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Implementation and independent verification are complete.',
+          toolCalls: undefined,
+          finishReason: 'stop',
+        });
+
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
+      executeMock
+        .mockResolvedValueOnce({
+          success: true,
+          llmContent: 'Applied three files.',
+          metadata: {
+            affected_paths: ['src/a.ts', 'src/b.ts', 'src/c.ts'],
+          },
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          llmContent: '## Verification Result: PASS',
+          metadata: {
+            subagentType: 'verification',
+            subagentStatus: 'completed',
+            subagentSummary: '## Verification Result: PASS',
+            verificationAgentBuiltin: true,
+            verificationVerdict: 'pass',
+            verificationCommands: ['bun run test:all'],
+          },
+        });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Implement the requested production feature.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(chatMock).toHaveBeenCalledTimes(4);
+      expect(chatMock.mock.calls[2]?.[3]).toEqual({
+        toolChoice: { type: 'tool', toolName: 'Task' },
+      });
+      expect(executeMock).toHaveBeenNthCalledWith(
+        2,
+        'Task',
+        expect.objectContaining({
+          subagent_type: 'verification',
+          run_in_background: false,
+          isolation: 'none',
+          prompt: expect.stringMatching(
+            /Original request:[\s\S]*Run every automated test/
+          ),
+        }),
+        expect.objectContaining({ sessionId: 'test-session' })
+      );
+      expect(context.messages).toContainEqual(
+        expect.objectContaining({
+          role: 'user',
+          content: expect.stringContaining('non-trivial implementation'),
+        })
+      );
+    });
+
+    it('invalidates a PASS when a later write changes the implementation', async () => {
+      const deps = createMockDeps();
+      exposeIndependentVerificationTools(deps);
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      const verifierCall = (id: string) => ({
+        content: '',
+        toolCalls: [
+          {
+            id,
+            type: 'function',
+            function: {
+              name: 'Task',
+              arguments:
+                '{"subagent_type":"verification","description":"Verify implementation","prompt":"Independently verify the current implementation.","run_in_background":false,"isolation":"none"}',
+            },
+          },
+        ],
+        finishReason: 'tool_calls',
+      });
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'initial-patch',
+              type: 'function',
+              function: {
+                name: 'ApplyPatch',
+                arguments: '{"patch":"*** Begin Patch\\n*** End Patch"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Initial implementation complete.',
+          finishReason: 'stop',
+        })
+        .mockResolvedValueOnce(verifierCall('first-verifier'))
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'post-verification-edit',
+              type: 'function',
+              function: {
+                name: 'Edit',
+                arguments: '{"file_path":"src/a.ts"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'The follow-up edit is complete.',
+          finishReason: 'stop',
+        })
+        .mockResolvedValueOnce(verifierCall('second-verifier'))
+        .mockResolvedValueOnce({
+          content: 'The fresh verification passed.',
+          finishReason: 'stop',
+        });
+
+      const passResult = {
+        success: true,
+        llmContent: '## Verification Result: PASS',
+        metadata: {
+          subagentType: 'verification',
+          subagentStatus: 'completed',
+          verificationAgentBuiltin: true,
+          verificationVerdict: 'pass',
+        },
+      };
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
+      executeMock
+        .mockResolvedValueOnce({
+          success: true,
+          llmContent: 'patched',
+          metadata: {
+            affected_paths: ['src/a.ts', 'src/b.ts', 'src/c.ts'],
+          },
+        })
+        .mockResolvedValueOnce(passResult)
+        .mockResolvedValueOnce({
+          success: true,
+          llmContent: 'edited',
+          metadata: { file_path: 'src/a.ts' },
+        })
+        .mockResolvedValueOnce(passResult);
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Implement and verify the production feature.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(
+        executeMock.mock.calls.filter(([toolName]) => toolName === 'Task')
+      ).toHaveLength(2);
+      expect(chatMock.mock.calls[5]?.[3]).toEqual({
+        toolChoice: { type: 'tool', toolName: 'Task' },
+      });
+    });
+
+    it('fails closed when a non-trivial change never receives a verifier PASS', async () => {
+      const deps = createMockDeps();
+      exposeIndependentVerificationTools(deps);
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'unverified-patch',
+              type: 'function',
+              function: {
+                name: 'ApplyPatch',
+                arguments: '{"patch":"*** Begin Patch\\n*** End Patch"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValue({
+          content: 'Done without verification.',
+          finishReason: 'stop',
+        });
+      (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true,
+        llmContent: 'patched',
+        metadata: {
+          affected_paths: ['src/a.ts', 'src/b.ts', 'src/c.ts'],
+        },
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Implement the production feature.',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result).toMatchObject({
+        success: false,
+        error: {
+          type: 'verification_failed',
+          message: expect.stringContaining('fresh PASS'),
+        },
+      });
+      expect(chatMock.mock.calls.length).toBeGreaterThan(3);
     });
 
     it('writes successful Task outcome metadata for in-memory recovery', async () => {

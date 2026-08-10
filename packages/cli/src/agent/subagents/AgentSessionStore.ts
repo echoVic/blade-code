@@ -18,6 +18,7 @@ import {
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import type { WorktreeSession } from '../../worktree/WorktreeManager.js';
+import type { VerificationVerdict } from '../loop/independentVerification.js';
 import type { SubagentIsolationMode } from './SubagentWorktreeLifecycle.js';
 import type { SubagentConfig } from './types.js';
 
@@ -45,6 +46,7 @@ export type AgentSessionConfigSnapshot = Pick<
   | 'maxTurns'
   | 'skills'
   | 'isolation'
+  | 'source'
 >;
 
 export function createAgentSessionConfigSnapshot(
@@ -61,6 +63,7 @@ export function createAgentSessionConfigSnapshot(
     maxTurns: config.maxTurns,
     skills: config.skills ? [...config.skills] : undefined,
     isolation: config.isolation,
+    source: config.source,
   };
 }
 
@@ -95,6 +98,8 @@ export interface AgentSession {
     message: string;
     error?: string;
     verificationCommands?: string[];
+    verificationVerdict?: VerificationVerdict;
+    modifiedFiles?: string[];
   };
 
   /** 执行统计 */
@@ -422,6 +427,8 @@ export class AgentSessionStore {
       message: string;
       error?: string;
       verificationCommands?: string[];
+      verificationVerdict?: VerificationVerdict;
+      modifiedFiles?: string[];
     },
     stats?: AgentSession['stats']
   ): AgentSession | undefined {

@@ -7,6 +7,7 @@
  */
 
 import path from 'node:path';
+import { VERIFICATION_SUBAGENT_TYPE } from '../../../agent/loop/independentVerification.js';
 import type { AgentSessionOwner } from '../../../agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../agent/subagents/BackgroundAgentManager.js';
 import { McpTaskManager } from '../../../mcp/McpTaskManager.js';
@@ -378,6 +379,11 @@ async function handleAgentOutput(
           ? session.result.message.slice(0, 500)
           : undefined,
       verificationCommands: session.result?.verificationCommands,
+      verificationVerdict: session.result?.verificationVerdict,
+      modifiedFiles: session.result?.modifiedFiles,
+      verificationAgentBuiltin:
+        session.subagentType === VERIFICATION_SUBAGENT_TYPE &&
+        session.configSnapshot?.source === 'builtin',
     },
   };
 }

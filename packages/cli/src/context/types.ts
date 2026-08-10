@@ -317,11 +317,13 @@ export interface SessionRewindInfo {
 export interface SubagentRunRef {
   subagentSessionId: string;
   subagentType: string;
+  subagentDescription?: string;
   subagentStatus: 'running' | 'completed' | 'failed' | 'cancelled';
   subagentSummary?: string;
   subagentResumedFrom?: string;
   subagentRootId?: string;
   subagentResumeDepth?: number;
+  verificationVerdict?: 'pass' | 'fail' | 'partial';
 }
 
 export interface PartInfo {

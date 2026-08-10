@@ -192,8 +192,10 @@ export type DomainEvent =
   | {
       kind: 'subagent_completed';
       sessionId: string;
+      type: string;
       success: boolean;
       summary?: string;
+      verificationVerdict?: 'pass' | 'fail' | 'partial';
       resumedFrom?: string;
       rootAgentId?: string;
       resumeDepth?: number;

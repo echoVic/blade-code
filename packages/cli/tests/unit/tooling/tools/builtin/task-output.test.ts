@@ -255,7 +255,7 @@ describe('TaskOutput Tool', () => {
     it('应获取后台 agent 输出', async () => {
       const mockSession = {
         id: 'agent_xyz789',
-        subagentType: 'Explore',
+        subagentType: 'verification',
         description: 'Find files',
         status: 'completed',
         createdAt: 1000,
@@ -265,6 +265,13 @@ describe('TaskOutput Tool', () => {
           success: true,
           message: 'Found 10 files',
           verificationCommands: ['npm test'],
+          verificationVerdict: 'pass',
+          modifiedFiles: [],
+        },
+        configSnapshot: {
+          name: 'verification',
+          description: 'Built-in verifier',
+          source: 'builtin',
         },
         stats: {
           duration: 1000,
@@ -288,10 +295,15 @@ describe('TaskOutput Tool', () => {
         task_id: 'agent_xyz789',
         type: 'agent',
         status: 'completed',
-        subagent_type: 'Explore',
+        subagent_type: 'verification',
         description: 'Find files',
       });
       expect(result.metadata?.verificationCommands).toEqual(['npm test']);
+      expect(result.metadata).toMatchObject({
+        verificationVerdict: 'pass',
+        modifiedFiles: [],
+        verificationAgentBuiltin: true,
+      });
     });
 
     it('agent 不存在时应返回错误', async () => {

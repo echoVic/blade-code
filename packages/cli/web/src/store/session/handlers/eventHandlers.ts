@@ -388,6 +388,12 @@ const handleToolResult: EventHandler = (props, get, set) => {
     metadata && typeof metadata.subagentResumeDepth === 'number'
       ? metadata.subagentResumeDepth
       : undefined;
+  const verificationVerdict =
+    metadata?.verificationVerdict === 'pass' ||
+    metadata?.verificationVerdict === 'fail' ||
+    metadata?.verificationVerdict === 'partial'
+      ? metadata.verificationVerdict
+      : undefined;
 
   if (matchingSubagent) {
     updateSubagent(targetMessageId, matchingSubagent.id, {
@@ -401,6 +407,7 @@ const handleToolResult: EventHandler = (props, get, set) => {
       resumedFrom: subagentResumedFrom || matchingSubagent.resumedFrom,
       rootAgentId: subagentRootId || matchingSubagent.rootAgentId,
       resumeDepth: subagentResumeDepth ?? matchingSubagent.resumeDepth,
+      verificationVerdict: verificationVerdict ?? matchingSubagent.verificationVerdict,
     });
   }
 
@@ -444,6 +451,11 @@ const handleToolResult: EventHandler = (props, get, set) => {
           resumeDepth:
             subagentResumeDepth ??
             (typeof existing?.resumeDepth === 'number' ? existing.resumeDepth : 0),
+          verificationVerdict:
+            verificationVerdict ||
+            (typeof existing?.verificationVerdict === 'string'
+              ? existing.verificationVerdict
+              : undefined),
         };
         const subtaskRefs = [...existingRefs];
         if (existingIndex >= 0) subtaskRefs[existingIndex] = nextRef;
@@ -1015,6 +1027,12 @@ const handleSubagentComplete: EventHandler = (props, get) => {
     sessionId: target.subagent.sessionId || subagentSessionId,
     status: props.success ? 'completed' : 'failed',
     currentTool: undefined,
+    verificationVerdict:
+      props.verificationVerdict === 'pass' ||
+      props.verificationVerdict === 'fail' ||
+      props.verificationVerdict === 'partial'
+        ? props.verificationVerdict
+        : target.subagent.verificationVerdict,
   });
 };
 

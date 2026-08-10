@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { resolvePermissionDecision } from '../../../../../src/tools/execution/PermissionResolver.js';
-import type { PermissionDecision } from '../../../../../src/tools/types/index.js';
+import { PermissionMode } from '../../../../../src/config/types.js';
+import { Type } from '../../../../../src/schema/index.js';
+import { createTool } from '../../../../../src/tools/core/createTool.js';
+import {
+  PermissionResolver,
+  resolvePermissionDecision,
+} from '../../../../../src/tools/execution/PermissionResolver.js';
+import { InMemorySessionApprovalStore } from '../../../../../src/tools/execution/SessionApprovalStore.js';
+import {
+  type PermissionDecision,
+  type Tool,
+  type ToolInvocation,
+  ToolKind,
+} from '../../../../../src/tools/types/index.js';
 
 function rule(
   behavior: 'allow' | 'ask' | 'deny',
@@ -142,6 +154,142 @@ describe('resolvePermissionDecision — 决策矩阵', () => {
         undefined
       );
       expect(r.reason).toBe('blocked by policy');
+    });
+  });
+});
+
+describe('verification agent permission boundary', () => {
+  const resolver = new PermissionResolver(
+    { allow: [], ask: [], deny: [] },
+    new InMemorySessionApprovalStore(),
+    PermissionMode.YOLO
+  );
+  const bash = createTool({
+    name: 'Bash',
+    displayName: 'Bash',
+    kind: ToolKind.Execute,
+    schema: Type.Object({ command: Type.String() }),
+    description: { short: 'Run command' },
+    execute: async () => ({ success: true, llmContent: 'ok' }),
+  });
+  const write = createTool({
+    name: 'Write',
+    displayName: 'Write',
+    kind: ToolKind.Write,
+    schema: Type.Object({ file_path: Type.String() }),
+    affectedPaths: (params) => [params.file_path],
+    description: { short: 'Write file' },
+    execute: async () => ({ success: true, llmContent: 'ok' }),
+  });
+
+  it('allows verification and read-only commands even when the parent is YOLO', () => {
+    for (const command of [
+      'bun run test:all',
+      'npm test 2>&1',
+      'git status --short',
+      'git diff -- src/a.ts 2>&1',
+    ]) {
+      const invocation = bash.build({ command });
+      expect(
+        resolver.resolveRulePermission(
+          bash as unknown as Tool,
+          invocation as ToolInvocation<unknown>,
+          { command },
+          {
+            subagentType: 'verification',
+            permissionMode: PermissionMode.YOLO,
+          }
+        ).decision
+      ).toMatchObject({
+        behavior: 'allow',
+        source: 'rule',
+      });
+    }
+    const invocation = bash.build({ command: 'node --test' });
+    expect(
+      resolver.resolveRulePermission(
+        bash as unknown as Tool,
+        invocation as ToolInvocation<unknown>,
+        { command: 'node --test', cwd: '/workspace/project' },
+        {
+          subagentType: 'verification',
+          permissionMode: PermissionMode.YOLO,
+          workspaceRoot: '/workspace/project',
+        }
+      ).decision
+    ).toMatchObject({
+      behavior: 'allow',
+      source: 'rule',
+    });
+  });
+
+  it('denies mutating Bash and write tools even when the parent is YOLO', () => {
+    for (const params of [
+      { command: 'rm -rf build' },
+      { command: 'rm -rf build; bun test' },
+      { command: 'bun test --update' },
+      { command: 'npm test 2>test.log' },
+      { command: 'bun test', run_in_background: true },
+      { command: 'git status --short', env: { PATH: '/tmp/evil' } },
+      { command: 'bun test', cwd: '/tmp' },
+      { command: 'bun test', cwd: '../other-workspace' },
+    ]) {
+      const bashInvocation = bash.build({ command: params.command });
+      expect(
+        resolver.resolveRulePermission(
+          bash as unknown as Tool,
+          bashInvocation as ToolInvocation<unknown>,
+          params,
+          {
+            subagentType: 'verification',
+            permissionMode: PermissionMode.YOLO,
+          }
+        ).decision
+      ).toMatchObject({
+        behavior: 'deny',
+        matchedRule: 'builtin:verification-agent-read-only',
+      });
+    }
+
+    const writeInvocation = write.build({ file_path: '/tmp/changed.txt' });
+    expect(
+      resolver.resolveRulePermission(
+        write as unknown as Tool,
+        writeInvocation as ToolInvocation<unknown>,
+        { file_path: '/tmp/changed.txt' },
+        {
+          subagentType: 'verification',
+          permissionMode: PermissionMode.YOLO,
+        }
+      ).decision
+    ).toMatchObject({
+      behavior: 'deny',
+      matchedRule: 'builtin:verification-agent-read-only',
+    });
+  });
+
+  it('does not override an explicit Bash deny rule', () => {
+    const denied = new PermissionResolver(
+      { allow: [], ask: [], deny: ['Bash'] },
+      new InMemorySessionApprovalStore(),
+      PermissionMode.YOLO
+    );
+    const invocation = bash.build({ command: 'npm test' });
+
+    expect(
+      denied.resolveRulePermission(
+        bash as unknown as Tool,
+        invocation as ToolInvocation<unknown>,
+        { command: 'npm test' },
+        {
+          subagentType: 'verification',
+          permissionMode: PermissionMode.YOLO,
+          workspaceRoot: '/workspace/project',
+        }
+      ).decision
+    ).toMatchObject({
+      behavior: 'deny',
+      source: 'rule',
     });
   });
 });

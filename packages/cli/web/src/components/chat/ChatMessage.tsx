@@ -737,6 +737,21 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
                   : 'running'
             }
           />
+          {subagent.type === 'verification' && subagent.verificationVerdict && (
+            <span
+              data-verification-verdict={subagent.verificationVerdict}
+              className={cn(
+                'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                subagent.verificationVerdict === 'pass'
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                  : subagent.verificationVerdict === 'fail'
+                    ? 'bg-red-500/10 text-red-600 dark:text-red-400'
+                    : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+              )}
+            >
+              {subagent.verificationVerdict}
+            </span>
+          )}
           {subagent.resumedFrom && (
             <span
               className="rounded bg-[#EDE9FE] px-1.5 py-0.5 text-[10px] font-mono text-[#6D28D9] dark:bg-[#2E1065] dark:text-[#C4B5FD]"

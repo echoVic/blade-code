@@ -79,6 +79,7 @@ export interface SubagentProgress {
   resumedFrom?: string;
   rootAgentId?: string;
   resumeDepth?: number;
+  verificationVerdict?: 'pass' | 'fail' | 'partial';
   output?: string;
   thinking?: string;
   toolCalls?: ToolCallInfo[];

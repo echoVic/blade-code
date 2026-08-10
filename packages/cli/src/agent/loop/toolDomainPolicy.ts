@@ -161,11 +161,17 @@ export function handleSubagentLifecycle(
     return {
       kind: 'subagent_completed',
       sessionId,
+      type: subagentType,
       success: status === 'completed',
       summary: metadata.subagentSummary as string | undefined,
-      resumedFrom,
-      rootAgentId,
-      resumeDepth,
+      ...(metadata.verificationVerdict === 'pass' ||
+      metadata.verificationVerdict === 'fail' ||
+      metadata.verificationVerdict === 'partial'
+        ? { verificationVerdict: metadata.verificationVerdict }
+        : {}),
+      ...(resumedFrom ? { resumedFrom } : {}),
+      ...(rootAgentId ? { rootAgentId } : {}),
+      ...(resumeDepth !== undefined ? { resumeDepth } : {}),
     };
   }
 

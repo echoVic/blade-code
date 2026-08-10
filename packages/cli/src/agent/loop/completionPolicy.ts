@@ -16,6 +16,7 @@ import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { ToolResult } from '../../tools/types/index.js';
 import { getCwd } from '../../utils/cwd.js';
+import { isVerificationCommand } from '../../utils/shell/verificationCommand.js';
 
 const logger = createLogger(LogCategory.AGENT);
 
@@ -133,9 +134,6 @@ const EXPLICIT_VERIFICATION_PATTERNS = [
   /(?:运行|执行|跑|重新运行).{0,30}(?:测试|单测|集成测试|检查|构建)/,
 ];
 
-const VERIFICATION_COMMAND_PATTERN =
-  /(?:^|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|build|type-?check)\b|(?:^|\s)(?:node|bun)\s+--test\b|(?:^|\s)(?:vitest|jest|pytest|go\s+test|cargo\s+test|tsc)\b/i;
-
 type VerificationKind = 'test' | 'lint' | 'type-check' | 'build';
 
 const VERIFICATION_KIND_PATTERNS: Record<VerificationKind, RegExp> = {
@@ -169,9 +167,7 @@ export type VerificationAction =
 
 export const MAX_VERIFICATION_RETRIES = 3;
 
-export function isVerificationCommand(command: string): boolean {
-  return VERIFICATION_COMMAND_PATTERN.test(command);
-}
+export { isVerificationCommand };
 
 /** Record only structured, successful verification evidence from tool results. */
 export function recordVerificationEvidence(
@@ -260,6 +256,13 @@ const NEGATED_DELEGATION_PATTERNS = [
   /\b(?:do not|don't|never)\s+(?:delegate|call|use|invoke)\b/i,
   /(?:不要|禁止|无需)(?:委派|调用|使用).{0,20}(?:Task|子代理|子智能体)?/,
 ];
+
+export function isDelegationForbidden(request: string | undefined): boolean {
+  return (
+    typeof request === 'string' &&
+    NEGATED_DELEGATION_PATTERNS.some((pattern) => pattern.test(request))
+  );
+}
 
 const SINGLE_TASK_DELEGATION_PATTERNS = [
   /\b(?:call|use|invoke)\b[\s\S]{0,30}\bTask(?: tool)?\b[\s\S]{0,30}\bexactly once\b/i,

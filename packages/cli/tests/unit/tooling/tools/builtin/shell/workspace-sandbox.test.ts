@@ -28,6 +28,7 @@ function makeRuntime(
     checkDependencies: vi.fn(async () => ({ errors: [], warnings: [] })),
     getDefaultWritePaths: vi.fn(async () => []),
     initialize: vi.fn(async () => undefined),
+    updateConfig: vi.fn(),
     wrapWithSandboxArgv: vi.fn(async () => ({
       argv: ['/bin/bash', '-c', 'sandboxed-command'],
       env: { SANDBOX_RUNTIME: '1' },
@@ -182,6 +183,59 @@ describe('AnthropicWorkspaceSandboxBackend', () => {
 
     command.cleanup();
     expect(runtime.cleanupAfterCommand).toHaveBeenCalledOnce();
+  });
+
+  it('denies workspace writes for verification commands', async () => {
+    const root = await makeTempRoot();
+    const workspaceRoot = path.join(root, 'workspace');
+    const tempRoot = path.join(root, 'sandbox-temp');
+    await mkdir(workspaceRoot);
+    const canonicalWorkspace = await realpath(workspaceRoot);
+    const runtime = makeRuntime();
+    const backend = new AnthropicWorkspaceSandboxBackend({
+      runtime,
+      tempRoot,
+      defaultWritePaths: ['/dev/null', '/home/user/.npm/_logs'],
+    });
+
+    const command = await backend.prepare({
+      command: 'npm test',
+      cwd: canonicalWorkspace,
+      workspaceRoot: canonicalWorkspace,
+      access: 'workspace-read-only',
+    });
+
+    expect(runtime.wrapWithSandboxArgv).toHaveBeenCalledWith(
+      'npm test',
+      expect.any(String),
+      expect.objectContaining({
+        network: {
+          allowedDomains: [],
+          deniedDomains: [],
+          strictAllowlist: true,
+        },
+        filesystem: {
+          denyRead: expect.arrayContaining([path.resolve(os.homedir())]),
+          allowRead: [canonicalWorkspace],
+          allowWrite: [await realpath(tempRoot)],
+          denyWrite: [canonicalWorkspace, '/home/user/.npm/_logs'],
+        },
+      }),
+      undefined,
+      canonicalWorkspace
+    );
+    expect(runtime.updateConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        network: expect.objectContaining({ allowedDomains: [] }),
+      })
+    );
+
+    command.cleanup();
+    expect(runtime.updateConfig).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        network: expect.objectContaining({ allowedDomains: ['*'] }),
+      })
+    );
   });
 
   it('fails closed when the platform or dependencies cannot enforce sandboxing', async () => {

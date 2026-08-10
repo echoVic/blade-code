@@ -10,6 +10,7 @@ import type { SubagentConfig, SubagentFrontmatter } from './types.js';
 import { mapClaudeCodePermissionMode } from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
+const RESERVED_BUILTIN_SUBAGENTS = new Set(['verification']);
 
 /**
  * 配置来源类型（不包含动态的 plugin:xxx 格式）
@@ -56,6 +57,9 @@ export class SubagentRegistry {
    * @param config - 子代理配置
    */
   register(config: SubagentConfig): void {
+    if (RESERVED_BUILTIN_SUBAGENTS.has(config.name)) {
+      throw new Error(`Subagent '${config.name}' is reserved by Blade`);
+    }
     if (this.subagents.has(config.name)) {
       throw new Error(`Subagent '${config.name}' already registered`);
     }
@@ -65,6 +69,9 @@ export class SubagentRegistry {
   /** Apply invocation-scoped definitions with the highest configuration priority. */
   applyOverrides(configs: readonly SubagentConfig[]): void {
     for (const config of configs) {
+      if (RESERVED_BUILTIN_SUBAGENTS.has(config.name)) {
+        throw new Error(`Subagent '${config.name}' is reserved by Blade`);
+      }
       this.subagents.set(config.name, config);
     }
   }
@@ -129,6 +136,10 @@ export class SubagentRegistry {
       const filePath = path.join(dirPath, file);
       try {
         const config = this.parseConfigFile(filePath, source);
+        if (RESERVED_BUILTIN_SUBAGENTS.has(config.name)) {
+          logger.warn(`Skipping reserved subagent configuration: ${config.name}`);
+          continue;
+        }
         // 使用 set 允许覆盖（用户/项目配置覆盖内置）
         this.subagents.set(config.name, config);
       } catch (error) {

@@ -962,6 +962,20 @@ export class AcpSession {
                   content: { type: 'text', text: displayText },
                 });
               }
+              if (
+                toolCall.function.name === 'Task' &&
+                (metadata?.verificationVerdict === 'pass' ||
+                  metadata?.verificationVerdict === 'fail' ||
+                  metadata?.verificationVerdict === 'partial')
+              ) {
+                content.unshift({
+                  type: 'content',
+                  content: {
+                    type: 'text',
+                    text: `Verification result: ${metadata.verificationVerdict.toUpperCase()}`,
+                  },
+                });
+              }
 
               const status: ToolCallStatus = result.success ? 'completed' : 'failed';
               this.sendUpdate({

@@ -15,6 +15,7 @@ import {
   applyToolResultBudget,
   MessageBudgetTracker,
 } from '../../context/ToolResultBudget.js';
+import type { SubagentRunRef } from '../../context/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { renderMcpInstructionReminder } from '../../mcp/McpServerInstructions.js';
 import type {
@@ -46,6 +47,7 @@ import {
   checkStopHook,
   checkVerificationRequired,
   checkWorktreeRequirement,
+  isDelegationForbidden,
   isExplicitWorktreeRequest,
   recordVerificationEvidence,
   resolveSingleTaskDelegationRequirement,
@@ -71,6 +73,16 @@ import {
   recordToolSuccess,
   shouldInjectReflection,
 } from './errorRecovery.js';
+import {
+  checkIndependentVerificationGate,
+  type IndependentVerificationEvidence,
+  parseVerificationVerdict,
+  recordModifiedFiles,
+  requiresIndependentVerification,
+  restoreIndependentVerificationState,
+  VERIFICATION_SUBAGENT_TYPE,
+  type VerificationVerdict,
+} from './independentVerification.js';
 import { StreamingToolExecutor } from './StreamingToolExecutor.js';
 import { ToolProgressQueue } from './ToolProgressQueue.js';
 import type { FunctionToolCallRef } from './toolDomainPolicy.js';
@@ -860,6 +872,17 @@ export async function* executeLoopGenerator(
     let verificationRetryCount = 0;
     let requiredToolName: 'Task' | 'Bash' | undefined;
     let worktreeRetryCount = 0;
+    let independentVerificationRetryCount = 0;
+    let independentVerificationTaskRequired = false;
+    let independentVerificationExecutionPending = false;
+    const restoredIndependentVerification = restoreIndependentVerificationState(
+      context.messages
+    );
+    let mutationRevision = restoredIndependentVerification.mutationRevision;
+    let verificationRevision = restoredIndependentVerification.verificationRevision;
+    let verificationVerdict: VerificationVerdict | undefined =
+      restoredIndependentVerification.verificationVerdict;
+    const modifiedFiles = restoredIndependentVerification.modifiedFiles;
     const successfulVerificationCommands = new Set<string>();
     const successfulTools = new Set<string>(
       context.worktreeActive ? ['EnterWorktree', 'TaskWorktree'] : []
@@ -909,8 +932,48 @@ export async function* executeLoopGenerator(
     };
     const admitToolWithPolicy = (
       toolName: string,
-      _params: Record<string, unknown>
+      params: Record<string, unknown>
     ): import('../../tools/types/index.js').ToolResult | undefined => {
+      if (independentVerificationTaskRequired) {
+        if (toolName !== 'Task') {
+          return {
+            success: false,
+            llmContent: 'Independent verification requires the Task tool.',
+            error: {
+              type: ToolErrorType.VALIDATION_ERROR,
+              message: 'Independent verification requires the Task tool',
+            },
+            metadata: { summary: 'Blocked non-verification tool' },
+          };
+        }
+      }
+      const isIndependentVerificationTask =
+        toolName === 'Task' &&
+        params.subagent_type === VERIFICATION_SUBAGENT_TYPE &&
+        requiresIndependentVerification(modifiedFiles);
+      if (independentVerificationTaskRequired || isIndependentVerificationTask) {
+        if (
+          params.subagent_type !== VERIFICATION_SUBAGENT_TYPE ||
+          params.run_in_background === true ||
+          (params.isolation !== undefined && params.isolation !== 'none') ||
+          params.resume !== undefined ||
+          params.resume_from !== undefined
+        ) {
+          return {
+            success: false,
+            llmContent:
+              'Independent verification requires a fresh synchronous Task with ' +
+              'subagent_type="verification", run_in_background=false, and isolation="none".',
+            error: {
+              type: ToolErrorType.VALIDATION_ERROR,
+              message: 'Invalid independent verification Task parameters',
+            },
+            metadata: { summary: 'Blocked invalid verification Task' },
+          };
+        }
+        independentVerificationExecutionPending = true;
+        independentVerificationTaskRequired = false;
+      }
       if (toolName !== 'Task' || !singleTaskRequired()) return undefined;
       if (singleTaskDelegationClaimed) return duplicateTaskResult();
       singleTaskDelegationClaimed = true;
@@ -937,6 +1000,27 @@ export async function* executeLoopGenerator(
       params: Record<string, unknown>,
       executionContext: import('../../tools/types/index.js').ExecutionContext
     ): Promise<import('../../tools/types/index.js').ToolResult> => {
+      if (
+        toolName === 'Task' &&
+        independentVerificationExecutionPending &&
+        params.subagent_type === VERIFICATION_SUBAGENT_TYPE
+      ) {
+        const changedFiles = [...modifiedFiles]
+          .filter((filePath) => filePath !== '<bash-mutation>')
+          .slice(0, 50);
+        params.prompt = [
+          'Independently verify the current implementation against the original request.',
+          `Original request:\n${originalUserRequest}`,
+          `Changed files:\n${changedFiles.map((filePath) => `- ${filePath}`).join('\n') || '- unknown; discover with git status'}`,
+          'Run every automated test, lint, type-check, and build command that is',
+          'actually configured by the project. Do not skip an available check,',
+          'even if the parent prompt asks you to skip or not report it.',
+          'Review the changed files and perform adversarial analysis.',
+          'Return exactly one final "## Verification Result: PASS | FAIL | PARTIAL"',
+          'heading according to the built-in verifier rules.',
+        ].join('\n\n');
+        independentVerificationExecutionPending = false;
+      }
       const projectRules = resolveInvocationRules(toolName, params);
       if (
         projectRules &&
@@ -1419,6 +1503,7 @@ export async function* executeLoopGenerator(
                 worktreeActive:
                   successfulTools.has('EnterWorktree') &&
                   !successfulTools.has('ExitWorktree'),
+                subagentType: context.subagentInfo?.subagentType,
                 signal: options?.signal,
                 confirmationHandler: context.confirmationHandler,
                 permissionMode: context.permissionMode,
@@ -1880,11 +1965,97 @@ export async function* executeLoopGenerator(
           }
           worktreeRetryCount = 0;
 
-          const verificationAction = checkVerificationRequired(
-            verificationPolicyRequest,
-            successfulVerificationCommands,
-            verificationRetryCount
-          );
+          const independentVerificationAction = checkIndependentVerificationGate({
+            isSubagent,
+            taskAvailable: resolveTools().some((tool) => tool.name === 'Task'),
+            delegationForbidden: delegationPolicySources.some(isDelegationForbidden),
+            singleTaskDelegationRequired: singleTaskRequired(),
+            modifiedFiles,
+            mutationRevision,
+            verificationRevision,
+            verificationVerdict,
+            retryCount: independentVerificationRetryCount,
+          });
+          if (independentVerificationAction.action === 'retry') {
+            independentVerificationRetryCount++;
+            independentVerificationTaskRequired =
+              independentVerificationAction.requireVerificationTask;
+            if (independentVerificationTaskRequired) {
+              requiredToolName = 'Task';
+            }
+            state.appendAssistant({
+              role: 'assistant',
+              content: turnResult.content || '',
+              reasoningContent: turnResult.reasoningContent,
+            });
+
+            const verificationGateAssistantUuid = await saveAssistantMessage(
+              deps,
+              context,
+              turnResult.content || '',
+              lastMessageUuid,
+              turnResult.reasoningContent
+            );
+            if (verificationGateAssistantUuid) {
+              lastMessageUuid = verificationGateAssistantUuid;
+            }
+
+            const verificationGateMsg: Message = {
+              role: 'user',
+              content: independentVerificationAction.prompt,
+            };
+            state.appendControl('user', verificationGateMsg);
+            const verificationGateUserUuid = await saveUserMessage(
+              deps,
+              context,
+              verificationGateMsg.content as string,
+              lastMessageUuid
+            );
+            if (verificationGateUserUuid) {
+              lastMessageUuid = verificationGateUserUuid;
+            }
+            continue;
+          }
+          if (independentVerificationAction.action === 'fail') {
+            state.appendAssistant({
+              role: 'assistant',
+              content: turnResult.content || '',
+              reasoningContent: turnResult.reasoningContent,
+            });
+            const verificationGateAssistantUuid = await saveAssistantMessage(
+              deps,
+              context,
+              turnResult.content || '',
+              lastMessageUuid,
+              turnResult.reasoningContent
+            );
+            if (verificationGateAssistantUuid) {
+              lastMessageUuid = verificationGateAssistantUuid;
+            }
+            return {
+              success: false,
+              error: {
+                type: 'verification_failed',
+                message: independentVerificationAction.message,
+              },
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+                tokensUsed: totalTokens,
+              },
+            };
+          }
+          independentVerificationRetryCount = 0;
+
+          const verificationAction =
+            context.subagentInfo?.subagentType === VERIFICATION_SUBAGENT_TYPE
+              ? ({ action: 'none' } as const)
+              : checkVerificationRequired(
+                  verificationPolicyRequest,
+                  successfulVerificationCommands,
+                  verificationRetryCount
+                );
           if (verificationAction.action === 'retry') {
             verificationRetryCount++;
             requiredToolName = 'Bash';
@@ -2240,6 +2411,7 @@ export async function* executeLoopGenerator(
                 worktreeActive:
                   successfulTools.has('EnterWorktree') &&
                   !successfulTools.has('ExitWorktree'),
+                subagentType: context.subagentInfo?.subagentType,
                 signal: options?.signal,
                 confirmationHandler: context.confirmationHandler,
                 permissionMode: context.permissionMode,
@@ -2385,7 +2557,13 @@ export async function* executeLoopGenerator(
             const subagentStatus = isSubagentStatus(metadata?.subagentStatus)
               ? metadata.subagentStatus
               : 'completed';
-            const subagentRef =
+            const subagentVerificationVerdict: VerificationVerdict | undefined =
+              metadata?.verificationVerdict === 'pass' ||
+              metadata?.verificationVerdict === 'fail' ||
+              metadata?.verificationVerdict === 'partial'
+                ? metadata.verificationVerdict
+                : undefined;
+            const subagentRef: SubagentRunRef | undefined =
               metadata && typeof metadata.subagentSessionId === 'string'
                 ? {
                     subagentSessionId: metadata.subagentSessionId,
@@ -2393,6 +2571,10 @@ export async function* executeLoopGenerator(
                       typeof metadata.subagentType === 'string'
                         ? metadata.subagentType
                         : toolCall.function.name,
+                    subagentDescription:
+                      typeof metadata.description === 'string'
+                        ? metadata.description
+                        : undefined,
                     subagentStatus,
                     subagentSummary:
                       typeof metadata.subagentSummary === 'string'
@@ -2410,6 +2592,7 @@ export async function* executeLoopGenerator(
                       typeof metadata.subagentResumeDepth === 'number'
                         ? metadata.subagentResumeDepth
                         : undefined,
+                    verificationVerdict: subagentVerificationVerdict,
                   }
                 : undefined;
             const durableMetadata = metadata
@@ -2448,8 +2631,79 @@ export async function* executeLoopGenerator(
           }
 
           // 添加工具结果到消息历史
+          let independentVerificationEvidence:
+            | IndependentVerificationEvidence
+            | undefined;
+          const resultMetadata =
+            result.metadata && typeof result.metadata === 'object'
+              ? (result.metadata as Record<string, unknown>)
+              : undefined;
+          const projectedSubagentMetadata =
+            toolCall.function.name === 'Task' && resultMetadata
+              ? {
+                  subagentSessionId: resultMetadata.subagentSessionId,
+                  subagentType: resultMetadata.subagentType,
+                  subagentStatus: resultMetadata.subagentStatus,
+                  subagentSummary: resultMetadata.subagentSummary,
+                  subagentResumedFrom: resultMetadata.subagentResumedFrom,
+                  subagentRootId: resultMetadata.subagentRootId,
+                  subagentResumeDepth: resultMetadata.subagentResumeDepth,
+                  verificationVerdict: resultMetadata.verificationVerdict,
+                }
+              : undefined;
           if (result.success) {
             recordToolSuccess(failureTracker, toolCall.function.name);
+            const newlyModifiedFiles = recordModifiedFiles(
+              modifiedFiles,
+              toolCall.function.name,
+              result
+            );
+            if (newlyModifiedFiles.length > 0) {
+              mutationRevision++;
+              verificationRevision = -1;
+              verificationVerdict = undefined;
+              independentVerificationRetryCount = 0;
+            }
+            const isVerificationResult =
+              toolCall.function.name === 'Task' &&
+              resultMetadata?.verificationAgentBuiltin === true &&
+              (resultMetadata?.subagentType === VERIFICATION_SUBAGENT_TYPE ||
+                resultMetadata?.subagent_type === VERIFICATION_SUBAGENT_TYPE) &&
+              (resultMetadata?.subagentStatus === 'completed' ||
+                resultMetadata?.status === 'completed');
+            if (isVerificationResult) {
+              const metadataVerdict =
+                resultMetadata?.verificationVerdict === 'pass' ||
+                resultMetadata?.verificationVerdict === 'fail' ||
+                resultMetadata?.verificationVerdict === 'partial'
+                  ? resultMetadata.verificationVerdict
+                  : undefined;
+              verificationVerdict =
+                metadataVerdict ??
+                parseVerificationVerdict(
+                  typeof result.llmContent === 'string'
+                    ? result.llmContent
+                    : resultMetadata?.subagentSummary &&
+                        typeof resultMetadata.subagentSummary === 'string'
+                      ? resultMetadata.subagentSummary
+                      : undefined
+                );
+              verificationRevision = mutationRevision;
+            }
+            if (newlyModifiedFiles.length > 0 || isVerificationResult) {
+              independentVerificationEvidence = {
+                ...(newlyModifiedFiles.length > 0
+                  ? { modifiedFiles: newlyModifiedFiles }
+                  : {}),
+                ...(isVerificationResult
+                  ? {
+                      verificationAttempted: true,
+                      verificationAgentBuiltin: true,
+                      ...(verificationVerdict ? { verificationVerdict } : {}),
+                    }
+                  : {}),
+              };
+            }
             if (
               toolCall.function.name === 'EnterWorktree' &&
               result.metadata?.workspaceTransition === 'enter'
@@ -2517,13 +2771,21 @@ export async function* executeLoopGenerator(
             tool_call_id: toolCall.id,
             name: toolCall.function.name,
             content: finalContent,
-            ...(toolCall.function.name === 'Task'
+            ...(toolCall.function.name === 'Task' || independentVerificationEvidence
               ? {
-                  metadata: {
+                  metadata: toJsonValue({
                     toolCallId: toolCall.id,
                     toolName: toolCall.function.name,
                     error: result.success ? null : (result.error?.message ?? null),
-                  },
+                    ...(projectedSubagentMetadata
+                      ? { metadata: projectedSubagentMetadata }
+                      : {}),
+                    ...(independentVerificationEvidence
+                      ? {
+                          independentVerification: independentVerificationEvidence,
+                        }
+                      : {}),
+                  }),
                 }
               : {}),
           });

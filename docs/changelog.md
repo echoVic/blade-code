@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### ✨ 新功能
+
+- 非平凡实现现在必须通过 fresh independent verification gate：三文件或
+  backend/API/infrastructure 改动会强制启动保留的内置 `verification` subagent；
+  只有与最后一次源码修改同 revision 的结构化 PASS 才允许完成，FAIL/PARTIAL 和
+  PASS 后继续写入都会要求修复并重新验证
+- verifier prompt 由 runtime 注入原始请求与真实 changed files；即使父会话为 YOLO，
+  verifier 也只能执行项目内只读命令和 test/lint/type-check/build，用户、项目、
+  plugin 与 CLI agent 配置不能覆盖保留 verifier
+- 本地 verifier Bash 使用 workspace read-only sandbox，关闭网络并屏蔽 user
+  home、Blade storage、provider key 与 Session env；显式 Bash deny 仍保持最高优先级
+- TUI/headless、Web 与 ACP 统一投影 verifier lifecycle 和 verdict；Web PASS badge
+  通过 durable `subtask_ref` 在 server restart 后恢复
+
+### ✅ 测试相关
+
+- 新增策略、权限、durable restore、PASS 后失效、FAIL/PARTIAL、重试耗尽和
+  CLI/Web/ACP 回归；真实 DeepSeek Flash 轨迹执行三文件 ApplyPatch、fresh child
+  verifier 与真实项目测试
+- Production Web GUI 验证唯一 verification 卡片、唯一 PASS badge、三个 changed
+  files、最终 marker、server restart fresh-load、零内部 reminder 与零 console error
+
 ## [0.10.2] - 2026-08-10
 
 ### 🐛 问题修复

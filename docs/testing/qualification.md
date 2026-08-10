@@ -104,6 +104,19 @@ Claude 发送最多 8 tokens 的真实 probe；结果必须使用 canonical fail
 顺序执行无法通过。确定性测试另行覆盖 exclusive FIFO、同路径文件锁、abort、fallback
 epoch、Web 多卡刷新重建、TUI keyed progress 和 ACP 独立 tool-call ID。
 
+Fresh independent verification 资格要求主模型实际完成三个文件的非平凡实现，并在
+第一次尝试结束时由 runtime 强制启动新的内置 `verification` subagent。Verifier
+必须处于独立 child Session，运行项目已配置的真实测试，返回恰好一个结构化 PASS；
+FAIL/PARTIAL、缺失 verdict、PASS 后继续写入或重试耗尽均不得成功完成。确定性测试
+另行覆盖 backend/API/infrastructure 单文件触发、文档/fixture 排除、reserved agent、
+YOLO 只读 Bash、越界 cwd/env/background/重定向拒绝和 durable mutation revision
+恢复。本地 verifier 的 sandbox 还必须证明 workspace 不可写、网络关闭、user
+home/Blade storage 不可读且 provider key/Session env 不进入子进程。Production Web
+GUI 必须显示唯一 verification 卡片和 PASS badge、三个 changed
+files 与最终 marker；清空浏览器状态并重启 server 后仍须恢复同一张卡，且页面不得
+暴露内部 completion reminder 或 application console error。ACP 必须通过标准 Task
+tool-call update 显示同一 verdict。
+
 Hook trust 资格要求 GPT 通过 production stream 实际发出工具调用。相同的
 PreToolUse command 在 `untrusted` 状态必须零副作用，只有当前 SHA-256 摘要被显式
 信任后才能执行。确定性安全测试另行覆盖 `0600` 原子存储、symlink/owner/mode

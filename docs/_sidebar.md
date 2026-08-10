@@ -34,6 +34,7 @@
   * [Trusted Contextual Project Rules](reference/trusted-contextual-project-rules.md)
   * [Session User Shell Command](reference/session-user-shell-command.md)
   * [TUI Terminal Input](reference/tui-terminal-input.md)
+  * [Fresh Independent Verification](reference/fresh-independent-verification.md)
   * [Workspace Plugin 生命周期](reference/workspace-plugin-lifecycle.md)
   * [Workspace Runtime 环境隔离](reference/workspace-runtime-environment.md)
   * [Session-scoped LSP](reference/lsp-session-intelligence.md)

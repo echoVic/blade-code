@@ -11,6 +11,7 @@
 
 import path from 'node:path';
 import { nanoid } from 'nanoid';
+import { VERIFICATION_SUBAGENT_TYPE } from '../../../agent/loop/independentVerification.js';
 import type { LoopEvent } from '../../../agent/loop/types.js';
 import type { SessionAgentResources } from '../../../agent/resources/WorkspaceAgentResources.js';
 import type { SessionModelResources } from '../../../agent/resources/WorkspaceModelResources.js';
@@ -606,6 +607,8 @@ function createSubagentEventBridge(input: {
         success: session.status === 'completed',
         status: session.status,
         summary: session.result?.message?.slice(0, 500),
+        type: session.subagentType,
+        verificationVerdict: session.result?.verificationVerdict,
         ...lineage,
       });
     },
@@ -751,6 +754,8 @@ async function executeForegroundTask(input: ForegroundTaskInput): Promise<ToolRe
         message: result.message,
         error: result.error,
         verificationCommands: result.verificationCommands,
+        verificationVerdict: result.verificationVerdict,
+        modifiedFiles: result.modifiedFiles,
       },
       {
         ...result.stats,
@@ -871,6 +876,11 @@ function buildCompletedTaskResult(input: {
     resume_from_hint: input.sessionId,
     resumed_from: input.resumedFrom,
     verificationCommands: input.result.verificationCommands,
+    verificationVerdict: input.result.verificationVerdict,
+    modifiedFiles: input.result.modifiedFiles,
+    verificationAgentBuiltin:
+      input.config.name === VERIFICATION_SUBAGENT_TYPE &&
+      input.config.source === 'builtin',
     isolation: input.isolation,
     worktreePath: input.result.worktreePath,
     worktreeBranch: input.result.worktreeBranch,

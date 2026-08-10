@@ -89,14 +89,17 @@ describe('toolDomainPolicy', () => {
           subagentType: 'Explore',
           subagentStatus: 'completed',
           subagentSummary: 'Found 3 files',
+          verificationVerdict: 'pass',
         },
       };
       const event = handleSubagentLifecycle(makeToolCall('Task'), result);
       expect(event).toEqual({
         kind: 'subagent_completed',
         sessionId: 'sess-123',
+        type: 'Explore',
         success: true,
         summary: 'Found 3 files',
+        verificationVerdict: 'pass',
       });
     });
 
@@ -114,6 +117,7 @@ describe('toolDomainPolicy', () => {
       expect(event).toEqual({
         kind: 'subagent_completed',
         sessionId: 'sess-456',
+        type: 'Task',
         success: false,
         summary: undefined,
       });

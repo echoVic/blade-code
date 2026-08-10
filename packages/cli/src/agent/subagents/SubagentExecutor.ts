@@ -3,6 +3,10 @@ import { getCwd } from '../../utils/cwd.js';
 import { createSessionId } from '../../utils/sessionId.js';
 import { Agent } from '../Agent.js';
 import { recordVerificationEvidence } from '../loop/completionPolicy.js';
+import {
+  parseVerificationVerdict,
+  recordModifiedFiles,
+} from '../loop/independentVerification.js';
 import { drainLoop } from '../loop/index.js';
 import type { LoopEvent } from '../loop/types.js';
 import type { SessionAgentResources } from '../resources/WorkspaceAgentResources.js';
@@ -95,6 +99,7 @@ export class SubagentExecutor {
       let toolCallCount = 0;
       let tokensUsed = 0;
       const verificationCommands = new Set<string>();
+      const modifiedFiles = new Set<string>();
 
       chatContext = {
         messages: [...(context.existingMessages ?? [])],
@@ -112,6 +117,11 @@ export class SubagentExecutor {
        */
       const onEvent = async (event: LoopEvent) => {
         if (event.kind === 'tool_result' && 'function' in event.toolCall) {
+          recordModifiedFiles(
+            modifiedFiles,
+            event.toolCall.function.name,
+            event.result
+          );
           recordVerificationEvidence(
             verificationCommands,
             event.toolCall.function.name,
@@ -142,6 +152,11 @@ export class SubagentExecutor {
         agentId,
         messages: chatContext.messages,
         verificationCommands: [...verificationCommands],
+        verificationVerdict:
+          this.config.name === 'verification'
+            ? parseVerificationVerdict(finalMessage)
+            : undefined,
+        modifiedFiles: [...modifiedFiles],
         stats: {
           tokens: tokensUsed,
           toolCalls: toolCallCount,

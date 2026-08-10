@@ -232,12 +232,13 @@ describe('aggregateMessages', () => {
         metadata: {
           subtaskRef: {
             childSessionId: 'agent-child',
-            agentType: 'Explore',
+            agentType: 'verification',
             status: 'completed',
             summary: 'Follow-up complete',
             resumedFrom: 'agent-source',
             rootAgentId: 'agent-root',
             resumeDepth: 2,
+            verificationVerdict: 'pass',
           },
         },
       },
@@ -248,6 +249,86 @@ describe('aggregateMessages', () => {
       resumedFrom: 'agent-source',
       rootAgentId: 'agent-root',
       resumeDepth: 2,
+      verificationVerdict: 'pass',
+    });
+  });
+
+  test('restores verifier evidence from an in-memory Task tool result', () => {
+    const [message] = aggregateMessages([
+      {
+        id: 'assistant-verifier',
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'verify-call',
+            function: {
+              name: 'Task',
+              arguments:
+                '{"subagent_type":"verification","description":"Verify change"}',
+            },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'verify-call',
+        name: 'Task',
+        content: '## Verification Result: PASS',
+        metadata: {
+          toolCallId: 'verify-call',
+          toolName: 'Task',
+          error: null,
+          independentVerification: {
+            verificationAttempted: true,
+            verificationAgentBuiltin: true,
+            verificationVerdict: 'pass',
+          },
+        },
+      },
+    ] as never);
+
+    expect(message?.agentContent?.subagent).toMatchObject({
+      type: 'verification',
+      status: 'completed',
+      verificationVerdict: 'pass',
+    });
+  });
+
+  test('merges a durable verifier ref with its Task card', () => {
+    const [message] = aggregateMessages([
+      {
+        id: 'assistant-verifier',
+        role: 'assistant',
+        content: '',
+        metadata: {
+          subtaskRef: {
+            childSessionId: 'agent-verifier',
+            agentType: 'verification',
+            description: 'Verify change',
+            status: 'completed',
+            summary: 'Verified',
+            verificationVerdict: 'pass',
+          },
+        },
+        tool_calls: [
+          {
+            id: 'verify-call',
+            function: {
+              name: 'Task',
+              arguments:
+                '{"subagent_type":"verification","description":"Verify change"}',
+            },
+          },
+        ],
+      },
+    ] as never);
+
+    expect(message?.agentContent?.subagents).toHaveLength(1);
+    expect(message?.agentContent?.subagent).toMatchObject({
+      id: 'verify-call',
+      sessionId: 'agent-verifier',
+      verificationVerdict: 'pass',
     });
   });
 

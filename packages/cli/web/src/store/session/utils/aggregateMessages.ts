@@ -39,6 +39,12 @@ const parseSubtaskRef = (
     resumedFrom: ref.resumedFrom as string | undefined,
     rootAgentId: ref.rootAgentId as string | undefined,
     resumeDepth: typeof ref.resumeDepth === 'number' ? ref.resumeDepth : undefined,
+    verificationVerdict:
+      ref.verificationVerdict === 'pass' ||
+      ref.verificationVerdict === 'fail' ||
+      ref.verificationVerdict === 'partial'
+        ? ref.verificationVerdict
+        : undefined,
   };
 };
 
@@ -189,6 +195,12 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
           !Array.isArray(metadata.metadata)
             ? (metadata.metadata as Record<string, unknown>)
             : undefined;
+        const independentVerification =
+          metadata?.independentVerification &&
+          typeof metadata.independentVerification === 'object' &&
+          !Array.isArray(metadata.independentVerification)
+            ? (metadata.independentVerification as Record<string, unknown>)
+            : undefined;
         const failed = typeof metadata?.error === 'string' && metadata.error.length > 0;
         const subagents = getSubagents(currentAssistant.agentContent);
         const subagentIndex = subagents.findIndex(
@@ -226,6 +238,16 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
               typeof toolMetadata?.subagentResumeDepth === 'number'
                 ? toolMetadata.subagentResumeDepth
                 : current.resumeDepth,
+            verificationVerdict:
+              toolMetadata?.verificationVerdict === 'pass' ||
+              toolMetadata?.verificationVerdict === 'fail' ||
+              toolMetadata?.verificationVerdict === 'partial'
+                ? toolMetadata.verificationVerdict
+                : independentVerification?.verificationVerdict === 'pass' ||
+                    independentVerification?.verificationVerdict === 'fail' ||
+                    independentVerification?.verificationVerdict === 'partial'
+                  ? independentVerification.verificationVerdict
+                  : current.verificationVerdict,
           };
           currentAssistant.agentContent = withSubagents(
             currentAssistant.agentContent,

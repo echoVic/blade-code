@@ -838,9 +838,10 @@ function createEventWriter(io: HeadlessIO, outputFormat: HeadlessOutputFormat) {
         writeJsonl('subagent', {
           state: spawned ? 'spawned' : 'completed',
           session_id: event.sessionId,
-          subagent_type: spawned ? event.type : undefined,
+          subagent_type: event.type,
           success: spawned ? undefined : event.success,
           summary: spawned ? undefined : event.summary,
+          verification_verdict: spawned ? undefined : event.verificationVerdict,
           resumed_from: event.resumedFrom,
           root_agent_id: event.rootAgentId,
           resume_depth: event.resumeDepth,

@@ -416,6 +416,8 @@ export const SubagentSessionSchema = Runtime(
         message: Type.String(),
         error: Type.Optional(Type.String()),
         verificationCommands: Type.Optional(Type.Array(Type.String())),
+        verificationVerdict: Type.Optional(StringEnum(['pass', 'fail', 'partial'])),
+        modifiedFiles: Type.Optional(Type.Array(Type.String())),
       })
     ),
     stats: Type.Optional(

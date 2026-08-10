@@ -919,6 +919,64 @@ describe('AcpSession', () => {
       );
     });
 
+    it('应该把独立验证判定投影为 ACP Task 结果内容', async () => {
+      const mockAgent = getMockAgent();
+      const toolCall = {
+        id: 'verification-call',
+        type: 'function' as const,
+        function: {
+          name: 'Task',
+          arguments:
+            '{"subagent_type":"verification","description":"Verify implementation"}',
+        },
+      };
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield {
+          kind: 'tool_start',
+          toolCall,
+          toolKind: 'readonly',
+        } as LoopEvent;
+        yield {
+          kind: 'tool_result',
+          toolCall,
+          result: {
+            success: true,
+            llmContent: '## Verification Result: PASS',
+            metadata: {
+              subagentType: 'verification',
+              subagentStatus: 'completed',
+              verificationVerdict: 'pass',
+            },
+          },
+        } as LoopEvent;
+        return { success: true, finalMessage: 'done' };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'verify implementation' }],
+      });
+
+      expect(mockConnection.sessionUpdates).toContainEqual(
+        expect.objectContaining({
+          update: expect.objectContaining({
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'verification-call',
+            status: 'completed',
+            content: expect.arrayContaining([
+              {
+                type: 'content',
+                content: {
+                  type: 'text',
+                  text: 'Verification result: PASS',
+                },
+              },
+            ]),
+          }),
+        })
+      );
+    });
+
     it('应该把工具进度投影为 ACP in-progress update', async () => {
       const mockAgent = getMockAgent();
       const toolCall = {

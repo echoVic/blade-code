@@ -93,6 +93,7 @@ export interface ExecutionContext {
   environment?: Readonly<Record<string, string>>;
   worktreeIsolationRequired?: boolean;
   worktreeActive?: boolean;
+  subagentType?: string;
   signal?: AbortSignal;
   onProgress?: (message: string) => void;
   onProgressUpdate?: (update: ToolProgressUpdate) => void;

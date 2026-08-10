@@ -108,6 +108,7 @@ blade web
 - [Trusted Contextual Project Rules](reference/trusted-contextual-project-rules.md)
 - [Session User Shell Command](reference/session-user-shell-command.md)
 - [TUI Terminal Input](reference/tui-terminal-input.md)
+- [Fresh Independent Verification](reference/fresh-independent-verification.md)
 - [工具并发模型](reference/tool-concurrency.md)
 - [Session-scoped LSP](reference/lsp-session-intelligence.md)
 - [MCP Elicitation](reference/mcp-elicitation.md)

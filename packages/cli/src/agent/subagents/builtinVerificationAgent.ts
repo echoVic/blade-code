@@ -63,8 +63,10 @@ Run all applicable checks. Capture full output.
 
 ### Phase 3: Code Review of Changed Files
 
-1. Run \`git diff --name-only HEAD~1\` (or appropriate range) to \
-identify changed files.
+1. Treat the changed-file list supplied by the parent as authoritative. \
+Use \`git status --short\` and \`git diff --name-only\` only to discover \
+additional uncommitted changes. Do not use \`HEAD~1\` as a substitute for \
+the supplied scope.
 2. Read each changed file and review for:
    - **Logic errors**: off-by-one, null/undefined handling, race \
 conditions
@@ -91,7 +93,8 @@ functionality?
 
 ## Output Format
 
-You MUST end your response with a structured verification report:
+You MUST end your response with a structured verification report. Emit \
+exactly one \`## Verification Result:\` heading in the entire response:
 
 \`\`\`
 ## Verification Result: PASS | FAIL | PARTIAL

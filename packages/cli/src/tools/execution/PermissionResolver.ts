@@ -7,6 +7,11 @@ import {
 import { type PermissionConfig, PermissionMode } from '../../config/types.js';
 import { isReadOnlyBashCommand } from '../../utils/shell/readOnlyValidation.js';
 import {
+  isSafeVerificationWorkingDirectory,
+  isVerificationCommand,
+  stripSafeStderrMerge,
+} from '../../utils/shell/verificationCommand.js';
+import {
   type ExecutionContext,
   isReadOnlyKind,
   type PermissionDecision,
@@ -55,6 +60,45 @@ export class PermissionResolver {
     };
     const signature = PermissionChecker.buildSignature(descriptor);
     let checkResult = this.permissionChecker.check(descriptor);
+    if (context.subagentType === 'verification') {
+      const verifierBashAllowed =
+        tool.name === 'Bash' &&
+        typeof params.command === 'string' &&
+        params.run_in_background !== true &&
+        params.env === undefined &&
+        isSafeVerificationWorkingDirectory(params.cwd, context.workspaceRoot) &&
+        (isReadOnlyBashCommand(stripSafeStderrMerge(params.command)) ||
+          isVerificationCommand(params.command));
+      if (!isReadOnlyKind(tool.kind) && !verifierBashAllowed) {
+        return {
+          signature,
+          decision: {
+            behavior: 'deny',
+            source: 'rule',
+            matchedRule: 'builtin:verification-agent-read-only',
+            reason:
+              'Verification agents may only use read-only tools and verification commands',
+          },
+        };
+      }
+      if (verifierBashAllowed) {
+        if (checkResult.result === PermissionResult.DENY) {
+          return {
+            signature,
+            decision: toPermissionDecision(checkResult),
+          };
+        }
+        return {
+          signature,
+          decision: {
+            behavior: 'allow',
+            source: 'rule',
+            matchedRule: 'builtin:verification-agent-command',
+            reason: 'Verification command allowed for the read-only verifier',
+          },
+        };
+      }
+    }
 
     if (
       checkResult.result === PermissionResult.ASK &&

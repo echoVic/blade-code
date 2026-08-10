@@ -176,10 +176,13 @@ Before executing commands:
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const { command, timeout = 30000, cwd, env, run_in_background = false } = params;
     const { updateOutput } = context;
-    const effectiveEnv = {
-      ...context.environment,
-      ...env,
-    };
+    const effectiveEnv =
+      context.subagentType === 'verification'
+        ? {}
+        : {
+            ...context.environment,
+            ...env,
+          };
     const signal = context.signal ?? new AbortController().signal;
     const workspaceRoot = context.workspaceRoot ?? getCwd();
     const effectiveCwd =
@@ -191,14 +194,25 @@ Before executing commands:
 
     try {
       updateOutput?.(`Executing Bash command: ${command}`);
-      const sandboxedCommand = context.worktreeActive
-        ? await workspaceWriteSandbox.prepare({
-            command,
-            cwd: effectiveCwd,
-            workspaceRoot,
-            signal,
-          })
-        : undefined;
+      const acpMode = isAcpMode(context.sessionId);
+      const sandboxedCommand =
+        context.subagentType === 'verification' && !acpMode
+          ? await workspaceWriteSandbox.prepare({
+              command,
+              cwd: effectiveCwd,
+              workspaceRoot,
+              access: 'workspace-read-only',
+              signal,
+            })
+          : context.worktreeActive
+            ? await workspaceWriteSandbox.prepare({
+                command,
+                cwd: effectiveCwd,
+                workspaceRoot,
+                access: 'workspace-write',
+                signal,
+              })
+            : undefined;
 
       if (run_in_background) {
         return executeInBackground(
@@ -211,7 +225,7 @@ Before executing commands:
       }
 
       // 检查是否在 ACP 模式下运行
-      const useAcp = isAcpMode(context.sessionId) && !sandboxedCommand;
+      const useAcp = acpMode && !sandboxedCommand;
       if (useAcp) {
         // ACP 模式：通过 IDE 终端执行命令
         updateOutput?.('通过 IDE 终端执行命令...');
@@ -585,10 +599,14 @@ async function executeWithTimeout(
     // 创建进程
     const executable = sandboxedCommand?.executable ?? 'bash';
     const args = sandboxedCommand?.args ?? ['-c', command];
+    const inheritedEnvironment =
+      sandboxedCommand?.inheritProcessEnv === false
+        ? selectVerificationEnvironment(process.env)
+        : process.env;
     const { child: bashProcess, processTree } = spawnOwnedProcess(executable, args, {
       cwd: cwd || getCwd(),
       env: {
-        ...process.env,
+        ...inheritedEnvironment,
         ...env,
         ...sandboxedCommand?.env,
         BLADE_CLI: '1',
@@ -793,4 +811,28 @@ async function executeWithTimeout(
       });
     });
   });
+}
+
+function selectVerificationEnvironment(
+  environment: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv {
+  const allowed = [
+    'CI',
+    'COLORTERM',
+    'FORCE_COLOR',
+    'LANG',
+    'LANGUAGE',
+    'LC_ALL',
+    'LC_CTYPE',
+    'NO_COLOR',
+    'PATH',
+    'TERM',
+    'TZ',
+  ] as const;
+  return Object.fromEntries(
+    allowed.flatMap((name) => {
+      const value = environment[name];
+      return value === undefined ? [] : [[name, value]];
+    })
+  );
 }

@@ -738,6 +738,41 @@ describe('ChatMessage', () => {
     expect(container.querySelectorAll('[data-subagent-id]')).toHaveLength(2);
   });
 
+  test('renders the independent verification verdict on its GUI card', async () => {
+    const message: Message = {
+      id: 'assistant-verification',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000005,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: {
+          id: 'verification-task',
+          type: 'verification',
+          description: 'Verify implementation',
+          status: 'completed',
+          startTime: 1,
+          sessionId: 'agent-verifier',
+          verificationVerdict: 'pass',
+        },
+        confirmation: null,
+        question: null,
+      },
+    };
+
+    await act(async () => {
+      root.render(<ChatMessage message={message} />);
+    });
+
+    expect(
+      container.querySelector('[data-verification-verdict="pass"]')?.textContent
+    ).toBe('pass');
+  });
+
   test('renders durable lineage and resumes a completed subagent from the GUI', async () => {
     serviceMocks.listSubagents.mockResolvedValue([
       {
