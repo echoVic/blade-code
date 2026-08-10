@@ -100,11 +100,13 @@ describe('TUI batched input integration', () => {
     const stdout = new TestOutputStream();
     const stderr = new TestOutputStream();
     const submitted: string[] = [];
+    let currentValue = '';
 
     function Harness() {
       useTerminalInputModes();
       const [value, setValue] = useState('');
       const [cursorPosition, setCursorPosition] = useState(0);
+      currentValue = value;
       useInput((_input, key) => {
         if (key.return) submitted.push(value);
       });
@@ -128,15 +130,28 @@ describe('TUI batched input integration', () => {
       patchConsole: false,
     });
     activeRenders.push(instance);
-    return { instance, stdin, stdout, submitted };
+    return {
+      instance,
+      stdin,
+      stdout,
+      submitted,
+      readValue: () => currentValue,
+    };
+  }
+
+  async function waitForInputReady(stdin: TestInputStream): Promise<void> {
+    await vi.waitFor(() => {
+      expect(stdin.isRawMode).toBe(true);
+    }, RAW_INPUT_WAIT_OPTIONS);
   }
 
   it('submits one complete multi-character stdin chunk', async () => {
-    const { stdin, stdout, submitted } = startHarness();
+    const { stdin, submitted, readValue } = startHarness();
 
+    await waitForInputReady(stdin);
     stdin.write('! printf RAW_BATCH_OK');
     await vi.waitFor(() => {
-      expect(stdout.output).toContain('RAW_BATCH_OK');
+      expect(readValue()).toBe('! printf RAW_BATCH_OK');
     }, RAW_INPUT_WAIT_OPTIONS);
     stdin.write('\r');
     await vi.waitFor(() => {
@@ -145,14 +160,15 @@ describe('TUI batched input integration', () => {
   });
 
   it('submits split bracketed paste without focus CSI leakage', async () => {
-    const { stdin, stdout, submitted } = startHarness();
+    const { stdin, submitted, readValue } = startHarness();
 
+    await waitForInputReady(stdin);
     stdin.write('\u001B[200~');
     stdin.write('! printf RAW_PASTE_OK');
     stdin.write('\u001B[201~');
     stdin.write('\u001B[I');
     await vi.waitFor(() => {
-      expect(stdout.output).toContain('RAW_PASTE_OK');
+      expect(readValue()).toBe('! printf RAW_PASTE_OK');
     }, RAW_INPUT_WAIT_OPTIONS);
     stdin.write('\r');
     await vi.waitFor(() => {
