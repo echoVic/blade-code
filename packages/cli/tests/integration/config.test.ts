@@ -120,6 +120,21 @@ describe('ConfigManager 集成', () => {
     expect(persisted.language).toBe('zh-CN');
   });
 
+  it('应将沟通风格持久化到全局 config.json', async () => {
+    await ConfigService.getInstance().save(
+      { communicationStyle: 'friendly' },
+      { scope: 'global', immediate: true }
+    );
+
+    const configPath = path.join(tempHome, '.blade', 'config.json');
+    expect(JSON.parse(readFileSync(configPath, 'utf8'))).toMatchObject({
+      communicationStyle: 'friendly',
+    });
+    expect(() =>
+      readFileSync(path.join(tempHome, '.blade', 'settings.json'), 'utf8')
+    ).toThrow();
+  });
+
   it('项目级配置应覆盖用户配置', async () => {
     const userConfigPath = path.join(tempHome, '.blade', 'config.json');
     const projectConfigPath = path.join(tempProject, '.blade', 'config.json');

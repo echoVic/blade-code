@@ -150,6 +150,12 @@ const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     mergeStrategy: 'replace',
     persistable: true,
   },
+  communicationStyle: {
+    target: 'config',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
 
   // ===== settings.json 字段（行为配置）=====
   permissionMode: {
