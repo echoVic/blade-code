@@ -54,6 +54,12 @@ const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     mergeStrategy: 'replace', // 完全替换数组
     persistable: true,
   },
+  modelProviders: {
+    target: 'config',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
   currentModelId: {
     target: 'config',
     defaultScope: 'global',
@@ -164,6 +170,18 @@ const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     mergeStrategy: 'deep-merge', // 深度合并对象
     persistable: true,
   },
+  enabledPlugins: {
+    target: 'settings',
+    defaultScope: 'local',
+    mergeStrategy: 'deep-merge',
+    persistable: true,
+  },
+  pluginSourcePolicy: {
+    target: 'settings',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
   env: {
     target: 'settings',
     defaultScope: 'local',
@@ -197,6 +215,12 @@ const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
   mcpServers: {
     target: 'config',
     defaultScope: 'global', // MCP 服务器配置存储在用户全局配置中
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
+  lspServers: {
+    target: 'config',
+    defaultScope: 'global',
     mergeStrategy: 'replace',
     persistable: true,
   },
@@ -567,6 +591,25 @@ export class ConfigService {
     options: Omit<SaveOptions, 'scope'> = {}
   ): Promise<void> {
     await this.appendPermissionDenyRule(rule, { ...options, scope: 'local' });
+  }
+
+  async removePluginSetting(name: string, options: SaveOptions = {}): Promise<void> {
+    const scope = options.scope ?? 'local';
+    const filePath = this.resolveFilePath('settings', scope, options.projectDir);
+    await this.flushTargetWithModifier(filePath, (existingConfig) => {
+      const enabledPlugins = {
+        ...((existingConfig.enabledPlugins as Record<string, boolean> | undefined) ??
+          {}),
+      };
+      delete enabledPlugins[name];
+      const updated = { ...existingConfig };
+      if (Object.keys(enabledPlugins).length > 0) {
+        updated.enabledPlugins = enabledPlugins;
+      } else {
+        delete updated.enabledPlugins;
+      }
+      return updated;
+    });
   }
 
   // ============================================

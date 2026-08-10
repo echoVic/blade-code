@@ -9,5 +9,5 @@ export { ConfigManager, mergeRuntimeConfig } from './ConfigManager.js';
 export { getConfigService, type SaveOptions } from './ConfigService.js';
 // 默认配置
 export { DEFAULT_CONFIG } from './defaults.js';
-export { PermissionMode } from './types.js';
 export type { BladeConfig, PermissionConfig, RuntimeConfig } from './types.js'; // 类型定义
+export { PermissionMode } from './types.js';

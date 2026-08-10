@@ -47,6 +47,7 @@ describe('配置系统', () => {
       expect(DEFAULT_CONFIG.theme).toBe('dracula');
       expect(DEFAULT_CONFIG.currentModelId).toBe('');
       expect(DEFAULT_CONFIG.models).toEqual([]);
+      expect(DEFAULT_CONFIG.modelProviders).toEqual({});
     });
 
     it('应该能够初始化配置', async () => {
@@ -56,6 +57,7 @@ describe('配置系统', () => {
       expect(config.theme).toBe('dracula');
       expect(config.currentModelId).toBe('');
       expect(config.models).toEqual([]);
+      expect(config.modelProviders).toEqual({});
     });
 
     it('应该能够获取配置', async () => {
@@ -158,6 +160,86 @@ describe('配置系统', () => {
           maxQueuedTasks: 10_001,
         })
       ).toThrow('maxQueuedTasks');
+    });
+
+    it('应该拒绝过短的流式 idle timeout', () => {
+      const base = {
+        ...DEFAULT_CONFIG,
+        models: [
+          {
+            id: 'test-model',
+            displayName: 'Test Model',
+            provider: 'openai',
+            model: 'gpt-4',
+            overrides: { streamIdleTimeout: 999 },
+          },
+        ],
+        currentModelId: 'test-model',
+      };
+
+      expect(() => configManager.validateConfig(base)).toThrow(
+        'overrides.streamIdleTimeout'
+      );
+      expect(() =>
+        configManager.validateConfig({
+          ...base,
+          models: [
+            {
+              ...base.models[0],
+              overrides: { streamIdleTimeout: 1_000 },
+            },
+          ],
+        })
+      ).not.toThrow();
+    });
+
+    it('应该验证自定义 Provider 渠道并拒绝内嵌凭据', () => {
+      const valid = {
+        ...DEFAULT_CONFIG,
+        modelProviders: {
+          'team-gateway': {
+            name: 'Team Gateway',
+            baseUrl: 'https://gateway.example.test/v1',
+            wireApi: 'openai-completions' as const,
+          },
+        },
+        models: [
+          {
+            id: 'team-model',
+            provider: 'team-gateway',
+            model: 'vendor-model',
+          },
+        ],
+        currentModelId: 'team-model',
+      };
+
+      expect(() => configManager.validateConfig(valid)).not.toThrow();
+      expect(() =>
+        configManager.validateConfig({
+          ...valid,
+          modelProviders: {
+            'team-gateway': {
+              ...valid.modelProviders['team-gateway'],
+              apiKey: 'must-not-live-in-config',
+            },
+          },
+        } as typeof valid)
+      ).toThrow('auth.json');
+      expect(() =>
+        configManager.validateConfig({
+          ...valid,
+          modelProviders: {
+            deepseek: valid.modelProviders['team-gateway'],
+          },
+          models: [
+            {
+              id: 'team-model',
+              provider: 'deepseek',
+              model: 'deepseek-v4-pro',
+            },
+          ],
+        })
+      ).toThrow('built-in provider ids cannot be overridden');
     });
   });
 

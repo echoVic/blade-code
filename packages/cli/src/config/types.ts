@@ -40,11 +40,29 @@ export interface ModelRef {
   model: string;
 }
 
+export type ModelProviderWireApi = 'openai-completions' | 'anthropic-messages';
+
+/**
+ * A concrete model-provider channel.
+ *
+ * The map key in BladeConfig.modelProviders is the runtime provider id and
+ * the credential key in auth.json. Keeping the channel separate from the
+ * wire protocol allows multiple OpenAI/Anthropic-compatible gateways to
+ * coexist without sharing credentials.
+ */
+export interface ModelProviderConfig {
+  name: string;
+  baseUrl: string;
+  wireApi: ModelProviderWireApi;
+  apiKeyEnv?: string;
+}
+
 export interface ModelOverrides {
   baseUrl?: string;
   temperature?: number;
   maxOutputTokens?: number;
   timeout?: number;
+  streamIdleTimeout?: number;
   apiVersion?: string;
   customHeaders?: Record<string, string>;
   maxRetries?: number;
@@ -58,6 +76,59 @@ export interface ModelConfig {
   model: string;
   overrides?: ModelOverrides;
   fallbackModels?: ModelRef[];
+}
+
+export type ReasoningEffortSelection =
+  | 'auto'
+  | 'off'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max';
+
+export type ServiceTierSelection = 'auto' | 'standard' | 'fast' | 'flex';
+
+export type ResponseVerbositySelection = 'auto' | 'low' | 'medium' | 'high';
+
+export type BuiltInCommunicationStyleSelection =
+  | 'auto'
+  | 'pragmatic'
+  | 'friendly'
+  | 'explanatory';
+
+export type CustomCommunicationStyleSelection =
+  | `user:${string}`
+  | `project:${string}`
+  | `plugin:${string}:${string}`;
+
+export type CommunicationStyleSelection =
+  | BuiltInCommunicationStyleSelection
+  | CustomCommunicationStyleSelection;
+
+export interface PluginSourcePolicy {
+  restrictToAllowedSources: boolean;
+  requireGitCommitSha: boolean;
+  allowedGitHosts: string[];
+  allowedMarketplaces: string[];
+  allowedLocalRoots: string[];
+}
+
+export interface LspServerConfig {
+  command: string;
+  args?: string[];
+  extensionToLanguage: Record<string, string>;
+  env?: Record<string, string>;
+  initializationOptions?: unknown;
+  settings?: unknown;
+  enabled?: boolean;
+  priority?: number;
+  startupTimeout?: number;
+  shutdownTimeout?: number;
+  requestTimeout?: number;
+  diagnosticWaitTimeout?: number;
+  maxRestarts?: number;
 }
 
 import { UiTheme } from '@/api/schemas.js';
@@ -76,6 +147,7 @@ export interface BladeConfig {
   // 多模型配置
   currentModelId: string; // 当前激活的模型 ID
   models: ModelConfig[]; // 所有模型配置
+  modelProviders: Record<string, ModelProviderConfig>; // 自定义 Provider 渠道
 
   // 全局默认参数
   temperature: number;
@@ -106,7 +178,10 @@ export interface BladeConfig {
 
   // MCP
   mcpEnabled: boolean;
-  mcpServers: Record<string, McpServerConfig>; // MCP 服务器配置（全局）
+  mcpServers: Record<string, McpServerConfig>; // 启动项目投影；执行时按 Session 重解析
+
+  // LSP
+  lspServers: Record<string, LspServerConfig>; // Session 私有、按 source project 重解析
 
   // =====================================
   // 行为配置 (来自 settings.json)
@@ -118,6 +193,10 @@ export interface BladeConfig {
 
   // Hooks
   hooks: HookConfig;
+
+  // Plugins (later workspace layers override by plugin name)
+  enabledPlugins: Record<string, boolean>;
+  pluginSourcePolicy: PluginSourcePolicy;
 
   // 环境变量
   env: Record<string, string>;
@@ -186,6 +265,7 @@ export interface McpServerConfig {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  cwd?: string;
 
   // http/sse 传输
   url?: string;
@@ -193,16 +273,39 @@ export interface McpServerConfig {
 
   // 通用配置
   timeout?: number;
+  idleTimeout?: number;
+  sampling?: {
+    enabled: boolean;
+    maxTokens?: number;
+    maxRequestsPerToolCall?: number;
+    maxInputBytes?: number;
+  };
+  logging?: {
+    enabled?: boolean;
+    level?:
+      | 'debug'
+      | 'info'
+      | 'notice'
+      | 'warning'
+      | 'error'
+      | 'critical'
+      | 'alert'
+      | 'emergency';
+  };
+  tasks?: {
+    enabled: boolean;
+    defaultTtlMs?: number;
+    pollIntervalMs?: number;
+    maxTasksPerSession?: number;
+    maxLifetimeMs?: number;
+  };
 
   // OAuth 配置
   oauth?: {
     enabled?: boolean;
     clientId?: string;
-    clientSecret?: string;
-    authorizationUrl?: string;
-    tokenUrl?: string;
     scopes?: string[];
-    redirectUri?: string;
+    callbackPort?: number;
   };
 
   // 健康监控配置
@@ -211,6 +314,16 @@ export interface McpServerConfig {
     interval?: number; // 检查间隔（毫秒）
     timeout?: number; // 超时时间（毫秒）
     failureThreshold?: number; // 失败阈值
+  };
+
+  // 意外断连恢复配置
+  recovery?: {
+    enabled?: boolean;
+    maxAttempts?: number;
+    initialDelayMs?: number;
+    maxDelayMs?: number;
+    jitterRatio?: number;
+    terminalErrorThreshold?: number;
   };
 }
 
@@ -225,4 +338,5 @@ export interface SetupConfig {
   model: string;
   apiKey?: string;
   overrides?: ModelOverrides;
+  modelProvider?: ModelProviderConfig;
 }

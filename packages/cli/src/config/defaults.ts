@@ -12,6 +12,7 @@ export const DEFAULT_CONFIG: BladeConfig = {
   // 多模型配置
   currentModelId: '',
   models: [],
+  modelProviders: {},
 
   // 全局默认参数
   temperature: 0.0,
@@ -41,6 +42,9 @@ export const DEFAULT_CONFIG: BladeConfig = {
   // MCP
   mcpEnabled: false,
   mcpServers: {}, // 空对象表示没有配置 MCP 服务器
+
+  // LSP
+  lspServers: {},
 
   // =====================================
   // 行为配置 (settings.json)
@@ -205,6 +209,8 @@ export const DEFAULT_CONFIG: BladeConfig = {
     PostToolUse: [],
     PostToolUseFailure: [],
     PermissionRequest: [],
+    Elicitation: [],
+    ElicitationResult: [],
     // 会话生命周期类
     UserPromptSubmit: [],
     SessionStart: [],
@@ -215,6 +221,16 @@ export const DEFAULT_CONFIG: BladeConfig = {
     // 其他
     Notification: [],
     Compaction: [],
+  },
+
+  // Plugins
+  enabledPlugins: {},
+  pluginSourcePolicy: {
+    restrictToAllowedSources: false,
+    requireGitCommitSha: false,
+    allowedGitHosts: [],
+    allowedMarketplaces: [],
+    allowedLocalRoots: [],
   },
 
   // 环境变量

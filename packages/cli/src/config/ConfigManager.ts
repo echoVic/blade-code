@@ -21,11 +21,27 @@ import { merge } from 'lodash-es';
 import os from 'os';
 import path from 'path';
 import type { GlobalOptions } from '../cli/types.js';
+import { normalizeMcpOAuthConfig } from '../mcp/auth/index.js';
+import { normalizeMcpCallLifecycle } from '../mcp/McpCallLifecycle.js';
+import { normalizeMcpLoggingPolicy } from '../mcp/McpLogging.js';
+import { normalizeMcpSamplingPolicy } from '../mcp/McpSampling.js';
+import { normalizeMcpTaskPolicy } from '../mcp/McpTasks.js';
+import { WorkspaceTrustService } from '../security/WorkspaceTrustService.js';
 import { resolveModelAlias } from '../services/modelAlias.js';
-import { getPiModelCatalog } from '../services/pi/PiModelCatalog.js';
+import {
+  getPiModelCatalog,
+  type PiModelCatalog,
+} from '../services/pi/PiModelCatalog.js';
 import { getCwd } from '../utils/cwd.js';
 import { DEFAULT_CONFIG } from './defaults.js';
+import { normalizeLspServers } from './lspSettings.js';
 import { formatMaxTurnsRange, isValidMaxTurns } from './maxTurns.js';
+import { validateModelProviderConfig } from './modelProviders.js';
+import {
+  normalizePluginSettings,
+  normalizePluginSourcePolicy,
+} from './pluginSettings.js';
+import { normalizeRuntimeEnvironment } from './runtimeEnvironment.js';
 import {
   isValidConcurrentTaskLimit,
   isValidQueuedTaskLimit,
@@ -36,14 +52,37 @@ import {
 } from './taskConcurrency.js';
 import {
   BladeConfig,
+  type HookConfig,
+  type LspServerConfig,
+  type McpServerConfig,
+  type ModelConfig,
+  type ModelProviderConfig,
   type PermissionConfig,
   PermissionMode,
+  type PluginSourcePolicy,
   RuntimeConfig,
 } from './types.js';
+
+export interface WorkspaceModelConfig {
+  currentModelId: string;
+  models: ModelConfig[];
+  modelProviders: Record<string, ModelProviderConfig>;
+  temperature: number;
+  maxOutputTokens?: number;
+  timeout: number;
+}
+
+export interface WorkspaceRuntimeSettings {
+  env: Record<string, string>;
+  disableAllHooks: boolean;
+  maxTurns: number;
+  permissionMode: PermissionMode;
+}
 
 export class ConfigManager {
   private static instance: ConfigManager | null = null;
   private runtimePermissionOverrides?: PermissionConfig;
+  private lastAdditionalSettings?: Partial<RuntimeConfig>;
 
   /**
    * 私有构造函数，防止外部直接实例化
@@ -82,17 +121,26 @@ export class ConfigManager {
     additionalSettings?: Partial<RuntimeConfig>
   ): Promise<RuntimeConfig> {
     try {
+      this.lastAdditionalSettings = additionalSettings;
       this.runtimePermissionOverrides = additionalSettings?.permissions;
+      const workspaceTrust = await WorkspaceTrustService.getInstance().getStatus(
+        getCwd()
+      );
+      const projectTrusted = workspaceTrust.state === 'trusted';
       // 1. 加载基础配置 (config.json)
-      const baseConfig = await this.loadConfigFiles();
+      const baseConfig = await this.loadConfigFiles(projectTrusted);
 
       // 2. 加载行为配置 (settings.json)
-      const settingsConfig = await this.loadSettingsFiles();
+      const settingsConfig = await this.loadSettingsFiles(projectTrusted);
 
       // 3. 合并为统一配置
       let mergedConfig: Partial<RuntimeConfig> = {
         ...baseConfig,
         ...settingsConfig,
+        enabledPlugins: {
+          ...(baseConfig.enabledPlugins || {}),
+          ...(settingsConfig.enabledPlugins || {}),
+        },
       };
       if (additionalSettings) {
         mergedConfig = this.mergeSettings(mergedConfig, additionalSettings);
@@ -102,6 +150,14 @@ export class ConfigManager {
         ...DEFAULT_CONFIG,
         ...normalized,
       } as RuntimeConfig;
+      config.enabledPlugins = normalizePluginSettings(config.enabledPlugins);
+      config.lspServers = normalizeLspServers(config.lspServers);
+      config.pluginSourcePolicy = {
+        ...DEFAULT_CONFIG.pluginSourcePolicy,
+        ...normalizePluginSourcePolicy(
+          config.pluginSourcePolicy as unknown as Record<string, unknown>
+        ),
+      };
 
       // 4. 解析环境变量插值
       this.resolveEnvInterpolation(config);
@@ -128,6 +184,7 @@ export class ConfigManager {
           process.env.BLADE_DEBUG;
       }
 
+      getPiModelCatalog().configureModelProviders(config.modelProviders, config.models);
       if (config.models.length > 0) {
         this.validateConfig(config);
       }
@@ -139,8 +196,13 @@ export class ConfigManager {
       return config;
     } catch (error) {
       console.error('[ConfigManager] Failed to initialize:', error);
+      getPiModelCatalog().configureModelProviders({}, []);
       return DEFAULT_CONFIG;
     }
+  }
+
+  async reload(): Promise<RuntimeConfig> {
+    return this.initialize(this.lastAdditionalSettings);
   }
 
   /**
@@ -148,7 +210,9 @@ export class ConfigManager {
    * 优先级: 项目配置 > 用户配置 > 默认配置
    * 注意: mcpServers 字段使用合并策略（项目配置补充/覆盖全局配置）
    */
-  private async loadConfigFiles(): Promise<Partial<BladeConfig>> {
+  private async loadConfigFiles(
+    projectTrusted: boolean
+  ): Promise<Partial<BladeConfig>> {
     const userConfigPath = path.join(os.homedir(), '.blade', 'config.json');
     const projectConfigPath = path.join(getCwd(), '.blade', 'config.json');
 
@@ -162,11 +226,23 @@ export class ConfigManager {
 
     // 2. 加载项目配置
     const projectConfig = await this.loadJsonFile(projectConfigPath);
-    if (projectConfig) {
+    if (projectConfig && projectTrusted) {
       // mcpServers 使用合并策略：项目服务器补充/覆盖全局服务器
       const mergedMcpServers = {
         ...(config.mcpServers || {}),
         ...(projectConfig.mcpServers || {}),
+      };
+      const mergedLspServers = {
+        ...(config.lspServers || {}),
+        ...(projectConfig.lspServers || {}),
+      };
+      const mergedModelProviders = {
+        ...(config.modelProviders || {}),
+        ...(projectConfig.modelProviders || {}),
+      };
+      const mergedEnabledPlugins = {
+        ...(config.enabledPlugins || {}),
+        ...(projectConfig.enabledPlugins || {}),
       };
 
       config = { ...config, ...projectConfig };
@@ -175,6 +251,17 @@ export class ConfigManager {
       if (Object.keys(mergedMcpServers).length > 0) {
         config.mcpServers = mergedMcpServers;
       }
+      if (Object.keys(mergedLspServers).length > 0) {
+        config.lspServers = normalizeLspServers(mergedLspServers);
+      }
+      if (Object.keys(mergedModelProviders).length > 0) {
+        config.modelProviders = mergedModelProviders;
+      }
+      if (Object.keys(mergedEnabledPlugins).length > 0) {
+        config.enabledPlugins = normalizePluginSettings(mergedEnabledPlugins);
+      }
+    } else if (projectConfig?.hooks) {
+      config.hooks = projectConfig.hooks;
     }
 
     return config;
@@ -184,7 +271,9 @@ export class ConfigManager {
    * 加载 settings.json 文件 (3层优先级)
    * 优先级: 本地配置 > 项目配置 > 用户配置
    */
-  private async loadSettingsFiles(): Promise<Partial<BladeConfig>> {
+  private async loadSettingsFiles(
+    projectTrusted: boolean
+  ): Promise<Partial<BladeConfig>> {
     const userSettingsPath = path.join(os.homedir(), '.blade', 'settings.json');
     const projectSettingsPath = path.join(getCwd(), '.blade', 'settings.json');
     const localSettingsPath = path.join(getCwd(), '.blade', 'settings.local.json');
@@ -199,14 +288,22 @@ export class ConfigManager {
 
     // 2. 加载项目共享配置
     const projectSettings = await this.loadJsonFile(projectSettingsPath);
-    if (projectSettings) {
+    if (projectSettings && projectTrusted) {
       settings = this.mergeSettings(settings, projectSettings);
+    } else if (projectSettings?.hooks) {
+      settings = this.mergeSettings(settings, {
+        hooks: projectSettings.hooks,
+      });
     }
 
     // 3. 加载项目本地配置
     const localSettings = await this.loadJsonFile(localSettingsPath);
-    if (localSettings) {
+    if (localSettings && projectTrusted) {
       settings = this.mergeSettings(settings, localSettings);
+    } else if (localSettings?.hooks) {
+      settings = this.mergeSettings(settings, {
+        hooks: localSettings.hooks,
+      });
     }
 
     return settings;
@@ -227,7 +324,9 @@ export class ConfigManager {
     };
 
     if (path.resolve(workspaceRoot) !== path.resolve(getCwd())) {
-      const sourcePermissions = await this.loadWorkspacePermissionOverrides(getCwd());
+      const sourcePermissions = await this.loadWorkspacePermissionOverrides(getCwd(), {
+        includeUntrusted: true,
+      });
       const userSettings = await this.loadJsonFile(
         path.join(os.homedir(), '.blade', 'settings.json')
       );
@@ -277,13 +376,422 @@ export class ConfigManager {
     return permissions;
   }
 
-  private async loadWorkspacePermissionOverrides(
+  /**
+   * Resolve MCP configuration for one source project. The process Store may
+   * contain the startup project's layer, so runtimes for another workspace
+   * must rebuild from user settings and that exact trusted project.
+   */
+  async loadWorkspaceMcpServers(
+    workspaceRoot: string,
+    base: Readonly<Record<string, McpServerConfig>>
+  ): Promise<Record<string, McpServerConfig>> {
+    if (path.resolve(workspaceRoot) === path.resolve(getCwd())) {
+      return { ...base };
+    }
+
+    const trust = await WorkspaceTrustService.getInstance().getStatus(workspaceRoot);
+    const projectTrusted = trust.state === 'trusted';
+    const projectRoot = trust.projectPath;
+    let servers: Record<string, McpServerConfig> = {};
+    const mergeFile = async (filePath: string) => {
+      const layer = await this.loadJsonFile(filePath);
+      if (layer?.mcpServers) {
+        servers = { ...servers, ...layer.mcpServers };
+      }
+    };
+
+    await mergeFile(path.join(os.homedir(), '.blade', 'config.json'));
+    await mergeFile(path.join(os.homedir(), '.blade', 'settings.json'));
+
+    if (projectTrusted) {
+      await mergeFile(path.join(projectRoot, '.blade', 'config.json'));
+      await mergeFile(path.join(projectRoot, '.blade', 'settings.json'));
+      await mergeFile(path.join(projectRoot, '.blade', 'settings.local.json'));
+    }
+
+    if (this.lastAdditionalSettings?.mcpServers) {
+      servers = {
+        ...servers,
+        ...this.lastAdditionalSettings.mcpServers,
+      };
+    }
+
+    const resolved = { mcpServers: servers } as BladeConfig;
+    this.resolveEnvInterpolation(resolved);
+    return resolved.mcpServers;
+  }
+
+  async loadWorkspaceLspServers(
+    workspaceRoot: string,
+    base: Readonly<Record<string, LspServerConfig>>
+  ): Promise<Record<string, LspServerConfig>> {
+    if (path.resolve(workspaceRoot) === path.resolve(getCwd())) {
+      return normalizeLspServers(base);
+    }
+
+    const trust = await WorkspaceTrustService.getInstance().getStatus(workspaceRoot);
+    let servers: Record<string, LspServerConfig> = {};
+    const mergeFile = async (filePath: string) => {
+      const layer = await this.loadJsonFile(filePath);
+      if (layer?.lspServers) {
+        servers = {
+          ...servers,
+          ...normalizeLspServers(layer.lspServers),
+        };
+      }
+    };
+
+    await mergeFile(path.join(os.homedir(), '.blade', 'config.json'));
+    await mergeFile(path.join(os.homedir(), '.blade', 'settings.json'));
+    if (trust.state === 'trusted') {
+      for (const filename of ['config.json', 'settings.json', 'settings.local.json']) {
+        await mergeFile(path.join(trust.projectPath, '.blade', filename));
+      }
+    }
+    if (this.lastAdditionalSettings?.lspServers) {
+      servers = {
+        ...servers,
+        ...normalizeLspServers(this.lastAdditionalSettings.lspServers),
+      };
+    }
+    const interpolated = { lspServers: servers } as BladeConfig;
+    this.resolveEnvInterpolation(interpolated);
+    return normalizeLspServers(interpolated.lspServers);
+  }
+
+  /**
+   * Resolve the model/provider projection for one source project. The process
+   * Store may include the startup project's models and endpoints, so a runtime
+   * targeting another project must rebuild from user layers and that exact
+   * trusted project.
+   */
+  async loadWorkspaceModelConfig(
+    workspaceRoot: string,
+    base: BladeConfig
+  ): Promise<WorkspaceModelConfig> {
+    if (path.resolve(workspaceRoot) === path.resolve(getCwd())) {
+      return {
+        currentModelId: base.currentModelId,
+        models: base.models.map((model) => structuredClone(model)),
+        modelProviders: structuredClone(base.modelProviders),
+        temperature: base.temperature,
+        ...(base.maxOutputTokens !== undefined
+          ? { maxOutputTokens: base.maxOutputTokens }
+          : {}),
+        timeout: base.timeout,
+      };
+    }
+
+    const trust = await WorkspaceTrustService.getInstance().getStatus(workspaceRoot);
+    const projectRoot = trust.projectPath;
+    let resolved: WorkspaceModelConfig = {
+      currentModelId: DEFAULT_CONFIG.currentModelId,
+      models: DEFAULT_CONFIG.models.map((model) => structuredClone(model)),
+      modelProviders: structuredClone(DEFAULT_CONFIG.modelProviders),
+      temperature: DEFAULT_CONFIG.temperature,
+      ...(DEFAULT_CONFIG.maxOutputTokens !== undefined
+        ? { maxOutputTokens: DEFAULT_CONFIG.maxOutputTokens }
+        : {}),
+      timeout: DEFAULT_CONFIG.timeout,
+    };
+    const applyLayer = (layer: Partial<BladeConfig> | null | undefined) => {
+      if (!layer) return;
+      if (layer.modelProviders) {
+        resolved.modelProviders = {
+          ...resolved.modelProviders,
+          ...structuredClone(layer.modelProviders),
+        };
+      }
+      if (layer.models) {
+        resolved.models = layer.models.map((model) => structuredClone(model));
+      }
+      if (layer.currentModelId !== undefined) {
+        resolved.currentModelId = layer.currentModelId;
+      }
+      if (layer.temperature !== undefined) {
+        resolved.temperature = layer.temperature;
+      }
+      if (layer.maxOutputTokens !== undefined) {
+        resolved.maxOutputTokens = layer.maxOutputTokens;
+      }
+      if (layer.timeout !== undefined) {
+        resolved.timeout = layer.timeout;
+      }
+    };
+
+    applyLayer(
+      await this.loadJsonFile(path.join(os.homedir(), '.blade', 'config.json'))
+    );
+    applyLayer(
+      await this.loadJsonFile(path.join(os.homedir(), '.blade', 'settings.json'))
+    );
+
+    if (trust.state === 'trusted') {
+      applyLayer(
+        await this.loadJsonFile(path.join(projectRoot, '.blade', 'config.json'))
+      );
+      applyLayer(
+        await this.loadJsonFile(path.join(projectRoot, '.blade', 'settings.json'))
+      );
+      applyLayer(
+        await this.loadJsonFile(path.join(projectRoot, '.blade', 'settings.local.json'))
+      );
+    }
+    applyLayer(this.lastAdditionalSettings);
+
+    resolved = this.normalizeConfig(
+      resolved as Partial<RuntimeConfig>
+    ) as WorkspaceModelConfig;
+    this.resolveEnvInterpolation(resolved as BladeConfig);
+    if (process.env.BLADE_MODEL && resolved.models.length > 0) {
+      const requested = process.env.BLADE_MODEL;
+      const alias = resolveModelAlias(requested);
+      const selected = resolved.models.find(
+        (model) =>
+          model.id === alias ||
+          model.model === alias ||
+          model.id === requested ||
+          model.model === requested
+      );
+      if (selected) resolved.currentModelId = selected.id;
+    }
+    if (!resolved.models.some((model) => model.id === resolved.currentModelId)) {
+      resolved.currentModelId = resolved.models[0]?.id ?? '';
+    }
+    return resolved;
+  }
+
+  /**
+   * Resolve execution-facing settings for one source project. UI preferences
+   * and process-wide task admission remain owned by the startup Store.
+   */
+  async loadWorkspaceRuntimeSettings(
+    workspaceRoot: string,
+    base: BladeConfig
+  ): Promise<WorkspaceRuntimeSettings> {
+    if (path.resolve(workspaceRoot) === path.resolve(getCwd())) {
+      return {
+        env: normalizeRuntimeEnvironment(base.env),
+        disableAllHooks: base.disableAllHooks,
+        maxTurns: base.maxTurns,
+        permissionMode: base.permissionMode,
+      };
+    }
+
+    const trust = await WorkspaceTrustService.getInstance().getStatus(workspaceRoot);
+    const projectRoot = trust.projectPath;
+    const resolved: WorkspaceRuntimeSettings = {
+      env: {},
+      disableAllHooks: DEFAULT_CONFIG.disableAllHooks,
+      maxTurns: DEFAULT_CONFIG.maxTurns,
+      permissionMode: DEFAULT_CONFIG.permissionMode,
+    };
+    const applyLayer = (
+      layer: Partial<BladeConfig> | null | undefined,
+      options: { allowExecutionSettings: boolean }
+    ) => {
+      if (!layer) return;
+      if (options.allowExecutionSettings) {
+        if (layer.env) {
+          resolved.env = {
+            ...resolved.env,
+            ...normalizeRuntimeEnvironment(layer.env),
+          };
+        }
+        if (layer.maxTurns !== undefined) resolved.maxTurns = layer.maxTurns;
+        if (layer.permissionMode !== undefined) {
+          resolved.permissionMode = layer.permissionMode;
+        }
+        if (layer.disableAllHooks !== undefined) {
+          resolved.disableAllHooks = layer.disableAllHooks;
+        }
+      } else if (layer.disableAllHooks === true) {
+        // An untrusted project may only make hook execution more restrictive.
+        resolved.disableAllHooks = true;
+      }
+    };
+
+    applyLayer(
+      await this.loadJsonFile(path.join(os.homedir(), '.blade', 'config.json')),
+      { allowExecutionSettings: true }
+    );
+    applyLayer(
+      await this.loadJsonFile(path.join(os.homedir(), '.blade', 'settings.json')),
+      { allowExecutionSettings: true }
+    );
+
+    const projectLayers = await Promise.all([
+      this.loadJsonFile(path.join(projectRoot, '.blade', 'config.json')),
+      this.loadJsonFile(path.join(projectRoot, '.blade', 'settings.json')),
+      this.loadJsonFile(path.join(projectRoot, '.blade', 'settings.local.json')),
+    ]);
+    for (const layer of projectLayers) {
+      applyLayer(layer, {
+        allowExecutionSettings: trust.state === 'trusted',
+      });
+    }
+    applyLayer(this.lastAdditionalSettings, { allowExecutionSettings: true });
+
+    const interpolated = { env: resolved.env } as BladeConfig;
+    this.resolveEnvInterpolation(interpolated);
+    resolved.env = normalizeRuntimeEnvironment(interpolated.env);
+    return resolved;
+  }
+
+  async loadWorkspacePluginSettings(
     workspaceRoot: string
-  ): Promise<PermissionConfig> {
-    const permissions: PermissionConfig = { allow: [], ask: [], deny: [] };
+  ): Promise<Record<string, boolean>> {
+    const trust = await WorkspaceTrustService.getInstance().getStatus(workspaceRoot);
+    const resolved: Record<string, boolean> = {};
+    const applyLayer = (
+      layer: Partial<BladeConfig> | null | undefined,
+      allowEnable: boolean
+    ) => {
+      if (!layer?.enabledPlugins) return;
+      const settings = normalizePluginSettings(layer.enabledPlugins);
+      for (const [name, enabled] of Object.entries(settings)) {
+        if (allowEnable || enabled === false) resolved[name] = enabled;
+      }
+    };
+
+    applyLayer(
+      await this.loadJsonFile(path.join(os.homedir(), '.blade', 'config.json')),
+      true
+    );
+    applyLayer(
+      await this.loadJsonFile(path.join(os.homedir(), '.blade', 'settings.json')),
+      true
+    );
+
+    for (const filename of ['config.json', 'settings.json', 'settings.local.json']) {
+      applyLayer(
+        await this.loadJsonFile(path.join(trust.projectPath, '.blade', filename)),
+        trust.state === 'trusted'
+      );
+    }
+    applyLayer(this.lastAdditionalSettings, true);
+    return resolved;
+  }
+
+  async loadWorkspacePluginSourcePolicy(
+    workspaceRoot: string
+  ): Promise<PluginSourcePolicy> {
+    const trust = await WorkspaceTrustService.getInstance().getStatus(workspaceRoot);
+    const resolved: PluginSourcePolicy = {
+      ...DEFAULT_CONFIG.pluginSourcePolicy,
+      allowedGitHosts: [...DEFAULT_CONFIG.pluginSourcePolicy.allowedGitHosts],
+      allowedMarketplaces: [...DEFAULT_CONFIG.pluginSourcePolicy.allowedMarketplaces],
+      allowedLocalRoots: [...DEFAULT_CONFIG.pluginSourcePolicy.allowedLocalRoots],
+    };
+
+    const applyUserLayer = (layer: Partial<BladeConfig> | null | undefined) => {
+      if (!layer?.pluginSourcePolicy) return;
+      Object.assign(
+        resolved,
+        normalizePluginSourcePolicy(
+          layer.pluginSourcePolicy as unknown as Record<string, unknown>
+        )
+      );
+    };
+    const intersect = (current: string[], incoming: string[] | undefined) => {
+      if (!incoming) return current;
+      if (current.length === 0 && !resolved.restrictToAllowedSources) {
+        return incoming;
+      }
+      const allowed = new Set(incoming);
+      return current.filter((entry) => allowed.has(entry));
+    };
+    const applyRestrictiveLayer = (layer: Partial<BladeConfig> | null | undefined) => {
+      if (!layer?.pluginSourcePolicy) return;
+      const policy = normalizePluginSourcePolicy(
+        layer.pluginSourcePolicy as unknown as Record<string, unknown>
+      );
+      resolved.allowedGitHosts = intersect(
+        resolved.allowedGitHosts,
+        policy.allowedGitHosts
+      );
+      resolved.allowedMarketplaces = intersect(
+        resolved.allowedMarketplaces,
+        policy.allowedMarketplaces
+      );
+      resolved.allowedLocalRoots = intersect(
+        resolved.allowedLocalRoots,
+        policy.allowedLocalRoots
+      );
+      resolved.restrictToAllowedSources =
+        resolved.restrictToAllowedSources || policy.restrictToAllowedSources === true;
+      resolved.requireGitCommitSha =
+        resolved.requireGitCommitSha || policy.requireGitCommitSha === true;
+    };
+
+    applyUserLayer(
+      await this.loadJsonFile(path.join(os.homedir(), '.blade', 'config.json'))
+    );
+    applyUserLayer(
+      await this.loadJsonFile(path.join(os.homedir(), '.blade', 'settings.json'))
+    );
+    for (const filename of ['config.json', 'settings.json', 'settings.local.json']) {
+      applyRestrictiveLayer(
+        await this.loadJsonFile(path.join(trust.projectPath, '.blade', filename))
+      );
+    }
+    applyRestrictiveLayer(this.lastAdditionalSettings);
+    if (
+      process.env.BLADE_PLUGIN_REQUIRE_SHA === '1' ||
+      process.env.BLADE_PLUGIN_REQUIRE_SHA === 'true'
+    ) {
+      resolved.requireGitCommitSha = true;
+    }
+    return resolved;
+  }
+
+  /**
+   * Resolve hooks for one runtime without inheriting another project's hooks.
+   * The startup workspace keeps explicit CLI/settings overrides; other
+   * workspaces rebuild from user + exact project layers.
+   */
+  async loadWorkspaceHooks(
+    workspaceRoot: string,
+    base: HookConfig,
+    options: { includeBaseForCurrentWorkspace?: boolean } = {}
+  ): Promise<HookConfig> {
+    if (
+      path.resolve(workspaceRoot) === path.resolve(getCwd()) &&
+      options.includeBaseForCurrentWorkspace !== false
+    ) {
+      return merge({}, base);
+    }
+
+    let hooks = merge({}, DEFAULT_CONFIG.hooks) as HookConfig;
     const settingsPaths = [
+      path.join(os.homedir(), '.blade', 'settings.json'),
       path.join(workspaceRoot, '.blade', 'settings.json'),
       path.join(workspaceRoot, '.blade', 'settings.local.json'),
+    ];
+    for (const settingsPath of settingsPaths) {
+      const settings = await this.loadJsonFile(settingsPath);
+      if (settings?.hooks) {
+        hooks = merge({}, hooks, settings.hooks);
+      }
+    }
+    return hooks;
+  }
+
+  private async loadWorkspacePermissionOverrides(
+    workspaceRoot: string,
+    options: { includeUntrusted?: boolean } = {}
+  ): Promise<PermissionConfig> {
+    const permissions: PermissionConfig = { allow: [], ask: [], deny: [] };
+    const workspaceTrusted =
+      (await WorkspaceTrustService.getInstance().getStatus(workspaceRoot)).state ===
+      'trusted';
+    const settingsPaths = [
+      ...(workspaceTrusted || options.includeUntrusted
+        ? [path.join(workspaceRoot, '.blade', 'settings.json')]
+        : []),
+      ...(workspaceTrusted || options.includeUntrusted
+        ? [path.join(workspaceRoot, '.blade', 'settings.local.json')]
+        : []),
     ];
 
     for (const settingsPath of settingsPaths) {
@@ -343,6 +851,22 @@ export class ConfigManager {
       result.hooks = merge({}, result.hooks, override.hooks);
     }
 
+    if (override.enabledPlugins) {
+      result.enabledPlugins = {
+        ...(base.enabledPlugins || {}),
+        ...normalizePluginSettings(override.enabledPlugins),
+      };
+    }
+
+    if (override.pluginSourcePolicy) {
+      result.pluginSourcePolicy = {
+        ...(base.pluginSourcePolicy ?? DEFAULT_CONFIG.pluginSourcePolicy),
+        ...normalizePluginSourcePolicy(
+          override.pluginSourcePolicy as unknown as Record<string, unknown>
+        ),
+      };
+    }
+
     // 合并 env (对象深度合并，使用 lodash merge)
     if (override.env) {
       result.env = merge({}, result.env, override.env);
@@ -353,6 +877,12 @@ export class ConfigManager {
       result.mcpServers = {
         ...(result.mcpServers || {}),
         ...override.mcpServers,
+      };
+    }
+    if (override.lspServers) {
+      result.lspServers = {
+        ...(result.lspServers || {}),
+        ...normalizeLspServers(override.lspServers),
       };
     }
 
@@ -459,8 +989,60 @@ export class ConfigManager {
   /**
    * 验证 BladeConfig 是否包含 Agent 所需的必要字段
    */
-  public validateConfig(config: BladeConfig): void {
+  public validateConfig(
+    config: BladeConfig,
+    catalog: PiModelCatalog = getPiModelCatalog()
+  ): void {
     const errors: string[] = [];
+
+    try {
+      config.lspServers = normalizeLspServers(config.lspServers);
+    } catch (error) {
+      errors.push(
+        error instanceof Error ? error.message : 'Invalid LSP server configuration'
+      );
+    }
+
+    for (const [serverName, server] of Object.entries(config.mcpServers || {})) {
+      try {
+        normalizeMcpCallLifecycle(server);
+        server.oauth = normalizeMcpOAuthConfig(server);
+        const logging = normalizeMcpLoggingPolicy(server);
+        if (server.logging !== undefined) server.logging = logging;
+        if (server.sampling) {
+          server.sampling = normalizeMcpSamplingPolicy(server.sampling);
+        }
+        if (server.tasks) {
+          server.tasks = normalizeMcpTaskPolicy(server.tasks);
+        }
+      } catch (error) {
+        errors.push(
+          `MCP server "${serverName}": ${
+            error instanceof Error ? error.message : 'invalid sampling policy'
+          }`
+        );
+      }
+    }
+
+    for (const [providerId, provider] of Object.entries(config.modelProviders || {})) {
+      errors.push(...validateModelProviderConfig(providerId, provider));
+      if (catalog.isReservedProviderId(providerId)) {
+        errors.push(
+          `modelProviders.${providerId}: built-in provider ids cannot be overridden`
+        );
+      }
+    }
+    if (errors.length === 0) {
+      try {
+        catalog.configureModelProviders(config.modelProviders || {}, config.models);
+      } catch (error) {
+        errors.push(
+          error instanceof Error
+            ? error.message
+            : 'Failed to configure custom model providers'
+        );
+      }
+    }
 
     if (!config.models || config.models.length === 0) {
       errors.push('没有可用的模型配置');
@@ -518,8 +1100,15 @@ export class ConfigManager {
             `${prefix}: overrides.baseUrl "${model.overrides.baseUrl}" 不是有效的 HTTP URL`
           );
         }
+        const streamIdleTimeout = model.overrides?.streamIdleTimeout;
+        if (
+          streamIdleTimeout !== undefined &&
+          (!Number.isFinite(streamIdleTimeout) || streamIdleTimeout < 1_000)
+        ) {
+          errors.push(`${prefix}: overrides.streamIdleTimeout 必须至少为 1000ms`);
+        }
         try {
-          getPiModelCatalog().getModel(model.provider, model.model);
+          catalog.getModel(model.provider, model.model);
         } catch {
           errors.push(
             `${prefix}: 内置 catalog 中不存在 ${model.provider}/${model.model}`
