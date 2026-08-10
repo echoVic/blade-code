@@ -22,15 +22,21 @@ import { useEffect, useRef } from 'react';
 import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
+import type { SubagentConfig } from '../../agent/subagents/types.js';
 import type { LoopResult } from '../../agent/types.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { renderUserShellCommandForDisplay } from '../../services/UserShellCommandService.js';
 import {
   useAppActions,
   useCommandActions,
+  useCommunicationStyle,
   useCurrentModelId,
   useIsProcessing,
   usePermissionMode,
+  useReasoningEffort,
+  useResponseVerbosity,
+  useServiceTier,
   useSessionActions,
   useSessionId,
   useThinkingModeEnabled,
@@ -65,7 +71,8 @@ export const useCommandHandler = (
   appendSystemPrompt?: string,
   confirmationHandler?: ConfirmationHandler,
   maxTurns?: number,
-  onDismissConfirmations?: () => void
+  onDismissConfirmations?: () => void,
+  agents?: SubagentConfig[]
 ) => {
   // ==================== Store 选择器 ====================
   const isProcessing = useIsProcessing();
@@ -74,6 +81,10 @@ export const useCommandHandler = (
   const currentModelId = useCurrentModelId();
   const permissionMode = usePermissionMode();
   const thinkingModeEnabled = useThinkingModeEnabled();
+  const reasoningEffort = useReasoningEffort();
+  const serviceTier = useServiceTier();
+  const responseVerbosity = useResponseVerbosity();
+  const communicationStyle = useCommunicationStyle();
 
   // ==================== Store Actions ====================
   const sessionActions = useSessionActions();
@@ -93,6 +104,25 @@ export const useCommandHandler = (
     rewindSession,
     listSubagents,
     resumeSubagent,
+    getMcpContentCatalog,
+    refreshMcpContentCatalogs,
+    getMcpPrompt,
+    completeMcpArgument,
+    listMcpTasks,
+    getMcpTask,
+    cancelMcpTask,
+    getMcpLogs,
+    setMcpLoggingLevel,
+    getMcpInstructions,
+    getReasoningConfiguration,
+    setReasoningEffort,
+    getServiceTierConfiguration,
+    setServiceTier,
+    getResponseVerbosityConfiguration,
+    setResponseVerbosity,
+    getCommunicationStyleConfiguration,
+    setCommunicationStyle,
+    executeUserShellCommand,
   } = useAgent({
     sessionId,
     workspaceRoot,
@@ -100,9 +130,57 @@ export const useCommandHandler = (
     appendSystemPrompt: appendSystemPrompt,
     maxTurns: maxTurns,
     modelId: currentModelId,
+    reasoningEffort,
+    serviceTier,
+    responseVerbosity,
+    communicationStyle,
+    agents,
   });
 
   const streamingBuffer = useStreamingBuffer(sessionActions);
+
+  const handleUserShellCommand = useMemoizedFn(
+    async (
+      resolved: ResolvedInput,
+      signal: AbortSignal
+    ): Promise<CommandResult> => {
+      if (resolved.images.length > 0) {
+        return {
+          success: false,
+          error: 'User shell commands do not accept image attachments',
+        };
+      }
+      const command = resolved.text.trimStart().slice(1).trim();
+      if (!command) {
+        return { success: false, error: 'User shell command cannot be empty' };
+      }
+      sessionActions.setCommand(`! ${command}`);
+      try {
+        const result = await executeUserShellCommand(command, { signal });
+        sessionActions.addMessage({
+          id: `user-shell-${result.executionId}`,
+          role: 'user',
+          content: renderUserShellCommandForDisplay(result.record),
+          timestamp: Date.now(),
+          metadata: {
+            userShellCommand: result.record,
+          },
+        });
+        if (result.delivery === 'next_turn') {
+          pendingResumeRequestedRef.current = true;
+        }
+        return {
+          success: result.record.status !== 'spawn_error',
+          output: renderUserShellCommandForDisplay(result.record),
+          ...(result.record.status === 'spawn_error'
+            ? { error: result.record.stderr || 'User shell command failed' }
+            : {}),
+        };
+      } finally {
+        sessionActions.setCommand(null);
+      }
+    }
+  );
 
   // ==================== 生命周期 ====================
   useEffect(() => {
@@ -181,6 +259,16 @@ export const useCommandHandler = (
       let agentInput = resolved;
 
       try {
+        if (resolved.text.trimStart().startsWith('!')) {
+          const abortController =
+            commandActions.getAbortController() ??
+            commandActions.createAbortController();
+          return await handleUserShellCommand(
+            resolved,
+            abortController.signal
+          );
+        }
+
         // --- 1. Slash 命令路由 ---
         // ensureStoreInitialized 是唯一的初始化点，必须在 processSlashCommand 前调用
         await ensureStoreInitialized();
@@ -206,6 +294,34 @@ export const useCommandHandler = (
           {
             list: listSubagents,
             resume: resumeSubagent,
+          },
+          {
+            getCatalog: getMcpContentCatalog,
+            refresh: refreshMcpContentCatalogs,
+            getPrompt: getMcpPrompt,
+            complete: completeMcpArgument,
+            listTasks: listMcpTasks,
+            getTask: getMcpTask,
+            cancelTask: cancelMcpTask,
+            getLogs: getMcpLogs,
+            setLoggingLevel: setMcpLoggingLevel,
+            getInstructions: getMcpInstructions,
+          },
+          {
+            get: getReasoningConfiguration,
+            set: setReasoningEffort,
+          },
+          {
+            get: getServiceTierConfiguration,
+            set: setServiceTier,
+          },
+          {
+            get: getResponseVerbosityConfiguration,
+            set: setResponseVerbosity,
+          },
+          {
+            get: getCommunicationStyleConfiguration,
+            set: setCommunicationStyle,
           },
           workspaceRoot
         );
@@ -455,6 +571,24 @@ export const useCommandHandler = (
       return;
     }
 
+    if (resolved.text.trimStart().startsWith('!') && isProcessing) {
+      const abortController = commandActions.getAbortController();
+      if (!abortController) {
+        sessionActions.addAssistantMessage(
+          '当前任务没有可用的取消边界，无法执行用户 Shell 命令。'
+        );
+        return;
+      }
+      const result = await handleUserShellCommand(
+        resolved,
+        abortController.signal
+      );
+      if (!result.success && result.error && result.error !== 'aborted') {
+        sessionActions.setError(result.error);
+      }
+      return;
+    }
+
     // 运行中提交新消息时，将其注入当前 Agent 回合的下一个安全边界。
     // Esc/Ctrl+C 仍由 handleAbort 提供真正的中止语义。
     if (isProcessing) {
@@ -471,6 +605,11 @@ export const useCommandHandler = (
             abortController.signal,
             cleanupAgent,
             sessionId,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
             undefined,
             undefined,
             undefined,

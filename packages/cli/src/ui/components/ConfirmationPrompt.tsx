@@ -104,10 +104,11 @@ const ConfirmationContent = React.memo<ConfirmationContentProps>(
 function getShortcutHint(
   isPlanModeExit: boolean,
   isPlanModeEnter: boolean,
-  isMaxTurnsExceeded: boolean
+  isMaxTurnsExceeded: boolean,
+  isMcpSampling: boolean
 ): string {
   const shortcutText =
-    isPlanModeEnter || isMaxTurnsExceeded
+    isPlanModeEnter || isMaxTurnsExceeded || isMcpSampling
       ? 'Y/N'
       : isPlanModeExit
         ? 'Y/S/N'
@@ -144,6 +145,7 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
     const isPlanModeExit = details.type === 'exitPlanMode';
     const isPlanModeEnter = details.type === 'enterPlanMode';
     const isMaxTurnsExceeded = details.type === 'maxTurnsExceeded';
+    const isMcpSampling = details.type === 'mcpSampling';
 
     // 处理键盘输入
     useInput(
@@ -195,6 +197,15 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
           }
           if (lowerInput === 'n') {
             onResponse({ approved: false, reason: '用户选择停止' });
+            return;
+          }
+        } else if (isMcpSampling) {
+          if (lowerInput === 'y') {
+            onResponse({ approved: true, scope: 'once' });
+            return;
+          }
+          if (lowerInput === 'n') {
+            onResponse({ approved: false, reason: '用户拒绝 MCP Sampling' });
             return;
           }
         } else {
@@ -273,6 +284,21 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
         ];
       }
 
+      if (isMcpSampling) {
+        return [
+          {
+            key: 'approve-once',
+            label: '[Y] 允许本次 Sampling',
+            value: { approved: true, scope: 'once' },
+          },
+          {
+            key: 'reject',
+            label: '[N] 拒绝',
+            value: { approved: false, reason: '用户拒绝 MCP Sampling' },
+          },
+        ];
+      }
+
       return [
         {
           key: 'approve-once',
@@ -295,7 +321,7 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
           value: { approved: false, reason: '用户拒绝' },
         },
       ];
-    }, [isPlanModeExit, isPlanModeEnter, isMaxTurnsExceeded]);
+    }, [isPlanModeExit, isPlanModeEnter, isMaxTurnsExceeded, isMcpSampling]);
 
     // Header 样式（memo 化）
     const headerStyle = useMemo(() => {
@@ -335,7 +361,12 @@ export const ConfirmationPrompt: React.FC<ConfirmationPromptProps> = React.memo(
 
         <Box flexDirection="column">
           <Text color="gray">
-            {getShortcutHint(isPlanModeExit, isPlanModeEnter, isMaxTurnsExceeded)}
+            {getShortcutHint(
+              isPlanModeExit,
+              isPlanModeEnter,
+              isMaxTurnsExceeded,
+              isMcpSampling
+            )}
           </Text>
           <SelectInput
             items={options}

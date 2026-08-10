@@ -6,13 +6,17 @@ import type { GoalSnapshot } from '../../goals/types.js';
 import {
   useActiveModal,
   useAwaitingSecondCtrlC,
+  useCommunicationStyle,
   useContextRemaining,
   useCurrentModel,
   useIsCompacting,
   useIsReady,
   usePendingCommands,
   usePermissionMode,
+  useReasoningEffort,
   useRecoveredSteeringCount,
+  useResponseVerbosity,
+  useServiceTier,
   useSessionCost,
   useSessionId,
   useThinkingModeEnabled,
@@ -41,6 +45,10 @@ export const ChatStatusBar: React.FC = React.memo(() => {
   const contextRemaining = useContextRemaining();
   const isCompacting = useIsCompacting();
   const thinkingModeEnabled = useThinkingModeEnabled();
+  const reasoningEffort = useReasoningEffort();
+  const serviceTier = useServiceTier();
+  const responseVerbosity = useResponseVerbosity();
+  const communicationStyle = useCommunicationStyle();
   const sessionCost = useSessionCost();
   const pendingCommands = usePendingCommands();
   const recoveredSteeringCount = useRecoveredSteeringCount();
@@ -179,10 +187,30 @@ export const ChatStatusBar: React.FC = React.memo(() => {
             {supportsThinking && (
               <>
                 {thinkingModeEnabled ? (
-                  <Text color="cyan">Thinking on</Text>
+                  <Text color="cyan">Effort {reasoningEffort}</Text>
                 ) : (
-                  <Text color="gray">Tab:Thinking</Text>
+                  <Text color="gray">Tab:Effort</Text>
                 )}
+                <Text color="gray">·</Text>
+              </>
+            )}
+            {serviceTier !== 'auto' && (
+              <>
+                <Text color={serviceTier === 'fast' ? 'yellow' : 'gray'}>
+                  Speed {serviceTier}
+                </Text>
+                <Text color="gray">·</Text>
+              </>
+            )}
+            {responseVerbosity !== 'auto' && (
+              <>
+                <Text color="gray">Output {responseVerbosity}</Text>
+                <Text color="gray">·</Text>
+              </>
+            )}
+            {communicationStyle !== 'auto' && (
+              <>
+                <Text color="gray">Style {communicationStyle}</Text>
                 <Text color="gray">·</Text>
               </>
             )}

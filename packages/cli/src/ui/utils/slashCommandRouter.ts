@@ -7,7 +7,7 @@
 
 import type { Message, UsageInfo } from '../../services/ChatServiceInterface.js';
 import { safeExit } from '../../services/GracefulShutdown.js';
-import type { SessionMetadata } from '../../services/SessionService.js';
+import { type SessionMetadata, SessionService } from '../../services/SessionService.js';
 import {
   executeSlashCommand,
   isSlashCommand,
@@ -294,6 +294,14 @@ function handleSlashMessage(
       );
       return true;
     }
+    case 'session_archived': {
+      const archived = (data as { session?: SessionMetadata } | undefined)?.session;
+      sessionActions.addAssistantMessage(
+        archived ? `会话 ${archived.sessionId} 已归档。` : '当前会话已归档。'
+      );
+      safeExit(0);
+      return true;
+    }
     case 'clear_screen':
       // 完整重置会话状态（参考 Claude Code 的 /clear 行为）
       sessionActions.clearMessages();
@@ -359,6 +367,11 @@ export async function processSlashCommand(
   messages?: Message[],
   rewind?: SlashCommandContext['rewind'],
   subagents?: SlashCommandContext['subagents'],
+  mcp?: SlashCommandContext['mcp'],
+  reasoning?: SlashCommandContext['reasoning'],
+  serviceTier?: SlashCommandContext['serviceTier'],
+  responseVerbosity?: SlashCommandContext['responseVerbosity'],
+  communicationStyle?: SlashCommandContext['communicationStyle'],
   workspaceRoot: string = getCwd()
 ): Promise<SlashRouteResult> {
   const { text: command } = resolved;
@@ -369,11 +382,26 @@ export async function processSlashCommand(
 
   const slashContext: SlashCommandContext = {
     cwd: workspaceRoot,
+    surface: 'tui',
     workspaceRoot,
     sessionId,
     messages,
     rewind,
+    lifecycle:
+      sessionId === undefined
+        ? undefined
+        : {
+            archiveCurrent: async () => {
+              await cleanupAgent();
+              return SessionService.archiveSession(sessionId, workspaceRoot);
+            },
+          },
     subagents,
+    mcp,
+    reasoning,
+    serviceTier,
+    responseVerbosity,
+    communicationStyle,
     signal,
   };
 

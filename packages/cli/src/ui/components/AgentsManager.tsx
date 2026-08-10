@@ -9,7 +9,7 @@ import { useMemoizedFn } from 'ahooks';
 import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import { useEffect, useMemo, useState } from 'react';
-import { subagentRegistry } from '../../agent/subagents/SubagentRegistry.js';
+import { getSubagentRegistry } from '../../agent/subagents/SubagentRegistry.js';
 import type { SubagentConfig } from '../../agent/subagents/types.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 import { AgentCreationWizard } from './AgentCreationWizard.js';
@@ -27,6 +27,7 @@ type ViewMode =
   | 'deleteConfirm';
 
 export interface AgentsManagerProps {
+  workspaceRoot?: string;
   /** 初始视图模式 */
   initialMode?: ViewMode;
   /** 完成回调 */
@@ -45,10 +46,12 @@ interface MenuItem {
  * Subagent 配置管理器主组件
  */
 export function AgentsManager({
+  workspaceRoot,
   initialMode = 'menu',
   onComplete,
   onCancel,
 }: AgentsManagerProps) {
+  const subagentRegistry = getSubagentRegistry(workspaceRoot);
   const [mode, setMode] = useState<ViewMode>(initialMode);
   const [selectedAgent, setSelectedAgent] = useState<SubagentConfig | null>(null);
   const [refreshKey, setRefreshKey] = useState(0); // 用于触发重新加载

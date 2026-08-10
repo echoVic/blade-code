@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { getCurrentBranch, isGitRepository } from '../../utils/git.js';
 import { getCwd } from '../../utils/cwd.js';
+import { getCurrentBranch, isGitRepository } from '../../utils/git.js';
 
 export interface GitBranchInfo {
   /** 当前分支名，非 Git 仓库时为 null */

@@ -165,6 +165,7 @@ export function createLoopEventHandler(
           const params = JSON.parse(toolCall.function.arguments);
           const summary = formatToolCallSummary(toolCall.function.name, params);
           deps.sessionActions.addToolMessage(summary, {
+            toolCallId: toolCall.id,
             toolName: toolCall.function.name,
             phase: 'start',
             summary,
@@ -173,6 +174,28 @@ export function createLoopEventHandler(
         } catch (error) {
           logger.error('[loopEventHandler] onToolStart error:', error);
         }
+        break;
+      }
+      case 'tool_progress': {
+        const toolCall = event.toolCall;
+        if (!('function' in toolCall)) break;
+        const percentage =
+          event.update.total !== undefined
+            ? ` ${Math.max(
+                0,
+                Math.min(
+                  100,
+                  Math.round(((event.update.progress ?? 0) / event.update.total) * 100)
+                )
+              )}%`
+            : '';
+        const summary = `${toolCall.function.name}${percentage}: ${event.update.message}`;
+        deps.sessionActions.addToolMessage(summary, {
+          toolCallId: toolCall.id,
+          toolName: toolCall.function.name,
+          phase: 'progress',
+          summary,
+        });
         break;
       }
       case 'tool_result': {
@@ -184,6 +207,7 @@ export function createLoopEventHandler(
         });
         const display = formatToolDisplay(toolCall.function.name, event.result);
         deps.sessionActions.addToolMessage(display.summary, {
+          toolCallId: toolCall.id,
           toolName: toolCall.function.name,
           phase: 'complete',
           summary: display.summary,
@@ -217,6 +241,153 @@ export function createLoopEventHandler(
       case 'task_update':
         deps.appActions.setTasks(event.tasks);
         break;
+      case 'mcp_catalog_changed': {
+        const summary =
+          `MCP catalog r${event.revision}: ` +
+          `+${event.added.length} -${event.removed.length} ~${event.updated.length}`;
+        deps.sessionActions.addToolMessage(summary, {
+          toolName: 'MCP Catalog',
+          phase: 'complete',
+          summary,
+          detail: [
+            event.added.length > 0 ? `Added: ${event.added.join(', ')}` : '',
+            event.removed.length > 0 ? `Removed: ${event.removed.join(', ')}` : '',
+            event.updated.length > 0 ? `Updated: ${event.updated.join(', ')}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        });
+        break;
+      }
+      case 'mcp_content_changed': {
+        const summary =
+          `MCP ${event.contentKind} r${event.revision}: ` +
+          `+${event.added.length} -${event.removed.length} ~${event.updated.length}`;
+        deps.sessionActions.addToolMessage(summary, {
+          toolName: 'MCP Content',
+          phase: 'complete',
+          summary,
+          detail: [
+            event.added.length > 0 ? `Added: ${event.added.join(', ')}` : '',
+            event.removed.length > 0 ? `Removed: ${event.removed.join(', ')}` : '',
+            event.updated.length > 0 ? `Updated: ${event.updated.join(', ')}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        });
+        break;
+      }
+      case 'mcp_resource_updated': {
+        const summary = `MCP resource updated: ${event.uri}`;
+        deps.sessionActions.addToolMessage(summary, {
+          toolName: 'MCP Resource',
+          phase: 'progress',
+          summary,
+          detail: `${event.serverName} · revision ${event.revision}`,
+        });
+        break;
+      }
+      case 'mcp_connection_changed': {
+        const label =
+          event.phase === 'reconnecting'
+            ? 'recovering'
+            : event.phase === 'recovered'
+              ? 'recovered'
+              : 'recovery failed';
+        const summary =
+          `MCP ${event.serverName} ${label}` +
+          (event.phase === 'reconnecting'
+            ? ` (${event.attempt}/${event.maxAttempts})`
+            : '');
+        deps.sessionActions.addToolMessage(summary, {
+          toolName: 'MCP Connection',
+          phase: 'complete',
+          summary,
+          detail: [
+            `reason: ${event.reason}`,
+            `revision: ${event.revision}`,
+            event.error ? `error: ${event.error}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        });
+        break;
+      }
+      case 'mcp_log': {
+        const source = event.logger
+          ? `${event.serverName} · ${event.logger}`
+          : event.serverName;
+        const summary = `MCP ${event.level} · ${source}`;
+        deps.sessionActions.addToolMessage(summary, {
+          toolName: 'MCP Log',
+          phase: 'complete',
+          summary,
+          detail: [
+            event.message,
+            `revision: ${event.revision}`,
+            `sha256: ${event.dataSha256}`,
+            event.truncated ? 'truncated: true' : '',
+            event.detailsOmitted ? 'details omitted by runtime policy' : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        });
+        break;
+      }
+      case 'mcp_instructions_changed': {
+        const summary =
+          `MCP instructions ${event.action}: ${event.serverName}` +
+          (event.truncated ? ' (truncated)' : '');
+        deps.sessionActions.addToolMessage(summary, {
+          toolName: 'MCP Instructions',
+          phase: 'complete',
+          summary,
+          detail: [
+            event.text ?? '',
+            event.sha256 ? `sha256: ${event.sha256}` : '',
+            event.detailsOmitted ? 'details omitted by runtime policy' : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        });
+        break;
+      }
+      case 'mcp_task_changed': {
+        const summary =
+          `MCP task ${event.status}: ${event.taskId}` +
+          ` (${event.serverName}/${event.toolName})`;
+        deps.sessionActions.addToolMessage(summary, {
+          toolName: 'MCP Task',
+          phase: 'complete',
+          summary,
+          detail: [
+            event.statusMessage ?? '',
+            `revision: ${event.revision}`,
+            event.hasResult ? 'result available via TaskOutput' : '',
+            event.error ? `error: ${event.error}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        });
+        break;
+      }
+      case 'project_rules_loaded': {
+        const summary =
+          `Project rules loaded: ${event.files.length}` +
+          (event.blockedWrite ? ' (write retry required)' : '');
+        deps.sessionActions.addToolMessage(summary, {
+          toolName: 'Project Rules',
+          phase: 'complete',
+          summary,
+          detail: event.files
+            .map(
+              (file) =>
+                `${file.relativePath} ${file.source} sha256=${file.contentSha256}`
+            )
+            .join('\n'),
+        });
+        break;
+      }
 
       case 'steering_applied':
         for (let index = 0; index < event.count; index++) {

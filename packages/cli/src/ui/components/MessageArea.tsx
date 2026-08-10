@@ -34,8 +34,8 @@ import {
 import { CollapsedHistorySummary } from './CollapsedHistorySummary.js';
 import { Header } from './Header.js';
 import { MessageRenderer } from './MessageRenderer.js';
-import { ThinkingBlock } from './ThinkingBlock.js';
 import { TaskPanel } from './TaskPanel.js';
+import { ThinkingBlock } from './ThinkingBlock.js';
 
 /**
  * 消息区域组件

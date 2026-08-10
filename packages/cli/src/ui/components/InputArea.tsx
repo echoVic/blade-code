@@ -34,6 +34,7 @@ export const InputArea: React.FC<InputAreaProps> = React.memo(
     // 使用 Zustand store 管理焦点
     const currentFocus = useCurrentFocus();
     const isFocused = currentFocus === FocusId.MAIN_INPUT;
+    const isShellMode = input.trimStart().startsWith('!');
 
     // 文本粘贴回调 - 处理大段文本粘贴
     // 显示摘要标记，但保存原文用于提交时替换
@@ -100,10 +101,10 @@ export const InputArea: React.FC<InputAreaProps> = React.memo(
         flexGrow={0}
         overflow="hidden"
         borderStyle="round"
-        borderColor="gray"
+        borderColor={isShellMode ? 'yellow' : 'gray'}
       >
-        <Text color="blue" bold>
-          {'> '}
+        <Text color={isShellMode ? 'yellow' : 'blue'} bold>
+          {isShellMode ? '$ ' : '> '}
         </Text>
         <CustomTextInput
           value={input}

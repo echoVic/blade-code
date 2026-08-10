@@ -13,10 +13,10 @@ import React, { useMemo } from 'react';
 import stringWidth from 'string-width';
 import { useTheme } from '../../store/selectors/index.js';
 import {
-  getPlainTextLength,
   getLongestWordWidth,
-  wrapCellText,
+  getPlainTextLength,
   padAligned,
+  wrapCellText,
 } from '../utils/markdown.js';
 import { InlineRenderer } from './InlineRenderer.js';
 

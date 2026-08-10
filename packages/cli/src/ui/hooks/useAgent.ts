@@ -10,18 +10,34 @@ import type { LoopEvent } from '../../agent/loop/types.js';
 import type { SteeringEnqueueResult } from '../../agent/runtime/ActiveTurnMailbox.js';
 import {
   type ResumedSubagent,
+  type SessionUserShellCommandEvent,
   SessionRuntime,
 } from '../../agent/runtime/SessionRuntime.js';
 import type { AgentSession } from '../../agent/subagents/AgentSessionStore.js';
+import type { SubagentConfig } from '../../agent/subagents/types.js';
 import type { UserMessageContent } from '../../agent/types.js';
+import type {
+  CommunicationStyleSelection,
+  ReasoningEffortSelection,
+  ResponseVerbositySelection,
+  ServiceTierSelection,
+} from '../../config/types.js';
+import type {
+  McpCompletionInput,
+  McpNormalizedCompletionResult,
+} from '../../mcp/McpCompletion.js';
+import type { McpNormalizedPromptResult } from '../../mcp/McpContentCatalog.js';
+import type { McpLogLevel } from '../../mcp/McpLogging.js';
+import type { McpTaskSnapshot } from '../../mcp/McpTasks.js';
 import { registerCleanup } from '../../services/GracefulShutdown.js';
 import {
   type RewindSessionOptions,
   type RewoundSession,
+  SessionMissingCreationError,
   type SessionRewindCheckpoint,
   SessionService,
 } from '../../services/SessionService.js';
-import { vanillaStore } from '../../store/vanilla.js';
+import { appActions, vanillaStore } from '../../store/vanilla.js';
 import { getCwd } from '../../utils/cwd.js';
 
 export interface AgentOptions {
@@ -31,6 +47,11 @@ export interface AgentOptions {
   appendSystemPrompt?: string;
   maxTurns?: number;
   modelId?: string;
+  reasoningEffort?: ReasoningEffortSelection;
+  serviceTier?: ServiceTierSelection;
+  responseVerbosity?: ResponseVerbositySelection;
+  communicationStyle?: CommunicationStyleSelection;
+  agents?: SubagentConfig[];
 }
 
 /**
@@ -46,10 +67,15 @@ export interface AgentOptions {
 export function useAgent(options: AgentOptions) {
   const agentRef = useRef<Agent | undefined>(undefined);
   const runtimeRef = useRef<SessionRuntime | undefined>(undefined);
-  const persistedModelRef = useRef<
+  const persistedSettingsRef = useRef<
     | {
         sessionId: string;
         modelId?: string;
+        reasoningEffort?: ReasoningEffortSelection;
+        serviceTier?: ServiceTierSelection;
+        responseVerbosity?: ResponseVerbositySelection;
+        communicationStyle?: CommunicationStyleSelection;
+        communicationStyleDigest?: string;
       }
     | undefined
   >(undefined);
@@ -70,7 +96,7 @@ export function useAgent(options: AgentOptions) {
 
     agentRef.current = undefined;
     runtimeRef.current = undefined;
-    persistedModelRef.current = undefined;
+    persistedSettingsRef.current = undefined;
 
     const cleanupPromise = (async () => {
       try {
@@ -92,7 +118,8 @@ export function useAgent(options: AgentOptions) {
 
   const getOrCreateSessionRuntime = useMemoizedFn(
     async (sessionId: string): Promise<SessionRuntime> => {
-      const workspaceRoot = options.workspaceRoot ?? getCwd();
+      const workspaceRoot =
+        options.workspaceRoot ?? runtimeRef.current?.workspaceRoot ?? getCwd();
       if (
         runtimeRef.current &&
         (runtimeRef.current.sessionId !== sessionId ||
@@ -101,20 +128,55 @@ export function useAgent(options: AgentOptions) {
         await cleanupAgent();
       }
       if (!runtimeRef.current) {
+        const metadata = await SessionService.findSessionMetadata(
+          sessionId,
+          workspaceRoot
+        );
+        const isResume =
+          metadata !== undefined &&
+          (await SessionService.loadSession(sessionId, workspaceRoot)).length > 0;
         runtimeRef.current = await SessionRuntime.create({
           sessionId,
           workspaceRoot,
           modelId: options.modelId,
+          reasoningEffort: metadata?.reasoningEffort ?? options.reasoningEffort,
+          serviceTier: metadata?.serviceTier ?? options.serviceTier,
+          responseVerbosity: metadata?.responseVerbosity ?? options.responseVerbosity,
+          communicationStyle:
+            metadata?.communicationStyle ?? options.communicationStyle,
+          communicationStyleDigest: metadata?.communicationStyleDigest,
+          agents: options.agents,
+          ...(isResume
+            ? {
+                sessionStart: {
+                  isResume: true,
+                  resumeSessionId: sessionId,
+                },
+              }
+            : {}),
         });
         try {
-          const metadata = await SessionService.findSessionMetadata(
-            sessionId,
-            runtimeRef.current.workspaceRoot
-          );
-          persistedModelRef.current = {
+          persistedSettingsRef.current = {
             sessionId,
             modelId: metadata?.selectedModelId,
+            reasoningEffort: metadata?.reasoningEffort,
+            serviceTier: metadata?.serviceTier,
+            responseVerbosity: metadata?.responseVerbosity,
+            communicationStyle: metadata?.communicationStyle,
+            communicationStyleDigest: metadata?.communicationStyleDigest,
           };
+          appActions().setReasoningEffort(
+            runtimeRef.current.getReasoningConfiguration().selection
+          );
+          appActions().setServiceTier(
+            runtimeRef.current.getServiceTierConfiguration().selection
+          );
+          appActions().setResponseVerbosity(
+            runtimeRef.current.getResponseVerbosityConfiguration().selection
+          );
+          appActions().setCommunicationStyle(
+            runtimeRef.current.getCommunicationStyleConfiguration().selection
+          );
         } catch (error) {
           const runtime = runtimeRef.current;
           runtimeRef.current = undefined;
@@ -137,34 +199,118 @@ export function useAgent(options: AgentOptions) {
 
       let agent: Agent;
       if (!shouldUseEphemeralRuntime && sessionId) {
+        const hadOwnedRuntime = runtimeRef.current !== undefined;
         const runtime = await getOrCreateSessionRuntime(sessionId);
         const requestedModelId = overrides?.modelId ?? options.modelId;
+        const requestedReasoningEffort =
+          overrides?.reasoningEffort ??
+          (hadOwnedRuntime
+            ? options.reasoningEffort
+            : runtime.getReasoningConfiguration().selection);
+        const requestedServiceTier =
+          overrides?.serviceTier ??
+          (hadOwnedRuntime
+            ? options.serviceTier
+            : runtime.getServiceTierConfiguration().selection);
+        const requestedResponseVerbosity =
+          overrides?.responseVerbosity ??
+          (hadOwnedRuntime
+            ? options.responseVerbosity
+            : runtime.getResponseVerbosityConfiguration().selection);
+        const requestedCommunicationStyle =
+          overrides?.communicationStyle ??
+          (hadOwnedRuntime
+            ? options.communicationStyle
+            : runtime.getCommunicationStyleConfiguration().selection);
         const previousModelId = runtime.getCurrentModelId();
+        const previousReasoning = runtime.getReasoningConfiguration();
+        const previousServiceTier = runtime.getServiceTierConfiguration();
+        const previousResponseVerbosity = runtime.getResponseVerbosityConfiguration();
+        const previousCommunicationStyle = runtime.getCommunicationStyleConfiguration();
         await runtime.refresh({
           modelId: requestedModelId,
+          ...(requestedReasoningEffort
+            ? { reasoningEffort: requestedReasoningEffort }
+            : {}),
+          ...(requestedServiceTier ? { serviceTier: requestedServiceTier } : {}),
+          ...(requestedResponseVerbosity
+            ? { responseVerbosity: requestedResponseVerbosity }
+            : {}),
+          ...(requestedCommunicationStyle
+            ? { communicationStyle: requestedCommunicationStyle }
+            : {}),
         });
+        const nextCommunicationStyle = runtime.getCommunicationStyleConfiguration();
         if (
-          requestedModelId &&
-          requestedModelId !== 'inherit' &&
-          (persistedModelRef.current?.sessionId !== sessionId ||
-            persistedModelRef.current.modelId !== requestedModelId)
+          nextCommunicationStyle.source !== 'built-in' &&
+          !nextCommunicationStyle.contentSha256
         ) {
+          throw new Error('Custom communication style has no provenance');
+        }
+        const metadataUpdate = {
+          ...(requestedModelId &&
+          requestedModelId !== 'inherit' &&
+          (persistedSettingsRef.current?.sessionId !== sessionId ||
+            persistedSettingsRef.current.modelId !== requestedModelId)
+            ? { selectedModelId: requestedModelId }
+            : {}),
+          ...(requestedReasoningEffort &&
+          (persistedSettingsRef.current?.sessionId !== sessionId ||
+            persistedSettingsRef.current.reasoningEffort !== requestedReasoningEffort)
+            ? { reasoningEffort: requestedReasoningEffort }
+            : {}),
+          ...(requestedServiceTier &&
+          (persistedSettingsRef.current?.sessionId !== sessionId ||
+            persistedSettingsRef.current.serviceTier !== requestedServiceTier)
+            ? { serviceTier: requestedServiceTier }
+            : {}),
+          ...(requestedResponseVerbosity &&
+          (persistedSettingsRef.current?.sessionId !== sessionId ||
+            persistedSettingsRef.current.responseVerbosity !==
+              requestedResponseVerbosity)
+            ? { responseVerbosity: requestedResponseVerbosity }
+            : {}),
+          ...(requestedCommunicationStyle &&
+          (persistedSettingsRef.current?.sessionId !== sessionId ||
+            persistedSettingsRef.current.communicationStyle !==
+              requestedCommunicationStyle ||
+            persistedSettingsRef.current.communicationStyleDigest !==
+              nextCommunicationStyle.contentSha256)
+            ? {
+                communicationStyle: requestedCommunicationStyle,
+                communicationStyleDigest:
+                  nextCommunicationStyle.source === 'built-in'
+                    ? null
+                    : nextCommunicationStyle.contentSha256,
+              }
+            : {}),
+        };
+        if (Object.keys(metadataUpdate).length > 0) {
           try {
             const metadata = await SessionService.updateSessionMetadata(
               sessionId,
               runtime.workspaceRoot,
-              { selectedModelId: requestedModelId }
+              metadataUpdate
             );
-            persistedModelRef.current = {
+            persistedSettingsRef.current = {
               sessionId,
               modelId: metadata.selectedModelId,
+              reasoningEffort: metadata.reasoningEffort,
+              serviceTier: metadata.serviceTier,
+              responseVerbosity: metadata.responseVerbosity,
+              communicationStyle: metadata.communicationStyle,
+              communicationStyleDigest: metadata.communicationStyleDigest,
             };
           } catch (error) {
-            if (previousModelId && previousModelId !== requestedModelId) {
-              await runtime
-                .refresh({ modelId: previousModelId })
-                .catch(() => undefined);
-            }
+            await runtime
+              .refresh({
+                ...(previousModelId ? { modelId: previousModelId } : {}),
+                reasoningEffort: previousReasoning.selection,
+                serviceTier: previousServiceTier.selection,
+                responseVerbosity: previousResponseVerbosity.selection,
+                communicationStyle: previousCommunicationStyle.selection,
+              })
+              .catch(() => undefined);
             throw error;
           }
         }
@@ -176,6 +322,7 @@ export function useAgent(options: AgentOptions) {
             overrides?.appendSystemPrompt ?? options.appendSystemPrompt,
           maxTurns: overrides?.maxTurns ?? options.maxTurns,
           modelId: overrides?.modelId ?? options.modelId,
+          agents: options.agents,
         });
       } else {
         agent = await Agent.create({
@@ -184,6 +331,7 @@ export function useAgent(options: AgentOptions) {
             overrides?.appendSystemPrompt ?? options.appendSystemPrompt,
           maxTurns: overrides?.maxTurns ?? options.maxTurns,
           modelId: overrides?.modelId ?? options.modelId,
+          agents: options.agents,
         });
       }
       agentRef.current = agent;
@@ -233,10 +381,14 @@ export function useAgent(options: AgentOptions) {
       const runtime = await getOrCreateSessionRuntime(options.sessionId);
       let announced = false;
       let pendingCompletion: AgentSession | undefined;
+      let progressId = agentId;
       const complete = (session: AgentSession) => {
         vanillaStore
           .getState()
-          .app.actions.completeSubagentProgress(session.status === 'completed');
+          .app.actions.completeSubagentProgress(
+            progressId,
+            session.status === 'completed'
+          );
       };
       const result = runtime.resumeSubagent({
         agentId,
@@ -245,7 +397,7 @@ export function useAgent(options: AgentOptions) {
           if (event.kind === 'tool_start' && 'function' in event.toolCall) {
             vanillaStore
               .getState()
-              .app.actions.updateSubagentTool(event.toolCall.function.name);
+              .app.actions.updateSubagentTool(progressId, event.toolCall.function.name);
           }
         },
         onCompleted: (session) => {
@@ -253,6 +405,7 @@ export function useAgent(options: AgentOptions) {
           else pendingCompletion = session;
         },
       });
+      progressId = result.session.id;
       vanillaStore
         .getState()
         .app.actions.startSubagentProgress(
@@ -266,6 +419,409 @@ export function useAgent(options: AgentOptions) {
     }
   );
 
+  const getMcpContentCatalog = useMemoizedFn(async () => {
+    if (!options.sessionId) {
+      throw new Error('No active session for MCP content');
+    }
+    return (await getOrCreateSessionRuntime(options.sessionId)).getMcpContentCatalog();
+  });
+
+  const refreshMcpContentCatalogs = useMemoizedFn(
+    async (serverName?: string): Promise<void> => {
+      if (!options.sessionId) {
+        throw new Error('No active session for MCP content');
+      }
+      await (
+        await getOrCreateSessionRuntime(options.sessionId)
+      ).refreshMcpContentCatalogs(serverName);
+    }
+  );
+
+  const getMcpPrompt = useMemoizedFn(
+    async (
+      serverName: string,
+      name: string,
+      arguments_: Record<string, string>
+    ): Promise<McpNormalizedPromptResult> => {
+      if (!options.sessionId) {
+        throw new Error('No active session for MCP prompts');
+      }
+      return (await getOrCreateSessionRuntime(options.sessionId)).getMcpPrompt(
+        serverName,
+        name,
+        arguments_
+      );
+    }
+  );
+
+  const completeMcpArgument = useMemoizedFn(
+    async (
+      serverName: string,
+      input: McpCompletionInput,
+      signal?: AbortSignal
+    ): Promise<McpNormalizedCompletionResult> => {
+      if (!options.sessionId) {
+        throw new Error('No active session for MCP completion');
+      }
+      return (await getOrCreateSessionRuntime(options.sessionId)).completeMcpArgument(
+        serverName,
+        input,
+        signal
+      );
+    }
+  );
+
+  const getMcpLogs = useMemoizedFn(
+    async (
+      serverName?: string,
+      query: { afterRevision?: number; limit?: number } = {}
+    ) => {
+      if (!options.sessionId) {
+        throw new Error('No active session for MCP logs');
+      }
+      return (await getOrCreateSessionRuntime(options.sessionId)).getMcpLogs(
+        serverName,
+        query
+      );
+    }
+  );
+
+  const listMcpTasks = useMemoizedFn(
+    async (serverName?: string): Promise<McpTaskSnapshot[]> => {
+      if (!options.sessionId) {
+        throw new Error('No active session for MCP tasks');
+      }
+      return (await getOrCreateSessionRuntime(options.sessionId)).listMcpTasks(
+        serverName
+      );
+    }
+  );
+
+  const getMcpTask = useMemoizedFn(
+    async (taskId: string): Promise<McpTaskSnapshot | undefined> => {
+      if (!options.sessionId) {
+        throw new Error('No active session for MCP tasks');
+      }
+      return (await getOrCreateSessionRuntime(options.sessionId)).getMcpTask(taskId);
+    }
+  );
+
+  const cancelMcpTask = useMemoizedFn(
+    async (
+      taskId: string,
+      signal?: AbortSignal
+    ): Promise<McpTaskSnapshot | undefined> => {
+      if (!options.sessionId) {
+        throw new Error('No active session for MCP tasks');
+      }
+      return (await getOrCreateSessionRuntime(options.sessionId)).cancelMcpTask(
+        taskId,
+        signal
+      );
+    }
+  );
+
+  const setMcpLoggingLevel = useMemoizedFn(
+    async (serverName: string, level: McpLogLevel): Promise<void> => {
+      if (!options.sessionId) {
+        throw new Error('No active session for MCP logging');
+      }
+      await (await getOrCreateSessionRuntime(options.sessionId)).setMcpLoggingLevel(
+        serverName,
+        level
+      );
+    }
+  );
+
+  const getMcpInstructions = useMemoizedFn(async () => {
+    if (!options.sessionId) {
+      throw new Error('No active session for MCP instructions');
+    }
+    return (await getOrCreateSessionRuntime(options.sessionId)).getMcpInstructions();
+  });
+
+  const getReasoningConfiguration = useMemoizedFn(async () => {
+    if (!options.sessionId) {
+      throw new Error('No active session for reasoning effort');
+    }
+    return (
+      await getOrCreateSessionRuntime(options.sessionId)
+    ).getReasoningConfiguration();
+  });
+
+  const setReasoningEffort = useMemoizedFn(
+    async (reasoningEffort: ReasoningEffortSelection) => {
+      if (!options.sessionId) {
+        throw new Error('No active session for reasoning effort');
+      }
+      const runtime = await getOrCreateSessionRuntime(options.sessionId);
+      if (runtime.hasTurnOwner()) {
+        throw new Error('Cannot switch reasoning effort while a turn is active');
+      }
+      const previous = runtime.getReasoningConfiguration();
+      runtime.resolveReasoningConfiguration(reasoningEffort);
+      if (previous.selection === reasoningEffort) return previous;
+      await runtime.refresh({ reasoningEffort });
+      try {
+        let metadata;
+        try {
+          metadata = await SessionService.updateSessionMetadata(
+            options.sessionId,
+            runtime.workspaceRoot,
+            { reasoningEffort }
+          );
+        } catch (error) {
+          if (
+            !(error instanceof SessionMissingCreationError) &&
+            (error as NodeJS.ErrnoException).code !== 'ENOENT'
+          ) {
+            throw error;
+          }
+          metadata = await SessionService.createSessionMetadata(
+            options.sessionId,
+            runtime.workspaceRoot,
+            {
+              taskStatus: 'completed',
+              selectedModelId: runtime.getCurrentModelId(),
+              reasoningEffort,
+              serviceTier: runtime.getServiceTierConfiguration().selection,
+              responseVerbosity: runtime.getResponseVerbosityConfiguration().selection,
+              communicationStyle:
+                runtime.getCommunicationStyleConfiguration().selection,
+            }
+          );
+        }
+        persistedSettingsRef.current = {
+          sessionId: options.sessionId,
+          modelId: metadata.selectedModelId,
+          reasoningEffort: metadata.reasoningEffort,
+          serviceTier: metadata.serviceTier,
+          responseVerbosity: metadata.responseVerbosity,
+          communicationStyle: metadata.communicationStyle,
+          communicationStyleDigest: metadata.communicationStyleDigest,
+        };
+        appActions().setReasoningEffort(reasoningEffort);
+        return runtime.getReasoningConfiguration();
+      } catch (error) {
+        await runtime.refresh({ reasoningEffort: previous.selection });
+        throw error;
+      }
+    }
+  );
+
+  const getServiceTierConfiguration = useMemoizedFn(async () => {
+    if (!options.sessionId) {
+      throw new Error('No active session for service tier');
+    }
+    return (
+      await getOrCreateSessionRuntime(options.sessionId)
+    ).getServiceTierConfiguration();
+  });
+
+  const setServiceTier = useMemoizedFn(async (serviceTier: ServiceTierSelection) => {
+    if (!options.sessionId) {
+      throw new Error('No active session for service tier');
+    }
+    const runtime = await getOrCreateSessionRuntime(options.sessionId);
+    if (runtime.hasTurnOwner()) {
+      throw new Error('Cannot switch service tier while a turn is active');
+    }
+    const previous = runtime.getServiceTierConfiguration();
+    runtime.resolveServiceTierConfiguration(serviceTier);
+    if (previous.selection === serviceTier) return previous;
+    await runtime.refresh({ serviceTier });
+    try {
+      let metadata;
+      try {
+        metadata = await SessionService.updateSessionMetadata(
+          options.sessionId,
+          runtime.workspaceRoot,
+          { serviceTier }
+        );
+      } catch (error) {
+        if (
+          !(error instanceof SessionMissingCreationError) &&
+          (error as NodeJS.ErrnoException).code !== 'ENOENT'
+        ) {
+          throw error;
+        }
+        metadata = await SessionService.createSessionMetadata(
+          options.sessionId,
+          runtime.workspaceRoot,
+          {
+            taskStatus: 'completed',
+            selectedModelId: runtime.getCurrentModelId(),
+            reasoningEffort: runtime.getReasoningConfiguration().selection,
+            serviceTier,
+            responseVerbosity: runtime.getResponseVerbosityConfiguration().selection,
+            communicationStyle: runtime.getCommunicationStyleConfiguration().selection,
+          }
+        );
+      }
+      persistedSettingsRef.current = {
+        sessionId: options.sessionId,
+        modelId: metadata.selectedModelId,
+        reasoningEffort: metadata.reasoningEffort,
+        serviceTier: metadata.serviceTier,
+        responseVerbosity: metadata.responseVerbosity,
+        communicationStyle: metadata.communicationStyle,
+        communicationStyleDigest: metadata.communicationStyleDigest,
+      };
+      appActions().setServiceTier(serviceTier);
+      return runtime.getServiceTierConfiguration();
+    } catch (error) {
+      await runtime.refresh({ serviceTier: previous.selection });
+      throw error;
+    }
+  });
+
+  const getResponseVerbosityConfiguration = useMemoizedFn(async () => {
+    if (!options.sessionId) {
+      throw new Error('No active session for response verbosity');
+    }
+    return (
+      await getOrCreateSessionRuntime(options.sessionId)
+    ).getResponseVerbosityConfiguration();
+  });
+
+  const setResponseVerbosity = useMemoizedFn(
+    async (responseVerbosity: ResponseVerbositySelection) => {
+      if (!options.sessionId) {
+        throw new Error('No active session for response verbosity');
+      }
+      const runtime = await getOrCreateSessionRuntime(options.sessionId);
+      if (runtime.hasTurnOwner()) {
+        throw new Error('Cannot switch response verbosity while a turn is active');
+      }
+      const previous = runtime.getResponseVerbosityConfiguration();
+      runtime.resolveResponseVerbosityConfiguration(responseVerbosity);
+      if (previous.selection === responseVerbosity) return previous;
+      await runtime.refresh({ responseVerbosity });
+      try {
+        let metadata;
+        try {
+          metadata = await SessionService.updateSessionMetadata(
+            options.sessionId,
+            runtime.workspaceRoot,
+            { responseVerbosity }
+          );
+        } catch (error) {
+          if (
+            !(error instanceof SessionMissingCreationError) &&
+            (error as NodeJS.ErrnoException).code !== 'ENOENT'
+          ) {
+            throw error;
+          }
+          metadata = await SessionService.createSessionMetadata(
+            options.sessionId,
+            runtime.workspaceRoot,
+            {
+              taskStatus: 'completed',
+              selectedModelId: runtime.getCurrentModelId(),
+              reasoningEffort: runtime.getReasoningConfiguration().selection,
+              serviceTier: runtime.getServiceTierConfiguration().selection,
+              responseVerbosity,
+              communicationStyle:
+                runtime.getCommunicationStyleConfiguration().selection,
+            }
+          );
+        }
+        persistedSettingsRef.current = {
+          sessionId: options.sessionId,
+          modelId: metadata.selectedModelId,
+          reasoningEffort: metadata.reasoningEffort,
+          serviceTier: metadata.serviceTier,
+          responseVerbosity: metadata.responseVerbosity,
+          communicationStyle: metadata.communicationStyle,
+          communicationStyleDigest: metadata.communicationStyleDigest,
+        };
+        appActions().setResponseVerbosity(responseVerbosity);
+        return runtime.getResponseVerbosityConfiguration();
+      } catch (error) {
+        await runtime.refresh({ responseVerbosity: previous.selection });
+        throw error;
+      }
+    }
+  );
+
+  const getCommunicationStyleConfiguration = useMemoizedFn(async () => {
+    if (!options.sessionId) {
+      throw new Error('No active session for communication style');
+    }
+    return (
+      await getOrCreateSessionRuntime(options.sessionId)
+    ).getCommunicationStyleConfiguration();
+  });
+
+  const setCommunicationStyle = useMemoizedFn(
+    async (communicationStyle: CommunicationStyleSelection) => {
+      if (!options.sessionId) {
+        throw new Error('No active session for communication style');
+      }
+      const runtime = await getOrCreateSessionRuntime(options.sessionId);
+      if (runtime.hasTurnOwner()) {
+        throw new Error('Cannot switch communication style while a turn is active');
+      }
+      const previous = runtime.getCommunicationStyleConfiguration();
+      const next = runtime.resolveCommunicationStyleConfiguration(communicationStyle);
+      if (next.source !== 'built-in' && !next.contentSha256) {
+        throw new Error('Custom communication style has no provenance');
+      }
+      if (previous.selection === communicationStyle) return previous;
+      await runtime.refresh({ communicationStyle });
+      try {
+        let metadata;
+        try {
+          metadata = await SessionService.updateSessionMetadata(
+            options.sessionId,
+            runtime.workspaceRoot,
+            {
+              communicationStyle,
+              communicationStyleDigest:
+                next.source === 'built-in' ? null : next.contentSha256,
+            }
+          );
+        } catch (error) {
+          if (
+            !(error instanceof SessionMissingCreationError) &&
+            (error as NodeJS.ErrnoException).code !== 'ENOENT'
+          ) {
+            throw error;
+          }
+          metadata = await SessionService.createSessionMetadata(
+            options.sessionId,
+            runtime.workspaceRoot,
+            {
+              taskStatus: 'completed',
+              selectedModelId: runtime.getCurrentModelId(),
+              reasoningEffort: runtime.getReasoningConfiguration().selection,
+              serviceTier: runtime.getServiceTierConfiguration().selection,
+              responseVerbosity: runtime.getResponseVerbosityConfiguration().selection,
+              communicationStyle,
+              ...(next.source !== 'built-in' && next.contentSha256
+                ? { communicationStyleDigest: next.contentSha256 }
+                : {}),
+            }
+          );
+        }
+        persistedSettingsRef.current = {
+          sessionId: options.sessionId,
+          modelId: metadata.selectedModelId,
+          reasoningEffort: metadata.reasoningEffort,
+          serviceTier: metadata.serviceTier,
+          responseVerbosity: metadata.responseVerbosity,
+          communicationStyle: metadata.communicationStyle,
+          communicationStyleDigest: metadata.communicationStyleDigest,
+        };
+        appActions().setCommunicationStyle(communicationStyle);
+        return runtime.getCommunicationStyleConfiguration();
+      } catch (error) {
+        await runtime.refresh({ communicationStyle: previous.selection });
+        throw error;
+      }
+    }
+  );
+
   const steerActiveTurn = useMemoizedFn(
     async (content: UserMessageContent): Promise<SteeringEnqueueResult> => {
       if (!runtimeRef.current) {
@@ -274,6 +830,25 @@ export function useAgent(options: AgentOptions) {
       return runtimeRef.current.enqueueSteering(content, {
         allowBeforeTurn: true,
       });
+    }
+  );
+
+  const executeUserShellCommand = useMemoizedFn(
+    async (
+      command: string,
+      shellOptions?: {
+        signal?: AbortSignal;
+        onEvent?: (
+          event: SessionUserShellCommandEvent
+        ) => void | Promise<void>;
+      }
+    ) => {
+      const targetSessionId = options.sessionId;
+      if (!targetSessionId) {
+        throw new Error('User shell command requires a Session');
+      }
+      const runtime = await getOrCreateSessionRuntime(targetSessionId);
+      return runtime.executeUserShellCommand(command, shellOptions);
     }
   );
 
@@ -290,9 +865,28 @@ export function useAgent(options: AgentOptions) {
     createAgent,
     cleanupAgent,
     steerActiveTurn,
+    executeUserShellCommand,
     listRewindCheckpoints,
     rewindSession,
     listSubagents,
     resumeSubagent,
+    getMcpContentCatalog,
+    refreshMcpContentCatalogs,
+    getMcpPrompt,
+    completeMcpArgument,
+    listMcpTasks,
+    getMcpTask,
+    cancelMcpTask,
+    getMcpLogs,
+    setMcpLoggingLevel,
+    getMcpInstructions,
+    getReasoningConfiguration,
+    setReasoningEffort,
+    getServiceTierConfiguration,
+    setServiceTier,
+    getResponseVerbosityConfiguration,
+    setResponseVerbosity,
+    getCommunicationStyleConfiguration,
+    setCommunicationStyle,
   };
 }

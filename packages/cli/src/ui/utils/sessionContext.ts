@@ -1,10 +1,18 @@
 import type { Message } from '../../services/ChatServiceInterface.js';
+import {
+  renderUserShellCommandForModel,
+  userShellCommandRecordFromMetadata,
+} from '../../services/UserShellCommandService.js';
 import type { SessionMessage, SessionState } from '../../store/types.js';
 
 function toContextMessage(message: SessionMessage): Message {
+  const userShellCommand = userShellCommandRecordFromMetadata(message.metadata);
   return {
     role: message.role,
-    content: message.content,
+    content: userShellCommand
+      ? renderUserShellCommandForModel(userShellCommand)
+      : message.content,
+    ...(message.metadata ? { metadata: message.metadata as never } : {}),
   };
 }
 

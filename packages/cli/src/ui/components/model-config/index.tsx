@@ -3,9 +3,10 @@ import { Box, Text, useInput } from 'ink';
 import React, { useState } from 'react';
 import type { SetupConfig } from '../../../config/types.js';
 import { getPiModelCatalog } from '../../../services/pi/PiModelCatalog.js';
-import { configActions } from '../../../store/vanilla.js';
+import { configActions, getConfig } from '../../../store/vanilla.js';
 import { useCtrlCHandler } from '../../hooks/useCtrlCHandler.js';
 import { ApiKeyInput } from './ApiKeyInput.js';
+import { CustomProviderInput } from './CustomProviderInput.js';
 import { useModels, useProviders } from './hooks/usePiCatalog.js';
 import { ModelSelector } from './ModelSelector.js';
 import { ProviderSelector } from './ProviderSelector.js';
@@ -27,6 +28,7 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
   const [step, setStep] = useState<WizardStep>('provider');
   const [provider, setProvider] = useState<ProviderOption>();
   const [model, setModel] = useState<ModelOption>();
+  const [customSetup, setCustomSetup] = useState<SetupConfig>();
   const [apiKey, setApiKey] = useState('');
   const [error, setError] = useState<string>();
   const [isSaving, setIsSaving] = useState(false);
@@ -41,29 +43,63 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
   });
 
   const save = useMemoizedFn(async (credential?: string) => {
-    if (!provider || !model) return;
+    if (!provider) return;
+    const setup: SetupConfig | undefined =
+      customSetup ??
+      (model
+        ? {
+            provider: provider.id,
+            model: model.id,
+            displayName: initialConfig?.displayName,
+          }
+        : undefined);
+    if (!setup) return;
     setIsSaving(true);
     setError(undefined);
     try {
-      if (credential?.trim()) {
-        await getPiModelCatalog().setApiKey(provider.id, credential.trim());
+      if (setup.modelProvider) {
+        getPiModelCatalog().registerModelProvider(setup.provider, setup.modelProvider, [
+          setup.model,
+        ]);
       }
-      const setup: SetupConfig = {
-        provider: provider.id,
-        model: model.id,
-        displayName: initialConfig?.displayName,
+      if (credential?.trim()) {
+        await getPiModelCatalog().setApiKey(setup.provider, credential.trim());
+      }
+      const modelData = {
+        displayName: setup.displayName,
+        provider: setup.provider,
+        model: setup.model,
+        overrides: setup.overrides,
       };
       if (mode === 'setup') {
-        onComplete(setup);
+        await onComplete(setup);
       } else if (mode === 'add') {
-        const added = await configActions().addModel(setup);
+        const added = setup.modelProvider
+          ? await configActions().addModelWithProvider(modelData, setup.modelProvider)
+          : await configActions().addModel(modelData);
         await configActions().setCurrentModel(added.id);
-        onComplete(setup);
+        await onComplete(setup);
       } else if (modelId) {
-        await configActions().updateModel(modelId, setup);
-        onComplete(setup);
+        if (setup.modelProvider) {
+          await configActions().updateModelWithProvider(
+            modelId,
+            modelData,
+            setup.modelProvider
+          );
+        } else {
+          await configActions().updateModel(modelId, modelData);
+        }
+        await onComplete(setup);
       }
     } catch (cause) {
+      if (setup.modelProvider) {
+        await getPiModelCatalog().credentials.delete(setup.provider);
+        const config = getConfig();
+        getPiModelCatalog().configureModelProviders(
+          config?.modelProviders ?? {},
+          config?.models ?? []
+        );
+      }
       setError(cause instanceof Error ? cause.message : '保存配置失败');
       setIsSaving(false);
     }
@@ -84,6 +120,10 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
 
   const back = useMemoizedFn(() => {
     setError(undefined);
+    if (step === 'credential' && customSetup) {
+      setStep('custom');
+      return;
+    }
     const previous = getPreviousWizardStep(step);
     if (previous) setStep(previous);
   });
@@ -98,9 +138,22 @@ export const ModelConfigWizard: React.FC<ModelConfigWizardProps> = ({
           {...providersState}
           onSelect={(selected) => {
             setProvider(selected);
-            setStep('model');
+            setModel(undefined);
+            setCustomSetup(undefined);
+            setStep(selected.factoryWireApi ? 'custom' : 'model');
           }}
           onCancel={mode === 'setup' ? () => undefined : onCancel}
+        />
+      )}
+      {step === 'custom' && provider?.factoryWireApi && (
+        <CustomProviderInput
+          wireApi={provider.factoryWireApi}
+          initialConfig={customSetup}
+          onSubmit={(setup) => {
+            setCustomSetup(setup);
+            setStep('credential');
+          }}
+          onCancel={back}
         />
       )}
       {step === 'model' && provider && (

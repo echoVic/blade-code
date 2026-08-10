@@ -8,12 +8,12 @@ import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import React, { useState } from 'react';
 import { HookManager } from '../../hooks/HookManager.js';
-import { getCwd } from '../../utils/cwd.js';
 import {
   type CommandHook,
   HookEvent,
   type HookMatcher,
 } from '../../hooks/types/HookTypes.js';
+import { getCwd } from '../../utils/cwd.js';
 import { themeManager } from '../themes/ThemeManager.js';
 
 interface HooksManagerProps {
@@ -29,7 +29,7 @@ interface NewHookData {
 
 type Step = 'action' | 'event' | 'matcher' | 'command' | 'location' | 'confirm';
 
-type ActionType = 'add' | 'status' | 'list';
+type ActionType = 'add' | 'status' | 'list' | 'trust' | 'revoke';
 
 type SaveLocation = 'local' | 'project' | 'user';
 
@@ -37,6 +37,8 @@ const ACTIONS: Array<{ action: ActionType; description: string }> = [
   { action: 'add', description: 'Add a new hook' },
   { action: 'status', description: 'Show hooks status' },
   { action: 'list', description: 'List all configured hooks' },
+  { action: 'trust', description: 'Trust the current project hook digest' },
+  { action: 'revoke', description: 'Revoke project hook trust' },
 ];
 
 const SAVE_LOCATIONS: Array<{
@@ -176,17 +178,22 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
     if (action === 'add') {
       setStep('event');
     } else if (action === 'status') {
-      showStatus();
+      void showStatus();
     } else if (action === 'list') {
       showList();
+    } else if (action === 'trust') {
+      void trustCurrentProject();
+    } else if (action === 'revoke') {
+      void revokeCurrentProject();
     }
   };
 
   // 显示 hooks 状态
-  const showStatus = () => {
+  const showStatus = async () => {
     const hookManager = HookManager.getInstance();
-    const isEnabled = hookManager.isEnabled();
-    const config = hookManager.getConfig();
+    const isEnabled = hookManager.isEnabled(getCwd());
+    const config = hookManager.getConfig(getCwd());
+    const trust = await hookManager.getTrustStatus(getCwd());
 
     // 统计各类型配置的 hooks 数量
     const hookCounts: Record<string, number> = {};
@@ -200,7 +207,12 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
       }
     }
 
-    const lines: string[] = [`Status: ${isEnabled ? 'Enabled' : 'Disabled'}`, ''];
+    const lines: string[] = [
+      `Status: ${isEnabled ? 'Enabled' : 'Disabled'}`,
+      `Trust: ${trust.state}`,
+      `Digest: ${trust.currentDigest ?? 'none'}`,
+      '',
+    ];
 
     if (Object.keys(hookCounts).length > 0) {
       lines.push('Configured hooks:');
@@ -214,10 +226,34 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
     setStatusMessage(lines.join('\n'));
   };
 
+  const trustCurrentProject = async () => {
+    try {
+      const trust = await HookManager.getInstance().trustProject(getCwd());
+      setStatusMessage(
+        `Trust: ${trust.state}\nDigest: ${trust.currentDigest ?? 'none'}`
+      );
+    } catch (trustError) {
+      setError(
+        trustError instanceof Error ? trustError.message : 'Failed to trust hooks'
+      );
+    }
+  };
+
+  const revokeCurrentProject = async () => {
+    try {
+      const trust = await HookManager.getInstance().revokeProjectTrust(getCwd());
+      setStatusMessage(`Trust: ${trust.state}`);
+    } catch (trustError) {
+      setError(
+        trustError instanceof Error ? trustError.message : 'Failed to revoke hook trust'
+      );
+    }
+  };
+
   // 显示 hooks 列表
   const showList = () => {
     const hookManager = HookManager.getInstance();
-    const config = hookManager.getConfig();
+    const config = hookManager.getConfig(getCwd());
     const lines: string[] = [];
 
     let hasAnyHooks = false;
@@ -368,8 +404,8 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
       {/* 警告信息 */}
       <Box marginBottom={1}>
         <Text color={theme.colors.warning}>
-          [WARN] Hooks execute shell commands with your full user permissions. Only use
-          hooks from trusted sources.
+          [WARN] Configured hooks run only after this exact project digest is trusted.
+          Function hooks registered by application code are exempt.
         </Text>
       </Box>
 

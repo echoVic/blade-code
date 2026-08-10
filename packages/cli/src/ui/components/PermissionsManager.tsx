@@ -11,8 +11,8 @@ import type { PermissionConfig } from '../../config/types.js';
 import { useCurrentFocus } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
 import { configActions } from '../../store/vanilla.js';
-import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 import { getCwd } from '../../utils/cwd.js';
+import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 
 type RuleSource = 'local' | 'project' | 'global';
 type PermissionType = 'allow' | 'ask' | 'deny';

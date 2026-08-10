@@ -14,7 +14,7 @@ import type { ModelConfig } from '../../config/types.js';
 import { getPiModelCatalog } from '../../services/pi/PiModelCatalog.js';
 import { getModelDisplayName } from '../../services/pi/resolveModelConfig.js';
 import { useAllModels, useCurrentModelId } from '../../store/selectors/index.js';
-import { configActions } from '../../store/vanilla.js';
+import { configActions, getConfig } from '../../store/vanilla.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 
 interface ModelSelectorProps {
@@ -154,6 +154,9 @@ export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
   const selectedModel = useMemo(() => {
     return models.find((m) => m.id === selectedId);
   }, [models, selectedId]);
+  const selectedProvider = selectedModel
+    ? getConfig()?.modelProviders[selectedModel.provider]
+    : undefined;
 
   const items = models.map((model) => {
     const suffix = model.id === currentModelId ? ' (当前)' : '';
@@ -228,8 +231,24 @@ export const ModelSelector = memo(({ onClose, onEdit }: ModelSelectorProps) => {
               </Text>
               <Text>
                 <Text dimColor>Provider: </Text>
-                <Text bold>{selectedModel.provider}</Text>
+                <Text bold>{selectedProvider?.name ?? selectedModel.provider}</Text>
               </Text>
+              {selectedProvider && (
+                <>
+                  <Text>
+                    <Text dimColor>Channel ID: </Text>
+                    <Text>{selectedModel.provider}</Text>
+                  </Text>
+                  <Text>
+                    <Text dimColor>Wire API: </Text>
+                    <Text>{selectedProvider.wireApi}</Text>
+                  </Text>
+                  <Text>
+                    <Text dimColor>Endpoint: </Text>
+                    <Text color="blueBright">{selectedProvider.baseUrl}</Text>
+                  </Text>
+                </>
+              )}
               <Text>
                 <Text dimColor>Model: </Text>
                 <Text bold>{selectedModel.model}</Text>

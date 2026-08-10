@@ -4,7 +4,7 @@ import type { SessionMetadata } from '../../services/SessionService.js';
 import { SessionService } from '../../services/SessionService.js';
 import type { SessionSelectionIntent } from '../../slash-commands/types.js';
 import type { SessionMessage } from '../../store/types.js';
-import { configActions, getModelById } from '../../store/vanilla.js';
+import { getModelById, getState } from '../../store/vanilla.js';
 
 export interface SessionActivationActions {
   restoreSession: (
@@ -33,6 +33,11 @@ function shortSessionId(sessionId: string): string {
 
 function resolveWorkspace(workspace: string): string {
   return path.resolve(workspace);
+}
+
+function activateModelInMemory(modelId?: string): void {
+  if (!modelId || !getModelById(modelId)) return;
+  getState().config.actions.updateConfig({ currentModelId: modelId });
 }
 
 export async function listSessionCandidatesForIntent(
@@ -74,12 +79,7 @@ export async function activateSessionSelection(
       });
     }
     await cleanupAgent();
-    if (
-      forked.metadata.selectedModelId &&
-      getModelById(forked.metadata.selectedModelId)
-    ) {
-      await configActions().setCurrentModel(forked.metadata.selectedModelId);
-    }
+    activateModelInMemory(forked.metadata.selectedModelId);
     actions.restoreSession(
       forked.sessionId,
       visibleMessages,
@@ -92,15 +92,14 @@ export async function activateSessionSelection(
     };
   }
 
+  await SessionService.assertSessionWritable(session.sessionId, session.projectPath);
   const messages = await SessionService.loadSession(
     session.sessionId,
     session.projectPath
   );
   const uiMessages = SessionService.toUISafeMessages(messages);
   await cleanupAgent();
-  if (session.selectedModelId && getModelById(session.selectedModelId)) {
-    await configActions().setCurrentModel(session.selectedModelId);
-  }
+  activateModelInMemory(session.selectedModelId);
   actions.restoreSession(session.sessionId, uiMessages, messages, session.projectPath);
   return {
     sessionId: session.sessionId,

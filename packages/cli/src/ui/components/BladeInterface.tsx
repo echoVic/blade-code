@@ -1,6 +1,7 @@
 import { useMemoizedFn } from 'ahooks';
 import { Box } from 'ink';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { parseCliAgents } from '../../cli/agents.js';
 import {
   type ModelConfig,
   PermissionMode,
@@ -47,6 +48,7 @@ import { ConfirmationPrompt } from './ConfirmationPrompt.js';
 import { HooksManager } from './HooksManager.js';
 import { InputArea } from './InputArea.js';
 import { LoadingIndicator } from './LoadingIndicator.js';
+import { McpElicitationPrompt } from './McpElicitationPrompt.js';
 import { MessageArea } from './MessageArea.js';
 import { ModelSelector } from './ModelSelector.js';
 import { ModelConfigWizard } from './model-config/index.js';
@@ -131,6 +133,10 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const readyForChat = initializationStatus === 'ready';
   const requiresSetup = initializationStatus === 'needsSetup';
   const isInitializing = initializationStatus === 'idle';
+  const invocationAgents = useMemo(
+    () => (otherProps.agents ? parseCliAgents(otherProps.agents) : undefined),
+    [otherProps.agents]
+  );
 
   const {
     confirmationState,
@@ -144,7 +150,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     otherProps.appendSystemPrompt,
     confirmationHandler,
     otherProps.maxTurns,
-    dismissAll
+    dismissAll,
+    invocationAgents
   );
 
   const { getPreviousCommand, getNextCommand, addToHistory } = useCommandHistory();
@@ -184,12 +191,17 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const handleSetupComplete = useMemoizedFn(async (newConfig: SetupConfig) => {
     try {
       // 使用 configActions 统一入口：自动同步内存 + 持久化
-      await configActions().addModel({
+      const model = {
         displayName: newConfig.displayName,
         provider: newConfig.provider,
         model: newConfig.model,
         overrides: newConfig.overrides,
-      });
+      };
+      if (newConfig.modelProvider) {
+        await configActions().addModelWithProvider(model, newConfig.modelProvider);
+      } else {
+        await configActions().addModel(model);
+      }
 
       // 设置完成后，将状态改为 ready（因为 API Key 已经配置）
       appActions.setInitializationStatus('ready');
@@ -198,8 +210,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         '初始化配置保存失败:',
         error instanceof Error ? error.message : error
       );
-      // 即使出错也继续，让用户可以进入主界面
-      appActions.setInitializationStatus('ready');
+      throw error;
     }
   });
 
@@ -612,8 +623,20 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const blockingModal =
     confirmationState.isVisible && confirmationState.details ? (
       // 根据确认类型选择不同的 UI 组件
-      confirmationState.details.type === 'askUserQuestion' &&
-      confirmationState.details.questions ? (
+      confirmationState.details.type === 'mcpElicitation' &&
+      confirmationState.details.mcpElicitation ? (
+        <McpElicitationPrompt
+          details={confirmationState.details.mcpElicitation}
+          onComplete={(elicitation, openExternalUrl) =>
+            handleResponse({
+              approved: elicitation.action === 'accept',
+              elicitation,
+              ...(openExternalUrl ? { openExternalUrl: true } : {}),
+            })
+          }
+        />
+      ) : confirmationState.details.type === 'askUserQuestion' &&
+        confirmationState.details.questions ? (
         <QuestionPrompt
           questions={confirmationState.details.questions}
           onComplete={(answers) => handleResponse({ approved: true, answers })}
@@ -694,7 +717,11 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
         {agentsManagerVisible && (
           <Box marginTop={1} paddingX={2}>
-            <AgentsManager onComplete={closeModal} onCancel={closeModal} />
+            <AgentsManager
+              workspaceRoot={workspaceRoot}
+              onComplete={closeModal}
+              onCancel={closeModal}
+            />
           </Box>
         )}
 
@@ -712,7 +739,11 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
         {pluginsManagerVisible && (
           <Box marginTop={1} paddingX={2}>
-            <PluginsManager onComplete={closeModal} onCancel={closeModal} />
+            <PluginsManager
+              workspaceRoot={workspaceRoot}
+              onComplete={closeModal}
+              onCancel={closeModal}
+            />
           </Box>
         )}
 

@@ -6,13 +6,13 @@ import type {
 
 export type { ModelOption, ProviderOption };
 
-export type WizardStep = 'provider' | 'model' | 'credential';
+export type WizardStep = 'provider' | 'custom' | 'model' | 'credential';
 
 export interface ModelConfigWizardProps {
   mode: 'setup' | 'add' | 'edit';
   initialConfig?: SetupConfig;
   modelId?: string;
-  onComplete: (config: SetupConfig) => void;
+  onComplete: (config: SetupConfig) => void | Promise<void>;
   onCancel: () => void;
 }
 

@@ -7,11 +7,11 @@
 import fg from 'fast-glob';
 import Fuse from 'fuse.js';
 import { useEffect, useMemo, useState } from 'react';
+import { getCwd } from '../../utils/cwd.js';
 import {
   DEFAULT_EXCLUDE_DIRS,
   DEFAULT_EXCLUDE_FILE_PATTERNS,
 } from '../../utils/filePatterns.js';
-import { getCwd } from '../../utils/cwd.js';
 
 // 全局文件列表缓存，避免重复加载
 let globalFileCache: {

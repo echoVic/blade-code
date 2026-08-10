@@ -68,12 +68,27 @@ blade serve --port 3000      # 无头服务器模式
 
 ```json
 {
-  "provider": "openai-compatible",
-  "apiKey": "${BLADE_API_KEY}",
-  "baseUrl": "https://api.openai.com/v1",
-  "model": "gpt-4o-mini"
+  "currentModelId": "custom",
+  "modelProviders": {
+    "company-gateway": {
+      "name": "Company Gateway",
+      "baseUrl": "https://gateway.example.com/v1",
+      "wireApi": "openai-completions"
+    }
+  },
+  "models": [
+    {
+      "id": "custom",
+      "provider": "company-gateway",
+      "model": "gpt-4o-mini"
+    }
+  ]
 }
 ```
+
+API key 以渠道 ID 为键存放在权限为 `0600` 的 `~/.blade/auth.json`，不会写入模型
+或渠道配置。TUI 与 Web 均可创建 OpenAI Chat Completions 和 Anthropic Messages
+兼容渠道。
 
 ---
 
@@ -84,7 +99,7 @@ blade serve --port 3000      # 无头服务器模式
 - `blade` 启动交互式 CLI 界面
 - `blade web` 启动 Web UI（0.2.0 新增）
 - `blade serve` 启动无头服务器（0.2.0 新增）
-- `blade mcp` 管理 MCP 服务器
+- `blade mcp` 管理 MCP 服务器；`blade mcp login/logout` 显式管理远程 OAuth
 - `blade doctor` 环境自检
 - `blade update` 检查更新
 

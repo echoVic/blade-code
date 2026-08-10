@@ -26,6 +26,13 @@ export function formatToolCallSummary(
       const fileName = filePath ? basename(filePath) : 'file';
       return `Editing ${fileName}`;
     }
+    case 'ApplyPatch': {
+      const patchText = params.patch as string;
+      const count = patchText
+        ? (patchText.match(/^\*\*\* (?:Add|Delete|Update) File: /gm) ?? []).length
+        : 0;
+      return `Applying atomic patch${count > 0 ? ` to ${count} file(s)` : ''}`;
+    }
     case 'Read': {
       const filePath = params.file_path as string;
       const fileName = filePath ? basename(filePath) : 'file';
@@ -148,6 +155,7 @@ export function shouldShowToolDetail(toolName: string, result: ToolResult): bool
   switch (toolName) {
     case 'Write':
     case 'Edit':
+    case 'ApplyPatch':
     case 'Read':
     case 'Glob':
     case 'Grep':
@@ -291,6 +299,28 @@ export function generateToolDetail(
         return diff_snippet;
       }
       return null;
+    }
+
+    case 'ApplyPatch': {
+      const changes = result.metadata?.changes;
+      if (!Array.isArray(changes)) return null;
+      const markers = { add: 'A', update: 'M', delete: 'D' } as const;
+      return changes
+        .slice(0, 20)
+        .map((change) => {
+          if (
+            !change ||
+            typeof change !== 'object' ||
+            !('kind' in change) ||
+            !('path' in change)
+          ) {
+            return null;
+          }
+          const kind = change.kind as keyof typeof markers;
+          return `${markers[kind] ?? 'M'} ${String(change.path)}`;
+        })
+        .filter((line): line is string => Boolean(line))
+        .join('\n');
     }
 
     case 'WebFetch': {

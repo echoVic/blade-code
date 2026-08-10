@@ -1,28 +1,29 @@
 import { useMemoizedFn } from 'ahooks';
 import React, { useEffect, useState } from 'react';
-import { subagentRegistry } from '../agent/subagents/SubagentRegistry.js';
-import { parseCliAgents } from '../cli/agents.js';
+import { resolveWorkspaceAgentResources } from '../agent/resources/WorkspaceAgentResources.js';
 import type { GlobalOptions } from '../cli/types.js';
 import {
   DEFAULT_CONFIG,
   mergeRuntimeConfig,
-  PermissionMode,
   type RuntimeConfig,
 } from '../config/index.js';
 import { HookManager } from '../hooks/HookManager.js';
 import { setLoggerSessionId } from '../logging/Logger.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
-import { getPluginRegistry, integrateAllPlugins } from '../plugins/index.js';
+import { reloadWorkspaceTrustConfiguration } from '../security/reloadWorkspaceTrust.js';
+import {
+  WorkspaceTrustService,
+  type WorkspaceTrustStatus,
+} from '../security/WorkspaceTrustService.js';
 import { registerCleanup } from '../services/GracefulShutdown.js';
 import type { VersionCheckResult } from '../services/VersionChecker.js';
-import { discoverSkills } from '../skills/index.js';
-import { initializeCustomCommands } from '../slash-commands/index.js';
 import { appActions, getState, sessionActions } from '../store/vanilla.js';
 import { BackgroundShellManager } from '../tools/builtin/shell/BackgroundShellManager.js';
 import { getCwd } from '../utils/cwd.js';
 import { BladeInterface } from './components/BladeInterface.js';
 import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { UpdatePrompt } from './components/UpdatePrompt.js';
+import { WorkspaceTrustPrompt } from './components/WorkspaceTrustPrompt.js';
 import { themeManager } from './themes/ThemeManager.js';
 import { formatErrorMessage } from './utils/security.js';
 
@@ -69,6 +70,9 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
   const [isReady, setIsReady] = useState(false); // 应用初始化完成，可以显示主界面
   const [versionInfo, setVersionInfo] = useState<VersionCheckResult | null>(null);
   const [showUpdatePrompt, setShowUpdatePrompt] = useState(false);
+  const [workspaceTrust, setWorkspaceTrust] = useState<WorkspaceTrustStatus | null>(
+    null
+  );
 
   const handleInitializationError = useMemoizedFn(
     (error: unknown, debug?: boolean): void => {
@@ -113,150 +117,34 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
         }
       }
 
-      // 6. 预加载 subagents 配置
-      try {
-        const loadedCount = subagentRegistry.loadFromStandardLocations();
-        if (props.agents) {
-          subagentRegistry.applyOverrides(parseCliAgents(props.agents));
-        }
-        if (props.debug && loadedCount > 0) {
-          console.log(
-            `[OK] 已加载 ${loadedCount} 个 subagents: ${subagentRegistry.getAllNames().join(', ')}`
-          );
-        }
-      } catch (error) {
-        if (props.debug) {
-          console.warn('Subagents 加载失败:', formatErrorMessage(error));
-        }
-      }
-
-      // 7. 初始化 HookManager 并执行 SessionStart hooks
+      // 6. 初始化 workspace 资源和 HookManager，并执行 SessionStart hooks
       try {
         const hookManager = HookManager.getInstance();
-        hookManager.loadConfig(mergedConfig.hooks || {});
+        hookManager.loadConfig(mergedConfig.hooks || {}, getCwd());
+        const resources = await resolveWorkspaceAgentResources(getCwd());
         if (props.debug && mergedConfig.hooks?.enabled) {
           console.log('[OK] Hooks 系统已启用');
+        }
+        if (props.debug) {
+          console.log(
+            `[OK] Workspace resources: ${resources.subagents.getAllNames().length} agents, ` +
+              `${resources.skills.size} skills, ` +
+              `${resources.commands.getCommandCount() + resources.commands.getPluginCommandCount()} commands, ` +
+              `${resources.plugins.getAll().length} plugins`
+          );
         }
 
         // 获取当前 session ID 并设置到日志系统（每个 session 使用独立的日志文件）
         const state = getState();
         const sessionId = state.session.sessionId;
         setLoggerSessionId(sessionId);
-
-        // 执行 SessionStart hooks
-        if (hookManager.isEnabled()) {
-          const permissionMode =
-            state.config.config?.permissionMode || PermissionMode.DEFAULT;
-          const isResume = !!props.resume;
-
-          const sessionStartResult = await hookManager.executeSessionStartHooks({
-            projectDir: getCwd(),
-            sessionId,
-            permissionMode,
-            isResume,
-            resumeSessionId:
-              typeof props.resume === 'string' ? props.resume : undefined,
-          });
-
-          // 应用环境变量
-          if (sessionStartResult.env) {
-            for (const [key, value] of Object.entries(sessionStartResult.env)) {
-              process.env[key] = value;
-            }
-            if (props.debug) {
-              console.log(
-                '[OK] SessionStart hooks 注入环境变量:',
-                Object.keys(sessionStartResult.env).join(', ')
-              );
-            }
-          }
-
-          if (sessionStartResult.warning && props.debug) {
-            console.warn('SessionStart hooks 警告:', sessionStartResult.warning);
-          }
-        }
       } catch (error) {
         if (props.debug) {
           console.warn('Hooks 初始化失败:', formatErrorMessage(error));
         }
       }
 
-      // 8. 初始化 Skills（发现并加载所有可用的 Skills）
-      try {
-        const skillsResult = await discoverSkills();
-        if (props.debug && skillsResult.skills.length > 0) {
-          console.log(
-            `[OK] 已加载 ${skillsResult.skills.length} 个 skills: ${skillsResult.skills.map((s) => s.name).join(', ')}`
-          );
-        }
-        if (skillsResult.errors.length > 0 && props.debug) {
-          for (const error of skillsResult.errors) {
-            console.warn(`Skill 加载错误 (${error.path}): ${error.error}`);
-          }
-        }
-      } catch (error) {
-        if (props.debug) {
-          console.warn('Skills 初始化失败:', formatErrorMessage(error));
-        }
-      }
-
-      // 9. 初始化自定义命令（发现并加载所有 .blade/commands/ 和 .claude/commands/ 下的命令）
-      try {
-        const customCommandsResult = await initializeCustomCommands(getCwd());
-        if (props.debug && customCommandsResult.commands.length > 0) {
-          console.log(
-            `[OK] 已加载 ${customCommandsResult.commands.length} 个自定义命令: ${customCommandsResult.commands.map((c) => c.name).join(', ')}`
-          );
-        }
-        if (customCommandsResult.errors.length > 0 && props.debug) {
-          for (const error of customCommandsResult.errors) {
-            console.warn(`自定义命令加载错误 (${error.path}): ${error.error}`);
-          }
-        }
-      } catch (error) {
-        if (props.debug) {
-          console.warn('自定义命令初始化失败:', formatErrorMessage(error));
-        }
-      }
-
-      // 10. 初始化插件系统（加载 --plugin-dir 指定的插件和默认目录插件）
-      try {
-        const pluginRegistry = getPluginRegistry();
-        const pluginResult = await pluginRegistry.initialize(
-          getCwd(),
-          props.pluginDir || []
-        );
-
-        if (props.debug && pluginResult.plugins.length > 0) {
-          console.log(
-            `[OK] 已加载 ${pluginResult.plugins.length} 个插件: ${pluginResult.plugins.map((p) => p.manifest.name).join(', ')}`
-          );
-        }
-
-        // 将插件集成到各子系统
-        if (pluginResult.plugins.length > 0) {
-          const integrationResult = await integrateAllPlugins();
-          if (props.debug) {
-            const { totalCommands, totalSkills, totalAgents, totalMcpServers } =
-              integrationResult;
-            console.log(
-              `  [OK] 已集成: ${totalCommands} 命令, ${totalSkills} 技能, ${totalAgents} 代理, ${totalMcpServers} MCP 服务器`
-            );
-          }
-        }
-
-        if (pluginResult.errors.length > 0 && props.debug) {
-          for (const error of pluginResult.errors) {
-            console.warn(`插件加载错误 (${error.path}): ${error.error}`);
-          }
-        }
-      } catch (error) {
-        if (props.debug) {
-          console.warn('插件系统初始化失败:', formatErrorMessage(error));
-        }
-      }
-
-      // 11. 注册退出清理函数
+      // 7. 注册退出清理函数
       registerCleanup(async () => {
         await BackgroundShellManager.getInstance().killAll();
         await McpRegistry.getInstance().disconnectAll();
@@ -267,6 +155,15 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
     } catch (error) {
       handleInitializationError(error, !!props.debug);
     }
+  });
+
+  const resolveWorkspaceTrust = useMemoizedFn(async () => {
+    const status = await WorkspaceTrustService.getInstance().getStatus(getCwd());
+    if (status.state === 'untrusted' || status.state === 'error') {
+      setWorkspaceTrust(status);
+      return;
+    }
+    await initializeApp();
   });
 
   // 启动流程：先检查版本，再决定是否初始化应用
@@ -282,8 +179,8 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
       }
     }
 
-    // 2. 不需要升级，直接初始化应用
-    await initializeApp();
+    // 2. 不需要升级，先完成 workspace trust 决策
+    await resolveWorkspaceTrust();
   });
 
   // 启动时初始化配置和主题
@@ -299,7 +196,27 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
           versionInfo={versionInfo}
           onComplete={() => {
             setShowUpdatePrompt(false);
-            initializeApp(); // 用户跳过更新后，继续初始化应用
+            resolveWorkspaceTrust();
+          }}
+        />
+      </ErrorBoundary>
+    );
+  }
+
+  if (workspaceTrust) {
+    return (
+      <ErrorBoundary>
+        <WorkspaceTrustPrompt
+          status={workspaceTrust}
+          onTrust={async () => {
+            await WorkspaceTrustService.getInstance().trust(getCwd());
+            await reloadWorkspaceTrustConfiguration();
+            setWorkspaceTrust(null);
+            await initializeApp();
+          }}
+          onContinueSafely={async () => {
+            setWorkspaceTrust(null);
+            await initializeApp();
           }}
         />
       </ErrorBoundary>

@@ -65,6 +65,7 @@ const AVAILABLE_TOOLS = [
   { label: 'Read - 读取文件', value: 'Read' },
   { label: 'Write - 写入文件', value: 'Write' },
   { label: 'Edit - 编辑文件', value: 'Edit' },
+  { label: 'ApplyPatch - 原子多文件补丁', value: 'ApplyPatch' },
   { label: 'Bash - 执行命令', value: 'Bash' },
   { label: '所有工具 (不限制)', value: 'all' },
 ];
@@ -217,6 +218,7 @@ export function AgentCreationWizard({
 - **Read**: 读取文件内容
 - **Write**: 写入/创建文件
 - **Edit**: 编辑文件（字符串替换）
+- **ApplyPatch**: 原子应用多文件文本补丁
 - **Bash**: 执行命令行命令
 
 ## 可用颜色
