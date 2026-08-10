@@ -128,17 +128,21 @@ describe('EditProviderModal', () => {
   }
 
   async function selectOption(label: string, value: string) {
-    const select = document.querySelector(
+    const trigger = document.querySelector(
       `[aria-label="${label}"]`
-    ) as HTMLSelectElement;
-    expect(select).toBeTruthy();
-    const setter = Object.getOwnPropertyDescriptor(
-      HTMLSelectElement.prototype,
-      'value'
-    )?.set;
+    ) as HTMLButtonElement;
+    expect(trigger).toBeTruthy();
     await act(async () => {
-      setter?.call(select, value);
-      select.dispatchEvent(new Event('change', { bubbles: true }));
+      trigger.click();
+      await Promise.resolve();
+    });
+    const option = document.querySelector(
+      `[role="option"][data-value="${value}"]`
+    ) as HTMLButtonElement;
+    expect(option).toBeTruthy();
+    await act(async () => {
+      option.click();
+      await Promise.resolve();
     });
   }
 });

@@ -1,6 +1,7 @@
 import { Loader2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Select } from '@/components/ui/select';
 import { restoreFocusToSelector } from '@/lib/mobileNavigationFocus';
 
 export interface ProviderChannel {
@@ -143,19 +144,17 @@ export function EditProviderModal({
         </label>
         <label className="flex flex-col gap-2 font-mono text-sm">
           Wire API
-          <select
+          <Select
             aria-label="Wire API"
             value={wireApi}
-            onChange={(event) =>
-              setWireApi(
-                event.target.value as 'openai-completions' | 'anthropic-messages'
-              )
+            onChange={(val) =>
+              setWireApi(val as 'openai-completions' | 'anthropic-messages')
             }
-            className="field"
-          >
-            <option value="openai-completions">OpenAI Chat Completions</option>
-            <option value="anthropic-messages">Anthropic Messages</option>
-          </select>
+            options={[
+              { value: 'openai-completions', label: 'OpenAI Chat Completions' },
+              { value: 'anthropic-messages', label: 'Anthropic Messages' },
+            ]}
+          />
         </label>
         <label className="flex flex-col gap-2 font-mono text-sm">
           Base URL

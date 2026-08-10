@@ -24,6 +24,7 @@ import {
   shortcutKeyLabels,
 } from '@/lib/keyboardShortcuts';
 import { cn } from '@/lib/utils';
+import { Select } from '@/components/ui/select';
 import { type SettingsSection, useAppStore } from '@/store/AppStore';
 import { type ModelConfig, useConfigStore } from '@/store/ConfigStore';
 import { useSettingsStore } from '@/store/SettingsStore';
@@ -849,25 +850,26 @@ export function SettingsModal() {
                           AI will respond in this language
                         </span>
                       </div>
-                      <select
+                      <Select
                         aria-label="Response language"
                         value={settings.language}
-                        onChange={(e) =>
-                          settings.updateSettings({ language: e.target.value })
+                        onChange={(val) =>
+                          settings.updateSettings({ language: val })
                         }
-                        className="field h-8 w-auto min-w-[120px] text-[12px]"
-                      >
-                        <option value="en-US">English (US)</option>
-                        <option value="zh-CN">简体中文</option>
-                        <option value="zh-TW">繁體中文</option>
-                        <option value="ja-JP">日本語</option>
-                        <option value="ko-KR">한국어</option>
-                        <option value="es-ES">Español</option>
-                        <option value="fr-FR">Français</option>
-                        <option value="de-DE">Deutsch</option>
-                        <option value="pt-BR">Português (BR)</option>
-                        <option value="ru-RU">Русский</option>
-                      </select>
+                        className="h-8 w-auto min-w-[140px] text-[12px]"
+                        options={[
+                          { value: 'en-US', label: 'English (US)' },
+                          { value: 'zh-CN', label: '简体中文' },
+                          { value: 'zh-TW', label: '繁體中文' },
+                          { value: 'ja-JP', label: '日本語' },
+                          { value: 'ko-KR', label: '한국어' },
+                          { value: 'es-ES', label: 'Español' },
+                          { value: 'fr-FR', label: 'Français' },
+                          { value: 'de-DE', label: 'Deutsch' },
+                          { value: 'pt-BR', label: 'Português (BR)' },
+                          { value: 'ru-RU', label: 'Русский' },
+                        ]}
+                      />
                     </div>
                     <div className="flex items-center justify-between py-2">
                       <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
@@ -890,22 +892,20 @@ export function SettingsModal() {
                           How the agent phrases its replies across every session
                         </span>
                       </div>
-                      <select
+                      <Select
                         aria-label="Communication style"
                         value={settings.communicationStyle ?? 'auto'}
-                        onChange={(e) =>
+                        onChange={(val) =>
                           settings.updateSettings({
-                            communicationStyle: e.target.value,
+                            communicationStyle: val,
                           })
                         }
-                        className="h-8 bg-[#F3F4F6] dark:bg-[#18181b] text-[#111827] dark:text-[#E5E5E5] text-[12px] font-mono rounded-md px-3 border border-[#E5E7EB] dark:border-[#27272a]"
-                      >
-                        {DEFAULT_COMMUNICATION_STYLES.map((style) => (
-                          <option key={style.id} value={style.id}>
-                            {style.name}
-                          </option>
-                        ))}
-                      </select>
+                        className="h-8 w-auto min-w-[140px] text-[12px]"
+                        options={DEFAULT_COMMUNICATION_STYLES.map((style) => ({
+                          value: style.id,
+                          label: style.name,
+                        }))}
+                      />
                     </div>
                   </div>
 
@@ -957,28 +957,29 @@ export function SettingsModal() {
                           Syntax highlighting colors
                         </span>
                       </div>
-                      <select
+                      <Select
                         aria-label="Code theme"
                         value={settings.theme}
-                        onChange={(e) =>
-                          settings.updateSettings({ theme: e.target.value })
+                        onChange={(val) =>
+                          settings.updateSettings({ theme: val })
                         }
-                        className="field h-8 w-auto min-w-[120px] text-[12px]"
-                      >
-                        <option value="dracula">Dracula</option>
-                        <option value="monokai">Monokai</option>
-                        <option value="nord">Nord</option>
-                        <option value="tokyo-night">Tokyo Night</option>
-                        <option value="one-dark">One Dark</option>
-                        <option value="catppuccin">Catppuccin</option>
-                        <option value="gruvbox">Gruvbox</option>
-                        <option value="github">GitHub</option>
-                        <option value="solarized-light">Solarized Light</option>
-                        <option value="solarized-dark">Solarized Dark</option>
-                        <option value="ayu-dark">Ayu Dark</option>
-                        <option value="rose-pine">Rose Pine</option>
-                        <option value="kanagawa">Kanagawa</option>
-                      </select>
+                        className="h-8 w-auto min-w-[140px] text-[12px]"
+                        options={[
+                          { value: 'dracula', label: 'Dracula' },
+                          { value: 'monokai', label: 'Monokai' },
+                          { value: 'nord', label: 'Nord' },
+                          { value: 'tokyo-night', label: 'Tokyo Night' },
+                          { value: 'one-dark', label: 'One Dark' },
+                          { value: 'catppuccin', label: 'Catppuccin' },
+                          { value: 'gruvbox', label: 'Gruvbox' },
+                          { value: 'github', label: 'GitHub' },
+                          { value: 'solarized-light', label: 'Solarized Light' },
+                          { value: 'solarized-dark', label: 'Solarized Dark' },
+                          { value: 'ayu-dark', label: 'Ayu Dark' },
+                          { value: 'rose-pine', label: 'Rose Pine' },
+                          { value: 'kanagawa', label: 'Kanagawa' },
+                        ]}
+                      />
                     </div>
                   </div>
 
@@ -1084,19 +1085,20 @@ export function SettingsModal() {
                       placeholder="Search actions..."
                       className="field flex-1 text-[12px]"
                     />
-                    <select
+                    <Select
                       aria-label="Shortcut scope"
                       value={shortcutScope}
-                      onChange={(event) =>
-                        setShortcutScope(event.target.value as typeof shortcutScope)
+                      onChange={(val) =>
+                        setShortcutScope(val as typeof shortcutScope)
                       }
-                      className="field w-auto min-w-[120px] text-[12px]"
-                    >
-                      <option value="all">All scopes</option>
-                      <option value="global">Global</option>
-                      <option value="chat">Chat</option>
-                      <option value="layout">Layout</option>
-                    </select>
+                      className="w-auto min-w-[120px] text-[12px]"
+                      options={[
+                        { value: 'all', label: 'All scopes' },
+                        { value: 'global', label: 'Global' },
+                        { value: 'chat', label: 'Chat' },
+                        { value: 'layout', label: 'Layout' },
+                      ]}
+                    />
                     <button
                       onClick={() => {
                         setShortcutQuery('');

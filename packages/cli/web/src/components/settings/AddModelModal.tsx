@@ -1,6 +1,7 @@
 import { AlertCircle, Eye, EyeOff, Loader2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Select } from '@/components/ui/select';
 import { requestJson } from '@/lib/http';
 import { restoreFocusToSelector } from '@/lib/mobileNavigationFocus';
 
@@ -232,30 +233,24 @@ export function AddModelModal({
 
           <label className="flex flex-col gap-2 text-[13px] font-mono text-zinc-500">
             Provider
-            <select
+            <Select
               aria-label="Provider"
               value={provider?.id ?? ''}
               disabled={loadingProviders}
-              onChange={(event) => {
-                setProvider(providers.find((entry) => entry.id === event.target.value));
+              onChange={(val) => {
+                setProvider(providers.find((entry) => entry.id === val));
                 setDisplayName('');
                 setChannelId('');
                 setChannelName('');
                 setCustomModelId('');
                 setCustomBaseUrl('');
               }}
-              className="field"
-            >
-              <option value="">
-                {loadingProviders ? 'Loading providers...' : 'Select provider'}
-              </option>
-              {providers.map((entry) => (
-                <option key={entry.id} value={entry.id}>
-                  {entry.name} ({entry.modelCount})
-                  {entry.configured ? ' - configured' : ''}
-                </option>
-              ))}
-            </select>
+              placeholder={loadingProviders ? 'Loading providers...' : 'Select provider'}
+              options={providers.map((entry) => ({
+                value: entry.id,
+                label: `${entry.name} (${entry.modelCount})${entry.configured ? ' - configured' : ''}`,
+              }))}
+            />
           </label>
 
           {customProvider ? (
@@ -331,30 +326,21 @@ export function AddModelModal({
           ) : (
             <label className="flex flex-col gap-2 text-[13px] font-mono text-zinc-500">
               Model
-              <select
+              <Select
                 aria-label="Model"
                 value={model?.id ?? ''}
                 disabled={!provider || loadingModels}
-                onChange={(event) => {
-                  const selected = models.find(
-                    (entry) => entry.id === event.target.value
-                  );
+                onChange={(val) => {
+                  const selected = models.find((entry) => entry.id === val);
                   setModel(selected);
                   if (selected) setDisplayName(selected.name);
                 }}
-                className="field"
-              >
-                <option value="">
-                  {loadingModels ? 'Loading models...' : 'Select model'}
-                </option>
-                {models.map((entry) => (
-                  <option key={entry.id} value={entry.id}>
-                    {entry.name} - {Math.round(entry.contextWindow / 1000)}K
-                    {entry.reasoning ? ' - reasoning' : ''}
-                    {entry.input.includes('image') ? ' - vision' : ''}
-                  </option>
-                ))}
-              </select>
+                placeholder={loadingModels ? 'Loading models...' : 'Select model'}
+                options={models.map((entry) => ({
+                  value: entry.id,
+                  label: `${entry.name} - ${Math.round(entry.contextWindow / 1000)}K${entry.reasoning ? ' - reasoning' : ''}${entry.input.includes('image') ? ' - vision' : ''}`,
+                }))}
+              />
             </label>
           )}
 

@@ -373,23 +373,22 @@ describe('SettingsModal', () => {
       await Promise.resolve();
     });
 
-    const styleSelect = document.body.querySelector<HTMLSelectElement>(
-      'select[aria-label="Communication style"]'
+    const styleTrigger = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Communication style"]'
     );
-    expect(styleSelect).toBeInstanceOf(HTMLSelectElement);
-    expect(styleSelect?.value).toBe('auto');
-    // The built-in catalog is offered as options.
-    expect(document.body.textContent).toContain('Explanatory');
+    expect(styleTrigger).toBeInstanceOf(HTMLButtonElement);
+    expect(styleTrigger?.textContent).toContain('Auto');
 
     await act(async () => {
-      if (styleSelect) {
-        const setter = Object.getOwnPropertyDescriptor(
-          HTMLSelectElement.prototype,
-          'value'
-        )?.set;
-        setter?.call(styleSelect, 'explanatory');
-        styleSelect.dispatchEvent(new Event('change', { bubbles: true }));
-      }
+      styleTrigger?.click();
+      await Promise.resolve();
+    });
+    const option = document.querySelector<HTMLButtonElement>(
+      '[role="option"][data-value="explanatory"]'
+    );
+    expect(option).toBeTruthy();
+    await act(async () => {
+      option?.click();
       await Promise.resolve();
     });
 
