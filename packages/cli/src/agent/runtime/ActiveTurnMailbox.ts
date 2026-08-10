@@ -83,7 +83,11 @@ export class ActiveTurnMailbox {
 
   async enqueue(
     content: UserMessageContent,
-    options: { allowBeforeTurn?: boolean } = {}
+    options: {
+      allowBeforeTurn?: boolean;
+      messageId?: string;
+      persisted?: boolean;
+    } = {}
   ): Promise<SteeringEnqueueResult> {
     return this.transitionMutex.runExclusive(async () => {
       if (!this.activeTurn && !options.allowBeforeTurn) {
@@ -98,7 +102,7 @@ export class ActiveTurnMailbox {
         this.activeTurn && !this.activeTurn.sealed
           ? ('current_turn' as const)
           : ('next_turn' as const);
-      return this.enqueueDurably(content, delivery);
+      return this.enqueueDurably(content, delivery, options);
     });
   }
 
@@ -245,12 +249,14 @@ export class ActiveTurnMailbox {
 
   private async enqueueDurably(
     content: UserMessageContent,
-    delivery: 'current_turn' | 'next_turn'
+    delivery: 'current_turn' | 'next_turn',
+    options: { messageId?: string; persisted?: boolean } = {}
   ): Promise<SteeringEnqueueResult> {
     const message = {
-      id: nanoid(12),
+      id: options.messageId ?? nanoid(12),
       content,
       queuedAt: Date.now(),
+      ...(options.persisted ? { persisted: true } : {}),
     };
     const accepted = await this.inbox.enqueue(message, (pending) => {
       if (pending.length >= MAX_PENDING_STEERS) return false;

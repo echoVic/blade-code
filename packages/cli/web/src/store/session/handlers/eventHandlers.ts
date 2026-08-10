@@ -767,6 +767,132 @@ const handleProjectRulesLoaded: EventHandler = (props, get, set) => {
   });
 };
 
+const userShellMessageId = (executionId: string): string =>
+  `user-shell-${executionId}`;
+
+const handleUserShellStarted: EventHandler = (props, get, set) => {
+  const { currentSessionId, addMessage, messages, updateMessage } = get();
+  if (
+    props.sessionId !== currentSessionId ||
+    typeof props.executionId !== 'string' ||
+    typeof props.command !== 'string'
+  ) {
+    return;
+  }
+  const id = userShellMessageId(props.executionId);
+  const message = {
+    id,
+    role: 'user' as const,
+    content: `! ${props.command}`,
+    timestamp: Date.now(),
+    metadata: {
+      userShellExecution: {
+        executionId: props.executionId,
+        command: props.command,
+        status: 'running',
+        output: '',
+      },
+    },
+  };
+  if (messages.some((candidate) => candidate.id === id)) {
+    updateMessage(id, message);
+  } else {
+    addMessage(message);
+  }
+  if (props.auxiliary !== true) {
+    set({
+      isStreaming: true,
+      agentPhase: 'running',
+      error: null,
+      errorContext: null,
+    });
+  }
+};
+
+const handleUserShellOutput: EventHandler = (props, get) => {
+  const { currentSessionId, messages, updateMessage } = get();
+  if (
+    props.sessionId !== currentSessionId ||
+    typeof props.executionId !== 'string' ||
+    typeof props.chunk !== 'string'
+  ) {
+    return;
+  }
+  const id = userShellMessageId(props.executionId);
+  const message = messages.find((candidate) => candidate.id === id);
+  if (!message) return;
+  const live =
+    message.metadata?.userShellExecution &&
+    typeof message.metadata.userShellExecution === 'object'
+      ? (message.metadata.userShellExecution as Record<string, unknown>)
+      : {};
+  const output = `${typeof live.output === 'string' ? live.output : ''}${props.chunk}`;
+  updateMessage(id, {
+    content: `! ${String(live.command ?? '')}\n${output}`,
+    metadata: {
+      ...message.metadata,
+      userShellExecution: {
+        ...live,
+        output,
+        streamTruncated: props.streamTruncated === true,
+      },
+    },
+  });
+};
+
+const handleUserShellCompleted: EventHandler = (props, get, set) => {
+  const { currentSessionId, messages, addMessage, updateMessage } = get();
+  if (
+    props.sessionId !== currentSessionId ||
+    typeof props.executionId !== 'string' ||
+    !props.record ||
+    typeof props.record !== 'object' ||
+    Array.isArray(props.record)
+  ) {
+    return;
+  }
+  const record = props.record as Record<string, unknown>;
+  const command = typeof record.command === 'string' ? record.command : '';
+  const stdout = typeof record.stdout === 'string' ? record.stdout : '';
+  const stderr = typeof record.stderr === 'string' ? record.stderr : '';
+  const output = [stdout, stderr ? `stderr:\n${stderr}` : '']
+    .filter(Boolean)
+    .join('\n');
+  const id = userShellMessageId(props.executionId);
+  const patch = {
+    role: 'user' as const,
+    content: [`! ${command}`, output || '(no output)'].join('\n'),
+    metadata: { userShellCommand: record },
+  };
+  if (messages.some((candidate) => candidate.id === id)) {
+    updateMessage(id, patch);
+  } else {
+    addMessage({
+      id,
+      ...patch,
+      timestamp: Date.now(),
+    });
+  }
+  if (props.auxiliary !== true) {
+    set({
+      isStreaming: false,
+      isStopping: false,
+      agentPhase: 'idle',
+    });
+  }
+  if (
+    props.delivery === 'current_turn' ||
+    props.delivery === 'next_turn'
+  ) {
+    set({
+      pendingSteeringCount:
+        typeof props.queued === 'number' ? Math.max(0, props.queued) : 0,
+      pendingInputDelivery:
+        props.delivery === 'current_turn' ? 'current_turn' : 'next_turn',
+    });
+  }
+};
+
 const handleTokenUsage: EventHandler = (props, get) => {
   const { currentSessionId, updateTokenUsage, setMaxContextTokens } = get();
   if (props.sessionId !== currentSessionId) return;
@@ -1767,6 +1893,9 @@ const eventHandlers: Record<string, EventHandler> = {
   'mcp.instructions.changed': handleMcpInstructionsChanged,
   'mcp.task.changed': handleMcpTaskChanged,
   'project.rules.loaded': handleProjectRulesLoaded,
+  'user.shell.started': handleUserShellStarted,
+  'user.shell.output': handleUserShellOutput,
+  'user.shell.completed': handleUserShellCompleted,
   'token.usage': handleTokenUsage,
   'task.updated': handleTaskUpdate,
   'subagent.start': handleSubagentStart,

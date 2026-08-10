@@ -1,5 +1,5 @@
-import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import { OwnedProcessTree } from '../../../../src/utils/process/OwnedProcessTree.js';
 
@@ -55,6 +55,28 @@ describe('OwnedProcessTree', () => {
       forced: false,
     });
     expect(killProcess).not.toHaveBeenCalled();
+  });
+
+  it('retains an owned group after its leader exits when configured', async () => {
+    const child = new FakeChild(42_427);
+    const killProcess = vi.fn(() => true);
+    const tree = new OwnedProcessTree(asChild(child), {
+      platform: 'linux',
+      releaseOnExit: false,
+      killProcess,
+      wait: async () => undefined,
+    });
+    child.emit('close', 9, null);
+
+    await expect(tree.terminate()).resolves.toMatchObject({
+      success: true,
+      alreadyExited: false,
+      forced: true,
+    });
+    expect(killProcess.mock.calls).toEqual([
+      [-42_427, 'SIGTERM'],
+      [-42_427, 'SIGKILL'],
+    ]);
   });
 
   it('refuses to broadcast to the caller process group', async () => {

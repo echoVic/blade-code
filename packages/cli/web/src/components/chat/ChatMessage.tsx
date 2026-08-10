@@ -1,31 +1,31 @@
-import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Copy,
-  FileText,
-  Loader2,
-  RotateCcw,
-} from 'lucide-react';
-import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
 import { BladeMark } from '@/components/layout/BladeMark';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { type SubagentSession, sessionService } from '@/services';
 import { useAppStore } from '@/store/AppStore';
 import type {
-  AgentResponseContent,
-  Message,
-  MessageContent,
-  ToolCallInfo,
+    AgentResponseContent,
+    Message,
+    MessageContent,
+    ToolCallInfo,
 } from '@/store/session';
 import { useSessionStore } from '@/store/session';
 import {
-  getAgentTimeline,
-  getSubagents,
-  getTimelineText,
+    getAgentTimeline,
+    getSubagents,
+    getTimelineText,
 } from '@/store/session/utils/agentTimeline';
 import { aggregateMessages } from '@/store/session/utils/aggregateMessages';
+import {
+    Check,
+    ChevronDown,
+    ChevronRight,
+    Copy,
+    FileText,
+    Loader2,
+    RotateCcw,
+} from 'lucide-react';
+import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
 import { McpElicitationSection } from './McpElicitationSection';
 
 export type { Message };
@@ -1217,6 +1217,63 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
   }
 
   if (isUser) {
+    const shell =
+      message.metadata?.userShellCommand &&
+      typeof message.metadata.userShellCommand === 'object'
+        ? (message.metadata.userShellCommand as Record<string, unknown>)
+        : message.metadata?.userShellExecution &&
+            typeof message.metadata.userShellExecution === 'object'
+          ? (message.metadata.userShellExecution as Record<string, unknown>)
+          : undefined;
+    if (shell) {
+      const command = typeof shell.command === 'string' ? shell.command : '';
+      const status =
+        shell.status === 'running'
+          ? 'running'
+          : shell.status === 'completed'
+            ? 'success'
+            : 'error';
+      const output =
+        typeof shell.output === 'string'
+          ? shell.output
+          : [
+              typeof shell.stdout === 'string' ? shell.stdout : '',
+              typeof shell.stderr === 'string' && shell.stderr
+                ? `stderr:\n${shell.stderr}`
+                : '',
+            ]
+              .filter(Boolean)
+              .join('\n');
+      return (
+        <div
+          data-chat-message-id={message.id}
+          data-user-shell-command
+          className="flex w-full justify-end p-4"
+        >
+          <div className="w-full max-w-[85%] overflow-hidden rounded-lg border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))]">
+            <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface-2))] px-3 py-2">
+              <div className="min-w-0 truncate font-mono text-[12px] text-[hsl(var(--deck-ink))]">
+                <span className="mr-2 text-amber-600 dark:text-amber-400">$</span>
+                {command}
+              </div>
+              <StatusPill status={status} />
+            </div>
+            <pre className="max-h-64 overflow-auto whitespace-pre-wrap px-3 py-2 font-mono text-[11px] text-[hsl(var(--deck-ink-muted))]">
+              {output || '(no output)'}
+            </pre>
+            {typeof shell.exitCode === 'number' && (
+              <div className="border-t border-[hsl(var(--deck-border))] px-3 py-1.5 font-mono text-[10px] text-[hsl(var(--deck-ink-faint))]">
+                exit {shell.exitCode}
+                {typeof shell.durationMs === 'number'
+                  ? ` · ${(shell.durationMs / 1000).toFixed(3)}s`
+                  : ''}
+                {shell.truncated === true ? ' · truncated' : ''}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
     const { text, images } = getUserMessageParts(message.content);
     return (
       <div

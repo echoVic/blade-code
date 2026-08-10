@@ -1,8 +1,8 @@
 import { Default, Runtime, type Static, StringEnum, Type } from '../schema/index.js';
 import {
-  MAX_INLINE_ATTACHMENT_BYTES,
-  MAX_INLINE_ATTACHMENT_COUNT,
-  MAX_USER_MESSAGE_TEXT_CHARS,
+    MAX_INLINE_ATTACHMENT_BYTES,
+    MAX_INLINE_ATTACHMENT_COUNT,
+    MAX_USER_MESSAGE_TEXT_CHARS,
 } from './attachmentLimits.js';
 
 export { parseSchema } from '../schema/index.js';
@@ -556,6 +556,60 @@ export const SendMessageRequestSchema = Runtime(
   })
 );
 export type SendMessageRequest = Static<typeof SendMessageRequestSchema>;
+
+export const UserShellCommandStatusSchema = StringEnum([
+  'completed',
+  'failed',
+  'aborted',
+  'timed_out',
+  'spawn_error',
+]);
+
+export const UserShellCommandRecordSchema = Runtime(
+  Type.Object({
+    version: Type.Literal(1),
+    command: Type.String(),
+    status: UserShellCommandStatusSchema,
+    exitCode: Type.Union([Type.Integer(), Type.Null()]),
+    durationMs: Type.Number({ minimum: 0 }),
+    stdout: Type.String(),
+    stderr: Type.String(),
+    stdoutOmittedBytes: Type.Integer({ minimum: 0 }),
+    stderrOmittedBytes: Type.Integer({ minimum: 0 }),
+    binaryOutput: Type.Boolean(),
+    truncated: Type.Boolean(),
+  })
+);
+export type UserShellCommandRecord = Static<
+  typeof UserShellCommandRecordSchema
+>;
+
+export const UserShellCommandRequestSchema = Runtime(
+  Type.Object({
+    command: Type.String({
+      minLength: 1,
+      maxLength: 32 * 1024,
+    }),
+    projectPath: Type.Optional(Type.String()),
+  })
+);
+export type UserShellCommandRequest = Static<
+  typeof UserShellCommandRequestSchema
+>;
+
+export const UserShellCommandResponseSchema = Runtime(
+  Type.Object({
+    executionId: Type.String(),
+    messageId: Type.String(),
+    record: UserShellCommandRecordSchema,
+    auxiliary: Type.Boolean(),
+    delivery: Type.Optional(StringEnum(['current_turn', 'next_turn'])),
+    queued: Type.Optional(Type.Integer({ minimum: 0 })),
+  })
+);
+export type UserShellCommandResponse = Static<
+  typeof UserShellCommandResponseSchema
+>;
 
 export const SendMessageResponseSchema = Runtime(
   Type.Object({
