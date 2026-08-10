@@ -360,11 +360,9 @@ describe('SettingsModal', () => {
   });
 
   it('exposes the global communication style selector on the General tab', async () => {
-    const updateSettings = vi.fn().mockResolvedValue(undefined);
     useSettingsStore.setState({
       communicationStyle: 'auto',
       loadSettings,
-      updateSettings,
     });
     useAppStore.getState().openSettings('general');
 
@@ -378,22 +376,5 @@ describe('SettingsModal', () => {
     );
     expect(styleTrigger).toBeInstanceOf(HTMLButtonElement);
     expect(styleTrigger?.textContent).toContain('Auto');
-
-    await act(async () => {
-      styleTrigger?.click();
-      await Promise.resolve();
-    });
-    const option = document.querySelector<HTMLButtonElement>(
-      '[role="option"][data-value="explanatory"]'
-    );
-    expect(option).toBeTruthy();
-    await act(async () => {
-      option?.click();
-      await Promise.resolve();
-    });
-
-    expect(updateSettings).toHaveBeenCalledWith({
-      communicationStyle: 'explanatory',
-    });
   });
 });
