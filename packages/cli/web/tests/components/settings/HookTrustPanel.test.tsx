@@ -31,6 +31,14 @@ const untrusted = {
   ],
 };
 
+const sessionEnabled = {
+  sessionId: 'session-1',
+  projectPath: '/workspace/project',
+  enabled: true,
+  paused: false,
+  configEnabled: true,
+};
+
 describe('HookTrustPanel', () => {
   let container: HTMLDivElement;
   let root: ReactDOM.Root;
@@ -55,11 +63,14 @@ describe('HookTrustPanel', () => {
   });
 
   it('requires explicit confirmation before trusting the reviewed digest', async () => {
-    requestJson.mockResolvedValueOnce(untrusted).mockResolvedValueOnce({
-      ...untrusted,
-      state: 'trusted',
-      trustedDigest: untrusted.currentDigest,
-    });
+    requestJson
+      .mockResolvedValueOnce(untrusted)
+      .mockResolvedValueOnce(sessionEnabled)
+      .mockResolvedValueOnce({
+        ...untrusted,
+        state: 'trusted',
+        trustedDigest: untrusted.currentDigest,
+      });
 
     await act(async () => {
       root.render(<HookTrustPanel />);
@@ -89,7 +100,7 @@ describe('HookTrustPanel', () => {
       confirmButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(requestJson).toHaveBeenNthCalledWith(2, '/hooks/trust', {
+    expect(requestJson).toHaveBeenNthCalledWith(3, '/hooks/trust', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -102,16 +113,18 @@ describe('HookTrustPanel', () => {
   });
 
   it('keeps a changed definition reviewable instead of auto-trusting it', async () => {
-    requestJson.mockResolvedValueOnce({
-      ...untrusted,
-      state: 'modified',
-      definitions: [
-        {
-          ...untrusted.definitions[0],
-          target: 'bin/changed-check.sh',
-        },
-      ],
-    });
+    requestJson
+      .mockResolvedValueOnce({
+        ...untrusted,
+        state: 'modified',
+        definitions: [
+          {
+            ...untrusted.definitions[0],
+            target: 'bin/changed-check.sh',
+          },
+        ],
+      })
+      .mockResolvedValueOnce(sessionEnabled);
 
     await act(async () => {
       root.render(<HookTrustPanel />);
@@ -124,24 +137,41 @@ describe('HookTrustPanel', () => {
 
   it('ignores a late trust response from the previously selected project', async () => {
     let resolveFirst!: (value: typeof untrusted) => void;
-    requestJson
-      .mockImplementationOnce(
-        () =>
-          new Promise<typeof untrusted>((resolve) => {
-            resolveFirst = resolve;
-          })
-      )
-      .mockResolvedValueOnce({
-        ...untrusted,
-        projectPath: '/workspace/second',
-        trustRoot: '/workspace/second',
-        definitions: [
-          {
-            ...untrusted.definitions[0],
-            target: 'bin/second-project.sh',
-          },
-        ],
-      });
+    requestJson.mockImplementation((url: string) => {
+      if (url === '/hooks/trust?projectPath=%2Fworkspace%2Fproject') {
+        return new Promise<typeof untrusted>((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      if (
+        url === '/hooks/session?projectPath=%2Fworkspace%2Fproject&sessionId=session-1'
+      ) {
+        return Promise.resolve(sessionEnabled);
+      }
+      if (url === '/hooks/trust?projectPath=%2Fworkspace%2Fsecond') {
+        return Promise.resolve({
+          ...untrusted,
+          projectPath: '/workspace/second',
+          trustRoot: '/workspace/second',
+          definitions: [
+            {
+              ...untrusted.definitions[0],
+              target: 'bin/second-project.sh',
+            },
+          ],
+        });
+      }
+      if (
+        url === '/hooks/session?projectPath=%2Fworkspace%2Fsecond&sessionId=session-2'
+      ) {
+        return Promise.resolve({
+          ...sessionEnabled,
+          sessionId: 'session-2',
+          projectPath: '/workspace/second',
+        });
+      }
+      return Promise.reject(new Error(`Unexpected request: ${url}`));
+    });
 
     await act(async () => {
       root.render(<HookTrustPanel />);
@@ -171,5 +201,68 @@ describe('HookTrustPanel', () => {
 
     expect(container.textContent).toContain('bin/second-project.sh');
     expect(container.textContent).not.toContain('bin/late-first-project.sh');
+  });
+
+  it('pauses only the current session through the session endpoint', async () => {
+    requestJson
+      .mockResolvedValueOnce(untrusted)
+      .mockResolvedValueOnce(sessionEnabled)
+      .mockResolvedValueOnce({
+        ...sessionEnabled,
+        enabled: false,
+        paused: true,
+      });
+
+    await act(async () => {
+      root.render(<HookTrustPanel />);
+    });
+
+    const sessionSwitch = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Pause hooks for current session"]'
+    );
+    expect(sessionSwitch?.getAttribute('aria-checked')).toBe('true');
+
+    await act(async () => {
+      sessionSwitch?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(requestJson).toHaveBeenNthCalledWith(3, '/hooks/session', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectPath: '/workspace/project',
+        sessionId: 'session-1',
+        enabled: false,
+      }),
+    });
+    expect(
+      container.querySelector('[aria-label="Enable hooks for current session"]')
+    ).toBeTruthy();
+  });
+
+  it('renders a disabled switch when runtime policy cannot execute hooks', async () => {
+    requestJson
+      .mockResolvedValueOnce({
+        ...untrusted,
+        enabled: false,
+        state: 'disabled',
+      })
+      .mockResolvedValueOnce({
+        ...sessionEnabled,
+        enabled: false,
+        configEnabled: false,
+      });
+
+    await act(async () => {
+      root.render(<HookTrustPanel />);
+    });
+
+    const sessionSwitch = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Hooks unavailable for current session"]'
+    );
+    expect(sessionSwitch).toBeInstanceOf(HTMLButtonElement);
+    expect(sessionSwitch?.disabled).toBe(true);
+    expect(sessionSwitch?.getAttribute('aria-checked')).toBe('false');
+    expect(container.textContent).toContain('Disabled by workspace configuration.');
   });
 });

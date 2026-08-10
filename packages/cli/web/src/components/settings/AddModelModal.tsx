@@ -2,6 +2,7 @@ import { AlertCircle, Eye, EyeOff, Loader2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Select } from '@/components/ui/select';
+import { useT } from '@/i18n';
 import { requestJson } from '@/lib/http';
 import { restoreFocusToSelector } from '@/lib/mobileNavigationFocus';
 
@@ -55,6 +56,7 @@ export function AddModelModal({
   onSave,
   saveError,
 }: AddModelModalProps) {
+  const t = useT();
   const [providers, setProviders] = useState<ProviderOption[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [provider, setProvider] = useState<ProviderOption>();
@@ -93,7 +95,9 @@ export function AddModelModal({
       .catch((error) => {
         if (active) {
           setLoadError(
-            error instanceof Error ? error.message : 'Failed to load providers'
+            error instanceof Error
+              ? error.message
+              : t('settings.models.addModal.loadProvidersError')
           );
         }
       })
@@ -103,7 +107,7 @@ export function AddModelModal({
     return () => {
       active = false;
     };
-  }, [open]);
+  }, [open, t]);
 
   useEffect(() => {
     if (!provider) return;
@@ -125,7 +129,9 @@ export function AddModelModal({
       .catch((error) => {
         if (active) {
           setLoadError(
-            error instanceof Error ? error.message : 'Failed to load models'
+            error instanceof Error
+              ? error.message
+              : t('settings.models.addModal.loadModelsError')
           );
         }
       })
@@ -135,7 +141,7 @@ export function AddModelModal({
     return () => {
       active = false;
     };
-  }, [provider]);
+  }, [provider, t]);
 
   const customFactory = provider?.factoryWireApi;
   const customProvider = Boolean(customFactory || provider?.custom);
@@ -147,20 +153,18 @@ export function AddModelModal({
     }
     if (customFactory) {
       if (!CHANNEL_ID_PATTERN.test(channelId.trim())) {
-        setLoadError(
-          'Channel ID must start with a lowercase letter and contain only lowercase letters, numbers, ".", "_" or "-"'
-        );
+        setLoadError(t('settings.models.addModal.channelIdError'));
         return;
       }
       let parsed: URL;
       try {
         parsed = new URL(customBaseUrl.trim());
       } catch {
-        setLoadError('Base URL must be an absolute HTTP(S) URL');
+        setLoadError(t('settings.models.addModal.invalidBaseUrl'));
         return;
       }
       if (!['http:', 'https:'].includes(parsed.protocol)) {
-        setLoadError('Base URL must be an absolute HTTP(S) URL');
+        setLoadError(t('settings.models.addModal.invalidBaseUrl'));
         return;
       }
     }
@@ -207,14 +211,18 @@ export function AddModelModal({
         aria-describedby={undefined}
         hideCloseButton
       >
-        <DialogTitle className="sr-only">Add Model</DialogTitle>
+        <DialogTitle className="sr-only">
+          {t('settings.models.addModal.title')}
+        </DialogTitle>
         <div className="flex flex-col gap-5 p-4 sm:p-6">
           <div className="flex items-center justify-between">
-            <h2 className="font-mono text-base font-semibold">Add Model</h2>
+            <h2 className="font-mono text-base font-semibold">
+              {t('settings.models.addModal.title')}
+            </h2>
             <button
               type="button"
               onClick={() => onOpenChange(false)}
-              aria-label="Close add model"
+              aria-label={t('settings.models.addModal.close')}
               className="flex h-8 w-8 items-center justify-center rounded-md"
             >
               <X className="h-4 w-4" />
@@ -232,9 +240,9 @@ export function AddModelModal({
           )}
 
           <label className="flex flex-col gap-2 text-[13px] font-mono text-zinc-500">
-            Provider
+            {t('settings.models.addModal.provider')}
             <Select
-              aria-label="Provider"
+              aria-label={t('settings.models.addModal.provider')}
               value={provider?.id ?? ''}
               disabled={loadingProviders}
               onChange={(val) => {
@@ -246,12 +254,22 @@ export function AddModelModal({
                 setCustomBaseUrl('');
               }}
               placeholder={
-                loadingProviders ? 'Loading providers...' : 'Select provider'
+                loadingProviders
+                  ? t('settings.models.addModal.loadingProviders')
+                  : t('settings.models.addModal.selectProvider')
               }
-              options={providers.map((entry) => ({
-                value: entry.id,
-                label: `${entry.name} (${entry.modelCount})${entry.configured ? ' - configured' : ''}`,
-              }))}
+              options={providers.map((entry) => {
+                const providerName =
+                  entry.factoryWireApi === 'openai-completions'
+                    ? t('settings.models.addModal.customOpenAI')
+                    : entry.factoryWireApi === 'anthropic-messages'
+                      ? t('settings.models.addModal.customAnthropic')
+                      : entry.name;
+                return {
+                  value: entry.id,
+                  label: `${providerName} (${entry.modelCount})${entry.configured ? t('settings.models.addModal.configuredSuffix') : ''}`,
+                };
+              })}
             />
           </label>
 
@@ -260,9 +278,9 @@ export function AddModelModal({
               {customFactory && (
                 <>
                   <label className="flex flex-col gap-2 text-[13px] font-mono text-zinc-500">
-                    Channel ID
+                    {t('settings.models.addModal.channelId')}
                     <input
-                      aria-label="Channel ID"
+                      aria-label={t('settings.models.addModal.channelId')}
                       value={channelId}
                       onChange={(event) => {
                         setChannelId(event.target.value);
@@ -274,13 +292,13 @@ export function AddModelModal({
                       className="field"
                     />
                     <span className="text-[11px] text-zinc-400">
-                      Stable config and credential identifier.
+                      {t('settings.models.addModal.channelIdHint')}
                     </span>
                   </label>
                   <label className="flex flex-col gap-2 text-[13px] font-mono text-zinc-500">
-                    Channel name
+                    {t('settings.models.addModal.channelName')}
                     <input
-                      aria-label="Channel name"
+                      aria-label={t('settings.models.addModal.channelName')}
                       value={channelName}
                       onChange={(event) => setChannelName(event.target.value)}
                       placeholder="Team Gateway"
@@ -288,9 +306,9 @@ export function AddModelModal({
                     />
                   </label>
                   <label className="flex flex-col gap-2 text-[13px] font-mono text-zinc-500">
-                    Base URL
+                    {t('settings.models.addModal.baseUrl')}
                     <input
-                      aria-label="Base URL"
+                      aria-label={t('settings.models.addModal.baseUrl')}
                       value={customBaseUrl}
                       onChange={(event) => {
                         setCustomBaseUrl(event.target.value);
@@ -305,16 +323,16 @@ export function AddModelModal({
                     />
                     <span className="text-[11px] text-zinc-400">
                       {customFactory === 'anthropic-messages'
-                        ? 'Uses the Anthropic Messages protocol.'
-                        : 'Uses the OpenAI Chat Completions protocol.'}
+                        ? t('settings.models.addModal.anthropicProtocol')
+                        : t('settings.models.addModal.openaiProtocol')}
                     </span>
                   </label>
                 </>
               )}
               <label className="flex flex-col gap-2 text-[13px] font-mono text-zinc-500">
-                Model ID
+                {t('settings.models.addModal.modelId')}
                 <input
-                  aria-label="Model ID"
+                  aria-label={t('settings.models.addModal.modelId')}
                   value={customModelId}
                   onChange={(event) => {
                     setCustomModelId(event.target.value);
@@ -327,9 +345,9 @@ export function AddModelModal({
             </>
           ) : (
             <label className="flex flex-col gap-2 text-[13px] font-mono text-zinc-500">
-              Model
+              {t('settings.models.addModal.model')}
               <Select
-                aria-label="Model"
+                aria-label={t('settings.models.addModal.model')}
                 value={model?.id ?? ''}
                 disabled={!provider || loadingModels}
                 onChange={(val) => {
@@ -337,41 +355,51 @@ export function AddModelModal({
                   setModel(selected);
                   if (selected) setDisplayName(selected.name);
                 }}
-                placeholder={loadingModels ? 'Loading models...' : 'Select model'}
+                placeholder={
+                  loadingModels
+                    ? t('settings.models.addModal.loadingModels')
+                    : t('settings.models.addModal.selectModel')
+                }
                 options={models.map((entry) => ({
                   value: entry.id,
-                  label: `${entry.name} - ${Math.round(entry.contextWindow / 1000)}K${entry.reasoning ? ' - reasoning' : ''}${entry.input.includes('image') ? ' - vision' : ''}`,
+                  label: `${entry.name} - ${Math.round(entry.contextWindow / 1000)}K${entry.reasoning ? t('settings.models.addModal.reasoningSuffix') : ''}${entry.input.includes('image') ? t('settings.models.addModal.visionSuffix') : ''}`,
                 }))}
               />
             </label>
           )}
 
           <label className="flex flex-col gap-2 text-[13px] font-mono text-zinc-500">
-            Display name
+            {t('settings.models.addModal.displayName')}
             <input
               value={displayName}
               onChange={(event) => setDisplayName(event.target.value)}
-              placeholder={model?.name ?? 'Optional alias'}
+              placeholder={
+                model?.name ?? t('settings.models.addModal.displayNamePlaceholder')
+              }
               className="field"
             />
           </label>
 
           {provider?.supportsApiKey && !provider.configured && (
             <label className="flex flex-col gap-2 text-[13px] font-mono text-zinc-500">
-              API Key
+              {t('settings.models.addModal.apiKey')}
               <span className="relative">
                 <input
-                  aria-label="API key"
+                  aria-label={t('settings.models.addModal.apiKeyAria')}
                   type={showApiKey ? 'text' : 'password'}
                   value={apiKey}
                   onChange={(event) => setApiKey(event.target.value)}
                   className="field w-full pr-10"
-                  placeholder="Stored separately in auth.json"
+                  placeholder={t('settings.models.addModal.apiKeyPlaceholder')}
                 />
                 <button
                   type="button"
                   onClick={() => setShowApiKey(!showApiKey)}
-                  aria-label={showApiKey ? 'Hide API key' : 'Show API key'}
+                  aria-label={
+                    showApiKey
+                      ? t('settings.models.addModal.hideApiKey')
+                      : t('settings.models.addModal.showApiKey')
+                  }
                   className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded"
                 >
                   {showApiKey ? (
@@ -386,8 +414,7 @@ export function AddModelModal({
 
           {provider && !provider.configured && !provider.supportsApiKey && (
             <p className="font-mono text-sm text-amber-600">
-              This provider requires OAuth or ambient credentials. Configure it
-              externally before selecting the model.
+              {t('settings.models.addModal.oauthNote')}
             </p>
           )}
 
@@ -405,7 +432,9 @@ export function AddModelModal({
             className="flex min-h-9 items-center justify-center gap-2 rounded-md bg-green-600 px-4 py-2 font-mono text-sm font-semibold text-white disabled:opacity-50"
           >
             {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-            {saving ? 'Saving...' : 'Save Model'}
+            {saving
+              ? t('settings.models.addModal.saving')
+              : t('settings.models.addModal.saveModel')}
           </button>
         </div>
       </DialogContent>

@@ -4,6 +4,7 @@ import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PluginPanel } from '../../../src/components/settings/PluginPanel';
+import { setLocale } from '../../../src/i18n';
 import { useSessionStore } from '../../../src/store/session';
 
 describe('PluginPanel', () => {
@@ -11,6 +12,7 @@ describe('PluginPanel', () => {
   let root: ReactDOM.Root;
 
   beforeEach(() => {
+    setLocale('en');
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -22,6 +24,7 @@ describe('PluginPanel', () => {
 
   afterEach(() => {
     act(() => root.unmount());
+    setLocale('en');
     container.remove();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
@@ -48,6 +51,13 @@ describe('PluginPanel', () => {
               hooks: 1,
               mcpServers: 0,
               configurable: true,
+              managed: false,
+              effectiveScope: 'project',
+              settingLayers: {
+                global: false,
+                project: enabled,
+              },
+              compatibilityIssues: [],
             },
           ],
         } as Response;
@@ -77,7 +87,7 @@ describe('PluginPanel', () => {
         expect(JSON.parse(String(init.body))).toEqual({
           projectPath: '/tmp/plugin-project',
           enabled: false,
-          scope: 'local',
+          scope: 'project',
         });
         enabled = false;
         return {
@@ -100,6 +110,15 @@ describe('PluginPanel', () => {
     await vi.waitFor(() =>
       expect(document.body.textContent).toContain('Review changes')
     );
+    expect(document.body.textContent).toContain('effective: Project');
+    expect(document.body.textContent).toContain('Global off · Project on');
+    act(() => {
+      document.body
+        .querySelector<HTMLButtonElement>(
+          '[role="radio"][title="Shared project settings"]'
+        )
+        ?.click();
+    });
     const toggle = document.body.querySelector<HTMLButtonElement>(
       '[aria-label="Disable review-plugin"]'
     );
@@ -118,6 +137,10 @@ describe('PluginPanel', () => {
       '/plugins/review-plugin/state',
       expect.objectContaining({ method: 'POST' })
     );
+
+    act(() => setLocale('zh'));
+    expect(document.body.textContent).toContain('生效范围：项目');
+    expect(document.body.textContent).toContain('全局 关 · 项目 关');
   });
 
   it('installs from a Marketplace and confirms managed updates and removal', async () => {

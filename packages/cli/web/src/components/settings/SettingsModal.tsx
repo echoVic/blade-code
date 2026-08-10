@@ -16,6 +16,8 @@ import {
   useRef,
   useState,
 } from 'react';
+import { Select } from '@/components/ui/select';
+import { type TranslationKey, useT } from '@/i18n';
 import { DEFAULT_COMMUNICATION_STYLES } from '@/lib/communicationStyles';
 import { requestJson } from '@/lib/http';
 import {
@@ -24,7 +26,6 @@ import {
   shortcutKeyLabels,
 } from '@/lib/keyboardShortcuts';
 import { cn } from '@/lib/utils';
-import { Select } from '@/components/ui/select';
 import { type SettingsSection, useAppStore } from '@/store/AppStore';
 import { type ModelConfig, useConfigStore } from '@/store/ConfigStore';
 import { useSettingsStore } from '@/store/SettingsStore';
@@ -59,15 +60,29 @@ const PROVIDER_ICONS: Record<string, { bg: string; label: string }> = {
   'gpt-openai-platform': { bg: '#10a37f', label: 'GP' },
 };
 
-const SHORTCUT_ACTION_LABELS: Record<ShortcutId, string> = {
-  searchTasks: 'Search tasks',
-  openCommands: 'Open command center',
-  newTask: 'New task',
-  focusComposer: 'Focus composer',
-  toggleSidebar: 'Toggle sidebar',
+const SHORTCUT_ACTION_LABEL_KEYS: Record<ShortcutId, TranslationKey> = {
+  searchTasks: 'settings.shortcuts.action.searchTasks',
+  openCommands: 'settings.shortcuts.action.openCommands',
+  newTask: 'settings.shortcuts.action.newTask',
+  focusComposer: 'settings.shortcuts.action.focusComposer',
+  toggleSidebar: 'settings.shortcuts.action.toggleSidebar',
+};
+
+const COMMUNICATION_STYLE_LABEL_KEYS: Record<string, TranslationKey> = {
+  auto: 'settings.style.auto',
+  pragmatic: 'settings.style.pragmatic',
+  friendly: 'settings.style.friendly',
+  explanatory: 'settings.style.explanatory',
+};
+
+const SHORTCUT_SCOPE_LABEL_KEYS: Record<string, TranslationKey> = {
+  Global: 'settings.shortcuts.scope.global',
+  Chat: 'settings.shortcuts.scope.chat',
+  Layout: 'settings.shortcuts.scope.layout',
 };
 
 export function SettingsModal() {
+  const t = useT();
   const {
     isSettingsOpen,
     settingsSection,
@@ -114,24 +129,56 @@ export function SettingsModal() {
   >(typeof Notification === 'undefined' ? 'unsupported' : Notification.permission);
 
   const tabs: { value: TabValue; label: string; category: string }[] = [
-    { value: 'general', label: 'General', category: 'Settings' },
-    { value: 'trust', label: 'Security', category: 'Settings' },
-    { value: 'models', label: 'Models', category: 'Settings' },
-    { value: 'shortcuts', label: 'Shortcuts', category: 'Settings' },
-    { value: 'mcp', label: 'MCP', category: 'Integrations' },
-    { value: 'skills', label: 'Skills', category: 'Integrations' },
-    { value: 'plugins', label: 'Plugins', category: 'Integrations' },
-    { value: 'hooks', label: 'Hooks', category: 'Integrations' },
+    {
+      value: 'general',
+      label: t('settings.tab.general'),
+      category: t('settings.category.settings'),
+    },
+    {
+      value: 'trust',
+      label: t('settings.tab.trust'),
+      category: t('settings.category.settings'),
+    },
+    {
+      value: 'models',
+      label: t('settings.tab.models'),
+      category: t('settings.category.settings'),
+    },
+    {
+      value: 'shortcuts',
+      label: t('settings.tab.shortcuts'),
+      category: t('settings.category.settings'),
+    },
+    {
+      value: 'mcp',
+      label: t('settings.tab.mcp'),
+      category: t('settings.category.integrations'),
+    },
+    {
+      value: 'skills',
+      label: t('settings.tab.skills'),
+      category: t('settings.category.integrations'),
+    },
+    {
+      value: 'plugins',
+      label: t('settings.tab.plugins'),
+      category: t('settings.category.integrations'),
+    },
+    {
+      value: 'hooks',
+      label: t('settings.tab.hooks'),
+      category: t('settings.category.integrations'),
+    },
   ];
 
   const shortcuts = useMemo(
     () =>
       KEYBOARD_SHORTCUTS.map((shortcut) => ({
-        action: SHORTCUT_ACTION_LABELS[shortcut.id],
+        action: t(SHORTCUT_ACTION_LABEL_KEYS[shortcut.id]),
         combo: shortcutKeyLabels(shortcut),
         scope: shortcut.scope,
       })),
-    []
+    [t]
   );
 
   const filteredShortcuts = shortcuts.filter((shortcut) => {
@@ -169,10 +216,10 @@ export function SettingsModal() {
       setProviderActionError(null);
     } catch (error) {
       setProviderActionError(
-        error instanceof Error ? error.message : 'Failed to load provider channels'
+        error instanceof Error ? error.message : t('settings.models.loadChannelsFailed')
       );
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (isSettingsOpen) {
@@ -245,7 +292,9 @@ export function SettingsModal() {
       await loadProviderChannels();
       return true;
     } catch (err) {
-      setModelActionError(err instanceof Error ? err.message : 'Failed to save model');
+      setModelActionError(
+        err instanceof Error ? err.message : t('settings.models.saveFailed')
+      );
       return false;
     } finally {
       setModelAction(null);
@@ -266,7 +315,7 @@ export function SettingsModal() {
       setDeleteModel(null);
     } catch (err) {
       setModelActionError(
-        err instanceof Error ? err.message : 'Failed to delete model'
+        err instanceof Error ? err.message : t('settings.models.deleteFailed')
       );
     } finally {
       setModelAction(null);
@@ -289,7 +338,7 @@ export function SettingsModal() {
       return true;
     } catch (err) {
       setModelActionError(
-        err instanceof Error ? err.message : 'Failed to update model'
+        err instanceof Error ? err.message : t('settings.models.updateFailed')
       );
       return false;
     } finally {
@@ -313,7 +362,9 @@ export function SettingsModal() {
       return true;
     } catch (error) {
       setProviderActionError(
-        error instanceof Error ? error.message : 'Failed to update provider channel'
+        error instanceof Error
+          ? error.message
+          : t('settings.models.updateChannelFailed')
       );
       return false;
     } finally {
@@ -339,7 +390,7 @@ export function SettingsModal() {
       }));
     } catch (error) {
       setProviderActionError(
-        error instanceof Error ? error.message : 'Provider probe failed'
+        error instanceof Error ? error.message : t('settings.models.probeFailed')
       );
     } finally {
       setProviderAction(null);
@@ -363,7 +414,9 @@ export function SettingsModal() {
       await Promise.all([loadModels(), loadProviderChannels()]);
     } catch (error) {
       setProviderActionError(
-        error instanceof Error ? error.message : 'Failed to delete provider channel'
+        error instanceof Error
+          ? error.message
+          : t('settings.models.deleteChannelFailed')
       );
     } finally {
       setProviderAction(null);
@@ -387,7 +440,8 @@ export function SettingsModal() {
           ? tabs.length - 1
           : (index + direction + tabs.length) % tabs.length;
     setActiveTab(tabs[nextIndex].value);
-    event.currentTarget.parentElement
+    event.currentTarget
+      .closest('[role="tablist"]')
       ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
       [nextIndex]?.focus();
   };
@@ -436,7 +490,7 @@ export function SettingsModal() {
         {/* Left navigation sidebar */}
         <nav
           role="tablist"
-          aria-label="Settings sections"
+          aria-label={t('settings.nav.aria')}
           className="flex h-full w-[220px] shrink-0 flex-col border-r border-[#E5E7EB] bg-[#F9FAFB] dark:border-zinc-800 dark:bg-[#111113]"
         >
           <div className="shrink-0 p-4">
@@ -447,7 +501,7 @@ export function SettingsModal() {
               className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12px] font-mono text-[#6B7280] transition-colors hover:bg-[#E5E7EB] hover:text-[#111827] dark:text-[#a1a1aa] dark:hover:bg-[#27272a] dark:hover:text-[#E5E5E5]"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
-              Back
+              {t('settings.action.back')}
             </button>
           </div>
           <div className="flex-1 overflow-y-auto px-3 pb-4">
@@ -495,7 +549,8 @@ export function SettingsModal() {
           <div className="flex-1 overflow-y-auto p-6 sm:p-10">
             <div className="mx-auto max-w-2xl">
               <h1 className="mb-6 text-xl font-semibold text-[#111827] dark:text-[#E5E5E5]">
-                {tabs.find((tab) => tab.value === activeTab)?.label ?? 'Settings'}
+                {tabs.find((tab) => tab.value === activeTab)?.label ??
+                  t('settings.title')}
               </h1>
 
               {settings.isLoading && activeTab === 'general' && (
@@ -504,7 +559,7 @@ export function SettingsModal() {
                   className="flex shrink-0 items-center gap-2 text-[11px] font-mono text-[#9CA3AF] dark:text-[#71717a]"
                 >
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Loading settings...
+                  {t('settings.general.loading')}
                 </div>
               )}
               {settings.error && activeTab === 'general' && (
@@ -519,7 +574,7 @@ export function SettingsModal() {
                     onClick={() => void settings.loadSettings()}
                     className="shrink-0 underline"
                   >
-                    Retry
+                    {t('settings.common.retry')}
                   </button>
                 </div>
               )}
@@ -532,7 +587,7 @@ export function SettingsModal() {
                   className="flex flex-col gap-6 flex-1 min-h-0 overflow-hidden"
                 >
                   <p className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono shrink-0">
-                    Configure API keys and model settings for different providers.
+                    {t('settings.models.description')}
                   </p>
 
                   {(modelsError || modelActionError || providerActionError) && (
@@ -553,7 +608,9 @@ export function SettingsModal() {
                         }}
                         className="shrink-0 underline"
                       >
-                        {modelsError ? 'Retry' : 'Dismiss'}
+                        {modelsError
+                          ? t('settings.common.retry')
+                          : t('settings.common.dismiss')}
                       </button>
                     </div>
                   )}
@@ -561,12 +618,15 @@ export function SettingsModal() {
                   {deleteModel && (
                     <div
                       role="alertdialog"
-                      aria-label={`Delete ${deleteModel.displayName || deleteModel.model}`}
+                      aria-label={t('settings.models.deleteModelAria', {
+                        name: deleteModel.displayName || deleteModel.model,
+                      })}
                       className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 dark:border-red-900/60 dark:bg-red-950/30"
                     >
                       <span className="text-[11px] font-mono text-red-700 dark:text-red-300">
-                        Delete {deleteModel.displayName || deleteModel.model} and its
-                        saved configuration?
+                        {t('settings.models.deleteModelPrompt', {
+                          name: deleteModel.displayName || deleteModel.model,
+                        })}
                       </span>
                       <div className="flex items-center gap-2">
                         <button
@@ -574,7 +634,7 @@ export function SettingsModal() {
                           onClick={() => setDeleteModel(null)}
                           className="h-7 rounded-md px-2.5 text-[11px] font-mono text-[#6B7280] dark:text-[#a1a1aa]"
                         >
-                          Cancel
+                          {t('settings.common.cancel')}
                         </button>
                         <button
                           type="button"
@@ -582,7 +642,9 @@ export function SettingsModal() {
                           disabled={modelAction !== null}
                           className="h-7 rounded-md bg-red-600 px-2.5 text-[11px] font-mono font-semibold text-white disabled:opacity-60"
                         >
-                          {modelAction === 'delete' ? 'Deleting...' : 'Delete model'}
+                          {modelAction === 'delete'
+                            ? t('settings.models.deleting')
+                            : t('settings.models.deleteModel')}
                         </button>
                       </div>
                     </div>
@@ -591,13 +653,16 @@ export function SettingsModal() {
                   {deleteProvider && (
                     <div
                       role="alertdialog"
-                      aria-label={`Delete channel ${deleteProvider.name}`}
+                      aria-label={t('settings.models.deleteChannelAria', {
+                        name: deleteProvider.name,
+                      })}
                       className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 dark:border-red-900/60 dark:bg-red-950/30"
                     >
                       <span className="text-[11px] font-mono text-red-700 dark:text-red-300">
-                        Delete channel {deleteProvider.name}, its credential, and{' '}
-                        {groupedModels[deleteProvider.id]?.length ?? 0} configured
-                        model(s)? Fallback references will also be removed.
+                        {t('settings.models.deleteChannelPrompt', {
+                          name: deleteProvider.name,
+                          count: groupedModels[deleteProvider.id]?.length ?? 0,
+                        })}
                       </span>
                       <div className="flex items-center gap-2">
                         <button
@@ -605,7 +670,7 @@ export function SettingsModal() {
                           onClick={() => setDeleteProvider(null)}
                           className="h-7 rounded-md px-2.5 text-[11px] font-mono text-[#6B7280] dark:text-[#a1a1aa]"
                         >
-                          Cancel
+                          {t('settings.common.cancel')}
                         </button>
                         <button
                           type="button"
@@ -614,8 +679,8 @@ export function SettingsModal() {
                           className="h-7 rounded-md bg-red-600 px-2.5 text-[11px] font-mono font-semibold text-white disabled:opacity-60"
                         >
                           {providerAction?.type === 'delete'
-                            ? 'Deleting...'
-                            : 'Delete channel'}
+                            ? t('settings.models.deleting')
+                            : t('settings.models.deleteChannel')}
                         </button>
                       </div>
                     </div>
@@ -629,7 +694,7 @@ export function SettingsModal() {
                           className="flex items-center justify-center gap-2 py-8 text-sm font-mono text-[#9CA3AF] dark:text-[#71717a]"
                         >
                           <Loader2 className="h-4 w-4 animate-spin" />
-                          Loading models...
+                          {t('settings.models.loading')}
                         </div>
                       )}
                       {Object.entries(groupedModels).map(([provider, models]) => {
@@ -666,8 +731,13 @@ export function SettingsModal() {
                                       {channel?.name ?? provider.replace(/-/g, ' ')}
                                     </span>
                                     <span className="truncate text-xs font-mono text-[#9CA3AF] dark:text-[#71717a]">
-                                      {models.length} model
-                                      {models.length !== 1 ? 's' : ''}
+                                      {models.length === 1
+                                        ? t('settings.models.modelCountOne', {
+                                            count: models.length,
+                                          })
+                                        : t('settings.models.modelCountMany', {
+                                            count: models.length,
+                                          })}
                                       {channel?.custom ? ` · ${channel.wireApi}` : ''}
                                     </span>
                                   </div>
@@ -683,8 +753,8 @@ export function SettingsModal() {
                                   >
                                     ●{' '}
                                     {channel?.configured === false
-                                      ? 'Missing credential'
-                                      : 'Configured'}
+                                      ? t('settings.models.missingCredential')
+                                      : t('settings.models.configured')}
                                   </span>
                                   <ChevronDown
                                     className={cn(
@@ -704,7 +774,9 @@ export function SettingsModal() {
                                     disabled={
                                       providerAction !== null || models.length === 0
                                     }
-                                    aria-label={`Test ${channel.name}`}
+                                    aria-label={t('settings.models.testChannelAria', {
+                                      name: channel.name,
+                                    })}
                                     className="rounded p-1.5 text-[#71717a] hover:bg-[#E5E7EB] hover:text-[#111827] disabled:opacity-50 dark:hover:bg-[#27272a] dark:hover:text-[#E5E5E5]"
                                   >
                                     {probing ? (
@@ -721,7 +793,9 @@ export function SettingsModal() {
                                       setEditingProvider(channel);
                                     }}
                                     disabled={providerAction !== null}
-                                    aria-label={`Edit channel ${channel.name}`}
+                                    aria-label={t('settings.models.editChannelAria', {
+                                      name: channel.name,
+                                    })}
                                     className="rounded p-1.5 text-[#71717a] hover:bg-[#E5E7EB] hover:text-[#111827] disabled:opacity-50 dark:hover:bg-[#27272a] dark:hover:text-[#E5E5E5]"
                                   >
                                     <Pencil className="h-3.5 w-3.5" />
@@ -730,7 +804,10 @@ export function SettingsModal() {
                                     type="button"
                                     onClick={() => setDeleteProvider(channel)}
                                     disabled={providerAction !== null}
-                                    aria-label={`Delete channel ${channel.name}`}
+                                    aria-label={t(
+                                      'settings.models.deleteChannelActionAria',
+                                      { name: channel.name }
+                                    )}
                                     className="rounded p-1.5 text-[#71717a] hover:bg-[#E5E7EB] hover:text-red-500 disabled:opacity-50 dark:hover:bg-[#27272a] dark:hover:text-red-400"
                                   >
                                     <Trash2 className="h-3.5 w-3.5" />
@@ -772,7 +849,8 @@ export function SettingsModal() {
                                       </span>
                                       <span className="text-xs text-[#9CA3AF] dark:text-[#71717a] font-mono truncate">
                                         {model.displayName && `${model.model} · `}
-                                        {model.overrides?.baseUrl || 'default endpoint'}
+                                        {model.overrides?.baseUrl ||
+                                          t('settings.models.defaultEndpoint')}
                                       </span>
                                     </div>
                                     <div className="flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
@@ -783,7 +861,9 @@ export function SettingsModal() {
                                           setEditingModel(model);
                                         }}
                                         disabled={modelAction !== null}
-                                        aria-label={`Edit ${model.displayName || model.model}`}
+                                        aria-label={t('settings.models.editModelAria', {
+                                          name: model.displayName || model.model,
+                                        })}
                                         className="p-1.5 text-[#9CA3AF] hover:text-[#111827] hover:bg-[#E5E7EB] dark:text-[#71717a] dark:hover:text-[#E5E5E5] dark:hover:bg-[#27272a] rounded transition-colors"
                                       >
                                         <Pencil className="h-3.5 w-3.5" />
@@ -791,7 +871,12 @@ export function SettingsModal() {
                                       <button
                                         onClick={() => setDeleteModel(model)}
                                         disabled={modelAction !== null}
-                                        aria-label={`Delete ${model.displayName || model.model}`}
+                                        aria-label={t(
+                                          'settings.models.deleteModelAria',
+                                          {
+                                            name: model.displayName || model.model,
+                                          }
+                                        )}
                                         className="p-1.5 text-[#9CA3AF] hover:text-red-500 hover:bg-[#E5E7EB] dark:text-[#71717a] dark:hover:text-red-400 dark:hover:bg-[#27272a] rounded transition-colors"
                                       >
                                         <Trash2 className="h-3.5 w-3.5" />
@@ -809,7 +894,7 @@ export function SettingsModal() {
                         !modelsError &&
                         Object.keys(groupedModels).length === 0 && (
                           <div className="text-center py-8 text-[#9CA3AF] dark:text-[#71717a] text-sm font-mono">
-                            No models configured yet
+                            {t('settings.models.empty')}
                           </div>
                         )}
                     </div>
@@ -824,7 +909,7 @@ export function SettingsModal() {
                     disabled={modelAction !== null}
                     className="w-full py-3 rounded-md text-[#6B7280] dark:text-[#a1a1aa] text-[13px] font-mono hover:bg-[#F3F4F6] dark:bg-[#18181b] transition-colors shrink-0"
                   >
-                    + Add New Model
+                    {t('settings.models.add')}
                   </button>
                 </div>
               )}
@@ -839,19 +924,19 @@ export function SettingsModal() {
                 >
                   <div className="space-y-3">
                     <h3 className="text-[14px] text-[#111827] dark:text-[#E5E5E5] font-mono font-semibold">
-                      General
+                      {t('settings.tab.general')}
                     </h3>
                     <div className="flex items-center justify-between py-2">
                       <div className="flex flex-col gap-1">
                         <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
-                          Response Language
+                          {t('settings.general.responseLanguage')}
                         </span>
                         <span className="text-[11px] text-[#9CA3AF] dark:text-[#71717a] font-mono">
-                          AI will respond in this language
+                          {t('settings.general.responseLanguageHint')}
                         </span>
                       </div>
                       <Select
-                        aria-label="Response language"
+                        aria-label={t('settings.general.responseLanguage')}
                         value={settings.language}
                         onChange={(val) => settings.updateSettings({ language: val })}
                         className="h-8 w-auto min-w-[140px] text-[12px]"
@@ -871,10 +956,10 @@ export function SettingsModal() {
                     </div>
                     <div className="flex items-center justify-between py-2">
                       <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
-                        Auto-save sessions
+                        {t('settings.general.autoSave')}
                       </span>
                       <ToggleSwitch
-                        label="Auto-save sessions"
+                        label={t('settings.general.autoSave')}
                         enabled={settings.autoSaveSessions}
                         onChange={(v) =>
                           settings.updateSettings({ autoSaveSessions: v })
@@ -884,14 +969,14 @@ export function SettingsModal() {
                     <div className="flex items-center justify-between py-2">
                       <div className="flex flex-col gap-1">
                         <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
-                          Communication Style
+                          {t('settings.general.communicationStyle')}
                         </span>
                         <span className="text-[11px] text-[#9CA3AF] dark:text-[#71717a] font-mono">
-                          How the agent phrases its replies across every session
+                          {t('settings.general.communicationStyleHint')}
                         </span>
                       </div>
                       <Select
-                        aria-label="Communication style"
+                        aria-label={t('settings.general.communicationStyle')}
                         value={settings.communicationStyle ?? 'auto'}
                         onChange={(val) =>
                           settings.updateSettings({
@@ -901,7 +986,9 @@ export function SettingsModal() {
                         className="h-8 w-auto min-w-[140px] text-[12px]"
                         options={DEFAULT_COMMUNICATION_STYLES.map((style) => ({
                           value: style.id,
-                          label: style.name,
+                          label: COMMUNICATION_STYLE_LABEL_KEYS[style.id]
+                            ? t(COMMUNICATION_STYLE_LABEL_KEYS[style.id])
+                            : style.name,
                         }))}
                       />
                     </div>
@@ -909,11 +996,11 @@ export function SettingsModal() {
 
                   <div className="space-y-3">
                     <h3 className="text-[14px] text-[#111827] dark:text-[#E5E5E5] font-mono font-semibold">
-                      Appearance
+                      {t('settings.appearance.heading')}
                     </h3>
                     <div className="flex items-center justify-between py-2">
                       <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
-                        Theme Preference
+                        {t('settings.appearance.theme')}
                       </span>
                       <div className="flex items-center gap-2 bg-[#F3F4F6] dark:bg-[#18181b] border border-[#E5E7EB] dark:border-[#27272a] rounded-md p-1">
                         {(['dark', 'light', 'system'] as const).map((mode) => (
@@ -928,20 +1015,20 @@ export function SettingsModal() {
                             )}
                           >
                             {mode === 'dark'
-                              ? 'Dark'
+                              ? t('settings.appearance.theme.dark')
                               : mode === 'light'
-                                ? 'Light'
-                                : 'System'}
+                                ? t('settings.appearance.theme.light')
+                                : t('settings.appearance.theme.system')}
                           </button>
                         ))}
                       </div>
                     </div>
                     <div className="flex items-center justify-between py-2">
                       <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
-                        Compact sidebar
+                        {t('settings.appearance.compactSidebar')}
                       </span>
                       <ToggleSwitch
-                        label="Compact sidebar"
+                        label={t('settings.appearance.compactSidebar')}
                         enabled={!isSidebarOpen}
                         onChange={(value) => setSidebarOpen(!value)}
                       />
@@ -949,14 +1036,14 @@ export function SettingsModal() {
                     <div className="flex items-center justify-between py-2">
                       <div className="flex flex-col gap-1">
                         <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
-                          Code theme
+                          {t('settings.appearance.codeTheme')}
                         </span>
                         <span className="text-[11px] text-[#9CA3AF] dark:text-[#71717a] font-mono">
-                          Syntax highlighting colors
+                          {t('settings.appearance.codeThemeHint')}
                         </span>
                       </div>
                       <Select
-                        aria-label="Code theme"
+                        aria-label={t('settings.appearance.codeTheme')}
                         value={settings.theme}
                         onChange={(val) => settings.updateSettings({ theme: val })}
                         className="h-8 w-auto min-w-[140px] text-[12px]"
@@ -981,34 +1068,34 @@ export function SettingsModal() {
 
                   <div className="space-y-3">
                     <h3 className="text-[14px] text-[#111827] dark:text-[#E5E5E5] font-mono font-semibold">
-                      Notifications
+                      {t('settings.notifications.heading')}
                     </h3>
                     <div className="flex items-center justify-between py-2">
                       <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
-                        Build finished
+                        {t('settings.notifications.buildFinished')}
                       </span>
                       <ToggleSwitch
-                        label="Build finished notifications"
+                        label={t('settings.notifications.buildFinished')}
                         enabled={settings.notifyBuild}
                         onChange={(v) => settings.updateSettings({ notifyBuild: v })}
                       />
                     </div>
                     <div className="flex items-center justify-between py-2">
                       <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
-                        Errors only
+                        {t('settings.notifications.errorsOnly')}
                       </span>
                       <ToggleSwitch
-                        label="Error notifications"
+                        label={t('settings.notifications.errorsOnly')}
                         enabled={settings.notifyErrors}
                         onChange={(v) => settings.updateSettings({ notifyErrors: v })}
                       />
                     </div>
                     <div className="flex items-center justify-between py-2">
                       <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
-                        System sounds
+                        {t('settings.notifications.systemSounds')}
                       </span>
                       <ToggleSwitch
-                        label="System sounds"
+                        label={t('settings.notifications.systemSounds')}
                         enabled={settings.notifySounds}
                         onChange={(v) => settings.updateSettings({ notifySounds: v })}
                       />
@@ -1018,10 +1105,10 @@ export function SettingsModal() {
                         <div className="flex items-center justify-between gap-4 rounded-md border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-2 dark:border-[#27272a] dark:bg-[#18181b]">
                           <span className="text-[11px] font-mono text-[#6B7280] dark:text-[#a1a1aa]">
                             {notificationPermission === 'denied'
-                              ? 'Browser notifications are blocked'
+                              ? t('settings.notifications.blocked')
                               : notificationPermission === 'unsupported'
-                                ? 'Browser notifications are unavailable'
-                                : 'Enable alerts while this tab is in the background'}
+                                ? t('settings.notifications.unavailable')
+                                : t('settings.notifications.enablePrompt')}
                           </span>
                           {notificationPermission === 'default' && (
                             <button
@@ -1029,7 +1116,7 @@ export function SettingsModal() {
                               onClick={() => void requestNotificationPermission()}
                               className="shrink-0 rounded-md bg-[#111827] px-2.5 py-1.5 text-[10px] font-mono text-white hover:bg-[#374151] dark:bg-[#E5E5E5] dark:text-[#111827]"
                             >
-                              Enable
+                              {t('settings.common.enable')}
                             </button>
                           )}
                         </div>
@@ -1038,14 +1125,14 @@ export function SettingsModal() {
 
                   <div className="space-y-3">
                     <h3 className="text-[14px] text-[#111827] dark:text-[#E5E5E5] font-mono font-semibold">
-                      Privacy
+                      {t('settings.privacy.heading')}
                     </h3>
                     <div className="flex items-center justify-between py-2">
                       <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
-                        Telemetry
+                        {t('settings.privacy.telemetry')}
                       </span>
                       <ToggleSwitch
-                        label="Telemetry"
+                        label={t('settings.privacy.telemetry')}
                         enabled={settings.privacyTelemetry}
                         onChange={(v) =>
                           settings.updateSettings({ privacyTelemetry: v })
@@ -1054,10 +1141,10 @@ export function SettingsModal() {
                     </div>
                     <div className="flex items-center justify-between py-2">
                       <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
-                        Crash reports
+                        {t('settings.privacy.crash')}
                       </span>
                       <ToggleSwitch
-                        label="Crash reports"
+                        label={t('settings.privacy.crash')}
                         enabled={settings.privacyCrash}
                         onChange={(v) => settings.updateSettings({ privacyCrash: v })}
                       />
@@ -1075,22 +1162,28 @@ export function SettingsModal() {
                 >
                   <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
                     <input
-                      aria-label="Search shortcut actions"
+                      aria-label={t('settings.shortcuts.searchPlaceholder')}
                       value={shortcutQuery}
                       onChange={(event) => setShortcutQuery(event.target.value)}
-                      placeholder="Search actions..."
+                      placeholder={t('settings.shortcuts.searchPlaceholder')}
                       className="field flex-1 text-[12px]"
                     />
                     <Select
-                      aria-label="Shortcut scope"
+                      aria-label={t('settings.shortcuts.col.scope')}
                       value={shortcutScope}
                       onChange={(val) => setShortcutScope(val as typeof shortcutScope)}
                       className="w-auto min-w-[120px] text-[12px]"
                       options={[
-                        { value: 'all', label: 'All scopes' },
-                        { value: 'global', label: 'Global' },
-                        { value: 'chat', label: 'Chat' },
-                        { value: 'layout', label: 'Layout' },
+                        { value: 'all', label: t('settings.shortcuts.scope.all') },
+                        {
+                          value: 'global',
+                          label: t('settings.shortcuts.scope.global'),
+                        },
+                        { value: 'chat', label: t('settings.shortcuts.scope.chat') },
+                        {
+                          value: 'layout',
+                          label: t('settings.shortcuts.scope.layout'),
+                        },
                       ]}
                     />
                     <button
@@ -1100,15 +1193,15 @@ export function SettingsModal() {
                       }}
                       className="h-9 px-3 rounded-md bg-[#E5E7EB] dark:bg-[#27272a] text-[#111827] dark:text-[#E5E5E5] text-[12px] font-mono font-semibold"
                     >
-                      Reset
+                      {t('settings.shortcuts.reset')}
                     </button>
                   </div>
 
                   <div className="flex-1 min-h-0 overflow-auto border border-[#E5E7EB] dark:border-[#27272a] rounded-lg bg-[#E5E7EB] dark:bg-[#111827]">
                     <div className="grid min-w-[520px] grid-cols-[1fr_180px_120px] gap-2 px-3 py-2 bg-white dark:bg-[#0C0C0C] text-[12px] text-[#6B7280] dark:text-[#94a3b8] font-mono font-semibold">
-                      <span>Action</span>
-                      <span>Shortcut</span>
-                      <span>Scope</span>
+                      <span>{t('settings.shortcuts.col.action')}</span>
+                      <span>{t('settings.shortcuts.col.shortcut')}</span>
+                      <span>{t('settings.shortcuts.col.scope')}</span>
                     </div>
                     {filteredShortcuts.map((shortcut, index) => (
                       <div
@@ -1134,13 +1227,15 @@ export function SettingsModal() {
                           ))}
                         </div>
                         <span className="text-[#6B7280] dark:text-[#94a3b8] text-[12px]">
-                          {shortcut.scope}
+                          {SHORTCUT_SCOPE_LABEL_KEYS[shortcut.scope]
+                            ? t(SHORTCUT_SCOPE_LABEL_KEYS[shortcut.scope])
+                            : shortcut.scope}
                         </span>
                       </div>
                     ))}
                     {filteredShortcuts.length === 0 && (
                       <div className="px-3 py-6 text-center text-[12px] text-[#6B7280] dark:text-[#94a3b8] font-mono">
-                        No shortcuts found.
+                        {t('settings.shortcuts.empty')}
                       </div>
                     )}
                   </div>
@@ -1154,7 +1249,7 @@ export function SettingsModal() {
                   aria-labelledby="settings-tab-mcp"
                   className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa]"
                 >
-                  <p>MCP server configuration is available via the MCP panel.</p>
+                  <p>{t('settings.mcp.description')}</p>
                   <button
                     type="button"
                     onClick={() => {
@@ -1162,7 +1257,7 @@ export function SettingsModal() {
                     }}
                     className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-md border border-[#E5E7EB] px-3 text-[12px] font-medium text-[#111827] transition-colors hover:bg-[#F3F4F6] dark:border-zinc-700 dark:text-[#E5E5E5] dark:hover:bg-[#27272a]"
                   >
-                    Open MCP Panel
+                    {t('settings.mcp.open')}
                   </button>
                 </div>
               )}
@@ -1174,7 +1269,7 @@ export function SettingsModal() {
                   aria-labelledby="settings-tab-skills"
                   className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa]"
                 >
-                  <p>Skills configuration is available via the Skills panel.</p>
+                  <p>{t('settings.skills.description')}</p>
                   <button
                     type="button"
                     onClick={() => {
@@ -1182,7 +1277,7 @@ export function SettingsModal() {
                     }}
                     className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-md border border-[#E5E7EB] px-3 text-[12px] font-medium text-[#111827] transition-colors hover:bg-[#F3F4F6] dark:border-zinc-700 dark:text-[#E5E5E5] dark:hover:bg-[#27272a]"
                   >
-                    Open Skills Panel
+                    {t('settings.skills.open')}
                   </button>
                 </div>
               )}

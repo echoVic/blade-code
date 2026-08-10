@@ -2,6 +2,7 @@ import { Loader2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Select } from '@/components/ui/select';
+import { useT } from '@/i18n';
 import { restoreFocusToSelector } from '@/lib/mobileNavigationFocus';
 
 export interface ProviderChannel {
@@ -37,6 +38,7 @@ export function EditProviderModal({
   onSave,
   saveError,
 }: EditProviderModalProps) {
+  const t = useT();
   const [name, setName] = useState(provider.name);
   const [baseUrl, setBaseUrl] = useState(provider.defaultBaseUrl ?? '');
   const [wireApi, setWireApi] = useState<'openai-completions' | 'anthropic-messages'>(
@@ -58,14 +60,14 @@ export function EditProviderModal({
 
   const save = async () => {
     if (!name.trim()) {
-      setError('Channel name is required');
+      setError(t('settings.models.editProvider.channelNameRequired'));
       return;
     }
     try {
       const parsed = new URL(baseUrl.trim());
       if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error();
     } catch {
-      setError('Base URL must be an absolute HTTP(S) URL');
+      setError(t('settings.models.editProvider.invalidBaseUrl'));
       return;
     }
 
@@ -108,16 +110,20 @@ export function EditProviderModal({
         aria-describedby={undefined}
         hideCloseButton
       >
-        <DialogTitle className="sr-only">Edit Provider Channel</DialogTitle>
+        <DialogTitle className="sr-only">
+          {t('settings.models.editProvider.title')}
+        </DialogTitle>
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="font-mono font-semibold">Edit Provider Channel</h2>
+            <h2 className="font-mono font-semibold">
+              {t('settings.models.editProvider.title')}
+            </h2>
             <p className="mt-1 font-mono text-[11px] text-zinc-400">{provider.id}</p>
           </div>
           <button
             type="button"
             onClick={() => onOpenChange(false)}
-            aria-label="Close edit provider"
+            aria-label={t('settings.models.editProvider.close')}
             className="flex h-8 w-8 items-center justify-center rounded-md"
           >
             <X className="h-4 w-4" />
@@ -134,18 +140,18 @@ export function EditProviderModal({
         )}
 
         <label className="flex flex-col gap-2 font-mono text-sm">
-          Channel name
+          {t('settings.models.editProvider.channelName')}
           <input
-            aria-label="Channel name"
+            aria-label={t('settings.models.editProvider.channelName')}
             value={name}
             onChange={(event) => setName(event.target.value)}
             className="field"
           />
         </label>
         <label className="flex flex-col gap-2 font-mono text-sm">
-          Wire API
+          {t('settings.models.editProvider.wireApi')}
           <Select
-            aria-label="Wire API"
+            aria-label={t('settings.models.editProvider.wireApi')}
             value={wireApi}
             onChange={(val) =>
               setWireApi(val as 'openai-completions' | 'anthropic-messages')
@@ -157,9 +163,9 @@ export function EditProviderModal({
           />
         </label>
         <label className="flex flex-col gap-2 font-mono text-sm">
-          Base URL
+          {t('settings.models.editProvider.baseUrl')}
           <input
-            aria-label="Provider Base URL"
+            aria-label={t('settings.models.editProvider.baseUrlAria')}
             value={baseUrl}
             onChange={(event) => {
               setBaseUrl(event.target.value);
@@ -169,25 +175,25 @@ export function EditProviderModal({
           />
         </label>
         <label className="flex flex-col gap-2 font-mono text-sm">
-          API key environment variable
+          {t('settings.models.editProvider.apiKeyEnv')}
           <input
-            aria-label="API key environment variable"
+            aria-label={t('settings.models.editProvider.apiKeyEnv')}
             value={apiKeyEnv}
             onChange={(event) => setApiKeyEnv(event.target.value)}
-            placeholder="Optional, for example TEAM_GATEWAY_API_KEY"
+            placeholder={t('settings.models.editProvider.apiKeyEnvPlaceholder')}
             autoComplete="off"
             spellCheck={false}
             className="field"
           />
         </label>
         <label className="flex flex-col gap-2 font-mono text-sm">
-          Replace API key
+          {t('settings.models.editProvider.replaceApiKey')}
           <input
-            aria-label="Provider API key"
+            aria-label={t('settings.models.editProvider.apiKeyAria')}
             type="password"
             value={apiKey}
             onChange={(event) => setApiKey(event.target.value)}
-            placeholder="Leave empty to keep current credential"
+            placeholder={t('settings.models.editProvider.apiKeyPlaceholder')}
             className="field"
           />
         </label>
@@ -199,7 +205,9 @@ export function EditProviderModal({
           className="flex min-h-9 items-center justify-center gap-2 rounded-md bg-green-600 px-4 py-2 text-white disabled:opacity-60"
         >
           {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-          {saving ? 'Saving...' : 'Save channel'}
+          {saving
+            ? t('settings.models.editProvider.saving')
+            : t('settings.models.editProvider.save')}
         </button>
       </DialogContent>
     </Dialog>

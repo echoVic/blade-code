@@ -1,6 +1,7 @@
 import { Loader2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { useT } from '@/i18n';
 import { requestJson } from '@/lib/http';
 import { restoreFocusToSelector } from '@/lib/mobileNavigationFocus';
 import type { ModelConfig } from '@/store/ConfigStore';
@@ -14,6 +15,7 @@ interface EditModelModalProps {
 }
 
 export function EditModelModal(props: EditModelModalProps) {
+  const t = useT();
   const [displayName, setDisplayName] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
   const [streamIdleTimeout, setStreamIdleTimeout] = useState('');
@@ -43,7 +45,7 @@ export function EditModelModal(props: EditModelModalProps) {
       parsedStreamIdleTimeout !== undefined &&
       (!Number.isFinite(parsedStreamIdleTimeout) || parsedStreamIdleTimeout < 1_000)
     ) {
-      setCredentialError('Stream idle timeout must be at least 1000ms');
+      setCredentialError(t('settings.models.editModal.streamIdleTimeoutError'));
       return;
     }
     setSaving(true);
@@ -70,7 +72,9 @@ export function EditModelModal(props: EditModelModalProps) {
       if (saved) props.onOpenChange(false);
     } catch (error) {
       setCredentialError(
-        error instanceof Error ? error.message : 'Failed to update provider credential'
+        error instanceof Error
+          ? error.message
+          : t('settings.models.editModal.credentialError')
       );
     } finally {
       setSaving(false);
@@ -99,13 +103,17 @@ export function EditModelModal(props: EditModelModalProps) {
         aria-describedby={undefined}
         hideCloseButton
       >
-        <DialogTitle className="sr-only">Edit Model</DialogTitle>
+        <DialogTitle className="sr-only">
+          {t('settings.models.editModal.srTitle')}
+        </DialogTitle>
         <div className="flex items-center justify-between">
-          <h2 className="font-mono font-semibold">Edit Model Overrides</h2>
+          <h2 className="font-mono font-semibold">
+            {t('settings.models.editModal.title')}
+          </h2>
           <button
             type="button"
             onClick={() => props.onOpenChange(false)}
-            aria-label="Close edit model"
+            aria-label={t('settings.models.editModal.close')}
             className="flex h-8 w-8 items-center justify-center rounded-md"
           >
             <X className="h-4 w-4" />
@@ -122,7 +130,7 @@ export function EditModelModal(props: EditModelModalProps) {
         )}
 
         <label className="flex flex-col gap-2 font-mono text-sm">
-          Display name
+          {t('settings.models.editModal.displayName')}
           <input
             value={displayName}
             onChange={(event) => setDisplayName(event.target.value)}
@@ -130,26 +138,26 @@ export function EditModelModal(props: EditModelModalProps) {
           />
         </label>
         <label className="flex flex-col gap-2 font-mono text-sm">
-          Replace provider API key
+          {t('settings.models.editModal.replaceApiKey')}
           <input
             type="password"
             value={apiKey}
             onChange={(event) => setApiKey(event.target.value)}
-            placeholder="Leave empty to keep current credential"
+            placeholder={t('settings.models.editModal.replaceApiKeyPlaceholder')}
             className="field"
           />
         </label>
         <label className="flex flex-col gap-2 font-mono text-sm">
-          Base URL override
+          {t('settings.models.editModal.baseUrlOverride')}
           <input
             value={baseUrl}
             onChange={(event) => setBaseUrl(event.target.value)}
-            placeholder="Leave empty to use default endpoint"
+            placeholder={t('settings.models.editModal.baseUrlPlaceholder')}
             className="field"
           />
         </label>
         <label className="flex flex-col gap-2 font-mono text-sm">
-          Stream idle timeout (ms)
+          {t('settings.models.editModal.streamIdleTimeout')}
           <input
             type="number"
             min={1000}
@@ -167,7 +175,9 @@ export function EditModelModal(props: EditModelModalProps) {
           className="flex min-h-9 items-center justify-center gap-2 rounded-md bg-green-600 px-4 py-2 text-white disabled:opacity-60"
         >
           {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-          {saving ? 'Saving...' : 'Save'}
+          {saving
+            ? t('settings.models.editModal.saving')
+            : t('settings.models.editModal.save')}
         </button>
       </DialogContent>
     </Dialog>

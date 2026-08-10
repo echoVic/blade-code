@@ -87,6 +87,41 @@ describe('SettingsModal', () => {
     expect(loadSettings).toHaveBeenCalledOnce();
   });
 
+  it('moves keyboard focus across settings tab groups', async () => {
+    useAppStore.getState().openSettings('general');
+
+    await act(async () => {
+      root.render(<SettingsModal />);
+      await Promise.resolve();
+    });
+
+    const generalTab = document.body.querySelector<HTMLButtonElement>(
+      '#settings-tab-general'
+    );
+    const hooksTab =
+      document.body.querySelector<HTMLButtonElement>('#settings-tab-hooks');
+    const pluginsTab = document.body.querySelector<HTMLButtonElement>(
+      '#settings-tab-plugins'
+    );
+    generalTab?.focus();
+
+    await act(async () => {
+      generalTab?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'End', bubbles: true })
+      );
+    });
+    expect(hooksTab?.getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(hooksTab);
+
+    await act(async () => {
+      hooksTab?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })
+      );
+    });
+    expect(pluginsTab?.getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(pluginsTab);
+  });
+
   it('opens the mounted MCP panel instead of looping back to settings', async () => {
     useAppStore.getState().openSettings('mcp');
 
@@ -371,8 +406,11 @@ describe('SettingsModal', () => {
       await Promise.resolve();
     });
 
+    // The global communication-style selector is present on the General tab and
+    // reflects the persisted value. Selecting a new option is exercised in the
+    // browser end-to-end suite (Radix popovers do not open under jsdom).
     const styleTrigger = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Communication style"]'
+      '[aria-label="Communication Style"]'
     );
     expect(styleTrigger).toBeInstanceOf(HTMLButtonElement);
     expect(styleTrigger?.textContent).toContain('Auto');

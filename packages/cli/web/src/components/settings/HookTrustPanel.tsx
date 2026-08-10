@@ -1,5 +1,6 @@
 import { AlertTriangle, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type TranslationKey, useT } from '@/i18n';
 import { requestJson } from '@/lib/http';
 import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/store/session';
@@ -35,19 +36,28 @@ interface HookTrustStatus {
   definitions: HookTrustDefinition[];
 }
 
-const STATE_LABELS: Record<HookTrustState, string> = {
-  disabled: 'Hooks disabled',
-  not_required: 'No external hooks',
-  untrusted: 'Review required',
-  trusted: 'Trusted',
-  modified: 'Changed since approval',
-  error: 'Trust store error',
+interface HookSessionStatus {
+  sessionId: string;
+  projectPath: string;
+  enabled: boolean;
+  paused: boolean;
+  configEnabled: boolean;
+}
+
+const STATE_LABEL_KEYS: Record<HookTrustState, TranslationKey> = {
+  disabled: 'settings.hooks.state.disabled',
+  not_required: 'settings.hooks.state.notRequired',
+  untrusted: 'settings.hooks.state.review',
+  trusted: 'settings.hooks.state.trusted',
+  modified: 'settings.hooks.state.modified',
+  error: 'settings.hooks.state.error',
 };
 
 export function HookTrustPanel() {
-  const sessionProjectPath = useSessionStore(
-    (state) => state.currentSessionRef?.projectPath
-  );
+  const t = useT();
+  const sessionRef = useSessionStore((state) => state.currentSessionRef);
+  const sessionProjectPath = sessionRef?.projectPath;
+  const sessionId = sessionRef?.sessionId;
   const projectPath = useMemo(
     () =>
       sessionProjectPath ??
@@ -56,21 +66,29 @@ export function HookTrustPanel() {
     [sessionProjectPath]
   );
   const [status, setStatus] = useState<HookTrustStatus | null>(null);
+  const [sessionStatus, setSessionStatus] = useState<HookSessionStatus | null>(null);
   const [loadedProjectPath, setLoadedProjectPath] = useState('');
+  const [loadedSessionKey, setLoadedSessionKey] = useState('');
   const [loading, setLoading] = useState(false);
-  const [action, setAction] = useState<'trust' | 'revoke' | null>(null);
+  const [action, setAction] = useState<'trust' | 'revoke' | 'session' | null>(null);
   const [pendingAction, setPendingAction] = useState<'trust' | 'revoke' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const loadGeneration = useRef(0);
   const projectPathRef = useRef(projectPath);
   projectPathRef.current = projectPath;
+  const sessionKey = sessionId ? `${projectPath}\0${sessionId}` : '';
+  const sessionKeyRef = useRef(sessionKey);
+  sessionKeyRef.current = sessionKey;
   const activeStatus = loadedProjectPath === projectPath ? status : null;
+  const activeSessionStatus = loadedSessionKey === sessionKey ? sessionStatus : null;
 
   const load = useCallback(async () => {
     const generation = ++loadGeneration.current;
     if (!projectPath) {
       setStatus(null);
+      setSessionStatus(null);
       setLoadedProjectPath('');
+      setLoadedSessionKey('');
       setError(null);
       return;
     }
@@ -81,17 +99,27 @@ export function HookTrustPanel() {
         `/hooks/trust?projectPath=${encodeURIComponent(projectPath)}`
       );
       if (generation !== loadGeneration.current) return;
+      const nextSessionStatus = sessionId
+        ? await requestJson<HookSessionStatus>(
+            `/hooks/session?projectPath=${encodeURIComponent(
+              projectPath
+            )}&sessionId=${encodeURIComponent(sessionId)}`
+          )
+        : null;
+      if (generation !== loadGeneration.current) return;
       setStatus(nextStatus);
+      setSessionStatus(nextSessionStatus);
       setLoadedProjectPath(projectPath);
+      setLoadedSessionKey(nextSessionStatus ? sessionKey : '');
     } catch (loadError) {
       if (generation !== loadGeneration.current) return;
       setError(
-        loadError instanceof Error ? loadError.message : 'Failed to load hook trust'
+        loadError instanceof Error ? loadError.message : t('settings.hooks.loadFailed')
       );
     } finally {
       if (generation === loadGeneration.current) setLoading(false);
     }
-  }, [projectPath]);
+  }, [projectPath, sessionId, sessionKey, t]);
 
   useEffect(() => {
     setPendingAction(null);
@@ -128,7 +156,39 @@ export function HookTrustPanel() {
         setError(
           actionError instanceof Error
             ? actionError.message
-            : 'Failed to update hook trust'
+            : t('settings.hooks.updateFailed')
+        );
+      }
+    } finally {
+      setAction(null);
+    }
+  };
+
+  const setSessionEnabled = async (enabled: boolean) => {
+    if (!sessionId || !activeSessionStatus) return;
+    const actionSessionKey = sessionKey;
+    setAction('session');
+    setError(null);
+    try {
+      const nextStatus = await requestJson<HookSessionStatus>('/hooks/session', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectPath,
+          sessionId,
+          enabled,
+        }),
+      });
+      if (sessionKeyRef.current === actionSessionKey) {
+        setSessionStatus(nextStatus);
+        setLoadedSessionKey(actionSessionKey);
+      }
+    } catch (actionError) {
+      if (sessionKeyRef.current === actionSessionKey) {
+        setError(
+          actionError instanceof Error
+            ? actionError.message
+            : t('settings.hooks.sessionUpdateFailed')
         );
       }
     } finally {
@@ -139,7 +199,7 @@ export function HookTrustPanel() {
   if (!projectPath) {
     return (
       <div className="font-mono text-[12px] text-[#6B7280] dark:text-[#a1a1aa]">
-        Select a project session to review its hooks.
+        {t('settings.hooks.selectSession')}
       </div>
     );
   }
@@ -147,7 +207,10 @@ export function HookTrustPanel() {
   const trusted = activeStatus?.state === 'trusted';
   const needsReview =
     activeStatus?.state === 'untrusted' || activeStatus?.state === 'modified';
-
+  const sessionPolicyUnavailable =
+    activeSessionStatus !== null &&
+    !activeSessionStatus.enabled &&
+    !activeSessionStatus.paused;
   return (
     <div className="flex min-h-0 flex-col gap-3 font-mono">
       <div className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-[#E5E7EB] bg-[#F9FAFB] p-3 dark:border-[#27272a] dark:bg-[#111113]">
@@ -164,7 +227,9 @@ export function HookTrustPanel() {
               />
             )}
             <span className="text-[13px] font-semibold text-[#111827] dark:text-[#E5E5E5]">
-              {activeStatus ? STATE_LABELS[activeStatus.state] : 'Hook trust'}
+              {activeStatus
+                ? t(STATE_LABEL_KEYS[activeStatus.state])
+                : t('settings.hooks.heading')}
             </span>
             {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
           </div>
@@ -180,11 +245,11 @@ export function HookTrustPanel() {
             type="button"
             onClick={() => void load()}
             disabled={loading || action !== null}
-            aria-label="Reload hook trust"
+            aria-label={t('settings.hooks.reloadAria')}
             className="inline-flex h-8 items-center gap-1 rounded-md border border-[#E5E7EB] px-2 text-[11px] text-[#6B7280] disabled:opacity-50 dark:border-[#3f3f46] dark:text-[#a1a1aa]"
           >
             <RefreshCw className="h-3.5 w-3.5" />
-            Reload
+            {t('settings.common.reload')}
           </button>
           {trusted ? (
             <button
@@ -193,7 +258,7 @@ export function HookTrustPanel() {
               disabled={action !== null}
               className="h-8 rounded-md border border-red-200 px-2.5 text-[11px] text-red-600 disabled:opacity-50 dark:border-red-900 dark:text-red-400"
             >
-              Revoke
+              {t('settings.hooks.revoke')}
             </button>
           ) : (
             <button
@@ -206,7 +271,7 @@ export function HookTrustPanel() {
               }
               className="h-8 rounded-md bg-emerald-600 px-2.5 text-[11px] font-semibold text-white disabled:opacity-50"
             >
-              Trust digest
+              {t('settings.hooks.trustDigest')}
             </button>
           )}
         </div>
@@ -221,20 +286,70 @@ export function HookTrustPanel() {
         </div>
       )}
 
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[#E5E7EB] px-3 py-2 dark:border-[#27272a]">
+        <div>
+          <div className="text-[11px] font-semibold text-[#111827] dark:text-[#E5E5E5]">
+            {t('settings.hooks.currentSession')}
+          </div>
+          <div className="mt-0.5 text-[9.5px] text-[#9CA3AF]">
+            {!sessionId
+              ? t('settings.hooks.session.open')
+              : !activeSessionStatus
+                ? t('settings.hooks.session.loading')
+                : activeSessionStatus.paused
+                  ? t('settings.hooks.session.paused')
+                  : activeSessionStatus.enabled
+                    ? t('settings.hooks.session.active')
+                    : !activeSessionStatus.configEnabled
+                      ? t('settings.hooks.session.disabled')
+                      : t('settings.hooks.session.unavailable')}
+          </div>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-label={
+            activeSessionStatus?.paused
+              ? t('settings.hooks.session.enableAria')
+              : activeSessionStatus?.enabled
+                ? t('settings.hooks.session.pauseAria')
+                : t('settings.hooks.session.unavailableAria')
+          }
+          aria-checked={activeSessionStatus?.enabled ?? false}
+          disabled={!activeSessionStatus || action !== null || sessionPolicyUnavailable}
+          onClick={() => void setSessionEnabled(activeSessionStatus?.paused === true)}
+          className={cn(
+            'flex h-6 w-11 items-center rounded-full px-1 transition-colors disabled:opacity-40',
+            activeSessionStatus?.enabled
+              ? 'bg-emerald-500'
+              : 'bg-[#E5E7EB] dark:bg-[#27272a]'
+          )}
+        >
+          <span
+            className={cn(
+              'h-4 w-4 rounded-full bg-white transition-transform',
+              activeSessionStatus?.enabled ? 'translate-x-5' : 'translate-x-0'
+            )}
+          />
+        </button>
+      </div>
+
       {pendingAction && activeStatus && (
         <div
           role="alertdialog"
           aria-label={
             pendingAction === 'trust'
-              ? 'Trust project hooks'
-              : 'Revoke project hook trust'
+              ? t('settings.hooks.confirmTrustAria')
+              : t('settings.hooks.confirmRevokeAria')
           }
           className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 dark:border-amber-900/70 dark:bg-amber-950/30"
         >
           <span className="max-w-[620px] text-[11px] text-amber-900 dark:text-amber-200">
             {pendingAction === 'trust'
-              ? `Run these ${activeStatus.configuredHooks} hooks with your user permissions until their configuration changes?`
-              : 'Stop all configured hooks for this project until explicitly trusted again?'}
+              ? t('settings.hooks.confirmTrust', {
+                  count: activeStatus.configuredHooks,
+                })
+              : t('settings.hooks.confirmRevoke')}
           </span>
           <div className="flex items-center gap-2">
             <button
@@ -242,7 +357,7 @@ export function HookTrustPanel() {
               onClick={() => setPendingAction(null)}
               className="h-7 rounded px-2 text-[11px] text-[#6B7280] dark:text-[#a1a1aa]"
             >
-              Cancel
+              {t('settings.common.cancel')}
             </button>
             <button
               type="button"
@@ -254,10 +369,10 @@ export function HookTrustPanel() {
               )}
             >
               {action
-                ? 'Saving...'
+                ? t('settings.hooks.saving')
                 : pendingAction === 'trust'
-                  ? 'Trust reviewed hooks'
-                  : 'Revoke trust'}
+                  ? t('settings.hooks.trustReviewed')
+                  : t('settings.hooks.revokeTrust')}
             </button>
           </div>
         </div>
@@ -297,7 +412,7 @@ export function HookTrustPanel() {
         ))}
         {activeStatus && activeStatus.definitions.length === 0 && (
           <div className="px-3 py-8 text-center text-[11px] text-[#9CA3AF]">
-            No configured command, HTTP, or prompt hooks.
+            {t('settings.hooks.empty')}
           </div>
         )}
       </div>

@@ -9,9 +9,13 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type TranslationKey, useT } from '@/i18n';
 import { requestJson } from '@/lib/http';
 import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/store/session';
+
+type PersistedPluginScope = 'local' | 'project' | 'global';
+type PluginEffectiveScope = PersistedPluginScope | 'invocation' | 'default';
 
 interface PluginSummary {
   name: string;
@@ -31,6 +35,8 @@ interface PluginSummary {
   revision?: string;
   installedAt?: string;
   updatedAt?: string;
+  effectiveScope: PluginEffectiveScope;
+  settingLayers: Partial<Record<PersistedPluginScope | 'invocation', boolean>>;
   compatibilityIssues: Array<{
     code: string;
     message: string;
@@ -77,7 +83,38 @@ const DEFAULT_POLICY: PluginSourcePolicy = {
   allowedLocalRoots: [],
 };
 
+const PLUGIN_SCOPES: Array<{
+  value: PersistedPluginScope;
+  labelKey: TranslationKey;
+  descriptionKey: TranslationKey;
+}> = [
+  {
+    value: 'local',
+    labelKey: 'settings.plugins.scope.local',
+    descriptionKey: 'settings.plugins.scope.localDesc',
+  },
+  {
+    value: 'project',
+    labelKey: 'settings.plugins.scope.project',
+    descriptionKey: 'settings.plugins.scope.projectDesc',
+  },
+  {
+    value: 'global',
+    labelKey: 'settings.plugins.scope.global',
+    descriptionKey: 'settings.plugins.scope.globalDesc',
+  },
+];
+
+const PLUGIN_SCOPE_LABEL_KEYS: Record<PluginEffectiveScope, TranslationKey> = {
+  local: 'settings.plugins.scope.local',
+  project: 'settings.plugins.scope.project',
+  global: 'settings.plugins.scope.global',
+  invocation: 'settings.plugins.scope.invocation',
+  default: 'settings.plugins.scope.default',
+};
+
 export function PluginPanel() {
+  const t = useT();
   const sessionProjectPath = useSessionStore(
     (state) => state.currentSessionRef?.projectPath
   );
@@ -105,6 +142,7 @@ export function PluginPanel() {
   const [marketplaceSource, setMarketplaceSource] = useState('');
   const [trustSource, setTrustSource] = useState(false);
   const [confirmAction, setConfirmAction] = useState<string | null>(null);
+  const [pluginScope, setPluginScope] = useState<PersistedPluginScope>('local');
   const generation = useRef(0);
   const projectPathRef = useRef(projectPath);
   projectPathRef.current = projectPath;
@@ -145,12 +183,14 @@ export function PluginPanel() {
     } catch (loadError) {
       if (requestGeneration !== generation.current) return;
       setError(
-        loadError instanceof Error ? loadError.message : 'Failed to load plugins'
+        loadError instanceof Error
+          ? loadError.message
+          : t('settings.plugins.loadFailed')
       );
     } finally {
       if (requestGeneration === generation.current) setLoading(false);
     }
-  }, [projectPath]);
+  }, [projectPath, t]);
 
   useEffect(() => {
     void load();
@@ -170,14 +210,16 @@ export function PluginPanel() {
         body: JSON.stringify({
           projectPath: actionProjectPath,
           enabled,
-          scope: 'local',
+          scope: pluginScope,
         }),
       });
       if (projectPathRef.current === actionProjectPath) await load();
     } catch (actionError) {
       if (projectPathRef.current === actionProjectPath) {
         setError(
-          actionError instanceof Error ? actionError.message : 'Failed to update plugin'
+          actionError instanceof Error
+            ? actionError.message
+            : t('settings.plugins.updateFailed')
         );
       }
     } finally {
@@ -231,7 +273,9 @@ export function PluginPanel() {
     } catch (actionError) {
       if (projectPathRef.current === actionProjectPath) {
         setError(
-          actionError instanceof Error ? actionError.message : 'Plugin action failed'
+          actionError instanceof Error
+            ? actionError.message
+            : t('settings.plugins.actionFailed')
         );
       }
     } finally {
@@ -340,7 +384,7 @@ export function PluginPanel() {
   if (!projectPath) {
     return (
       <div className="font-mono text-[12px] text-[#6B7280] dark:text-[#a1a1aa]">
-        Select a project to manage its plugins.
+        {t('settings.plugins.selectProject')}
       </div>
     );
   }
@@ -351,23 +395,23 @@ export function PluginPanel() {
         <div>
           <div className="flex items-center gap-2 text-[13px] font-semibold text-[#111827] dark:text-[#E5E5E5]">
             <Package className="h-4 w-4" />
-            Workspace plugins
+            {t('settings.plugins.heading')}
             {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
           </div>
           <p className="mt-1 break-all text-[10.5px] text-[#71717a]">{projectPath}</p>
           <p className="mt-1 text-[10px] text-[#9CA3AF]">
-            Changes apply to future sessions and persist in local project settings.
+            {t('settings.plugins.changesNote')}
           </p>
         </div>
         <button
           type="button"
           onClick={() => void load()}
           disabled={loading || action !== null}
-          aria-label="Reload plugins"
+          aria-label={t('settings.plugins.reloadAria')}
           className="inline-flex h-8 items-center gap-1 rounded-md border border-[#E5E7EB] px-2 text-[11px] text-[#6B7280] disabled:opacity-50 dark:border-[#3f3f46] dark:text-[#a1a1aa]"
         >
           <RefreshCw className="h-3.5 w-3.5" />
-          Reload
+          {t('settings.common.reload')}
         </button>
       </div>
 
@@ -384,23 +428,25 @@ export function PluginPanel() {
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-[11px] font-semibold text-[#111827] dark:text-[#E5E5E5]">
             <ShieldCheck className="h-3.5 w-3.5" />
-            Source policy
+            {t('settings.plugins.sourcePolicy')}
           </div>
           <button
             type="button"
-            aria-label="Save plugin source policy"
+            aria-label={t('settings.plugins.savePolicyAria')}
             onClick={() => void savePolicy()}
             disabled={action !== null}
             className="rounded-md border border-[#D1D5DB] px-2 py-1 text-[9.5px] text-[#6B7280] disabled:opacity-40 dark:border-[#3f3f46] dark:text-[#a1a1aa]"
           >
-            {action === 'policy:save' ? 'Saving…' : 'Save for project'}
+            {action === 'policy:save'
+              ? t('settings.plugins.saving')
+              : t('settings.plugins.saveForProject')}
           </button>
         </div>
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
           <button
             type="button"
             role="switch"
-            aria-label="Restrict plugin sources"
+            aria-label={t('settings.plugins.restrictAria')}
             aria-checked={policy.restrictToAllowedSources}
             onClick={() =>
               setPolicy((current) => ({
@@ -425,12 +471,12 @@ export function PluginPanel() {
                 )}
               />
             </span>
-            Restrict to allowlists
+            {t('settings.plugins.restrictAllowlists')}
           </button>
           <button
             type="button"
             role="switch"
-            aria-label="Require full Git commit SHA"
+            aria-label={t('settings.plugins.requireShaAria')}
             aria-checked={policy.requireGitCommitSha}
             disabled={environmentRequiresSha}
             onClick={() =>
@@ -456,31 +502,31 @@ export function PluginPanel() {
                 )}
               />
             </span>
-            Require full Git SHA
-            {environmentRequiresSha ? ' · environment locked' : ''}
+            {t('settings.plugins.requireSha')}
+            {environmentRequiresSha ? t('settings.plugins.environmentLocked') : ''}
           </button>
         </div>
         <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
           <input
-            aria-label="Allowed plugin Git hosts"
+            aria-label={t('settings.plugins.gitHostsAria')}
             value={gitHosts}
             onChange={(event) => setGitHosts(event.target.value)}
             placeholder="github.com, *.corp.test"
-            className="h-7 rounded-md border border-[#D1D5DB] bg-transparent px-2 text-[9.5px] text-[#111827] outline-none dark:border-[#3f3f46] dark:text-[#E5E5E5]"
+            className="field h-7 px-2 text-[9.5px]"
           />
           <input
-            aria-label="Allowed plugin Marketplaces"
+            aria-label={t('settings.plugins.marketplacesAria')}
             value={allowedMarketplaces}
             onChange={(event) => setAllowedMarketplaces(event.target.value)}
             placeholder="team-market, official"
-            className="h-7 rounded-md border border-[#D1D5DB] bg-transparent px-2 text-[9.5px] text-[#111827] outline-none dark:border-[#3f3f46] dark:text-[#E5E5E5]"
+            className="field h-7 px-2 text-[9.5px]"
           />
           <input
-            aria-label="Allowed local plugin roots"
+            aria-label={t('settings.plugins.localRootsAria')}
             value={localRoots}
             onChange={(event) => setLocalRoots(event.target.value)}
             placeholder="/opt/approved/plugins"
-            className="h-7 rounded-md border border-[#D1D5DB] bg-transparent px-2 text-[9.5px] text-[#111827] outline-none dark:border-[#3f3f46] dark:text-[#E5E5E5]"
+            className="field h-7 px-2 text-[9.5px]"
           />
         </div>
         {policy.restrictToAllowedSources &&
@@ -488,7 +534,7 @@ export function PluginPanel() {
           !allowedMarketplaces.trim() &&
           !localRoots.trim() && (
             <p className="mt-1.5 text-[9px] text-amber-700 dark:text-amber-400">
-              Empty allowlists deny every plugin source.
+              {t('settings.plugins.emptyAllowlists')}
             </p>
           )}
       </div>
@@ -496,16 +542,16 @@ export function PluginPanel() {
       <div className="rounded-md border border-[#E5E7EB] p-3 dark:border-[#27272a]">
         <div className="flex items-center gap-2 text-[11px] font-semibold text-[#111827] dark:text-[#E5E5E5]">
           <Download className="h-3.5 w-3.5" />
-          Install trusted plugin
+          {t('settings.plugins.installHeading')}
         </div>
         <div className="mt-2 flex gap-2">
           <input
-            aria-label="Plugin source"
+            aria-label={t('settings.plugins.sourceAria')}
             value={source}
             onChange={(event) => setSource(event.target.value)}
             placeholder="plugin@marketplace, owner/repo, or ./path"
             disabled={action !== null}
-            className="h-8 min-w-0 flex-1 rounded-md border border-[#D1D5DB] bg-transparent px-2 text-[10.5px] text-[#111827] outline-none focus:border-[#6B7280] disabled:opacity-50 dark:border-[#3f3f46] dark:text-[#E5E5E5]"
+            className="field h-8 min-w-0 flex-1 px-2 text-[10.5px]"
           />
           <button
             type="button"
@@ -518,7 +564,7 @@ export function PluginPanel() {
             ) : (
               <Download className="h-3.5 w-3.5" />
             )}
-            Install
+            {t('settings.plugins.install')}
           </button>
         </div>
         <button
@@ -538,20 +584,75 @@ export function PluginPanel() {
           >
             {trustSource ? '✓' : ''}
           </span>
-          I trust this source to activate Hooks, MCP servers, skills, and commands.
+          {t('settings.plugins.trustSource')}
         </button>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[#E5E7EB] px-3 py-2 dark:border-[#27272a]">
+        <div>
+          <div className="text-[10.5px] font-semibold text-[#111827] dark:text-[#E5E5E5]">
+            {t('settings.plugins.activationScope')}
+          </div>
+          <div className="mt-0.5 text-[9px] text-[#9CA3AF]">
+            {t('settings.plugins.activationScopeHint')}
+          </div>
+        </div>
+        <div
+          role="radiogroup"
+          aria-label={t('settings.plugins.scopeAria')}
+          className="flex rounded-md bg-[#F3F4F6] p-0.5 dark:bg-[#18181b]"
+        >
+          {PLUGIN_SCOPES.map((scope) => (
+            <button
+              key={scope.value}
+              type="button"
+              role="radio"
+              aria-checked={pluginScope === scope.value}
+              title={t(scope.descriptionKey)}
+              onClick={() => setPluginScope(scope.value)}
+              className={cn(
+                'rounded px-2 py-1 text-[9.5px] transition-colors',
+                pluginScope === scope.value
+                  ? 'bg-white font-semibold text-[#111827] shadow-sm dark:bg-[#27272a] dark:text-[#E5E5E5]'
+                  : 'text-[#71717a] hover:text-[#374151] dark:hover:text-[#d4d4d8]'
+              )}
+            >
+              {t(scope.labelKey)}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="min-h-0 overflow-y-auto rounded-md border border-[#E5E7EB] dark:border-[#27272a]">
         {activePlugins.map((plugin) => {
           const busy = action === plugin.name;
           const capabilities = [
-            plugin.commands ? `${plugin.commands} commands` : '',
-            plugin.skills ? `${plugin.skills} skills` : '',
-            plugin.agents ? `${plugin.agents} agents` : '',
-            plugin.hooks ? `${plugin.hooks} hooks` : '',
-            plugin.mcpServers ? `${plugin.mcpServers} MCP` : '',
+            plugin.commands
+              ? t('settings.plugins.capability.commands', { count: plugin.commands })
+              : '',
+            plugin.skills
+              ? t('settings.plugins.capability.skills', { count: plugin.skills })
+              : '',
+            plugin.agents
+              ? t('settings.plugins.capability.agents', { count: plugin.agents })
+              : '',
+            plugin.hooks
+              ? t('settings.plugins.capability.hooks', { count: plugin.hooks })
+              : '',
+            plugin.mcpServers
+              ? t('settings.plugins.capability.mcp', { count: plugin.mcpServers })
+              : '',
           ].filter(Boolean);
+          const settingLayers = (['global', 'project', 'local', 'invocation'] as const)
+            .filter((scope) => plugin.settingLayers?.[scope] !== undefined)
+            .map(
+              (scope) =>
+                `${t(PLUGIN_SCOPE_LABEL_KEYS[scope])} ${t(
+                  plugin.settingLayers[scope]
+                    ? 'settings.plugins.layer.on'
+                    : 'settings.plugins.layer.off'
+                )}`
+            );
           return (
             <div
               key={plugin.name}
@@ -566,23 +667,33 @@ export function PluginPanel() {
                   <span className="rounded bg-[#E5E7EB] px-1.5 py-0.5 text-[9px] uppercase text-[#6B7280] dark:bg-[#27272a] dark:text-[#a1a1aa]">
                     {plugin.source}
                   </span>
+                  <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[9px] text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
+                    {t('settings.plugins.effective', {
+                      scope: t(PLUGIN_SCOPE_LABEL_KEYS[plugin.effectiveScope]),
+                    })}
+                  </span>
                 </div>
                 <p className="mt-1 text-[10.5px] text-[#6B7280] dark:text-[#a1a1aa]">
                   {plugin.description}
                 </p>
                 <p className="mt-1 text-[9.5px] text-[#9CA3AF]">
-                  {capabilities.join(' · ') || 'No declared resources'}
+                  {capabilities.join(' · ') || t('settings.plugins.noResources')}
                 </p>
+                {settingLayers.length > 0 && (
+                  <p className="mt-1 text-[9px] text-[#9CA3AF]">
+                    {settingLayers.join(' · ')}
+                  </p>
+                )}
                 {plugin.managed && (
                   <p className="mt-1 text-[9px] text-[#9CA3AF]">
-                    managed
+                    {t('settings.plugins.managed')}
                     {plugin.marketplace ? ` · ${plugin.marketplace}` : ''}
                     {plugin.revision ? ` · ${plugin.revision.slice(0, 12)}` : ''}
                   </p>
                 )}
                 {!plugin.configurable && (
                   <p className="mt-1 text-[9.5px] text-amber-600 dark:text-amber-400">
-                    Invocation-scoped via --plugin-dir
+                    {t('settings.plugins.invocationScoped')}
                   </p>
                 )}
                 {plugin.compatibilityIssues?.map((issue) => (
@@ -600,8 +711,10 @@ export function PluginPanel() {
                   role="switch"
                   aria-label={
                     plugin.status === 'error'
-                      ? `Unavailable ${plugin.name}`
-                      : `${plugin.enabled ? 'Disable' : 'Enable'} ${plugin.name}`
+                      ? t('settings.plugins.unavailableAria', { name: plugin.name })
+                      : plugin.enabled
+                        ? t('settings.plugins.disableAria', { name: plugin.name })
+                        : t('settings.plugins.enableAria', { name: plugin.name })
                   }
                   aria-checked={plugin.enabled}
                   disabled={
@@ -627,7 +740,9 @@ export function PluginPanel() {
                   <div className="flex gap-1">
                     <button
                       type="button"
-                      aria-label={`Update ${plugin.name}`}
+                      aria-label={t('settings.plugins.updateAria', {
+                        name: plugin.name,
+                      })}
                       onClick={() => void updatePlugin(plugin)}
                       disabled={action !== null}
                       className={cn(
@@ -640,14 +755,16 @@ export function PluginPanel() {
                       {action === `update:${plugin.name}` ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
                       ) : confirmAction === `update:${plugin.name}` ? (
-                        'Confirm update'
+                        t('settings.plugins.confirmUpdate')
                       ) : (
-                        'Update'
+                        t('settings.plugins.update')
                       )}
                     </button>
                     <button
                       type="button"
-                      aria-label={`Uninstall ${plugin.name}`}
+                      aria-label={t('settings.plugins.uninstallAria', {
+                        name: plugin.name,
+                      })}
                       onClick={() => void uninstallPlugin(plugin)}
                       disabled={action !== null}
                       className={cn(
@@ -660,7 +777,7 @@ export function PluginPanel() {
                       {action === `uninstall:${plugin.name}` ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
                       ) : confirmAction === `uninstall:${plugin.name}` ? (
-                        'Confirm remove'
+                        t('settings.plugins.confirmRemove')
                       ) : (
                         <Trash2 className="h-3 w-3" />
                       )}
@@ -673,7 +790,7 @@ export function PluginPanel() {
         })}
         {!loading && activePlugins.length === 0 && !error && (
           <div className="px-3 py-8 text-center text-[11px] text-[#9CA3AF]">
-            No plugins discovered for this project.
+            {t('settings.plugins.empty')}
           </div>
         )}
       </div>
@@ -682,24 +799,26 @@ export function PluginPanel() {
         <div className="flex items-center justify-between gap-2 border-b border-[#E5E7EB] px-3 py-2 dark:border-[#27272a]">
           <div className="flex items-center gap-2 text-[11px] font-semibold text-[#111827] dark:text-[#E5E5E5]">
             <Store className="h-3.5 w-3.5" />
-            Marketplaces
+            {t('settings.plugins.marketplaces')}
           </div>
           <span className="text-[9px] text-[#9CA3AF]">
-            {activeMarketplaces.length} configured
+            {t('settings.plugins.configuredCount', {
+              count: activeMarketplaces.length,
+            })}
           </span>
         </div>
         <div className="flex gap-2 border-b border-[#E5E7EB] p-2 dark:border-[#27272a]">
           <input
-            aria-label="Marketplace source"
+            aria-label={t('settings.plugins.marketplaceSourceAria')}
             value={marketplaceSource}
             onChange={(event) => setMarketplaceSource(event.target.value)}
             placeholder="owner/repo, HTTPS Git URL, or ./path"
             disabled={action !== null}
-            className="h-7 min-w-0 flex-1 rounded-md border border-[#D1D5DB] bg-transparent px-2 text-[10px] text-[#111827] outline-none focus:border-[#6B7280] dark:border-[#3f3f46] dark:text-[#E5E5E5]"
+            className="field h-7 min-w-0 flex-1 px-2 text-[10px]"
           />
           <button
             type="button"
-            aria-label="Add marketplace"
+            aria-label={t('settings.plugins.addMarketplaceAria')}
             onClick={() => void addMarketplace()}
             disabled={!marketplaceSource.trim() || action !== null}
             className="inline-flex h-7 items-center gap-1 rounded-md border border-[#D1D5DB] px-2 text-[9.5px] text-[#6B7280] disabled:opacity-40 dark:border-[#3f3f46] dark:text-[#a1a1aa]"
@@ -709,7 +828,7 @@ export function PluginPanel() {
             ) : (
               <Plus className="h-3 w-3" />
             )}
-            Add
+            {t('settings.plugins.add')}
           </button>
         </div>
         {activeMarketplaces.map((marketplace) => (
@@ -726,13 +845,15 @@ export function PluginPanel() {
                   </span>
                 </div>
                 <p className="mt-0.5 text-[9.5px] text-[#6B7280] dark:text-[#a1a1aa]">
-                  {marketplace.description || 'No description'}
+                  {marketplace.description || t('settings.plugins.noDescription')}
                 </p>
               </div>
               <div className="flex shrink-0 gap-1">
                 <button
                   type="button"
-                  aria-label={`Refresh marketplace ${marketplace.name}`}
+                  aria-label={t('settings.plugins.refreshMarketplaceAria', {
+                    name: marketplace.name,
+                  })}
                   disabled={action !== null}
                   onClick={() => void refreshMarketplace(marketplace)}
                   className="rounded p-1 text-[#9CA3AF] hover:bg-[#F3F4F6] disabled:opacity-40 dark:hover:bg-[#27272a]"
@@ -745,7 +866,9 @@ export function PluginPanel() {
                 </button>
                 <button
                   type="button"
-                  aria-label={`Remove marketplace ${marketplace.name}`}
+                  aria-label={t('settings.plugins.removeMarketplaceAria', {
+                    name: marketplace.name,
+                  })}
                   disabled={action !== null}
                   onClick={() => void removeMarketplace(marketplace)}
                   className={cn(
@@ -756,7 +879,9 @@ export function PluginPanel() {
                   )}
                 >
                   {confirmAction === `marketplace:remove:${marketplace.name}` ? (
-                    <span className="px-1 text-[8.5px]">Confirm</span>
+                    <span className="px-1 text-[8.5px]">
+                      {t('settings.plugins.confirm')}
+                    </span>
                   ) : (
                     <Trash2 className="h-3 w-3" />
                   )}
@@ -777,7 +902,7 @@ export function PluginPanel() {
                   className="rounded bg-[#F3F4F6] px-1.5 py-0.5 text-[8.5px] text-[#6B7280] disabled:opacity-40 dark:bg-[#27272a] dark:text-[#a1a1aa]"
                 >
                   {plugin.name}
-                  {plugin.installed ? ' · installed' : ''}
+                  {plugin.installed ? t('settings.plugins.installedSuffix') : ''}
                 </button>
               ))}
               {marketplace.plugins.length > 12 && (
@@ -790,7 +915,7 @@ export function PluginPanel() {
         ))}
         {!loading && activeMarketplaces.length === 0 && (
           <div className="px-3 py-4 text-center text-[10px] text-[#9CA3AF]">
-            Add a Marketplace to discover installable plugins.
+            {t('settings.plugins.marketplaceEmpty')}
           </div>
         )}
       </div>

@@ -1,5 +1,6 @@
 import { AlertTriangle, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type TranslationKey, useT } from '@/i18n';
 import { requestJson } from '@/lib/http';
 import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/store/session';
@@ -34,14 +35,15 @@ interface WorkspaceTrustStatus {
   reloadRequired?: boolean;
 }
 
-const STATE_LABELS: Record<WorkspaceTrustState, string> = {
-  not_required: 'No trust required',
-  trusted: 'Workspace trusted',
-  untrusted: 'Review required',
-  error: 'Trust store error',
+const STATE_LABEL_KEYS: Record<WorkspaceTrustState, TranslationKey> = {
+  not_required: 'settings.trust.state.notRequired',
+  trusted: 'settings.trust.state.trusted',
+  untrusted: 'settings.trust.state.review',
+  error: 'settings.trust.state.error',
 };
 
 export function WorkspaceTrustPanel() {
+  const t = useT();
   const sessionProjectPath = useSessionStore(
     (state) => state.currentSessionRef?.projectPath
   );
@@ -84,14 +86,12 @@ export function WorkspaceTrustPanel() {
     } catch (loadError) {
       if (generation !== loadGeneration.current) return;
       setError(
-        loadError instanceof Error
-          ? loadError.message
-          : 'Failed to load workspace trust'
+        loadError instanceof Error ? loadError.message : t('settings.trust.loadFailed')
       );
     } finally {
       if (generation === loadGeneration.current) setLoading(false);
     }
-  }, [projectPath]);
+  }, [projectPath, t]);
 
   useEffect(() => {
     setPendingAction(null);
@@ -127,7 +127,7 @@ export function WorkspaceTrustPanel() {
         setError(
           actionError instanceof Error
             ? actionError.message
-            : 'Failed to update workspace trust'
+            : t('settings.trust.updateFailed')
         );
       }
     } finally {
@@ -138,7 +138,7 @@ export function WorkspaceTrustPanel() {
   if (!projectPath) {
     return (
       <div className="font-mono text-[12px] text-[#6B7280] dark:text-[#a1a1aa]">
-        Select a project session to review folder trust.
+        {t('settings.trust.selectSession')}
       </div>
     );
   }
@@ -162,7 +162,9 @@ export function WorkspaceTrustPanel() {
               />
             )}
             <span className="text-[13px] font-semibold text-[#111827] dark:text-[#E5E5E5]">
-              {activeStatus ? STATE_LABELS[activeStatus.state] : 'Workspace trust'}
+              {activeStatus
+                ? t(STATE_LABEL_KEYS[activeStatus.state])
+                : t('settings.trust.heading')}
             </span>
             {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
           </div>
@@ -171,7 +173,9 @@ export function WorkspaceTrustPanel() {
             <p className="mt-1 break-all text-[10px] text-[#9CA3AF]">
               {activeStatus.decision}
               {activeStatus.inheritedFrom
-                ? ` · inherited from ${activeStatus.inheritedFrom}`
+                ? t('settings.trust.inheritedFrom', {
+                    source: activeStatus.inheritedFrom,
+                  })
                 : ''}
             </p>
           )}
@@ -181,11 +185,11 @@ export function WorkspaceTrustPanel() {
             type="button"
             onClick={() => void load()}
             disabled={loading || action !== null}
-            aria-label="Reload workspace trust"
+            aria-label={t('settings.trust.reloadAria')}
             className="inline-flex h-8 items-center gap-1 rounded-md border border-[#E5E7EB] px-2 text-[11px] text-[#6B7280] disabled:opacity-50 dark:border-[#3f3f46] dark:text-[#a1a1aa]"
           >
             <RefreshCw className="h-3.5 w-3.5" />
-            Reload
+            {t('settings.common.reload')}
           </button>
           {trusted ? (
             <button
@@ -194,7 +198,7 @@ export function WorkspaceTrustPanel() {
               disabled={action !== null}
               className="h-8 rounded-md border border-red-200 px-2.5 text-[11px] text-red-600 disabled:opacity-50 dark:border-red-900 dark:text-red-400"
             >
-              Revoke
+              {t('settings.trust.revoke')}
             </button>
           ) : (
             <button
@@ -208,7 +212,7 @@ export function WorkspaceTrustPanel() {
               }
               className="h-8 rounded-md bg-emerald-600 px-2.5 text-[11px] font-semibold text-white disabled:opacity-50"
             >
-              Trust workspace
+              {t('settings.trust.trustWorkspace')}
             </button>
           )}
         </div>
@@ -228,7 +232,7 @@ export function WorkspaceTrustPanel() {
           role="status"
           className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-300"
         >
-          Restart Blade to reload project models, MCP, LSP, permissions, and plugins.
+          {t('settings.trust.restartNotice')}
         </div>
       )}
 
@@ -236,14 +240,18 @@ export function WorkspaceTrustPanel() {
         <div
           role="alertdialog"
           aria-label={
-            pendingAction === 'trust' ? 'Trust workspace' : 'Revoke workspace trust'
+            pendingAction === 'trust'
+              ? t('settings.trust.trustWorkspace')
+              : t('settings.trust.revokeAria')
           }
           className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 dark:border-amber-900/70 dark:bg-amber-950/30"
         >
           <span className="max-w-[620px] text-[11px] text-amber-900 dark:text-amber-200">
             {pendingAction === 'trust'
-              ? `Allow ${activeStatus.sensitiveSources} project source(s) to configure models, MCP, LSP, permissions, environment, instructions, commands, skills, agents, or plugins?`
-              : 'Block project-controlled executable configuration after restart?'}
+              ? t('settings.trust.confirmTrust', {
+                  count: activeStatus.sensitiveSources,
+                })
+              : t('settings.trust.confirmRevoke')}
           </span>
           <div className="flex items-center gap-2">
             <button
@@ -251,7 +259,7 @@ export function WorkspaceTrustPanel() {
               onClick={() => setPendingAction(null)}
               className="h-7 rounded px-2 text-[11px] text-[#6B7280] dark:text-[#a1a1aa]"
             >
-              Cancel
+              {t('settings.common.cancel')}
             </button>
             <button
               type="button"
@@ -263,10 +271,10 @@ export function WorkspaceTrustPanel() {
               )}
             >
               {action
-                ? 'Saving...'
+                ? t('settings.trust.saving')
                 : pendingAction === 'trust'
-                  ? 'Trust reviewed workspace'
-                  : 'Revoke trust'}
+                  ? t('settings.trust.trustReviewed')
+                  : t('settings.trust.revokeTrust')}
             </button>
           </div>
         </div>
@@ -308,7 +316,7 @@ export function WorkspaceTrustPanel() {
         ))}
         {activeStatus && activeStatus.sources.length === 0 && (
           <div className="px-3 py-8 text-center text-[11px] text-[#9CA3AF]">
-            No project-controlled executable configuration was found.
+            {t('settings.trust.empty')}
           </div>
         )}
       </div>
