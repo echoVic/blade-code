@@ -136,6 +136,14 @@ export default defineConfig(({ mode }) => {
           target: apiTarget,
           changeOrigin: true,
         },
+        '/plugins': {
+          target: apiTarget,
+          changeOrigin: true,
+        },
+        '/hooks': {
+          target: apiTarget,
+          changeOrigin: true,
+        },
       },
     },
   }
