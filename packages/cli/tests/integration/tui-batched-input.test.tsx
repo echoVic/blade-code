@@ -1,7 +1,7 @@
 import type { SocketReadyState } from 'node:net';
 import { PassThrough } from 'node:stream';
 import { render, useInput } from 'ink';
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CustomTextInput } from '../../src/ui/components/CustomTextInput.js';
 import { useTerminalInputModes } from '../../src/ui/hooks/useTerminalInputModes.js';
@@ -9,6 +9,11 @@ import {
   DISABLE_BRACKETED_PASTE,
   ENABLE_BRACKETED_PASTE,
 } from '../../src/ui/input/terminalInput.js';
+
+const RAW_INPUT_WAIT_OPTIONS = {
+  interval: 20,
+  timeout: 10_000,
+} as const;
 
 class TestInputStream extends PassThrough {
   public isTTY = true;
@@ -132,11 +137,11 @@ describe('TUI batched input integration', () => {
     stdin.write('! printf RAW_BATCH_OK');
     await vi.waitFor(() => {
       expect(stdout.output).toContain('RAW_BATCH_OK');
-    });
+    }, RAW_INPUT_WAIT_OPTIONS);
     stdin.write('\r');
     await vi.waitFor(() => {
       expect(submitted).toContain('! printf RAW_BATCH_OK');
-    });
+    }, RAW_INPUT_WAIT_OPTIONS);
   });
 
   it('submits split bracketed paste without focus CSI leakage', async () => {
@@ -148,11 +153,11 @@ describe('TUI batched input integration', () => {
     stdin.write('\u001B[I');
     await vi.waitFor(() => {
       expect(stdout.output).toContain('RAW_PASTE_OK');
-    });
+    }, RAW_INPUT_WAIT_OPTIONS);
     stdin.write('\r');
     await vi.waitFor(() => {
       expect(submitted).toContain('! printf RAW_PASTE_OK');
-    });
+    }, RAW_INPUT_WAIT_OPTIONS);
   });
 
   it('owns and restores bracketed paste terminal mode', async () => {
@@ -160,7 +165,7 @@ describe('TUI batched input integration', () => {
 
     await vi.waitFor(() => {
       expect(stdout.output).toContain(ENABLE_BRACKETED_PASTE);
-    });
+    }, RAW_INPUT_WAIT_OPTIONS);
     instance.unmount();
     expect(stdout.output).toContain(DISABLE_BRACKETED_PASTE);
   });
