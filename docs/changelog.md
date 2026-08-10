@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.4] - 2026-08-10
+
+### ✨ 新功能
+
+- Hooks 运行时启停改为 Session scope；CLI/TUI、Web 与工具执行链共享同一状态，
+  source project 和 task worktree 使用 canonical alias，Session dispose 会完整清理
+- Plugin 设置新增 global/project/local/invocation 分层 provenance；TUI 和 Web
+  可选择写入层级，并显示实际生效层与每层开关状态
+- Web Settings 完成中英文生产化和跨分组键盘导航；Hooks switch 使用后端实际状态，
+  Plugin scope 完整本地化，新 Web 任务默认使用自动审批模式
+
+### 🐛 问题修复
+
+- `communicationStyle` 现在正确持久化到全局 `config.json`；运行中切换界面语言会立即
+  重算快捷键标签
+- Web 开发服务器补齐 `/hooks` 与 `/plugins` 控制面代理；本地 qualification 先构建
+  production Web bundle，再执行依赖产物的 Web 测试
+
+### ✅ 测试相关
+
+- 新增 Hook Session 隔离、project/worktree alias、非法 Session ID、Plugin
+  provenance、TUI 控制和 Web Settings 回归
+- 真实 DeepSeek API 完成 Hook trust、Plugin lifecycle 与 Marketplace 三条轨迹；
+  production Web GUI 验证中文设置、插件层级启停、Session Hook pause、键盘导航及
+  零 console error
+- 最终 release HEAD 在 clean worktree 通过 14/14 qualification，包括 2546 个 unit、
+  133 个 integration、369 个 Web、CLI/headless/E2E/security/performance 与
+  production build
+
 ## [0.10.3] - 2026-08-10
 
 ### ✨ 新功能
