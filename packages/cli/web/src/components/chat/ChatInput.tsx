@@ -1,26 +1,10 @@
-import {
-  MAX_INLINE_ATTACHMENT_BYTES,
-  MAX_INLINE_ATTACHMENT_COUNT,
-} from '@api/attachmentLimits';
-import type {
-  CommunicationStyle,
-  CommunicationStyleSummary,
-  ReasoningEffort,
-  ResponseVerbosity,
-  ServiceTier,
-} from '@api/schemas';
-import {
-  AlertCircle,
-  ChevronDown,
-  Info,
-  Loader2,
-  Paperclip,
-  Send,
-  Square,
-  X,
-} from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Textarea } from '@/components/ui/textarea';
 import { applyAtMentionSuggestion, useAtMention } from '@/hooks/useAtMention';
@@ -43,7 +27,34 @@ import {
   PermissionModeEnum,
   useConfigStore,
 } from '@/store/ConfigStore';
+import { useSettingsStore } from '@/store/SettingsStore';
 import { useSessionStore } from '@/store/session';
+import {
+  MAX_INLINE_ATTACHMENT_BYTES,
+  MAX_INLINE_ATTACHMENT_COUNT,
+} from '@api/attachmentLimits';
+import type {
+  CommunicationStyle,
+  ReasoningEffort,
+  ResponseVerbosity,
+  ServiceTier,
+} from '@api/schemas';
+import {
+  AlertCircle,
+  Check,
+  ChevronDown,
+  ClipboardList,
+  Hand,
+  Info,
+  Loader2,
+  Paperclip,
+  Send,
+  ShieldAlert,
+  ShieldCheck,
+  Square,
+  X,
+} from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { SuggestionPopover } from './SuggestionPopover';
 
 export interface ComposerImageAttachment {
@@ -81,40 +92,42 @@ interface ChatInputProps {
   workspacePath?: string | null;
 }
 
-const MODES: { value: PermissionMode; labelKey: TranslationKey }[] = [
-  { value: PermissionModeEnum.DEFAULT, labelKey: 'chat.input.mode.default' },
-  { value: PermissionModeEnum.AUTO_EDIT, labelKey: 'chat.input.mode.autoEdit' },
-  { value: PermissionModeEnum.PLAN, labelKey: 'chat.input.mode.plan' },
+const MODES: {
+  value: PermissionMode;
+  labelKey: TranslationKey;
+  descriptionKey: TranslationKey;
+  icon: typeof Hand;
+  tone?: 'danger';
+}[] = [
+  {
+    value: PermissionModeEnum.DEFAULT,
+    labelKey: 'chat.input.mode.default',
+    descriptionKey: 'chat.input.mode.default.desc',
+    icon: Hand,
+  },
+  {
+    value: PermissionModeEnum.AUTO_EDIT,
+    labelKey: 'chat.input.mode.autoEdit',
+    descriptionKey: 'chat.input.mode.autoEdit.desc',
+    icon: ShieldCheck,
+  },
+  {
+    value: PermissionModeEnum.YOLO,
+    labelKey: 'chat.input.mode.yolo',
+    descriptionKey: 'chat.input.mode.yolo.desc',
+    icon: ShieldAlert,
+    tone: 'danger',
+  },
+  {
+    value: PermissionModeEnum.PLAN,
+    labelKey: 'chat.input.mode.plan',
+    descriptionKey: 'chat.input.mode.plan.desc',
+    icon: ClipboardList,
+  },
 ];
 const DEFAULT_REASONING_EFFORTS: ReasoningEffort[] = ['off'];
 const DEFAULT_SERVICE_TIERS: ServiceTier[] = ['standard'];
 const DEFAULT_RESPONSE_VERBOSITIES: ResponseVerbosity[] = [];
-const DEFAULT_COMMUNICATION_STYLES: CommunicationStyleSummary[] = [
-  {
-    id: 'auto',
-    name: 'Auto',
-    description: 'Use the Blade default communication style',
-    source: 'built-in',
-  },
-  {
-    id: 'pragmatic',
-    name: 'Pragmatic',
-    description: 'Direct, factual, concise, and action-oriented',
-    source: 'built-in',
-  },
-  {
-    id: 'friendly',
-    name: 'Friendly',
-    description: 'Warm, collaborative, and task-focused',
-    source: 'built-in',
-  },
-  {
-    id: 'explanatory',
-    name: 'Explanatory',
-    description: 'Explain codebase-specific choices and tradeoffs',
-    source: 'built-in',
-  },
-];
 
 function formatAttachmentBytes(bytes: number): string {
   if (bytes < 1024 * 1024) {
@@ -155,8 +168,8 @@ export function ChatInput({
   const [effortOpen, setEffortOpen] = useState(false);
   const [serviceTierOpen, setServiceTierOpen] = useState(false);
   const [responseVerbosityOpen, setResponseVerbosityOpen] = useState(false);
-  const [communicationStyleOpen, setCommunicationStyleOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
+  const [yoloConfirmOpen, setYoloConfirmOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
@@ -178,6 +191,9 @@ export function ChatInput({
     setMode,
   } = useConfigStore();
   const isSettingsOpen = useAppStore((state) => state.isSettingsOpen);
+  const globalCommunicationStyle = useSettingsStore(
+    (state) => state.communicationStyle
+  );
   const setMaxContextTokens = useSessionStore((state) => state.setMaxContextTokens);
   const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
   const persistedSessionModelId = useSessionStore(
@@ -212,14 +228,6 @@ export function ChatInput({
           session.projectPath === currentSessionRef?.projectPath
       )?.responseVerbosity
   );
-  const persistedCommunicationStyle = useSessionStore(
-    (state) =>
-      state.sessions.find(
-        (session) =>
-          session.sessionId === currentSessionRef?.sessionId &&
-          session.projectPath === currentSessionRef?.projectPath
-      )?.communicationStyle
-  );
   const [sessionModelOverride, setSessionModelOverride] = useState<string | null>(null);
   const [sessionReasoningOverride, setSessionReasoningOverride] =
     useState<ReasoningEffort | null>(null);
@@ -227,8 +235,6 @@ export function ChatInput({
     useState<ServiceTier | null>(null);
   const [sessionResponseVerbosityOverride, setSessionResponseVerbosityOverride] =
     useState<ResponseVerbosity | null>(null);
-  const [sessionCommunicationStyleOverride, setSessionCommunicationStyleOverride] =
-    useState<CommunicationStyle | null>(null);
   const persistedModelAvailable = configuredModels.some(
     (model) => model.id === persistedSessionModelId
   );
@@ -258,13 +264,17 @@ export function ChatInput({
   ];
   const effectiveResponseVerbosity =
     sessionResponseVerbosityOverride ?? persistedResponseVerbosity ?? 'auto';
-  const effectiveCommunicationStyle =
-    sessionCommunicationStyleOverride ?? persistedCommunicationStyle ?? 'auto';
-  const communicationStyleOptions =
-    currentModelInfo?.communicationStyles ?? DEFAULT_COMMUNICATION_STYLES;
-  const communicationStyleName =
-    communicationStyleOptions.find((style) => style.id === effectiveCommunicationStyle)
-      ?.name ?? effectiveCommunicationStyle;
+  // Communication style is a global, cross-session preference configured in
+  // Settings — not a per-composer control. Every turn inherits it.
+  const effectiveCommunicationStyle = globalCommunicationStyle ?? 'auto';
+  // Capability-aware visibility: only surface a control when the active model
+  // actually offers a meaningful choice for that dimension. Otherwise the
+  // dropdown would collapse to a single inert `auto`/`off` entry.
+  const showReasoningControl = reasoningEffortOptions.length > 1;
+  const showServiceTierControl = supportedServiceTiers.some(
+    (tier) => tier !== 'standard'
+  );
+  const showResponseVerbosityControl = supportedResponseVerbosities.length > 0;
   const displayModelName =
     currentModelInfo?.displayName ||
     currentModelInfo?.model ||
@@ -302,7 +312,6 @@ export function ChatInput({
       setEffortOpen(false);
       setServiceTierOpen(false);
       setResponseVerbosityOpen(false);
-      setCommunicationStyleOpen(false);
     }
   }, [isStreaming]);
 
@@ -311,7 +320,6 @@ export function ChatInput({
     setSessionReasoningOverride(null);
     setSessionServiceTierOverride(null);
     setSessionResponseVerbosityOverride(null);
-    setSessionCommunicationStyleOverride(null);
   }, [currentSessionRef?.projectPath, currentSessionRef?.sessionId]);
 
   useEffect(() => {
@@ -781,9 +789,9 @@ export function ChatInput({
     }
   }, [input]);
 
-  const currentModeLabelKey =
-    MODES.find((m) => m.value === currentMode)?.labelKey ?? 'chat.input.mode.default';
-  const currentModeLabel = t(currentModeLabelKey);
+  const currentModeConfig = MODES.find((m) => m.value === currentMode) ?? MODES[1];
+  const currentModeLabel = t(currentModeConfig.labelKey);
+  const CurrentModeIcon = currentModeConfig.icon;
   const canSend = !!input.trim() || attachments.length > 0;
   const attachmentLimitReached = attachments.length >= MAX_INLINE_ATTACHMENT_COUNT;
   const attachmentBytes = inlineImageBytes(attachments);
@@ -920,7 +928,7 @@ export function ChatInput({
               className="mx-4 mb-2 flex min-h-8 items-center gap-2 rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
             >
               <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-              <span className="min-w-0 flex-1">{visibleAttachmentError}</span>
+              <span className="flex-1 min-w-0">{visibleAttachmentError}</span>
               {attachmentError && (
                 <button
                   type="button"
@@ -929,9 +937,9 @@ export function ChatInput({
                     setAttachmentError(null);
                     attachmentCapabilityErrorRef.current = null;
                   }}
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-red-500 hover:bg-red-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 dark:hover:bg-red-950"
+                  className="flex justify-center items-center w-6 h-6 text-red-500 rounded shrink-0 hover:bg-red-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 dark:hover:bg-red-950"
                 >
-                  <X className="h-3 w-3" />
+                  <X className="w-3 h-3" />
                 </button>
               )}
             </div>
@@ -944,14 +952,14 @@ export function ChatInput({
               className="mx-4 mb-2 flex min-h-8 items-center gap-2 rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface-2))] px-2.5 py-1.5 text-[11px] text-[hsl(var(--deck-ink-muted))]"
             >
               <Info className="h-3.5 w-3.5 shrink-0 text-[hsl(var(--deck-accent))]" />
-              <span className="min-w-0 flex-1">{visibleAttachmentNotice}</span>
+              <span className="flex-1 min-w-0">{visibleAttachmentNotice}</span>
               <button
                 type="button"
                 aria-label={t('chat.notice.dismiss')}
                 onClick={() => setAttachmentNotice(null)}
                 className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-[hsl(var(--deck-ink-faint))] hover:bg-[hsl(var(--deck-surface))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))]"
               >
-                <X className="h-3 w-3" />
+                <X className="w-3 h-3" />
               </button>
             </div>
           )}
@@ -976,16 +984,16 @@ export function ChatInput({
                     <img
                       src={attachment.dataUrl}
                       alt={attachment.name}
-                      className="h-20 w-20 object-cover"
+                      className="object-cover w-20 h-20"
                     />
                     <button
                       type="button"
                       aria-label={`${t('chat.input.attachment.remove')} ${attachment.name}`}
                       title={`${t('chat.input.attachment.remove')} ${attachment.name}`}
                       onClick={() => removeAttachment(attachment.id)}
-                      className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded bg-black/75 text-white transition-colors hover:bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                      className="flex absolute top-1 right-1 justify-center items-center w-6 h-6 text-white rounded transition-colors bg-black/75 hover:bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                     >
-                      <X className="h-3 w-3" />
+                      <X className="w-3 h-3" />
                     </button>
                   </div>
                 ))}
@@ -1005,7 +1013,7 @@ export function ChatInput({
                   onClick={handleUnavailableAttachment}
                   className="flex h-8 w-8 cursor-help items-center justify-center rounded-md text-[#9CA3AF] opacity-55 transition-colors hover:bg-[hsl(var(--deck-surface-2))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] disabled:cursor-not-allowed dark:text-zinc-500"
                 >
-                  <Paperclip className="h-4 w-4" />
+                  <Paperclip className="w-4 h-4" />
                 </button>
               ) : (
                 <label
@@ -1018,10 +1026,10 @@ export function ChatInput({
                     accept="image/*"
                     multiple
                     aria-label={attachmentControlLabel}
-                    className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+                    className="absolute inset-0 z-10 w-full h-full opacity-0 cursor-pointer"
                     onChange={handleFileChange}
                   />
-                  <Paperclip className="h-4 w-4" />
+                  <Paperclip className="w-4 h-4" />
                 </label>
               )}
 
@@ -1094,8 +1102,8 @@ export function ChatInput({
                                   .catch(() => undefined);
                               }}
                             >
-                              <span className="flex min-w-0 items-center gap-2">
-                                <span className="min-w-0 flex-1 truncate">
+                              <span className="flex gap-2 items-center min-w-0">
+                                <span className="flex-1 min-w-0 truncate">
                                   {model.displayName || model.model}
                                 </span>
                                 {model.input?.includes('image') && (
@@ -1113,282 +1121,276 @@ export function ChatInput({
                 </PopoverContent>
               </Popover>
 
-              <Popover
-                open={effortOpen}
-                onOpenChange={(open) => {
-                  if (!isStreaming && !isSubmitting) setEffortOpen(open);
-                }}
-              >
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    disabled={isStreaming || isSubmitting}
-                    aria-label={t('chat.input.effort.change')}
-                    title={
-                      isStreaming
-                        ? t('chat.input.effort.locked')
-                        : t('chat.input.effort.change')
-                    }
-                    className="flex cursor-pointer items-center gap-1 rounded px-2 py-1 font-mono text-[11px] text-[#6B7280] transition-colors hover:bg-[#E5E7EB] hover:text-[#111827] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] disabled:cursor-not-allowed disabled:opacity-55 dark:text-zinc-500 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-200"
-                  >
-                    {t('chat.input.effort.label', {
-                      effort: effectiveReasoningEffort,
-                    })}
-                    <ChevronDown className="h-3 w-3" />
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent
-                  className="w-52 border border-[#E5E7EB] bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900"
-                  align="start"
+              {showReasoningControl && (
+                <Popover
+                  open={effortOpen}
+                  onOpenChange={(open) => {
+                    if (!isStreaming && !isSubmitting) setEffortOpen(open);
+                  }}
                 >
-                  <div className="px-2 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-[#9CA3AF] dark:text-zinc-600">
-                    {t('chat.input.effort.heading')}
-                  </div>
-                  <div className="flex flex-col gap-0.5">
-                    {reasoningEffortOptions.map((effort) => (
-                      <button
-                        key={effort}
-                        type="button"
-                        aria-label={t('chat.input.effort.option', { effort })}
-                        onClick={() => {
-                          setSessionReasoningOverride(effort);
-                          setEffortOpen(false);
-                        }}
-                        className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-[#E5E7EB] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] dark:hover:bg-zinc-800 ${
-                          effectiveReasoningEffort === effort
-                            ? 'bg-[#E5E7EB] text-[#111827] dark:bg-zinc-800 dark:text-zinc-100'
-                            : 'text-[#6B7280] dark:text-zinc-400'
-                        }`}
-                      >
-                        <span className="capitalize">{effort}</span>
-                        {effort === 'auto' && (
-                          <span className="text-[9px] text-[#9CA3AF] dark:text-zinc-600">
-                            {t('chat.input.effort.autoHint')}
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </PopoverContent>
-              </Popover>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      disabled={isStreaming || isSubmitting}
+                      aria-label={t('chat.input.effort.change')}
+                      title={
+                        isStreaming
+                          ? t('chat.input.effort.locked')
+                          : t('chat.input.effort.change')
+                      }
+                      className="flex cursor-pointer items-center gap-1 rounded px-2 py-1 font-mono text-[11px] text-[#6B7280] transition-colors hover:bg-[#E5E7EB] hover:text-[#111827] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] disabled:cursor-not-allowed disabled:opacity-55 dark:text-zinc-500 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-200"
+                    >
+                      {t('chat.input.effort.label', {
+                        effort: effectiveReasoningEffort,
+                      })}
+                      <ChevronDown className="w-3 h-3" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    className="w-52 border border-[#E5E7EB] bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900"
+                    align="start"
+                  >
+                    <div className="px-2 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-[#9CA3AF] dark:text-zinc-600">
+                      {t('chat.input.effort.heading')}
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      {reasoningEffortOptions.map((effort) => (
+                        <button
+                          key={effort}
+                          type="button"
+                          aria-label={t('chat.input.effort.option', { effort })}
+                          onClick={() => {
+                            setSessionReasoningOverride(effort);
+                            setEffortOpen(false);
+                          }}
+                          className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-[#E5E7EB] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] dark:hover:bg-zinc-800 ${
+                            effectiveReasoningEffort === effort
+                              ? 'bg-[#E5E7EB] text-[#111827] dark:bg-zinc-800 dark:text-zinc-100'
+                              : 'text-[#6B7280] dark:text-zinc-400'
+                          }`}
+                        >
+                          <span className="capitalize">{effort}</span>
+                          {effort === 'auto' && (
+                            <span className="text-[9px] text-[#9CA3AF] dark:text-zinc-600">
+                              {t('chat.input.effort.autoHint')}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              )}
 
-              <Popover
-                open={serviceTierOpen}
-                onOpenChange={(open) => {
-                  if (!isStreaming && !isSubmitting) setServiceTierOpen(open);
-                }}
-              >
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    disabled={isStreaming || isSubmitting}
-                    aria-label={t('chat.input.serviceTier.change')}
-                    title={
-                      isStreaming
-                        ? t('chat.input.serviceTier.locked')
-                        : t('chat.input.serviceTier.change')
-                    }
-                    className="flex cursor-pointer items-center gap-1 rounded px-2 py-1 font-mono text-[11px] text-[#6B7280] transition-colors hover:bg-[#E5E7EB] hover:text-[#111827] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] disabled:cursor-not-allowed disabled:opacity-55 dark:text-zinc-500 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-200"
-                  >
-                    {t('chat.input.serviceTier.label', {
-                      tier: effectiveServiceTier,
-                    })}
-                    <ChevronDown className="h-3 w-3" />
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent
-                  className="w-52 border border-[#E5E7EB] bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900"
-                  align="start"
+              {showServiceTierControl && (
+                <Popover
+                  open={serviceTierOpen}
+                  onOpenChange={(open) => {
+                    if (!isStreaming && !isSubmitting) setServiceTierOpen(open);
+                  }}
                 >
-                  <div className="px-2 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-[#9CA3AF] dark:text-zinc-600">
-                    {t('chat.input.serviceTier.heading')}
-                  </div>
-                  <div className="flex flex-col gap-0.5">
-                    {serviceTierOptions.map((tier) => (
-                      <button
-                        key={tier}
-                        type="button"
-                        aria-label={t('chat.input.serviceTier.option', { tier })}
-                        onClick={() => {
-                          setSessionServiceTierOverride(tier);
-                          setServiceTierOpen(false);
-                        }}
-                        className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-[#E5E7EB] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] dark:hover:bg-zinc-800 ${
-                          effectiveServiceTier === tier
-                            ? 'bg-[#E5E7EB] text-[#111827] dark:bg-zinc-800 dark:text-zinc-100'
-                            : 'text-[#6B7280] dark:text-zinc-400'
-                        }`}
-                      >
-                        <span className="capitalize">{tier}</span>
-                        {tier === 'fast' && (
-                          <span className="text-[9px] text-[#9CA3AF] dark:text-zinc-600">
-                            {t('chat.input.serviceTier.fastHint')}
-                          </span>
-                        )}
-                        {tier === 'flex' && (
-                          <span className="text-[9px] text-[#9CA3AF] dark:text-zinc-600">
-                            {t('chat.input.serviceTier.flexHint')}
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </PopoverContent>
-              </Popover>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      disabled={isStreaming || isSubmitting}
+                      aria-label={t('chat.input.serviceTier.change')}
+                      title={
+                        isStreaming
+                          ? t('chat.input.serviceTier.locked')
+                          : t('chat.input.serviceTier.change')
+                      }
+                      className="flex cursor-pointer items-center gap-1 rounded px-2 py-1 font-mono text-[11px] text-[#6B7280] transition-colors hover:bg-[#E5E7EB] hover:text-[#111827] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] disabled:cursor-not-allowed disabled:opacity-55 dark:text-zinc-500 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-200"
+                    >
+                      {t('chat.input.serviceTier.label', {
+                        tier: effectiveServiceTier,
+                      })}
+                      <ChevronDown className="w-3 h-3" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    className="w-52 border border-[#E5E7EB] bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900"
+                    align="start"
+                  >
+                    <div className="px-2 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-[#9CA3AF] dark:text-zinc-600">
+                      {t('chat.input.serviceTier.heading')}
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      {serviceTierOptions.map((tier) => (
+                        <button
+                          key={tier}
+                          type="button"
+                          aria-label={t('chat.input.serviceTier.option', { tier })}
+                          onClick={() => {
+                            setSessionServiceTierOverride(tier);
+                            setServiceTierOpen(false);
+                          }}
+                          className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-[#E5E7EB] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] dark:hover:bg-zinc-800 ${
+                            effectiveServiceTier === tier
+                              ? 'bg-[#E5E7EB] text-[#111827] dark:bg-zinc-800 dark:text-zinc-100'
+                              : 'text-[#6B7280] dark:text-zinc-400'
+                          }`}
+                        >
+                          <span className="capitalize">{tier}</span>
+                          {tier === 'fast' && (
+                            <span className="text-[9px] text-[#9CA3AF] dark:text-zinc-600">
+                              {t('chat.input.serviceTier.fastHint')}
+                            </span>
+                          )}
+                          {tier === 'flex' && (
+                            <span className="text-[9px] text-[#9CA3AF] dark:text-zinc-600">
+                              {t('chat.input.serviceTier.flexHint')}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              )}
 
-              <Popover
-                open={responseVerbosityOpen}
-                onOpenChange={(open) => {
-                  if (!isStreaming && !isSubmitting) {
-                    setResponseVerbosityOpen(open);
-                  }
-                }}
-              >
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    disabled={isStreaming || isSubmitting}
-                    aria-label={t('chat.input.responseVerbosity.change')}
-                    title={
-                      isStreaming
-                        ? t('chat.input.responseVerbosity.locked')
-                        : t('chat.input.responseVerbosity.change')
+              {showResponseVerbosityControl && (
+                <Popover
+                  open={responseVerbosityOpen}
+                  onOpenChange={(open) => {
+                    if (!isStreaming && !isSubmitting) {
+                      setResponseVerbosityOpen(open);
                     }
-                    className="flex cursor-pointer items-center gap-1 rounded px-2 py-1 font-mono text-[11px] text-[#6B7280] transition-colors hover:bg-[#E5E7EB] hover:text-[#111827] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] disabled:cursor-not-allowed disabled:opacity-55 dark:text-zinc-500 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-200"
-                  >
-                    {t('chat.input.responseVerbosity.label', {
-                      verbosity: effectiveResponseVerbosity,
-                    })}
-                    <ChevronDown className="h-3 w-3" />
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent
-                  className="w-52 border border-[#E5E7EB] bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900"
-                  align="start"
+                  }}
                 >
-                  <div className="px-2 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-[#9CA3AF] dark:text-zinc-600">
-                    {t('chat.input.responseVerbosity.heading')}
-                  </div>
-                  <div className="flex flex-col gap-0.5">
-                    {responseVerbosityOptions.map((verbosity) => (
-                      <button
-                        key={verbosity}
-                        type="button"
-                        aria-label={t('chat.input.responseVerbosity.option', {
-                          verbosity,
-                        })}
-                        onClick={() => {
-                          setSessionResponseVerbosityOverride(verbosity);
-                          setResponseVerbosityOpen(false);
-                        }}
-                        className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-[#E5E7EB] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] dark:hover:bg-zinc-800 ${
-                          effectiveResponseVerbosity === verbosity
-                            ? 'bg-[#E5E7EB] text-[#111827] dark:bg-zinc-800 dark:text-zinc-100'
-                            : 'text-[#6B7280] dark:text-zinc-400'
-                        }`}
-                      >
-                        <span className="capitalize">{verbosity}</span>
-                        {verbosity === 'auto' && (
-                          <span className="text-[9px] text-[#9CA3AF] dark:text-zinc-600">
-                            {t('chat.input.responseVerbosity.autoHint')}
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </PopoverContent>
-              </Popover>
-
-              <Popover
-                open={communicationStyleOpen}
-                onOpenChange={(open) => {
-                  if (!isStreaming && !isSubmitting) {
-                    setCommunicationStyleOpen(open);
-                  }
-                }}
-              >
-                <PopoverTrigger asChild>
-                  <button
-                    type="button"
-                    disabled={isStreaming || isSubmitting}
-                    aria-label={t('chat.input.communicationStyle.change')}
-                    title={
-                      isStreaming
-                        ? t('chat.input.communicationStyle.locked')
-                        : t('chat.input.communicationStyle.change')
-                    }
-                    className="flex cursor-pointer items-center gap-1 rounded px-2 py-1 font-mono text-[11px] text-[#6B7280] transition-colors hover:bg-[#E5E7EB] hover:text-[#111827] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] disabled:cursor-not-allowed disabled:opacity-55 dark:text-zinc-500 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-200"
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      disabled={isStreaming || isSubmitting}
+                      aria-label={t('chat.input.responseVerbosity.change')}
+                      title={
+                        isStreaming
+                          ? t('chat.input.responseVerbosity.locked')
+                          : t('chat.input.responseVerbosity.change')
+                      }
+                      className="flex cursor-pointer items-center gap-1 rounded px-2 py-1 font-mono text-[11px] text-[#6B7280] transition-colors hover:bg-[#E5E7EB] hover:text-[#111827] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] disabled:cursor-not-allowed disabled:opacity-55 dark:text-zinc-500 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-200"
+                    >
+                      {t('chat.input.responseVerbosity.label', {
+                        verbosity: effectiveResponseVerbosity,
+                      })}
+                      <ChevronDown className="w-3 h-3" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    className="w-52 border border-[#E5E7EB] bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900"
+                    align="start"
                   >
-                    {t('chat.input.communicationStyle.label', {
-                      style: communicationStyleName,
-                    })}
-                    <ChevronDown className="h-3 w-3" />
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent
-                  className="w-56 border border-[#E5E7EB] bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900"
-                  align="start"
-                >
-                  <div className="px-2 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-[#9CA3AF] dark:text-zinc-600">
-                    {t('chat.input.communicationStyle.heading')}
-                  </div>
-                  <div className="flex flex-col gap-0.5">
-                    {communicationStyleOptions.map((style) => (
-                      <button
-                        key={style.id}
-                        type="button"
-                        aria-label={t('chat.input.communicationStyle.option', {
-                          style: style.id,
-                        })}
-                        title={style.description}
-                        onClick={() => {
-                          setSessionCommunicationStyleOverride(style.id);
-                          setCommunicationStyleOpen(false);
-                        }}
-                        className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-[#E5E7EB] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] dark:hover:bg-zinc-800 ${
-                          effectiveCommunicationStyle === style.id
-                            ? 'bg-[#E5E7EB] text-[#111827] dark:bg-zinc-800 dark:text-zinc-100'
-                            : 'text-[#6B7280] dark:text-zinc-400'
-                        }`}
-                      >
-                        <span>{style.name}</span>
-                        <span className="text-[9px] text-[#9CA3AF] dark:text-zinc-600">
-                          {style.source}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </PopoverContent>
-              </Popover>
+                    <div className="px-2 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-[#9CA3AF] dark:text-zinc-600">
+                      {t('chat.input.responseVerbosity.heading')}
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      {responseVerbosityOptions.map((verbosity) => (
+                        <button
+                          key={verbosity}
+                          type="button"
+                          aria-label={t('chat.input.responseVerbosity.option', {
+                            verbosity,
+                          })}
+                          onClick={() => {
+                            setSessionResponseVerbosityOverride(verbosity);
+                            setResponseVerbosityOpen(false);
+                          }}
+                          className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-[#E5E7EB] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] dark:hover:bg-zinc-800 ${
+                            effectiveResponseVerbosity === verbosity
+                              ? 'bg-[#E5E7EB] text-[#111827] dark:bg-zinc-800 dark:text-zinc-100'
+                              : 'text-[#6B7280] dark:text-zinc-400'
+                          }`}
+                        >
+                          <span className="capitalize">{verbosity}</span>
+                          {verbosity === 'auto' && (
+                            <span className="text-[9px] text-[#9CA3AF] dark:text-zinc-600">
+                              {t('chat.input.responseVerbosity.autoHint')}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              )}
 
               <Popover open={modeOpen} onOpenChange={setModeOpen}>
                 <PopoverTrigger asChild>
-                  <button className="flex items-center gap-1 text-xs text-[#6B7280] hover:text-[#111827] px-2 py-1 rounded hover:bg-[#E5E7EB] dark:text-zinc-500 dark:hover:text-zinc-200 dark:hover:bg-zinc-800/50 cursor-pointer transition-colors">
+                  <button
+                    className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+                      currentModeConfig.tone === 'danger'
+                        ? 'text-amber-600 hover:bg-amber-500/10 dark:text-amber-400'
+                        : 'text-[#6B7280] hover:bg-[#E5E7EB] hover:text-[#111827] dark:text-zinc-500 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-200'
+                    }`}
+                  >
+                    <CurrentModeIcon className="h-3.5 w-3.5" />
                     {currentModeLabel}
                     <ChevronDown className="w-3 h-3" />
                   </button>
                 </PopoverTrigger>
                 <PopoverContent
-                  className="w-40 p-1 bg-white dark:bg-zinc-900 border border-[#E5E7EB] dark:border-zinc-700"
+                  className="w-72 p-1.5 bg-white dark:bg-zinc-900 border border-[#E5E7EB] dark:border-zinc-700"
                   align="start"
                 >
+                  <div className="px-2 pb-1.5 pt-1 text-[11px] font-medium text-[#9CA3AF] dark:text-zinc-500">
+                    {t('chat.input.mode.aria')}
+                  </div>
                   <div className="flex flex-col gap-0.5">
-                    {MODES.map((mode) => (
-                      <button
-                        key={mode.value}
-                        className={`w-full text-left px-2 py-1.5 text-xs rounded hover:bg-[#E5E7EB] dark:hover:bg-zinc-800 transition-colors ${
-                          currentMode === mode.value
-                            ? 'bg-[#E5E7EB] text-[#111827] dark:bg-zinc-800 dark:text-zinc-100'
-                            : 'text-[#6B7280] dark:text-zinc-400'
-                        }`}
-                        onClick={() => {
-                          setMode(mode.value);
-                          setModeOpen(false);
-                        }}
-                      >
-                        {t(mode.labelKey)}
-                      </button>
-                    ))}
+                    {MODES.map((mode) => {
+                      const ModeIcon = mode.icon;
+                      const selected = currentMode === mode.value;
+                      const danger = mode.tone === 'danger';
+                      return (
+                        <button
+                          key={mode.value}
+                          type="button"
+                          aria-pressed={selected}
+                          className={`flex w-full items-start gap-2.5 rounded-md px-2 py-2 text-left transition-colors ${
+                            selected
+                              ? 'bg-[#F3F4F6] dark:bg-zinc-800/70'
+                              : 'hover:bg-[#F3F4F6] dark:hover:bg-zinc-800/50'
+                          }`}
+                          onClick={() => {
+                            if (
+                              mode.value === PermissionModeEnum.YOLO &&
+                              currentMode !== PermissionModeEnum.YOLO
+                            ) {
+                              setModeOpen(false);
+                              setYoloConfirmOpen(true);
+                            } else {
+                              setMode(mode.value);
+                              setModeOpen(false);
+                            }
+                          }}
+                        >
+                          <ModeIcon
+                            className={`mt-0.5 h-4 w-4 shrink-0 ${
+                              danger
+                                ? 'text-amber-500'
+                                : selected
+                                  ? 'text-[#111827] dark:text-zinc-100'
+                                  : 'text-[#6B7280] dark:text-zinc-400'
+                            }`}
+                          />
+                          <span className="flex-1 min-w-0">
+                            <span
+                              className={`block text-[13px] font-medium leading-tight ${
+                                danger
+                                  ? 'text-amber-600 dark:text-amber-400'
+                                  : 'text-[#111827] dark:text-zinc-100'
+                              }`}
+                            >
+                              {t(mode.labelKey)}
+                            </span>
+                            <span className="mt-0.5 block text-[11px] leading-snug text-[#6B7280] dark:text-zinc-500">
+                              {t(mode.descriptionKey)}
+                            </span>
+                          </span>
+                          {selected && (
+                            <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[hsl(var(--deck-accent))]" />
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                 </PopoverContent>
               </Popover>
@@ -1448,7 +1450,7 @@ export function ChatInput({
                 className="h-8 w-8 bg-[#111827] text-white hover:bg-[#0F172A] disabled:bg-[#E5E7EB] disabled:text-[#9CA3AF] dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white dark:disabled:bg-zinc-800 dark:disabled:text-zinc-600"
               >
                 {isSubmitting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
                   <Send className="w-4 h-4" />
                 )}
@@ -1462,6 +1464,49 @@ export function ChatInput({
           </div>
         )}
       </div>
+      <Dialog open={yoloConfirmOpen} onOpenChange={setYoloConfirmOpen}>
+        <DialogContent
+          className="gap-0 rounded-xl border border-zinc-200 bg-white p-0 dark:border-zinc-800 dark:bg-[#09090b] sm:max-w-[400px]"
+          aria-describedby="yolo-confirm-desc"
+          hideCloseButton
+        >
+          <div className="flex flex-col gap-4 p-5">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-950/40">
+                <ShieldAlert className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+              </div>
+              <DialogTitle className="font-mono text-sm font-semibold">
+                {t('chat.input.mode.yolo.confirm.title')}
+              </DialogTitle>
+            </div>
+            <DialogDescription
+              id="yolo-confirm-desc"
+              className="text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-400"
+            >
+              {t('chat.input.mode.yolo.confirm.desc')}
+            </DialogDescription>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setYoloConfirmOpen(false)}
+                className="h-8 rounded-md px-3 font-mono text-[12px] font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+              >
+                {t('chat.input.mode.yolo.confirm.cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode(PermissionModeEnum.YOLO);
+                  setYoloConfirmOpen(false);
+                }}
+                className="h-8 rounded-md bg-amber-600 px-3 font-mono text-[12px] font-semibold text-white transition-colors hover:bg-amber-700"
+              >
+                {t('chat.input.mode.yolo.confirm.accept')}
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
