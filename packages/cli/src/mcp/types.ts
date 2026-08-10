@@ -11,6 +11,7 @@ import type { JSONSchema7 } from 'json-schema';
 export enum McpConnectionStatus {
   DISCONNECTED = 'disconnected',
   CONNECTING = 'connecting',
+  RECONNECTING = 'reconnecting',
   CONNECTED = 'connected',
   ERROR = 'error',
 }
@@ -22,6 +23,7 @@ export interface McpToolDefinition {
   name: string;
   description: string;
   inputSchema: JSONSchema7;
+  taskSupport?: 'required' | 'optional' | 'forbidden';
 }
 
 /**
@@ -29,10 +31,21 @@ export interface McpToolDefinition {
  */
 export interface McpToolCallResponse {
   content: Array<{
-    type: 'text' | 'image' | 'resource';
+    type: 'text' | 'image' | 'audio' | 'resource' | 'resource_link';
     text?: string;
     data?: string;
     mimeType?: string;
+    uri?: string;
+    name?: string;
+    description?: string;
+    resource?: {
+      uri: string;
+      mimeType?: string;
+      text?: string;
+      blob?: string;
+    };
   }>;
+  structuredContent?: Record<string, unknown>;
   isError?: boolean;
+  _meta?: Record<string, unknown>;
 }

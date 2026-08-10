@@ -4,7 +4,8 @@
  * 职责：
  * - 从 CLI --mcp-config 参数加载 MCP 配置
  * - 支持 JSON 文件路径或 JSON 字符串
- * - 将配置临时注入到 Store（不持久化）
+ * - 提供无副作用解析器，供 SessionRuntime 构造会话级 MCP 配置
+ * - 保留 Store 注入兼容入口
  */
 
 import fs from 'fs/promises';
@@ -16,6 +17,66 @@ import { getMcpServers, getState } from '../store/vanilla.js';
 
 const logger = createLogger(LogCategory.GENERAL);
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeMcpConfig(value: unknown): Record<string, McpServerConfig> {
+  if (!isRecord(value)) {
+    throw new Error('MCP configuration must be an object');
+  }
+
+  if (typeof value.name === 'string' && typeof value.type === 'string') {
+    const { name, ...serverConfig } = value;
+    return { [name]: serverConfig as unknown as McpServerConfig };
+  }
+
+  const rawServers = isRecord(value.mcpServers) ? value.mcpServers : value;
+  const servers: Record<string, McpServerConfig> = {};
+  for (const [name, rawConfig] of Object.entries(rawServers)) {
+    if (!name.trim() || !isRecord(rawConfig)) {
+      throw new Error(`Invalid MCP server configuration: ${name || '<empty>'}`);
+    }
+    servers[name] = rawConfig as unknown as McpServerConfig;
+  }
+  return servers;
+}
+
+async function parseMcpConfigArgument(
+  configArg: string
+): Promise<Record<string, McpServerConfig>> {
+  if (configArg.trim().startsWith('{')) {
+    return normalizeMcpConfig(JSON.parse(configArg));
+  }
+
+  const filePath = path.resolve(getOriginalCwd(), configArg);
+  const content = await fs.readFile(filePath, 'utf-8');
+  return normalizeMcpConfig(JSON.parse(content));
+}
+
+/**
+ * Parse CLI MCP sources without mutating process-global configuration.
+ * Later arguments override earlier arguments and the supplied base.
+ */
+export async function resolveMcpConfigFromCli(
+  mcpConfigs: readonly string[],
+  base: Readonly<Record<string, McpServerConfig>> = {}
+): Promise<Record<string, McpServerConfig>> {
+  let servers: Record<string, McpServerConfig> = { ...base };
+  for (const configArg of mcpConfigs) {
+    try {
+      const parsed = await parseMcpConfigArgument(configArg);
+      servers = { ...servers, ...parsed };
+      logger.debug(
+        `[OK] Loaded MCP config from CLI: ${Object.keys(parsed).join(', ')}`
+      );
+    } catch (error) {
+      logger.warn(`[WARN] Failed to load MCP config "${configArg}":`, error);
+    }
+  }
+  return servers;
+}
+
 /**
  * 从 CLI --mcp-config 参数加载 MCP 配置
  * 支持多种格式：
@@ -26,41 +87,6 @@ const logger = createLogger(LogCategory.GENERAL);
  * @param mcpConfigs - CLI 参数数组
  */
 export async function loadMcpConfigFromCli(mcpConfigs: string[]): Promise<void> {
-  for (const configArg of mcpConfigs) {
-    try {
-      let configData: Record<string, McpServerConfig>;
-
-      // 尝试解析为 JSON 字符串
-      if (configArg.trim().startsWith('{')) {
-        const parsed = JSON.parse(configArg);
-        // 单个服务器配置: {"name": "xxx", "type": "stdio", ...}
-        if (parsed.name && parsed.type) {
-          const { name, ...serverConfig } = parsed;
-          configData = { [name]: serverConfig as McpServerConfig };
-        } else {
-          // 多个服务器配置: {"server1": {...}, "server2": {...}}
-          configData = parsed;
-        }
-      } else {
-        // 作为文件路径处理 — CLI 参数应相对于用户的 shell 工作目录解析
-        const filePath = path.resolve(getOriginalCwd(), configArg);
-        const content = await fs.readFile(filePath, 'utf-8');
-        const parsed = JSON.parse(content);
-
-        // 支持 {"mcpServers": {...}} 或直接 {"server1": {...}}
-        configData = parsed.mcpServers || parsed;
-      }
-
-      // 添加到 Store（临时，不持久化）
-      const currentServers = getMcpServers();
-      const updatedServers = { ...currentServers, ...configData };
-      getState().config.actions.updateConfig({ mcpServers: updatedServers });
-
-      logger.debug(
-        `[OK] Loaded MCP config from CLI: ${Object.keys(configData).join(', ')}`
-      );
-    } catch (error) {
-      logger.warn(`[WARN] Failed to load MCP config "${configArg}":`, error);
-    }
-  }
+  const updatedServers = await resolveMcpConfigFromCli(mcpConfigs, getMcpServers());
+  getState().config.actions.updateConfig({ mcpServers: updatedServers });
 }

@@ -103,4 +103,16 @@ describe('McpRegistry', () => {
         .sort()
     ).toEqual(['a', 'b']);
   });
+
+  it('disconnectAll 应回收未完成连接的会话级客户端', async () => {
+    await registry.registerServer('connecting', {
+      type: 'stdio',
+      command: 'server',
+    });
+
+    await registry.disconnectAll();
+
+    expect(mockDisconnect).toHaveBeenCalledTimes(1);
+    expect(registry.getAllServers().size).toBe(0);
+  });
 });

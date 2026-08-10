@@ -43,6 +43,10 @@ function showMcpHelp(): void {
     '  blade mcp list                                  列出所有 MCP 服务器并检查健康状态 [aliases: ls]'
   );
   console.log('  blade mcp get <name>                            获取服务器详情');
+  console.log('  blade mcp login <name>                          登录远程 MCP OAuth');
+  console.log(
+    '  blade mcp logout <name>                         清除远程 MCP OAuth 凭证'
+  );
   console.log(
     '  blade mcp add-json <name> <json>                从 JSON 字符串添加服务器\n'
   );
@@ -317,9 +321,17 @@ const mcpListCommand: CommandModule = {
       for (const { name, config, serverInfo, error } of results) {
         const status = serverInfo?.status || McpConnectionStatus.DISCONNECTED;
         const statusSymbol =
-          status === McpConnectionStatus.CONNECTED ? '[OK]' : '[FAIL]';
+          status === McpConnectionStatus.CONNECTED
+            ? '[OK]'
+            : status === McpConnectionStatus.RECONNECTING
+              ? '[WAIT]'
+              : '[FAIL]';
         const statusText =
-          status === McpConnectionStatus.CONNECTED ? 'Connected' : 'Failed';
+          status === McpConnectionStatus.CONNECTED
+            ? 'Connected'
+            : status === McpConnectionStatus.RECONNECTING
+              ? `Recovering ${serverInfo?.recovery?.attempt ?? 0}/${serverInfo?.recovery?.maxAttempts ?? 0}`
+              : 'Failed';
 
         console.log(
           `${name}: ${config.type === 'stdio' ? config.command : config.url} - ${statusSymbol} ${statusText}`
@@ -389,6 +401,93 @@ const mcpGetCommand: CommandModule = {
         `Error: 获取失败: ${error instanceof Error ? error.message : '未知错误'}`
       );
       process.exit(1);
+    }
+  },
+};
+
+const mcpLoginCommand: CommandModule = {
+  command: 'login <name>',
+  describe: '显式启动远程 MCP OAuth 登录',
+  builder: (yargs) =>
+    yargs.positional('name', {
+      type: 'string',
+      describe: '服务器名称',
+      demandOption: true,
+    }),
+  handler: async (argv: AnyArgs) => {
+    const name = asString(argv.name);
+    if (!name) {
+      console.error('Error: 缺少必需参数: name');
+      process.exitCode = 1;
+      return;
+    }
+    const config = getMcpServers()[name];
+    if (!config) {
+      console.error(`Error: 服务器 "${name}" 不存在`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const registry = McpRegistry.getInstance();
+    try {
+      if (!registry.getServerStatus(name)) {
+        await registry.registerServer(name, config, { connect: false });
+      }
+      const handle = await registry.beginOAuthLogin(name, {
+        openBrowser: true,
+      });
+      console.log(`OAuth 授权已启动: ${handle.authorizationUrl}`);
+      console.log('等待浏览器授权完成...');
+      await handle.completion;
+      console.log(`MCP 服务器 "${name}" OAuth 登录成功`);
+    } catch (error) {
+      console.error(
+        `Error: OAuth 登录失败: ${error instanceof Error ? error.message : '未知错误'}`
+      );
+      process.exitCode = 1;
+    } finally {
+      await registry.unregisterServer(name);
+    }
+  },
+};
+
+const mcpLogoutCommand: CommandModule = {
+  command: 'logout <name>',
+  describe: '清除远程 MCP OAuth 凭证',
+  builder: (yargs) =>
+    yargs.positional('name', {
+      type: 'string',
+      describe: '服务器名称',
+      demandOption: true,
+    }),
+  handler: async (argv: AnyArgs) => {
+    const name = asString(argv.name);
+    if (!name) {
+      console.error('Error: 缺少必需参数: name');
+      process.exitCode = 1;
+      return;
+    }
+    const config = getMcpServers()[name];
+    if (!config) {
+      console.error(`Error: 服务器 "${name}" 不存在`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const registry = McpRegistry.getInstance();
+    try {
+      if (!registry.getServerStatus(name)) {
+        await registry.registerServer(name, config, { connect: false });
+      }
+      await registry.logoutOAuth(name);
+      console.log(`MCP 服务器 "${name}" OAuth 凭证已清除`);
+    } catch (error) {
+      console.error(
+        `Error: OAuth 登出失败: ${error instanceof Error ? error.message : '未知错误'}`
+      );
+      process.exitCode = 1;
+    } finally {
+      await registry.unregisterServer(name);
     }
   },
 };
@@ -464,6 +563,8 @@ export const mcpCommands: CommandModule = {
       .command(mcpRemoveCommand)
       .command(mcpListCommand)
       .command(mcpGetCommand)
+      .command(mcpLoginCommand)
+      .command(mcpLogoutCommand)
       .command(mcpAddJsonCommand)
       .demandCommand(0) // 允许不传子命令
       .help(false) // 禁用自动帮助，我们自己处理
@@ -475,7 +576,16 @@ export const mcpCommands: CommandModule = {
   },
   handler: (argv: AnyArgs) => {
     // 检查是否有子命令
-    const subcommands = ['add', 'remove', 'list', 'ls', 'get', 'add-json'];
+    const subcommands = [
+      'add',
+      'remove',
+      'list',
+      'ls',
+      'get',
+      'login',
+      'logout',
+      'add-json',
+    ];
     const positional = Array.isArray(argv._) ? argv._ : [];
     const hasSubcommand = positional.some(
       (arg) => typeof arg === 'string' && subcommands.includes(arg)

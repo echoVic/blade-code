@@ -41,6 +41,26 @@ export interface HealthCheckResult {
   lastError?: Error;
 }
 
+function boundedInteger(
+  value: unknown,
+  fallback: number,
+  label: string,
+  minimum: number,
+  maximum: number
+): number {
+  if (value === undefined) return fallback;
+  if (
+    typeof value !== 'number' ||
+    !Number.isFinite(value) ||
+    !Number.isInteger(value) ||
+    value < minimum ||
+    value > maximum
+  ) {
+    throw new Error(`${label} must be an integer between ${minimum} and ${maximum}`);
+  }
+  return value;
+}
+
 /**
  * MCP 健康监控器
  */
@@ -49,6 +69,7 @@ export class HealthMonitor extends EventEmitter {
   private config: Required<HealthCheckConfig>;
   private checkTimer: NodeJS.Timeout | null = null;
   private isChecking = false;
+  private running = false;
   private consecutiveFailures = 0;
   private lastCheckTime = 0;
   private currentStatus: HealthStatus = HealthStatus.HEALTHY;
@@ -56,11 +77,32 @@ export class HealthMonitor extends EventEmitter {
   constructor(client: McpClient, config: HealthCheckConfig = {}) {
     super();
     this.client = client;
+    if (config.enabled !== undefined && typeof config.enabled !== 'boolean') {
+      throw new Error('MCP health check enabled must be a boolean');
+    }
     this.config = {
-      interval: config.interval ?? 30000, // 30 秒
-      timeout: config.timeout ?? 10000, // 10 秒
+      interval: boundedInteger(
+        config.interval,
+        30_000,
+        'MCP health check interval',
+        10,
+        5 * 60_000
+      ),
+      timeout: boundedInteger(
+        config.timeout,
+        10_000,
+        'MCP health check timeout',
+        10,
+        60_000
+      ),
       enabled: config.enabled ?? false,
-      failureThreshold: config.failureThreshold ?? 3,
+      failureThreshold: boundedInteger(
+        config.failureThreshold,
+        3,
+        'MCP health check failureThreshold',
+        1,
+        10
+      ),
     };
   }
 
@@ -68,17 +110,8 @@ export class HealthMonitor extends EventEmitter {
    * 启动健康监控
    */
   start(): void {
-    if (this.checkTimer) {
-      console.warn('[HealthMonitor] 健康监控已在运行');
-      return;
-    }
-
-    if (!this.config.enabled) {
-      console.log('[HealthMonitor] 健康监控未启用');
-      return;
-    }
-
-    console.log(`[HealthMonitor] 启动健康监控（间隔: ${this.config.interval}ms）`);
+    if (this.running || !this.config.enabled) return;
+    this.running = true;
     this.scheduleNextCheck();
   }
 
@@ -86,10 +119,10 @@ export class HealthMonitor extends EventEmitter {
    * 停止健康监控
    */
   stop(): void {
+    this.running = false;
     if (this.checkTimer) {
       clearTimeout(this.checkTimer);
       this.checkTimer = null;
-      console.log('[HealthMonitor] 停止健康监控');
     }
   }
 
@@ -97,10 +130,13 @@ export class HealthMonitor extends EventEmitter {
    * 调度下一次检查
    */
   private scheduleNextCheck(): void {
+    if (!this.running) return;
     this.checkTimer = setTimeout(async () => {
-      await this.performHealthCheck();
+      this.checkTimer = null;
+      await this.performHealthCheck().catch(() => undefined);
       this.scheduleNextCheck();
     }, this.config.interval);
+    this.checkTimer.unref();
   }
 
   /**
@@ -108,7 +144,6 @@ export class HealthMonitor extends EventEmitter {
    */
   async performHealthCheck(): Promise<HealthCheckResult> {
     if (this.isChecking) {
-      console.warn('[HealthMonitor] 上一次检查仍在进行中');
       return this.getLastResult();
     }
 
@@ -121,8 +156,7 @@ export class HealthMonitor extends EventEmitter {
       const connectionStatus = this.client.connectionStatus;
 
       if (connectionStatus === McpConnectionStatus.CONNECTED) {
-        // 尝试列出工具作为活跃度检查
-        await this.pingServer();
+        await this.client.ping(this.config.timeout);
 
         // 检查成功，重置失败计数
         this.consecutiveFailures = 0;
@@ -144,22 +178,12 @@ export class HealthMonitor extends EventEmitter {
       this.consecutiveFailures++;
       const err = error as Error;
 
-      console.warn(
-        `[HealthMonitor] 健康检查失败（${this.consecutiveFailures}/${this.config.failureThreshold}）:`,
-        err.message
-      );
-
       // 判断状态
       let status: HealthStatus;
       if (this.consecutiveFailures >= this.config.failureThreshold) {
         status = HealthStatus.UNHEALTHY;
         this.emit('unhealthy', this.consecutiveFailures, err);
-
-        // 触发重连
-        console.log('[HealthMonitor] 达到失败阈值，触发重连...');
-        this.triggerReconnection().catch((reconnectError) => {
-          console.error('[HealthMonitor] 重连失败:', reconnectError);
-        });
+        this.client.requestRecovery(err, 'health_check');
       } else {
         status = HealthStatus.DEGRADED;
       }
@@ -177,52 +201,6 @@ export class HealthMonitor extends EventEmitter {
       return result;
     } finally {
       this.isChecking = false;
-    }
-  }
-
-  /**
-   * Ping 服务器（通过列出工具）
-   */
-  private async pingServer(): Promise<void> {
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('Health check timeout')), this.config.timeout);
-    });
-
-    // 使用列出工具作为 ping
-    const checkPromise = (async () => {
-      const tools = this.client.availableTools;
-      if (tools.length === 0) {
-        // 如果没有工具，至少检查客户端是否存在
-        if (!this.client.server) {
-          throw new Error('Server info not available');
-        }
-      }
-    })();
-
-    await Promise.race([checkPromise, timeoutPromise]);
-  }
-
-  /**
-   * 触发重连
-   */
-  private async triggerReconnection(): Promise<void> {
-    try {
-      // 先断开
-      await this.client.disconnect();
-
-      // 等待一小段时间
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      // 重新连接
-      await this.client.connect();
-
-      console.log('[HealthMonitor] 重连成功');
-      this.consecutiveFailures = 0;
-      this.setStatus(HealthStatus.HEALTHY);
-      this.emit('reconnected');
-    } catch (error) {
-      console.error('[HealthMonitor] 重连失败:', error);
-      throw error;
     }
   }
 

@@ -1,49 +1,52 @@
-/**
- * OAuth 相关类型定义
- */
+import type {
+  OAuthClientProvider,
+  OAuthDiscoveryState,
+} from '@modelcontextprotocol/sdk/client/auth.js';
+import type {
+  OAuthClientInformationMixed,
+  OAuthTokens,
+} from '@modelcontextprotocol/sdk/shared/auth.js';
 
-/**
- * OAuth 令牌
- */
-export interface OAuthToken {
-  accessToken: string;
-  tokenType: string;
-  expiresAt?: number;
-  refreshToken?: string;
-  scope?: string;
-}
-
-/**
- * OAuth 配置
- */
 export interface OAuthConfig {
   enabled?: boolean;
   clientId?: string;
-  clientSecret?: string;
-  authorizationUrl?: string;
-  tokenUrl?: string;
   scopes?: string[];
-  redirectUri?: string;
+  callbackPort?: number;
 }
 
-/**
- * OAuth 凭证（包含令牌和元数据）
- */
-export interface OAuthCredentials {
-  serverName: string;
-  token: OAuthToken;
+export type McpOAuthStatus =
+  | 'disabled'
+  | 'unavailable'
+  | 'unauthenticated'
+  | 'authorizing'
+  | 'authenticated'
+  | 'error';
+
+export interface McpOAuthCredential {
+  serverUrl: string;
   clientId?: string;
-  tokenUrl?: string;
-  updatedAt: number;
+  clientInformation?: OAuthClientInformationMixed;
+  tokens?: OAuthTokens;
+  tokenExpiresAt?: number;
+  discoveryState?: OAuthDiscoveryState;
+  updatedAt: string;
 }
 
-/**
- * OAuth 令牌响应
- */
-export interface OAuthTokenResponse {
-  access_token: string;
-  token_type: string;
-  expires_in?: number;
-  refresh_token?: string;
-  scope?: string;
+export interface McpOAuthCredentialStore {
+  version: 1;
+  credentials: Record<string, McpOAuthCredential>;
+}
+
+export interface McpOAuthLoginHandle {
+  flowId: string;
+  authorizationUrl: string;
+  callbackUrl: string;
+  completion: Promise<void>;
+}
+
+export interface McpOAuthProvider extends OAuthClientProvider {
+  getStatus(): Promise<McpOAuthStatus>;
+  hasUsableCredentials(): Promise<boolean>;
+  beginAuthorization(): Promise<McpOAuthLoginHandle>;
+  logout(): Promise<void>;
 }

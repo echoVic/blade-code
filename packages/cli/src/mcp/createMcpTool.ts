@@ -1,7 +1,15 @@
-import { Type, type TSchema } from '../schema/index.js';
+import path from 'node:path';
+import { type TSchema, Type } from '../schema/index.js';
 import { createTool } from '../tools/core/createTool.js';
 import { ToolErrorType, ToolKind } from '../tools/types/index.js';
+import { getCwd } from '../utils/cwd.js';
 import type { McpClient } from './McpClient.js';
+import { McpTaskManager } from './McpTaskManager.js';
+import {
+  type McpToolArtifactWriter,
+  normalizeMcpToolResult,
+  sanitizeMcpToolError,
+} from './McpToolResult.js';
 import type { McpToolDefinition } from './types.js';
 
 /**
@@ -11,7 +19,8 @@ export function createMcpTool(
   mcpClient: McpClient,
   serverName: string,
   toolDef: McpToolDefinition,
-  customName?: string // 可选的自定义工具名（用于冲突处理）
+  customName?: string,
+  artifactWriter?: McpToolArtifactWriter
 ) {
   const schema =
     toolDef.inputSchema && typeof toolDef.inputSchema === 'object'
@@ -30,6 +39,12 @@ export function createMcpTool(
       important: [
         `From MCP server: ${serverName}`,
         'Executes external tools; user confirmation required',
+        ...(toolDef.taskSupport === 'required'
+          ? [
+              'This tool requires MCP task execution and returns an opaque task ID.',
+              'Use TaskOutput to retrieve the eventual result.',
+            ]
+          : []),
       ],
     },
     category: 'MCP tool',
@@ -37,59 +52,103 @@ export function createMcpTool(
 
     async execute(params, context) {
       try {
-        const result = await mcpClient.callTool(
-          toolDef.name,
-          params as Record<string, unknown>
-        );
-
-        // 处理 MCP 响应内容
-        let llmContent = '';
-
-        if (result.content && Array.isArray(result.content)) {
-          for (const item of result.content) {
-            if (item.type === 'text' && item.text) {
-              llmContent += item.text;
-            } else if (item.type === 'image') {
-              llmContent += `[image: ${item.mimeType || 'unknown'}]\n`;
-            } else if (item.type === 'resource') {
-              llmContent += `[resource: ${item.mimeType || 'unknown'}]\n`;
-            }
+        const interactionContext = {
+          ...(context.confirmationHandler
+            ? { confirmationHandler: context.confirmationHandler }
+            : {}),
+          ...(context.mcpSamplingHandler
+            ? { samplingHandler: context.mcpSamplingHandler }
+            : {}),
+          ...(context.onProgressUpdate
+            ? { progressHandler: context.onProgressUpdate }
+            : {}),
+          ...(context.sessionId ? { sessionId: context.sessionId } : {}),
+          ...(context.workspaceRoot ? { workspaceRoot: context.workspaceRoot } : {}),
+          ...(context.permissionMode ? { permissionMode: context.permissionMode } : {}),
+        };
+        if (toolDef.taskSupport === 'required') {
+          if (!context.sessionId) {
+            throw new Error('MCP tasks require an active Session');
           }
-        }
-
-        if (result.isError) {
+          const task = await McpTaskManager.getInstance().start({
+            client: mcpClient,
+            serverName,
+            toolName: toolDef.name,
+            arguments: params as Record<string, unknown>,
+            owner: {
+              sessionId: context.sessionId,
+              projectPath: path.resolve(context.workspaceRoot || getCwd()),
+            },
+            interactionContext,
+            signal: context.signal,
+          });
           return {
-            success: false,
-            llmContent: llmContent || 'MCP tool execution failed',
-            error: {
-              type: ToolErrorType.EXECUTION_ERROR,
-              message: llmContent || 'MCP tool execution failed',
+            success: true,
+            llmContent: {
+              task_id: task.taskId,
+              type: 'mcp',
+              status: task.status,
+              message:
+                `MCP task started. Use TaskOutput(task_id: "${task.taskId}") ` +
+                'to retrieve its result.',
             },
             metadata: {
-              summary: `MCP ${toolDef.name} 执行失败`,
+              summary: `Started MCP task ${task.taskId}`,
               serverName,
               toolName: toolDef.name,
+              task_id: task.taskId,
+              taskType: 'mcp',
+              taskStatus: task.status,
+              background: true,
             },
+          };
+        }
+        const result = await mcpClient.callTool(
+          toolDef.name,
+          params as Record<string, unknown>,
+          {
+            ...(context.signal ? { signal: context.signal } : {}),
+            ...interactionContext,
+          }
+        );
+
+        const normalized = await normalizeMcpToolResult(result, artifactWriter);
+        const metadata = {
+          summary: `MCP ${toolDef.name} 执行${normalized.isError ? '失败' : '成功'}`,
+          serverName,
+          toolName: toolDef.name,
+          mcpResult: {
+            isError: normalized.isError,
+            ...normalized.metadata,
+          },
+        };
+
+        if (normalized.isError) {
+          const message = sanitizeMcpToolError(normalized.llmContent);
+          return {
+            success: false,
+            llmContent: message,
+            error: {
+              type: ToolErrorType.EXECUTION_ERROR,
+              message,
+            },
+            metadata,
           };
         }
 
         return {
           success: true,
-          llmContent: llmContent || 'Execution succeeded',
-          metadata: {
-            summary: `MCP ${toolDef.name} 执行成功`,
-            serverName,
-            toolName: toolDef.name,
-            mcpResult: result,
-          },
+          llmContent: normalized.llmContent,
+          metadata,
         };
       } catch (error) {
+        const message = sanitizeMcpToolError(error);
         return {
           success: false,
-          llmContent: `MCP tool execution failed: ${(error as Error).message}`,
+          llmContent: `MCP tool execution failed: ${message}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
-            message: (error as Error).message,
+            message,
           },
           metadata: {
             summary: `MCP ${toolDef.name} 执行失败`,

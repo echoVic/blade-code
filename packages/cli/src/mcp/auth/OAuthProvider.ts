@@ -1,402 +1,494 @@
-/**
- * OAuth 认证提供者
- * 实现基础的 OAuth 2.0 授权码流程 + PKCE
- */
+import { randomUUID } from 'node:crypto';
+import http, {
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from 'node:http';
+import {
+  auth,
+  type OAuthClientProvider,
+  type OAuthDiscoveryState,
+} from '@modelcontextprotocol/sdk/client/auth.js';
+import type {
+  OAuthClientInformationMixed,
+  OAuthClientMetadata,
+  OAuthTokens,
+} from '@modelcontextprotocol/sdk/shared/auth.js';
+import open from 'open';
+import { getPackageName, getVersion } from '../../utils/packageInfo.js';
+import { assertSafeMcpOAuthUrl, safeMcpOAuthFetch } from './McpOAuthPolicy.js';
+import {
+  canonicalMcpOAuthServerUrl,
+  mcpOAuthCredentialId,
+  OAuthTokenStorage,
+} from './OAuthTokenStorage.js';
+import type {
+  McpOAuthCredential,
+  McpOAuthLoginHandle,
+  McpOAuthProvider,
+  McpOAuthStatus,
+  OAuthConfig,
+} from './types.js';
 
-import { spawn } from 'child_process';
-import * as crypto from 'crypto';
-import * as http from 'http';
-import { URL } from 'url';
-import { OAuthTokenStorage } from './OAuthTokenStorage.js';
-import type { OAuthConfig, OAuthToken, OAuthTokenResponse } from './types.js';
+const CALLBACK_HOST = '127.0.0.1';
+const DEFAULT_CALLBACK_PORT = 7777;
+const CALLBACK_PATH = '/oauth/callback';
+const AUTHORIZATION_TIMEOUT_MS = 5 * 60 * 1000;
 
-const REDIRECT_PORT = 7777;
-const REDIRECT_PATH = '/oauth/callback';
-const HTTP_OK = 200;
-
-/**
- * PKCE 参数
- */
-interface PKCEParams {
-  codeVerifier: string;
-  codeChallenge: string;
+interface ActiveOAuthFlow {
+  flowId: string;
   state: string;
+  authorizationUrl?: string;
+  callbackUrl: string;
+  server: Server;
+  timeout: NodeJS.Timeout;
+  completion: Promise<void>;
+  resolve: () => void;
+  reject: (error: Error) => void;
+  settled: boolean;
 }
 
-/**
- * OAuth 认证提供者
- */
-export class OAuthProvider {
+export class McpOAuthAuthorizationRequiredError extends Error {
+  constructor(serverName: string) {
+    super(
+      `MCP server "${serverName}" requires OAuth authorization; run "blade mcp login ${serverName}" or use the Web MCP panel`
+    );
+    this.name = 'McpOAuthAuthorizationRequiredError';
+  }
+}
+
+export class McpOAuthUnavailableError extends Error {
+  constructor(serverName: string) {
+    super(
+      `MCP OAuth credentials are unavailable in this runtime for server "${serverName}"`
+    );
+    this.name = 'McpOAuthUnavailableError';
+  }
+}
+
+function callbackHtml(success: boolean): string {
+  const title = success ? 'Authentication complete' : 'Authentication failed';
+  const message = success
+    ? 'You can close this window and return to Blade.'
+    : 'Return to Blade and retry the OAuth login.';
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>${title}</title>
+</head>
+<body>
+  <main>
+    <h1>${title}</h1>
+    <p>${message}</p>
+  </main>
+</body>
+</html>`;
+}
+
+function writeCallbackResponse(
+  response: ServerResponse,
+  status: number,
+  success: boolean
+): void {
+  response.writeHead(status, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'",
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+  });
+  response.end(callbackHtml(success));
+}
+
+export interface OAuthProviderOptions {
+  tokenStorage?: OAuthTokenStorage;
+  openAuthorizationUrl?: (url: string) => Promise<void>;
+}
+
+export class OAuthProvider implements McpOAuthProvider, OAuthClientProvider {
+  private static activeFlowIdentity?: string;
+
   private readonly tokenStorage: OAuthTokenStorage;
+  private readonly serverUrl: string;
+  private readonly identity: string;
+  private readonly callbackUrl: string;
+  private readonly openAuthorizationUrl: (url: string) => Promise<void>;
+  private codeVerifierValue?: string;
+  private activeFlow?: ActiveOAuthFlow;
+  private lastError?: Error;
 
-  constructor(tokenStorage: OAuthTokenStorage = new OAuthTokenStorage()) {
-    this.tokenStorage = tokenStorage;
+  constructor(
+    private readonly serverName: string,
+    serverUrl: string,
+    private readonly config: OAuthConfig,
+    options: OAuthProviderOptions = {}
+  ) {
+    this.serverUrl = canonicalMcpOAuthServerUrl(serverUrl);
+    this.identity = mcpOAuthCredentialId(
+      this.serverUrl,
+      config.clientId,
+      config.scopes
+    );
+    this.tokenStorage = options.tokenStorage ?? new OAuthTokenStorage();
+    const callbackPort = config.callbackPort ?? DEFAULT_CALLBACK_PORT;
+    this.callbackUrl = `http://${CALLBACK_HOST}:${callbackPort}${CALLBACK_PATH}`;
+    this.openAuthorizationUrl =
+      options.openAuthorizationUrl ??
+      (async (url) => {
+        await open(url, { wait: false });
+      });
   }
 
-  /**
-   * 生成 PKCE 参数
-   */
-  private generatePKCEParams(): PKCEParams {
-    // 生成 code verifier (43-128 字符)
-    const codeVerifier = crypto.randomBytes(32).toString('base64url');
-
-    // 生成 code challenge (SHA256)
-    const codeChallenge = crypto
-      .createHash('sha256')
-      .update(codeVerifier)
-      .digest('base64url');
-
-    // 生成 state (CSRF 保护)
-    const state = crypto.randomBytes(16).toString('base64url');
-
-    return { codeVerifier, codeChallenge, state };
+  get redirectUrl(): string {
+    return this.callbackUrl;
   }
 
-  /**
-   * 构建授权 URL
-   */
-  private buildAuthorizationUrl(config: OAuthConfig, pkceParams: PKCEParams): string {
-    const redirectUri =
-      config.redirectUri || `http://localhost:${REDIRECT_PORT}${REDIRECT_PATH}`;
+  get clientMetadata(): OAuthClientMetadata {
+    return {
+      redirect_uris: [this.callbackUrl],
+      token_endpoint_auth_method: 'none',
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      client_name: `${getPackageName()} ${getVersion()}`,
+      ...(this.config.scopes?.length ? { scope: this.config.scopes.join(' ') } : {}),
+    };
+  }
 
-    const params = new URLSearchParams({
-      client_id: config.clientId!,
-      response_type: 'code',
-      redirect_uri: redirectUri,
-      state: pkceParams.state,
-      code_challenge: pkceParams.codeChallenge,
-      code_challenge_method: 'S256',
+  async state(): Promise<string> {
+    return this.activeFlow?.state ?? randomUUID();
+  }
+
+  async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
+    if (this.config.clientId) {
+      return { client_id: this.config.clientId };
+    }
+    return (await this.readCredential())?.clientInformation;
+  }
+
+  async saveClientInformation(
+    clientInformation: OAuthClientInformationMixed
+  ): Promise<void> {
+    await this.updateCredential((current) => ({
+      ...this.baseCredential(current),
+      clientInformation,
+    }));
+  }
+
+  async tokens(): Promise<OAuthTokens | undefined> {
+    const credential = await this.readCredential();
+    if (!credential?.tokens) return undefined;
+    if (
+      credential.tokenExpiresAt !== undefined &&
+      credential.tokenExpiresAt <= Date.now() &&
+      !credential.tokens.refresh_token
+    ) {
+      return undefined;
+    }
+    return structuredClone(credential.tokens);
+  }
+
+  async saveTokens(tokens: OAuthTokens): Promise<void> {
+    const tokenExpiresAt =
+      tokens.expires_in === undefined
+        ? undefined
+        : Date.now() + tokens.expires_in * 1000;
+    await this.updateCredential((current) => ({
+      ...this.baseCredential(current),
+      tokens: structuredClone(tokens),
+      ...(tokenExpiresAt === undefined ? {} : { tokenExpiresAt }),
+    }));
+    this.lastError = undefined;
+  }
+
+  async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
+    const flow = this.activeFlow;
+    if (!flow) {
+      throw new McpOAuthAuthorizationRequiredError(this.serverName);
+    }
+    flow.authorizationUrl = assertSafeMcpOAuthUrl(
+      authorizationUrl,
+      'MCP OAuth authorization URL'
+    ).toString();
+  }
+
+  async saveCodeVerifier(codeVerifier: string): Promise<void> {
+    this.codeVerifierValue = codeVerifier;
+  }
+
+  async codeVerifier(): Promise<string> {
+    if (!this.codeVerifierValue) {
+      throw new Error('MCP OAuth PKCE verifier is unavailable');
+    }
+    return this.codeVerifierValue;
+  }
+
+  async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
+    await this.updateCredential((current) => ({
+      ...this.baseCredential(current),
+      discoveryState: structuredClone(state),
+    }));
+  }
+
+  async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
+    const state = (await this.readCredential())?.discoveryState;
+    return state ? structuredClone(state) : undefined;
+  }
+
+  async invalidateCredentials(
+    scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery'
+  ): Promise<void> {
+    if (scope === 'verifier') {
+      this.codeVerifierValue = undefined;
+      return;
+    }
+    if (scope === 'all') {
+      await this.tokenStorage.deleteCredential(this.identity);
+      this.codeVerifierValue = undefined;
+      return;
+    }
+    await this.updateCredential((current) => {
+      if (!current) return null;
+      const next = { ...current };
+      if (scope === 'client') {
+        delete next.clientInformation;
+        delete next.tokens;
+        delete next.tokenExpiresAt;
+      } else if (scope === 'tokens') {
+        delete next.tokens;
+        delete next.tokenExpiresAt;
+      } else if (scope === 'discovery') {
+        delete next.discoveryState;
+      }
+      return { ...next, updatedAt: new Date().toISOString() };
     });
+  }
 
-    if (config.scopes && config.scopes.length > 0) {
-      params.append('scope', config.scopes.join(' '));
+  async getStatus(): Promise<McpOAuthStatus> {
+    if (this.activeFlow) return 'authorizing';
+    if (this.lastError) return 'error';
+    return (await this.hasUsableCredentials()) ? 'authenticated' : 'unauthenticated';
+  }
+
+  async hasUsableCredentials(): Promise<boolean> {
+    const credential = await this.readCredential();
+    if (!credential?.tokens?.access_token) return false;
+    if (
+      credential.tokenExpiresAt === undefined ||
+      credential.tokenExpiresAt > Date.now()
+    ) {
+      return true;
+    }
+    return Boolean(credential.tokens.refresh_token);
+  }
+
+  async beginAuthorization(): Promise<McpOAuthLoginHandle> {
+    if (this.activeFlow) return this.toHandle(this.activeFlow);
+    if (await this.hasUsableCredentials()) {
+      throw new Error(`MCP server "${this.serverName}" already has OAuth credentials`);
+    }
+    if (OAuthProvider.activeFlowIdentity) {
+      throw new Error('Another MCP OAuth authorization is already in progress');
     }
 
-    const url = new URL(config.authorizationUrl!);
-    params.forEach((value, key) => {
-      url.searchParams.append(key, value);
-    });
+    OAuthProvider.activeFlowIdentity = this.identity;
+    this.lastError = undefined;
+    this.codeVerifierValue = undefined;
 
-    return url.toString();
+    try {
+      const flow = await this.createFlow();
+      this.activeFlow = flow;
+      const result = await auth(this, {
+        serverUrl: this.serverUrl,
+        fetchFn: safeMcpOAuthFetch,
+      });
+      if (result !== 'REDIRECT' || !flow.authorizationUrl) {
+        throw new Error('MCP OAuth server did not start an authorization redirect');
+      }
+      return this.toHandle(flow);
+    } catch (error) {
+      const normalized = error instanceof Error ? error : new Error(String(error));
+      await this.failActiveFlow(normalized);
+      throw normalized;
+    }
   }
 
-  /**
-   * 启动本地回调服务器
-   */
-  private async startCallbackServer(expectedState: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const server = http.createServer((req, res) => {
-        try {
-          const url = new URL(req.url!, `http://localhost:${REDIRECT_PORT}`);
+  async openAuthorization(): Promise<McpOAuthLoginHandle> {
+    const handle = await this.beginAuthorization();
+    await this.openAuthorizationUrl(handle.authorizationUrl);
+    return handle;
+  }
 
-          if (url.pathname !== REDIRECT_PATH) {
-            res.writeHead(404);
-            res.end('Not found');
-            return;
-          }
+  async logout(): Promise<void> {
+    if (this.activeFlow) {
+      await this.failActiveFlow(new Error('MCP OAuth authorization cancelled'));
+    }
+    await this.tokenStorage.deleteCredential(this.identity);
+    this.codeVerifierValue = undefined;
+    this.lastError = undefined;
+  }
 
-          const code = url.searchParams.get('code');
-          const state = url.searchParams.get('state');
-          const error = url.searchParams.get('error');
+  async dispose(): Promise<void> {
+    if (this.activeFlow) {
+      await this.failActiveFlow(new Error('MCP OAuth authorization cancelled'));
+    }
+  }
 
-          if (error) {
-            res.writeHead(HTTP_OK, { 'Content-Type': 'text/html' });
-            res.end(`
-              <html>
-                <body>
-                  <h1>Authentication Failed</h1>
-                  <p>Error: ${error}</p>
-                  <p>You can close this window.</p>
-                </body>
-              </html>
-            `);
-            server.close();
-            reject(new Error(`OAuth error: ${error}`));
-            return;
-          }
+  private async createFlow(): Promise<ActiveOAuthFlow> {
+    let resolveCompletion: (() => void) | undefined;
+    let rejectCompletion: ((error: Error) => void) | undefined;
+    const completion = new Promise<void>((resolve, reject) => {
+      resolveCompletion = resolve;
+      rejectCompletion = reject;
+    });
+    void completion.catch(() => undefined);
 
-          if (!code || !state) {
-            res.writeHead(400);
-            res.end('Missing code or state parameter');
-            return;
-          }
-
-          if (state !== expectedState) {
-            res.writeHead(400);
-            res.end('Invalid state parameter');
-            server.close();
-            reject(new Error('State mismatch - possible CSRF attack'));
-            return;
-          }
-
-          // 成功响应
-          res.writeHead(HTTP_OK, { 'Content-Type': 'text/html' });
-          res.end(`
-            <html>
-              <body>
-                <h1>Authentication Successful!</h1>
-                <p>You can close this window and return to Blade.</p>
-                <script>window.close();</script>
-              </body>
-            </html>
-          `);
-
-          server.close();
-          resolve(code);
-        } catch (error) {
-          server.close();
-          reject(error);
-        }
-      });
-
-      server.on('error', reject);
-      server.listen(REDIRECT_PORT, () => {
-        console.log(`[OAuth] Callback server listening on port ${REDIRECT_PORT}`);
-      });
-
-      // 5 分钟超时
-      setTimeout(
+    const state = randomUUID();
+    const server = http.createServer((request, response) => {
+      void this.handleCallback(request, response);
+    });
+    server.on('clientError', (_error, socket) => {
+      socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+    });
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => reject(error);
+      server.once('error', onError);
+      server.listen(
+        this.config.callbackPort ?? DEFAULT_CALLBACK_PORT,
+        CALLBACK_HOST,
         () => {
-          server.close();
-          reject(new Error('OAuth callback timeout'));
-        },
-        5 * 60 * 1000
+          server.off('error', onError);
+          resolve();
+        }
       );
     });
-  }
 
-  /**
-   * 用授权码换取令牌
-   */
-  private async exchangeCodeForToken(
-    config: OAuthConfig,
-    code: string,
-    codeVerifier: string
-  ): Promise<OAuthTokenResponse> {
-    const redirectUri =
-      config.redirectUri || `http://localhost:${REDIRECT_PORT}${REDIRECT_PATH}`;
-
-    const params = new URLSearchParams({
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: redirectUri,
-      code_verifier: codeVerifier,
-      client_id: config.clientId!,
-    });
-
-    if (config.clientSecret) {
-      params.append('client_secret', config.clientSecret);
-    }
-
-    const response = await fetch(config.tokenUrl!, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Accept: 'application/json',
-      },
-      body: params.toString(),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Token exchange failed: ${response.status} - ${errorText}`);
-    }
-
-    return (await response.json()) as OAuthTokenResponse;
-  }
-
-  /**
-   * 刷新访问令牌
-   */
-  async refreshAccessToken(
-    config: OAuthConfig,
-    refreshToken: string
-  ): Promise<OAuthTokenResponse> {
-    const params = new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      client_id: config.clientId!,
-    });
-
-    if (config.clientSecret) {
-      params.append('client_secret', config.clientSecret);
-    }
-
-    if (config.scopes && config.scopes.length > 0) {
-      params.append('scope', config.scopes.join(' '));
-    }
-
-    const response = await fetch(config.tokenUrl!, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Accept: 'application/json',
-      },
-      body: params.toString(),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Token refresh failed: ${response.status} - ${errorText}`);
-    }
-
-    return (await response.json()) as OAuthTokenResponse;
-  }
-
-  /**
-   * 执行完整的 OAuth 授权流程
-   */
-  async authenticate(serverName: string, config: OAuthConfig): Promise<OAuthToken> {
-    // 验证配置
-    if (!config.clientId || !config.authorizationUrl || !config.tokenUrl) {
-      throw new Error('Missing required OAuth configuration');
-    }
-
-    // 生成 PKCE 参数
-    const pkceParams = this.generatePKCEParams();
-
-    // 构建授权 URL
-    const authUrl = this.buildAuthorizationUrl(config, pkceParams);
-
-    console.log('\n[OAuth] Opening browser for authentication...');
-    console.log(
-      '\nIf the browser does not open automatically, copy and paste this URL:'
-    );
-    console.log(authUrl);
-    console.log('');
-
-    // 启动回调服务器
-    const callbackPromise = this.startCallbackServer(pkceParams.state);
-
-    // 尝试打开浏览器
-    try {
-      await this.openAuthorizationUrl(authUrl);
-    } catch (error) {
-      console.warn('[OAuth] Failed to open browser automatically:', error);
-    }
-
-    // 等待回调
-    const code = await callbackPromise;
-
-    console.log('[OAuth] Authorization code received, exchanging for tokens...');
-
-    // 用授权码换取令牌
-    const tokenResponse = await this.exchangeCodeForToken(
-      config,
-      code,
-      pkceParams.codeVerifier
-    );
-
-    // 转换为内部令牌格式
-    const token: OAuthToken = {
-      accessToken: tokenResponse.access_token,
-      tokenType: tokenResponse.token_type || 'Bearer',
-      refreshToken: tokenResponse.refresh_token,
-      scope: tokenResponse.scope,
+    const flow: ActiveOAuthFlow = {
+      flowId: randomUUID(),
+      state,
+      callbackUrl: this.callbackUrl,
+      server,
+      timeout: setTimeout(() => {
+        void this.failActiveFlow(new Error('MCP OAuth authorization timed out'));
+      }, AUTHORIZATION_TIMEOUT_MS),
+      completion,
+      resolve: resolveCompletion!,
+      reject: rejectCompletion!,
+      settled: false,
     };
-
-    if (tokenResponse.expires_in) {
-      token.expiresAt = Date.now() + tokenResponse.expires_in * 1000;
-    }
-
-    // 保存令牌
-    await this.tokenStorage.saveToken(
-      serverName,
-      token,
-      config.clientId,
-      config.tokenUrl
-    );
-
-    console.log('[OAuth] Authentication successful! Token saved.');
-
-    return token;
+    flow.timeout.unref();
+    return flow;
   }
 
-  /**
-   * 打开系统浏览器
-   */
-  private async openAuthorizationUrl(authUrl: string): Promise<void> {
-    const { command, args } = this.getBrowserCommand(authUrl);
-
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn(command, args, { stdio: 'ignore' });
-      child.once('error', reject);
-      child.once('close', (code) => {
-        if (code === 0 || code === null) {
-          resolve();
-        } else {
-          reject(new Error(`Failed to open browser (exit code ${code})`));
-        }
-      });
-    });
-  }
-
-  private getBrowserCommand(url: string): { command: string; args: string[] } {
-    if (process.platform === 'darwin') {
-      return { command: 'open', args: [url] };
+  private async handleCallback(
+    request: IncomingMessage,
+    response: ServerResponse
+  ): Promise<void> {
+    const flow = this.activeFlow;
+    if (!flow) {
+      writeCallbackResponse(response, 410, false);
+      return;
     }
-
-    if (process.platform === 'win32') {
-      return { command: 'cmd', args: ['/c', 'start', '', url] };
-    }
-
-    return { command: 'xdg-open', args: [url] };
-  }
-
-  /**
-   * 获取有效令牌（自动刷新）
-   */
-  async getValidToken(serverName: string, config: OAuthConfig): Promise<string | null> {
-    const credentials = await this.tokenStorage.getCredentials(serverName);
-
-    if (!credentials) {
-      return null;
-    }
-
-    const { token } = credentials;
-
-    // 检查令牌是否过期
-    if (!this.tokenStorage.isTokenExpired(token)) {
-      return token.accessToken;
-    }
-
-    // 尝试刷新令牌
-    if (token.refreshToken && config.clientId && credentials.tokenUrl) {
-      try {
-        console.log(`[OAuth] Refreshing expired token for server: ${serverName}`);
-
-        const newTokenResponse = await this.refreshAccessToken(
-          config,
-          token.refreshToken
-        );
-
-        // 更新存储的令牌
-        const newToken: OAuthToken = {
-          accessToken: newTokenResponse.access_token,
-          tokenType: newTokenResponse.token_type,
-          refreshToken: newTokenResponse.refresh_token || token.refreshToken,
-          scope: newTokenResponse.scope || token.scope,
-        };
-
-        if (newTokenResponse.expires_in) {
-          newToken.expiresAt = Date.now() + newTokenResponse.expires_in * 1000;
-        }
-
-        await this.tokenStorage.saveToken(
-          serverName,
-          newToken,
-          config.clientId,
-          credentials.tokenUrl
-        );
-
-        return newToken.accessToken;
-      } catch (error) {
-        console.error('[OAuth] Failed to refresh token:', error);
-        // 删除无效令牌
-        await this.tokenStorage.deleteCredentials(serverName);
+    try {
+      if (request.method !== 'GET') {
+        response.setHeader('Allow', 'GET');
+        writeCallbackResponse(response, 405, false);
+        return;
       }
-    }
+      const callback = new URL(request.url ?? '/', flow.callbackUrl);
+      if (callback.pathname !== CALLBACK_PATH) {
+        writeCallbackResponse(response, 404, false);
+        return;
+      }
+      const returnedState = callback.searchParams.get('state');
+      const authorizationCode = callback.searchParams.get('code');
+      const oauthError = callback.searchParams.get('error');
+      if (oauthError) {
+        throw new Error('MCP OAuth authorization was denied');
+      }
+      if (!returnedState || returnedState !== flow.state) {
+        throw new Error('MCP OAuth state mismatch');
+      }
+      if (!authorizationCode) {
+        throw new Error('MCP OAuth callback is missing the authorization code');
+      }
 
-    return null;
+      const result = await auth(this, {
+        serverUrl: this.serverUrl,
+        authorizationCode,
+        fetchFn: safeMcpOAuthFetch,
+      });
+      if (result !== 'AUTHORIZED') {
+        throw new Error('MCP OAuth token exchange did not complete');
+      }
+      writeCallbackResponse(response, 200, true);
+      await this.completeActiveFlow();
+    } catch (error) {
+      writeCallbackResponse(response, 400, false);
+      await this.failActiveFlow(
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
+  }
+
+  private async completeActiveFlow(): Promise<void> {
+    const flow = this.activeFlow;
+    if (!flow || flow.settled) return;
+    flow.settled = true;
+    clearTimeout(flow.timeout);
+    await new Promise<void>((resolve) => flow.server.close(() => resolve()));
+    this.activeFlow = undefined;
+    OAuthProvider.activeFlowIdentity = undefined;
+    this.codeVerifierValue = undefined;
+    this.lastError = undefined;
+    flow.resolve();
+  }
+
+  private async failActiveFlow(error: Error): Promise<void> {
+    const flow = this.activeFlow;
+    this.lastError = error;
+    this.codeVerifierValue = undefined;
+    OAuthProvider.activeFlowIdentity = undefined;
+    if (!flow || flow.settled) {
+      this.activeFlow = undefined;
+      return;
+    }
+    flow.settled = true;
+    clearTimeout(flow.timeout);
+    await new Promise<void>((resolve) => flow.server.close(() => resolve()));
+    this.activeFlow = undefined;
+    flow.reject(error);
+  }
+
+  private toHandle(flow: ActiveOAuthFlow): McpOAuthLoginHandle {
+    if (!flow.authorizationUrl) {
+      throw new Error('MCP OAuth authorization URL is unavailable');
+    }
+    return {
+      flowId: flow.flowId,
+      authorizationUrl: flow.authorizationUrl,
+      callbackUrl: flow.callbackUrl,
+      completion: flow.completion,
+    };
+  }
+
+  private readCredential(): Promise<McpOAuthCredential | null> {
+    return this.tokenStorage.getCredential(this.identity);
+  }
+
+  private updateCredential(
+    update: (current: McpOAuthCredential | null) => McpOAuthCredential | null
+  ): Promise<McpOAuthCredential | null> {
+    return this.tokenStorage.updateCredential(this.identity, update);
+  }
+
+  private baseCredential(current: McpOAuthCredential | null): McpOAuthCredential {
+    return {
+      ...(current ?? {}),
+      serverUrl: this.serverUrl,
+      ...(this.config.clientId ? { clientId: this.config.clientId } : {}),
+      updatedAt: new Date().toISOString(),
+    };
   }
 }

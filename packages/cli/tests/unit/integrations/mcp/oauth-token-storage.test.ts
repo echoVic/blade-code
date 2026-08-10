@@ -1,130 +1,137 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-const mockFiles = new Map<string, string>();
-const mockWriteOptions = new Map<string, unknown>();
-
-vi.mock('fs', () => ({
-  promises: {
-    mkdir: vi.fn().mockResolvedValue(undefined),
-    readFile: vi.fn().mockImplementation(async (filePath: string) => {
-      if (!mockFiles.has(filePath)) {
-        const error = new Error('ENOENT: no such file or directory');
-        (error as NodeJS.ErrnoException).code = 'ENOENT';
-        throw error;
-      }
-      return mockFiles.get(filePath);
-    }),
-    writeFile: vi
-      .fn()
-      .mockImplementation(
-        async (filePath: string, content: string, options?: unknown) => {
-          mockFiles.set(filePath, content);
-          mockWriteOptions.set(filePath, options);
-        }
-      ),
-  },
-}));
-
-vi.mock('os', () => ({
-  default: {
-    homedir: vi.fn().mockReturnValue('/mock/home'),
-  },
-}));
-
-import { OAuthTokenStorage } from '../../../../src/mcp/auth/OAuthTokenStorage.js';
+import {
+  chmod,
+  lstat,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+} from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  canonicalMcpOAuthServerUrl,
+  mcpOAuthCredentialId,
+  OAuthTokenStorage,
+} from '../../../../src/mcp/auth/OAuthTokenStorage.js';
+import type { McpOAuthCredential } from '../../../../src/mcp/auth/types.js';
 
 describe('OAuthTokenStorage', () => {
-  beforeEach(() => {
-    mockFiles.clear();
-    mockWriteOptions.clear();
-    vi.clearAllMocks();
+  let root: string;
+  let storage: OAuthTokenStorage;
+
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(os.tmpdir(), 'blade-mcp-oauth-store-'));
+    storage = new OAuthTokenStorage(root);
   });
 
-  it('saveToken 应写入文件并设置权限', async () => {
-    const storage = new OAuthTokenStorage();
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
 
-    await storage.saveToken(
-      'github',
-      {
-        accessToken: 'token-1',
-        refreshToken: 'refresh-1',
-        expiresAt: Date.now() + 60_000,
-        tokenType: 'Bearer',
+  function credential(serverUrl: string, accessToken: string): McpOAuthCredential {
+    return {
+      serverUrl,
+      clientId: 'blade-test-client',
+      clientInformation: { client_id: 'blade-test-client' },
+      tokens: {
+        access_token: accessToken,
+        refresh_token: `refresh-${accessToken}`,
+        token_type: 'Bearer',
+        expires_in: 3600,
       },
-      'client-1',
-      'https://example.com/token'
+      tokenExpiresAt: Date.now() + 3_600_000,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  it('atomically writes a strict 0600 credential ledger', async () => {
+    const serverUrl = 'https://mcp.example.test/rpc';
+    const identity = mcpOAuthCredentialId(serverUrl, 'blade-test-client');
+    await storage.updateCredential(identity, () => credential(serverUrl, 'access-one'));
+
+    const filePath = path.join(root, 'mcp', 'oauth-credentials.json');
+    expect((await lstat(filePath)).mode & 0o777).toBe(0o600);
+    const stored = JSON.parse(await readFile(filePath, 'utf8')) as {
+      version: number;
+      credentials: Record<string, McpOAuthCredential>;
+    };
+    expect(stored.version).toBe(1);
+    expect(stored.credentials[identity]?.tokens?.access_token).toBe('access-one');
+    expect((await readdir(path.dirname(filePath))).sort()).toEqual([
+      'oauth-credentials.json',
+    ]);
+  });
+
+  it('serializes updates from independent storage instances without lost writes', async () => {
+    const other = new OAuthTokenStorage(root);
+    const firstUrl = 'https://one.example.test/mcp';
+    const secondUrl = 'https://two.example.test/mcp';
+    const firstId = mcpOAuthCredentialId(firstUrl, 'client');
+    const secondId = mcpOAuthCredentialId(secondUrl, 'client');
+
+    await Promise.all([
+      storage.updateCredential(firstId, async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return credential(firstUrl, 'first');
+      }),
+      other.updateCredential(secondId, () => credential(secondUrl, 'second')),
+    ]);
+
+    expect((await storage.listCredentialIds()).sort()).toEqual(
+      [firstId, secondId].sort()
+    );
+    expect((await storage.getCredential(firstId))?.tokens?.access_token).toBe('first');
+    expect((await storage.getCredential(secondId))?.tokens?.access_token).toBe(
+      'second'
+    );
+  });
+
+  it('fails closed for malformed, over-permissive, and symlink stores', async () => {
+    const identity = mcpOAuthCredentialId('https://mcp.example.test', 'client');
+    await storage.updateCredential(identity, () =>
+      credential('https://mcp.example.test', 'access')
+    );
+    const filePath = path.join(root, 'mcp', 'oauth-credentials.json');
+
+    await chmod(filePath, 0o644);
+    await expect(storage.getCredential(identity)).rejects.toThrow(
+      'permissions must be 0600'
     );
 
-    const tokenPath = '/mock/home/.blade/mcp-oauth-tokens.json';
-    expect(mockFiles.has(tokenPath)).toBe(true);
-
-    const options = mockWriteOptions.get(tokenPath) as { mode?: number } | undefined;
-    expect(options?.mode).toBe(0o600);
-
-    const stored = JSON.parse(mockFiles.get(tokenPath) || '[]') as any[];
-    expect(stored).toHaveLength(1);
-    expect(stored[0].serverName).toBe('github');
-    expect(stored[0].token.accessToken).toBe('token-1');
-    expect(stored[0].clientId).toBe('client-1');
-    expect(stored[0].tokenUrl).toBe('https://example.com/token');
-    expect(typeof stored[0].updatedAt).toBe('number');
-  });
-
-  it('getCredentials 应返回已保存的凭证', async () => {
-    const storage = new OAuthTokenStorage();
-
-    await storage.saveToken('server-a', { accessToken: 'a', tokenType: 'Bearer' });
-    const cred = await storage.getCredentials('server-a');
-
-    expect(cred).not.toBeNull();
-    expect(cred?.serverName).toBe('server-a');
-    expect(cred?.token.accessToken).toBe('a');
-  });
-
-  it('deleteCredentials 应删除指定服务器凭证', async () => {
-    const storage = new OAuthTokenStorage();
-
-    await storage.saveToken('a', { accessToken: 'a', tokenType: 'Bearer' });
-    await storage.saveToken('b', { accessToken: 'b', tokenType: 'Bearer' });
-
-    await storage.deleteCredentials('a');
-
-    expect(await storage.getCredentials('a')).toBeNull();
-    expect((await storage.getCredentials('b'))?.token.accessToken).toBe('b');
-  });
-
-  it('listServers 应返回所有服务器名', async () => {
-    const storage = new OAuthTokenStorage();
-
-    await storage.saveToken('a', { accessToken: 'a', tokenType: 'Bearer' });
-    await storage.saveToken('b', { accessToken: 'b', tokenType: 'Bearer' });
-
-    const servers = await storage.listServers();
-    expect(servers.sort()).toEqual(['a', 'b']);
-  });
-
-  it('isTokenExpired 应考虑 5 分钟缓冲', () => {
-    const storage = new OAuthTokenStorage();
-    const now = Date.now();
-
-    expect(
-      storage.isTokenExpired({
-        accessToken: 'x',
-        tokenType: 'Bearer',
-        expiresAt: now + 10 * 60 * 1000,
-      })
-    ).toBe(false);
-
-    expect(
-      storage.isTokenExpired({
-        accessToken: 'x',
-        tokenType: 'Bearer',
-        expiresAt: now + 4 * 60 * 1000,
-      })
-    ).toBe(true);
-
-    expect(storage.isTokenExpired({ accessToken: 'x', tokenType: 'Bearer' })).toBe(
-      false
+    await rm(filePath);
+    await symlink(path.join(root, 'outside.json'), filePath);
+    await expect(storage.getCredential(identity)).rejects.toThrow(
+      'must be a regular file'
     );
+  });
+
+  it('deletes only the exact endpoint and client identity', async () => {
+    const firstUrl = 'https://mcp.example.test/a';
+    const secondUrl = 'https://mcp.example.test/b';
+    const firstId = mcpOAuthCredentialId(firstUrl, 'client');
+    const secondId = mcpOAuthCredentialId(secondUrl, 'client');
+    await storage.updateCredential(firstId, () => credential(firstUrl, 'first'));
+    await storage.updateCredential(secondId, () => credential(secondUrl, 'second'));
+
+    await storage.deleteCredential(firstId);
+
+    expect(await storage.getCredential(firstId)).toBeNull();
+    expect((await storage.getCredential(secondId))?.tokens?.access_token).toBe(
+      'second'
+    );
+  });
+
+  it('canonicalizes fragments and isolates client identities', () => {
+    expect(canonicalMcpOAuthServerUrl('https://example.test/mcp#fragment')).toBe(
+      'https://example.test/mcp'
+    );
+    expect(mcpOAuthCredentialId('https://example.test/mcp', 'client-a')).not.toBe(
+      mcpOAuthCredentialId('https://example.test/mcp', 'client-b')
+    );
+    expect(
+      mcpOAuthCredentialId('https://example.test/mcp', 'client-a', ['read'])
+    ).not.toBe(mcpOAuthCredentialId('https://example.test/mcp', 'client-a', ['write']));
   });
 });
