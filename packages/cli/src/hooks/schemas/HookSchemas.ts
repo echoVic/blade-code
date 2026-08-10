@@ -2,8 +2,8 @@ import {
   type SafeParseResult,
   type Static,
   StringEnum,
-  Type,
   safeParseSchema,
+  Type,
 } from '../../schema/index.js';
 import { DecisionBehavior, PermissionDecision } from '../types/HookTypes.js';
 
@@ -39,6 +39,29 @@ const PermissionRequestOutputSchema = Type.Object({
   permissionDecisionReason: Type.Optional(Type.String()),
 });
 
+const ElicitationContentSchema = Type.Record(
+  Type.String(),
+  Type.Union([
+    Type.String(),
+    Type.Number(),
+    Type.Boolean(),
+    Type.Array(Type.String(), { maxItems: 100 }),
+  ]),
+  { maxProperties: 32 }
+);
+
+const ElicitationOutputSchema = Type.Object({
+  hookEventName: Type.Literal('Elicitation'),
+  action: Type.Optional(StringEnum(['accept', 'decline', 'cancel'])),
+  content: Type.Optional(ElicitationContentSchema),
+});
+
+const ElicitationResultOutputSchema = Type.Object({
+  hookEventName: Type.Literal('ElicitationResult'),
+  action: Type.Optional(StringEnum(['accept', 'decline', 'cancel'])),
+  content: Type.Optional(ElicitationContentSchema),
+});
+
 const UserPromptSubmitOutputSchema = Type.Object({
   hookEventName: Type.Literal('UserPromptSubmit'),
   updatedPrompt: Type.Optional(Type.String()),
@@ -70,6 +93,8 @@ const HookOutputSchema = Type.Object({
       StopOutputSchema,
       SubagentStopOutputSchema,
       PermissionRequestOutputSchema,
+      ElicitationOutputSchema,
+      ElicitationResultOutputSchema,
       UserPromptSubmitOutputSchema,
       SessionStartOutputSchema,
       CompactionOutputSchema,

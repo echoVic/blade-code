@@ -5,6 +5,10 @@
  */
 
 import type { PermissionMode } from '../../config/types.js';
+import type {
+  McpElicitationAction,
+  McpElicitationContent,
+} from '../../mcp/McpElicitation.js';
 
 // ============================================================================
 // Hook Events
@@ -27,6 +31,12 @@ export enum HookEvent {
 
   /** 权限请求时 (可自动批准/拒绝) */
   PermissionRequest = 'PermissionRequest',
+
+  /** MCP 服务器请求用户输入时 */
+  Elicitation = 'Elicitation',
+
+  /** MCP 用户输入即将返回服务器时 */
+  ElicitationResult = 'ElicitationResult',
 
   // ========== 会话生命周期类 ==========
   /** 用户提交提示词时 (可注入上下文) */
@@ -175,6 +185,25 @@ export interface PermissionRequestInput extends HookInputBase {
   tool_input: Record<string, unknown>;
 }
 
+export interface ElicitationInput extends HookInputBase {
+  hook_event_name: HookEvent.Elicitation;
+  server_name: string;
+  mode: 'form' | 'url';
+  message: string;
+  requested_schema?: Record<string, unknown>;
+  url?: string;
+  elicitation_id?: string;
+}
+
+export interface ElicitationResultInput extends HookInputBase {
+  hook_event_name: HookEvent.ElicitationResult;
+  server_name: string;
+  mode: 'form' | 'url';
+  elicitation_id?: string;
+  action: McpElicitationAction;
+  content?: McpElicitationContent;
+}
+
 /**
  * UserPromptSubmit 输入
  */
@@ -292,6 +321,8 @@ export type HookInput =
   | PostToolUseInput
   | PostToolUseFailureInput
   | PermissionRequestInput
+  | ElicitationInput
+  | ElicitationResultInput
   | UserPromptSubmitInput
   | SessionStartInput
   | SessionEndInput
@@ -398,6 +429,18 @@ interface PermissionRequestOutput {
   permissionDecisionReason?: string;
 }
 
+interface ElicitationOutput {
+  hookEventName?: 'Elicitation';
+  action?: McpElicitationAction;
+  content?: McpElicitationContent;
+}
+
+interface ElicitationResultOutput {
+  hookEventName?: 'ElicitationResult';
+  action?: McpElicitationAction;
+  content?: McpElicitationContent;
+}
+
 /**
  * UserPromptSubmit 特定输出
  */
@@ -443,6 +486,8 @@ export type HookSpecificOutput =
   | StopOutput
   | SubagentStopOutput
   | PermissionRequestOutput
+  | ElicitationOutput
+  | ElicitationResultOutput
   | UserPromptSubmitOutput
   | SessionStartOutput
   | CompactionOutput;
@@ -544,10 +589,19 @@ export interface FunctionHook {
   timeout?: number;
 }
 
+export interface PluginHookSource {
+  kind: 'plugin';
+  pluginName: string;
+  pluginSource: 'cli' | 'project' | 'user';
+  pluginRoot: string;
+}
+
 /**
  * Hook 联合类型
  */
-export type Hook = CommandHook | PromptHook | FunctionHook | HttpHook;
+export type Hook = (CommandHook | PromptHook | FunctionHook | HttpHook) & {
+  source?: PluginHookSource;
+};
 
 /**
  * HTTP Hook — 远程 Webhook
@@ -673,6 +727,12 @@ export interface HookConfig {
 
   /** PermissionRequest Hooks */
   PermissionRequest?: HookMatcher[];
+
+  /** MCP Elicitation Hooks */
+  Elicitation?: HookMatcher[];
+
+  /** MCP ElicitationResult Hooks */
+  ElicitationResult?: HookMatcher[];
 
   // ========== 会话生命周期类 ==========
   /** UserPromptSubmit Hooks */
@@ -848,6 +908,15 @@ export interface PermissionRequestHookResult {
   warning?: string;
 }
 
+export interface ElicitationHookResult {
+  response?: {
+    action: McpElicitationAction;
+    content?: McpElicitationContent;
+  };
+  blockedReason?: string;
+  warning?: string;
+}
+
 /**
  * UserPromptSubmit Hook 执行结果
  */
@@ -947,6 +1016,9 @@ export interface HookExecutionContext {
   /** Hook 配置 */
   config: HookConfig;
 
+  /** Session-scoped explicit environment; never the mutable process environment. */
+  environment?: Readonly<Record<string, string>>;
+
   /** 中止信号 */
   abortSignal?: AbortSignal;
 }
@@ -960,6 +1032,9 @@ export interface MatchContext {
 
   /** 文件路径 */
   filePath?: string;
+
+  /** 多文件工具涉及的全部路径 */
+  filePaths?: string[];
 
   /** 命令 */
   command?: string;

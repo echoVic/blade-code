@@ -4,16 +4,26 @@
  * 管理 Hook 配置和执行
  */
 
+import path from 'node:path';
 import { nanoid } from 'nanoid';
+import type { SessionModelResources } from '../agent/resources/WorkspaceModelResources.js';
 import type { PermissionMode } from '../config/types.js';
+import type {
+  McpElicitationDetails,
+  McpElicitationResponse,
+} from '../mcp/McpElicitation.js';
 import { getCwd } from '../utils/cwd.js';
 import { DEFAULT_HOOK_CONFIG, mergeHookConfig, parseEnvConfig } from './HookConfig.js';
 import { HookExecutionGuard } from './HookExecutionGuard.js';
 import { HookExecutor } from './HookExecutor.js';
+import { HookTrustService, type HookTrustStatus } from './HookTrustService.js';
 import { Matcher } from './Matcher.js';
 import {
   type CompactionHookResult,
   type CompactionInput,
+  type ElicitationHookResult,
+  type ElicitationInput,
+  type ElicitationResultInput,
   type FunctionHook,
   type Hook,
   type HookConfig,
@@ -58,6 +68,9 @@ export class HookManager {
   private guard = new HookExecutionGuard();
   private matcher = new Matcher();
   private sessionDisabled = false;
+  private projectConfigs = new Map<string, HookConfig>();
+  private sessionConfigs = new Map<string, HookConfig>();
+  private managedFunctionMatchers: Partial<Record<HookEvent, HookMatcher[]>> = {};
 
   private constructor() {}
 
@@ -71,24 +84,73 @@ export class HookManager {
     return HookManager.instance;
   }
 
+  bindSessionModelResources(
+    sessionId: string,
+    projectDirs: readonly string[],
+    resources: SessionModelResources
+  ): void {
+    this.executor.bindSessionModelResources(sessionId, projectDirs, resources);
+  }
+
+  bindSessionEnvironment(
+    sessionId: string,
+    projectDirs: readonly string[],
+    environment: Readonly<Record<string, string>>
+  ): void {
+    this.executor.bindSessionEnvironment(sessionId, projectDirs, environment);
+  }
+
+  bindSessionConfig(
+    sessionId: string,
+    projectDirs: readonly string[],
+    config: Readonly<HookConfig>
+  ): void {
+    for (const projectDir of projectDirs) {
+      this.sessionConfigs.set(
+        this.sessionConfigKey(sessionId, projectDir),
+        this.snapshotConfig(config)
+      );
+    }
+  }
+
+  async unbindSessionModelResources(
+    sessionId: string,
+    projectDirs: readonly string[]
+  ): Promise<void> {
+    for (const projectDir of projectDirs) {
+      this.sessionConfigs.delete(this.sessionConfigKey(sessionId, projectDir));
+    }
+    await this.executor.unbindSessionModelResources(sessionId, projectDirs);
+  }
+
+  static resetInstance(): void {
+    HookManager.instance?.cleanup();
+    HookManager.instance = null;
+  }
+
   /**
    * 加载配置
    */
-  loadConfig(config: Partial<HookConfig>): void {
+  loadConfig(config: Partial<HookConfig>, projectDir: string = getCwd()): void {
     // 合并配置: 默认 -> 用户配置 -> 环境变量
     let merged = mergeHookConfig(DEFAULT_HOOK_CONFIG, config);
     const envConfig = parseEnvConfig();
     merged = mergeHookConfig(merged, envConfig);
 
-    this.config = merged;
+    const projectKey = path.resolve(projectDir);
+    if (projectKey === path.resolve(getCwd())) {
+      this.config = merged;
+    }
+    this.projectConfigs.set(projectKey, merged);
   }
 
   /**
    * 检查是否启用
    */
-  isEnabled(): boolean {
+  isEnabled(projectDir: string = getCwd()): boolean {
+    const config = this.getConfig(projectDir);
     // 1. 全局配置开关
-    if (!this.config.enabled) {
+    if (!config.enabled) {
       return false;
     }
 
@@ -119,8 +181,70 @@ export class HookManager {
   /**
    * 获取当前配置（只读）
    */
-  getConfig(): Readonly<HookConfig> {
-    return this.config;
+  getConfig(projectDir: string = getCwd()): Readonly<HookConfig> {
+    const projectKey = path.resolve(projectDir);
+    const projectConfig = this.projectConfigs.get(projectKey);
+    if (projectConfig) return projectConfig;
+    if (projectKey === path.resolve(getCwd())) return this.config;
+    return { ...DEFAULT_HOOK_CONFIG, enabled: false };
+  }
+
+  private getExecutionConfig(
+    sessionId: string,
+    projectDir: string
+  ): Readonly<HookConfig> {
+    return (
+      this.sessionConfigs.get(this.sessionConfigKey(sessionId, projectDir)) ??
+      this.getConfig(projectDir)
+    );
+  }
+
+  private sessionConfigKey(sessionId: string, projectDir: string): string {
+    return `${sessionId}\0${path.resolve(projectDir)}`;
+  }
+
+  private snapshotConfig(config: Readonly<HookConfig>): HookConfig {
+    const snapshot = mergeHookConfig(DEFAULT_HOOK_CONFIG, config);
+    for (const event of Object.values(HookEvent)) {
+      snapshot[event] = (config[event] ?? []).map((matcher) => ({
+        ...matcher,
+        matcher: matcher.matcher ? { ...matcher.matcher } : undefined,
+        hooks: matcher.hooks.map((hook) => ({ ...hook })),
+      }));
+    }
+    return snapshot;
+  }
+
+  inheritProjectConfig(sourceDir: string, targetDir: string): void {
+    this.projectConfigs.set(
+      path.resolve(targetDir),
+      this.getConfig(sourceDir) as HookConfig
+    );
+  }
+
+  getTrustStatus(projectDir: string = getCwd()): Promise<HookTrustStatus> {
+    return HookTrustService.getInstance().getStatus(
+      projectDir,
+      this.getConfig(projectDir)
+    );
+  }
+
+  trustProject(
+    projectDir: string = getCwd(),
+    expectedDigest?: string
+  ): Promise<HookTrustStatus> {
+    return HookTrustService.getInstance().trust(
+      projectDir,
+      this.getConfig(projectDir),
+      expectedDigest
+    );
+  }
+
+  revokeProjectTrust(projectDir: string = getCwd()): Promise<HookTrustStatus> {
+    return HookTrustService.getInstance().revoke(
+      projectDir,
+      this.getConfig(projectDir)
+    );
   }
 
   /**
@@ -152,7 +276,7 @@ export class HookManager {
     event: HookEvent,
     matcher: MatcherConfig | undefined,
     handler: FunctionHook['handler'],
-    options?: { name?: string; timeout?: number }
+    options?: { name?: string; timeout?: number; projectDir?: string }
   ): () => void {
     const hookEntry: FunctionHook = {
       type: HookType.Function,
@@ -168,13 +292,28 @@ export class HookManager {
     // 不要 push 进现有数组 — 它可能是 DEFAULT_HOOK_CONFIG 的共享引用
     // (mergeHookConfig 只做浅合并),push 会污染全局默认值。
     // 始终用新数组替换,保证 registerFunction 的修改局限在本 instance。
-    const existing = (this.config[event] ?? []) as HookMatcher[];
-    (this.config[event] as HookMatcher[]) = [...existing, matcherEntry];
+    if (options?.projectDir) {
+      const projectKey = path.resolve(options.projectDir);
+      const config = this.getConfig(projectKey) as HookConfig;
+      const existing = (config[event] ?? []) as HookMatcher[];
+      (config[event] as HookMatcher[]) = [...existing, matcherEntry];
+      this.projectConfigs.set(projectKey, config);
+      return () => {
+        const current = config[event] as HookMatcher[] | undefined;
+        if (!current) return;
+        (config[event] as HookMatcher[]) = current.filter(
+          (entry) => entry !== matcherEntry
+        );
+      };
+    }
 
+    const existing = this.managedFunctionMatchers[event] ?? [];
+    this.managedFunctionMatchers[event] = [...existing, matcherEntry];
     return () => {
-      const current = this.config[event] as HookMatcher[] | undefined;
-      if (!current) return;
-      (this.config[event] as HookMatcher[]) = current.filter((m) => m !== matcherEntry);
+      const current = this.managedFunctionMatchers[event] ?? [];
+      this.managedFunctionMatchers[event] = current.filter(
+        (entry) => entry !== matcherEntry
+      );
     };
   }
 
@@ -213,7 +352,8 @@ export class HookManager {
       abortSignal?: AbortSignal;
     }
   ): Promise<PreToolHookResult> {
-    if (!this.isEnabled()) {
+    const config = this.getExecutionConfig(context.sessionId, context.projectDir);
+    if (!config.enabled || this.sessionDisabled) {
       return { decision: 'allow' };
     }
 
@@ -241,11 +381,16 @@ export class HookManager {
     };
 
     // 获取匹配的 hooks
-    const hooks = this.getMatchingHooks(HookEvent.PreToolUse, {
-      toolName,
-      filePath: this.extractFilePath(toolInput),
-      command: this.extractCommand(toolName, toolInput),
-    });
+    const hooks = this.getMatchingHooks(
+      HookEvent.PreToolUse,
+      {
+        toolName,
+        filePath: this.extractFilePaths(toolInput)[0],
+        filePaths: this.extractFilePaths(toolInput),
+        command: this.extractCommand(toolName, toolInput),
+      },
+      config
+    );
 
     if (hooks.length === 0) {
       return { decision: 'allow' };
@@ -256,7 +401,7 @@ export class HookManager {
       projectDir: context.projectDir,
       sessionId: context.sessionId,
       permissionMode: context.permissionMode,
-      config: this.config,
+      config,
       abortSignal: context.abortSignal,
     };
 
@@ -311,7 +456,8 @@ export class HookManager {
       abortSignal?: AbortSignal;
     }
   ): Promise<PostToolHookResult> {
-    if (!this.isEnabled()) {
+    const config = this.getExecutionConfig(context.sessionId, context.projectDir);
+    if (!config.enabled || this.sessionDisabled) {
       return {};
     }
 
@@ -340,11 +486,16 @@ export class HookManager {
     };
 
     // 获取匹配的 hooks
-    const hooks = this.getMatchingHooks(HookEvent.PostToolUse, {
-      toolName,
-      filePath: this.extractFilePath(toolInput),
-      command: this.extractCommand(toolName, toolInput),
-    });
+    const hooks = this.getMatchingHooks(
+      HookEvent.PostToolUse,
+      {
+        toolName,
+        filePath: this.extractFilePaths(toolInput)[0],
+        filePaths: this.extractFilePaths(toolInput),
+        command: this.extractCommand(toolName, toolInput),
+      },
+      config
+    );
 
     if (hooks.length === 0) {
       return {};
@@ -355,7 +506,7 @@ export class HookManager {
       projectDir: context.projectDir,
       sessionId: context.sessionId,
       permissionMode: context.permissionMode,
-      config: this.config,
+      config,
       abortSignal: context.abortSignal,
     };
 
@@ -392,7 +543,8 @@ export class HookManager {
     reason?: string;
     abortSignal?: AbortSignal;
   }): Promise<StopHookResult> {
-    if (!this.isEnabled()) {
+    const config = this.getExecutionConfig(context.sessionId, context.projectDir);
+    if (!config.enabled || this.sessionDisabled) {
       return { shouldStop: true };
     }
 
@@ -408,7 +560,7 @@ export class HookManager {
     };
 
     // 获取 hooks (Stop hooks 通常没有匹配器)
-    const hooks = this.getMatchingHooks(HookEvent.Stop, {});
+    const hooks = this.getMatchingHooks(HookEvent.Stop, {}, config);
 
     if (hooks.length === 0) {
       return { shouldStop: true };
@@ -419,7 +571,7 @@ export class HookManager {
       projectDir: context.projectDir,
       sessionId: context.sessionId,
       permissionMode: context.permissionMode,
-      config: this.config,
+      config,
       abortSignal: context.abortSignal,
     };
 
@@ -455,7 +607,8 @@ export class HookManager {
       abortSignal?: AbortSignal;
     }
   ): Promise<SubagentStopHookResult> {
-    if (!this.isEnabled()) {
+    const config = this.getExecutionConfig(context.sessionId, context.projectDir);
+    if (!config.enabled || this.sessionDisabled) {
       return { shouldStop: true };
     }
 
@@ -475,7 +628,7 @@ export class HookManager {
     };
 
     // 获取 hooks
-    const hooks = this.getMatchingHooks(HookEvent.SubagentStop, {});
+    const hooks = this.getMatchingHooks(HookEvent.SubagentStop, {}, config);
 
     if (hooks.length === 0) {
       return { shouldStop: true };
@@ -486,7 +639,7 @@ export class HookManager {
       projectDir: context.projectDir,
       sessionId: context.sessionId,
       permissionMode: context.permissionMode,
-      config: this.config,
+      config,
       abortSignal: context.abortSignal,
     };
 
@@ -520,7 +673,8 @@ export class HookManager {
       abortSignal?: AbortSignal;
     }
   ): Promise<PermissionRequestHookResult> {
-    if (!this.isEnabled()) {
+    const config = this.getExecutionConfig(context.sessionId, context.projectDir);
+    if (!config.enabled || this.sessionDisabled) {
       return { decision: 'ask' };
     }
 
@@ -538,11 +692,16 @@ export class HookManager {
     };
 
     // 获取匹配的 hooks
-    const hooks = this.getMatchingHooks(HookEvent.PermissionRequest, {
-      toolName,
-      filePath: this.extractFilePath(toolInput),
-      command: this.extractCommand(toolName, toolInput),
-    });
+    const hooks = this.getMatchingHooks(
+      HookEvent.PermissionRequest,
+      {
+        toolName,
+        filePath: this.extractFilePaths(toolInput)[0],
+        filePaths: this.extractFilePaths(toolInput),
+        command: this.extractCommand(toolName, toolInput),
+      },
+      config
+    );
 
     if (hooks.length === 0) {
       return { decision: 'ask' };
@@ -553,7 +712,7 @@ export class HookManager {
       projectDir: context.projectDir,
       sessionId: context.sessionId,
       permissionMode: context.permissionMode,
-      config: this.config,
+      config,
       abortSignal: context.abortSignal,
     };
 
@@ -587,7 +746,8 @@ export class HookManager {
       abortSignal?: AbortSignal;
     }
   ): Promise<UserPromptSubmitHookResult> {
-    if (!this.isEnabled()) {
+    const config = this.getExecutionConfig(context.sessionId, context.projectDir);
+    if (!config.enabled || this.sessionDisabled) {
       return { proceed: true };
     }
 
@@ -605,7 +765,7 @@ export class HookManager {
     };
 
     // 获取 hooks (UserPromptSubmit 通常没有匹配器)
-    const hooks = this.getMatchingHooks(HookEvent.UserPromptSubmit, {});
+    const hooks = this.getMatchingHooks(HookEvent.UserPromptSubmit, {}, config);
 
     if (hooks.length === 0) {
       return { proceed: true };
@@ -616,7 +776,7 @@ export class HookManager {
       projectDir: context.projectDir,
       sessionId: context.sessionId,
       permissionMode: context.permissionMode,
-      config: this.config,
+      config,
       abortSignal: context.abortSignal,
     };
 
@@ -647,7 +807,8 @@ export class HookManager {
     resumeSessionId?: string;
     abortSignal?: AbortSignal;
   }): Promise<SessionStartHookResult> {
-    if (!this.isEnabled()) {
+    const config = this.getExecutionConfig(context.sessionId, context.projectDir);
+    if (!config.enabled || this.sessionDisabled) {
       return { proceed: true };
     }
 
@@ -664,7 +825,7 @@ export class HookManager {
     };
 
     // 获取 hooks
-    const hooks = this.getMatchingHooks(HookEvent.SessionStart, {});
+    const hooks = this.getMatchingHooks(HookEvent.SessionStart, {}, config);
 
     if (hooks.length === 0) {
       return { proceed: true };
@@ -675,7 +836,7 @@ export class HookManager {
       projectDir: context.projectDir,
       sessionId: context.sessionId,
       permissionMode: context.permissionMode,
-      config: this.config,
+      config,
       abortSignal: context.abortSignal,
     };
 
@@ -707,7 +868,8 @@ export class HookManager {
       abortSignal?: AbortSignal;
     }
   ): Promise<SessionEndHookResult> {
-    if (!this.isEnabled()) {
+    const config = this.getExecutionConfig(context.sessionId, context.projectDir);
+    if (!config.enabled || this.sessionDisabled) {
       return {};
     }
 
@@ -723,7 +885,7 @@ export class HookManager {
     };
 
     // 获取 hooks
-    const hooks = this.getMatchingHooks(HookEvent.SessionEnd, {});
+    const hooks = this.getMatchingHooks(HookEvent.SessionEnd, {}, config);
 
     if (hooks.length === 0) {
       return {};
@@ -734,7 +896,7 @@ export class HookManager {
       projectDir: context.projectDir,
       sessionId: context.sessionId,
       permissionMode: context.permissionMode,
-      config: this.config,
+      config,
       abortSignal: context.abortSignal,
     };
 
@@ -768,7 +930,8 @@ export class HookManager {
       abortSignal?: AbortSignal;
     }
   ): Promise<PostToolUseFailureHookResult> {
-    if (!this.isEnabled()) {
+    const config = this.getExecutionConfig(context.sessionId, context.projectDir);
+    if (!config.enabled || this.sessionDisabled) {
       return {};
     }
 
@@ -790,11 +953,16 @@ export class HookManager {
     };
 
     // 获取匹配的 hooks
-    const hooks = this.getMatchingHooks(HookEvent.PostToolUseFailure, {
-      toolName,
-      filePath: this.extractFilePath(toolInput),
-      command: this.extractCommand(toolName, toolInput),
-    });
+    const hooks = this.getMatchingHooks(
+      HookEvent.PostToolUseFailure,
+      {
+        toolName,
+        filePath: this.extractFilePaths(toolInput)[0],
+        filePaths: this.extractFilePaths(toolInput),
+        command: this.extractCommand(toolName, toolInput),
+      },
+      config
+    );
 
     if (hooks.length === 0) {
       return {};
@@ -805,7 +973,7 @@ export class HookManager {
       projectDir: context.projectDir,
       sessionId: context.sessionId,
       permissionMode: context.permissionMode,
-      config: this.config,
+      config,
       abortSignal: context.abortSignal,
     };
 
@@ -838,7 +1006,8 @@ export class HookManager {
       abortSignal?: AbortSignal;
     }
   ): Promise<NotificationHookResult> {
-    if (!this.isEnabled()) {
+    const config = this.getExecutionConfig(context.sessionId, context.projectDir);
+    if (!config.enabled || this.sessionDisabled) {
       return { suppress: false, message };
     }
 
@@ -856,7 +1025,7 @@ export class HookManager {
     };
 
     // 获取 hooks
-    const hooks = this.getMatchingHooks(HookEvent.Notification, {});
+    const hooks = this.getMatchingHooks(HookEvent.Notification, {}, config);
 
     if (hooks.length === 0) {
       return { suppress: false, message };
@@ -867,7 +1036,7 @@ export class HookManager {
       projectDir: context.projectDir,
       sessionId: context.sessionId,
       permissionMode: context.permissionMode,
-      config: this.config,
+      config,
       abortSignal: context.abortSignal,
     };
 
@@ -888,6 +1057,105 @@ export class HookManager {
     }
   }
 
+  async executeElicitationHooks(
+    details: McpElicitationDetails,
+    context: {
+      projectDir: string;
+      sessionId: string;
+      permissionMode: PermissionMode;
+      abortSignal?: AbortSignal;
+    }
+  ): Promise<ElicitationHookResult> {
+    const config = this.getExecutionConfig(context.sessionId, context.projectDir);
+    if (!config.enabled || this.sessionDisabled) return {};
+
+    const hookInput: ElicitationInput = {
+      hook_event_name: HookEvent.Elicitation,
+      hook_execution_id: nanoid(),
+      timestamp: new Date().toISOString(),
+      project_dir: context.projectDir,
+      session_id: context.sessionId,
+      permission_mode: context.permissionMode,
+      server_name: details.serverName,
+      mode: details.mode,
+      message: details.message,
+      requested_schema: details.requestedSchema,
+      url: details.url,
+      elicitation_id: details.elicitationId,
+    };
+    return this.executeElicitationHookChain(
+      HookEvent.Elicitation,
+      hookInput,
+      context,
+      config
+    );
+  }
+
+  async executeElicitationResultHooks(
+    details: McpElicitationDetails,
+    response: McpElicitationResponse,
+    context: {
+      projectDir: string;
+      sessionId: string;
+      permissionMode: PermissionMode;
+      abortSignal?: AbortSignal;
+    }
+  ): Promise<ElicitationHookResult> {
+    const config = this.getExecutionConfig(context.sessionId, context.projectDir);
+    if (!config.enabled || this.sessionDisabled) return {};
+
+    const hookInput: ElicitationResultInput = {
+      hook_event_name: HookEvent.ElicitationResult,
+      hook_execution_id: nanoid(),
+      timestamp: new Date().toISOString(),
+      project_dir: context.projectDir,
+      session_id: context.sessionId,
+      permission_mode: context.permissionMode,
+      server_name: details.serverName,
+      mode: details.mode,
+      elicitation_id: details.elicitationId,
+      action: response.action,
+      content: response.content,
+    };
+    return this.executeElicitationHookChain(
+      HookEvent.ElicitationResult,
+      hookInput,
+      context,
+      config
+    );
+  }
+
+  private async executeElicitationHookChain(
+    event: HookEvent.Elicitation | HookEvent.ElicitationResult,
+    input: ElicitationInput | ElicitationResultInput,
+    context: {
+      projectDir: string;
+      sessionId: string;
+      permissionMode: PermissionMode;
+      abortSignal?: AbortSignal;
+    },
+    config: Readonly<HookConfig>
+  ): Promise<ElicitationHookResult> {
+    const hooks = this.getMatchingHooks(event, {}, config);
+    if (hooks.length === 0) return {};
+    const execContext: HookExecutionContext = {
+      projectDir: context.projectDir,
+      sessionId: context.sessionId,
+      permissionMode: context.permissionMode,
+      config,
+      abortSignal: context.abortSignal,
+    };
+    try {
+      return await this.executor.executeElicitationHooks(hooks, input, execContext);
+    } catch (error) {
+      return {
+        warning: `Hook execution failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      };
+    }
+  }
+
   /**
    * 执行 Compaction Hooks
    */
@@ -902,7 +1170,8 @@ export class HookManager {
       abortSignal?: AbortSignal;
     }
   ): Promise<CompactionHookResult> {
-    if (!this.isEnabled()) {
+    const config = this.getExecutionConfig(context.sessionId, context.projectDir);
+    if (!config.enabled || this.sessionDisabled) {
       return { blockCompaction: false };
     }
 
@@ -920,7 +1189,7 @@ export class HookManager {
     };
 
     // 获取 hooks
-    const hooks = this.getMatchingHooks(HookEvent.Compaction, {});
+    const hooks = this.getMatchingHooks(HookEvent.Compaction, {}, config);
 
     if (hooks.length === 0) {
       return { blockCompaction: false };
@@ -931,7 +1200,7 @@ export class HookManager {
       projectDir: context.projectDir,
       sessionId: context.sessionId,
       permissionMode: context.permissionMode,
-      config: this.config,
+      config,
       abortSignal: context.abortSignal,
     };
 
@@ -954,8 +1223,15 @@ export class HookManager {
   /**
    * 获取匹配的 Hooks
    */
-  private getMatchingHooks(event: HookEvent, context: MatchContext): Hook[] {
-    const matchers = this.config[event] || [];
+  private getMatchingHooks(
+    event: HookEvent,
+    context: MatchContext,
+    config: Readonly<HookConfig>
+  ): Hook[] {
+    const matchers = [
+      ...(config[event] ?? []),
+      ...(this.managedFunctionMatchers[event] ?? []),
+    ];
 
     const matchedHooks: Hook[] = [];
 
@@ -971,18 +1247,29 @@ export class HookManager {
   /**
    * 从工具输入提取文件路径
    */
-  private extractFilePath(toolInput: Record<string, unknown>): string | undefined {
+  private extractFilePaths(toolInput: Record<string, unknown>): string[] {
+    const paths: string[] = [];
     // 常见的文件路径字段
     const pathFields = ['file_path', 'path', 'filePath', 'source', 'target'];
 
     for (const field of pathFields) {
       const value = toolInput[field];
       if (typeof value === 'string') {
-        return value;
+        paths.push(value);
       }
     }
 
-    return undefined;
+    if (typeof toolInput.patch === 'string') {
+      for (const match of toolInput.patch.matchAll(
+        /^\*\*\* (?:Add|Delete|Update) File: (.+)$/gm
+      )) {
+        if (match[1]) paths.push(match[1]);
+      }
+      for (const match of toolInput.patch.matchAll(/^\*\*\* Move to: (.+)$/gm)) {
+        if (match[1]) paths.push(match[1]);
+      }
+    }
+    return [...new Set(paths)];
   }
 
   /**

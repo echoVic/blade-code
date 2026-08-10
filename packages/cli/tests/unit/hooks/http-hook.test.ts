@@ -1,4 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../../src/hooks/HookTrustService.js', () => ({
+  HookTrustService: {
+    getInstance: () => ({
+      getStatus: async () => ({ state: 'trusted' }),
+    }),
+  },
+}));
+
 import { PermissionMode } from '../../../src/config/types.js';
 import { HookManager } from '../../../src/hooks/HookManager.js';
 import {
@@ -32,11 +41,14 @@ function registerHttpHook(
   url: string,
   opts?: Partial<{ timeout: number; retries: number; allowedHosts: string[] }>
 ) {
-  hm.loadConfig({
-    enabled: true,
-    httpPolicy: opts?.allowedHosts ? { allowedHosts: opts.allowedHosts } : undefined,
-  });
-  const cfg = hm.getConfig() as HookConfig;
+  hm.loadConfig(
+    {
+      enabled: true,
+      httpPolicy: opts?.allowedHosts ? { allowedHosts: opts.allowedHosts } : undefined,
+    },
+    execContext.projectDir
+  );
+  const cfg = hm.getConfig(execContext.projectDir) as HookConfig;
   (cfg.PreToolUse as HookMatcher[]) = [
     {
       name: 'test-http',
@@ -65,7 +77,7 @@ describe('HTTP Hook', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    hm.loadConfig({ enabled: false });
+    hm.loadConfig({ enabled: false }, execContext.projectDir);
     vi.restoreAllMocks();
   });
 

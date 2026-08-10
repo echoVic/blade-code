@@ -41,6 +41,8 @@ export const DEFAULT_HOOK_CONFIG: Required<HookConfig> = {
   ],
   PostToolUseFailure: [],
   PermissionRequest: [],
+  Elicitation: [],
+  ElicitationResult: [],
   // 会话生命周期类
   UserPromptSubmit: [],
   SessionStart: [],
@@ -68,6 +70,8 @@ export function mergeHookConfig(
     PostToolUse: override.PostToolUse ?? base.PostToolUse,
     PostToolUseFailure: override.PostToolUseFailure ?? base.PostToolUseFailure,
     PermissionRequest: override.PermissionRequest ?? base.PermissionRequest,
+    Elicitation: override.Elicitation ?? base.Elicitation,
+    ElicitationResult: override.ElicitationResult ?? base.ElicitationResult,
     // 会话生命周期类
     UserPromptSubmit: override.UserPromptSubmit ?? base.UserPromptSubmit,
     SessionStart: override.SessionStart ?? base.SessionStart,

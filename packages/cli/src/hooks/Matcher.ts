@@ -41,8 +41,13 @@ export class Matcher {
     }
 
     // 文件路径匹配 (glob，支持数组)
-    if (config.paths && context.filePath) {
-      if (!this.matchPaths(config.paths, context.filePath)) {
+    if (config.paths) {
+      const filePaths =
+        context.filePaths ?? (context.filePath ? [context.filePath] : []);
+      if (
+        filePaths.length === 0 ||
+        !filePaths.some((filePath) => this.matchPaths(config.paths!, filePath))
+      ) {
         return false;
       }
     }
@@ -128,38 +133,42 @@ export class Matcher {
     // 然后匹配参数
     // 对于 Bash 工具，参数是 command
     // 对于 Read/Edit/Write 等工具，参数是 filePath
-    const argValue = this.getArgValue(toolName!, command, filePath);
+    const argValues = this.getArgValues(
+      toolName!,
+      command,
+      context.filePaths ?? (filePath ? [filePath] : [])
+    );
 
-    if (!argValue) {
+    if (argValues.length === 0) {
       // 没有参数值，无法匹配参数模式
       return false;
     }
 
     // 使用 glob 模式匹配参数
-    return this.matchGlobOrPattern(argValue, argPattern);
+    return argValues.some((argValue) => this.matchGlobOrPattern(argValue, argPattern));
   }
 
   /**
    * 获取工具的参数值
    */
-  private getArgValue(
+  private getArgValues(
     toolName: string,
     command?: string,
-    filePath?: string
-  ): string | undefined {
+    filePaths: string[] = []
+  ): string[] {
     // Bash 工具使用 command
     if (toolName === 'Bash' || toolName === 'BashTool') {
-      return command;
+      return command ? [command] : [];
     }
 
     // 文件操作工具使用 filePath
-    const fileTools = ['Read', 'Edit', 'Write', 'Glob', 'Grep'];
+    const fileTools = ['Read', 'Edit', 'Write', 'ApplyPatch', 'Glob', 'Grep'];
     if (fileTools.includes(toolName)) {
-      return filePath;
+      return filePaths;
     }
 
     // 其他工具尝试使用 command 或 filePath
-    return command || filePath;
+    return command ? [command] : filePaths;
   }
 
   /**

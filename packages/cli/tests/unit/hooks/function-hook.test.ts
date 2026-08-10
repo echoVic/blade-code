@@ -17,15 +17,15 @@ describe('Function Hook', () => {
   let hm: HookManager;
 
   beforeEach(() => {
+    HookManager.resetInstance();
     // 清空并启用 hooks
     const instance = HookManager.getInstance();
-    instance.loadConfig({ enabled: true, defaultTimeout: 5 });
+    instance.loadConfig({ enabled: true, defaultTimeout: 5 }, execContext.projectDir);
     hm = instance;
   });
 
   afterEach(() => {
-    // 清空所有注册的 hooks
-    hm.loadConfig({ enabled: false });
+    HookManager.resetInstance();
   });
 
   describe('registerFunction API', () => {
@@ -39,6 +39,81 @@ describe('Function Hook', () => {
       off();
       await hm.executePreToolHooks('Edit', 'id2', { file_path: '/x.ts' }, execContext);
       expect(handler).toHaveBeenCalledTimes(1); // 没再调用
+    });
+  });
+
+  describe('MCP elicitation events', () => {
+    it('allows a trusted function hook to answer before UI presentation', async () => {
+      const handler = vi.fn().mockResolvedValue({
+        hookSpecificOutput: {
+          hookEventName: 'Elicitation',
+          action: 'accept',
+          content: { channel: 'stable' },
+        },
+      });
+      hm.registerFunction(HookEvent.Elicitation, undefined, handler);
+
+      const result = await hm.executeElicitationHooks(
+        {
+          serverName: 'deploy',
+          mode: 'form',
+          message: 'Choose a channel',
+          fields: [],
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              channel: { type: 'string', enum: ['stable'] },
+            },
+            required: ['channel'],
+          },
+        },
+        execContext
+      );
+
+      expect(result.response).toEqual({
+        action: 'accept',
+        content: { channel: 'stable' },
+      });
+      expect(handler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hook_event_name: HookEvent.Elicitation,
+          server_name: 'deploy',
+          mode: 'form',
+          requested_schema: expect.any(Object),
+        }),
+        expect.any(Object)
+      );
+    });
+
+    it('can cancel a response without logging form content', async () => {
+      const handler = vi.fn().mockResolvedValue({
+        hookSpecificOutput: {
+          hookEventName: 'ElicitationResult',
+          action: 'cancel',
+        },
+      });
+      hm.registerFunction(HookEvent.ElicitationResult, undefined, handler);
+
+      const result = await hm.executeElicitationResultHooks(
+        {
+          serverName: 'deploy',
+          mode: 'form',
+          message: 'Choose a channel',
+          fields: [],
+          requestedSchema: {
+            type: 'object',
+            properties: {},
+          },
+        },
+        {
+          action: 'accept',
+          content: { owner: 'private@example.test' },
+        },
+        execContext
+      );
+
+      expect(result.response).toEqual({ action: 'cancel' });
+      expect(handler).toHaveBeenCalledOnce();
     });
   });
 
@@ -137,6 +212,30 @@ describe('Function Hook', () => {
       hm.registerFunction(HookEvent.PreToolUse, undefined, handler);
 
       await hm.executePreToolHooks('AnyTool', 'id-any', {}, execContext);
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('ApplyPatch 的任一文件都可以触发路径 matcher', async () => {
+      const handler = vi.fn().mockResolvedValue(undefined);
+      hm.registerFunction(
+        HookEvent.PreToolUse,
+        { tools: 'ApplyPatch(src/**)' },
+        handler
+      );
+
+      await hm.executePreToolHooks(
+        'ApplyPatch',
+        'id-patch',
+        {
+          patch:
+            '*** Begin Patch\n' +
+            '*** Update File: docs/readme.md\n@@\n-old\n+new\n' +
+            '*** Add File: src/value.ts\n+value\n' +
+            '*** End Patch',
+        },
+        execContext
+      );
+
       expect(handler).toHaveBeenCalledTimes(1);
     });
   });

@@ -4,12 +4,18 @@
  * 负责执行单个或多个 Hooks
  */
 
+import path from 'node:path';
+import type { SessionModelResources } from '../agent/resources/WorkspaceModelResources.js';
+import { createLogger, LogCategory } from '../logging/Logger.js';
+import type { IChatService } from '../services/ChatServiceInterface.js';
+import { HookTrustService } from './HookTrustService.js';
+import { substituteEnvVars, validateHookUrl } from './HttpHookSecurity.js';
 import { OutputParser } from './OutputParser.js';
 import { SecureProcessExecutor } from './SecureProcessExecutor.js';
-import { substituteEnvVars, validateHookUrl } from './HttpHookSecurity.js';
 import {
   type CommandHook,
   type CompactionHookResult,
+  type ElicitationHookResult,
   type FunctionHook,
   type Hook,
   type HookExecutionContext,
@@ -30,8 +36,6 @@ import {
   type SubagentStopHookResult,
   type UserPromptSubmitHookResult,
 } from './types/HookTypes.js';
-import type { IChatService } from '../services/ChatServiceInterface.js';
-import { createLogger, LogCategory } from '../logging/Logger.js';
 
 const promptHookLogger = createLogger(LogCategory.EXECUTION);
 
@@ -48,6 +52,10 @@ const EVENT_SCHEMA_HINTS: Record<string, string> = {
     '{ "continue": true, "continueReason": "...", "additionalContext": "..." }',
   PermissionRequest:
     '{ "permissionDecision": "approve" | "deny" | "ask", "permissionDecisionReason": "..." }',
+  Elicitation:
+    '{ "action": "accept" | "decline" | "cancel", "content": { "field": "value" } }',
+  ElicitationResult:
+    '{ "action": "accept" | "decline" | "cancel", "content": { "field": "value" } }',
   UserPromptSubmit:
     '{ "updatedPrompt": "修改后的提示词", "contextInjection": "注入的上下文" }',
   Compaction: '{ "blockCompaction": true, "blockReason": "阻止压缩的原因" }',
@@ -60,6 +68,58 @@ export class HookExecutor {
   private processExecutor = new SecureProcessExecutor();
   private outputParser = new OutputParser();
   private chatServiceCache = new Map<string, IChatService>();
+  private sessionModelResources = new Map<string, SessionModelResources>();
+  private sessionEnvironments = new Map<string, Readonly<Record<string, string>>>();
+  private trustWarnings = new Set<string>();
+
+  bindSessionModelResources(
+    sessionId: string,
+    projectDirs: readonly string[],
+    resources: SessionModelResources
+  ): void {
+    for (const projectDir of projectDirs) {
+      this.sessionModelResources.set(
+        this.sessionResourceKey(sessionId, projectDir),
+        resources
+      );
+      this.sessionEnvironments.set(
+        this.sessionResourceKey(sessionId, projectDir),
+        resources.config.env
+      );
+    }
+  }
+
+  bindSessionEnvironment(
+    sessionId: string,
+    projectDirs: readonly string[],
+    environment: Readonly<Record<string, string>>
+  ): void {
+    for (const projectDir of projectDirs) {
+      this.sessionEnvironments.set(
+        this.sessionResourceKey(sessionId, projectDir),
+        environment
+      );
+    }
+  }
+
+  async unbindSessionModelResources(
+    sessionId: string,
+    projectDirs: readonly string[]
+  ): Promise<void> {
+    for (const projectDir of projectDirs) {
+      const resourceKey = this.sessionResourceKey(sessionId, projectDir);
+      this.sessionModelResources.delete(resourceKey);
+      this.sessionEnvironments.delete(resourceKey);
+      const cachePrefix = `${resourceKey}\0`;
+      for (const [key, service] of this.chatServiceCache) {
+        if (!key.startsWith(cachePrefix)) continue;
+        this.chatServiceCache.delete(key);
+        await (
+          service as IChatService & { dispose?: () => void | Promise<void> }
+        ).dispose?.();
+      }
+    }
+  }
 
   /**
    * 执行 PreToolUse Hooks (串行)
@@ -383,6 +443,58 @@ export class HookExecutor {
     };
   }
 
+  async executeElicitationHooks(
+    hooks: Hook[],
+    input: HookInput,
+    context: HookExecutionContext
+  ): Promise<ElicitationHookResult> {
+    if (hooks.length === 0) return {};
+
+    const warnings: string[] = [];
+    for (const hook of hooks) {
+      try {
+        const result = await this.executeHook(hook, input, context);
+        if (!result.success) {
+          if (result.blocking) {
+            return {
+              blockedReason: result.error ?? 'Elicitation blocked by hook',
+              warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+            };
+          }
+          if (result.warning) warnings.push(result.warning);
+          continue;
+        }
+
+        const specific = result.output?.hookSpecificOutput;
+        if (
+          specific &&
+          'action' in specific &&
+          (specific.action === 'accept' ||
+            specific.action === 'decline' ||
+            specific.action === 'cancel')
+        ) {
+          return {
+            response: {
+              action: specific.action,
+              ...('content' in specific && specific.content
+                ? { content: specific.content }
+                : {}),
+            },
+            warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+          };
+        }
+      } catch (error) {
+        warnings.push(
+          `Hook failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+
+    return {
+      warning: warnings.length > 0 ? warnings.join('\n') : undefined,
+    };
+  }
+
   /**
    * 执行 UserPromptSubmit Hooks (串行)
    *
@@ -680,20 +792,43 @@ export class HookExecutor {
     input: HookInput,
     context: HookExecutionContext
   ): Promise<HookExecutionResult> {
+    if (hook.type !== HookType.Function) {
+      const trust = await HookTrustService.getInstance().getStatus(
+        context.projectDir,
+        context.config
+      );
+      if (trust.state !== 'trusted') {
+        const warningKey = `${trust.trustRoot}:${trust.currentDigest}:${trust.state}`;
+        if (!this.trustWarnings.has(warningKey)) {
+          if (this.trustWarnings.size >= 512) this.trustWarnings.clear();
+          this.trustWarnings.add(warningKey);
+          promptHookLogger.warn(
+            `[HookTrust] Skipping configured hooks for ${trust.trustRoot}: ${trust.state}`
+          );
+        }
+        return {
+          success: true,
+          hook,
+          warning: `Hook skipped: project hook trust is ${trust.state}`,
+        };
+      }
+    }
+
+    const executionContext = this.withHookEnvironment(context, hook);
     if (hook.type === HookType.Command) {
-      return this.executeCommandHook(hook, input, context);
+      return this.executeCommandHook(hook, input, executionContext);
     }
 
     if (hook.type === HookType.Prompt) {
-      return this.executePromptHook(hook, input, context);
+      return this.executePromptHook(hook, input, executionContext);
     }
 
     if (hook.type === HookType.Function) {
-      return this.executeFunctionHook(hook, input, context);
+      return this.executeFunctionHook(hook, input, executionContext);
     }
 
     if (hook.type === HookType.Http) {
-      return this.executeHttpHook(hook, input, context);
+      return this.executeHttpHook(hook, input, executionContext);
     }
 
     throw new Error(`Hook type ${(hook as Hook).type} not supported`);
@@ -746,7 +881,7 @@ export class HookExecutor {
 
     try {
       // 1. 解析模型配置
-      const chatService = await this.getOrCreateChatService(hook.model);
+      const chatService = await this.getOrCreateChatService(hook.model, context);
 
       // 2. 构建 messages
       const eventType =
@@ -1065,39 +1200,75 @@ export class HookExecutor {
   /**
    * 获取或创建 ChatService 实例（按 modelId 缓存）
    */
-  private async getOrCreateChatService(modelId?: string): Promise<IChatService> {
-    const cacheKey = modelId || '__default__';
+  private async getOrCreateChatService(
+    modelId: string | undefined,
+    context: HookExecutionContext
+  ): Promise<IChatService> {
+    const resourceKey = this.sessionResourceKey(context.sessionId, context.projectDir);
+    const cacheKey = `${resourceKey}\0${modelId || '__default__'}`;
 
     const cached = this.chatServiceCache.get(cacheKey);
     if (cached) return cached;
 
-    // 延迟导入避免启动时加载开销
-    const { ensureStoreInitialized, getCurrentModel, getModelById } = await import(
-      '../store/vanilla.js'
-    );
+    const { ensureStoreInitialized, getConfig } = await import('../store/vanilla.js');
     const { createChatServiceAsync } = await import(
       '../services/ChatServiceInterface.js'
     );
     const { resolveModelConfig } = await import('../services/pi/resolveModelConfig.js');
+    const { resolveWorkspaceModelResources } = await import(
+      '../agent/resources/WorkspaceModelResources.js'
+    );
 
     await ensureStoreInitialized();
-
+    const startupConfig = getConfig();
+    if (!startupConfig) throw new Error('PromptHook: 配置未初始化');
+    const resources =
+      this.sessionModelResources.get(resourceKey) ??
+      (await resolveWorkspaceModelResources(context.projectDir, startupConfig));
     const modelConfig = modelId
-      ? getModelById(modelId) || getCurrentModel()
-      : getCurrentModel();
+      ? resources.config.models.find((model) => model.id === modelId)
+      : (resources.config.models.find(
+          (model) => model.id === resources.config.currentModelId
+        ) ?? resources.config.models[0]);
 
     if (!modelConfig) {
       throw new Error('PromptHook: 无法获取模型配置。请确保至少配置了一个模型。');
     }
 
-    const appConfig = (await import('../store/vanilla.js')).getConfig();
-    if (!appConfig) throw new Error('PromptHook: 配置未初始化');
     const chatService = await createChatServiceAsync(
-      resolveModelConfig(modelConfig, appConfig, false).chat
+      resolveModelConfig(modelConfig, resources.config, 'off', resources.catalog).chat
     );
 
     this.chatServiceCache.set(cacheKey, chatService);
     return chatService;
+  }
+
+  private sessionResourceKey(sessionId: string, projectDir: string): string {
+    return `${sessionId}\0${path.resolve(projectDir)}`;
+  }
+
+  private withSessionEnvironment(context: HookExecutionContext): HookExecutionContext {
+    const environment = this.sessionEnvironments.get(
+      this.sessionResourceKey(context.sessionId, context.projectDir)
+    );
+    return environment ? { ...context, environment } : context;
+  }
+
+  private withHookEnvironment(
+    context: HookExecutionContext,
+    hook: Hook
+  ): HookExecutionContext {
+    const sessionContext = this.withSessionEnvironment(context);
+    if (!hook.source) return sessionContext;
+    return {
+      ...sessionContext,
+      environment: {
+        ...sessionContext.environment,
+        BLADE_PLUGIN_ROOT: hook.source.pluginRoot,
+        CLAUDE_PLUGIN_ROOT: hook.source.pluginRoot,
+        BLADE_PLUGIN_NAME: hook.source.pluginName,
+      },
+    };
   }
 
   /**

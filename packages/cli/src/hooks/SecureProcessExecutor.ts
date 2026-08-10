@@ -65,7 +65,7 @@ export class SecureProcessExecutor {
     }
 
     // 2. 创建受限环境变量
-    const env = this.createSafeEnv(input);
+    const env = this.createSafeEnv(input, context.environment);
 
     // 3. 启动子进程
     const { child, processTree } = spawnOwnedProcess(command, [], {
@@ -173,23 +173,23 @@ export class SecureProcessExecutor {
   /**
    * 创建安全的环境变量
    */
-  private createSafeEnv(input: HookInput): NodeJS.ProcessEnv {
-    // 只暴露安全的环境变量
+  private createSafeEnv(
+    input: HookInput,
+    environment: Readonly<Record<string, string>> = {}
+  ): NodeJS.ProcessEnv {
+    // Only the explicit Session environment and minimum host environment cross
+    // the process boundary. Arbitrary process credentials remain private.
     return {
-      // Blade 特定变量
+      ...environment,
+      PATH: environment.PATH ?? process.env.PATH ?? '',
+      HOME: environment.HOME ?? process.env.HOME ?? '',
+      USER: environment.USER ?? process.env.USER ?? '',
+      SHELL: environment.SHELL ?? process.env.SHELL ?? '/bin/sh',
       BLADE_PROJECT_DIR: input.project_dir,
       BLADE_SESSION_ID: input.session_id,
       BLADE_HOOK_EVENT: input.hook_event_name,
       BLADE_TOOL_NAME: 'tool_name' in input ? (input.tool_name as string) : '',
       BLADE_TOOL_USE_ID: 'tool_use_id' in input ? (input.tool_use_id as string) : '',
-
-      // 保留必要的系统变量
-      PATH: process.env.PATH || '',
-      HOME: process.env.HOME || '',
-      USER: process.env.USER || '',
-      SHELL: process.env.SHELL || '/bin/sh',
-
-      // 不传递敏感变量 (API keys, tokens, etc.)
     };
   }
 }
