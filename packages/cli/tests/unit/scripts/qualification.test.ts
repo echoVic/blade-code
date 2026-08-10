@@ -60,12 +60,13 @@ describe('production qualification contract', () => {
       'e2e',
       'snapshot',
       'security',
+      'build',
       'web-test',
       'web-type-check',
-      'build',
       'performance',
     ]);
     expect(plan).toHaveLength(14);
+    expect(checkIds.indexOf('build')).toBeLessThan(checkIds.indexOf('web-test'));
     expect(checkIds.indexOf('build')).toBeLessThan(checkIds.indexOf('performance'));
     expect(plan.some((check) => check.network === 'paid-api')).toBe(false);
   });

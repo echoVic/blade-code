@@ -76,6 +76,7 @@ const LOCAL_CHECKS: readonly QualificationCheck[] = [
     command: 'bun',
     args: ['run', '--filter', 'blade-code', 'test:security'],
   },
+  { id: 'build', name: 'Production build', command: 'bun', args: ['run', 'build'] },
   { id: 'web-test', name: 'Web tests', command: 'bun', args: ['run', 'test:web'] },
   {
     id: 'web-type-check',
@@ -83,7 +84,6 @@ const LOCAL_CHECKS: readonly QualificationCheck[] = [
     command: 'bun',
     args: ['run', 'type-check:web'],
   },
-  { id: 'build', name: 'Production build', command: 'bun', args: ['run', 'build'] },
   {
     id: 'performance',
     name: 'Performance regression tests',
