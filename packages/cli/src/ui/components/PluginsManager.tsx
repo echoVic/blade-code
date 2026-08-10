@@ -5,10 +5,18 @@
  */
 
 import { Box, Text, useInput } from 'ink';
+import { useState } from 'react';
 import { getPluginRegistry } from '../../plugins/index.js';
+import {
+  refreshWorkspacePlugins,
+  setWorkspacePluginEnabled,
+  uninstallWorkspacePlugin,
+  updateWorkspacePlugin,
+} from '../../plugins/PluginLifecycle.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
 
 export interface PluginsManagerProps {
+  workspaceRoot?: string;
   /** 完成回调 */
   onComplete?: () => void;
   /** 取消回调 */
@@ -18,23 +26,153 @@ export interface PluginsManagerProps {
 /**
  * 插件管理器主组件
  */
-export function PluginsManager({ onCancel }: PluginsManagerProps) {
-  const registry = getPluginRegistry();
+export function PluginsManager({ workspaceRoot, onCancel }: PluginsManagerProps) {
+  const registry = getPluginRegistry(workspaceRoot);
   const plugins = registry.getAll();
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState('');
+  const [confirmingRemoval, setConfirmingRemoval] = useState<string | null>(null);
+  const [, setRevision] = useState(0);
 
   // 按来源分组
   const bySource = registry.getBySource();
   const stats = registry.getStats();
+  const sourcePolicy = registry.getSourcePolicy();
 
   // 使用智能 Ctrl+C 处理
   const handleCtrlC = useCtrlCHandler(false, onCancel);
 
-  // ESC 和 Ctrl+C 处理
+  const toggleSelected = async () => {
+    const plugin = plugins[selectedIndex];
+    if (!plugin || busy) return;
+    if (plugin.source === 'cli') {
+      setStatus(`${plugin.manifest.name} 由 --plugin-dir 管理，不能持久化切换`);
+      return;
+    }
+    if (plugin.status === 'error') {
+      setStatus(plugin.error ?? `${plugin.manifest.name} 当前不可用`);
+      return;
+    }
+    setBusy(true);
+    setStatus('');
+    try {
+      const change = await setWorkspacePluginEnabled(
+        registry.getWorkspaceRoot(),
+        plugin.manifest.name,
+        plugin.status !== 'active',
+        'local'
+      );
+      setStatus(
+        change.effectiveEnabled
+          ? `已启用 ${plugin.manifest.name}`
+          : `已禁用 ${plugin.manifest.name}`
+      );
+      setRevision((value) => value + 1);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const refresh = async () => {
+    if (busy) return;
+    setBusy(true);
+    setStatus('');
+    try {
+      await refreshWorkspacePlugins(registry.getWorkspaceRoot());
+      setSelectedIndex(0);
+      setStatus('插件列表已刷新');
+      setRevision((value) => value + 1);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateSelected = async () => {
+    const plugin = plugins[selectedIndex];
+    if (!plugin || busy) return;
+    if (!plugin.installation) {
+      setStatus(`${plugin.manifest.name} 不是 Blade 受管安装，不能自动更新`);
+      return;
+    }
+    setBusy(true);
+    setConfirmingRemoval(null);
+    setStatus('');
+    try {
+      const { result } = await updateWorkspacePlugin(
+        registry.getWorkspaceRoot(),
+        plugin.manifest.name,
+        { trusted: true }
+      );
+      if (!result.success) throw new Error(result.error);
+      setStatus(
+        result.changed
+          ? `已更新 ${plugin.manifest.name} 到 ${result.installation?.revision}`
+          : `${plugin.manifest.name} 已是最新版本`
+      );
+      setRevision((value) => value + 1);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeSelected = async () => {
+    const plugin = plugins[selectedIndex];
+    if (!plugin || busy) return;
+    if (!plugin.installation) {
+      setStatus(`${plugin.manifest.name} 不是 Blade 受管安装，不能自动卸载`);
+      return;
+    }
+    if (confirmingRemoval !== plugin.manifest.name) {
+      setConfirmingRemoval(plugin.manifest.name);
+      setStatus(`再次按 x 确认卸载 ${plugin.manifest.name}`);
+      return;
+    }
+    setBusy(true);
+    setStatus('');
+    try {
+      const { result } = await uninstallWorkspacePlugin(
+        registry.getWorkspaceRoot(),
+        plugin.manifest.name,
+        true
+      );
+      if (!result.success) throw new Error(result.error);
+      setConfirmingRemoval(null);
+      setSelectedIndex(0);
+      setStatus(`已卸载 ${plugin.manifest.name}`);
+      setRevision((value) => value + 1);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   useInput((input, key) => {
     if (key.escape) {
       onCancel?.();
     } else if ((key.ctrl && input === 'c') || (key.meta && input === 'c')) {
       handleCtrlC();
+    } else if ((key.upArrow || input === 'k') && plugins.length > 0) {
+      setConfirmingRemoval(null);
+      setSelectedIndex((index) => (index - 1 + plugins.length) % plugins.length);
+    } else if ((key.downArrow || input === 'j') && plugins.length > 0) {
+      setConfirmingRemoval(null);
+      setSelectedIndex((index) => (index + 1) % plugins.length);
+    } else if (input === ' ' || key.return) {
+      void toggleSelected();
+    } else if (input === 'r') {
+      void refresh();
+    } else if (input === 'u') {
+      void updateSelected();
+    } else if (input === 'x') {
+      void removeSelected();
     }
   });
 
@@ -90,6 +228,12 @@ export function PluginsManager({ onCancel }: PluginsManagerProps) {
           {stats.skills} | 代理: {stats.agents}
         </Text>
       </Box>
+      <Box paddingLeft={2} marginBottom={1}>
+        <Text color="gray">
+          来源策略: {sourcePolicy.restrictToAllowedSources ? 'restricted' : 'open'} |
+          Git SHA: {sourcePolicy.requireGitCommitSha ? 'required' : 'optional'}
+        </Text>
+      </Box>
 
       {/* CLI 指定的插件 */}
       {bySource.cli.length > 0 && (
@@ -102,10 +246,12 @@ export function PluginsManager({ onCancel }: PluginsManagerProps) {
           </Box>
           {bySource.cli.map((plugin) => {
             const statusIcon = plugin.status === 'active' ? '[on]' : '[off]';
+            const selected = plugins.indexOf(plugin) === selectedIndex;
             return (
               <Box key={plugin.manifest.name} flexDirection="column" paddingLeft={2}>
                 <Text>
-                  <Text bold color="green">
+                  <Text bold color={selected ? 'cyan' : 'green'}>
+                    {selected ? '› ' : '  '}
                     {statusIcon} {plugin.manifest.name}
                   </Text>
                   <Text color="gray"> v{plugin.manifest.version}</Text>
@@ -138,10 +284,12 @@ export function PluginsManager({ onCancel }: PluginsManagerProps) {
           </Box>
           {bySource.project.map((plugin) => {
             const statusIcon = plugin.status === 'active' ? '[on]' : '[off]';
+            const selected = plugins.indexOf(plugin) === selectedIndex;
             return (
               <Box key={plugin.manifest.name} flexDirection="column" paddingLeft={2}>
                 <Text>
-                  <Text bold color="green">
+                  <Text bold color={selected ? 'cyan' : 'green'}>
+                    {selected ? '› ' : '  '}
                     {statusIcon} {plugin.manifest.name}
                   </Text>
                   <Text color="gray"> v{plugin.manifest.version}</Text>
@@ -174,10 +322,12 @@ export function PluginsManager({ onCancel }: PluginsManagerProps) {
           </Box>
           {bySource.user.map((plugin) => {
             const statusIcon = plugin.status === 'active' ? '[on]' : '[off]';
+            const selected = plugins.indexOf(plugin) === selectedIndex;
             return (
               <Box key={plugin.manifest.name} flexDirection="column" paddingLeft={2}>
                 <Text>
-                  <Text bold color="green">
+                  <Text bold color={selected ? 'cyan' : 'green'}>
+                    {selected ? '› ' : '  '}
                     {statusIcon} {plugin.manifest.name}
                   </Text>
                   <Text color="gray"> v{plugin.manifest.version}</Text>
@@ -217,11 +367,23 @@ export function PluginsManager({ onCancel }: PluginsManagerProps) {
           {' '}
           • /plugins enable/disable &lt;name&gt; - 启用/禁用插件
         </Text>
+        <Text color="gray" dimColor>
+          {' '}
+          • /plugins policy show|set - 来源与 SHA 策略
+        </Text>
       </Box>
 
       <Box marginTop={1}>
-        <Text dimColor>按 ESC 返回菜单</Text>
+        <Text dimColor>
+          ↑/↓ 选择 · Space/Enter 启停 · u 信任并更新 · x 卸载 · r 刷新 · ESC 返回
+        </Text>
       </Box>
+      {status && (
+        <Box marginTop={1}>
+          <Text color={status.includes('失败') ? 'red' : 'cyan'}>{status}</Text>
+        </Box>
+      )}
+      {busy && <Text color="gray">处理中...</Text>}
     </Box>
   );
 }

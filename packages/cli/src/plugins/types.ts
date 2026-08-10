@@ -6,7 +6,7 @@
  */
 
 import type { SubagentConfig } from '../agent/subagents/types.js';
-import type { McpServerConfig } from '../config/types.js';
+import type { LspServerConfig, McpServerConfig } from '../config/types.js';
 import type { HookConfig } from '../hooks/types/HookTypes.js';
 import type { SkillMetadata } from '../skills/types.js';
 import type { CustomCommandConfig } from '../slash-commands/custom/types.js';
@@ -58,6 +58,88 @@ export interface PluginManifest {
   bladeVersion?: string;
 }
 
+export type PluginInstallSource =
+  | {
+      type: 'git';
+      url: string;
+      ref?: string;
+    }
+  | {
+      type: 'local';
+      path: string;
+    }
+  | {
+      type: 'marketplace';
+      marketplace: string;
+    };
+
+export interface InstalledPluginRecord {
+  name: string;
+  source: PluginInstallSource;
+  installPath: string;
+  version: string;
+  revision: string;
+  contentDigest: string;
+  installedAt: string;
+  updatedAt: string;
+}
+
+export type PluginMarketplaceSource =
+  | {
+      type: 'git';
+      url: string;
+      ref?: string;
+    }
+  | {
+      type: 'local';
+      path: string;
+    };
+
+export interface PluginMarketplaceRecord {
+  name: string;
+  source: PluginMarketplaceSource;
+  installPath: string;
+  revision: string;
+  contentDigest: string;
+  addedAt: string;
+  updatedAt: string;
+}
+
+export interface PluginMarketplaceEntry {
+  name: string;
+  description?: string;
+  version?: string;
+  author?: string | PluginAuthor;
+  source:
+    | string
+    | {
+        source: 'url';
+        url: string;
+        ref?: string;
+        sha?: string;
+      };
+  category?: string;
+  homepage?: string;
+  tags?: string[];
+}
+
+export interface PluginMarketplaceManifest {
+  name: string;
+  description?: string;
+  owner?: PluginAuthor;
+  metadata?: {
+    description?: string;
+    version?: string;
+  };
+  plugins: PluginMarketplaceEntry[];
+}
+
+export interface PluginPackageState {
+  version: 1;
+  installed: Record<string, InstalledPluginRecord>;
+  marketplaces: Record<string, PluginMarketplaceRecord>;
+}
+
 /**
  * Plugin source type indicating where the plugin was loaded from
  */
@@ -75,6 +157,21 @@ export type ManifestSource = 'blade' | 'claude';
  * Plugin status
  */
 export type PluginStatus = 'active' | 'inactive' | 'error';
+
+export type PluginCompatibilityIssueCode =
+  | 'blade-version'
+  | 'dependency-missing'
+  | 'dependency-version'
+  | 'dependency-inactive'
+  | 'source-policy';
+
+export interface PluginCompatibilityIssue {
+  code: PluginCompatibilityIssueCode;
+  message: string;
+  dependency?: string;
+  expected?: string;
+  actual?: string;
+}
 
 /**
  * A namespaced command from a plugin
@@ -170,11 +267,20 @@ export interface LoadedPlugin {
   /** MCP server configurations from .mcp.json */
   mcpServers?: Record<string, McpServerConfig>;
 
+  /** LSP server configurations from .lsp.json */
+  lspServers?: Record<string, LspServerConfig>;
+
   /** Plugin status */
   status: PluginStatus;
 
   /** Error message if status is 'error' */
   error?: string;
+
+  /** Compatibility or source-policy reasons that prevent activation */
+  compatibilityIssues?: PluginCompatibilityIssue[];
+
+  /** Immutable package-manager installation metadata */
+  installation?: InstalledPluginRecord;
 
   /** When the plugin was loaded */
   loadedAt: Date;
@@ -216,6 +322,8 @@ type PluginErrorCode =
   | 'INVALID_AGENT' // Agent config is invalid
   | 'INVALID_HOOKS' // Hooks config is invalid
   | 'INVALID_MCP' // MCP config is invalid
+  | 'INVALID_LSP' // LSP config is invalid
+  | 'SOURCE_POLICY_BLOCKED' // Plugin source is denied by effective policy
   | 'VERSION_INCOMPATIBLE' // Plugin requires newer Blade version
   | 'DEPENDENCY_MISSING' // Required dependency not found
   | 'IO_ERROR'; // File system error
@@ -238,6 +346,9 @@ export interface PluginLoadOptions {
 
   /** Skip loading MCP config */
   skipMcp?: boolean;
+
+  /** Skip loading LSP config */
+  skipLsp?: boolean;
 }
 
 /**

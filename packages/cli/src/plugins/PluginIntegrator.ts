@@ -5,14 +5,38 @@
  * the existing subsystems (commands, skills, agents, hooks, MCP).
  */
 
-import { subagentRegistry } from '../agent/subagents/SubagentRegistry.js';
+import path from 'node:path';
+import {
+  getSubagentRegistry,
+  type SubagentRegistry,
+} from '../agent/subagents/SubagentRegistry.js';
 import { HookManager } from '../hooks/HookManager.js';
+import {
+  type HookConfig,
+  HookEvent,
+  type HookMatcher,
+} from '../hooks/types/HookTypes.js';
 import { logger } from '../logging/Logger.js';
-import { McpRegistry } from '../mcp/McpRegistry.js';
-import { getSkillRegistry } from '../skills/index.js';
+import { getSkillRegistry, type SkillRegistry } from '../skills/index.js';
 import { CustomCommandRegistry } from '../slash-commands/custom/CustomCommandRegistry.js';
+import { getCwd } from '../utils/cwd.js';
 import { getPluginRegistry } from './PluginRegistry.js';
 import type { LoadedPlugin } from './types.js';
+
+const pluginHookBaseConfigs = new Map<string, ReturnType<HookManager['getConfig']>>();
+const HOOK_EVENTS = Object.values(HookEvent);
+
+function cloneHookConfig(config: Readonly<HookConfig>): HookConfig {
+  const cloned: HookConfig = { ...config };
+  for (const event of HOOK_EVENTS) {
+    cloned[event] = (config[event] ?? []).map((matcher) => ({
+      ...matcher,
+      matcher: matcher.matcher ? { ...matcher.matcher } : undefined,
+      hooks: matcher.hooks.map((hook) => ({ ...hook })),
+    }));
+  }
+  return cloned;
+}
 
 /**
  * Integration result for a single plugin
@@ -24,6 +48,7 @@ interface PluginIntegrationResult {
   agentsRegistered: number;
   hooksRegistered: boolean;
   mcpServersRegistered: number;
+  lspServersRegistered: number;
   errors: string[];
 }
 
@@ -48,12 +73,17 @@ interface IntegrationResult {
 class PluginIntegrator {
   private commandRegistry: CustomCommandRegistry;
   private hookManager: HookManager;
-  private mcpRegistry: McpRegistry;
+  private skillRegistry: SkillRegistry;
+  private subagentRegistry: SubagentRegistry;
 
-  constructor() {
-    this.commandRegistry = CustomCommandRegistry.getInstance();
+  private readonly workspaceRoot: string;
+
+  constructor(workspaceRoot: string = getCwd()) {
+    this.workspaceRoot = path.resolve(workspaceRoot);
+    this.commandRegistry = CustomCommandRegistry.getInstance(this.workspaceRoot);
     this.hookManager = HookManager.getInstance();
-    this.mcpRegistry = McpRegistry.getInstance();
+    this.skillRegistry = getSkillRegistry({ cwd: this.workspaceRoot });
+    this.subagentRegistry = getSubagentRegistry(this.workspaceRoot);
   }
 
   /**
@@ -66,11 +96,16 @@ class PluginIntegrator {
     this.commandRegistry.clearPluginCommands();
 
     // Clear plugin skills
-    const skillRegistry = getSkillRegistry();
-    skillRegistry.clearPluginSkills();
+    this.skillRegistry.clearPluginSkills();
 
     // Clear plugin agents
-    subagentRegistry.clearPluginAgents();
+    this.subagentRegistry.clearPluginAgents();
+
+    const hookBase = pluginHookBaseConfigs.get(this.workspaceRoot);
+    if (hookBase) {
+      this.hookManager.loadConfig(hookBase, this.workspaceRoot);
+      pluginHookBaseConfigs.delete(this.workspaceRoot);
+    }
 
     logger.debug('Cleared all plugin resources from subsystems');
   }
@@ -81,7 +116,7 @@ class PluginIntegrator {
    * @returns Integration result
    */
   async integrateAll(): Promise<IntegrationResult> {
-    const pluginRegistry = getPluginRegistry();
+    const pluginRegistry = getPluginRegistry(this.workspaceRoot);
     const plugins = pluginRegistry.getActive();
 
     const results: PluginIntegrationResult[] = [];
@@ -91,23 +126,26 @@ class PluginIntegrator {
     let totalSkills = 0;
     let totalAgents = 0;
     let totalMcpServers = 0;
+    let totalLspServers = 0;
 
     for (const plugin of plugins) {
-      const result = await this.integratePlugin(plugin);
+      const result = this.integratePlugin(plugin);
       results.push(result);
 
       totalCommands += result.commandsRegistered;
       totalSkills += result.skillsRegistered;
       totalAgents += result.agentsRegistered;
       totalMcpServers += result.mcpServersRegistered;
+      totalLspServers += result.lspServersRegistered;
       allErrors.push(...result.errors);
     }
+    this.integrateHooks(plugins);
 
     if (totalCommands + totalSkills + totalAgents > 0) {
       logger.info(
         `Plugin integration complete: ${totalCommands} commands, ` +
           `${totalSkills} skills, ${totalAgents} agents, ` +
-          `${totalMcpServers} MCP servers`
+          `${totalMcpServers} MCP servers, ${totalLspServers} LSP servers`
       );
     }
 
@@ -127,7 +165,7 @@ class PluginIntegrator {
    * @param plugin - The plugin to integrate
    * @returns Integration result for this plugin
    */
-  async integratePlugin(plugin: LoadedPlugin): Promise<PluginIntegrationResult> {
+  integratePlugin(plugin: LoadedPlugin): PluginIntegrationResult {
     const result: PluginIntegrationResult = {
       pluginName: plugin.manifest.name,
       commandsRegistered: 0,
@@ -135,6 +173,7 @@ class PluginIntegrator {
       agentsRegistered: 0,
       hooksRegistered: false,
       mcpServersRegistered: 0,
+      lspServersRegistered: 0,
       errors: [],
     };
 
@@ -171,20 +210,12 @@ class PluginIntegrator {
       );
     }
 
-    // 4. Integrate hooks
-    try {
-      result.hooksRegistered = this.integrateHooks(plugin);
-    } catch (error) {
-      result.errors.push(
-        `Failed to integrate hooks: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    }
+    // Hooks are swapped once for the complete active plugin set in integrateAll.
+    result.hooksRegistered = plugin.hooks !== undefined;
 
     // 5. Integrate MCP servers
     try {
-      result.mcpServersRegistered = await this.integrateMcp(plugin);
+      result.mcpServersRegistered = this.integrateMcp(plugin);
     } catch (error) {
       result.errors.push(
         `Failed to integrate MCP servers: ${
@@ -192,6 +223,7 @@ class PluginIntegrator {
         }`
       );
     }
+    result.lspServersRegistered = Object.keys(plugin.lspServers ?? {}).length;
 
     logger.debug(
       `Integrated plugin "${plugin.manifest.name}": ` +
@@ -224,11 +256,10 @@ class PluginIntegrator {
    * Integrate skills from a plugin
    */
   private integrateSkills(plugin: LoadedPlugin): number {
-    const skillRegistry = getSkillRegistry();
     let count = 0;
 
     for (const skill of plugin.skills) {
-      skillRegistry.registerPluginSkill(skill);
+      this.skillRegistry.registerPluginSkill(skill);
       count++;
     }
 
@@ -243,7 +274,7 @@ class PluginIntegrator {
 
     for (const agent of plugin.agents) {
       // Register with namespaced name
-      subagentRegistry.register({
+      this.subagentRegistry.register({
         ...agent.config,
         name: agent.namespacedName,
       });
@@ -258,63 +289,77 @@ class PluginIntegrator {
    *
    * Plugin hooks are merged into the existing hook configuration.
    */
-  private integrateHooks(plugin: LoadedPlugin): boolean {
-    if (!plugin.hooks) {
-      return false;
+  private integrateHooks(plugins: LoadedPlugin[]): void {
+    const pluginsWithHooks = plugins.filter((plugin) => plugin.hooks);
+    if (pluginsWithHooks.length === 0) {
+      const base = pluginHookBaseConfigs.get(this.workspaceRoot);
+      if (base) {
+        this.hookManager.loadConfig(base, this.workspaceRoot);
+        pluginHookBaseConfigs.delete(this.workspaceRoot);
+      }
+      return;
+    }
+    const currentConfig = cloneHookConfig(
+      this.hookManager.getConfig(this.workspaceRoot)
+    );
+    if (!pluginHookBaseConfigs.has(this.workspaceRoot)) {
+      pluginHookBaseConfigs.set(this.workspaceRoot, cloneHookConfig(currentConfig));
     }
 
-    const currentConfig = this.hookManager.getConfig();
-
-    // Deep merge the plugin hooks into current config
-    // Note: This is a simplified merge - a more sophisticated approach
-    // might handle array concatenation for specific hook types
-    this.hookManager.loadConfig({
-      ...currentConfig,
-      ...plugin.hooks,
-    });
-
-    return true;
+    const baseConfig = pluginHookBaseConfigs.get(this.workspaceRoot) ?? currentConfig;
+    const effective = cloneHookConfig(baseConfig);
+    effective.enabled = true;
+    for (const event of HOOK_EVENTS) {
+      const configured = baseConfig.enabled ? [...(baseConfig[event] ?? [])] : [];
+      const pluginMatchers: HookMatcher[] = [];
+      for (const plugin of pluginsWithHooks) {
+        for (const matcher of plugin.hooks?.[event] ?? []) {
+          pluginMatchers.push({
+            ...matcher,
+            name: matcher.name
+              ? `plugin:${plugin.manifest.name}:${matcher.name}`
+              : `plugin:${plugin.manifest.name}:${event}`,
+            hooks: matcher.hooks.map((hook) => ({
+              ...hook,
+              source: {
+                kind: 'plugin',
+                pluginName: plugin.manifest.name,
+                pluginSource: plugin.source,
+                pluginRoot: plugin.basePath,
+              },
+            })),
+          });
+        }
+      }
+      effective[event] = [...configured, ...pluginMatchers];
+    }
+    this.hookManager.loadConfig(effective, this.workspaceRoot);
   }
 
   /**
    * Integrate MCP servers from a plugin
    */
-  private async integrateMcp(plugin: LoadedPlugin): Promise<number> {
-    if (!plugin.mcpServers) {
-      return 0;
-    }
-
-    let count = 0;
-
-    for (const [name, config] of Object.entries(plugin.mcpServers)) {
-      try {
-        await this.mcpRegistry.registerServer(name, config);
-        count++;
-      } catch (error) {
-        logger.warn(
-          `Failed to register MCP server "${name}" from plugin "${plugin.manifest.name}": ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      }
-    }
-
-    return count;
+  private integrateMcp(plugin: LoadedPlugin): number {
+    // SessionRuntime resolves these definitions for its exact workspace and
+    // connects them through an isolated registry.
+    return Object.keys(plugin.mcpServers ?? {}).length;
   }
 }
 
 /**
  * Convenience function to integrate all plugins
  */
-export async function integrateAllPlugins(): Promise<IntegrationResult> {
-  const integrator = new PluginIntegrator();
+export async function integrateAllPlugins(
+  workspaceRoot: string = getCwd()
+): Promise<IntegrationResult> {
+  const integrator = new PluginIntegrator(workspaceRoot);
   return integrator.integrateAll();
 }
 
 /**
  * Convenience function to clear all plugin resources
  */
-export function clearAllPluginResources(): void {
-  const integrator = new PluginIntegrator();
+export function clearAllPluginResources(workspaceRoot: string = getCwd()): void {
+  const integrator = new PluginIntegrator(workspaceRoot);
   integrator.clearAllPluginResources();
 }

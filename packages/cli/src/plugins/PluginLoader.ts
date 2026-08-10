@@ -10,7 +10,8 @@ import { homedir } from 'node:os';
 import * as path from 'node:path';
 import matter from 'gray-matter';
 import type { SubagentConfig } from '../agent/subagents/types.js';
-import type { McpServerConfig } from '../config/types.js';
+import { normalizeLspServers } from '../config/lspSettings.js';
+import type { LspServerConfig, McpServerConfig } from '../config/types.js';
 import type { HookConfig } from '../hooks/types/HookTypes.js';
 import { logger } from '../logging/Logger.js';
 import { loadSkillMetadata } from '../skills/SkillLoader.js';
@@ -83,6 +84,9 @@ export class PluginLoader {
     const mcpServers = options.skipMcp
       ? undefined
       : await this.loadMcpConfig(pluginDir, pluginName);
+    const lspServers = options.skipLsp
+      ? undefined
+      : await this.loadLspConfig(pluginDir, pluginName);
 
     logger.debug(
       `Plugin "${pluginName}" loaded: ${commands.length} commands, ` +
@@ -99,6 +103,7 @@ export class PluginLoader {
       skills,
       hooks,
       mcpServers,
+      lspServers,
       status: 'active',
       loadedAt: new Date(),
     };
@@ -371,6 +376,51 @@ export class PluginLoader {
 
       return namespacedServers;
     } catch {
+      return undefined;
+    }
+  }
+
+  private async loadLspConfig(
+    pluginDir: string,
+    pluginName: string
+  ): Promise<Record<string, LspServerConfig> | undefined> {
+    const lspPath = path.join(pluginDir, '.lsp.json');
+    try {
+      const parsed = JSON.parse(await fs.readFile(lspPath, 'utf8')) as unknown;
+      const raw =
+        parsed &&
+        typeof parsed === 'object' &&
+        !Array.isArray(parsed) &&
+        'lspServers' in parsed
+          ? (parsed as { lspServers: unknown }).lspServers
+          : parsed;
+      const normalized = normalizeLspServers(raw);
+      const servers: Record<string, LspServerConfig> = {};
+      for (const [name, config] of Object.entries(normalized)) {
+        const expand = (value: string) =>
+          value
+            .replaceAll('${CLAUDE_PLUGIN_ROOT}', pluginDir)
+            .replaceAll('${BLADE_PLUGIN_ROOT}', pluginDir);
+        servers[`plugin:${pluginName}:${name}`] = {
+          ...config,
+          command: expand(config.command),
+          args: config.args?.map(expand),
+          env: config.env
+            ? Object.fromEntries(
+                Object.entries(config.env).map(([key, value]) => [key, expand(value)])
+              )
+            : undefined,
+        };
+      }
+      return servers;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        logger.warn(
+          `Invalid .lsp.json in ${pluginDir}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
       return undefined;
     }
   }

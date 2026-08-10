@@ -5,13 +5,26 @@
  * It handles plugin discovery, loading, and provides lookup methods.
  */
 
+import path from 'node:path';
+import { ConfigManager } from '../config/ConfigManager.js';
+import { DEFAULT_CONFIG } from '../config/defaults.js';
+import type { PluginSourcePolicy } from '../config/types.js';
 import { logger } from '../logging/Logger.js';
+import { WorkspaceTrustService } from '../security/WorkspaceTrustService.js';
+import { getCwd } from '../utils/cwd.js';
+import { applyPluginCompatibility } from './PluginCompatibility.js';
+import { getPluginInstaller } from './PluginInstaller.js';
 import { PluginLoader } from './PluginLoader.js';
+import {
+  assertPluginSourceAllowed,
+  PluginSourcePolicyError,
+} from './PluginSourcePolicy.js';
 import type {
   LoadedPlugin,
   PluginAgent,
   PluginCommand,
   PluginDiscoveryResult,
+  PluginMarketplaceRecord,
   PluginSkill,
   PluginSource,
 } from './types.js';
@@ -26,31 +39,47 @@ import type {
  * - Resource lookup (commands, skills, agents)
  */
 export class PluginRegistry {
-  private static instance: PluginRegistry | null = null;
+  private static instances = new Map<string, PluginRegistry>();
 
   private plugins: Map<string, LoadedPlugin> = new Map();
   private loader = new PluginLoader();
   private initialized = false;
   private workspaceRoot = '';
   private cliPluginDirs: string[] = [];
+  private enabledSettings: Record<string, boolean> = {};
+  private sourcePolicy: PluginSourcePolicy = {
+    ...DEFAULT_CONFIG.pluginSourcePolicy,
+  };
+  private marketplaces: Record<string, PluginMarketplaceRecord> = {};
 
-  private constructor() {}
+  private constructor(workspaceRoot: string) {
+    this.workspaceRoot = workspaceRoot;
+  }
 
   /**
    * Get the singleton instance
    */
-  static getInstance(): PluginRegistry {
-    if (!PluginRegistry.instance) {
-      PluginRegistry.instance = new PluginRegistry();
+  static getInstance(workspaceRoot: string = getCwd()): PluginRegistry {
+    const key = path.resolve(workspaceRoot);
+    let registry = PluginRegistry.instances.get(key);
+    if (!registry) {
+      registry = new PluginRegistry(key);
+      PluginRegistry.instances.set(key, registry);
     }
-    return PluginRegistry.instance;
+    return registry;
   }
 
   /**
    * Reset the singleton instance (mainly for testing)
    */
   static resetInstance(): void {
-    PluginRegistry.instance = null;
+    PluginRegistry.instances.clear();
+  }
+
+  static getInitializedInstances(): PluginRegistry[] {
+    return Array.from(PluginRegistry.instances.values()).filter((registry) =>
+      registry.isInitialized()
+    );
   }
 
   /**
@@ -70,6 +99,9 @@ export class PluginRegistry {
   ): Promise<PluginDiscoveryResult> {
     this.workspaceRoot = workspaceRoot;
     this.cliPluginDirs = cliPluginDirs;
+    this.enabledSettings =
+      await ConfigManager.getInstance().loadWorkspacePluginSettings(workspaceRoot);
+    await this.refreshPolicyContext();
 
     const allPlugins: LoadedPlugin[] = [];
     const allErrors: PluginDiscoveryResult['errors'] = [];
@@ -91,9 +123,44 @@ export class PluginRegistry {
     }
 
     // 2. Discover plugins in standard directories
-    const standardDirs = PluginLoader.getPluginDirs(workspaceRoot);
+    const workspaceTrusted =
+      (await WorkspaceTrustService.getInstance().getStatus(workspaceRoot)).state ===
+      'trusted';
+    const standardDirs = PluginLoader.getPluginDirs(workspaceRoot).filter(
+      (directory) => directory.source !== 'project' || workspaceTrusted
+    );
+
+    let managedPluginsLoaded = false;
+    const loadManagedPlugins = async () => {
+      if (managedPluginsLoaded) return;
+      managedPluginsLoaded = true;
+      const installer = getPluginInstaller();
+      const installations = await installer.listInstallationRecords();
+      for (const installation of installations) {
+        try {
+          await installer.verifyInstallation(installation);
+          const plugin = await this.loader.loadPlugin(installation.installPath, 'user');
+          if (plugin.manifest.name !== installation.name) {
+            throw new Error(`Managed plugin identity mismatch: ${installation.name}`);
+          }
+          plugin.installation = Object.freeze({ ...installation });
+          const existing = this.plugins.get(plugin.manifest.name);
+          if (!existing || existing.source === 'user') {
+            this.plugins.set(plugin.manifest.name, plugin);
+            allPlugins.push(plugin);
+          }
+        } catch (error) {
+          allErrors.push({
+            path: installation.installPath,
+            code: 'IO_ERROR',
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    };
 
     for (const { path: dirPath, source } of standardDirs) {
+      if (source === 'project') await loadManagedPlugins();
       const result = await this.loader.discoverPluginsInDir(dirPath, source);
 
       for (const plugin of result.plugins) {
@@ -106,6 +173,22 @@ export class PluginRegistry {
       }
 
       allErrors.push(...result.errors);
+    }
+    await loadManagedPlugins();
+    this.applyEnabledSettings();
+    for (const plugin of this.plugins.values()) {
+      if (plugin.status !== 'error') continue;
+      allErrors.push({
+        path: plugin.basePath,
+        code: plugin.compatibilityIssues?.some(
+          (issue) => issue.code === 'source-policy'
+        )
+          ? 'SOURCE_POLICY_BLOCKED'
+          : plugin.compatibilityIssues?.some((issue) => issue.code === 'blade-version')
+            ? 'VERSION_INCOMPATIBLE'
+            : 'DEPENDENCY_MISSING',
+        error: plugin.error ?? 'Plugin compatibility check failed',
+      });
     }
 
     this.initialized = true;
@@ -126,6 +209,19 @@ export class PluginRegistry {
    */
   isInitialized(): boolean {
     return this.initialized;
+  }
+
+  getWorkspaceRoot(): string {
+    return this.workspaceRoot;
+  }
+
+  getSourcePolicy(): PluginSourcePolicy {
+    return {
+      ...this.sourcePolicy,
+      allowedGitHosts: [...this.sourcePolicy.allowedGitHosts],
+      allowedMarketplaces: [...this.sourcePolicy.allowedMarketplaces],
+      allowedLocalRoots: [...this.sourcePolicy.allowedLocalRoots],
+    };
   }
 
   /**
@@ -154,6 +250,60 @@ export class PluginRegistry {
    */
   has(name: string): boolean {
     return this.plugins.has(name);
+  }
+
+  async reapplyEnabledSettings(): Promise<void> {
+    this.enabledSettings =
+      await ConfigManager.getInstance().loadWorkspacePluginSettings(this.workspaceRoot);
+    await this.refreshPolicyContext();
+    this.applyEnabledSettings();
+  }
+
+  private applyEnabledSettings(): void {
+    for (const plugin of this.plugins.values()) {
+      plugin.compatibilityIssues = [];
+      plugin.error = undefined;
+      plugin.status =
+        plugin.source === 'cli' || this.enabledSettings[plugin.manifest.name] !== false
+          ? 'active'
+          : 'inactive';
+      if (plugin.status !== 'active') continue;
+      try {
+        assertPluginSourceAllowed(
+          this.sourcePolicy,
+          plugin.installation?.source ?? {
+            type: 'local',
+            path: plugin.basePath,
+          },
+          this.marketplaces,
+          `Plugin "${plugin.manifest.name}"`
+        );
+      } catch (error) {
+        if (!(error instanceof PluginSourcePolicyError)) throw error;
+        plugin.status = 'error';
+        plugin.error = error.message;
+        plugin.compatibilityIssues = [
+          {
+            code: 'source-policy',
+            message: error.message,
+          },
+        ];
+      }
+    }
+    applyPluginCompatibility(Array.from(this.plugins.values()));
+  }
+
+  private async refreshPolicyContext(): Promise<void> {
+    this.sourcePolicy =
+      await ConfigManager.getInstance().loadWorkspacePluginSourcePolicy(
+        this.workspaceRoot
+      );
+    this.marketplaces = Object.fromEntries(
+      (await getPluginInstaller().listMarketplaces()).map((marketplace) => [
+        marketplace.name,
+        marketplace,
+      ])
+    );
   }
 
   /**
@@ -513,6 +663,6 @@ export class PluginRegistry {
 /**
  * Convenience function to get the plugin registry instance
  */
-export function getPluginRegistry(): PluginRegistry {
-  return PluginRegistry.getInstance();
+export function getPluginRegistry(workspaceRoot: string = getCwd()): PluginRegistry {
+  return PluginRegistry.getInstance(workspaceRoot);
 }

@@ -8,8 +8,9 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { logger } from '../logging/Logger.js';
-import { pluginManifestSchema } from './schemas.js';
 import { safeParseSchema } from '../schema/index.js';
+import { validatePluginManifestConstraints } from './PluginCompatibility.js';
+import { pluginManifestSchema } from './schemas.js';
 import type { ManifestSource, PluginManifest } from './types.js';
 
 /**
@@ -78,6 +79,7 @@ export async function parsePluginManifest(
           .join('; ');
         throw new Error(`Invalid plugin.json: ${errors}`);
       }
+      validatePluginManifestConstraints(result.data);
 
       logger.debug(`Parsed plugin manifest from ${manifestPath}`);
 
