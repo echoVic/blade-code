@@ -13,10 +13,11 @@ import {
   HookEvent,
   type HookMatcher,
 } from '../../hooks/types/HookTypes.js';
-import { getCwd } from '../../utils/cwd.js';
 import { themeManager } from '../themes/ThemeManager.js';
 
 interface HooksManagerProps {
+  workspaceRoot: string;
+  sessionId: string;
   onClose: () => void;
   onSave?: (hook: NewHookData) => void;
 }
@@ -29,7 +30,7 @@ interface NewHookData {
 
 type Step = 'action' | 'event' | 'matcher' | 'command' | 'location' | 'confirm';
 
-type ActionType = 'add' | 'status' | 'list' | 'trust' | 'revoke';
+type ActionType = 'add' | 'status' | 'list' | 'enable' | 'disable' | 'trust' | 'revoke';
 
 type SaveLocation = 'local' | 'project' | 'user';
 
@@ -37,6 +38,8 @@ const ACTIONS: Array<{ action: ActionType; description: string }> = [
   { action: 'add', description: 'Add a new hook' },
   { action: 'status', description: 'Show hooks status' },
   { action: 'list', description: 'List all configured hooks' },
+  { action: 'enable', description: 'Enable hooks for this session' },
+  { action: 'disable', description: 'Disable hooks for this session' },
   { action: 'trust', description: 'Trust the current project hook digest' },
   { action: 'revoke', description: 'Revoke project hook trust' },
 ];
@@ -84,7 +87,12 @@ const COMMAND_EXAMPLES = [
   'python3 ~/hooks/validate_changes.py',
 ];
 
-export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) => {
+export const HooksManager: React.FC<HooksManagerProps> = ({
+  workspaceRoot,
+  sessionId,
+  onClose,
+  onSave,
+}) => {
   const theme = themeManager.getTheme();
   const [step, setStep] = useState<Step>('action');
   const [selectedActionIndex, setSelectedActionIndex] = useState(0);
@@ -181,6 +189,12 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
       void showStatus();
     } else if (action === 'list') {
       showList();
+    } else if (action === 'enable') {
+      HookManager.getInstance().enableSession(sessionId, workspaceRoot);
+      setStatusMessage('Hooks enabled for this session');
+    } else if (action === 'disable') {
+      HookManager.getInstance().disableSession(sessionId, workspaceRoot);
+      setStatusMessage('Hooks disabled for this session');
     } else if (action === 'trust') {
       void trustCurrentProject();
     } else if (action === 'revoke') {
@@ -191,9 +205,9 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
   // 显示 hooks 状态
   const showStatus = async () => {
     const hookManager = HookManager.getInstance();
-    const isEnabled = hookManager.isEnabled(getCwd());
-    const config = hookManager.getConfig(getCwd());
-    const trust = await hookManager.getTrustStatus(getCwd());
+    const isEnabled = hookManager.isEnabled(workspaceRoot, sessionId);
+    const config = hookManager.getConfig(workspaceRoot);
+    const trust = await hookManager.getTrustStatus(workspaceRoot);
 
     // 统计各类型配置的 hooks 数量
     const hookCounts: Record<string, number> = {};
@@ -228,7 +242,7 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
 
   const trustCurrentProject = async () => {
     try {
-      const trust = await HookManager.getInstance().trustProject(getCwd());
+      const trust = await HookManager.getInstance().trustProject(workspaceRoot);
       setStatusMessage(
         `Trust: ${trust.state}\nDigest: ${trust.currentDigest ?? 'none'}`
       );
@@ -241,7 +255,7 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
 
   const revokeCurrentProject = async () => {
     try {
-      const trust = await HookManager.getInstance().revokeProjectTrust(getCwd());
+      const trust = await HookManager.getInstance().revokeProjectTrust(workspaceRoot);
       setStatusMessage(`Trust: ${trust.state}`);
     } catch (trustError) {
       setError(
@@ -253,7 +267,7 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
   // 显示 hooks 列表
   const showList = () => {
     const hookManager = HookManager.getInstance();
-    const config = hookManager.getConfig(getCwd());
+    const config = hookManager.getConfig(workspaceRoot);
     const lines: string[] = [];
 
     let hasAnyHooks = false;
@@ -333,10 +347,14 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
       let settingsPath: string;
       switch (selectedLocation.location) {
         case 'local':
-          settingsPath = pathModule.join(getCwd(), '.blade', 'settings.local.json');
+          settingsPath = pathModule.join(
+            workspaceRoot,
+            '.blade',
+            'settings.local.json'
+          );
           break;
         case 'project':
-          settingsPath = pathModule.join(getCwd(), '.blade', 'settings.json');
+          settingsPath = pathModule.join(workspaceRoot, '.blade', 'settings.json');
           break;
         case 'user':
           settingsPath = pathModule.join(os.homedir(), '.blade', 'settings.json');
@@ -372,7 +390,7 @@ export const HooksManager: React.FC<HooksManagerProps> = ({ onClose, onSave }) =
       await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
 
       // 重新加载 HookManager 配置
-      await hookManager.reloadConfig();
+      await hookManager.reloadConfig(workspaceRoot);
 
       // 通知保存成功
       if (onSave) {

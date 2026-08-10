@@ -21,6 +21,7 @@ import {
   useModelEditorTarget,
   usePermissionMode,
   useSessionActions,
+  useSessionId,
   useSessionSelectorState,
   useThemeName,
   useWorkspaceRoot,
@@ -104,6 +105,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
   // Session actions
   const sessionActions = useSessionActions();
+  const sessionId = useSessionId();
   const workspaceRoot = useWorkspaceRoot();
 
   // Focus
@@ -660,7 +662,11 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         onCancel={handleSessionCancel}
       />
     ) : activeModal === 'hooksManager' ? (
-      <HooksManager onClose={closeModal} />
+      <HooksManager
+        workspaceRoot={workspaceRoot}
+        sessionId={sessionId}
+        onClose={closeModal}
+      />
     ) : null;
 
   // 是否有阻塞式弹窗

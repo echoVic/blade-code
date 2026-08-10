@@ -145,4 +145,67 @@ describe('Hook trust routes', () => {
       state: 'untrusted',
     });
   });
+
+  it('toggles hook execution for one session without changing project config', async () => {
+    const sessionId = 'web-session-1';
+    const query =
+      `/hooks/session?projectPath=${encodeURIComponent(project)}` +
+      `&sessionId=${sessionId}`;
+    const initial = await app.request(query);
+    expect(initial.status).toBe(200);
+    await expect(initial.json()).resolves.toMatchObject({
+      sessionId,
+      projectPath: project,
+      enabled: true,
+      paused: false,
+      configEnabled: true,
+    });
+
+    const disabled = await app.request('/hooks/session', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectPath: project,
+        sessionId,
+        enabled: false,
+      }),
+    });
+    await expect(disabled.json()).resolves.toMatchObject({
+      enabled: false,
+      paused: true,
+      configEnabled: true,
+    });
+    expect(HookManager.getInstance().getConfig(project).enabled).toBe(true);
+
+    const otherSession = await app.request(
+      `/hooks/session?projectPath=${encodeURIComponent(project)}` +
+        '&sessionId=web-session-2'
+    );
+    await expect(otherSession.json()).resolves.toMatchObject({
+      enabled: true,
+      paused: false,
+    });
+  });
+
+  it('rejects invalid session identities before mutating hook state', async () => {
+    const getResponse = await app.request(
+      `/hooks/session?projectPath=${encodeURIComponent(project)}&sessionId=..`
+    );
+    expect(getResponse.status).toBe(400);
+    await expect(getResponse.json()).resolves.toMatchObject({
+      error: { message: expect.stringContaining('Invalid session ID') },
+    });
+
+    const postResponse = await app.request('/hooks/session', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectPath: project,
+        sessionId: '../escape',
+        enabled: false,
+      }),
+    });
+    expect(postResponse.status).toBe(400);
+    expect(HookManager.getInstance().isSessionPaused('../escape', project)).toBe(false);
+  });
 });

@@ -219,14 +219,15 @@ class GracefulShutdownManager {
     // 执行 SessionEnd hooks
     try {
       const hookManager = HookManager.getInstance();
-      if (hookManager.isEnabled()) {
-        const state = getState();
-        const sessionId = state.session?.sessionId || 'unknown';
+      const state = getState();
+      const sessionId = state.session?.sessionId || 'unknown';
+      const projectDir = state.session?.workspaceRoot || getCwd();
+      if (hookManager.isEnabled(projectDir, sessionId)) {
         const permissionMode =
           state.config?.config?.permissionMode || PermissionMode.DEFAULT;
 
         await hookManager.executeSessionEndHooks(mapExitReasonToHookReason(reason), {
-          projectDir: getCwd(),
+          projectDir,
           sessionId,
           permissionMode,
         });

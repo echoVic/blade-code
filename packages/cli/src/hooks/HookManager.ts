@@ -67,7 +67,9 @@ export class HookManager {
   private executor = new HookExecutor();
   private guard = new HookExecutionGuard();
   private matcher = new Matcher();
-  private sessionDisabled = false;
+  private processDisabled = false;
+  private disabledSessions = new Set<string>();
+  private sessionStateAliases = new Map<string, string>();
   private projectConfigs = new Map<string, HookConfig>();
   private sessionConfigs = new Map<string, HookConfig>();
   private managedFunctionMatchers: Partial<Record<HookEvent, HookMatcher[]>> = {};
@@ -105,21 +107,31 @@ export class HookManager {
     projectDirs: readonly string[],
     config: Readonly<HookConfig>
   ): void {
+    const canonicalKey = this.sessionConfigKey(sessionId, projectDirs[0] ?? getCwd());
+    let disabled = this.disabledSessions.has(canonicalKey);
     for (const projectDir of projectDirs) {
-      this.sessionConfigs.set(
-        this.sessionConfigKey(sessionId, projectDir),
-        this.snapshotConfig(config)
-      );
+      const key = this.sessionConfigKey(sessionId, projectDir);
+      disabled ||= this.disabledSessions.has(key);
+      this.sessionStateAliases.set(key, canonicalKey);
+      this.sessionConfigs.set(key, this.snapshotConfig(config));
+      if (key !== canonicalKey) this.disabledSessions.delete(key);
     }
+    if (disabled) this.disabledSessions.add(canonicalKey);
   }
 
   async unbindSessionModelResources(
     sessionId: string,
     projectDirs: readonly string[]
   ): Promise<void> {
+    const stateKeys = new Set<string>();
     for (const projectDir of projectDirs) {
-      this.sessionConfigs.delete(this.sessionConfigKey(sessionId, projectDir));
+      const key = this.sessionConfigKey(sessionId, projectDir);
+      stateKeys.add(this.sessionStateAliases.get(key) ?? key);
+      this.sessionConfigs.delete(key);
+      this.sessionStateAliases.delete(key);
+      this.disabledSessions.delete(key);
     }
+    for (const key of stateKeys) this.disabledSessions.delete(key);
     await this.executor.unbindSessionModelResources(sessionId, projectDirs);
   }
 
@@ -147,15 +159,23 @@ export class HookManager {
   /**
    * 检查是否启用
    */
-  isEnabled(projectDir: string = getCwd()): boolean {
-    const config = this.getConfig(projectDir);
+  isEnabled(projectDir: string = getCwd(), sessionId?: string): boolean {
+    const config = sessionId
+      ? this.getExecutionConfig(sessionId, projectDir)
+      : this.getConfig(projectDir);
     // 1. 全局配置开关
     if (!config.enabled) {
       return false;
     }
 
     // 2. 会话级禁用
-    if (this.sessionDisabled) {
+    if (this.processDisabled) {
+      return false;
+    }
+    if (
+      sessionId &&
+      this.disabledSessions.has(this.sessionStateKey(sessionId, projectDir))
+    ) {
       return false;
     }
 
@@ -163,19 +183,35 @@ export class HookManager {
   }
 
   /**
-   * 运行时禁用 (当前会话)
+   * Disable all hooks process-wide. Kept for host policy and test compatibility.
    */
   disable(): void {
-    this.sessionDisabled = true;
-    console.log('[HookManager] Hooks disabled for this session');
+    this.processDisabled = true;
+    console.log('[HookManager] Hooks disabled for this process');
   }
 
   /**
-   * 运行时启用 (当前会话)
+   * Re-enable process-wide hook execution.
    */
   enable(): void {
-    this.sessionDisabled = false;
-    console.log('[HookManager] Hooks enabled for this session');
+    this.processDisabled = false;
+    console.log('[HookManager] Hooks enabled for this process');
+  }
+
+  disableSession(sessionId: string, projectDir: string): void {
+    this.disabledSessions.add(this.sessionStateKey(sessionId, projectDir));
+  }
+
+  enableSession(sessionId: string, projectDir: string): void {
+    this.disabledSessions.delete(this.sessionStateKey(sessionId, projectDir));
+  }
+
+  isSessionEnabled(sessionId: string, projectDir: string): boolean {
+    return this.isEnabled(projectDir, sessionId);
+  }
+
+  isSessionPaused(sessionId: string, projectDir: string): boolean {
+    return this.disabledSessions.has(this.sessionStateKey(sessionId, projectDir));
   }
 
   /**
@@ -197,6 +233,23 @@ export class HookManager {
       this.sessionConfigs.get(this.sessionConfigKey(sessionId, projectDir)) ??
       this.getConfig(projectDir)
     );
+  }
+
+  private isExecutionEnabled(
+    config: Readonly<HookConfig>,
+    sessionId: string,
+    projectDir: string
+  ): boolean {
+    return (
+      config.enabled === true &&
+      !this.processDisabled &&
+      !this.disabledSessions.has(this.sessionStateKey(sessionId, projectDir))
+    );
+  }
+
+  private sessionStateKey(sessionId: string, projectDir: string): string {
+    const key = this.sessionConfigKey(sessionId, projectDir);
+    return this.sessionStateAliases.get(key) ?? key;
   }
 
   private sessionConfigKey(sessionId: string, projectDir: string): string {
@@ -320,18 +373,18 @@ export class HookManager {
   /**
    * 重新加载配置（直接从配置文件读取）
    */
-  async reloadConfig(): Promise<void> {
+  async reloadConfig(projectDir: string = getCwd()): Promise<void> {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
 
     try {
       // 读取本地 settings 文件
-      const localSettingsPath = path.join(getCwd(), '.blade', 'settings.local.json');
+      const localSettingsPath = path.join(projectDir, '.blade', 'settings.local.json');
       const content = await fs.readFile(localSettingsPath, 'utf-8');
       const settings = JSON.parse(content);
 
       if (settings.hooks) {
-        this.loadConfig(settings.hooks);
+        this.loadConfig(settings.hooks, projectDir);
       }
     } catch {
       // 文件不存在或读取失败，保持当前配置
@@ -353,7 +406,7 @@ export class HookManager {
     }
   ): Promise<PreToolHookResult> {
     const config = this.getExecutionConfig(context.sessionId, context.projectDir);
-    if (!config.enabled || this.sessionDisabled) {
+    if (!this.isExecutionEnabled(config, context.sessionId, context.projectDir)) {
       return { decision: 'allow' };
     }
 
@@ -457,7 +510,7 @@ export class HookManager {
     }
   ): Promise<PostToolHookResult> {
     const config = this.getExecutionConfig(context.sessionId, context.projectDir);
-    if (!config.enabled || this.sessionDisabled) {
+    if (!this.isExecutionEnabled(config, context.sessionId, context.projectDir)) {
       return {};
     }
 
@@ -544,7 +597,7 @@ export class HookManager {
     abortSignal?: AbortSignal;
   }): Promise<StopHookResult> {
     const config = this.getExecutionConfig(context.sessionId, context.projectDir);
-    if (!config.enabled || this.sessionDisabled) {
+    if (!this.isExecutionEnabled(config, context.sessionId, context.projectDir)) {
       return { shouldStop: true };
     }
 
@@ -608,7 +661,7 @@ export class HookManager {
     }
   ): Promise<SubagentStopHookResult> {
     const config = this.getExecutionConfig(context.sessionId, context.projectDir);
-    if (!config.enabled || this.sessionDisabled) {
+    if (!this.isExecutionEnabled(config, context.sessionId, context.projectDir)) {
       return { shouldStop: true };
     }
 
@@ -674,7 +727,7 @@ export class HookManager {
     }
   ): Promise<PermissionRequestHookResult> {
     const config = this.getExecutionConfig(context.sessionId, context.projectDir);
-    if (!config.enabled || this.sessionDisabled) {
+    if (!this.isExecutionEnabled(config, context.sessionId, context.projectDir)) {
       return { decision: 'ask' };
     }
 
@@ -747,7 +800,7 @@ export class HookManager {
     }
   ): Promise<UserPromptSubmitHookResult> {
     const config = this.getExecutionConfig(context.sessionId, context.projectDir);
-    if (!config.enabled || this.sessionDisabled) {
+    if (!this.isExecutionEnabled(config, context.sessionId, context.projectDir)) {
       return { proceed: true };
     }
 
@@ -808,7 +861,7 @@ export class HookManager {
     abortSignal?: AbortSignal;
   }): Promise<SessionStartHookResult> {
     const config = this.getExecutionConfig(context.sessionId, context.projectDir);
-    if (!config.enabled || this.sessionDisabled) {
+    if (!this.isExecutionEnabled(config, context.sessionId, context.projectDir)) {
       return { proceed: true };
     }
 
@@ -869,7 +922,7 @@ export class HookManager {
     }
   ): Promise<SessionEndHookResult> {
     const config = this.getExecutionConfig(context.sessionId, context.projectDir);
-    if (!config.enabled || this.sessionDisabled) {
+    if (!this.isExecutionEnabled(config, context.sessionId, context.projectDir)) {
       return {};
     }
 
@@ -931,7 +984,7 @@ export class HookManager {
     }
   ): Promise<PostToolUseFailureHookResult> {
     const config = this.getExecutionConfig(context.sessionId, context.projectDir);
-    if (!config.enabled || this.sessionDisabled) {
+    if (!this.isExecutionEnabled(config, context.sessionId, context.projectDir)) {
       return {};
     }
 
@@ -1007,7 +1060,7 @@ export class HookManager {
     }
   ): Promise<NotificationHookResult> {
     const config = this.getExecutionConfig(context.sessionId, context.projectDir);
-    if (!config.enabled || this.sessionDisabled) {
+    if (!this.isExecutionEnabled(config, context.sessionId, context.projectDir)) {
       return { suppress: false, message };
     }
 
@@ -1067,7 +1120,9 @@ export class HookManager {
     }
   ): Promise<ElicitationHookResult> {
     const config = this.getExecutionConfig(context.sessionId, context.projectDir);
-    if (!config.enabled || this.sessionDisabled) return {};
+    if (!this.isExecutionEnabled(config, context.sessionId, context.projectDir)) {
+      return {};
+    }
 
     const hookInput: ElicitationInput = {
       hook_event_name: HookEvent.Elicitation,
@@ -1102,7 +1157,9 @@ export class HookManager {
     }
   ): Promise<ElicitationHookResult> {
     const config = this.getExecutionConfig(context.sessionId, context.projectDir);
-    if (!config.enabled || this.sessionDisabled) return {};
+    if (!this.isExecutionEnabled(config, context.sessionId, context.projectDir)) {
+      return {};
+    }
 
     const hookInput: ElicitationResultInput = {
       hook_event_name: HookEvent.ElicitationResult,
@@ -1171,7 +1228,7 @@ export class HookManager {
     }
   ): Promise<CompactionHookResult> {
     const config = this.getExecutionConfig(context.sessionId, context.projectDir);
-    if (!config.enabled || this.sessionDisabled) {
+    if (!this.isExecutionEnabled(config, context.sessionId, context.projectDir)) {
       return { blockCompaction: false };
     }
 
@@ -1295,5 +1352,7 @@ export class HookManager {
    */
   cleanup(): void {
     this.guard.cleanupAll();
+    this.disabledSessions.clear();
+    this.sessionStateAliases.clear();
   }
 }

@@ -158,17 +158,18 @@ export class ToolApprovalController {
   ): Promise<'approved' | ToolResult | undefined> {
     const hookManager = HookManager.getInstance();
     const projectDir = context.workspaceRoot || getCwd();
-    if (!hookManager.isEnabled(projectDir)) {
+    const sessionId = context.sessionId || 'unknown';
+    if (!hookManager.isEnabled(projectDir, sessionId)) {
       return undefined;
     }
 
     const result = await hookManager.executePermissionRequestHooks(
       tool.name,
-      context.sessionId || 'unknown',
+      sessionId,
       params,
       {
         projectDir,
-        sessionId: context.sessionId || 'unknown',
+        sessionId,
         permissionMode: context.permissionMode || PermissionMode.DEFAULT,
       }
     );

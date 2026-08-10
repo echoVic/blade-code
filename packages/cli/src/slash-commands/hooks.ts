@@ -42,6 +42,7 @@ const hooksCommand: SlashCommand = {
     const subcommand = args[0]?.toLowerCase() || '';
     const hookManager = HookManager.getInstance();
     const ui = getUI(context);
+    const projectDir = context.workspaceRoot ?? context.cwd;
 
     switch (subcommand) {
       case '':
@@ -55,23 +56,33 @@ const hooksCommand: SlashCommand = {
       }
 
       case 'status': {
-        return showHooksStatus(hookManager, context.cwd, ui);
+        return showHooksStatus(hookManager, projectDir, context.sessionId, ui);
       }
 
       case 'enable': {
-        hookManager.enable();
+        if (!context.sessionId) {
+          const error = '当前表面没有可用的 Session，无法切换 Hooks';
+          ui.sendMessage(error);
+          return { success: false, error };
+        }
+        hookManager.enableSession(context.sessionId, projectDir);
         ui.sendMessage('[OK] Hooks 已启用（当前会话）');
         return { success: true, message: 'Hooks enabled' };
       }
 
       case 'disable': {
-        hookManager.disable();
+        if (!context.sessionId) {
+          const error = '当前表面没有可用的 Session，无法切换 Hooks';
+          ui.sendMessage(error);
+          return { success: false, error };
+        }
+        hookManager.disableSession(context.sessionId, projectDir);
         ui.sendMessage('Hooks 已禁用（当前会话）');
         return { success: true, message: 'Hooks disabled' };
       }
 
       case 'trust': {
-        const status = await hookManager.trustProject(context.cwd);
+        const status = await hookManager.trustProject(projectDir);
         ui.sendMessage(
           `[OK] 已信任当前 Hook 配置\n\n摘要：\`${status.currentDigest}\``
         );
@@ -79,13 +90,13 @@ const hooksCommand: SlashCommand = {
       }
 
       case 'revoke': {
-        await hookManager.revokeProjectTrust(context.cwd);
+        await hookManager.revokeProjectTrust(projectDir);
         ui.sendMessage('已撤销当前项目的 Hook 信任；配置型 Hooks 不再执行。');
         return { success: true, message: 'Hook trust revoked' };
       }
 
       case 'list': {
-        return listHooksConfig(hookManager, context.cwd, ui);
+        return listHooksConfig(hookManager, projectDir, ui);
       }
 
       default: {
@@ -102,9 +113,10 @@ const hooksCommand: SlashCommand = {
 async function showHooksStatus(
   hookManager: HookManager,
   projectDir: string,
+  sessionId: string | undefined,
   ui: SlashCommandUI
 ): Promise<SlashCommandResult> {
-  const isEnabled = hookManager.isEnabled(projectDir);
+  const isEnabled = hookManager.isEnabled(projectDir, sessionId);
   const config = hookManager.getConfig(projectDir);
   const trust = await hookManager.getTrustStatus(projectDir);
 

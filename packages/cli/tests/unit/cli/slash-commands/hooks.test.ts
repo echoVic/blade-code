@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   addAssistantMessage: vi.fn(),
   enable: vi.fn(),
   disable: vi.fn(),
+  enableSession: vi.fn(),
+  disableSession: vi.fn(),
   trustProject: vi.fn(),
   revokeProjectTrust: vi.fn(),
   getTrustStatus: vi.fn(),
@@ -69,6 +71,25 @@ describe('/hooks trust commands', () => {
 
     expect(mocks.trustProject).toHaveBeenCalledWith('/workspace/project');
     expect(mocks.revokeProjectTrust).toHaveBeenCalledWith('/workspace/project');
+  });
+
+  it('toggles only the current session in its active workspace', async () => {
+    const context = {
+      cwd: '/startup/project',
+      workspaceRoot: '/workspace/project',
+      sessionId: 'session-1',
+    };
+
+    await hooksCommand.handler(['disable'], context);
+    await hooksCommand.handler(['enable'], context);
+
+    expect(mocks.disableSession).toHaveBeenCalledWith(
+      'session-1',
+      '/workspace/project'
+    );
+    expect(mocks.enableSession).toHaveBeenCalledWith('session-1', '/workspace/project');
+    expect(mocks.disable).not.toHaveBeenCalled();
+    expect(mocks.enable).not.toHaveBeenCalled();
   });
 
   it('projects hook trust status through ACP callbacks', async () => {

@@ -107,6 +107,8 @@ Git linked worktree 使用 common checkout 作为信任身份，因此源码项�
 ```text
 /hooks status
 /hooks list
+/hooks enable
+/hooks disable
 /hooks trust
 /hooks revoke
 ```
@@ -114,6 +116,12 @@ Git linked worktree 使用 common checkout 作为信任身份，因此源码项�
 ACP 通过标准 callback 返回相同状态。Web 在 `Settings → Hooks` 中展示每个事件、
 matcher、Hook 类型、有界目标预览和摘要；HTTP URL 不投影凭据、query 或 fragment。
 Trust/Revoke 都有显式二次确认。
+
+`/hooks enable|disable` 只切换当前 Session，不修改项目 Hook 配置，也不影响同一
+workspace 中的其他 Session。源码项目与 Session worktree 会映射到同一个会话状态；
+Runtime 释放时该状态随 Session 清理，不写入配置文件。TUI Hooks Manager 和 Web
+`Settings → Hooks` 使用同一会话级开关。若 workspace 配置、Session snapshot 或宿主
+策略已禁用 Hooks，Web 会显示不可用状态，不会把无效开关渲染为已启用。
 
 信任操作带 reviewed digest。若配置在 review 与提交之间变化，服务返回 `409`，要求
 重新加载后再确认。任何配置变化都会进入 `modified`，不会继承旧批准。
