@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-08-10
+
 ### 🐛 问题修复
 
 - TUI 新增 production terminal input framing：显式管理 bracketed paste mode，
