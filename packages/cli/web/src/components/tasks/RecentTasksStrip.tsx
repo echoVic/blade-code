@@ -137,7 +137,9 @@ export function RecentTasksStrip({
           const interactionLabelKey = session.pendingInteraction
             ? session.pendingInteraction.type === 'question'
               ? 'interaction.badge.question'
-              : 'interaction.badge.permission'
+              : session.pendingInteraction.type === 'elicitation'
+                ? 'interaction.badge.elicitation'
+                : 'interaction.badge.permission'
             : null;
           const project = projectShort(
             session.taskSourceProjectPath || session.projectPath

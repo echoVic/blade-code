@@ -16,6 +16,7 @@ interface EditModelModalProps {
 export function EditModelModal(props: EditModelModalProps) {
   const [displayName, setDisplayName] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
+  const [streamIdleTimeout, setStreamIdleTimeout] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [credentialError, setCredentialError] = useState<string | null>(null);
@@ -23,14 +24,29 @@ export function EditModelModal(props: EditModelModalProps) {
   useEffect(() => {
     setDisplayName(props.model?.displayName ?? '');
     setBaseUrl(props.model?.overrides?.baseUrl ?? '');
+    setStreamIdleTimeout(
+      props.model?.overrides?.streamIdleTimeout !== undefined
+        ? String(props.model.overrides.streamIdleTimeout)
+        : ''
+    );
     setApiKey('');
     setCredentialError(null);
   }, [props.model]);
 
   const save = async () => {
     if (!props.model) return;
-    setSaving(true);
     setCredentialError(null);
+    const parsedStreamIdleTimeout = streamIdleTimeout.trim()
+      ? Number(streamIdleTimeout)
+      : undefined;
+    if (
+      parsedStreamIdleTimeout !== undefined &&
+      (!Number.isFinite(parsedStreamIdleTimeout) || parsedStreamIdleTimeout < 1_000)
+    ) {
+      setCredentialError('Stream idle timeout must be at least 1000ms');
+      return;
+    }
+    setSaving(true);
     try {
       if (apiKey.trim()) {
         await requestJson(`/providers/${props.model.provider}/credential`, {
@@ -39,9 +55,17 @@ export function EditModelModal(props: EditModelModalProps) {
           body: JSON.stringify({ apiKey: apiKey.trim() }),
         });
       }
+      const overrides = { ...props.model.overrides };
+      if (baseUrl.trim()) overrides.baseUrl = baseUrl.trim();
+      else delete overrides.baseUrl;
+      if (parsedStreamIdleTimeout !== undefined) {
+        overrides.streamIdleTimeout = parsedStreamIdleTimeout;
+      } else {
+        delete overrides.streamIdleTimeout;
+      }
       const saved = await props.onSave(props.model.id, {
         displayName: displayName || undefined,
-        overrides: baseUrl ? { ...props.model.overrides, baseUrl } : undefined,
+        overrides: Object.keys(overrides).length > 0 ? overrides : undefined,
       });
       if (saved) props.onOpenChange(false);
     } catch (error) {
@@ -61,6 +85,16 @@ export function EditModelModal(props: EditModelModalProps) {
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogContent
         onCloseAutoFocus={(event) => restoreFocusToSelector(triggerSelector, event)}
+        onEscapeKeyDown={(event) => {
+          event.preventDefault();
+          props.onOpenChange(false);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape') return;
+          event.preventDefault();
+          event.stopPropagation();
+          props.onOpenChange(false);
+        }}
         className="gap-4 overflow-y-auto bg-white p-4 dark:bg-[#09090b] sm:max-w-[480px] sm:p-6"
         aria-describedby={undefined}
         hideCloseButton
@@ -111,6 +145,18 @@ export function EditModelModal(props: EditModelModalProps) {
             value={baseUrl}
             onChange={(event) => setBaseUrl(event.target.value)}
             placeholder="Leave empty to use default endpoint"
+            className="field"
+          />
+        </label>
+        <label className="flex flex-col gap-2 font-mono text-sm">
+          Stream idle timeout (ms)
+          <input
+            type="number"
+            min={1000}
+            step={1000}
+            value={streamIdleTimeout}
+            onChange={(event) => setStreamIdleTimeout(event.target.value)}
+            placeholder="300000"
             className="field"
           />
         </label>

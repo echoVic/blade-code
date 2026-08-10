@@ -7,13 +7,14 @@ import type { SessionMessage } from '../../../../../src/store/types.js';
 import { buildContextMessagesFromSession } from '../../../../../src/ui/utils/sessionContext.js';
 
 const serviceMocks = vi.hoisted(() => ({
+  assertSessionWritable: vi.fn(),
   forkSession: vi.fn(),
   listSessions: vi.fn(),
   loadSession: vi.fn(),
   toUISafeMessages: vi.fn(),
 }));
 const modelMocks = vi.hoisted(() => ({
-  setCurrentModel: vi.fn(),
+  updateConfig: vi.fn(),
 }));
 
 vi.mock('../../../../../src/services/SessionService.js', async () => {
@@ -24,6 +25,7 @@ vi.mock('../../../../../src/services/SessionService.js', async () => {
     ...actual,
     SessionService: {
       ...actual.SessionService,
+      assertSessionWritable: serviceMocks.assertSessionWritable,
       forkSession: serviceMocks.forkSession,
       listSessions: serviceMocks.listSessions,
       loadSession: serviceMocks.loadSession,
@@ -33,8 +35,12 @@ vi.mock('../../../../../src/services/SessionService.js', async () => {
 });
 
 vi.mock('../../../../../src/store/vanilla.js', () => ({
-  configActions: () => ({
-    setCurrentModel: modelMocks.setCurrentModel,
+  getState: () => ({
+    config: {
+      actions: {
+        updateConfig: modelMocks.updateConfig,
+      },
+    },
   }),
   getModelById: (modelId: string) =>
     modelId === 'model-2' ? { id: modelId } : undefined,
@@ -111,11 +117,13 @@ describe('activateSessionSelection', () => {
   };
 
   beforeEach(() => {
-    modelMocks.setCurrentModel.mockReset().mockResolvedValue(undefined);
+    modelMocks.updateConfig.mockReset();
   });
   const cleanupAgent = vi.fn<() => Promise<void>>();
 
   beforeEach(() => {
+    serviceMocks.assertSessionWritable.mockReset();
+    serviceMocks.assertSessionWritable.mockResolvedValue(undefined);
     serviceMocks.forkSession.mockReset();
     serviceMocks.listSessions.mockReset();
     serviceMocks.loadSession.mockReset();
@@ -435,7 +443,9 @@ describe('activateSessionSelection', () => {
       childMessages,
       '/workspace/parent'
     );
-    expect(modelMocks.setCurrentModel).toHaveBeenCalledWith('model-2');
+    expect(modelMocks.updateConfig).toHaveBeenCalledWith({
+      currentModelId: 'model-2',
+    });
     expect(actions.addAssistantMessage).not.toHaveBeenCalled();
   });
 

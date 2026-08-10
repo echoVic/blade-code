@@ -1,13 +1,7 @@
+import { type LucideIcon, Plus, Search, Settings, Terminal } from 'lucide-react';
 import { type TranslationKey, useT } from '@/i18n';
 import { shortcutHint } from '@/lib/keyboardShortcuts';
 import { cn } from '@/lib/utils';
-import {
-  type LucideIcon,
-  Plus,
-  Search,
-  Settings,
-  Terminal
-} from 'lucide-react';
 import { BladeMark } from './BladeMark';
 import { LanguageSwitcher } from './LanguageSwitcher';
 
@@ -109,6 +103,7 @@ export function SidebarCollapsed({
       {footerActions.map(({ icon: Icon, action, labelKey }) => (
         <button
           key={labelKey}
+          data-settings-trigger
           onClick={action}
           aria-label={t(labelKey)}
           title={t(labelKey)}

@@ -13,6 +13,7 @@ export type {
   SendMessagePayload,
   SendMessageResponse,
   Session,
+  SessionMarkdownDownload,
   SessionRewindCheckpoint,
   SessionRewindMode,
   StreamEvent,

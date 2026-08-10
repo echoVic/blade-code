@@ -58,6 +58,14 @@ describe('ProjectBindingDialog folder picker', () => {
     container.remove();
   });
 
+  it('does not retain a closed modal portal that blocks the page', async () => {
+    await act(async () => {
+      root.render(<ProjectBindingDialog open={false} onOpenChange={onOpenChange} />);
+    });
+
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
   it('opens the native picker and binds the selected folder', async () => {
     serviceMocks.pickProjectDirectory.mockResolvedValue({
       cancelled: false,

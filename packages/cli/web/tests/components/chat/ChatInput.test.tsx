@@ -55,6 +55,10 @@ describe('ChatInput', () => {
           provider: 'openai',
           model: 'gpt-4',
           contextWindow: 128000,
+          reasoning: true,
+          supportedReasoningEfforts: ['off', 'low', 'medium', 'high'],
+          supportedServiceTiers: ['standard', 'fast', 'flex'],
+          supportedResponseVerbosities: ['low', 'medium', 'high'],
           input: ['text', 'image'],
         },
       ],
@@ -403,6 +407,10 @@ describe('ChatInput', () => {
     expect(onSend).toHaveBeenCalledWith({
       content: '',
       modelId: 'model-1',
+      reasoningEffort: 'off',
+      serviceTier: 'auto',
+      responseVerbosity: 'auto',
+      communicationStyle: 'auto',
       attachments: [
         expect.objectContaining({
           name: 'picked.png',
@@ -450,6 +458,10 @@ describe('ChatInput', () => {
     expect(onSend).toHaveBeenCalledWith({
       content: '',
       modelId: 'model-1',
+      reasoningEffort: 'off',
+      serviceTier: 'auto',
+      responseVerbosity: 'auto',
+      communicationStyle: 'auto',
       attachments: [
         expect.objectContaining({
           name: 'picked-a.png',
@@ -778,6 +790,10 @@ describe('ChatInput', () => {
     expect(onSend).toHaveBeenCalledWith({
       content: 'Edit this request',
       modelId: 'model-1',
+      reasoningEffort: 'off',
+      serviceTier: 'auto',
+      responseVerbosity: 'auto',
+      communicationStyle: 'auto',
       attachments: [restoredAttachment],
     });
   });
@@ -870,6 +886,10 @@ describe('ChatInput', () => {
     expect(onSend).toHaveBeenCalledWith({
       content: 'Use the session choice',
       modelId: 'model-1',
+      reasoningEffort: 'off',
+      serviceTier: 'auto',
+      responseVerbosity: 'auto',
+      communicationStyle: 'auto',
       attachments: [],
     });
   });
@@ -881,5 +901,252 @@ describe('ChatInput', () => {
 
     expect(container.textContent).toContain('Test');
     expect(container.textContent).not.toContain('gpt-4');
+  });
+
+  test('selects a model-supported reasoning effort and includes it in submission', async () => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    await act(async () => {
+      root.render(<ChatInput onSend={onSend} />);
+    });
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Change reasoning effort"]'
+        )
+        ?.click();
+    });
+    const high = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Use high reasoning effort"]'
+    );
+    expect(high).toBeInstanceOf(HTMLButtonElement);
+    await act(async () => high?.click());
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    await act(async () => {
+      valueSetter?.call(textarea, 'Use deliberate reasoning');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Send message"]')
+        ?.click();
+      await Promise.resolve();
+    });
+    expect(onSend).toHaveBeenCalledWith({
+      content: 'Use deliberate reasoning',
+      modelId: 'model-1',
+      reasoningEffort: 'high',
+      serviceTier: 'auto',
+      responseVerbosity: 'auto',
+      communicationStyle: 'auto',
+      attachments: [],
+    });
+  });
+
+  test('selects a model-supported provider service tier and includes it in submission', async () => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    await act(async () => {
+      root.render(<ChatInput onSend={onSend} />);
+    });
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Change provider service tier"]'
+        )
+        ?.click();
+    });
+    const fast = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Use fast service tier"]'
+    );
+    expect(fast).toBeInstanceOf(HTMLButtonElement);
+    await act(async () => fast?.click());
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    await act(async () => {
+      valueSetter?.call(textarea, 'Use the priority provider tier');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Send message"]')
+        ?.click();
+      await Promise.resolve();
+    });
+    expect(onSend).toHaveBeenCalledWith({
+      content: 'Use the priority provider tier',
+      modelId: 'model-1',
+      reasoningEffort: 'off',
+      serviceTier: 'fast',
+      responseVerbosity: 'auto',
+      communicationStyle: 'auto',
+      attachments: [],
+    });
+  });
+
+  test('selects model-supported response verbosity and includes it in submission', async () => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    await act(async () => {
+      root.render(<ChatInput onSend={onSend} />);
+    });
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Change response verbosity"]'
+        )
+        ?.click();
+    });
+    const high = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Use high response verbosity"]'
+    );
+    expect(high).toBeInstanceOf(HTMLButtonElement);
+    await act(async () => high?.click());
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    await act(async () => {
+      valueSetter?.call(textarea, 'Use detailed output');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Send message"]')
+        ?.click();
+      await Promise.resolve();
+    });
+    expect(onSend).toHaveBeenCalledWith({
+      content: 'Use detailed output',
+      modelId: 'model-1',
+      reasoningEffort: 'off',
+      serviceTier: 'auto',
+      responseVerbosity: 'high',
+      communicationStyle: 'auto',
+      attachments: [],
+    });
+  });
+
+  test('selects a Session communication style and includes it in submission', async () => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    await act(async () => {
+      root.render(<ChatInput onSend={onSend} />);
+    });
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Change communication style"]'
+        )
+        ?.click();
+    });
+    const explanatory = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Use explanatory communication style"]'
+    );
+    expect(explanatory).toBeInstanceOf(HTMLButtonElement);
+    await act(async () => explanatory?.click());
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    await act(async () => {
+      valueSetter?.call(textarea, 'Explain the implementation choices');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Send message"]')
+        ?.click();
+      await Promise.resolve();
+    });
+    expect(onSend).toHaveBeenCalledWith({
+      content: 'Explain the implementation choices',
+      modelId: 'model-1',
+      reasoningEffort: 'off',
+      serviceTier: 'auto',
+      responseVerbosity: 'auto',
+      communicationStyle: 'explanatory',
+      attachments: [],
+    });
+  });
+
+  test('renders safe custom style summaries and submits only the namespaced id', async () => {
+    const configured = useConfigStore.getState().configuredModels[0];
+    useConfigStore.setState({
+      configuredModels: [
+        {
+          ...configured,
+          communicationStyles: [
+            {
+              id: 'auto',
+              name: 'Auto',
+              description: 'Use the Blade default communication style',
+              source: 'built-in',
+            },
+            {
+              id: 'project:security-review',
+              name: 'Security Review',
+              description: 'Prioritize concrete security findings',
+              source: 'project',
+              contentSha256: 'a'.repeat(64),
+            },
+          ],
+        },
+      ],
+    });
+    const onSend = vi.fn().mockResolvedValue(true);
+    await act(async () => {
+      root.render(<ChatInput onSend={onSend} />);
+    });
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Change communication style"]'
+        )
+        ?.click();
+    });
+    const customStyle = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Use project:security-review communication style"]'
+    );
+    expect(customStyle?.title).toBe('Prioritize concrete security findings');
+    expect(customStyle?.textContent).toContain('project');
+    await act(async () => customStyle?.click());
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    await act(async () => {
+      valueSetter?.call(textarea, 'Review this change');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Send message"]')
+        ?.click();
+      await Promise.resolve();
+    });
+
+    expect(onSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        communicationStyle: 'project:security-review',
+      })
+    );
+    expect(JSON.stringify(onSend.mock.calls)).not.toContain(
+      'Prioritize concrete security findings'
+    );
   });
 });

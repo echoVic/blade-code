@@ -1,10 +1,10 @@
+import { ArrowDown, History } from 'lucide-react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BladeMark } from '@/components/layout/BladeMark';
 import { ScrollArea } from '@/components/ui/ScrollArea';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { Message } from '@/services';
-import { ArrowDown, History } from 'lucide-react';
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChatMessage } from './ChatMessage';
 import { anchoredScrollTop, nextVisibleMessageCount } from './chatListWindow';
 

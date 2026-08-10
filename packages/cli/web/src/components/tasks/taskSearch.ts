@@ -49,9 +49,11 @@ function searchableText(session: Session, activePath: string | null): string {
       STATUS_TERMS[session.taskStatus],
       session.pendingInteraction?.type === 'question'
         ? 'needs answer question attention 等待回答 需要回答'
-        : session.pendingInteraction
-          ? 'needs approval permission attention 等待审批 需要授权'
-          : '',
+        : session.pendingInteraction?.type === 'elicitation'
+          ? 'mcp input elicitation attention MCP 输入 等待输入'
+          : session.pendingInteraction
+            ? 'needs approval permission attention 等待审批 需要授权'
+            : '',
       session.sessionId,
     ]
       .filter(Boolean)

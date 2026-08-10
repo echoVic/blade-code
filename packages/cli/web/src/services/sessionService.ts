@@ -3,6 +3,7 @@ import {
   type BoundProject,
   BoundProjectSchema,
   BusEventSchema,
+  type CommunicationStyle,
   type CreateTaskResponse,
   CreateTaskResponseSchema,
   type ForkSessionResponse,
@@ -14,9 +15,14 @@ import {
   type ProjectDirectorySelection,
   ProjectDirectorySelectionSchema,
   parseSchema,
+  type ReasoningEffort,
+  type ResponseVerbosity,
   type ResumeSubagentResponse,
   ResumeSubagentResponseSchema,
+  type ServiceTier,
   type Session,
+  type SessionArchiveResponse,
+  SessionArchiveResponseSchema,
   type SessionCatalogPage,
   SessionCatalogPageSchema,
   type SessionHistoryMessage,
@@ -32,9 +38,13 @@ import {
   type SessionTaskDiffArtifact,
   SessionTaskDiffArtifactSchema,
   type SessionTaskIsolation,
+  type SessionUnarchiveResponse,
+  SessionUnarchiveResponseSchema,
   type SubagentSession,
   SubagentSessionSchema,
   Type,
+  type UserShellCommandResponse,
+  UserShellCommandResponseSchema,
 } from '@api/schemas';
 import { requestJson } from '@/lib/http';
 
@@ -77,6 +87,10 @@ export interface ImageAttachmentInput {
 export interface SendMessagePayload {
   content: string;
   modelId?: string;
+  reasoningEffort?: ReasoningEffort;
+  serviceTier?: ServiceTier;
+  responseVerbosity?: ResponseVerbosity;
+  communicationStyle?: CommunicationStyle;
   attachments?: ImageAttachmentInput[];
 }
 
@@ -85,6 +99,10 @@ export interface TaskDispatchInput {
   title?: string;
   projectPath?: string;
   modelId?: string;
+  reasoningEffort?: ReasoningEffort;
+  serviceTier?: ServiceTier;
+  responseVerbosity?: ResponseVerbosity;
+  communicationStyle?: CommunicationStyle;
   isolation: SessionTaskIsolation;
   permissionMode?: PermissionMode;
   attachments?: ImageAttachmentInput[];
@@ -99,6 +117,15 @@ export interface WorkspaceInfo {
     maxConcurrent: number;
     maxQueued: number;
   };
+}
+
+export interface SessionMarkdownDownload {
+  filename: string;
+  markdown: string;
+  contentSha256: string;
+  messageCount: number;
+  activityCount: number;
+  redactionCount: number;
 }
 
 export interface Message extends Omit<ApiMessage, 'content'> {
@@ -224,9 +251,14 @@ export const sessionService = {
     return parseSchema(SessionArraySchema, await res.json());
   },
 
-  listSessionPage: async (cursor?: string, limit = 50): Promise<SessionCatalogPage> => {
+  listSessionPage: async (
+    cursor?: string,
+    limit = 50,
+    archived = false
+  ): Promise<SessionCatalogPage> => {
     const params = new URLSearchParams({ limit: String(limit) });
     if (cursor) params.set('cursor', cursor);
+    if (archived) params.set('archived', 'true');
     const res = await fetch(`${API_BASE}/sessions/catalog?${params.toString()}`);
     if (!res.ok) throw new Error('Failed to load session catalog');
     return SessionCatalogPageSchema.parse(await res.json());
@@ -330,6 +362,66 @@ export const sessionService = {
     if (!res.ok) throw new Error('Failed to delete session');
   },
 
+  archiveSession: async (ref: SessionRef): Promise<SessionArchiveResponse> => {
+    return SessionArchiveResponseSchema.parse(
+      await requestJson<unknown>(
+        withSessionRef(`${API_BASE}/sessions/${ref.sessionId}/archive`, ref),
+        { method: 'POST' }
+      )
+    );
+  },
+
+  unarchiveSession: async (ref: SessionRef): Promise<SessionUnarchiveResponse> => {
+    return SessionUnarchiveResponseSchema.parse(
+      await requestJson<unknown>(
+        withSessionRef(`${API_BASE}/sessions/${ref.sessionId}/unarchive`, ref),
+        { method: 'POST' }
+      )
+    );
+  },
+
+  exportSessionMarkdown: async (
+    ref: SessionRef,
+    includeReasoning = false
+  ): Promise<SessionMarkdownDownload> => {
+    const baseUrl = withSessionRef(`${API_BASE}/sessions/${ref.sessionId}/export`, ref);
+    const url = includeReasoning ? `${baseUrl}&includeReasoning=true` : baseUrl;
+    const response = await fetch(url);
+    if (!response.ok) {
+      const body = (await response.json().catch(() => undefined)) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message || 'Failed to export session');
+    }
+    const disposition = response.headers.get('content-disposition') ?? '';
+    const filename =
+      /filename="([A-Za-z0-9._-]+)"/.exec(disposition)?.[1] ??
+      `blade-session-${ref.sessionId.slice(0, 12)}.md`;
+    const contentSha256 = response.headers.get('x-blade-content-sha256') ?? '';
+    if (!/^[a-f0-9]{64}$/.test(contentSha256)) {
+      throw new Error('Session export is missing its integrity hash');
+    }
+    const parseCount = (name: string): number => {
+      const raw = response.headers.get(name);
+      if (raw === null) {
+        throw new Error(`Session export is missing its ${name} header`);
+      }
+      const value = Number(raw);
+      if (!Number.isInteger(value) || value < 0) {
+        throw new Error(`Session export has an invalid ${name} header`);
+      }
+      return value;
+    };
+    return {
+      filename,
+      markdown: await response.text(),
+      contentSha256,
+      messageCount: parseCount('x-blade-export-messages'),
+      activityCount: parseCount('x-blade-export-activities'),
+      redactionCount: parseCount('x-blade-export-redactions'),
+    };
+  },
+
   updateSession: async (ref: SessionRef, title: string): Promise<void> => {
     const res = await fetch(`${API_BASE}/sessions/${ref.sessionId}`, {
       method: 'PATCH',
@@ -371,6 +463,25 @@ export const sessionService = {
       throw new Error(reason || 'Failed to send message');
     }
     return res.json();
+  },
+
+  executeUserShellCommand: async (
+    ref: SessionRef,
+    command: string
+  ): Promise<UserShellCommandResponse> => {
+    return UserShellCommandResponseSchema.parse(
+      await requestJson<unknown>(
+        `${API_BASE}/sessions/${ref.sessionId}/shell`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            command,
+            projectPath: ref.projectPath,
+          }),
+        }
+      )
+    );
   },
 
   abortSession: async (ref: SessionRef): Promise<void> => {
@@ -869,22 +980,45 @@ export const sessionService = {
     toolCallId: string,
     answers: Record<string, string | string[]>
   ): Promise<void> => {
-    const res = await fetch(
-      withSessionRef(
-        `${API_BASE}/sessions/${ref.sessionId}/question/${toolCallId}`,
-        ref
-      ),
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ answers }),
-      }
-    );
+    const query = new URLSearchParams({
+      sessionId: ref.sessionId,
+      projectPath: ref.projectPath,
+    });
+    const res = await fetch(`${API_BASE}/permissions/${toolCallId}?${query}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approved: true, answers }),
+    });
     if (!res.ok) {
       const body = (await res.json().catch(() => undefined)) as
         | { error?: { message?: string } }
         | undefined;
       throw new Error(body?.error?.message || 'Failed to respond to question');
+    }
+  },
+
+  respondToElicitation: async (
+    ref: SessionRef,
+    toolCallId: string,
+    elicitation: NonNullable<PermissionResponse['elicitation']>
+  ): Promise<void> => {
+    const query = new URLSearchParams({
+      sessionId: ref.sessionId,
+      projectPath: ref.projectPath,
+    });
+    const res = await fetch(`${API_BASE}/permissions/${toolCallId}?${query}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        approved: elicitation.action === 'accept',
+        elicitation,
+      }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message || 'Failed to respond to MCP elicitation');
     }
   },
 

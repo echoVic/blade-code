@@ -12,6 +12,9 @@ import {
   appendTimelineText,
   appendTimelineThinking,
   appendTimelineToolCall,
+  getSubagents,
+  upsertSubagent,
+  withSubagents,
 } from '../../../src/store/session/utils/agentTimeline';
 
 function createEmptyAgentContent() {
@@ -23,6 +26,7 @@ function createEmptyAgentContent() {
     thinkingContent: '',
     tasks: [],
     subagent: null,
+    subagents: [],
     confirmation: null,
     question: null,
   };
@@ -41,6 +45,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
 
   const state = {
     sessions: [],
+    archivedSessions: [],
     currentSessionId: 'session-1',
     currentSessionRef: {
       sessionId: 'session-1',
@@ -51,6 +56,8 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     isLoading: false,
     catalogLoadState: 'ready' as const,
     catalogError: null,
+    archivedCatalogLoadState: 'idle' as const,
+    archivedCatalogError: null,
     error: null,
     errorContext: null,
     goal: null,
@@ -103,7 +110,10 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     clearError: vi.fn(),
     setGoal: vi.fn(),
     loadSessions: vi.fn(),
+    loadArchivedSessions: vi.fn(async () => undefined),
     selectSession: vi.fn(),
+    archiveSession: vi.fn(async () => undefined),
+    unarchiveSession: vi.fn(async () => undefined),
     deleteSession: vi.fn(),
     updateSession: vi.fn(),
     forkSession: vi.fn(async () => undefined),
@@ -200,18 +210,53 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
       });
     }),
     setQuestion: vi.fn(),
+    setElicitation: vi.fn((id, elicitation) => {
+      state.messages = state.messages.map((message) => {
+        if (message.id !== id) return message;
+        return {
+          ...message,
+          agentContent: {
+            ...(message.agentContent ?? createEmptyAgentContent()),
+            elicitation,
+          },
+        };
+      });
+    }),
     setSubagent: vi.fn((messageId, subagent) => {
       state.messages = state.messages.map((message) =>
         message.id === messageId
           ? {
               ...message,
-              agentContent: {
-                ...(message.agentContent ?? createEmptyAgentContent()),
-                subagent,
-              },
+              agentContent: subagent
+                ? upsertSubagent(
+                    message.agentContent ?? createEmptyAgentContent(),
+                    subagent
+                  )
+                : withSubagents(message.agentContent ?? createEmptyAgentContent(), []),
             }
           : message
       );
+    }),
+    updateSubagent: vi.fn((messageId, subagentId, update) => {
+      state.messages = state.messages.map((message) => {
+        if (message.id !== messageId) return message;
+        const agentContent = message.agentContent ?? createEmptyAgentContent();
+        const subagents = [...getSubagents(agentContent)];
+        const index = subagents.findIndex(
+          (subagent) => subagent.id === subagentId || subagent.sessionId === subagentId
+        );
+        if (index === -1) return message;
+        const current = subagents[index];
+        subagents[index] = {
+          ...current,
+          ...(typeof update === 'function' ? update(current) : update),
+          id: current.id,
+        };
+        return {
+          ...message,
+          agentContent: withSubagents(agentContent, subagents, current.id),
+        };
+      });
     }),
     setTasks: vi.fn((messageId, tasks) => {
       state.messages = state.messages.map((message) =>
@@ -443,6 +488,86 @@ describe('eventHandlers', () => {
     });
   });
 
+  test('keeps parallel subagents isolated by child session', () => {
+    const state = createState();
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+
+    for (const [toolCallId, type, description] of [
+      ['task-a', 'Explore', 'Inspect API'],
+      ['task-b', 'reviewer', 'Review tests'],
+    ]) {
+      dispatch({
+        type: 'tool.start',
+        properties: {
+          sessionId: 'session-1',
+          projectPath: '/workspace/a',
+          messageId: 'assistant-1',
+          toolCallId,
+          toolName: 'Task',
+          arguments: JSON.stringify({
+            subagent_type: type,
+            description,
+          }),
+        },
+      });
+    }
+
+    dispatch({
+      type: 'subagent.start',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        subagentId: 'progress-a',
+        subagentSessionId: 'agent-a',
+        type: 'Explore',
+        description: 'Inspect API',
+      },
+    });
+    dispatch({
+      type: 'subagent.start',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        subagentId: 'progress-b',
+        subagentSessionId: 'agent-b',
+        type: 'reviewer',
+        description: 'Review tests',
+      },
+    });
+    dispatch({
+      type: 'subagent.update',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        subagentSessionId: 'agent-a',
+        toolName: 'Read',
+      },
+    });
+    dispatch({
+      type: 'subagent.complete',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        subagentSessionId: 'agent-b',
+        success: true,
+      },
+    });
+
+    expect(state.messages[0]?.agentContent?.subagents).toEqual([
+      expect.objectContaining({
+        id: 'task-a',
+        sessionId: 'agent-a',
+        status: 'running',
+        currentTool: 'Read',
+      }),
+      expect.objectContaining({
+        id: 'task-b',
+        sessionId: 'agent-b',
+        status: 'completed',
+      }),
+    ]);
+  });
+
   test('drains buffered message deltas before message.complete updates message content', () => {
     vi.useFakeTimers();
     const state = createState();
@@ -542,6 +667,415 @@ describe('eventHandlers', () => {
       expect.objectContaining({ type: 'tool_group', toolCallIds: ['bash-1'] }),
     ]);
     expect(state.messages[0]?.content).toBe('first\n\nsecond');
+  });
+
+  test('projects tool progress onto the active tool call', () => {
+    const state = createState();
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+    const ref = { sessionId: 'session-1', projectPath: '/workspace/a' };
+
+    dispatch({
+      type: 'tool.start',
+      properties: {
+        ...ref,
+        messageId: 'assistant-1',
+        toolCallId: 'mcp-1',
+        toolName: 'progressive',
+        arguments: '{}',
+      },
+    });
+    dispatch({
+      type: 'tool.progress',
+      properties: {
+        ...ref,
+        messageId: 'assistant-1',
+        toolCallId: 'mcp-1',
+        toolName: 'progressive',
+        message: 'phase-two',
+        progress: 2,
+        total: 4,
+      },
+    });
+
+    expect(state.messages[0]?.agentContent?.toolCalls[0]).toMatchObject({
+      toolCallId: 'mcp-1',
+      status: 'running',
+      summary: 'phase-two',
+      progress: 2,
+      progressTotal: 4,
+      progressMessage: 'phase-two',
+    });
+  });
+
+  test('projects MCP catalog revisions as transient completed tool cards', () => {
+    const state = createState();
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+
+    dispatch({
+      type: 'mcp.catalog.changed',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        messageId: 'assistant-1',
+        revision: 2,
+        serverName: 'dynamic',
+        added: ['mcp__dynamic__new_tool'],
+        removed: ['mcp__dynamic__old_tool'],
+        updated: [],
+      },
+    });
+
+    expect(state.messages[0]?.agentContent?.toolCalls).toEqual([
+      expect.objectContaining({
+        toolCallId: 'mcp-catalog:2',
+        toolName: 'MCP Catalog',
+        status: 'success',
+        summary: 'MCP catalog r2: +1 -1 ~0',
+        output: 'Added: mcp__dynamic__new_tool\nRemoved: mcp__dynamic__old_tool',
+      }),
+    ]);
+  });
+
+  test('projects MCP content and resource updates as transient tool cards', () => {
+    const state = createState();
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+    const ref = {
+      sessionId: 'session-1',
+      projectPath: '/workspace/a',
+      messageId: 'assistant-1',
+    };
+    dispatch({
+      type: 'mcp.content.changed',
+      properties: {
+        ...ref,
+        revision: 4,
+        serverName: 'content',
+        contentKind: 'prompts',
+        added: ['new_prompt'],
+        removed: [],
+        updated: ['compose_report'],
+      },
+    });
+    dispatch({
+      type: 'mcp.resource.updated',
+      properties: {
+        ...ref,
+        revision: 5,
+        serverName: 'content',
+        uri: 'context://live',
+      },
+    });
+    dispatch({
+      type: 'mcp.connection.changed',
+      properties: {
+        ...ref,
+        revision: 6,
+        serverName: 'content',
+        phase: 'reconnecting',
+        reason: 'transport_closed',
+        attempt: 1,
+        maxAttempts: 5,
+        error: 'Connection closed',
+      },
+    });
+    dispatch({
+      type: 'mcp.log',
+      properties: {
+        ...ref,
+        revision: 7,
+        serverName: 'content',
+        level: 'warning',
+        logger: 'fixture',
+        message: 'SAFE_LOG_MARKER',
+        projectedBytes: 15,
+        dataSha256: 'a'.repeat(64),
+        truncated: false,
+        detailsOmitted: false,
+        timestamp: 1_000,
+      },
+    });
+    dispatch({
+      type: 'mcp.instructions.changed',
+      properties: {
+        ...ref,
+        revision: 8,
+        serverName: 'content',
+        action: 'added',
+        reason: 'snapshot',
+        text: 'Use INSTRUCTION_CODE_42',
+        sourceBytes: 23,
+        projectedBytes: 23,
+        sha256: 'b'.repeat(64),
+        truncated: false,
+        detailsOmitted: false,
+      },
+    });
+    dispatch({
+      type: 'mcp.task.changed',
+      properties: {
+        ...ref,
+        revision: 9,
+        taskId: 'mcp_task_safe',
+        serverName: 'content',
+        toolName: 'long_task',
+        status: 'working',
+        createdAt: 1_000,
+        updatedAt: 1_000,
+        hasResult: false,
+      },
+    });
+    dispatch({
+      type: 'mcp.task.changed',
+      properties: {
+        ...ref,
+        revision: 10,
+        taskId: 'mcp_task_safe',
+        serverName: 'content',
+        toolName: 'long_task',
+        status: 'completed',
+        createdAt: 1_000,
+        updatedAt: 2_000,
+        completedAt: 2_000,
+        hasResult: true,
+      },
+    });
+    dispatch({
+      type: 'project.rules.loaded',
+      properties: {
+        ...ref,
+        files: [
+          {
+            id: 'project:rule-one',
+            relativePath: '.claude/rules/typescript.md',
+            source: 'project',
+            conditional: true,
+            contentSha256: 'c'.repeat(64),
+          },
+        ],
+        triggerPaths: ['src/index.ts'],
+        blockedWrite: true,
+      },
+    });
+
+    expect(state.messages[0]?.agentContent?.toolCalls).toEqual([
+      expect.objectContaining({
+        toolCallId: 'mcp-content:4',
+        toolName: 'MCP Content',
+        summary: 'MCP prompts r4: +1 -0 ~1',
+      }),
+      expect.objectContaining({
+        toolCallId: 'mcp-resource:5',
+        toolName: 'MCP Resource',
+        summary: 'MCP resource updated: context://live',
+      }),
+      expect.objectContaining({
+        toolCallId: 'mcp-connection:6',
+        toolName: 'MCP Connection',
+        status: 'success',
+        summary: 'MCP content reconnecting (1/5)',
+      }),
+      expect.objectContaining({
+        toolCallId: 'mcp-log:7',
+        toolName: 'MCP Log',
+        status: 'success',
+        summary: 'MCP warning · content · fixture',
+        output: `SAFE_LOG_MARKER\nSHA-256: ${'a'.repeat(64)}`,
+      }),
+      expect.objectContaining({
+        toolCallId: 'mcp-instructions:8:content:added',
+        toolName: 'MCP Instructions',
+        status: 'success',
+        summary: 'MCP instructions added: content',
+        output: `Use INSTRUCTION_CODE_42\nSHA-256: ${'b'.repeat(64)}`,
+      }),
+      expect.objectContaining({
+        toolCallId: 'mcp-task:mcp_task_safe',
+        toolName: 'MCP Task',
+        status: 'success',
+        summary: 'MCP task completed: mcp_task_safe · content/long_task',
+        output: 'Result available via TaskOutput',
+      }),
+      expect.objectContaining({
+        toolCallId: 'project-rules:project:rule-one',
+        toolName: 'Project Rules',
+        status: 'success',
+        summary: 'Project rules loaded: 1 (write retry required)',
+        output: `.claude/rules/typescript.md project SHA-256: ${'c'.repeat(64)}`,
+      }),
+    ]);
+  });
+
+  test('projects subagent MCP updates into the owning task card', () => {
+    const state = createState();
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+    const ref = { sessionId: 'session-1', projectPath: '/workspace/a' };
+    dispatch({
+      type: 'tool.start',
+      properties: {
+        ...ref,
+        messageId: 'assistant-1',
+        toolCallId: 'task-a',
+        toolName: 'Task',
+        arguments: JSON.stringify({
+          subagent_type: 'Explore',
+          description: 'Inspect MCP',
+        }),
+      },
+    });
+    dispatch({
+      type: 'subagent.start',
+      properties: {
+        ...ref,
+        subagentId: 'task-a',
+        subagentSessionId: 'agent-a',
+        type: 'Explore',
+        description: 'Inspect MCP',
+      },
+    });
+    dispatch({
+      type: 'subagent.mcp.catalog.changed',
+      properties: {
+        ...ref,
+        subagentSessionId: 'agent-a',
+        revision: 3,
+        serverName: 'dynamic',
+        added: ['mcp__dynamic__new_tool'],
+        removed: [],
+        updated: [],
+      },
+    });
+    dispatch({
+      type: 'subagent.mcp.content.changed',
+      properties: {
+        ...ref,
+        subagentSessionId: 'agent-a',
+        revision: 4,
+        serverName: 'content',
+        contentKind: 'prompts',
+        added: ['new_prompt'],
+        removed: [],
+        updated: [],
+      },
+    });
+    dispatch({
+      type: 'subagent.mcp.resource.updated',
+      properties: {
+        ...ref,
+        subagentSessionId: 'agent-a',
+        revision: 5,
+        serverName: 'content',
+        uri: 'context://live',
+      },
+    });
+    dispatch({
+      type: 'subagent.mcp.connection.changed',
+      properties: {
+        ...ref,
+        subagentSessionId: 'agent-a',
+        revision: 6,
+        serverName: 'content',
+        phase: 'failed',
+        reason: 'transport_closed',
+        attempt: 5,
+        maxAttempts: 5,
+        error: 'Connection closed',
+      },
+    });
+    dispatch({
+      type: 'subagent.mcp.log',
+      properties: {
+        ...ref,
+        subagentSessionId: 'agent-a',
+        revision: 7,
+        serverName: 'content',
+        level: 'error',
+        message: 'SUBAGENT_LOG_MARKER',
+        projectedBytes: 19,
+        dataSha256: 'b'.repeat(64),
+        truncated: false,
+        detailsOmitted: false,
+        timestamp: 1_000,
+      },
+    });
+    dispatch({
+      type: 'subagent.mcp.instructions.changed',
+      properties: {
+        ...ref,
+        subagentSessionId: 'agent-a',
+        revision: 8,
+        serverName: 'content',
+        action: 'added',
+        reason: 'snapshot',
+        projectedBytes: 0,
+        sha256: 'c'.repeat(64),
+        truncated: false,
+        detailsOmitted: true,
+      },
+    });
+    dispatch({
+      type: 'subagent.mcp.task.changed',
+      properties: {
+        ...ref,
+        subagentSessionId: 'agent-a',
+        revision: 9,
+        taskId: 'mcp_task_child',
+        serverName: 'content',
+        toolName: 'long_task',
+        status: 'failed',
+        statusMessage: 'Task failed safely',
+        createdAt: 1_000,
+        updatedAt: 2_000,
+        completedAt: 2_000,
+        hasResult: false,
+        error: 'safe failure',
+      },
+    });
+
+    expect(state.messages[0]?.agentContent?.subagent?.toolCalls).toEqual([
+      expect.objectContaining({
+        toolCallId: 'mcp-catalog:3',
+        toolName: 'MCP Catalog',
+        status: 'success',
+        summary: 'MCP catalog r3: +1 -0 ~0',
+      }),
+      expect.objectContaining({
+        toolCallId: 'mcp-content:4',
+        toolName: 'MCP Content',
+        summary: 'MCP prompts r4: +1 -0 ~0',
+      }),
+      expect.objectContaining({
+        toolCallId: 'mcp-resource:5',
+        toolName: 'MCP Resource',
+        summary: 'MCP resource updated: context://live',
+      }),
+      expect.objectContaining({
+        toolCallId: 'mcp-connection:6',
+        toolName: 'MCP Connection',
+        status: 'error',
+        summary: 'MCP content failed',
+      }),
+      expect.objectContaining({
+        toolCallId: 'mcp-log:7',
+        toolName: 'MCP Log',
+        status: 'success',
+        summary: 'MCP error · content',
+        output: `SUBAGENT_LOG_MARKER\nSHA-256: ${'b'.repeat(64)}`,
+      }),
+      expect.objectContaining({
+        toolCallId: 'mcp-instructions:8:content:added',
+        toolName: 'MCP Instructions',
+        status: 'success',
+        summary: 'MCP instructions added: content',
+        output: `SHA-256: ${'c'.repeat(64)}\n` + 'Details omitted by runtime policy',
+      }),
+      expect.objectContaining({
+        toolCallId: 'mcp-task:mcp_task_child',
+        toolName: 'MCP Task',
+        status: 'error',
+        summary: 'MCP task failed: mcp_task_child · content/long_task',
+        output: 'Task failed safely\nError: safe failure',
+      }),
+    ]);
   });
 
   test('applies task.updated events to the current assistant message', () => {
@@ -968,10 +1502,70 @@ describe('eventHandlers', () => {
     expect(state.sessions[0]?.pendingInteraction).toBeUndefined();
   });
 
-  test('replays permission and question requests into an empty active session', () => {
+  test('projects MCP sampling as a one-shot permission with an inspectable preview', () => {
+    const state = createState({
+      messages: [],
+      currentAssistantMessageId: null,
+    });
+    const set = vi.fn(
+      (
+        update:
+          | Partial<SessionStoreState>
+          | ((current: SessionStoreState) => Partial<SessionStoreState>)
+      ) => {
+        Object.assign(state, typeof update === 'function' ? update(state) : update);
+      }
+    );
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'permission.asked',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        requestId: 'sampling-1',
+        toolName: 'MCP sampling: fixture',
+        description: 'May consume up to 128 output tokens.',
+        details: {
+          type: 'mcpSampling',
+          details: 'User: Return the release marker.',
+        },
+      },
+    });
+
+    expect(state.messages).toEqual([
+      expect.objectContaining({
+        agentContent: expect.objectContaining({
+          confirmation: {
+            toolCallId: 'sampling-1',
+            toolName: 'MCP sampling: fixture',
+            description: 'May consume up to 128 output tokens.',
+            diff: 'User: Return the release marker.',
+            allowRemember: false,
+            status: 'pending',
+          },
+        }),
+      }),
+    ]);
+    expect(state.agentPhase).toBe('waiting_permission');
+  });
+
+  test('replays permission, question, and MCP requests into an empty active session', () => {
     const state = createState({
       messages: [],
       currentAssistantMessageId: 'assistant-from-previous-session',
+      sessions: [
+        {
+          sessionId: 'session-1',
+          projectPath: '/workspace/a',
+          rootId: 'session-1',
+          taskStatus: 'running',
+          messageCount: 0,
+          firstMessageTime: '2026-08-08T09:00:00.000Z',
+          lastMessageTime: '2026-08-08T09:00:00.000Z',
+          hasErrors: false,
+        },
+      ],
     });
     const set = vi.fn(
       (
@@ -1057,6 +1651,47 @@ describe('eventHandlers', () => {
         }),
       }),
     ]);
+
+    state.messages = [];
+    state.currentAssistantMessageId = 'assistant-from-previous-session';
+    dispatch({
+      type: 'elicitation.required',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        requestId: 'elicitation-replay',
+        elicitation: {
+          serverName: 'deploy',
+          mode: 'form',
+          message: 'Configure release',
+          fields: [],
+          requestedSchema: {
+            type: 'object',
+            properties: {},
+          },
+        },
+        replayed: true,
+      },
+    });
+    expect(state.messages).toEqual([
+      expect.objectContaining({
+        id: 'assistant-elicitation-elicitation-replay',
+        agentContent: expect.objectContaining({
+          elicitation: expect.objectContaining({
+            toolCallId: 'elicitation-replay',
+            status: 'pending',
+            details: expect.objectContaining({
+              serverName: 'deploy',
+              mode: 'form',
+            }),
+          }),
+        }),
+      }),
+    ]);
+    expect(state.sessions[0]?.pendingInteraction).toEqual({
+      type: 'elicitation',
+      requestId: 'elicitation-replay',
+    });
   });
 
   test('flushes buffered message deltas to the message that received them', () => {

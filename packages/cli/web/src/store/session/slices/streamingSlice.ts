@@ -1,17 +1,10 @@
 import { sessionService } from '@/services';
 import { createEventDispatcher } from '../handlers/eventHandlers';
 import { globalStreamingBuffer } from '../handlers/streamingBuffer';
-import type {
-  SliceCreator,
-  StreamingSlice,
-  TaskEventConnectionState,
-} from '../types';
+import type { SliceCreator, StreamingSlice, TaskEventConnectionState } from '../types';
 
 export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => {
-  const connectionStates = new WeakMap<
-    () => void,
-    TaskEventConnectionState
-  >();
+  const connectionStates = new WeakMap<() => void, TaskEventConnectionState>();
   let activeConnection: (() => void) | null = null;
 
   return {

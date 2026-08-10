@@ -99,6 +99,8 @@ export function ProjectBindingDialog({
     onOpenChange(false);
   };
 
+  if (!open) return null;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent

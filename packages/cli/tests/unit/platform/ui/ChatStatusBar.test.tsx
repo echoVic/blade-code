@@ -8,6 +8,7 @@ const mockUseGitBranch = vi.fn((_projectRoot?: string) => ({
 }));
 const mockGetProjectRoot = vi.fn(() => '/repo-root');
 const mockRecoveredSteeringCount = vi.fn(() => 0);
+const mockCommunicationStyle = vi.fn(() => 'auto');
 
 vi.mock('ink', () => ({
   Box: ({ children }: { children?: React.ReactNode }) =>
@@ -29,6 +30,10 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
   useSessionCost: () => null,
   useSessionId: () => 'status-bar-session',
   useThinkingModeEnabled: () => false,
+  useReasoningEffort: () => 'off',
+  useServiceTier: () => 'auto',
+  useResponseVerbosity: () => 'auto',
+  useCommunicationStyle: () => mockCommunicationStyle(),
   useWorkspaceRoot: () => '/active-workspace',
 }));
 
@@ -45,6 +50,7 @@ describe('ChatStatusBar', () => {
     mockUseGitBranch.mockClear();
     mockGetProjectRoot.mockClear();
     mockRecoveredSteeringCount.mockReturnValue(0);
+    mockCommunicationStyle.mockReturnValue('auto');
   });
 
   it('应该使用当前会话的 active workspace 获取分支', async () => {
@@ -67,5 +73,16 @@ describe('ChatStatusBar', () => {
     const markup = renderToStaticMarkup(React.createElement(ChatStatusBar));
 
     expect(markup).toContain('已恢复 2 条指令');
+  });
+
+  it('应该显示当前 Session 的显式沟通风格', async () => {
+    mockCommunicationStyle.mockReturnValue('pragmatic');
+    const { ChatStatusBar } = await import(
+      '../../../../src/ui/components/ChatStatusBar.js'
+    );
+
+    const markup = renderToStaticMarkup(React.createElement(ChatStatusBar));
+
+    expect(markup).toContain('Style pragmatic');
   });
 });

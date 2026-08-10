@@ -9,6 +9,7 @@ describe('ConfigStore', () => {
       availableModels: [],
       isLoading: false,
       hasLoaded: false,
+      loadedWorkspacePath: null,
       error: null,
     });
   });
@@ -130,6 +131,52 @@ describe('ConfigStore', () => {
     expect(useConfigStore.getState()).toMatchObject({
       currentModelId: 'model-1',
       error: 'Config update rejected',
+    });
+  });
+
+  it('keeps the latest workspace model response when requests finish out of order', async () => {
+    const resolvers = new Map<string, (response: Response) => void>();
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      const workspace = new Headers(init?.headers).get('x-blade-directory') ?? '';
+      return new Promise<Response>((resolve) => {
+        resolvers.set(workspace, resolve);
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const loadA = useConfigStore.getState().loadModels('/workspace/a');
+    const loadB = useConfigStore.getState().loadModels('/workspace/b');
+    const responseFor = (workspace: 'a' | 'b') =>
+      new Response(
+        JSON.stringify({
+          current: {
+            id: `model-${workspace}`,
+            provider: 'shared-channel',
+            model: 'gpt-4.1',
+          },
+          configured: [
+            {
+              id: `model-${workspace}`,
+              provider: 'shared-channel',
+              model: 'gpt-4.1',
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+
+    resolvers.get('/workspace/b')?.(responseFor('b'));
+    await loadB;
+    resolvers.get('/workspace/a')?.(responseFor('a'));
+    await loadA;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(useConfigStore.getState()).toMatchObject({
+      loadedWorkspacePath: '/workspace/b',
+      currentModelId: 'model-b',
+      configuredModels: [expect.objectContaining({ id: 'model-b' })],
+      hasLoaded: true,
+      isLoading: false,
     });
   });
 });

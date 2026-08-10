@@ -102,6 +102,11 @@ export const en = {
   'session.action.forkShort': 'Fork',
   'session.action.rename': 'Rename {title}',
   'session.action.renameShort': 'Rename',
+  'session.action.archive': 'Archive {title}',
+  'session.action.archiveShort': 'Archive',
+  'session.action.export': 'Export {title} as Markdown',
+  'session.action.exportShort': 'Export Markdown',
+  'session.action.exportingShort': 'Exporting…',
   'session.action.delete': 'Delete {title}',
   'session.action.deleteShort': 'Delete',
   'session.action.stop': 'Stop {title}',
@@ -115,6 +120,19 @@ export const en = {
   'session.retriedFrom': 'Retried from',
   'session.retryShort': 'retry',
   'session.queued': '#{position}/{depth} queued',
+
+  // -------- Session archive --------
+  'archive.title': 'Archive',
+  'archive.subtitle': 'Stored safely outside the active task list',
+  'archive.open': 'Open session archive',
+  'archive.refresh': 'Refresh archived sessions',
+  'archive.retry': 'Retry',
+  'archive.loading': 'Loading archive…',
+  'archive.empty': 'No archived sessions',
+  'archive.restore': 'Restore {title}',
+  'archive.restoreShort': 'Restore',
+  'archive.restoreAncestor': 'Restore the archive root first',
+  'archive.inherited': 'Archived with {id}',
 
   // -------- Task switcher --------
   'taskSwitcher.title': 'Task switcher',
@@ -256,6 +274,7 @@ export const en = {
   'attention.notification.interrupted': 'Task interrupted',
   'attention.notification.permission': 'Approval required',
   'attention.notification.question': 'Answer required',
+  'attention.notification.elicitation': 'MCP input required',
 
   // -------- Pending interactions --------
   'interaction.permission.title': 'Permission required: {tool}',
@@ -268,15 +287,29 @@ export const en = {
   'interaction.question.other': 'Other',
   'interaction.question.submit': 'Submit answers',
   'interaction.question.failed': 'Failed to submit answers',
+  'interaction.elicitation.title': 'MCP input requested',
+  'interaction.elicitation.submit': 'Submit to MCP',
+  'interaction.elicitation.open': 'Open external URL',
+  'interaction.elicitation.decline': 'Decline',
+  'interaction.elicitation.cancel': 'Cancel',
+  'interaction.elicitation.responded': 'MCP request answered',
+  'interaction.elicitation.cancelled': 'MCP request cancelled',
+  'interaction.elicitation.failed': 'Failed to respond to MCP request',
+  'interaction.elicitation.warning':
+    'Only continue if you trust this MCP server and understand the request.',
   'interaction.bar.permissionTitle': 'Agent needs approval',
   'interaction.bar.permissionHint':
     'Review the pending tool request before this task can continue.',
   'interaction.bar.questionTitle': 'Agent needs your answer',
   'interaction.bar.questionHint':
     'Answer the pending question before this task can continue.',
+  'interaction.bar.elicitationTitle': 'MCP server needs your input',
+  'interaction.bar.elicitationHint':
+    'Review the MCP request before this task can continue.',
   'interaction.bar.review': 'Review request',
   'interaction.badge.permission': 'Needs approval',
   'interaction.badge.question': 'Needs answer',
+  'interaction.badge.elicitation': 'MCP input',
 
   // -------- Task artifact bar --------
   'artifact.env.isolated': 'isolated',
@@ -379,6 +412,38 @@ export const en = {
   'chat.input.model.change': 'Change model',
   'chat.input.model.locked':
     'Wait for the active turn to finish before switching models',
+  'chat.input.effort.label': 'Effort {effort}',
+  'chat.input.effort.heading': 'Reasoning effort',
+  'chat.input.effort.change': 'Change reasoning effort',
+  'chat.input.effort.locked':
+    'Wait for the active turn to finish before changing reasoning effort',
+  'chat.input.effort.option': 'Use {effort} reasoning effort',
+  'chat.input.effort.autoHint': 'near high',
+  'chat.input.serviceTier.label': 'Speed {tier}',
+  'chat.input.serviceTier.heading': 'Provider service tier',
+  'chat.input.serviceTier.change': 'Change provider service tier',
+  'chat.input.serviceTier.locked':
+    'Wait for the current turn to finish before changing service tier',
+  'chat.input.serviceTier.option': 'Use {tier} service tier',
+  'chat.input.serviceTier.fastHint': 'priority',
+  'chat.input.serviceTier.flexHint': 'lower cost',
+  'chat.input.responseVerbosity.label': 'Output {verbosity}',
+  'chat.input.responseVerbosity.heading': 'Response verbosity',
+  'chat.input.responseVerbosity.change': 'Change response verbosity',
+  'chat.input.responseVerbosity.locked':
+    'Wait for the current turn to finish before changing response verbosity',
+  'chat.input.responseVerbosity.option': 'Use {verbosity} response verbosity',
+  'chat.input.responseVerbosity.autoHint': 'model default',
+  'chat.input.communicationStyle.label': 'Style {style}',
+  'chat.input.communicationStyle.heading': 'Communication style',
+  'chat.input.communicationStyle.change': 'Change communication style',
+  'chat.input.communicationStyle.locked':
+    'Wait for the current turn to finish before changing communication style',
+  'chat.input.communicationStyle.option': 'Use {style} communication style',
+  'chat.input.communicationStyle.autoHint': 'Blade default',
+  'chat.input.communicationStyle.pragmaticHint': 'direct',
+  'chat.input.communicationStyle.friendlyHint': 'warm',
+  'chat.input.communicationStyle.explanatoryHint': 'explain choices',
   'chat.notice.dismiss': 'Dismiss notice',
   'chat.input.mode.default': 'Default',
   'chat.input.mode.autoEdit': 'Auto Edit',

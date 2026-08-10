@@ -1,7 +1,9 @@
 import type { SessionRef } from '@api/schemas';
 import {
   AlertCircle,
+  Archive,
   Check,
+  Download,
   GitFork,
   Loader2,
   MoreHorizontal,
@@ -46,10 +48,13 @@ export interface SessionRowProps {
   };
   isCancelling: boolean;
   isRetrying: boolean;
+  isExporting: boolean;
   onSelect: () => void;
   onCancelTask: () => void;
   onRetryTask: () => void;
   onFork: () => void;
+  onArchive: () => void;
+  onExport: () => void;
   onStartRename: (e: React.MouseEvent) => void;
   onDelete: (e: React.MouseEvent) => void;
   onEditingTitleChange: (v: string) => void;
@@ -69,10 +74,13 @@ export function SessionRow({
   context,
   isCancelling,
   isRetrying,
+  isExporting,
   onSelect,
   onCancelTask,
   onRetryTask,
   onFork,
+  onArchive,
+  onExport,
   onStartRename,
   onDelete,
   onEditingTitleChange,
@@ -149,7 +157,9 @@ export function SessionRow({
               ? t(
                   session.pendingInteraction.type === 'question'
                     ? 'interaction.badge.question'
-                    : 'interaction.badge.permission'
+                    : session.pendingInteraction.type === 'elicitation'
+                      ? 'interaction.badge.elicitation'
+                      : 'interaction.badge.permission'
                 )
               : session.taskStatus
           }
@@ -176,14 +186,18 @@ export function SessionRow({
                 title={t(
                   session.pendingInteraction.type === 'question'
                     ? 'interaction.badge.question'
-                    : 'interaction.badge.permission'
+                    : session.pendingInteraction.type === 'elicitation'
+                      ? 'interaction.badge.elicitation'
+                      : 'interaction.badge.permission'
                 )}
               >
                 <AlertCircle className="h-2.5 w-2.5" />
                 {t(
                   session.pendingInteraction.type === 'question'
                     ? 'interaction.badge.question'
-                    : 'interaction.badge.permission'
+                    : session.pendingInteraction.type === 'elicitation'
+                      ? 'interaction.badge.elicitation'
+                      : 'interaction.badge.permission'
                 )}
               </span>
             )}
@@ -358,6 +372,46 @@ export function SessionRow({
             >
               <Pencil className="h-3 w-3" aria-hidden />
               {t('session.action.renameShort')}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              aria-label={t('session.action.archive', { title })}
+              disabled={
+                session.taskStatus === 'running' || session.taskStatus === 'queued'
+              }
+              onClick={(event) => {
+                event.stopPropagation();
+                onArchive();
+                setActionsOpen(false);
+              }}
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left font-mono text-[11px] text-[hsl(var(--deck-ink-muted))] transition-colors hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))] focus-visible:bg-[hsl(var(--deck-surface))] focus-visible:text-[hsl(var(--deck-ink))] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-35"
+            >
+              <Archive className="h-3 w-3" aria-hidden />
+              {t('session.action.archiveShort')}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              aria-label={t('session.action.export', { title })}
+              disabled={isExporting}
+              onClick={(event) => {
+                event.stopPropagation();
+                onExport();
+                setActionsOpen(false);
+              }}
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left font-mono text-[11px] text-[hsl(var(--deck-ink-muted))] transition-colors hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))] focus-visible:bg-[hsl(var(--deck-surface))] focus-visible:text-[hsl(var(--deck-ink))] focus-visible:outline-none disabled:cursor-wait disabled:opacity-45"
+            >
+              {isExporting ? (
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+              ) : (
+                <Download className="h-3 w-3" aria-hidden />
+              )}
+              {t(
+                isExporting
+                  ? 'session.action.exportingShort'
+                  : 'session.action.exportShort'
+              )}
             </button>
             <button
               type="button"

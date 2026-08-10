@@ -1,4 +1,4 @@
-import type { SessionRef } from '@api/schemas';
+import type { McpElicitationDetails, SessionRef } from '@api/schemas';
 import type { StateCreator } from 'zustand';
 import type {
   Message as BaseMessage,
@@ -91,6 +91,9 @@ export interface ToolCallInfo {
   toolKind?: string;
   status: 'running' | 'success' | 'error';
   summary?: string;
+  progress?: number;
+  progressTotal?: number;
+  progressMessage?: string;
   output?: string;
   startTime: number;
   metadata?: Record<string, unknown>;
@@ -122,8 +125,10 @@ export interface AgentResponseContent {
   thinkingContent: string;
   tasks: TaskItem[];
   subagent: SubagentProgress | null;
+  subagents?: SubagentProgress[];
   confirmation: ConfirmationInfo | null;
   question: QuestionInfo | null;
+  elicitation?: ElicitationInfo | null;
 }
 
 export interface ConfirmationInfo {
@@ -131,6 +136,7 @@ export interface ConfirmationInfo {
   toolName: string;
   description: string;
   diff?: string;
+  allowRemember?: boolean;
   status: 'pending' | 'approved' | 'denied';
 }
 
@@ -144,6 +150,12 @@ export interface QuestionInfo {
   }>;
   status: 'pending' | 'answered';
   answers?: Record<string, string | string[]>;
+}
+
+export interface ElicitationInfo {
+  toolCallId: string;
+  details: McpElicitationDetails;
+  status: 'pending' | 'responded' | 'cancelled';
 }
 
 export interface Message extends Omit<BaseMessage, 'metadata'> {
@@ -169,6 +181,7 @@ export interface SessionErrorContext {
 
 export interface SessionSlice {
   sessions: Session[];
+  archivedSessions: Session[];
   currentSessionId: string | null;
   currentSessionRef: SessionRef | null;
   forkingSessionRef: SessionRef | null;
@@ -176,6 +189,8 @@ export interface SessionSlice {
   isLoading: boolean;
   catalogLoadState: CatalogLoadState;
   catalogError: string | null;
+  archivedCatalogLoadState: CatalogLoadState;
+  archivedCatalogError: string | null;
   error: string | null;
   errorContext: SessionErrorContext | null;
   goal: Goal | null;
@@ -192,7 +207,10 @@ export interface SessionSlice {
   clearError: () => void;
   setGoal: (goal: Goal | null) => void;
   loadSessions: () => Promise<void>;
+  loadArchivedSessions: () => Promise<void>;
   selectSession: (ref: SessionRef) => Promise<void>;
+  archiveSession: (ref: SessionRef) => Promise<void>;
+  unarchiveSession: (ref: SessionRef) => Promise<void>;
   deleteSession: (ref: SessionRef) => Promise<void>;
   updateSession: (ref: SessionRef, title: string) => Promise<void>;
   forkSession: (session: Session) => Promise<void>;
@@ -254,7 +272,15 @@ export interface MessageSlice {
   appendThinking: (id: string, delta: string) => void;
   setConfirmation: (id: string, confirmation: ConfirmationInfo | null) => void;
   setQuestion: (id: string, question: QuestionInfo | null) => void;
+  setElicitation: (id: string, elicitation: ElicitationInfo | null) => void;
   setSubagent: (id: string, subagent: SubagentProgress | null) => void;
+  updateSubagent: (
+    id: string,
+    subagentId: string,
+    update:
+      | Partial<SubagentProgress>
+      | ((current: SubagentProgress) => Partial<SubagentProgress>)
+  ) => void;
   setTasks: (id: string, tasks: TaskItem[]) => void;
   replaceTemp: (content: MessageContent, message: Message) => void;
 }

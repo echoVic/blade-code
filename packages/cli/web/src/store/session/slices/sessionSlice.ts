@@ -76,6 +76,7 @@ const waitForCatalogContinuation = (): Promise<void> =>
 export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
   let navigationGeneration = 0;
   let catalogGeneration = 0;
+  let archivedCatalogGeneration = 0;
 
   const beginNavigation = (): number => {
     navigationGeneration += 1;
@@ -95,6 +96,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
 
   return {
     sessions: [],
+    archivedSessions: [],
     currentSessionId: null,
     currentSessionRef: null,
     forkingSessionRef: null,
@@ -102,6 +104,8 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     isLoading: false,
     catalogLoadState: 'idle',
     catalogError: null,
+    archivedCatalogLoadState: 'idle',
+    archivedCatalogError: null,
     error: null,
     errorContext: null,
     goal: null,
@@ -248,6 +252,50 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
       }
     },
 
+    loadArchivedSessions: async () => {
+      const generation = ++archivedCatalogGeneration;
+      set({
+        archivedCatalogLoadState: 'loading',
+        archivedCatalogError: null,
+      });
+      try {
+        let cursor: string | undefined;
+        const archivedSessions: ReturnType<typeof get>['sessions'] = [];
+        do {
+          const page = await sessionService.listSessionPage(cursor, 50, true);
+          if (generation !== archivedCatalogGeneration) return;
+          for (const session of page.sessions) {
+            const index = archivedSessions.findIndex((candidate) =>
+              sameSessionRef(
+                sessionRefFromSession(candidate),
+                sessionRefFromSession(session)
+              )
+            );
+            if (index === -1) archivedSessions.push(session);
+            else archivedSessions[index] = session;
+          }
+          cursor = page.nextCursor;
+          if (cursor) {
+            set({ archivedCatalogLoadState: 'hydrating' });
+            await waitForCatalogContinuation();
+          }
+        } while (cursor);
+
+        if (generation !== archivedCatalogGeneration) return;
+        set({
+          archivedSessions,
+          archivedCatalogLoadState: 'ready',
+          archivedCatalogError: null,
+        });
+      } catch (err) {
+        if (generation !== archivedCatalogGeneration) return;
+        set({
+          archivedCatalogLoadState: 'error',
+          archivedCatalogError: (err as Error).message,
+        });
+      }
+    },
+
     selectSession: async (ref) => {
       const generation = beginNavigation();
       set({
@@ -334,6 +382,73 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           error: (err as Error).message,
           errorContext: { kind: 'navigation', sessionRef: ref },
           isLoading: false,
+        });
+      }
+    },
+
+    archiveSession: async (ref) => {
+      try {
+        const result = await sessionService.archiveSession(ref);
+        const archivedIds = new Set(result.archivedSessionIds);
+        const state = get();
+        const archivesCurrent =
+          state.currentSessionRef?.projectPath === ref.projectPath &&
+          archivedIds.has(state.currentSessionRef.sessionId);
+        if (archivesCurrent) {
+          beginNavigation();
+          state.unsubscribeFromEvents();
+        }
+        set((currentState) => {
+          const sessions = currentState.sessions.filter(
+            (session) =>
+              session.projectPath !== ref.projectPath ||
+              !archivedIds.has(session.sessionId)
+          );
+          const unreadTaskKeys = pruneUnreadTaskKeys(
+            currentState.unreadTaskKeys,
+            sessions
+          );
+          persistUnreadTaskKeys(unreadTaskKeys);
+          return {
+            sessions,
+            archivedSessions: upsertSessionByRef(
+              currentState.archivedSessions,
+              result.session
+            ),
+            unreadTaskKeys,
+            currentSessionId: archivesCurrent ? null : currentState.currentSessionId,
+            currentSessionRef: archivesCurrent ? null : currentState.currentSessionRef,
+            messages: archivesCurrent ? [] : currentState.messages,
+            goal: archivesCurrent ? null : currentState.goal,
+            ...(archivesCurrent ? resetStreamingState() : {}),
+          };
+        });
+        await get().loadArchivedSessions();
+      } catch (err) {
+        set({
+          error: (err as Error).message,
+          errorContext: { kind: 'task_action', sessionRef: ref },
+        });
+      }
+    },
+
+    unarchiveSession: async (ref) => {
+      try {
+        const result = await sessionService.unarchiveSession(ref);
+        const restoredIds = new Set(result.restoredSessionIds);
+        set((state) => ({
+          archivedSessions: state.archivedSessions.filter(
+            (session) =>
+              session.projectPath !== ref.projectPath ||
+              !restoredIds.has(session.sessionId)
+          ),
+          sessions: upsertSessionByRef(state.sessions, result.session),
+        }));
+        await Promise.all([get().loadSessions(), get().loadArchivedSessions()]);
+      } catch (err) {
+        set({
+          error: (err as Error).message,
+          errorContext: { kind: 'task_action', sessionRef: ref },
         });
       }
     },
@@ -566,6 +681,44 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
 
         if (!isCurrentSend()) return false;
         const trimmedInput = payload.content.trim();
+        if (trimmedInput.startsWith('!')) {
+          if ((payload.attachments?.length ?? 0) > 0) {
+            throw new Error(
+              'User shell commands do not accept image attachments'
+            );
+          }
+          const command = trimmedInput.slice(1).trim();
+          if (!command) throw new Error('User shell command cannot be empty');
+          if (!isStreaming) {
+            set({
+              isStreaming: true,
+              agentPhase: 'running',
+              error: null,
+              errorContext: null,
+            });
+          }
+          const response = await sessionService.executeUserShellCommand(
+            sessionRef,
+            command
+          );
+          if (!isCurrentSend()) return false;
+          if (!response.auxiliary) {
+            set({
+              isStreaming: false,
+              agentPhase: 'idle',
+            });
+          }
+          if (response.delivery) {
+            set({
+              pendingSteeringCount: response.queued ?? 0,
+              pendingInputDelivery:
+                response.delivery === 'current_turn'
+                  ? 'current_turn'
+                  : 'next_turn',
+            });
+          }
+          return true;
+        }
         if (
           (payload.attachments?.length ?? 0) === 0 &&
           (trimmedInput === '/goal' || trimmedInput.startsWith('/goal '))
@@ -666,6 +819,10 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         const { currentMode, currentModelId } = useConfigStore.getState();
         const { modelId: payloadModelId, ...payloadWithoutModel } = payload;
         const selectedModelId = payloadModelId ?? currentModelId ?? undefined;
+        const selectedReasoningEffort = payload.reasoningEffort;
+        const selectedServiceTier = payload.serviceTier;
+        const selectedResponseVerbosity = payload.responseVerbosity;
+        const selectedCommunicationStyle = payload.communicationStyle;
         const requestPayload =
           selectedModelId && !isStreaming
             ? { ...payloadWithoutModel, modelId: selectedModelId }
@@ -690,11 +847,31 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
                 ? 'next_turn'
                 : get().pendingInputDelivery,
           sessions:
-            selectedModelId && !isStreaming
+            (selectedModelId ||
+              selectedReasoningEffort ||
+              selectedServiceTier ||
+              selectedResponseVerbosity ||
+              selectedCommunicationStyle) &&
+            !isStreaming
               ? get().sessions.map((session) =>
                   session.sessionId === sessionRef.sessionId &&
                   session.projectPath === sessionRef.projectPath
-                    ? { ...session, selectedModelId }
+                    ? {
+                        ...session,
+                        ...(selectedModelId ? { selectedModelId } : {}),
+                        ...(selectedReasoningEffort
+                          ? { reasoningEffort: selectedReasoningEffort }
+                          : {}),
+                        ...(selectedServiceTier
+                          ? { serviceTier: selectedServiceTier }
+                          : {}),
+                        ...(selectedResponseVerbosity
+                          ? { responseVerbosity: selectedResponseVerbosity }
+                          : {}),
+                        ...(selectedCommunicationStyle
+                          ? { communicationStyle: selectedCommunicationStyle }
+                          : {}),
+                      }
                     : session
                 )
               : get().sessions,

@@ -518,7 +518,9 @@ export function TaskSwitcher() {
                             {t(
                               session.pendingInteraction.type === 'question'
                                 ? 'interaction.badge.question'
-                                : 'interaction.badge.permission'
+                                : session.pendingInteraction.type === 'elicitation'
+                                  ? 'interaction.badge.elicitation'
+                                  : 'interaction.badge.permission'
                             )}
                           </span>
                         )}
@@ -556,7 +558,9 @@ export function TaskSwitcher() {
                               ? t(
                                   session.pendingInteraction.type === 'question'
                                     ? 'interaction.badge.question'
-                                    : 'interaction.badge.permission'
+                                    : session.pendingInteraction.type === 'elicitation'
+                                      ? 'interaction.badge.elicitation'
+                                      : 'interaction.badge.permission'
                                 )
                               : t(STATUS_LABELS[session.taskStatus])}
                         </span>

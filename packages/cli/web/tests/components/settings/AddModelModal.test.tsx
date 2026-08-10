@@ -24,17 +24,38 @@ describe('AddModelModal', () => {
                 modelCount: 2,
                 supportsApiKey: true,
                 configured: false,
+                custom: false,
+              },
+              {
+                id: 'openai-compatible',
+                name: 'Custom OpenAI Endpoint',
+                modelCount: 0,
+                supportsApiKey: true,
+                configured: false,
+                custom: false,
+                factoryWireApi: 'openai-completions',
+              },
+              {
+                id: 'anthropic-compatible',
+                name: 'Custom Anthropic Endpoint',
+                modelCount: 0,
+                supportsApiKey: true,
+                configured: false,
+                custom: false,
+                factoryWireApi: 'anthropic-messages',
               },
             ]
-          : [
-              {
-                id: 'deepseek-v4-pro',
-                name: 'DeepSeek V4 Pro',
-                contextWindow: 128000,
-                reasoning: true,
-                input: ['text'],
-              },
-            ];
+          : url.includes('/providers/openai-compatible/')
+            ? []
+            : [
+                {
+                  id: 'deepseek-v4-pro',
+                  name: 'DeepSeek V4 Pro',
+                  contextWindow: 128000,
+                  reasoning: true,
+                  input: ['text'],
+                },
+              ];
       return Promise.resolve({ ok: true, json: async () => data } as Response);
     }) as typeof fetch;
   });
@@ -84,6 +105,121 @@ describe('AddModelModal', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  test('creates an isolated OpenAI-compatible provider channel', async () => {
+    const onSave = vi.fn().mockResolvedValue(true);
+    const onOpenChange = vi.fn();
+    await act(async () => {
+      root.render(
+        <AddModelModal
+          open
+          onOpenChange={onOpenChange}
+          onSave={onSave}
+          saveError={null}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await selectOption('Provider', 'openai-compatible');
+    const channelId = document.querySelector(
+      '[aria-label="Channel ID"]'
+    ) as HTMLInputElement;
+    const channelName = document.querySelector(
+      '[aria-label="Channel name"]'
+    ) as HTMLInputElement;
+    const modelId = document.querySelector(
+      '[aria-label="Model ID"]'
+    ) as HTMLInputElement;
+    const baseUrl = document.querySelector(
+      '[aria-label="Base URL"]'
+    ) as HTMLInputElement;
+    const apiKey = document.querySelector(
+      'input[placeholder="Stored separately in auth.json"]'
+    ) as HTMLInputElement;
+    expect(modelId).toBeTruthy();
+    expect(baseUrl).toBeTruthy();
+    expect(document.querySelector('[aria-label="Model"]')).toBeNull();
+
+    await setInput(channelId, 'Invalid Channel');
+    await setInput(channelName, 'Team Gateway');
+    await setInput(modelId, 'vendor-model-2026');
+    await setInput(baseUrl, 'https://gateway.example.test/v1');
+    await setInput(apiKey, 'test-key');
+    await click('Save Model');
+    expect(onSave).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      'Channel ID must start'
+    );
+
+    await setInput(channelId, 'team-gateway');
+    await setInput(baseUrl, 'not-a-url');
+    await click('Save Model');
+    expect(onSave).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      'absolute HTTP(S) URL'
+    );
+
+    await setInput(baseUrl, 'https://gateway.example.test/v1');
+    await click('Save Model');
+
+    expect(onSave).toHaveBeenCalledWith({
+      provider: 'team-gateway',
+      model: 'vendor-model-2026',
+      displayName: 'vendor-model-2026',
+      apiKey: 'test-key',
+      modelProvider: {
+        id: 'team-gateway',
+        name: 'Team Gateway',
+        baseUrl: 'https://gateway.example.test/v1',
+        wireApi: 'openai-completions',
+      },
+    });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  test('creates an Anthropic Messages channel without appending model paths', async () => {
+    const onSave = vi.fn().mockResolvedValue(true);
+    await act(async () => {
+      root.render(
+        <AddModelModal open onOpenChange={vi.fn()} onSave={onSave} saveError={null} />
+      );
+      await Promise.resolve();
+    });
+
+    await selectOption('Provider', 'anthropic-compatible');
+    await setInput(
+      document.querySelector('[aria-label="Channel ID"]') as HTMLInputElement,
+      'claude-gateway'
+    );
+    await setInput(
+      document.querySelector('[aria-label="Base URL"]') as HTMLInputElement,
+      'https://gateway.example.test/v1'
+    );
+    await setInput(
+      document.querySelector('[aria-label="Model ID"]') as HTMLInputElement,
+      'claude-opus-4-8'
+    );
+    await setInput(
+      document.querySelector(
+        'input[placeholder="Stored separately in auth.json"]'
+      ) as HTMLInputElement,
+      'test-key'
+    );
+    await click('Save Model');
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'claude-gateway',
+        modelProvider: {
+          id: 'claude-gateway',
+          name: 'claude-gateway',
+          baseUrl: 'https://gateway.example.test/v1',
+          wireApi: 'anthropic-messages',
+        },
+      })
+    );
+  });
+
   test('resets stale provider state when reopened', async () => {
     const props = {
       onOpenChange: vi.fn(),
@@ -114,6 +250,34 @@ describe('AddModelModal', () => {
     expect(
       document.querySelector('input[placeholder="Stored separately in auth.json"]')
     ).toBeNull();
+  });
+
+  test('consumes Escape inside the dialog before the Settings panel', async () => {
+    const onOpenChange = vi.fn();
+    await act(async () => {
+      root.render(
+        <AddModelModal
+          open
+          onOpenChange={onOpenChange}
+          onSave={vi.fn().mockResolvedValue(true)}
+          saveError={null}
+        />
+      );
+      await Promise.resolve();
+    });
+    const provider = document.querySelector('[aria-label="Provider"]');
+
+    await act(async () => {
+      provider?.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+    });
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   async function click(text: string) {

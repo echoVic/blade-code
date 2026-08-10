@@ -45,6 +45,34 @@ const TASK_STATUSES = new Set<Session['taskStatus']>([
   'cancelled',
   'interrupted',
 ]);
+const REASONING_EFFORTS = new Set<NonNullable<Session['reasoningEffort']>>([
+  'auto',
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+]);
+const SERVICE_TIERS = new Set<NonNullable<Session['serviceTier']>>([
+  'auto',
+  'standard',
+  'fast',
+  'flex',
+]);
+const RESPONSE_VERBOSITIES = new Set<NonNullable<Session['responseVerbosity']>>([
+  'auto',
+  'low',
+  'medium',
+  'high',
+]);
+const COMMUNICATION_STYLES = new Set<NonNullable<Session['communicationStyle']>>([
+  'auto',
+  'pragmatic',
+  'friendly',
+  'explanatory',
+]);
 
 function isTaskStatus(value: unknown): value is Session['taskStatus'] {
   return typeof value === 'string' && TASK_STATUSES.has(value as Session['taskStatus']);
@@ -198,6 +226,29 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
         get().removeSession(ref);
         return;
       }
+      if (event.type === 'session.archived') {
+        const sessionId = event.properties.sessionId;
+        const projectPath = event.properties.projectPath;
+        if (typeof sessionId !== 'string' || typeof projectPath !== 'string') {
+          return;
+        }
+        const ref = { sessionId, projectPath };
+        invalidateExactSessionSync(ref);
+        get().removeSession(ref);
+        void get().loadArchivedSessions();
+        return;
+      }
+      if (event.type === 'session.unarchived') {
+        const sessionId = event.properties.sessionId;
+        const projectPath = event.properties.projectPath;
+        if (typeof sessionId !== 'string' || typeof projectPath !== 'string') {
+          return;
+        }
+        const ref = { sessionId, projectPath };
+        syncExactSession(ref);
+        void get().loadArchivedSessions();
+        return;
+      }
       // Session metadata updates (e.g. auto-derived titles) patch the matching
       // session in place so the sidebar reflects renames without a full reload.
       if (event.type === 'session.updated') {
@@ -205,12 +256,26 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
         const projectPath = event.properties.projectPath;
         const title = event.properties.title;
         const selectedModelId = event.properties.selectedModelId;
+        const reasoningEffort = event.properties.reasoningEffort;
+        const serviceTier = event.properties.serviceTier;
+        const responseVerbosity = event.properties.responseVerbosity;
+        const communicationStyle = event.properties.communicationStyle;
         if (
           typeof sessionId !== 'string' ||
           typeof projectPath !== 'string' ||
           !(
             (typeof title === 'string' && title.trim()) ||
-            (typeof selectedModelId === 'string' && selectedModelId.trim())
+            (typeof selectedModelId === 'string' && selectedModelId.trim()) ||
+            REASONING_EFFORTS.has(
+              reasoningEffort as NonNullable<Session['reasoningEffort']>
+            ) ||
+            SERVICE_TIERS.has(serviceTier as NonNullable<Session['serviceTier']>) ||
+            RESPONSE_VERBOSITIES.has(
+              responseVerbosity as NonNullable<Session['responseVerbosity']>
+            ) ||
+            COMMUNICATION_STYLES.has(
+              communicationStyle as NonNullable<Session['communicationStyle']>
+            )
           )
         ) {
           return;
@@ -234,6 +299,40 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
                   ...(typeof title === 'string' && title.trim() ? { title } : {}),
                   ...(typeof selectedModelId === 'string' && selectedModelId.trim()
                     ? { selectedModelId }
+                    : {}),
+                  ...(REASONING_EFFORTS.has(
+                    reasoningEffort as NonNullable<Session['reasoningEffort']>
+                  )
+                    ? {
+                        reasoningEffort: reasoningEffort as NonNullable<
+                          Session['reasoningEffort']
+                        >,
+                      }
+                    : {}),
+                  ...(SERVICE_TIERS.has(
+                    serviceTier as NonNullable<Session['serviceTier']>
+                  )
+                    ? {
+                        serviceTier: serviceTier as NonNullable<Session['serviceTier']>,
+                      }
+                    : {}),
+                  ...(RESPONSE_VERBOSITIES.has(
+                    responseVerbosity as NonNullable<Session['responseVerbosity']>
+                  )
+                    ? {
+                        responseVerbosity: responseVerbosity as NonNullable<
+                          Session['responseVerbosity']
+                        >,
+                      }
+                    : {}),
+                  ...(COMMUNICATION_STYLES.has(
+                    communicationStyle as NonNullable<Session['communicationStyle']>
+                  )
+                    ? {
+                        communicationStyle: communicationStyle as NonNullable<
+                          Session['communicationStyle']
+                        >,
+                      }
                     : {}),
                 }
               : session
@@ -284,7 +383,9 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
         if (
           typeof sessionId !== 'string' ||
           typeof projectPath !== 'string' ||
-          (interactionType !== 'permission' && interactionType !== 'question') ||
+          (interactionType !== 'permission' &&
+            interactionType !== 'question' &&
+            interactionType !== 'elicitation') ||
           typeof requestId !== 'string' ||
           !requestId
         ) {
@@ -326,7 +427,9 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
               title: `Blade · ${t(
                 interactionType === 'question'
                   ? 'attention.notification.question'
-                  : 'attention.notification.permission'
+                  : interactionType === 'elicitation'
+                    ? 'attention.notification.elicitation'
+                    : 'attention.notification.permission'
               )}`,
               body: displayTitle,
               onOpen: (notificationRef) => {

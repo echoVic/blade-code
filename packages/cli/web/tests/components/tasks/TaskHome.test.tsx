@@ -74,6 +74,7 @@ describe('TaskHome', () => {
       ],
       isLoading: false,
       hasLoaded: true,
+      loadedWorkspacePath: '/workspace/blade',
       error: null,
       loadModels,
     });
@@ -122,6 +123,10 @@ describe('TaskHome', () => {
       isolation: 'local',
       permissionMode: 'default',
       modelId: 'model-1',
+      reasoningEffort: 'off',
+      serviceTier: 'auto',
+      responseVerbosity: 'auto',
+      communicationStyle: 'auto',
       attachments: [],
     });
   });

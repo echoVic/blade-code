@@ -177,4 +177,36 @@ describe('ConfirmationPrompt', () => {
       reason: '用户拒绝进入 Plan 模式',
     });
   });
+
+  it('MCP Sampling 只允许逐次批准，不展示持久授权选项', async () => {
+    const { ConfirmationPrompt } = await import(
+      '../../../../src/ui/components/ConfirmationPrompt.js'
+    );
+    const onResponse = vi.fn();
+    const html = renderToStaticMarkup(
+      React.createElement(ConfirmationPrompt, {
+        details: {
+          type: 'mcpSampling',
+          title: 'MCP model sampling request',
+          message: 'May consume up to 128 output tokens.',
+          details: 'User: Return the release marker.',
+        },
+        onResponse,
+      })
+    );
+
+    expect(html).toContain('User: Return the release marker.');
+    expect(html).toContain('[Y] 允许本次 Sampling');
+    expect(html).toContain('Y/N 快捷键');
+    expect(html).not.toContain('允许（本次会话）');
+    expect(html).not.toContain('允许并记住');
+
+    inputHandler?.('s', { ctrl: false, meta: false, escape: false });
+    expect(onResponse).not.toHaveBeenCalled();
+    inputHandler?.('y', { ctrl: false, meta: false, escape: false });
+    expect(onResponse).toHaveBeenCalledWith({
+      approved: true,
+      scope: 'once',
+    });
+  });
 });

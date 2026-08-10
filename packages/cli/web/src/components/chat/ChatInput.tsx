@@ -1,3 +1,25 @@
+import {
+  MAX_INLINE_ATTACHMENT_BYTES,
+  MAX_INLINE_ATTACHMENT_COUNT,
+} from '@api/attachmentLimits';
+import type {
+  CommunicationStyle,
+  CommunicationStyleSummary,
+  ReasoningEffort,
+  ResponseVerbosity,
+  ServiceTier,
+} from '@api/schemas';
+import {
+  AlertCircle,
+  ChevronDown,
+  Info,
+  Loader2,
+  Paperclip,
+  Send,
+  Square,
+  X,
+} from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Textarea } from '@/components/ui/textarea';
@@ -15,27 +37,13 @@ import {
   inlineImageBytes,
   validateImageAttachmentBatch,
 } from '@/lib/imageAttachments';
+import { useAppStore } from '@/store/AppStore';
 import {
   type PermissionMode,
   PermissionModeEnum,
   useConfigStore,
 } from '@/store/ConfigStore';
 import { useSessionStore } from '@/store/session';
-import {
-  MAX_INLINE_ATTACHMENT_BYTES,
-  MAX_INLINE_ATTACHMENT_COUNT,
-} from '@api/attachmentLimits';
-import {
-  AlertCircle,
-  ChevronDown,
-  Info,
-  Loader2,
-  Paperclip,
-  Send,
-  Square,
-  X,
-} from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
 import { SuggestionPopover } from './SuggestionPopover';
 
 export interface ComposerImageAttachment {
@@ -49,6 +57,10 @@ interface ChatInputProps {
   onSend: (payload: {
     content: string;
     modelId?: string;
+    reasoningEffort?: ReasoningEffort;
+    serviceTier?: ServiceTier;
+    responseVerbosity?: ResponseVerbosity;
+    communicationStyle?: CommunicationStyle;
     attachments: ComposerImageAttachment[];
   }) => boolean | void | Promise<boolean | void>;
   onAbort?: () => void | Promise<unknown>;
@@ -72,6 +84,35 @@ const MODES: { value: PermissionMode; labelKey: TranslationKey }[] = [
   { value: PermissionModeEnum.DEFAULT, labelKey: 'chat.input.mode.default' },
   { value: PermissionModeEnum.AUTO_EDIT, labelKey: 'chat.input.mode.autoEdit' },
   { value: PermissionModeEnum.PLAN, labelKey: 'chat.input.mode.plan' },
+];
+const DEFAULT_REASONING_EFFORTS: ReasoningEffort[] = ['off'];
+const DEFAULT_SERVICE_TIERS: ServiceTier[] = ['standard'];
+const DEFAULT_RESPONSE_VERBOSITIES: ResponseVerbosity[] = [];
+const DEFAULT_COMMUNICATION_STYLES: CommunicationStyleSummary[] = [
+  {
+    id: 'auto',
+    name: 'Auto',
+    description: 'Use the Blade default communication style',
+    source: 'built-in',
+  },
+  {
+    id: 'pragmatic',
+    name: 'Pragmatic',
+    description: 'Direct, factual, concise, and action-oriented',
+    source: 'built-in',
+  },
+  {
+    id: 'friendly',
+    name: 'Friendly',
+    description: 'Warm, collaborative, and task-focused',
+    source: 'built-in',
+  },
+  {
+    id: 'explanatory',
+    name: 'Explanatory',
+    description: 'Explain codebase-specific choices and tradeoffs',
+    source: 'built-in',
+  },
 ];
 
 function formatAttachmentBytes(bytes: number): string {
@@ -109,6 +150,10 @@ export function ChatInput({
   const attachmentsRef = useRef(attachments);
   const [cursorPosition, setCursorPosition] = useState<number | undefined>(undefined);
   const [modelOpen, setModelOpen] = useState(false);
+  const [effortOpen, setEffortOpen] = useState(false);
+  const [serviceTierOpen, setServiceTierOpen] = useState(false);
+  const [responseVerbosityOpen, setResponseVerbosityOpen] = useState(false);
+  const [communicationStyleOpen, setCommunicationStyleOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
@@ -122,11 +167,13 @@ export function ChatInput({
     currentModelId,
     configuredModels,
     hasLoaded: modelsLoaded,
+    loadedWorkspacePath,
     loadModels,
     setCurrentModel,
     currentMode,
     setMode,
   } = useConfigStore();
+  const isSettingsOpen = useAppStore((state) => state.isSettingsOpen);
   const setMaxContextTokens = useSessionStore((state) => state.setMaxContextTokens);
   const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
   const persistedSessionModelId = useSessionStore(
@@ -137,7 +184,47 @@ export function ChatInput({
           session.projectPath === currentSessionRef?.projectPath
       )?.selectedModelId
   );
+  const persistedReasoningEffort = useSessionStore(
+    (state) =>
+      state.sessions.find(
+        (session) =>
+          session.sessionId === currentSessionRef?.sessionId &&
+          session.projectPath === currentSessionRef?.projectPath
+      )?.reasoningEffort
+  );
+  const persistedServiceTier = useSessionStore(
+    (state) =>
+      state.sessions.find(
+        (session) =>
+          session.sessionId === currentSessionRef?.sessionId &&
+          session.projectPath === currentSessionRef?.projectPath
+      )?.serviceTier
+  );
+  const persistedResponseVerbosity = useSessionStore(
+    (state) =>
+      state.sessions.find(
+        (session) =>
+          session.sessionId === currentSessionRef?.sessionId &&
+          session.projectPath === currentSessionRef?.projectPath
+      )?.responseVerbosity
+  );
+  const persistedCommunicationStyle = useSessionStore(
+    (state) =>
+      state.sessions.find(
+        (session) =>
+          session.sessionId === currentSessionRef?.sessionId &&
+          session.projectPath === currentSessionRef?.projectPath
+      )?.communicationStyle
+  );
   const [sessionModelOverride, setSessionModelOverride] = useState<string | null>(null);
+  const [sessionReasoningOverride, setSessionReasoningOverride] =
+    useState<ReasoningEffort | null>(null);
+  const [sessionServiceTierOverride, setSessionServiceTierOverride] =
+    useState<ServiceTier | null>(null);
+  const [sessionResponseVerbosityOverride, setSessionResponseVerbosityOverride] =
+    useState<ResponseVerbosity | null>(null);
+  const [sessionCommunicationStyleOverride, setSessionCommunicationStyleOverride] =
+    useState<CommunicationStyle | null>(null);
   const persistedModelAvailable = configuredModels.some(
     (model) => model.id === persistedSessionModelId
   );
@@ -146,6 +233,34 @@ export function ChatInput({
       (persistedModelAvailable ? persistedSessionModelId : currentModelId))
     : currentModelId;
   const currentModelInfo = configuredModels.find((m) => m.id === effectiveModelId);
+  const supportedReasoningEfforts =
+    currentModelInfo?.supportedReasoningEfforts ?? DEFAULT_REASONING_EFFORTS;
+  const reasoningEffortOptions: ReasoningEffort[] = [
+    'auto',
+    ...supportedReasoningEfforts,
+  ];
+  const effectiveReasoningEffort =
+    sessionReasoningOverride ?? persistedReasoningEffort ?? 'off';
+  const supportedServiceTiers =
+    currentModelInfo?.supportedServiceTiers ?? DEFAULT_SERVICE_TIERS;
+  const serviceTierOptions: ServiceTier[] = ['auto', ...supportedServiceTiers];
+  const effectiveServiceTier =
+    sessionServiceTierOverride ?? persistedServiceTier ?? 'auto';
+  const supportedResponseVerbosities =
+    currentModelInfo?.supportedResponseVerbosities ?? DEFAULT_RESPONSE_VERBOSITIES;
+  const responseVerbosityOptions: ResponseVerbosity[] = [
+    'auto',
+    ...supportedResponseVerbosities,
+  ];
+  const effectiveResponseVerbosity =
+    sessionResponseVerbosityOverride ?? persistedResponseVerbosity ?? 'auto';
+  const effectiveCommunicationStyle =
+    sessionCommunicationStyleOverride ?? persistedCommunicationStyle ?? 'auto';
+  const communicationStyleOptions =
+    currentModelInfo?.communicationStyles ?? DEFAULT_COMMUNICATION_STYLES;
+  const communicationStyleName =
+    communicationStyleOptions.find((style) => style.id === effectiveCommunicationStyle)
+      ?.name ?? effectiveCommunicationStyle;
   const displayModelName =
     currentModelInfo?.displayName ||
     currentModelInfo?.model ||
@@ -169,12 +284,58 @@ export function ChatInput({
   const showAnySuggestions = showSlashSuggestions || showAtSuggestions;
 
   useEffect(() => {
-    if (!modelsLoaded) void loadModels();
-  }, [loadModels, modelsLoaded]);
+    if (
+      !isSettingsOpen &&
+      (!modelsLoaded || loadedWorkspacePath !== (workspacePath ?? null))
+    ) {
+      void loadModels(workspacePath ?? undefined);
+    }
+  }, [isSettingsOpen, loadModels, loadedWorkspacePath, modelsLoaded, workspacePath]);
 
   useEffect(() => {
-    if (isStreaming) setModelOpen(false);
+    if (isStreaming) {
+      setModelOpen(false);
+      setEffortOpen(false);
+      setServiceTierOpen(false);
+      setResponseVerbosityOpen(false);
+      setCommunicationStyleOpen(false);
+    }
   }, [isStreaming]);
+
+  useEffect(() => {
+    setSessionModelOverride(null);
+    setSessionReasoningOverride(null);
+    setSessionServiceTierOverride(null);
+    setSessionResponseVerbosityOverride(null);
+    setSessionCommunicationStyleOverride(null);
+  }, [currentSessionRef?.projectPath, currentSessionRef?.sessionId]);
+
+  useEffect(() => {
+    if (
+      effectiveReasoningEffort !== 'auto' &&
+      !supportedReasoningEfforts.includes(effectiveReasoningEffort)
+    ) {
+      setSessionReasoningOverride('auto');
+    }
+  }, [effectiveReasoningEffort, supportedReasoningEfforts]);
+
+  useEffect(() => {
+    if (
+      effectiveServiceTier !== 'auto' &&
+      !supportedServiceTiers.includes(effectiveServiceTier)
+    ) {
+      setSessionServiceTierOverride('auto');
+    }
+  }, [effectiveServiceTier, supportedServiceTiers]);
+
+  useEffect(() => {
+    if (
+      effectiveResponseVerbosity !== 'auto' &&
+      !supportedResponseVerbosities.includes(effectiveResponseVerbosity)
+    ) {
+      setSessionResponseVerbosityOverride('auto');
+    }
+  }, [effectiveResponseVerbosity, supportedResponseVerbosities]);
 
   useEffect(() => {
     setAttachmentNotice(null);
@@ -242,6 +403,10 @@ export function ChatInput({
       const accepted = await onSend({
         content: input,
         modelId: effectiveModelId ?? undefined,
+        reasoningEffort: effectiveReasoningEffort,
+        serviceTier: effectiveServiceTier,
+        responseVerbosity: effectiveResponseVerbosity,
+        communicationStyle: effectiveCommunicationStyle,
         attachments,
       });
       if (accepted === false) return;
@@ -267,6 +432,10 @@ export function ChatInput({
     input,
     disabled,
     effectiveModelId,
+    effectiveReasoningEffort,
+    effectiveResponseVerbosity,
+    effectiveCommunicationStyle,
+    effectiveServiceTier,
     submitDisabled,
     onSend,
     inputHistory,
@@ -691,7 +860,9 @@ export function ChatInput({
                 : t('chat.input.placeholder.default'))
             }
             className={`flex-1 w-full resize-none border-0 bg-transparent px-4 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none text-[#111827] dark:text-zinc-300 placeholder:text-[#9CA3AF] dark:placeholder:text-zinc-600 ${
-              variant === 'task' ? 'min-h-[84px] py-4 text-[15px]' : 'py-2.5 text-[14px]'
+              variant === 'task'
+                ? 'min-h-[84px] py-4 text-[15px]'
+                : 'py-2.5 text-[14px]'
             }`}
             disabled={disabled || isSubmitting}
             aria-busy={isSubmitting}
@@ -897,7 +1068,10 @@ export function ChatInput({
                                   setModelOpen(false);
                                   return;
                                 }
-                                void setCurrentModel(model.id)
+                                void setCurrentModel(
+                                  model.id,
+                                  workspacePath ?? undefined
+                                )
                                   .then(() => setModelOpen(false))
                                   .catch(() => undefined);
                               }}
@@ -917,6 +1091,254 @@ export function ChatInput({
                         </div>
                       ))
                     )}
+                  </div>
+                </PopoverContent>
+              </Popover>
+
+              <Popover
+                open={effortOpen}
+                onOpenChange={(open) => {
+                  if (!isStreaming && !isSubmitting) setEffortOpen(open);
+                }}
+              >
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    disabled={isStreaming || isSubmitting}
+                    aria-label={t('chat.input.effort.change')}
+                    title={
+                      isStreaming
+                        ? t('chat.input.effort.locked')
+                        : t('chat.input.effort.change')
+                    }
+                    className="flex cursor-pointer items-center gap-1 rounded px-2 py-1 font-mono text-[11px] text-[#6B7280] transition-colors hover:bg-[#E5E7EB] hover:text-[#111827] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] disabled:cursor-not-allowed disabled:opacity-55 dark:text-zinc-500 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-200"
+                  >
+                    {t('chat.input.effort.label', {
+                      effort: effectiveReasoningEffort,
+                    })}
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-52 border border-[#E5E7EB] bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900"
+                  align="start"
+                >
+                  <div className="px-2 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-[#9CA3AF] dark:text-zinc-600">
+                    {t('chat.input.effort.heading')}
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    {reasoningEffortOptions.map((effort) => (
+                      <button
+                        key={effort}
+                        type="button"
+                        aria-label={t('chat.input.effort.option', { effort })}
+                        onClick={() => {
+                          setSessionReasoningOverride(effort);
+                          setEffortOpen(false);
+                        }}
+                        className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-[#E5E7EB] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] dark:hover:bg-zinc-800 ${
+                          effectiveReasoningEffort === effort
+                            ? 'bg-[#E5E7EB] text-[#111827] dark:bg-zinc-800 dark:text-zinc-100'
+                            : 'text-[#6B7280] dark:text-zinc-400'
+                        }`}
+                      >
+                        <span className="capitalize">{effort}</span>
+                        {effort === 'auto' && (
+                          <span className="text-[9px] text-[#9CA3AF] dark:text-zinc-600">
+                            {t('chat.input.effort.autoHint')}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
+
+              <Popover
+                open={serviceTierOpen}
+                onOpenChange={(open) => {
+                  if (!isStreaming && !isSubmitting) setServiceTierOpen(open);
+                }}
+              >
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    disabled={isStreaming || isSubmitting}
+                    aria-label={t('chat.input.serviceTier.change')}
+                    title={
+                      isStreaming
+                        ? t('chat.input.serviceTier.locked')
+                        : t('chat.input.serviceTier.change')
+                    }
+                    className="flex cursor-pointer items-center gap-1 rounded px-2 py-1 font-mono text-[11px] text-[#6B7280] transition-colors hover:bg-[#E5E7EB] hover:text-[#111827] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] disabled:cursor-not-allowed disabled:opacity-55 dark:text-zinc-500 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-200"
+                  >
+                    {t('chat.input.serviceTier.label', {
+                      tier: effectiveServiceTier,
+                    })}
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-52 border border-[#E5E7EB] bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900"
+                  align="start"
+                >
+                  <div className="px-2 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-[#9CA3AF] dark:text-zinc-600">
+                    {t('chat.input.serviceTier.heading')}
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    {serviceTierOptions.map((tier) => (
+                      <button
+                        key={tier}
+                        type="button"
+                        aria-label={t('chat.input.serviceTier.option', { tier })}
+                        onClick={() => {
+                          setSessionServiceTierOverride(tier);
+                          setServiceTierOpen(false);
+                        }}
+                        className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-[#E5E7EB] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] dark:hover:bg-zinc-800 ${
+                          effectiveServiceTier === tier
+                            ? 'bg-[#E5E7EB] text-[#111827] dark:bg-zinc-800 dark:text-zinc-100'
+                            : 'text-[#6B7280] dark:text-zinc-400'
+                        }`}
+                      >
+                        <span className="capitalize">{tier}</span>
+                        {tier === 'fast' && (
+                          <span className="text-[9px] text-[#9CA3AF] dark:text-zinc-600">
+                            {t('chat.input.serviceTier.fastHint')}
+                          </span>
+                        )}
+                        {tier === 'flex' && (
+                          <span className="text-[9px] text-[#9CA3AF] dark:text-zinc-600">
+                            {t('chat.input.serviceTier.flexHint')}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
+
+              <Popover
+                open={responseVerbosityOpen}
+                onOpenChange={(open) => {
+                  if (!isStreaming && !isSubmitting) {
+                    setResponseVerbosityOpen(open);
+                  }
+                }}
+              >
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    disabled={isStreaming || isSubmitting}
+                    aria-label={t('chat.input.responseVerbosity.change')}
+                    title={
+                      isStreaming
+                        ? t('chat.input.responseVerbosity.locked')
+                        : t('chat.input.responseVerbosity.change')
+                    }
+                    className="flex cursor-pointer items-center gap-1 rounded px-2 py-1 font-mono text-[11px] text-[#6B7280] transition-colors hover:bg-[#E5E7EB] hover:text-[#111827] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] disabled:cursor-not-allowed disabled:opacity-55 dark:text-zinc-500 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-200"
+                  >
+                    {t('chat.input.responseVerbosity.label', {
+                      verbosity: effectiveResponseVerbosity,
+                    })}
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-52 border border-[#E5E7EB] bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900"
+                  align="start"
+                >
+                  <div className="px-2 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-[#9CA3AF] dark:text-zinc-600">
+                    {t('chat.input.responseVerbosity.heading')}
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    {responseVerbosityOptions.map((verbosity) => (
+                      <button
+                        key={verbosity}
+                        type="button"
+                        aria-label={t('chat.input.responseVerbosity.option', {
+                          verbosity,
+                        })}
+                        onClick={() => {
+                          setSessionResponseVerbosityOverride(verbosity);
+                          setResponseVerbosityOpen(false);
+                        }}
+                        className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-[#E5E7EB] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] dark:hover:bg-zinc-800 ${
+                          effectiveResponseVerbosity === verbosity
+                            ? 'bg-[#E5E7EB] text-[#111827] dark:bg-zinc-800 dark:text-zinc-100'
+                            : 'text-[#6B7280] dark:text-zinc-400'
+                        }`}
+                      >
+                        <span className="capitalize">{verbosity}</span>
+                        {verbosity === 'auto' && (
+                          <span className="text-[9px] text-[#9CA3AF] dark:text-zinc-600">
+                            {t('chat.input.responseVerbosity.autoHint')}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
+
+              <Popover
+                open={communicationStyleOpen}
+                onOpenChange={(open) => {
+                  if (!isStreaming && !isSubmitting) {
+                    setCommunicationStyleOpen(open);
+                  }
+                }}
+              >
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    disabled={isStreaming || isSubmitting}
+                    aria-label={t('chat.input.communicationStyle.change')}
+                    title={
+                      isStreaming
+                        ? t('chat.input.communicationStyle.locked')
+                        : t('chat.input.communicationStyle.change')
+                    }
+                    className="flex cursor-pointer items-center gap-1 rounded px-2 py-1 font-mono text-[11px] text-[#6B7280] transition-colors hover:bg-[#E5E7EB] hover:text-[#111827] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] disabled:cursor-not-allowed disabled:opacity-55 dark:text-zinc-500 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-200"
+                  >
+                    {t('chat.input.communicationStyle.label', {
+                      style: communicationStyleName,
+                    })}
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-56 border border-[#E5E7EB] bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900"
+                  align="start"
+                >
+                  <div className="px-2 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-[#9CA3AF] dark:text-zinc-600">
+                    {t('chat.input.communicationStyle.heading')}
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    {communicationStyleOptions.map((style) => (
+                      <button
+                        key={style.id}
+                        type="button"
+                        aria-label={t('chat.input.communicationStyle.option', {
+                          style: style.id,
+                        })}
+                        title={style.description}
+                        onClick={() => {
+                          setSessionCommunicationStyleOverride(style.id);
+                          setCommunicationStyleOpen(false);
+                        }}
+                        className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-[#E5E7EB] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] dark:hover:bg-zinc-800 ${
+                          effectiveCommunicationStyle === style.id
+                            ? 'bg-[#E5E7EB] text-[#111827] dark:bg-zinc-800 dark:text-zinc-100'
+                            : 'text-[#6B7280] dark:text-zinc-400'
+                        }`}
+                      >
+                        <span>{style.name}</span>
+                        <span className="text-[9px] text-[#9CA3AF] dark:text-zinc-600">
+                          {style.source}
+                        </span>
+                      </button>
+                    ))}
                   </div>
                 </PopoverContent>
               </Popover>

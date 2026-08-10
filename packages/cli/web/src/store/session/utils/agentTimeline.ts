@@ -1,4 +1,9 @@
-import type { AgentResponseContent, AgentTimelineBlock, ToolCallInfo } from '../types';
+import type {
+  AgentResponseContent,
+  AgentTimelineBlock,
+  SubagentProgress,
+  ToolCallInfo,
+} from '../types';
 
 export function createEmptyAgentContent(): AgentResponseContent {
   return {
@@ -9,9 +14,71 @@ export function createEmptyAgentContent(): AgentResponseContent {
     thinkingContent: '',
     tasks: [],
     subagent: null,
+    subagents: [],
     confirmation: null,
     question: null,
+    elicitation: null,
   };
+}
+
+export function getSubagents(
+  content: AgentResponseContent | undefined
+): SubagentProgress[] {
+  if (!content) return [];
+  if (content.subagents && content.subagents.length > 0) {
+    return content.subagents;
+  }
+  return content.subagent ? [content.subagent] : [];
+}
+
+export function withSubagents(
+  content: AgentResponseContent,
+  subagents: SubagentProgress[],
+  preferredId?: string
+): AgentResponseContent {
+  const preferred =
+    (preferredId
+      ? subagents.find(
+          (subagent) =>
+            subagent.id === preferredId || subagent.sessionId === preferredId
+        )
+      : undefined) ??
+    subagents[subagents.length - 1] ??
+    null;
+  return { ...content, subagents, subagent: preferred };
+}
+
+export function upsertSubagent(
+  content: AgentResponseContent,
+  next: SubagentProgress
+): AgentResponseContent {
+  const subagents = [...getSubagents(content)];
+  let index = subagents.findIndex(
+    (candidate) =>
+      candidate.id === next.id ||
+      Boolean(
+        candidate.sessionId && next.sessionId && candidate.sessionId === next.sessionId
+      )
+  );
+  if (index === -1 && next.sessionId) {
+    index = subagents.findIndex(
+      (candidate) =>
+        !candidate.sessionId &&
+        candidate.status === 'running' &&
+        candidate.type === next.type &&
+        candidate.description === next.description
+    );
+  }
+
+  if (index === -1) {
+    subagents.push(next);
+    return withSubagents(content, subagents, next.id);
+  }
+
+  const existing = subagents[index];
+  const merged = { ...existing, ...next, id: existing.id };
+  subagents[index] = merged;
+  return withSubagents(content, subagents, merged.id);
 }
 
 function nextBlockId(

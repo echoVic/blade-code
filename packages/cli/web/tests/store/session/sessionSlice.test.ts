@@ -11,6 +11,8 @@ vi.mock('../../../src/services', () => ({
     listSessions: vi.fn(),
     listSessionPage: vi.fn(),
     createSession: vi.fn(),
+    archiveSession: vi.fn(),
+    unarchiveSession: vi.fn(),
     deleteSession: vi.fn(),
     updateSession: vi.fn(),
     getSession: vi.fn(),
@@ -173,6 +175,7 @@ describe('sessionSlice multimodal sendMessage', () => {
     useSessionStore.setState((state) => ({
       ...state,
       sessions: [],
+      archivedSessions: [],
       currentSessionId: TEMP_SESSION_ID,
       currentSessionRef: null,
       forkingSessionRef: null,
@@ -180,6 +183,8 @@ describe('sessionSlice multimodal sendMessage', () => {
       isLoading: false,
       catalogLoadState: 'idle',
       catalogError: null,
+      archivedCatalogLoadState: 'idle',
+      archivedCatalogError: null,
       error: null,
       errorContext: null,
       messages: [],
@@ -226,6 +231,9 @@ describe('sessionSlice multimodal sendMessage', () => {
 
     const payload: SendMessagePayload = {
       content: 'describe this image',
+      reasoningEffort: 'high',
+      responseVerbosity: 'high',
+      communicationStyle: 'explanatory',
       attachments: [
         {
           type: 'image',
@@ -254,6 +262,9 @@ describe('sessionSlice multimodal sendMessage', () => {
       expect.objectContaining({
         sessionId: 'session-1',
         selectedModelId: 'vision-model',
+        reasoningEffort: 'high',
+        responseVerbosity: 'high',
+        communicationStyle: 'explanatory',
       }),
     ]);
   });
@@ -1643,6 +1654,118 @@ describe('sessionSlice multimodal sendMessage', () => {
     });
   });
 
+  it('loads archived sessions through an independently paginated catalog', async () => {
+    const archived = createSession({
+      sessionId: 'archived-root',
+      archivedAt: '2026-08-09T00:00:00.000Z',
+      archivedBySessionId: 'archived-root',
+    });
+    vi.mocked(sessionService.listSessionPage).mockResolvedValue({
+      sessions: [archived],
+    });
+
+    await useSessionStore.getState().loadArchivedSessions();
+
+    expect(sessionService.listSessionPage).toHaveBeenCalledWith(undefined, 50, true);
+    expect(useSessionStore.getState()).toMatchObject({
+      archivedSessions: [archived],
+      archivedCatalogLoadState: 'ready',
+      archivedCatalogError: null,
+    });
+  });
+
+  it('archives a session tree, clears an archived current descendant, and refreshes the archive', async () => {
+    const root = createSession({
+      sessionId: 'archive-root',
+      projectPath: '/tmp/archive',
+    });
+    const child = createSession({
+      sessionId: 'archive-child',
+      projectPath: '/tmp/archive',
+      rootId: root.sessionId,
+      parentId: root.sessionId,
+      relationType: 'fork',
+    });
+    const unrelated = createSession({
+      sessionId: 'unrelated',
+      projectPath: '/tmp/archive',
+    });
+    const archivedRoot = {
+      ...root,
+      archivedAt: '2026-08-09T00:02:00.000Z',
+      archivedBySessionId: root.sessionId,
+    };
+    const archivedChild = {
+      ...child,
+      archivedAt: archivedRoot.archivedAt,
+      archivedBySessionId: root.sessionId,
+    };
+    const unsubscribe = vi.fn();
+    useSessionStore.setState({
+      sessions: [root, child, unrelated],
+      currentSessionId: child.sessionId,
+      currentSessionRef: createRef(child.sessionId, child.projectPath),
+      messages: [
+        {
+          id: 'message',
+          role: 'assistant',
+          content: 'visible',
+          timestamp: Date.now(),
+        },
+      ],
+      eventUnsubscribe: unsubscribe,
+      unsubscribeFromEvents: actualUnsubscribeFromEvents,
+    });
+    vi.mocked(sessionService.archiveSession).mockResolvedValue({
+      session: archivedRoot,
+      archivedSessionIds: [root.sessionId, child.sessionId],
+    });
+    vi.mocked(sessionService.listSessionPage).mockResolvedValue({
+      sessions: [archivedRoot, archivedChild],
+    });
+
+    await useSessionStore
+      .getState()
+      .archiveSession(createRef(root.sessionId, root.projectPath));
+
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(useSessionStore.getState()).toMatchObject({
+      sessions: [unrelated],
+      archivedSessions: [archivedRoot, archivedChild],
+      currentSessionId: null,
+      currentSessionRef: null,
+      messages: [],
+    });
+  });
+
+  it('restores an archive root to the active catalog', async () => {
+    const archived = createSession({
+      sessionId: 'archive-root',
+      projectPath: '/tmp/archive',
+      archivedAt: '2026-08-09T00:02:00.000Z',
+      archivedBySessionId: 'archive-root',
+    });
+    const restored = createSession({
+      sessionId: archived.sessionId,
+      projectPath: archived.projectPath,
+    });
+    useSessionStore.setState({ archivedSessions: [archived] });
+    vi.mocked(sessionService.unarchiveSession).mockResolvedValue({
+      session: restored,
+      restoredSessionIds: [restored.sessionId],
+    });
+    vi.mocked(sessionService.listSessionPage)
+      .mockResolvedValueOnce({ sessions: [restored] })
+      .mockResolvedValueOnce({ sessions: [] });
+
+    await useSessionStore
+      .getState()
+      .unarchiveSession(createRef(archived.sessionId, archived.projectPath));
+
+    expect(useSessionStore.getState().sessions).toContainEqual(restored);
+    expect(useSessionStore.getState().archivedSessions).toEqual([]);
+  });
+
   it('does not let catalog completion clear an active session navigation', async () => {
     const target = createSession({
       sessionId: 'navigation-target',
@@ -2089,6 +2212,59 @@ describe('sessionSlice multimodal sendMessage', () => {
     expect(withSessionRef('/sessions/shared-id/message', ref)).toBe(
       '/sessions/shared-id/message?projectPath=%2Ftmp%2Fproject%20with%20spaces'
     );
+  });
+
+  it('parses the Markdown export body and integrity headers from the exact workspace route', async () => {
+    const ref = createRef('shared-id', '/tmp/project with spaces');
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response('# Blade conversation\n', {
+        status: 200,
+        headers: {
+          'content-disposition': 'attachment; filename="blade-session-shared-id.md"',
+          'content-type': 'text/markdown; charset=utf-8',
+          'x-blade-content-sha256': 'a'.repeat(64),
+          'x-blade-export-activities': '2',
+          'x-blade-export-messages': '3',
+          'x-blade-export-redactions': '4',
+        },
+      })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { sessionService: actualSessionService } = await vi.importActual<
+      typeof import('../../../src/services/sessionService')
+    >('../../../src/services/sessionService');
+
+    await expect(
+      actualSessionService.exportSessionMarkdown(ref, true)
+    ).resolves.toEqual({
+      filename: 'blade-session-shared-id.md',
+      markdown: '# Blade conversation\n',
+      contentSha256: 'a'.repeat(64),
+      activityCount: 2,
+      messageCount: 3,
+      redactionCount: 4,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/sessions/shared-id/export?projectPath=%2Ftmp%2Fproject%20with%20spaces&includeReasoning=true'
+    );
+  });
+
+  it('rejects a Markdown export response without provenance headers', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>().mockResolvedValue(
+        new Response('# Blade conversation\n', {
+          status: 200,
+          headers: { 'content-type': 'text/markdown' },
+        })
+      )
+    );
+    const { sessionService: actualSessionService } = await vi.importActual<
+      typeof import('../../../src/services/sessionService')
+    >('../../../src/services/sessionService');
+    await expect(
+      actualSessionService.exportSessionMarkdown(createRef('session', '/workspace'))
+    ).rejects.toThrow('integrity hash');
   });
 
   it.each([

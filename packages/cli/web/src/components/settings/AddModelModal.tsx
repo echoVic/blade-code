@@ -16,6 +16,15 @@ export interface ModelFormData {
   model: string;
   displayName: string;
   apiKey?: string;
+  modelProvider?: {
+    id: string;
+    name: string;
+    baseUrl: string;
+    wireApi: 'openai-completions' | 'anthropic-messages';
+  };
+  overrides?: {
+    baseUrl?: string;
+  };
 }
 
 interface ProviderOption {
@@ -24,6 +33,9 @@ interface ProviderOption {
   modelCount: number;
   supportsApiKey: boolean;
   configured: boolean;
+  custom: boolean;
+  factoryWireApi?: 'openai-completions' | 'anthropic-messages';
+  wireApi?: 'openai-completions' | 'anthropic-messages';
 }
 
 interface ModelOption {
@@ -33,6 +45,8 @@ interface ModelOption {
   reasoning: boolean;
   input: string[];
 }
+
+const CHANNEL_ID_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
 
 export function AddModelModal({
   open,
@@ -45,6 +59,10 @@ export function AddModelModal({
   const [provider, setProvider] = useState<ProviderOption>();
   const [model, setModel] = useState<ModelOption>();
   const [displayName, setDisplayName] = useState('');
+  const [channelId, setChannelId] = useState('');
+  const [channelName, setChannelName] = useState('');
+  const [customModelId, setCustomModelId] = useState('');
+  const [customBaseUrl, setCustomBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [loadingProviders, setLoadingProviders] = useState(false);
@@ -59,6 +77,10 @@ export function AddModelModal({
     setProvider(undefined);
     setModel(undefined);
     setDisplayName('');
+    setChannelId('');
+    setChannelName('');
+    setCustomModelId('');
+    setCustomBaseUrl('');
     setApiKey('');
     setShowApiKey(false);
     setLoadError(null);
@@ -88,6 +110,12 @@ export function AddModelModal({
     setModels([]);
     setModel(undefined);
     setLoadError(null);
+    if (provider.factoryWireApi || provider.custom) {
+      setLoadingModels(false);
+      return () => {
+        active = false;
+      };
+    }
     setLoadingModels(true);
     void requestJson<ModelOption[]>(`/providers/${provider.id}/models`)
       .then((data) => {
@@ -108,14 +136,51 @@ export function AddModelModal({
     };
   }, [provider]);
 
+  const customFactory = provider?.factoryWireApi;
+  const customProvider = Boolean(customFactory || provider?.custom);
+  const selectedModelId = customProvider ? customModelId.trim() : model?.id;
+
   const submit = async () => {
-    if (!provider || !model || (!provider.configured && !apiKey)) return;
+    if (!provider || !selectedModelId || (!provider.configured && !apiKey)) {
+      return;
+    }
+    if (customFactory) {
+      if (!CHANNEL_ID_PATTERN.test(channelId.trim())) {
+        setLoadError(
+          'Channel ID must start with a lowercase letter and contain only lowercase letters, numbers, ".", "_" or "-"'
+        );
+        return;
+      }
+      let parsed: URL;
+      try {
+        parsed = new URL(customBaseUrl.trim());
+      } catch {
+        setLoadError('Base URL must be an absolute HTTP(S) URL');
+        return;
+      }
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        setLoadError('Base URL must be an absolute HTTP(S) URL');
+        return;
+      }
+    }
     setSaving(true);
+    const resolvedProvider = customFactory ? channelId.trim() : provider.id;
     const saved = await onSave({
-      provider: provider.id,
-      model: model.id,
-      displayName: displayName || model.name,
+      provider: resolvedProvider,
+      model: selectedModelId,
+      displayName:
+        displayName || (customProvider ? selectedModelId : (model?.name ?? '')),
       apiKey: apiKey || undefined,
+      ...(customFactory
+        ? {
+            modelProvider: {
+              id: resolvedProvider,
+              name: channelName.trim() || resolvedProvider,
+              baseUrl: customBaseUrl.trim(),
+              wireApi: customFactory,
+            },
+          }
+        : {}),
     });
     setSaving(false);
     if (saved) onOpenChange(false);
@@ -127,6 +192,16 @@ export function AddModelModal({
         onCloseAutoFocus={(event) =>
           restoreFocusToSelector('[data-add-model-trigger]', event)
         }
+        onEscapeKeyDown={(event) => {
+          event.preventDefault();
+          onOpenChange(false);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape') return;
+          event.preventDefault();
+          event.stopPropagation();
+          onOpenChange(false);
+        }}
         className="gap-0 overflow-y-auto rounded-xl border border-[#E5E7EB] bg-white p-0 dark:border-zinc-800 dark:bg-[#09090b] sm:max-w-[480px]"
         aria-describedby={undefined}
         hideCloseButton
@@ -164,6 +239,10 @@ export function AddModelModal({
               onChange={(event) => {
                 setProvider(providers.find((entry) => entry.id === event.target.value));
                 setDisplayName('');
+                setChannelId('');
+                setChannelName('');
+                setCustomModelId('');
+                setCustomBaseUrl('');
               }}
               className="field"
             >
@@ -179,33 +258,105 @@ export function AddModelModal({
             </select>
           </label>
 
-          <label className="flex flex-col gap-2 text-[13px] font-mono text-zinc-500">
-            Model
-            <select
-              aria-label="Model"
-              value={model?.id ?? ''}
-              disabled={!provider || loadingModels}
-              onChange={(event) => {
-                const selected = models.find(
-                  (entry) => entry.id === event.target.value
-                );
-                setModel(selected);
-                if (selected) setDisplayName(selected.name);
-              }}
-              className="field"
-            >
-              <option value="">
-                {loadingModels ? 'Loading models...' : 'Select model'}
-              </option>
-              {models.map((entry) => (
-                <option key={entry.id} value={entry.id}>
-                  {entry.name} - {Math.round(entry.contextWindow / 1000)}K
-                  {entry.reasoning ? ' - reasoning' : ''}
-                  {entry.input.includes('image') ? ' - vision' : ''}
+          {customProvider ? (
+            <>
+              {customFactory && (
+                <>
+                  <label className="flex flex-col gap-2 text-[13px] font-mono text-zinc-500">
+                    Channel ID
+                    <input
+                      aria-label="Channel ID"
+                      value={channelId}
+                      onChange={(event) => {
+                        setChannelId(event.target.value);
+                        setLoadError(null);
+                      }}
+                      placeholder="team-gateway"
+                      autoComplete="off"
+                      spellCheck={false}
+                      className="field"
+                    />
+                    <span className="text-[11px] text-zinc-400">
+                      Stable config and credential identifier.
+                    </span>
+                  </label>
+                  <label className="flex flex-col gap-2 text-[13px] font-mono text-zinc-500">
+                    Channel name
+                    <input
+                      aria-label="Channel name"
+                      value={channelName}
+                      onChange={(event) => setChannelName(event.target.value)}
+                      placeholder="Team Gateway"
+                      className="field"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-2 text-[13px] font-mono text-zinc-500">
+                    Base URL
+                    <input
+                      aria-label="Base URL"
+                      value={customBaseUrl}
+                      onChange={(event) => {
+                        setCustomBaseUrl(event.target.value);
+                        setLoadError(null);
+                      }}
+                      placeholder={
+                        customFactory === 'anthropic-messages'
+                          ? 'https://gateway.example.com'
+                          : 'https://gateway.example.com/v1'
+                      }
+                      className="field"
+                    />
+                    <span className="text-[11px] text-zinc-400">
+                      {customFactory === 'anthropic-messages'
+                        ? 'Uses the Anthropic Messages protocol.'
+                        : 'Uses the OpenAI Chat Completions protocol.'}
+                    </span>
+                  </label>
+                </>
+              )}
+              <label className="flex flex-col gap-2 text-[13px] font-mono text-zinc-500">
+                Model ID
+                <input
+                  aria-label="Model ID"
+                  value={customModelId}
+                  onChange={(event) => {
+                    setCustomModelId(event.target.value);
+                    setLoadError(null);
+                  }}
+                  placeholder="vendor-model-2026"
+                  className="field"
+                />
+              </label>
+            </>
+          ) : (
+            <label className="flex flex-col gap-2 text-[13px] font-mono text-zinc-500">
+              Model
+              <select
+                aria-label="Model"
+                value={model?.id ?? ''}
+                disabled={!provider || loadingModels}
+                onChange={(event) => {
+                  const selected = models.find(
+                    (entry) => entry.id === event.target.value
+                  );
+                  setModel(selected);
+                  if (selected) setDisplayName(selected.name);
+                }}
+                className="field"
+              >
+                <option value="">
+                  {loadingModels ? 'Loading models...' : 'Select model'}
                 </option>
-              ))}
-            </select>
-          </label>
+                {models.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.name} - {Math.round(entry.contextWindow / 1000)}K
+                    {entry.reasoning ? ' - reasoning' : ''}
+                    {entry.input.includes('image') ? ' - vision' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
 
           <label className="flex flex-col gap-2 text-[13px] font-mono text-zinc-500">
             Display name
@@ -257,7 +408,8 @@ export function AddModelModal({
             disabled={
               saving ||
               !provider ||
-              !model ||
+              !selectedModelId ||
+              (customFactory && (!channelId.trim() || !customBaseUrl.trim())) ||
               (!provider.configured &&
                 (!provider.supportsApiKey || apiKey.trim().length === 0))
             }

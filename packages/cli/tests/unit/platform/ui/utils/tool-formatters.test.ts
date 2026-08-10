@@ -36,4 +36,28 @@ describe('tool formatters', () => {
     expect(display.detail).toContain('latest stderr marker');
     expect(display.detail?.length).toBeLessThanOrEqual(500);
   });
+
+  it('summarizes ApplyPatch without exposing the full patch body', () => {
+    const patch =
+      '*** Begin Patch\n' +
+      '*** Update File: first.ts\n@@\n-secret\n+public\n' +
+      '*** Add File: second.ts\n+value\n' +
+      '*** End Patch';
+    expect(formatToolCallSummary('ApplyPatch', { patch })).toBe(
+      'Applying atomic patch to 2 file(s)'
+    );
+    const display = formatToolDisplay('ApplyPatch', {
+      success: true,
+      llmContent: 'done',
+      metadata: {
+        changes: [
+          { kind: 'update', path: '/workspace/first.ts' },
+          { kind: 'add', path: '/workspace/second.ts' },
+        ],
+      },
+    });
+    expect(display.detail).toContain('M /workspace/first.ts');
+    expect(display.detail).toContain('A /workspace/second.ts');
+    expect(JSON.stringify(display)).not.toContain('secret');
+  });
 });

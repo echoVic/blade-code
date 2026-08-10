@@ -11,7 +11,9 @@ const mocks = vi.hoisted(() => ({
   registerCleanup: vi.fn(),
   unregisterCleanup: vi.fn(),
   findSessionMetadata: vi.fn(),
+  loadSession: vi.fn(),
   updateSessionMetadata: vi.fn(),
+  getCwd: vi.fn(),
 }));
 
 vi.mock('../../../../../src/agent/runtime/SessionRuntime.js', () => ({
@@ -32,8 +34,13 @@ vi.mock('../../../../../src/services/GracefulShutdown.js', () => ({
 vi.mock('../../../../../src/services/SessionService.js', () => ({
   SessionService: {
     findSessionMetadata: mocks.findSessionMetadata,
+    loadSession: mocks.loadSession,
     updateSessionMetadata: mocks.updateSessionMetadata,
   },
+}));
+
+vi.mock('../../../../../src/utils/cwd.js', () => ({
+  getCwd: mocks.getCwd,
 }));
 
 import { useAgent } from '../../../../../src/ui/hooks/useAgent.js';
@@ -46,6 +53,15 @@ describe('useAgent runtime ownership', () => {
     sessionId: string;
     workspaceRoot: string;
     getCurrentModelId: ReturnType<typeof vi.fn>;
+    getReasoningConfiguration: ReturnType<typeof vi.fn>;
+    resolveReasoningConfiguration: ReturnType<typeof vi.fn>;
+    getServiceTierConfiguration: ReturnType<typeof vi.fn>;
+    resolveServiceTierConfiguration: ReturnType<typeof vi.fn>;
+    getResponseVerbosityConfiguration: ReturnType<typeof vi.fn>;
+    resolveResponseVerbosityConfiguration: ReturnType<typeof vi.fn>;
+    getCommunicationStyleConfiguration: ReturnType<typeof vi.fn>;
+    resolveCommunicationStyleConfiguration: ReturnType<typeof vi.fn>;
+    hasTurnOwner: ReturnType<typeof vi.fn>;
     refresh: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
     enqueueSteering: ReturnType<typeof vi.fn>;
@@ -70,6 +86,26 @@ describe('useAgent runtime ownership', () => {
     return null;
   }
 
+  function AgentsHarness() {
+    hook = useAgent({
+      sessionId: 'session-1',
+      workspaceRoot: '/tmp/project',
+      agents: [
+        {
+          name: 'invocation-reviewer',
+          description: 'Invocation-only reviewer',
+          source: 'flag',
+        },
+      ],
+    });
+    return null;
+  }
+
+  function ImplicitWorkspaceHarness() {
+    hook = useAgent({ sessionId: 'session-1' });
+    return null;
+  }
+
   function WorkspaceHarness({ workspaceRoot }: { workspaceRoot: string }) {
     hook = useAgent({ sessionId: 'session-1', workspaceRoot });
     return null;
@@ -80,6 +116,54 @@ describe('useAgent runtime ownership', () => {
       sessionId: 'session-1',
       workspaceRoot: '/tmp/project',
       getCurrentModelId: vi.fn(() => 'model-1'),
+      getReasoningConfiguration: vi.fn(() => ({
+        selection: 'off',
+        effective: 'off',
+        supported: ['off', 'low', 'medium', 'high'],
+      })),
+      resolveReasoningConfiguration: vi.fn((selection: string) => ({
+        selection,
+        effective: selection === 'auto' ? 'high' : selection,
+        supported: ['off', 'low', 'medium', 'high'],
+      })),
+      getServiceTierConfiguration: vi.fn(() => ({
+        selection: 'auto',
+        effective: 'provider-default',
+        supported: ['standard', 'fast', 'flex'],
+      })),
+      resolveServiceTierConfiguration: vi.fn((selection: string) => ({
+        selection,
+        effective: selection === 'auto' ? 'provider-default' : selection,
+        supported: ['standard', 'fast', 'flex'],
+      })),
+      getResponseVerbosityConfiguration: vi.fn(() => ({
+        selection: 'auto',
+        effective: 'provider-default',
+        supported: ['low', 'medium', 'high'],
+      })),
+      resolveResponseVerbosityConfiguration: vi.fn((selection: string) => ({
+        selection,
+        effective: selection === 'auto' ? 'provider-default' : selection,
+        supported: ['low', 'medium', 'high'],
+      })),
+      getCommunicationStyleConfiguration: vi.fn(() => ({
+        selection: 'auto',
+        effective: 'blade-default',
+        name: 'Auto',
+        description: 'Default',
+        source: 'built-in',
+        supported: [],
+      })),
+      resolveCommunicationStyleConfiguration: vi.fn((selection: string) => ({
+        selection,
+        effective: selection === 'auto' ? 'blade-default' : selection,
+        name: selection,
+        description: `Use ${selection}`,
+        source: selection.includes(':') ? 'project' : 'built-in',
+        ...(selection.includes(':') ? { contentSha256: 'a'.repeat(64) } : {}),
+        supported: [],
+      })),
+      hasTurnOwner: vi.fn(() => false),
       refresh: vi.fn().mockResolvedValue(undefined),
       dispose: vi.fn().mockResolvedValue(undefined),
       enqueueSteering: vi.fn(() => ({
@@ -130,9 +214,15 @@ describe('useAgent runtime ownership', () => {
     mocks.findSessionMetadata.mockResolvedValue({
       selectedModelId: undefined,
     });
+    mocks.loadSession.mockResolvedValue([]);
     mocks.updateSessionMetadata.mockResolvedValue({
       selectedModelId: 'model-2',
+      reasoningEffort: 'off',
+      serviceTier: 'auto',
+      responseVerbosity: 'auto',
+      communicationStyle: 'auto',
     });
+    mocks.getCwd.mockReturnValue('/tmp/project');
 
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -178,8 +268,60 @@ describe('useAgent runtime ownership', () => {
     expect(runtime.dispose).toHaveBeenCalledTimes(1);
   });
 
+  it('passes invocation-scoped agents into the owned SessionRuntime', async () => {
+    await act(async () => {
+      root.render(<AgentsHarness />);
+      await Promise.resolve();
+    });
+    await hook?.createAgent();
+
+    expect(mocks.createRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        workspaceRoot: '/tmp/project',
+        agents: [
+          expect.objectContaining({
+            name: 'invocation-reviewer',
+            source: 'flag',
+          }),
+        ],
+      })
+    );
+    expect(mocks.createWithRuntime).toHaveBeenCalledWith(
+      runtime,
+      expect.objectContaining({
+        agents: [
+          expect.objectContaining({
+            name: 'invocation-reviewer',
+          }),
+        ],
+      })
+    );
+  });
+
+  it('marks SessionStart as resume only when durable history exists', async () => {
+    mocks.loadSession.mockResolvedValue([
+      { role: 'user', content: 'persisted message' },
+    ]);
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+    await hook?.createAgent();
+
+    expect(mocks.createRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionStart: {
+          isResume: true,
+          resumeSessionId: 'session-1',
+        },
+      })
+    );
+  });
+
   it('releases the previous runtime before creating an Agent for another session', async () => {
     const nextRuntime = {
+      ...runtime,
       sessionId: 'session-2',
       workspaceRoot: '/tmp/project',
       getCurrentModelId: vi.fn(() => 'model-1'),
@@ -245,6 +387,23 @@ describe('useAgent runtime ownership', () => {
       })
     );
     await hook?.cleanupAgent();
+  });
+
+  it('keeps the owned runtime workspace across async CWD boundaries', async () => {
+    runtime.workspaceRoot = '/tmp/project-a';
+    mocks.getCwd.mockReturnValue('/tmp/project-a');
+    await act(async () => {
+      root.render(<ImplicitWorkspaceHarness />);
+      await Promise.resolve();
+    });
+    await hook?.createAgent();
+
+    mocks.getCwd.mockReturnValue('/tmp/project-b');
+    await hook?.listRewindCheckpoints();
+
+    expect(mocks.createRuntime).toHaveBeenCalledOnce();
+    expect(runtime.dispose).not.toHaveBeenCalled();
+    expect(runtime.listRewindCheckpoints).toHaveBeenCalledOnce();
   });
 
   it('still disposes the runtime when Agent destruction fails', async () => {
@@ -342,11 +501,24 @@ describe('useAgent runtime ownership', () => {
 
     await hook?.createAgent();
 
-    expect(runtime.refresh).toHaveBeenCalledWith({ modelId: 'model-2' });
+    expect(runtime.refresh).toHaveBeenCalledWith({
+      modelId: 'model-2',
+      reasoningEffort: 'off',
+      serviceTier: 'auto',
+      responseVerbosity: 'auto',
+      communicationStyle: 'auto',
+    });
     expect(mocks.updateSessionMetadata).toHaveBeenCalledWith(
       'session-1',
       '/tmp/project',
-      { selectedModelId: 'model-2' }
+      {
+        selectedModelId: 'model-2',
+        reasoningEffort: 'off',
+        serviceTier: 'auto',
+        responseVerbosity: 'auto',
+        communicationStyle: 'auto',
+        communicationStyleDigest: null,
+      }
     );
     expect(mocks.createWithRuntime).toHaveBeenCalledOnce();
   });
@@ -360,8 +532,44 @@ describe('useAgent runtime ownership', () => {
 
     await expect(hook?.createAgent()).rejects.toThrow('disk unavailable');
 
-    expect(runtime.refresh).toHaveBeenNthCalledWith(1, { modelId: 'model-2' });
-    expect(runtime.refresh).toHaveBeenNthCalledWith(2, { modelId: 'model-1' });
+    expect(runtime.refresh).toHaveBeenNthCalledWith(1, {
+      modelId: 'model-2',
+      reasoningEffort: 'off',
+      serviceTier: 'auto',
+      responseVerbosity: 'auto',
+      communicationStyle: 'auto',
+    });
+    expect(runtime.refresh).toHaveBeenNthCalledWith(2, {
+      modelId: 'model-1',
+      reasoningEffort: 'off',
+      serviceTier: 'auto',
+      responseVerbosity: 'auto',
+      communicationStyle: 'auto',
+    });
     expect(mocks.createWithRuntime).not.toHaveBeenCalled();
+  });
+
+  it('persists a Session communication-style switch through the TUI boundary', async () => {
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    await hook?.setCommunicationStyle('friendly');
+
+    expect(runtime.resolveCommunicationStyleConfiguration).toHaveBeenCalledWith(
+      'friendly'
+    );
+    expect(runtime.refresh).toHaveBeenCalledWith({
+      communicationStyle: 'friendly',
+    });
+    expect(mocks.updateSessionMetadata).toHaveBeenCalledWith(
+      'session-1',
+      '/tmp/project',
+      {
+        communicationStyle: 'friendly',
+        communicationStyleDigest: null,
+      }
+    );
   });
 });

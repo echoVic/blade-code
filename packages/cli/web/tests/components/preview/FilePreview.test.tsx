@@ -971,4 +971,62 @@ describe('FilePreview', () => {
       expect(container.textContent).toContain('second file content')
     );
   });
+
+  test('renders every diff carried by an ApplyPatch tool result', async () => {
+    const { FilePreview } = await import('../../../src/components/preview/FilePreview');
+    useSessionStore.setState({
+      messages: [
+        {
+          id: 'patch-result',
+          role: 'assistant',
+          content: '',
+          timestamp: 1,
+          agentContent: {
+            textBefore: '',
+            textAfter: '',
+            thinkingContent: '',
+            tasks: [],
+            subagent: null,
+            confirmation: null,
+            question: null,
+            toolCalls: [
+              {
+                toolCallId: 'patch-call',
+                toolName: 'ApplyPatch',
+                status: 'success',
+                startTime: 1,
+                summary: 'Patched two files',
+                metadata: {
+                  kind: 'patch',
+                  changes: [
+                    {
+                      path: '/workspace/a/src/first.ts',
+                      oldContent: 'old first',
+                      newContent: 'new first',
+                      diff: '--- first.ts\n+++ first.ts\n@@\n-old first\n+new first',
+                    },
+                    {
+                      path: '/workspace/a/src/second.ts',
+                      oldContent: null,
+                      newContent: 'new second',
+                      diff: '--- second.ts\n+++ second.ts\n@@\n+new second',
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    await act(async () => {
+      root.render(<FilePreview />);
+    });
+
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('first.ts');
+      expect(container.textContent).toContain('second.ts');
+    });
+  });
 });

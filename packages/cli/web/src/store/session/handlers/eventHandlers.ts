@@ -1,3 +1,4 @@
+import type { McpElicitationDetails } from '@api/schemas';
 import { taskFailureCode } from '@/lib/taskFailure';
 import type { Message as ServiceMessage, StreamEvent } from '@/services';
 import type {
@@ -7,9 +8,17 @@ import type {
   TaskItem,
   ToolCallInfo,
 } from '../types';
+import {
+  createEmptyAgentContent,
+  getSubagents,
+  getTimelineText,
+} from '../utils/agentTimeline';
 import { aggregateMessages } from '../utils/aggregateMessages';
-import { createEmptyAgentContent, getTimelineText } from '../utils/agentTimeline';
-import { makeSubagentId, makeToolCallId } from '../utils/messageIdentity';
+import {
+  makeSubagentId,
+  makeToolCallId,
+  normalizeSubagentStatus,
+} from '../utils/messageIdentity';
 import { globalStreamingBuffer } from './streamingBuffer';
 
 type GetState = () => SessionStoreState;
@@ -32,6 +41,39 @@ type EventHandler = (
   get: GetState,
   set: SetState
 ) => void;
+
+const findSubagentTarget = (
+  messages: Message[],
+  subagentId: string | undefined,
+  preferredMessageId?: string | null
+): { messageId: string; subagent: SubagentProgress } | undefined => {
+  if (subagentId) {
+    for (const message of messages) {
+      const subagent = getSubagents(message.agentContent).find(
+        (candidate) => candidate.id === subagentId || candidate.sessionId === subagentId
+      );
+      if (subagent) return { messageId: message.id, subagent };
+    }
+  }
+
+  if (preferredMessageId) {
+    const preferred = messages.find((message) => message.id === preferredMessageId);
+    const candidates = getSubagents(preferred?.agentContent);
+    const subagent =
+      candidates.find((candidate) => candidate.status === 'running') ??
+      candidates[candidates.length - 1];
+    if (subagent) return { messageId: preferredMessageId, subagent };
+  }
+
+  for (const message of [...messages].reverse()) {
+    const candidates = getSubagents(message.agentContent);
+    const subagent =
+      candidates.find((candidate) => candidate.status === 'running') ??
+      candidates[candidates.length - 1];
+    if (subagent) return { messageId: message.id, subagent };
+  }
+  return undefined;
+};
 
 const ensureAssistantMessage = (
   get: GetState,
@@ -254,8 +296,25 @@ const handleToolStart: EventHandler = (props, get, set) => {
   appendToolCall(targetMessageId, toolCall);
 };
 
-const handleToolResult: EventHandler = (props, get, set) => {
+const handleToolProgress: EventHandler = (props, get) => {
   const { currentSessionId, updateToolCall, messages } = get();
+  if (props.sessionId !== currentSessionId) return;
+  const toolCallId = props.toolCallId as string;
+  if (!toolCallId) return;
+  const message = messages.find((candidate) =>
+    candidate.agentContent?.toolCalls.some((tool) => tool.toolCallId === toolCallId)
+  );
+  if (!message) return;
+  updateToolCall(message.id, toolCallId, {
+    summary: props.message as string,
+    progress: typeof props.progress === 'number' ? props.progress : undefined,
+    progressTotal: typeof props.total === 'number' ? props.total : undefined,
+    progressMessage: props.message as string,
+  });
+};
+
+const handleToolResult: EventHandler = (props, get, set) => {
+  const { currentSessionId, updateToolCall, updateSubagent, messages } = get();
   if (props.sessionId !== currentSessionId) return;
 
   const toolCallId = props.toolCallId as string;
@@ -265,10 +324,14 @@ const handleToolResult: EventHandler = (props, get, set) => {
   const messageWithTool = messages.find((m) =>
     m.agentContent?.toolCalls.some((tc) => tc.toolCallId === toolCallId)
   );
+  const messageWithSubagent = messages.find((message) =>
+    getSubagents(message.agentContent).some((subagent) => subagent.id === toolCallId)
+  );
 
   const targetMessageId =
     (props.messageId as string) ||
     messageWithTool?.id ||
+    messageWithSubagent?.id ||
     [...messages].reverse().find((m) => m.role === 'assistant')?.id;
 
   if (!targetMessageId) {
@@ -292,24 +355,9 @@ const handleToolResult: EventHandler = (props, get, set) => {
   });
 
   const message = messages.find((m) => m.id === targetMessageId);
-  if (message?.agentContent?.subagent?.id === toolCallId) {
-    set((state) => ({
-      messages: state.messages.map((m) => {
-        if (m.id !== targetMessageId) return m;
-        if (!m.agentContent?.subagent) return m;
-        return {
-          ...m,
-          agentContent: {
-            ...m.agentContent,
-            subagent: {
-              ...m.agentContent.subagent,
-              status: props.success ? 'completed' : 'failed',
-            },
-          },
-        };
-      }),
-    }));
-  }
+  const matchingSubagent = getSubagents(message?.agentContent).find(
+    (subagent) => subagent.id === toolCallId
+  );
 
   const metadata = props.metadata as Record<string, unknown> | undefined;
   const subagentSessionId =
@@ -341,14 +389,40 @@ const handleToolResult: EventHandler = (props, get, set) => {
       ? metadata.subagentResumeDepth
       : undefined;
 
+  if (matchingSubagent) {
+    updateSubagent(targetMessageId, matchingSubagent.id, {
+      sessionId: matchingSubagent.sessionId || subagentSessionId,
+      type: subagentType || matchingSubagent.type,
+      status: subagentStatus
+        ? normalizeSubagentStatus(subagentStatus)
+        : props.success
+          ? 'completed'
+          : 'failed',
+      resumedFrom: subagentResumedFrom || matchingSubagent.resumedFrom,
+      rootAgentId: subagentRootId || matchingSubagent.rootAgentId,
+      resumeDepth: subagentResumeDepth ?? matchingSubagent.resumeDepth,
+    });
+  }
+
   if (subagentSessionId && subagentStatus) {
     set((state) => ({
       messages: state.messages.map((m) => {
         if (m.id !== targetMessageId) return m;
         const baseMetadata = (m.metadata ?? {}) as Record<string, unknown>;
-        const existing = baseMetadata.subtaskRef as Record<string, unknown> | undefined;
+        const existingRefs = Array.isArray(baseMetadata.subtaskRefs)
+          ? (baseMetadata.subtaskRefs as Record<string, unknown>[])
+          : [];
+        const existingIndex = existingRefs.findIndex(
+          (ref) =>
+            ref.childSessionId === subagentSessionId || ref.subagentId === toolCallId
+        );
+        const existing =
+          existingIndex >= 0
+            ? existingRefs[existingIndex]
+            : ((baseMetadata.subtaskRef as Record<string, unknown> | undefined) ?? {});
         const nextRef = {
-          ...(existing ?? {}),
+          ...existing,
+          subagentId: toolCallId,
           childSessionId: subagentSessionId,
           agentType:
             subagentType ||
@@ -371,16 +445,326 @@ const handleToolResult: EventHandler = (props, get, set) => {
             subagentResumeDepth ??
             (typeof existing?.resumeDepth === 'number' ? existing.resumeDepth : 0),
         };
+        const subtaskRefs = [...existingRefs];
+        if (existingIndex >= 0) subtaskRefs[existingIndex] = nextRef;
+        else subtaskRefs.push(nextRef);
         return {
           ...m,
           metadata: {
             ...baseMetadata,
             subtaskRef: nextRef,
+            subtaskRefs,
           },
         };
       }),
     }));
   }
+};
+
+const handleMcpCatalogChanged: EventHandler = (props, get, set) => {
+  const { currentSessionId, appendToolCall } = get();
+  if (props.sessionId !== currentSessionId) return;
+  const messageId = ensureAssistantMessage(
+    get,
+    set,
+    (props.messageId as string) || `mcp-catalog-${String(props.revision)}`
+  );
+  if (!messageId) return;
+  const added = Array.isArray(props.added) ? props.added.map(String) : [];
+  const removed = Array.isArray(props.removed) ? props.removed.map(String) : [];
+  const updated = Array.isArray(props.updated) ? props.updated.map(String) : [];
+  const summary =
+    `MCP catalog r${String(props.revision)}: ` +
+    `+${added.length} -${removed.length} ~${updated.length}`;
+  appendToolCall(messageId, {
+    toolCallId: `mcp-catalog:${String(props.revision)}`,
+    toolName: 'MCP Catalog',
+    arguments: JSON.stringify({
+      serverName: props.serverName,
+      added,
+      removed,
+      updated,
+    }),
+    toolKind: 'readonly',
+    status: 'success',
+    startTime: Date.now(),
+    summary,
+    output: [
+      added.length > 0 ? `Added: ${added.join(', ')}` : '',
+      removed.length > 0 ? `Removed: ${removed.join(', ')}` : '',
+      updated.length > 0 ? `Updated: ${updated.join(', ')}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  });
+};
+
+const handleMcpContentChanged: EventHandler = (props, get, set) => {
+  const { currentSessionId, appendToolCall } = get();
+  if (props.sessionId !== currentSessionId) return;
+  const messageId = ensureAssistantMessage(
+    get,
+    set,
+    (props.messageId as string) || `mcp-content-${String(props.revision)}`
+  );
+  if (!messageId) return;
+  const added = Array.isArray(props.added) ? props.added.map(String) : [];
+  const removed = Array.isArray(props.removed) ? props.removed.map(String) : [];
+  const updated = Array.isArray(props.updated) ? props.updated.map(String) : [];
+  const summary =
+    `MCP ${String(props.contentKind)} r${String(props.revision)}: ` +
+    `+${added.length} -${removed.length} ~${updated.length}`;
+  appendToolCall(messageId, {
+    toolCallId: `mcp-content:${String(props.revision)}`,
+    toolName: 'MCP Content',
+    arguments: JSON.stringify({
+      serverName: props.serverName,
+      contentKind: props.contentKind,
+      added,
+      removed,
+      updated,
+    }),
+    toolKind: 'readonly',
+    status: 'success',
+    startTime: Date.now(),
+    summary,
+    output: [
+      added.length > 0 ? `Added: ${added.join(', ')}` : '',
+      removed.length > 0 ? `Removed: ${removed.join(', ')}` : '',
+      updated.length > 0 ? `Updated: ${updated.join(', ')}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  });
+};
+
+const handleMcpResourceUpdated: EventHandler = (props, get, set) => {
+  const { currentSessionId, appendToolCall } = get();
+  if (props.sessionId !== currentSessionId) return;
+  const messageId = ensureAssistantMessage(
+    get,
+    set,
+    (props.messageId as string) || `mcp-resource-${String(props.revision)}`
+  );
+  if (!messageId) return;
+  appendToolCall(messageId, {
+    toolCallId: `mcp-resource:${String(props.revision)}`,
+    toolName: 'MCP Resource',
+    arguments: JSON.stringify({
+      serverName: props.serverName,
+      uri: props.uri,
+    }),
+    toolKind: 'readonly',
+    status: 'success',
+    startTime: Date.now(),
+    summary: `MCP resource updated: ${String(props.uri)}`,
+    output: `${String(props.serverName)} · revision ${String(props.revision)}`,
+  });
+};
+
+const handleMcpConnectionChanged: EventHandler = (props, get, set) => {
+  const { currentSessionId, appendToolCall } = get();
+  if (props.sessionId !== currentSessionId) return;
+  const messageId = ensureAssistantMessage(
+    get,
+    set,
+    (props.messageId as string) || `mcp-connection-${String(props.revision)}`
+  );
+  if (!messageId) return;
+  const phase = String(props.phase);
+  const summary =
+    `MCP ${String(props.serverName)} ${phase}` +
+    (phase === 'reconnecting'
+      ? ` (${String(props.attempt)}/${String(props.maxAttempts)})`
+      : '');
+  appendToolCall(messageId, {
+    toolCallId: `mcp-connection:${String(props.revision)}`,
+    toolName: 'MCP Connection',
+    arguments: JSON.stringify({
+      serverName: props.serverName,
+      phase,
+      reason: props.reason,
+      attempt: props.attempt,
+      maxAttempts: props.maxAttempts,
+    }),
+    toolKind: 'readonly',
+    status: phase === 'failed' ? 'error' : 'success',
+    startTime: Date.now(),
+    summary,
+    output: [
+      `Reason: ${String(props.reason)}`,
+      props.error ? `Error: ${String(props.error)}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  });
+};
+
+const handleMcpLog: EventHandler = (props, get, set) => {
+  const { currentSessionId, appendToolCall } = get();
+  if (props.sessionId !== currentSessionId) return;
+  const messageId = ensureAssistantMessage(
+    get,
+    set,
+    (props.messageId as string) || `mcp-log-${String(props.revision)}`
+  );
+  if (!messageId) return;
+  const level = String(props.level);
+  const logger = typeof props.logger === 'string' ? props.logger : undefined;
+  const summary =
+    `MCP ${level} · ${String(props.serverName)}` + (logger ? ` · ${logger}` : '');
+  appendToolCall(messageId, {
+    toolCallId: `mcp-log:${String(props.revision)}`,
+    toolName: 'MCP Log',
+    arguments: JSON.stringify({
+      serverName: props.serverName,
+      level,
+      logger,
+    }),
+    toolKind: 'readonly',
+    status: 'success',
+    startTime: Date.now(),
+    summary,
+    output: [
+      String(props.message),
+      `SHA-256: ${String(props.dataSha256)}`,
+      props.truncated === true ? 'Truncated' : '',
+      props.detailsOmitted === true ? 'Details omitted by runtime policy' : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  });
+};
+
+const handleMcpInstructionsChanged: EventHandler = (props, get, set) => {
+  const { currentSessionId, appendToolCall } = get();
+  if (props.sessionId !== currentSessionId) return;
+  const serverName = String(props.serverName);
+  const action = String(props.action);
+  const messageId = ensureAssistantMessage(
+    get,
+    set,
+    (props.messageId as string) ||
+      `mcp-instructions-${String(props.revision)}-${serverName}`
+  );
+  if (!messageId) return;
+  const summary =
+    `MCP instructions ${action}: ${serverName}` +
+    (props.truncated === true ? ' (truncated)' : '');
+  appendToolCall(messageId, {
+    toolCallId: `mcp-instructions:${String(props.revision)}:${serverName}:${action}`,
+    toolName: 'MCP Instructions',
+    arguments: JSON.stringify({
+      serverName,
+      action,
+      reason: props.reason,
+    }),
+    toolKind: 'readonly',
+    status: 'success',
+    startTime: Date.now(),
+    summary,
+    output: [
+      typeof props.text === 'string' ? props.text : '',
+      props.sha256 ? `SHA-256: ${String(props.sha256)}` : '',
+      props.detailsOmitted === true ? 'Details omitted by runtime policy' : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  });
+};
+
+const handleMcpTaskChanged: EventHandler = (props, get, set) => {
+  const { currentSessionId, appendToolCall, updateToolCall } = get();
+  if (props.sessionId !== currentSessionId) return;
+  const taskId = String(props.taskId);
+  const status = String(props.status);
+  const toolCallId = `mcp-task:${taskId}`;
+  const messageId = ensureAssistantMessage(
+    get,
+    set,
+    (props.messageId as string) || `mcp-task-${taskId}`
+  );
+  if (!messageId) return;
+  const summary =
+    `MCP task ${status}: ${taskId}` +
+    ` · ${String(props.serverName)}/${String(props.toolName)}`;
+  const taskProjection = {
+    status:
+      status === 'failed' || status === 'cancelled'
+        ? ('error' as const)
+        : status === 'completed'
+          ? ('success' as const)
+          : ('running' as const),
+    summary,
+    output: [
+      typeof props.statusMessage === 'string' ? props.statusMessage : '',
+      props.hasResult === true ? 'Result available via TaskOutput' : '',
+      typeof props.error === 'string' ? `Error: ${props.error}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  };
+  const existing = get()
+    .messages.find((message) => message.id === messageId)
+    ?.agentContent?.toolCalls.some((tool) => tool.toolCallId === toolCallId);
+  if (existing) {
+    updateToolCall(messageId, toolCallId, taskProjection);
+    return;
+  }
+  appendToolCall(messageId, {
+    toolCallId,
+    toolName: 'MCP Task',
+    arguments: JSON.stringify({
+      taskId,
+      serverName: props.serverName,
+      toolName: props.toolName,
+    }),
+    toolKind: 'readonly',
+    status: taskProjection.status,
+    startTime: Number(props.createdAt) || Date.now(),
+    summary: taskProjection.summary,
+    output: taskProjection.output,
+  });
+};
+
+const handleProjectRulesLoaded: EventHandler = (props, get, set) => {
+  const { currentSessionId, appendToolCall } = get();
+  if (props.sessionId !== currentSessionId) return;
+  const files = Array.isArray(props.files)
+    ? props.files.filter(
+        (file): file is Record<string, unknown> =>
+          Boolean(file) && typeof file === 'object' && !Array.isArray(file)
+      )
+    : [];
+  const messageId = ensureAssistantMessage(
+    get,
+    set,
+    (props.messageId as string) || `project-rules-${Date.now()}`
+  );
+  if (!messageId) return;
+  const blockedWrite = props.blockedWrite === true;
+  const summary =
+    `Project rules loaded: ${files.length}` +
+    (blockedWrite ? ' (write retry required)' : '');
+  appendToolCall(messageId, {
+    toolCallId: `project-rules:${files.map((file) => String(file.id)).join(',')}`,
+    toolName: 'Project Rules',
+    arguments: JSON.stringify({
+      triggerPaths: props.triggerPaths,
+      blockedWrite,
+    }),
+    toolKind: 'readonly',
+    status: 'success',
+    startTime: Date.now(),
+    summary,
+    output: files
+      .map(
+        (file) =>
+          `${String(file.relativePath)} ${String(file.source)} ` +
+          `SHA-256: ${String(file.contentSha256)}`
+      )
+      .join('\n'),
+  });
 };
 
 const handleTokenUsage: EventHandler = (props, get) => {
@@ -435,142 +819,86 @@ const handleSubagentStart: EventHandler = (props, get) => {
   setSubagent(currentAssistantMessageId, subagent);
 };
 
-const handleSubagentUpdate: EventHandler = (props, get, set) => {
-  const { currentSessionId, currentAssistantMessageId, messages } = get();
+const handleSubagentUpdate: EventHandler = (props, get) => {
+  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
+    get();
   if (props.sessionId !== currentSessionId) return;
   const subagentSessionId = props.subagentSessionId as string | undefined;
-  const targetMessageId = subagentSessionId
-    ? messages.find((m) => m.agentContent?.subagent?.sessionId === subagentSessionId)
-        ?.id
-    : currentAssistantMessageId ||
-      [...messages].reverse().find((m) => m.agentContent?.subagent)?.id;
-  if (!targetMessageId) return;
-  const message = messages.find((m) => m.id === targetMessageId);
-  if (!message?.agentContent?.subagent) return;
-
-  set((state) => ({
-    messages: state.messages.map((m) => {
-      if (m.id !== targetMessageId) return m;
-      if (!m.agentContent?.subagent) return m;
-      return {
-        ...m,
-        agentContent: {
-          ...m.agentContent,
-          subagent: {
-            ...m.agentContent.subagent,
-            sessionId: m.agentContent.subagent.sessionId || subagentSessionId,
-            currentTool: props.toolName as string,
-          },
-        },
-      };
-    }),
-  }));
+  const target = findSubagentTarget(
+    messages,
+    subagentSessionId,
+    currentAssistantMessageId
+  );
+  if (!target) return;
+  updateSubagent(target.messageId, target.subagent.id, {
+    sessionId: target.subagent.sessionId || subagentSessionId,
+    currentTool: props.toolName as string,
+  });
 };
 
-const handleSubagentDelta: EventHandler = (props, get, set) => {
-  const { currentSessionId, currentAssistantMessageId, messages } = get();
+const handleSubagentDelta: EventHandler = (props, get) => {
+  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
+    get();
   if (props.sessionId !== currentSessionId) return;
 
   const delta = props.delta as string;
   if (!delta) return;
 
   const subagentSessionId = props.subagentSessionId as string | undefined;
-  const targetMessageId = subagentSessionId
-    ? messages.find((m) => m.agentContent?.subagent?.sessionId === subagentSessionId)
-        ?.id || messages.find((m) => m.agentContent?.subagent?.status === 'running')?.id
-    : currentAssistantMessageId ||
-      [...messages].reverse().find((m) => m.agentContent?.subagent)?.id;
-
-  if (!targetMessageId) return;
-
-  set((state) => ({
-    messages: state.messages.map((m) => {
-      if (m.id !== targetMessageId) return m;
-      if (!m.agentContent?.subagent) return m;
-      return {
-        ...m,
-        agentContent: {
-          ...m.agentContent,
-          subagent: {
-            ...m.agentContent.subagent,
-            sessionId: m.agentContent.subagent.sessionId || subagentSessionId,
-            output: (m.agentContent.subagent.output || '') + delta,
-          },
-        },
-      };
-    }),
+  const target = findSubagentTarget(
+    messages,
+    subagentSessionId,
+    currentAssistantMessageId
+  );
+  if (!target) return;
+  updateSubagent(target.messageId, target.subagent.id, (current) => ({
+    sessionId: current.sessionId || subagentSessionId,
+    output: (current.output || '') + delta,
   }));
 };
 
-const handleSubagentThinkingDelta: EventHandler = (props, get, set) => {
-  const { currentSessionId, currentAssistantMessageId, messages } = get();
+const handleSubagentThinkingDelta: EventHandler = (props, get) => {
+  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
+    get();
   if (props.sessionId !== currentSessionId) return;
 
   const delta = props.delta as string;
   if (!delta) return;
 
   const subagentSessionId = props.subagentSessionId as string | undefined;
-  const targetMessageId = subagentSessionId
-    ? messages.find((m) => m.agentContent?.subagent?.sessionId === subagentSessionId)
-        ?.id || messages.find((m) => m.agentContent?.subagent?.status === 'running')?.id
-    : currentAssistantMessageId ||
-      [...messages].reverse().find((m) => m.agentContent?.subagent)?.id;
-
-  if (!targetMessageId) return;
-
-  set((state) => ({
-    messages: state.messages.map((m) => {
-      if (m.id !== targetMessageId) return m;
-      if (!m.agentContent?.subagent) return m;
-      return {
-        ...m,
-        agentContent: {
-          ...m.agentContent,
-          subagent: {
-            ...m.agentContent.subagent,
-            sessionId: m.agentContent.subagent.sessionId || subagentSessionId,
-            thinking: (m.agentContent.subagent.thinking || '') + delta,
-          },
-        },
-      };
-    }),
+  const target = findSubagentTarget(
+    messages,
+    subagentSessionId,
+    currentAssistantMessageId
+  );
+  if (!target) return;
+  updateSubagent(target.messageId, target.subagent.id, (current) => ({
+    sessionId: current.sessionId || subagentSessionId,
+    thinking: (current.thinking || '') + delta,
   }));
 };
 
-const handleSubagentComplete: EventHandler = (props, get, set) => {
-  const { currentSessionId, currentAssistantMessageId, messages } = get();
+const handleSubagentComplete: EventHandler = (props, get) => {
+  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
+    get();
   if (props.sessionId !== currentSessionId) return;
   const subagentSessionId = props.subagentSessionId as string | undefined;
-  const targetMessageId = subagentSessionId
-    ? messages.find((m) => m.agentContent?.subagent?.sessionId === subagentSessionId)
-        ?.id || messages.find((m) => m.agentContent?.subagent?.status === 'running')?.id
-    : currentAssistantMessageId ||
-      [...messages].reverse().find((m) => m.agentContent?.subagent)?.id;
-  if (!targetMessageId) return;
-  const message = messages.find((m) => m.id === targetMessageId);
-  if (!message?.agentContent?.subagent) return;
-
-  set((state) => ({
-    messages: state.messages.map((m) => {
-      if (m.id !== targetMessageId) return m;
-      if (!m.agentContent?.subagent) return m;
-      return {
-        ...m,
-        agentContent: {
-          ...m.agentContent,
-          subagent: {
-            ...m.agentContent.subagent,
-            sessionId: m.agentContent.subagent.sessionId || subagentSessionId,
-            status: props.success ? 'completed' : 'failed',
-          },
-        },
-      };
-    }),
-  }));
+  const target = findSubagentTarget(
+    messages,
+    subagentSessionId,
+    currentAssistantMessageId
+  );
+  if (!target) return;
+  updateSubagent(target.messageId, target.subagent.id, {
+    sessionId: target.subagent.sessionId || subagentSessionId,
+    status: props.success ? 'completed' : 'failed',
+    currentTool: undefined,
+  });
 };
 
-const handleSubagentToolStart: EventHandler = (props, get, set) => {
-  const { currentSessionId, currentAssistantMessageId, messages } = get();
+const handleSubagentToolStart: EventHandler = (props, get) => {
+  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
+    get();
   if (props.sessionId !== currentSessionId) return;
 
   const toolCallId = props.toolCallId as string;
@@ -578,13 +906,12 @@ const handleSubagentToolStart: EventHandler = (props, get, set) => {
   if (!toolCallId || !toolName) return;
 
   const subagentSessionId = props.subagentSessionId as string | undefined;
-  const targetMessageId = subagentSessionId
-    ? messages.find((m) => m.agentContent?.subagent?.sessionId === subagentSessionId)
-        ?.id || messages.find((m) => m.agentContent?.subagent?.status === 'running')?.id
-    : currentAssistantMessageId ||
-      [...messages].reverse().find((m) => m.agentContent?.subagent)?.id;
-
-  if (!targetMessageId) return;
+  const target = findSubagentTarget(
+    messages,
+    subagentSessionId,
+    currentAssistantMessageId
+  );
+  if (!target) return;
 
   const toolCall: ToolCallInfo = {
     toolCallId,
@@ -595,42 +922,34 @@ const handleSubagentToolStart: EventHandler = (props, get, set) => {
     startTime: Date.now(),
   };
 
-  set((state) => ({
-    messages: state.messages.map((m) => {
-      if (m.id !== targetMessageId) return m;
-      if (!m.agentContent?.subagent) return m;
-      const existing = m.agentContent.subagent.toolCalls || [];
-      if (existing.some((tc) => tc.toolCallId === toolCallId)) return m;
-      return {
-        ...m,
-        agentContent: {
-          ...m.agentContent,
-          subagent: {
-            ...m.agentContent.subagent,
-            sessionId: m.agentContent.subagent.sessionId || subagentSessionId,
-            toolCalls: [...existing, toolCall],
-          },
-        },
-      };
-    }),
-  }));
+  updateSubagent(target.messageId, target.subagent.id, (current) => {
+    const existing = current.toolCalls || [];
+    return {
+      sessionId: current.sessionId || subagentSessionId,
+      currentTool: toolName,
+      toolCalls: existing.some((tool) => tool.toolCallId === toolCallId)
+        ? existing
+        : [...existing, toolCall],
+    };
+  });
 };
 
-const handleSubagentToolResult: EventHandler = (props, get, set) => {
-  const { currentSessionId, currentAssistantMessageId, messages } = get();
+const handleSubagentToolResult: EventHandler = (props, get) => {
+  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
+    get();
   if (props.sessionId !== currentSessionId) return;
 
   const toolCallId = props.toolCallId as string;
   if (!toolCallId) return;
+  const toolName = props.toolName as string | undefined;
 
   const subagentSessionId = props.subagentSessionId as string | undefined;
-  const targetMessageId = subagentSessionId
-    ? messages.find((m) => m.agentContent?.subagent?.sessionId === subagentSessionId)
-        ?.id || messages.find((m) => m.agentContent?.subagent?.status === 'running')?.id
-    : currentAssistantMessageId ||
-      [...messages].reverse().find((m) => m.agentContent?.subagent)?.id;
-
-  if (!targetMessageId) return;
+  const target = findSubagentTarget(
+    messages,
+    subagentSessionId,
+    currentAssistantMessageId
+  );
+  if (!target) return;
 
   const output = props.output as string;
   const success = props.success === true;
@@ -643,34 +962,372 @@ const handleSubagentToolResult: EventHandler = (props, get, set) => {
         ? '执行成功'
         : '执行失败');
 
-  set((state) => ({
-    messages: state.messages.map((m) => {
-      if (m.id !== targetMessageId) return m;
-      if (!m.agentContent?.subagent) return m;
-      const existing = m.agentContent.subagent.toolCalls || [];
-      const updated = existing.map((tc) =>
-        tc.toolCallId === toolCallId
-          ? {
-              ...tc,
-              status,
-              summary,
-              output,
-              metadata: props.metadata as Record<string, unknown>,
-            }
-          : tc
-      );
-      return {
-        ...m,
-        agentContent: {
-          ...m.agentContent,
-          subagent: {
-            ...m.agentContent.subagent,
-            sessionId: m.agentContent.subagent.sessionId || subagentSessionId,
-            toolCalls: updated,
-          },
-        },
-      };
-    }),
+  updateSubagent(target.messageId, target.subagent.id, (current) => ({
+    sessionId: current.sessionId || subagentSessionId,
+    currentTool: current.currentTool === toolName ? undefined : current.currentTool,
+    toolCalls: (current.toolCalls || []).map((tool) =>
+      tool.toolCallId === toolCallId
+        ? {
+            ...tool,
+            status,
+            summary,
+            output,
+            metadata: props.metadata as Record<string, unknown>,
+          }
+        : tool
+    ),
+  }));
+};
+
+const handleSubagentToolProgress: EventHandler = (props, get) => {
+  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
+    get();
+  if (props.sessionId !== currentSessionId) return;
+  const toolCallId = props.toolCallId as string;
+  if (!toolCallId) return;
+  const target = findSubagentTarget(
+    messages,
+    props.subagentSessionId as string | undefined,
+    currentAssistantMessageId
+  );
+  if (!target) return;
+  updateSubagent(target.messageId, target.subagent.id, (current) => ({
+    toolCalls: (current.toolCalls || []).map((tool) =>
+      tool.toolCallId === toolCallId
+        ? {
+            ...tool,
+            summary: props.message as string,
+            progress: typeof props.progress === 'number' ? props.progress : undefined,
+            progressTotal: typeof props.total === 'number' ? props.total : undefined,
+            progressMessage: props.message as string,
+          }
+        : tool
+    ),
+  }));
+};
+
+const handleSubagentMcpCatalogChanged: EventHandler = (props, get) => {
+  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
+    get();
+  if (props.sessionId !== currentSessionId) return;
+  const target = findSubagentTarget(
+    messages,
+    props.subagentSessionId as string | undefined,
+    currentAssistantMessageId
+  );
+  if (!target) return;
+  const added = Array.isArray(props.added) ? props.added.map(String) : [];
+  const removed = Array.isArray(props.removed) ? props.removed.map(String) : [];
+  const updated = Array.isArray(props.updated) ? props.updated.map(String) : [];
+  const toolCallId = `mcp-catalog:${String(props.revision)}`;
+  updateSubagent(target.messageId, target.subagent.id, (current) => ({
+    toolCalls: [
+      ...(current.toolCalls || []).filter((tool) => tool.toolCallId !== toolCallId),
+      {
+        toolCallId,
+        toolName: 'MCP Catalog',
+        arguments: JSON.stringify({
+          serverName: props.serverName,
+          added,
+          removed,
+          updated,
+        }),
+        toolKind: 'readonly',
+        status: 'success',
+        startTime: Date.now(),
+        summary:
+          `MCP catalog r${String(props.revision)}: ` +
+          `+${added.length} -${removed.length} ~${updated.length}`,
+        output: [
+          added.length > 0 ? `Added: ${added.join(', ')}` : '',
+          removed.length > 0 ? `Removed: ${removed.join(', ')}` : '',
+          updated.length > 0 ? `Updated: ${updated.join(', ')}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      },
+    ],
+  }));
+};
+
+const handleSubagentMcpContentChanged: EventHandler = (props, get) => {
+  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
+    get();
+  if (props.sessionId !== currentSessionId) return;
+  const target = findSubagentTarget(
+    messages,
+    props.subagentSessionId as string | undefined,
+    currentAssistantMessageId
+  );
+  if (!target) return;
+  const added = Array.isArray(props.added) ? props.added.map(String) : [];
+  const removed = Array.isArray(props.removed) ? props.removed.map(String) : [];
+  const updated = Array.isArray(props.updated) ? props.updated.map(String) : [];
+  const toolCallId = `mcp-content:${String(props.revision)}`;
+  updateSubagent(target.messageId, target.subagent.id, (current) => ({
+    toolCalls: [
+      ...(current.toolCalls || []).filter((tool) => tool.toolCallId !== toolCallId),
+      {
+        toolCallId,
+        toolName: 'MCP Content',
+        arguments: JSON.stringify({
+          serverName: props.serverName,
+          contentKind: props.contentKind,
+          added,
+          removed,
+          updated,
+        }),
+        toolKind: 'readonly',
+        status: 'success',
+        startTime: Date.now(),
+        summary:
+          `MCP ${String(props.contentKind)} r${String(props.revision)}: ` +
+          `+${added.length} -${removed.length} ~${updated.length}`,
+      },
+    ],
+  }));
+};
+
+const handleSubagentMcpResourceUpdated: EventHandler = (props, get) => {
+  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
+    get();
+  if (props.sessionId !== currentSessionId) return;
+  const target = findSubagentTarget(
+    messages,
+    props.subagentSessionId as string | undefined,
+    currentAssistantMessageId
+  );
+  if (!target) return;
+  const toolCallId = `mcp-resource:${String(props.revision)}`;
+  updateSubagent(target.messageId, target.subagent.id, (current) => ({
+    toolCalls: [
+      ...(current.toolCalls || []).filter((tool) => tool.toolCallId !== toolCallId),
+      {
+        toolCallId,
+        toolName: 'MCP Resource',
+        arguments: JSON.stringify({
+          serverName: props.serverName,
+          uri: props.uri,
+        }),
+        toolKind: 'readonly',
+        status: 'success',
+        startTime: Date.now(),
+        summary: `MCP resource updated: ${String(props.uri)}`,
+      },
+    ],
+  }));
+};
+
+const handleSubagentMcpConnectionChanged: EventHandler = (props, get) => {
+  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
+    get();
+  if (props.sessionId !== currentSessionId) return;
+  const target = findSubagentTarget(
+    messages,
+    props.subagentSessionId as string | undefined,
+    currentAssistantMessageId
+  );
+  if (!target) return;
+  const phase = String(props.phase);
+  const toolCallId = `mcp-connection:${String(props.revision)}`;
+  updateSubagent(target.messageId, target.subagent.id, (current) => ({
+    toolCalls: [
+      ...(current.toolCalls || []).filter((tool) => tool.toolCallId !== toolCallId),
+      {
+        toolCallId,
+        toolName: 'MCP Connection',
+        arguments: JSON.stringify({
+          serverName: props.serverName,
+          phase,
+          reason: props.reason,
+          attempt: props.attempt,
+          maxAttempts: props.maxAttempts,
+        }),
+        toolKind: 'readonly',
+        status: phase === 'failed' ? 'error' : 'success',
+        startTime: Date.now(),
+        summary:
+          `MCP ${String(props.serverName)} ${phase}` +
+          (phase === 'reconnecting'
+            ? ` (${String(props.attempt)}/${String(props.maxAttempts)})`
+            : ''),
+        output: props.error ? `Error: ${String(props.error)}` : undefined,
+      },
+    ],
+  }));
+};
+
+const handleSubagentMcpLog: EventHandler = (props, get) => {
+  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
+    get();
+  if (props.sessionId !== currentSessionId) return;
+  const target = findSubagentTarget(
+    messages,
+    props.subagentSessionId as string | undefined,
+    currentAssistantMessageId
+  );
+  if (!target) return;
+  const level = String(props.level);
+  const logger = typeof props.logger === 'string' ? props.logger : undefined;
+  const toolCallId = `mcp-log:${String(props.revision)}`;
+  updateSubagent(target.messageId, target.subagent.id, (current) => ({
+    toolCalls: [
+      ...(current.toolCalls || []).filter((tool) => tool.toolCallId !== toolCallId),
+      {
+        toolCallId,
+        toolName: 'MCP Log',
+        arguments: JSON.stringify({
+          serverName: props.serverName,
+          level,
+          logger,
+        }),
+        toolKind: 'readonly',
+        status: 'success',
+        startTime: Date.now(),
+        summary:
+          `MCP ${level} · ${String(props.serverName)}` + (logger ? ` · ${logger}` : ''),
+        output: [
+          String(props.message),
+          `SHA-256: ${String(props.dataSha256)}`,
+          props.truncated === true ? 'Truncated' : '',
+          props.detailsOmitted === true ? 'Details omitted by runtime policy' : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      },
+    ],
+  }));
+};
+
+const handleSubagentMcpInstructionsChanged: EventHandler = (props, get) => {
+  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
+    get();
+  if (props.sessionId !== currentSessionId) return;
+  const target = findSubagentTarget(
+    messages,
+    props.subagentSessionId as string | undefined,
+    currentAssistantMessageId
+  );
+  if (!target) return;
+  const serverName = String(props.serverName);
+  const action = String(props.action);
+  const toolCallId = `mcp-instructions:${String(props.revision)}:${serverName}:${action}`;
+  updateSubagent(target.messageId, target.subagent.id, (current) => ({
+    toolCalls: [
+      ...(current.toolCalls || []).filter((tool) => tool.toolCallId !== toolCallId),
+      {
+        toolCallId,
+        toolName: 'MCP Instructions',
+        arguments: JSON.stringify({
+          serverName,
+          action,
+          reason: props.reason,
+        }),
+        toolKind: 'readonly',
+        status: 'success',
+        startTime: Date.now(),
+        summary:
+          `MCP instructions ${action}: ${serverName}` +
+          (props.truncated === true ? ' (truncated)' : ''),
+        output: [
+          typeof props.text === 'string' ? props.text : '',
+          props.sha256 ? `SHA-256: ${String(props.sha256)}` : '',
+          props.detailsOmitted === true ? 'Details omitted by runtime policy' : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      },
+    ],
+  }));
+};
+
+const handleSubagentMcpTaskChanged: EventHandler = (props, get) => {
+  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
+    get();
+  if (props.sessionId !== currentSessionId) return;
+  const target = findSubagentTarget(
+    messages,
+    props.subagentSessionId as string | undefined,
+    currentAssistantMessageId
+  );
+  if (!target) return;
+  const taskId = String(props.taskId);
+  const status = String(props.status);
+  const toolCallId = `mcp-task:${taskId}`;
+  updateSubagent(target.messageId, target.subagent.id, (current) => ({
+    toolCalls: [
+      ...(current.toolCalls || []).filter((tool) => tool.toolCallId !== toolCallId),
+      {
+        toolCallId,
+        toolName: 'MCP Task',
+        arguments: JSON.stringify({
+          taskId,
+          serverName: props.serverName,
+          toolName: props.toolName,
+        }),
+        toolKind: 'readonly',
+        status:
+          status === 'failed' || status === 'cancelled'
+            ? 'error'
+            : status === 'completed'
+              ? 'success'
+              : 'running',
+        startTime: Number(props.createdAt) || Date.now(),
+        summary:
+          `MCP task ${status}: ${taskId}` +
+          ` · ${String(props.serverName)}/${String(props.toolName)}`,
+        output: [
+          typeof props.statusMessage === 'string' ? props.statusMessage : '',
+          props.hasResult === true ? 'Result available via TaskOutput' : '',
+          typeof props.error === 'string' ? `Error: ${props.error}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      },
+    ],
+  }));
+};
+
+const handleSubagentProjectRulesLoaded: EventHandler = (props, get) => {
+  const { currentSessionId, currentAssistantMessageId, messages, updateSubagent } =
+    get();
+  if (props.sessionId !== currentSessionId) return;
+  const target = findSubagentTarget(
+    messages,
+    props.subagentSessionId as string | undefined,
+    currentAssistantMessageId
+  );
+  if (!target) return;
+  const files = Array.isArray(props.files)
+    ? props.files.filter(
+        (file): file is Record<string, unknown> =>
+          Boolean(file) && typeof file === 'object' && !Array.isArray(file)
+      )
+    : [];
+  const toolCallId = `project-rules:${files.map((file) => String(file.id)).join(',')}`;
+  updateSubagent(target.messageId, target.subagent.id, (current) => ({
+    toolCalls: [
+      ...(current.toolCalls || []).filter((tool) => tool.toolCallId !== toolCallId),
+      {
+        toolCallId,
+        toolName: 'Project Rules',
+        arguments: JSON.stringify({
+          triggerPaths: props.triggerPaths,
+          blockedWrite: props.blockedWrite,
+        }),
+        toolKind: 'readonly',
+        status: 'success',
+        startTime: Date.now(),
+        summary: `Project rules loaded: ${files.length}`,
+        output: files
+          .map(
+            (file) =>
+              `${String(file.relativePath)} ${String(file.source)} ` +
+              `SHA-256: ${String(file.contentSha256)}`
+          )
+          .join('\n'),
+      },
+    ],
   }));
 };
 
@@ -688,13 +1345,14 @@ const handlePermissionAsked: EventHandler = (props, get, set) => {
 
   const details = props.details as Record<string, unknown> | undefined;
   const toolName =
-    (props.toolName as string) || (details?.toolName as string) || 'Edit';
+    (props.toolName as string) || (details?.toolName as string) || 'Tool';
 
   setConfirmation(assistantMessageId, {
     toolCallId: requestId,
     toolName,
     description: props.description as string,
     diff: (details?.details as string) || (details?.diff as string) || '',
+    allowRemember: details?.type !== 'mcpSampling',
     status: 'pending',
   });
   set((state) => ({
@@ -715,7 +1373,13 @@ const handlePermissionAsked: EventHandler = (props, get, set) => {
 };
 
 const handlePermissionTimeout: EventHandler = (props, get, set) => {
-  const { currentSessionId, currentSessionRef, messages, setConfirmation } = get();
+  const {
+    currentSessionId,
+    currentSessionRef,
+    messages,
+    setConfirmation,
+    setElicitation,
+  } = get();
   if (props.sessionId !== currentSessionId) return;
 
   const requestId = props.requestId as string;
@@ -725,6 +1389,16 @@ const handlePermissionTimeout: EventHandler = (props, get, set) => {
   const confirmation = message?.agentContent?.confirmation;
   if (message && confirmation?.status === 'pending') {
     setConfirmation(message.id, { ...confirmation, status: 'denied' });
+  }
+  const elicitationMessage = messages.find(
+    (candidate) => candidate.agentContent?.elicitation?.toolCallId === requestId
+  );
+  const elicitation = elicitationMessage?.agentContent?.elicitation;
+  if (elicitationMessage && elicitation?.status === 'pending') {
+    setElicitation(elicitationMessage.id, {
+      ...elicitation,
+      status: 'cancelled',
+    });
   }
   set({
     agentPhase: 'running',
@@ -782,6 +1456,40 @@ const handleQuestionRequired: EventHandler = (props, get, set) => {
             ...session,
             pendingInteraction: {
               type: 'question' as const,
+              requestId,
+            },
+          }
+        : session
+    ),
+  }));
+};
+
+const handleElicitationRequired: EventHandler = (props, get, set) => {
+  const { currentSessionId, setElicitation } = get();
+  if (props.sessionId !== currentSessionId) return;
+  const requestId = (props.requestId as string) || (props.toolCallId as string) || '';
+  const assistantMessageId = ensureAssistantMessage(
+    get,
+    set,
+    requestId ? `assistant-elicitation-${requestId}` : undefined
+  );
+  const details = props.elicitation as McpElicitationDetails | undefined;
+  if (!assistantMessageId || !details) return;
+
+  setElicitation(assistantMessageId, {
+    toolCallId: requestId,
+    details,
+    status: 'pending',
+  });
+  set((state) => ({
+    agentPhase: 'waiting_permission',
+    isStreaming: true,
+    sessions: state.sessions.map((session) =>
+      session.sessionId === props.sessionId && session.projectPath === props.projectPath
+        ? {
+            ...session,
+            pendingInteraction: {
+              type: 'elicitation' as const,
               requestId,
             },
           }
@@ -897,27 +1605,33 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
 };
 
 const handleRunCancelled: EventHandler = (props, get, set) => {
-  const { currentSessionId, endAgentResponse } = get();
+  const { currentSessionId, endAgentResponse, messages, updateSubagent } = get();
   if (props.sessionId !== currentSessionId) return;
 
   set((state) => ({
     isStreaming: false,
     agentPhase: 'idle',
-    messages: state.messages.map((m) => {
-      if (!m.agentContent?.subagent) return m;
-      if (m.agentContent.subagent.status !== 'running') return m;
+    messages: state.messages.map((message) => {
+      const elicitation = message.agentContent?.elicitation;
+      if (elicitation?.status !== 'pending' || !message.agentContent) {
+        return message;
+      }
       return {
-        ...m,
+        ...message,
         agentContent: {
-          ...m.agentContent,
-          subagent: {
-            ...m.agentContent.subagent,
-            status: 'failed',
-          },
+          ...message.agentContent,
+          elicitation: { ...elicitation, status: 'cancelled' as const },
         },
       };
     }),
   }));
+  for (const message of messages) {
+    for (const subagent of getSubagents(message.agentContent)) {
+      if (subagent.status === 'running') {
+        updateSubagent(message.id, subagent.id, { status: 'failed' });
+      }
+    }
+  }
   endAgentResponse();
 };
 
@@ -1043,7 +1757,16 @@ const eventHandlers: Record<string, EventHandler> = {
   'thinking.delta': handleThinkingDelta,
   'thinking.completed': handleThinkingCompleted,
   'tool.start': handleToolStart,
+  'tool.progress': handleToolProgress,
   'tool.result': handleToolResult,
+  'mcp.catalog.changed': handleMcpCatalogChanged,
+  'mcp.content.changed': handleMcpContentChanged,
+  'mcp.resource.updated': handleMcpResourceUpdated,
+  'mcp.connection.changed': handleMcpConnectionChanged,
+  'mcp.log': handleMcpLog,
+  'mcp.instructions.changed': handleMcpInstructionsChanged,
+  'mcp.task.changed': handleMcpTaskChanged,
+  'project.rules.loaded': handleProjectRulesLoaded,
   'token.usage': handleTokenUsage,
   'task.updated': handleTaskUpdate,
   'subagent.start': handleSubagentStart,
@@ -1051,7 +1774,16 @@ const eventHandlers: Record<string, EventHandler> = {
   'subagent.delta': handleSubagentDelta,
   'subagent.thinking.delta': handleSubagentThinkingDelta,
   'subagent.tool.start': handleSubagentToolStart,
+  'subagent.tool.progress': handleSubagentToolProgress,
   'subagent.tool.result': handleSubagentToolResult,
+  'subagent.mcp.catalog.changed': handleSubagentMcpCatalogChanged,
+  'subagent.mcp.content.changed': handleSubagentMcpContentChanged,
+  'subagent.mcp.resource.updated': handleSubagentMcpResourceUpdated,
+  'subagent.mcp.connection.changed': handleSubagentMcpConnectionChanged,
+  'subagent.mcp.log': handleSubagentMcpLog,
+  'subagent.mcp.instructions.changed': handleSubagentMcpInstructionsChanged,
+  'subagent.mcp.task.changed': handleSubagentMcpTaskChanged,
+  'subagent.project.rules.loaded': handleSubagentProjectRulesLoaded,
   'subagent.complete': handleSubagentComplete,
   'permission.asked': handlePermissionAsked,
   'permission.timeout': handlePermissionTimeout,
@@ -1060,6 +1792,7 @@ const eventHandlers: Record<string, EventHandler> = {
   'compaction.completed': handleCompactionCompleted,
   'model.fallback': handleModelFallback,
   'question.required': handleQuestionRequired,
+  'elicitation.required': handleElicitationRequired,
   'interaction.resolved': handleInteractionResolved,
   'session.completed': handleSessionCompleted,
   'session.error': handleSessionError,
@@ -1091,24 +1824,6 @@ const STREAM_END_EVENTS = new Set([
   'session.error',
   'run.cancelled',
 ]);
-
-const resolveSubagentTargetMessageId = (
-  messages: Message[],
-  currentAssistantMessageId: string | null,
-  subagentSessionId: string
-): string | undefined => {
-  if (subagentSessionId) {
-    return (
-      messages.find((m) => m.agentContent?.subagent?.sessionId === subagentSessionId)
-        ?.id || messages.find((m) => m.agentContent?.subagent?.status === 'running')?.id
-    );
-  }
-
-  return (
-    currentAssistantMessageId ||
-    [...messages].reverse().find((m) => m.agentContent?.subagent)?.id
-  );
-};
 
 export const createEventDispatcher = (get: GetState, set: SetState) => {
   return (event: StreamEvent) => {
@@ -1210,39 +1925,26 @@ export const createEventDispatcher = (get: GetState, set: SetState) => {
         currentAssistantMessageId: targetCurrentAssistantMessageId,
         messages: targetMessages,
       } = get();
-      const targetMessageIdAtAppend = resolveSubagentTargetMessageId(
+      const targetAtAppend = findSubagentTarget(
         targetMessages,
-        targetCurrentAssistantMessageId,
-        subagentSessionId
+        subagentSessionId || undefined,
+        targetCurrentAssistantMessageId
       );
 
       globalStreamingBuffer.append(channelKey, delta, (bufferedDelta) => {
-        const { currentAssistantMessageId, messages } = get();
-        const targetMessageId =
-          targetMessageIdAtAppend ||
-          resolveSubagentTargetMessageId(
+        const { currentAssistantMessageId, messages, updateSubagent } = get();
+        const target =
+          targetAtAppend ||
+          findSubagentTarget(
             messages,
-            currentAssistantMessageId,
-            subagentSessionId
+            subagentSessionId || undefined,
+            currentAssistantMessageId
           );
 
-        if (!targetMessageId) return;
-        set((state) => ({
-          messages: state.messages.map((m) => {
-            if (m.id !== targetMessageId) return m;
-            if (!m.agentContent?.subagent) return m;
-            return {
-              ...m,
-              agentContent: {
-                ...m.agentContent,
-                subagent: {
-                  ...m.agentContent.subagent,
-                  sessionId: m.agentContent.subagent.sessionId || subagentSessionId,
-                  output: (m.agentContent.subagent.output || '') + bufferedDelta,
-                },
-              },
-            };
-          }),
+        if (!target) return;
+        updateSubagent(target.messageId, target.subagent.id, (current) => ({
+          sessionId: current.sessionId || subagentSessionId,
+          output: (current.output || '') + bufferedDelta,
         }));
       });
       return;
@@ -1262,39 +1964,26 @@ export const createEventDispatcher = (get: GetState, set: SetState) => {
         currentAssistantMessageId: targetCurrentAssistantMessageId,
         messages: targetMessages,
       } = get();
-      const targetMessageIdAtAppend = resolveSubagentTargetMessageId(
+      const targetAtAppend = findSubagentTarget(
         targetMessages,
-        targetCurrentAssistantMessageId,
-        subagentSessionId
+        subagentSessionId || undefined,
+        targetCurrentAssistantMessageId
       );
 
       globalStreamingBuffer.append(channelKey, delta, (bufferedDelta) => {
-        const { currentAssistantMessageId, messages } = get();
-        const targetMessageId =
-          targetMessageIdAtAppend ||
-          resolveSubagentTargetMessageId(
+        const { currentAssistantMessageId, messages, updateSubagent } = get();
+        const target =
+          targetAtAppend ||
+          findSubagentTarget(
             messages,
-            currentAssistantMessageId,
-            subagentSessionId
+            subagentSessionId || undefined,
+            currentAssistantMessageId
           );
 
-        if (!targetMessageId) return;
-        set((state) => ({
-          messages: state.messages.map((m) => {
-            if (m.id !== targetMessageId) return m;
-            if (!m.agentContent?.subagent) return m;
-            return {
-              ...m,
-              agentContent: {
-                ...m.agentContent,
-                subagent: {
-                  ...m.agentContent.subagent,
-                  sessionId: m.agentContent.subagent.sessionId || subagentSessionId,
-                  thinking: (m.agentContent.subagent.thinking || '') + bufferedDelta,
-                },
-              },
-            };
-          }),
+        if (!target) return;
+        updateSubagent(target.messageId, target.subagent.id, (current) => ({
+          sessionId: current.sessionId || subagentSessionId,
+          thinking: (current.thinking || '') + bufferedDelta,
         }));
       });
       return;

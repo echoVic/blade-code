@@ -181,13 +181,17 @@ describe('taskListSlice', () => {
     expect(useSessionStore.getState().sessions[0]?.taskFailure).toBeUndefined();
   });
 
-  it('patches a durable session model update without requiring a title change', () => {
+  it('patches durable inference settings without requiring a title change', () => {
     useSessionStore.getState().handleTaskEvent({
       type: 'session.updated',
       properties: {
         sessionId: 'shared-session',
         projectPath: '/workspace/a',
         selectedModelId: 'model-2',
+        reasoningEffort: 'high',
+        serviceTier: 'fast',
+        responseVerbosity: 'high',
+        communicationStyle: 'friendly',
       },
     });
 
@@ -195,8 +199,16 @@ describe('taskListSlice', () => {
     expect(workspaceA).toMatchObject({
       projectPath: '/workspace/a',
       selectedModelId: 'model-2',
+      reasoningEffort: 'high',
+      serviceTier: 'fast',
+      responseVerbosity: 'high',
+      communicationStyle: 'friendly',
     });
     expect(workspaceB?.selectedModelId).toBeUndefined();
+    expect(workspaceB?.reasoningEffort).toBeUndefined();
+    expect(workspaceB?.serviceTier).toBeUndefined();
+    expect(workspaceB?.responseVerbosity).toBeUndefined();
+    expect(workspaceB?.communicationStyle).toBeUndefined();
   });
 
   it('loads only the exact session when another client creates it', async () => {

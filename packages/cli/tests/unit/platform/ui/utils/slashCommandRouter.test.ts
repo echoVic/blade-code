@@ -39,6 +39,22 @@ vi.mock('../../../../../src/services/GracefulShutdown.js', () => ({
   safeExit: vi.fn(),
 }));
 
+const sessionServiceMocks = vi.hoisted(() => ({
+  archiveSession: vi.fn(),
+}));
+
+vi.mock('../../../../../src/services/SessionService.js', async () => {
+  const actual = await vi.importActual<
+    typeof import('../../../../../src/services/SessionService.js')
+  >('../../../../../src/services/SessionService.js');
+  return {
+    ...actual,
+    SessionService: {
+      archiveSession: sessionServiceMocks.archiveSession,
+    },
+  };
+});
+
 const activationMocks = vi.hoisted(() => ({
   activateSessionSelection: vi.fn(),
 }));
@@ -91,6 +107,10 @@ function createMockAppActions(): AppActions {
     setTasks: vi.fn(),
     updateTask: vi.fn(),
     setAwaitingSecondCtrlC: vi.fn(),
+    setReasoningEffort: vi.fn(),
+    setServiceTier: vi.fn(),
+    setResponseVerbosity: vi.fn(),
+    setCommunicationStyle: vi.fn(),
     setThinkingModeEnabled: vi.fn(),
     toggleThinkingMode: vi.fn(),
     startSubagentProgress: vi.fn(),
@@ -146,6 +166,7 @@ describe('processSlashCommand', () => {
     executeSlashCommand = vi.mocked(slashModule.executeSlashCommand);
     executeSlashCommand.mockReset();
     activationMocks.activateSessionSelection.mockReset();
+    sessionServiceMocks.archiveSession.mockReset();
     cleanupAgent.mockReset();
     cleanupAgent.mockResolvedValue(undefined);
   });
@@ -187,6 +208,86 @@ describe('processSlashCommand', () => {
           sessionId: 'session-owner',
           workspaceRoot: expect.any(String),
           messages: ownedMessages,
+        })
+      );
+    });
+
+    it('应在释放当前 Agent owner 后通过 lifecycle 归档当前会话', async () => {
+      executeSlashCommand.mockResolvedValue({ success: true });
+      const metadata = createSessionMetadata({
+        sessionId: 'session-owner',
+        projectPath: '/workspace',
+      });
+      sessionServiceMocks.archiveSession.mockResolvedValue(metadata);
+
+      await processSlashCommand(
+        createResolvedInput('/archive'),
+        createMockAppActions(),
+        createMockSessionActions(),
+        new AbortController().signal,
+        cleanupAgent,
+        'session-owner',
+        [],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        '/workspace'
+      );
+
+      const context = executeSlashCommand.mock.calls[0]?.[1];
+      await context.lifecycle?.archiveCurrent();
+      expect(cleanupAgent).toHaveBeenCalledOnce();
+      expect(sessionServiceMocks.archiveSession).toHaveBeenCalledWith(
+        'session-owner',
+        '/workspace'
+      );
+      expect(cleanupAgent.mock.invocationCallOrder[0]).toBeLessThan(
+        sessionServiceMocks.archiveSession.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('应将 Session MCP boundary 传给 slash command handler', async () => {
+      executeSlashCommand.mockResolvedValue({ success: true });
+      const mcp = {
+        getCatalog: vi.fn(),
+        refresh: vi.fn(),
+        getPrompt: vi.fn(),
+        complete: vi.fn(),
+        listTasks: vi.fn(),
+        getTask: vi.fn(),
+        cancelTask: vi.fn(),
+        getLogs: vi.fn(),
+        setLoggingLevel: vi.fn(),
+        getInstructions: vi.fn(),
+      };
+
+      await processSlashCommand(
+        createResolvedInput('/mcp prompts'),
+        createMockAppActions(),
+        createMockSessionActions(),
+        new AbortController().signal,
+        async () => undefined,
+        'session-owner',
+        [],
+        undefined,
+        undefined,
+        mcp,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        '/workspace'
+      );
+
+      expect(executeSlashCommand).toHaveBeenCalledWith(
+        '/mcp prompts',
+        expect.objectContaining({
+          sessionId: 'session-owner',
+          mcp,
         })
       );
     });

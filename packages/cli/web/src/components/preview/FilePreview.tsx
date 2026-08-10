@@ -1195,6 +1195,10 @@ function findAllDiffs(
       for (let j = message.agentContent.toolCalls.length - 1; j >= 0; j -= 1) {
         const toolCall = message.agentContent.toolCalls[j];
         const toolMeta = toolCall.metadata;
+        if (toolMeta?.kind === 'patch' && Array.isArray(toolMeta.changes)) {
+          appendPatchDiffs(diffs, seenFiles, toolMeta.changes, toolCall.summary);
+          continue;
+        }
         const output = toolCall.output || '';
         const diffCandidate =
           extractDiffBlock(output) ||
@@ -1227,6 +1231,15 @@ function findAllDiffs(
     const meta = message.metadata as Record<string, unknown> | undefined;
     if (!meta || meta.kind !== 'tool_result') continue;
     const toolMeta = meta.metadata as Record<string, unknown> | undefined;
+    if (toolMeta?.kind === 'patch' && Array.isArray(toolMeta.changes)) {
+      appendPatchDiffs(
+        diffs,
+        seenFiles,
+        toolMeta.changes,
+        meta.summary as string | undefined
+      );
+      continue;
+    }
     const output =
       (meta.output as string) ||
       (typeof message.content === 'string' ? message.content : '') ||
@@ -1258,6 +1271,42 @@ function findAllDiffs(
     }
   }
   return diffs.reverse();
+}
+
+function appendPatchDiffs(
+  diffs: FullDiffPayload[],
+  seenFiles: Set<string>,
+  changes: unknown[],
+  summary?: string
+): void {
+  for (let index = changes.length - 1; index >= 0; index--) {
+    const change = changes[index];
+    if (
+      !change ||
+      typeof change !== 'object' ||
+      !('path' in change) ||
+      typeof change.path !== 'string' ||
+      !('diff' in change) ||
+      typeof change.diff !== 'string' ||
+      seenFiles.has(change.path)
+    ) {
+      continue;
+    }
+    seenFiles.add(change.path);
+    diffs.push({
+      diff: { patch: change.diff, startLine: 1, matchLine: 1 },
+      filePath: change.path,
+      summary,
+      oldContent:
+        'oldContent' in change && typeof change.oldContent === 'string'
+          ? change.oldContent
+          : undefined,
+      newContent:
+        'newContent' in change && typeof change.newContent === 'string'
+          ? change.newContent
+          : undefined,
+    });
+  }
 }
 
 function extractDiffBlock(output: string): { diff?: PreviewDiffData } | null {

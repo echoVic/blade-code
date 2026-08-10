@@ -19,6 +19,7 @@ export function PendingInteractionBar() {
       const content = messages[index]?.agentContent;
       if (content?.confirmation?.status === 'pending') return 'permission';
       if (content?.question?.status === 'pending') return 'question';
+      if (content?.elicitation?.status === 'pending') return 'elicitation';
     }
     return null;
   }, [currentSessionRef, messages, sessions]);
@@ -34,6 +35,7 @@ export function PendingInteractionBar() {
   };
 
   const isQuestion = interaction === 'question';
+  const isElicitation = interaction === 'elicitation';
   return (
     <div
       role="alert"
@@ -45,14 +47,18 @@ export function PendingInteractionBar() {
           {t(
             isQuestion
               ? 'interaction.bar.questionTitle'
-              : 'interaction.bar.permissionTitle'
+              : isElicitation
+                ? 'interaction.bar.elicitationTitle'
+                : 'interaction.bar.permissionTitle'
           )}
         </div>
         <div className="mt-0.5 text-[10px] leading-4 text-amber-800 dark:text-amber-300">
           {t(
             isQuestion
               ? 'interaction.bar.questionHint'
-              : 'interaction.bar.permissionHint'
+              : isElicitation
+                ? 'interaction.bar.elicitationHint'
+                : 'interaction.bar.permissionHint'
           )}
         </div>
       </div>

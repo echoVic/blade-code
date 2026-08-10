@@ -319,6 +319,222 @@ describe('createLoopEventHandler', () => {
     });
   });
 
+  describe('tool_progress 投影', () => {
+    it('应该把结构化进度投影为瞬态工具消息', () => {
+      const deps = createMockDeps();
+      const handler = createLoopEventHandler(deps, createMockStats());
+
+      handler({
+        kind: 'tool_progress',
+        toolCall: {
+          id: 'mcp-call-1',
+          type: 'function',
+          function: { name: 'progressive', arguments: '{}' },
+        },
+        update: {
+          message: 'phase-two',
+          progress: 2,
+          total: 4,
+        },
+      });
+
+      expect(deps.sessionActions.addToolMessage).toHaveBeenCalledWith(
+        'progressive 50%: phase-two',
+        {
+          toolCallId: 'mcp-call-1',
+          toolName: 'progressive',
+          phase: 'progress',
+          summary: 'progressive 50%: phase-two',
+        }
+      );
+    });
+  });
+
+  it('将 MCP catalog revision 投影为瞬态工具消息', () => {
+    const deps = createMockDeps();
+    const handler = createLoopEventHandler(deps, createMockStats());
+
+    handler({
+      kind: 'mcp_catalog_changed',
+      revision: 2,
+      serverName: 'dynamic',
+      reason: 'notification',
+      added: ['mcp__dynamic__new_tool'],
+      removed: ['mcp__dynamic__old_tool'],
+      updated: [],
+    });
+
+    expect(deps.sessionActions.addToolMessage).toHaveBeenCalledWith(
+      'MCP catalog r2: +1 -1 ~0',
+      {
+        toolName: 'MCP Catalog',
+        phase: 'complete',
+        summary: 'MCP catalog r2: +1 -1 ~0',
+        detail: 'Added: mcp__dynamic__new_tool\nRemoved: mcp__dynamic__old_tool',
+      }
+    );
+  });
+
+  it('将 MCP content 与 resource update 投影为瞬态工具消息', () => {
+    const deps = createMockDeps();
+    const handler = createLoopEventHandler(deps, createMockStats());
+
+    handler({
+      kind: 'mcp_content_changed',
+      revision: 4,
+      serverName: 'content',
+      contentKind: 'prompts',
+      reason: 'notification',
+      added: ['new_prompt'],
+      removed: [],
+      updated: ['compose_report'],
+    });
+    handler({
+      kind: 'mcp_resource_updated',
+      revision: 5,
+      serverName: 'content',
+      uri: 'context://live',
+    });
+    handler({
+      kind: 'mcp_connection_changed',
+      revision: 6,
+      serverName: 'content',
+      phase: 'reconnecting',
+      reason: 'transport_closed',
+      attempt: 1,
+      maxAttempts: 5,
+      nextRetryAt: 1_000,
+      error: 'Connection closed',
+    });
+    handler({
+      kind: 'mcp_log',
+      revision: 7,
+      serverName: 'content',
+      level: 'warning',
+      logger: 'fixture',
+      message: 'SAFE_LOG_MARKER',
+      projectedBytes: 15,
+      dataSha256: 'a'.repeat(64),
+      truncated: false,
+      detailsOmitted: false,
+      timestamp: 1_000,
+    });
+    handler({
+      kind: 'mcp_instructions_changed',
+      revision: 8,
+      serverName: 'content',
+      action: 'added',
+      reason: 'snapshot',
+      text: 'Use INSTRUCTION_CODE_42',
+      sourceBytes: 23,
+      projectedBytes: 23,
+      sha256: 'b'.repeat(64),
+      truncated: false,
+      detailsOmitted: false,
+    });
+    handler({
+      kind: 'mcp_task_changed',
+      revision: 9,
+      taskId: 'mcp_task_safe',
+      serverName: 'content',
+      toolName: 'long_task',
+      status: 'completed',
+      createdAt: 1_000,
+      updatedAt: 2_000,
+      completedAt: 2_000,
+      hasResult: true,
+    });
+
+    expect(deps.sessionActions.addToolMessage).toHaveBeenNthCalledWith(
+      1,
+      'MCP prompts r4: +1 -0 ~1',
+      expect.objectContaining({
+        toolName: 'MCP Content',
+        phase: 'complete',
+      })
+    );
+    expect(deps.sessionActions.addToolMessage).toHaveBeenNthCalledWith(
+      2,
+      'MCP resource updated: context://live',
+      {
+        toolName: 'MCP Resource',
+        phase: 'progress',
+        summary: 'MCP resource updated: context://live',
+        detail: 'content · revision 5',
+      }
+    );
+    expect(deps.sessionActions.addToolMessage).toHaveBeenNthCalledWith(
+      3,
+      'MCP content recovering (1/5)',
+      {
+        toolName: 'MCP Connection',
+        phase: 'complete',
+        summary: 'MCP content recovering (1/5)',
+        detail: 'reason: transport_closed\nrevision: 6\nerror: Connection closed',
+      }
+    );
+    expect(deps.sessionActions.addToolMessage).toHaveBeenNthCalledWith(
+      4,
+      'MCP warning · content · fixture',
+      {
+        toolName: 'MCP Log',
+        phase: 'complete',
+        summary: 'MCP warning · content · fixture',
+        detail: `SAFE_LOG_MARKER\nrevision: 7\nsha256: ${'a'.repeat(64)}`,
+      }
+    );
+    expect(deps.sessionActions.addToolMessage).toHaveBeenNthCalledWith(
+      5,
+      'MCP instructions added: content',
+      {
+        toolName: 'MCP Instructions',
+        phase: 'complete',
+        summary: 'MCP instructions added: content',
+        detail: `Use INSTRUCTION_CODE_42\nsha256: ${'b'.repeat(64)}`,
+      }
+    );
+    expect(deps.sessionActions.addToolMessage).toHaveBeenNthCalledWith(
+      6,
+      'MCP task completed: mcp_task_safe (content/long_task)',
+      {
+        toolName: 'MCP Task',
+        phase: 'complete',
+        summary: 'MCP task completed: mcp_task_safe (content/long_task)',
+        detail: 'revision: 9\nresult available via TaskOutput',
+      }
+    );
+  });
+
+  it('将 contextual project rules 投影为安全摘要', () => {
+    const deps = createMockDeps();
+    const handler = createLoopEventHandler(deps, createMockStats());
+
+    handler({
+      kind: 'project_rules_loaded',
+      files: [
+        {
+          id: 'project:rule-one',
+          relativePath: '.claude/rules/typescript.md',
+          source: 'project',
+          conditional: true,
+          contentSha256: 'c'.repeat(64),
+        },
+      ],
+      triggerPaths: ['src/index.ts'],
+      blockedWrite: true,
+    });
+
+    expect(deps.sessionActions.addToolMessage).toHaveBeenCalledWith(
+      'Project rules loaded: 1 (write retry required)',
+      {
+        toolName: 'Project Rules',
+        phase: 'complete',
+        summary: 'Project rules loaded: 1 (write retry required)',
+        detail: `.claude/rules/typescript.md project sha256=${'c'.repeat(64)}`,
+      }
+    );
+  });
+
   // ==================== 场景 7: thinking_delta 开关控制 ====================
 
   describe('thinking_delta 受 thinkingModeEnabled 控制', () => {

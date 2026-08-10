@@ -9,12 +9,23 @@ import type { SessionStoreState } from '../../../src/store/session';
 const sessionActionMocks = vi.hoisted(() => ({
   selectSession: vi.fn(),
   startTemporarySession: vi.fn(),
+  archiveSession: vi.fn(),
+  unarchiveSession: vi.fn(),
   deleteSession: vi.fn(),
   loadSessions: vi.fn(),
+  loadArchivedSessions: vi.fn(),
   forkSession: vi.fn(),
   updateSession: vi.fn(),
   bindProject: vi.fn(),
   selectProject: vi.fn(),
+}));
+
+const exportMocks = vi.hoisted(() => ({
+  downloadSessionMarkdown: vi.fn(),
+}));
+
+vi.mock('../../../src/lib/sessionExport', () => ({
+  downloadSessionMarkdown: exportMocks.downloadSessionMarkdown,
 }));
 
 vi.mock('../../../src/store/session', async () => {
@@ -134,6 +145,15 @@ describe('Sidebar', () => {
 
   beforeEach(() => {
     Object.values(sessionActionMocks).forEach((mock) => mock.mockReset());
+    exportMocks.downloadSessionMarkdown.mockReset();
+    exportMocks.downloadSessionMarkdown.mockResolvedValue({
+      filename: 'conversation.md',
+      markdown: '# Blade conversation\n',
+      contentSha256: 'a'.repeat(64),
+      messageCount: 1,
+      activityCount: 0,
+      redactionCount: 0,
+    });
     window.localStorage.removeItem(PROJECT_ORDER_STORAGE_KEY);
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -152,8 +172,11 @@ describe('Sidebar', () => {
     useSessionStore.setState((state) => ({
       ...state,
       sessions: [],
+      archivedSessions: [],
       catalogLoadState: 'ready',
       catalogError: null,
+      archivedCatalogLoadState: 'idle',
+      archivedCatalogError: null,
       currentSessionId: null,
       currentSessionRef: null,
       forkingSessionRef: null,
@@ -697,12 +720,22 @@ describe('Sidebar', () => {
     const deleteButton = document.querySelector(
       'button[aria-label="Delete Semantic Session"]'
     );
+    const archiveButton = document.querySelector(
+      'button[aria-label="Archive Semantic Session"]'
+    );
+    const exportButton = document.querySelector(
+      'button[aria-label="Export Semantic Session as Markdown"]'
+    );
 
     expect(forkButton).toBeInstanceOf(HTMLButtonElement);
     expect(renameButton).toBeInstanceOf(HTMLButtonElement);
+    expect(archiveButton).toBeInstanceOf(HTMLButtonElement);
+    expect(exportButton).toBeInstanceOf(HTMLButtonElement);
     expect(deleteButton).toBeInstanceOf(HTMLButtonElement);
     expect(selectButton?.contains(forkButton)).toBe(false);
     expect(selectButton?.contains(renameButton)).toBe(false);
+    expect(selectButton?.contains(archiveButton)).toBe(false);
+    expect(selectButton?.contains(exportButton)).toBe(false);
     expect(selectButton?.contains(deleteButton)).toBe(false);
   });
 
@@ -745,6 +778,8 @@ describe('Sidebar', () => {
     await user.keyboard('{Enter}');
     await user.tab();
     await user.tab();
+    await user.tab();
+    await user.tab();
     const deleteButton = document.querySelector(
       'button[aria-label="Delete Keyboard Actions"]'
     );
@@ -755,6 +790,118 @@ describe('Sidebar', () => {
       createRef('session-1', '/workspace/a')
     );
     expect(sessionActionMocks.selectSession).not.toHaveBeenCalled();
+  });
+
+  test('archives from the row action menu and restores from the archive popover', async () => {
+    useAppStore.setState({ sidebarView: 'status' });
+    const session = createSession({ title: 'Archive Candidate' });
+    const archived = createSession({
+      sessionId: 'archived-session',
+      title: 'Archived Session',
+      archivedAt: '2026-08-09T00:00:00.000Z',
+      archivedBySessionId: 'archived-session',
+    });
+    useSessionStore.setState({
+      sessions: [session],
+      archivedSessions: [archived],
+      archivedCatalogLoadState: 'ready',
+    });
+
+    await act(async () => {
+      root.render(<Sidebar />);
+    });
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="More actions for Archive Candidate"]'
+        )
+        ?.click();
+    });
+    await act(async () => {
+      document
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Archive Archive Candidate"]'
+        )
+        ?.click();
+    });
+    await act(
+      async () =>
+        new Promise((resolve) => {
+          window.setTimeout(resolve, 20);
+        })
+    );
+    expect(sessionActionMocks.archiveSession).toHaveBeenCalledWith(
+      createRef(session.sessionId, session.projectPath)
+    );
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Open session archive"]')
+        ?.click();
+    });
+    expect(sessionActionMocks.loadArchivedSessions).toHaveBeenCalledOnce();
+    let restoreButton: HTMLButtonElement | null = null;
+    await vi.waitFor(() => {
+      restoreButton = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Restore Archived Session"]'
+      );
+      expect(restoreButton).toBeInstanceOf(HTMLButtonElement);
+    });
+    expect(restoreButton).toBeInstanceOf(HTMLButtonElement);
+    await act(async () => restoreButton?.click());
+    expect(sessionActionMocks.unarchiveSession).toHaveBeenCalledWith(
+      createRef(archived.sessionId, archived.projectPath)
+    );
+  });
+
+  test('exports active and archived sessions through the safe download helper', async () => {
+    useAppStore.setState({ sidebarView: 'status' });
+    const active = createSession({ title: 'Export Active' });
+    const archived = createSession({
+      sessionId: 'export-archived',
+      title: 'Export Archived',
+      archivedAt: '2026-08-09T00:00:00.000Z',
+      archivedBySessionId: 'export-archived',
+    });
+    useSessionStore.setState({
+      sessions: [active],
+      archivedSessions: [archived],
+      archivedCatalogLoadState: 'ready',
+    });
+    await act(async () => root.render(<Sidebar />));
+
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="More actions for Export Active"]'
+        )
+        ?.click()
+    );
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Export Export Active as Markdown"]'
+        )
+        ?.click()
+    );
+    expect(exportMocks.downloadSessionMarkdown).toHaveBeenCalledWith(
+      createRef(active.sessionId, active.projectPath)
+    );
+
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Open session archive"]')
+        ?.click()
+    );
+    const archivedExport = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Export Export Archived as Markdown"]'
+    );
+    expect(archivedExport).toBeInstanceOf(HTMLButtonElement);
+    await act(async () => archivedExport?.click());
+    expect(exportMocks.downloadSessionMarkdown).toHaveBeenCalledWith(
+      createRef(archived.sessionId, archived.projectPath)
+    );
   });
 
   test('disables fork menu items while any fork is pending and only marks the source row busy', async () => {

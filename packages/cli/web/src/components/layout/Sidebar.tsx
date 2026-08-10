@@ -1,7 +1,18 @@
+import {
+  ChevronLeft,
+  FolderPlus,
+  Plus,
+  Search,
+  Settings,
+  Sparkles,
+  Terminal,
+} from 'lucide-react';
+import { useState } from 'react';
 import { ScrollArea } from '@/components/ui/ScrollArea';
 import { useT } from '@/i18n';
 import { shortcutHint } from '@/lib/keyboardShortcuts';
 import { sessionDisplayTitle } from '@/lib/sessionDisplayTitle';
+import { downloadSessionMarkdown } from '@/lib/sessionExport';
 import { taskFailureMessageKey } from '@/lib/taskFailure';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/AppStore';
@@ -11,16 +22,7 @@ import {
   sessionRefFromSession,
   sessionRefKey,
 } from '@/store/session/sessionIdentity';
-import {
-  ChevronLeft,
-  FolderPlus,
-  Plus,
-  Search,
-  Settings,
-  Sparkles,
-  Terminal
-} from 'lucide-react';
-import { useState } from 'react';
+import { ArchivedSessionsPopover } from './ArchivedSessionsPopover';
 import { BladeMark } from './BladeMark';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { ProjectBindingDialog } from './ProjectBindingDialog';
@@ -53,9 +55,11 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
   const selectSession = useSessionStore((state) => state.selectSession);
   const startTemporarySession = useSessionStore((state) => state.startTemporarySession);
   const deleteSession = useSessionStore((state) => state.deleteSession);
+  const archiveSession = useSessionStore((state) => state.archiveSession);
   const forkSession = useSessionStore((state) => state.forkSession);
   const updateSession = useSessionStore((state) => state.updateSession);
   const loadSessions = useSessionStore((state) => state.loadSessions);
+  const setError = useSessionStore((state) => state.setError);
   const taskEventsConnected = useSessionStore((state) => state.taskEventsConnected);
   const taskWorkspaceInfo = useSessionStore((state) => state.taskWorkspaceInfo);
   const boundProjects = useSessionStore((state) => state.boundProjects);
@@ -69,6 +73,7 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
   const unreadTaskKeys = useSessionStore((state) => state.unreadTaskKeys);
   const [editingSessionKey, setEditingSessionKey] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
+  const [exportingSessionKey, setExportingSessionKey] = useState<string | null>(null);
   const [isProjectDialogOpen, setIsProjectDialogOpen] = useState(false);
 
   const activeProjectPath = selectedProjectPath ?? taskWorkspaceInfo?.cwd ?? null;
@@ -138,6 +143,20 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
   ) => {
     e.stopPropagation();
     await deleteSession(sessionRefFromSession(session));
+  };
+
+  const handleExportSession = async (session: (typeof sessions)[0]) => {
+    const ref = sessionRefFromSession(session);
+    const key = sessionRefKey(ref);
+    if (exportingSessionKey) return;
+    setExportingSessionKey(key);
+    try {
+      await downloadSessionMarkdown(ref);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Session export failed');
+    } finally {
+      setExportingSessionKey(null);
+    }
   };
 
   const handleStartRename = (e: React.MouseEvent, session: (typeof sessions)[0]) => {
@@ -336,6 +355,7 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
                       sessionRefKey(sessionRef)
                     )}
                     isRetrying={retryingTaskKeys.includes(sessionRefKey(sessionRef))}
+                    isExporting={exportingSessionKey === sessionKey}
                     onSelect={() => {
                       onNavigate?.();
                       return selectSession(sessionRef);
@@ -347,6 +367,8 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
                       void retryTask(sessionRef).catch(() => undefined);
                     }}
                     onFork={() => void forkSession(session)}
+                    onArchive={() => void archiveSession(sessionRef)}
+                    onExport={() => void handleExportSession(session)}
                     onStartRename={(e) => handleStartRename(e, session)}
                     onDelete={(e) => handleDeleteSession(e, session)}
                     onEditingTitleChange={setEditingTitle}
@@ -378,6 +400,7 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
 
       <div className="flex flex-col gap-3 px-5 pt-3 pb-5">
         <div className="flex flex-col gap-0.5 border-t border-[hsl(var(--deck-hairline))] pt-3">
+          <ArchivedSessionsPopover />
           {[
             {
               icon: Settings,
@@ -387,6 +410,7 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
           ].map(({ icon: Icon, action, labelKey }) => (
             <button
               key={labelKey}
+              data-settings-trigger
               onClick={action}
               className="flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 font-mono text-[12.5px] text-[hsl(var(--deck-ink-muted))] transition-colors hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))]"
             >

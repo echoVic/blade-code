@@ -1,3 +1,5 @@
+import { FileCode, GitBranch, Menu, RotateCcw } from 'lucide-react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { RewindDialog } from '@/components/chat/RewindDialog';
 import { CapacityMeter } from '@/components/tasks/CapacityMeter';
 import { Button } from '@/components/ui/button';
@@ -8,8 +10,6 @@ import { sessionService } from '@/services';
 import { useAppStore } from '@/store/AppStore';
 import { useSessionStore } from '@/store/session';
 import { sameSessionRef, sessionRefKey } from '@/store/session/sessionIdentity';
-import { FileCode, GitBranch, Menu, RotateCcw } from 'lucide-react';
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Sidebar } from './Sidebar';
 
 interface LayoutProps {
@@ -19,6 +19,11 @@ interface LayoutProps {
 const SettingsModal = lazy(() =>
   import('@/components/settings/SettingsModal').then((module) => ({
     default: module.SettingsModal,
+  }))
+);
+const McpModal = lazy(() =>
+  import('@/components/mcp/McpModal').then((module) => ({
+    default: module.McpModal,
   }))
 );
 const loadTaskSwitcher = () =>
@@ -62,6 +67,7 @@ export function Layout({ children }: LayoutProps) {
   const {
     isSidebarOpen,
     isFilePreviewOpen,
+    isMcpOpen,
     isSettingsOpen,
     isTerminalOpen,
     isTaskSwitcherOpen,
@@ -255,10 +261,11 @@ export function Layout({ children }: LayoutProps) {
         inert={previewModalOpen || (isMobile && !isSidebarOpen) ? true : undefined}
         onKeyDown={handleMobileSidebarKeyDown}
         className={cn(
-          'transition-all duration-300 ease-in-out',
-          isSidebarOpen ? 'w-[260px]' : 'w-[64px]',
           'overflow-hidden',
-          isMobile && 'fixed inset-y-0 left-0 z-50 shadow-2xl transition-transform',
+          isSidebarOpen ? 'w-[260px]' : 'w-[64px]',
+          isMobile
+            ? 'fixed inset-y-0 left-0 z-50 shadow-2xl transition-none'
+            : 'shrink-0 transition-[width] duration-300 ease-in-out',
           isMobile && !isSidebarOpen && '-translate-x-full'
         )}
       >
@@ -436,6 +443,11 @@ export function Layout({ children }: LayoutProps) {
       {isTaskSwitcherOpen && (
         <Suspense fallback={null}>
           <TaskSwitcher />
+        </Suspense>
+      )}
+      {isMcpOpen && (
+        <Suspense fallback={null}>
+          <McpModal />
         </Suspense>
       )}
       <RewindDialog open={isRewindOpen} onOpenChange={setIsRewindOpen} />

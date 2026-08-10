@@ -1,5 +1,6 @@
 import type {
   ConfirmationInfo,
+  ElicitationInfo,
   MessageSlice,
   QuestionInfo,
   SliceCreator,
@@ -11,6 +12,9 @@ import {
   appendTimelineThinking,
   appendTimelineToolCall,
   createEmptyAgentContent,
+  getSubagents,
+  upsertSubagent,
+  withSubagents,
 } from '../utils/agentTimeline';
 
 export const createMessageSlice: SliceCreator<MessageSlice> = (set, _get) => ({
@@ -116,12 +120,49 @@ export const createMessageSlice: SliceCreator<MessageSlice> = (set, _get) => ({
       }),
     })),
 
+  setElicitation: (id, elicitation: ElicitationInfo | null) =>
+    set((state) => ({
+      messages: state.messages.map((message) => {
+        if (message.id !== id) return message;
+        const agentContent = message.agentContent || createEmptyAgentContent();
+        return {
+          ...message,
+          agentContent: { ...agentContent, elicitation },
+        };
+      }),
+    })),
+
   setSubagent: (id, subagent: SubagentProgress | null) =>
     set((state) => ({
       messages: state.messages.map((m) => {
         if (m.id !== id) return m;
         const agentContent = m.agentContent || createEmptyAgentContent();
-        return { ...m, agentContent: { ...agentContent, subagent } };
+        return {
+          ...m,
+          agentContent: subagent
+            ? upsertSubagent(agentContent, subagent)
+            : withSubagents(agentContent, []),
+        };
+      }),
+    })),
+
+  updateSubagent: (id, subagentId, update) =>
+    set((state) => ({
+      messages: state.messages.map((m) => {
+        if (m.id !== id) return m;
+        const agentContent = m.agentContent || createEmptyAgentContent();
+        const subagents = [...getSubagents(agentContent)];
+        const index = subagents.findIndex(
+          (subagent) => subagent.id === subagentId || subagent.sessionId === subagentId
+        );
+        if (index === -1) return m;
+        const current = subagents[index];
+        const patch = typeof update === 'function' ? update(current) : update;
+        subagents[index] = { ...current, ...patch, id: current.id };
+        return {
+          ...m,
+          agentContent: withSubagents(agentContent, subagents, subagents[index].id),
+        };
       }),
     })),
 

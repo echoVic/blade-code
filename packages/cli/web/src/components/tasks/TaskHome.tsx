@@ -1,3 +1,9 @@
+import type {
+  CommunicationStyle,
+  ReasoningEffort,
+  ResponseVerbosity,
+  ServiceTier,
+} from '@api/schemas';
 import {
   AlertCircle,
   Bot,
@@ -96,6 +102,8 @@ export function TaskHome() {
     error,
     selectProject,
     dispatchTask,
+    sendMessage,
+    startTemporarySession,
     selectSession,
     cancelTask,
     cancellingTaskKeys,
@@ -110,11 +118,13 @@ export function TaskHome() {
     loadBoundProjects,
   } = useSessionStore();
   const openSettings = useAppStore((state) => state.openSettings);
+  const isSettingsOpen = useAppStore((state) => state.isSettingsOpen);
   const currentMode = useConfigStore((state) => state.currentMode);
   const currentModelId = useConfigStore((state) => state.currentModelId);
   const configuredModels = useConfigStore((state) => state.configuredModels);
   const modelsLoading = useConfigStore((state) => state.isLoading);
   const modelsLoaded = useConfigStore((state) => state.hasLoaded);
+  const loadedModelWorkspacePath = useConfigStore((state) => state.loadedWorkspacePath);
   const modelsError = useConfigStore((state) => state.error);
   const loadModels = useConfigStore((state) => state.loadModels);
   const [isolation, setIsolation] = useState<'local' | 'worktree'>('worktree');
@@ -144,6 +154,21 @@ export function TaskHome() {
     (selectedProject?.available ? selectedProject.path : undefined) ??
     taskWorkspaceInfo?.cwd;
   const composerDraftKey = `task:${targetProjectPath ?? 'unavailable'}`;
+  useEffect(() => {
+    if (
+      !isSettingsOpen &&
+      targetProjectPath &&
+      (!modelsLoaded || loadedModelWorkspacePath !== targetProjectPath)
+    ) {
+      void loadModels(targetProjectPath);
+    }
+  }, [
+    isSettingsOpen,
+    loadModels,
+    loadedModelWorkspacePath,
+    modelsLoaded,
+    targetProjectPath,
+  ]);
   const workspaceReadinessPending =
     !selectedProject?.available && isTaskWorkspaceLoading;
   const workspaceReadinessError = selectedProject?.available
@@ -174,14 +199,30 @@ export function TaskHome() {
     async (payload: {
       content: string;
       modelId?: string;
+      reasoningEffort?: ReasoningEffort;
+      serviceTier?: ServiceTier;
+      responseVerbosity?: ResponseVerbosity;
+      communicationStyle?: CommunicationStyle;
       attachments: ComposerImageAttachment[];
     }) => {
+      if (payload.content.trimStart().startsWith('!')) {
+        startTemporarySession(targetProjectPath);
+        await sendMessage({
+          content: payload.content,
+          attachments: [],
+        });
+        return;
+      }
       await dispatchTask({
         prompt: payload.content,
         projectPath: targetProjectPath,
         isolation,
         permissionMode: currentMode,
         modelId: payload.modelId ?? currentModelId ?? undefined,
+        reasoningEffort: payload.reasoningEffort,
+        serviceTier: payload.serviceTier,
+        responseVerbosity: payload.responseVerbosity,
+        communicationStyle: payload.communicationStyle,
         attachments: payload.attachments.map((attachment) => ({
           type: 'image' as const,
           content: attachment.dataUrl,
@@ -190,7 +231,15 @@ export function TaskHome() {
         })),
       });
     },
-    [currentMode, currentModelId, dispatchTask, isolation, targetProjectPath]
+    [
+      currentMode,
+      currentModelId,
+      dispatchTask,
+      isolation,
+      sendMessage,
+      startTemporarySession,
+      targetProjectPath,
+    ]
   );
 
   // Keyboard shortcuts: ⌘1..⌘4 (or Ctrl on non-mac) drops a template prompt.
@@ -377,7 +426,9 @@ export function TaskHome() {
               {isDispatchingTask && (
                 <span className="inline-flex items-center gap-1.5 font-mono text-[10.5px] text-[hsl(var(--deck-accent))]">
                   <Loader2 className="h-3 w-3 animate-spin" />
-                  <span className="hidden sm:inline">{t('taskHome.context.preparing')}</span>
+                  <span className="hidden sm:inline">
+                    {t('taskHome.context.preparing')}
+                  </span>
                 </span>
               )}
             </div>
@@ -514,7 +565,7 @@ export function TaskHome() {
                       data-model-setup-trigger
                       onClick={() => {
                         if (modelsError) {
-                          void loadModels();
+                          void loadModels(targetProjectPath);
                         } else {
                           openSettings('models');
                         }

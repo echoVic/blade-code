@@ -12,7 +12,7 @@
  */
 
 import { useSyncExternalStore } from 'react';
-import { en, type Dict, type TranslationKey } from './en';
+import { type Dict, en, type TranslationKey } from './en';
 import { zh } from './zh';
 
 export type Locale = 'en' | 'zh';
@@ -22,8 +22,7 @@ const DICTIONARIES: Record<Locale, Dict> = { en, zh };
 
 const STORAGE_KEY = 'blade-ui-locale';
 
-const isBrowser =
-  typeof window !== 'undefined' && typeof document !== 'undefined';
+const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
 
 function detectInitialLocale(): Locale {
   if (isBrowser) {

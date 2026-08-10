@@ -15,6 +15,7 @@ vi.mock('../../../src/components/chat/MarkdownRenderer', () => ({
 const serviceMocks = vi.hoisted(() => ({
   respondPermission: vi.fn(),
   respondToQuestion: vi.fn(),
+  respondToElicitation: vi.fn(),
   listSubagents: vi.fn(),
   resumeSubagent: vi.fn(),
 }));
@@ -29,6 +30,7 @@ vi.mock('../../../src/services', async () => {
       ...actual.sessionService,
       respondPermission: serviceMocks.respondPermission,
       respondToQuestion: serviceMocks.respondToQuestion,
+      respondToElicitation: serviceMocks.respondToElicitation,
       listSubagents: serviceMocks.listSubagents,
       resumeSubagent: serviceMocks.resumeSubagent,
     },
@@ -37,6 +39,18 @@ vi.mock('../../../src/services', async () => {
 
 import { ChatMessage } from '../../../src/components/chat/ChatMessage';
 
+async function setInput(input: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(
+    Object.getPrototypeOf(input),
+    'value'
+  )?.set;
+  await act(async () => {
+    setter?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
 describe('ChatMessage', () => {
   let container: HTMLDivElement;
   let root: ReactDOM.Root;
@@ -44,6 +58,7 @@ describe('ChatMessage', () => {
   beforeEach(() => {
     serviceMocks.respondPermission.mockReset();
     serviceMocks.respondToQuestion.mockReset();
+    serviceMocks.respondToElicitation.mockReset();
     serviceMocks.listSubagents.mockReset().mockResolvedValue([]);
     serviceMocks.resumeSubagent.mockReset();
     container = document.createElement('div');
@@ -260,6 +275,47 @@ describe('ChatMessage', () => {
     expect(container.textContent).not.toContain('undefined');
   });
 
+  test('renders accessible progress for a running MCP tool', async () => {
+    const message: Message = {
+      id: 'assistant-progress',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000002,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [
+          {
+            toolCallId: 'mcp-progress-1',
+            toolName: 'progressive',
+            arguments: '{}',
+            status: 'running',
+            summary: 'phase-two',
+            progress: 2,
+            progressTotal: 4,
+            progressMessage: 'phase-two',
+            startTime: Date.now(),
+          },
+        ],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: null,
+        confirmation: null,
+        question: null,
+      },
+    };
+
+    await act(async () => {
+      root.render(<ChatMessage message={message} />);
+    });
+
+    expect(container.textContent).toContain('phase-two');
+    expect(container.textContent).toContain('50%');
+    const progress = container.querySelector('[role="progressbar"]');
+    expect(progress?.getAttribute('aria-valuenow')).toBe('2');
+    expect(progress?.getAttribute('aria-valuemax')).toBe('4');
+  });
+
   test('responds to permissions with the full current session ref instead of a bare session id', async () => {
     const message: Message = {
       id: 'assistant-confirmation',
@@ -301,6 +357,41 @@ describe('ChatMessage', () => {
       'permission-1',
       { approved: true, scope: 'once' }
     );
+  });
+
+  test('renders MCP sampling as one-shot approval without remember actions', async () => {
+    const message: Message = {
+      id: 'assistant-sampling',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000002,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: null,
+        confirmation: {
+          toolCallId: 'sampling-1',
+          toolName: 'MCP sampling: fixture',
+          description: 'May consume up to 128 output tokens.',
+          diff: 'User: Return the release marker.',
+          allowRemember: false,
+          status: 'pending',
+        },
+        question: null,
+      },
+    };
+
+    await act(async () => {
+      root.render(<ChatMessage message={message} />);
+    });
+
+    expect(container.textContent).toContain('Return the release marker.');
+    expect(container.textContent).toContain('Allow once');
+    expect(container.textContent).not.toContain('Allow for session');
+    expect(container.textContent).not.toContain('Allow for project');
   });
 
   test('keeps a permission request pending and retryable when the response fails', async () => {
@@ -412,6 +503,204 @@ describe('ChatMessage', () => {
       'question-1',
       { mode: 'A' }
     );
+  });
+
+  test('submits typed MCP form content without projecting answers into the message', async () => {
+    const message: Message = {
+      id: 'assistant-elicitation',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000004,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: null,
+        confirmation: null,
+        question: null,
+        elicitation: {
+          toolCallId: 'elicitation-1',
+          status: 'pending',
+          details: {
+            serverName: 'deploy',
+            mode: 'form',
+            message: 'Configure release',
+            requestedSchema: { type: 'object', properties: {} },
+            fields: [
+              {
+                name: 'channel',
+                type: 'select',
+                title: 'Channel',
+                required: true,
+                options: [
+                  { value: 'stable', label: 'Stable' },
+                  { value: 'preview', label: 'Preview' },
+                ],
+              },
+              {
+                name: 'notifications',
+                type: 'boolean',
+                title: 'Notifications',
+                required: true,
+                defaultValue: true,
+              },
+              {
+                name: 'retries',
+                type: 'integer',
+                title: 'Retries',
+                required: true,
+                defaultValue: 2,
+              },
+              {
+                name: 'owner',
+                type: 'string',
+                title: 'Owner',
+                required: true,
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    await act(async () => {
+      root.render(<ChatMessage message={message} />);
+    });
+    const stable = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Stable'
+    );
+    const owner = container.querySelector('#mcp-elicitation-owner') as HTMLInputElement;
+    expect(stable).toBeTruthy();
+    expect(owner).toBeTruthy();
+
+    await act(async () => {
+      stable?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await setInput(owner, 'owner@example.test');
+    const submit = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Submit to MCP')
+    );
+    expect(submit?.disabled).toBe(false);
+    await act(async () => {
+      submit?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(serviceMocks.respondToElicitation).toHaveBeenCalledWith(
+      { sessionId: 'session-1', projectPath: '/workspace/a' },
+      'elicitation-1',
+      {
+        action: 'accept',
+        content: {
+          channel: 'stable',
+          notifications: true,
+          retries: 2,
+          owner: 'owner@example.test',
+        },
+      }
+    );
+  });
+
+  test('opens an MCP URL only from the explicit browser gesture', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(window);
+    const message: Message = {
+      id: 'assistant-url-elicitation',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000005,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: null,
+        confirmation: null,
+        question: null,
+        elicitation: {
+          toolCallId: 'elicitation-url-1',
+          status: 'pending',
+          details: {
+            serverName: 'deploy',
+            mode: 'url',
+            message: 'Authorize release',
+            url: 'https://deploy.example.test/authorize?state=opaque',
+            domain: 'deploy.example.test',
+            elicitationId: 'auth-1',
+          },
+        },
+      },
+    };
+
+    await act(async () => {
+      root.render(<ChatMessage message={message} />);
+    });
+    expect(open).not.toHaveBeenCalled();
+    const openButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Open external URL')
+    );
+    await act(async () => {
+      openButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(open).toHaveBeenCalledWith(
+      'https://deploy.example.test/authorize?state=opaque',
+      '_blank',
+      'noopener,noreferrer'
+    );
+    expect(serviceMocks.respondToElicitation).toHaveBeenCalledWith(
+      { sessionId: 'session-1', projectPath: '/workspace/a' },
+      'elicitation-url-1',
+      { action: 'accept' }
+    );
+    open.mockRestore();
+  });
+
+  test('renders concurrent subagents as independent GUI cards', async () => {
+    const first = {
+      id: 'task-a',
+      type: 'Explore',
+      description: 'Inspect API',
+      status: 'running' as const,
+      startTime: 1,
+      sessionId: 'agent-a',
+    };
+    const second = {
+      id: 'task-b',
+      type: 'reviewer',
+      description: 'Review tests',
+      status: 'completed' as const,
+      startTime: 2,
+      sessionId: 'agent-b',
+    };
+    const message: Message = {
+      id: 'assistant-parallel-subagents',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000004,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: second,
+        subagents: [first, second],
+        confirmation: null,
+        question: null,
+      },
+    };
+
+    await act(async () => {
+      root.render(<ChatMessage message={message} />);
+    });
+
+    expect(container.textContent).toContain('Explore: Inspect API');
+    expect(container.textContent).toContain('reviewer: Review tests');
+    expect(container.querySelectorAll('[data-subagent-id]')).toHaveLength(2);
   });
 
   test('renders durable lineage and resumes a completed subagent from the GUI', async () => {
@@ -684,5 +973,45 @@ describe('ChatMessage', () => {
       previewTargetPath: '/workspace/a/src/target.ts',
       previewRequestId: 1,
     });
+  });
+
+  test('lists every changed file from an ApplyPatch result', async () => {
+    const message: Message = {
+      id: 'assistant-patch-files',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000008,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [
+          {
+            toolCallId: 'patch-1',
+            toolName: 'ApplyPatch',
+            status: 'success',
+            startTime: 1,
+            metadata: {
+              kind: 'patch',
+              changes: [
+                { path: '/workspace/a/src/first.ts' },
+                { path: '/workspace/a/src/second.ts' },
+              ],
+            },
+          },
+        ],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: null,
+        confirmation: null,
+        question: null,
+      },
+    };
+
+    await act(async () => {
+      root.render(<ChatMessage message={message} />);
+    });
+
+    expect(container.textContent).toContain('first.ts');
+    expect(container.textContent).toContain('second.ts');
   });
 });

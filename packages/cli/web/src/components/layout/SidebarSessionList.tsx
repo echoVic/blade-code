@@ -1,3 +1,6 @@
+import type { SessionRef } from '@api/schemas';
+import { AlertCircle, Loader2, RefreshCw } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { type TranslationKey, useT } from '@/i18n';
 import {
   applyProjectOrder,
@@ -14,9 +17,6 @@ import {
   sessionRefFromSession,
   sessionRefKey,
 } from '@/store/session/sessionIdentity';
-import type { SessionRef } from '@api/schemas';
-import { AlertCircle, Loader2, RefreshCw } from 'lucide-react';
-import { useMemo, useState } from 'react';
 import { ProjectGroupHeader } from './ProjectGroupHeader';
 import { groupByProject, groupByStatus, type SidebarView } from './sidebarGrouping';
 

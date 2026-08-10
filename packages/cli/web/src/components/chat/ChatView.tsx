@@ -1,10 +1,9 @@
-import { TaskArtifactBar } from '@/components/tasks/TaskArtifactBar';
-import { useT } from '@/i18n';
-import { focusBladeComposer } from '@/lib/composerFocus';
-import { taskFailureIsRetryable, taskFailureMessageKey } from '@/lib/taskFailure';
-import { useAppStore } from '@/store/AppStore';
-import { useSessionStore } from '@/store/session';
-import { sameSessionRef, sessionRefKey } from '@/store/session/sessionIdentity';
+import type {
+  CommunicationStyle,
+  ReasoningEffort,
+  ResponseVerbosity,
+  ServiceTier,
+} from '@api/schemas';
 import {
   AlertCircle,
   Loader2,
@@ -14,6 +13,13 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { TaskArtifactBar } from '@/components/tasks/TaskArtifactBar';
+import { useT } from '@/i18n';
+import { focusBladeComposer } from '@/lib/composerFocus';
+import { taskFailureIsRetryable, taskFailureMessageKey } from '@/lib/taskFailure';
+import { useAppStore } from '@/store/AppStore';
+import { useSessionStore } from '@/store/session';
+import { sameSessionRef, sessionRefKey } from '@/store/session/sessionIdentity';
 import type { ComposerImageAttachment } from './ChatInput';
 import { ChatInput } from './ChatInput';
 import { ChatList } from './ChatList';
@@ -153,11 +159,19 @@ export function ChatView() {
   const handleSend = async (payload: {
     content: string;
     modelId?: string;
+    reasoningEffort?: ReasoningEffort;
+    serviceTier?: ServiceTier;
+    responseVerbosity?: ResponseVerbosity;
+    communicationStyle?: CommunicationStyle;
     attachments: ComposerImageAttachment[];
   }) => {
     return sendMessage({
       content: payload.content,
       modelId: payload.modelId,
+      reasoningEffort: payload.reasoningEffort,
+      serviceTier: payload.serviceTier,
+      responseVerbosity: payload.responseVerbosity,
+      communicationStyle: payload.communicationStyle,
       attachments: payload.attachments.map((attachment) => ({
         type: 'image' as const,
         content: attachment.dataUrl,

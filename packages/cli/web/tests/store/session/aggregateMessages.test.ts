@@ -3,6 +3,28 @@ import { describe, expect, test, vi } from 'vitest';
 import { aggregateMessages } from '../../../src/store/session/utils/aggregateMessages';
 
 describe('aggregateMessages', () => {
+  test('does not project model-only system messages into chat history', () => {
+    const messages = aggregateMessages([
+      {
+        id: 'contextual-rule',
+        role: 'system',
+        content: 'PRIVATE_CONTEXTUAL_RULE',
+        metadata: { contextualProjectRules: true },
+      },
+      {
+        id: 'assistant-visible',
+        role: 'assistant',
+        content: 'visible answer',
+      },
+    ] as never);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      role: 'assistant',
+      content: 'visible answer',
+    });
+  });
+
   test('keeps fallback tool call ids stable across repeated aggregation', () => {
     const rawMessages = [
       {
@@ -227,5 +249,76 @@ describe('aggregateMessages', () => {
       rootAgentId: 'agent-root',
       resumeDepth: 2,
     });
+  });
+
+  test('reconstructs multiple Task results without collapsing their lineage', () => {
+    const [message] = aggregateMessages([
+      {
+        id: 'assistant-parallel',
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'task-a',
+            function: {
+              name: 'Task',
+              arguments: '{"subagent_type":"Explore","description":"Inspect API"}',
+            },
+          },
+          {
+            id: 'task-b',
+            function: {
+              name: 'Task',
+              arguments: '{"subagent_type":"reviewer","description":"Review tests"}',
+            },
+          },
+        ],
+      },
+      {
+        id: 'result-a',
+        role: 'tool',
+        content: 'API inspected',
+        tool_call_id: 'task-a',
+        name: 'Task',
+        metadata: {
+          metadata: {
+            subagentSessionId: 'agent-a',
+            subagentStatus: 'completed',
+            subagentType: 'Explore',
+            subagentRootId: 'agent-a',
+          },
+        },
+      },
+      {
+        id: 'result-b',
+        role: 'tool',
+        content: 'Tests need work',
+        tool_call_id: 'task-b',
+        name: 'Task',
+        metadata: {
+          error: 'review failed',
+          metadata: {
+            subagentSessionId: 'agent-b',
+            subagentStatus: 'failed',
+            subagentType: 'reviewer',
+            subagentRootId: 'agent-b',
+          },
+        },
+      },
+    ] as never);
+
+    expect(message?.agentContent?.toolCalls).toEqual([]);
+    expect(message?.agentContent?.subagents).toEqual([
+      expect.objectContaining({
+        id: 'task-a',
+        sessionId: 'agent-a',
+        status: 'completed',
+      }),
+      expect.objectContaining({
+        id: 'task-b',
+        sessionId: 'agent-b',
+        status: 'failed',
+      }),
+    ]);
   });
 });

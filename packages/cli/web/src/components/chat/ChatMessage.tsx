@@ -1,3 +1,13 @@
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  FileText,
+  Loader2,
+  RotateCcw,
+} from 'lucide-react';
+import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
 import { BladeMark } from '@/components/layout/BladeMark';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -10,18 +20,13 @@ import type {
   ToolCallInfo,
 } from '@/store/session';
 import { useSessionStore } from '@/store/session';
-import { getAgentTimeline, getTimelineText } from '@/store/session/utils/agentTimeline';
-import { aggregateMessages } from '@/store/session/utils/aggregateMessages';
 import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Copy,
-  FileText,
-  Loader2,
-  RotateCcw,
-} from 'lucide-react';
-import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
+  getAgentTimeline,
+  getSubagents,
+  getTimelineText,
+} from '@/store/session/utils/agentTimeline';
+import { aggregateMessages } from '@/store/session/utils/aggregateMessages';
+import { McpElicitationSection } from './McpElicitationSection';
 
 export type { Message };
 
@@ -234,6 +239,43 @@ function ToolCallItem({ tool }: { tool: ToolCallInfo }) {
         <StatusPill status={tool.status} />
       </button>
 
+      {tool.status === 'running' && tool.progressMessage && (
+        <div className="border-t border-[hsl(var(--deck-border))] px-3 py-2 space-y-1.5">
+          <div className="flex items-center justify-between gap-3 font-mono text-[10px] text-[hsl(var(--deck-ink-muted))]">
+            <span className="truncate">{tool.progressMessage}</span>
+            {tool.progressTotal !== undefined && tool.progress !== undefined && (
+              <span className="shrink-0">
+                {Math.max(
+                  0,
+                  Math.min(100, Math.round((tool.progress / tool.progressTotal) * 100))
+                )}
+                %
+              </span>
+            )}
+          </div>
+          {tool.progressTotal !== undefined && tool.progress !== undefined && (
+            <div
+              role="progressbar"
+              aria-label={`${tool.toolName} progress`}
+              aria-valuemin={0}
+              aria-valuemax={tool.progressTotal}
+              aria-valuenow={Math.min(tool.progress, tool.progressTotal)}
+              className="h-1 overflow-hidden rounded-full bg-[hsl(var(--deck-border))]"
+            >
+              <div
+                className="h-full rounded-full bg-amber-500 transition-[width] duration-150"
+                style={{
+                  width: `${Math.max(
+                    0,
+                    Math.min(100, (tool.progress / tool.progressTotal) * 100)
+                  )}%`,
+                }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
       {expanded && (
         <div className="px-3 py-2 space-y-2 border-t border-[hsl(var(--deck-border))]">
           {args && (
@@ -297,6 +339,9 @@ function ToolCallsGroup({
 
   const running = groupedTools.filter((tool) => tool.status === 'running').length;
   const errors = groupedTools.filter((tool) => tool.status === 'error').length;
+  const activeProgress = [...groupedTools]
+    .reverse()
+    .find((tool) => tool.status === 'running' && Boolean(tool.progressMessage));
   const label =
     running > 0
       ? t(
@@ -339,7 +384,50 @@ function ToolCallsGroup({
           <Loader2 className="h-3 w-3 shrink-0 animate-spin text-[hsl(var(--deck-accent))]" />
         )}
         <span>{label}</span>
+        {activeProgress?.progressMessage && (
+          <span className="min-w-0 truncate text-[10.5px] text-[hsl(var(--deck-ink-muted))]">
+            {activeProgress.progressMessage}
+            {activeProgress.progress !== undefined &&
+              activeProgress.progressTotal !== undefined &&
+              ` · ${Math.max(
+                0,
+                Math.min(
+                  100,
+                  Math.round(
+                    (activeProgress.progress / activeProgress.progressTotal) * 100
+                  )
+                )
+              )}%`}
+          </span>
+        )}
       </button>
+      {activeProgress?.progress !== undefined &&
+        activeProgress.progressTotal !== undefined && (
+          <div
+            role="progressbar"
+            aria-label={`${activeProgress.toolName} progress`}
+            aria-valuemin={0}
+            aria-valuemax={activeProgress.progressTotal}
+            aria-valuenow={Math.min(
+              activeProgress.progress,
+              activeProgress.progressTotal
+            )}
+            className="mx-1.5 h-0.5 overflow-hidden rounded-full bg-[hsl(var(--deck-border))]"
+          >
+            <div
+              className="h-full rounded-full bg-amber-500 transition-[width] duration-150"
+              style={{
+                width: `${Math.max(
+                  0,
+                  Math.min(
+                    100,
+                    (activeProgress.progress / activeProgress.progressTotal) * 100
+                  )
+                )}%`,
+              }}
+            />
+          </div>
+        )}
       {expanded && (
         <div data-agent-tool-group-details className="mt-2 space-y-2 pl-1">
           <ToolCallsList toolCalls={groupedTools} />
@@ -402,10 +490,26 @@ function ChangedFilesSection({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
 
   const changedFiles = useMemo(() => {
     const files = new Map<string, { path: string; toolName: string }>();
-    const editTools = ['Write', 'SearchReplace', 'Edit'];
+    const editTools = ['Write', 'SearchReplace', 'Edit', 'ApplyPatch'];
     for (const tc of toolCalls) {
       if (tc.status !== 'success') continue;
       const meta = tc.metadata as Record<string, unknown> | undefined;
+      if (tc.toolName === 'ApplyPatch' && Array.isArray(meta?.changes)) {
+        for (const change of meta.changes) {
+          if (
+            change &&
+            typeof change === 'object' &&
+            'path' in change &&
+            typeof change.path === 'string'
+          ) {
+            files.set(change.path, {
+              path: change.path,
+              toolName: tc.toolName,
+            });
+          }
+        }
+        continue;
+      }
       const filePath = meta?.file_path as string | undefined;
       if (filePath && editTools.includes(tc.toolName)) {
         files.set(filePath, { path: filePath, toolName: tc.toolName });
@@ -608,7 +712,10 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
   };
 
   return (
-    <div className="bg-[hsl(var(--deck-surface-2))] border border-[hsl(var(--deck-border))] rounded-lg px-3 py-2">
+    <div
+      data-subagent-id={subagent.id}
+      className="bg-[hsl(var(--deck-surface-2))] border border-[hsl(var(--deck-border))] rounded-lg px-3 py-2"
+    >
       <button
         type="button"
         onClick={() => setManualToggle(!expanded)}
@@ -826,22 +933,26 @@ function ConfirmationSection({
             t('interaction.permission.once')
           )}
         </button>
-        <button
-          type="button"
-          onClick={() => void handleResponse(true, 'session')}
-          disabled={submitting}
-          className="min-h-8 px-3 py-1.5 text-[12px] font-mono bg-[#3B82F6] text-white rounded-md hover:bg-[#2563EB] disabled:cursor-wait disabled:opacity-50"
-        >
-          {t('interaction.permission.session')}
-        </button>
-        <button
-          type="button"
-          onClick={() => void handleResponse(true, 'project')}
-          disabled={submitting}
-          className="min-h-8 px-3 py-1.5 text-[12px] font-mono bg-[#6366F1] text-white rounded-md hover:bg-[#4F46E5] disabled:cursor-wait disabled:opacity-50"
-        >
-          {t('interaction.permission.project')}
-        </button>
+        {confirmation.allowRemember !== false && (
+          <>
+            <button
+              type="button"
+              onClick={() => void handleResponse(true, 'session')}
+              disabled={submitting}
+              className="min-h-8 px-3 py-1.5 text-[12px] font-mono bg-[#3B82F6] text-white rounded-md hover:bg-[#2563EB] disabled:cursor-wait disabled:opacity-50"
+            >
+              {t('interaction.permission.session')}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleResponse(true, 'project')}
+              disabled={submitting}
+              className="min-h-8 px-3 py-1.5 text-[12px] font-mono bg-[#6366F1] text-white rounded-md hover:bg-[#4F46E5] disabled:cursor-wait disabled:opacity-50"
+            >
+              {t('interaction.permission.project')}
+            </button>
+          </>
+        )}
         <button
           type="button"
           onClick={() => void handleResponse(false)}
@@ -1022,10 +1133,16 @@ function AgentMessageContent({ message }: { message: Message }) {
     return content ? <MarkdownBlock content={content} /> : null;
   }
 
-  const { toolCalls, tasks, subagent, confirmation, question } = agentContent;
+  const { toolCalls, tasks, confirmation, question, elicitation } = agentContent;
+  const subagents = getSubagents(agentContent);
   const timeline = getAgentTimeline(agentContent);
   const hasContent =
-    timeline.length > 0 || tasks.length > 0 || subagent || confirmation || question;
+    timeline.length > 0 ||
+    tasks.length > 0 ||
+    subagents.length > 0 ||
+    confirmation ||
+    question ||
+    elicitation;
 
   if (!hasContent && isCurrentStreamingMessage) {
     return (
@@ -1069,11 +1186,16 @@ function AgentMessageContent({ message }: { message: Message }) {
         );
       })}
       {tasks.length > 0 && <TaskSection tasks={tasks} />}
-      {subagent && <SubagentSection subagent={subagent} />}
+      {subagents.map((subagent) => (
+        <SubagentSection key={subagent.id} subagent={subagent} />
+      ))}
       {confirmation && (
         <ConfirmationSection confirmation={confirmation} messageId={message.id} />
       )}
       {question && <QuestionSection question={question} messageId={message.id} />}
+      {elicitation && (
+        <McpElicitationSection elicitation={elicitation} messageId={message.id} />
+      )}
       {showChangedFiles && <ChangedFilesSection toolCalls={toolCalls} />}
     </div>
   );
