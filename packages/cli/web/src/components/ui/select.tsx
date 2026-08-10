@@ -44,11 +44,7 @@ export function Select({
   const handleKeyDown = (event: React.KeyboardEvent) => {
     if (disabled) return;
     if (!open) {
-      if (
-        event.key === 'Enter' ||
-        event.key === ' ' ||
-        event.key === 'ArrowDown'
-      ) {
+      if (event.key === 'Enter' || event.key === ' ' || event.key === 'ArrowDown') {
         event.preventDefault();
         setOpen(true);
       }
@@ -80,9 +76,7 @@ export function Select({
 
   React.useEffect(() => {
     if (!open || highlightedIndex < 0) return;
-    const el = listRef.current?.children[highlightedIndex] as
-      | HTMLElement
-      | undefined;
+    const el = listRef.current?.children[highlightedIndex] as HTMLElement | undefined;
     el?.scrollIntoView({ block: 'nearest' });
   }, [highlightedIndex, open]);
 
@@ -104,9 +98,7 @@ export function Select({
             className
           )}
         >
-          <span className="truncate">
-            {selected ? selected.label : placeholder}
-          </span>
+          <span className="truncate">{selected ? selected.label : placeholder}</span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
         </button>
       </PopoverTrigger>
@@ -133,10 +125,8 @@ export function Select({
                 onMouseEnter={() => setHighlightedIndex(i)}
                 className={cn(
                   'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left font-mono text-[13px] outline-none transition-colors',
-                  i === highlightedIndex &&
-                    'bg-zinc-100 dark:bg-zinc-800',
-                  opt.value === value &&
-                    'text-zinc-900 dark:text-zinc-50 font-medium'
+                  i === highlightedIndex && 'bg-zinc-100 dark:bg-zinc-800',
+                  opt.value === value && 'text-zinc-900 dark:text-zinc-50 font-medium'
                 )}
               >
                 <Check

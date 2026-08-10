@@ -135,14 +135,7 @@
 @layer components {
   /* Unified form field styling */
   .field {
-    @apply h-9 w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5
-      font-mono text-sm text-zinc-900 outline-none
-      transition-colors placeholder:text-zinc-400
-      focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400
-      disabled:cursor-not-allowed disabled:opacity-50
-      dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100
-      dark:placeholder:text-zinc-500
-      dark:focus:border-zinc-500 dark:focus:ring-zinc-500;
+    @apply h-9 w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 font-mono text-sm text-zinc-900 outline-none transition-colors placeholder:text-zinc-400 focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:border-zinc-500 dark:focus:ring-zinc-500;
   }
 
   select.field {

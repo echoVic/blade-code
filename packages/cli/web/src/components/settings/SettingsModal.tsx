@@ -853,9 +853,7 @@ export function SettingsModal() {
                       <Select
                         aria-label="Response language"
                         value={settings.language}
-                        onChange={(val) =>
-                          settings.updateSettings({ language: val })
-                        }
+                        onChange={(val) => settings.updateSettings({ language: val })}
                         className="h-8 w-auto min-w-[140px] text-[12px]"
                         options={[
                           { value: 'en-US', label: 'English (US)' },
@@ -960,9 +958,7 @@ export function SettingsModal() {
                       <Select
                         aria-label="Code theme"
                         value={settings.theme}
-                        onChange={(val) =>
-                          settings.updateSettings({ theme: val })
-                        }
+                        onChange={(val) => settings.updateSettings({ theme: val })}
                         className="h-8 w-auto min-w-[140px] text-[12px]"
                         options={[
                           { value: 'dracula', label: 'Dracula' },
@@ -1088,9 +1084,7 @@ export function SettingsModal() {
                     <Select
                       aria-label="Shortcut scope"
                       value={shortcutScope}
-                      onChange={(val) =>
-                        setShortcutScope(val as typeof shortcutScope)
-                      }
+                      onChange={(val) => setShortcutScope(val as typeof shortcutScope)}
                       className="w-auto min-w-[120px] text-[12px]"
                       options={[
                         { value: 'all', label: 'All scopes' },

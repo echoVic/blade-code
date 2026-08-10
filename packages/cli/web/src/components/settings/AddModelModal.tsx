@@ -245,7 +245,9 @@ export function AddModelModal({
                 setCustomModelId('');
                 setCustomBaseUrl('');
               }}
-              placeholder={loadingProviders ? 'Loading providers...' : 'Select provider'}
+              placeholder={
+                loadingProviders ? 'Loading providers...' : 'Select provider'
+              }
               options={providers.map((entry) => ({
                 value: entry.id,
                 label: `${entry.name} (${entry.modelCount})${entry.configured ? ' - configured' : ''}`,
