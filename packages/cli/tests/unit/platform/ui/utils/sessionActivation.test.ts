@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PermissionMode } from '../../../../../src/config/types.js';
 import type { Message } from '../../../../../src/services/ChatServiceInterface.js';
 import type { SessionMetadata } from '../../../../../src/services/SessionService.js';
 import type { SessionMessage } from '../../../../../src/store/types.js';
@@ -220,6 +221,7 @@ describe('activateSessionSelection', () => {
     const resumeMetadata = createSessionMetadata({
       sessionId: 'resume-session-12345678',
       projectPath: '/workspace/elsewhere',
+      permissionMode: 'plan',
     });
     serviceMocks.loadSession.mockResolvedValue(childMessages);
     serviceMocks.toUISafeMessages.mockReturnValue(safeMessages);
@@ -238,6 +240,9 @@ describe('activateSessionSelection', () => {
       sessionId: 'resume-session-12345678',
       messages: childMessages,
     });
+    expect(modelMocks.updateConfig).toHaveBeenCalledWith({
+      permissionMode: 'plan',
+    });
 
     expect(serviceMocks.loadSession).toHaveBeenCalledWith(
       'resume-session-12345678',
@@ -249,6 +254,34 @@ describe('activateSessionSelection', () => {
       childMessages,
       '/workspace/elsewhere'
     );
+  });
+
+  it('gives an explicit invocation mode precedence over resumed metadata', async () => {
+    const resumeMetadata = createSessionMetadata({
+      sessionId: 'resume-session-explicit',
+      projectPath: '/workspace/elsewhere',
+      permissionMode: 'yolo',
+    });
+    serviceMocks.loadSession.mockResolvedValue(childMessages);
+    serviceMocks.toUISafeMessages.mockReturnValue(safeMessages);
+    const { activateSessionSelection } = await import(
+      '../../../../../src/ui/utils/sessionActivation.js'
+    );
+
+    await activateSessionSelection(
+      {
+        intent: 'resume',
+        session: resumeMetadata,
+        permissionModeOverride: PermissionMode.DEFAULT,
+      },
+      '/workspace/parent',
+      actions,
+      cleanupAgent
+    );
+
+    expect(modelMocks.updateConfig).toHaveBeenCalledWith({
+      permissionMode: 'default',
+    });
   });
 
   it('forks inside the current workspace and restores child messages with a visible announcement', async () => {

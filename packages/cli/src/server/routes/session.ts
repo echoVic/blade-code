@@ -1,9 +1,9 @@
-import path from 'node:path';
 import { Mutex } from 'async-mutex';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { LRUCache } from 'lru-cache';
 import { nanoid } from 'nanoid';
+import path from 'node:path';
 import { Agent } from '../../agent/Agent.js';
 import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
@@ -52,7 +52,7 @@ import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
-import { StringEnum, safeParseSchema, Type } from '../../schema/index.js';
+import { safeParseSchema, StringEnum, Type } from '../../schema/index.js';
 import type { ContentPart, Message } from '../../services/ChatServiceInterface.js';
 import {
   type CommunicationStyleConfiguration,
@@ -182,6 +182,7 @@ interface SessionInfo {
   taskPromptSummary?: string;
   taskModelId?: string;
   selectedModelId?: string;
+  permissionMode?: PermissionMode;
   reasoningEffort?: ReasoningEffortSelection;
   serviceTier?: ServiceTierSelection;
   responseVerbosity?: ResponseVerbositySelection;
@@ -627,6 +628,7 @@ function sessionInfoFromMetadata(
     taskPromptSummary: metadata.taskPromptSummary,
     taskModelId: metadata.taskModelId,
     selectedModelId: metadata.selectedModelId,
+    permissionMode: metadata.permissionMode as PermissionMode | undefined,
     reasoningEffort: metadata.reasoningEffort,
     serviceTier: metadata.serviceTier,
     responseVerbosity: metadata.responseVerbosity,
@@ -678,6 +680,7 @@ function syncSessionTaskMetadata(
   session.taskPromptSummary = metadata.taskPromptSummary;
   session.taskModelId = metadata.taskModelId;
   session.selectedModelId = metadata.selectedModelId;
+  session.permissionMode = metadata.permissionMode as PermissionMode | undefined;
   session.reasoningEffort = metadata.reasoningEffort;
   session.serviceTier = metadata.serviceTier;
   session.responseVerbosity = metadata.responseVerbosity;
@@ -731,6 +734,7 @@ function projectActiveSession(session: SessionInfo) {
     taskPromptSummary: session.taskPromptSummary,
     taskModelId: session.taskModelId,
     selectedModelId: session.selectedModelId,
+    permissionMode: session.permissionMode,
     reasoningEffort: session.reasoningEffort,
     serviceTier: session.serviceTier,
     responseVerbosity: session.responseVerbosity,
@@ -976,7 +980,10 @@ export const createSessionRouteController = (): SessionRouteController => {
 
   const getOrCreateRuntime = async (
     session: SessionInfo,
-    overrides: { communicationStyle?: CommunicationStyleSelection } = {}
+    overrides: {
+      communicationStyle?: CommunicationStyleSelection;
+      permissionMode?: PermissionMode;
+    } = {}
   ): Promise<SessionRuntime> => {
     const key = sessionRefKey(sessionRefFromSession(session));
     await runtimeDisposals.get(key);
@@ -993,6 +1000,8 @@ export const createSessionRouteController = (): SessionRouteController => {
         ...((session.selectedModelId ?? session.taskModelId)
           ? { modelId: session.selectedModelId ?? session.taskModelId }
           : {}),
+        permissionMode:
+          overrides.permissionMode ?? session.permissionMode ?? PermissionMode.DEFAULT,
         ...(session.reasoningEffort
           ? { reasoningEffort: session.reasoningEffort }
           : {}),
@@ -1114,6 +1123,23 @@ export const createSessionRouteController = (): SessionRouteController => {
       throw error;
     }
     return getOrHydrateSession(ref);
+  };
+
+  const persistSessionPermissionMode = async (
+    session: SessionInfo,
+    permissionMode: PermissionMode
+  ): Promise<void> => {
+    if (session.permissionMode === permissionMode) return;
+    const metadata = await SessionService.setSessionPermissionMode(
+      session.id,
+      session.projectPath,
+      permissionMode
+    );
+    session.permissionMode = metadata.permissionMode as PermissionMode | undefined;
+    session.updatedAt = new Date(metadata.lastMessageTime);
+    Bus.publish(sessionRefFromSession(session), 'session.updated', {
+      permissionMode,
+    });
   };
 
   const startRun = (
@@ -1580,7 +1606,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     if ((!hasPending && !hasActiveGoal) || runtime.hasTurnOwner()) {
       return;
     }
-    startRun(session, '', PermissionMode.DEFAULT, {
+    startRun(session, '', session.permissionMode ?? PermissionMode.DEFAULT, {
       pendingInputOnly: hasPending,
       goalContinuationOnly: hasActiveGoal,
       ...(session.taskIsolation ? { taskRuntime: runtime } : {}),
@@ -2144,12 +2170,17 @@ export const createSessionRouteController = (): SessionRouteController => {
         return c.json({ status: 'rejected', reason: 'run_active' }, 409);
       }
 
+      const requestedPermissionMode = parsed.data.permissionMode as
+        | PermissionMode
+        | undefined;
+      const permissionMode =
+        requestedPermissionMode ?? session.permissionMode ?? PermissionMode.DEFAULT;
+      if (session.permissionMode !== permissionMode) {
+        await persistSessionPermissionMode(session, permissionMode);
+      }
       const runtime = await getOrCreateRuntime(session);
       const goal = await runtime.createGoal(parsed.data);
       Bus.publish(ref, 'goal.updated', { goal });
-      const permissionMode =
-        (parsed.data.permissionMode as PermissionMode | undefined) ??
-        PermissionMode.DEFAULT;
       const run = startRun(session, '', permissionMode, {
         goalContinuationOnly: true,
         ...(session.taskIsolation ? { taskRuntime: runtime } : {}),
@@ -2666,13 +2697,15 @@ export const createSessionRouteController = (): SessionRouteController => {
     if (attachmentBytes > MAX_INLINE_ATTACHMENT_BYTES) {
       throw new BadRequestError('Message attachments exceed the 5 MiB limit');
     }
-    const permissionMode = (requestedMode as PermissionMode) || PermissionMode.DEFAULT;
+    const requestedPermissionMode = requestedMode as PermissionMode | undefined;
     const userContent = buildUserMessageContent(content, attachments);
 
     const session = await resolveSessionForWrite(
       sessionId,
       projectPath ?? c.req.query('projectPath')
     );
+    const permissionMode =
+      requestedPermissionMode ?? session.permissionMode ?? PermissionMode.DEFAULT;
     const sessionRef = sessionRefFromSession(session);
 
     return getMessageSubmissionLock(sessionRef).runExclusive(async () => {
@@ -2719,6 +2752,14 @@ export const createSessionRouteController = (): SessionRouteController => {
         ) {
           throw new ConflictError(
             'Wait for the active turn to finish before switching communication style'
+          );
+        }
+        if (
+          requestedPermissionMode &&
+          session.permissionMode !== requestedPermissionMode
+        ) {
+          throw new ConflictError(
+            'Wait for the active turn to finish before switching permission mode'
           );
         }
         const steering = await runtime.enqueueSteering(userContent, {
@@ -2774,7 +2815,11 @@ export const createSessionRouteController = (): SessionRouteController => {
         );
       }
 
+      if (session.permissionMode !== permissionMode) {
+        await persistSessionPermissionMode(session, permissionMode);
+      }
       const runtime = await getOrCreateRuntime(session, {
+        permissionMode,
         ...(requestedCommunicationStyle && !requestedCommunicationStyle.includes(':')
           ? { communicationStyle: requestedCommunicationStyle }
           : {}),
@@ -2905,6 +2950,9 @@ export const createSessionRouteController = (): SessionRouteController => {
             session.projectPath,
             metadataUpdate
           );
+          session.permissionMode = metadata.permissionMode as
+            | PermissionMode
+            | undefined;
           session.selectedModelId = metadata.selectedModelId;
           session.reasoningEffort = metadata.reasoningEffort;
           session.serviceTier = metadata.serviceTier;
@@ -3225,6 +3273,11 @@ async function executeRunAsync(
       workspaceRoot: session.projectPath,
       signal: abortController.signal,
       permissionMode,
+      onPermissionModeChange: async (nextMode) => {
+        session.permissionMode = nextMode;
+        session.updatedAt = new Date();
+        emit('session.updated', { permissionMode: nextMode });
+      },
       ...(session.taskWorktree ? { worktreeActive: true } : {}),
       confirmationHandler: { requestConfirmation },
     };

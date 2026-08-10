@@ -32,6 +32,7 @@ import {
 } from '../schema/index.js';
 import { Bus } from '../server/bus.js';
 import type { Message } from '../services/ChatServiceInterface.js';
+import { SessionService } from '../services/SessionService.js';
 import { SessionTaskService } from '../services/SessionTaskService.js';
 import { getCurrentModel } from '../store/vanilla.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
@@ -1001,9 +1002,6 @@ export async function runHeadless(
       throw new Error('User shell commands cannot be combined with --task-isolation');
     }
 
-    const permissionMode =
-      (validatedOptions.permissionMode as PermissionMode | undefined) ??
-      PermissionMode.YOLO;
     if (
       validatedOptions.taskIsolation &&
       (validatedOptions.continue ||
@@ -1014,13 +1012,17 @@ export async function runHeadless(
         '--task-isolation cannot be combined with --continue, --resume, or --fork-session'
       );
     }
-    const { sessionId, messages } = await resolveNonInteractiveSession({
+    const { sessionId, messages, metadata } = await resolveNonInteractiveSession({
       sessionId: validatedOptions.sessionId,
       continue: validatedOptions.continue,
       resume: validatedOptions.resume,
       forkSession: validatedOptions.forkSession,
       fallbackSessionPrefix: 'headless',
     });
+    const permissionMode =
+      (validatedOptions.permissionMode as PermissionMode | undefined) ??
+      (metadata?.permissionMode as PermissionMode | undefined) ??
+      PermissionMode.YOLO;
     const taskModelId =
       validatedOptions.model && validatedOptions.model !== 'inherit'
         ? validatedOptions.model
@@ -1041,7 +1043,15 @@ export async function runHeadless(
           },
         })
       : undefined;
-    const workspaceRoot = createdTask?.metadata.projectPath ?? getCwd();
+    const workspaceRoot =
+      createdTask?.metadata.projectPath ?? metadata?.projectPath ?? getCwd();
+    if (!createdTask) {
+      await SessionService.setSessionPermissionMode(
+        sessionId,
+        workspaceRoot,
+        permissionMode
+      );
+    }
     if (createdTask) {
       eventWriter.taskSession({
         sessionId,
@@ -1091,6 +1101,7 @@ export async function runHeadless(
       sessionId,
       workspaceRoot,
       modelId: validatedOptions.model,
+      permissionMode,
       mcpConfig: validatedOptions.mcpConfig,
       strictMcpConfig: validatedOptions.strictMcpConfig,
       agents: validatedOptions.agents

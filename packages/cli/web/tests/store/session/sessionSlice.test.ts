@@ -346,6 +346,37 @@ describe('sessionSlice multimodal sendMessage', () => {
     ]);
   });
 
+  it('restores the exact session permission mode when selecting history', async () => {
+    const setMode = vi.fn();
+    useConfigStore.setState({ setMode });
+    const session = createSession({
+      sessionId: 'persisted-yolo',
+      projectPath: '/tmp/yolo',
+      permissionMode: 'yolo',
+    });
+    useSessionStore.setState({ sessions: [session] });
+    vi.mocked(sessionService.getMessages).mockResolvedValue([]);
+
+    await useSessionStore
+      .getState()
+      .selectSession(createRef(session.sessionId, session.projectPath));
+
+    expect(setMode).toHaveBeenCalledWith('yolo');
+  });
+
+  it('resets a previously resumed YOLO mode before starting a temporary task', () => {
+    useConfigStore.setState({ currentMode: 'yolo' });
+
+    useSessionStore.getState().startTemporarySession('/tmp/new-task');
+
+    expect(useConfigStore.getState().currentMode).toBe('autoEdit');
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionId: TEMP_SESSION_ID,
+      currentSessionRef: null,
+      isTemporarySession: true,
+    });
+  });
+
   it('restores durable task failure diagnostics when selecting after refresh', async () => {
     const ref = createRef('failed-task', '/tmp/failed-task');
     const failedSession = createSession({

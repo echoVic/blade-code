@@ -1,4 +1,5 @@
 import path from 'node:path';
+import type { PermissionMode } from '../../config/types.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import type { SessionMetadata } from '../../services/SessionService.js';
 import { SessionService } from '../../services/SessionService.js';
@@ -22,6 +23,7 @@ interface SessionSelectionInput {
   session: SessionMetadata;
   newSessionId?: string;
   announceFork?: boolean;
+  permissionModeOverride?: PermissionMode;
 }
 
 function shortSessionId(sessionId: string): string {
@@ -40,6 +42,15 @@ function activateModelInMemory(modelId?: string): void {
   getState().config.actions.updateConfig({ currentModelId: modelId });
 }
 
+function activatePermissionModeInMemory(
+  permissionMode?: SessionMetadata['permissionMode']
+): void {
+  if (!permissionMode) return;
+  getState().config.actions.updateConfig({
+    permissionMode: permissionMode as PermissionMode,
+  });
+}
+
 export async function listSessionCandidatesForIntent(
   _intent: SessionSelectionIntent,
   _workspaceRoot: string
@@ -55,7 +66,8 @@ export async function activateSessionSelection(
   actions: SessionActivationActions,
   cleanupAgent: CleanupAgent
 ): Promise<{ sessionId: string; messages: Message[] }> {
-  const { intent, session, newSessionId, announceFork } = selection;
+  const { intent, session, newSessionId, announceFork, permissionModeOverride } =
+    selection;
   const resolvedWorkspace = resolveWorkspace(session.projectPath);
 
   if (intent === 'fork') {
@@ -79,6 +91,9 @@ export async function activateSessionSelection(
       });
     }
     await cleanupAgent();
+    activatePermissionModeInMemory(
+      permissionModeOverride ?? forked.metadata.permissionMode
+    );
     activateModelInMemory(forked.metadata.selectedModelId);
     actions.restoreSession(
       forked.sessionId,
@@ -99,6 +114,7 @@ export async function activateSessionSelection(
   );
   const uiMessages = SessionService.toUISafeMessages(messages);
   await cleanupAgent();
+  activatePermissionModeInMemory(permissionModeOverride ?? session.permissionMode);
   activateModelInMemory(session.selectedModelId);
   actions.restoreSession(session.sessionId, uiMessages, messages, session.projectPath);
   return {

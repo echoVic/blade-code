@@ -18,6 +18,7 @@ import type { SubagentConfig } from '../../agent/subagents/types.js';
 import type { UserMessageContent } from '../../agent/types.js';
 import type {
   CommunicationStyleSelection,
+  PermissionMode,
   ReasoningEffortSelection,
   ResponseVerbositySelection,
   ServiceTierSelection,
@@ -47,6 +48,7 @@ export interface AgentOptions {
   appendSystemPrompt?: string;
   maxTurns?: number;
   modelId?: string;
+  permissionMode?: PermissionMode;
   reasoningEffort?: ReasoningEffortSelection;
   serviceTier?: ServiceTierSelection;
   responseVerbosity?: ResponseVerbositySelection;
@@ -71,6 +73,7 @@ export function useAgent(options: AgentOptions) {
     | {
         sessionId: string;
         modelId?: string;
+        permissionMode?: PermissionMode;
         reasoningEffort?: ReasoningEffortSelection;
         serviceTier?: ServiceTierSelection;
         responseVerbosity?: ResponseVerbositySelection;
@@ -139,6 +142,9 @@ export function useAgent(options: AgentOptions) {
           sessionId,
           workspaceRoot,
           modelId: options.modelId,
+          permissionMode:
+            options.permissionMode ??
+            (metadata?.permissionMode as PermissionMode | undefined),
           reasoningEffort: metadata?.reasoningEffort ?? options.reasoningEffort,
           serviceTier: metadata?.serviceTier ?? options.serviceTier,
           responseVerbosity: metadata?.responseVerbosity ?? options.responseVerbosity,
@@ -159,6 +165,7 @@ export function useAgent(options: AgentOptions) {
           persistedSettingsRef.current = {
             sessionId,
             modelId: metadata?.selectedModelId,
+            permissionMode: metadata?.permissionMode as PermissionMode | undefined,
             reasoningEffort: metadata?.reasoningEffort,
             serviceTier: metadata?.serviceTier,
             responseVerbosity: metadata?.responseVerbosity,
@@ -227,6 +234,22 @@ export function useAgent(options: AgentOptions) {
         const previousServiceTier = runtime.getServiceTierConfiguration();
         const previousResponseVerbosity = runtime.getResponseVerbosityConfiguration();
         const previousCommunicationStyle = runtime.getCommunicationStyleConfiguration();
+        if (
+          options.permissionMode &&
+          (persistedSettingsRef.current?.sessionId !== sessionId ||
+            persistedSettingsRef.current.permissionMode !== options.permissionMode)
+        ) {
+          const metadata = await SessionService.setSessionPermissionMode(
+            sessionId,
+            runtime.workspaceRoot,
+            options.permissionMode
+          );
+          persistedSettingsRef.current = {
+            ...persistedSettingsRef.current,
+            sessionId,
+            permissionMode: metadata.permissionMode as PermissionMode | undefined,
+          };
+        }
         await runtime.refresh({
           modelId: requestedModelId,
           ...(requestedReasoningEffort
@@ -295,6 +318,7 @@ export function useAgent(options: AgentOptions) {
             persistedSettingsRef.current = {
               sessionId,
               modelId: metadata.selectedModelId,
+              permissionMode: metadata.permissionMode as PermissionMode | undefined,
               reasoningEffort: metadata.reasoningEffort,
               serviceTier: metadata.serviceTier,
               responseVerbosity: metadata.responseVerbosity,
@@ -322,6 +346,7 @@ export function useAgent(options: AgentOptions) {
             overrides?.appendSystemPrompt ?? options.appendSystemPrompt,
           maxTurns: overrides?.maxTurns ?? options.maxTurns,
           modelId: overrides?.modelId ?? options.modelId,
+          permissionMode: overrides?.permissionMode ?? options.permissionMode,
           agents: options.agents,
         });
       } else {
@@ -331,6 +356,7 @@ export function useAgent(options: AgentOptions) {
             overrides?.appendSystemPrompt ?? options.appendSystemPrompt,
           maxTurns: overrides?.maxTurns ?? options.maxTurns,
           modelId: overrides?.modelId ?? options.modelId,
+          permissionMode: overrides?.permissionMode ?? options.permissionMode,
           agents: options.agents,
         });
       }
@@ -594,6 +620,7 @@ export function useAgent(options: AgentOptions) {
         persistedSettingsRef.current = {
           sessionId: options.sessionId,
           modelId: metadata.selectedModelId,
+          permissionMode: metadata.permissionMode as PermissionMode | undefined,
           reasoningEffort: metadata.reasoningEffort,
           serviceTier: metadata.serviceTier,
           responseVerbosity: metadata.responseVerbosity,
@@ -661,6 +688,7 @@ export function useAgent(options: AgentOptions) {
       persistedSettingsRef.current = {
         sessionId: options.sessionId,
         modelId: metadata.selectedModelId,
+        permissionMode: metadata.permissionMode as PermissionMode | undefined,
         reasoningEffort: metadata.reasoningEffort,
         serviceTier: metadata.serviceTier,
         responseVerbosity: metadata.responseVerbosity,
@@ -729,6 +757,7 @@ export function useAgent(options: AgentOptions) {
         persistedSettingsRef.current = {
           sessionId: options.sessionId,
           modelId: metadata.selectedModelId,
+          permissionMode: metadata.permissionMode as PermissionMode | undefined,
           reasoningEffort: metadata.reasoningEffort,
           serviceTier: metadata.serviceTier,
           responseVerbosity: metadata.responseVerbosity,
@@ -807,6 +836,7 @@ export function useAgent(options: AgentOptions) {
         persistedSettingsRef.current = {
           sessionId: options.sessionId,
           modelId: metadata.selectedModelId,
+          permissionMode: metadata.permissionMode as PermissionMode | undefined,
           reasoningEffort: metadata.reasoningEffort,
           serviceTier: metadata.serviceTier,
           responseVerbosity: metadata.responseVerbosity,

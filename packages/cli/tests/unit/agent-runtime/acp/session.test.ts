@@ -156,6 +156,9 @@ vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
 }));
 
 const sessionServiceState = vi.hoisted(() => ({
+  setSessionPermissionMode: vi.fn().mockResolvedValue({
+    permissionMode: 'default',
+  }),
   updateSessionMetadata: vi.fn().mockResolvedValue({
     selectedModelId: 'model-1',
     reasoningEffort: 'off',
@@ -230,6 +233,11 @@ describe('AcpSession', () => {
     runtimeState.runtime.listSubagents.mockReset().mockReturnValue([]);
     runtimeState.runtime.resumeSubagent.mockReset();
     runtimeState.runtime.executeUserShellCommand.mockReset();
+    sessionServiceState.setSessionPermissionMode
+      .mockReset()
+      .mockImplementation(async (_sessionId, _cwd, permissionMode) => ({
+        permissionMode,
+      }));
     terminalState.execute.mockReset();
     // 创建 mock 连接
     mockConnection = createMockACPClient();
@@ -285,6 +293,7 @@ describe('AcpSession', () => {
       expect(SessionRuntime.create).toHaveBeenCalledWith({
         sessionId: 'test-session-id',
         workspaceRoot: '/tmp/test',
+        permissionMode: 'default',
         userShellExecutor: expect.any(Object),
       });
       expect(Agent.createWithRuntime).toHaveBeenCalledWith(runtimeState.runtime, {
@@ -823,6 +832,7 @@ describe('AcpSession', () => {
             headers: { Authorization: 'Bearer test-token' },
           },
         },
+        permissionMode: 'default',
         userShellExecutor: expect.any(Object),
       });
     });
@@ -1798,12 +1808,29 @@ describe('AcpSession', () => {
     it('应该设置会话模式为 yolo', async () => {
       await session.setMode('yolo');
 
+      expect(sessionServiceState.setSessionPermissionMode).toHaveBeenLastCalledWith(
+        'test-session-id',
+        '/tmp/test',
+        'yolo'
+      );
       const updates = mockConnection.sessionUpdates;
       const modeUpdates = updates.filter(
         (u) => u.update.sessionUpdate === 'current_mode_update'
       );
       expect(modeUpdates.length).toBeGreaterThan(0);
       expect((modeUpdates[0].update as any).currentModeId).toBe('yolo');
+    });
+
+    it('持久化失败时不应通知客户端或改变当前模式', async () => {
+      const updatesBefore = mockConnection.sessionUpdates.length;
+      sessionServiceState.setSessionPermissionMode.mockRejectedValueOnce(
+        new Error('mode fsync failed')
+      );
+
+      await expect(session.setMode('yolo')).rejects.toThrow('mode fsync failed');
+
+      expect(mockConnection.sessionUpdates).toHaveLength(updatesBefore);
+      expect(session.getMode()).toBe('default');
     });
 
     it('应该设置会话模式为 plan', async () => {

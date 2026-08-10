@@ -12,7 +12,9 @@ import {
   validatePermissions,
 } from '../cli/middleware.js';
 import { PermissionMode } from '../config/types.js';
+import { SessionService } from '../services/SessionService.js';
 import { renderUserShellCommandForDisplay } from '../services/UserShellCommandService.js';
+import { getConfig } from '../store/vanilla.js';
 import { getCwd } from '../utils/cwd.js';
 import {
   initializeCliPlugins,
@@ -134,18 +136,30 @@ export async function runPrint(
       ? input.trimStart().slice(1).trim()
       : undefined;
 
-    const { sessionId, messages } = await resolveNonInteractiveSession({
+    const { sessionId, messages, metadata } = await resolveNonInteractiveSession({
       sessionId: options.sessionId,
       continue: options.continue,
       resume: options.resume,
       forkSession: options.forkSession,
       fallbackSessionPrefix: 'print',
     });
+    const workspaceRoot = metadata?.projectPath ?? getCwd();
+    const permissionMode =
+      toPermissionMode(options.permissionMode) ??
+      (metadata?.permissionMode as PermissionMode | undefined) ??
+      getConfig()?.permissionMode ??
+      PermissionMode.DEFAULT;
+    await SessionService.setSessionPermissionMode(
+      sessionId,
+      workspaceRoot,
+      permissionMode
+    );
 
     runtime = await SessionRuntime.create({
       sessionId,
-      workspaceRoot: getCwd(),
+      workspaceRoot,
       modelId: options.model,
+      permissionMode,
       mcpConfig: options.mcpConfig,
       strictMcpConfig: options.strictMcpConfig,
       agents: options.agents ? parseCliAgents(options.agents) : undefined,
@@ -186,7 +200,7 @@ export async function runPrint(
       appendSystemPrompt: options.appendSystemPrompt,
       maxTurns: options.maxTurns,
       modelId: options.model,
-      permissionMode: toPermissionMode(options.permissionMode),
+      permissionMode,
       toolWhitelist: options.allowedTools,
       toolBlacklist: options.disallowedTools,
       mcpConfig: options.mcpConfig,
@@ -198,8 +212,8 @@ export async function runPrint(
         messages: [...messages],
         userId: 'cli-user',
         sessionId,
-        workspaceRoot: getCwd(),
-        permissionMode: toPermissionMode(options.permissionMode),
+        workspaceRoot,
+        permissionMode,
       })
     );
     const response = loopResult.finalMessage || '';

@@ -9,7 +9,7 @@ import {
 } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { safeExit } from '../../services/GracefulShutdown.js';
-import type { SessionMetadata } from '../../services/SessionService.js';
+import { type SessionMetadata, SessionService } from '../../services/SessionService.js';
 import type { SessionSelectionIntent } from '../../slash-commands/types.js';
 import {
   useActiveModal,
@@ -183,7 +183,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     }
 
     try {
-      // 使用 configActions 自动同步内存 + 持久化
+      await SessionService.setSessionPermissionMode(sessionId, workspaceRoot, nextMode);
       await configActions().setPermissionMode(nextMode);
     } catch (error) {
       logger.error('权限模式切换失败:', error instanceof Error ? error.message : error);
@@ -236,6 +236,9 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
           session,
           newSessionId: options?.newSessionId,
           announceFork: options?.announceFork,
+          permissionModeOverride: otherProps.permissionMode as
+            | PermissionMode
+            | undefined,
         },
         workspaceRoot,
         sessionActions,
@@ -369,7 +372,11 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     // EnterPlanMode approved: Switch to Plan mode
     if (confirmationType === 'enterPlanMode' && response.approved) {
       try {
-        // 更新内存中的权限模式（运行时状态，不持久化）
+        await SessionService.setSessionPermissionMode(
+          sessionId,
+          workspaceRoot,
+          PermissionMode.PLAN
+        );
         await configActions().setPermissionMode(PermissionMode.PLAN);
         logger.debug('[BladeInterface] Entered Plan mode');
       } catch (error) {

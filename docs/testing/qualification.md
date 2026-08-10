@@ -271,6 +271,20 @@ archived Popover 和 fresh tab 下载 exact Session；HTTP 响应需为 `no-stor
 正文 hash 匹配，fresh tab 无 application console error。测试结束后端口、临时根和
 下载验证产物必须归零。
 
+Session Permission Mode 资格必须证明权限策略属于 durable Session，而非进程全局或
+单一 UI Store。确定性测试覆盖 `default/autoEdit/yolo/plan`、latest update wins、
+legacy fallback、fork/task 继承、非法值 fail closed、SessionStart Hook snapshot、
+Plan 批准后的写前持久化、metadata 失败零执行，以及显式调用覆盖高于恢复值。Web
+切换历史 Session 必须恢复对应模式，新任务必须重置为 `autoEdit`，不能从上一
+`yolo` Session 泄漏。
+
+真实 GPT 必须将进程默认设为 `default`，仅在 Session JSONL 中持久化 `yolo`，随后
+分别通过不携带 mode 的 Web HTTP、ACP `session/load`、headless `--resume` 和真实
+TUI activation 完成实际 Write。四条轨迹都必须产生精确文件字节；Web/ACP 不得出现
+permission request，headless 不得以“需要交互确认”失败。Production Web GUI 必须
+创建完全访问 Session，fresh reload 后仍显示完全访问；点击新任务后必须显示自动审批，
+再返回原 Session 时恢复完全访问。浏览器 console 必须无 application error。
+
 Session Reasoning Effort 资格必须区分 durable selection 与 Provider effective
 level。确定性测试覆盖 `auto/off/minimal/low/medium/high/xhigh/max`、model
 capability projection、unsupported fail closed、active-turn 拒绝、Runtime service

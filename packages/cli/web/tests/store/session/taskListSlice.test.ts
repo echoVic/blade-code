@@ -182,12 +182,22 @@ describe('taskListSlice', () => {
   });
 
   it('patches durable inference settings without requiring a title change', () => {
+    useConfigStore.setState({ currentMode: 'default' });
+    useSessionStore.setState({
+      currentSessionId: 'shared-session',
+      currentSessionRef: {
+        sessionId: 'shared-session',
+        projectPath: '/workspace/a',
+      },
+      isTemporarySession: false,
+    });
     useSessionStore.getState().handleTaskEvent({
       type: 'session.updated',
       properties: {
         sessionId: 'shared-session',
         projectPath: '/workspace/a',
         selectedModelId: 'model-2',
+        permissionMode: 'yolo',
         reasoningEffort: 'high',
         serviceTier: 'fast',
         responseVerbosity: 'high',
@@ -199,16 +209,19 @@ describe('taskListSlice', () => {
     expect(workspaceA).toMatchObject({
       projectPath: '/workspace/a',
       selectedModelId: 'model-2',
+      permissionMode: 'yolo',
       reasoningEffort: 'high',
       serviceTier: 'fast',
       responseVerbosity: 'high',
       communicationStyle: 'friendly',
     });
     expect(workspaceB?.selectedModelId).toBeUndefined();
+    expect(workspaceB?.permissionMode).toBeUndefined();
     expect(workspaceB?.reasoningEffort).toBeUndefined();
     expect(workspaceB?.serviceTier).toBeUndefined();
     expect(workspaceB?.responseVerbosity).toBeUndefined();
     expect(workspaceB?.communicationStyle).toBeUndefined();
+    expect(useConfigStore.getState().currentMode).toBe('yolo');
   });
 
   it('loads only the exact session when another client creates it', async () => {

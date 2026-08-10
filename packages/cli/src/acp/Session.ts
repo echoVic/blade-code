@@ -89,7 +89,7 @@ const logger = createLogger(LogCategory.AGENT);
 /**
  * ACP 模式 ID（与 BladeAgent 返回的 availableModes 对应）
  */
-type AcpModeId = 'default' | 'auto-edit' | 'yolo' | 'plan';
+export type AcpModeId = 'default' | 'auto-edit' | 'yolo' | 'plan';
 
 interface ResolvedAcpPrompt {
   content: UserMessageContent;
@@ -98,6 +98,7 @@ interface ResolvedAcpPrompt {
 
 export interface AcpSessionOptions {
   initialMessages?: Message[];
+  permissionMode?: PermissionMode;
   mcpServers?: McpServer[];
   taskWorktree?: SessionTaskWorktree;
   taskIsolation?: SessionTaskIsolation;
@@ -194,7 +195,7 @@ export class AcpSession {
   private taskStatusUnsubscribe?: () => void;
   private destroyed = false;
   private messages: Message[];
-  private mode: AcpModeId = 'default';
+  private mode: AcpModeId;
 
   constructor(
     private readonly id: string,
@@ -204,6 +205,23 @@ export class AcpSession {
     private readonly options: AcpSessionOptions = {}
   ) {
     this.messages = [...(options.initialMessages ?? [])];
+    this.mode = this.mapPermissionModeToMode(options.permissionMode);
+  }
+
+  private mapPermissionModeToMode(
+    permissionMode: PermissionMode | undefined
+  ): AcpModeId {
+    switch (permissionMode) {
+      case PermissionMode.YOLO:
+        return 'yolo';
+      case PermissionMode.AUTO_EDIT:
+        return 'auto-edit';
+      case PermissionMode.PLAN:
+        return 'plan';
+      case PermissionMode.DEFAULT:
+      default:
+        return 'default';
+    }
   }
 
   private createAgent(): Promise<Agent> {
@@ -224,6 +242,11 @@ export class AcpSession {
    */
   async initialize(): Promise<void> {
     logger.debug(`[AcpSession ${this.id}] Initializing...`);
+    await SessionService.setSessionPermissionMode(
+      this.id,
+      this.cwd,
+      this.mapModeToPermissionMode() ?? PermissionMode.DEFAULT
+    );
 
     // 初始化 ACP 服务上下文（按会话隔离，不使用 process.chdir）
     AcpServiceContext.initializeSession(
@@ -241,6 +264,7 @@ export class AcpSession {
     this.runtime = await SessionRuntime.create({
       sessionId: this.id,
       workspaceRoot: this.cwd,
+      permissionMode: this.mapModeToPermissionMode(),
       ...(mcpServers ? { mcpServers } : {}),
       ...(this.options.taskWorktree ? { taskWorktree: this.options.taskWorktree } : {}),
       ...(this.options.taskIsolation
@@ -827,6 +851,13 @@ export class AcpSession {
         signal: abortController.signal,
         // 根据 ACP 模式映射到 Blade 权限模式
         permissionMode: this.mapModeToPermissionMode(),
+        onPermissionModeChange: async (permissionMode) => {
+          this.mode = this.mapPermissionModeToMode(permissionMode);
+          this.sendUpdate({
+            sessionUpdate: 'current_mode_update',
+            currentModeId: this.mode,
+          });
+        },
         ...(this.options.taskWorktree ? { worktreeActive: true } : {}),
         // 确认处理器：转发给 IDE 请求权限
         confirmationHandler: {
@@ -1323,11 +1354,13 @@ export class AcpSession {
    * - plan: 只读模式，不允许写操作
    */
   async setMode(mode: string): Promise<void> {
-    // 验证并设置模式
     const validModes: AcpModeId[] = ['default', 'auto-edit', 'yolo', 'plan'];
-    this.mode = validModes.includes(mode as AcpModeId)
+    const nextMode = validModes.includes(mode as AcpModeId)
       ? (mode as AcpModeId)
       : 'default';
+    const permissionMode = this.mapModeIdToPermissionMode(nextMode);
+    await SessionService.setSessionPermissionMode(this.id, this.cwd, permissionMode);
+    this.mode = nextMode;
     logger.info(`[AcpSession ${this.id}] Mode set to: ${this.mode}`);
 
     // 发送模式更新通知给 IDE
@@ -1341,7 +1374,11 @@ export class AcpSession {
    * 将 ACP 模式映射到 Blade 权限模式
    */
   private mapModeToPermissionMode(): PermissionMode | undefined {
-    switch (this.mode) {
+    return this.mapModeIdToPermissionMode(this.mode);
+  }
+
+  private mapModeIdToPermissionMode(mode: AcpModeId): PermissionMode {
+    switch (mode) {
       case 'yolo':
         return PermissionMode.YOLO; // 绕过所有权限检查
       case 'auto-edit':
@@ -1624,6 +1661,10 @@ export class AcpSession {
       responseVerbosity: this.runtime.getResponseVerbosityConfiguration(),
       communicationStyle: this.runtime.getCommunicationStyleConfiguration(),
     };
+  }
+
+  getMode(): AcpModeId {
+    return this.mode;
   }
 
   /**

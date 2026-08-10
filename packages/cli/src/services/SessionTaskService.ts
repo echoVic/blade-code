@@ -67,6 +67,7 @@ export class SessionTaskService {
           taskDispatch: input.dispatch,
           taskModelId: input.dispatch?.modelId,
           selectedModelId: input.dispatch?.modelId,
+          permissionMode: input.dispatch?.permissionMode,
           reasoningEffort: input.dispatch?.reasoningEffort,
           serviceTier: input.dispatch?.serviceTier,
           responseVerbosity: input.dispatch?.responseVerbosity,

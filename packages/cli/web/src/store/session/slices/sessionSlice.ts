@@ -1,7 +1,7 @@
 import { deriveSessionTitle } from '@api/sessionTitle';
 import { projectPathOf } from '@/lib/projectIdentity';
 import { sessionService } from '@/services';
-import { useConfigStore } from '@/store/ConfigStore';
+import { DEFAULT_WEB_PERMISSION_MODE, useConfigStore } from '@/store/ConfigStore';
 import { initialTokenUsage, TEMP_SESSION_ID } from '../constants';
 import {
   findSessionByRef,
@@ -165,6 +165,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     startTemporarySession: (projectPath) => {
       beginNavigation();
       get().unsubscribeFromEvents();
+      useConfigStore.getState().resetMode();
       if (projectPath) {
         get().selectProject(projectPath);
       }
@@ -339,6 +340,9 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         ) {
           get().selectProject(displayProjectPath);
         }
+        useConfigStore
+          .getState()
+          .setMode(exactSession.permissionMode ?? DEFAULT_WEB_PERMISSION_MODE);
         set((state) => ({
           currentSessionId: ref.sessionId,
           currentSessionRef: ref,

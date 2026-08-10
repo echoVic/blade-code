@@ -34,6 +34,7 @@ type CreateMetadataInitial = Pick<
   | 'taskSourceProjectPath'
   | 'taskWorktree'
   | 'selectedModelId'
+  | 'permissionMode'
   | 'reasoningEffort'
   | 'serviceTier'
   | 'responseVerbosity'
@@ -102,6 +103,7 @@ const makeSessionMetadata = (
   taskPromptSummary: overrides.taskPromptSummary,
   taskModelId: overrides.taskModelId,
   selectedModelId: overrides.selectedModelId,
+  permissionMode: overrides.permissionMode,
   reasoningEffort: overrides.reasoningEffort,
   serviceTier: overrides.serviceTier,
   responseVerbosity: overrides.responseVerbosity,
@@ -423,11 +425,20 @@ vi.mock('../../../../src/services/SessionService.js', () => ({
           sessionId,
           projectPath,
           title: update.title,
+          permissionMode: update.permissionMode ?? undefined,
           selectedModelId: update.selectedModelId ?? undefined,
           reasoningEffort: update.reasoningEffort ?? undefined,
           serviceTier: update.serviceTier ?? undefined,
           responseVerbosity: update.responseVerbosity ?? undefined,
           communicationStyle: update.communicationStyle ?? undefined,
+        })
+    ),
+    setSessionPermissionMode: vi.fn(
+      async (sessionId: string, projectPath: string, permissionMode: string) =>
+        makeSessionMetadata({
+          sessionId,
+          projectPath,
+          permissionMode: permissionMode as SessionMetadata['permissionMode'],
         })
     ),
     forkSession: vi.fn(
@@ -581,6 +592,14 @@ describe('SessionRoutes runtime reuse', () => {
     vi.mocked(SessionService.findSessionTaskWorktree).mockResolvedValue(undefined);
     vi.mocked(SessionService.findSessionTaskDispatch).mockResolvedValue(undefined);
     vi.mocked(SessionService.loadSession).mockResolvedValue(makeMessages());
+    vi.mocked(SessionService.setSessionPermissionMode).mockImplementation(
+      async (sessionId: string, projectPath: string, permissionMode) =>
+        makeSessionMetadata({
+          sessionId,
+          projectPath,
+          permissionMode,
+        })
+    );
     vi.mocked(SessionService.createSessionMetadata).mockImplementation(
       async (sessionId: string, projectPath: string, initial?: CreateMetadataInitial) =>
         makeSessionMetadata({
@@ -592,6 +611,7 @@ describe('SessionRoutes runtime reuse', () => {
           taskModelId: initial?.taskModelId ?? undefined,
           selectedModelId:
             initial?.selectedModelId ?? initial?.taskModelId ?? undefined,
+          permissionMode: initial?.permissionMode ?? undefined,
           taskRetryAvailable: initial?.taskDispatch !== undefined,
           taskRetriedFrom: initial?.taskRetriedFrom ?? undefined,
           taskIsolation: initial?.taskIsolation ?? undefined,
@@ -608,6 +628,7 @@ describe('SessionRoutes runtime reuse', () => {
           sessionId,
           projectPath,
           title: update.title,
+          permissionMode: update.permissionMode ?? undefined,
           selectedModelId: update.selectedModelId ?? undefined,
         })
     );
@@ -711,6 +732,7 @@ describe('SessionRoutes runtime reuse', () => {
       rootId: string;
       parentId: string;
       relationType: 'subagent' | 'fork';
+      permissionMode: SessionMetadata['permissionMode'];
     }> = {}
   ): SessionMetadata =>
     makeSessionMetadata({
@@ -724,9 +746,12 @@ describe('SessionRoutes runtime reuse', () => {
     options: {
       projectPath?: string;
       messages?: Message[];
+      permissionMode?: SessionMetadata['permissionMode'];
     } = {}
   ) => {
-    const metadata = metadataFor(sessionId, options.projectPath);
+    const metadata = metadataFor(sessionId, options.projectPath, {
+      permissionMode: options.permissionMode,
+    });
     const messages = options.messages ?? makeMessages();
     vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
@@ -964,6 +989,7 @@ describe('SessionRoutes runtime reuse', () => {
     expect(SessionRuntime.create).toHaveBeenCalledWith({
       sessionId: 'session-1',
       workspaceRoot: expect.any(String),
+      permissionMode: PermissionMode.DEFAULT,
     });
     expect(runtimeState.runtime.prepareInputTurn).toHaveBeenNthCalledWith(1, 'first');
     expect(runtimeState.runtime.prepareInputTurn).toHaveBeenNthCalledWith(2, 'second');
@@ -1398,7 +1424,8 @@ describe('SessionRoutes runtime reuse', () => {
     );
     const recoveredMetadata = metadataFor(
       'recovered-web-session',
-      '/persisted-workspace'
+      '/persisted-workspace',
+      { permissionMode: 'yolo' }
     );
     vi.mocked(SessionService.listSessions).mockResolvedValue([recoveredMetadata]);
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
@@ -1448,6 +1475,7 @@ describe('SessionRoutes runtime reuse', () => {
         expect.objectContaining({
           sessionId: 'recovered-web-session',
           workspaceRoot: '/persisted-workspace',
+          permissionMode: PermissionMode.YOLO,
         }),
         expect.objectContaining({ pendingInputOnly: true })
       );
@@ -1820,6 +1848,98 @@ describe('SessionRoutes runtime reuse', () => {
     });
   });
 
+  it('restores the persisted permission mode when a cold follow-up omits it', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('persisted-mode', {
+      projectPath: '/persisted-mode-workspace',
+      permissionMode: 'yolo',
+    });
+
+    const response = await SessionRoutes().request('/persisted-mode/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'continue with the frozen policy' }),
+    });
+
+    expect(response.status).toBe(202);
+    await vi.waitFor(() => {
+      expect(agentState.chatStream).toHaveBeenCalledWith(
+        'continue with the frozen policy',
+        expect.objectContaining({
+          permissionMode: PermissionMode.YOLO,
+        }),
+        expect.any(Object)
+      );
+    });
+    expect(SessionService.updateSessionMetadata).not.toHaveBeenCalledWith(
+      'persisted-mode',
+      '/persisted-mode-workspace',
+      expect.objectContaining({ permissionMode: expect.anything() })
+    );
+  });
+
+  it('persists an explicit permission override before preparing the next turn', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('override-mode', {
+      projectPath: '/override-mode-workspace',
+      permissionMode: 'yolo',
+    });
+
+    const response = await SessionRoutes().request('/override-mode/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: 'continue under automatic edits only',
+        permissionMode: 'autoEdit',
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(SessionService.setSessionPermissionMode).toHaveBeenCalledWith(
+      'override-mode',
+      '/override-mode-workspace',
+      'autoEdit'
+    );
+    expect(
+      vi.mocked(SessionService.setSessionPermissionMode).mock.invocationCallOrder.at(-1)
+    ).toBeLessThan(
+      runtimeState.runtime.prepareInputTurn.mock.invocationCallOrder.at(-1)!
+    );
+    await vi.waitFor(() => {
+      expect(agentState.chatStream).toHaveBeenCalledWith(
+        'continue under automatic edits only',
+        expect.objectContaining({
+          permissionMode: PermissionMode.AUTO_EDIT,
+        }),
+        expect.any(Object)
+      );
+    });
+  });
+
+  it('does not start a turn when an explicit permission override cannot persist', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('failed-mode', {
+      projectPath: '/failed-mode-workspace',
+      permissionMode: 'default',
+    });
+    vi.mocked(SessionService.setSessionPermissionMode).mockRejectedValueOnce(
+      new Error('permission mode fsync failed')
+    );
+
+    const response = await SessionRoutes().request('/failed-mode/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: 'do not run with a volatile policy',
+        permissionMode: 'yolo',
+      }),
+    });
+
+    expect(response.status).toBe(500);
+    expect(runtimeState.runtime.prepareInputTurn).not.toHaveBeenCalled();
+    expect(agentState.chatStream).not.toHaveBeenCalled();
+  });
+
   it('publishes a run error and releases a prepared owner on loop failure', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     const { Bus } = await import('../../../../src/server/bus.js');
@@ -2113,6 +2233,7 @@ describe('SessionRoutes runtime reuse', () => {
       sessionId,
       workspaceRoot: executionPath,
       modelId: 'model-1',
+      permissionMode: PermissionMode.DEFAULT,
       taskIsolation: isolation,
       ...(isolation === 'worktree'
         ? {
@@ -3609,10 +3730,12 @@ describe('SessionRoutes runtime reuse', () => {
     expect(SessionRuntime.create).toHaveBeenNthCalledWith(1, {
       sessionId: 'shared-session',
       workspaceRoot: '/tmp/workspace-a',
+      permissionMode: PermissionMode.DEFAULT,
     });
     expect(SessionRuntime.create).toHaveBeenNthCalledWith(2, {
       sessionId: 'shared-session',
       workspaceRoot: '/tmp/workspace-b',
+      permissionMode: PermissionMode.DEFAULT,
     });
   });
 
@@ -3640,6 +3763,7 @@ describe('SessionRoutes runtime reuse', () => {
     expect(SessionRuntime.create).toHaveBeenCalledWith({
       sessionId: 'shared-session',
       workspaceRoot: '/tmp/workspace-b',
+      permissionMode: PermissionMode.DEFAULT,
     });
   });
 

@@ -175,7 +175,8 @@ export interface SessionTaskDiffStat {
   commits: number;
 }
 
-export type SessionTaskPermissionMode = 'default' | 'autoEdit' | 'yolo' | 'plan';
+export type SessionPermissionMode = 'default' | 'autoEdit' | 'yolo' | 'plan';
+export type SessionTaskPermissionMode = SessionPermissionMode;
 
 export interface SessionTaskAttachment {
   type: 'file' | 'image' | 'url';
@@ -261,6 +262,7 @@ export interface SessionInfo {
   taskQueueDepth?: number | null;
   taskConcurrencyLimit?: number | null;
   selectedModelId?: string | null;
+  permissionMode?: SessionPermissionMode | null;
   reasoningEffort?: ReasoningEffortSelection | null;
   serviceTier?: ServiceTierSelection | null;
   responseVerbosity?: ResponseVerbositySelection | null;

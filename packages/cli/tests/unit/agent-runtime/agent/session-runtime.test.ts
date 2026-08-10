@@ -426,6 +426,36 @@ describe('SessionRuntime', () => {
     await runtime.dispose();
   });
 
+  it('restores the durable permission mode into the immutable runtime snapshot', async () => {
+    const workspaceRoot = path.join(storageRoot, 'permission-mode-workspace');
+    mkdirSync(workspaceRoot, { recursive: true });
+    await SessionService.createSessionMetadata(
+      'permission-mode-session',
+      workspaceRoot,
+      {
+        taskStatus: 'completed',
+        permissionMode: 'yolo',
+      }
+    );
+    const sessionStart = vi
+      .spyOn(HookManager.getInstance(), 'executeSessionStartHooks')
+      .mockResolvedValue({ proceed: true });
+
+    const runtime = await SessionRuntime.create({
+      sessionId: 'permission-mode-session',
+      workspaceRoot,
+    });
+
+    expect(runtime.getConfig().permissionMode).toBe(PermissionMode.YOLO);
+    expect(sessionStart).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'permission-mode-session',
+        permissionMode: PermissionMode.YOLO,
+      })
+    );
+    await runtime.dispose();
+  });
+
   it('persists standalone user shell output without invoking the model', async () => {
     const workspaceRoot = path.join(storageRoot, 'user-shell-workspace');
     mkdirSync(workspaceRoot, { recursive: true });

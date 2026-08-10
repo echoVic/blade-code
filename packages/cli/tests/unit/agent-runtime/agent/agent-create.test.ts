@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Agent } from '../../../../src/agent/Agent.js';
 import { taskRunScheduler } from '../../../../src/agent/runtime/TaskRunScheduler.js';
 import { type BladeConfig, PermissionMode } from '../../../../src/config/types.js';
+import { SessionService } from '../../../../src/services/SessionService.js';
 
 function createConfig(overrides: Partial<BladeConfig> = {}): BladeConfig {
   return {
@@ -174,6 +175,93 @@ describe('Agent runLoop system prompt injection', () => {
     expect(runtime.acknowledgeTurn).toHaveBeenCalledWith(turnHandle);
     expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(1, 'running');
     expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(2, 'completed', undefined);
+  });
+
+  it('persists an approved Plan mode transition before notifying or executing', async () => {
+    const turnHandle = { id: 'plan-turn' };
+    const order: string[] = [];
+    const runtime = {
+      ...createGoalRuntimeMocks(),
+      workspaceRoot: '/workspace',
+      prepareInputTurn: vi.fn(async () => ({
+        accepted: true,
+        handle: turnHandle,
+        messageId: 'plan-input',
+        queued: 1,
+        mode: 'direct',
+      })),
+      drainSteering: vi.fn(async () => []),
+      drainSteeringOrSeal: vi.fn(async () => ({
+        messages: [],
+        sealed: true,
+      })),
+      acknowledgeTurn: vi.fn().mockResolvedValue(undefined),
+      finishTurn: vi.fn().mockResolvedValue(undefined),
+    };
+    const persist = vi
+      .spyOn(SessionService, 'setSessionPermissionMode')
+      .mockImplementation(async (_sessionId, _workspaceRoot, permissionMode) => {
+        order.push(`persist:${permissionMode}`);
+        return {} as never;
+      });
+    const agent = new Agent(
+      createConfig({ permissionMode: PermissionMode.PLAN }),
+      {},
+      {
+        getRegistry: () => ({ getAll: () => [] }),
+      } as any,
+      runtime as any
+    );
+    (agent as any).isInitialized = true;
+    (agent as any).processAtMentionsForContent = vi.fn().mockResolvedValue('execute');
+    (agent as any).runPlanLoop = vi.fn(async function* () {
+      if (Date.now() < 0) yield undefined;
+      return {
+        success: true,
+        finalMessage: '',
+        metadata: {
+          turnsCount: 1,
+          toolCallsCount: 1,
+          duration: 0,
+          targetMode: PermissionMode.AUTO_EDIT,
+          planContent: 'Apply the approved change.',
+        },
+      };
+    });
+    (agent as any).runLoop = vi.fn(async function* () {
+      order.push('execute');
+      if (Date.now() < 0) yield undefined;
+      return {
+        success: true,
+        finalMessage: 'done',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const result = await agent
+      .chatStream('execute', {
+        messages: [],
+        userId: 'user-1',
+        sessionId: 'session-1',
+        workspaceRoot: '/workspace',
+        permissionMode: PermissionMode.PLAN,
+        onPermissionModeChange: async (permissionMode) => {
+          order.push(`surface:${permissionMode}`);
+        },
+      })
+      .next();
+
+    expect(result).toMatchObject({
+      done: true,
+      value: { success: true, finalMessage: 'done' },
+    });
+    expect(order).toEqual(['persist:autoEdit', 'surface:autoEdit', 'execute']);
+    expect(persist).toHaveBeenCalledWith(
+      'session-1',
+      '/workspace',
+      PermissionMode.AUTO_EDIT
+    );
+    persist.mockRestore();
   });
 
   it('serializes task sessions through the shared admission gate', async () => {

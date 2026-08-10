@@ -5,14 +5,14 @@
  *
  */
 
-import path from 'node:path';
 import type * as acp from '@agentclientprotocol/sdk';
 import {
   type Agent as AcpAgentInterface,
   type AgentSideConnection,
   PROTOCOL_VERSION,
 } from '@agentclientprotocol/sdk';
-import type { BladeConfig } from '../config/types.js';
+import path from 'node:path';
+import type { BladeConfig, PermissionMode } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
 import {
@@ -266,7 +266,11 @@ export class BladeAgent implements AcpAgentInterface {
       params.cwd,
       this.connection,
       this.clientCapabilities,
-      { initialMessages: fork.messages, mcpServers: params.mcpServers }
+      {
+        initialMessages: fork.messages,
+        permissionMode: fork.metadata.permissionMode as PermissionMode | undefined,
+        mcpServers: params.mcpServers,
+      }
     );
 
     try {
@@ -326,14 +330,24 @@ export class BladeAgent implements AcpAgentInterface {
         }
       }
     }
-    const messages = await SessionService.loadSession(params.sessionId, params.cwd);
+    const [messages, metadata] = await Promise.all([
+      SessionService.loadSession(params.sessionId, params.cwd),
+      SessionService.findSessionMetadata(params.sessionId, params.cwd),
+    ]);
+    if (!metadata) {
+      throw new Error(`Session not found: ${params.sessionId}`);
+    }
 
     const session = new AcpSession(
       params.sessionId,
       params.cwd,
       this.connection,
       this.clientCapabilities,
-      { initialMessages: messages, mcpServers: params.mcpServers }
+      {
+        initialMessages: messages,
+        permissionMode: metadata.permissionMode as PermissionMode | undefined,
+        mcpServers: params.mcpServers,
+      }
     );
 
     try {
@@ -348,7 +362,7 @@ export class BladeAgent implements AcpAgentInterface {
     this.sessions.set(params.sessionId, session);
     session.sendAvailableCommandsDelayed();
 
-    return this.buildSessionSetup(session.getModelConfiguration());
+    return this.buildSessionSetup(session.getModelConfiguration(), session.getMode());
   }
 
   private buildChildSessionResponse(
@@ -358,7 +372,12 @@ export class BladeAgent implements AcpAgentInterface {
   ): acp.NewSessionResponse & acp.ForkSessionResponse {
     return {
       sessionId,
-      ...this.buildSessionSetup(modelConfiguration),
+      ...this.buildSessionSetup(
+        modelConfiguration,
+        taskMetadata?.permissionMode === 'autoEdit'
+          ? 'auto-edit'
+          : taskMetadata?.permissionMode
+      ),
       ...(taskMetadata
         ? {
             _meta: {
@@ -396,7 +415,8 @@ export class BladeAgent implements AcpAgentInterface {
   }
 
   private buildSessionSetup(
-    modelConfiguration?: AcpModelConfiguration
+    modelConfiguration?: AcpModelConfiguration,
+    currentModeId: acp.SessionModeId = 'default'
   ): acp.LoadSessionResponse {
     const models = modelConfiguration?.models ?? [];
     const currentModelId =
@@ -539,7 +559,7 @@ export class BladeAgent implements AcpAgentInterface {
     return {
       modes: {
         availableModes,
-        currentModeId: 'default',
+        currentModeId,
       },
       configOptions: configOptions.length > 0 ? configOptions : undefined,
     };
@@ -637,7 +657,8 @@ export class BladeAgent implements AcpAgentInterface {
     }
     return {
       configOptions:
-        this.buildSessionSetup(session.getModelConfiguration()).configOptions ?? [],
+        this.buildSessionSetup(session.getModelConfiguration(), session.getMode())
+          .configOptions ?? [],
     };
   }
 

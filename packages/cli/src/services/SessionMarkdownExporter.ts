@@ -6,7 +6,7 @@ import type {
   ResponseVerbositySelection,
   ServiceTierSelection,
 } from '../config/types.js';
-import type { SessionEvent } from '../context/types.js';
+import type { SessionEvent, SessionPermissionMode } from '../context/types.js';
 import type { JsonValue } from '../store/types.js';
 import { materializeSessionEvents } from './sessionRewind.js';
 import { userShellCommandRecordFromMetadata } from './UserShellCommandService.js';
@@ -33,6 +33,7 @@ export interface SessionMarkdownMetadata {
   projectPath: string;
   title?: string;
   selectedModelId?: string;
+  permissionMode?: SessionPermissionMode;
   taskModelId?: string;
   taskSourceProjectPath?: string;
   reasoningEffort?: ReasoningEffortSelection;
@@ -500,6 +501,9 @@ export function renderSessionMarkdown(
       `- Project: \`${inline(sanitizeCredentialText(projectName, state))}\``,
       ...(model
         ? [`- Model: \`${inline(sanitizeCredentialText(model, state))}\``]
+        : []),
+      ...(metadata.permissionMode
+        ? [`- Permission mode: ${metadata.permissionMode}`]
         : []),
       `- Created: ${metadata.firstMessageTime}`,
       `- Updated: ${metadata.lastMessageTime}`,

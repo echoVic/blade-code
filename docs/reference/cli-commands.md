@@ -454,6 +454,8 @@ session。Agent 正在处理当前回合时，`/fork` 会被拒绝，不会转�
 fork 只复制源会话在边界前已提交的 conversation history：父会话保持不变，子会话
 沿用源 workspace，并等待下一条 user prompt。它不会倒回或复制 workspace 文件，也不会
 创建 Git branch；需要文件隔离时应另外使用 Git worktree 或 branch。
+模型配置和权限模式也按 fork 边界继承；显式 `--permission-mode` 仍高于继承值。详见
+[Session Permission Mode](session-permission-mode.md)。
 
 #### `/branch`
 

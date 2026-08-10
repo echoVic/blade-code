@@ -20,6 +20,10 @@ const taskState = vi.hoisted(() => ({
   createSessionTask: vi.fn(),
 }));
 
+const sessionServiceState = vi.hoisted(() => ({
+  setSessionPermissionMode: vi.fn(),
+}));
+
 vi.mock('../../../src/agent/Agent.js', () => ({
   Agent: {
     createWithRuntime: agentState.createWithRuntime,
@@ -40,6 +44,10 @@ vi.mock('../../../src/services/SessionTaskService.js', () => ({
   SessionTaskService: {
     createSessionTask: taskState.createSessionTask,
   },
+}));
+
+vi.mock('../../../src/services/SessionService.js', () => ({
+  SessionService: sessionServiceState,
 }));
 
 describe('headless runner', () => {
@@ -74,6 +82,9 @@ describe('headless runner', () => {
       executeUserShellCommand: runtimeState.executeUserShellCommand,
     });
     runtimeState.executeUserShellCommand.mockReset();
+    sessionServiceState.setSessionPermissionMode.mockResolvedValue({
+      permissionMode: 'yolo',
+    });
     agentState.chatStream.mockImplementation(mockChatGenerator([]));
     agentState.createWithRuntime.mockResolvedValue({
       chatStream: agentState.chatStream,
@@ -439,12 +450,78 @@ describe('headless runner', () => {
         permissionMode: 'yolo',
       })
     );
+    expect(sessionServiceState.setSessionPermissionMode).toHaveBeenCalledWith(
+      'headless-session',
+      expect.any(String),
+      'yolo'
+    );
     expect(stdout.write).toHaveBeenCalledWith('hello');
     expect(stderrOutput).toContain('[thinking] reasoning');
     expect(stderrOutput).toContain('Reading demo.ts');
     expect(stderrOutput).toContain('Read demo.ts');
     expect(stderrOutput).toContain('[task] [in_progress] Ship headless mode');
     expect(stderrOutput).toContain('[tokens] in=10 out=20 total=30 / 1000');
+  });
+
+  it('restores the durable permission mode unless the invocation overrides it', async () => {
+    sessionState.resolveNonInteractiveSession.mockResolvedValueOnce({
+      sessionId: 'headless-session',
+      messages: [{ role: 'assistant', content: 'history' }],
+      metadata: {
+        projectPath: '/workspace/restored',
+        permissionMode: 'plan',
+      },
+    });
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+
+    await expect(
+      runHeadless({ headless: true, message: 'continue' }, { stdout, stderr })
+    ).resolves.toBe(0);
+
+    expect(agentState.createWithRuntime).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ permissionMode: 'plan' })
+    );
+    expect(sessionServiceState.setSessionPermissionMode).toHaveBeenCalledWith(
+      'headless-session',
+      '/workspace/restored',
+      'plan'
+    );
+  });
+
+  it('gives an explicit headless permission mode precedence over durable state', async () => {
+    sessionState.resolveNonInteractiveSession.mockResolvedValueOnce({
+      sessionId: 'headless-session',
+      messages: [{ role: 'assistant', content: 'history' }],
+      metadata: {
+        projectPath: '/workspace/restored',
+        permissionMode: 'plan',
+      },
+    });
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+
+    await runHeadless(
+      {
+        headless: true,
+        message: 'continue',
+        permissionMode: 'autoEdit',
+      },
+      { stdout, stderr }
+    );
+
+    expect(agentState.createWithRuntime).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ permissionMode: 'autoEdit' })
+    );
+    expect(sessionServiceState.setSessionPermissionMode).toHaveBeenCalledWith(
+      'headless-session',
+      '/workspace/restored',
+      'autoEdit'
+    );
   });
 
   it('emits structured jsonl events when outputFormat=jsonl', async () => {

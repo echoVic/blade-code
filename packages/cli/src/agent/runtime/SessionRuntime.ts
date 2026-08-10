@@ -195,6 +195,7 @@ export interface SessionRuntimeOptions {
   sessionId: string;
   workspaceRoot?: string;
   modelId?: string;
+  permissionMode?: PermissionMode;
   reasoningEffort?: ReasoningEffortSelection;
   serviceTier?: ServiceTierSelection;
   responseVerbosity?: ResponseVerbositySelection;
@@ -351,6 +352,7 @@ export class SessionRuntime {
     let taskWorktree = options.taskWorktree;
     let taskIsolation = options.taskIsolation;
     let selectedModelId = options.modelId;
+    let selectedPermissionMode = options.permissionMode;
     let selectedReasoningEffort = options.reasoningEffort;
     let selectedServiceTier = options.serviceTier;
     let selectedResponseVerbosity = options.responseVerbosity;
@@ -371,6 +373,9 @@ export class SessionRuntime {
           storedMetadata.archivedBySessionId ?? options.sessionId
         );
       }
+      selectedPermissionMode ??= storedMetadata?.permissionMode as
+        | PermissionMode
+        | undefined;
       selectedReasoningEffort ??= storedMetadata?.reasoningEffort ?? 'off';
       selectedServiceTier ??= storedMetadata?.serviceTier ?? 'auto';
       selectedResponseVerbosity ??= storedMetadata?.responseVerbosity ?? 'auto';
@@ -452,6 +457,10 @@ export class SessionRuntime {
       });
       const runtimeConfig: BladeConfig = {
         ...modelResources.config,
+        permissionMode:
+          selectedPermissionMode ??
+          modelResources.config.permissionMode ??
+          PermissionMode.DEFAULT,
         lspServers: structuredClone(lspResources.servers),
         permissions: await configManager.loadWorkspacePermissions(
           hookConfigRoot,
@@ -470,6 +479,7 @@ export class SessionRuntime {
         lspResources,
         mcpServers,
         ...(selectedModelId ? { modelId: selectedModelId } : {}),
+        permissionMode: runtimeConfig.permissionMode,
         reasoningEffort: selectedReasoningEffort,
         serviceTier: selectedServiceTier,
         responseVerbosity: selectedResponseVerbosity,

@@ -250,6 +250,7 @@ export const SessionSchema = Runtime(
     taskPromptSummary: Type.Optional(Type.String()),
     taskModelId: Type.Optional(Type.String()),
     selectedModelId: Type.Optional(Type.String()),
+    permissionMode: Type.Optional(PermissionModeSchema),
     reasoningEffort: Type.Optional(ReasoningEffortSchema),
     serviceTier: Type.Optional(ServiceTierSchema),
     responseVerbosity: Type.Optional(ResponseVerbositySchema),

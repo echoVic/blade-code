@@ -23,6 +23,13 @@ describe('ConfigStore', () => {
     expect(useConfigStore.getState().currentMode).toBe(PermissionModeEnum.AUTO_EDIT);
   });
 
+  it('resets a resumed session mode before starting a new Web task', () => {
+    useConfigStore.getState().setMode(PermissionModeEnum.YOLO);
+    useConfigStore.getState().resetMode();
+
+    expect(useConfigStore.getState().currentMode).toBe(PermissionModeEnum.AUTO_EDIT);
+  });
+
   it('deduplicates concurrent model discovery and records readiness', async () => {
     let resolveResponse!: (response: Response) => void;
     const response = new Promise<Response>((resolve) => {

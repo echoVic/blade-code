@@ -5,6 +5,7 @@ import { requestJson } from '@/lib/http';
 
 export type { ModelConfig, PermissionMode };
 export { PermissionModeEnum };
+export const DEFAULT_WEB_PERMISSION_MODE = PermissionModeEnum.AUTO_EDIT;
 
 interface ConfigState {
   currentModelId: string | null;
@@ -19,13 +20,14 @@ interface ConfigState {
   loadModels: (workspacePath?: string) => Promise<void>;
   setCurrentModel: (modelId: string, workspacePath?: string) => Promise<void>;
   setMode: (mode: PermissionMode) => void;
+  resetMode: () => void;
 }
 
 let modelRequestSequence = 0;
 
 export const useConfigStore = create<ConfigState>((set, get) => ({
   currentModelId: null,
-  currentMode: PermissionModeEnum.AUTO_EDIT,
+  currentMode: DEFAULT_WEB_PERMISSION_MODE,
   configuredModels: [],
   availableModels: [],
   isLoading: false,
@@ -109,4 +111,5 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
   },
 
   setMode: (mode) => set({ currentMode: mode }),
+  resetMode: () => set({ currentMode: DEFAULT_WEB_PERMISSION_MODE }),
 }));

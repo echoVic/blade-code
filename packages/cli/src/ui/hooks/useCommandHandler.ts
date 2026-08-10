@@ -24,6 +24,7 @@ import type { LoopEvent } from '../../agent/loop/types.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
 import type { SubagentConfig } from '../../agent/subagents/types.js';
 import type { LoopResult } from '../../agent/types.js';
+import type { PermissionMode } from '../../config/types.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { renderUserShellCommandForDisplay } from '../../services/UserShellCommandService.js';
@@ -42,7 +43,11 @@ import {
   useThinkingModeEnabled,
   useWorkspaceRoot,
 } from '../../store/selectors/index.js';
-import { ensureStoreInitialized, getState } from '../../store/vanilla.js';
+import {
+  configActions,
+  ensureStoreInitialized,
+  getState,
+} from '../../store/vanilla.js';
 import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
 import { classifyError } from '../utils/errorExtractor.js';
 import { createLoopEventHandler } from '../utils/loopEventHandler.js';
@@ -130,6 +135,7 @@ export const useCommandHandler = (
     appendSystemPrompt: appendSystemPrompt,
     maxTurns: maxTurns,
     modelId: currentModelId,
+    permissionMode,
     reasoningEffort,
     serviceTier,
     responseVerbosity,
@@ -406,6 +412,9 @@ export const useCommandHandler = (
           signal: abortController.signal,
           confirmationHandler,
           permissionMode: permissionMode,
+          onPermissionModeChange: async (nextMode: PermissionMode) => {
+            await configActions().setPermissionMode(nextMode);
+          },
         };
 
         // --- 5. 消费 Agent 事件流 ---
@@ -519,6 +528,9 @@ export const useCommandHandler = (
         signal: abortController.signal,
         confirmationHandler,
         permissionMode,
+        onPermissionModeChange: async (nextMode: PermissionMode) => {
+          await configActions().setPermissionMode(nextMode);
+        },
       };
       const { loopResult } = await consumeAgentStream(
         agent.chatStream('', chatContext, {

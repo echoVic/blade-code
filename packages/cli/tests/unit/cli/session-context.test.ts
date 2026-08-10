@@ -24,6 +24,7 @@ describe('resolveNonInteractiveSession', () => {
     vi.restoreAllMocks();
     vi.spyOn(SessionService, 'listSessions').mockResolvedValue([]);
     vi.spyOn(SessionService, 'loadSession').mockResolvedValue([]);
+    vi.spyOn(SessionService, 'findSessionMetadata').mockResolvedValue(undefined);
     vi.spyOn(SessionService, 'forkSession').mockResolvedValue({
       sessionId: 'child-session',
       parentSessionId: 'parent-session',
@@ -107,10 +108,36 @@ describe('resolveNonInteractiveSession', () => {
     ).resolves.toEqual({
       sessionId: 'global-latest',
       messages: [{ role: 'assistant', content: 'global history' }],
+      metadata: makeMetadata('global-latest', '/another-workspace'),
     });
 
     expect(SessionService.listSessions).toHaveBeenCalledWith();
     expect(SessionService.loadSession).toHaveBeenCalledWith('global-latest');
     expect(SessionService.forkSession).not.toHaveBeenCalled();
+  });
+
+  it('returns durable settings when explicitly resuming a session', async () => {
+    const metadata = {
+      ...makeMetadata('resume-session'),
+      permissionMode: 'plan' as const,
+    };
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionService.loadSession).mockResolvedValue([
+      { role: 'assistant', content: 'resume history' },
+    ]);
+    const { resolveNonInteractiveSession } = await import(
+      '../../../src/commands/shared/sessionContext.js'
+    );
+
+    await expect(
+      resolveNonInteractiveSession({
+        resume: 'resume-session',
+        fallbackSessionPrefix: 'headless',
+      })
+    ).resolves.toEqual({
+      sessionId: 'resume-session',
+      messages: [{ role: 'assistant', content: 'resume history' }],
+      metadata,
+    });
   });
 });

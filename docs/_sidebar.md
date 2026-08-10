@@ -27,6 +27,7 @@
   * [Durable Session Archive](reference/session-archive.md)
   * [Portable Session Markdown Export](reference/session-markdown-export.md)
   * [Session Reasoning Effort](reference/session-reasoning-effort.md)
+  * [Session Permission Mode](reference/session-permission-mode.md)
   * [Session Service Tier](reference/session-service-tier.md)
   * [Session Response Verbosity](reference/session-response-verbosity.md)
   * [Session Communication Style](reference/session-communication-style.md)

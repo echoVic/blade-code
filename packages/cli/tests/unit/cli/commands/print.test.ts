@@ -24,6 +24,10 @@ const loopState = vi.hoisted(() => ({
   drainLoop: vi.fn(),
 }));
 
+const sessionServiceState = vi.hoisted(() => ({
+  setSessionPermissionMode: vi.fn(),
+}));
+
 vi.mock('../../../../src/commands/shared/commandInput.js', () => ({
   initializeCliPlugins: commandInputState.initializeCliPlugins,
   readCliInput: commandInputState.readCliInput,
@@ -50,6 +54,10 @@ vi.mock('../../../../src/agent/loop/index.js', () => ({
   drainLoop: loopState.drainLoop,
 }));
 
+vi.mock('../../../../src/services/SessionService.js', () => ({
+  SessionService: sessionServiceState,
+}));
+
 describe('print command runner', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -67,6 +75,10 @@ describe('print command runner', () => {
     runtimeState.dispose.mockResolvedValue(undefined);
     runtimeState.create.mockResolvedValue({
       dispose: runtimeState.dispose,
+      getConfig: () => ({ permissionMode: 'default' }),
+    });
+    sessionServiceState.setSessionPermissionMode.mockResolvedValue({
+      permissionMode: 'default',
     });
     agentState.chatStream.mockReturnValue({ kind: 'mock-loop' });
     agentState.createWithRuntime.mockResolvedValue({
@@ -80,6 +92,14 @@ describe('print command runner', () => {
   });
 
   it('uses resolved session/runtime and forwards tool restrictions', async () => {
+    sessionState.resolveNonInteractiveSession.mockResolvedValueOnce({
+      sessionId: 'print-session',
+      messages: [{ role: 'assistant', content: 'history' }],
+      metadata: {
+        projectPath: '/workspace/persisted-yolo',
+        permissionMode: 'yolo',
+      },
+    });
     const { runPrint } = await import('../../../../src/commands/print.js');
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
@@ -132,6 +152,11 @@ describe('print command runner', () => {
         toolBlacklist: ['Write'],
       })
     );
+    expect(sessionServiceState.setSessionPermissionMode).toHaveBeenCalledWith(
+      'print-session',
+      '/workspace/persisted-yolo',
+      'default'
+    );
     expect(agentState.chatStream).toHaveBeenCalledWith(
       'hello',
       expect.objectContaining({
@@ -142,6 +167,40 @@ describe('print command runner', () => {
     expect(stdout.write).toHaveBeenCalledWith('final answer\n');
     expect(stderr.write).not.toHaveBeenCalled();
     expect(runtimeState.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores a durable permission mode when no CLI override is provided', async () => {
+    sessionState.resolveNonInteractiveSession.mockResolvedValueOnce({
+      sessionId: 'print-session',
+      messages: [{ role: 'assistant', content: 'history' }],
+      metadata: {
+        projectPath: '/workspace/restored',
+        permissionMode: 'yolo',
+      },
+    });
+    const { runPrint } = await import('../../../../src/commands/print.js');
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    await expect(
+      runPrint({ print: true, message: 'continue' }, {
+        stdout,
+        stderr,
+      } as unknown as Pick<typeof process, 'stdout' | 'stderr'>)
+    ).resolves.toBe(0);
+
+    expect(runtimeState.create).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceRoot: '/workspace/restored' })
+    );
+    expect(agentState.createWithRuntime).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ permissionMode: 'yolo' })
+    );
+    expect(sessionServiceState.setSessionPermissionMode).toHaveBeenCalledWith(
+      'print-session',
+      '/workspace/restored',
+      'yolo'
+    );
   });
 
   it('prints slash-command output directly instead of short status text', async () => {

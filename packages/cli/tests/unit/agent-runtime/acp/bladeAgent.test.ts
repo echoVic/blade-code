@@ -19,6 +19,7 @@ const sessionServiceMocks = vi.hoisted(() => ({
   assertSessionWritable: vi.fn(),
   deleteSession: vi.fn(),
   forkSession: vi.fn(),
+  findSessionMetadata: vi.fn(),
   listSessionPage: vi.fn(),
   loadSession: vi.fn(),
 }));
@@ -45,6 +46,7 @@ interface MockAcpSessionInstance {
   setCommunicationStyle: ReturnType<typeof vi.fn<AcpSession['setCommunicationStyle']>>;
   getCurrentModelId: ReturnType<typeof vi.fn<AcpSession['getCurrentModelId']>>;
   getModelConfiguration: ReturnType<typeof vi.fn<AcpSession['getModelConfiguration']>>;
+  getMode: ReturnType<typeof vi.fn<AcpSession['getMode']>>;
   destroy: ReturnType<typeof vi.fn<AcpSession['destroy']>>;
   replayHistory: ReturnType<typeof vi.fn<AcpSession['replayHistory']>>;
   sendAvailableCommandsDelayed: ReturnType<
@@ -172,6 +174,7 @@ vi.mock('../../../../src/acp/Session.js', () => {
           ],
         } satisfies CommunicationStyleConfiguration,
       })),
+      getMode: vi.fn(() => (options?.permissionMode === 'yolo' ? 'yolo' : 'default')),
       destroy: vi.fn().mockImplementation(async () => {
         const error = acpSessionMocks.destroyErrors.shift();
         if (error) throw error;
@@ -227,6 +230,7 @@ vi.mock('../../../../src/services/SessionService.js', () => ({
     assertSessionWritable: sessionServiceMocks.assertSessionWritable,
     deleteSession: sessionServiceMocks.deleteSession,
     forkSession: sessionServiceMocks.forkSession,
+    findSessionMetadata: sessionServiceMocks.findSessionMetadata,
     listSessionPage: sessionServiceMocks.listSessionPage,
     loadSession: sessionServiceMocks.loadSession,
   },
@@ -302,6 +306,12 @@ describe('BladeAgent', () => {
     sessionServiceMocks.forkSession.mockResolvedValue({
       sessionId: 'forked-session',
       messages: [],
+      metadata: {
+        permissionMode: 'default',
+      },
+    });
+    sessionServiceMocks.findSessionMetadata.mockResolvedValue({
+      permissionMode: 'default',
     });
     sessionServiceMocks.loadSession.mockResolvedValue([]);
     sessionTaskServiceMocks.createSessionTask.mockReset();
@@ -539,6 +549,7 @@ describe('BladeAgent', () => {
       sessionServiceMocks.forkSession.mockResolvedValueOnce({
         sessionId: 'forked-session',
         messages,
+        metadata: { permissionMode: 'yolo' },
       });
 
       const response = await agent.unstable_forkSession(request);
@@ -552,7 +563,7 @@ describe('BladeAgent', () => {
         '/tmp/project',
         mockConnection,
         undefined,
-        { initialMessages: messages, mcpServers: [] }
+        { initialMessages: messages, permissionMode: 'yolo', mcpServers: [] }
       );
       const child = createdSessions[0];
       expect(child.initialize).toHaveBeenCalledTimes(1);
@@ -560,7 +571,7 @@ describe('BladeAgent', () => {
       expect(child.sendAvailableCommandsDelayed).toHaveBeenCalledTimes(1);
       expect(response).toMatchObject({
         sessionId: 'forked-session',
-        modes: { currentModeId: 'default' },
+        modes: { currentModeId: 'yolo' },
       });
       const forkModelCfg = response.configOptions?.find((o: any) => o.id === 'model');
       expect(
@@ -576,14 +587,14 @@ describe('BladeAgent', () => {
       expect(child.prompt).toHaveBeenCalledTimes(1);
     });
 
-    it('应该让 fork 与 new 返回完全相同的 setup', async () => {
+    it('应该让 fork 与 new 返回相同的 modes 和 config setup', async () => {
       const created = await agent.newSession({
         cwd: '/tmp/project',
         mcpServers: [],
       });
       const forked = await agent.unstable_forkSession(request);
       const { sessionId: _createdId, ...createdSetup } = created;
-      const { sessionId: _forkedId, ...forkedSetup } = forked;
+      const { sessionId: _forkedId, _meta: _forkMeta, ...forkedSetup } = forked;
 
       expect(forkedSetup).toEqual(createdSetup);
     });
@@ -612,6 +623,7 @@ describe('BladeAgent', () => {
       sessionServiceMocks.forkSession.mockResolvedValueOnce({
         sessionId: 'cleanup-failure-child',
         messages: [],
+        metadata: { permissionMode: 'default' },
       });
 
       await expect(agent.unstable_forkSession(request)).rejects.toBe(initializeError);
@@ -661,7 +673,11 @@ describe('BladeAgent', () => {
         '/tmp/project',
         mockConnection,
         undefined,
-        { initialMessages: [], mcpServers }
+        {
+          initialMessages: [],
+          permissionMode: 'default',
+          mcpServers,
+        }
       );
     });
   });
@@ -673,6 +689,9 @@ describe('BladeAgent', () => {
         { role: 'assistant' as const, content: 'Original answer' },
       ];
       sessionServiceMocks.loadSession.mockResolvedValue(history);
+      sessionServiceMocks.findSessionMetadata.mockResolvedValueOnce({
+        permissionMode: 'yolo',
+      });
       acpSessionMocks.currentModelId = 'gpt-3.5';
 
       const response = await loadSession({
@@ -690,7 +709,11 @@ describe('BladeAgent', () => {
         '/tmp/project',
         mockConnection,
         undefined,
-        { initialMessages: history, mcpServers: [] }
+        {
+          initialMessages: history,
+          permissionMode: 'yolo',
+          mcpServers: [],
+        }
       );
       const loadedSession = createdSessions[0];
       expect(loadedSession.initialize).toHaveBeenCalledTimes(1);
@@ -698,7 +721,7 @@ describe('BladeAgent', () => {
       expect(loadedSession.initialize.mock.invocationCallOrder[0]).toBeLessThan(
         loadedSession.replayHistory.mock.invocationCallOrder[0]
       );
-      expect(response?.modes?.currentModeId).toBe('default');
+      expect(response?.modes?.currentModeId).toBe('yolo');
       const modelOpt = response?.configOptions?.find((o: any) => o.id === 'model');
       expect(
         modelOpt && 'currentValue' in modelOpt ? modelOpt.currentValue : undefined

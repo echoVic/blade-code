@@ -45,6 +45,12 @@ const TASK_STATUSES = new Set<Session['taskStatus']>([
   'cancelled',
   'interrupted',
 ]);
+const PERMISSION_MODES = new Set<NonNullable<Session['permissionMode']>>([
+  'default',
+  'autoEdit',
+  'yolo',
+  'plan',
+]);
 const REASONING_EFFORTS = new Set<NonNullable<Session['reasoningEffort']>>([
   'auto',
   'off',
@@ -256,6 +262,7 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
         const projectPath = event.properties.projectPath;
         const title = event.properties.title;
         const selectedModelId = event.properties.selectedModelId;
+        const permissionMode = event.properties.permissionMode;
         const reasoningEffort = event.properties.reasoningEffort;
         const serviceTier = event.properties.serviceTier;
         const responseVerbosity = event.properties.responseVerbosity;
@@ -266,6 +273,9 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
           !(
             (typeof title === 'string' && title.trim()) ||
             (typeof selectedModelId === 'string' && selectedModelId.trim()) ||
+            PERMISSION_MODES.has(
+              permissionMode as NonNullable<Session['permissionMode']>
+            ) ||
             REASONING_EFFORTS.has(
               reasoningEffort as NonNullable<Session['reasoningEffort']>
             ) ||
@@ -281,6 +291,14 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
           return;
         }
         const ref = { sessionId, projectPath };
+        if (
+          sameSessionRef(get().currentSessionRef, ref) &&
+          PERMISSION_MODES.has(permissionMode as NonNullable<Session['permissionMode']>)
+        ) {
+          useConfigStore
+            .getState()
+            .setMode(permissionMode as NonNullable<Session['permissionMode']>);
+        }
         const hasSession = get().sessions.some((session) =>
           sameSessionRef(sessionRefFromSession(session), ref)
         );
@@ -299,6 +317,15 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
                   ...(typeof title === 'string' && title.trim() ? { title } : {}),
                   ...(typeof selectedModelId === 'string' && selectedModelId.trim()
                     ? { selectedModelId }
+                    : {}),
+                  ...(PERMISSION_MODES.has(
+                    permissionMode as NonNullable<Session['permissionMode']>
+                  )
+                    ? {
+                        permissionMode: permissionMode as NonNullable<
+                          Session['permissionMode']
+                        >,
+                      }
                     : {}),
                   ...(REASONING_EFFORTS.has(
                     reasoningEffort as NonNullable<Session['reasoningEffort']>

@@ -36,9 +36,9 @@ import {
   type IChatService,
   type Message,
 } from '../services/ChatServiceInterface.js';
+import { SessionService } from '../services/SessionService.js';
 import { resolveModelConfig as resolvePiModelConfig } from '../services/pi/resolveModelConfig.js';
 import {
-  configActions,
   ensureStoreInitialized,
   getAllModels,
   getConfig,
@@ -706,7 +706,14 @@ export class Agent {
             const planContent = result.metadata.planContent as string | undefined;
             logger.debug(`Plan 模式已批准，切换到 ${targetMode} 模式并重新执行`);
 
-            await configActions().setPermissionMode(targetMode);
+            if (this.sessionRuntime && currentContext.sessionId) {
+              await SessionService.setSessionPermissionMode(
+                currentContext.sessionId,
+                this.sessionRuntime.workspaceRoot,
+                targetMode
+              );
+            }
+            await currentContext.onPermissionModeChange?.(targetMode);
 
             currentContext = {
               ...currentContext,

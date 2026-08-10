@@ -1,5 +1,5 @@
 import type { Message } from '../../services/ChatServiceInterface.js';
-import { SessionService } from '../../services/SessionService.js';
+import { type SessionMetadata, SessionService } from '../../services/SessionService.js';
 import { getCwd } from '../../utils/cwd.js';
 
 export interface NonInteractiveSessionOptions {
@@ -13,6 +13,7 @@ export interface NonInteractiveSessionOptions {
 export interface ResolvedSessionContext {
   sessionId: string;
   messages: Message[];
+  metadata?: SessionMetadata;
 }
 
 function isMissingSessionError(error: unknown): boolean {
@@ -56,9 +57,14 @@ export async function resolveNonInteractiveSession(
         targetProjectPath: workspace,
       });
     }
+    const [messages, metadata] = await Promise.all([
+      SessionService.loadSession(options.resume),
+      SessionService.findSessionMetadata(options.resume),
+    ]);
     return {
       sessionId: options.resume,
-      messages: await SessionService.loadSession(options.resume),
+      messages,
+      metadata,
     };
   }
 
@@ -79,6 +85,7 @@ export async function resolveNonInteractiveSession(
       return {
         sessionId,
         messages: await SessionService.loadSession(sessionId),
+        metadata: sessions[0],
       };
     }
     if (options.forkSession) {
@@ -87,9 +94,18 @@ export async function resolveNonInteractiveSession(
   }
 
   if (options.sessionId) {
+    const messages = await tryLoadSession(options.sessionId);
     return {
       sessionId: options.sessionId,
-      messages: (await tryLoadSession(options.sessionId)) ?? [],
+      messages: messages ?? [],
+      ...(messages
+        ? {
+            metadata: await SessionService.findSessionMetadata(
+              options.sessionId,
+              getCwd()
+            ),
+          }
+        : {}),
     };
   }
 

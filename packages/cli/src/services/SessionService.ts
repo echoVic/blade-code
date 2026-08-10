@@ -37,6 +37,7 @@ import {
 import { isSessionTaskFailure, toTaskFailure } from '../context/taskFailure.js';
 import type {
   SessionEvent,
+  SessionPermissionMode,
   SessionRewindMode,
   SessionTaskDelivery,
   SessionTaskDiffStat,
@@ -92,7 +93,12 @@ const SESSION_TASK_STATUSES = new Set<SessionTaskStatus>([
   'interrupted',
 ]);
 const SESSION_TASK_ISOLATION = new Set<SessionTaskIsolation>(['local', 'worktree']);
-const SESSION_TASK_PERMISSION_MODES = new Set(['default', 'autoEdit', 'yolo', 'plan']);
+const SESSION_PERMISSION_MODES = new Set<SessionPermissionMode>([
+  'default',
+  'autoEdit',
+  'yolo',
+  'plan',
+]);
 const SESSION_TASK_DELIVERY_STATUSES = new Set(['applied', 'discarded', 'conflicted']);
 
 class SessionTaskReconciliationSkipped extends Error {}
@@ -200,7 +206,7 @@ function parseTaskDispatch(value: unknown): SessionTaskDispatch | undefined {
     typeof dispatch.sourceProjectPath !== 'string' ||
     !path.isAbsolute(dispatch.sourceProjectPath) ||
     !SESSION_TASK_ISOLATION.has(dispatch.isolation as SessionTaskIsolation) ||
-    !SESSION_TASK_PERMISSION_MODES.has(String(dispatch.permissionMode)) ||
+    !isSessionPermissionMode(dispatch.permissionMode) ||
     (dispatch.title !== undefined &&
       (typeof dispatch.title !== 'string' ||
         !dispatch.title.trim() ||
@@ -294,6 +300,13 @@ function parseTaskDispatch(value: unknown): SessionTaskDispatch | undefined {
   };
 }
 
+function isSessionPermissionMode(value: unknown): value is SessionPermissionMode {
+  return (
+    typeof value === 'string' &&
+    SESSION_PERMISSION_MODES.has(value as SessionPermissionMode)
+  );
+}
+
 function parseTaskRetryRef(value: unknown): SessionTaskRetryRef | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const ref = value as Record<string, unknown>;
@@ -351,6 +364,7 @@ export interface SessionMetadata {
   agentType?: string;
   model?: string;
   selectedModelId?: string;
+  permissionMode?: SessionPermissionMode;
   reasoningEffort?: ReasoningEffortSelection;
   serviceTier?: ServiceTierSelection;
   responseVerbosity?: ResponseVerbositySelection;
@@ -412,6 +426,7 @@ export interface SessionMetadataUpdate {
   taskQueueDepth?: number | null;
   taskConcurrencyLimit?: number | null;
   selectedModelId?: string | null;
+  permissionMode?: SessionPermissionMode | null;
   reasoningEffort?: ReasoningEffortSelection | null;
   serviceTier?: ServiceTierSelection | null;
   responseVerbosity?: ResponseVerbositySelection | null;
@@ -1338,6 +1353,13 @@ export class SessionService {
       throw new Error('Invalid selected session model ID');
     }
     if (
+      update.permissionMode !== undefined &&
+      update.permissionMode !== null &&
+      !isSessionPermissionMode(update.permissionMode)
+    ) {
+      throw new Error('Invalid session permission mode');
+    }
+    if (
       update.reasoningEffort !== undefined &&
       update.reasoningEffort !== null &&
       !isReasoningEffortSelection(update.reasoningEffort)
@@ -1477,6 +1499,7 @@ export class SessionService {
       | 'taskSourceProjectPath'
       | 'taskWorktree'
       | 'selectedModelId'
+      | 'permissionMode'
       | 'reasoningEffort'
       | 'serviceTier'
       | 'responseVerbosity'
@@ -1531,6 +1554,9 @@ export class SessionService {
           : {}),
         ...(initial.selectedModelId !== undefined
           ? { selectedModelId: initial.selectedModelId }
+          : {}),
+        ...(initial.permissionMode !== undefined
+          ? { permissionMode: initial.permissionMode }
           : {}),
         ...(initial.reasoningEffort !== undefined
           ? { reasoningEffort: initial.reasoningEffort }
@@ -1949,6 +1975,9 @@ export class SessionService {
             ...(update.selectedModelId !== undefined
               ? { selectedModelId: update.selectedModelId }
               : {}),
+            ...(update.permissionMode !== undefined
+              ? { permissionMode: update.permissionMode }
+              : {}),
             ...(update.reasoningEffort !== undefined
               ? { reasoningEffort: update.reasoningEffort }
               : {}),
@@ -1985,6 +2014,47 @@ export class SessionService {
         filePath
       )
     );
+  }
+
+  static async setSessionPermissionMode(
+    sessionId: string,
+    projectPath: string,
+    permissionMode: SessionPermissionMode
+  ): Promise<SessionMetadata> {
+    assertValidSessionId(sessionId);
+    if (!isSessionPermissionMode(permissionMode)) {
+      throw new Error('Invalid session permission mode');
+    }
+    const resolvedProjectPath = SessionService.resolveCatalogWorkspace(projectPath);
+    const current = await SessionService.findSessionMetadata(
+      sessionId,
+      resolvedProjectPath
+    );
+    if (current?.permissionMode === permissionMode) {
+      return current;
+    }
+    if (current) {
+      return SessionService.updateSessionMetadata(sessionId, resolvedProjectPath, {
+        permissionMode,
+      });
+    }
+    try {
+      return await SessionService.createSessionMetadata(
+        sessionId,
+        resolvedProjectPath,
+        {
+          taskStatus: 'completed',
+          permissionMode,
+        }
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        throw error;
+      }
+      return SessionService.updateSessionMetadata(sessionId, resolvedProjectPath, {
+        permissionMode,
+      });
+    }
   }
 
   static async findSessionTaskWorktree(
@@ -2550,6 +2620,9 @@ export class SessionService {
       typeof durable.selectedModelId === 'string' && durable.selectedModelId.trim()
         ? durable.selectedModelId
         : taskModelId;
+    const permissionMode = isSessionPermissionMode(durable.permissionMode)
+      ? durable.permissionMode
+      : taskDispatch?.permissionMode;
     const reasoningEffort = isReasoningEffortSelection(durable.reasoningEffort)
       ? durable.reasoningEffort
       : taskDispatch?.reasoningEffort;
@@ -2622,6 +2695,7 @@ export class SessionService {
       agentType: durable.agentType,
       model: durable.model,
       selectedModelId,
+      permissionMode,
       reasoningEffort,
       serviceTier,
       responseVerbosity,
