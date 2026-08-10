@@ -16,6 +16,10 @@ import { type Key, Text, useInput } from 'ink';
 import React, { useEffect, useRef } from 'react';
 import { PASTE_CONFIG } from '../constants.js';
 import {
+  createTerminalInputParserState,
+  parseTerminalInput,
+} from '../input/terminalInput.js';
+import {
   getImageFromClipboard,
   getTextFromClipboard,
   isImagePath,
@@ -68,17 +72,6 @@ export interface CustomTextInputProps {
 }
 
 /**
- * 粘贴检测状态
- */
-interface PasteState {
-  chunks: string[];
-  timeoutId: NodeJS.Timeout | null;
-  firstInputTime: number | null;
-  lastInputTime: number | null;
-  totalLength: number;
-}
-
-/**
  * 在光标位置插入文本
  */
 function insertTextAtCursor(
@@ -110,134 +103,108 @@ export function CustomTextInput({
   onImagePaste,
   disabledKeys = [],
 }: CustomTextInputProps): React.JSX.Element {
-  // 粘贴检测状态
-  const pasteStateRef = useRef<PasteState>({
-    chunks: [],
-    timeoutId: null,
-    firstInputTime: null,
-    lastInputTime: null,
-    totalLength: 0,
-  });
-
-  // 存储最新的值和光标位置（用于异步回调中避免闭包陷阱）
+  const terminalInputStateRef = useRef(createTerminalInputParserState());
   const latestValueRef = useRef(originalValue);
   const latestCursorRef = useRef(cursorPosition);
+  const pendingInputMutationRef = useRef<Promise<void> | null>(null);
 
-  // 同步更新 ref
   useEffect(() => {
     latestValueRef.current = originalValue;
     latestCursorRef.current = cursorPosition;
   }, [originalValue, cursorPosition]);
 
-  // 清理超时
-  useEffect(() => {
-    return () => {
-      if (pasteStateRef.current.timeoutId) {
-        clearTimeout(pasteStateRef.current.timeoutId);
-      }
-    };
-  }, []);
-
-  // 同步光标位置（当 value 长度变化时）
   useEffect(() => {
     if (cursorPosition > originalValue.length) {
       onChangeCursorPosition(originalValue.length);
     }
   }, [originalValue, cursorPosition, onChangeCursorPosition]);
 
-  /**
-   * 处理待处理的粘贴 chunks
-   */
-  const processPendingChunks = useMemoizedFn(() => {
-    const currentState = pasteStateRef.current;
-    if (currentState.timeoutId) {
-      clearTimeout(currentState.timeoutId);
-    }
-
-    const timeoutId = setTimeout(async () => {
-      const chunks = pasteStateRef.current.chunks;
-      const totalLength = pasteStateRef.current.totalLength;
-
-      if (chunks.length === 0) return;
-
-      const mergedInput = normalizeInputText(chunks.join(''));
-
-      // 重置状态
-      pasteStateRef.current = {
-        chunks: [],
-        timeoutId: null,
-        firstInputTime: null,
-        lastInputTime: null,
-        totalLength: 0,
-      };
-
-      // 使用 ref 获取最新值（避免闭包陷阱）
-      const currentValue = latestValueRef.current;
-      const currentCursor = latestCursorRef.current;
-
-      // 1. 检测是否为图片路径
-      if (onImagePaste && isImagePath(mergedInput)) {
-        try {
-          const imageResult = await processImageFromPath(mergedInput);
-          if (imageResult) {
-            const result = await onImagePaste(
-              imageResult.base64,
-              imageResult.mediaType,
-              imageResult.filename
-            );
-            if (result?.prompt) {
-              const sanitizedPrompt = normalizeInputText(result.prompt);
-              const { newValue, newCursorPosition } = insertTextAtCursor(
-                sanitizedPrompt,
-                currentValue,
-                currentCursor
-              );
-              onChange(newValue);
-              onChangeCursorPosition(newCursorPosition);
-            }
-            return;
-          }
-        } catch (error) {
-          console.error('Failed to process image path:', error);
-        }
+  const commitInputState = useMemoizedFn(
+    (newValue: string, newCursorPosition: number) => {
+      const previousValue = latestValueRef.current;
+      const previousCursor = latestCursorRef.current;
+      latestValueRef.current = newValue;
+      latestCursorRef.current = newCursorPosition;
+      if (newValue !== previousValue) onChange(newValue);
+      if (newCursorPosition !== previousCursor) {
+        onChangeCursorPosition(newCursorPosition);
       }
+    }
+  );
 
-      // 2. 判断是否应该触发 onPaste
-      const hasMultipleLines = mergedInput.includes('\n');
-      const isMediumSizeMultiChunk =
-        totalLength > PASTE_CONFIG.MEDIUM_SIZE_MULTI_CHUNK_THRESHOLD &&
-        chunks.length > 3;
-      const isPastePattern =
-        totalLength > PASTE_CONFIG.LARGE_INPUT_THRESHOLD ||
-        hasMultipleLines ||
-        isMediumSizeMultiChunk;
+  const insertIntoLatest = useMemoizedFn((text: string) => {
+    if (!text) return;
+    const { newValue, newCursorPosition } = insertTextAtCursor(
+      normalizeInputText(text),
+      latestValueRef.current,
+      latestCursorRef.current
+    );
+    commitInputState(newValue, newCursorPosition);
+  });
 
-      if (isPastePattern && onPaste) {
-        const result = await onPaste(mergedInput);
-        if (result?.prompt) {
-          const sanitizedPrompt = normalizeInputText(result.prompt);
-          const { newValue, newCursorPosition } = insertTextAtCursor(
-            sanitizedPrompt,
-            currentValue,
-            currentCursor
+  const handlePastedText = useMemoizedFn(async (rawText: string) => {
+    const text = normalizeInputText(rawText);
+    if (!text) return;
+
+    if (onImagePaste && isImagePath(text)) {
+      try {
+        const imageResult = await processImageFromPath(text);
+        if (imageResult) {
+          const result = await onImagePaste(
+            imageResult.base64,
+            imageResult.mediaType,
+            imageResult.filename
           );
-          onChange(newValue);
-          onChangeCursorPosition(newCursorPosition);
+          if (result?.prompt) insertIntoLatest(result.prompt);
           return;
         }
+      } catch (error) {
+        console.error('Failed to process image path:', error);
       }
+    }
 
-      // 3. 直接插入文本
-      const { newValue, newCursorPosition } = insertTextAtCursor(
-        mergedInput,
-        currentValue,
-        currentCursor
-      );
-      onChange(newValue);
-      onChangeCursorPosition(newCursorPosition);
-    }, PASTE_CONFIG.TIMEOUT_MS);
+    const shouldProjectPaste =
+      text.length > PASTE_CONFIG.LARGE_INPUT_THRESHOLD || text.includes('\n');
+    if (shouldProjectPaste && onPaste) {
+      const result = await onPaste(text);
+      if (result?.prompt) {
+        insertIntoLatest(result.prompt);
+        return;
+      }
+    }
 
-    pasteStateRef.current.timeoutId = timeoutId;
+    insertIntoLatest(text);
+  });
+
+  const enqueueInputMutation = useMemoizedFn((mutation: () => void | Promise<void>) => {
+    const previous = pendingInputMutationRef.current;
+    if (!previous) {
+      try {
+        const result = mutation();
+        if (!result) return;
+        const pending = result.catch(() => undefined);
+        pendingInputMutationRef.current = pending;
+        void pending.finally(() => {
+          if (pendingInputMutationRef.current === pending) {
+            pendingInputMutationRef.current = null;
+          }
+        });
+      } catch {
+        // Input projection failures must not terminate the TUI.
+      }
+      return;
+    }
+
+    const pending = previous
+      .then(mutation)
+      .then(() => undefined)
+      .catch(() => undefined);
+    pendingInputMutationRef.current = pending;
+    void pending.finally(() => {
+      if (pendingInputMutationRef.current === pending) {
+        pendingInputMutationRef.current = null;
+      }
+    });
   });
 
   /**
@@ -246,256 +213,184 @@ export function CustomTextInput({
    */
   useInput(
     (rawInput, key) => {
-      const input = normalizeInputText(rawInput);
-
-      // 检查是否是被禁用的按键
-      const isDisabledKey = disabledKeys.some((disabledKey) => key[disabledKey]);
-
-      // 跳过被禁用的按键和需要外部处理的按键
-      // - Ctrl+C: 中断/退出
-      // - Shift+Tab: 切换权限模式
-      // - 空输入时的 ? 键: 切换快捷键帮助
-      // - Ctrl+L/T/O: 清屏/切换 thinking/切换历史折叠（由 useMainInput 处理）
-      if (
-        isDisabledKey ||
-        (key.ctrl && rawInput === 'c') ||
-        (key.ctrl && rawInput === 'l') ||
-        (key.ctrl && rawInput === 't') ||
-        (key.ctrl && rawInput === 'o') ||
-        (key.meta && rawInput === 'l') ||
-        (key.meta && rawInput === 't') ||
-        (key.meta && rawInput === 'o') ||
-        (key.shift && key.tab) ||
-        (input === '?' && originalValue === '')
-      ) {
-        return;
-      }
-
-      const currentTime = Date.now();
-      const currentState = pasteStateRef.current;
-      let nextCursorPosition = cursorPosition;
-      let nextValue = originalValue;
-
-      // === ink-text-input 原有的左右箭头处理 ===
-      if (key.leftArrow) {
-        nextCursorPosition--;
-      } else if (key.rightArrow) {
-        nextCursorPosition++;
-      }
-      // === 扩展：Backspace/Delete 处理 ===
-      else if (key.backspace || key.delete) {
-        // WORKAROUND: 某些键盘/终端配置下，Backspace 键会被识别为 delete
-        // 通过 rawInput 为空来判断是 Backspace（向后删除）还是真正的 Delete（向前删除）
-        const isBackspace = rawInput === '';
-
-        if (isBackspace) {
-          // Backspace：删除光标前面的字符
-          if (cursorPosition > 0) {
-            nextValue =
-              originalValue.slice(0, cursorPosition - 1) +
-              originalValue.slice(cursorPosition, originalValue.length);
-            nextCursorPosition--;
-          }
-        } else {
-          // Delete：删除光标位置的字符（向前删除）
-          if (cursorPosition < originalValue.length) {
-            nextValue =
-              originalValue.slice(0, cursorPosition) +
-              originalValue.slice(cursorPosition + 1, originalValue.length);
-            // 光标位置不变
-          }
-        }
-      }
-      // === 扩展：Ctrl+A - 移到开头 ===
-      else if (key.ctrl && input === 'a') {
-        nextCursorPosition = 0;
-      }
-      // === 扩展：Ctrl+E - 移到末尾 ===
-      else if (key.ctrl && input === 'e') {
-        nextCursorPosition = originalValue.length;
-      }
-      // === 扩展：Ctrl+K - 删除到行尾 ===
-      else if (key.ctrl && input === 'k') {
-        nextValue = originalValue.slice(0, cursorPosition);
-      }
-      // === 扩展：Ctrl+U - 删除到行首 ===
-      else if (key.ctrl && input === 'u') {
-        nextValue = originalValue.slice(cursorPosition);
-        nextCursorPosition = 0;
-      }
-      // === 扩展：Ctrl+W - 删除前一个单词 ===
-      else if (key.ctrl && input === 'w') {
-        const beforeCursor = originalValue.slice(0, cursorPosition);
-        const match = beforeCursor.match(/\s*\S+\s*$/);
-        if (match) {
-          const deleteCount = match[0].length;
-          nextValue =
-            originalValue.slice(0, cursorPosition - deleteCount) +
-            originalValue.slice(cursorPosition);
-          nextCursorPosition -= deleteCount;
-        }
-      }
-      // === 扩展：Ctrl+V - 从剪贴板粘贴 ===
-      // macOS: Ctrl+V 仅粘贴图片（文本用 Cmd+V，通过终端 bracketed paste 处理）
-      // Linux/Windows: Ctrl+V 优先图片，其次文本
-      else if (key.ctrl && input === 'v') {
-        const isMac = process.platform === 'darwin';
-
-        (async () => {
-          // 1. 尝试读取图片
-          if (onImagePaste) {
-            const imageResult = await getImageFromClipboard();
-            if (imageResult) {
-              const result = await onImagePaste(
-                imageResult.base64,
-                imageResult.mediaType,
-                'clipboard.png'
-              );
-              if (result?.prompt) {
-                const sanitizedPrompt = normalizeInputText(result.prompt);
-                const { newValue, newCursorPosition } = insertTextAtCursor(
-                  sanitizedPrompt,
-                  latestValueRef.current,
-                  latestCursorRef.current
-                );
-                onChange(newValue);
-                onChangeCursorPosition(newCursorPosition);
+      enqueueInputMutation(() => {
+        const input = normalizeInputText(rawInput);
+        const parsedInput = parseTerminalInput(terminalInputStateRef.current, input);
+        terminalInputStateRef.current = parsedInput.state;
+        if (parsedInput.handled) {
+          return (async () => {
+            for (const segment of parsedInput.segments) {
+              if (segment.kind === 'paste') {
+                await handlePastedText(segment.text);
+              } else {
+                insertIntoLatest(segment.text);
               }
-              return;
+            }
+          })();
+        }
+
+        // 检查是否是被禁用的按键
+        const isDisabledKey = disabledKeys.some((disabledKey) => key[disabledKey]);
+
+        // 跳过被禁用的按键和需要外部处理的按键
+        // - Ctrl+C: 中断/退出
+        // - Shift+Tab: 切换权限模式
+        // - 空输入时的 ? 键: 切换快捷键帮助
+        // - Ctrl+L/T/O: 清屏/切换 thinking/切换历史折叠（由 useMainInput 处理）
+        if (
+          isDisabledKey ||
+          (key.ctrl && rawInput === 'c') ||
+          (key.ctrl && rawInput === 'l') ||
+          (key.ctrl && rawInput === 't') ||
+          (key.ctrl && rawInput === 'o') ||
+          (key.meta && rawInput === 'l') ||
+          (key.meta && rawInput === 't') ||
+          (key.meta && rawInput === 'o') ||
+          (key.shift && key.tab) ||
+          (input === '?' && latestValueRef.current === '')
+        ) {
+          return;
+        }
+
+        const currentValue = latestValueRef.current;
+        const currentCursor = latestCursorRef.current;
+        let nextCursorPosition = currentCursor;
+        let nextValue = currentValue;
+
+        // === ink-text-input 原有的左右箭头处理 ===
+        if (key.leftArrow) {
+          nextCursorPosition--;
+        } else if (key.rightArrow) {
+          nextCursorPosition++;
+        }
+        // === 扩展：Backspace/Delete 处理 ===
+        else if (key.backspace || key.delete) {
+          // WORKAROUND: 某些键盘/终端配置下，Backspace 键会被识别为 delete
+          // 通过 rawInput 为空来判断是 Backspace（向后删除）还是真正的 Delete（向前删除）
+          const isBackspace = rawInput === '';
+
+          if (isBackspace) {
+            // Backspace：删除光标前面的字符
+            if (currentCursor > 0) {
+              nextValue =
+                currentValue.slice(0, currentCursor - 1) +
+                currentValue.slice(currentCursor, currentValue.length);
+              nextCursorPosition--;
+            }
+          } else {
+            // Delete：删除光标位置的字符（向前删除）
+            if (currentCursor < currentValue.length) {
+              nextValue =
+                currentValue.slice(0, currentCursor) +
+                currentValue.slice(currentCursor + 1, currentValue.length);
+              // 光标位置不变
             }
           }
-
-          // 2. macOS 下 Ctrl+V 不处理文本（用户应使用 Cmd+V）
-          if (isMac) {
-            return;
+        }
+        // === 扩展：Ctrl+A - 移到开头 ===
+        else if (key.ctrl && input === 'a') {
+          nextCursorPosition = 0;
+        }
+        // === 扩展：Ctrl+E - 移到末尾 ===
+        else if (key.ctrl && input === 'e') {
+          nextCursorPosition = currentValue.length;
+        }
+        // === 扩展：Ctrl+K - 删除到行尾 ===
+        else if (key.ctrl && input === 'k') {
+          nextValue = currentValue.slice(0, currentCursor);
+        }
+        // === 扩展：Ctrl+U - 删除到行首 ===
+        else if (key.ctrl && input === 'u') {
+          nextValue = currentValue.slice(currentCursor);
+          nextCursorPosition = 0;
+        }
+        // === 扩展：Ctrl+W - 删除前一个单词 ===
+        else if (key.ctrl && input === 'w') {
+          const beforeCursor = currentValue.slice(0, currentCursor);
+          const match = beforeCursor.match(/\s*\S+\s*$/);
+          if (match) {
+            const deleteCount = match[0].length;
+            nextValue =
+              currentValue.slice(0, currentCursor - deleteCount) +
+              currentValue.slice(currentCursor);
+            nextCursorPosition -= deleteCount;
           }
+        }
+        // === 扩展：Ctrl+V - 从剪贴板粘贴 ===
+        // macOS: Ctrl+V 仅粘贴图片（文本用 Cmd+V，通过终端 bracketed paste 处理）
+        // Linux/Windows: Ctrl+V 优先图片，其次文本
+        else if (key.ctrl && input === 'v') {
+          const isMac = process.platform === 'darwin';
 
-          // 3. Linux/Windows: 没有图片时读取文本
-          const textResult = await getTextFromClipboard();
-          if (textResult) {
-            const sanitizedText = normalizeInputText(textResult);
-
-            // 大段文本走 onPaste 流程（摘要/标记）
-            const hasMultipleLines = sanitizedText.includes('\n');
-            const isLargeText =
-              sanitizedText.length > PASTE_CONFIG.LARGE_INPUT_THRESHOLD;
-
-            if ((hasMultipleLines || isLargeText) && onPaste) {
-              const result = await onPaste(sanitizedText);
-              if (result?.prompt) {
-                const sanitizedPrompt = normalizeInputText(result.prompt);
-                const { newValue, newCursorPosition } = insertTextAtCursor(
-                  sanitizedPrompt,
-                  latestValueRef.current,
-                  latestCursorRef.current
+          return (async () => {
+            // 1. 尝试读取图片
+            if (onImagePaste) {
+              const imageResult = await getImageFromClipboard();
+              if (imageResult) {
+                const result = await onImagePaste(
+                  imageResult.base64,
+                  imageResult.mediaType,
+                  'clipboard.png'
                 );
-                onChange(newValue);
-                onChangeCursorPosition(newCursorPosition);
+                if (result?.prompt) insertIntoLatest(result.prompt);
                 return;
               }
             }
 
-            // 小段文本直接插入
-            const { newValue, newCursorPosition } = insertTextAtCursor(
-              sanitizedText,
-              latestValueRef.current,
-              latestCursorRef.current
-            );
-            onChange(newValue);
-            onChangeCursorPosition(newCursorPosition);
-          }
-        })().catch(() => {
-          // 读取剪贴板失败，静默处理
-        });
-        return;
-      }
-      // === 扩展：Home 键 ===
-      else if (key.pageUp) {
-        nextCursorPosition = 0;
-      }
-      // === 扩展：End 键 ===
-      else if (key.pageDown) {
-        nextCursorPosition = originalValue.length;
-      }
-      // === 扩展：Shift+Enter（多行输入） ===
-      else if (input === '\n' && (key.shift || key.meta)) {
-        const { newValue, newCursorPosition } = insertTextAtCursor(
-          input,
-          originalValue,
-          cursorPosition
-        );
-        onChange(newValue);
-        onChangeCursorPosition(newCursorPosition);
-        return;
-      }
-      // === 扩展：粘贴检测逻辑 ===
-      else if (!key.ctrl && !key.meta) {
-        // 初始化时间
-        if (!currentState.firstInputTime) {
-          currentState.firstInputTime = currentTime;
+            // 2. macOS 下 Ctrl+V 不处理文本（用户应使用 Cmd+V）
+            if (isMac) {
+              return;
+            }
+
+            // 3. Linux/Windows: 没有图片时读取文本
+            const textResult = await getTextFromClipboard();
+            if (textResult) await handlePastedText(textResult);
+          })();
         }
-        currentState.lastInputTime = currentTime;
-
-        const timeSinceFirst =
-          currentTime - (currentState.firstInputTime || currentTime);
-
-        // 粘贴检测条件
-        const isLargeInput = input.length > PASTE_CONFIG.LARGE_INPUT_THRESHOLD;
-        const hasMultipleNewlines = input.includes('\n') && input.length > 1;
-        const isRapidSequence =
-          timeSinceFirst < PASTE_CONFIG.RAPID_INPUT_THRESHOLD_MS &&
-          currentState.chunks.length > 0;
-        const isNewRapidInput =
-          timeSinceFirst < PASTE_CONFIG.RAPID_INPUT_THRESHOLD_MS && input.length > 10;
-        const isAlreadyCollecting = currentState.timeoutId !== null;
-
-        const isPasteCandidate =
-          onPaste &&
-          (isLargeInput ||
-            hasMultipleNewlines ||
-            isRapidSequence ||
-            isNewRapidInput ||
-            isAlreadyCollecting);
-
-        if (isPasteCandidate) {
-          // 添加到 chunks 进行合并
-          currentState.chunks.push(input);
-          currentState.totalLength += input.length;
-          processPendingChunks();
+        // === 扩展：Home 键 ===
+        else if (key.pageUp) {
+          nextCursorPosition = 0;
+        }
+        // === 扩展：End 键 ===
+        else if (key.pageDown) {
+          nextCursorPosition = currentValue.length;
+        }
+        // === 扩展：Shift+Enter（多行输入） ===
+        else if (input === '\n' && (key.shift || key.meta)) {
+          const { newValue, newCursorPosition } = insertTextAtCursor(
+            input,
+            currentValue,
+            currentCursor
+          );
+          commitInputState(newValue, newCursorPosition);
           return;
         }
+        // Multi-character chunks are either terminal paste/IME commits or batched stdin.
+        else if (!key.ctrl && !key.meta) {
+          if (
+            onPaste &&
+            (input.length > PASTE_CONFIG.LARGE_INPUT_THRESHOLD || input.includes('\n'))
+          ) {
+            return handlePastedText(input);
+          }
 
-        // 重置单字符输入状态
-        if (input.length === 1 && !currentState.timeoutId) {
-          currentState.chunks = [];
-          currentState.firstInputTime = null;
-          currentState.lastInputTime = null;
-          currentState.totalLength = 0;
+          nextValue =
+            currentValue.slice(0, currentCursor) +
+            input +
+            currentValue.slice(currentCursor, currentValue.length);
+          nextCursorPosition += input.length;
         }
 
-        // === ink-text-input 原有的普通输入处理 ===
-        nextValue =
-          originalValue.slice(0, cursorPosition) +
-          input +
-          originalValue.slice(cursorPosition, originalValue.length);
-        nextCursorPosition += input.length;
-      }
+        // === ink-text-input 原有的边界检查 ===
+        if (nextCursorPosition < 0) {
+          nextCursorPosition = 0;
+        }
+        if (nextCursorPosition > nextValue.length) {
+          nextCursorPosition = nextValue.length;
+        }
 
-      // === ink-text-input 原有的边界检查 ===
-      if (nextCursorPosition < 0) {
-        nextCursorPosition = 0;
-      }
-      if (nextCursorPosition > nextValue.length) {
-        nextCursorPosition = nextValue.length;
-      }
-
-      // 更新状态（先更新值，再更新光标位置，避免闪烁）
-      if (nextValue !== originalValue) {
-        onChange(nextValue);
-      }
-      if (nextCursorPosition !== cursorPosition) {
-        onChangeCursorPosition(nextCursorPosition);
-      }
+        commitInputState(nextValue, nextCursorPosition);
+      });
     },
     { isActive: focus }
   );

@@ -377,6 +377,19 @@ history、零内部 XML 和零应用 console error。TUI Computer Use 只有在�
 真实 raw TTY 焦点并完整提交命令时计入通过；否则必须依赖 Ink 渲染、真实 PTY 和进程树
 测试，不能把启动截图算作完整 TUI 资格。
 
+TUI Terminal Input 资格必须覆盖普通 multi-character stdin、同一 React batch 内的
+快速字符、完整和 split bracketed paste、CRLF、focus CSI、literal `[I`/`[O]`、
+TTY mode 成对启停与 GracefulShutdown 复位。raw Ink 测试必须把完整输入提交给
+command handler；production PTY 必须将 bracketed payload 送入刚构建的
+`dist/blade.js`。
+
+真实 DeepSeek 必须经不记录 Authorization 的透明代理直接观察完整 pasted prompt
+位于 provider request body，并返回由分段 token 组成的预期 marker。Web GUI smoke
+必须证明 terminal-only 改动没有影响 Composer：多字符 `!` 输入仍只走 `/shell`，
+fresh tab 恢复一个 command card，内部 XML 和应用 console error 均为零。Computer
+Use 只有在工具能稳定寻址独立 terminal process/window 时计入通过；bundle ID 指向旧
+实例或焦点可能落入用户窗口时必须停止 UI 操作，改用 raw PTY 证据。
+
 Plugin Marketplace 资格必须使用隔离 HOME 和本地 Marketplace snapshot。确定性测试
 覆盖 `0600` 严格账本、跨进程串行写、Git `execFile` 参数边界、显式 source trust、
 symlink/路径逃逸/凭据 URL/体积限制、摘要篡改、失败更新回滚、旧根保留和依赖删除保护。

@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### 🐛 问题修复
+
+- TUI 新增 production terminal input framing：显式管理 bracketed paste mode，
+  完整处理 multi-character/IME chunk、split paste marker 与 CRLF，并同步维护
+  value/cursor ref，避免 React batch 内快速输入互相覆盖
+
+### ✅ 测试相关
+
+- 新增 TUI parser、component、raw Ink TTY 和 production PTY 回归；真实 DeepSeek
+  transparent proxy 直接验证完整 bracketed paste prompt 进入 provider body，Web GUI
+  smoke 验证 `/shell`、fresh-load 与零应用 console error
+
 ## [0.10.0] - 2026-08-10
 
 ### ✨ 新功能

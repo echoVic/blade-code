@@ -309,6 +309,10 @@ TUI 显示黄色 `$` prompt；Web 显示结构化 command card；ACP 使用 IDE 
 不可用时不会回退宿主 shell。详见
 [Session-owned User Shell Command](session-user-shell-command.md)。
 
+TUI 支持标准 bracketed paste、IME/batched multi-character input 和 CRLF 规范化；
+启动和退出时会成对启用/恢复 terminal paste mode，并过滤独立 focus CSI。详见
+[TUI Terminal Input](tui-terminal-input.md)。
+
 ### 会话 Slash 命令
 
 #### `/effort [level]`

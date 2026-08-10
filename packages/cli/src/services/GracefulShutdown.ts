@@ -33,6 +33,7 @@ function restoreTerminal(): void {
   process.stdout.write('\x1B[<u');
   process.stdout.write('\x1B[>4;0m');
   process.stdout.write('\x1B[?2004l');
+  process.stdout.write('\x1B[?1004l');
   process.stdout.write('\x1B[?1l\x1B>');
 
   // 恢复光标和样式
