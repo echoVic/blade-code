@@ -25,6 +25,12 @@ local > project > user > default enabled
 - Project scope: `.blade/settings.json`
 - Local scope: `.blade/settings.local.json`
 
+Management surfaces call the user layer `global`. A state write records only
+the selected `global`, `project`, or `local` layer; more specific layers still
+win. The TUI and Web project each plugin's effective scope and the configured
+layer values so a successful write cannot be mistaken for an effective state
+change.
+
 An untrusted project may set a plugin to `false`, but cannot enable a plugin
 that a user layer disabled. Project plugins are not discovered until Workspace
 Trust is granted.
@@ -172,13 +178,16 @@ Session environment.
 
 ## Management surfaces
 
-- TUI: `/plugins`, arrow keys, Space/Enter, `u`, `x`, and `r`
+- TUI: `/plugins`, arrow keys, Space/Enter, `s` to select the write scope,
+  `u`, `x`, and `r`
 - CLI/headless/ACP: `/plugins install|update|uninstall`,
   `/plugins marketplace`, `/plugins policy`, and `/plugins enable|disable`
-- Web: Settings > Plugins includes package and Marketplace lifecycle controls
+- Web: Settings > Plugins includes package and Marketplace lifecycle controls,
+  write-scope selection, effective-scope badges, and layer provenance
 - HTTP: `/plugins/install`, `/plugins/:name/update`,
   `/plugins/:name/uninstall`, `/plugins/catalog`, and
-  `/plugins/marketplaces/*`, all with an explicit absolute `projectPath`
+  `/plugins/marketplaces/*`, plus `/plugins/:name/state`; all require an
+  explicit absolute `projectPath`
 
 Install, update, and uninstall reconcile resources automatically. Uninstall
 removes stale state entries from all editable scopes for the current project.

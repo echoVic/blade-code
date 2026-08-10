@@ -40,6 +40,8 @@ import { validateModelProviderConfig } from './modelProviders.js';
 import {
   normalizePluginSettings,
   normalizePluginSourcePolicy,
+  type PluginSettingsScope,
+  type WorkspacePluginSettingsResolution,
 } from './pluginSettings.js';
 import { normalizeRuntimeEnvironment } from './runtimeEnvironment.js';
 import {
@@ -641,36 +643,68 @@ export class ConfigManager {
   async loadWorkspacePluginSettings(
     workspaceRoot: string
   ): Promise<Record<string, boolean>> {
+    return (await this.loadWorkspacePluginSettingsResolution(workspaceRoot)).effective;
+  }
+
+  async loadWorkspacePluginSettingsResolution(
+    workspaceRoot: string
+  ): Promise<WorkspacePluginSettingsResolution> {
     const trust = await WorkspaceTrustService.getInstance().getStatus(workspaceRoot);
     const resolved: Record<string, boolean> = {};
+    const settings: WorkspacePluginSettingsResolution['settings'] = {};
     const applyLayer = (
       layer: Partial<BladeConfig> | null | undefined,
+      scope: PluginSettingsScope,
       allowEnable: boolean
     ) => {
       if (!layer?.enabledPlugins) return;
-      const settings = normalizePluginSettings(layer.enabledPlugins);
-      for (const [name, enabled] of Object.entries(settings)) {
-        if (allowEnable || enabled === false) resolved[name] = enabled;
+      const normalized = normalizePluginSettings(layer.enabledPlugins);
+      for (const [name, enabled] of Object.entries(normalized)) {
+        if (!allowEnable && enabled !== false) continue;
+        const previous = settings[name];
+        resolved[name] = enabled;
+        settings[name] = {
+          effective: enabled,
+          effectiveScope: scope,
+          layers: {
+            ...(previous?.layers ?? {}),
+            [scope]: enabled,
+          },
+        };
       }
     };
 
     applyLayer(
       await this.loadJsonFile(path.join(os.homedir(), '.blade', 'config.json')),
+      'global',
       true
     );
     applyLayer(
       await this.loadJsonFile(path.join(os.homedir(), '.blade', 'settings.json')),
+      'global',
       true
     );
 
-    for (const filename of ['config.json', 'settings.json', 'settings.local.json']) {
+    for (const filename of ['config.json', 'settings.json']) {
       applyLayer(
         await this.loadJsonFile(path.join(trust.projectPath, '.blade', filename)),
+        'project',
         trust.state === 'trusted'
       );
     }
-    applyLayer(this.lastAdditionalSettings, true);
-    return resolved;
+    applyLayer(
+      await this.loadJsonFile(
+        path.join(trust.projectPath, '.blade', 'settings.local.json')
+      ),
+      'local',
+      trust.state === 'trusted'
+    );
+    applyLayer(this.lastAdditionalSettings, 'invocation', true);
+    return {
+      effective: resolved,
+      settings,
+      workspaceTrusted: trust.state === 'trusted',
+    };
   }
 
   async loadWorkspacePluginSourcePolicy(

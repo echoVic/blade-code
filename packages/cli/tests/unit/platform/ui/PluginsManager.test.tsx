@@ -81,6 +81,7 @@ describe('PluginsManager', () => {
     setWorkspacePluginEnabled.mockReset();
     setWorkspacePluginEnabled.mockResolvedValue({
       effectiveEnabled: false,
+      effectiveScope: 'local',
     });
     refreshWorkspacePlugins.mockReset();
   });
@@ -96,6 +97,9 @@ describe('PluginsManager', () => {
     );
 
     expect(html).toContain('tui-plugin');
+    expect(html).toContain('写入层级:');
+    expect(html).toContain('local');
+    expect(html).toContain('s 切换层级');
     expect(html).toContain('Space/Enter 启停');
     inputHandler?.('', { return: true });
     await vi.waitFor(() =>

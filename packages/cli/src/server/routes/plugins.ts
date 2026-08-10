@@ -75,7 +75,10 @@ function requireProjectPath(projectPath: string | undefined): string {
 }
 
 async function projectPlugins(projectPath: string) {
-  const resources = await resolveWorkspaceAgentResources(projectPath);
+  const [resources, settingsResolution] = await Promise.all([
+    resolveWorkspaceAgentResources(projectPath),
+    ConfigManager.getInstance().loadWorkspacePluginSettingsResolution(projectPath),
+  ]);
   return resources.plugins.getAll().map((plugin) => ({
     name: plugin.manifest.name,
     description: plugin.manifest.description,
@@ -103,6 +106,15 @@ async function projectPlugins(projectPath: string) {
     installedAt: plugin.installation?.installedAt,
     updatedAt: plugin.installation?.updatedAt,
     compatibilityIssues: plugin.compatibilityIssues ?? [],
+    effectiveScope:
+      plugin.source === 'cli'
+        ? 'invocation'
+        : (settingsResolution.settings[plugin.manifest.name]?.effectiveScope ??
+          'default'),
+    settingLayers:
+      plugin.source === 'cli'
+        ? { invocation: true }
+        : (settingsResolution.settings[plugin.manifest.name]?.layers ?? {}),
   }));
 }
 

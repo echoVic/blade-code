@@ -66,6 +66,31 @@ await write(
   })}\n`
 );
 await write(
+  workspace,
+  '.blade/settings.json',
+  `${JSON.stringify(
+    {
+      hooks: {
+        enabled: true,
+        PreToolUse: [
+          {
+            name: 'gui-settings-review',
+            matcher: { tools: 'Read' },
+            hooks: [
+              {
+                type: 'command',
+                command: 'node -e "process.exit(0)"',
+              },
+            ],
+          },
+        ],
+      },
+    },
+    null,
+    2
+  )}\n`
+);
+await write(
   marketplace,
   '.blade-plugin/marketplace.json',
   `${JSON.stringify(

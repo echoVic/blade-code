@@ -6,7 +6,10 @@ import {
 } from '../agent/resources/WorkspaceAgentResources.js';
 import { ConfigManager } from '../config/ConfigManager.js';
 import { getConfigService } from '../config/ConfigService.js';
-import { normalizePluginSourcePolicy } from '../config/pluginSettings.js';
+import {
+  normalizePluginSourcePolicy,
+  type PersistedPluginSettingsScope,
+} from '../config/pluginSettings.js';
 import type { PluginSourcePolicy } from '../config/types.js';
 import { WorkspaceTrustService } from '../security/WorkspaceTrustService.js';
 import {
@@ -20,7 +23,7 @@ import { clearAllPluginResources, integrateAllPlugins } from './PluginIntegrator
 import { PluginRegistry } from './PluginRegistry.js';
 import type { PluginDiscoveryResult, PluginSource, PluginStatus } from './types.js';
 
-export type PluginSettingsScope = 'local' | 'project' | 'global';
+export type PluginSettingsScope = PersistedPluginSettingsScope;
 
 export interface PluginStateChange {
   name: string;
@@ -29,6 +32,7 @@ export interface PluginStateChange {
   scope: PluginSettingsScope;
   source: PluginSource;
   status: PluginStatus;
+  effectiveScope: 'default' | PersistedPluginSettingsScope | 'invocation';
 }
 
 const lifecycleMutex = new Mutex();
@@ -149,6 +153,8 @@ export async function setWorkspacePluginEnabled(
 
     const updated = resources.plugins.get(name);
     if (!updated) throw new Error(`Plugin disappeared during reconciliation: ${name}`);
+    const resolution =
+      await ConfigManager.getInstance().loadWorkspacePluginSettingsResolution(root);
     return {
       name,
       requestedEnabled: enabled,
@@ -156,6 +162,7 @@ export async function setWorkspacePluginEnabled(
       scope,
       source: updated.source,
       status: updated.status,
+      effectiveScope: resolution.settings[name]?.effectiveScope ?? 'default',
     };
   });
 }

@@ -5,7 +5,12 @@
  */
 
 import { Box, Text, useInput } from 'ink';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { ConfigManager } from '../../config/ConfigManager.js';
+import type {
+  PersistedPluginSettingsScope,
+  PluginSettingResolution,
+} from '../../config/pluginSettings.js';
 import { getPluginRegistry } from '../../plugins/index.js';
 import {
   refreshWorkspacePlugins,
@@ -23,6 +28,8 @@ export interface PluginsManagerProps {
   onCancel?: () => void;
 }
 
+const PLUGIN_SCOPES: PersistedPluginSettingsScope[] = ['local', 'project', 'global'];
+
 /**
  * 插件管理器主组件
  */
@@ -33,7 +40,12 @@ export function PluginsManager({ workspaceRoot, onCancel }: PluginsManagerProps)
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [confirmingRemoval, setConfirmingRemoval] = useState<string | null>(null);
-  const [, setRevision] = useState(0);
+  const [scope, setScope] = useState<PersistedPluginSettingsScope>('local');
+  const [settings, setSettings] = useState<Record<
+    string,
+    PluginSettingResolution
+  > | null>(null);
+  const [revision, setRevision] = useState(0);
 
   // 按来源分组
   const bySource = registry.getBySource();
@@ -42,6 +54,31 @@ export function PluginsManager({ workspaceRoot, onCancel }: PluginsManagerProps)
 
   // 使用智能 Ctrl+C 处理
   const handleCtrlC = useCtrlCHandler(false, onCancel);
+
+  useEffect(() => {
+    let active = true;
+    void ConfigManager.getInstance()
+      .loadWorkspacePluginSettingsResolution(registry.getWorkspaceRoot())
+      .then((resolution) => {
+        if (active) setSettings(resolution.settings);
+      })
+      .catch((error) => {
+        if (active) {
+          setStatus(error instanceof Error ? error.message : '无法读取插件作用域配置');
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [registry, revision]);
+
+  const cycleScope = () => {
+    setScope((current) => {
+      const index = PLUGIN_SCOPES.indexOf(current);
+      return PLUGIN_SCOPES[(index + 1) % PLUGIN_SCOPES.length]!;
+    });
+    setConfirmingRemoval(null);
+  };
 
   const toggleSelected = async () => {
     const plugin = plugins[selectedIndex];
@@ -61,12 +98,12 @@ export function PluginsManager({ workspaceRoot, onCancel }: PluginsManagerProps)
         registry.getWorkspaceRoot(),
         plugin.manifest.name,
         plugin.status !== 'active',
-        'local'
+        scope
       );
       setStatus(
         change.effectiveEnabled
-          ? `已启用 ${plugin.manifest.name}`
-          : `已禁用 ${plugin.manifest.name}`
+          ? `已启用 ${plugin.manifest.name} · 生效层级 ${change.effectiveScope}`
+          : `已禁用 ${plugin.manifest.name} · 生效层级 ${change.effectiveScope}`
       );
       setRevision((value) => value + 1);
     } catch (error) {
@@ -169,6 +206,8 @@ export function PluginsManager({ workspaceRoot, onCancel }: PluginsManagerProps)
       void toggleSelected();
     } else if (input === 'r') {
       void refresh();
+    } else if (input === 's') {
+      cycleScope();
     } else if (input === 'u') {
       void updateSelected();
     } else if (input === 'x') {
@@ -234,6 +273,11 @@ export function PluginsManager({ workspaceRoot, onCancel }: PluginsManagerProps)
           Git SHA: {sourcePolicy.requireGitCommitSha ? 'required' : 'optional'}
         </Text>
       </Box>
+      <Box paddingLeft={2} marginBottom={1}>
+        <Text color="gray">
+          写入层级: <Text color="cyan">{scope}</Text> · 按 s 切换
+        </Text>
+      </Box>
 
       {/* CLI 指定的插件 */}
       {bySource.cli.length > 0 && (
@@ -258,6 +302,11 @@ export function PluginsManager({ workspaceRoot, onCancel }: PluginsManagerProps)
                 </Text>
                 <Box paddingLeft={2}>
                   <Text color="gray">{plugin.manifest.description}</Text>
+                </Box>
+                <Box paddingLeft={2}>
+                  <Text color="gray" dimColor>
+                    生效层级: invocation
+                  </Text>
                 </Box>
                 {plugin.commands.length > 0 && (
                   <Box paddingLeft={2}>
@@ -297,6 +346,12 @@ export function PluginsManager({ workspaceRoot, onCancel }: PluginsManagerProps)
                 <Box paddingLeft={2}>
                   <Text color="gray">{plugin.manifest.description}</Text>
                 </Box>
+                <Box paddingLeft={2}>
+                  <Text color="gray" dimColor>
+                    生效层级:{' '}
+                    {settings?.[plugin.manifest.name]?.effectiveScope ?? 'default'}
+                  </Text>
+                </Box>
                 {plugin.commands.length > 0 && (
                   <Box paddingLeft={2}>
                     <Text color="blue">
@@ -334,6 +389,12 @@ export function PluginsManager({ workspaceRoot, onCancel }: PluginsManagerProps)
                 </Text>
                 <Box paddingLeft={2}>
                   <Text color="gray">{plugin.manifest.description}</Text>
+                </Box>
+                <Box paddingLeft={2}>
+                  <Text color="gray" dimColor>
+                    生效层级:{' '}
+                    {settings?.[plugin.manifest.name]?.effectiveScope ?? 'default'}
+                  </Text>
                 </Box>
                 {plugin.commands.length > 0 && (
                   <Box paddingLeft={2}>
@@ -375,7 +436,8 @@ export function PluginsManager({ workspaceRoot, onCancel }: PluginsManagerProps)
 
       <Box marginTop={1}>
         <Text dimColor>
-          ↑/↓ 选择 · Space/Enter 启停 · u 信任并更新 · x 卸载 · r 刷新 · ESC 返回
+          ↑/↓ 选择 · Space/Enter 启停 · s 切换层级 · u 信任并更新 · x 卸载 · r 刷新 ·
+          ESC 返回
         </Text>
       </Box>
       {status && (

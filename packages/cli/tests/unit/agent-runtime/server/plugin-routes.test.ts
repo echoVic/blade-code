@@ -79,6 +79,8 @@ describe('PluginRoutes', () => {
           enabled: true,
           commands: 1,
           configurable: true,
+          effectiveScope: 'default',
+          settingLayers: {},
         }),
       ])
     );
@@ -111,6 +113,10 @@ describe('PluginRoutes', () => {
         expect.objectContaining({
           name: 'route-plugin',
           enabled: false,
+          effectiveScope: 'local',
+          settingLayers: {
+            local: false,
+          },
         }),
       ])
     );

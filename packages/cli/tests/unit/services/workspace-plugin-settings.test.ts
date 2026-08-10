@@ -68,6 +68,30 @@ describe('workspace plugin settings', () => {
       'project-plugin': false,
       'local-plugin': true,
     });
+
+    await expect(
+      ConfigManager.getInstance().loadWorkspacePluginSettingsResolution(trusted)
+    ).resolves.toMatchObject({
+      workspaceTrusted: true,
+      settings: {
+        'shared-plugin': {
+          effective: true,
+          effectiveScope: 'project',
+          layers: {
+            global: false,
+            project: true,
+          },
+        },
+        'project-plugin': {
+          effective: false,
+          effectiveScope: 'local',
+          layers: {
+            project: true,
+            local: false,
+          },
+        },
+      },
+    });
   });
 
   it('lets an untrusted workspace disable but never enable plugins', async () => {
@@ -77,6 +101,24 @@ describe('workspace plugin settings', () => {
       'shared-plugin': false,
       'user-plugin': true,
       'project-plugin': false,
+    });
+
+    await expect(
+      ConfigManager.getInstance().loadWorkspacePluginSettingsResolution(untrusted)
+    ).resolves.toMatchObject({
+      workspaceTrusted: false,
+      settings: {
+        'shared-plugin': {
+          effective: false,
+          effectiveScope: 'global',
+          layers: { global: false },
+        },
+        'project-plugin': {
+          effective: false,
+          effectiveScope: 'local',
+          layers: { local: false },
+        },
+      },
     });
   });
 

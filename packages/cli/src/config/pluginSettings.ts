@@ -1,6 +1,21 @@
 import path from 'node:path';
 import type { PluginSourcePolicy } from './types.js';
 
+export type PluginSettingsScope = 'global' | 'project' | 'local' | 'invocation';
+export type PersistedPluginSettingsScope = Exclude<PluginSettingsScope, 'invocation'>;
+
+export interface PluginSettingResolution {
+  effective: boolean;
+  effectiveScope: PluginSettingsScope;
+  layers: Partial<Record<PluginSettingsScope, boolean>>;
+}
+
+export interface WorkspacePluginSettingsResolution {
+  effective: Record<string, boolean>;
+  settings: Record<string, PluginSettingResolution>;
+  workspaceTrusted: boolean;
+}
+
 const PLUGIN_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$/;
 const HOST_PATTERN =
   /^(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
