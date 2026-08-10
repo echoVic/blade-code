@@ -600,7 +600,7 @@ describe('session selector fork integration', () => {
         () => {
           const selectedChunk = stdout.output.slice(outputLengthBeforeMove);
           expect(stdout.output.length).toBeGreaterThan(outputLengthBeforeMove);
-          expect(selectedChunk).toContain('>[QUEUED]');
+          expect(selectedChunk).toContain('> [QUEUED]');
           expect(selectedChunk).toContain(workspaceLabel);
           expect(selectedChunk).toContain('[QUEUED]');
           expect(selectedChunk).toContain('wt:blade-worktree-task-demo');
