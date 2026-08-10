@@ -390,6 +390,10 @@ fresh tab 恢复一个 command card，内部 XML 和应用 console error 均为�
 Use 只有在工具能稳定寻址独立 terminal process/window 时计入通过；bundle ID 指向旧
 实例或焦点可能落入用户窗口时必须停止 UI 操作，改用 raw PTY 证据。
 
+Production Web bundle 资格必须从 fresh build 产物计算，且构建调用者设置
+`NODE_ENV=test` 时仍必须打入 production React runtime。CI 不得读取旧 `dist` 通过
+预算；initial entry graph、单入口和总 JS gzip 均需在 production build 后重新验证。
+
 Plugin Marketplace 资格必须使用隔离 HOME 和本地 Marketplace snapshot。确定性测试
 覆盖 `0600` 严格账本、跨进程串行写、Git `execFile` 参数边界、显式 source trust、
 symlink/路径逃逸/凭据 URL/体积限制、摘要篡改、失败更新回滚、旧根保留和依赖删除保护。

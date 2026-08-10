@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createWebBuildEnvironment } from "./buildEnvironment.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, "..");
@@ -43,6 +44,7 @@ if (existsSync(join(webDir, "vite.config.ts"))) {
     return new Promise((resolve, reject) => {
       const child = spawn("npx", ["vite", "build"], {
         cwd: webDir,
+        env: createWebBuildEnvironment(process.env),
         stdio: "inherit",
         shell: true,
       });

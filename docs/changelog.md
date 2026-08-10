@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### 🐛 问题修复
+
+- Web production build 现在显式覆盖 `NODE_ENV=production`，避免 CI 的全局测试环境将
+  React development runtime 打入 npm 产物并误触 initial bundle 预算
+
+### ✅ 测试相关
+
+- 新增 build environment 契约测试，并在 `NODE_ENV=test` 下真实重建 Web bundle；
+  initial JS gzip 从 CI 失败时的 284,231 B 恢复为 220,326 B
+
 ## [0.10.1] - 2026-08-10
 
 ### 🐛 问题修复
