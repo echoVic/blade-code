@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import yaml from 'yaml';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { WorkspaceTrustService } from '../../security/WorkspaceTrustService.js';
 import { getCwd } from '../../utils/cwd.js';
 import { builtinAgents } from './builtinAgents.js';
 import type { SubagentConfig, SubagentFrontmatter } from './types.js';
@@ -31,7 +32,24 @@ type ConfigSource =
  * - 生成 LLM 可读的描述
  */
 export class SubagentRegistry {
+  private static instances = new Map<string, SubagentRegistry>();
   private subagents = new Map<string, SubagentConfig>();
+
+  constructor(private readonly workspaceRoot: string = getCwd()) {}
+
+  static getInstance(workspaceRoot: string = getCwd()): SubagentRegistry {
+    const key = path.resolve(workspaceRoot);
+    let registry = SubagentRegistry.instances.get(key);
+    if (!registry) {
+      registry = new SubagentRegistry(key);
+      SubagentRegistry.instances.set(key, registry);
+    }
+    return registry;
+  }
+
+  static resetInstances(): void {
+    SubagentRegistry.instances.clear();
+  }
 
   /**
    * 注册一个 subagent
@@ -221,7 +239,10 @@ export class SubagentRegistry {
    *
    * @returns 加载的 subagent 数量
    */
-  loadFromStandardLocations(): number {
+  loadFromStandardLocations(projectTrusted?: boolean): number {
+    const allowProjectSources =
+      projectTrusted ??
+      WorkspaceTrustService.getInstance().isTrustedCached(this.workspaceRoot);
     // 1. 加载内置配置
     this.loadBuiltinAgents();
 
@@ -230,16 +251,24 @@ export class SubagentRegistry {
     this.loadFromDirectory(claudeCodeUserAgentsDir, 'claude-code-user');
 
     // 3. 加载 Claude Code 项目级配置（可覆盖用户级）
-    const claudeCodeProjectAgentsDir = path.join(getCwd(), '.claude', 'agents');
-    this.loadFromDirectory(claudeCodeProjectAgentsDir, 'claude-code-project');
+    if (allowProjectSources) {
+      const claudeCodeProjectAgentsDir = path.join(
+        this.workspaceRoot,
+        '.claude',
+        'agents'
+      );
+      this.loadFromDirectory(claudeCodeProjectAgentsDir, 'claude-code-project');
+    }
 
     // 4. 加载 Blade 用户级配置（可覆盖 Claude Code）
     const bladeUserAgentsDir = path.join(os.homedir(), '.blade', 'agents');
     this.loadFromDirectory(bladeUserAgentsDir, 'blade-user');
 
     // 5. 加载 Blade 项目级配置（可覆盖所有）
-    const bladeProjectAgentsDir = path.join(getCwd(), '.blade', 'agents');
-    this.loadFromDirectory(bladeProjectAgentsDir, 'blade-project');
+    if (allowProjectSources) {
+      const bladeProjectAgentsDir = path.join(this.workspaceRoot, '.blade', 'agents');
+      this.loadFromDirectory(bladeProjectAgentsDir, 'blade-project');
+    }
 
     const count = this.getAllNames().length;
     logger.debug(`Loaded ${count} subagents from standard locations`);
@@ -267,6 +296,21 @@ export class SubagentRegistry {
    */
   clear(): void {
     this.subagents.clear();
+  }
+
+  snapshot(): SubagentRegistry {
+    const snapshot = new SubagentRegistry(this.workspaceRoot);
+    for (const config of this.subagents.values()) {
+      snapshot.subagents.set(config.name, {
+        ...config,
+        ...(config.tools ? { tools: [...config.tools] } : {}),
+        ...(config.disallowedTools
+          ? { disallowedTools: [...config.disallowedTools] }
+          : {}),
+        ...(config.skills ? { skills: [...config.skills] } : {}),
+      });
+    }
+    return snapshot;
   }
 
   /**
@@ -338,4 +382,17 @@ export class SubagentRegistry {
 /**
  * 全局单例
  */
-export const subagentRegistry = new SubagentRegistry();
+export function getSubagentRegistry(
+  workspaceRoot: string = getCwd()
+): SubagentRegistry {
+  return SubagentRegistry.getInstance(workspaceRoot);
+}
+
+/** @deprecated Use getSubagentRegistry(workspaceRoot). */
+export const subagentRegistry = new Proxy({} as SubagentRegistry, {
+  get(_target, property) {
+    const registry = getSubagentRegistry();
+    const value = Reflect.get(registry, property, registry) as unknown;
+    return typeof value === 'function' ? value.bind(registry) : value;
+  },
+});

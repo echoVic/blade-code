@@ -5,29 +5,29 @@
  */
 
 export { ConversationState, isRootSystemPrompt } from './ConversationState.js';
-export { drainLoop } from './consumeLoop.js';
 export {
-  checkOutputRecovery,
   checkIncompleteIntent,
+  checkOutputRecovery,
   checkStopHook,
 } from './completionPolicy.js';
+export { drainLoop } from './consumeLoop.js';
 export {
-  saveUserMessage,
   saveAssistantMessage,
-  saveToolUse,
-  saveToolResult,
   saveCompaction,
+  saveToolResult,
+  saveToolUse,
+  saveUserMessage,
 } from './conversationPersistence.js';
+export type { CompactResult } from './executeLoopGenerator.js';
+export { checkAndCompactInLoop, executeLoopGenerator } from './executeLoopGenerator.js';
+export { StreamingToolExecutor } from './StreamingToolExecutor.js';
+export type { FunctionToolCallRef, TaskUpdateAction } from './toolDomainPolicy.js';
 export {
   applyToolDomainEffects,
-  handleTaskListUpdate,
-  handleSkillActivation,
   extractModelSwitch,
+  handleSkillActivation,
+  handleTaskListUpdate,
 } from './toolDomainPolicy.js';
-export type { FunctionToolCallRef, TaskUpdateAction } from './toolDomainPolicy.js';
-export { checkAndCompactInLoop, executeLoopGenerator } from './executeLoopGenerator.js';
-export type { CompactResult } from './executeLoopGenerator.js';
-export { StreamingToolExecutor } from './StreamingToolExecutor.js';
 
 export type {
   DomainEvent,

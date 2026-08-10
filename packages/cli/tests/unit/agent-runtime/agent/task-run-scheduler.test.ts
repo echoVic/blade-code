@@ -194,4 +194,23 @@ describe('TaskRunScheduler', () => {
     (await admission.ready).release();
     expect(scheduler.getStats().inFlight).toBe(0);
   });
+
+  it('does not let a Session admission override explicit process limits', async () => {
+    const scheduler = new TaskRunScheduler();
+    scheduler.configure(4, 40);
+
+    const admission = scheduler.admit({
+      key: 'project-with-local-limits',
+      maxConcurrent: 1,
+      maxQueued: 1,
+    });
+    const permit = await admission.ready;
+
+    expect(scheduler.getStats()).toMatchObject({
+      maxConcurrent: 4,
+      maxQueued: 40,
+      inFlight: 1,
+    });
+    permit.release();
+  });
 });

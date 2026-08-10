@@ -1,9 +1,13 @@
+import type { SessionLspResources } from '../../lsp/WorkspaceLspResources.js';
 import { getCwd } from '../../utils/cwd.js';
 import { createSessionId } from '../../utils/sessionId.js';
 import { Agent } from '../Agent.js';
 import { recordVerificationEvidence } from '../loop/completionPolicy.js';
 import { drainLoop } from '../loop/index.js';
 import type { LoopEvent } from '../loop/types.js';
+import type { SessionAgentResources } from '../resources/WorkspaceAgentResources.js';
+import type { SessionModelResources } from '../resources/WorkspaceModelResources.js';
+import { SessionRuntime } from '../runtime/SessionRuntime.js';
 import type { ChatContext } from '../types.js';
 import type { SubagentConfig, SubagentContext, SubagentResult } from './types.js';
 
@@ -17,7 +21,12 @@ import type { SubagentConfig, SubagentContext, SubagentResult } from './types.js
  * - 将子代理对话流写入独立 JSONL 文件
  */
 export class SubagentExecutor {
-  constructor(private config: SubagentConfig) {}
+  constructor(
+    private config: SubagentConfig,
+    private readonly agentResources?: SessionAgentResources,
+    private readonly modelResources?: SessionModelResources,
+    private readonly lspResources?: SessionLspResources
+  ) {}
 
   /**
    * 执行 subagent 任务
@@ -28,6 +37,7 @@ export class SubagentExecutor {
     const startTime = Date.now();
     const agentId = context.subagentSessionId ?? createSessionId('agent');
     let agent: Agent | undefined;
+    let runtime: SessionRuntime | undefined;
     let chatContext: ChatContext | undefined;
 
     try {
@@ -38,7 +48,37 @@ export class SubagentExecutor {
           ? this.config.model
           : undefined;
       const permissionMode = this.config.permissionMode ?? context.permissionMode;
-      agent = await Agent.create({
+      const subagentInfo = {
+        parentSessionId: context.parentSessionId || '',
+        subagentType: this.config.name,
+        isSidechain: false,
+        resumedFrom: context.resumedFrom,
+        rootAgentId: context.rootAgentId ?? agentId,
+        resumeDepth: context.resumeDepth ?? 0,
+      };
+      runtime = await SessionRuntime.create({
+        sessionId: agentId,
+        workspaceRoot: context.workspaceRoot || getCwd(),
+        modelId,
+        reasoningEffort: context.reasoningEffort,
+        serviceTier: context.serviceTier,
+        responseVerbosity: context.responseVerbosity,
+        communicationStyle: context.communicationStyle,
+        subagentInfo,
+        agentResources: this.agentResources,
+        modelResources: this.modelResources,
+        lspResources: this.lspResources,
+        ...((context.existingMessages?.length ?? 0) > 0
+          ? {
+              sessionStart: {
+                isResume: true,
+                resumeSessionId: agentId,
+              },
+            }
+          : {}),
+      });
+      agent = await Agent.createWithRuntime(runtime, {
+        sessionId: agentId,
         toolWhitelist: this.config.tools,
         toolBlacklist: [
           'EnterWorktree',
@@ -56,14 +96,6 @@ export class SubagentExecutor {
       let tokensUsed = 0;
       const verificationCommands = new Set<string>();
 
-      const subagentInfo = {
-        parentSessionId: context.parentSessionId || '',
-        subagentType: this.config.name,
-        isSidechain: false,
-        resumedFrom: context.resumedFrom,
-        rootAgentId: context.rootAgentId ?? agentId,
-        resumeDepth: context.resumeDepth ?? 0,
-      };
       chatContext = {
         messages: [...(context.existingMessages ?? [])],
         userId: 'subagent',
@@ -132,6 +164,7 @@ export class SubagentExecutor {
       if (agent && typeof agent.destroy === 'function') {
         await agent.destroy().catch(() => undefined);
       }
+      await runtime?.dispose().catch(() => undefined);
     }
   }
 

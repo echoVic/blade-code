@@ -74,7 +74,7 @@ const INCOMPLETE_INTENT_PATTERNS = [
 const CODE_BLOCK_WITHOUT_TOOL_PATTERN = /```[\s\S]{50,}```/;
 
 const RETRY_PROMPT =
-  '请执行你提到的操作，不要只是描述。使用 Edit/Write/Bash 工具来实际修改文件。';
+  '请执行你提到的操作，不要只是描述。使用 Edit/Write/ApplyPatch/Bash 工具来实际修改文件。';
 
 /** 最大重试次数 */
 const MAX_INCOMPLETE_INTENT_RETRIES = 2;
@@ -181,7 +181,7 @@ export function recordVerificationEvidence(
 ): void {
   if (!result.success) return;
 
-  if (['Edit', 'Write', 'NotebookEdit'].includes(toolName)) {
+  if (['Edit', 'Write', 'ApplyPatch', 'NotebookEdit'].includes(toolName)) {
     commands.clear();
     return;
   }
@@ -475,6 +475,7 @@ export type StopHookAction =
  */
 export async function checkStopHook(context: {
   sessionId: string;
+  workspaceRoot?: string;
   permissionMode: PermissionMode;
   reason?: string;
   abortSignal?: AbortSignal;
@@ -483,7 +484,7 @@ export async function checkStopHook(context: {
     const hookManager = HookManager.getInstance();
 
     const hookPromise = hookManager.executeStopHooks({
-      projectDir: getCwd(),
+      projectDir: context.workspaceRoot ?? getCwd(),
       sessionId: context.sessionId,
       permissionMode: context.permissionMode,
       reason: context.reason,

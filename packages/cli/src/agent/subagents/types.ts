@@ -2,7 +2,13 @@
  * Subagent 系统类型定义
  */
 
-import { PermissionMode } from '../../config/types.js';
+import {
+  type CommunicationStyleSelection,
+  PermissionMode,
+  type ReasoningEffortSelection,
+  type ResponseVerbositySelection,
+  type ServiceTierSelection,
+} from '../../config/types.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import type { WorktreeSession } from '../../worktree/WorktreeManager.js';
 import type { LoopEvent } from '../loop/types.js';
@@ -138,6 +144,18 @@ export interface SubagentContext {
 
   /** 父 Agent 的权限模式（继承给子 Agent） */
   permissionMode?: PermissionMode;
+
+  /** 父 Session 当前的 durable reasoning 策略 */
+  reasoningEffort?: ReasoningEffortSelection;
+
+  /** 父 Session 当前的 provider service tier */
+  serviceTier?: ServiceTierSelection;
+
+  /** 父 Session 当前的 response verbosity */
+  responseVerbosity?: ResponseVerbositySelection;
+
+  /** 父 Session 当前的 communication style */
+  communicationStyle?: CommunicationStyleSelection;
 
   /** 子代理会话 ID（用于与主会话关联） */
   subagentSessionId?: string;

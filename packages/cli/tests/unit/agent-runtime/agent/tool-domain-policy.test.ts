@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   applyWorkspaceTransition,
+  type FunctionToolCallRef,
   handleSubagentLifecycle,
   handleTaskListUpdate,
-  type FunctionToolCallRef,
 } from '../../../../src/agent/loop/toolDomainPolicy.js';
+import { HookManager } from '../../../../src/hooks/HookManager.js';
 import type { ToolResult } from '../../../../src/tools/types/index.js';
 
 function makeToolCall(name: string, args = '{}'): FunctionToolCallRef {
@@ -12,8 +13,13 @@ function makeToolCall(name: string, args = '{}'): FunctionToolCallRef {
 }
 
 describe('toolDomainPolicy', () => {
+  afterEach(() => {
+    HookManager.resetInstance();
+  });
+
   describe('applyWorkspaceTransition', () => {
     it('updates the chat workspace only for successful managed transitions', () => {
+      HookManager.getInstance().loadConfig({ enabled: true }, '/repo');
       const context = {
         messages: [],
         sessionId: 'session-1',
@@ -33,6 +39,7 @@ describe('toolDomainPolicy', () => {
         applyWorkspaceTransition(makeToolCall('EnterWorktree'), result, context)
       ).toBe('/worktrees/feature');
       expect(context.workspaceRoot).toBe('/worktrees/feature');
+      expect(HookManager.getInstance().isEnabled('/worktrees/feature')).toBe(true);
     });
 
     it('ignores failed or unrelated tool results', () => {

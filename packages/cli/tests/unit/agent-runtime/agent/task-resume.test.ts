@@ -2,15 +2,29 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PermissionMode } from '../../../../src/config/types.js';
 import type { SubagentContext } from '../../../../src/agent/subagents/types.js';
+import { PermissionMode } from '../../../../src/config/types.js';
 
 const executionState = vi.hoisted(() => ({
   contexts: [] as SubagentContext[],
+  resources: [] as unknown[],
+  modelResources: [] as unknown[],
+  lspResources: [] as unknown[],
 }));
 
 vi.mock('../../../../src/agent/subagents/SubagentExecutor.js', () => ({
   SubagentExecutor: class MockSubagentExecutor {
+    constructor(
+      _config: unknown,
+      resources?: unknown,
+      modelResources?: unknown,
+      lspResources?: unknown
+    ) {
+      executionState.resources.push(resources);
+      executionState.modelResources.push(modelResources);
+      executionState.lspResources.push(lspResources);
+    }
+
     execute = vi.fn(async (context: SubagentContext) => {
       executionState.contexts.push(context);
       const messages = [
@@ -82,6 +96,9 @@ describe('Task durable subagent resume protocol', () => {
     vi.resetModules();
     vi.clearAllMocks();
     executionState.contexts.length = 0;
+    executionState.resources.length = 0;
+    executionState.modelResources.length = 0;
+    executionState.lspResources.length = 0;
     previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
     storageRoot = mkdtempSync(path.join(os.tmpdir(), 'blade-task-resume-'));
     process.env.BLADE_STORAGE_ROOT = storageRoot;
@@ -148,6 +165,67 @@ describe('Task durable subagent resume protocol', () => {
       }
     ).instance = null;
   }
+
+  it('allows independent durable child sessions to share batch execution', async () => {
+    const tool = await taskTool();
+    expect(tool.isConcurrencySafe).toBe(false);
+    expect(tool.parallelism).toBe('shared');
+  });
+
+  it('passes the parent Session resources to foreground subagents', async () => {
+    const { createTaskTool } = await import(
+      '../../../../src/tools/builtin/task/task.js'
+    );
+    const { subagentRegistry } = await import(
+      '../../../../src/agent/subagents/SubagentRegistry.js'
+    );
+    const agentResources = {
+      projectRoot: workspaceA,
+      subagents: subagentRegistry,
+      skills: {},
+      commands: {},
+    } as never;
+    const modelResources = {
+      projectRoot: workspaceA,
+      config: {},
+      catalog: {},
+    } as never;
+    const lspResources = {
+      projectRoot: workspaceA,
+      servers: { typescript: { command: 'server' } },
+    } as never;
+    const tool = createTaskTool(
+      subagentRegistry,
+      agentResources,
+      modelResources,
+      lspResources,
+      () => 'high',
+      () => 'fast',
+      () => 'high',
+      () => 'explanatory'
+    );
+
+    await tool
+      .build({
+        subagent_type: 'durable-reviewer',
+        description: 'Inspect resources',
+        prompt: 'Inspect the inherited project resource snapshot.',
+        run_in_background: false,
+        subagent_session_id: 'agent-resource-child',
+      })
+      .execute(new AbortController().signal, undefined, {
+        sessionId: 'parent-session',
+        workspaceRoot: workspaceA,
+      });
+
+    expect(executionState.resources).toEqual([agentResources]);
+    expect(executionState.modelResources).toEqual([modelResources]);
+    expect(executionState.lspResources).toEqual([lspResources]);
+    expect(executionState.contexts[0]?.reasoningEffort).toBe('high');
+    expect(executionState.contexts[0]?.serviceTier).toBe('fast');
+    expect(executionState.contexts[0]?.responseVerbosity).toBe('high');
+    expect(executionState.contexts[0]?.communicationStyle).toBe('explanatory');
+  });
 
   it('persists a foreground root run and resumes it after process reconstruction', async () => {
     const tool = await taskTool();

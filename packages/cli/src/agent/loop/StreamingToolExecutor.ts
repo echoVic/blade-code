@@ -5,12 +5,12 @@
  *
  * 设计：
  * - STREAMING_PRELAUNCH_ALLOWLIST 中的工具 -> 立即启动（流式预启动）
- * - 不在 allowlist 中的工具 -> 排队等流结束后顺序执行
+ * - 不在 allowlist 中的工具 -> 排队到流提交后交给 ToolExecutor 公平调度
+ * - parallelism=shared 的工具共享执行，exclusive 工具形成 FIFO 屏障
  * - discard() 用于流式降级到非流式时清理，递增 epoch 阻止旧世代结果
  *
- * 注意：流式预启动 allowlist 与 isConcurrencySafe 是独立概念：
- * - allowlist 决定是否允许在流式阶段提前执行
- * - isConcurrencySafe 仅在 ToolExecutor 中决定是否需要文件锁
+ * 流式预启动要求 allowlist 和 isConcurrencySafe 同时成立。allowlist 防止在
+ * provider 流提交前启动不可回放的副作用；批内语义由 parallelism 负责。
  */
 
 import type { ContextManager } from '../../context/ContextManager.js';
@@ -18,7 +18,10 @@ import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { JsonValue } from '../../store/types.js';
 import type { ToolExecutor } from '../../tools/execution/ToolExecutor.js';
 import type { ToolRegistry } from '../../tools/registry/ToolRegistry.js';
-import type { ExecutionContext } from '../../tools/types/ExecutionTypes.js';
+import type {
+  ExecutionContext,
+  ToolProgressUpdate,
+} from '../../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../../tools/types/index.js';
 import { ToolErrorType } from '../../tools/types/index.js';
 import { combineAbortSignals } from '../../utils/abort.js';
@@ -35,6 +38,10 @@ export type ToolAdmissionPolicy = (
   params: Record<string, unknown>
 ) => ToolResult | undefined;
 export type ToolAdmissionRollback = (toolName: string) => void;
+export type ToolProgressSink = (
+  toolCall: FunctionToolCall,
+  update: ToolProgressUpdate
+) => void;
 export type ToolDispatchStatus = 'prelaunched' | 'queued' | 'rejected';
 
 const logger = createLogger(LogCategory.AGENT);
@@ -75,6 +82,7 @@ export class StreamingToolExecutor {
   private order: string[] = [];
   private dispatched = new Set<string>();
   private abortController = new AbortController();
+  private hasExclusiveBarrier = false;
 
   /** 世代计数器：每次 discard() 递增，用于防止旧世代工具结果泄漏 */
   private epoch = 0;
@@ -95,7 +103,8 @@ export class StreamingToolExecutor {
       parentSessionId: string;
       subagentType: string;
       isSidechain: boolean;
-    }
+    },
+    private progressSink?: ToolProgressSink
   ) {}
 
   setExecutionPolicy(executeTool: ToolExecutionPolicy): void {
@@ -135,7 +144,15 @@ export class StreamingToolExecutor {
       });
       return 'rejected';
     }
-    const canPrelaunch = STREAMING_PRELAUNCH_ALLOWLIST.has(toolCall.function.name);
+    const tool = this.registry.get(toolCall.function.name);
+    const concurrencySafe = tool?.isConcurrencySafe === true;
+    const shared =
+      tool?.parallelism === 'shared' ||
+      (tool?.parallelism === undefined && concurrencySafe);
+    const canPrelaunch =
+      STREAMING_PRELAUNCH_ALLOWLIST.has(toolCall.function.name) &&
+      concurrencySafe &&
+      !this.hasExclusiveBarrier;
 
     if (canPrelaunch) {
       logger.debug(
@@ -149,6 +166,9 @@ export class StreamingToolExecutor {
         `[StreamingToolExecutor] 排队非预启动工具: ${toolCall.function.name}`
       );
       this.queued.push({ toolCall, params });
+      if (!shared) {
+        this.hasExclusiveBarrier = true;
+      }
       return 'queued';
     }
   }
@@ -161,6 +181,8 @@ export class StreamingToolExecutor {
    * 流结束后调用：按添加顺序 yield 所有结果
    */
   async *getRemainingResults(): AsyncGenerator<ToolExecResult> {
+    this.dispatchQueuedTools();
+
     for (const id of this.order) {
       // 已完成的
       if (this.completed.has(id)) {
@@ -177,27 +199,8 @@ export class StreamingToolExecutor {
         continue;
       }
 
-      // 排队中的（顺序执行）
-      const queuedIdx = this.queued.findIndex((q) => q.toolCall.id === id);
-      if (queuedIdx !== -1) {
-        const { toolCall, params } = this.queued[queuedIdx];
-        this.queued.splice(queuedIdx, 1);
-
-        // Guard: 如果 user signal 已 aborted，不启动尚未开始的排队工具
-        if (this.execContext.signal?.aborted) {
-          logger.debug(
-            `[StreamingToolExecutor] Signal aborted, 跳过排队工具: ${toolCall.function.name} (${toolCall.id})`
-          );
-          yield this.makeAbortResult(
-            toolCall,
-            'Tool execution skipped: task aborted before launch'
-          );
-          continue;
-        }
-
-        const result = await this.executeOne(toolCall, params);
-        yield result;
-      }
+      // All queued calls are dispatched before ordered collection. Missing IDs
+      // can only belong to a discarded generation and are intentionally ignored.
     }
   }
 
@@ -237,6 +240,7 @@ export class StreamingToolExecutor {
     this.dispatched.clear();
     this.completed.clear();
     this.pending.clear();
+    this.hasExclusiveBarrier = false;
     logger.debug(
       `[StreamingToolExecutor] 已丢弃所有挂起工作并重置状态 (epoch=${this.epoch})`
     );
@@ -273,6 +277,49 @@ export class StreamingToolExecutor {
       },
       toolUseUuid: null,
     };
+  }
+
+  private dispatchQueuedTools(): void {
+    const queued = this.queued;
+    this.queued = [];
+    this.hasExclusiveBarrier = false;
+    const scheduledEpoch = this.epoch;
+
+    for (const { toolCall, params } of queued) {
+      if (this.execContext.signal?.aborted) {
+        this.completed.set(
+          toolCall.id,
+          this.makeAbortResult(
+            toolCall,
+            'Tool execution skipped: task aborted before launch'
+          )
+        );
+        continue;
+      }
+
+      const promise = this.executeQueued(toolCall, params, scheduledEpoch);
+      this.pending.set(toolCall.id, promise);
+    }
+  }
+
+  private async executeQueued(
+    toolCall: FunctionToolCall,
+    params: Record<string, unknown>,
+    scheduledEpoch: number
+  ): Promise<ToolExecResult> {
+    if (scheduledEpoch !== this.epoch) {
+      return this.makeAbortResult(
+        toolCall,
+        'Tool execution aborted due to epoch mismatch (discard)'
+      );
+    }
+    if (this.execContext.signal?.aborted) {
+      return this.makeAbortResult(
+        toolCall,
+        'Tool execution skipped: task aborted before launch'
+      );
+    }
+    return this.executeOne(toolCall, params);
   }
 
   private async executeOne(
@@ -321,6 +368,16 @@ export class StreamingToolExecutor {
         ...this.execContext,
         messageId: toolUseUuid ?? toolCall.id,
         signal: combinedSignal,
+        onProgress: (message) => {
+          this.execContext.onProgress?.(message);
+          this.progressSink?.(toolCall, {
+            message: message.slice(0, 1_000),
+          });
+        },
+        onProgressUpdate: (update) => {
+          this.execContext.onProgressUpdate?.(update);
+          this.progressSink?.(toolCall, update);
+        },
       };
 
       const result = this.executeTool

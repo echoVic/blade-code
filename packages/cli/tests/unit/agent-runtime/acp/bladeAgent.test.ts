@@ -12,9 +12,11 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BladeAgent } from '../../../../src/acp/BladeAgent.js';
 import { AcpSession } from '../../../../src/acp/Session.js';
+import type { CommunicationStyleConfiguration } from '../../../../src/services/communicationStyle.js';
 import { createMockACPClient } from '../../../support/mocks/mockACPClient.js';
 
 const sessionServiceMocks = vi.hoisted(() => ({
+  assertSessionWritable: vi.fn(),
   deleteSession: vi.fn(),
   forkSession: vi.fn(),
   listSessionPage: vi.fn(),
@@ -37,7 +39,12 @@ interface MockAcpSessionInstance {
   cancel: ReturnType<typeof vi.fn<AcpSession['cancel']>>;
   setMode: ReturnType<typeof vi.fn<AcpSession['setMode']>>;
   setModel: ReturnType<typeof vi.fn<AcpSession['setModel']>>;
+  setReasoningEffort: ReturnType<typeof vi.fn<AcpSession['setReasoningEffort']>>;
+  setServiceTier: ReturnType<typeof vi.fn<AcpSession['setServiceTier']>>;
+  setResponseVerbosity: ReturnType<typeof vi.fn<AcpSession['setResponseVerbosity']>>;
+  setCommunicationStyle: ReturnType<typeof vi.fn<AcpSession['setCommunicationStyle']>>;
   getCurrentModelId: ReturnType<typeof vi.fn<AcpSession['getCurrentModelId']>>;
+  getModelConfiguration: ReturnType<typeof vi.fn<AcpSession['getModelConfiguration']>>;
   destroy: ReturnType<typeof vi.fn<AcpSession['destroy']>>;
   replayHistory: ReturnType<typeof vi.fn<AcpSession['replayHistory']>>;
   sendAvailableCommandsDelayed: ReturnType<
@@ -97,7 +104,74 @@ vi.mock('../../../../src/acp/Session.js', () => {
       cancel: vi.fn(),
       setMode: vi.fn().mockResolvedValue(undefined),
       setModel: vi.fn().mockResolvedValue(undefined),
+      setReasoningEffort: vi.fn().mockResolvedValue(undefined),
+      setServiceTier: vi.fn().mockResolvedValue(undefined),
+      setResponseVerbosity: vi.fn().mockResolvedValue(undefined),
+      setCommunicationStyle: vi.fn().mockResolvedValue(undefined),
       getCurrentModelId: vi.fn(() => acpSessionMocks.currentModelId),
+      getModelConfiguration: vi.fn(() => ({
+        currentModelId: ['gpt-4', 'gpt-3.5'].includes(acpSessionMocks.currentModelId)
+          ? acpSessionMocks.currentModelId
+          : 'gpt-4',
+        models: [
+          {
+            id: 'gpt-4',
+            displayName: 'GPT-4',
+            provider: 'openai',
+            model: 'gpt-4',
+          },
+          {
+            id: 'gpt-3.5',
+            displayName: 'GPT-3.5',
+            provider: 'team-gateway',
+            model: 'gpt-4.1-mini',
+          },
+        ],
+        modelProviders: {
+          'team-gateway': {
+            name: 'Team Gateway',
+            baseUrl: 'https://gateway.example.test/v1',
+            wireApi: 'openai-completions',
+          },
+        },
+        reasoning: {
+          selection: 'off',
+          effective: 'off',
+          supported: ['off', 'low', 'medium', 'high'],
+        },
+        serviceTier: {
+          selection: 'auto',
+          effective: 'provider-default',
+          supported: ['standard', 'fast', 'flex'],
+        },
+        responseVerbosity: {
+          selection: 'auto',
+          effective: 'provider-default',
+          supported: ['low', 'medium', 'high'],
+        },
+        communicationStyle: {
+          selection: 'auto',
+          effective: 'blade-default',
+          name: 'Auto',
+          description: 'Use the Blade default communication style',
+          source: 'built-in',
+          supported: [
+            {
+              id: 'auto',
+              name: 'Auto',
+              description: 'Use the Blade default communication style',
+              source: 'built-in',
+            },
+            {
+              id: 'project:security-review',
+              name: 'Security Review',
+              description: 'Prioritize concrete security findings',
+              source: 'project',
+              contentSha256: 'a'.repeat(64),
+            },
+          ],
+        } satisfies CommunicationStyleConfiguration,
+      })),
       destroy: vi.fn().mockImplementation(async () => {
         const error = acpSessionMocks.destroyErrors.shift();
         if (error) throw error;
@@ -150,6 +224,7 @@ vi.mock('../../../../src/agent/Agent.js', () => ({
 
 vi.mock('../../../../src/services/SessionService.js', () => ({
   SessionService: {
+    assertSessionWritable: sessionServiceMocks.assertSessionWritable,
     deleteSession: sessionServiceMocks.deleteSession,
     forkSession: sessionServiceMocks.forkSession,
     listSessionPage: sessionServiceMocks.listSessionPage,
@@ -175,10 +250,17 @@ vi.mock('../../../../src/store/vanilla.js', () => ({
       {
         id: 'gpt-3.5',
         displayName: 'GPT-3.5',
-        provider: 'openai',
+        provider: 'team-gateway',
         model: 'gpt-4.1-mini',
       },
     ],
+    modelProviders: {
+      'team-gateway': {
+        name: 'Team Gateway',
+        baseUrl: 'https://gateway.example.test/v1',
+        wireApi: 'openai-completions',
+      },
+    },
     currentModelId: 'gpt-4',
   })),
 }));
@@ -639,6 +721,23 @@ describe('BladeAgent', () => {
       expect(createdSessions).toHaveLength(0);
     });
 
+    it('应该在读取历史或替换 owner 前拒绝归档会话', async () => {
+      sessionServiceMocks.assertSessionWritable.mockRejectedValueOnce(
+        new Error('Session is archived: archived-session')
+      );
+
+      await expect(
+        loadSession({
+          sessionId: 'archived-session',
+          cwd: '/tmp/project',
+          mcpServers: [],
+        })
+      ).rejects.toThrow('Session is archived');
+
+      expect(sessionServiceMocks.loadSession).not.toHaveBeenCalled();
+      expect(createdSessions).toHaveLength(0);
+    });
+
     it('重复加载同一 session 时应该先销毁旧 owner', async () => {
       await loadSession({
         sessionId: 'persisted-session',
@@ -873,12 +972,12 @@ describe('BladeAgent', () => {
         {
           value: 'gpt-4',
           name: 'GPT-4',
-          description: 'openai/gpt-4',
+          description: 'openai · gpt-4',
         },
         {
           value: 'gpt-3.5',
           name: 'GPT-3.5',
-          description: 'openai/gpt-4.1-mini',
+          description: 'Team Gateway · gpt-4.1-mini',
         },
       ]);
       expect(
@@ -1115,12 +1214,106 @@ describe('BladeAgent', () => {
         value: 'gpt-3.5',
       });
 
-      expect(response).toEqual({ configOptions: [] });
+      expect(response?.configOptions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'model' }),
+          expect.objectContaining({
+            id: 'reasoning_effort',
+            currentValue: 'off',
+          }),
+          expect.objectContaining({
+            id: 'service_tier',
+            currentValue: 'auto',
+          }),
+          expect.objectContaining({
+            id: 'response_verbosity',
+            currentValue: 'auto',
+          }),
+          expect.objectContaining({
+            id: 'communication_style',
+            currentValue: 'auto',
+            options: expect.arrayContaining([
+              expect.objectContaining({
+                value: 'project:security-review',
+                name: 'Security Review',
+              }),
+            ]),
+          }),
+        ])
+      );
 
       // 验证会话的 setModel 方法被调用
       const sessions = createdSessions;
       const sessionInstance = sessions[sessions.length - 1];
       expect(sessionInstance?.setModel).toHaveBeenCalledWith('gpt-3.5');
+    });
+
+    it('应该通过标准 config option 设置 Session service tier', async () => {
+      const created = await agent.newSession({
+        cwd: '/tmp/test',
+        mcpServers: [],
+      });
+      const response = await agent.setSessionConfigOption?.({
+        sessionId: created.sessionId,
+        configId: 'service_tier',
+        value: 'fast',
+      });
+      const sessionInstance = createdSessions.at(-1);
+      expect(sessionInstance?.setServiceTier).toHaveBeenCalledWith('fast');
+      expect(response?.configOptions).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: 'service_tier' })])
+      );
+    });
+
+    it('应该通过标准 config option 设置 Session response verbosity', async () => {
+      const created = await agent.newSession({
+        cwd: '/tmp/test',
+        mcpServers: [],
+      });
+      const response = await agent.setSessionConfigOption?.({
+        sessionId: created.sessionId,
+        configId: 'response_verbosity',
+        value: 'high',
+      });
+      const sessionInstance = createdSessions.at(-1);
+      expect(sessionInstance?.setResponseVerbosity).toHaveBeenCalledWith('high');
+      expect(response?.configOptions).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: 'response_verbosity' })])
+      );
+    });
+
+    it('应该通过标准 config option 设置 Session communication style', async () => {
+      const created = await agent.newSession({
+        cwd: '/tmp/test',
+        mcpServers: [],
+      });
+      const response = await agent.setSessionConfigOption?.({
+        sessionId: created.sessionId,
+        configId: 'communication_style',
+        value: 'friendly',
+      });
+      const sessionInstance = createdSessions.at(-1);
+      expect(sessionInstance?.setCommunicationStyle).toHaveBeenCalledWith('friendly');
+      expect(response?.configOptions).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: 'communication_style' })])
+      );
+    });
+
+    it('应该通过标准 config option 设置 Session reasoning effort', async () => {
+      const created = await agent.newSession({
+        cwd: '/tmp/test',
+        mcpServers: [],
+      });
+      const response = await agent.setSessionConfigOption?.({
+        sessionId: created.sessionId,
+        configId: 'reasoning_effort',
+        value: 'high',
+      });
+      const sessionInstance = createdSessions.at(-1);
+      expect(sessionInstance?.setReasoningEffort).toHaveBeenCalledWith('high');
+      expect(response?.configOptions).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: 'reasoning_effort' })])
+      );
     });
 
     it('应该拒绝为不存在的会话切换模型', async () => {

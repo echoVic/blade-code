@@ -12,6 +12,7 @@ import { Bus } from '../../server/bus.js';
 import type { ContentPart } from '../../services/ChatServiceInterface.js';
 import { SessionService } from '../../services/SessionService.js';
 import type { JsonValue } from '../../store/types.js';
+import type { ProjectRuleReference } from '../resources/WorkspaceProjectRules.js';
 import type { ChatContext, UserMessageContent } from '../types.js';
 import type { LoopDependencies } from './types.js';
 
@@ -168,6 +169,38 @@ export async function saveInterruptedTurnMarker(
     }
   } catch (error) {
     logger.warn('[Loop] 保存中断边界失败:', error);
+  }
+  return null;
+}
+
+export async function saveContextualProjectRulesMarker(
+  deps: LoopDependencies,
+  context: ChatContext,
+  references: readonly ProjectRuleReference[],
+  triggerPaths: readonly string[],
+  parentUuid: string | null
+): Promise<string | null> {
+  try {
+    const contextMgr = getContextMgr(deps);
+    if (!contextMgr || !context.sessionId || references.length === 0) {
+      return null;
+    }
+    return await contextMgr.saveMessage(
+      context.sessionId,
+      'system',
+      `<contextual-project-instructions-ref count="${references.length}" />`,
+      parentUuid,
+      {
+        contextualProjectRules: true,
+        ruleReferences: JSON.parse(
+          JSON.stringify(references.map((item) => ({ ...item })))
+        ) as JsonValue,
+        triggerPaths: [...triggerPaths],
+      },
+      context.subagentInfo
+    );
+  } catch (error) {
+    logger.warn('[Loop] 保存 contextual project rules provenance 失败:', error);
   }
   return null;
 }

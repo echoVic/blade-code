@@ -37,9 +37,19 @@ export function isRootSystemPrompt(msg: Message): boolean {
   return msg.role === 'system' && Array.isArray(msg.content);
 }
 
+export function isContextualProjectInstructionMessage(msg: Message): boolean {
+  if (msg.role !== 'system' || !msg.metadata || Array.isArray(msg.metadata)) {
+    return false;
+  }
+  return (
+    typeof msg.metadata === 'object' && msg.metadata.contextualProjectRules === true
+  );
+}
+
 export class ConversationState {
   /** 系统提示词（不参与压缩） */
   readonly systemMessages: Message[];
+  private _contextualSystemMessages: Message[];
 
   /** 可压缩的会话历史 — 对应原 context.messages */
   private _history: Message[];
@@ -55,12 +65,15 @@ export class ConversationState {
 
     // 从 context.messages 中提取已有的根系统提示
     const existingRootPrompt = context.messages.find(isRootSystemPrompt);
+    this._contextualSystemMessages = context.messages.filter(
+      isContextualProjectInstructionMessage
+    );
 
     // 构建 systemMessages — 根 system prompt 必须从 history 中隔离，
     // 确保 compaction 不会改写或丢掉它（Invariant #1）
     if (existingRootPrompt) {
       // 从持久化恢复的根 system prompt，提取到 systemMessages
-      this.systemMessages = [existingRootPrompt];
+      this.systemMessages = [existingRootPrompt, ...this._contextualSystemMessages];
     } else if (systemPrompt) {
       // 没有现有的根系统提示，注入新的
       this.systemMessages = [
@@ -76,14 +89,17 @@ export class ConversationState {
             },
           ],
         },
+        ...this._contextualSystemMessages,
       ];
     } else {
-      this.systemMessages = [];
+      this.systemMessages = [...this._contextualSystemMessages];
     }
 
     // history = context.messages 中排除根系统提示
     // 根 system prompt 已在 systemMessages 中，不参与 compaction
-    this._history = context.messages.filter((msg) => !isRootSystemPrompt(msg));
+    this._history = context.messages.filter(
+      (msg) => !isRootSystemPrompt(msg) && !isContextualProjectInstructionMessage(msg)
+    );
   }
 
   /** 当前 history 长度（压缩检查使用） */
@@ -142,6 +158,24 @@ export class ConversationState {
     this._pending.push(msg);
   }
 
+  appendContextualProjectInstructions(msg: Message): void {
+    if (!isContextualProjectInstructionMessage(msg)) {
+      throw new Error('Contextual project instructions require safe metadata');
+    }
+    this._contextualSystemMessages.push(msg);
+    this.systemMessages.push(msg);
+  }
+
+  private syncContextualSystemMessages(): void {
+    const roots = this.systemMessages.filter(isRootSystemPrompt);
+    this.systemMessages.splice(
+      0,
+      this.systemMessages.length,
+      ...roots,
+      ...this._contextualSystemMessages
+    );
+  }
+
   /**
    * 追加控制消息到 pending。
    * role === 'system' 时抛出异常（根系统提示只能通过构造函数设置）。
@@ -187,12 +221,18 @@ export class ConversationState {
    * toLLMMessages() 会自动反映新 history。
    */
   replaceHistory(newHistory: Message[]): void {
-    this._history = newHistory.filter((msg) => !isRootSystemPrompt(msg));
+    this._history = newHistory.filter(
+      (msg) => !isRootSystemPrompt(msg) && !isContextualProjectInstructionMessage(msg)
+    );
   }
 
   removeMessages(predicate: (message: Message) => boolean): void {
     this._history = this._history.filter((message) => !predicate(message));
     this._pending = this._pending.filter((message) => !predicate(message));
+    this._contextualSystemMessages = this._contextualSystemMessages.filter(
+      (message) => !predicate(message)
+    );
+    this.syncContextualSystemMessages();
   }
 
   /**
@@ -203,7 +243,7 @@ export class ConversationState {
    */
   writeback(): void {
     this.commitPending();
-    this.context.messages = this._history;
+    this.context.messages = [...this._contextualSystemMessages, ...this._history];
   }
 
   /**

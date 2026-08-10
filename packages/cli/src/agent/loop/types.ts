@@ -12,8 +12,13 @@ import type {
 } from '../../services/ChatServiceInterface.js';
 import type { TaskListItem } from '../../tools/builtin/task/taskListTypes.js';
 import type { ToolExecutor } from '../../tools/execution/ToolExecutor.js';
+import type { ToolProgressUpdate } from '../../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../../tools/types/index.js';
 import type { ExecutionEngine } from '../ExecutionEngine.js';
+import type {
+  ProjectRuleReference,
+  ProjectRuleResolution,
+} from '../resources/WorkspaceProjectRules.js';
 import type { SteeringMessage } from '../runtime/ActiveTurnMailbox.js';
 import type { AgentOptions } from '../types.js';
 
@@ -37,6 +42,11 @@ export type StreamEvent =
 /** 工具生命周期事件 */
 export type ToolEvent =
   | { kind: 'tool_start'; toolCall: ToolCallRef; toolKind?: ToolKindStr }
+  | {
+      kind: 'tool_progress';
+      toolCall: ToolCallRef;
+      update: ToolProgressUpdate;
+    }
   | { kind: 'tool_result'; toolCall: ToolCallRef; result: ToolResult };
 
 /** 循环控制事件 */
@@ -62,6 +72,109 @@ export type DomainEvent =
       messages: Array<SteeringMessage & { persisted: boolean }>;
     }
   | { kind: 'goal_updated'; goal: GoalSnapshot | null }
+  | {
+      kind: 'mcp_catalog_changed';
+      revision: number;
+      serverName: string;
+      reason: string;
+      added: string[];
+      removed: string[];
+      updated: string[];
+    }
+  | {
+      kind: 'mcp_content_changed';
+      revision: number;
+      serverName: string;
+      contentKind: 'resources' | 'resourceTemplates' | 'prompts';
+      reason: string;
+      added: string[];
+      removed: string[];
+      updated: string[];
+    }
+  | {
+      kind: 'mcp_resource_updated';
+      revision: number;
+      serverName: string;
+      uri: string;
+    }
+  | {
+      kind: 'mcp_connection_changed';
+      revision: number;
+      serverName: string;
+      phase: 'reconnecting' | 'recovered' | 'failed';
+      reason: string;
+      attempt: number;
+      maxAttempts: number;
+      nextRetryAt?: number;
+      error?: string;
+    }
+  | {
+      kind: 'mcp_log';
+      revision: number;
+      serverName: string;
+      level:
+        | 'debug'
+        | 'info'
+        | 'notice'
+        | 'warning'
+        | 'error'
+        | 'critical'
+        | 'alert'
+        | 'emergency';
+      logger?: string;
+      message: string;
+      projectedBytes: number;
+      dataSha256: string;
+      truncated: boolean;
+      detailsOmitted: boolean;
+      timestamp: number;
+      synthetic?: boolean;
+    }
+  | {
+      kind: 'mcp_instructions_changed';
+      revision: number;
+      serverName: string;
+      action: 'added' | 'removed';
+      reason: 'snapshot' | 'connection' | 'disconnection';
+      text?: string;
+      sourceBytes?: number;
+      projectedBytes?: number;
+      sha256?: string;
+      truncated?: boolean;
+      detailsOmitted?: boolean;
+    }
+  | {
+      kind: 'mcp_task_changed';
+      revision: number;
+      taskId: string;
+      serverName: string;
+      toolName: string;
+      status:
+        | 'working'
+        | 'input_required'
+        | 'interrupted'
+        | 'completed'
+        | 'failed'
+        | 'cancelled';
+      statusMessage?: string;
+      createdAt: number;
+      updatedAt: number;
+      completedAt?: number;
+      hasResult: boolean;
+      error?: string;
+    }
+  | {
+      kind: 'project_rules_loaded';
+      files: Array<{
+        id: string;
+        relativePath: string;
+        source: 'project' | 'local';
+        conditional: boolean;
+        contentSha256: string;
+      }>;
+      triggerPaths: string[];
+      blockedWrite: boolean;
+    }
   | {
       kind: 'goal_continuation_started';
       goal: GoalSnapshot;
@@ -166,6 +279,16 @@ export interface LoopDependencies {
   onModelSwitch?: (modelId: string) => Promise<void>;
   /** 应用 Skill 工具限制 */
   applySkillToolRestrictions: (tools: FunctionDeclaration[]) => FunctionDeclaration[];
+  staticProjectRules?: ProjectRuleResolution;
+  hydrateProjectRules?: (
+    references: readonly ProjectRuleReference[]
+  ) => ProjectRuleResolution;
+  resolveContextualProjectRules?: (
+    toolName: string,
+    params: Record<string, unknown>,
+    result: ToolResult | undefined,
+    loadedIds: ReadonlySet<string>
+  ) => ProjectRuleResolution;
 }
 
 // ===== Tool Execution Result (for StreamingToolExecutor) =====

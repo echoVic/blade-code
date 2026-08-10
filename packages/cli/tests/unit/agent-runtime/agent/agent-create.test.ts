@@ -37,6 +37,16 @@ function createConfig(overrides: Partial<BladeConfig> = {}): BladeConfig {
     disableAllHooks: false,
     maxTurns: 20,
     ...overrides,
+    lspServers: overrides.lspServers ?? {},
+    modelProviders: overrides.modelProviders ?? {},
+    enabledPlugins: overrides.enabledPlugins ?? {},
+    pluginSourcePolicy: overrides.pluginSourcePolicy ?? {
+      restrictToAllowedSources: false,
+      requireGitCommitSha: false,
+      allowedGitHosts: [],
+      allowedMarketplaces: [],
+      allowedLocalRoots: [],
+    },
     maxConcurrentTasks: overrides.maxConcurrentTasks ?? 3,
     maxQueuedTasks: overrides.maxQueuedTasks ?? 100,
   };
@@ -44,6 +54,14 @@ function createConfig(overrides: Partial<BladeConfig> = {}): BladeConfig {
 
 function createGoalRuntimeMocks() {
   return {
+    getAgentResources: vi.fn(() => ({
+      projectRoot: process.cwd(),
+      subagents: {},
+      skills: {
+        generateAvailableSkillsList: () => '',
+      },
+      commands: {},
+    })),
     setTaskStatus: vi.fn().mockResolvedValue(undefined),
     recordGoalProgress: vi.fn().mockResolvedValue(null),
     getGoal: vi.fn().mockResolvedValue(null),
@@ -338,6 +356,7 @@ describe('Agent runLoop system prompt injection', () => {
     const turnHandle = { id: 'expansion-turn' };
     const order: string[] = [];
     const runtime = {
+      ...createGoalRuntimeMocks(),
       prepareInputTurn: vi.fn(async () => {
         order.push('prepare');
         return {
@@ -348,7 +367,6 @@ describe('Agent runLoop system prompt injection', () => {
           mode: 'direct',
         };
       }),
-      setTaskStatus: vi.fn().mockResolvedValue(undefined),
       finishTurn: vi.fn().mockResolvedValue(undefined),
     };
     const agent = new Agent(
@@ -761,10 +779,10 @@ describe('Agent runLoop system prompt injection', () => {
     let claimedContinuations = 0;
     let completedContinuations = 0;
     const runtime = {
+      ...createGoalRuntimeMocks(),
       beginTurn: vi.fn(() => ({
         id: `goal-turn-${claimedContinuations + 1}`,
       })),
-      setTaskStatus: vi.fn().mockResolvedValue(undefined),
       beginGoalContinuation: vi.fn(async () => {
         claimedContinuations++;
         return makeGoal('active', claimedContinuations);
@@ -782,7 +800,6 @@ describe('Agent runLoop system prompt injection', () => {
           completedContinuations
         );
       }),
-      pauseActiveGoal: vi.fn().mockResolvedValue(null),
       acknowledgeTurn: vi.fn().mockResolvedValue(undefined),
       finishTurn: vi.fn().mockResolvedValue(undefined),
       drainSteering: vi.fn().mockResolvedValue([]),

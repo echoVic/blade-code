@@ -76,10 +76,13 @@ export class TaskRunScheduler {
   private inFlight = 0;
   private readonly queue: PendingAdmission[] = [];
   private readonly activeKeys = new Set<string>();
+  private explicitlyConfigured = false;
 
   admit(options: TaskAdmissionOptions): TaskAdmissionHandle {
     this.validateLimits(options.maxConcurrent, options.maxQueued);
-    this.configure(options.maxConcurrent, options.maxQueued);
+    if (!this.explicitlyConfigured) {
+      this.applyConfiguration(options.maxConcurrent, options.maxQueued);
+    }
     if (!options.key.trim()) throw new Error('Task admission key must not be blank');
     if (this.activeKeys.has(options.key)) {
       throw new TaskAdmissionConflictError(options.key);
@@ -141,6 +144,11 @@ export class TaskRunScheduler {
 
   configure(maxConcurrent: number, maxQueued: number): void {
     this.validateLimits(maxConcurrent, maxQueued);
+    this.explicitlyConfigured = true;
+    this.applyConfiguration(maxConcurrent, maxQueued);
+  }
+
+  private applyConfiguration(maxConcurrent: number, maxQueued: number): void {
     this.maxConcurrent = maxConcurrent;
     this.maxQueued = maxQueued;
     this.drain();
@@ -170,6 +178,7 @@ export class TaskRunScheduler {
     this.inFlight = 0;
     this.maxConcurrent = 3;
     this.maxQueued = 100;
+    this.explicitlyConfigured = false;
   }
 
   private startPending(pending: PendingAdmission): void {

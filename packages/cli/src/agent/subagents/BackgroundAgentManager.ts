@@ -7,8 +7,15 @@
  * - 支持等待完成、恢复、终止
  */
 
-import type { PermissionMode } from '../../config/types.js';
+import type {
+  CommunicationStyleSelection,
+  PermissionMode,
+  ReasoningEffortSelection,
+  ResponseVerbositySelection,
+  ServiceTierSelection,
+} from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import type { SessionLspResources } from '../../lsp/WorkspaceLspResources.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import { getCwd } from '../../utils/cwd.js';
 import { createSessionId } from '../../utils/sessionId.js';
@@ -17,6 +24,8 @@ import { Agent } from '../Agent.js';
 import { recordVerificationEvidence } from '../loop/completionPolicy.js';
 import { drainLoop } from '../loop/index.js';
 import type { LoopEvent } from '../loop/types.js';
+import type { SessionAgentResources } from '../resources/WorkspaceAgentResources.js';
+import type { SessionModelResources } from '../resources/WorkspaceModelResources.js';
 import { SessionRuntime } from '../runtime/SessionRuntime.js';
 import {
   type AgentSession,
@@ -87,6 +96,12 @@ export interface StartBackgroundAgentOptions {
   /** 权限模式 */
   permissionMode?: PermissionMode;
 
+  /** 父 Session 当前的 durable reasoning 策略 */
+  reasoningEffort?: ReasoningEffortSelection;
+  serviceTier?: ServiceTierSelection;
+  responseVerbosity?: ResponseVerbositySelection;
+  communicationStyle?: CommunicationStyleSelection;
+
   /** 已有的 agent ID（用于 resume） */
   agentId?: string;
 
@@ -114,6 +129,11 @@ export interface StartBackgroundAgentOptions {
   /** Number of resume edges from the root run */
   resumeDepth?: number;
 
+  /** Immutable resource view inherited from the parent Session */
+  agentResources?: SessionAgentResources;
+  modelResources?: SessionModelResources;
+  lspResources?: SessionLspResources;
+
   /** Forward child loop events to the owning surface */
   onEvent?: (event: LoopEvent, agentId: string) => void | Promise<void>;
 
@@ -127,7 +147,14 @@ export interface ResumeAgentOptions {
   config: SubagentConfig;
   owner: AgentSessionOwner;
   permissionMode?: PermissionMode;
+  reasoningEffort?: ReasoningEffortSelection;
+  serviceTier?: ServiceTierSelection;
+  responseVerbosity?: ResponseVerbositySelection;
+  communicationStyle?: CommunicationStyleSelection;
   newAgentId?: string;
+  agentResources?: SessionAgentResources;
+  modelResources?: SessionModelResources;
+  lspResources?: SessionLspResources;
   onEvent?: (event: LoopEvent, agentId: string) => void | Promise<void>;
   onCompleted?: (session: AgentSession) => void | Promise<void>;
 }
@@ -202,6 +229,10 @@ export class BackgroundAgentManager {
       parentSessionId,
       parentProjectPath,
       permissionMode,
+      reasoningEffort,
+      serviceTier,
+      responseVerbosity,
+      communicationStyle,
       agentId,
       existingMessages,
       taskListId,
@@ -211,6 +242,9 @@ export class BackgroundAgentManager {
       rootAgentId,
       resumedFrom,
       resumeDepth = 0,
+      agentResources,
+      modelResources,
+      lspResources,
       onEvent,
       onCompleted,
     } = options;
@@ -259,12 +293,19 @@ export class BackgroundAgentManager {
       prompt,
       parentSessionId,
       permissionMode,
+      reasoningEffort,
+      serviceTier,
+      responseVerbosity,
+      communicationStyle,
       abortController.signal,
       existingMessages,
       taskListId,
       workspaceRoot,
       isolation,
       restoredWorktree,
+      agentResources,
+      modelResources,
+      lspResources,
       onEvent,
       onCompleted
     );
@@ -296,12 +337,19 @@ export class BackgroundAgentManager {
     prompt: string,
     parentSessionId: string | undefined,
     permissionMode: PermissionMode | undefined,
+    reasoningEffort: ReasoningEffortSelection | undefined,
+    serviceTier: ServiceTierSelection | undefined,
+    responseVerbosity: ResponseVerbositySelection | undefined,
+    communicationStyle: CommunicationStyleSelection | undefined,
     signal: AbortSignal,
     existingMessages?: Message[],
     taskListId?: string,
     workspaceRoot: string = getCwd(),
     isolation: SubagentIsolationMode = 'none',
     restoredWorktree?: WorktreeSession,
+    agentResources?: SessionAgentResources,
+    modelResources?: SessionModelResources,
+    lspResources?: SessionLspResources,
     onEvent?: (event: LoopEvent, agentId: string) => void | Promise<void>,
     onCompleted?: (session: AgentSession) => void | Promise<void>
   ): Promise<SubagentResult> {
@@ -349,6 +397,21 @@ export class BackgroundAgentManager {
         sessionId: agentId,
         workspaceRoot: lease.workspaceRoot,
         modelId,
+        reasoningEffort,
+        serviceTier,
+        responseVerbosity,
+        communicationStyle,
+        agentResources,
+        modelResources,
+        lspResources,
+        ...((existingMessages?.length ?? 0) > 0
+          ? {
+              sessionStart: {
+                isResume: true,
+                resumeSessionId: agentId,
+              },
+            }
+          : {}),
         subagentInfo: parentSessionId
           ? {
               parentSessionId,
@@ -600,7 +663,14 @@ export class BackgroundAgentManager {
       prompt,
       config,
       permissionMode,
+      reasoningEffort,
+      serviceTier,
+      responseVerbosity,
+      communicationStyle,
       newAgentId = createSessionId('agent'),
+      agentResources,
+      modelResources,
+      lspResources,
       onEvent,
       onCompleted,
     } = options;
@@ -640,6 +710,10 @@ export class BackgroundAgentManager {
       parentSessionId: owner.sessionId,
       parentProjectPath: owner.projectPath,
       permissionMode,
+      reasoningEffort,
+      serviceTier,
+      responseVerbosity,
+      communicationStyle,
       agentId: newAgentId,
       existingMessages: session.messages,
       taskListId: session.taskListId,
@@ -649,6 +723,9 @@ export class BackgroundAgentManager {
       rootAgentId: session.rootAgentId,
       resumedFrom: session.id,
       resumeDepth: session.resumeDepth + 1,
+      agentResources,
+      modelResources,
+      lspResources,
       onEvent,
       onCompleted,
     });

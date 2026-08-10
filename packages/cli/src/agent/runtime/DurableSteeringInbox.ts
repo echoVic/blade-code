@@ -1,6 +1,6 @@
-import { Mutex } from 'async-mutex';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { Mutex } from 'async-mutex';
 import writeFileAtomic from 'write-file-atomic';
 import { parseSessionJSONL } from '../../context/storage/JSONLStore.js';
 import {
@@ -18,6 +18,7 @@ export interface DurableSteeringMessage {
   content: UserMessageContent;
   queuedAt: number;
   recovered: boolean;
+  persisted?: boolean;
 }
 
 interface InboxRecord {
@@ -87,7 +88,8 @@ function parseInboxRecord(
       !('content' in message) ||
       !isUserMessageContent(message.content) ||
       !('queuedAt' in message) ||
-      typeof message.queuedAt !== 'number'
+      typeof message.queuedAt !== 'number' ||
+      ('persisted' in message && typeof message.persisted !== 'boolean')
     ) {
       throw new Error(`Invalid steering inbox message: ${filePath}`);
     }
@@ -95,6 +97,9 @@ function parseInboxRecord(
       id: message.id,
       content: message.content,
       queuedAt: message.queuedAt,
+      ...('persisted' in message && message.persisted === true
+        ? { persisted: true }
+        : {}),
     };
   });
 

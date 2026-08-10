@@ -9,6 +9,11 @@ import type { LoopResult } from '../../../../src/agent/types.js';
 import { MAX_INLINE_ATTACHMENT_BYTES } from '../../../../src/api/attachmentLimits.js';
 import { Bus } from '../../../../src/server/bus.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
+import type {
+  ConfirmationDetails,
+  ConfirmationResponse,
+} from '../../../../src/tools/types/ExecutionTypes.js';
+import { ToolKind } from '../../../../src/tools/types/ToolTypes.js';
 import { createMockACPClient } from '../../../support/mocks/mockACPClient.js';
 import { createMockAgent, type MockAgent } from '../../../support/mocks/mockAgent.js';
 
@@ -37,11 +42,87 @@ const runtimeState = vi.hoisted(() => ({
     })),
     getPendingSteeringCount: vi.fn(() => 0),
     getCurrentModelId: vi.fn(() => 'model-1'),
+    getReasoningConfiguration: vi.fn(() => ({
+      selection: 'off' as const,
+      effective: 'off' as const,
+      supported: ['off', 'low', 'medium', 'high'] as const,
+    })),
+    resolveReasoningConfiguration: vi.fn((selection: string) => ({
+      selection,
+      effective: selection === 'auto' ? 'high' : selection,
+      supported: ['off', 'low', 'medium', 'high'],
+    })),
+    getServiceTierConfiguration: vi.fn(() => ({
+      selection: 'auto' as const,
+      effective: 'provider-default' as const,
+      supported: ['standard', 'fast', 'flex'] as const,
+    })),
+    resolveServiceTierConfiguration: vi.fn((selection: string) => ({
+      selection,
+      effective: selection === 'auto' ? 'provider-default' : selection,
+      supported: ['standard', 'fast', 'flex'],
+    })),
+    getResponseVerbosityConfiguration: vi.fn(() => ({
+      selection: 'auto' as const,
+      effective: 'provider-default' as const,
+      supported: ['low', 'medium', 'high'] as const,
+    })),
+    resolveResponseVerbosityConfiguration: vi.fn((selection: string) => ({
+      selection,
+      effective: selection === 'auto' ? 'provider-default' : selection,
+      supported: ['low', 'medium', 'high'],
+    })),
+    getCommunicationStyleConfiguration: vi.fn(() => ({
+      selection: 'auto' as const,
+      effective: 'blade-default' as const,
+      name: 'Auto',
+      description: 'Default',
+      source: 'built-in' as const,
+      supported: [],
+    })),
+    resolveCommunicationStyleConfiguration: vi.fn((selection: string) => ({
+      selection,
+      effective: selection === 'auto' ? 'blade-default' : selection,
+      name: selection,
+      description: `Use ${selection}`,
+      source: selection.includes(':') ? 'project' : 'built-in',
+      ...(selection.includes(':') ? { contentSha256: 'a'.repeat(64) } : {}),
+      supported: [],
+    })),
+    refresh: vi.fn().mockResolvedValue(undefined),
     getGoal: vi.fn().mockResolvedValue(null),
     listRewindCheckpoints: vi.fn().mockResolvedValue([]),
     rewindSession: vi.fn(),
     listSubagents: vi.fn(() => []),
     resumeSubagent: vi.fn(),
+    getMcpContentCatalog: vi.fn(() => ({
+      revision: 1,
+      resources: [],
+      resourceTemplates: [],
+      prompts: [],
+    })),
+    refreshMcpContentCatalogs: vi.fn().mockResolvedValue(undefined),
+    getMcpPrompt: vi.fn().mockResolvedValue({
+      messages: [],
+    }),
+    completeMcpArgument: vi.fn().mockResolvedValue({
+      values: ['production'],
+      hasMore: false,
+      sourceValueCount: 1,
+      sourceBytes: 10,
+      projectedBytes: 10,
+      sha256: 'c'.repeat(64),
+      truncated: false,
+    }),
+    listMcpTasks: vi.fn(() => []),
+    getMcpTask: vi.fn(),
+    cancelMcpTask: vi.fn(),
+    getMcpLogs: vi.fn(() => ({ revision: 0, entries: [] })),
+    setMcpLoggingLevel: vi.fn().mockResolvedValue(undefined),
+    getMcpInstructions: vi.fn(() => ({
+      revision: 0,
+      instructions: [],
+    })),
   },
 }));
 
@@ -72,9 +153,17 @@ vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
 const sessionServiceState = vi.hoisted(() => ({
   updateSessionMetadata: vi.fn().mockResolvedValue({
     selectedModelId: 'model-1',
+    reasoningEffort: 'off',
+    serviceTier: 'auto',
+    responseVerbosity: 'auto',
+    communicationStyle: 'auto',
   }),
   createSessionMetadata: vi.fn().mockResolvedValue({
     selectedModelId: 'model-1',
+    reasoningEffort: 'off',
+    serviceTier: 'auto',
+    responseVerbosity: 'auto',
+    communicationStyle: 'auto',
   }),
 }));
 
@@ -384,6 +473,170 @@ describe('AcpSession', () => {
     });
   });
 
+  describe('MCP sampling projection', () => {
+    it('requires one-shot approval in yolo mode and exposes the request preview', async () => {
+      await session.setMode('yolo');
+      const requestPermission = vi
+        .spyOn(mockConnection, 'requestPermission')
+        .mockResolvedValue({
+          outcome: { outcome: 'selected', optionId: 'allow_once' },
+        });
+
+      const response = await (
+        session as unknown as {
+          requestPermission: (
+            input: ConfirmationDetails
+          ) => Promise<ConfirmationResponse>;
+        }
+      ).requestPermission({
+        type: 'mcpSampling',
+        kind: ToolKind.Execute,
+        title: 'MCP model sampling request',
+        message: 'May consume up to 128 output tokens.',
+        details: 'User: Return the release marker.',
+      });
+
+      expect(response).toEqual({ approved: true, scope: 'once' });
+      expect(requestPermission).toHaveBeenCalledWith(
+        expect.objectContaining({
+          options: [
+            expect.objectContaining({ optionId: 'allow_once' }),
+            expect.objectContaining({ optionId: 'reject_once' }),
+          ],
+          toolCall: expect.objectContaining({
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                content: {
+                  type: 'text',
+                  text: 'User: Return the release marker.',
+                },
+              }),
+            ]),
+          }),
+        })
+      );
+    });
+  });
+
+  describe('MCP elicitation projection', () => {
+    const requestMcpElicitation = (target: AcpSession, details: ConfirmationDetails) =>
+      (
+        target as unknown as {
+          requestPermission: (
+            input: ConfirmationDetails
+          ) => Promise<ConfirmationResponse>;
+        }
+      ).requestPermission(details);
+
+    it('maps enum and boolean form fields to ACP choices', async () => {
+      const requestPermission = vi
+        .spyOn(mockConnection, 'requestPermission')
+        .mockResolvedValueOnce({
+          outcome: { outcome: 'selected', optionId: 'option:1' },
+        })
+        .mockResolvedValueOnce({
+          outcome: { outcome: 'selected', optionId: 'true' },
+        });
+
+      const response = await requestMcpElicitation(session, {
+        type: 'mcpElicitation',
+        message: 'Configure release',
+        mcpElicitation: {
+          serverName: 'deploy',
+          mode: 'form',
+          message: 'Configure release',
+          requestedSchema: { type: 'object', properties: {} },
+          fields: [
+            {
+              name: 'channel',
+              type: 'select',
+              title: 'Channel',
+              required: true,
+              options: [
+                { value: 'stable', label: 'Stable' },
+                { value: 'preview', label: 'Preview' },
+              ],
+            },
+            {
+              name: 'notifications',
+              type: 'boolean',
+              title: 'Notifications',
+              required: true,
+            },
+          ],
+        },
+      });
+
+      expect(response).toEqual({
+        approved: true,
+        elicitation: {
+          action: 'accept',
+          content: {
+            channel: 'preview',
+            notifications: true,
+          },
+        },
+      });
+      expect(requestPermission).toHaveBeenCalledTimes(2);
+    });
+
+    it('fails closed for a required free-text field ACP cannot represent', async () => {
+      const response = await requestMcpElicitation(session, {
+        type: 'mcpElicitation',
+        message: 'Configure release',
+        mcpElicitation: {
+          serverName: 'deploy',
+          mode: 'form',
+          message: 'Configure release',
+          requestedSchema: { type: 'object', properties: {} },
+          fields: [
+            {
+              name: 'owner',
+              type: 'string',
+              title: 'Owner',
+              required: true,
+            },
+          ],
+        },
+      });
+
+      expect(response).toEqual({
+        approved: false,
+        reason: 'ACP cannot collect required string field "owner"',
+        elicitation: { action: 'cancel' },
+      });
+      expect(mockConnection.permissionRequests).toHaveLength(0);
+    });
+
+    it('surfaces URL details without opening them on the ACP host', async () => {
+      const requestPermission = vi
+        .spyOn(mockConnection, 'requestPermission')
+        .mockResolvedValueOnce({
+          outcome: { outcome: 'selected', optionId: 'accept' },
+        });
+      const response = await requestMcpElicitation(session, {
+        type: 'mcpElicitation',
+        message: 'Authorize release',
+        mcpElicitation: {
+          serverName: 'deploy',
+          mode: 'url',
+          message: 'Authorize release',
+          url: 'https://deploy.example.test/authorize?state=opaque',
+          domain: 'deploy.example.test',
+          elicitationId: 'auth-1',
+        },
+      });
+
+      expect(response).toEqual({
+        approved: true,
+        elicitation: { action: 'accept' },
+      });
+      expect(
+        JSON.stringify(requestPermission.mock.calls[0]?.[0].toolCall.content)
+      ).toContain('https://deploy.example.test/authorize?state=opaque');
+    });
+  });
+
   describe('replayHistory', () => {
     it.each([
       'destroy',
@@ -585,6 +838,332 @@ describe('AcpSession', () => {
       expect(response.stopReason).toBe('end_turn');
     });
 
+    it('应该把 ApplyPatch 的每个文件投影为标准 ACP diff', async () => {
+      const mockAgent = getMockAgent();
+      const toolCall = {
+        id: 'patch-call',
+        type: 'function' as const,
+        function: { name: 'ApplyPatch', arguments: '{"patch":"..."}' },
+      };
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield {
+          kind: 'tool_start',
+          toolCall,
+          toolKind: 'write',
+        } as LoopEvent;
+        yield {
+          kind: 'tool_result',
+          toolCall,
+          result: {
+            success: true,
+            llmContent: 'patched',
+            metadata: {
+              kind: 'patch',
+              changes: [
+                {
+                  path: '/tmp/test/first.ts',
+                  oldContent: 'old',
+                  newContent: 'new',
+                },
+                {
+                  path: '/tmp/test/second.ts',
+                  oldContent: null,
+                  newContent: 'added',
+                },
+              ],
+            },
+          },
+        } as LoopEvent;
+        return { success: true, finalMessage: 'done' };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'apply patch' }],
+      });
+
+      expect(mockConnection.sessionUpdates).toContainEqual(
+        expect.objectContaining({
+          update: expect.objectContaining({
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'patch-call',
+            status: 'completed',
+            content: [
+              {
+                type: 'diff',
+                path: '/tmp/test/first.ts',
+                oldText: 'old',
+                newText: 'new',
+              },
+              {
+                type: 'diff',
+                path: '/tmp/test/second.ts',
+                oldText: null,
+                newText: 'added',
+              },
+            ],
+          }),
+        })
+      );
+    });
+
+    it('应该把工具进度投影为 ACP in-progress update', async () => {
+      const mockAgent = getMockAgent();
+      const toolCall = {
+        id: 'progress-call',
+        type: 'function' as const,
+        function: { name: 'progressive', arguments: '{}' },
+      };
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield {
+          kind: 'tool_start',
+          toolCall,
+          toolKind: 'execute',
+        } as LoopEvent;
+        yield {
+          kind: 'tool_progress',
+          toolCall,
+          update: {
+            message: 'phase-two',
+            progress: 2,
+            total: 4,
+          },
+        } as LoopEvent;
+        yield {
+          kind: 'tool_result',
+          toolCall,
+          result: {
+            success: true,
+            llmContent: 'done',
+          },
+        } as LoopEvent;
+        return { success: true, finalMessage: 'done' };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'run progress tool' }],
+      });
+
+      expect(mockConnection.sessionUpdates).toContainEqual(
+        expect.objectContaining({
+          update: expect.objectContaining({
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'progress-call',
+            status: 'in_progress',
+            content: [
+              {
+                type: 'content',
+                content: { type: 'text', text: 'phase-two' },
+              },
+            ],
+          }),
+        })
+      );
+    });
+
+    it('应该把 MCP catalog revision 投影为 ACP 消息更新', async () => {
+      const mockAgent = getMockAgent();
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield {
+          kind: 'mcp_catalog_changed',
+          revision: 2,
+          serverName: 'dynamic',
+          reason: 'notification',
+          added: ['mcp__dynamic__new_tool'],
+          removed: [],
+          updated: [],
+        } as LoopEvent;
+        return { success: true, finalMessage: 'done' };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'refresh catalog' }],
+      });
+
+      expect(mockConnection.sessionUpdates).toContainEqual(
+        expect.objectContaining({
+          update: expect.objectContaining({
+            sessionUpdate: 'agent_message_chunk',
+            content: {
+              type: 'text',
+              text: 'MCP catalog r2 (dynamic): +1 -0 ~0\n',
+            },
+          }),
+        })
+      );
+    });
+
+    it('应该把 MCP content 与 resource update 投影为 ACP 消息', async () => {
+      const mockAgent = getMockAgent();
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield {
+          kind: 'mcp_content_changed',
+          revision: 4,
+          serverName: 'content',
+          contentKind: 'prompts',
+          reason: 'notification',
+          added: ['new_prompt'],
+          removed: [],
+          updated: ['compose_report'],
+        } as LoopEvent;
+        yield {
+          kind: 'mcp_resource_updated',
+          revision: 5,
+          serverName: 'content',
+          uri: 'context://live',
+        } as LoopEvent;
+        yield {
+          kind: 'mcp_connection_changed',
+          revision: 6,
+          serverName: 'content',
+          phase: 'reconnecting',
+          reason: 'transport_closed',
+          attempt: 1,
+          maxAttempts: 5,
+        } as LoopEvent;
+        yield {
+          kind: 'mcp_log',
+          revision: 7,
+          serverName: 'content',
+          level: 'warning',
+          message: `[MCP log details omitted; sha256=${'a'.repeat(64)}]`,
+          projectedBytes: 15,
+          dataSha256: 'a'.repeat(64),
+          truncated: false,
+          detailsOmitted: true,
+          timestamp: 1_000,
+        } as LoopEvent;
+        yield {
+          kind: 'mcp_instructions_changed',
+          revision: 8,
+          serverName: 'content',
+          action: 'added',
+          reason: 'snapshot',
+          sourceBytes: 23,
+          projectedBytes: 0,
+          sha256: 'b'.repeat(64),
+          truncated: false,
+          detailsOmitted: true,
+        } as LoopEvent;
+        yield {
+          kind: 'mcp_task_changed',
+          revision: 9,
+          taskId: 'mcp_task_safe',
+          serverName: 'content',
+          toolName: 'long_task',
+          status: 'completed',
+          createdAt: 1_000,
+          updatedAt: 2_000,
+          completedAt: 2_000,
+          hasResult: true,
+        } as LoopEvent;
+        yield {
+          kind: 'project_rules_loaded',
+          files: [
+            {
+              id: 'project:rule-one',
+              relativePath: '.claude/rules/typescript.md',
+              source: 'project',
+              conditional: true,
+              contentSha256: 'c'.repeat(64),
+            },
+          ],
+          triggerPaths: ['src/index.ts'],
+          blockedWrite: true,
+        } as LoopEvent;
+        return { success: true, finalMessage: 'done' };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'refresh content' }],
+      });
+
+      expect(mockConnection.sessionUpdates).toContainEqual(
+        expect.objectContaining({
+          update: expect.objectContaining({
+            sessionUpdate: 'agent_message_chunk',
+            content: {
+              type: 'text',
+              text: 'MCP prompts r4 (content): +1 -0 ~1\n',
+            },
+          }),
+        })
+      );
+      expect(mockConnection.sessionUpdates).toContainEqual(
+        expect.objectContaining({
+          update: expect.objectContaining({
+            sessionUpdate: 'agent_message_chunk',
+            content: {
+              type: 'text',
+              text: 'MCP resource updated r5 (content): context://live\n',
+            },
+          }),
+        })
+      );
+      expect(mockConnection.sessionUpdates).toContainEqual(
+        expect.objectContaining({
+          update: expect.objectContaining({
+            sessionUpdate: 'agent_message_chunk',
+            content: {
+              type: 'text',
+              text: 'MCP connection r6 (content): reconnecting 1/5\n',
+            },
+          }),
+        })
+      );
+      expect(mockConnection.sessionUpdates).toContainEqual(
+        expect.objectContaining({
+          update: expect.objectContaining({
+            sessionUpdate: 'agent_message_chunk',
+            content: {
+              type: 'text',
+              text:
+                'MCP log r7 (content) warning: ' +
+                `[MCP log details omitted; sha256=${'a'.repeat(64)}]\n`,
+            },
+          }),
+        })
+      );
+      expect(mockConnection.sessionUpdates).toContainEqual(
+        expect.objectContaining({
+          update: expect.objectContaining({
+            sessionUpdate: 'agent_message_chunk',
+            content: {
+              type: 'text',
+              text: 'MCP instructions r8 (content): added details-omitted\n',
+            },
+          }),
+        })
+      );
+      expect(mockConnection.sessionUpdates).toContainEqual(
+        expect.objectContaining({
+          update: expect.objectContaining({
+            sessionUpdate: 'agent_message_chunk',
+            content: {
+              type: 'text',
+              text:
+                'MCP task r9 mcp_task_safe ' +
+                '(content/long_task): completed result-available\n',
+            },
+          }),
+        })
+      );
+      expect(mockConnection.sessionUpdates).toContainEqual(
+        expect.objectContaining({
+          update: expect.objectContaining({
+            sessionUpdate: 'agent_message_chunk',
+            content: {
+              type: 'text',
+              text: 'Project rules loaded: 1 (write retry required)\n',
+            },
+          }),
+        })
+      );
+    });
+
     it('应该把 ACP 图片作为真正的多模态内容传给 Agent', async () => {
       await session.prompt({
         sessionId: 'test-session-id',
@@ -697,7 +1276,50 @@ describe('AcpSession', () => {
           workspaceRoot: '/tmp/test',
           sessionId: 'test-session-id',
           messages: [],
+          mcp: expect.objectContaining({
+            getCatalog: expect.any(Function),
+            refresh: expect.any(Function),
+            getPrompt: expect.any(Function),
+            complete: expect.any(Function),
+            listTasks: expect.any(Function),
+            getTask: expect.any(Function),
+            cancelTask: expect.any(Function),
+          }),
         })
+      );
+      const context = vi.mocked(executeSlashCommand).mock.calls.at(-1)?.[1];
+      await context?.mcp?.getCatalog();
+      await context?.mcp?.refresh('content');
+      await context?.mcp?.getPrompt('content', 'report', { topic: 'MCP' });
+      await context?.mcp?.complete('content', {
+        reference: { type: 'prompt', name: 'report' },
+        argument: { name: 'topic', value: 'M' },
+      });
+      await context?.mcp?.listTasks('content');
+      await context?.mcp?.getTask('mcp_task_safe');
+      await context?.mcp?.cancelTask('mcp_task_safe');
+      expect(runtimeState.runtime.getMcpContentCatalog).toHaveBeenCalled();
+      expect(runtimeState.runtime.refreshMcpContentCatalogs).toHaveBeenCalledWith(
+        'content'
+      );
+      expect(runtimeState.runtime.getMcpPrompt).toHaveBeenCalledWith(
+        'content',
+        'report',
+        { topic: 'MCP' }
+      );
+      expect(runtimeState.runtime.completeMcpArgument).toHaveBeenCalledWith(
+        'content',
+        {
+          reference: { type: 'prompt', name: 'report' },
+          argument: { name: 'topic', value: 'M' },
+        },
+        undefined
+      );
+      expect(runtimeState.runtime.listMcpTasks).toHaveBeenCalledWith('content');
+      expect(runtimeState.runtime.getMcpTask).toHaveBeenCalledWith('mcp_task_safe');
+      expect(runtimeState.runtime.cancelMcpTask).toHaveBeenCalledWith(
+        'mcp_task_safe',
+        undefined
       );
     });
 
@@ -1136,6 +1758,184 @@ describe('AcpSession', () => {
     });
   });
 
+  describe('setReasoningEffort', () => {
+    beforeEach(async () => {
+      await session.initialize();
+    });
+
+    it('原子切换并持久化 Session reasoning effort', async () => {
+      await session.setReasoningEffort('high');
+
+      expect(runtimeState.runtime.resolveReasoningConfiguration).toHaveBeenCalledWith(
+        'high'
+      );
+      expect(runtimeState.runtime.refresh).toHaveBeenCalledWith({
+        reasoningEffort: 'high',
+      });
+      expect(sessionServiceState.updateSessionMetadata).toHaveBeenCalledWith(
+        'test-session-id',
+        '/tmp/test',
+        { reasoningEffort: 'high' }
+      );
+    });
+
+    it('活动回合期间拒绝切换 reasoning effort', async () => {
+      (session as any).pendingPrompt = new AbortController();
+      await expect(session.setReasoningEffort('low')).rejects.toThrow(
+        'Cannot switch reasoning effort while a prompt is active'
+      );
+      expect(runtimeState.runtime.refresh).not.toHaveBeenCalled();
+    });
+
+    it('持久化失败时回滚 reasoning effort', async () => {
+      sessionServiceState.updateSessionMetadata.mockRejectedValueOnce(
+        new Error('disk unavailable')
+      );
+      await expect(session.setReasoningEffort('medium')).rejects.toThrow(
+        'disk unavailable'
+      );
+      expect(runtimeState.runtime.refresh).toHaveBeenNthCalledWith(1, {
+        reasoningEffort: 'medium',
+      });
+      expect(runtimeState.runtime.refresh).toHaveBeenNthCalledWith(2, {
+        reasoningEffort: 'off',
+      });
+    });
+  });
+
+  describe('setServiceTier', () => {
+    beforeEach(async () => {
+      await session.initialize();
+    });
+
+    it('原子切换并持久化 Session service tier', async () => {
+      await session.setServiceTier('fast');
+      expect(runtimeState.runtime.resolveServiceTierConfiguration).toHaveBeenCalledWith(
+        'fast'
+      );
+      expect(runtimeState.runtime.refresh).toHaveBeenCalledWith({
+        serviceTier: 'fast',
+      });
+      expect(sessionServiceState.updateSessionMetadata).toHaveBeenCalledWith(
+        'test-session-id',
+        '/tmp/test',
+        { serviceTier: 'fast' }
+      );
+    });
+
+    it('活动回合期间拒绝切换 service tier', async () => {
+      (session as any).pendingPrompt = new AbortController();
+      await expect(session.setServiceTier('flex')).rejects.toThrow(
+        'Cannot switch service tier while a prompt is active'
+      );
+      expect(runtimeState.runtime.refresh).not.toHaveBeenCalled();
+    });
+
+    it('持久化失败时回滚 service tier', async () => {
+      sessionServiceState.updateSessionMetadata.mockRejectedValueOnce(
+        new Error('disk unavailable')
+      );
+      await expect(session.setServiceTier('fast')).rejects.toThrow('disk unavailable');
+      expect(runtimeState.runtime.refresh).toHaveBeenNthCalledWith(1, {
+        serviceTier: 'fast',
+      });
+      expect(runtimeState.runtime.refresh).toHaveBeenNthCalledWith(2, {
+        serviceTier: 'auto',
+      });
+    });
+  });
+
+  describe('setResponseVerbosity', () => {
+    beforeEach(async () => {
+      await session.initialize();
+    });
+
+    it('原子切换并持久化 Session response verbosity', async () => {
+      await session.setResponseVerbosity('high');
+      expect(
+        runtimeState.runtime.resolveResponseVerbosityConfiguration
+      ).toHaveBeenCalledWith('high');
+      expect(runtimeState.runtime.refresh).toHaveBeenCalledWith({
+        responseVerbosity: 'high',
+      });
+      expect(sessionServiceState.updateSessionMetadata).toHaveBeenCalledWith(
+        'test-session-id',
+        '/tmp/test',
+        { responseVerbosity: 'high' }
+      );
+    });
+
+    it('活动回合期间拒绝切换 response verbosity', async () => {
+      (session as any).pendingPrompt = new AbortController();
+      await expect(session.setResponseVerbosity('low')).rejects.toThrow(
+        'Cannot switch response verbosity while a prompt is active'
+      );
+      expect(runtimeState.runtime.refresh).not.toHaveBeenCalled();
+    });
+
+    it('持久化失败时回滚 response verbosity', async () => {
+      sessionServiceState.updateSessionMetadata.mockRejectedValueOnce(
+        new Error('disk unavailable')
+      );
+      await expect(session.setResponseVerbosity('high')).rejects.toThrow(
+        'disk unavailable'
+      );
+      expect(runtimeState.runtime.refresh).toHaveBeenNthCalledWith(1, {
+        responseVerbosity: 'high',
+      });
+      expect(runtimeState.runtime.refresh).toHaveBeenNthCalledWith(2, {
+        responseVerbosity: 'auto',
+      });
+    });
+  });
+
+  describe('setCommunicationStyle', () => {
+    beforeEach(async () => {
+      await session.initialize();
+    });
+
+    it('原子切换并持久化 Session communication style', async () => {
+      await session.setCommunicationStyle('explanatory');
+      expect(
+        runtimeState.runtime.resolveCommunicationStyleConfiguration
+      ).toHaveBeenCalledWith('explanatory');
+      expect(runtimeState.runtime.refresh).toHaveBeenCalledWith({
+        communicationStyle: 'explanatory',
+      });
+      expect(sessionServiceState.updateSessionMetadata).toHaveBeenCalledWith(
+        'test-session-id',
+        '/tmp/test',
+        {
+          communicationStyle: 'explanatory',
+          communicationStyleDigest: null,
+        }
+      );
+    });
+
+    it('活动回合期间拒绝切换 communication style', async () => {
+      (session as any).pendingPrompt = new AbortController();
+      await expect(session.setCommunicationStyle('friendly')).rejects.toThrow(
+        'Cannot switch communication style while a prompt is active'
+      );
+      expect(runtimeState.runtime.refresh).not.toHaveBeenCalled();
+    });
+
+    it('持久化失败时回滚 communication style', async () => {
+      sessionServiceState.updateSessionMetadata.mockRejectedValueOnce(
+        new Error('disk unavailable')
+      );
+      await expect(session.setCommunicationStyle('pragmatic')).rejects.toThrow(
+        'disk unavailable'
+      );
+      expect(runtimeState.runtime.refresh).toHaveBeenNthCalledWith(1, {
+        communicationStyle: 'pragmatic',
+      });
+      expect(runtimeState.runtime.refresh).toHaveBeenNthCalledWith(2, {
+        communicationStyle: 'auto',
+      });
+    });
+  });
+
   describe('destroy', () => {
     it('destroy 后丢弃仍在 drain 的旧 generator 产生的更新', async () => {
       await session.initialize();
@@ -1505,6 +2305,48 @@ describe('AcpSession', () => {
         ];
         expect(validKinds).toContain(kind);
       }
+    });
+
+    it('projects parallel Tasks as independent ACP tool calls', async () => {
+      const mockAgent = getMockAgent();
+      mockAgent.chatStream = async function* (): AsyncGenerator<
+        LoopEvent,
+        LoopResult,
+        void
+      > {
+        for (const [id, description] of [
+          ['parallel-task-a', 'Inspect API'],
+          ['parallel-task-b', 'Review tests'],
+        ]) {
+          yield {
+            kind: 'tool_start',
+            toolCall: {
+              id,
+              type: 'function',
+              function: {
+                name: 'Task',
+                arguments: JSON.stringify({
+                  subagent_type: 'Explore',
+                  description,
+                }),
+              },
+            },
+            toolKind: 'readonly',
+          };
+        }
+        return { success: true, finalMessage: 'Parallel work started.' };
+      };
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'Run both checks.' }],
+      });
+
+      expect(
+        mockConnection.sessionUpdates
+          .filter((update) => update.update.sessionUpdate === 'tool_call')
+          .map((update) => (update.update as { toolCallId: string }).toolCallId)
+      ).toEqual(['parallel-task-a', 'parallel-task-b']);
     });
   });
 

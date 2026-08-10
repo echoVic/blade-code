@@ -38,10 +38,27 @@ const mockChatStream =
     ) => AsyncGenerator<LoopEvent, LoopResult, void>
   >();
 
+const runtimeState = vi.hoisted(() => ({
+  runtime: {
+    dispose: vi.fn(async () => undefined),
+  },
+  create: vi.fn(),
+}));
+
+vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
+  SessionRuntime: {
+    create: runtimeState.create,
+  },
+}));
+
 vi.mock('../../../../src/agent/Agent.js', () => ({
   Agent: {
     create: vi.fn(async () => ({
       chatStream: mockChatStream,
+    })),
+    createWithRuntime: vi.fn(async () => ({
+      chatStream: mockChatStream,
+      destroy: vi.fn(async () => undefined),
     })),
   },
 }));
@@ -49,6 +66,7 @@ vi.mock('../../../../src/agent/Agent.js', () => ({
 describe('SubagentExecutor event forwarding', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    runtimeState.create.mockResolvedValue(runtimeState.runtime);
   });
 
   it('forwards all events via onEvent', async () => {
@@ -300,7 +318,14 @@ describe('SubagentExecutor event forwarding', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(Agent.create).toHaveBeenCalledWith(
+    expect(runtimeState.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'child-1',
+        workspaceRoot: '/tmp/isolated-worktree',
+      })
+    );
+    expect(Agent.createWithRuntime).toHaveBeenCalledWith(
+      runtimeState.runtime,
       expect.objectContaining({
         toolBlacklist: expect.arrayContaining(['EnterWorktree', 'ExitWorktree']),
         appendSystemPrompt: 'Focus on implementation and verification.',
@@ -338,7 +363,8 @@ describe('SubagentExecutor event forwarding', () => {
       permissionMode: PermissionMode.YOLO,
     });
 
-    expect(Agent.create).toHaveBeenCalledWith(
+    expect(Agent.createWithRuntime).toHaveBeenCalledWith(
+      runtimeState.runtime,
       expect.objectContaining({
         toolWhitelist: ['Read', 'Bash'],
         toolBlacklist: ['EnterWorktree', 'ExitWorktree', 'Bash', 'Write'],

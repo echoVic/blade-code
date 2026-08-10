@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Type } from '../../../../src/schema/index.js';
 import { executeLoopGenerator } from '../../../../src/agent/loop/executeLoopGenerator.js';
 import type { LoopDependencies, LoopEvent } from '../../../../src/agent/loop/types.js';
 import type { ChatContext, LoopResult } from '../../../../src/agent/types.js';
 import { DEFAULT_CONFIG } from '../../../../src/config/defaults.js';
 import { PermissionMode } from '../../../../src/config/types.js';
+import { Type } from '../../../../src/schema/index.js';
 import type {
   ChatConfig,
   ChatResponse,
@@ -333,7 +333,8 @@ class MissingRequiredTaskChatService implements IChatService {
 
 function createTaskLoopDependencies(
   chatService: IChatService,
-  taskExecution: ReturnType<typeof vi.fn>
+  taskExecution: ReturnType<typeof vi.fn>,
+  options: { exactlyOnce?: boolean } = {}
 ): LoopDependencies {
   const registry = new ToolRegistry();
   registry.register(
@@ -342,6 +343,7 @@ function createTaskLoopDependencies(
       displayName: 'Task',
       kind: ToolKind.ReadOnly,
       isConcurrencySafe: false,
+      parallelism: 'shared',
       description: { short: 'Delegate work' },
       schema: Type.Unknown(),
       execute: taskExecution as any,
@@ -354,9 +356,12 @@ function createTaskLoopDependencies(
     }),
     executionEngine: undefined,
     config: DEFAULT_CONFIG,
-    runtimeOptions: {
-      appendSystemPrompt: 'Call Task exactly once, then return a final answer.',
-    },
+    runtimeOptions:
+      options.exactlyOnce === false
+        ? {}
+        : {
+            appendSystemPrompt: 'Call Task exactly once, then return a final answer.',
+          },
     currentModelMaxContextTokens: 64_000,
     applySkillToolRestrictions: (tools) => tools,
   };
@@ -401,6 +406,14 @@ async function drain(
     current = await generator.next();
   }
   return { events, result: current.value };
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 describe('executeLoopGenerator streaming tool policy', () => {
@@ -602,6 +615,60 @@ describe('executeLoopGenerator streaming tool policy', () => {
         errorType: 'validation_error',
       },
     ]);
+  });
+
+  it('runs independent Tasks from one production stream concurrently', async () => {
+    let started = 0;
+    let markBothStarted!: () => void;
+    const bothStarted = new Promise<void>((resolve) => {
+      markBothStarted = resolve;
+    });
+    const first = deferred();
+    const second = deferred();
+    const taskExecution = vi.fn(async (params: { prompt?: string }) => {
+      started++;
+      if (started === 2) markBothStarted();
+      await (params.prompt === 'first' ? first.promise : second.promise);
+      return {
+        success: true,
+        llmContent: `${params.prompt}:done`,
+      };
+    });
+    const dependencies = createTaskLoopDependencies(
+      new ExactlyOnceStreamingChatService(),
+      taskExecution,
+      { exactlyOnce: false }
+    );
+    const context: ChatContext = {
+      messages: [],
+      userId: 'parallel-stream-user',
+      sessionId: 'parallel-stream-session',
+      workspaceRoot: process.cwd(),
+      permissionMode: PermissionMode.YOLO,
+    };
+
+    const run = drain(
+      executeLoopGenerator(
+        dependencies,
+        'Run both independent reviews in parallel.',
+        context,
+        { stream: true },
+        undefined
+      )
+    );
+
+    await bothStarted;
+    expect(taskExecution).toHaveBeenCalledTimes(2);
+    second.resolve();
+    first.resolve();
+
+    const { events, result } = await run;
+    expect(result.success).toBe(true);
+    expect(
+      events
+        .filter((event) => event.kind === 'tool_result')
+        .map((event) => ('function' in event.toolCall ? event.toolCall.id : ''))
+    ).toEqual(['stream-task-one', 'stream-task-two']);
   });
 
   it('releases an unexecuted Task admission when the model stream falls back', async () => {

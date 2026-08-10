@@ -5,8 +5,8 @@
  * 用户可以通过 ~/.blade/agents/ 或 .blade/agents/ 扩展更多 agent。
  */
 
-import type { SubagentConfig } from './types.js';
 import { verificationAgentConfig } from './builtinVerificationAgent.js';
+import type { SubagentConfig } from './types.js';
 
 /**
  * 内置 Subagent 列表（4 个核心 agent）

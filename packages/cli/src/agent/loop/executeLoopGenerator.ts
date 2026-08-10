@@ -697,7 +697,7 @@ export async function* executeLoopGenerator(
     const registry = deps.toolExecutor.getRegistry();
     const permissionMode = context.permissionMode as PermissionMode | undefined;
     let rawTools = registry.getFunctionDeclarationsByMode(permissionMode);
-    rawTools = injectSkillsMetadata(rawTools, context.workspaceRoot);
+    rawTools = injectSkillsMetadata(rawTools);
     const tools = deps.applySkillToolRestrictions(rawTools);
     const failureTracker = createToolFailureTracker();
     const staleDetector = createStaleLoopDetector();
@@ -1189,8 +1189,7 @@ export async function* executeLoopGenerator(
             deps,
             context,
             turnResult.content || '',
-            lastMessageUuid,
-            turnResult.reasoningContent
+            lastMessageUuid
           );
           if (recoveryAssistantUuid) lastMessageUuid = recoveryAssistantUuid;
 
@@ -1233,8 +1232,7 @@ export async function* executeLoopGenerator(
             deps,
             context,
             turnResult.content || '',
-            lastMessageUuid,
-            turnResult.reasoningContent
+            lastMessageUuid
           );
           if (uuid) lastMessageUuid = uuid;
 
@@ -1269,8 +1267,7 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid,
-              turnResult.reasoningContent
+              lastMessageUuid
             );
             if (steeringAssistantUuid) {
               lastMessageUuid = steeringAssistantUuid;
@@ -1321,8 +1318,7 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid,
-              turnResult.reasoningContent
+              lastMessageUuid
             );
             if (retryAssistantUuid) lastMessageUuid = retryAssistantUuid;
 
@@ -1362,8 +1358,7 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid,
-              turnResult.reasoningContent
+              lastMessageUuid
             );
             if (delegationAssistantUuid) {
               lastMessageUuid = delegationAssistantUuid;
@@ -1398,8 +1393,7 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid,
-              turnResult.reasoningContent
+              lastMessageUuid
             );
             if (delegationAssistantUuid) {
               lastMessageUuid = delegationAssistantUuid;
@@ -1438,8 +1432,7 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid,
-              turnResult.reasoningContent
+              lastMessageUuid
             );
             if (worktreeAssistantUuid) {
               lastMessageUuid = worktreeAssistantUuid;
@@ -1474,8 +1467,7 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid,
-              turnResult.reasoningContent
+              lastMessageUuid
             );
             if (worktreeAssistantUuid) {
               lastMessageUuid = worktreeAssistantUuid;
@@ -1515,8 +1507,7 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid,
-              turnResult.reasoningContent
+              lastMessageUuid
             );
             if (verificationAssistantUuid) {
               lastMessageUuid = verificationAssistantUuid;
@@ -1551,8 +1542,7 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid,
-              turnResult.reasoningContent
+              lastMessageUuid
             );
             if (verificationAssistantUuid) {
               lastMessageUuid = verificationAssistantUuid;
@@ -1595,8 +1585,7 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid,
-              turnResult.reasoningContent
+              lastMessageUuid
             );
             if (continueAssistantUuid) lastMessageUuid = continueAssistantUuid;
 
@@ -1629,8 +1618,7 @@ export async function* executeLoopGenerator(
               deps,
               context,
               turnResult.content || '',
-              lastMessageUuid,
-              turnResult.reasoningContent
+              lastMessageUuid
             );
             if (steeringAssistantUuid) {
               lastMessageUuid = steeringAssistantUuid;
@@ -1655,8 +1643,7 @@ export async function* executeLoopGenerator(
             deps,
             context,
             turnResult.content || '',
-            lastMessageUuid,
-            turnResult.reasoningContent
+            lastMessageUuid
           );
           if (uuid) lastMessageUuid = uuid;
 
@@ -1692,8 +1679,7 @@ export async function* executeLoopGenerator(
             deps,
             context,
             turnResult.content || '',
-            lastMessageUuid,
-            turnResult.reasoningContent
+            lastMessageUuid
           );
           if (uuid) lastMessageUuid = uuid;
         }
@@ -1974,16 +1960,6 @@ export async function* executeLoopGenerator(
                         : undefined,
                   }
                 : undefined;
-            const durableMetadata = metadata
-              ? (() => {
-                  const {
-                    oldContent: _oldContent,
-                    newContent: _newContent,
-                    ...rest
-                  } = metadata;
-                  return toJsonValue(rest);
-                })()
-              : undefined;
             const uuid = await persistToolResult(
               deps,
               context,
@@ -1992,8 +1968,7 @@ export async function* executeLoopGenerator(
               result.success ? toJsonValue(result.llmContent) : null,
               toolUseUuid,
               result.success ? undefined : result.error?.message,
-              subagentRef,
-              durableMetadata
+              subagentRef
             );
             if (uuid) lastMessageUuid = uuid;
           }

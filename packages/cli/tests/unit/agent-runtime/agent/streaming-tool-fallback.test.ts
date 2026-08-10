@@ -6,7 +6,7 @@
  * - per-tool abort
  * - discard 后复用
  * - chunkCount 重置（processStreamResponse 逻辑）
- * - 非安全工具排队
+ * - 非预启动工具排队后批量交给共享 gate
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -268,7 +268,7 @@ describe('StreamingToolExecutor — fallback & epoch guard', () => {
       expect(pipeline.execute).not.toHaveBeenCalled();
     });
 
-    it('queued tools execute sequentially on getRemainingResults', async () => {
+    it('queued tools are dispatched in source order on getRemainingResults', async () => {
       const callOrder: string[] = [];
       pipeline.execute.mockImplementation(async (name: string) => {
         callOrder.push(name);

@@ -1,18 +1,23 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ProjectRuleCatalog } from '../../../../src/agent/resources/WorkspaceProjectRules.js';
 import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
 import type { AgentSession } from '../../../../src/agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../../src/agent/subagents/BackgroundAgentManager.js';
+import { PermissionMode } from '../../../../src/config/types.js';
 import { PersistentStore } from '../../../../src/context/storage/PersistentStore.js';
 import { getSessionFilePath } from '../../../../src/context/storage/pathUtils.js';
+import { HookManager } from '../../../../src/hooks/HookManager.js';
+import { HookEvent } from '../../../../src/hooks/types/HookTypes.js';
 import { McpRegistry } from '../../../../src/mcp/McpRegistry.js';
 import { Bus } from '../../../../src/server/bus.js';
 import {
   createChatServiceAsync,
   type IChatService,
 } from '../../../../src/services/ChatServiceInterface.js';
+import { CommunicationStyleCatalog } from '../../../../src/services/communicationStyle.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
 import { FileAccessTracker } from '../../../../src/tools/builtin/file/FileAccessTracker.js';
 import { BackgroundShellManager } from '../../../../src/tools/builtin/shell/BackgroundShellManager.js';
@@ -37,8 +42,157 @@ const worktreeMocks = vi.hoisted(() => ({
   releaseSession: vi.fn(),
 }));
 
+const mcpResolverMocks = vi.hoisted(() => ({
+  resolve: vi.fn(
+    async ({
+      storeServers,
+      sessionServers,
+      strictCliConfig,
+    }: {
+      storeServers: Record<string, unknown>;
+      sessionServers?: Record<string, unknown>;
+      strictCliConfig?: boolean;
+    }) => ({
+      ...(strictCliConfig ? {} : storeServers),
+      ...(strictCliConfig ? {} : sessionServers),
+    })
+  ),
+}));
+
+const resourceMocks = vi.hoisted(() => {
+  const snapshot = {
+    applyOverrides: vi.fn(),
+    getSubagent: vi.fn(),
+    getAllNames: vi.fn(() => []),
+  };
+  return {
+    snapshot,
+    resolve: vi.fn(async (workspaceRoot: string) => ({
+      workspaceRoot,
+      subagents: {
+        snapshot: () => snapshot,
+      },
+    })),
+    createSnapshot: vi.fn(
+      (resources: {
+        workspaceRoot?: string;
+        projectRoot?: string;
+        subagents: { snapshot: () => typeof snapshot };
+      }) => ({
+        projectRoot: resources.projectRoot ?? resources.workspaceRoot ?? '/workspace',
+        subagents: resources.subagents.snapshot(),
+        skills: {},
+        commands: {},
+      })
+    ),
+  };
+});
+
+const modelResourceMocks = vi.hoisted(() => {
+  const models = [
+    {
+      id: 'model-1',
+      displayName: 'Model 1',
+      provider: 'openai',
+      model: 'gpt-4',
+    },
+    {
+      id: 'model-2',
+      displayName: 'Model 2',
+      provider: 'openai',
+      model: 'gpt-4.1',
+    },
+  ];
+  const catalog = {
+    resolveConfig: vi.fn((config: (typeof models)[number]) => ({
+      id: config.model,
+      name: config.displayName,
+      provider: config.provider,
+      api: 'openai-completions',
+      baseUrl: 'https://api.openai.com/v1',
+      reasoning: false,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: config.id === 'model-2' ? 1_047_576 : 8_192,
+      maxTokens: 8_192,
+    })),
+  };
+  const create = (projectRoot: string, startupConfig: Record<string, unknown>) => ({
+    projectRoot,
+    config: {
+      ...startupConfig,
+      currentModelId: 'model-1',
+      models: structuredClone(models),
+      modelProviders: {},
+      mcpServers: {},
+    },
+    catalog,
+  });
+  return {
+    catalog,
+    resolve: vi.fn(
+      async (projectRoot: string, startupConfig: Record<string, unknown>) =>
+        create(projectRoot, startupConfig)
+    ),
+    snapshot: vi.fn(
+      (resources: { projectRoot: string; config: Record<string, unknown> }) =>
+        create(resources.projectRoot, resources.config)
+    ),
+  };
+});
+
+const lspResourceMocks = vi.hoisted(() => {
+  const create = (
+    projectRoot: string,
+    servers: Readonly<Record<string, unknown>> = {}
+  ) => ({
+    projectRoot,
+    servers: structuredClone(servers),
+  });
+  return {
+    resolve: vi.fn(
+      async (projectRoot: string, servers: Readonly<Record<string, unknown>> = {}) =>
+        create(projectRoot, servers)
+    ),
+    snapshot: vi.fn(
+      (resources: {
+        projectRoot: string;
+        servers: Readonly<Record<string, unknown>>;
+      }) => create(resources.projectRoot, resources.servers)
+    ),
+  };
+});
+
+const patchRecoveryMocks = vi.hoisted(() => ({
+  recover: vi.fn(async () => 0),
+}));
+
 vi.mock('../../../../src/worktree/WorktreeManager.js', () => ({
   worktreeManager: worktreeMocks,
+}));
+
+vi.mock('../../../../src/mcp/resolveWorkspaceMcpConfig.js', () => ({
+  resolveWorkspaceMcpConfig: mcpResolverMocks.resolve,
+}));
+
+vi.mock('../../../../src/agent/resources/WorkspaceAgentResources.js', () => ({
+  resolveWorkspaceAgentResources: resourceMocks.resolve,
+  snapshotWorkspaceAgentResources: resourceMocks.createSnapshot,
+}));
+
+vi.mock('../../../../src/agent/resources/WorkspaceModelResources.js', () => ({
+  cloneWorkspaceModelConfig: (config: unknown) => config,
+  resolveWorkspaceModelResources: modelResourceMocks.resolve,
+  snapshotWorkspaceModelResources: modelResourceMocks.snapshot,
+}));
+
+vi.mock('../../../../src/lsp/WorkspaceLspResources.js', () => ({
+  resolveWorkspaceLspResources: lspResourceMocks.resolve,
+  snapshotWorkspaceLspResources: lspResourceMocks.snapshot,
+}));
+
+vi.mock('../../../../src/tools/builtin/file/PatchTransactionCoordinator.js', () => ({
+  recoverWorkspacePatchTransactions: patchRecoveryMocks.recover,
 }));
 
 vi.mock('../../../../src/store/vanilla.js', () => ({
@@ -54,6 +208,10 @@ vi.mock('../../../../src/store/vanilla.js', () => ({
     temperature: 0,
     maxOutputTokens: 8192,
     timeout: 30000,
+    maxConcurrentTasks: 3,
+    maxQueuedTasks: 100,
+    env: { BASE_SESSION_ENV: 'base-value' },
+    hooks: { enabled: true },
   })),
   getCurrentModel: vi.fn(() => ({
     id: 'model-1',
@@ -84,6 +242,12 @@ vi.mock('../../../../src/config/index.js', async () => {
         validateConfig: vi.fn(),
         loadWorkspacePermissions: vi.fn(
           async (_workspaceRoot: string, permissions: unknown) => permissions
+        ),
+        loadWorkspaceMcpServers: vi.fn(
+          async (_workspaceRoot: string, servers: Record<string, unknown>) => servers
+        ),
+        loadWorkspaceHooks: vi.fn(
+          async (_workspaceRoot: string, hooks: unknown) => hooks
         ),
       })),
     },
@@ -151,6 +315,13 @@ describe('SessionRuntime', () => {
     const isolatedRegistry = {
       registerServer: vi.fn().mockResolvedValue(undefined),
       getAvailableTools: vi.fn().mockResolvedValue([]),
+      getCatalogSnapshot: vi.fn(() => ({ revision: 0, tools: [] })),
+      getInstructionsSnapshot: vi.fn(() => ({
+        revision: 0,
+        instructions: [],
+      })),
+      on: vi.fn(),
+      off: vi.fn(),
       disconnectAll: vi.fn().mockResolvedValue(undefined),
     };
     const createIsolated = vi
@@ -178,14 +349,71 @@ describe('SessionRuntime', () => {
       workspaceRoot: expect.any(String),
     });
     expect(createIsolated).toHaveBeenCalledTimes(1);
+    expect(createIsolated).toHaveBeenCalledWith({
+      roots: [runtime.workspaceRoot],
+      samplingAvailable: true,
+      oauthCredentialAccess: true,
+      exposeLogDetails: true,
+      exposeInstructions: true,
+      artifactWriter: expect.any(Object),
+    });
     expect(globalRegistry).not.toHaveBeenCalled();
-    expect(isolatedRegistry.registerServer).toHaveBeenCalledWith(
-      'project',
-      mcpServers.project
-    );
+    expect(isolatedRegistry.registerServer).toHaveBeenCalledWith('project', {
+      ...mcpServers.project,
+      env: { BASE_SESSION_ENV: 'base-value' },
+    });
 
     await runtime.dispose();
 
+    expect(isolatedRegistry.disconnectAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves workspace MCP for every runtime without using the global registry', async () => {
+    const workspaceRoot = path.join(storageRoot, 'workspace-b');
+    const resolvedServers = {
+      target: {
+        type: 'stdio' as const,
+        command: 'target-server',
+        cwd: workspaceRoot,
+      },
+    };
+    mcpResolverMocks.resolve.mockResolvedValueOnce(resolvedServers);
+    const isolatedRegistry = {
+      registerServer: vi.fn().mockResolvedValue(undefined),
+      getAvailableTools: vi.fn().mockResolvedValue([]),
+      getCatalogSnapshot: vi.fn(() => ({ revision: 0, tools: [] })),
+      getInstructionsSnapshot: vi.fn(() => ({
+        revision: 0,
+        instructions: [],
+      })),
+      on: vi.fn(),
+      off: vi.fn(),
+      disconnectAll: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.spyOn(McpRegistry, 'createIsolated').mockReturnValue(
+      isolatedRegistry as unknown as McpRegistry
+    );
+    const globalRegistry = vi.spyOn(McpRegistry, 'getInstance');
+
+    const runtime = await SessionRuntime.create({
+      sessionId: 'workspace-mcp-session',
+      workspaceRoot,
+    });
+
+    expect(mcpResolverMocks.resolve).toHaveBeenCalledWith({
+      workspaceRoot,
+      storeServers: {},
+      sessionServers: undefined,
+      cliConfigs: undefined,
+      strictCliConfig: undefined,
+    });
+    expect(isolatedRegistry.registerServer).toHaveBeenCalledWith('target', {
+      ...resolvedServers.target,
+      env: { BASE_SESSION_ENV: 'base-value' },
+    });
+    expect(globalRegistry).not.toHaveBeenCalled();
+
+    await runtime.dispose();
     expect(isolatedRegistry.disconnectAll).toHaveBeenCalledTimes(1);
   });
 
@@ -195,6 +423,81 @@ describe('SessionRuntime', () => {
     expect(runtime.sessionId).toBe('session-1');
 
     await runtime.dispose();
+  });
+
+  it('keeps SessionStart environment inside the owned runtime', async () => {
+    const variable = 'BLADE_TEST_SESSION_ONLY_ENV';
+    const previous = process.env[variable];
+    delete process.env[variable];
+    HookManager.resetInstance();
+    const hookManager = HookManager.getInstance();
+    const off = hookManager.registerFunction(
+      HookEvent.SessionStart,
+      undefined,
+      async (_input, context) => {
+        expect(context.environment).toMatchObject({
+          BASE_SESSION_ENV: 'base-value',
+        });
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'SessionStart',
+            env: { [variable]: 'hook-value' },
+          },
+        };
+      }
+    );
+
+    let runtime: SessionRuntime | undefined;
+    try {
+      runtime = await SessionRuntime.create({
+        sessionId: 'session-environment',
+      });
+      expect(runtime.getConfig().env).toMatchObject({
+        BASE_SESSION_ENV: 'base-value',
+        [variable]: 'hook-value',
+      });
+      expect(Object.isFrozen(runtime.getConfig().env)).toBe(true);
+      let executionEnvironment: Readonly<Record<string, string>> | undefined;
+      const executor = runtime.createToolExecutor();
+      executor.once('executionStarted', (event) => {
+        executionEnvironment = event.context.environment;
+      });
+      await executor.execute('MissingTool', {}, {});
+      expect(executionEnvironment).toMatchObject({
+        BASE_SESSION_ENV: 'base-value',
+        [variable]: 'hook-value',
+      });
+      expect(process.env[variable]).toBeUndefined();
+    } finally {
+      await runtime?.dispose();
+      off();
+      HookManager.resetInstance();
+      if (previous !== undefined) process.env[variable] = previous;
+    }
+  });
+
+  it('fails initialization for an invalid SessionStart environment', async () => {
+    HookManager.resetInstance();
+    const hookManager = HookManager.getInstance();
+    const off = hookManager.registerFunction(
+      HookEvent.SessionStart,
+      undefined,
+      async () => ({
+        hookSpecificOutput: {
+          hookEventName: 'SessionStart',
+          env: { 'INVALID-NAME': 'value' },
+        },
+      })
+    );
+
+    try {
+      await expect(
+        SessionRuntime.create({ sessionId: 'invalid-session-environment' })
+      ).rejects.toThrow('Invalid environment variable name');
+    } finally {
+      off();
+      HookManager.resetInstance();
+    }
   });
 
   it('restores the task model snapshot from durable metadata', async () => {
@@ -261,6 +564,7 @@ describe('SessionRuntime', () => {
     expect(worktreeMocks.cleanupStaleAgentWorktrees).toHaveBeenCalledWith({
       workspaceRoot,
     });
+    expect(patchRecoveryMocks.recover).toHaveBeenCalledWith(workspaceRoot);
     expect(
       existsSync(getSessionFilePath(workspaceRoot, 'workspace-owned-session'))
     ).toBe(true);
@@ -651,6 +955,7 @@ describe('SessionRuntime', () => {
         agentId: source.id,
         prompt: 'Check the follow-up',
         owner,
+        reasoningEffort: 'off',
         config: expect.objectContaining({
           name: 'Explore',
           model: 'model-1',
@@ -710,6 +1015,26 @@ describe('SessionRuntime', () => {
     });
     expect(resumed.sessionId).toBe('exclusive-session');
     await resumed.dispose();
+  });
+
+  it('rejects archived sessions before restoring runtime resources', async () => {
+    const workspaceRoot = path.join(storageRoot, 'archived-runtime-project');
+    const sessionId = 'archived-runtime-session';
+    await SessionService.createSessionMetadata(sessionId, workspaceRoot, {
+      taskStatus: 'completed',
+    });
+    await SessionService.archiveSession(sessionId, workspaceRoot);
+    worktreeMocks.cleanupStaleAgentWorktrees.mockClear();
+
+    await expect(
+      SessionRuntime.create({ sessionId, workspaceRoot })
+    ).rejects.toMatchObject({
+      name: 'SessionArchivedError',
+      code: 'BLADE_SESSION_ARCHIVED',
+      archivedBySessionId: sessionId,
+    });
+    expect(worktreeMocks.cleanupStaleAgentWorktrees).not.toHaveBeenCalled();
+    expect(createChatServiceAsync).not.toHaveBeenCalled();
   });
 
   it('marks an existing top-level task failed when runtime initialization fails', async () => {
@@ -883,6 +1208,386 @@ describe('SessionRuntime', () => {
     expect(secondDispose).toHaveBeenCalledTimes(1);
   });
 
+  it('owns reasoning effort per Session and recreates the provider atomically', async () => {
+    const reasoningModel = (config: { id: string; model: string }) => ({
+      id: config.model,
+      name: 'Reasoning Model',
+      provider: 'openai',
+      api: 'openai-responses',
+      baseUrl: 'https://api.openai.com/v1',
+      reasoning: true,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128_000,
+      maxTokens: 16_000,
+    });
+    vi.mocked(modelResourceMocks.catalog.resolveConfig)
+      .mockImplementationOnce(reasoningModel as never)
+      .mockImplementationOnce(reasoningModel as never);
+    const firstService = createDisposableChatService(
+      vi.fn().mockResolvedValue(undefined)
+    );
+    const secondService = createDisposableChatService(
+      vi.fn().mockResolvedValue(undefined)
+    );
+    vi.mocked(createChatServiceAsync)
+      .mockResolvedValueOnce(firstService)
+      .mockResolvedValueOnce(secondService);
+
+    const runtime = await SessionRuntime.create({
+      sessionId: 'reasoning-session',
+      reasoningEffort: 'low',
+    });
+    expect(runtime.getReasoningConfiguration()).toEqual({
+      selection: 'low',
+      effective: 'low',
+      supported: ['off', 'minimal', 'low', 'medium', 'high'],
+    });
+    expect(createChatServiceAsync).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        reasoningEnabled: true,
+        reasoningEffort: 'low',
+      })
+    );
+
+    await runtime.refresh({ reasoningEffort: 'high' });
+    expect(runtime.getReasoningConfiguration().selection).toBe('high');
+    expect(createChatServiceAsync).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        reasoningEnabled: true,
+        reasoningEffort: 'high',
+      })
+    );
+    await expect(runtime.refresh({ reasoningEffort: 'xhigh' })).rejects.toThrow(
+      'xhigh is not supported'
+    );
+    expect(runtime.getReasoningConfiguration().selection).toBe('high');
+    expect(createChatServiceAsync).toHaveBeenCalledTimes(2);
+    const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
+    const builtinOptions = vi.mocked(getBuiltinTools).mock.calls.at(-1)?.[0];
+    expect(builtinOptions?.getReasoningEffort?.()).toBe('high');
+
+    await runtime.dispose();
+  });
+
+  it('owns provider service tier per Session and updates subagent inheritance dynamically', async () => {
+    const firstService = createDisposableChatService(
+      vi.fn().mockResolvedValue(undefined)
+    );
+    const secondService = createDisposableChatService(
+      vi.fn().mockResolvedValue(undefined)
+    );
+    const thirdService = createDisposableChatService(
+      vi.fn().mockResolvedValue(undefined)
+    );
+    vi.mocked(createChatServiceAsync)
+      .mockResolvedValueOnce(firstService)
+      .mockResolvedValueOnce(secondService)
+      .mockResolvedValueOnce(thirdService);
+    const runtime = await SessionRuntime.create({
+      sessionId: 'service-tier-session',
+      serviceTier: 'standard',
+    });
+    expect(runtime.getServiceTierConfiguration()).toEqual({
+      selection: 'standard',
+      effective: 'standard',
+      supported: ['standard', 'fast', 'flex'],
+      providerValue: 'default',
+    });
+    expect(createChatServiceAsync).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ serviceTier: 'default' })
+    );
+
+    await runtime.refresh({ serviceTier: 'fast' });
+    expect(runtime.getServiceTierConfiguration().selection).toBe('fast');
+    expect(createChatServiceAsync).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ serviceTier: 'priority' })
+    );
+
+    await runtime.refresh({ modelId: 'model-2' });
+    expect(runtime.getCurrentModelId()).toBe('model-2');
+    expect(runtime.getServiceTierConfiguration().selection).toBe('fast');
+    expect(createChatServiceAsync).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ serviceTier: 'priority' })
+    );
+    const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
+    const builtinOptions = vi.mocked(getBuiltinTools).mock.calls.at(-1)?.[0];
+    expect(builtinOptions?.getServiceTier?.()).toBe('fast');
+
+    await runtime.dispose();
+  });
+
+  it('owns response verbosity per Session and preserves it across model switches', async () => {
+    const verbosityModel = (config: {
+      id: string;
+      model: string;
+      displayName: string;
+    }) =>
+      ({
+        id: config.id === 'model-2' ? 'gpt-5.4' : 'gpt-5.5',
+        name: config.displayName,
+        provider: 'openai',
+        api: 'openai-completions',
+        baseUrl: 'https://api.openai.com/v1',
+        reasoning: false,
+        input: ['text'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 128_000,
+        maxTokens: 16_000,
+      }) as never;
+    vi.mocked(modelResourceMocks.catalog.resolveConfig)
+      .mockImplementationOnce(verbosityModel)
+      .mockImplementationOnce(verbosityModel)
+      .mockImplementationOnce(verbosityModel);
+    const firstService = createDisposableChatService(
+      vi.fn().mockResolvedValue(undefined)
+    );
+    const secondService = createDisposableChatService(
+      vi.fn().mockResolvedValue(undefined)
+    );
+    const thirdService = createDisposableChatService(
+      vi.fn().mockResolvedValue(undefined)
+    );
+    vi.mocked(createChatServiceAsync)
+      .mockResolvedValueOnce(firstService)
+      .mockResolvedValueOnce(secondService)
+      .mockResolvedValueOnce(thirdService);
+
+    const runtime = await SessionRuntime.create({
+      sessionId: 'response-verbosity-session',
+      responseVerbosity: 'low',
+    });
+    expect(runtime.getResponseVerbosityConfiguration()).toEqual({
+      selection: 'low',
+      effective: 'low',
+      supported: ['low', 'medium', 'high'],
+      providerValue: 'low',
+    });
+    expect(createChatServiceAsync).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ responseVerbosity: 'low' })
+    );
+
+    await runtime.refresh({ responseVerbosity: 'high' });
+    expect(runtime.getResponseVerbosityConfiguration().selection).toBe('high');
+    expect(createChatServiceAsync).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ responseVerbosity: 'high' })
+    );
+
+    await runtime.refresh({ modelId: 'model-2' });
+    expect(runtime.getCurrentModelId()).toBe('model-2');
+    expect(runtime.getResponseVerbosityConfiguration().selection).toBe('high');
+    expect(createChatServiceAsync).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ responseVerbosity: 'high' })
+    );
+    const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
+    const builtinOptions = vi.mocked(getBuiltinTools).mock.calls.at(-1)?.[0];
+    expect(builtinOptions?.getResponseVerbosity?.()).toBe('high');
+
+    await runtime.dispose();
+  });
+
+  it('owns communication style per Session without rebuilding the provider', async () => {
+    const runtime = await SessionRuntime.create({
+      sessionId: 'communication-style-session',
+      communicationStyle: 'pragmatic',
+    });
+
+    expect(runtime.getCommunicationStyleConfiguration()).toMatchObject({
+      selection: 'pragmatic',
+      effective: 'pragmatic',
+      source: 'built-in',
+      prompt: expect.stringContaining('deeply pragmatic'),
+      supported: expect.arrayContaining([
+        expect.objectContaining({ id: 'explanatory' }),
+      ]),
+    });
+    expect(createChatServiceAsync).toHaveBeenCalledTimes(1);
+    const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
+    const builtinOptions = vi.mocked(getBuiltinTools).mock.calls.at(-1)?.[0];
+    expect(builtinOptions?.getCommunicationStyle?.()).toBe('pragmatic');
+
+    await runtime.refresh({ communicationStyle: 'explanatory' });
+    expect(runtime.getCommunicationStyleConfiguration()).toMatchObject({
+      selection: 'explanatory',
+      effective: 'explanatory',
+      prompt: expect.stringContaining('implementation choices'),
+    });
+    expect(createChatServiceAsync).toHaveBeenCalledTimes(1);
+
+    await runtime.refresh({ modelId: 'model-2' });
+    expect(runtime.getCurrentModelId()).toBe('model-2');
+    expect(runtime.getCommunicationStyleConfiguration().selection).toBe('explanatory');
+    expect(createChatServiceAsync).toHaveBeenCalledTimes(2);
+
+    await runtime.dispose();
+  });
+
+  it('pins custom style provenance across durable runtime reconstruction', async () => {
+    const catalog = new CommunicationStyleCatalog([
+      {
+        id: 'project:strict',
+        name: 'Strict',
+        description: 'Strict project communication',
+        source: 'project',
+        prompt: 'PINNED_STYLE_MARKER',
+      },
+    ]);
+    const digest = catalog.resolve('project:strict').contentSha256!;
+    const snapshot = (resources: {
+      workspaceRoot?: string;
+      projectRoot?: string;
+      subagents: { snapshot: () => unknown };
+    }) => ({
+      projectRoot: resources.projectRoot ?? resources.workspaceRoot ?? '/workspace',
+      subagents: resources.subagents.snapshot(),
+      skills: {},
+      commands: {},
+      communicationStyles: catalog.snapshot(),
+    });
+    resourceMocks.createSnapshot
+      .mockImplementationOnce(snapshot as never)
+      .mockImplementationOnce(snapshot as never)
+      .mockImplementationOnce(snapshot as never);
+
+    const mismatchedWorkspace = path.join(storageRoot, 'style-mismatch');
+    await SessionService.createSessionMetadata(
+      'custom-style-mismatch',
+      mismatchedWorkspace,
+      {
+        taskStatus: 'completed',
+        communicationStyle: 'project:strict',
+        communicationStyleDigest: 'f'.repeat(64),
+      }
+    );
+    await expect(
+      SessionRuntime.create({
+        sessionId: 'custom-style-mismatch',
+        workspaceRoot: mismatchedWorkspace,
+      })
+    ).rejects.toThrow('Communication style provenance mismatch');
+
+    const legacyWorkspace = path.join(storageRoot, 'style-backfill');
+    await SessionService.createSessionMetadata(
+      'custom-style-backfill',
+      legacyWorkspace,
+      {
+        taskStatus: 'completed',
+        communicationStyle: 'project:strict',
+      }
+    );
+    const runtime = await SessionRuntime.create({
+      sessionId: 'custom-style-backfill',
+      workspaceRoot: legacyWorkspace,
+    });
+    expect(
+      (
+        await SessionService.findSessionMetadata(
+          'custom-style-backfill',
+          legacyWorkspace
+        )
+      )?.communicationStyleDigest
+    ).toBe(digest);
+    await runtime.dispose();
+
+    const recoveryWorkspace = path.join(storageRoot, 'style-recovery');
+    await SessionService.createSessionMetadata(
+      'custom-style-recovery',
+      recoveryWorkspace,
+      {
+        taskStatus: 'completed',
+        communicationStyle: 'project:strict',
+        communicationStyleDigest: 'f'.repeat(64),
+      }
+    );
+    const recovered = await SessionRuntime.create({
+      sessionId: 'custom-style-recovery',
+      workspaceRoot: recoveryWorkspace,
+      communicationStyle: 'auto',
+    });
+    expect(recovered.getCommunicationStyleConfiguration().selection).toBe('auto');
+    await recovered.dispose();
+  });
+
+  it('pins static project instruction provenance across reconstruction', async () => {
+    const workspace = path.join(storageRoot, 'project-rule-provenance');
+    mkdirSync(workspace, { recursive: true });
+    const catalog = new ProjectRuleCatalog(workspace, [
+      {
+        id: 'project:root-rule',
+        relativePath: 'BLADE.md',
+        source: 'project',
+        kind: 'instruction',
+        scopeDirectory: '',
+        priority: 60,
+        conditional: false,
+        content: 'STATIC_PROJECT_RULE',
+        contentSha256: 'a'.repeat(64),
+      },
+    ]);
+    const digest = catalog.staticRules(workspace).provenanceSha256;
+    const snapshot = (resources: {
+      workspaceRoot?: string;
+      projectRoot?: string;
+      subagents: { snapshot: () => unknown };
+    }) => ({
+      projectRoot: resources.projectRoot ?? resources.workspaceRoot ?? workspace,
+      subagents: resources.subagents.snapshot(),
+      skills: {},
+      commands: {},
+      projectRules: catalog.snapshot(),
+    });
+    resourceMocks.createSnapshot
+      .mockImplementationOnce(snapshot as never)
+      .mockImplementationOnce(snapshot as never)
+      .mockImplementationOnce(snapshot as never);
+
+    await SessionService.createSessionMetadata('project-rules-mismatch', workspace, {
+      taskStatus: 'completed',
+      projectInstructionsDigest: 'f'.repeat(64),
+    });
+    await expect(
+      SessionRuntime.create({
+        sessionId: 'project-rules-mismatch',
+        workspaceRoot: workspace,
+      })
+    ).rejects.toThrow('Project instruction provenance mismatch');
+
+    await SessionService.createSessionMetadata('project-rules-backfill', workspace, {
+      taskStatus: 'completed',
+    });
+    const runtime = await SessionRuntime.create({
+      sessionId: 'project-rules-backfill',
+      workspaceRoot: workspace,
+    });
+    expect(
+      (await SessionService.findSessionMetadata('project-rules-backfill', workspace))
+        ?.projectInstructionsDigest
+    ).toBe(digest);
+    await runtime.dispose();
+
+    const freshRuntime = await SessionRuntime.create({
+      sessionId: 'project-rules-fresh-session',
+      workspaceRoot: workspace,
+    });
+    expect(
+      (
+        await SessionService.findSessionMetadata(
+          'project-rules-fresh-session',
+          workspace
+        )
+      )?.projectInstructionsDigest
+    ).toBe(digest);
+    await freshRuntime.dispose();
+  });
+
   it('keeps an explicitly selected session model when refreshed without a model', async () => {
     const modelService = {
       chat: vi.fn(),
@@ -935,6 +1640,59 @@ describe('SessionRuntime', () => {
 
     expect(runtime.createExecutionPipeline()).toBeInstanceOf(ToolExecutor);
     expect(runtime.createToolExecutor()).toBeInstanceOf(ToolExecutor);
+  });
+
+  it('only attaches hidden project verification to an explicit YOLO executor', async () => {
+    const runtime = await SessionRuntime.create({
+      sessionId: 'auto-verify-permission-boundary',
+    });
+
+    const defaultExecutor = runtime.createToolExecutor({
+      permissionMode: PermissionMode.DEFAULT,
+    });
+    const autoEditExecutor = runtime.createToolExecutor({
+      permissionMode: PermissionMode.AUTO_EDIT,
+    });
+    const yoloExecutor = runtime.createToolExecutor({
+      permissionMode: PermissionMode.YOLO,
+    });
+    const getVerifier = (executor: ToolExecutor) =>
+      (executor as unknown as { autoVerifyRuntime?: unknown }).autoVerifyRuntime;
+
+    expect(getVerifier(defaultExecutor)).toBeUndefined();
+    expect(getVerifier(autoEditExecutor)).toBeUndefined();
+    expect(getVerifier(yoloExecutor)).toBeDefined();
+
+    await runtime.dispose();
+  });
+
+  it('prefers an immutable Session LSP manager over hidden AutoVerify', async () => {
+    lspResourceMocks.resolve.mockResolvedValueOnce({
+      projectRoot: storageRoot,
+      servers: {
+        typescript: {
+          command: 'fake-lsp',
+          extensionToLanguage: { '.ts': 'typescript' },
+        },
+      },
+    });
+    const runtime = await SessionRuntime.create({
+      sessionId: 'session-lsp-resources',
+      workspaceRoot: storageRoot,
+    });
+    const executor = runtime.createToolExecutor({
+      permissionMode: PermissionMode.YOLO,
+    });
+    const internals = executor as unknown as {
+      autoVerifyRuntime?: unknown;
+      lspManager?: unknown;
+    };
+
+    expect(runtime.getLspResources().servers.typescript?.command).toBe('fake-lsp');
+    expect(internals.lspManager).toBeDefined();
+    expect(internals.autoVerifyRuntime).toBeUndefined();
+
+    await runtime.dispose();
   });
 
   it('disposes the chat service when it supports disposal', async () => {

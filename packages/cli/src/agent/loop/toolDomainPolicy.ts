@@ -9,6 +9,7 @@
  * 纯函数 / 薄封装，返回 action descriptors 或直接调用 deps 回调。
  */
 
+import { HookManager } from '../../hooks/HookManager.js';
 import type { TaskListItem } from '../../tools/builtin/task/taskListTypes.js';
 import type { ToolResult } from '../../tools/types/index.js';
 import type { ChatContext } from '../types.js';
@@ -125,6 +126,7 @@ export function applyWorkspaceTransition(
     return undefined;
   }
 
+  HookManager.getInstance().inheritProjectConfig(context.workspaceRoot, workspaceRoot);
   context.workspaceRoot = workspaceRoot;
   context.worktreeActive = metadata?.workspaceTransition === 'enter';
   return workspaceRoot;

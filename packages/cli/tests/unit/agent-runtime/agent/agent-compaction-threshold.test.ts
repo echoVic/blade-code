@@ -39,6 +39,16 @@ function createConfig(overrides: Partial<BladeConfig> = {}): BladeConfig {
     disableAllHooks: false,
     maxTurns: 20,
     ...overrides,
+    lspServers: overrides.lspServers ?? {},
+    modelProviders: overrides.modelProviders ?? {},
+    enabledPlugins: overrides.enabledPlugins ?? {},
+    pluginSourcePolicy: overrides.pluginSourcePolicy ?? {
+      restrictToAllowedSources: false,
+      requireGitCommitSha: false,
+      allowedGitHosts: [],
+      allowedMarketplaces: [],
+      allowedLocalRoots: [],
+    },
     maxConcurrentTasks: overrides.maxConcurrentTasks ?? 3,
     maxQueuedTasks: overrides.maxQueuedTasks ?? 100,
   };

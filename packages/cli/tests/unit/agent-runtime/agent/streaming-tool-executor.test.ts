@@ -1,7 +1,7 @@
 /**
  * StreamingToolExecutor unit tests
  *
- * 测试流式预启动逻辑现在基于 STREAMING_PRELAUNCH_ALLOWLIST（而非 isConcurrencySafe）。
+ * 测试流式预启动白名单、并发安全屏障和流提交后的批量调度。
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -168,18 +168,31 @@ describe('StreamingToolExecutor', () => {
       expect(pipeline.execute).not.toHaveBeenCalled();
     });
 
-    it('prelaunch decision is based on allowlist, not isConcurrencySafe', () => {
-      // Even if registry says isConcurrencySafe: true for Edit, it should be queued
+    it('requires both allowlist membership and concurrency safety to prelaunch', () => {
       registry.get.mockReturnValue({ isConcurrencySafe: true });
       const tc = makeToolCall('t1', 'Edit');
       executor.addTool(tc, {});
       expect(pipeline.execute).not.toHaveBeenCalled();
 
-      // Even if registry says isConcurrencySafe: false for Read, it should be immediate
       registry.get.mockReturnValue({ isConcurrencySafe: false });
       const tc2 = makeToolCall('t2', 'Read');
       executor.addTool(tc2, {});
-      expect(pipeline.execute).toHaveBeenCalledTimes(1);
+      expect(pipeline.execute).not.toHaveBeenCalled();
+    });
+
+    it('does not let a later read overtake an exclusive queued tool', () => {
+      registry.get.mockImplementation((name: string) => ({
+        isConcurrencySafe: name === 'Read',
+      }));
+
+      executor.addTool(makeToolCall('edit', 'Edit'), {});
+      executor.addTool(makeToolCall('read', 'Read'), {});
+
+      expect(pipeline.execute).not.toHaveBeenCalled();
+      expect(executor.getQueuedToolCalls().map((call) => call.id)).toEqual([
+        'edit',
+        'read',
+      ]);
     });
   });
 
@@ -224,23 +237,33 @@ describe('StreamingToolExecutor', () => {
       expect(collected[2].toolCall.id).toBe('c');
     });
 
-    it('executes queued (non-allowlisted) tools sequentially on drain', async () => {
-      const callOrder: string[] = [];
-      pipeline.execute.mockImplementation(async (name: string) => {
-        callOrder.push(name);
-        return makeSuccessResult(name);
+    it('dispatches queued calls together and yields results in insertion order', async () => {
+      const started: string[] = [];
+      const resolvers = new Map<
+        string,
+        (result: ReturnType<typeof makeSuccessResult>) => void
+      >();
+      pipeline.execute.mockImplementation((name: string) => {
+        started.push(name);
+        return new Promise((resolve) => {
+          resolvers.set(name, resolve);
+        });
       });
 
       executor.addTool(makeToolCall('q1', 'Edit'), {});
       executor.addTool(makeToolCall('q2', 'Write'), {});
 
-      // Nothing executed yet
       expect(pipeline.execute).not.toHaveBeenCalled();
+      const collectedPromise = collectAsync(executor.getRemainingResults());
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(started).toEqual(['Edit', 'Write']);
 
-      const collected = await collectAsync(executor.getRemainingResults());
+      resolvers.get('Write')!(makeSuccessResult('Write'));
+      resolvers.get('Edit')!(makeSuccessResult('Edit'));
+      const collected = await collectedPromise;
 
       expect(collected).toHaveLength(2);
-      expect(callOrder).toEqual(['Edit', 'Write']);
       expect(collected[0].toolCall.id).toBe('q1');
       expect(collected[1].toolCall.id).toBe('q2');
     });

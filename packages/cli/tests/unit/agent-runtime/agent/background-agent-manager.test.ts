@@ -270,6 +270,55 @@ describe('BackgroundAgentManager', () => {
       );
     });
 
+    it('inherits the parent Session agent resource snapshot', async () => {
+      const agentResources = {
+        projectRoot: '/repo',
+        subagents: {},
+        skills: {},
+        commands: {},
+      } as never;
+      const modelResources = {
+        projectRoot: '/repo',
+        config: {},
+        catalog: {},
+      } as never;
+      const lspResources = {
+        projectRoot: '/repo',
+        servers: { typescript: { command: 'server' } },
+      } as never;
+      const agentId = manager.startBackgroundAgent({
+        config: {
+          name: 'Explore',
+          description: 'Explore agent',
+        },
+        description: 'Inspect resources',
+        prompt: 'Inspect the inherited workspace resources.',
+        workspaceRoot: '/repo',
+        reasoningEffort: 'high',
+        serviceTier: 'fast',
+        responseVerbosity: 'high',
+        communicationStyle: 'explanatory',
+        agentResources,
+        modelResources,
+        lspResources,
+      });
+
+      await manager.waitForCompletion(agentId, 0);
+
+      expect(SessionRuntime.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workspaceRoot: '/repo',
+          reasoningEffort: 'high',
+          serviceTier: 'fast',
+          responseVerbosity: 'high',
+          communicationStyle: 'explanatory',
+          agentResources,
+          modelResources,
+          lspResources,
+        })
+      );
+    });
+
     it('应执行自定义 agent 的工具、回合和权限限制', async () => {
       const agentId = manager.startBackgroundAgent({
         config: {

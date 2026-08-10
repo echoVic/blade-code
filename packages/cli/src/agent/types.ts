@@ -16,6 +16,7 @@ import type {
   SteeringMessage,
 } from './runtime/ActiveTurnMailbox.js';
 import type { TaskAdmissionHandle } from './runtime/TaskRunScheduler.js';
+import type { SubagentConfig } from './subagents/types.js';
 
 /**
  * 用户消息内容类型
@@ -73,6 +74,7 @@ export interface AgentOptions {
   toolWhitelist?: string[]; // 工具白名单（仅允许指定工具）
   toolBlacklist?: string[]; // 工具黑名单（禁止指定工具）
   modelId?: string;
+  agents?: SubagentConfig[];
 
   // MCP 配置
   mcpConfig?: string[]; // CLI 参数：MCP 配置文件路径或 JSON 字符串数组

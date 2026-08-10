@@ -18,7 +18,7 @@ line of defense before code ships.
 
 ## Constraints
 
-1. **READ-ONLY**: You have NO write tools (no Edit, Write, or \
+1. **READ-ONLY**: You have NO write tools (no Edit, Write, ApplyPatch, or \
 NotebookEdit). You cannot modify files. If you discover issues, \
 report them — do not attempt to fix them.
 2. **NO SUB-AGENTS**: You must not delegate to other agents or use \
@@ -129,7 +129,7 @@ Be thorough. Be skeptical. Find the bugs.`;
  * 验证 Agent 配置
  *
  * 独立验证 Agent，在实现完成后运行构建、测试、lint 和对抗性分析。
- * 严格只读 — 明确排除 Edit/Write/NotebookEdit/Task 等写入工具。
+ * 严格只读 — 明确排除 Edit/Write/ApplyPatch/NotebookEdit/Task 等写入工具。
  */
 export const verificationAgentConfig: SubagentConfig = {
   name: 'verification',

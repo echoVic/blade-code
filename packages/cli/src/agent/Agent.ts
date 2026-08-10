@@ -10,6 +10,7 @@
  * 负责：LLM 交互、工具执行、循环检测
  */
 
+import { randomUUID } from 'node:crypto';
 import * as os from 'os';
 import * as path from 'path';
 import {
@@ -23,8 +24,9 @@ import { ContextManager } from '../context/ContextManager.js';
 import { buildGoalContinuationPrompt } from '../goals/prompts.js';
 import type { GoalSnapshot } from '../goals/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
-import { loadMcpConfigFromCli } from '../mcp/loadMcpConfig.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
+import { McpToolArtifactStore } from '../mcp/McpToolArtifactStore.js';
+import { resolveWorkspaceMcpConfig } from '../mcp/resolveWorkspaceMcpConfig.js';
 import { buildSystemPrompt, createPlanModeReminder } from '../prompts/index.js';
 import { AttachmentCollector } from '../prompts/processors/AttachmentCollector.js';
 import type { Attachment } from '../prompts/processors/types.js';
@@ -35,24 +37,28 @@ import {
   type Message,
 } from '../services/ChatServiceInterface.js';
 import { resolveModelConfig as resolvePiModelConfig } from '../services/pi/resolveModelConfig.js';
-import { discoverSkills } from '../skills/index.js';
 import {
   configActions,
   ensureStoreInitialized,
   getAllModels,
   getConfig,
   getCurrentModel,
-  getMcpServers,
   getModelById,
   getThinkingModeEnabled,
 } from '../store/vanilla.js';
 import { getBuiltinTools } from '../tools/builtin/index.js';
+import { createMcpContentTools } from '../tools/builtin/mcp/index.js';
 import { ToolExecutor } from '../tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
 import type { Tool } from '../tools/types/index.js';
 import { getCwd } from '../utils/cwd.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
 import { executeLoopGenerator } from './loop/index.js';
+import {
+  resolveWorkspaceAgentResources,
+  type SessionAgentResources,
+  snapshotWorkspaceAgentResources,
+} from './resources/WorkspaceAgentResources.js';
 import type {
   ActiveTurnHandle,
   PreparedInputTurn,
@@ -64,7 +70,7 @@ import {
   type TaskRunPermit,
   taskRunScheduler,
 } from './runtime/TaskRunScheduler.js';
-import { subagentRegistry } from './subagents/SubagentRegistry.js';
+import type { SubagentRegistry } from './subagents/SubagentRegistry.js';
 import type {
   AgentOptions,
   AgentResponse,
@@ -109,6 +115,9 @@ export class Agent {
   private currentModelMaxContextTokens!: number;
   private currentModelId?: string;
   private sessionRuntime?: SessionRuntime;
+  private legacyMcpRegistry?: McpRegistry;
+  private agentResources?: SessionAgentResources;
+  private subagentRegistry?: SubagentRegistry;
 
   constructor(
     config: BladeConfig,
@@ -120,6 +129,8 @@ export class Agent {
     this.runtimeOptions = runtimeOptions;
     this.toolExecutor = toolExecutor || this.createDefaultToolExecutor();
     this.sessionRuntime = sessionRuntime;
+    this.agentResources = sessionRuntime?.getAgentResources();
+    this.subagentRegistry = this.agentResources?.subagents;
     // sessionId 不再存储在 Agent 内部，改为从 context 传入
   }
 
@@ -164,7 +175,7 @@ export class Agent {
     const resolved = resolvePiModelConfig(
       modelConfig,
       this.config,
-      thinkingModeEnabled
+      thinkingModeEnabled ? 'auto' : 'off'
     );
     this.log(`${label} ${resolved.displayName} (${modelConfig.model})`);
 
@@ -315,16 +326,13 @@ export class Agent {
       // 1. 初始化系统提示
       await this.initializeSystemPrompt();
 
-      // 2. 注册内置工具
-      await this.registerBuiltinTools();
-
-      // 3. 加载 subagent 配置
+      // 2. 加载 workspace-scoped subagent 配置
       await this.loadSubagents();
 
-      // 4. 发现并注册 Skills
-      await this.discoverSkills();
+      // 3. 注册绑定当前资源快照的内置工具
+      await this.registerBuiltinTools();
 
-      // 5. 初始化核心组件
+      // 4. 初始化核心组件
       const modelConfig = this.resolveModelConfig(this.runtimeOptions.modelId);
       await this.applyModelConfig(modelConfig, '使用模型:');
 
@@ -856,6 +864,12 @@ export class Agent {
       mode: PermissionMode.PLAN,
       includeEnvironment: true,
       language: this.config.language,
+      availableSkills: this.agentResources?.skills.generateAvailableSkillsList(),
+      communicationStyle:
+        this.sessionRuntime?.getCommunicationStyleConfiguration().selection,
+      communicationStyleCatalog: this.sessionRuntime?.getCommunicationStyleCatalog(),
+      projectRuleCatalog: this.sessionRuntime?.getProjectRuleCatalog(),
+      projectInstructionSourcePath: this.sessionRuntime?.projectRoot,
     });
 
     // Plan 模式差异 2: 在用户消息中注入 system-reminder
@@ -921,6 +935,12 @@ export class Agent {
       append: appendPrompt,
       includeEnvironment: true,
       language: this.config.language,
+      availableSkills: this.agentResources?.skills.generateAvailableSkillsList(),
+      communicationStyle:
+        this.sessionRuntime?.getCommunicationStyleConfiguration().selection,
+      communicationStyleCatalog: this.sessionRuntime?.getCommunicationStyleCatalog(),
+      projectRuleCatalog: this.sessionRuntime?.getProjectRuleCatalog(),
+      projectInstructionSourcePath: this.sessionRuntime?.projectRoot,
     });
 
     return result.prompt;
@@ -965,6 +985,19 @@ export class Agent {
       },
       onModelSwitch: (modelId) => this.switchModelIfNeeded(modelId),
       applySkillToolRestrictions: (tools) => this.applySkillToolRestrictions(tools),
+      staticProjectRules: this.sessionRuntime?.getStaticProjectRules(),
+      hydrateProjectRules: this.sessionRuntime
+        ? (references) => this.sessionRuntime!.hydrateProjectRules(references)
+        : undefined,
+      resolveContextualProjectRules: this.sessionRuntime
+        ? (toolName, params, result, loadedIds) =>
+            this.sessionRuntime!.resolveContextualProjectRules(
+              toolName,
+              params,
+              result,
+              loadedIds
+            )
+        : undefined,
     };
   }
 
@@ -1091,11 +1124,15 @@ export class Agent {
     this.log('销毁Agent...');
 
     try {
-      this.isInitialized = false;
+      await this.legacyMcpRegistry?.disconnectAll();
+      this.legacyMcpRegistry = undefined;
       this.log('Agent已销毁');
     } catch (error) {
       this.error('Agent销毁失败', error);
       throw error;
+    } finally {
+      this.toolExecutor.dispose();
+      this.isInitialized = false;
     }
   }
 
@@ -1149,6 +1186,12 @@ export class Agent {
         append: appendPrompt,
         includeEnvironment: false,
         language: this.config.language,
+        availableSkills: this.agentResources?.skills.generateAvailableSkillsList(),
+        communicationStyle:
+          this.sessionRuntime?.getCommunicationStyleConfiguration().selection,
+        communicationStyleCatalog: this.sessionRuntime?.getCommunicationStyleCatalog(),
+        projectRuleCatalog: this.sessionRuntime?.getProjectRuleCatalog(),
+        projectInstructionSourcePath: this.sessionRuntime?.projectRoot,
       });
 
       if (result.prompt) {
@@ -1175,6 +1218,9 @@ export class Agent {
       const builtinTools = await getBuiltinTools({
         sessionId: 'default',
         configDir: path.join(os.homedir(), '.blade'),
+        workspaceRoot: getCwd(),
+        resourceRoot: getCwd(),
+        agentResources: this.agentResources,
       });
       logger.debug(`Registering ${builtinTools.length} builtin tools...`);
 
@@ -1203,21 +1249,22 @@ export class Agent {
    */
   private async registerMcpTools(): Promise<void> {
     try {
-      // 1. 处理 --mcp-config CLI 参数（从外部模块加载）
-      if (this.runtimeOptions.mcpConfig && this.runtimeOptions.mcpConfig.length > 0) {
-        await loadMcpConfigFromCli(this.runtimeOptions.mcpConfig);
-      }
-
-      // 2. 获取所有 MCP 服务器配置（从 Store - 统一数据源）
-      const mcpServers = getMcpServers();
+      const mcpServers = await resolveWorkspaceMcpConfig({
+        workspaceRoot: getCwd(),
+        storeServers: this.config.mcpServers ?? {},
+        cliConfigs: this.runtimeOptions.mcpConfig,
+        strictCliConfig: this.runtimeOptions.strictMcpConfig,
+      });
 
       if (Object.keys(mcpServers).length === 0) {
         logger.debug('No MCP servers configured');
         return;
       }
 
-      // 3. 连接所有 MCP 服务器并注册工具
-      const registry = McpRegistry.getInstance();
+      const registry = McpRegistry.createIsolated({
+        artifactWriter: new McpToolArtifactStore(`legacy-${randomUUID()}`),
+      });
+      this.legacyMcpRegistry = registry;
 
       for (const [name, config] of Object.entries(mcpServers)) {
         try {
@@ -1230,14 +1277,56 @@ export class Agent {
         }
       }
 
-      // 4. 获取所有 MCP 工具（包含冲突处理）
-      const mcpTools = await registry.getAvailableTools();
-
-      if (mcpTools.length > 0) {
-        // 5. 注册到工具注册表
-        this.toolExecutor.getRegistry().registerAll(mcpTools);
-        logger.debug(`Registered ${mcpTools.length} MCP tools`);
-        logger.debug(`[MCP Tools] ${mcpTools.map((t) => t.name).join(', ')}`);
+      const toolRegistry = this.toolExecutor.getRegistry();
+      toolRegistry.setMcpCatalogBarrier(() => registry.waitForCatalogIdle());
+      const snapshot = registry.getCatalogSnapshot();
+      toolRegistry.replaceMcpTools(snapshot.tools);
+      toolRegistry.registerAll(createMcpContentTools(registry));
+      const instructions = registry.getInstructionsSnapshot();
+      toolRegistry.queueMcpInstructionsChange({
+        revision: instructions.revision,
+        reason: 'snapshot',
+        replace: true,
+        instructions: instructions.instructions,
+        removed: [],
+      });
+      registry.on('catalogChanged', (change) => {
+        toolRegistry.replaceMcpTools(change.tools, change);
+      });
+      registry.on('contentCatalogChanged', (change) => {
+        toolRegistry.queueMcpContentChange(change);
+      });
+      registry.on('resourceUpdated', (update) => {
+        toolRegistry.queueMcpResourceUpdated(update);
+      });
+      registry.on('connectionLifecycleChanged', (change) => {
+        toolRegistry.queueMcpConnectionChange(change);
+      });
+      registry.on('log', (entry) => {
+        toolRegistry.queueMcpLog(entry);
+      });
+      registry.on('instructionsChanged', (change) => {
+        toolRegistry.queueMcpInstructionsChange({
+          revision: change.revision,
+          reason: change.reason,
+          replace: false,
+          instructions:
+            change.action === 'added' && change.instruction
+              ? [
+                  {
+                    serverName: change.serverName,
+                    ...change.instruction,
+                  },
+                ]
+              : [],
+          removed: change.action === 'removed' ? [change.serverName] : [],
+        });
+      });
+      if (snapshot.tools.length > 0) {
+        logger.debug(`Registered ${snapshot.tools.length} MCP tools`);
+        logger.debug(
+          `[MCP Tools] ${snapshot.tools.map((tool) => tool.name).join(', ')}`
+        );
       }
     } catch (error) {
       logger.warn('Failed to register MCP tools:', error);
@@ -1249,54 +1338,19 @@ export class Agent {
    * 加载 subagent 配置
    */
   private async loadSubagents(): Promise<void> {
-    // 如果已经加载过，跳过（全局单例，只需加载一次）
-    if (subagentRegistry.getAllNames().length > 0) {
+    const resources = await resolveWorkspaceAgentResources(getCwd());
+    this.agentResources = snapshotWorkspaceAgentResources(resources);
+    this.subagentRegistry = this.agentResources.subagents;
+    if (this.runtimeOptions.agents?.length) {
+      this.subagentRegistry.applyOverrides(this.runtimeOptions.agents);
+    }
+    const loadedCount = this.subagentRegistry.getAllNames().length;
+    if (loadedCount > 0) {
       logger.debug(
-        `Subagents already loaded: ${subagentRegistry.getAllNames().join(', ')}`
+        `Loaded ${loadedCount} subagents: ${this.subagentRegistry.getAllNames().join(', ')}`
       );
-      return;
-    }
-
-    try {
-      const loadedCount = subagentRegistry.loadFromStandardLocations();
-      if (loadedCount > 0) {
-        logger.debug(
-          `Loaded ${loadedCount} subagents: ${subagentRegistry.getAllNames().join(', ')}`
-        );
-      } else {
-        logger.debug('No subagents configured');
-      }
-    } catch (error) {
-      logger.warn('Failed to load subagents:', error);
-      // 不抛出错误，允许 Agent 继续初始化
-    }
-  }
-
-  /**
-   * 发现并注册 Skills
-   * Skills 是动态 Prompt 扩展机制，允许 AI 根据用户请求自动调用专业能力
-   */
-  private async discoverSkills(): Promise<void> {
-    try {
-      const result = await discoverSkills({
-        cwd: getCwd(),
-      });
-
-      if (result.skills.length > 0) {
-        logger.debug(
-          `Discovered ${result.skills.length} skills: ${result.skills.map((s) => s.name).join(', ')}`
-        );
-      } else {
-        logger.debug('No skills configured');
-      }
-
-      // 记录发现过程中的错误（不阻塞初始化）
-      for (const error of result.errors) {
-        logger.warn(`Warning: Skill loading error at ${error.path}: ${error.error}`);
-      }
-    } catch (error) {
-      logger.warn('Failed to discover skills:', error);
-      // 不抛出错误，允许 Agent 继续初始化
+    } else {
+      logger.debug('No subagents configured');
     }
   }
 
