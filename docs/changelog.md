@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.5] - 2026-08-10
+
+### ✨ 新功能
+
+- 权限模式升级为 Session-owned durable metadata；`default`、`autoEdit`、`yolo`
+  与 `plan` 在 CLI/TUI、Web、ACP、headless 和 print resume 中使用同一恢复优先级，
+  显式入口参数继续覆盖 Session 历史值
+- Web 切换历史 Session 会恢复对应权限模式，新任务固定重置为 `autoEdit`；ACP
+  load/fork/setSessionMode、TUI resume/fork 和 task dispatch 均继承并持久化模式
+- Plan 批准后的权限切换先写入 durable Session，再通知当前 surface 并继续执行，
+  持久化失败时 fail closed，避免跨 Session 全局状态污染或错误启动工具
+
+### ✅ 测试相关
+
+- 新增 durable create/update/fork、Runtime snapshot、Web/ACP/TUI/headless/print
+  恢复、显式覆盖、持久化失败和 Plan 执行顺序回归
+- 真实 GPT API 验证 Web、ACP、headless 与 React Ink/TUI 从 durable YOLO Session
+  恢复后实际执行 Write；production Web GUI 验证 fresh load 为完全访问、新任务重置
+  为自动审批、返回历史 Session 再恢复完全访问，且无应用 console error
+- 最终 feature commit 在 detached clean worktree 通过 14/14 qualification，包括
+  2560 个 unit、372 个 Web、integration/security、production build、bundle 和
+  performance 门禁
+
 ## [0.10.4] - 2026-08-10
 
 ### ✨ 新功能
