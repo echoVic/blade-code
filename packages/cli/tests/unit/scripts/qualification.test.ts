@@ -99,8 +99,16 @@ describe('production qualification contract', () => {
 
   it('fails closed when production credentials are missing', () => {
     expect(() => resolveProductionEnvironment({})).toThrow(
-      'DEEPSEEK_API_KEY is required'
+      'DeepSeek credentials are required'
     );
+  });
+
+  it('accepts the split Blade credential store without copying its secret', () => {
+    expect(
+      resolveProductionEnvironment({}, { hasConfiguredDeepSeekApiKey: true })
+    ).toEqual({
+      REAL_API_TEST: '1',
+    });
   });
 
   it('requires both production qualification models', () => {

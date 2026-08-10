@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { FileCredentialStore } from '../src/services/pi/FileCredentialStore.js';
 import {
   createQualificationPlan,
   resolveQualificationRoot,
@@ -7,6 +8,7 @@ import {
   runQualification,
   type QualificationMode,
 } from './qualification.js';
+import { materializeRealApiEnvironment } from './real-api-credentials.js';
 
 const mode = process.argv[2];
 
@@ -23,9 +25,16 @@ let environment: Record<string, string | undefined> = {
 };
 if (qualificationMode === 'production') {
   try {
+    const credentialEnvironment = materializeRealApiEnvironment(environment);
+    const deepSeekCredential = await new FileCredentialStore().read('deepseek');
     environment = {
-      ...environment,
-      ...resolveProductionEnvironment(environment),
+      ...credentialEnvironment,
+      ...resolveProductionEnvironment(credentialEnvironment, {
+        hasConfiguredDeepSeekApiKey:
+          deepSeekCredential?.type === 'api_key' &&
+          typeof deepSeekCredential.key === 'string' &&
+          Boolean(deepSeekCredential.key.trim()),
+      }),
     };
   } catch (error) {
     console.error(

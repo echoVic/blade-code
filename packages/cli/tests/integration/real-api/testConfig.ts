@@ -2,9 +2,11 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { materializeRealApiEnvironment } from '../../../scripts/real-api-credentials.js';
 import { DEFAULT_CONFIG } from '../../../src/config/defaults.js';
 import type { BladeConfig } from '../../../src/config/types.js';
 import { PiAIChatService } from '../../../src/services/PiAIChatService.js';
+import { getModelApiKeyEnvironmentVariable } from '../../../src/services/pi/resolveModelConfig.js';
 
 export type ModelId = 'deepseek' | 'claude' | 'gpt' | 'domestic';
 
@@ -26,8 +28,11 @@ export interface BladeModelConfig {
   name?: string;
   provider: string;
   model: string;
-  apiKey: string;
+  apiKey?: string;
   baseUrl?: string;
+  overrides?: {
+    baseUrl?: string;
+  };
 }
 
 export interface ResolvedModelSettings {
@@ -36,31 +41,68 @@ export interface ResolvedModelSettings {
   model: string;
 }
 
+export interface DeepSeekQualificationSettings {
+  apiKey: string;
+  baseURL: string;
+  models: readonly [string, string];
+}
+
 export function normalizeNewApiBaseURL(baseURL: string): string {
   const normalized = baseURL.trim().replace(/^`|`$/g, '').replace(/\/+$/, '');
   return /\/v\d+$/i.test(normalized) ? normalized : `${normalized}/v1`;
 }
 
-let cachedBladeModel: BladeModelConfig | null | undefined;
+const REQUIRED_DEEPSEEK_MODELS = ['deepseek-v4-flash', 'deepseek-v4-pro'] as const;
 
-function getBladeCurrentModel(): BladeModelConfig | undefined {
-  if (cachedBladeModel !== undefined) {
-    return cachedBladeModel ?? undefined;
-  }
+const cachedBladeModels = new Map<string, BladeModelConfig | null>();
 
+export function loadBladeCurrentModel(
+  configRoot: string
+): BladeModelConfig | undefined {
   try {
-    const configPath = path.join(os.homedir(), '.blade', 'config.json');
-    const parsed = JSON.parse(readFileSync(configPath, 'utf-8')) as {
+    const parsed = JSON.parse(
+      readFileSync(path.join(configRoot, 'config.json'), 'utf-8')
+    ) as {
       currentModelId?: string;
       models?: BladeModelConfig[];
     };
-    cachedBladeModel =
-      parsed.models?.find((model) => model.id === parsed.currentModelId) ?? null;
-  } catch {
-    cachedBladeModel = null;
-  }
+    const model = parsed.models?.find(
+      (candidate) => candidate.id === parsed.currentModelId
+    );
+    if (!model) return undefined;
 
-  return cachedBladeModel ?? undefined;
+    let apiKey = model.apiKey?.trim() ?? '';
+    if (!apiKey) {
+      try {
+        const credentials = JSON.parse(
+          readFileSync(path.join(configRoot, 'auth.json'), 'utf-8')
+        ) as Record<string, { type?: unknown; key?: unknown }>;
+        const credential = credentials[model.provider];
+        if (credential?.type === 'api_key' && typeof credential.key === 'string') {
+          apiKey = credential.key.trim();
+        }
+      } catch {
+        apiKey = '';
+      }
+    }
+
+    return {
+      ...model,
+      apiKey,
+      baseUrl: model.overrides?.baseUrl ?? model.baseUrl,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function getBladeCurrentModel(): BladeModelConfig | undefined {
+  const configuredRoot = process.env.BLADE_REAL_API_CONFIG_ROOT?.trim();
+  const configRoot = configuredRoot || path.join(os.homedir(), '.blade');
+  if (!cachedBladeModels.has(configRoot)) {
+    cachedBladeModels.set(configRoot, loadBladeCurrentModel(configRoot) ?? null);
+  }
+  return cachedBladeModels.get(configRoot) ?? undefined;
 }
 
 function matchesModel(id: ModelId, config: BladeModelConfig): boolean {
@@ -155,7 +197,6 @@ export function createTestChatService(config: TestModelConfig): PiAIChatService 
     maxOutputTokens: REAL_API_OUTPUT_BUDGET,
     temperature: 0,
     timeout: 120_000,
-    maxRetries: 0,
   });
 }
 
@@ -219,8 +260,9 @@ export function resolveForkQualificationModels(
   options: { requiredDeepSeek?: boolean } = {}
 ): TestModelConfig[] {
   const allowBladeFallback = env === process.env;
+  const resolvedEnv = allowBladeFallback ? materializeRealApiEnvironment(env) : env;
   const bladeModel =
-    allowBladeFallback && !hasExplicitProviderCredentials(env)
+    allowBladeFallback && !hasExplicitProviderCredentials(resolvedEnv)
       ? getBladeCurrentModel()
       : null;
   const deepseekSettings = resolveModelSettings(
@@ -228,12 +270,14 @@ export function resolveForkQualificationModels(
     'DEEPSEEK',
     'deepseek-chat',
     'https://api.deepseek.com',
-    env,
+    resolvedEnv,
     bladeModel
   );
-  const configuredDeepSeekModels = Object.hasOwn(env, 'DEEPSEEK_MODELS')
-    ? parseModelList(env.DEEPSEEK_MODELS ?? '')
-    : [deepseekSettings.model];
+  const configuredDeepSeekModels = Object.hasOwn(resolvedEnv, 'DEEPSEEK_MODELS')
+    ? parseModelList(resolvedEnv.DEEPSEEK_MODELS ?? '')
+    : options.requiredDeepSeek
+      ? [...REQUIRED_DEEPSEEK_MODELS]
+      : [deepseekSettings.model];
 
   if (options.requiredDeepSeek) {
     if (!deepseekSettings.apiKey) {
@@ -262,13 +306,19 @@ export function resolveForkQualificationModels(
     'claude',
     'CLAUDE',
     'claude-opus-4-8',
-    env,
+    resolvedEnv,
     bladeModel
   );
   if (claudeSettings.apiKey) {
     configs.push(createClaudeTestConfig(claudeSettings));
   }
-  const gptSettings = resolveNewApiSettings('gpt', 'GPT', 'gpt-5.5', env, bladeModel);
+  const gptSettings = resolveNewApiSettings(
+    'gpt',
+    'GPT',
+    'gpt-5.5',
+    resolvedEnv,
+    bladeModel
+  );
   if (gptSettings.apiKey) {
     configs.push(createCompatibleTestConfig('gpt', 'GPT (via NewAPI)', gptSettings));
   }
@@ -276,7 +326,7 @@ export function resolveForkQualificationModels(
     'domestic',
     'DOMESTIC',
     'qwen-plus',
-    env,
+    resolvedEnv,
     bladeModel
   );
   if (domesticSettings.apiKey) {
@@ -288,8 +338,34 @@ export function resolveForkQualificationModels(
   return configs;
 }
 
+export function resolveDeepSeekQualificationSettings(
+  env: Readonly<Record<string, string | undefined>> = process.env
+): DeepSeekQualificationSettings {
+  const configs = resolveForkQualificationModels(env, {
+    requiredDeepSeek: true,
+  }).filter((config) => config.id === 'deepseek');
+  const ordered = REQUIRED_DEEPSEEK_MODELS.map((model) =>
+    configs.find((config) => config.model === model)
+  );
+  const [flash, pro] = ordered;
+  if (!flash || !pro) {
+    throw new Error(
+      'DeepSeek qualification requires exactly the Flash and Pro model matrix'
+    );
+  }
+  if (flash.apiKey !== pro.apiKey || flash.baseURL !== pro.baseURL) {
+    throw new Error('DeepSeek qualification models must share one provider channel');
+  }
+
+  return {
+    apiKey: flash.apiKey,
+    baseURL: flash.baseURL ?? 'https://api.deepseek.com',
+    models: [flash.model, pro.model],
+  };
+}
+
 function resolveLegacyModelConfigs(): TestModelConfig[] {
-  const env = process.env;
+  const env = materializeRealApiEnvironment(process.env);
   const bladeModel = hasExplicitProviderCredentials(env)
     ? null
     : (getBladeCurrentModel() ?? null);
@@ -348,6 +424,23 @@ function sanitizeRuntimeModelId(qualificationId: string): string {
   return `real-api-${slug}-${hash}`;
 }
 
+function getRealApiProviderKeyEnvironmentVariable(qualificationId: string): string {
+  const hash = createHash('sha256')
+    .update(`provider:${qualificationId}`)
+    .digest('hex')
+    .slice(0, 24)
+    .toUpperCase();
+  return `BLADE_REAL_API_PROVIDER_KEY_${hash}`;
+}
+
+function getRealApiProviderId(modelConfig: TestModelConfig): string {
+  const hash = createHash('sha256')
+    .update(`provider:${modelConfig.qualificationId}:${modelConfig.baseURL ?? ''}`)
+    .digest('hex')
+    .slice(0, 12);
+  return `real-api-${modelConfig.id}-channel-${hash}`;
+}
+
 export function expandDeepSeekModelMatrix(
   configs: readonly TestModelConfig[],
   configuredModels = process.env.DEEPSEEK_MODELS
@@ -375,19 +468,47 @@ export function expandDeepSeekModelMatrix(
 
 export function buildRealApiRuntimeConfig(modelConfig: TestModelConfig): BladeConfig {
   const modelId = sanitizeRuntimeModelId(modelConfig.qualificationId);
+  const customProvider = modelConfig.id !== 'deepseek';
+  const providerId = customProvider
+    ? getRealApiProviderId(modelConfig)
+    : modelConfig.provider;
+  const apiKeyEnv = getRealApiProviderKeyEnvironmentVariable(
+    modelConfig.qualificationId
+  );
+  if (isRealApiTestEnabled()) {
+    if (customProvider) {
+      process.env[apiKeyEnv] = requireApiKey(modelConfig);
+    } else {
+      process.env[getModelApiKeyEnvironmentVariable(modelId)] =
+        requireApiKey(modelConfig);
+    }
+  }
   return {
     ...DEFAULT_CONFIG,
     currentModelId: modelId,
+    modelProviders: customProvider
+      ? {
+          [providerId]: {
+            name: modelConfig.name,
+            baseUrl: modelConfig.baseURL ?? 'https://callapi8.com/v1',
+            wireApi:
+              modelConfig.id === 'claude' ? 'anthropic-messages' : 'openai-completions',
+            apiKeyEnv,
+          },
+        }
+      : {},
     models: [
       {
         id: modelId,
         displayName: modelConfig.name,
-        provider: modelConfig.provider,
+        provider: providerId,
         model: modelConfig.model,
         overrides: {
           maxOutputTokens: 4_096,
           timeout: 180_000,
-          ...(modelConfig.baseURL ? { baseUrl: modelConfig.baseURL } : {}),
+          ...(!customProvider && modelConfig.baseURL
+            ? { baseUrl: modelConfig.baseURL }
+            : {}),
         },
       },
     ],

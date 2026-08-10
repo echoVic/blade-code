@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import { DEFAULT_CONFIG } from '../../../src/config/defaults.js';
 import type {
   BladeConfig,
   McpServerConfig,
@@ -62,6 +63,11 @@ export const createDefaultMockConfig = (
   disableAllHooks: false,
   maxTurns: 10,
   ...overrides,
+  lspServers: overrides?.lspServers ?? {},
+  modelProviders: overrides?.modelProviders ?? {},
+  enabledPlugins: overrides?.enabledPlugins ?? {},
+  pluginSourcePolicy:
+    overrides?.pluginSourcePolicy ?? DEFAULT_CONFIG.pluginSourcePolicy,
   maxConcurrentTasks: overrides?.maxConcurrentTasks ?? 3,
   maxQueuedTasks: overrides?.maxQueuedTasks ?? 100,
 });

@@ -1,9 +1,9 @@
 import Type, { type Static, type TSchema, type TUnsafe } from 'typebox';
-import { parseSchema, safeParseSchema, type SafeParseResult } from './validation.js';
+import { parseSchema, type SafeParseResult, safeParseSchema } from './validation.js';
 
 export * from './validation.js';
-export { Type };
 export type { Static, TSchema };
+export { Type };
 
 export type RuntimeSchema<T extends TSchema> = T & {
   parse(value: unknown): Static<T>;

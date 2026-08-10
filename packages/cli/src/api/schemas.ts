@@ -117,9 +117,67 @@ export const SessionTaskDiffArtifactSchema = Runtime(
 );
 export type SessionTaskDiffArtifact = Static<typeof SessionTaskDiffArtifactSchema>;
 
+export const McpElicitationContentValueSchema = Type.Union([
+  Type.String(),
+  Type.Number(),
+  Type.Boolean(),
+  Type.Array(Type.String()),
+]);
+export type McpElicitationContentValue = Static<
+  typeof McpElicitationContentValueSchema
+>;
+
+export const McpElicitationFieldSchema = Runtime(
+  Type.Object({
+    name: Type.String(),
+    type: StringEnum([
+      'string',
+      'number',
+      'integer',
+      'boolean',
+      'select',
+      'multi-select',
+    ]),
+    title: Type.String(),
+    description: Type.Optional(Type.String()),
+    required: Type.Boolean(),
+    defaultValue: Type.Optional(McpElicitationContentValueSchema),
+    options: Type.Optional(
+      Type.Array(
+        Type.Object({
+          value: Type.String(),
+          label: Type.String(),
+        })
+      )
+    ),
+    format: Type.Optional(StringEnum(['date', 'uri', 'email', 'date-time'])),
+    minimum: Type.Optional(Type.Number()),
+    maximum: Type.Optional(Type.Number()),
+    minLength: Type.Optional(Type.Number()),
+    maxLength: Type.Optional(Type.Number()),
+    minItems: Type.Optional(Type.Number()),
+    maxItems: Type.Optional(Type.Number()),
+  })
+);
+export type McpElicitationField = Static<typeof McpElicitationFieldSchema>;
+
+export const McpElicitationDetailsSchema = Runtime(
+  Type.Object({
+    serverName: Type.String(),
+    mode: StringEnum(['form', 'url']),
+    message: Type.String(),
+    fields: Type.Optional(Type.Array(McpElicitationFieldSchema)),
+    requestedSchema: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+    url: Type.Optional(Type.String()),
+    domain: Type.Optional(Type.String()),
+    elicitationId: Type.Optional(Type.String()),
+  })
+);
+export type McpElicitationDetails = Static<typeof McpElicitationDetailsSchema>;
+
 export const SessionPendingInteractionSchema = Runtime(
   Type.Object({
-    type: StringEnum(['permission', 'question']),
+    type: StringEnum(['permission', 'question', 'elicitation']),
     requestId: Type.String(),
   })
 );
@@ -144,6 +202,34 @@ export const SessionTaskFailureSchema = Runtime(
 );
 export type SessionTaskFailure = Static<typeof SessionTaskFailureSchema>;
 
+export const ReasoningEffortSchema = Runtime(
+  StringEnum(['auto', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+);
+export type ReasoningEffort = Static<typeof ReasoningEffortSchema>;
+
+export const ServiceTierSchema = Runtime(
+  StringEnum(['auto', 'standard', 'fast', 'flex'])
+);
+export type ServiceTier = Static<typeof ServiceTierSchema>;
+
+export const ResponseVerbositySchema = Runtime(
+  StringEnum(['auto', 'low', 'medium', 'high'])
+);
+export type ResponseVerbosity = Static<typeof ResponseVerbositySchema>;
+
+export const CommunicationStyleSchema = Runtime(
+  Type.Union([
+    StringEnum(['auto', 'pragmatic', 'friendly', 'explanatory']),
+    Type.String({
+      minLength: 7,
+      maxLength: 300,
+      pattern:
+        '^(?:(?:user|project):[a-z0-9][a-z0-9._-]{0,63}(?::[a-z0-9][a-z0-9._-]{0,63}){0,3}|plugin:[a-z0-9][a-z0-9._-]{0,63}:[a-z0-9][a-z0-9._-]{0,63}(?::[a-z0-9][a-z0-9._-]{0,63}){0,3})$',
+    }),
+  ])
+);
+export type CommunicationStyle = Static<typeof CommunicationStyleSchema>;
+
 export const SessionSchema = Runtime(
   Type.Object({
     sessionId: Type.String(),
@@ -164,6 +250,14 @@ export const SessionSchema = Runtime(
     taskPromptSummary: Type.Optional(Type.String()),
     taskModelId: Type.Optional(Type.String()),
     selectedModelId: Type.Optional(Type.String()),
+    reasoningEffort: Type.Optional(ReasoningEffortSchema),
+    serviceTier: Type.Optional(ServiceTierSchema),
+    responseVerbosity: Type.Optional(ResponseVerbositySchema),
+    communicationStyle: Type.Optional(CommunicationStyleSchema),
+    communicationStyleDigest: Type.Optional(Type.String({ pattern: '^[a-f0-9]{64}$' })),
+    projectInstructionsDigest: Type.Optional(
+      Type.String({ pattern: '^[a-f0-9]{64}$' })
+    ),
     taskRetryAvailable: Type.Optional(Type.Boolean()),
     taskRetriedFrom: Type.Optional(
       Type.Object({
@@ -181,6 +275,8 @@ export const SessionSchema = Runtime(
     taskQueuePosition: Type.Optional(Type.Integer({ minimum: 1 })),
     taskQueueDepth: Type.Optional(Type.Integer({ minimum: 0 })),
     taskConcurrencyLimit: Type.Optional(Type.Integer({ minimum: 1 })),
+    archivedAt: Type.Optional(Type.String()),
+    archivedBySessionId: Type.Optional(Type.String()),
     pendingInteraction: Type.Optional(SessionPendingInteractionSchema),
     messageCount: Type.Number(),
     firstMessageTime: Type.String(),
@@ -197,6 +293,22 @@ export const SessionCatalogPageSchema = Runtime(
   })
 );
 export type SessionCatalogPage = Static<typeof SessionCatalogPageSchema>;
+
+export const SessionArchiveResponseSchema = Runtime(
+  Type.Object({
+    session: SessionSchema,
+    archivedSessionIds: Type.Array(Type.String()),
+  })
+);
+export type SessionArchiveResponse = Static<typeof SessionArchiveResponseSchema>;
+
+export const SessionUnarchiveResponseSchema = Runtime(
+  Type.Object({
+    session: SessionSchema,
+    restoredSessionIds: Type.Array(Type.String()),
+  })
+);
+export type SessionUnarchiveResponse = Static<typeof SessionUnarchiveResponseSchema>;
 
 export const GoalSchema = Runtime(
   Type.Object({
@@ -393,6 +505,10 @@ export const CreateTaskRequestSchema = Runtime(
     title: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
     projectPath: Type.Optional(Type.String()),
     modelId: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+    reasoningEffort: Type.Optional(ReasoningEffortSchema),
+    serviceTier: Type.Optional(ServiceTierSchema),
+    responseVerbosity: Type.Optional(ResponseVerbositySchema),
+    communicationStyle: Type.Optional(CommunicationStyleSchema),
     isolation: Default(SessionTaskIsolationSchema, 'worktree'),
     permissionMode: Default(PermissionModeSchema, 'default'),
     attachments: Type.Optional(
@@ -429,6 +545,10 @@ export const SendMessageRequestSchema = Runtime(
     content: Type.String({ maxLength: MAX_USER_MESSAGE_TEXT_CHARS }),
     projectPath: Type.Optional(Type.String()),
     modelId: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+    reasoningEffort: Type.Optional(ReasoningEffortSchema),
+    serviceTier: Type.Optional(ServiceTierSchema),
+    responseVerbosity: Type.Optional(ResponseVerbositySchema),
+    communicationStyle: Type.Optional(CommunicationStyleSchema),
     permissionMode: Type.Optional(PermissionModeSchema),
     attachments: Type.Optional(
       Type.Array(TaskAttachmentSchema, { maxItems: MAX_INLINE_ATTACHMENT_COUNT })
@@ -457,9 +577,37 @@ export const PermissionResponseSchema = Runtime(
     answers: Type.Optional(
       Type.Record(Type.String(), Type.Union([Type.String(), Type.Array(Type.String())]))
     ),
+    elicitation: Type.Optional(
+      Type.Object({
+        action: StringEnum(['accept', 'decline', 'cancel']),
+        content: Type.Optional(
+          Type.Record(
+            Type.String(),
+            Type.Union([
+              Type.String({ maxLength: 4_000 }),
+              Type.Number(),
+              Type.Boolean(),
+              Type.Array(Type.String({ maxLength: 1_000 }), { maxItems: 100 }),
+            ]),
+            { maxProperties: 32 }
+          )
+        ),
+      })
+    ),
   })
 );
 export type PermissionResponse = Static<typeof PermissionResponseSchema>;
+
+export const CommunicationStyleSummarySchema = Runtime(
+  Type.Object({
+    id: CommunicationStyleSchema,
+    name: Type.String({ minLength: 1, maxLength: 80 }),
+    description: Type.String({ minLength: 1, maxLength: 256 }),
+    source: StringEnum(['built-in', 'user', 'project', 'plugin']),
+    contentSha256: Type.Optional(Type.String({ pattern: '^[a-f0-9]{64}$' })),
+  })
+);
+export type CommunicationStyleSummary = Static<typeof CommunicationStyleSummarySchema>;
 
 export const ModelConfigSchema = Runtime(
   Type.Object({
@@ -470,6 +618,20 @@ export const ModelConfigSchema = Runtime(
     contextWindow: Type.Optional(Type.Number()),
     maxTokens: Type.Optional(Type.Number()),
     reasoning: Type.Optional(Type.Boolean()),
+    supportedReasoningEfforts: Type.Optional(
+      Type.Array(
+        StringEnum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+      )
+    ),
+    supportedServiceTiers: Type.Optional(
+      Type.Array(StringEnum(['standard', 'fast', 'flex']))
+    ),
+    supportedResponseVerbosities: Type.Optional(
+      Type.Array(StringEnum(['low', 'medium', 'high']))
+    ),
+    communicationStyles: Type.Optional(
+      Type.Array(CommunicationStyleSummarySchema, { maxItems: 36 })
+    ),
     input: Type.Optional(Type.Array(StringEnum(['text', 'image']))),
     overrides: Type.Optional(
       Type.Object({
@@ -477,6 +639,7 @@ export const ModelConfigSchema = Runtime(
         temperature: Type.Optional(Type.Number()),
         maxOutputTokens: Type.Optional(Type.Number()),
         timeout: Type.Optional(Type.Number()),
+        streamIdleTimeout: Type.Optional(Type.Number({ minimum: 1_000 })),
       })
     ),
   })

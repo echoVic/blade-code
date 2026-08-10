@@ -31,6 +31,10 @@ export interface QualificationResult {
   exitCode?: number;
 }
 
+export interface ProductionEnvironmentOptions {
+  hasConfiguredDeepSeekApiKey?: boolean;
+}
+
 const REQUIRED_DEEPSEEK_MODELS = [
   'deepseek-v4-flash',
   'deepseek-v4-pro',
@@ -109,13 +113,21 @@ export function createQualificationPlan(
 }
 
 export function resolveProductionEnvironment(
-  input: Readonly<Record<string, string | undefined>>
+  input: Readonly<Record<string, string | undefined>>,
+  options: ProductionEnvironmentOptions = {}
 ): Record<string, string> {
   const apiKey = input.DEEPSEEK_API_KEY?.trim();
-  if (!apiKey) {
+  if (!apiKey && !options.hasConfiguredDeepSeekApiKey) {
     throw new Error(
-      'DEEPSEEK_API_KEY is required for production qualification; implicit user config is not accepted.'
+      'DeepSeek credentials are required for production qualification; set ' +
+        'DEEPSEEK_API_KEY or configure DeepSeek in ~/.blade/config.json.'
     );
+  }
+
+  if (!apiKey) {
+    return {
+      REAL_API_TEST: '1',
+    };
   }
 
   const configuredModels = (

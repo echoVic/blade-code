@@ -149,6 +149,7 @@ export const createToolExecutionSequence = (
 export const builtinToolNames = [
   'Read',
   'Write',
+  'ApplyPatch',
   'SearchReplace',
   'Glob',
   'Grep',
