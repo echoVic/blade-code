@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-08-10
+
 ### ✨ 新功能
 
 - 非平凡实现现在必须通过 fresh independent verification gate：三文件或
