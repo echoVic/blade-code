@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-08-10
+
 ### 🐛 问题修复
 
 - Web production build 现在显式覆盖 `NODE_ENV=production`，避免 CI 的全局测试环境将
