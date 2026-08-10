@@ -25,7 +25,7 @@ let modelRequestSequence = 0;
 
 export const useConfigStore = create<ConfigState>((set, get) => ({
   currentModelId: null,
-  currentMode: PermissionModeEnum.DEFAULT,
+  currentMode: PermissionModeEnum.AUTO_EDIT,
   configuredModels: [],
   availableModels: [],
   isLoading: false,

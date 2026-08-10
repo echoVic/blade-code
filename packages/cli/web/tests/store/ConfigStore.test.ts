@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useConfigStore } from '../../src/store/ConfigStore';
+import { PermissionModeEnum, useConfigStore } from '../../src/store/ConfigStore';
 
 describe('ConfigStore', () => {
   beforeEach(() => {
     useConfigStore.setState({
       currentModelId: null,
+      currentMode: PermissionModeEnum.AUTO_EDIT,
       configuredModels: [],
       availableModels: [],
       isLoading: false,
@@ -16,6 +17,10 @@ describe('ConfigStore', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('defaults new web conversations to automatic edit approval', () => {
+    expect(useConfigStore.getState().currentMode).toBe(PermissionModeEnum.AUTO_EDIT);
   });
 
   it('deduplicates concurrent model discovery and records readiness', async () => {
