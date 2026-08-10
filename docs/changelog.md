@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-10
+
 ### ✨ 新功能
 
 - 同一模型响应中的工具调用统一使用 shared/exclusive FIFO gate：纯读、不同路径写入、
