@@ -52,6 +52,41 @@ async function setInput(input: HTMLInputElement, value: string) {
 }
 
 describe('ChatMessage', () => {
+  test('renders durable user shell metadata as a command card instead of XML', () => {
+    act(() => {
+      root.render(
+        <ChatMessage
+          message={{
+            id: 'shell-message',
+            role: 'user',
+            content: '<user_shell_command>private model context</user_shell_command>',
+            timestamp: Date.now(),
+            metadata: {
+              userShellCommand: {
+                version: 1,
+                command: 'pwd',
+                status: 'completed',
+                exitCode: 0,
+                durationMs: 4,
+                stdout: '/workspace',
+                stderr: '',
+                stdoutOmittedBytes: 0,
+                stderrOmittedBytes: 0,
+                binaryOutput: false,
+                truncated: false,
+              },
+            },
+          }}
+        />
+      );
+    });
+
+    expect(container.textContent).toContain('pwd');
+    expect(container.textContent).toContain('/workspace');
+    expect(container.textContent).not.toContain('private model context');
+    expect(document.querySelector('[data-user-shell-command]')).toBeTruthy();
+  });
+
   let container: HTMLDivElement;
   let root: ReactDOM.Root;
 

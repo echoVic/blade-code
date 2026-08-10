@@ -106,6 +106,7 @@ blade web
 - [Session Communication Style](reference/session-communication-style.md)
 - [Trusted Custom Output Styles](reference/trusted-output-styles.md)
 - [Trusted Contextual Project Rules](reference/trusted-contextual-project-rules.md)
+- [Session User Shell Command](reference/session-user-shell-command.md)
 - [工具并发模型](reference/tool-concurrency.md)
 - [Session-scoped LSP](reference/lsp-session-intelligence.md)
 - [MCP Elicitation](reference/mcp-elicitation.md)

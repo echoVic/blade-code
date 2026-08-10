@@ -2,6 +2,12 @@
  * 上下文管理模块的核心类型定义
  */
 
+import type {
+  CommunicationStyleSelection,
+  ReasoningEffortSelection,
+  ResponseVerbositySelection,
+  ServiceTierSelection,
+} from '../config/types.js';
 import type { JsonObject, JsonValue, MessageRole } from '../store/types.js';
 
 export interface ContextMessage {
@@ -126,6 +132,7 @@ export type JSONLEventType =
 
 export type PartType =
   | 'text'
+  | 'reasoning'
   | 'image'
   | 'tool_call'
   | 'tool_result'
@@ -187,6 +194,12 @@ export interface SessionTaskDispatch {
   isolation: SessionTaskIsolation;
   permissionMode: SessionTaskPermissionMode;
   modelId?: string;
+  reasoningEffort?: ReasoningEffortSelection;
+  serviceTier?: ServiceTierSelection;
+  responseVerbosity?: ResponseVerbositySelection;
+  communicationStyle?: CommunicationStyleSelection;
+  communicationStyleDigest?: string;
+  projectInstructionsDigest?: string;
   attachments?: SessionTaskAttachment[];
 }
 
@@ -248,6 +261,13 @@ export interface SessionInfo {
   taskQueueDepth?: number | null;
   taskConcurrencyLimit?: number | null;
   selectedModelId?: string | null;
+  reasoningEffort?: ReasoningEffortSelection | null;
+  serviceTier?: ServiceTierSelection | null;
+  responseVerbosity?: ResponseVerbositySelection | null;
+  communicationStyle?: CommunicationStyleSelection | null;
+  communicationStyleDigest?: string | null;
+  projectInstructionsDigest?: string | null;
+  archivedAt?: string | null;
   agentType?: string;
   model?: string;
   permission?: JsonValue;
@@ -266,6 +286,17 @@ export interface MessageInfo {
     input_tokens: number;
     output_tokens: number;
   };
+  metadata?: JsonValue;
+}
+
+export interface MessagePersistenceMetadata {
+  model?: string;
+  usage?: { input_tokens: number; output_tokens: number };
+  inboxMessageId?: string;
+  contextualProjectRules?: boolean;
+  ruleReferences?: JsonValue;
+  triggerPaths?: string[];
+  userShellCommand?: JsonValue;
 }
 
 export interface InboxAcknowledgementInfo {

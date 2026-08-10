@@ -140,10 +140,7 @@ export const useCommandHandler = (
   const streamingBuffer = useStreamingBuffer(sessionActions);
 
   const handleUserShellCommand = useMemoizedFn(
-    async (
-      resolved: ResolvedInput,
-      signal: AbortSignal
-    ): Promise<CommandResult> => {
+    async (resolved: ResolvedInput, signal: AbortSignal): Promise<CommandResult> => {
       if (resolved.images.length > 0) {
         return {
           success: false,
@@ -263,10 +260,7 @@ export const useCommandHandler = (
           const abortController =
             commandActions.getAbortController() ??
             commandActions.createAbortController();
-          return await handleUserShellCommand(
-            resolved,
-            abortController.signal
-          );
+          return await handleUserShellCommand(resolved, abortController.signal);
         }
 
         // --- 1. Slash 命令路由 ---
@@ -579,10 +573,7 @@ export const useCommandHandler = (
         );
         return;
       }
-      const result = await handleUserShellCommand(
-        resolved,
-        abortController.signal
-      );
+      const result = await handleUserShellCommand(resolved, abortController.signal);
       if (!result.success && result.error && result.error !== 'aborted') {
         sessionActions.setError(result.error);
       }

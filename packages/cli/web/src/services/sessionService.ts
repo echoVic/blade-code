@@ -470,17 +470,14 @@ export const sessionService = {
     command: string
   ): Promise<UserShellCommandResponse> => {
     return UserShellCommandResponseSchema.parse(
-      await requestJson<unknown>(
-        `${API_BASE}/sessions/${ref.sessionId}/shell`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            command,
-            projectPath: ref.projectPath,
-          }),
-        }
-      )
+      await requestJson<unknown>(`${API_BASE}/sessions/${ref.sessionId}/shell`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          command,
+          projectPath: ref.projectPath,
+        }),
+      })
     );
   },
 

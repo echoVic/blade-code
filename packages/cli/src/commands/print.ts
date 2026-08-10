@@ -12,6 +12,7 @@ import {
   validatePermissions,
 } from '../cli/middleware.js';
 import { PermissionMode } from '../config/types.js';
+import { renderUserShellCommandForDisplay } from '../services/UserShellCommandService.js';
 import { getCwd } from '../utils/cwd.js';
 import {
   initializeCliPlugins,
@@ -129,6 +130,9 @@ export async function runPrint(
       return normalized.exitCode ?? 0;
     }
     const input = normalized.content;
+    const userShellCommand = input.trimStart().startsWith('!')
+      ? input.trimStart().slice(1).trim()
+      : undefined;
 
     const { sessionId, messages } = await resolveNonInteractiveSession({
       sessionId: options.sessionId,
@@ -154,6 +158,27 @@ export async function runPrint(
           }
         : {}),
     });
+    if (userShellCommand !== undefined) {
+      const result = await runtime.executeUserShellCommand(userShellCommand);
+      if (options.outputFormat === 'json') {
+        io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      } else if (options.outputFormat === 'stream-json') {
+        io.stdout.write(
+          `${JSON.stringify({
+            type: 'user_shell_completed',
+            executionId: result.executionId,
+            record: result.record,
+          })}\n`
+        );
+      } else {
+        io.stdout.write(`${renderUserShellCommandForDisplay(result.record)}\n`);
+      }
+      return result.record.status === 'completed'
+        ? 0
+        : result.record.status === 'aborted'
+          ? 130
+          : (result.record.exitCode ?? 1);
+    }
 
     const agent = await Agent.createWithRuntime(runtime, {
       sessionId,

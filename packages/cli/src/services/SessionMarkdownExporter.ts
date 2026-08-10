@@ -9,6 +9,7 @@ import type {
 import type { SessionEvent } from '../context/types.js';
 import type { JsonValue } from '../store/types.js';
 import { materializeSessionEvents } from './sessionRewind.js';
+import { userShellCommandRecordFromMetadata } from './UserShellCommandService.js';
 
 export const MAX_SESSION_MARKDOWN_EXPORT_BYTES = 16 * 1024 * 1024;
 export const MAX_SESSION_MARKDOWN_ACTIVITY_BYTES = 64 * 1024;
@@ -74,6 +75,7 @@ interface ProjectedMessage {
   order: number;
   role: string;
   parts: ProjectedPart[];
+  metadata?: JsonValue;
 }
 
 function redact(state: RedactionState, replacement: string): string {
@@ -274,6 +276,7 @@ function projectMessages(events: readonly SessionEvent[]): ProjectedMessage[] {
       const orphan = orphanMessages.get(event.data.messageId);
       if (orphan) {
         orphan.role = event.data.role;
+        orphan.metadata = event.data.metadata;
         messages.set(event.data.messageId, orphan);
         orphanMessages.delete(event.data.messageId);
       } else if (!messages.has(event.data.messageId)) {
@@ -281,6 +284,7 @@ function projectMessages(events: readonly SessionEvent[]): ProjectedMessage[] {
           order: order++,
           role: event.data.role,
           parts: [],
+          metadata: event.data.metadata,
         });
       }
       continue;
@@ -336,6 +340,24 @@ export function renderSessionMarkdown(
   let reasoningCount = 0;
 
   for (const message of projectMessages(events)) {
+    const userShellCommand = userShellCommandRecordFromMetadata(message.metadata);
+    if (userShellCommand) {
+      const command = sanitizeCredentialText(userShellCommand.command, state);
+      const output = sanitizeCredentialText(
+        [
+          userShellCommand.stdout,
+          userShellCommand.stderr ? `stderr:\n${userShellCommand.stderr}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n') || '(no output)',
+        state
+      );
+      sections.push(
+        `## User shell command\n\n${markdownFence(`$ ${command}\n${output}`, 'console')}`
+      );
+      messageCount += 1;
+      continue;
+    }
     const textParts: string[] = [];
     const imageParts: string[] = [];
     const messageSections: Array<{ order: number; markdown: string }> = [];

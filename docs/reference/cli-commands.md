@@ -117,6 +117,10 @@ blade -p --output-format json "生成一个函数"
 
 # 流式 JSON 输出
 blade -p --output-format stream-json "写一段代码"
+
+# 直接在 Session workspace 执行，不调用模型
+blade -p '! pwd'
+blade -p --output-format stream-json '! npm test'
 ```
 
 ## 子命令
@@ -297,6 +301,13 @@ OAuth 交互。完整安全契约见 [MCP OAuth 生命周期](mcp-oauth-lifecycl
 
 - `/` 开头：触发 Slash 命令补全
 - `@` 开头：触发文件路径补全
+- `!` 开头：在当前 Session workspace 执行用户 shell command，不调用模型
+
+`! <command>` 使用 Session 冻结的 cwd/env，结果进入 durable history。活动 Agent
+回合期间会作为 persisted auxiliary steering 注入下一次安全 provider boundary。
+TUI 显示黄色 `$` prompt；Web 显示结构化 command card；ACP 使用 IDE terminal 且
+不可用时不会回退宿主 shell。详见
+[Session-owned User Shell Command](session-user-shell-command.md)。
 
 ### 会话 Slash 命令
 

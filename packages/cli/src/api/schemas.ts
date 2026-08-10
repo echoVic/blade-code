@@ -1,8 +1,8 @@
 import { Default, Runtime, type Static, StringEnum, Type } from '../schema/index.js';
 import {
-    MAX_INLINE_ATTACHMENT_BYTES,
-    MAX_INLINE_ATTACHMENT_COUNT,
-    MAX_USER_MESSAGE_TEXT_CHARS,
+  MAX_INLINE_ATTACHMENT_BYTES,
+  MAX_INLINE_ATTACHMENT_COUNT,
+  MAX_USER_MESSAGE_TEXT_CHARS,
 } from './attachmentLimits.js';
 
 export { parseSchema } from '../schema/index.js';
@@ -580,22 +580,19 @@ export const UserShellCommandRecordSchema = Runtime(
     truncated: Type.Boolean(),
   })
 );
-export type UserShellCommandRecord = Static<
-  typeof UserShellCommandRecordSchema
->;
+export type UserShellCommandRecord = Static<typeof UserShellCommandRecordSchema>;
 
 export const UserShellCommandRequestSchema = Runtime(
   Type.Object({
     command: Type.String({
       minLength: 1,
       maxLength: 32 * 1024,
+      pattern: '^(?![\\s\\S]*\\u0000)(?=[\\s\\S]*\\S)[\\s\\S]*$',
     }),
     projectPath: Type.Optional(Type.String()),
   })
 );
-export type UserShellCommandRequest = Static<
-  typeof UserShellCommandRequestSchema
->;
+export type UserShellCommandRequest = Static<typeof UserShellCommandRequestSchema>;
 
 export const UserShellCommandResponseSchema = Runtime(
   Type.Object({
@@ -607,9 +604,7 @@ export const UserShellCommandResponseSchema = Runtime(
     queued: Type.Optional(Type.Integer({ minimum: 0 })),
   })
 );
-export type UserShellCommandResponse = Static<
-  typeof UserShellCommandResponseSchema
->;
+export type UserShellCommandResponse = Static<typeof UserShellCommandResponseSchema>;
 
 export const SendMessageResponseSchema = Runtime(
   Type.Object({

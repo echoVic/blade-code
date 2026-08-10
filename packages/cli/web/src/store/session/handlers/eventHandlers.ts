@@ -767,8 +767,7 @@ const handleProjectRulesLoaded: EventHandler = (props, get, set) => {
   });
 };
 
-const userShellMessageId = (executionId: string): string =>
-  `user-shell-${executionId}`;
+const userShellMessageId = (executionId: string): string => `user-shell-${executionId}`;
 
 const handleUserShellStarted: EventHandler = (props, get, set) => {
   const { currentSessionId, addMessage, messages, updateMessage } = get();
@@ -880,10 +879,7 @@ const handleUserShellCompleted: EventHandler = (props, get, set) => {
       agentPhase: 'idle',
     });
   }
-  if (
-    props.delivery === 'current_turn' ||
-    props.delivery === 'next_turn'
-  ) {
+  if (props.delivery === 'current_turn' || props.delivery === 'next_turn') {
     set({
       pendingSteeringCount:
         typeof props.queued === 'number' ? Math.max(0, props.queued) : 0,

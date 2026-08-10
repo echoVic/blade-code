@@ -207,6 +207,7 @@ const runtimeState = vi.hoisted(() => ({
     rewindSession: vi.fn(),
     listSubagents: vi.fn(() => []),
     resumeSubagent: vi.fn(),
+    executeUserShellCommand: vi.fn(),
   },
 }));
 
@@ -556,6 +557,7 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.listSubagents.mockReset();
     runtimeState.runtime.listSubagents.mockReturnValue([]);
     runtimeState.runtime.resumeSubagent.mockReset();
+    runtimeState.runtime.executeUserShellCommand.mockReset();
     worktreeState.enter.mockReset();
     worktreeState.restoreSession.mockReset();
     worktreeState.restoreSession.mockImplementation(async (session) => session);
@@ -5158,5 +5160,64 @@ describe('SessionRoutes runtime reuse', () => {
     expect(body.error.message).not.toContain(
       '/secret/workspaces/project/.blade/sessions'
     );
+  });
+
+  it('executes a user shell command through the exact Session runtime', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { SessionService } = await import(
+      '../../../../src/services/SessionService.js'
+    );
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(
+      makeSessionMetadata({
+        sessionId: 'shell-session',
+        projectPath: '/tmp/shell-workspace',
+      })
+    );
+    vi.mocked(SessionService.loadSession).mockResolvedValue([]);
+    runtimeState.runtime.executeUserShellCommand.mockResolvedValueOnce({
+      executionId: 'shell-execution',
+      messageId: 'shell-message',
+      record: {
+        version: 1,
+        command: 'pwd',
+        status: 'completed',
+        exitCode: 0,
+        durationMs: 4,
+        stdout: '/tmp/shell-workspace',
+        stderr: '',
+        stdoutOmittedBytes: 0,
+        stderrOmittedBytes: 0,
+        binaryOutput: false,
+        truncated: false,
+      },
+      modelContent: '<user_shell_command>pwd</user_shell_command>',
+      auxiliary: false,
+    });
+
+    const response = await SessionRoutes().request('/shell-session/shell', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        command: 'pwd',
+        projectPath: '/tmp/shell-workspace',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      executionId: 'shell-execution',
+      record: {
+        command: 'pwd',
+        stdout: '/tmp/shell-workspace',
+      },
+    });
+    expect(runtimeState.runtime.executeUserShellCommand).toHaveBeenCalledWith('pwd', {
+      signal: expect.any(AbortSignal),
+    });
+    expect(SessionService.loadSession).toHaveBeenCalledWith(
+      'shell-session',
+      '/tmp/shell-workspace'
+    );
+    expect(agentState.chatStream).not.toHaveBeenCalled();
   });
 });

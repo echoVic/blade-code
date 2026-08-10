@@ -838,9 +838,7 @@ export function useAgent(options: AgentOptions) {
       command: string,
       shellOptions?: {
         signal?: AbortSignal;
-        onEvent?: (
-          event: SessionUserShellCommandEvent
-        ) => void | Promise<void>;
+        onEvent?: (event: SessionUserShellCommandEvent) => void | Promise<void>;
       }
     ) => {
       const targetSessionId = options.sessionId;

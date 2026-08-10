@@ -44,6 +44,43 @@ describe('SessionService.toUISafeMessages', () => {
       { role: 'assistant', content: 'same answer' },
     ]);
   });
+
+  it('projects durable user shell metadata without exposing model XML', () => {
+    const messages: Message[] = [
+      {
+        role: 'user',
+        content:
+          '<user_shell_command><command>pwd</command><result>private</result></user_shell_command>',
+        metadata: {
+          userShellCommand: {
+            version: 1,
+            command: 'pwd',
+            status: 'completed',
+            exitCode: 0,
+            durationMs: 5,
+            stdout: '/workspace',
+            stderr: '',
+            stdoutOmittedBytes: 0,
+            stderrOmittedBytes: 0,
+            binaryOutput: false,
+            truncated: false,
+          },
+        },
+      },
+    ];
+
+    expect(SessionService.toUISafeMessages(messages)).toMatchObject([
+      {
+        role: 'user',
+        content: '! pwd\n/workspace',
+        metadata: {
+          userShellCommand: expect.objectContaining({
+            status: 'completed',
+          }),
+        },
+      },
+    ]);
+  });
 });
 
 describe('SessionService subagent history projection', () => {

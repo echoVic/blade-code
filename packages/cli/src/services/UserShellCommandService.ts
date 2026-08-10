@@ -1,7 +1,7 @@
 import { StringDecoder } from 'node:string_decoder';
-import { spawnOwnedProcess } from '../utils/process/OwnedProcessTree.js';
 import { BoundedOutputBuffer } from '../tools/builtin/shell/BoundedOutputBuffer.js';
 import { OutputTruncator } from '../tools/builtin/shell/OutputTruncator.js';
+import { spawnOwnedProcess } from '../utils/process/OwnedProcessTree.js';
 
 export const MAX_USER_SHELL_COMMAND_CHARS = 32 * 1024;
 export const MAX_USER_SHELL_CAPTURE_BYTES = 1024 * 1024;
@@ -95,9 +95,7 @@ interface StreamCaptureSnapshot {
 }
 
 class StreamCapture {
-  private readonly output = new BoundedOutputBuffer(
-    MAX_USER_SHELL_CAPTURE_BYTES / 2
-  );
+  private readonly output = new BoundedOutputBuffer(MAX_USER_SHELL_CAPTURE_BYTES / 2);
   private readonly decoder = new StringDecoder('utf8');
   private readonly sniffChunks: Buffer[] = [];
   private sniffBytes = 0;
@@ -105,6 +103,7 @@ class StreamCapture {
   private totalBytes = 0;
   private streamedBytes = 0;
   private streamTruncated = false;
+  private readonly pendingEvents: Promise<void>[] = [];
 
   constructor(
     private readonly stream: 'stdout' | 'stderr',
@@ -159,6 +158,11 @@ class StreamCapture {
     };
   }
 
+  async flushEvents(): Promise<void> {
+    await Promise.all(this.pendingEvents);
+    this.pendingEvents.length = 0;
+  }
+
   private emit(chunk: string): void {
     if (!chunk || !this.onEvent || this.streamTruncated) return;
     const remaining = MAX_USER_SHELL_STREAM_BYTES - this.streamedBytes;
@@ -169,14 +173,18 @@ class StreamCapture {
     const projected = truncateUtf8(chunk, remaining);
     this.streamedBytes += Buffer.byteLength(projected);
     if (projected.length < chunk.length) this.streamTruncated = true;
-    void this.onEvent({
-      type: 'output',
-      executionId: this.executionId,
-      stream: this.stream,
-      chunk: projected,
-      streamedBytes: this.streamedBytes,
-      streamTruncated: this.streamTruncated,
-    });
+    this.pendingEvents.push(
+      Promise.resolve(
+        this.onEvent({
+          type: 'output',
+          executionId: this.executionId,
+          stream: this.stream,
+          chunk: projected,
+          streamedBytes: this.streamedBytes,
+          streamTruncated: this.streamTruncated,
+        })
+      ).then(() => undefined)
+    );
   }
 }
 
@@ -232,8 +240,8 @@ export function createLocalUserShellExecutor(): UserShellExecutor {
           env: options.env,
           stdio: ['ignore', 'pipe', 'pipe'],
         });
-        let stdout = '';
-        let stderr = '';
+        const stdout = '';
+        const stderr = '';
         let timedOut = false;
         let aborted = false;
         let settled = false;
@@ -335,6 +343,7 @@ export async function executeUserShellCommand(
   if (!receivedStderr) stderrCapture.append(rawResult.stderr);
   stdoutCapture.finish();
   stderrCapture.finish();
+  await Promise.all([stdoutCapture.flushEvents(), stderrCapture.flushEvents()]);
   const stdout = stdoutCapture.snapshot();
   const stderr = stderrCapture.snapshot();
   const truncated = OutputTruncator.truncateForLLM(
@@ -378,9 +387,7 @@ export async function executeUserShellCommand(
   return record;
 }
 
-export function renderUserShellCommandForModel(
-  record: UserShellCommandRecord
-): string {
+export function renderUserShellCommandForModel(record: UserShellCommandRecord): string {
   const output = [
     record.stdout ? `stdout:\n${record.stdout}` : '',
     record.stderr ? `stderr:\n${record.stderr}` : '',
@@ -403,10 +410,7 @@ export function renderUserShellCommandForModel(
 export function renderUserShellCommandForDisplay(
   record: UserShellCommandRecord
 ): string {
-  const output = [
-    record.stdout,
-    record.stderr ? `stderr:\n${record.stderr}` : '',
-  ]
+  const output = [record.stdout, record.stderr ? `stderr:\n${record.stderr}` : '']
     .filter(Boolean)
     .join('\n');
   return [`! ${record.command}`, output || '(no output)'].join('\n');

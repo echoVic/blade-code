@@ -43,6 +43,9 @@ import {
   SessionSchema,
   type UiTheme,
   UiThemeSchema,
+  UserShellCommandRecordSchema,
+  UserShellCommandRequestSchema,
+  UserShellCommandResponseSchema,
 } from '../../../../src/api/schemas.js';
 
 describe('API Schemas', () => {
@@ -576,6 +579,66 @@ describe('API Schemas', () => {
       };
 
       expect(() => SendMessageResponseSchema.parse(validResponse)).not.toThrow();
+    });
+  });
+
+  describe('User shell command schemas', () => {
+    const record = {
+      version: 1 as const,
+      command: 'pwd',
+      status: 'completed' as const,
+      exitCode: 0,
+      durationMs: 4,
+      stdout: '/workspace\n',
+      stderr: '',
+      stdoutOmittedBytes: 0,
+      stderrOmittedBytes: 0,
+      binaryOutput: false,
+      truncated: false,
+    };
+
+    it('validates bounded commands and durable responses', () => {
+      expect(
+        UserShellCommandRequestSchema.parse({
+          command: `printf ok\n${'x'.repeat(32 * 1024 - 10)}`,
+          projectPath: '/workspace',
+        })
+      ).toMatchObject({ projectPath: '/workspace' });
+      expect(UserShellCommandRecordSchema.parse(record)).toEqual(record);
+      expect(
+        UserShellCommandResponseSchema.parse({
+          executionId: 'shell-1',
+          messageId: 'message-1',
+          record,
+          auxiliary: true,
+          delivery: 'current_turn',
+          queued: 1,
+        })
+      ).toMatchObject({
+        executionId: 'shell-1',
+        auxiliary: true,
+        delivery: 'current_turn',
+      });
+    });
+
+    it('rejects empty, null-byte, oversized, and invalid result data', () => {
+      expect(() =>
+        UserShellCommandRequestSchema.parse({ command: ' \n\t ' })
+      ).toThrow();
+      expect(() =>
+        UserShellCommandRequestSchema.parse({ command: 'printf ok\0ignored' })
+      ).toThrow();
+      expect(() =>
+        UserShellCommandRequestSchema.parse({
+          command: 'x'.repeat(32 * 1024 + 1),
+        })
+      ).toThrow();
+      expect(() =>
+        UserShellCommandRecordSchema.parse({
+          ...record,
+          durationMs: -1,
+        })
+      ).toThrow();
     });
   });
 

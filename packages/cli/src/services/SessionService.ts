@@ -12,6 +12,12 @@ import {
   MAX_INLINE_ATTACHMENT_BYTES,
   MAX_INLINE_ATTACHMENT_COUNT,
 } from '../api/attachmentLimits.js';
+import type {
+  CommunicationStyleSelection,
+  ReasoningEffortSelection,
+  ResponseVerbositySelection,
+  ServiceTierSelection,
+} from '../config/types.js';
 import { JSONLStore, parseSessionJSONL } from '../context/storage/JSONLStore.js';
 import {
   assertValidSessionId,
@@ -47,6 +53,15 @@ import { FileAccessTracker } from '../tools/builtin/file/FileAccessTracker.js';
 import { SnapshotManager } from '../tools/builtin/file/SnapshotManager.js';
 import { getVersion } from '../utils/packageInfo.js';
 import type { ContentPart, Message } from './ChatServiceInterface.js';
+import { isCommunicationStyleSelection } from './communicationStyle.js';
+import { isReasoningEffortSelection } from './pi/reasoningEffort.js';
+import { isResponseVerbositySelection } from './pi/responseVerbosity.js';
+import { isServiceTierSelection } from './pi/serviceTier.js';
+import {
+  renderSessionMarkdown,
+  type SessionMarkdownExport,
+  type SessionMarkdownExportOptions,
+} from './SessionMarkdownExporter.js';
 import {
   compareSessionCatalogItems,
   type NormalizedSessionListOptions,
@@ -62,6 +77,10 @@ import {
   type SessionRewindCheckpoint as ProjectedRewindCheckpoint,
   planSessionRewind,
 } from './sessionRewind.js';
+import {
+  renderUserShellCommandForDisplay,
+  userShellCommandRecordFromMetadata,
+} from './UserShellCommandService.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 const SESSION_TASK_STATUSES = new Set<SessionTaskStatus>([
@@ -189,7 +208,21 @@ function parseTaskDispatch(value: unknown): SessionTaskDispatch | undefined {
     (dispatch.modelId !== undefined &&
       (typeof dispatch.modelId !== 'string' ||
         !dispatch.modelId.trim() ||
-        dispatch.modelId.length > 500))
+        dispatch.modelId.length > 500)) ||
+    (dispatch.reasoningEffort !== undefined &&
+      !isReasoningEffortSelection(dispatch.reasoningEffort)) ||
+    (dispatch.serviceTier !== undefined &&
+      !isServiceTierSelection(dispatch.serviceTier)) ||
+    (dispatch.responseVerbosity !== undefined &&
+      !isResponseVerbositySelection(dispatch.responseVerbosity)) ||
+    (dispatch.communicationStyle !== undefined &&
+      !isCommunicationStyleSelection(dispatch.communicationStyle)) ||
+    (dispatch.communicationStyleDigest !== undefined &&
+      (typeof dispatch.communicationStyleDigest !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(dispatch.communicationStyleDigest))) ||
+    (dispatch.projectInstructionsDigest !== undefined &&
+      (typeof dispatch.projectInstructionsDigest !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(dispatch.projectInstructionsDigest)))
   ) {
     return undefined;
   }
@@ -239,6 +272,24 @@ function parseTaskDispatch(value: unknown): SessionTaskDispatch | undefined {
     isolation: dispatch.isolation as SessionTaskIsolation,
     permissionMode: dispatch.permissionMode as SessionTaskDispatch['permissionMode'],
     ...(typeof dispatch.modelId === 'string' ? { modelId: dispatch.modelId } : {}),
+    ...(isReasoningEffortSelection(dispatch.reasoningEffort)
+      ? { reasoningEffort: dispatch.reasoningEffort }
+      : {}),
+    ...(isServiceTierSelection(dispatch.serviceTier)
+      ? { serviceTier: dispatch.serviceTier }
+      : {}),
+    ...(isResponseVerbositySelection(dispatch.responseVerbosity)
+      ? { responseVerbosity: dispatch.responseVerbosity }
+      : {}),
+    ...(isCommunicationStyleSelection(dispatch.communicationStyle)
+      ? { communicationStyle: dispatch.communicationStyle }
+      : {}),
+    ...(typeof dispatch.communicationStyleDigest === 'string'
+      ? { communicationStyleDigest: dispatch.communicationStyleDigest }
+      : {}),
+    ...(typeof dispatch.projectInstructionsDigest === 'string'
+      ? { projectInstructionsDigest: dispatch.projectInstructionsDigest }
+      : {}),
     ...(attachments ? { attachments } : {}),
   };
 }
@@ -300,6 +351,12 @@ export interface SessionMetadata {
   agentType?: string;
   model?: string;
   selectedModelId?: string;
+  reasoningEffort?: ReasoningEffortSelection;
+  serviceTier?: ServiceTierSelection;
+  responseVerbosity?: ResponseVerbositySelection;
+  communicationStyle?: CommunicationStyleSelection;
+  communicationStyleDigest?: string;
+  projectInstructionsDigest?: string;
   taskStatus: SessionTaskStatus;
   taskStatusReason?: string;
   taskFailure?: SessionTaskFailure;
@@ -319,6 +376,8 @@ export interface SessionMetadata {
   taskQueuePosition?: number;
   taskQueueDepth?: number;
   taskConcurrencyLimit?: number;
+  archivedAt?: string;
+  archivedBySessionId?: string;
   messageCount: number;
   firstMessageTime: string;
   lastMessageTime: string;
@@ -353,6 +412,12 @@ export interface SessionMetadataUpdate {
   taskQueueDepth?: number | null;
   taskConcurrencyLimit?: number | null;
   selectedModelId?: string | null;
+  reasoningEffort?: ReasoningEffortSelection | null;
+  serviceTier?: ServiceTierSelection | null;
+  responseVerbosity?: ResponseVerbositySelection | null;
+  communicationStyle?: CommunicationStyleSelection | null;
+  communicationStyleDigest?: string | null;
+  projectInstructionsDigest?: string | null;
 }
 
 export interface SessionPage {
@@ -364,6 +429,31 @@ export class SessionMissingCreationError extends Error {
   constructor(sessionId: string) {
     super(`Session has no durable creation record: ${sessionId}`);
     this.name = 'SessionMissingCreationError';
+  }
+}
+
+export class SessionArchivedError extends Error {
+  readonly code = 'BLADE_SESSION_ARCHIVED';
+
+  constructor(
+    readonly sessionId: string,
+    readonly archivedBySessionId: string
+  ) {
+    super(
+      sessionId === archivedBySessionId
+        ? `Session is archived: ${sessionId}`
+        : `Session is archived by ancestor ${archivedBySessionId}: ${sessionId}`
+    );
+    this.name = 'SessionArchivedError';
+  }
+}
+
+export class SessionArchiveConflictError extends Error {
+  readonly code = 'BLADE_SESSION_ARCHIVE_CONFLICT';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'SessionArchiveConflictError';
   }
 }
 
@@ -398,6 +488,65 @@ export interface RewoundSession {
   messages: Message[];
 }
 
+function archiveKey(projectPath: string, sessionId: string): string {
+  return `${projectPath}\0${sessionId}`;
+}
+
+function isValidArchiveTimestamp(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length <= 64 &&
+    Number.isFinite(Date.parse(value))
+  );
+}
+
+function projectEffectiveArchiveState(
+  sessions: readonly StoredSessionMetadata[]
+): StoredSessionMetadata[] {
+  const byKey = new Map(
+    sessions.map((session) => [
+      archiveKey(session.projectPath, session.sessionId),
+      session,
+    ])
+  );
+
+  return sessions.map((session) => {
+    let current: StoredSessionMetadata | undefined = session;
+    const visited = new Set<string>();
+    while (current) {
+      const key = archiveKey(current.projectPath, current.sessionId);
+      if (visited.has(key)) break;
+      visited.add(key);
+      if (isValidArchiveTimestamp(current.archivedAt)) {
+        return {
+          ...session,
+          archivedAt: current.archivedAt,
+          archivedBySessionId: current.sessionId,
+        };
+      }
+      current = current.parentId
+        ? byKey.get(archiveKey(current.projectPath, current.parentId))
+        : undefined;
+    }
+
+    const {
+      archivedAt: _archivedAt,
+      archivedBySessionId: _archivedBySessionId,
+      ...active
+    } = session;
+    return active;
+  });
+}
+
+function filterArchiveState(
+  sessions: readonly StoredSessionMetadata[],
+  archived: boolean | null
+): StoredSessionMetadata[] {
+  const projected = projectEffectiveArchiveState(sessions);
+  if (archived === null) return projected;
+  return projected.filter((session) => Boolean(session.archivedAt) === archived);
+}
+
 /**
  * 会话管理服务
  */
@@ -428,12 +577,16 @@ export class SessionService {
 
       const normalizedContent = content.trim();
       if (!normalizedContent) return;
+      const userShellCommand = userShellCommandRecordFromMetadata(msg.metadata);
+      const visibleContent = userShellCommand
+        ? renderUserShellCommandForDisplay(userShellCommand)
+        : normalizedContent;
 
       const previous = result[result.length - 1];
       if (
         previous &&
         previous.role === msg.role &&
-        previous.content === normalizedContent
+        previous.content === visibleContent
       ) {
         return;
       }
@@ -441,7 +594,7 @@ export class SessionService {
       result.push({
         id: `restored-${now}-${index}`,
         role: msg.role,
-        content: normalizedContent,
+        content: visibleContent,
         timestamp: now - (total - index) * 1000,
         metadata:
           msg.metadata && typeof msg.metadata === 'object'
@@ -460,7 +613,8 @@ export class SessionService {
     const stored = await this.scanStoredSessions(
       normalized.cwd ?? undefined,
       normalized.includeSubagents,
-      normalized.cursor ? 5_000 : 0
+      normalized.cursor ? 5_000 : 0,
+      normalized.archived
     );
     const filtered = stored.sort(compareSessionCatalogItems);
     const page = paginateSessionCatalog(filtered, normalized);
@@ -482,20 +636,23 @@ export class SessionService {
       const filters: string[] = [];
       const parameters: unknown[] = [];
       if (options.cwd) {
-        filters.push('project_path = ?');
+        filters.push('s.project_path = ?');
         parameters.push(options.cwd);
       }
       if (!options.includeSubagents) {
-        filters.push('is_subagent = 0');
+        filters.push('s.is_subagent = 0');
       }
+      filters.push(
+        options.archived ? 'a.session_id IS NOT NULL' : 'a.session_id IS NULL'
+      );
       if (boundary) {
         filters.push(`(
-          last_message_time < ?
+          s.last_message_time < ?
           OR (
-            last_message_time = ?
+            s.last_message_time = ?
             AND (
-              project_sort_key > ?
-              OR (project_sort_key = ? AND session_sort_key > ?)
+              s.project_sort_key > ?
+              OR (s.project_sort_key = ? AND s.session_sort_key > ?)
             )
           )
         )`);
@@ -511,16 +668,63 @@ export class SessionService {
 
       const rows = db
         .prepare(
-          `SELECT metadata_json
-           FROM sessions
+          `WITH RECURSIVE archive_members(
+             project_path, session_id, archive_root_id, effective_archived_at, depth
+           ) AS (
+             SELECT project_path, session_id, session_id, archived_at, 0
+             FROM sessions
+             WHERE archived_at IS NOT NULL
+             UNION ALL
+             SELECT child.project_path, child.session_id, parent.archive_root_id,
+                    parent.effective_archived_at, parent.depth + 1
+             FROM sessions child
+             JOIN archive_members parent
+               ON child.project_path = parent.project_path
+              AND child.parent_id = parent.session_id
+             WHERE parent.depth < 128
+           ),
+           ranked_archive AS (
+             SELECT project_path, session_id, archive_root_id,
+                    effective_archived_at,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY project_path, session_id
+                      ORDER BY depth ASC, archive_root_id ASC
+                    ) AS rank
+             FROM archive_members
+           )
+           SELECT s.metadata_json, a.archive_root_id, a.effective_archived_at
+           FROM sessions s
+           LEFT JOIN ranked_archive a
+             ON a.project_path = s.project_path
+            AND a.session_id = s.session_id
+            AND a.rank = 1
            ${filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : ''}
-           ORDER BY last_message_time DESC, project_sort_key ASC, session_sort_key ASC
+           ORDER BY s.last_message_time DESC,
+                    s.project_sort_key ASC,
+                    s.session_sort_key ASC
            LIMIT ?`
         )
-        .all<{ metadata_json: string }>(...parameters, options.limit + 1);
-      const sessions = rows.map(
-        (row) => JSON.parse(row.metadata_json) as StoredSessionMetadata
-      );
+        .all<{
+          metadata_json: string;
+          archive_root_id: string | null;
+          effective_archived_at: string | null;
+        }>(...parameters, options.limit + 1);
+      const sessions = rows.map((row) => {
+        const metadata = JSON.parse(row.metadata_json) as StoredSessionMetadata;
+        if (row.archive_root_id && row.effective_archived_at) {
+          return {
+            ...metadata,
+            archivedAt: row.effective_archived_at,
+            archivedBySessionId: row.archive_root_id,
+          };
+        }
+        const {
+          archivedAt: _archivedAt,
+          archivedBySessionId: _archivedBySessionId,
+          ...active
+        } = metadata;
+        return active;
+      });
       const page = paginateSessionCatalog(sessions, options);
       return {
         sessions: page.sessions.map((session) => this.toPublicMetadata(session)),
@@ -541,7 +745,9 @@ export class SessionService {
     const normalized = normalizeSessionListOptions(options);
     const stored = await this.scanStoredSessions(
       normalized.cwd ?? undefined,
-      normalized.includeSubagents
+      normalized.includeSubagents,
+      0,
+      normalized.archived
     );
     const seenSessions = new Set<string>();
     return stored.sort(compareSessionCatalogItems).flatMap((session) => {
@@ -573,7 +779,18 @@ export class SessionService {
         if (stored.projectPath !== resolvedProjectPath) {
           return undefined;
         }
-        return this.toPublicMetadata(stored);
+        if (!stored.parentId || stored.archivedAt) {
+          return this.toPublicMetadata(filterArchiveState([stored], null)[0] ?? stored);
+        }
+        const scoped = await this.scanStoredSessions(
+          resolvedProjectPath,
+          true,
+          0,
+          null
+        );
+        return this.toPublicMetadata(
+          scoped.find((session) => session.sessionId === sessionId) ?? stored
+        );
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
           return undefined;
@@ -582,7 +799,7 @@ export class SessionService {
       }
     }
 
-    const matches = (await this.scanStoredSessions(undefined, true)).filter(
+    const matches = (await this.scanStoredSessions(undefined, true, 0, null)).filter(
       (session) => session.sessionId === sessionId
     );
     if (matches.length === 0) return undefined;
@@ -622,7 +839,7 @@ export class SessionService {
         }
       }
 
-      const session = (await this.scanStoredSessions(undefined, true)).find(
+      const session = (await this.scanStoredSessions(undefined, true, 0, null)).find(
         (candidate) => candidate.sessionId === sessionId
       );
 
@@ -635,6 +852,45 @@ export class SessionService {
       logger.error(`[SessionService] 加载会话失败 (${sessionId}):`, error);
       throw error;
     }
+  }
+
+  static async exportSessionMarkdown(
+    sessionId: string,
+    projectPath: string,
+    options: SessionMarkdownExportOptions = {}
+  ): Promise<SessionMarkdownExport> {
+    assertValidSessionId(sessionId);
+    const resolvedProjectPath = this.resolveCatalogWorkspace(projectPath);
+    const filePath = getSessionFilePath(resolvedProjectPath, sessionId);
+    let entries: SessionEvent[];
+    try {
+      entries = await this.readStableSessionSnapshot(filePath, sessionId);
+    } catch (error) {
+      throw this.sanitizeStoredSessionError(error, sessionId);
+    }
+    const stored = this.projectMetadataFromEntries(
+      entries,
+      sessionId,
+      resolvedProjectPath,
+      filePath
+    );
+    if (stored.projectPath !== resolvedProjectPath) {
+      throw new Error(`Session export workspace mismatch: ${sessionId}`);
+    }
+    let archivedAt = stored.archivedAt;
+    if (!archivedAt && stored.parentId) {
+      archivedAt = (
+        await this.findArchivedAncestor(stored.parentId, resolvedProjectPath)
+      )?.archivedAt;
+    }
+    return renderSessionMarkdown(
+      entries,
+      {
+        ...stored,
+        archivedAt,
+      },
+      options
+    );
   }
 
   static async listRewindCheckpoints(
@@ -672,6 +928,7 @@ export class SessionService {
   ): Promise<RewoundSession> {
     assertValidSessionId(sessionId);
     const resolvedProjectPath = this.resolveCatalogWorkspace(projectPath);
+    await this.assertSessionWritable(sessionId, resolvedProjectPath);
     const filePath = getSessionFilePath(resolvedProjectPath, sessionId);
     const store = new JSONLStore(filePath);
     let result: RewoundSession | undefined;
@@ -771,6 +1028,24 @@ export class SessionService {
       throw new Error(
         'Fork source session_created.cwd must resolve to the requested source workspace'
       );
+    }
+    const sourceMetadata = this.projectMetadataFromEntries(
+      sourceTranscript,
+      sourceSessionId,
+      sourceProjectPath,
+      sourceFilePath
+    );
+    if (sourceMetadata.archivedAt) {
+      throw new SessionArchivedError(sourceSessionId, sourceSessionId);
+    }
+    if (sourceMetadata.parentId) {
+      const ancestor = await this.findArchivedAncestor(
+        sourceMetadata.parentId,
+        sourceProjectPath
+      );
+      if (ancestor) {
+        throw new SessionArchivedError(sourceSessionId, ancestor.sessionId);
+      }
     }
     const sourceEntries = materializeSessionEvents(sourceTranscript);
 
@@ -1063,6 +1338,48 @@ export class SessionService {
       throw new Error('Invalid selected session model ID');
     }
     if (
+      update.reasoningEffort !== undefined &&
+      update.reasoningEffort !== null &&
+      !isReasoningEffortSelection(update.reasoningEffort)
+    ) {
+      throw new Error('Invalid session reasoning effort');
+    }
+    if (
+      update.serviceTier !== undefined &&
+      update.serviceTier !== null &&
+      !isServiceTierSelection(update.serviceTier)
+    ) {
+      throw new Error('Invalid session service tier');
+    }
+    if (
+      update.responseVerbosity !== undefined &&
+      update.responseVerbosity !== null &&
+      !isResponseVerbositySelection(update.responseVerbosity)
+    ) {
+      throw new Error('Invalid session response verbosity');
+    }
+    if (
+      update.communicationStyle !== undefined &&
+      update.communicationStyle !== null &&
+      !isCommunicationStyleSelection(update.communicationStyle)
+    ) {
+      throw new Error('Invalid session communication style');
+    }
+    if (
+      update.communicationStyleDigest !== undefined &&
+      update.communicationStyleDigest !== null &&
+      !/^[a-f0-9]{64}$/.test(update.communicationStyleDigest)
+    ) {
+      throw new Error('Invalid session communication style digest');
+    }
+    if (
+      update.projectInstructionsDigest !== undefined &&
+      update.projectInstructionsDigest !== null &&
+      !/^[a-f0-9]{64}$/.test(update.projectInstructionsDigest)
+    ) {
+      throw new Error('Invalid session project instructions digest');
+    }
+    if (
       update.taskRetriedFrom !== undefined &&
       update.taskRetriedFrom !== null &&
       !parseTaskRetryRef(update.taskRetriedFrom)
@@ -1160,6 +1477,12 @@ export class SessionService {
       | 'taskSourceProjectPath'
       | 'taskWorktree'
       | 'selectedModelId'
+      | 'reasoningEffort'
+      | 'serviceTier'
+      | 'responseVerbosity'
+      | 'communicationStyle'
+      | 'communicationStyleDigest'
+      | 'projectInstructionsDigest'
     > = {}
   ): Promise<SessionMetadata> {
     assertValidSessionId(sessionId);
@@ -1209,6 +1532,24 @@ export class SessionService {
         ...(initial.selectedModelId !== undefined
           ? { selectedModelId: initial.selectedModelId }
           : {}),
+        ...(initial.reasoningEffort !== undefined
+          ? { reasoningEffort: initial.reasoningEffort }
+          : {}),
+        ...(initial.serviceTier !== undefined
+          ? { serviceTier: initial.serviceTier }
+          : {}),
+        ...(initial.responseVerbosity !== undefined
+          ? { responseVerbosity: initial.responseVerbosity }
+          : {}),
+        ...(initial.communicationStyle !== undefined
+          ? { communicationStyle: initial.communicationStyle }
+          : {}),
+        ...(initial.communicationStyleDigest !== undefined
+          ? { communicationStyleDigest: initial.communicationStyleDigest }
+          : {}),
+        ...(initial.projectInstructionsDigest !== undefined
+          ? { projectInstructionsDigest: initial.projectInstructionsDigest }
+          : {}),
         createdAt: now,
         updatedAt: now,
       },
@@ -1223,6 +1564,255 @@ export class SessionService {
         filePath
       )
     );
+  }
+
+  static async assertSessionWritable(
+    sessionId: string,
+    projectPath: string
+  ): Promise<SessionMetadata> {
+    const metadata = await this.findSessionMetadata(sessionId, projectPath);
+    if (!metadata) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
+    if (metadata.archivedAt) {
+      throw new SessionArchivedError(
+        sessionId,
+        metadata.archivedBySessionId ?? sessionId
+      );
+    }
+    return metadata;
+  }
+
+  private static async findArchivedAncestor(
+    parentSessionId: string,
+    projectPath: string
+  ): Promise<{ sessionId: string; archivedAt: string } | undefined> {
+    const visited = new Set<string>();
+    let currentSessionId: string | undefined = parentSessionId;
+    while (currentSessionId) {
+      if (visited.has(currentSessionId)) {
+        throw new Error('Session lineage contains a cycle');
+      }
+      visited.add(currentSessionId);
+      assertValidSessionId(currentSessionId);
+      const filePath = getSessionFilePath(projectPath, currentSessionId);
+      let content: string;
+      try {
+        content = await readFile(filePath, 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+        throw error;
+      }
+      const ancestor = this.projectMetadataFromEntries(
+        this.parseStoredSession(content, currentSessionId),
+        currentSessionId,
+        projectPath,
+        filePath
+      );
+      if (ancestor.projectPath !== projectPath) {
+        throw new Error('Session lineage escapes the requested workspace');
+      }
+      if (ancestor.archivedAt) {
+        return {
+          sessionId: ancestor.sessionId,
+          archivedAt: ancestor.archivedAt,
+        };
+      }
+      currentSessionId = ancestor.parentId;
+    }
+    return undefined;
+  }
+
+  static async listSessionArchiveMembers(
+    sessionId: string,
+    projectPath: string
+  ): Promise<SessionMetadata[]> {
+    assertValidSessionId(sessionId);
+    const resolvedProjectPath = this.resolveCatalogWorkspace(projectPath);
+    const sessions = await this.scanStoredSessions(resolvedProjectPath, true, 0, null);
+    if (!sessions.some((session) => session.sessionId === sessionId)) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
+
+    const memberIds = new Set([sessionId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const session of sessions) {
+        if (
+          session.parentId &&
+          memberIds.has(session.parentId) &&
+          !memberIds.has(session.sessionId)
+        ) {
+          memberIds.add(session.sessionId);
+          changed = true;
+        }
+      }
+    }
+
+    return sessions
+      .filter((session) => memberIds.has(session.sessionId))
+      .sort((left, right) => left.sessionId.localeCompare(right.sessionId))
+      .map((session) => this.toPublicMetadata(session));
+  }
+
+  static async archiveSession(
+    sessionId: string,
+    projectPath: string
+  ): Promise<SessionMetadata> {
+    assertValidSessionId(sessionId);
+    const resolvedProjectPath = this.resolveCatalogWorkspace(projectPath);
+    const current = await this.findSessionMetadata(sessionId, resolvedProjectPath);
+    if (!current) throw new Error(`Session not found: ${sessionId}`);
+    if (current.archivedAt) return current;
+
+    const members = await this.listSessionArchiveMembers(
+      sessionId,
+      resolvedProjectPath
+    );
+    const activeMember = members.find(
+      (member) => member.taskStatus === 'queued' || member.taskStatus === 'running'
+    );
+    if (activeMember) {
+      throw new SessionArchiveConflictError(
+        `Stop session ${activeMember.sessionId} before archiving this session tree`
+      );
+    }
+
+    const leases: SessionLease[] = [];
+    try {
+      for (const member of members) {
+        leases.push(await SessionLease.acquire(member.sessionId, resolvedProjectPath));
+      }
+
+      const filePath = getSessionFilePath(resolvedProjectPath, sessionId);
+      const store = new JSONLStore(filePath);
+      let persistedEntries: SessionEvent[] = [];
+      await store.appendValidated((entries) => {
+        const stored = this.projectMetadataFromEntries(
+          entries,
+          sessionId,
+          resolvedProjectPath,
+          filePath
+        );
+        if (stored.archivedAt) {
+          throw new SessionArchiveConflictError(
+            `Session archive state changed concurrently: ${sessionId}`
+          );
+        }
+        if (stored.taskStatus === 'queued' || stored.taskStatus === 'running') {
+          throw new SessionArchiveConflictError(
+            `Stop session ${sessionId} before archiving it`
+          );
+        }
+        const now = new Date().toISOString();
+        const next: Extract<SessionEvent, { type: 'session_updated' }> = {
+          id: nanoid(),
+          sessionId,
+          timestamp: now,
+          type: 'session_updated',
+          cwd: resolvedProjectPath,
+          gitBranch: detectGitBranch(resolvedProjectPath),
+          version: getVersion(),
+          data: {
+            sessionId,
+            archivedAt: now,
+            updatedAt: now,
+          },
+        };
+        persistedEntries = [...entries, next];
+        return next;
+      });
+      return this.toPublicMetadata({
+        ...this.projectMetadataFromEntries(
+          persistedEntries,
+          sessionId,
+          resolvedProjectPath,
+          filePath
+        ),
+        archivedBySessionId: sessionId,
+      });
+    } catch (error) {
+      if (error instanceof SessionArchiveConflictError) throw error;
+      if (error instanceof SessionInUseError) {
+        throw new SessionArchiveConflictError(error.message);
+      }
+      throw this.sanitizeStoredSessionError(error, sessionId);
+    } finally {
+      for (const lease of leases.reverse()) {
+        await lease.release();
+      }
+    }
+  }
+
+  static async unarchiveSession(
+    sessionId: string,
+    projectPath: string
+  ): Promise<SessionMetadata> {
+    assertValidSessionId(sessionId);
+    const resolvedProjectPath = this.resolveCatalogWorkspace(projectPath);
+    const current = await this.findSessionMetadata(sessionId, resolvedProjectPath);
+    if (!current) throw new Error(`Session not found: ${sessionId}`);
+    if (!current.archivedAt) return current;
+    if (current.archivedBySessionId && current.archivedBySessionId !== sessionId) {
+      throw new SessionArchiveConflictError(
+        `Unarchive ancestor ${current.archivedBySessionId} to restore session ${sessionId}`
+      );
+    }
+
+    let lease: SessionLease | undefined;
+    try {
+      lease = await SessionLease.acquire(sessionId, resolvedProjectPath);
+      const filePath = getSessionFilePath(resolvedProjectPath, sessionId);
+      const store = new JSONLStore(filePath);
+      let persistedEntries: SessionEvent[] = [];
+      await store.appendValidated((entries) => {
+        const stored = this.projectMetadataFromEntries(
+          entries,
+          sessionId,
+          resolvedProjectPath,
+          filePath
+        );
+        if (!stored.archivedAt) {
+          throw new SessionArchiveConflictError(
+            `Session archive state changed concurrently: ${sessionId}`
+          );
+        }
+        const now = new Date().toISOString();
+        const next: Extract<SessionEvent, { type: 'session_updated' }> = {
+          id: nanoid(),
+          sessionId,
+          timestamp: now,
+          type: 'session_updated',
+          cwd: resolvedProjectPath,
+          gitBranch: detectGitBranch(resolvedProjectPath),
+          version: getVersion(),
+          data: {
+            sessionId,
+            archivedAt: null,
+            updatedAt: now,
+          },
+        };
+        persistedEntries = [...entries, next];
+        return next;
+      });
+      return this.toPublicMetadata(
+        this.projectMetadataFromEntries(
+          persistedEntries,
+          sessionId,
+          resolvedProjectPath,
+          filePath
+        )
+      );
+    } catch (error) {
+      if (error instanceof SessionArchiveConflictError) throw error;
+      if (error instanceof SessionInUseError) {
+        throw new SessionArchiveConflictError(error.message);
+      }
+      throw this.sanitizeStoredSessionError(error, sessionId);
+    } finally {
+      await lease?.release();
+    }
   }
 
   static async updateSessionMetadata(
@@ -1257,7 +1847,7 @@ export class SessionService {
     let persistedEntries: SessionEvent[] = [];
 
     try {
-      await store.appendValidated((entries) => {
+      await store.appendValidatedAsync(async (entries) => {
         const created = SessionService.getSessionCreatedEntry(entries, sessionId);
         if (created.data.sessionId !== sessionId) {
           throw new Error(
@@ -1271,6 +1861,24 @@ export class SessionService {
           throw new Error(
             `Session metadata creation record cwd mismatch: ${sessionId}`
           );
+        }
+        const stored = SessionService.projectMetadataFromEntries(
+          entries,
+          sessionId,
+          resolvedProjectPath,
+          filePath
+        );
+        if (stored.archivedAt) {
+          throw new SessionArchivedError(sessionId, sessionId);
+        }
+        if (stored.parentId) {
+          const ancestor = await SessionService.findArchivedAncestor(
+            stored.parentId,
+            resolvedProjectPath
+          );
+          if (ancestor) {
+            throw new SessionArchivedError(sessionId, ancestor.sessionId);
+          }
         }
         const now = new Date().toISOString();
         const next: Extract<SessionEvent, { type: 'session_updated' }> = {
@@ -1340,6 +1948,24 @@ export class SessionService {
               : {}),
             ...(update.selectedModelId !== undefined
               ? { selectedModelId: update.selectedModelId }
+              : {}),
+            ...(update.reasoningEffort !== undefined
+              ? { reasoningEffort: update.reasoningEffort }
+              : {}),
+            ...(update.serviceTier !== undefined
+              ? { serviceTier: update.serviceTier }
+              : {}),
+            ...(update.responseVerbosity !== undefined
+              ? { responseVerbosity: update.responseVerbosity }
+              : {}),
+            ...(update.communicationStyle !== undefined
+              ? { communicationStyle: update.communicationStyle }
+              : {}),
+            ...(update.communicationStyleDigest !== undefined
+              ? { communicationStyleDigest: update.communicationStyleDigest }
+              : {}),
+            ...(update.projectInstructionsDigest !== undefined
+              ? { projectInstructionsDigest: update.projectInstructionsDigest }
               : {}),
             updatedAt: now,
           },
@@ -1446,8 +2072,19 @@ export class SessionService {
         const message: Message = recoveredAssistant ?? {
           role: entry.data.role,
           content: '',
-          ...(entry.data.inboxMessageId
-            ? { metadata: { inboxMessageId: entry.data.inboxMessageId } }
+          ...(entry.data.metadata || entry.data.inboxMessageId
+            ? {
+                metadata: {
+                  ...(entry.data.metadata &&
+                  typeof entry.data.metadata === 'object' &&
+                  !Array.isArray(entry.data.metadata)
+                    ? entry.data.metadata
+                    : {}),
+                  ...(entry.data.inboxMessageId
+                    ? { inboxMessageId: entry.data.inboxMessageId }
+                    : {}),
+                },
+              }
             : {}),
         };
         messageMap.set(entry.data.messageId, message);
@@ -1457,6 +2094,14 @@ export class SessionService {
         }
       }
       if (entry.type === 'part_created') {
+        if (entry.data.partType === 'reasoning') {
+          const message = messageMap.get(entry.data.messageId);
+          if (message) {
+            const payload = entry.data.payload as { text?: string };
+            message.reasoningContent =
+              (message.reasoningContent ?? '') + (payload.text ?? '');
+          }
+        }
         if (entry.data.partType === 'text') {
           const message = messageMap.get(entry.data.messageId);
           if (message) {
@@ -1591,7 +2236,8 @@ export class SessionService {
   private static async scanStoredSessionsFromProjection(
     scopedProjectPath: string | undefined,
     includeSubagents: boolean,
-    projectionSyncMaxAgeMs = 0
+    projectionSyncMaxAgeMs = 0,
+    archived: boolean | null = false
   ): Promise<StoredSessionMetadata[] | null> {
     try {
       const db = await getProjectionDb();
@@ -1624,7 +2270,7 @@ export class SessionService {
           // 损坏行跳过；下次 syncAll 会重建。
         }
       }
-      return sessions;
+      return filterArchiveState(sessions, archived);
     } catch {
       return null;
     }
@@ -1633,7 +2279,8 @@ export class SessionService {
   private static async scanStoredSessions(
     cwd?: string,
     includeSubagents = false,
-    projectionSyncMaxAgeMs = 0
+    projectionSyncMaxAgeMs = 0,
+    archived: boolean | null = false
   ): Promise<StoredSessionMetadata[]> {
     const scopedProjectPath = cwd ? path.resolve(cwd) : undefined;
 
@@ -1643,7 +2290,8 @@ export class SessionService {
     const projected = await this.scanStoredSessionsFromProjection(
       scopedProjectPath,
       includeSubagents,
-      projectionSyncMaxAgeMs
+      projectionSyncMaxAgeMs,
+      archived
     );
     if (projected) return projected;
 
@@ -1699,7 +2347,7 @@ export class SessionService {
       }
     }
 
-    return sessions;
+    return filterArchiveState(sessions, archived);
   }
 
   private static async listAllProjectStorageDirectories(): Promise<
@@ -1902,6 +2550,38 @@ export class SessionService {
       typeof durable.selectedModelId === 'string' && durable.selectedModelId.trim()
         ? durable.selectedModelId
         : taskModelId;
+    const reasoningEffort = isReasoningEffortSelection(durable.reasoningEffort)
+      ? durable.reasoningEffort
+      : taskDispatch?.reasoningEffort;
+    const serviceTier = isServiceTierSelection(durable.serviceTier)
+      ? durable.serviceTier
+      : taskDispatch?.serviceTier;
+    const responseVerbosity = isResponseVerbositySelection(durable.responseVerbosity)
+      ? durable.responseVerbosity
+      : taskDispatch?.responseVerbosity;
+    const communicationStyle = isCommunicationStyleSelection(durable.communicationStyle)
+      ? durable.communicationStyle
+      : taskDispatch?.communicationStyle;
+    const communicationStyleDigest = Object.hasOwn(durable, 'communicationStyleDigest')
+      ? typeof durable.communicationStyleDigest === 'string' &&
+        /^[a-f0-9]{64}$/.test(durable.communicationStyleDigest)
+        ? durable.communicationStyleDigest
+        : undefined
+      : communicationStyle === taskDispatch?.communicationStyle
+        ? taskDispatch?.communicationStyleDigest
+        : undefined;
+    const projectInstructionsDigest = Object.hasOwn(
+      durable,
+      'projectInstructionsDigest'
+    )
+      ? typeof durable.projectInstructionsDigest === 'string' &&
+        /^[a-f0-9]{64}$/.test(durable.projectInstructionsDigest)
+        ? durable.projectInstructionsDigest
+        : undefined
+      : taskDispatch?.projectInstructionsDigest;
+    const archivedAt = isValidArchiveTimestamp(durable.archivedAt)
+      ? durable.archivedAt
+      : undefined;
     const taskRetriedFrom = parseTaskRetryRef(durable.taskRetriedFrom);
     const taskDelivery = parseTaskDelivery(durable.taskDelivery);
     const taskQueuePosition =
@@ -1942,6 +2622,12 @@ export class SessionService {
       agentType: durable.agentType,
       model: durable.model,
       selectedModelId,
+      reasoningEffort,
+      serviceTier,
+      responseVerbosity,
+      communicationStyle,
+      communicationStyleDigest,
+      projectInstructionsDigest,
       taskStatus,
       taskStatusReason:
         taskFailure?.message ??
@@ -1972,6 +2658,7 @@ export class SessionService {
       taskQueuePosition,
       taskQueueDepth,
       taskConcurrencyLimit,
+      archivedAt,
       taskOwnerPid,
       taskWorktree,
       taskDispatch,

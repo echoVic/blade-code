@@ -19,6 +19,7 @@ import {
 } from '../../../../src/services/ChatServiceInterface.js';
 import { CommunicationStyleCatalog } from '../../../../src/services/communicationStyle.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
+import type { UserShellExecutor } from '../../../../src/services/UserShellCommandService.js';
 import { FileAccessTracker } from '../../../../src/tools/builtin/file/FileAccessTracker.js';
 import { BackgroundShellManager } from '../../../../src/tools/builtin/shell/BackgroundShellManager.js';
 import { InMemorySessionApprovalStore } from '../../../../src/tools/execution/SessionApprovalStore.js';
@@ -422,6 +423,106 @@ describe('SessionRuntime', () => {
 
     expect(runtime.sessionId).toBe('session-1');
 
+    await runtime.dispose();
+  });
+
+  it('persists standalone user shell output without invoking the model', async () => {
+    const workspaceRoot = path.join(storageRoot, 'user-shell-workspace');
+    mkdirSync(workspaceRoot, { recursive: true });
+    const executor: UserShellExecutor = {
+      execute: vi.fn(async (command, options) => {
+        expect(command).toBe('pwd');
+        expect(options.cwd).toBe(workspaceRoot);
+        expect(options.env).toMatchObject({
+          BASE_SESSION_ENV: 'base-value',
+          BLADE_USER_SHELL: '1',
+        });
+        options.onOutput?.('stdout', 'workspace-output\n');
+        return { exitCode: 0, stdout: '', stderr: '' };
+      }),
+    };
+    const runtime = await SessionRuntime.create({
+      sessionId: 'standalone-user-shell',
+      workspaceRoot,
+      userShellExecutor: executor,
+    });
+
+    const events: unknown[] = [];
+    const result = await runtime.executeUserShellCommand('pwd', {
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
+
+    expect(result).toMatchObject({
+      auxiliary: false,
+      record: {
+        status: 'completed',
+        stdout: 'workspace-output',
+      },
+    });
+    expect(events).toEqual([
+      expect.objectContaining({ type: 'started', auxiliary: false }),
+      expect.objectContaining({ type: 'output', auxiliary: false }),
+      expect.objectContaining({ type: 'completed', auxiliary: false }),
+    ]);
+    const messages = await SessionService.loadSession(
+      'standalone-user-shell',
+      workspaceRoot
+    );
+    expect(messages).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: expect.stringContaining('<user_shell_command>'),
+        metadata: expect.objectContaining({
+          userShellCommand: expect.objectContaining({
+            command: 'pwd',
+            status: 'completed',
+          }),
+        }),
+      }),
+    ]);
+    expect(createChatServiceAsync).toHaveBeenCalledTimes(1);
+    await runtime.dispose();
+  });
+
+  it('queues an already persisted user shell result into the active turn', async () => {
+    const workspaceRoot = path.join(storageRoot, 'aux-user-shell-workspace');
+    mkdirSync(workspaceRoot, { recursive: true });
+    const runtime = await SessionRuntime.create({
+      sessionId: 'aux-user-shell',
+      workspaceRoot,
+      userShellExecutor: {
+        execute: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: 'aux-output',
+          stderr: '',
+        })),
+      },
+    });
+    const handle = runtime.beginTurn();
+
+    const result = await runtime.executeUserShellCommand('echo aux');
+    const queued = await runtime.drainSteering(handle);
+
+    expect(result).toMatchObject({
+      auxiliary: true,
+      delivery: 'current_turn',
+      queued: 1,
+    });
+    expect(queued).toEqual([
+      expect.objectContaining({
+        id: result.executionId,
+        content: result.modelContent,
+        persisted: true,
+      }),
+    ]);
+    expect(
+      (await SessionService.loadSession('aux-user-shell', workspaceRoot)).filter(
+        (message) => message.role === 'user'
+      )
+    ).toHaveLength(1);
+    await runtime.finishTurn(handle);
     await runtime.dispose();
   });
 

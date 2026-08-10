@@ -24,6 +24,7 @@ vi.mock('../../../src/services', () => ({
     listRewindCheckpoints: vi.fn(),
     rewindSession: vi.fn(),
     sendMessage: vi.fn(),
+    executeUserShellCommand: vi.fn(),
     abortSession: vi.fn(),
     forkSession: vi.fn(),
     subscribeEvents: vi.fn(() => () => {
@@ -267,6 +268,47 @@ describe('sessionSlice multimodal sendMessage', () => {
         communicationStyle: 'explanatory',
       }),
     ]);
+  });
+
+  it('routes user shell input without sending a model message', async () => {
+    const ref = createRef('shell-session', '/tmp/shell-workspace');
+    useSessionStore.setState({
+      currentSessionId: ref.sessionId,
+      currentSessionRef: ref,
+      isTemporarySession: false,
+      isStreaming: false,
+    });
+    vi.mocked(sessionService.executeUserShellCommand).mockResolvedValue({
+      executionId: 'shell-execution',
+      messageId: 'shell-message',
+      record: {
+        version: 1,
+        command: 'pwd',
+        status: 'completed',
+        exitCode: 0,
+        durationMs: 4,
+        stdout: '/tmp/shell-workspace\n',
+        stderr: '',
+        stdoutOmittedBytes: 0,
+        stderrOmittedBytes: 0,
+        binaryOutput: false,
+        truncated: false,
+      },
+      auxiliary: false,
+    });
+
+    const accepted = await useSessionStore.getState().sendMessage({
+      content: '  !  pwd  ',
+    });
+
+    expect(accepted).toBe(true);
+    expect(sessionService.executeUserShellCommand).toHaveBeenCalledWith(ref, 'pwd');
+    expect(sessionService.sendMessage).not.toHaveBeenCalled();
+    expect(useSessionStore.getState()).toMatchObject({
+      isStreaming: false,
+      agentPhase: 'idle',
+      error: null,
+    });
   });
 
   it('subscribes after persisted history is loaded', async () => {

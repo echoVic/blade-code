@@ -65,11 +65,9 @@ describe('NativeDirectoryPicker', () => {
       | undefined;
     const runCommand = vi.fn(
       () =>
-        new Promise<{ stdout: string; stderr: string; exitCode: number }>(
-          (resolve) => {
-            resolveCommand = resolve;
-          }
-        )
+        new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve) => {
+          resolveCommand = resolve;
+        })
     );
     const picker = new NativeDirectoryPicker({ platform: 'darwin', runCommand });
 

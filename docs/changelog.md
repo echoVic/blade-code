@@ -86,6 +86,9 @@ All notable changes to this project will be documented in this file.
   `AGENTS.override.md`、`.claude/rules`、`.blade/rules` 和 `paths` frontmatter；
   Session catalog 冻结后按工具触达路径增量加载，首次写入先阻断再重试，JSONL 只保存
   relative path 与 SHA-256 provenance
+- 新增 Session-owned User Shell Command：`! <command>` 在精确 Session workspace
+  使用冻结环境和 owned process tree 执行，不创建 Agent 或模型请求；TUI、Web、
+  print、headless 与 ACP 共享 durable history、输出预算、取消和 UI-safe 投影
 - Subagents、skills、custom commands 与 plugins 改为按 canonical workspace 持有；
   Session 创建不可变资源快照，Task/Team 的前后台与 resume 子 Session 显式继承
 - `--agents` 只覆盖当前 Session，`--plugin-dir` 在 CLI 模式分流前统一传播到
@@ -228,6 +231,10 @@ All notable changes to this project will be documented in this file.
   预算、nested/conditional 去重、write-before-rule 防护和跨端事件回归；真实 API 与
   production Web GUI 验证规则只在 Read 命中后进入 provider context，fresh-load
   transcript 不包含规则正文
+- 新增 user shell 的 UTF-8/ANSI/binary/截断、durable steering、resume、HTTP/SSE、
+  headless、TUI/Web/ACP 与真实进程树回归；真实 GPT 透明代理证明 shell 阶段零请求且
+  后续 payload 含持久化结果，production DeepSeek Web GUI 验证 command card、真实
+  follow-up、fresh-tab 两轮恢复和零内部 XML
 - 新增真实 GPT Runtime/ACP 双 workspace plugin command 轨迹、DeepSeek Flash/Pro
   CLI `--agents` 轨迹，以及 production Web GUI 双项目 worktree、Security trust、
   marker 隔离、回切恢复和 fresh-tab console 资格

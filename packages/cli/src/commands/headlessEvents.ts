@@ -188,6 +188,34 @@ const ProjectRulesLoadedEventSchema = event({
   blocked_write: Type.Boolean(),
 });
 
+const UserShellStartedEventSchema = event({
+  type: Type.Literal('user_shell_started'),
+  execution_id: Type.String(),
+  command: Type.String(),
+  auxiliary: Type.Boolean(),
+});
+
+const UserShellOutputEventSchema = event({
+  type: Type.Literal('user_shell_output'),
+  execution_id: Type.String(),
+  stream: StringEnum(['stdout', 'stderr']),
+  chunk: Type.String(),
+  stream_truncated: Type.Boolean(),
+});
+
+const UserShellCompletedEventSchema = event({
+  type: Type.Literal('user_shell_completed'),
+  execution_id: Type.String(),
+  message_id: Type.String(),
+  status: StringEnum(['completed', 'failed', 'aborted', 'timed_out', 'spawn_error']),
+  exit_code: Type.Union([Type.Integer(), Type.Null()]),
+  duration_ms: Type.Number({ minimum: 0 }),
+  stdout: Type.String(),
+  stderr: Type.String(),
+  truncated: Type.Boolean(),
+  auxiliary: Type.Boolean(),
+});
+
 const PhaseEventSchema = event({
   type: Type.Literal('phase'),
   phase: StringEnum([
@@ -298,6 +326,9 @@ export const HeadlessJsonlEventSchema = Runtime(
     McpInstructionsChangedEventSchema,
     McpTaskChangedEventSchema,
     ProjectRulesLoadedEventSchema,
+    UserShellStartedEventSchema,
+    UserShellOutputEventSchema,
+    UserShellCompletedEventSchema,
     PhaseEventSchema,
     ToolDetailEventSchema,
     TaskUpdateEventSchema,

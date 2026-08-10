@@ -744,6 +744,57 @@ function createEventWriter(io: HeadlessIO, outputFormat: HeadlessOutputFormat) {
           `${event.blockedWrite ? ' before write' : ''}`
       );
     },
+    userShellStarted(executionId: string, command: string, auxiliary: boolean) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('user_shell_started', {
+          execution_id: executionId,
+          command,
+          auxiliary,
+        });
+        return;
+      }
+      writeLine(io.stderr, `[user-shell:start] ${command}`);
+    },
+    userShellOutput(
+      executionId: string,
+      stream: 'stdout' | 'stderr',
+      chunk: string,
+      streamTruncated: boolean
+    ) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('user_shell_output', {
+          execution_id: executionId,
+          stream,
+          chunk,
+          stream_truncated: streamTruncated,
+        });
+        return;
+      }
+      (stream === 'stderr' ? io.stderr : io.stdout).write(chunk);
+    },
+    userShellCompleted(
+      result: Awaited<ReturnType<SessionRuntime['executeUserShellCommand']>>
+    ) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('user_shell_completed', {
+          execution_id: result.executionId,
+          message_id: result.messageId,
+          status: result.record.status,
+          exit_code: result.record.exitCode,
+          duration_ms: result.record.durationMs,
+          stdout: result.record.stdout,
+          stderr: result.record.stderr,
+          truncated: result.record.truncated,
+          auxiliary: result.auxiliary,
+        });
+        return;
+      }
+      writeLine(
+        io.stderr,
+        `[user-shell:${result.record.status}] exit=${result.record.exitCode ?? 'null'} ` +
+          `${result.record.durationMs}ms`
+      );
+    },
     phase(
       phase: HeadlessPhaseName,
       status: HeadlessPhaseStatus,
@@ -942,6 +993,12 @@ export async function runHeadless(
       }
       return normalized.exitCode ?? 0;
     }
+    const userShellCommand = normalized.content.trimStart().startsWith('!')
+      ? normalized.content.trimStart().slice(1).trim()
+      : undefined;
+    if (userShellCommand !== undefined && validatedOptions.taskIsolation) {
+      throw new Error('User shell commands cannot be combined with --task-isolation');
+    }
 
     const permissionMode =
       (validatedOptions.permissionMode as PermissionMode | undefined) ??
@@ -1051,6 +1108,33 @@ export async function runHeadless(
           }
         : {}),
     });
+    if (userShellCommand !== undefined) {
+      const result = await runtime.executeUserShellCommand(userShellCommand, {
+        signal: abortControl.signal,
+        onEvent: (event) => {
+          if (event.type === 'started') {
+            eventWriter.userShellStarted(
+              event.executionId,
+              event.command,
+              event.auxiliary
+            );
+          } else if (event.type === 'output') {
+            eventWriter.userShellOutput(
+              event.executionId,
+              event.stream,
+              event.chunk,
+              event.streamTruncated
+            );
+          }
+        },
+      });
+      eventWriter.userShellCompleted(result);
+      return result.record.status === 'completed'
+        ? 0
+        : result.record.status === 'aborted'
+          ? 130
+          : (result.record.exitCode ?? 1);
+    }
     const effectiveMaxTurns = validatedOptions.maxTurns ?? runtime.getConfig().maxTurns;
     const toolBlacklist = createdTask?.taskWorktree
       ? [

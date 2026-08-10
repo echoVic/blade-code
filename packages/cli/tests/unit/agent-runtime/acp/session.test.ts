@@ -123,7 +123,12 @@ const runtimeState = vi.hoisted(() => ({
       revision: 0,
       instructions: [],
     })),
+    executeUserShellCommand: vi.fn(),
   },
+}));
+
+const terminalState = vi.hoisted(() => ({
+  execute: vi.fn(),
 }));
 
 // Mock Agent
@@ -179,6 +184,9 @@ vi.mock('../../../../src/acp/AcpServiceContext.js', () => ({
     initializeSession: vi.fn(),
     destroySession: vi.fn(),
     setCurrentSession: vi.fn(),
+    getInstance: vi.fn(() => ({
+      getTerminalService: vi.fn(() => terminalState),
+    })),
   },
 }));
 
@@ -221,6 +229,8 @@ describe('AcpSession', () => {
     runtimeState.runtime.rewindSession.mockReset();
     runtimeState.runtime.listSubagents.mockReset().mockReturnValue([]);
     runtimeState.runtime.resumeSubagent.mockReset();
+    runtimeState.runtime.executeUserShellCommand.mockReset();
+    terminalState.execute.mockReset();
     // 创建 mock 连接
     mockConnection = createMockACPClient();
     connectionAbortController = new AbortController();
@@ -275,6 +285,7 @@ describe('AcpSession', () => {
       expect(SessionRuntime.create).toHaveBeenCalledWith({
         sessionId: 'test-session-id',
         workspaceRoot: '/tmp/test',
+        userShellExecutor: expect.any(Object),
       });
       expect(Agent.createWithRuntime).toHaveBeenCalledWith(runtimeState.runtime, {
         sessionId: 'test-session-id',
@@ -812,6 +823,7 @@ describe('AcpSession', () => {
             headers: { Authorization: 'Bearer test-token' },
           },
         },
+        userShellExecutor: expect.any(Object),
       });
     });
   });
@@ -1585,6 +1597,115 @@ describe('AcpSession', () => {
 
       // 验证取消成功（没有抛出错误）
       expect(() => session.cancel()).not.toThrow();
+    });
+  });
+
+  describe('user shell command', () => {
+    beforeEach(async () => {
+      runtimeState.runtime.executeUserShellCommand.mockImplementation(
+        async (_command, options) => {
+          await options.onEvent({
+            type: 'started',
+            executionId: 'shell-acp',
+            command: 'pwd',
+            auxiliary: false,
+          });
+          await options.onEvent({
+            type: 'output',
+            executionId: 'shell-acp',
+            stream: 'stdout',
+            chunk: '/remote/workspace\n',
+            streamedBytes: 18,
+            streamTruncated: false,
+            auxiliary: false,
+          });
+          const record = {
+            version: 1 as const,
+            command: 'pwd',
+            status: 'completed' as const,
+            exitCode: 0,
+            durationMs: 5,
+            stdout: '/remote/workspace',
+            stderr: '',
+            stdoutOmittedBytes: 0,
+            stderrOmittedBytes: 0,
+            binaryOutput: false,
+            truncated: false,
+          };
+          await options.onEvent({
+            type: 'completed',
+            executionId: 'shell-acp',
+            messageId: 'shell-message',
+            record,
+            auxiliary: false,
+          });
+          return {
+            executionId: 'shell-acp',
+            messageId: 'shell-message',
+            record,
+            modelContent: '<user_shell_command>pwd</user_shell_command>',
+            auxiliary: false,
+          };
+        }
+      );
+      await session.initialize();
+    });
+
+    it('projects remote shell lifecycle as one ACP execute tool call', async () => {
+      const result = await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: '! pwd' }],
+      });
+
+      expect(result).toEqual({ stopReason: 'end_turn' });
+      expect(runtimeState.runtime.executeUserShellCommand).toHaveBeenCalledWith(
+        'pwd',
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      );
+      expect(mockConnection.sessionUpdates.map((entry) => entry.update)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            sessionUpdate: 'tool_call',
+            toolCallId: 'shell-acp',
+            kind: 'execute',
+          }),
+          expect.objectContaining({
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'shell-acp',
+            status: 'completed',
+          }),
+        ])
+      );
+    });
+
+    it('configures the ACP terminal executor to fail closed without local fallback', async () => {
+      const { SessionRuntime } = await import(
+        '../../../../src/agent/runtime/SessionRuntime.js'
+      );
+      const createOptions = vi.mocked(SessionRuntime.create).mock.calls.at(-1)?.[0];
+      const executor = createOptions?.userShellExecutor;
+      terminalState.execute.mockResolvedValueOnce({
+        success: false,
+        stdout: '',
+        stderr: '',
+        exitCode: null,
+        error: 'ACP terminal unavailable',
+      });
+
+      await executor?.execute('pwd', {
+        cwd: '/tmp/test',
+        env: {},
+        timeoutMs: 1000,
+        signal: new AbortController().signal,
+      });
+
+      expect(terminalState.execute).toHaveBeenCalledWith(
+        'pwd',
+        expect.objectContaining({
+          allowLocalFallback: false,
+          cwd: '/tmp/test',
+        })
+      );
     });
   });
 

@@ -200,6 +200,43 @@ describe('SessionMarkdownExporter', () => {
     expect(result.filename).toBe('blade-session-session-expo.md');
   });
 
+  it('exports user shell records without exposing their internal XML wrapper', () => {
+    const events = [
+      event(
+        'message_created',
+        {
+          messageId: 'shell-1',
+          role: 'user',
+          createdAt: timestamp,
+          metadata: {
+            userShellCommand: {
+              version: 1,
+              command: 'pwd',
+              status: 'completed',
+              exitCode: 0,
+              durationMs: 4,
+              stdout: '/workspace',
+              stderr: '',
+              stdoutOmittedBytes: 0,
+              stderrOmittedBytes: 0,
+              binaryOutput: false,
+              truncated: false,
+            },
+          },
+        },
+        'shell-message'
+      ),
+      part('shell-1', 'shell-text', 'text', {
+        text: '<user_shell_command>private wrapper</user_shell_command>',
+      }),
+    ];
+
+    const result = renderSessionMarkdown(events, metadata);
+    expect(result.markdown).toContain('## User shell command');
+    expect(result.markdown).toContain('$ pwd\n/workspace');
+    expect(result.markdown).not.toContain('<user_shell_command>');
+  });
+
   it('bounds individual activity projections without dropping the conversation', () => {
     const oversized = 'x'.repeat(MAX_SESSION_MARKDOWN_ACTIVITY_BYTES * 2);
     const result = renderSessionMarkdown(

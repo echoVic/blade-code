@@ -184,6 +184,53 @@ describe('headless event contract', () => {
       type: 'project_rules_loaded',
       blocked_write: true,
     });
+
+    const shellStarted = createHeadlessJsonlEvent('user_shell_started', {
+      execution_id: 'shell-1',
+      command: 'pwd',
+      auxiliary: false,
+    });
+    const shellOutput = createHeadlessJsonlEvent('user_shell_output', {
+      execution_id: 'shell-1',
+      stream: 'stdout',
+      chunk: '/workspace\n',
+      stream_truncated: false,
+    });
+    const shellCompleted = createHeadlessJsonlEvent('user_shell_completed', {
+      execution_id: 'shell-1',
+      message_id: 'message-1',
+      status: 'completed',
+      exit_code: 0,
+      duration_ms: 4,
+      stdout: '/workspace\n',
+      stderr: '',
+      truncated: false,
+      auxiliary: false,
+    });
+
+    expect(shellStarted).toEqual({
+      event_version: 1,
+      type: 'user_shell_started',
+      execution_id: 'shell-1',
+      command: 'pwd',
+      auxiliary: false,
+    });
+    expect(shellOutput).toMatchObject({
+      event_version: 1,
+      type: 'user_shell_output',
+      stream: 'stdout',
+      chunk: '/workspace\n',
+    });
+    expect(shellCompleted).toMatchObject({
+      event_version: 1,
+      type: 'user_shell_completed',
+      message_id: 'message-1',
+      status: 'completed',
+      exit_code: 0,
+    });
+    for (const shellEvent of [shellStarted, shellOutput, shellCompleted]) {
+      expect(() => HeadlessJsonlEventSchema.parse(shellEvent)).not.toThrow();
+    }
   });
 
   it('validates phase events for search and target-hit states', async () => {

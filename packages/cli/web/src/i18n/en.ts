@@ -345,6 +345,8 @@ export const en = {
   'chat.list.showEarlierWithRemaining':
     'Show {count} earlier messages, {remaining} hidden',
   'chat.list.jumpLatest': 'Jump to latest',
+  'chat.turns.aria': 'Jump to a previous message',
+  'chat.turns.label': 'Turn {n}',
   'chat.timeline.thinking': 'Thought process',
   'chat.timeline.tools.runningOne': 'Running 1 command',
   'chat.timeline.tools.running': 'Running {count} commands',

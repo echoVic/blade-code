@@ -810,6 +810,56 @@ describe('executeLoopGenerator', () => {
       );
     });
 
+    it('applies an already-persisted user shell result without duplicating JSONL', async () => {
+      const contextManager = createMockContextManager();
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: () => contextManager,
+        } as any,
+      });
+      const shellContext =
+        '<user_shell_command><command>pwd</command><result>ok</result></user_shell_command>';
+      let drained = false;
+      const turnSteering = {
+        drain: vi.fn(async () => {
+          if (drained) return [];
+          drained = true;
+          return [
+            {
+              id: 'persisted-shell',
+              content: shellContext,
+              queuedAt: Date.now(),
+              recovered: false,
+              persisted: true,
+            },
+          ];
+        }),
+        drainOrSeal: vi.fn(async () => ({ messages: [], sealed: true })),
+      };
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          '',
+          createMockContext(),
+          { stream: false, pendingInputOnly: true, turnSteering },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(
+        contextManager.saveMessage.mock.calls.some(
+          (call: unknown[]) => call[1] === 'user' && call[2] === shellContext
+        )
+      ).toBe(false);
+      expect(
+        JSON.stringify(
+          (deps.chatService.chat as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]
+        )
+      ).toContain('<user_shell_command>');
+    });
+
     it('starts a pending-only turn without persisting a synthetic empty prompt', async () => {
       const contextManager = createMockContextManager();
       const deps = createMockDeps({

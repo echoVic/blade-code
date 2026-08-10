@@ -9,6 +9,7 @@ const agentState = vi.hoisted(() => ({
 const runtimeState = vi.hoisted(() => ({
   create: vi.fn(),
   dispose: vi.fn(),
+  executeUserShellCommand: vi.fn(),
 }));
 
 const sessionState = vi.hoisted(() => ({
@@ -70,7 +71,9 @@ describe('headless runner', () => {
     runtimeState.create.mockResolvedValue({
       dispose: runtimeState.dispose,
       getConfig: () => ({ maxTurns: -1 }),
+      executeUserShellCommand: runtimeState.executeUserShellCommand,
     });
+    runtimeState.executeUserShellCommand.mockReset();
     agentState.chatStream.mockImplementation(mockChatGenerator([]));
     agentState.createWithRuntime.mockResolvedValue({
       chatStream: agentState.chatStream,
@@ -109,6 +112,72 @@ describe('headless runner', () => {
         ],
       })
     );
+  });
+
+  it('executes bang input without creating an Agent or calling a model', async () => {
+    runtimeState.executeUserShellCommand.mockImplementationOnce(
+      async (_command, options) => {
+        await options.onEvent({
+          type: 'started',
+          executionId: 'shell-headless',
+          command: 'pwd',
+          auxiliary: false,
+        });
+        await options.onEvent({
+          type: 'output',
+          executionId: 'shell-headless',
+          stream: 'stdout',
+          chunk: '/workspace\n',
+          streamedBytes: 11,
+          streamTruncated: false,
+          auxiliary: false,
+        });
+        return {
+          executionId: 'shell-headless',
+          messageId: 'shell-message',
+          record: {
+            version: 1,
+            command: 'pwd',
+            status: 'completed',
+            exitCode: 0,
+            durationMs: 3,
+            stdout: '/workspace',
+            stderr: '',
+            stdoutOmittedBytes: 0,
+            stderrOmittedBytes: 0,
+            binaryOutput: false,
+            truncated: false,
+          },
+          modelContent: '<user_shell_command>pwd</user_shell_command>',
+          auxiliary: false,
+        };
+      }
+    );
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        message: '! pwd',
+        outputFormat: 'jsonl',
+      },
+      { stdout, stderr }
+    );
+
+    expect(exitCode).toBe(0);
+    expect(runtimeState.executeUserShellCommand).toHaveBeenCalledWith(
+      'pwd',
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+    expect(agentState.createWithRuntime).not.toHaveBeenCalled();
+    const events = stdout.write.mock.calls.map(([chunk]) => JSON.parse(String(chunk)));
+    expect(events.map((event) => event.type)).toEqual([
+      'user_shell_started',
+      'user_shell_output',
+      'user_shell_completed',
+    ]);
   });
 
   it('dispatches a worktree task and emits its stable JSONL identity', async () => {

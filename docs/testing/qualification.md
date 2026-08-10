@@ -362,6 +362,21 @@ SHA-256，不能复制规则正文或宿主绝对路径。
 测试。production Web GUI 必须展示 `Project Rules` 活动卡、完成真实响应和 fresh-tab
 恢复；CLI/headless 与 ACP 必须输出同一安全摘要事件。
 
+Session-owned User Shell Command 资格必须覆盖 32 KiB 输入、UTF-8 分片、ANSI 清理、
+binary 降级、capture/stream 独立预算、async output 排序、exact workspace/env、
+durable resume、active-turn auxiliary steering 和整棵进程树取消。TUI、Web、headless
+与 ACP 必须证明 `!` 不创建 Agent；ACP terminal 不可用时必须 fail closed，不能回退
+Blade host shell。
+
+真实 GPT 必须经不记录 Authorization 的本地透明代理执行 shell、销毁 Runtime 并恢复
+同一 Session；shell 阶段代理请求数必须为 0，后续真实 provider payload 必须直接包含
+`<user_shell_command>` 与输出 marker。production DeepSeek Web GUI 必须从 Task Home
+创建普通 Session，网络中只出现 `/shell` 而非 task/message 请求；随后普通 follow-up
+通过 `/message` 使用该 marker。fresh tab 必须恢复一个 command card、两轮 durable
+history、零内部 XML 和零应用 console error。TUI Computer Use 只有在自动化桥接能保持
+真实 raw TTY 焦点并完整提交命令时计入通过；否则必须依赖 Ink 渲染、真实 PTY 和进程树
+测试，不能把启动截图算作完整 TUI 资格。
+
 Plugin Marketplace 资格必须使用隔离 HOME 和本地 Marketplace snapshot。确定性测试
 覆盖 `0600` 严格账本、跨进程串行写、Git `execFile` 参数边界、显式 source trust、
 symlink/路径逃逸/凭据 URL/体积限制、摘要篡改、失败更新回滚、旧根保留和依赖删除保护。

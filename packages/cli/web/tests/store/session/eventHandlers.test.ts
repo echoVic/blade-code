@@ -1733,4 +1733,75 @@ describe('eventHandlers', () => {
     expect(state.messages[0]?.agentContent?.textBefore).toBe('from one');
     expect(state.messages[1]?.agentContent?.textBefore).toBe('');
   });
+
+  test('projects user shell lifecycle as a user-owned command card', () => {
+    const state = createState({ messages: [] });
+    const set = vi.fn(
+      (
+        update:
+          | Partial<SessionStoreState>
+          | ((current: SessionStoreState) => Partial<SessionStoreState>)
+      ) => {
+        Object.assign(state, typeof update === 'function' ? update(state) : update);
+      }
+    );
+    const dispatch = createEventDispatcher(() => state, set);
+    const base = {
+      sessionId: 'session-1',
+      projectPath: '/workspace/a',
+      executionId: 'shell-1',
+      auxiliary: false,
+    };
+
+    dispatch({
+      type: 'user.shell.started',
+      properties: { ...base, command: 'pwd' },
+    });
+    dispatch({
+      type: 'user.shell.output',
+      properties: {
+        ...base,
+        stream: 'stdout',
+        chunk: '/workspace/a\n',
+        streamedBytes: 13,
+        streamTruncated: false,
+      },
+    });
+    dispatch({
+      type: 'user.shell.completed',
+      properties: {
+        ...base,
+        messageId: 'shell-message',
+        record: {
+          version: 1,
+          command: 'pwd',
+          status: 'completed',
+          exitCode: 0,
+          durationMs: 4,
+          stdout: '/workspace/a',
+          stderr: '',
+          stdoutOmittedBytes: 0,
+          stderrOmittedBytes: 0,
+          binaryOutput: false,
+          truncated: false,
+        },
+      },
+    });
+
+    expect(state.messages).toEqual([
+      expect.objectContaining({
+        id: 'user-shell-shell-1',
+        role: 'user',
+        content: '! pwd\n/workspace/a',
+        metadata: {
+          userShellCommand: expect.objectContaining({
+            status: 'completed',
+            exitCode: 0,
+          }),
+        },
+      }),
+    ]);
+    expect(state.isStreaming).toBe(false);
+    expect(state.agentPhase).toBe('idle');
+  });
 });

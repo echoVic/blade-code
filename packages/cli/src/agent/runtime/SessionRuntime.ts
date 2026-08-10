@@ -1,13 +1,24 @@
 import { stat } from 'node:fs/promises';
+import { Mutex } from 'async-mutex';
+import { nanoid } from 'nanoid';
 import * as os from 'os';
 import * as path from 'path';
+import { isAcpMode } from '../../acp/AcpServiceContext.js';
 import {
   type BladeConfig,
   ConfigManager,
   type PermissionConfig,
   PermissionMode,
 } from '../../config/index.js';
-import type { McpServerConfig, ModelConfig } from '../../config/types.js';
+import { normalizeRuntimeEnvironment } from '../../config/runtimeEnvironment.js';
+import type {
+  CommunicationStyleSelection,
+  McpServerConfig,
+  ModelConfig,
+  ReasoningEffortSelection,
+  ResponseVerbositySelection,
+  ServiceTierSelection,
+} from '../../config/types.js';
 import { getSessionInboxFilePath } from '../../context/storage/pathUtils.js';
 import { toTaskFailure } from '../../context/taskFailure.js';
 import type {
@@ -19,9 +30,42 @@ import type {
 } from '../../context/types.js';
 import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalCreateInput, GoalProgress, GoalSnapshot } from '../../goals/types.js';
+import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
-import { loadMcpConfigFromCli } from '../../mcp/loadMcpConfig.js';
-import { McpRegistry } from '../../mcp/McpRegistry.js';
+import { LspSessionManager } from '../../lsp/LspSessionManager.js';
+import {
+  resolveWorkspaceLspResources,
+  type SessionLspResources,
+  snapshotWorkspaceLspResources,
+} from '../../lsp/WorkspaceLspResources.js';
+import type {
+  McpCompletionInput,
+  McpNormalizedCompletionResult,
+} from '../../mcp/McpCompletion.js';
+import type { McpNormalizedPromptResult } from '../../mcp/McpContentCatalog.js';
+import type { McpLogLevel } from '../../mcp/McpLogging.js';
+import {
+  type McpCatalogChange,
+  type McpConnectionLifecycleChange,
+  type McpContentCatalogChange,
+  type McpInstructionsChange,
+  type McpInstructionsSnapshot,
+  type McpLogEntry,
+  type McpLogSnapshot,
+  type McpRegisteredPrompt,
+  type McpRegisteredResource,
+  type McpRegisteredResourceTemplate,
+  McpRegistry,
+  type McpResourceUpdated,
+} from '../../mcp/McpRegistry.js';
+import {
+  finalizeMcpSamplingResponse,
+  type McpSamplingHandler,
+} from '../../mcp/McpSampling.js';
+import { McpTaskManager } from '../../mcp/McpTaskManager.js';
+import type { McpTaskChange, McpTaskSnapshot } from '../../mcp/McpTasks.js';
+import { McpToolArtifactStore } from '../../mcp/McpToolArtifactStore.js';
+import { resolveWorkspaceMcpConfig } from '../../mcp/resolveWorkspaceMcpConfig.js';
 import { buildSystemPrompt } from '../../prompts/index.js';
 import { AttachmentCollector } from '../../prompts/processors/AttachmentCollector.js';
 import { Bus } from '../../server/bus.js';
@@ -29,40 +73,74 @@ import {
   createChatServiceAsync,
   type IChatService,
 } from '../../services/ChatServiceInterface.js';
+import {
+  BUILTIN_COMMUNICATION_STYLE_CATALOG,
+  type CommunicationStyleCatalog,
+  type CommunicationStyleConfiguration,
+  resolveCommunicationStyle,
+} from '../../services/communicationStyle.js';
+import { getPiModelCatalog, PiModelCatalog } from '../../services/pi/PiModelCatalog.js';
+import type { ReasoningEffortConfiguration } from '../../services/pi/reasoningEffort.js';
 import { resolveModelConfig as resolvePiModelConfig } from '../../services/pi/resolveModelConfig.js';
+import type { ResponseVerbosityConfiguration } from '../../services/pi/responseVerbosity.js';
+import type { ServiceTierConfiguration } from '../../services/pi/serviceTier.js';
 import {
   type RewindSessionOptions,
   type RewoundSession,
+  SessionArchivedError,
   type SessionMetadata,
+  SessionMissingCreationError,
   type SessionRewindCheckpoint,
   SessionService,
 } from '../../services/SessionService.js';
-import { discoverSkills } from '../../skills/index.js';
 import {
-  ensureStoreInitialized,
-  getAllModels,
-  getConfig,
-  getCurrentModel,
-  getMcpServers,
-  getModelById,
-  getThinkingModeEnabled,
-} from '../../store/vanilla.js';
+  executeUserShellCommand,
+  renderUserShellCommandForModel,
+  type UserShellCommandEvent,
+  type UserShellCommandRecord,
+  type UserShellExecutor,
+} from '../../services/UserShellCommandService.js';
+import type { JsonValue } from '../../store/types.js';
+import { ensureStoreInitialized, getConfig } from '../../store/vanilla.js';
 import { FileAccessTracker } from '../../tools/builtin/file/FileAccessTracker.js';
+import { recoverWorkspacePatchTransactions } from '../../tools/builtin/file/PatchTransactionCoordinator.js';
 import { getBuiltinTools } from '../../tools/builtin/index.js';
+import {
+  createMcpContentTools,
+  createMcpTaskTools,
+} from '../../tools/builtin/mcp/index.js';
 import { BackgroundShellManager } from '../../tools/builtin/shell/BackgroundShellManager.js';
+import { AutoVerifyRuntime } from '../../tools/execution/AutoVerify.js';
 import { InMemorySessionApprovalStore } from '../../tools/execution/SessionApprovalStore.js';
 import { ToolExecutor } from '../../tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../../tools/registry/ToolRegistry.js';
+import type { Tool, ToolResult } from '../../tools/types/index.js';
 import { getCwd } from '../../utils/cwd.js';
 import { worktreeManager } from '../../worktree/WorktreeManager.js';
 import { ExecutionEngine } from '../ExecutionEngine.js';
 import type { LoopEvent } from '../loop/types.js';
+import {
+  resolveWorkspaceAgentResources,
+  type SessionAgentResources,
+  snapshotWorkspaceAgentResources,
+} from '../resources/WorkspaceAgentResources.js';
+import {
+  cloneWorkspaceModelConfig,
+  resolveWorkspaceModelResources,
+  type SessionModelResources,
+  snapshotWorkspaceModelResources,
+} from '../resources/WorkspaceModelResources.js';
+import {
+  ProjectRuleCatalog,
+  type ProjectRuleReference,
+  type ProjectRuleResolution,
+} from '../resources/WorkspaceProjectRules.js';
 import type { AgentSession } from '../subagents/AgentSessionStore.js';
 import {
   BackgroundAgentManager,
   type ResumeAgentResult,
 } from '../subagents/BackgroundAgentManager.js';
-import { subagentRegistry } from '../subagents/SubagentRegistry.js';
+import type { SubagentRegistry } from '../subagents/SubagentRegistry.js';
 import type { SubagentConfig } from '../subagents/types.js';
 import type {
   AgentOptions,
@@ -117,14 +195,52 @@ export interface SessionRuntimeOptions {
   sessionId: string;
   workspaceRoot?: string;
   modelId?: string;
+  reasoningEffort?: ReasoningEffortSelection;
+  serviceTier?: ServiceTierSelection;
+  responseVerbosity?: ResponseVerbositySelection;
+  communicationStyle?: CommunicationStyleSelection;
+  communicationStyleDigest?: string;
+  projectInstructionsDigest?: string;
   mcpConfig?: string[];
   mcpServers?: Record<string, McpServerConfig>;
   strictMcpConfig?: boolean;
   agents?: SubagentConfig[];
+  agentResources?: SessionAgentResources;
+  modelResources?: SessionModelResources;
+  lspResources?: SessionLspResources;
+  sessionStart?: {
+    isResume: boolean;
+    resumeSessionId?: string;
+  };
   subagentInfo?: SubagentInfoForContext;
   taskWorktree?: SessionTaskWorktree;
   taskIsolation?: SessionTaskIsolation;
+  userShellExecutor?: UserShellExecutor;
 }
+
+export interface SessionUserShellCommandResult {
+  executionId: string;
+  messageId: string;
+  record: UserShellCommandRecord;
+  modelContent: string;
+  auxiliary: boolean;
+  delivery?: 'current_turn' | 'next_turn';
+  queued?: number;
+}
+
+export type SessionUserShellCommandEvent =
+  | (Extract<UserShellCommandEvent, { type: 'started' | 'output' }> & {
+      auxiliary: boolean;
+    })
+  | {
+      type: 'completed';
+      executionId: string;
+      messageId: string;
+      record: UserShellCommandRecord;
+      auxiliary: boolean;
+      delivery?: 'current_turn' | 'next_turn';
+      queued?: number;
+    };
 
 export interface ResumeSubagentOptions {
   agentId: string;
@@ -138,6 +254,13 @@ export interface ResumedSubagent {
   session: AgentSession;
 }
 
+export interface SessionMcpContentSnapshot {
+  revision: number;
+  resources: McpRegisteredResource[];
+  resourceTemplates: McpRegisteredResourceTemplate[];
+  prompts: McpRegisteredPrompt[];
+}
+
 export class SessionRuntime {
   private readonly approvalStore = new InMemorySessionApprovalStore();
   private baseRegistry = new ToolRegistry();
@@ -148,11 +271,41 @@ export class SessionRuntime {
   private chatService?: IChatService;
   private executionEngine?: ExecutionEngine;
   private selectedModelId?: string;
+  private selectedReasoningEffort: ReasoningEffortSelection;
+  private currentReasoning?: ReasoningEffortConfiguration;
+  private selectedServiceTier: ServiceTierSelection;
+  private currentServiceTier?: ServiceTierConfiguration;
+  private selectedResponseVerbosity: ResponseVerbositySelection;
+  private currentResponseVerbosity?: ResponseVerbosityConfiguration;
+  private selectedCommunicationStyle: CommunicationStyleSelection;
   private currentModelId?: string;
   private currentModelMaxContextTokens?: number;
   private initialized = false;
   private sessionLease?: SessionLease;
   private sessionMcpRegistry?: McpRegistry;
+  private mcpCatalogListener?: (change: McpCatalogChange) => void;
+  private mcpContentCatalogListener?: (change: McpContentCatalogChange) => void;
+  private mcpResourceUpdatedListener?: (update: McpResourceUpdated) => void;
+  private mcpConnectionListener?: (change: McpConnectionLifecycleChange) => void;
+  private mcpLogListener?: (entry: McpLogEntry) => void;
+  private mcpInstructionsListener?: (change: McpInstructionsChange) => void;
+  private mcpTaskListener?: (change: McpTaskChange) => void;
+  private mcpCatalogBarrier: () => Promise<void> = async () => undefined;
+  private readonly executorCatalogs = new Map<
+    ToolRegistry,
+    {
+      allowed: ReadonlySet<string> | null;
+      blocked: ReadonlySet<string> | null;
+    }
+  >();
+  private agentResources?: SessionAgentResources;
+  private readonly modelResources: SessionModelResources;
+  private readonly lspResources: SessionLspResources;
+  private sessionEnvironment: Readonly<Record<string, string>>;
+  private subagentRegistry?: SubagentRegistry;
+  private autoVerifyRuntime?: AutoVerifyRuntime;
+  private lspManager?: LspSessionManager;
+  private readonly userShellMutex = new Mutex();
 
   constructor(
     private readonly config: BladeConfig,
@@ -160,6 +313,30 @@ export class SessionRuntime {
   ) {
     this.selectedModelId =
       options.modelId && options.modelId !== 'inherit' ? options.modelId : undefined;
+    this.selectedReasoningEffort = options.reasoningEffort ?? 'off';
+    this.selectedServiceTier = options.serviceTier ?? 'auto';
+    this.selectedResponseVerbosity = options.responseVerbosity ?? 'auto';
+    this.selectedCommunicationStyle = options.communicationStyle ?? 'auto';
+    if (options.modelResources) {
+      this.modelResources = options.modelResources;
+    } else {
+      const catalog = new PiModelCatalog(getPiModelCatalog().credentials);
+      if (config.modelProviders && config.models) {
+        catalog.configureModelProviders(config.modelProviders, config.models);
+      }
+      this.modelResources = {
+        projectRoot: path.resolve(options.workspaceRoot ?? getCwd()),
+        config: cloneWorkspaceModelConfig(config),
+        catalog,
+      };
+    }
+    this.lspResources = snapshotWorkspaceLspResources(
+      options.lspResources ?? {
+        projectRoot: this.modelResources.projectRoot,
+        servers: config.lspServers,
+      }
+    );
+    this.sessionEnvironment = Object.freeze({ ...config.env });
     this.goalStore = new GoalStore(this.workspaceRoot, this.sessionId);
     this.attachmentCollector = new AttachmentCollector({
       cwd: this.workspaceRoot,
@@ -174,25 +351,50 @@ export class SessionRuntime {
     let taskWorktree = options.taskWorktree;
     let taskIsolation = options.taskIsolation;
     let selectedModelId = options.modelId;
+    let selectedReasoningEffort = options.reasoningEffort;
+    let selectedServiceTier = options.serviceTier;
+    let selectedResponseVerbosity = options.responseVerbosity;
+    let selectedCommunicationStyle = options.communicationStyle;
+    let selectedCommunicationStyleDigest = options.communicationStyleDigest;
+    let selectedProjectInstructionsDigest = options.projectInstructionsDigest;
     const hasExplicitModel = selectedModelId !== undefined;
+    const hasExplicitCommunicationStyle = selectedCommunicationStyle !== undefined;
     try {
       await ensureStoreInitialized();
+      const storedMetadata = await SessionService.findSessionMetadata(
+        options.sessionId,
+        workspaceRoot
+      );
+      if (storedMetadata?.archivedAt) {
+        throw new SessionArchivedError(
+          options.sessionId,
+          storedMetadata.archivedBySessionId ?? options.sessionId
+        );
+      }
+      selectedReasoningEffort ??= storedMetadata?.reasoningEffort ?? 'off';
+      selectedServiceTier ??= storedMetadata?.serviceTier ?? 'auto';
+      selectedResponseVerbosity ??= storedMetadata?.responseVerbosity ?? 'auto';
+      selectedCommunicationStyle ??= storedMetadata?.communicationStyle ?? 'auto';
+      if (
+        !hasExplicitCommunicationStyle ||
+        selectedCommunicationStyle === storedMetadata?.communicationStyle
+      ) {
+        selectedCommunicationStyleDigest ??= storedMetadata?.communicationStyleDigest;
+      }
+      await cleanupStaleWorktreesOnce(workspaceRoot);
+      selectedProjectInstructionsDigest ??= storedMetadata?.projectInstructionsDigest;
       await cleanupStaleWorktreesOnce(workspaceRoot);
       if (
         !options.subagentInfo &&
         (!taskWorktree || !taskIsolation || !selectedModelId)
       ) {
-        const [storedWorktree, metadata] = await Promise.all([
-          taskWorktree
-            ? undefined
-            : SessionService.findSessionTaskWorktree(options.sessionId, workspaceRoot),
-          taskIsolation && selectedModelId
-            ? undefined
-            : SessionService.findSessionMetadata(options.sessionId, workspaceRoot),
-        ]);
+        const storedWorktree = await (taskWorktree
+          ? Promise.resolve(undefined)
+          : SessionService.findSessionTaskWorktree(options.sessionId, workspaceRoot));
         taskWorktree ??= storedWorktree;
-        taskIsolation ??= metadata?.taskIsolation;
-        selectedModelId ??= metadata?.selectedModelId ?? metadata?.taskModelId;
+        taskIsolation ??= storedMetadata?.taskIsolation;
+        selectedModelId ??=
+          storedMetadata?.selectedModelId ?? storedMetadata?.taskModelId;
       }
       if (taskWorktree) {
         if (path.resolve(taskWorktree.workspaceRoot) !== path.resolve(workspaceRoot)) {
@@ -201,7 +403,29 @@ export class SessionRuntime {
         await worktreeManager.restoreSession(taskWorktree);
       }
 
-      const models = getAllModels();
+      const config = getConfig();
+      if (!config) {
+        throw new Error('配置未初始化，请确保应用已正确启动');
+      }
+      taskRunScheduler.configure(config.maxConcurrentTasks, config.maxQueuedTasks);
+
+      const configManager = ConfigManager.getInstance();
+      const hookConfigRoot =
+        options.modelResources?.projectRoot ??
+        options.lspResources?.projectRoot ??
+        options.agentResources?.projectRoot ??
+        taskWorktree?.originalWorkspaceRoot ??
+        workspaceRoot;
+      const modelResources = options.modelResources
+        ? snapshotWorkspaceModelResources(options.modelResources)
+        : await resolveWorkspaceModelResources(hookConfigRoot, config);
+      const models = modelResources.config.models;
+      const lspResources = options.lspResources
+        ? snapshotWorkspaceLspResources(options.lspResources)
+        : await resolveWorkspaceLspResources(
+            hookConfigRoot,
+            modelResources.config.lspServers
+          );
       if (models.length === 0) {
         throw new Error(
           '没有可用的模型配置\n\n' +
@@ -215,29 +439,47 @@ export class SessionRuntime {
         !hasExplicitModel &&
         selectedModelId &&
         selectedModelId !== 'inherit' &&
-        !getModelById(selectedModelId)
+        !models.some((model) => model.id === selectedModelId)
       ) {
         selectedModelId = undefined;
       }
-
-      const config = getConfig();
-      if (!config) {
-        throw new Error('配置未初始化，请确保应用已正确启动');
-      }
-
-      const configManager = ConfigManager.getInstance();
+      const mcpServers = await resolveWorkspaceMcpConfig({
+        workspaceRoot: hookConfigRoot,
+        storeServers: config.mcpServers ?? {},
+        sessionServers: options.mcpServers,
+        cliConfigs: options.mcpConfig,
+        strictCliConfig: options.strictMcpConfig,
+      });
       const runtimeConfig: BladeConfig = {
-        ...config,
+        ...modelResources.config,
+        lspServers: structuredClone(lspResources.servers),
         permissions: await configManager.loadWorkspacePermissions(
-          workspaceRoot,
-          config.permissions
+          hookConfigRoot,
+          modelResources.config.permissions
+        ),
+        hooks: await configManager.loadWorkspaceHooks(
+          hookConfigRoot,
+          modelResources.config.hooks ?? {}
         ),
       };
-      configManager.validateConfig(runtimeConfig);
+      configManager.validateConfig(runtimeConfig, modelResources.catalog);
 
       const runtime = new SessionRuntime(runtimeConfig, {
         ...options,
+        modelResources,
+        lspResources,
+        mcpServers,
         ...(selectedModelId ? { modelId: selectedModelId } : {}),
+        reasoningEffort: selectedReasoningEffort,
+        serviceTier: selectedServiceTier,
+        responseVerbosity: selectedResponseVerbosity,
+        communicationStyle: selectedCommunicationStyle,
+        ...(selectedCommunicationStyleDigest
+          ? { communicationStyleDigest: selectedCommunicationStyleDigest }
+          : {}),
+        ...(selectedProjectInstructionsDigest
+          ? { projectInstructionsDigest: selectedProjectInstructionsDigest }
+          : {}),
         ...(taskWorktree ? { taskWorktree } : {}),
         ...(taskIsolation ? { taskIsolation } : {}),
       });
@@ -296,8 +538,38 @@ export class SessionRuntime {
     return this.options.workspaceRoot ?? getCwd();
   }
 
+  get projectRoot(): string {
+    return (
+      this.options.modelResources?.projectRoot ??
+      this.options.lspResources?.projectRoot ??
+      this.options.agentResources?.projectRoot ??
+      this.options.taskWorktree?.originalWorkspaceRoot ??
+      this.workspaceRoot
+    );
+  }
+
   getConfig(): BladeConfig {
     return this.config;
+  }
+
+  getAvailableModels(): ModelConfig[] {
+    return this.config.models.map((model) => structuredClone(model));
+  }
+
+  getModelById(modelId: string): ModelConfig | undefined {
+    const model = this.config.models.find((candidate) => candidate.id === modelId);
+    return model ? structuredClone(model) : undefined;
+  }
+
+  getAgentResources(): SessionAgentResources {
+    if (!this.agentResources) {
+      throw new Error('Session agent resources are unavailable before initialization');
+    }
+    return this.agentResources;
+  }
+
+  getLspResources(): SessionLspResources {
+    return snapshotWorkspaceLspResources(this.lspResources);
   }
 
   isTaskSession(): boolean {
@@ -308,9 +580,10 @@ export class SessionRuntime {
     maxConcurrent: number;
     maxQueued: number;
   } {
+    const admission = taskRunScheduler.getStats();
     return {
-      maxConcurrent: this.config.maxConcurrentTasks,
-      maxQueued: this.config.maxQueuedTasks,
+      maxConcurrent: admission.maxConcurrent,
+      maxQueued: admission.maxQueued,
     };
   }
 
@@ -397,6 +670,178 @@ export class SessionRuntime {
 
   getCurrentModelId(): string | undefined {
     return this.currentModelId;
+  }
+
+  getReasoningConfiguration(): ReasoningEffortConfiguration {
+    if (!this.currentReasoning) {
+      throw new Error('Session runtime is not initialized');
+    }
+    return {
+      ...this.currentReasoning,
+      supported: [...this.currentReasoning.supported],
+    };
+  }
+
+  resolveReasoningConfiguration(
+    selection: ReasoningEffortSelection,
+    modelId = this.currentModelId
+  ): ReasoningEffortConfiguration {
+    return resolvePiModelConfig(
+      this.resolveModelConfig(modelId),
+      this.config,
+      selection,
+      this.modelResources.catalog
+    ).reasoning;
+  }
+
+  getServiceTierConfiguration(): ServiceTierConfiguration {
+    if (!this.currentServiceTier) {
+      throw new Error('Session runtime is not initialized');
+    }
+    return {
+      ...this.currentServiceTier,
+      supported: [...this.currentServiceTier.supported],
+    };
+  }
+
+  resolveServiceTierConfiguration(
+    selection: ServiceTierSelection,
+    modelId = this.currentModelId
+  ): ServiceTierConfiguration {
+    return resolvePiModelConfig(
+      this.resolveModelConfig(modelId),
+      this.config,
+      this.selectedReasoningEffort,
+      this.modelResources.catalog,
+      selection
+    ).serviceTier;
+  }
+
+  getResponseVerbosityConfiguration(): ResponseVerbosityConfiguration {
+    if (!this.currentResponseVerbosity) {
+      throw new Error('Session runtime is not initialized');
+    }
+    return {
+      ...this.currentResponseVerbosity,
+      supported: [...this.currentResponseVerbosity.supported],
+    };
+  }
+
+  resolveResponseVerbosityConfiguration(
+    selection: ResponseVerbositySelection,
+    modelId = this.currentModelId
+  ): ResponseVerbosityConfiguration {
+    return resolvePiModelConfig(
+      this.resolveModelConfig(modelId),
+      this.config,
+      this.selectedReasoningEffort,
+      this.modelResources.catalog,
+      this.selectedServiceTier,
+      selection
+    ).responseVerbosity;
+  }
+
+  getCommunicationStyleConfiguration(): CommunicationStyleConfiguration {
+    return resolveCommunicationStyle(
+      this.selectedCommunicationStyle,
+      this.getCommunicationStyleCatalog()
+    );
+  }
+
+  resolveCommunicationStyleConfiguration(
+    selection: CommunicationStyleSelection
+  ): CommunicationStyleConfiguration {
+    return resolveCommunicationStyle(selection, this.getCommunicationStyleCatalog());
+  }
+
+  getCommunicationStyleCatalog(): CommunicationStyleCatalog {
+    return (
+      this.agentResources?.communicationStyles ?? BUILTIN_COMMUNICATION_STYLE_CATALOG
+    );
+  }
+
+  getProjectRuleCatalog(): ProjectRuleCatalog {
+    return (
+      this.agentResources?.projectRules ?? ProjectRuleCatalog.empty(this.projectRoot)
+    );
+  }
+
+  getStaticProjectRules(): ProjectRuleResolution {
+    return this.getProjectRuleCatalog().staticRules(this.projectRoot);
+  }
+
+  hydrateProjectRules(
+    references: readonly ProjectRuleReference[]
+  ): ProjectRuleResolution {
+    return this.getProjectRuleCatalog().hydrate(references);
+  }
+
+  resolveContextualProjectRules(
+    toolName: string,
+    params: Record<string, unknown>,
+    result: ToolResult | undefined,
+    loadedIds: ReadonlySet<string>
+  ): ProjectRuleResolution {
+    const paths = new Set<string>();
+    try {
+      const invocation = this.baseRegistry.get(toolName)?.build(params);
+      for (const value of invocation?.getAffectedPaths() ?? []) {
+        if (value) paths.add(value);
+      }
+    } catch {
+      // Invalid tool parameters are handled by normal tool validation.
+    }
+    const addString = (value: unknown) => {
+      if (typeof value === 'string' && value.trim()) paths.add(value);
+    };
+    if (['Read', 'Edit', 'Write'].includes(toolName)) {
+      addString(params.file_path);
+    } else if (toolName === 'NotebookEdit') {
+      addString(params.notebook_path);
+    } else if (['Grep', 'Glob'].includes(toolName)) {
+      addString(params.path);
+    } else if (toolName === 'Bash') {
+      addString(params.cwd);
+    }
+    const metadata =
+      result?.metadata && typeof result.metadata === 'object'
+        ? (result.metadata as Record<string, unknown>)
+        : undefined;
+    if (Array.isArray(metadata?.affected_paths)) {
+      for (const value of metadata.affected_paths) addString(value);
+    }
+    if (Array.isArray(metadata?.changes)) {
+      for (const value of metadata.changes) {
+        if (value && typeof value === 'object') {
+          addString((value as Record<string, unknown>).path);
+        }
+      }
+    }
+    const sourcePaths = [...paths]
+      .map((value) =>
+        path.isAbsolute(value)
+          ? path.resolve(value)
+          : path.resolve(this.workspaceRoot, value)
+      )
+      .flatMap((target) => {
+        const relative = path.relative(this.workspaceRoot, target);
+        if (
+          relative === '' ||
+          (!relative.startsWith('..') && !path.isAbsolute(relative))
+        ) {
+          return [path.resolve(this.projectRoot, relative)];
+        }
+        const sourceRelative = path.relative(this.projectRoot, target);
+        return sourceRelative === '' ||
+          (!sourceRelative.startsWith('..') && !path.isAbsolute(sourceRelative))
+          ? [target]
+          : [];
+      });
+    return this.getProjectRuleCatalog().contextualRules(
+      this.projectRoot,
+      sourcePaths,
+      loadedIds
+    );
   }
 
   getCurrentModelMaxContextTokens(): number {
@@ -551,6 +996,105 @@ export class SessionRuntime {
     });
   }
 
+  getMcpContentCatalog(): SessionMcpContentSnapshot {
+    return (
+      this.sessionMcpRegistry?.getContentCatalogSnapshot() ?? {
+        revision: 0,
+        resources: [],
+        resourceTemplates: [],
+        prompts: [],
+      }
+    );
+  }
+
+  async refreshMcpContentCatalogs(serverName?: string): Promise<void> {
+    if (!this.sessionMcpRegistry) {
+      throw new Error('This Session has no MCP servers');
+    }
+    await this.sessionMcpRegistry.refreshContentCatalogs(serverName);
+  }
+
+  async getMcpPrompt(
+    serverName: string,
+    name: string,
+    arguments_: Record<string, string>
+  ): Promise<McpNormalizedPromptResult> {
+    if (!this.sessionMcpRegistry) {
+      throw new Error('This Session has no MCP servers');
+    }
+    return this.sessionMcpRegistry.getPrompt(serverName, name, arguments_);
+  }
+
+  async completeMcpArgument(
+    serverName: string,
+    input: McpCompletionInput,
+    signal?: AbortSignal
+  ): Promise<McpNormalizedCompletionResult> {
+    if (!this.sessionMcpRegistry) {
+      throw new Error('This Session has no MCP servers');
+    }
+    return this.sessionMcpRegistry.complete(serverName, input, signal);
+  }
+
+  listMcpTasks(serverName?: string): McpTaskSnapshot[] {
+    return McpTaskManager.getInstance().list(
+      {
+        sessionId: this.sessionId,
+        projectPath: this.workspaceRoot,
+      },
+      serverName
+    );
+  }
+
+  getMcpTask(taskId: string): McpTaskSnapshot | undefined {
+    return McpTaskManager.getInstance().get(taskId, {
+      sessionId: this.sessionId,
+      projectPath: this.workspaceRoot,
+    });
+  }
+
+  cancelMcpTask(
+    taskId: string,
+    signal?: AbortSignal
+  ): Promise<McpTaskSnapshot | undefined> {
+    return McpTaskManager.getInstance().cancel(
+      taskId,
+      {
+        sessionId: this.sessionId,
+        projectPath: this.workspaceRoot,
+      },
+      signal
+    );
+  }
+
+  getMcpLogs(
+    serverName?: string,
+    options: { afterRevision?: number; limit?: number } = {}
+  ): McpLogSnapshot {
+    return (
+      this.sessionMcpRegistry?.getLogSnapshot(serverName, options) ?? {
+        revision: 0,
+        entries: [],
+      }
+    );
+  }
+
+  getMcpInstructions(): McpInstructionsSnapshot {
+    return (
+      this.sessionMcpRegistry?.getInstructionsSnapshot() ?? {
+        revision: 0,
+        instructions: [],
+      }
+    );
+  }
+
+  async setMcpLoggingLevel(serverName: string, level: McpLogLevel): Promise<void> {
+    if (!this.sessionMcpRegistry) {
+      throw new Error('This Session has no MCP servers');
+    }
+    await this.sessionMcpRegistry.setServerLoggingLevel(serverName, level);
+  }
+
   resumeSubagent(options: ResumeSubagentOptions): ResumedSubagent {
     this.assertSubagentControlIdle();
     const manager = BackgroundAgentManager.getInstance();
@@ -562,7 +1106,7 @@ export class SessionRuntime {
     if (!source) {
       throw new Error(`Subagent not found in this session: ${options.agentId}`);
     }
-    const registered = subagentRegistry.getSubagent(source.subagentType);
+    const registered = this.subagentRegistry?.getSubagent(source.subagentType);
     const config = source.configSnapshot
       ? ({ ...source.configSnapshot } as SubagentConfig)
       : registered;
@@ -575,6 +1119,13 @@ export class SessionRuntime {
       config,
       owner,
       permissionMode: config.permissionMode,
+      reasoningEffort: this.selectedReasoningEffort,
+      serviceTier: this.selectedServiceTier,
+      responseVerbosity: this.selectedResponseVerbosity,
+      communicationStyle: this.selectedCommunicationStyle,
+      agentResources: this.agentResources,
+      modelResources: this.modelResources,
+      lspResources: this.lspResources,
       onEvent: options.onEvent,
       onCompleted: options.onCompleted,
     });
@@ -665,6 +1216,114 @@ export class SessionRuntime {
     return this.activeTurnMailbox?.recoveredCount() ?? 0;
   }
 
+  async executeUserShellCommand(
+    command: string,
+    options: {
+      signal?: AbortSignal;
+      timeoutMs?: number;
+      onEvent?: (event: SessionUserShellCommandEvent) => void | Promise<void>;
+    } = {}
+  ): Promise<SessionUserShellCommandResult> {
+    if (!this.initialized || !this.executionEngine) {
+      throw new Error('Session runtime is not initialized');
+    }
+    return this.userShellMutex.runExclusive(async () => {
+      const executionId = nanoid(12);
+      const auxiliary = this.hasTurnOwner();
+      const signal = options.signal ?? new AbortController().signal;
+      const publish = async (event: SessionUserShellCommandEvent) => {
+        const properties =
+          event.type === 'started'
+            ? {
+                executionId: event.executionId,
+                command: event.command,
+                auxiliary,
+              }
+            : event.type === 'output'
+              ? {
+                  executionId: event.executionId,
+                  stream: event.stream,
+                  chunk: event.chunk,
+                  streamedBytes: event.streamedBytes,
+                  streamTruncated: event.streamTruncated,
+                  auxiliary,
+                }
+              : {
+                  executionId: event.executionId,
+                  messageId: event.messageId,
+                  record: event.record,
+                  auxiliary,
+                  delivery: event.delivery,
+                  queued: event.queued,
+                };
+        Bus.publish(
+          { sessionId: this.sessionId, projectPath: this.workspaceRoot },
+          `user.shell.${event.type}`,
+          properties
+        );
+        await options.onEvent?.(event);
+      };
+
+      const record = await executeUserShellCommand(command, {
+        executionId,
+        cwd: this.workspaceRoot,
+        env: {
+          ...process.env,
+          ...this.sessionEnvironment,
+          BLADE_CLI: '1',
+          BLADE_USER_SHELL: '1',
+        },
+        signal,
+        timeoutMs: options.timeoutMs,
+        executor: this.options.userShellExecutor,
+        onEvent: async (event) => {
+          if (event.type !== 'completed') {
+            await publish({ ...event, auxiliary });
+          }
+        },
+      });
+      const modelContent = renderUserShellCommandForModel(record);
+      const contextManager = this.getExecutionEngine().getContextManager();
+      const messageId = await contextManager.saveMessage(
+        this.sessionId,
+        'user',
+        modelContent,
+        null,
+        {
+          ...(auxiliary ? { inboxMessageId: executionId } : {}),
+          userShellCommand: JSON.parse(JSON.stringify(record)) as JsonValue,
+        },
+        this.options.subagentInfo
+      );
+      const steering = auxiliary
+        ? await this.getActiveTurnMailbox().enqueue(modelContent, {
+            allowBeforeTurn: true,
+            messageId: executionId,
+            persisted: true,
+          })
+        : undefined;
+      const result: SessionUserShellCommandResult = {
+        executionId,
+        messageId,
+        record,
+        modelContent,
+        auxiliary,
+        ...(steering?.delivery ? { delivery: steering.delivery } : {}),
+        ...(steering ? { queued: steering.queued } : {}),
+      };
+      await publish({
+        type: 'completed',
+        executionId,
+        messageId,
+        record,
+        auxiliary,
+        ...(steering?.delivery ? { delivery: steering.delivery } : {}),
+        ...(steering ? { queued: steering.queued } : {}),
+      });
+      return result;
+    });
+  }
+
   async initialize(): Promise<void> {
     if (this.initialized) {
       return;
@@ -672,17 +1331,92 @@ export class SessionRuntime {
 
     this.sessionLease = await SessionLease.acquire(this.sessionId, this.workspaceRoot);
     try {
+      if (!isAcpMode(this.sessionId)) {
+        await recoverWorkspacePatchTransactions(this.workspaceRoot);
+      }
+      const hookManager = HookManager.getInstance();
+      hookManager.loadConfig(
+        this.config.disableAllHooks
+          ? { ...this.config.hooks, enabled: false }
+          : (this.config.hooks ?? {}),
+        this.projectRoot
+      );
+      hookManager.bindSessionModelResources(
+        this.sessionId,
+        [this.projectRoot, this.workspaceRoot],
+        this.modelResources
+      );
+      await this.loadAgentResources();
+      if (this.projectRoot !== this.workspaceRoot) {
+        hookManager.inheritProjectConfig(this.projectRoot, this.workspaceRoot);
+      }
+      hookManager.bindSessionConfig(
+        this.sessionId,
+        [this.projectRoot, this.workspaceRoot],
+        this.config.disableAllHooks
+          ? {
+              ...(this.agentResources?.hooks ??
+                hookManager.getConfig(this.projectRoot)),
+              enabled: false,
+            }
+          : (this.agentResources?.hooks ?? hookManager.getConfig(this.projectRoot))
+      );
+      const sessionStartResult = await hookManager.executeSessionStartHooks({
+        projectDir: this.workspaceRoot,
+        sessionId: this.sessionId,
+        permissionMode: this.config.permissionMode ?? PermissionMode.DEFAULT,
+        isResume: this.options.sessionStart?.isResume ?? false,
+        resumeSessionId: this.options.sessionStart?.resumeSessionId,
+      });
+      if (!sessionStartResult.proceed) {
+        throw new Error(
+          sessionStartResult.warning || 'SessionStart hook blocked initialization'
+        );
+      }
+      if (sessionStartResult.warning) {
+        logger.warn(
+          `[SessionRuntime ${this.sessionId}] SessionStart hook warning: ${sessionStartResult.warning}`
+        );
+      }
+      const hookEnvironment = normalizeRuntimeEnvironment(sessionStartResult.env ?? {});
+      this.sessionEnvironment = Object.freeze({
+        ...this.sessionEnvironment,
+        ...hookEnvironment,
+      });
+      this.config.env = this.sessionEnvironment as Record<string, string>;
+      hookManager.bindSessionEnvironment(
+        this.sessionId,
+        [this.projectRoot, this.workspaceRoot],
+        this.sessionEnvironment
+      );
+      if (Object.keys(this.lspResources.servers).length > 0) {
+        this.lspManager = new LspSessionManager({
+          sessionId: this.sessionId,
+          workspaceRoot: this.workspaceRoot,
+          environment: this.sessionEnvironment,
+          servers: this.lspResources.servers,
+        });
+      }
+      if (!this.lspManager?.available) {
+        this.autoVerifyRuntime = new AutoVerifyRuntime({
+          sessionId: this.sessionId,
+          workspaceRoot: this.workspaceRoot,
+          projectRoot: this.projectRoot,
+          environment: this.sessionEnvironment,
+        });
+      }
       await this.validateSystemPromptConfig();
       this.activeTurnMailbox = await ActiveTurnMailbox.create(
         this.workspaceRoot,
         this.sessionId
       );
       await this.registerBuiltinTools();
-      await this.loadSubagents();
-      await this.discoverSkills();
       await this.applyModelConfig(
         this.resolveModelConfig(this.selectedModelId),
-        '使用模型:'
+        '使用模型:',
+        this.selectedReasoningEffort,
+        this.selectedServiceTier,
+        this.selectedResponseVerbosity
       );
       await this.getExecutionEngine()
         .getContextManager()
@@ -715,20 +1449,53 @@ export class SessionRuntime {
     const requestedModelId =
       options.modelId && !clearsSelection ? options.modelId : undefined;
     const nextModelId = clearsSelection
-      ? getCurrentModel()?.id
-      : (requestedModelId ?? this.selectedModelId ?? getCurrentModel()?.id);
-    if (nextModelId && nextModelId !== this.currentModelId) {
-      await this.applyModelConfig(this.resolveModelConfig(nextModelId), '切换模型');
+      ? this.getDefaultModel()?.id
+      : (requestedModelId ?? this.selectedModelId ?? this.getDefaultModel()?.id);
+    const nextReasoningEffort = options.reasoningEffort ?? this.selectedReasoningEffort;
+    const nextServiceTier = options.serviceTier ?? this.selectedServiceTier;
+    const nextResponseVerbosity =
+      options.responseVerbosity ?? this.selectedResponseVerbosity;
+    const nextCommunicationStyle =
+      options.communicationStyle ?? this.selectedCommunicationStyle;
+    resolveCommunicationStyle(
+      nextCommunicationStyle,
+      this.getCommunicationStyleCatalog()
+    );
+    if (
+      nextModelId &&
+      (nextModelId !== this.currentModelId ||
+        nextReasoningEffort !== this.selectedReasoningEffort ||
+        nextServiceTier !== this.selectedServiceTier ||
+        nextResponseVerbosity !== this.selectedResponseVerbosity)
+    ) {
+      await this.applyModelConfig(
+        this.resolveModelConfig(nextModelId),
+        nextModelId !== this.currentModelId
+          ? '切换模型'
+          : nextReasoningEffort !== this.selectedReasoningEffort
+            ? '切换推理强度'
+            : nextServiceTier !== this.selectedServiceTier
+              ? '切换服务等级'
+              : '切换输出详略',
+        nextReasoningEffort,
+        nextServiceTier,
+        nextResponseVerbosity
+      );
     }
     if (clearsSelection) {
       this.selectedModelId = undefined;
     } else if (requestedModelId) {
       this.selectedModelId = requestedModelId;
     }
+    this.selectedReasoningEffort = nextReasoningEffort;
+    this.selectedServiceTier = nextServiceTier;
+    this.selectedResponseVerbosity = nextResponseVerbosity;
+    this.selectedCommunicationStyle = nextCommunicationStyle;
   }
 
   createToolExecutor(options: AgentOptions = {}): ToolExecutor {
     const registry = new ToolRegistry();
+    registry.setMcpCatalogBarrier(this.mcpCatalogBarrier);
     const allowed = options.toolWhitelist ? new Set(options.toolWhitelist) : null;
     const blocked = options.toolBlacklist ? new Set(options.toolBlacklist) : null;
 
@@ -738,12 +1505,33 @@ export class SessionRuntime {
         registry.register(tool);
       }
     }
-    for (const tool of this.baseRegistry.getMcpTools()) {
-      if (blocked?.has(tool.name)) continue;
-      if (!allowed || allowed.has(tool.name)) {
-        registry.registerMcpTool(tool);
+    registry.replaceMcpTools(
+      this.filterMcpTools(this.baseRegistry.getMcpTools(), allowed, blocked)
+    );
+    const instructions = this.getMcpInstructions();
+    registry.queueMcpInstructionsChange({
+      revision: instructions.revision,
+      reason: 'snapshot',
+      replace: true,
+      instructions: instructions.instructions,
+      removed: [],
+    });
+    const taskVisible = ['TaskOutput', 'ListMcpTasks', 'CancelMcpTask'].some(
+      (name) => !blocked?.has(name) && (!allowed || allowed.has(name))
+    );
+    if (taskVisible) {
+      for (const task of McpTaskManager.getInstance().list({
+        sessionId: this.sessionId,
+        projectPath: this.workspaceRoot,
+      })) {
+        const { result: _result, ...projection } = task;
+        registry.queueMcpTaskChange({
+          revision: 0,
+          ...projection,
+        });
       }
     }
+    this.executorCatalogs.set(registry, { allowed, blocked });
 
     const permissions: PermissionConfig = {
       ...this.config.permissions,
@@ -759,6 +1547,20 @@ export class SessionRuntime {
       maxHistorySize: 1000,
       toolWhitelist: options.toolWhitelist,
       toolBlacklist: options.toolBlacklist,
+      contextDefaults: {
+        sessionId: this.sessionId,
+        workspaceRoot: this.workspaceRoot,
+        environment: this.sessionEnvironment,
+        permissionMode,
+        mcpSamplingHandler: this.handleMcpSampling,
+      },
+      ...(this.lspManager ? { lspManager: this.lspManager } : {}),
+      ...(permissionMode === PermissionMode.YOLO && this.autoVerifyRuntime
+        ? { autoVerifyRuntime: this.autoVerifyRuntime }
+        : {}),
+      onDispose: () => {
+        this.executorCatalogs.delete(registry);
+      },
     });
   }
 
@@ -784,14 +1586,34 @@ export class SessionRuntime {
       | (IChatService & { dispose?: () => Promise<void> | void })
       | undefined;
     const sessionMcpRegistry = this.sessionMcpRegistry;
+    const mcpCatalogListener = this.mcpCatalogListener;
+    const mcpContentCatalogListener = this.mcpContentCatalogListener;
+    const mcpResourceUpdatedListener = this.mcpResourceUpdatedListener;
+    const mcpConnectionListener = this.mcpConnectionListener;
+    const mcpLogListener = this.mcpLogListener;
+    const mcpInstructionsListener = this.mcpInstructionsListener;
+    const mcpTaskListener = this.mcpTaskListener;
     const sessionLease = this.sessionLease;
+    const autoVerifyRuntime = this.autoVerifyRuntime;
+    const lspManager = this.lspManager;
     this.chatService = undefined;
     this.executionEngine = undefined;
     this.activeTurnMailbox = undefined;
     this.currentModelMaxContextTokens = undefined;
     this.baseRegistry = new ToolRegistry();
     this.sessionMcpRegistry = undefined;
+    this.mcpCatalogListener = undefined;
+    this.mcpContentCatalogListener = undefined;
+    this.mcpResourceUpdatedListener = undefined;
+    this.mcpConnectionListener = undefined;
+    this.mcpLogListener = undefined;
+    this.mcpInstructionsListener = undefined;
+    this.mcpTaskListener = undefined;
+    this.mcpCatalogBarrier = async () => undefined;
+    this.executorCatalogs.clear();
     this.sessionLease = undefined;
+    this.autoVerifyRuntime = undefined;
+    this.lspManager = undefined;
 
     await attempt('kill the session background processes', () =>
       BackgroundShellManager.getInstance().killSession(this.sessionId)
@@ -800,18 +1622,57 @@ export class SessionRuntime {
     await attempt('clear the session file access records', () =>
       FileAccessTracker.getInstance().clearSession(this.sessionId, this.workspaceRoot)
     );
+    await attempt('stop the session auto-verification processes', () =>
+      autoVerifyRuntime?.dispose()
+    );
+    await attempt('stop the session LSP servers', () => lspManager?.dispose());
+    await attempt('release the session hook model resources', () =>
+      HookManager.getInstance().unbindSessionModelResources(this.sessionId, [
+        this.projectRoot,
+        this.workspaceRoot,
+      ])
+    );
     await attempt('release the session worktrees', () =>
       worktreeManager.releaseSession(this.sessionId)
     );
     await attempt('dispose the session chat service', () =>
       disposableChatService?.dispose?.()
     );
-    await attempt('disconnect the session MCP servers', () =>
-      sessionMcpRegistry?.disconnectAll()
+    await attempt('cancel the session MCP tasks', () =>
+      McpTaskManager.getInstance().cancelSession({
+        sessionId: this.sessionId,
+        projectPath: this.workspaceRoot,
+      })
     );
+    await attempt('disconnect the session MCP servers', async () => {
+      if (sessionMcpRegistry && mcpCatalogListener) {
+        sessionMcpRegistry.off('catalogChanged', mcpCatalogListener);
+      }
+      if (sessionMcpRegistry && mcpContentCatalogListener) {
+        sessionMcpRegistry.off('contentCatalogChanged', mcpContentCatalogListener);
+      }
+      if (sessionMcpRegistry && mcpResourceUpdatedListener) {
+        sessionMcpRegistry.off('resourceUpdated', mcpResourceUpdatedListener);
+      }
+      if (sessionMcpRegistry && mcpConnectionListener) {
+        sessionMcpRegistry.off('connectionLifecycleChanged', mcpConnectionListener);
+      }
+      if (sessionMcpRegistry && mcpLogListener) {
+        sessionMcpRegistry.off('log', mcpLogListener);
+      }
+      if (sessionMcpRegistry && mcpInstructionsListener) {
+        sessionMcpRegistry.off('instructionsChanged', mcpInstructionsListener);
+      }
+      if (mcpTaskListener) {
+        McpTaskManager.getInstance().off('taskChanged', mcpTaskListener);
+      }
+      await sessionMcpRegistry?.disconnectAll();
+    });
     await attempt('release the session lease', () => sessionLease?.release());
 
     this.currentModelId = undefined;
+    this.currentReasoning = undefined;
+    this.currentServiceTier = undefined;
     this.initialized = false;
 
     if (firstError !== undefined) {
@@ -822,11 +1683,20 @@ export class SessionRuntime {
   private resolveModelConfig(requestedModelId?: string): ModelConfig {
     const modelId =
       requestedModelId && requestedModelId !== 'inherit' ? requestedModelId : undefined;
-    const modelConfig = modelId ? getModelById(modelId) : getCurrentModel();
+    const modelConfig = modelId
+      ? this.config.models.find((model) => model.id === modelId)
+      : this.getDefaultModel();
     if (!modelConfig) {
       throw new Error(`模型配置未找到: ${modelId ?? 'current'}`);
     }
     return modelConfig;
+  }
+
+  private getDefaultModel(): ModelConfig | undefined {
+    return (
+      this.config.models.find((model) => model.id === this.config.currentModelId) ??
+      this.config.models[0]
+    );
   }
 
   private getActiveTurnMailbox(): ActiveTurnMailbox {
@@ -873,13 +1743,18 @@ export class SessionRuntime {
 
   private async applyModelConfig(
     modelConfig: ModelConfig,
-    label: string
+    label: string,
+    reasoningEffort: ReasoningEffortSelection,
+    serviceTier: ServiceTierSelection,
+    responseVerbosity: ResponseVerbositySelection
   ): Promise<void> {
-    const thinkingModeEnabled = getThinkingModeEnabled();
     const resolved = resolvePiModelConfig(
       modelConfig,
       this.config,
-      thinkingModeEnabled
+      reasoningEffort,
+      this.modelResources.catalog,
+      serviceTier,
+      responseVerbosity
     );
     logger.debug(`${label} ${resolved.displayName} (${modelConfig.model})`);
     const nextModelMaxContextTokens = resolved.model.contextWindow;
@@ -895,6 +1770,9 @@ export class SessionRuntime {
     );
     this.currentModelMaxContextTokens = nextModelMaxContextTokens;
     this.currentModelId = modelConfig.id;
+    this.currentReasoning = resolved.reasoning;
+    this.currentServiceTier = resolved.serviceTier;
+    this.currentResponseVerbosity = resolved.responseVerbosity;
 
     const disposablePreviousService = previousChatService as
       | (IChatService & { dispose?: () => Promise<void> | void })
@@ -910,11 +1788,56 @@ export class SessionRuntime {
   }
 
   private async validateSystemPromptConfig(): Promise<void> {
+    const staticProjectRules = this.getStaticProjectRules();
+    if (
+      this.options.projectInstructionsDigest &&
+      staticProjectRules.provenanceSha256 !== this.options.projectInstructionsDigest
+    ) {
+      throw new Error('Project instruction provenance mismatch');
+    }
+    if (
+      !this.options.subagentInfo &&
+      staticProjectRules.files.length > 0 &&
+      !this.options.projectInstructionsDigest
+    ) {
+      await this.persistSystemPromptProvenance({
+        projectInstructionsDigest: staticProjectRules.provenanceSha256,
+      });
+      this.options.projectInstructionsDigest = staticProjectRules.provenanceSha256;
+    }
+    const communicationStyle = this.resolveCommunicationStyleConfiguration(
+      this.selectedCommunicationStyle
+    );
+    if (
+      communicationStyle.source !== 'built-in' &&
+      this.options.communicationStyleDigest &&
+      communicationStyle.contentSha256 !== this.options.communicationStyleDigest
+    ) {
+      throw new Error(
+        `Communication style provenance mismatch: ${this.selectedCommunicationStyle}`
+      );
+    }
+    if (
+      communicationStyle.source !== 'built-in' &&
+      communicationStyle.contentSha256 &&
+      !this.options.communicationStyleDigest
+    ) {
+      await this.persistSystemPromptProvenance({
+        communicationStyleDigest: communicationStyle.contentSha256,
+      });
+      this.options.communicationStyleDigest = communicationStyle.contentSha256;
+    }
     try {
       await buildSystemPrompt({
         projectPath: this.workspaceRoot,
         includeEnvironment: false,
         language: this.config.language,
+        availableSkills:
+          this.agentResources?.skills.generateAvailableSkillsList() ?? '',
+        communicationStyle: this.selectedCommunicationStyle,
+        communicationStyleCatalog: this.getCommunicationStyleCatalog(),
+        projectRuleCatalog: this.getProjectRuleCatalog(),
+        projectInstructionSourcePath: this.projectRoot,
       });
     } catch (error) {
       logger.warn(
@@ -924,11 +1847,43 @@ export class SessionRuntime {
     }
   }
 
+  private async persistSystemPromptProvenance(update: {
+    communicationStyleDigest?: string;
+    projectInstructionsDigest?: string;
+  }): Promise<void> {
+    try {
+      await SessionService.updateSessionMetadata(
+        this.sessionId,
+        this.workspaceRoot,
+        update
+      );
+    } catch (error) {
+      const isMissingCreation =
+        error instanceof SessionMissingCreationError ||
+        (error as NodeJS.ErrnoException).code === 'ENOENT';
+      if (!isMissingCreation || this.options.subagentInfo) throw error;
+      await SessionService.createSessionMetadata(
+        this.sessionId,
+        this.workspaceRoot,
+        update
+      );
+    }
+  }
+
   private async registerBuiltinTools(): Promise<void> {
     const builtinTools = await getBuiltinTools({
       sessionId: this.sessionId,
       configDir: path.join(os.homedir(), '.blade'),
       workspaceRoot: this.workspaceRoot,
+      resourceRoot: this.projectRoot,
+      agentResources: this.agentResources,
+      modelResources: this.modelResources,
+      lspManager: this.lspManager,
+      lspResources: this.lspResources,
+      getReasoningEffort: () => this.selectedReasoningEffort,
+      getServiceTier: () => this.selectedServiceTier,
+      getResponseVerbosity: () => this.selectedResponseVerbosity,
+      getCommunicationStyle: () => this.selectedCommunicationStyle,
     });
 
     const builtin = builtinTools.filter((tool) => !tool.name.startsWith('mcp__'));
@@ -940,65 +1895,244 @@ export class SessionRuntime {
 
   private async registerMcpTools(): Promise<void> {
     try {
-      const hasSessionMcpServers = this.options.mcpServers !== undefined;
-      if (
-        !hasSessionMcpServers &&
-        this.options.mcpConfig &&
-        this.options.mcpConfig.length > 0
-      ) {
-        await loadMcpConfigFromCli(this.options.mcpConfig);
-      }
-
-      const mcpServers = hasSessionMcpServers
-        ? (this.options.mcpServers ?? {})
-        : getMcpServers();
+      const mcpServers = this.options.mcpServers ?? {};
       if (Object.keys(mcpServers).length === 0) {
         return;
       }
 
-      const registry = hasSessionMcpServers
-        ? McpRegistry.createIsolated()
-        : McpRegistry.getInstance();
-      if (hasSessionMcpServers) {
-        this.sessionMcpRegistry = registry;
-      }
+      const registry = McpRegistry.createIsolated({
+        roots: isAcpMode(this.sessionId) ? [] : [this.workspaceRoot],
+        samplingAvailable: true,
+        oauthCredentialAccess: !isAcpMode(this.sessionId),
+        artifactWriter: new McpToolArtifactStore(
+          `${this.projectRoot}\0${this.sessionId}`,
+          {
+            exposePaths: !isAcpMode(this.sessionId),
+          }
+        ),
+        exposeLogDetails: !isAcpMode(this.sessionId),
+        exposeInstructions: !isAcpMode(this.sessionId),
+      });
+      this.sessionMcpRegistry = registry;
+      this.mcpCatalogBarrier = () => registry.waitForCatalogIdle();
+      this.baseRegistry.setMcpCatalogBarrier(this.mcpCatalogBarrier);
+      const catalogListener = (change: McpCatalogChange) => {
+        this.applyMcpCatalog(change, this.initialized);
+      };
+      this.mcpCatalogListener = catalogListener;
+      registry.on('catalogChanged', catalogListener);
+      const contentCatalogListener = (change: McpContentCatalogChange) => {
+        this.applyMcpContentCatalog(change);
+      };
+      const resourceUpdatedListener = (update: McpResourceUpdated) => {
+        this.applyMcpResourceUpdated(update);
+      };
+      const connectionListener = (change: McpConnectionLifecycleChange) => {
+        this.applyMcpConnectionChange(change);
+      };
+      const logListener = (entry: McpLogEntry) => {
+        this.applyMcpLog(entry);
+      };
+      const instructionsListener = (change: McpInstructionsChange) => {
+        this.applyMcpInstructions(change);
+      };
+      const taskListener = (change: McpTaskChange) => {
+        if (
+          change.owner.sessionId !== this.sessionId ||
+          path.resolve(change.owner.projectPath) !== path.resolve(this.workspaceRoot)
+        ) {
+          return;
+        }
+        this.applyMcpTask(change);
+        const { owner: _owner, result: _result, ...projection } = change;
+        Bus.publish(
+          {
+            sessionId: this.sessionId,
+            projectPath: this.workspaceRoot,
+          },
+          'mcp.task.changed',
+          projection
+        );
+      };
+      this.mcpContentCatalogListener = contentCatalogListener;
+      this.mcpResourceUpdatedListener = resourceUpdatedListener;
+      this.mcpConnectionListener = connectionListener;
+      this.mcpLogListener = logListener;
+      this.mcpInstructionsListener = instructionsListener;
+      this.mcpTaskListener = taskListener;
+      registry.on('contentCatalogChanged', contentCatalogListener);
+      registry.on('resourceUpdated', resourceUpdatedListener);
+      registry.on('connectionLifecycleChanged', connectionListener);
+      registry.on('log', logListener);
+      registry.on('instructionsChanged', instructionsListener);
+      McpTaskManager.getInstance().on('taskChanged', taskListener);
       for (const [name, config] of Object.entries(mcpServers)) {
         try {
-          await registry.registerServer(name, config);
+          const environment =
+            config.type === 'stdio'
+              ? {
+                  ...this.sessionEnvironment,
+                  ...config.env,
+                }
+              : undefined;
+          await registry.registerServer(
+            name,
+            config.type === 'stdio'
+              ? {
+                  ...config,
+                  ...(environment && Object.keys(environment).length > 0
+                    ? { env: environment }
+                    : {}),
+                }
+              : config
+          );
         } catch (error) {
           logger.warn(`Warning: MCP server "${name}" connection failed:`, error);
         }
       }
 
-      const mcpTools = await registry.getAvailableTools();
-      for (const tool of mcpTools) {
-        this.baseRegistry.registerMcpTool(tool);
-      }
+      this.baseRegistry.replaceMcpTools(registry.getCatalogSnapshot().tools);
+      this.baseRegistry.registerAll(createMcpContentTools(registry));
+      this.baseRegistry.registerAll(createMcpTaskTools(registry));
     } catch (error) {
       logger.warn('Failed to register MCP tools:', error);
     }
   }
 
-  private async loadSubagents(): Promise<void> {
-    try {
-      if (subagentRegistry.getAllNames().length === 0) {
-        subagentRegistry.loadFromStandardLocations();
-      }
-      if (this.options.agents?.length) {
-        subagentRegistry.applyOverrides(this.options.agents);
-      }
-    } catch (error) {
-      logger.warn('Failed to load subagents:', error);
+  private filterMcpTools(
+    tools: readonly Tool[],
+    allowed: ReadonlySet<string> | null,
+    blocked: ReadonlySet<string> | null
+  ): Tool[] {
+    return tools.filter(
+      (tool) => !blocked?.has(tool.name) && (!allowed || allowed.has(tool.name))
+    );
+  }
+
+  private applyMcpCatalog(change: McpCatalogChange, announce: boolean): void {
+    this.baseRegistry.replaceMcpTools(change.tools);
+    for (const [registry, filters] of this.executorCatalogs) {
+      const filteredTools = this.filterMcpTools(
+        change.tools,
+        filters.allowed,
+        filters.blocked
+      );
+      const include = (name: string) =>
+        !filters.blocked?.has(name) && (!filters.allowed || filters.allowed.has(name));
+      const projected = {
+        revision: change.revision,
+        serverName: change.serverName,
+        reason: change.reason,
+        added: change.added.filter(include),
+        removed: change.removed.filter(include),
+        updated: change.updated.filter(include),
+      };
+      const hasProjectedChanges =
+        projected.added.length > 0 ||
+        projected.removed.length > 0 ||
+        projected.updated.length > 0;
+      registry.replaceMcpTools(
+        filteredTools,
+        announce && hasProjectedChanges ? projected : undefined
+      );
     }
   }
 
-  private async discoverSkills(): Promise<void> {
-    try {
-      await discoverSkills({
-        cwd: this.workspaceRoot,
+  private applyMcpContentCatalog(change: McpContentCatalogChange): void {
+    if (!this.initialized) return;
+    const requiredTools =
+      change.kind === 'resources'
+        ? ['ListMcpResources', 'ReadMcpResource']
+        : change.kind === 'resourceTemplates'
+          ? ['ListMcpResourceTemplates', 'CompleteMcpArgument']
+          : ['ListMcpPrompts', 'CompleteMcpArgument', 'GetMcpPrompt'];
+    for (const [registry, filters] of this.executorCatalogs) {
+      const visible = requiredTools.some(
+        (name) =>
+          !filters.blocked?.has(name) && (!filters.allowed || filters.allowed.has(name))
+      );
+      if (visible) registry.queueMcpContentChange(change);
+    }
+  }
+
+  private applyMcpResourceUpdated(update: McpResourceUpdated): void {
+    if (!this.initialized) return;
+    for (const [registry, filters] of this.executorCatalogs) {
+      const visible =
+        !filters.blocked?.has('ReadMcpResource') &&
+        (!filters.allowed || filters.allowed.has('ReadMcpResource'));
+      if (visible) registry.queueMcpResourceUpdated(update);
+    }
+  }
+
+  private applyMcpConnectionChange(change: McpConnectionLifecycleChange): void {
+    if (!this.initialized) return;
+    for (const registry of this.executorCatalogs.keys()) {
+      registry.queueMcpConnectionChange(change);
+    }
+  }
+
+  private applyMcpLog(entry: McpLogEntry): void {
+    if (!this.initialized) return;
+    for (const registry of this.executorCatalogs.keys()) {
+      registry.queueMcpLog(entry);
+    }
+  }
+
+  private applyMcpInstructions(change: McpInstructionsChange): void {
+    if (!this.initialized) return;
+    for (const registry of this.executorCatalogs.keys()) {
+      registry.queueMcpInstructionsChange({
+        revision: change.revision,
+        reason: change.reason,
+        replace: false,
+        instructions:
+          change.action === 'added' && change.instruction
+            ? [
+                {
+                  serverName: change.serverName,
+                  ...change.instruction,
+                },
+              ]
+            : [],
+        removed: change.action === 'removed' ? [change.serverName] : [],
       });
-    } catch (error) {
-      logger.warn('Failed to discover skills:', error);
+    }
+  }
+
+  private applyMcpTask(change: McpTaskChange): void {
+    if (!this.initialized) return;
+    const { owner: _owner, result: _result, ...projection } = change;
+    for (const [registry, filters] of this.executorCatalogs) {
+      const visible = ['TaskOutput', 'ListMcpTasks', 'CancelMcpTask'].some(
+        (name) =>
+          !filters.blocked?.has(name) && (!filters.allowed || filters.allowed.has(name))
+      );
+      if (visible) registry.queueMcpTaskChange(projection);
+    }
+  }
+
+  private readonly handleMcpSampling: McpSamplingHandler = async (request, signal) => {
+    const service = this.getChatService();
+    const response = await service.chat(request.messages, undefined, signal, {
+      maxOutputTokens: request.maxTokens,
+      ...(request.temperature !== undefined
+        ? { temperature: request.temperature }
+        : {}),
+    });
+    return finalizeMcpSamplingResponse(response, service.getConfig().model, request);
+  };
+
+  private async loadAgentResources(): Promise<void> {
+    const resources = this.options.agentResources
+      ? this.options.agentResources
+      : await resolveWorkspaceAgentResources(this.projectRoot, {
+          reconcilePlugins: true,
+        });
+    this.agentResources = snapshotWorkspaceAgentResources(resources);
+    this.subagentRegistry = this.agentResources.subagents;
+    if (this.options.agents?.length) {
+      this.subagentRegistry.applyOverrides(this.options.agents);
     }
   }
 }

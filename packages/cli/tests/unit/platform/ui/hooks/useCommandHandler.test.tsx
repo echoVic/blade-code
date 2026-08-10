@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => {
     setResponseVerbosity: vi.fn(),
     getCommunicationStyleConfiguration: vi.fn(),
     setCommunicationStyle: vi.fn(),
+    executeUserShellCommand: vi.fn(),
     processSlashCommand: vi.fn(),
     abort: vi.fn(),
     hasPendingInbox: vi.fn(),
@@ -36,6 +37,8 @@ const mocks = vi.hoisted(() => {
     enqueueCommand: vi.fn(),
     addUserMessage: vi.fn(),
     addAssistantMessage: vi.fn(),
+    addMessage: vi.fn(),
+    setCommand: vi.fn(),
     isProcessing: false,
     storeProcessing: false,
     setProcessing: vi.fn(),
@@ -76,6 +79,7 @@ vi.mock('../../../../../src/ui/hooks/useAgent.js', () => ({
     setResponseVerbosity: mocks.setResponseVerbosity,
     getCommunicationStyleConfiguration: mocks.getCommunicationStyleConfiguration,
     setCommunicationStyle: mocks.setCommunicationStyle,
+    executeUserShellCommand: mocks.executeUserShellCommand,
   }),
 }));
 
@@ -95,6 +99,8 @@ vi.mock('../../../../../src/store/selectors/index.js', () => ({
     setCurrentThinkingContent: mocks.setCurrentThinkingContent,
     addAssistantMessage: mocks.addAssistantMessage,
     addUserMessage: mocks.addUserMessage,
+    addMessage: mocks.addMessage,
+    setCommand: mocks.setCommand,
     setError: vi.fn(),
   }),
   useAppActions: () => ({
@@ -237,6 +243,60 @@ describe('useCommandHandler durable recovery', () => {
     );
     expect(mocks.setProcessing).toHaveBeenNthCalledWith(1, true);
     expect(mocks.setProcessing).toHaveBeenLastCalledWith(false);
+  });
+
+  it('routes bang input to the Session shell without creating an Agent', async () => {
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    mocks.hasActiveGoal.mockResolvedValue(false);
+    mocks.executeUserShellCommand.mockResolvedValueOnce({
+      executionId: 'tui-shell',
+      messageId: 'shell-message',
+      record: {
+        version: 1,
+        command: 'pwd',
+        status: 'completed',
+        exitCode: 0,
+        durationMs: 3,
+        stdout: '/active-workspace',
+        stderr: '',
+        stdoutOmittedBytes: 0,
+        stderrOmittedBytes: 0,
+        binaryOutput: false,
+        truncated: false,
+      },
+      modelContent: '<user_shell_command>pwd</user_shell_command>',
+      auxiliary: false,
+    });
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await hook?.executeCommand({
+        displayText: '! pwd',
+        text: '! pwd',
+        images: [],
+        parts: [{ type: 'text', text: '! pwd' }],
+      });
+    });
+
+    expect(mocks.executeUserShellCommand).toHaveBeenCalledWith(
+      'pwd',
+      expect.objectContaining({ signal: mocks.abortController.signal })
+    );
+    expect(mocks.addMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: 'user',
+        content: '! pwd\n/active-workspace',
+        metadata: {
+          userShellCommand: expect.objectContaining({
+            status: 'completed',
+          }),
+        },
+      })
+    );
+    expect(mocks.createAgent).not.toHaveBeenCalled();
   });
 
   it('auto-starts a goal-only turn when the CLI session mounts with an active goal', async () => {

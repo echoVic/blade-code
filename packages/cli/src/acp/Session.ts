@@ -26,18 +26,46 @@ import { Agent } from '../agent/Agent.js';
 import { drainLoop } from '../agent/loop/index.js';
 import type { LoopEvent } from '../agent/loop/types.js';
 import { SessionRuntime } from '../agent/runtime/SessionRuntime.js';
-import type { ChatContext } from '../agent/types.js';
-import { type McpServerConfig, PermissionMode } from '../config/types.js';
+import type { ChatContext, UserMessageContent } from '../agent/types.js';
+import {
+  MAX_INLINE_ATTACHMENT_BYTES,
+  MAX_INLINE_ATTACHMENT_COUNT,
+  MAX_USER_MESSAGE_TEXT_CHARS,
+} from '../api/attachmentLimits.js';
+import {
+  type BladeConfig,
+  type CommunicationStyleSelection,
+  type McpServerConfig,
+  PermissionMode,
+  type ReasoningEffortSelection,
+  type ResponseVerbositySelection,
+  type ServiceTierSelection,
+} from '../config/types.js';
 import type { SessionTaskIsolation, SessionTaskWorktree } from '../context/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
+import type {
+  McpElicitationContent,
+  McpElicitationField,
+} from '../mcp/McpElicitation.js';
 import { Bus } from '../server/bus.js';
-import type { Message } from '../services/ChatServiceInterface.js';
+import type { ContentPart, Message } from '../services/ChatServiceInterface.js';
+import {
+  SessionMissingCreationError,
+  SessionService,
+} from '../services/SessionService.js';
+import {
+  renderUserShellCommandForDisplay,
+  type UserShellCommandRecord,
+  userShellCommandRecordFromMetadata,
+} from '../services/UserShellCommandService.js';
 import {
   executeSlashCommand,
   getRegisteredCommands,
+  initializeCustomCommands,
   isSlashCommand,
   type SlashCommandContext,
 } from '../slash-commands/index.js';
+import type { JsonValue } from '../store/types.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
 import {
   CONFIRMATION_ABORTED_REASON,
@@ -63,6 +91,11 @@ const logger = createLogger(LogCategory.AGENT);
  */
 type AcpModeId = 'default' | 'auto-edit' | 'yolo' | 'plan';
 
+interface ResolvedAcpPrompt {
+  content: UserMessageContent;
+  displayText: string;
+}
+
 export interface AcpSessionOptions {
   initialMessages?: Message[];
   mcpServers?: McpServer[];
@@ -71,12 +104,13 @@ export interface AcpSessionOptions {
 }
 
 function entriesToRecord(
-  entries: Array<{ name: string; value: string }>
+  entries: Array<{ name: string; value: string }> | undefined
 ): Record<string, string> {
+  if (!entries) return {};
   return Object.fromEntries(entries.map((entry) => [entry.name, entry.value]));
 }
 
-function toMcpServerConfig(server: McpServer): McpServerConfig {
+function toMcpServerConfig(server: McpServer): McpServerConfig | null {
   if ('command' in server) {
     return {
       type: 'stdio',
@@ -86,17 +120,28 @@ function toMcpServerConfig(server: McpServer): McpServerConfig {
     };
   }
 
-  return {
-    type: server.type,
-    url: server.url,
-    headers: entriesToRecord(server.headers),
-  };
+  if ('url' in server) {
+    return {
+      type: server.type as 'http' | 'sse',
+      url: server.url,
+      headers: entriesToRecord(
+        'headers' in server
+          ? (server.headers as Array<{ name: string; value: string }>)
+          : undefined
+      ),
+    };
+  }
+
+  return null;
 }
 
 function toMcpServers(servers: McpServer[]): Record<string, McpServerConfig> {
-  return Object.fromEntries(
-    servers.map((server) => [server.name, toMcpServerConfig(server)])
-  );
+  const result: Record<string, McpServerConfig> = {};
+  for (const server of servers) {
+    const config = toMcpServerConfig(server);
+    if (config) result[server.name] = config;
+  }
+  return result;
 }
 
 function historyContentBlocks(content: Message['content']): ContentBlock[] {
@@ -124,10 +169,26 @@ function historyContentBlocks(content: Message['content']): ContentBlock[] {
   });
 }
 
+function acpHistoryContentBlocks(message: Message): ContentBlock[] {
+  const record = userShellCommandRecordFromMetadata(message.metadata);
+  return record
+    ? [{ type: 'text', text: renderUserShellCommandForDisplay(record) }]
+    : historyContentBlocks(message.content);
+}
+
+function shellCompletionSummary(record: UserShellCommandRecord): string {
+  return [
+    `Status: ${record.status}`,
+    `Exit code: ${record.exitCode ?? 'null'}`,
+    `Duration: ${(record.durationMs / 1000).toFixed(3)} seconds`,
+  ].join('\n');
+}
+
 export class AcpSession {
   private agent: Agent | null = null;
   private runtime: SessionRuntime | null = null;
   private pendingPrompt: AbortController | null = null;
+  private pendingUserShell: AbortController | null = null;
   private pendingResumeRequested = false;
   private availableCommandsTimer: ReturnType<typeof setTimeout> | null = null;
   private taskStatusUnsubscribe?: () => void;
@@ -176,6 +237,7 @@ export class AcpSession {
     const mcpServers = this.options.mcpServers
       ? toMcpServers(this.options.mcpServers)
       : undefined;
+    const terminalService = AcpServiceContext.getInstance().getTerminalService(this.id);
     this.runtime = await SessionRuntime.create({
       sessionId: this.id,
       workspaceRoot: this.cwd,
@@ -184,19 +246,67 @@ export class AcpSession {
       ...(this.options.taskIsolation
         ? { taskIsolation: this.options.taskIsolation }
         : {}),
+      userShellExecutor: {
+        execute: async (command, options) => {
+          const result = await terminalService.execute(command, {
+            cwd: options.cwd,
+            env: options.env,
+            timeout: options.timeoutMs,
+            signal: options.signal,
+            allowLocalFallback: false,
+            onOutput: (chunk) => options.onOutput?.('stdout', chunk),
+          });
+          return {
+            exitCode: result.exitCode,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            ...(result.error ? { error: result.error } : {}),
+            timedOut: result.error === 'Command timed out',
+            aborted: result.error === 'Command was aborted',
+          };
+        },
+      },
+      ...((this.options.initialMessages?.length ?? 0) > 0
+        ? {
+            sessionStart: {
+              isResume: true,
+              resumeSessionId: this.id,
+            },
+          }
+        : {}),
     });
     this.agent = await this.createAgent();
+    await initializeCustomCommands(this.cwd);
 
     logger.debug(`[AcpSession ${this.id}] Agent created successfully`);
     this.taskStatusUnsubscribe?.();
     this.taskStatusUnsubscribe = Bus.subscribe((event) => {
-      if (
-        event.type !== 'task.status' ||
-        event.sessionId !== this.id ||
-        event.projectPath !== this.cwd
-      ) {
+      if (event.sessionId !== this.id || event.projectPath !== this.cwd) {
         return;
       }
+      if (event.type === 'task.delivery') {
+        if (
+          !event.properties.taskDelivery ||
+          typeof event.properties.taskDelivery !== 'object'
+        ) {
+          return;
+        }
+        this.sendUpdate({
+          sessionUpdate: 'session_info_update',
+          updatedAt:
+            typeof event.properties.updatedAt === 'string'
+              ? event.properties.updatedAt
+              : new Date().toISOString(),
+          _meta: {
+            'blade/taskDelivery': event.properties.taskDelivery,
+            ...(event.properties.taskWorktreeRemoved === true
+              ? { 'blade/taskWorktreeRemoved': true }
+              : {}),
+          },
+        });
+        return;
+      }
+      if (event.type !== 'task.status') return;
       this.sendUpdate({
         sessionUpdate: 'session_info_update',
         updatedAt:
@@ -209,6 +319,10 @@ export class AcpSession {
             ? {
                 'blade/taskStatusReason': event.properties.taskStatusReason,
               }
+            : {}),
+          ...(event.properties.taskFailure &&
+          typeof event.properties.taskFailure === 'object'
+            ? { 'blade/taskFailure': event.properties.taskFailure }
             : {}),
           ...(typeof event.properties.taskStartedAt === 'string'
             ? { 'blade/taskStartedAt': event.properties.taskStartedAt }
@@ -267,7 +381,7 @@ export class AcpSession {
             : undefined;
       if (!sessionUpdate) continue;
 
-      for (const content of historyContentBlocks(message.content)) {
+      for (const content of acpHistoryContentBlocks(message)) {
         if (!this.canSendUpdates()) return;
         if (!(await this.sendUpdateAndWait({ sessionUpdate, content }))) return;
       }
@@ -311,6 +425,7 @@ export class AcpSession {
       // 创建 slash command 上下文，包含 ACP 回调和取消信号
       const context: SlashCommandContext = {
         cwd: this.cwd,
+        surface: 'acp',
         workspaceRoot: this.cwd,
         sessionId: this.id,
         messages: [...this.messages],
@@ -326,6 +441,50 @@ export class AcpSession {
             await this.agent?.destroy();
             this.agent = await this.createAgent();
             return result;
+          },
+        },
+        reasoning: {
+          get: async () => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.getReasoningConfiguration();
+          },
+          set: async (selection) => {
+            await this.setReasoningEffort(selection);
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.getReasoningConfiguration();
+          },
+        },
+        serviceTier: {
+          get: async () => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.getServiceTierConfiguration();
+          },
+          set: async (selection) => {
+            await this.setServiceTier(selection);
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.getServiceTierConfiguration();
+          },
+        },
+        responseVerbosity: {
+          get: async () => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.getResponseVerbosityConfiguration();
+          },
+          set: async (selection) => {
+            await this.setResponseVerbosity(selection);
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.getResponseVerbosityConfiguration();
+          },
+        },
+        communicationStyle: {
+          get: async () => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.getCommunicationStyleConfiguration();
+          },
+          set: async (selection) => {
+            await this.setCommunicationStyle(selection);
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.getCommunicationStyleConfiguration();
           },
         },
         subagents: {
@@ -390,6 +549,48 @@ export class AcpSession {
             announced = true;
             if (pendingCompletion) sendCompletion(pendingCompletion);
             return result;
+          },
+        },
+        mcp: {
+          getCatalog: async () => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.getMcpContentCatalog();
+          },
+          refresh: async (serverName) => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            await this.runtime.refreshMcpContentCatalogs(serverName);
+          },
+          getPrompt: async (serverName, name, arguments_) => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.getMcpPrompt(serverName, name, arguments_);
+          },
+          complete: async (serverName, input, signal) => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.completeMcpArgument(serverName, input, signal);
+          },
+          listTasks: async (serverName) => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.listMcpTasks(serverName);
+          },
+          getTask: async (taskId) => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.getMcpTask(taskId);
+          },
+          cancelTask: async (taskId, signal) => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.cancelMcpTask(taskId, signal);
+          },
+          getLogs: async (serverName, options) => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.getMcpLogs(serverName, options);
+          },
+          setLoggingLevel: async (serverName, level) => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            await this.runtime.setMcpLoggingLevel(serverName, level);
+          },
+          getInstructions: async () => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.getMcpInstructions();
           },
         },
         signal, // 传递取消信号
@@ -497,7 +698,7 @@ export class AcpSession {
    */
   private async sendAvailableCommands(): Promise<void> {
     try {
-      const commands = getRegisteredCommands();
+      const commands = getRegisteredCommands(this.cwd);
 
       // 在 ACP 模式下过滤掉不需要的命令
       // - model/permissions/theme: Zed 已提供 UI
@@ -572,10 +773,15 @@ export class AcpSession {
       throw new Error('Session not initialized');
     }
 
-    const message = this.resolvePrompt(params.prompt);
+    const resolvedPrompt = this.resolvePrompt(params.prompt);
+    const message = resolvedPrompt.content;
+    const messageText = resolvedPrompt.displayText;
+    if (messageText.trimStart().startsWith('!')) {
+      return this.handleUserShellCommand(messageText);
+    }
     if (this.pendingPrompt) {
-      if (/^\/goal(?:\s|$)/i.test(message.trim())) {
-        return this.handleSlashCommand(message, this.pendingPrompt.signal);
+      if (/^\/goal(?:\s|$)/i.test(messageText.trim())) {
+        return this.handleSlashCommand(messageText, this.pendingPrompt.signal);
       }
       const steering = await this.runtime.enqueueSteering(message, {
         allowBeforeTurn: true,
@@ -602,14 +808,14 @@ export class AcpSession {
     try {
       // 1. 解析 ACP prompt 为文本消息
       logger.debug(
-        `[AcpSession ${this.id}] Received prompt: ${message.slice(0, 100)}...`
+        `[AcpSession ${this.id}] Received prompt: ${messageText.slice(0, 100)}...`
       );
 
       // 2. 检查是否是 slash command
-      if (isSlashCommand(message)) {
+      if (isSlashCommand(messageText)) {
         // 重要：使用 await 确保 finally 块在 handleSlashCommand 完成后才执行
         // 否则 finally 会在返回 Promise 后立即执行，导致 pendingPrompt 被提前清空
-        return await this.handleSlashCommand(message, abortController.signal);
+        return await this.handleSlashCommand(messageText, abortController.signal);
       }
 
       // 3. 构建 ChatContext
@@ -658,8 +864,7 @@ export class AcpSession {
             // --- 工具事件 ---
             case 'tool_start': {
               const toolCall = event.toolCall;
-              const toolName =
-                'function' in toolCall ? toolCall.function.name : toolCall.type;
+              const toolName = toolCall.function.name;
               const acpKind = this.mapToolKind(event.toolKind);
               let title = `Executing ${toolName}`;
               if (toolName === 'Task' && 'function' in toolCall) {
@@ -686,6 +891,24 @@ export class AcpSession {
               });
               break;
             }
+            case 'tool_progress': {
+              const toolCall = event.toolCall;
+              this.sendUpdate({
+                sessionUpdate: 'tool_call_update',
+                toolCallId: toolCall.id,
+                status: 'in_progress' as ToolCallStatus,
+                content: [
+                  {
+                    type: 'content',
+                    content: {
+                      type: 'text',
+                      text: event.update.message,
+                    },
+                  },
+                ],
+              });
+              break;
+            }
             case 'tool_result': {
               const toolCall = event.toolCall;
               const result = event.result;
@@ -693,7 +916,30 @@ export class AcpSession {
 
               // 检查是否有 diff 信息（Edit/Write 工具）
               const metadata = result.metadata;
-              if (
+              if (metadata?.kind === 'patch' && Array.isArray(metadata.changes)) {
+                for (const change of metadata.changes) {
+                  if (
+                    !change ||
+                    typeof change !== 'object' ||
+                    !('path' in change) ||
+                    typeof change.path !== 'string'
+                  ) {
+                    continue;
+                  }
+                  content.push({
+                    type: 'diff',
+                    path: change.path,
+                    oldText:
+                      'oldContent' in change && typeof change.oldContent === 'string'
+                        ? change.oldContent
+                        : null,
+                    newText:
+                      'newContent' in change && typeof change.newContent === 'string'
+                        ? change.newContent
+                        : null,
+                  });
+                }
+              } else if (
                 metadata?.kind === 'edit' &&
                 typeof metadata.file_path === 'string' &&
                 typeof metadata.oldContent === 'string' &&
@@ -707,8 +953,7 @@ export class AcpSession {
                   newText: (metadata.newContent as string) ?? null,
                 });
               } else {
-                const toolName =
-                  'function' in toolCall ? toolCall.function.name : toolCall.type;
+                const toolName = toolCall.function.name;
                 const displayText = renderToolDisplayToString(
                   formatToolDisplay(toolName, result)
                 );
@@ -727,6 +972,98 @@ export class AcpSession {
               });
               break;
             }
+            case 'mcp_catalog_changed':
+              this.sendUpdate({
+                sessionUpdate: 'agent_message_chunk',
+                content: {
+                  type: 'text',
+                  text:
+                    `MCP catalog r${event.revision} (${event.serverName}): ` +
+                    `+${event.added.length} -${event.removed.length} ~${event.updated.length}\n`,
+                },
+              });
+              break;
+            case 'mcp_content_changed':
+              this.sendUpdate({
+                sessionUpdate: 'agent_message_chunk',
+                content: {
+                  type: 'text',
+                  text:
+                    `MCP ${event.contentKind} r${event.revision} ` +
+                    `(${event.serverName}): +${event.added.length} ` +
+                    `-${event.removed.length} ~${event.updated.length}\n`,
+                },
+              });
+              break;
+            case 'mcp_resource_updated':
+              this.sendUpdate({
+                sessionUpdate: 'agent_message_chunk',
+                content: {
+                  type: 'text',
+                  text:
+                    `MCP resource updated r${event.revision} ` +
+                    `(${event.serverName}): ${event.uri}\n`,
+                },
+              });
+              break;
+            case 'mcp_connection_changed':
+              this.sendUpdate({
+                sessionUpdate: 'agent_message_chunk',
+                content: {
+                  type: 'text',
+                  text:
+                    `MCP connection r${event.revision} (${event.serverName}): ` +
+                    `${event.phase} ${event.attempt}/${event.maxAttempts}\n`,
+                },
+              });
+              break;
+            case 'mcp_log':
+              this.sendUpdate({
+                sessionUpdate: 'agent_message_chunk',
+                content: {
+                  type: 'text',
+                  text:
+                    `MCP log r${event.revision} (${event.serverName}) ` +
+                    `${event.level}${event.logger ? ` logger=${event.logger}` : ''}: ` +
+                    `${event.message}\n`,
+                },
+              });
+              break;
+            case 'mcp_instructions_changed':
+              this.sendUpdate({
+                sessionUpdate: 'agent_message_chunk',
+                content: {
+                  type: 'text',
+                  text:
+                    `MCP instructions r${event.revision} ` +
+                    `(${event.serverName}): ${event.action}` +
+                    `${event.detailsOmitted ? ' details-omitted' : ''}\n`,
+                },
+              });
+              break;
+            case 'mcp_task_changed':
+              this.sendUpdate({
+                sessionUpdate: 'agent_message_chunk',
+                content: {
+                  type: 'text',
+                  text:
+                    `MCP task r${event.revision} ${event.taskId} ` +
+                    `(${event.serverName}/${event.toolName}): ${event.status}` +
+                    `${event.hasResult ? ' result-available' : ''}\n`,
+                },
+              });
+              break;
+            case 'project_rules_loaded':
+              this.sendUpdate({
+                sessionUpdate: 'agent_message_chunk',
+                content: {
+                  type: 'text',
+                  text:
+                    `Project rules loaded: ${event.files.length}` +
+                    `${event.blockedWrite ? ' (write retry required)' : ''}\n`,
+                },
+              });
+              break;
 
             // --- 业务事件 ---
             case 'task_update':
@@ -807,6 +1144,107 @@ export class AcpSession {
     }
   }
 
+  private async handleUserShellCommand(input: string): Promise<PromptResponse> {
+    if (!this.runtime) throw new Error('Session runtime is unavailable');
+    if (this.pendingUserShell) {
+      throw new Error('A user shell command is already running');
+    }
+    const command = input.trimStart().slice(1).trim();
+    if (!command) throw new Error('User shell command cannot be empty');
+
+    const controller = new AbortController();
+    this.pendingUserShell = controller;
+    let toolCallId: string | undefined;
+    let streamedOutput = '';
+    try {
+      const result = await this.runtime.executeUserShellCommand(command, {
+        signal: controller.signal,
+        onEvent: async (event) => {
+          toolCallId = event.executionId;
+          if (event.type === 'started') {
+            this.sendUpdate({
+              sessionUpdate: 'tool_call',
+              toolCallId: event.executionId,
+              status: 'in_progress' as ToolCallStatus,
+              title: `! ${event.command}`,
+              content: [],
+              kind: 'execute' as ToolKind,
+            });
+            return;
+          }
+          if (event.type === 'output') {
+            streamedOutput += event.chunk;
+            this.sendUpdate({
+              sessionUpdate: 'tool_call_update',
+              toolCallId: event.executionId,
+              status: 'in_progress' as ToolCallStatus,
+              content: [
+                {
+                  type: 'content',
+                  content: {
+                    type: 'text',
+                    text: event.chunk,
+                  },
+                },
+              ],
+            });
+            return;
+          }
+          const display = renderUserShellCommandForDisplay(event.record);
+          this.sendUpdate({
+            sessionUpdate: 'tool_call_update',
+            toolCallId: event.executionId,
+            status:
+              event.record.status === 'completed'
+                ? ('completed' as ToolCallStatus)
+                : ('failed' as ToolCallStatus),
+            content: [
+              {
+                type: 'content',
+                content: {
+                  type: 'text',
+                  text: streamedOutput ? shellCompletionSummary(event.record) : display,
+                },
+              },
+            ],
+          });
+        },
+      });
+      this.messages.push({
+        role: 'user',
+        content: result.modelContent,
+        metadata: {
+          userShellCommand: JSON.parse(JSON.stringify(result.record)) as JsonValue,
+        },
+      });
+      if (result.delivery === 'next_turn') this.schedulePendingResume();
+      return {
+        stopReason: result.record.status === 'aborted' ? 'cancelled' : 'end_turn',
+      };
+    } catch (error) {
+      if (toolCallId) {
+        this.sendUpdate({
+          sessionUpdate: 'tool_call_update',
+          toolCallId,
+          status: 'failed' as ToolCallStatus,
+          content: [
+            {
+              type: 'content',
+              content: {
+                type: 'text',
+                text: error instanceof Error ? error.message : String(error),
+              },
+            },
+          ],
+        });
+      }
+      if (controller.signal.aborted) return { stopReason: 'cancelled' };
+      throw error;
+    } finally {
+      if (this.pendingUserShell === controller) this.pendingUserShell = null;
+    }
+  }
+
   private schedulePendingResume(): void {
     if (this.destroyed || this.connection.signal.aborted) return;
     this.pendingResumeRequested = true;
@@ -817,7 +1255,8 @@ export class AcpSession {
 
   private async resumePendingIfIdle(): Promise<void> {
     if (this.destroyed || this.connection.signal.aborted) return;
-    if (this.pendingPrompt || !this.runtime || !this.agent) return;
+    if (this.pendingPrompt || this.pendingUserShell || !this.runtime || !this.agent)
+      return;
     const hasPending = this.runtime.getPendingSteeringCount() > 0;
     const goal = hasPending ? null : await this.runtime.getGoal();
     const hasActiveGoal = goal?.status === 'active';
@@ -844,11 +1283,18 @@ export class AcpSession {
   cancel(): void {
     logger.info(`[AcpSession ${this.id}] Cancel requested`);
     this.pendingResumeRequested = false;
+    let cancelled = false;
     if (this.pendingPrompt) {
       this.pendingPrompt.abort();
       this.pendingPrompt = null;
-      logger.info(`[AcpSession ${this.id}] Cancelled successfully`);
-    } else {
+      cancelled = true;
+    }
+    if (this.pendingUserShell) {
+      this.pendingUserShell.abort();
+      this.pendingUserShell = null;
+      cancelled = true;
+    }
+    if (!cancelled) {
       logger.warn(`[AcpSession ${this.id}] No pending prompt to cancel`);
     }
   }
@@ -932,8 +1378,238 @@ export class AcpSession {
     if (!this.agent) {
       throw new Error('Session not initialized');
     }
+    if (!this.runtime) {
+      throw new Error('Session runtime is unavailable');
+    }
 
+    const previousModelId = this.runtime.getCurrentModelId();
     await this.agent.switchModel(modelId);
+    try {
+      try {
+        await SessionService.updateSessionMetadata(this.id, this.cwd, {
+          selectedModelId: modelId,
+        });
+      } catch (error) {
+        if (
+          !(error instanceof SessionMissingCreationError) &&
+          (error as NodeJS.ErrnoException).code !== 'ENOENT'
+        ) {
+          throw error;
+        }
+        await SessionService.createSessionMetadata(this.id, this.cwd, {
+          taskStatus: 'completed',
+          selectedModelId: modelId,
+        });
+      }
+    } catch (error) {
+      if (previousModelId && previousModelId !== modelId) {
+        await this.agent.switchModel(previousModelId).catch((rollbackError) => {
+          logger.error(
+            `[AcpSession ${this.id}] Failed to roll back a non-durable model switch:`,
+            rollbackError
+          );
+        });
+      }
+      throw error;
+    }
+  }
+
+  getCurrentModelId(): string | undefined {
+    return this.runtime?.getCurrentModelId();
+  }
+
+  async setReasoningEffort(reasoningEffort: ReasoningEffortSelection): Promise<void> {
+    if (this.pendingPrompt) {
+      throw new Error('Cannot switch reasoning effort while a prompt is active');
+    }
+    if (!this.runtime) {
+      throw new Error('Session runtime is unavailable');
+    }
+    const previous = this.runtime.getReasoningConfiguration();
+    try {
+      this.runtime.resolveReasoningConfiguration(reasoningEffort);
+    } catch (error) {
+      throw new Error(
+        error instanceof Error ? error.message : 'Invalid reasoning effort'
+      );
+    }
+    if (previous.selection === reasoningEffort) return;
+    await this.runtime.refresh({ reasoningEffort });
+    try {
+      try {
+        await SessionService.updateSessionMetadata(this.id, this.cwd, {
+          reasoningEffort,
+        });
+      } catch (error) {
+        if (
+          !(error instanceof SessionMissingCreationError) &&
+          (error as NodeJS.ErrnoException).code !== 'ENOENT'
+        ) {
+          throw error;
+        }
+        await SessionService.createSessionMetadata(this.id, this.cwd, {
+          taskStatus: 'completed',
+          selectedModelId: this.runtime.getCurrentModelId(),
+          reasoningEffort,
+        });
+      }
+    } catch (error) {
+      await this.runtime.refresh({ reasoningEffort: previous.selection });
+      throw error;
+    }
+  }
+
+  async setServiceTier(serviceTier: ServiceTierSelection): Promise<void> {
+    if (this.pendingPrompt) {
+      throw new Error('Cannot switch service tier while a prompt is active');
+    }
+    if (!this.runtime) {
+      throw new Error('Session runtime is unavailable');
+    }
+    const previous = this.runtime.getServiceTierConfiguration();
+    try {
+      this.runtime.resolveServiceTierConfiguration(serviceTier);
+    } catch (error) {
+      throw new Error(error instanceof Error ? error.message : 'Invalid service tier');
+    }
+    if (previous.selection === serviceTier) return;
+    await this.runtime.refresh({ serviceTier });
+    try {
+      try {
+        await SessionService.updateSessionMetadata(this.id, this.cwd, {
+          serviceTier,
+        });
+      } catch (error) {
+        if (
+          !(error instanceof SessionMissingCreationError) &&
+          (error as NodeJS.ErrnoException).code !== 'ENOENT'
+        ) {
+          throw error;
+        }
+        await SessionService.createSessionMetadata(this.id, this.cwd, {
+          taskStatus: 'completed',
+          selectedModelId: this.runtime.getCurrentModelId(),
+          serviceTier,
+        });
+      }
+    } catch (error) {
+      await this.runtime.refresh({ serviceTier: previous.selection });
+      throw error;
+    }
+  }
+
+  async setResponseVerbosity(
+    responseVerbosity: ResponseVerbositySelection
+  ): Promise<void> {
+    if (this.pendingPrompt) {
+      throw new Error('Cannot switch response verbosity while a prompt is active');
+    }
+    if (!this.runtime) {
+      throw new Error('Session runtime is unavailable');
+    }
+    const previous = this.runtime.getResponseVerbosityConfiguration();
+    try {
+      this.runtime.resolveResponseVerbosityConfiguration(responseVerbosity);
+    } catch (error) {
+      throw new Error(
+        error instanceof Error ? error.message : 'Invalid response verbosity'
+      );
+    }
+    if (previous.selection === responseVerbosity) return;
+    await this.runtime.refresh({ responseVerbosity });
+    try {
+      try {
+        await SessionService.updateSessionMetadata(this.id, this.cwd, {
+          responseVerbosity,
+        });
+      } catch (error) {
+        if (
+          !(error instanceof SessionMissingCreationError) &&
+          (error as NodeJS.ErrnoException).code !== 'ENOENT'
+        ) {
+          throw error;
+        }
+        await SessionService.createSessionMetadata(this.id, this.cwd, {
+          taskStatus: 'completed',
+          selectedModelId: this.runtime.getCurrentModelId(),
+          responseVerbosity,
+        });
+      }
+    } catch (error) {
+      await this.runtime.refresh({ responseVerbosity: previous.selection });
+      throw error;
+    }
+  }
+
+  async setCommunicationStyle(
+    communicationStyle: CommunicationStyleSelection
+  ): Promise<void> {
+    if (this.pendingPrompt) {
+      throw new Error('Cannot switch communication style while a prompt is active');
+    }
+    if (!this.runtime) {
+      throw new Error('Session runtime is unavailable');
+    }
+    const previous = this.runtime.getCommunicationStyleConfiguration();
+    const next =
+      this.runtime.resolveCommunicationStyleConfiguration(communicationStyle);
+    if (next.source !== 'built-in' && !next.contentSha256) {
+      throw new Error('Custom communication style has no provenance');
+    }
+    if (previous.selection === communicationStyle) return;
+    await this.runtime.refresh({ communicationStyle });
+    try {
+      try {
+        await SessionService.updateSessionMetadata(this.id, this.cwd, {
+          communicationStyle,
+          communicationStyleDigest:
+            next.source === 'built-in' ? null : next.contentSha256,
+        });
+      } catch (error) {
+        if (
+          !(error instanceof SessionMissingCreationError) &&
+          (error as NodeJS.ErrnoException).code !== 'ENOENT'
+        ) {
+          throw error;
+        }
+        await SessionService.createSessionMetadata(this.id, this.cwd, {
+          taskStatus: 'completed',
+          selectedModelId: this.runtime.getCurrentModelId(),
+          communicationStyle,
+          ...(next.source !== 'built-in' && next.contentSha256
+            ? { communicationStyleDigest: next.contentSha256 }
+            : {}),
+        });
+      }
+    } catch (error) {
+      await this.runtime.refresh({ communicationStyle: previous.selection });
+      throw error;
+    }
+  }
+
+  getModelConfiguration():
+    | (Pick<BladeConfig, 'currentModelId' | 'models' | 'modelProviders'> & {
+        reasoning: ReturnType<SessionRuntime['getReasoningConfiguration']>;
+        serviceTier: ReturnType<SessionRuntime['getServiceTierConfiguration']>;
+        responseVerbosity: ReturnType<
+          SessionRuntime['getResponseVerbosityConfiguration']
+        >;
+        communicationStyle: ReturnType<
+          SessionRuntime['getCommunicationStyleConfiguration']
+        >;
+      })
+    | undefined {
+    if (!this.runtime) return undefined;
+    const config = this.runtime.getConfig();
+    return {
+      currentModelId: this.runtime.getCurrentModelId() ?? config.currentModelId,
+      models: config.models.map((model) => structuredClone(model)),
+      modelProviders: structuredClone(config.modelProviders),
+      reasoning: this.runtime.getReasoningConfiguration(),
+      serviceTier: this.runtime.getServiceTierConfiguration(),
+      responseVerbosity: this.runtime.getResponseVerbosityConfiguration(),
+      communicationStyle: this.runtime.getCommunicationStyleConfiguration(),
+    };
   }
 
   /**
@@ -977,28 +1653,65 @@ export class AcpSession {
    * @param prompt - ACP prompt 数组
    * @returns 文本消息
    */
-  private resolvePrompt(prompt: ContentBlock[]): string {
-    const parts: string[] = [];
+  private resolvePrompt(prompt: ContentBlock[]): ResolvedAcpPrompt {
+    const displayParts: string[] = [];
+    const contentParts: ContentPart[] = [];
+    let imageCount = 0;
+    let imageBytes = 0;
+    let textChars = 0;
+
+    const appendContent = (part: ContentPart): void => {
+      if (contentParts.length > 0) {
+        contentParts.push({ type: 'text', text: '\n' });
+        textChars += 1;
+      }
+      contentParts.push(part);
+      if (part.type === 'text') textChars += part.text.length;
+    };
 
     for (const block of prompt) {
       if (block.type === 'text') {
-        parts.push(block.text);
+        displayParts.push(block.text);
+        appendContent({ type: 'text', text: block.text });
       } else if (block.type === 'image') {
-        // 图片暂时用占位符表示
-        parts.push(`[Image: ${block.mimeType}]`);
+        const dataUrl = `data:${block.mimeType};base64,${block.data}`;
+        imageCount += 1;
+        imageBytes += dataUrl.length;
+        displayParts.push(`[Image: ${block.mimeType}]`);
+        appendContent({ type: 'image_url', image_url: { url: dataUrl } });
       } else if (block.type === 'resource') {
-        // 嵌入资源（文件内容等）
         const resource = block.resource;
         if ('text' in resource) {
-          parts.push(`<file path="${resource.uri}">\n${resource.text}\n</file>`);
+          const text = `<file path="${resource.uri}">\n${resource.text}\n</file>`;
+          displayParts.push(text);
+          appendContent({ type: 'text', text });
         }
       } else if (block.type === 'resource_link') {
-        // 资源链接
-        parts.push(`[Resource: ${block.uri}]`);
+        const text = `[Resource: ${block.uri}]`;
+        displayParts.push(text);
+        appendContent({ type: 'text', text });
       }
     }
 
-    return parts.join('\n');
+    if (imageCount > MAX_INLINE_ATTACHMENT_COUNT) {
+      throw new Error(
+        `ACP prompt contains more than ${MAX_INLINE_ATTACHMENT_COUNT} images`
+      );
+    }
+    if (imageBytes > MAX_INLINE_ATTACHMENT_BYTES) {
+      throw new Error('ACP prompt images exceed the 5 MiB limit');
+    }
+    if (textChars > MAX_USER_MESSAGE_TEXT_CHARS) {
+      throw new Error(
+        `ACP prompt text exceeds ${MAX_USER_MESSAGE_TEXT_CHARS} characters`
+      );
+    }
+
+    const displayText = displayParts.join('\n');
+    return {
+      content: imageCount > 0 ? contentParts : displayText,
+      displayText,
+    };
   }
 
   /**
@@ -1074,10 +1787,13 @@ export class AcpSession {
     if (details.type === 'askUserQuestion') {
       return this.requestUserQuestions(details, signal);
     }
+    if (details.type === 'mcpElicitation') {
+      return this.requestMcpElicitation(details, signal);
+    }
 
     // 检查是否应该自动批准（基于当前模式）
     const toolKind = details.kind?.toLowerCase() || 'execute';
-    if (this.shouldAutoApprove(toolKind)) {
+    if (details.type !== 'mcpSampling' && this.shouldAutoApprove(toolKind)) {
       logger.debug(
         `[AcpSession ${this.id}] Auto-approving ${toolKind} in mode: ${this.mode}`
       );
@@ -1104,6 +1820,12 @@ export class AcpSession {
           content: { type: 'text', text: details.message },
         });
       }
+      if (details.details) {
+        content.push({
+          type: 'content',
+          content: { type: 'text', text: details.details },
+        });
+      }
 
       // 添加风险信息
       if (details.risks && details.risks.length > 0) {
@@ -1118,14 +1840,44 @@ export class AcpSession {
 
       const permissionRequest: RequestPermissionRequest = {
         sessionId: this.id,
-        options: [
-          // 允许选项
-          { optionId: 'allow_once', name: 'Allow once', kind: 'allow_once' },
-          { optionId: 'allow_always', name: 'Always allow', kind: 'allow_always' },
-          // 拒绝选项
-          { optionId: 'reject_once', name: 'Deny once', kind: 'reject_once' },
-          { optionId: 'reject_always', name: 'Always deny', kind: 'reject_always' },
-        ],
+        options:
+          details.type === 'mcpSampling'
+            ? [
+                {
+                  optionId: 'allow_once',
+                  name: 'Allow this sampling request',
+                  kind: 'allow_once',
+                },
+                {
+                  optionId: 'reject_once',
+                  name: 'Deny',
+                  kind: 'reject_once',
+                },
+              ]
+            : [
+                // 允许选项
+                {
+                  optionId: 'allow_once',
+                  name: 'Allow once',
+                  kind: 'allow_once',
+                },
+                {
+                  optionId: 'allow_always',
+                  name: 'Always allow',
+                  kind: 'allow_always',
+                },
+                // 拒绝选项
+                {
+                  optionId: 'reject_once',
+                  name: 'Deny once',
+                  kind: 'reject_once',
+                },
+                {
+                  optionId: 'reject_always',
+                  name: 'Always deny',
+                  kind: 'reject_always',
+                },
+              ],
         toolCall: {
           toolCallId,
           status: 'pending' as ToolCallStatus,
@@ -1257,6 +2009,190 @@ export class AcpSession {
       logger.warn(`[AcpSession ${this.id}] Question request failed:`, error);
       return { approved: false, reason: 'Question request failed' };
     }
+  }
+
+  private async requestMcpElicitation(
+    details: ConfirmationDetails,
+    signal?: AbortSignal
+  ): Promise<ConfirmationResponse> {
+    const elicitation = details.mcpElicitation;
+    if (!elicitation) {
+      return {
+        approved: false,
+        reason: 'MCP elicitation details are missing',
+        elicitation: { action: 'cancel' },
+      };
+    }
+
+    try {
+      if (elicitation.mode === 'url') {
+        const selected = await this.requestElicitationChoice(
+          'MCP external authorization',
+          [
+            elicitation.message,
+            `Server: ${elicitation.serverName}`,
+            `Domain: ${elicitation.domain ?? 'unknown'}`,
+            `URL: ${elicitation.url ?? ''}`,
+            'Open this URL yourself only if you trust the MCP server.',
+          ].join('\n'),
+          [
+            { id: 'accept', label: 'I will open this URL' },
+            { id: 'decline', label: 'Decline' },
+          ],
+          signal
+        );
+        if (selected === 'accept') {
+          return {
+            approved: true,
+            elicitation: { action: 'accept' },
+          };
+        }
+        return {
+          approved: false,
+          reason: selected === 'decline' ? 'User declined URL' : 'User cancelled',
+          elicitation: {
+            action: selected === 'decline' ? 'decline' : 'cancel',
+          },
+        };
+      }
+
+      const content = Object.create(null) as McpElicitationContent;
+      for (const field of elicitation.fields ?? []) {
+        const selected = await this.collectAcpElicitationField(field, signal);
+        if (selected.cancelled) {
+          return {
+            approved: false,
+            reason: selected.reason,
+            elicitation: { action: 'cancel' },
+          };
+        }
+        if (selected.value !== undefined) {
+          content[field.name] = selected.value;
+        }
+      }
+      return {
+        approved: true,
+        elicitation: { action: 'accept', content },
+      };
+    } catch (error) {
+      logger.warn(`[AcpSession ${this.id}] MCP elicitation failed:`, error);
+      return {
+        approved: false,
+        reason: 'MCP elicitation failed',
+        elicitation: { action: 'cancel' },
+      };
+    }
+  }
+
+  private async collectAcpElicitationField(
+    field: McpElicitationField,
+    signal?: AbortSignal
+  ): Promise<{
+    cancelled: boolean;
+    reason?: string;
+    value?: string | number | boolean | string[];
+  }> {
+    if (field.type === 'select' || field.type === 'boolean') {
+      const choices =
+        field.type === 'boolean'
+          ? [
+              { id: 'true', label: 'Yes', value: true },
+              { id: 'false', label: 'No', value: false },
+            ]
+          : (field.options ?? []).map((option, index) => ({
+              id: `option:${index}`,
+              label: option.label,
+              value: option.value,
+            }));
+      const selected = await this.requestElicitationChoice(
+        field.title,
+        [field.description, field.required ? 'Required' : 'Optional']
+          .filter(Boolean)
+          .join('\n'),
+        [
+          ...choices.map((choice) => ({ id: choice.id, label: choice.label })),
+          ...(!field.required ? [{ id: 'skip', label: 'Skip' }] : []),
+        ],
+        signal
+      );
+      if (selected === 'skip') return { cancelled: false };
+      const choice = choices.find((candidate) => candidate.id === selected);
+      if (!choice) {
+        return { cancelled: true, reason: 'User cancelled MCP elicitation' };
+      }
+      return { cancelled: false, value: choice.value };
+    }
+
+    if (field.defaultValue !== undefined) {
+      const selected = await this.requestElicitationChoice(
+        field.title,
+        [
+          field.description,
+          `ACP cannot collect ${field.type} input. Use the server default: ${String(
+            field.defaultValue
+          )}?`,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        [
+          { id: 'default', label: 'Use default' },
+          ...(!field.required ? [{ id: 'skip', label: 'Skip' }] : []),
+        ],
+        signal
+      );
+      if (selected === 'default') {
+        return { cancelled: false, value: field.defaultValue };
+      }
+      if (selected === 'skip') return { cancelled: false };
+      return { cancelled: true, reason: 'User cancelled MCP elicitation' };
+    }
+
+    if (!field.required) return { cancelled: false };
+    return {
+      cancelled: true,
+      reason: `ACP cannot collect required ${field.type} field "${field.name}"`,
+    };
+  }
+
+  private async requestElicitationChoice(
+    title: string,
+    message: string,
+    choices: Array<{ id: string; label: string }>,
+    signal?: AbortSignal
+  ): Promise<string | undefined> {
+    const response = await this.waitForClientInteraction(
+      this.connection.requestPermission({
+        sessionId: this.id,
+        options: [
+          ...choices.map((choice) => ({
+            optionId: choice.id,
+            name: choice.label,
+            kind: 'allow_once' as const,
+          })),
+          {
+            optionId: 'cancel',
+            name: 'Cancel',
+            kind: 'reject_once' as const,
+          },
+        ],
+        toolCall: {
+          toolCallId: nanoid(),
+          status: 'pending' as ToolCallStatus,
+          title,
+          kind: 'think',
+          content: [
+            {
+              type: 'content',
+              content: { type: 'text', text: message },
+            },
+          ],
+        },
+      }),
+      signal
+    );
+    return response?.outcome.outcome === 'selected'
+      ? response.outcome.optionId
+      : undefined;
   }
 
   private async waitForClientInteraction<T>(

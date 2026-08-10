@@ -1,31 +1,31 @@
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  FileText,
+  Loader2,
+  RotateCcw,
+} from 'lucide-react';
+import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
 import { BladeMark } from '@/components/layout/BladeMark';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { type SubagentSession, sessionService } from '@/services';
 import { useAppStore } from '@/store/AppStore';
 import type {
-    AgentResponseContent,
-    Message,
-    MessageContent,
-    ToolCallInfo,
+  AgentResponseContent,
+  Message,
+  MessageContent,
+  ToolCallInfo,
 } from '@/store/session';
 import { useSessionStore } from '@/store/session';
 import {
-    getAgentTimeline,
-    getSubagents,
-    getTimelineText,
+  getAgentTimeline,
+  getSubagents,
+  getTimelineText,
 } from '@/store/session/utils/agentTimeline';
 import { aggregateMessages } from '@/store/session/utils/aggregateMessages';
-import {
-    Check,
-    ChevronDown,
-    ChevronRight,
-    Copy,
-    FileText,
-    Loader2,
-    RotateCcw,
-} from 'lucide-react';
-import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
 import { McpElicitationSection } from './McpElicitationSection';
 
 export type { Message };
@@ -1278,6 +1278,7 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
     return (
       <div
         data-chat-message-id={message.id}
+        data-chat-role="user"
         className="group flex gap-2 justify-end p-4 w-full items-start"
       >
         <div className="mt-1 flex shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">

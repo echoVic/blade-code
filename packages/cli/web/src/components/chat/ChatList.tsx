@@ -7,6 +7,8 @@ import { cn } from '@/lib/utils';
 import type { Message } from '@/services';
 import { ChatMessage } from './ChatMessage';
 import { anchoredScrollTop, nextVisibleMessageCount } from './chatListWindow';
+import { TurnNavigator } from './TurnNavigator';
+import { deriveChatTurns } from './turnNavigation';
 
 interface ChatListProps {
   messages: Message[];
@@ -26,6 +28,7 @@ function findViewport(root: HTMLDivElement | null): HTMLDivElement | null {
 function ChatListComponent({ messages, isLoading }: ChatListProps) {
   const t = useT();
   const containerRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLElement | null>(null);
   const isNearBottomRef = useRef(true);
   const previousMessageCountRef = useRef(messages.length);
   const pendingHistoryAnchorRef = useRef<{
@@ -50,6 +53,7 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
   useEffect(() => {
     const viewport = findViewport(containerRef.current);
     if (!viewport) return;
+    viewportRef.current = viewport;
 
     const updatePosition = () => {
       const distanceFromBottom =
@@ -86,6 +90,7 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
     () => messages.slice(firstVisibleIndex),
     [messages, firstVisibleIndex]
   );
+  const turns = useMemo(() => deriveChatTurns(messages), [messages]);
 
   useLayoutEffect(() => {
     const anchor = pendingHistoryAnchorRef.current;
@@ -111,7 +116,7 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
         role="status"
         aria-live="polite"
         aria-busy="true"
-        className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-5 py-8"
+        className="flex overflow-hidden flex-1 justify-center items-center px-5 py-8 min-h-0"
       >
         <div className="w-full max-w-[560px]">
           <div className="flex flex-col items-center text-center">
@@ -120,7 +125,7 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
               <BladeMark size={42} className="relative" />
             </div>
             <div className="mt-4 inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-[hsl(var(--deck-accent))]">
-              <History className="h-3 w-3" />
+              <History className="w-3 h-3" />
               {t('chat.list.loading.eyebrow')}
             </div>
             <h2 className="mt-2 text-[15px] font-medium text-[hsl(var(--deck-ink))]">
@@ -203,8 +208,17 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
     );
   };
 
+  // Ensure a turn that lives in the windowed-out region is rendered before the
+  // navigator tries to scroll to its anchor. Returns true when the message is
+  // already visible, so the caller can scroll immediately.
+  const revealTurn = (turnIndex: number): boolean => {
+    if (turnIndex >= firstVisibleIndex) return true;
+    setVisibleCount(messages.length);
+    return false;
+  };
+
   return (
-    <div ref={containerRef} className="relative min-h-0 flex-1">
+    <div ref={containerRef} className="relative flex-1 min-h-0">
       <ScrollArea className="h-full">
         <div className="flex flex-col px-4 pb-4 w-full md:px-6">
           {hiddenCount > 0 && (
@@ -241,6 +255,12 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
           })}
         </div>
       </ScrollArea>
+      <TurnNavigator
+        turns={turns}
+        viewportRef={viewportRef}
+        containerRef={containerRef}
+        onRevealTurn={revealTurn}
+      />
       {showJumpToLatest && (
         <button
           type="button"

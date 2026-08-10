@@ -66,6 +66,7 @@ interface ChatInputProps {
   onAbort?: () => void | Promise<unknown>;
   disabled?: boolean;
   submitDisabled?: boolean;
+  shellSubmitDisabled?: boolean;
   isStreaming?: boolean;
   isStopping?: boolean;
   pendingSteeringCount?: number;
@@ -127,6 +128,7 @@ export function ChatInput({
   onAbort,
   disabled,
   submitDisabled = false,
+  shellSubmitDisabled = false,
   isStreaming,
   isStopping = false,
   pendingSteeringCount = 0,
@@ -158,6 +160,8 @@ export function ChatInput({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
+  const isShellMode = input.trimStart().startsWith('!');
+  const effectiveSubmitDisabled = isShellMode ? shellSubmitDisabled : submitDisabled;
   const attachmentCapabilityErrorRef = useRef<string | null>(null);
   const isSubmittingRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -387,7 +391,7 @@ export function ChatInput({
     if (
       (!input.trim() && attachments.length === 0) ||
       disabled ||
-      submitDisabled ||
+      effectiveSubmitDisabled ||
       attachmentsIncompatible ||
       isSubmittingRef.current
     ) {
@@ -436,7 +440,7 @@ export function ChatInput({
     effectiveResponseVerbosity,
     effectiveCommunicationStyle,
     effectiveServiceTier,
-    submitDisabled,
+    effectiveSubmitDisabled,
     onSend,
     inputHistory,
   ]);
@@ -820,8 +824,16 @@ export function ChatInput({
         <div
           className={`relative border rounded-lg bg-[hsl(var(--deck-surface))] transition-all duration-200 flex flex-col ${
             variant === 'task'
-              ? 'min-h-[148px] border-[hsl(var(--deck-border))] shadow-[0_18px_60px_-24px_hsl(var(--deck-accent)/0.4)] focus-within:border-[hsl(var(--deck-accent)/0.6)] focus-within:ring-1 focus-within:ring-[hsl(var(--deck-accent)/0.25)]'
-              : 'min-h-[56px] border-[hsl(var(--deck-border))] shadow-sm focus-within:border-[hsl(var(--deck-border-strong))] focus-within:ring-1 focus-within:ring-[hsl(var(--deck-border-strong))]'
+              ? `min-h-[148px] shadow-[0_18px_60px_-24px_hsl(var(--deck-accent)/0.4)] focus-within:ring-1 ${
+                  isShellMode
+                    ? 'border-amber-400/70 focus-within:border-amber-500 focus-within:ring-amber-400/25'
+                    : 'border-[hsl(var(--deck-border))] focus-within:border-[hsl(var(--deck-accent)/0.6)] focus-within:ring-[hsl(var(--deck-accent)/0.25)]'
+                }`
+              : `min-h-[56px] shadow-sm focus-within:ring-1 ${
+                  isShellMode
+                    ? 'border-amber-400/70 focus-within:border-amber-500 focus-within:ring-amber-400/25'
+                    : 'border-[hsl(var(--deck-border))] focus-within:border-[hsl(var(--deck-border-strong))] focus-within:ring-[hsl(var(--deck-border-strong))]'
+                }`
           }`}
         >
           <SuggestionPopover
@@ -867,6 +879,12 @@ export function ChatInput({
             disabled={disabled || isSubmitting}
             aria-busy={isSubmitting}
           />
+
+          {isShellMode && (
+            <div className="px-4 pb-2 font-mono text-[11px] text-amber-600 dark:text-amber-400">
+              $ user shell · runs in this Session workspace
+            </div>
+          )}
 
           {isStreaming && (
             <div className="px-4 pb-2 text-[11px] font-mono text-amber-600 dark:text-amber-400">
@@ -1408,7 +1426,7 @@ export function ChatInput({
                 disabled={
                   !canSend ||
                   disabled ||
-                  submitDisabled ||
+                  effectiveSubmitDisabled ||
                   attachmentsIncompatible ||
                   isSubmitting ||
                   showAnySuggestions

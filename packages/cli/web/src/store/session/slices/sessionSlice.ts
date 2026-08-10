@@ -683,9 +683,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         const trimmedInput = payload.content.trim();
         if (trimmedInput.startsWith('!')) {
           if ((payload.attachments?.length ?? 0) > 0) {
-            throw new Error(
-              'User shell commands do not accept image attachments'
-            );
+            throw new Error('User shell commands do not accept image attachments');
           }
           const command = trimmedInput.slice(1).trim();
           if (!command) throw new Error('User shell command cannot be empty');
@@ -712,9 +710,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
             set({
               pendingSteeringCount: response.queued ?? 0,
               pendingInputDelivery:
-                response.delivery === 'current_turn'
-                  ? 'current_turn'
-                  : 'next_turn',
+                response.delivery === 'current_turn' ? 'current_turn' : 'next_turn',
             });
           }
           return true;

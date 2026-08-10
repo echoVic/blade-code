@@ -1,83 +1,104 @@
+import path from 'node:path';
 import { Mutex } from 'async-mutex';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { LRUCache } from 'lru-cache';
 import { nanoid } from 'nanoid';
-import path from 'node:path';
 import { Agent } from '../../agent/Agent.js';
 import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
+import { resolveWorkspaceAgentResources } from '../../agent/resources/WorkspaceAgentResources.js';
+import { resolveWorkspaceModelResources } from '../../agent/resources/WorkspaceModelResources.js';
 import type { PreparedInputTurn } from '../../agent/runtime/ActiveTurnMailbox.js';
 import {
-    type ResumedSubagent,
-    SessionRuntime,
+  type ResumedSubagent,
+  SessionRuntime,
 } from '../../agent/runtime/SessionRuntime.js';
 import {
-    type TaskAdmissionHandle,
-    TaskAdmissionQueueFullError,
-    taskRunScheduler,
+  type TaskAdmissionHandle,
+  TaskAdmissionQueueFullError,
+  taskRunScheduler,
 } from '../../agent/runtime/TaskRunScheduler.js';
 import {
-    type AgentSession,
-    toPublicAgentSession,
+  type AgentSession,
+  toPublicAgentSession,
 } from '../../agent/subagents/AgentSessionStore.js';
 import type { ChatContext, UserMessageContent } from '../../agent/types.js';
 import { MAX_INLINE_ATTACHMENT_BYTES } from '../../api/attachmentLimits.js';
 import {
-    ResumeSubagentRequestSchema,
-    SendMessageRequestSchema,
-    SessionRewindRequestSchema,
-    type SessionTaskDiffArtifact,
-    UserShellCommandRequestSchema,
+  ResumeSubagentRequestSchema,
+  SendMessageRequestSchema,
+  SessionRewindRequestSchema,
+  type SessionTaskDiffArtifact,
+  UserShellCommandRequestSchema,
 } from '../../api/schemas.js';
-import { PermissionMode } from '../../config/types.js';
+import {
+  type CommunicationStyleSelection,
+  PermissionMode,
+  type ReasoningEffortSelection,
+  type ResponseVerbositySelection,
+  type ServiceTierSelection,
+} from '../../config/types.js';
 import { SessionEventLog } from '../../context/events/SessionEventLog.js';
 import { assertValidSessionId } from '../../context/storage/pathUtils.js';
 import { toTaskFailure } from '../../context/taskFailure.js';
 import type {
-    SessionTaskDelivery,
-    SessionTaskDispatch,
-    SessionTaskRetryRef,
-    SessionTaskWorktree,
+  SessionTaskDelivery,
+  SessionTaskDispatch,
+  SessionTaskRetryRef,
+  SessionTaskWorktree,
 } from '../../context/types.js';
 import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
-import { safeParseSchema, StringEnum, Type } from '../../schema/index.js';
+import { StringEnum, safeParseSchema, Type } from '../../schema/index.js';
 import type { ContentPart, Message } from '../../services/ChatServiceInterface.js';
+import {
+  type CommunicationStyleConfiguration,
+  resolveCommunicationStyle,
+} from '../../services/communicationStyle.js';
+import { resolveReasoningEffort } from '../../services/pi/reasoningEffort.js';
+import { resolveResponseVerbosity } from '../../services/pi/responseVerbosity.js';
+import { resolveServiceTier } from '../../services/pi/serviceTier.js';
 import type { RewoundSession, SessionMetadata } from '../../services/SessionService.js';
 import {
-    SessionMissingCreationError,
-    SessionService,
+  SessionArchiveConflictError,
+  SessionArchivedError,
+  SessionMissingCreationError,
+  SessionService,
 } from '../../services/SessionService.js';
 import { SessionTaskService } from '../../services/SessionTaskService.js';
-import { getCurrentModel, getModelById } from '../../store/vanilla.js';
 import {
-    CONFIRMATION_ABORTED_REASON,
-    type ConfirmationDetails,
-    type ConfirmationResponse,
+  renderUserShellCommandForDisplay,
+  userShellCommandRecordFromMetadata,
+} from '../../services/UserShellCommandService.js';
+import { getConfig } from '../../store/vanilla.js';
+import {
+  CONFIRMATION_ABORTED_REASON,
+  type ConfirmationDetails,
+  type ConfirmationResponse,
 } from '../../tools/types/ExecutionTypes.js';
 import type { ToolResultMetadata } from '../../tools/types/ToolTypes.js';
 import {
-    formatToolDisplay,
-    renderToolDisplayToString,
+  formatToolDisplay,
+  renderToolDisplayToString,
 } from '../../ui/utils/toolFormatters.js';
 import { getCwd } from '../../utils/cwd.js';
 import { createSessionId } from '../../utils/sessionId.js';
 import {
-    WorktreeDeliveryConflict,
-    worktreeManager,
+  WorktreeDeliveryConflict,
+  worktreeManager,
 } from '../../worktree/WorktreeManager.js';
 import { Bus } from '../bus.js';
 import {
-    AmbiguousSessionError,
-    BadRequestError,
-    BladeServerError,
-    ConflictError,
-    InternalServerError,
-    NotFoundError,
-    TooManyRequestsError,
+  AmbiguousSessionError,
+  BadRequestError,
+  BladeServerError,
+  ConflictError,
+  InternalServerError,
+  NotFoundError,
+  TooManyRequestsError,
 } from '../error.js';
 import { normalizeSessionRef, type SessionRef, sessionRefKey } from '../sessionRef.js';
 
@@ -137,6 +158,7 @@ export interface RunState {
   taskQueueDepth?: number;
   taskConcurrencyLimit?: number;
   taskAdmissionUpdate?: Promise<void>;
+  disposeRuntimeOnSettle?: boolean;
   completion?: Promise<void>;
   createdAt: Date;
 }
@@ -160,6 +182,12 @@ interface SessionInfo {
   taskPromptSummary?: string;
   taskModelId?: string;
   selectedModelId?: string;
+  reasoningEffort?: ReasoningEffortSelection;
+  serviceTier?: ServiceTierSelection;
+  responseVerbosity?: ResponseVerbositySelection;
+  communicationStyle?: CommunicationStyleSelection;
+  communicationStyleDigest?: string;
+  projectInstructionsDigest?: string;
   taskRetryAvailable?: boolean;
   taskRetriedFrom?: SessionTaskRetryRef;
   taskDelivery?: SessionTaskDelivery;
@@ -172,6 +200,8 @@ interface SessionInfo {
   taskQueuePosition?: number;
   taskQueueDepth?: number;
   taskConcurrencyLimit?: number;
+  archivedAt?: string;
+  archivedBySessionId?: string;
   taskWorktree?: SessionTaskWorktree;
 }
 
@@ -261,6 +291,17 @@ function buildPendingInteractionEvent(
       },
     };
   }
+  if (details.type === 'mcpElicitation' && details.mcpElicitation) {
+    return {
+      type: 'elicitation.required',
+      properties: {
+        requestId: permissionId,
+        toolCallId: permissionId,
+        elicitation: details.mcpElicitation,
+        ...(replayed ? { replayed: true } : {}),
+      },
+    };
+  }
 
   return {
     type: 'permission.asked',
@@ -292,10 +333,17 @@ type Variables = {
   directory: string;
 };
 
-const sanitizeToolMetadata = (metadata: ToolResultMetadata | undefined) => {
+export const sanitizeToolMetadata = (metadata: ToolResultMetadata | undefined) => {
   if (!metadata || typeof metadata !== 'object') return metadata;
   const sanitized = { ...(metadata as Record<string, unknown>) };
   const MAX_INLINE_CONTENT = 200000;
+  const safeInteger = (value: unknown, maximum: number): number =>
+    typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= maximum
+      ? value
+      : 0;
   if (
     typeof sanitized.oldContent === 'string' &&
     sanitized.oldContent.length > MAX_INLINE_CONTENT
@@ -307,6 +355,62 @@ const sanitizeToolMetadata = (metadata: ToolResultMetadata | undefined) => {
     sanitized.newContent.length > MAX_INLINE_CONTENT
   ) {
     delete sanitized.newContent;
+  }
+  if (
+    sanitized.mcpResult &&
+    typeof sanitized.mcpResult === 'object' &&
+    !Array.isArray(sanitized.mcpResult)
+  ) {
+    const result = sanitized.mcpResult as Record<string, unknown>;
+    const artifacts = Array.isArray(result.artifacts)
+      ? result.artifacts.slice(0, 64).flatMap((value) => {
+          if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+          const artifact = value as Record<string, unknown>;
+          const artifactKinds = new Set(['text', 'image', 'audio', 'resource']);
+          if (
+            typeof artifact.id !== 'string' ||
+            !/^[a-f0-9]{64}$/.test(artifact.id) ||
+            typeof artifact.sha256 !== 'string' ||
+            artifact.sha256 !== artifact.id ||
+            typeof artifact.kind !== 'string' ||
+            !artifactKinds.has(artifact.kind) ||
+            safeInteger(artifact.size, 64 * 1024 * 1024) !== artifact.size ||
+            typeof artifact.persisted !== 'boolean'
+          ) {
+            return [];
+          }
+          return [
+            {
+              id: artifact.id.slice(0, 128),
+              sha256: artifact.sha256.slice(0, 128),
+              kind: artifact.kind,
+              size: artifact.size,
+              persisted: artifact.persisted,
+              ...(typeof artifact.mimeType === 'string'
+                ? { mimeType: artifact.mimeType.slice(0, 256) }
+                : {}),
+              ...(typeof artifact.sourceUri === 'string'
+                ? { sourceUri: artifact.sourceUri.slice(0, 8_192) }
+                : {}),
+              ...(typeof artifact.path === 'string'
+                ? { path: artifact.path.slice(0, 8_192) }
+                : {}),
+            },
+          ];
+        })
+      : [];
+    sanitized.mcpResult = {
+      isError: result.isError === true,
+      contentCount: safeInteger(result.contentCount, 64),
+      textBytes: safeInteger(result.textBytes, 4 * 1024 * 1024),
+      structuredBytes: safeInteger(result.structuredBytes, 4 * 1024 * 1024),
+      artifactCount: safeInteger(result.artifactCount, 64),
+      truncated: result.truncated === true,
+      binaryOmitted: result.binaryOmitted === true,
+      artifacts,
+    };
+  } else {
+    delete sanitized.mcpResult;
   }
   return sanitized as ToolResultMetadata;
 };
@@ -347,6 +451,16 @@ function publishSubagentLoopEvent(
         });
       }
       break;
+    case 'tool_progress':
+      if ('function' in event.toolCall) {
+        Bus.publish(ref, 'subagent.tool.progress', {
+          subagentSessionId,
+          toolCallId: event.toolCall.id,
+          toolName: event.toolCall.function.name,
+          ...event.update,
+        });
+      }
+      break;
     case 'content_delta':
       Bus.publish(ref, 'subagent.delta', {
         subagentSessionId,
@@ -361,6 +475,103 @@ function publishSubagentLoopEvent(
       break;
     case 'stream_end':
       Bus.publish(ref, 'subagent.stream.end', { subagentSessionId });
+      break;
+    case 'mcp_catalog_changed':
+      Bus.publish(ref, 'subagent.mcp.catalog.changed', {
+        subagentSessionId,
+        revision: event.revision,
+        serverName: event.serverName,
+        added: event.added,
+        removed: event.removed,
+        updated: event.updated,
+      });
+      break;
+    case 'mcp_content_changed':
+      Bus.publish(ref, 'subagent.mcp.content.changed', {
+        subagentSessionId,
+        revision: event.revision,
+        serverName: event.serverName,
+        contentKind: event.contentKind,
+        added: event.added,
+        removed: event.removed,
+        updated: event.updated,
+      });
+      break;
+    case 'mcp_resource_updated':
+      Bus.publish(ref, 'subagent.mcp.resource.updated', {
+        subagentSessionId,
+        revision: event.revision,
+        serverName: event.serverName,
+        uri: event.uri,
+      });
+      break;
+    case 'mcp_connection_changed':
+      Bus.publish(ref, 'subagent.mcp.connection.changed', {
+        subagentSessionId,
+        revision: event.revision,
+        serverName: event.serverName,
+        phase: event.phase,
+        reason: event.reason,
+        attempt: event.attempt,
+        maxAttempts: event.maxAttempts,
+        nextRetryAt: event.nextRetryAt,
+        error: event.error,
+      });
+      break;
+    case 'mcp_log':
+      Bus.publish(ref, 'subagent.mcp.log', {
+        subagentSessionId,
+        revision: event.revision,
+        serverName: event.serverName,
+        level: event.level,
+        logger: event.logger,
+        message: event.message,
+        projectedBytes: event.projectedBytes,
+        dataSha256: event.dataSha256,
+        truncated: event.truncated,
+        detailsOmitted: event.detailsOmitted,
+        timestamp: event.timestamp,
+        synthetic: event.synthetic,
+      });
+      break;
+    case 'mcp_instructions_changed':
+      Bus.publish(ref, 'subagent.mcp.instructions.changed', {
+        subagentSessionId,
+        revision: event.revision,
+        serverName: event.serverName,
+        action: event.action,
+        reason: event.reason,
+        text: event.text,
+        sourceBytes: event.sourceBytes,
+        projectedBytes: event.projectedBytes,
+        sha256: event.sha256,
+        truncated: event.truncated,
+        detailsOmitted: event.detailsOmitted,
+      });
+      break;
+    case 'mcp_task_changed':
+      Bus.publish(ref, 'subagent.mcp.task.changed', {
+        subagentSessionId,
+        revision: event.revision,
+        taskId: event.taskId,
+        serverName: event.serverName,
+        toolName: event.toolName,
+        status: event.status,
+        statusMessage: event.statusMessage,
+        createdAt: event.createdAt,
+        updatedAt: event.updatedAt,
+        completedAt: event.completedAt,
+        hasResult: event.hasResult,
+        error: event.error,
+      });
+      break;
+    case 'project_rules_loaded':
+      Bus.publish(ref, 'subagent.project.rules.loaded', {
+        subagentSessionId,
+        files: event.files,
+        triggerPaths: event.triggerPaths,
+        blockedWrite: event.blockedWrite,
+      });
       break;
     default:
       break;
@@ -416,6 +627,12 @@ function sessionInfoFromMetadata(
     taskPromptSummary: metadata.taskPromptSummary,
     taskModelId: metadata.taskModelId,
     selectedModelId: metadata.selectedModelId,
+    reasoningEffort: metadata.reasoningEffort,
+    serviceTier: metadata.serviceTier,
+    responseVerbosity: metadata.responseVerbosity,
+    communicationStyle: metadata.communicationStyle,
+    communicationStyleDigest: metadata.communicationStyleDigest,
+    projectInstructionsDigest: metadata.projectInstructionsDigest,
     taskRetryAvailable: metadata.taskRetryAvailable,
     taskRetriedFrom: metadata.taskRetriedFrom,
     taskDelivery: metadata.taskDelivery,
@@ -428,9 +645,25 @@ function sessionInfoFromMetadata(
     taskQueuePosition: metadata.taskQueuePosition,
     taskQueueDepth: metadata.taskQueueDepth,
     taskConcurrencyLimit: metadata.taskConcurrencyLimit,
+    archivedAt: metadata.archivedAt,
+    archivedBySessionId: metadata.archivedBySessionId,
     taskWorktree,
     messages,
   };
+}
+
+function projectClientMessages(messages: readonly Message[]): Message[] {
+  return messages
+    .filter((message) => message.role !== 'system')
+    .map((message) => {
+      const record = userShellCommandRecordFromMetadata(message.metadata);
+      return record
+        ? {
+            ...message,
+            content: renderUserShellCommandForDisplay(record),
+          }
+        : message;
+    });
 }
 
 function syncSessionTaskMetadata(
@@ -445,6 +678,12 @@ function syncSessionTaskMetadata(
   session.taskPromptSummary = metadata.taskPromptSummary;
   session.taskModelId = metadata.taskModelId;
   session.selectedModelId = metadata.selectedModelId;
+  session.reasoningEffort = metadata.reasoningEffort;
+  session.serviceTier = metadata.serviceTier;
+  session.responseVerbosity = metadata.responseVerbosity;
+  session.communicationStyle = metadata.communicationStyle;
+  session.communicationStyleDigest = metadata.communicationStyleDigest;
+  session.projectInstructionsDigest = metadata.projectInstructionsDigest;
   session.taskRetryAvailable = metadata.taskRetryAvailable;
   session.taskRetriedFrom = metadata.taskRetriedFrom;
   session.taskDelivery = metadata.taskDelivery;
@@ -457,6 +696,8 @@ function syncSessionTaskMetadata(
   session.taskQueuePosition = metadata.taskQueuePosition;
   session.taskQueueDepth = metadata.taskQueueDepth;
   session.taskConcurrencyLimit = metadata.taskConcurrencyLimit;
+  session.archivedAt = metadata.archivedAt;
+  session.archivedBySessionId = metadata.archivedBySessionId;
   session.updatedAt = new Date(metadata.lastMessageTime);
 }
 
@@ -490,6 +731,12 @@ function projectActiveSession(session: SessionInfo) {
     taskPromptSummary: session.taskPromptSummary,
     taskModelId: session.taskModelId,
     selectedModelId: session.selectedModelId,
+    reasoningEffort: session.reasoningEffort,
+    serviceTier: session.serviceTier,
+    responseVerbosity: session.responseVerbosity,
+    communicationStyle: session.communicationStyle,
+    communicationStyleDigest: session.communicationStyleDigest,
+    projectInstructionsDigest: session.projectInstructionsDigest,
     taskRetryAvailable: session.taskRetryAvailable,
     taskRetriedFrom: session.taskRetriedFrom,
     taskDelivery: session.taskDelivery,
@@ -512,12 +759,16 @@ function projectActiveSession(session: SessionInfo) {
           ? session.taskQueueDepth
           : undefined,
     taskConcurrencyLimit: run?.taskConcurrencyLimit ?? session.taskConcurrencyLimit,
+    archivedAt: session.archivedAt,
+    archivedBySessionId: session.archivedBySessionId,
     pendingInteraction: run?.pendingPermission
       ? {
           type:
             run.pendingPermission.details.type === 'askUserQuestion'
               ? ('question' as const)
-              : ('permission' as const),
+              : run.pendingPermission.details.type === 'mcpElicitation'
+                ? ('elicitation' as const)
+                : ('permission' as const),
           requestId: run.pendingPermission.permissionId,
         }
       : undefined,
@@ -638,6 +889,10 @@ export interface DispatchTaskInput {
   isolation: 'local' | 'worktree';
   permissionMode: PermissionMode;
   modelId?: string;
+  reasoningEffort?: ReasoningEffortSelection;
+  serviceTier?: ServiceTierSelection;
+  responseVerbosity?: ResponseVerbositySelection;
+  communicationStyle?: CommunicationStyleSelection;
   attachments?: SessionTaskDispatch['attachments'];
   retriedFrom?: SessionTaskRetryRef;
 }
@@ -694,6 +949,7 @@ export const createSessionRouteController = (): SessionRouteController => {
   });
   const runtimes = new Map<string, SessionRuntime>();
   const runtimeInitializations = new Map<string, Promise<SessionRuntime>>();
+  const runtimeDisposals = new Map<string, Promise<void>>();
   const sessionHydrations = new Map<string, Promise<SessionInfo>>();
   const messageSubmissionLocks = new Map<string, Mutex>();
   const taskDeliveryLocks = new Map<string, Mutex>();
@@ -718,21 +974,52 @@ export const createSessionRouteController = (): SessionRouteController => {
     return lock;
   };
 
-  const getOrCreateRuntime = async (session: SessionInfo): Promise<SessionRuntime> => {
+  const getOrCreateRuntime = async (
+    session: SessionInfo,
+    overrides: { communicationStyle?: CommunicationStyleSelection } = {}
+  ): Promise<SessionRuntime> => {
     const key = sessionRefKey(sessionRefFromSession(session));
+    await runtimeDisposals.get(key);
     const existing = runtimes.get(key);
     if (existing) return existing;
 
     let initialization = runtimeInitializations.get(key);
     if (!initialization) {
+      const runtimeCommunicationStyle =
+        overrides.communicationStyle ?? session.communicationStyle;
       initialization = SessionRuntime.create({
         sessionId: session.id,
         workspaceRoot: session.projectPath,
         ...((session.selectedModelId ?? session.taskModelId)
           ? { modelId: session.selectedModelId ?? session.taskModelId }
           : {}),
+        ...(session.reasoningEffort
+          ? { reasoningEffort: session.reasoningEffort }
+          : {}),
+        ...(session.serviceTier ? { serviceTier: session.serviceTier } : {}),
+        ...(session.responseVerbosity
+          ? { responseVerbosity: session.responseVerbosity }
+          : {}),
+        ...(runtimeCommunicationStyle
+          ? { communicationStyle: runtimeCommunicationStyle }
+          : {}),
+        ...(runtimeCommunicationStyle === session.communicationStyle &&
+        session.communicationStyleDigest
+          ? { communicationStyleDigest: session.communicationStyleDigest }
+          : {}),
+        ...(session.projectInstructionsDigest
+          ? { projectInstructionsDigest: session.projectInstructionsDigest }
+          : {}),
         ...(session.taskWorktree ? { taskWorktree: session.taskWorktree } : {}),
         ...(session.taskIsolation ? { taskIsolation: session.taskIsolation } : {}),
+        ...(session.messages.length > 0
+          ? {
+              sessionStart: {
+                isResume: true,
+                resumeSessionId: session.id,
+              },
+            }
+          : {}),
       });
       runtimeInitializations.set(key, initialization);
     }
@@ -745,6 +1032,37 @@ export const createSessionRouteController = (): SessionRouteController => {
         runtimeInitializations.delete(key);
       }
     }
+  };
+
+  const disposeRuntime = async (
+    session: SessionInfo,
+    ownedRuntime?: SessionRuntime
+  ): Promise<void> => {
+    const key = sessionRefKey(sessionRefFromSession(session));
+    let disposal = runtimeDisposals.get(key);
+    if (!disposal) {
+      disposal = (async () => {
+        const initialization = runtimeInitializations.get(key);
+        if (initialization) {
+          await initialization.catch(() => undefined);
+        }
+        runtimeInitializations.delete(key);
+        const runtime = ownedRuntime ?? runtimes.get(key);
+        runtimes.delete(key);
+        if (runtime) {
+          for (const [runtimeKey, candidate] of runtimes) {
+            if (candidate === runtime) runtimes.delete(runtimeKey);
+          }
+        }
+        await runtime?.dispose();
+      })().finally(() => {
+        if (runtimeDisposals.get(key) === disposal) {
+          runtimeDisposals.delete(key);
+        }
+      });
+      runtimeDisposals.set(key, disposal);
+    }
+    await disposal;
   };
 
   const getOrHydrateSession = async (ref: SessionRef): Promise<SessionInfo> => {
@@ -786,9 +1104,16 @@ export const createSessionRouteController = (): SessionRouteController => {
     sessionId: string,
     requestedProjectPath: string | undefined
   ): Promise<SessionInfo> => {
-    return getOrHydrateSession(
-      await resolveSessionRef(sessionId, requestedProjectPath)
-    );
+    const ref = await resolveSessionRef(sessionId, requestedProjectPath);
+    try {
+      await SessionService.assertSessionWritable(ref.sessionId, ref.projectPath);
+    } catch (error) {
+      if (error instanceof SessionArchivedError) {
+        throw new ConflictError(error.message);
+      }
+      throw error;
+    }
+    return getOrHydrateSession(ref);
   };
 
   const startRun = (
@@ -809,6 +1134,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       projectPath: session.projectPath,
       status: 'running',
       abortController: new AbortController(),
+      disposeRuntimeOnSettle: options.taskRuntime !== undefined,
       createdAt: new Date(),
     };
     if (options.taskRuntime) {
@@ -858,6 +1184,7 @@ export const createSessionRouteController = (): SessionRouteController => {
         preparedInputTurn: options.preparedInputTurn,
         goalContinuationOnly: options.goalContinuationOnly,
         taskAdmission: run.taskAdmission,
+        disposeRuntime,
       }
     ).catch((error) => {
       logger.error(`[SessionRoutes] Run ${runId} failed:`, error);
@@ -871,13 +1198,60 @@ export const createSessionRouteController = (): SessionRouteController => {
     const sessionId = createSessionId('task', 12);
     const sourceProjectPath = normalizeProjectPathInput(input.sourceProjectPath);
     const requestedModelId = input.modelId?.trim();
-    if (requestedModelId && !getModelById(requestedModelId)) {
+    const startupConfig = getConfig();
+    if (!startupConfig) throw new BadRequestError('Config not initialized');
+    const [modelResources, agentResources] = await Promise.all([
+      resolveWorkspaceModelResources(sourceProjectPath, startupConfig),
+      resolveWorkspaceAgentResources(sourceProjectPath),
+    ]);
+    if (
+      requestedModelId &&
+      !modelResources.config.models.some((model) => model.id === requestedModelId)
+    ) {
       throw new BadRequestError(`Task model not found: ${requestedModelId}`);
     }
-    const modelId = requestedModelId || getCurrentModel()?.id;
+    const modelId =
+      requestedModelId ||
+      modelResources.config.models.find(
+        (model) => model.id === modelResources.config.currentModelId
+      )?.id ||
+      modelResources.config.models[0]?.id;
     if (!modelId) {
       throw new BadRequestError(
         'No model is configured. Add or select a model before dispatching a task.'
+      );
+    }
+    const modelConfig = modelResources.config.models.find(
+      (model) => model.id === modelId
+    );
+    if (!modelConfig) {
+      throw new BadRequestError(`Task model not found: ${modelId}`);
+    }
+    const reasoningEffort = input.reasoningEffort ?? 'off';
+    const serviceTier = input.serviceTier ?? 'auto';
+    const responseVerbosity = input.responseVerbosity ?? 'auto';
+    const communicationStyle = input.communicationStyle ?? 'auto';
+    let communicationStyleDigest: string | undefined;
+    const staticProjectRules =
+      agentResources.projectRules?.staticRules(sourceProjectPath);
+    const projectInstructionsDigest =
+      staticProjectRules && staticProjectRules.files.length > 0
+        ? staticProjectRules.provenanceSha256
+        : undefined;
+    try {
+      const runtimeModel = modelResources.catalog.resolveConfig(modelConfig);
+      resolveReasoningEffort(runtimeModel, reasoningEffort);
+      resolveServiceTier(runtimeModel, serviceTier);
+      resolveResponseVerbosity(runtimeModel, responseVerbosity);
+      const style = resolveCommunicationStyle(
+        communicationStyle,
+        agentResources.communicationStyles
+      );
+      communicationStyleDigest =
+        style.source === 'built-in' ? undefined : style.contentSha256;
+    } catch (error) {
+      throw new BadRequestError(
+        error instanceof Error ? error.message : 'Invalid reasoning effort'
       );
     }
     const dispatch: SessionTaskDispatch = {
@@ -888,6 +1262,12 @@ export const createSessionRouteController = (): SessionRouteController => {
       isolation: input.isolation,
       permissionMode: input.permissionMode,
       modelId,
+      reasoningEffort,
+      serviceTier,
+      responseVerbosity,
+      communicationStyle,
+      ...(communicationStyleDigest ? { communicationStyleDigest } : {}),
+      ...(projectInstructionsDigest ? { projectInstructionsDigest } : {}),
       ...(input.attachments
         ? {
             attachments: input.attachments.map((attachment) => ({
@@ -1027,6 +1407,10 @@ export const createSessionRouteController = (): SessionRouteController => {
       isolation: dispatch.isolation,
       permissionMode: dispatch.permissionMode as PermissionMode,
       modelId: dispatch.modelId,
+      reasoningEffort: dispatch.reasoningEffort,
+      serviceTier: dispatch.serviceTier,
+      responseVerbosity: dispatch.responseVerbosity,
+      communicationStyle: dispatch.communicationStyle,
       attachments: dispatch.attachments,
       retriedFrom: ref,
     });
@@ -1326,14 +1710,24 @@ export const createSessionRouteController = (): SessionRouteController => {
       const limit = rawLimit === undefined ? undefined : Number(rawLimit);
       const cursor = c.req.query('cursor');
       const projectPath = c.req.query('projectPath');
+      const rawArchived = c.req.query('archived');
+      if (
+        rawArchived !== undefined &&
+        rawArchived !== 'true' &&
+        rawArchived !== 'false'
+      ) {
+        throw new BadRequestError('archived must be true or false');
+      }
+      const archived = rawArchived === 'true';
       const page = await SessionService.listSessionPage({
         ...(projectPath ? { cwd: normalizeProjectPathInput(projectPath) } : {}),
         ...(cursor ? { cursor } : {}),
         ...(limit === undefined ? {} : { limit }),
         includeSubagents: false,
+        archived,
       });
       const activeByKey = new Map(
-        Array.from(sessions.values())
+        (archived ? [] : Array.from(sessions.values()))
           .filter((session) => session.relationType !== 'subagent')
           .map((session) => [
             sessionRefKey(sessionRefFromSession(session)),
@@ -1408,6 +1802,52 @@ export const createSessionRouteController = (): SessionRouteController => {
     }
   });
 
+  app.get('/:sessionId/export', async (c) => {
+    const sessionId = c.req.param('sessionId');
+    try {
+      const rawReasoning = c.req.query('includeReasoning');
+      if (
+        rawReasoning !== undefined &&
+        rawReasoning !== 'true' &&
+        rawReasoning !== 'false'
+      ) {
+        throw new BadRequestError('includeReasoning must be true or false');
+      }
+      const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
+      const exported = await SessionService.exportSessionMarkdown(
+        ref.sessionId,
+        ref.projectPath,
+        { includeReasoning: rawReasoning === 'true' }
+      );
+      return c.body(exported.markdown, 200, {
+        'Cache-Control': 'no-store',
+        'Content-Disposition': `attachment; filename="${exported.filename}"`,
+        'Content-Length': String(Buffer.byteLength(exported.markdown, 'utf8')),
+        'Content-Type': 'text/markdown; charset=utf-8',
+        'X-Blade-Content-Sha256': exported.contentSha256,
+        'X-Blade-Export-Activities': String(exported.activityCount),
+        'X-Blade-Export-Messages': String(exported.messageCount),
+        'X-Blade-Export-Redactions': String(exported.redactionCount),
+      });
+    } catch (error) {
+      if (
+        error instanceof BadRequestError ||
+        error instanceof NotFoundError ||
+        error instanceof AmbiguousSessionError
+      ) {
+        throw error;
+      }
+      if (
+        error instanceof Error &&
+        error.message === 'No conversation content to export'
+      ) {
+        throw new ConflictError(error.message);
+      }
+      logger.error('[SessionRoutes] Failed to export session:', error);
+      throw new InternalServerError('Failed to export session');
+    }
+  });
+
   app.post('/:sessionId/fork', async (c) => {
     const sessionId = c.req.param('sessionId');
 
@@ -1440,7 +1880,13 @@ export const createSessionRouteController = (): SessionRouteController => {
           : {}),
         updatedAt: fork.metadata.lastMessageTime,
       });
-      return c.json({ session: fork.metadata, messages: fork.messages }, 201);
+      return c.json(
+        {
+          session: fork.metadata,
+          messages: projectClientMessages(fork.messages),
+        },
+        201
+      );
     } catch (error) {
       if (
         error instanceof BadRequestError ||
@@ -1571,14 +2017,15 @@ export const createSessionRouteController = (): SessionRouteController => {
       }
       session.messages = [...result.messages];
       session.updatedAt = new Date();
+      const clientMessages = projectClientMessages(result.messages);
       Bus.publish(ref, 'session.rewound', {
         targetMessageId: result.checkpoint.messageId,
         mode: result.mode,
         removedTurns: result.removedTurns,
         restoredFiles: result.restoredFiles,
-        messages: result.messages,
+        messages: clientMessages,
       });
-      return c.json(result);
+      return c.json({ ...result, messages: clientMessages });
     });
   });
 
@@ -1775,6 +2222,125 @@ export const createSessionRouteController = (): SessionRouteController => {
     return c.json({ cleared });
   });
 
+  app.post('/:sessionId/archive', async (c) => {
+    const sessionId = c.req.param('sessionId');
+    try {
+      const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
+      const members = await SessionService.listSessionArchiveMembers(
+        ref.sessionId,
+        ref.projectPath
+      );
+
+      for (const member of members) {
+        const memberRef = normalizeSessionRef({
+          sessionId: member.sessionId,
+          projectPath: member.projectPath,
+        });
+        const active = sessions.get(sessionRefKey(memberRef));
+        if (isActiveRun(getRun(active?.currentRunId))) {
+          throw new ConflictError(
+            `Stop session ${member.sessionId} before archiving this session tree`
+          );
+        }
+      }
+
+      for (const member of members) {
+        const memberRef = normalizeSessionRef({
+          sessionId: member.sessionId,
+          projectPath: member.projectPath,
+        });
+        const active = sessions.get(sessionRefKey(memberRef));
+        if (active) {
+          await disposeRuntime(active);
+        }
+      }
+
+      const archived = await SessionService.archiveSession(
+        ref.sessionId,
+        ref.projectPath
+      );
+      for (const member of members) {
+        const memberRef = normalizeSessionRef({
+          sessionId: member.sessionId,
+          projectPath: member.projectPath,
+        });
+        const key = sessionRefKey(memberRef);
+        sessions.delete(key);
+        sessionHydrations.delete(key);
+        runtimeInitializations.delete(key);
+        messageSubmissionLocks.delete(key);
+        Bus.publish(memberRef, 'session.archived', {
+          archiveRootId: ref.sessionId,
+          archivedAt: archived.archivedAt,
+        });
+      }
+      if (runtimes.size === 0) {
+        await McpRegistry.getInstance().disconnectAll();
+      }
+      return c.json({
+        session: archived,
+        archivedSessionIds: members.map((member) => member.sessionId),
+      });
+    } catch (error) {
+      if (
+        error instanceof BadRequestError ||
+        error instanceof NotFoundError ||
+        error instanceof AmbiguousSessionError ||
+        error instanceof ConflictError
+      ) {
+        throw error;
+      }
+      if (error instanceof SessionArchiveConflictError) {
+        throw new ConflictError(error.message);
+      }
+      logger.error('[SessionRoutes] Failed to archive session:', error);
+      throw new InternalServerError('Failed to archive session');
+    }
+  });
+
+  app.post('/:sessionId/unarchive', async (c) => {
+    const sessionId = c.req.param('sessionId');
+    try {
+      const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
+      const members = await SessionService.listSessionArchiveMembers(
+        ref.sessionId,
+        ref.projectPath
+      );
+      const restored = await SessionService.unarchiveSession(
+        ref.sessionId,
+        ref.projectPath
+      );
+      const restoredSessionIds = members
+        .filter(
+          (member) =>
+            member.sessionId === ref.sessionId ||
+            member.archivedBySessionId === ref.sessionId
+        )
+        .map((member) => member.sessionId);
+      for (const restoredSessionId of restoredSessionIds) {
+        Bus.publish(
+          { sessionId: restoredSessionId, projectPath: ref.projectPath },
+          'session.unarchived',
+          { archiveRootId: ref.sessionId }
+        );
+      }
+      return c.json({ session: restored, restoredSessionIds });
+    } catch (error) {
+      if (
+        error instanceof BadRequestError ||
+        error instanceof NotFoundError ||
+        error instanceof AmbiguousSessionError
+      ) {
+        throw error;
+      }
+      if (error instanceof SessionArchiveConflictError) {
+        throw new ConflictError(error.message);
+      }
+      logger.error('[SessionRoutes] Failed to unarchive session:', error);
+      throw new InternalServerError('Failed to unarchive session');
+    }
+  });
+
   app.delete('/:sessionId', async (c) => {
     const sessionId = c.req.param('sessionId');
     const requestedProjectPath = c.req.query('projectPath');
@@ -1856,7 +2422,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       const messages = session?.messages
         ? session.messages
         : await SessionService.loadSession(ref.sessionId, ref.projectPath);
-      return c.json(messages);
+      return c.json(projectClientMessages(messages));
     } catch (error) {
       logger.error('[SessionRoutes] Failed to get messages:', error);
       if (
@@ -1873,6 +2439,14 @@ export const createSessionRouteController = (): SessionRouteController => {
   app.get('/:sessionId/events', async (c) => {
     const sessionId = c.req.param('sessionId');
     const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
+    try {
+      await SessionService.assertSessionWritable(ref.sessionId, ref.projectPath);
+    } catch (error) {
+      if (error instanceof SessionArchivedError) {
+        throw new ConflictError(error.message);
+      }
+      throw error;
+    }
     const session = await getOrHydrateSession(ref);
 
     // Last-Event-ID enables durable resume: the client's cursor is the seq of
@@ -1919,7 +2493,9 @@ export const createSessionRouteController = (): SessionRouteController => {
         }
         const requestId = event.properties.requestId;
         if (
-          (event.type === 'permission.asked' || event.type === 'question.required') &&
+          (event.type === 'permission.asked' ||
+            event.type === 'question.required' ||
+            event.type === 'elicitation.required') &&
           typeof requestId === 'string'
         ) {
           if (deliveredInteractionIds.has(requestId)) return;
@@ -2066,13 +2642,17 @@ export const createSessionRouteController = (): SessionRouteController => {
       content,
       attachments,
       modelId,
+      reasoningEffort: requestedReasoningEffort,
+      serviceTier: requestedServiceTier,
+      responseVerbosity: requestedResponseVerbosity,
+      communicationStyle: rawRequestedCommunicationStyle,
       permissionMode: requestedMode,
       projectPath,
     } = parsed.data;
+    const requestedCommunicationStyle = rawRequestedCommunicationStyle as
+      | CommunicationStyleSelection
+      | undefined;
     const requestedModelId = modelId?.trim();
-    if (requestedModelId && !getModelById(requestedModelId)) {
-      throw new BadRequestError(`Model not found: ${requestedModelId}`);
-    }
     const attachmentBytes = (attachments ?? []).reduce(
       (total, attachment) =>
         total +
@@ -2097,9 +2677,46 @@ export const createSessionRouteController = (): SessionRouteController => {
       const currentRun = getRun(session.currentRunId);
       if (isActiveRun(currentRun)) {
         const runtime = await getOrCreateRuntime(session);
+        if (requestedModelId && !runtime.getModelById(requestedModelId)) {
+          throw new BadRequestError(`Model not found: ${requestedModelId}`);
+        }
         if (requestedModelId && runtime.getCurrentModelId() !== requestedModelId) {
           throw new ConflictError(
             'Wait for the active turn to finish before switching models'
+          );
+        }
+        if (
+          requestedReasoningEffort &&
+          runtime.getReasoningConfiguration().selection !== requestedReasoningEffort
+        ) {
+          throw new ConflictError(
+            'Wait for the active turn to finish before switching reasoning effort'
+          );
+        }
+        if (
+          requestedServiceTier &&
+          runtime.getServiceTierConfiguration().selection !== requestedServiceTier
+        ) {
+          throw new ConflictError(
+            'Wait for the active turn to finish before switching service tier'
+          );
+        }
+        if (
+          requestedResponseVerbosity &&
+          runtime.getResponseVerbosityConfiguration().selection !==
+            requestedResponseVerbosity
+        ) {
+          throw new ConflictError(
+            'Wait for the active turn to finish before switching response verbosity'
+          );
+        }
+        if (
+          requestedCommunicationStyle &&
+          runtime.getCommunicationStyleConfiguration().selection !==
+            requestedCommunicationStyle
+        ) {
+          throw new ConflictError(
+            'Wait for the active turn to finish before switching communication style'
           );
         }
         const steering = await runtime.enqueueSteering(userContent, {
@@ -2155,38 +2772,169 @@ export const createSessionRouteController = (): SessionRouteController => {
         );
       }
 
-      const runtime = await getOrCreateRuntime(session);
-      if (requestedModelId) {
-        const previousModelId = runtime.getCurrentModelId();
-        const switchedModel = previousModelId !== requestedModelId;
-        if (switchedModel) {
-          await runtime.refresh({ modelId: requestedModelId });
+      const runtime = await getOrCreateRuntime(session, {
+        ...(requestedCommunicationStyle && !requestedCommunicationStyle.includes(':')
+          ? { communicationStyle: requestedCommunicationStyle }
+          : {}),
+      });
+      if (requestedModelId && !runtime.getModelById(requestedModelId)) {
+        throw new BadRequestError(`Model not found: ${requestedModelId}`);
+      }
+      if (requestedReasoningEffort) {
+        try {
+          runtime.resolveReasoningConfiguration(
+            requestedReasoningEffort,
+            requestedModelId
+          );
+        } catch (error) {
+          throw new BadRequestError(
+            error instanceof Error ? error.message : 'Invalid reasoning effort'
+          );
         }
-        if (session.selectedModelId !== requestedModelId) {
-          try {
-            const metadata = await SessionService.updateSessionMetadata(
-              session.id,
-              session.projectPath,
-              { selectedModelId: requestedModelId }
-            );
-            session.selectedModelId = metadata.selectedModelId;
-            session.updatedAt = new Date(metadata.lastMessageTime);
-            Bus.publish(sessionRefFromSession(session), 'session.updated', {
-              selectedModelId: requestedModelId,
-            });
-          } catch (error) {
-            if (switchedModel && previousModelId) {
-              await runtime
-                .refresh({ modelId: previousModelId })
-                .catch((rollbackError) =>
-                  logger.error(
-                    '[SessionRoutes] Failed to roll back a non-durable model switch:',
-                    rollbackError
-                  )
-                );
+      }
+      if (requestedServiceTier) {
+        try {
+          runtime.resolveServiceTierConfiguration(
+            requestedServiceTier,
+            requestedModelId
+          );
+        } catch (error) {
+          throw new BadRequestError(
+            error instanceof Error ? error.message : 'Invalid service tier'
+          );
+        }
+      }
+      if (requestedResponseVerbosity) {
+        try {
+          runtime.resolveResponseVerbosityConfiguration(
+            requestedResponseVerbosity,
+            requestedModelId
+          );
+        } catch (error) {
+          throw new BadRequestError(
+            error instanceof Error ? error.message : 'Invalid response verbosity'
+          );
+        }
+      }
+      const requestedCommunicationStyleConfiguration:
+        | CommunicationStyleConfiguration
+        | undefined = requestedCommunicationStyle
+        ? runtime.resolveCommunicationStyleConfiguration(requestedCommunicationStyle)
+        : undefined;
+      if (
+        requestedCommunicationStyleConfiguration?.source !== undefined &&
+        requestedCommunicationStyleConfiguration.source !== 'built-in' &&
+        !requestedCommunicationStyleConfiguration.contentSha256
+      ) {
+        throw new BadRequestError('Custom communication style has no provenance');
+      }
+      const previousModelId = runtime.getCurrentModelId();
+      const previousReasoning = runtime.getReasoningConfiguration();
+      const previousServiceTier = runtime.getServiceTierConfiguration();
+      const previousResponseVerbosity = runtime.getResponseVerbosityConfiguration();
+      const previousCommunicationStyle = runtime.getCommunicationStyleConfiguration();
+      const switchedModel =
+        Boolean(requestedModelId) && previousModelId !== requestedModelId;
+      const switchedReasoning =
+        Boolean(requestedReasoningEffort) &&
+        previousReasoning.selection !== requestedReasoningEffort;
+      const switchedServiceTier =
+        Boolean(requestedServiceTier) &&
+        previousServiceTier.selection !== requestedServiceTier;
+      const switchedResponseVerbosity =
+        Boolean(requestedResponseVerbosity) &&
+        previousResponseVerbosity.selection !== requestedResponseVerbosity;
+      const switchedCommunicationStyle =
+        Boolean(requestedCommunicationStyle) &&
+        previousCommunicationStyle.selection !== requestedCommunicationStyle;
+      if (
+        switchedModel ||
+        switchedReasoning ||
+        switchedServiceTier ||
+        switchedResponseVerbosity ||
+        switchedCommunicationStyle
+      ) {
+        await runtime.refresh({
+          ...(requestedModelId ? { modelId: requestedModelId } : {}),
+          ...(requestedReasoningEffort
+            ? { reasoningEffort: requestedReasoningEffort }
+            : {}),
+          ...(requestedServiceTier ? { serviceTier: requestedServiceTier } : {}),
+          ...(requestedResponseVerbosity
+            ? { responseVerbosity: requestedResponseVerbosity }
+            : {}),
+          ...(requestedCommunicationStyle
+            ? { communicationStyle: requestedCommunicationStyle }
+            : {}),
+        });
+      }
+      const metadataUpdate = {
+        ...(requestedModelId && session.selectedModelId !== requestedModelId
+          ? { selectedModelId: requestedModelId }
+          : {}),
+        ...(requestedReasoningEffort &&
+        session.reasoningEffort !== requestedReasoningEffort
+          ? { reasoningEffort: requestedReasoningEffort }
+          : {}),
+        ...(requestedServiceTier && session.serviceTier !== requestedServiceTier
+          ? { serviceTier: requestedServiceTier }
+          : {}),
+        ...(requestedResponseVerbosity &&
+        session.responseVerbosity !== requestedResponseVerbosity
+          ? { responseVerbosity: requestedResponseVerbosity }
+          : {}),
+        ...(requestedCommunicationStyleConfiguration &&
+        (session.communicationStyle !== requestedCommunicationStyle ||
+          session.communicationStyleDigest !==
+            requestedCommunicationStyleConfiguration.contentSha256)
+          ? {
+              communicationStyle: requestedCommunicationStyle,
+              communicationStyleDigest:
+                requestedCommunicationStyleConfiguration.source === 'built-in'
+                  ? null
+                  : requestedCommunicationStyleConfiguration.contentSha256,
             }
-            throw error;
+          : {}),
+      };
+      if (Object.keys(metadataUpdate).length > 0) {
+        try {
+          const metadata = await SessionService.updateSessionMetadata(
+            session.id,
+            session.projectPath,
+            metadataUpdate
+          );
+          session.selectedModelId = metadata.selectedModelId;
+          session.reasoningEffort = metadata.reasoningEffort;
+          session.serviceTier = metadata.serviceTier;
+          session.responseVerbosity = metadata.responseVerbosity;
+          session.communicationStyle = metadata.communicationStyle;
+          session.communicationStyleDigest = metadata.communicationStyleDigest;
+          session.updatedAt = new Date(metadata.lastMessageTime);
+          Bus.publish(sessionRef, 'session.updated', metadataUpdate);
+        } catch (error) {
+          if (
+            switchedModel ||
+            switchedReasoning ||
+            switchedServiceTier ||
+            switchedResponseVerbosity ||
+            switchedCommunicationStyle
+          ) {
+            await runtime
+              .refresh({
+                ...(previousModelId ? { modelId: previousModelId } : {}),
+                reasoningEffort: previousReasoning.selection,
+                serviceTier: previousServiceTier.selection,
+                responseVerbosity: previousResponseVerbosity.selection,
+                communicationStyle: previousCommunicationStyle.selection,
+              })
+              .catch((rollbackError) =>
+                logger.error(
+                  '[SessionRoutes] Failed to roll back non-durable model settings:',
+                  rollbackError
+                )
+              );
           }
+          throw error;
         }
       }
       const preparation = await runtime.prepareInputTurn(userContent);
@@ -2218,10 +2966,7 @@ export const createSessionRouteController = (): SessionRouteController => {
 
   app.post('/:sessionId/shell', async (c) => {
     const sessionId = c.req.param('sessionId');
-    const parsed = safeParseSchema(
-      UserShellCommandRequestSchema,
-      await c.req.json()
-    );
+    const parsed = safeParseSchema(UserShellCommandRequestSchema, await c.req.json());
     if (!parsed.success) {
       throw new BadRequestError('Invalid user shell command');
     }
@@ -2246,20 +2991,16 @@ export const createSessionRouteController = (): SessionRouteController => {
       });
       activeUserShellRuns.set(key, { controller, completion });
       try {
-        const result = await runtime.executeUserShellCommand(
-          parsed.data.command,
-          { signal: controller.signal }
-        );
+        const result = await runtime.executeUserShellCommand(parsed.data.command, {
+          signal: controller.signal,
+        });
         session.messages = await SessionService.loadSession(
           session.id,
           session.projectPath
         );
         session.updatedAt = new Date();
         const currentRun = getRun(session.currentRunId);
-        if (
-          result.delivery === 'next_turn' &&
-          isActiveRun(currentRun)
-        ) {
+        if (result.delivery === 'next_turn' && isActiveRun(currentRun)) {
           currentRun.pendingFollowUpRequested = true;
         }
         return c.json({
@@ -2337,6 +3078,7 @@ async function executeRunAsync(
     preparedInputTurn?: PreparedInputTurn;
     goalContinuationOnly?: boolean;
     taskAdmission?: TaskAdmissionHandle;
+    disposeRuntime?: (session: SessionInfo, runtime?: SessionRuntime) => Promise<void>;
   } = {}
 ): Promise<void> {
   const { abortController, sessionId, id: runId } = run;
@@ -2349,6 +3091,7 @@ async function executeRunAsync(
     ? undefined
     : nanoid(12);
   let runtime: SessionRuntime | undefined;
+  let agent: Agent | undefined;
   const sessionRef = sessionRefFromSession(session);
 
   const emit = (type: string, properties: Record<string, unknown>) => {
@@ -2413,7 +3156,7 @@ async function executeRunAsync(
 
     runtime = await getOrCreateRuntime(session);
     const runtimeOwner = runtime;
-    const agent = await Agent.createWithRuntime(runtimeOwner, {
+    agent = await Agent.createWithRuntime(runtimeOwner, {
       sessionId,
       ...(session.taskWorktree
         ? { toolBlacklist: ['EnterWorktree', 'ExitWorktree'] }
@@ -2508,7 +3251,10 @@ async function executeRunAsync(
           });
           break;
         case 'thinking_delta':
-          emit('thinking.delta', { delta: event.delta });
+          emit('thinking.delta', {
+            messageId: ensureAssistantMessage(),
+            delta: event.delta,
+          });
           break;
 
         // --- 工具事件 ---
@@ -2538,6 +3284,16 @@ async function executeRunAsync(
             });
           }
           break;
+        case 'tool_progress':
+          if ('function' in event.toolCall) {
+            emit('tool.progress', {
+              messageId: ensureAssistantMessage(),
+              toolName: event.toolCall.function.name,
+              toolCallId: event.toolCall.id,
+              ...event.update,
+            });
+          }
+          break;
 
         // --- Token 使用 ---
         case 'token_usage':
@@ -2545,6 +3301,103 @@ async function executeRunAsync(
           break;
         case 'turn_start':
           emit('turn.started', { turn: event.turn, maxTurns: event.maxTurns });
+          break;
+        case 'mcp_catalog_changed':
+          emit('mcp.catalog.changed', {
+            messageId: ensureAssistantMessage(),
+            revision: event.revision,
+            serverName: event.serverName,
+            added: event.added,
+            removed: event.removed,
+            updated: event.updated,
+          });
+          break;
+        case 'mcp_content_changed':
+          emit('mcp.content.changed', {
+            messageId: ensureAssistantMessage(),
+            revision: event.revision,
+            serverName: event.serverName,
+            contentKind: event.contentKind,
+            added: event.added,
+            removed: event.removed,
+            updated: event.updated,
+          });
+          break;
+        case 'mcp_resource_updated':
+          emit('mcp.resource.updated', {
+            messageId: ensureAssistantMessage(),
+            revision: event.revision,
+            serverName: event.serverName,
+            uri: event.uri,
+          });
+          break;
+        case 'mcp_connection_changed':
+          emit('mcp.connection.changed', {
+            messageId: ensureAssistantMessage(),
+            revision: event.revision,
+            serverName: event.serverName,
+            phase: event.phase,
+            reason: event.reason,
+            attempt: event.attempt,
+            maxAttempts: event.maxAttempts,
+            nextRetryAt: event.nextRetryAt,
+            error: event.error,
+          });
+          break;
+        case 'mcp_log':
+          emit('mcp.log', {
+            messageId: ensureAssistantMessage(),
+            revision: event.revision,
+            serverName: event.serverName,
+            level: event.level,
+            logger: event.logger,
+            message: event.message,
+            projectedBytes: event.projectedBytes,
+            dataSha256: event.dataSha256,
+            truncated: event.truncated,
+            detailsOmitted: event.detailsOmitted,
+            timestamp: event.timestamp,
+            synthetic: event.synthetic,
+          });
+          break;
+        case 'mcp_instructions_changed':
+          emit('mcp.instructions.changed', {
+            messageId: ensureAssistantMessage(),
+            revision: event.revision,
+            serverName: event.serverName,
+            action: event.action,
+            reason: event.reason,
+            text: event.text,
+            sourceBytes: event.sourceBytes,
+            projectedBytes: event.projectedBytes,
+            sha256: event.sha256,
+            truncated: event.truncated,
+            detailsOmitted: event.detailsOmitted,
+          });
+          break;
+        case 'mcp_task_changed':
+          emit('mcp.task.changed', {
+            messageId: ensureAssistantMessage(),
+            revision: event.revision,
+            taskId: event.taskId,
+            serverName: event.serverName,
+            toolName: event.toolName,
+            status: event.status,
+            statusMessage: event.statusMessage,
+            createdAt: event.createdAt,
+            updatedAt: event.updatedAt,
+            completedAt: event.completedAt,
+            hasResult: event.hasResult,
+            error: event.error,
+          });
+          break;
+        case 'project_rules_loaded':
+          emit('project.rules.loaded', {
+            messageId: ensureAssistantMessage(),
+            files: event.files,
+            triggerPaths: event.triggerPaths,
+            blockedWrite: event.blockedWrite,
+          });
           break;
         case 'steering_applied':
           emit('steering.applied', {
@@ -2725,6 +3578,15 @@ async function executeRunAsync(
         taskConcurrencyLimit: stats.maxConcurrent,
         taskInFlight: stats.inFlight,
         updatedAt: new Date().toISOString(),
+      });
+    }
+    await agent?.destroy().catch(() => undefined);
+    if (run.disposeRuntimeOnSettle && options.disposeRuntime) {
+      await options.disposeRuntime(session, runtime).catch((error) => {
+        logger.warn(
+          `[SessionRoutes] Failed to dispose terminal task runtime ${session.id}:`,
+          error
+        );
       });
     }
     settleRun(run);
