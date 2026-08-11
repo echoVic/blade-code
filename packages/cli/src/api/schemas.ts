@@ -319,6 +319,7 @@ export const GoalSchema = Runtime(
     objective: Type.String(),
     status: StringEnum([
       'active',
+      'verifying',
       'paused',
       'blocked',
       'usage_limited',
@@ -330,6 +331,17 @@ export const GoalSchema = Runtime(
     timeUsedSeconds: Type.Number(),
     continuationCount: Type.Number(),
     statusReason: Type.Optional(Type.String()),
+    completionVerification: Type.Optional(
+      Type.Object({
+        attempt: Type.Integer({ minimum: 1 }),
+        status: StringEnum(['pending', 'pass', 'fail', 'partial']),
+        requestedAt: Type.String(),
+        completedAt: Type.Optional(Type.String()),
+        verifierSessionId: Type.Optional(Type.String()),
+        summary: Type.Optional(Type.String()),
+        evidenceSha256: Type.Optional(Type.String({ pattern: '^[a-f0-9]{64}$' })),
+      })
+    ),
     createdAt: Type.String(),
     updatedAt: Type.String(),
   })

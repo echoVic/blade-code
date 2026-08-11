@@ -623,6 +623,7 @@ export const en = {
   // -------- Goal control bar --------
   'goal.aria.section': 'Goal controls',
   'goal.status.active': 'Goal running',
+  'goal.status.verifying': 'Verifying completion',
   'goal.status.paused': 'Goal paused',
   'goal.status.blocked': 'Goal blocked',
   'goal.status.usageLimited': 'Usage limited',
@@ -640,6 +641,12 @@ export const en = {
   'goal.metrics.tokens': 'tokens',
   'goal.metrics.continuationOne': '{n} continuation',
   'goal.metrics.continuationMany': '{n} continuations',
+  'goal.verification.attempt': 'Verification attempt {n}',
+  'goal.verification.pending': 'Pending independent review',
+  'goal.verification.pass': 'Independent PASS',
+  'goal.verification.fail': 'Independent FAIL',
+  'goal.verification.partial': 'Independent PARTIAL',
+  'goal.verification.session': 'Verifier {id}',
   'goal.dialog.title': 'Delete this goal?',
   'goal.dialog.description':
     'The goal state will be removed. Session history and workspace files are not affected.',

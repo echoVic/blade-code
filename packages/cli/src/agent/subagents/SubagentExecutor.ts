@@ -1,6 +1,10 @@
 import type { SessionLspResources } from '../../lsp/WorkspaceLspResources.js';
 import { getCwd } from '../../utils/cwd.js';
 import { createSessionId } from '../../utils/sessionId.js';
+import {
+  GOAL_VERIFICATION_SUBAGENT_TYPE,
+  isVerificationAuditSubagent,
+} from '../../utils/shell/readOnlyAudit.js';
 import { Agent } from '../Agent.js';
 import { recordVerificationEvidence } from '../loop/completionPolicy.js';
 import {
@@ -13,6 +17,10 @@ import type { SessionAgentResources } from '../resources/WorkspaceAgentResources
 import type { SessionModelResources } from '../resources/WorkspaceModelResources.js';
 import { SessionRuntime } from '../runtime/SessionRuntime.js';
 import type { ChatContext } from '../types.js';
+import {
+  GOAL_VERIFICATION_OUTPUT_SCHEMA,
+  goalVerificationVerdictFromOutput,
+} from './builtinGoalVerificationAgent.js';
 import type { SubagentConfig, SubagentContext, SubagentResult } from './types.js';
 
 /**
@@ -135,10 +143,13 @@ export class SubagentExecutor {
         await context.onEvent?.(event);
       };
 
-      const loopResult = await drainLoop(
-        agent.chatStream(context.prompt, chatContext),
-        onEvent
-      );
+      const stream =
+        this.config.name === GOAL_VERIFICATION_SUBAGENT_TYPE
+          ? agent.chatStream(context.prompt, chatContext, {
+              outputSchema: GOAL_VERIFICATION_OUTPUT_SCHEMA,
+            })
+          : agent.chatStream(context.prompt, chatContext);
+      const loopResult = await drainLoop(stream, onEvent);
 
       if (loopResult.success) {
         finalMessage = loopResult.finalMessage || '';
@@ -157,9 +168,11 @@ export class SubagentExecutor {
         messages: chatContext.messages,
         verificationCommands: [...verificationCommands],
         verificationVerdict:
-          this.config.name === 'verification'
-            ? parseVerificationVerdict(finalMessage)
-            : undefined,
+          this.config.name === GOAL_VERIFICATION_SUBAGENT_TYPE
+            ? goalVerificationVerdictFromOutput(loopResult.metadata?.structuredOutput)
+            : isVerificationAuditSubagent(this.config.name)
+              ? parseVerificationVerdict(finalMessage)
+              : undefined,
         modifiedFiles: [...modifiedFiles],
         stats: {
           tokens: tokensUsed,

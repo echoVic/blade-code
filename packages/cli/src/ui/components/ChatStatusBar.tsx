@@ -165,9 +165,11 @@ export const ChatStatusBar: React.FC = React.memo(() => {
                 color={
                   goal.status === 'active'
                     ? 'green'
-                    : goal.status === 'blocked' || goal.status === 'budget_limited'
-                      ? 'yellow'
-                      : 'gray'
+                    : goal.status === 'verifying'
+                      ? 'cyan'
+                      : goal.status === 'blocked' || goal.status === 'budget_limited'
+                        ? 'yellow'
+                        : 'gray'
                 }
               >
                 goal:{goal.status} {goal.objective.slice(0, 32)}

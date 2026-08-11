@@ -55,7 +55,14 @@ describe('GoalStore', () => {
       'unfinished goal'
     );
 
-    await store.complete();
+    await store.requestCompletion();
+    await store.recordCompletionVerification({
+      verdict: 'pass',
+      verifierSessionId: 'verifier-1',
+      summary: 'All requirements verified.',
+      evidenceSha256: '1'.repeat(64),
+    });
+    await store.finalizeVerifiedCompletion();
     await expect(
       store.create({ objective: 'second objective' })
     ).resolves.toMatchObject({
@@ -63,6 +70,106 @@ describe('GoalStore', () => {
       status: 'active',
       tokensUsed: 0,
     });
+  });
+
+  it('requires persisted independent PASS evidence before completion', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    await store.create({ objective: 'ship verified output' });
+
+    const candidate = await store.requestCompletion();
+    expect(candidate).toMatchObject({
+      status: 'verifying',
+      statusReason: 'awaiting independent completion verification',
+      completionVerification: {
+        attempt: 1,
+        status: 'pending',
+      },
+    });
+    await expect(store.requestCompletion()).resolves.toEqual(candidate);
+    await expect(store.finalizeVerifiedCompletion()).rejects.toThrow(
+      'independent PASS'
+    );
+    await expect(
+      store.recordCompletionVerification({
+        verdict: 'pass',
+        verifierSessionId: 'verifier-missing-digest',
+      })
+    ).rejects.toThrow('SHA-256');
+    await expect(
+      store.recordCompletionVerification({
+        verdict: 'pass',
+        evidenceSha256: 'a'.repeat(64),
+      })
+    ).rejects.toThrow('Session identity');
+
+    await expect(
+      store.recordCompletionVerification({
+        verdict: 'fail',
+        verifierSessionId: 'verifier-fail',
+        summary: 'Missing required evidence.',
+        evidenceSha256: 'f'.repeat(64),
+      })
+    ).resolves.toMatchObject({
+      status: 'verifying',
+      completionVerification: {
+        attempt: 1,
+        status: 'fail',
+        verifierSessionId: 'verifier-fail',
+      },
+    });
+    await expect(store.finalizeVerifiedCompletion()).rejects.toThrow(
+      'independent PASS'
+    );
+
+    await expect(
+      store.invalidateCompletionVerification('workspace changed')
+    ).resolves.toMatchObject({
+      status: 'verifying',
+      statusReason: 'workspace changed',
+      completionVerification: {
+        attempt: 1,
+        status: 'pending',
+      },
+    });
+    await store.recordCompletionVerification({
+      verdict: 'pass',
+      verifierSessionId: 'verifier-pass',
+      summary: 'Observed the requested output.',
+      evidenceSha256: 'a'.repeat(64),
+    });
+    const completed = await store.finalizeVerifiedCompletion();
+    expect(completed).toMatchObject({
+      status: 'complete',
+      completionVerification: {
+        attempt: 1,
+        status: 'pass',
+        verifierSessionId: 'verifier-pass',
+        evidenceSha256: 'a'.repeat(64),
+      },
+    });
+    await expect(new GoalStore(workspaceRoot, sessionId).get()).resolves.toEqual(
+      completed
+    );
+  });
+
+  it('resumes a paused verification candidate without trusting stale completion', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    await store.create({ objective: 'verify after restart' });
+    await store.requestCompletion();
+    await store.recordCompletionVerification({
+      verdict: 'pass',
+      verifierSessionId: 'verifier-before-pause',
+      evidenceSha256: '2'.repeat(64),
+    });
+
+    await expect(store.pause()).resolves.toMatchObject({ status: 'paused' });
+    await expect(store.resume()).resolves.toMatchObject({
+      status: 'verifying',
+      completionVerification: {
+        status: 'pass',
+      },
+    });
+    await expect(GoalStore.hasActiveGoal(workspaceRoot, sessionId)).resolves.toBe(true);
   });
 
   it('supports pause, resume, edit, block, and clear transitions', async () => {

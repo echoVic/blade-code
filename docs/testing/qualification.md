@@ -50,7 +50,8 @@ bun run qualify:production
 该命令运行固定的 release-blocking real matrix：真实 DeepSeek Flash/Pro coding 与可靠性
 轨迹、GPT Web structured output、Claude ACP structured output、DeepSeek headless
 structured output、Web/ACP/TUI code review、durable interaction recovery、permission
-recovery 和 ACP model switch。完整的高成本 provider/capability soak 由以下命令单独运行：
+recovery、ACP model switch，以及 DeepSeek Flash 的 Runtime/Web/ACP host-authoritative
+Goal completion verification。完整的高成本 provider/capability soak 由以下命令单独运行：
 
 ```bash
 bun run test:real-api

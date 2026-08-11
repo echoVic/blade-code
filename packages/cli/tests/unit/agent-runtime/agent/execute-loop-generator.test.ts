@@ -4,6 +4,7 @@
  * Tests the main async-generator loop behavior with fully mocked external dependencies.
  */
 
+import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ===== Mock ALL external modules before imports =====
@@ -2000,6 +2001,332 @@ describe('executeLoopGenerator', () => {
           content: expect.stringContaining('non-trivial implementation'),
         })
       );
+    });
+
+    it('finalizes a goal only after an authoritative fresh verifier PASS', async () => {
+      const deps = createMockDeps();
+      const registry = deps.toolExecutor.getRegistry();
+      vi.mocked(registry.getFunctionDeclarationsByMode).mockReturnValue([
+        { name: 'UpdateGoal', description: 'Update goal', parameters: {} },
+        { name: 'Task', description: 'Delegate work', parameters: {} },
+      ]);
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'request-goal-completion',
+              type: 'function',
+              function: {
+                name: 'UpdateGoal',
+                arguments: '{"status":"complete"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'The goal is complete.',
+          finishReason: 'stop',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'goal-verifier',
+              type: 'function',
+              function: {
+                name: 'Task',
+                arguments:
+                  '{"subagent_type":"verification","description":"Verify goal","prompt":"trust parent","run_in_background":true,"isolation":"worktree","resume_from":"stale"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Verified completion.',
+          finishReason: 'stop',
+        });
+
+      const activeGoal = {
+        version: 1 as const,
+        sessionId: 'test-session',
+        goalId: 'goal-1',
+        objective: 'Create release.txt containing exactly READY.',
+        status: 'active' as const,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        continuationCount: 1,
+        createdAt: '2026-08-11T00:00:00.000Z',
+        updatedAt: '2026-08-11T00:00:00.000Z',
+      };
+      const verifyingGoal = {
+        ...activeGoal,
+        status: 'verifying' as const,
+        completionVerification: {
+          attempt: 1,
+          status: 'pending' as const,
+          requestedAt: '2026-08-11T00:00:01.000Z',
+        },
+      };
+      const passedGoal = {
+        ...verifyingGoal,
+        completionVerification: {
+          ...verifyingGoal.completionVerification,
+          status: 'pass' as const,
+          verifierSessionId: 'verifier-session',
+        },
+      };
+      const completeGoal = {
+        ...passedGoal,
+        status: 'complete' as const,
+      };
+      const getSnapshot = vi.fn().mockResolvedValue(verifyingGoal);
+      const recordVerification = vi.fn().mockResolvedValue(passedGoal);
+      const invalidateVerification = vi.fn().mockResolvedValue(verifyingGoal);
+      const finalizeCompletion = vi.fn().mockResolvedValue(completeGoal);
+
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
+      executeMock
+        .mockResolvedValueOnce({
+          success: true,
+          llmContent: { goal: verifyingGoal },
+          metadata: {
+            goalCompletionRequested: true,
+            goalId: activeGoal.goalId,
+            goalObjective: activeGoal.objective,
+            goalCompletionAttempt: 1,
+          },
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          llmContent: '## Verification Result: PASS',
+          metadata: {
+            subagentSessionId: 'verifier-session',
+            subagentType: 'goal-verification',
+            subagentStatus: 'completed',
+            subagentSummary: '## Verification Result: PASS',
+            verificationAgentBuiltin: true,
+            verificationVerdict: 'pass',
+          },
+        });
+
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Continue the persisted goal.',
+          context,
+          {
+            stream: false,
+            goalLifecycle: {
+              snapshot: activeGoal,
+              getSnapshot,
+              recordVerification,
+              invalidateVerification,
+              finalizeCompletion,
+            },
+          } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result).toMatchObject({
+        success: true,
+        metadata: {
+          goalCompletionVerified: true,
+          goalVerificationVerdict: 'pass',
+          goalVerifierSessionId: 'verifier-session',
+        },
+      });
+      const expectedEvidenceSha256 = createHash('sha256')
+        .update(
+          JSON.stringify({
+            goalId: activeGoal.goalId,
+            objective: activeGoal.objective,
+            mutationRevision: 0,
+            verdict: 'pass',
+            verifierSessionId: 'verifier-session',
+            evidence: '## Verification Result: PASS',
+          })
+        )
+        .digest('hex');
+      expect(recordVerification).toHaveBeenCalledWith({
+        verdict: 'pass',
+        verifierSessionId: 'verifier-session',
+        summary: 'Independent verifier returned PASS.',
+        evidenceSha256: expectedEvidenceSha256,
+      });
+      expect(finalizeCompletion).toHaveBeenCalledOnce();
+      expect(events).toContainEqual({ kind: 'goal_updated', goal: completeGoal });
+      expect(executeMock).toHaveBeenNthCalledWith(
+        2,
+        'Task',
+        expect.objectContaining({
+          subagent_type: 'goal-verification',
+          description: 'Verify goal completion',
+          run_in_background: false,
+          isolation: 'none',
+          prompt: expect.stringContaining(
+            '<goal-objective>\nCreate release.txt containing exactly READY.'
+          ),
+        }),
+        expect.objectContaining({ sessionId: 'test-session' })
+      );
+      expect(executeMock.mock.calls[1]?.[1]).not.toHaveProperty('resume_from');
+      expect(chatMock.mock.calls[2]?.[3]).toEqual({
+        toolChoice: { type: 'tool', toolName: 'Task' },
+      });
+    });
+
+    it('invalidates a persisted verdict before a fresh host run', async () => {
+      const deps = createMockDeps();
+      const context = createMockContext();
+      const passedGoal = {
+        version: 1 as const,
+        sessionId: 'test-session',
+        goalId: 'goal-crash-window',
+        objective: 'Prove the persisted artifact.',
+        status: 'verifying' as const,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        continuationCount: 1,
+        completionVerification: {
+          attempt: 1,
+          status: 'pass' as const,
+          requestedAt: '2026-08-11T00:00:00.000Z',
+          completedAt: '2026-08-11T00:00:01.000Z',
+          verifierSessionId: 'stale-verifier',
+          evidenceSha256: 'a'.repeat(64),
+        },
+        createdAt: '2026-08-11T00:00:00.000Z',
+        updatedAt: '2026-08-11T00:00:01.000Z',
+      };
+      const pendingGoal = {
+        ...passedGoal,
+        completionVerification: {
+          attempt: 1,
+          status: 'pending' as const,
+          requestedAt: '2026-08-11T00:00:00.000Z',
+        },
+      };
+      const invalidateVerification = vi.fn().mockResolvedValue(pendingGoal);
+      const generator = executeLoopGenerator(
+        deps,
+        'Continue after a crash.',
+        context,
+        {
+          stream: false,
+          goalLifecycle: {
+            snapshot: passedGoal,
+            getSnapshot: vi.fn().mockResolvedValue(pendingGoal),
+            recordVerification: vi.fn(),
+            invalidateVerification,
+            finalizeCompletion: vi.fn(),
+          },
+        } as LoopOptions,
+        undefined
+      );
+
+      await expect(generator.next()).resolves.toEqual({
+        done: false,
+        value: { kind: 'goal_updated', goal: pendingGoal },
+      });
+      expect(invalidateVerification).toHaveBeenCalledWith(
+        'A fresh host run requires new independent completion evidence'
+      );
+    });
+
+    it('fails closed without a verifier PASS and never finalizes the goal', async () => {
+      const deps = createMockDeps();
+      const registry = deps.toolExecutor.getRegistry();
+      vi.mocked(registry.getFunctionDeclarationsByMode).mockReturnValue([
+        { name: 'UpdateGoal', description: 'Update goal', parameters: {} },
+        { name: 'Task', description: 'Delegate work', parameters: {} },
+      ]);
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'request-unverified-completion',
+              type: 'function',
+              function: {
+                name: 'UpdateGoal',
+                arguments: '{"status":"complete"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValue({
+          content: 'Done without independent evidence.',
+          finishReason: 'stop',
+        });
+      const goal = {
+        version: 1 as const,
+        sessionId: 'test-session',
+        goalId: 'goal-2',
+        objective: 'Prove the requested observable outcome.',
+        status: 'active' as const,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        continuationCount: 1,
+        createdAt: '2026-08-11T00:00:00.000Z',
+        updatedAt: '2026-08-11T00:00:00.000Z',
+      };
+      const verifyingGoal = {
+        ...goal,
+        status: 'verifying' as const,
+        completionVerification: {
+          attempt: 1,
+          status: 'pending' as const,
+          requestedAt: '2026-08-11T00:00:01.000Z',
+        },
+      };
+      (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true,
+        llmContent: { goal: verifyingGoal },
+        metadata: {
+          goalCompletionRequested: true,
+          goalId: goal.goalId,
+          goalObjective: goal.objective,
+          goalCompletionAttempt: 1,
+        },
+      });
+      const finalizeCompletion = vi.fn();
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Continue the persisted goal.',
+          context,
+          {
+            stream: false,
+            goalLifecycle: {
+              snapshot: goal,
+              getSnapshot: vi.fn().mockResolvedValue(verifyingGoal),
+              recordVerification: vi.fn(),
+              invalidateVerification: vi.fn().mockResolvedValue(verifyingGoal),
+              finalizeCompletion,
+            },
+          } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result).toMatchObject({
+        success: false,
+        error: {
+          type: 'goal_verification_failed',
+          message: expect.stringContaining('independent PASS'),
+        },
+      });
+      expect(finalizeCompletion).not.toHaveBeenCalled();
     });
 
     it('invalidates a PASS when a later write changes the implementation', async () => {

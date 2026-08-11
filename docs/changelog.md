@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### ✨ 新功能
+
+- Goal `complete` 改为宿主权威的两阶段状态机：模型调用 `UpdateGoal complete`
+  只提交 durable `verifying` 候选，保留的只读 `goal-verification` child Session
+  必须返回宿主 JSON Schema 校验后的 fresh PASS，GoalStore 才会原子写入 `complete`
+- Goal completion evidence 持久化 attempt、稳定 verdict、opaque verifier Session ID、
+  安全摘要与 SHA-256；CLI JSONL、TUI、Web 与 ACP `_meta` 使用同一 canonical 投影
+
+### 🐛 问题修复
+
+- 修复执行 Agent 可在独立完成门禁前提前持久化 Goal complete 的一致性缺陷；
+  FAIL/PARTIAL、mutation、steering、Stop continuation 与 process restart 均会使旧证据
+  失效，模型改为 blocked 时取消完成候选
+- Goal verifier 使用不可覆盖的专用只读 agent 与 schema-constrained verdict；宿主强制
+  规范 Task type/background/resume/isolation，避免模型参数绕过或错误类型导致无限拒绝
+- ACP 测试客户端实现真实 SDK terminal handle，测试命令按 cwd/env 执行，不再用固定
+  “Executed” 文本伪造成功
+
 ## [0.10.9] - 2026-08-11
 
 ### ✨ 新功能

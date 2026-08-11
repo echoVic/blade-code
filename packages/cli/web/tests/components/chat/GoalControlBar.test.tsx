@@ -16,6 +16,17 @@ const sessionState = vi.hoisted(() => ({
     timeUsedSeconds: 95,
     continuationCount: 3,
     statusReason: 'paused by user',
+    completionVerification: undefined as
+      | undefined
+      | {
+          attempt: number;
+          status: 'pending' | 'pass' | 'fail' | 'partial';
+          requestedAt: string;
+          completedAt?: string;
+          verifierSessionId?: string;
+          summary?: string;
+          evidenceSha256?: string;
+        },
     createdAt: '2026-08-04T00:00:00.000Z',
     updatedAt: '2026-08-04T00:01:35.000Z',
   },
@@ -39,6 +50,8 @@ describe('GoalControlBar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (sessionState.goal as { status: string }).status = 'paused';
+    sessionState.goal.statusReason = 'paused by user';
+    sessionState.goal.completionVerification = undefined;
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -89,6 +102,40 @@ describe('GoalControlBar', () => {
       await Promise.resolve();
     });
     expect(sessionState.pauseGoal).toHaveBeenCalledOnce();
+  });
+
+  it('renders durable independent verification evidence', async () => {
+    (sessionState.goal as { status: string }).status = 'verifying';
+    sessionState.goal.statusReason =
+      'independent completion verification returned partial';
+    sessionState.goal.completionVerification = {
+      attempt: 2,
+      status: 'partial',
+      requestedAt: '2026-08-04T00:01:00.000Z',
+      completedAt: '2026-08-04T00:01:30.000Z',
+      verifierSessionId: 'verifier-session-123456',
+      summary: 'Independent verifier returned PARTIAL.',
+      evidenceSha256: 'a'.repeat(64),
+    };
+    act(() => {
+      root.render(<GoalControlBar />);
+    });
+
+    expect(container.textContent).toContain('Verifying completion');
+    expect(container.querySelector('[aria-label="Pause goal"]')).toBeTruthy();
+    await act(async () => {
+      container
+        .querySelector('[aria-label="Expand goal details"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-goal-verification="partial"]')).toBeTruthy();
+    expect(container.textContent).toContain('Verification attempt 2');
+    expect(container.textContent).toContain('Independent PARTIAL');
+    expect(container.textContent).toContain('verifier-ses');
+    expect(container.textContent).toContain('Independent verifier returned PARTIAL.');
+    expect(container.textContent).toContain('sha256:aaaaaaaaaaaa');
   });
 
   it('edits without resuming and exposes resume as a separate action', async () => {

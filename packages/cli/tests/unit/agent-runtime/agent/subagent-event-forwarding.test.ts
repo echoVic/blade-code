@@ -34,7 +34,8 @@ const mockChatStream =
   vi.fn<
     (
       message: string,
-      context: Record<string, unknown>
+      context: Record<string, unknown>,
+      options?: Record<string, unknown>
     ) => AsyncGenerator<LoopEvent, LoopResult, void>
   >();
 
@@ -170,6 +171,46 @@ describe('SubagentExecutor event forwarding', () => {
     expect(result.message).toBe('task complete');
     expect(result.stats?.toolCalls).toBe(5);
     expect(result.stats?.tokens).toBe(1500);
+  });
+
+  it('uses a host-validated structured verdict for goal verification', async () => {
+    mockChatStream.mockImplementation(
+      createMockGenerator([], {
+        success: true,
+        finalMessage:
+          '{"verdict":"pass","summary":"All requirements proved.","findings":[]}',
+        metadata: {
+          turnsCount: 2,
+          toolCallsCount: 1,
+          duration: 100,
+          structuredOutput: {
+            verdict: 'pass',
+            summary: 'All requirements proved.',
+            findings: [],
+          },
+        },
+      })
+    );
+    const { SubagentExecutor } = await import(
+      '../../../../src/agent/subagents/SubagentExecutor.js'
+    );
+
+    const result = await new SubagentExecutor({
+      name: 'goal-verification',
+      description: 'verify goal',
+      source: 'builtin',
+    }).execute({ prompt: 'verify the goal' });
+
+    expect(result.verificationVerdict).toBe('pass');
+    expect(mockChatStream).toHaveBeenCalledWith(
+      'verify the goal',
+      expect.any(Object),
+      expect.objectContaining({
+        outputSchema: expect.objectContaining({
+          required: ['verdict', 'summary', 'findings'],
+        }),
+      })
+    );
   });
 
   it('passes custom agent policy into completion requirements', async () => {

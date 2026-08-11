@@ -98,7 +98,7 @@ describe('Bash Tool', () => {
       () => rm(workspace, { recursive: true, force: true })
     );
 
-    for (const subagentType of ['verification', 'review']) {
+    for (const subagentType of ['verification', 'goal-verification', 'review']) {
       const result = await bashTool.execute(
         {
           command:
@@ -120,7 +120,7 @@ describe('Bash Tool', () => {
         stdout: expect.stringMatching(/.+:unset:\/dev\/null$/),
       });
     }
-    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(prepare).toHaveBeenCalledTimes(3);
     expect(prepare).toHaveBeenCalledWith(
       expect.objectContaining({
         command:

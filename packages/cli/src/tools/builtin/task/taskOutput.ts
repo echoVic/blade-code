@@ -7,12 +7,12 @@
  */
 
 import path from 'node:path';
-import { VERIFICATION_SUBAGENT_TYPE } from '../../../agent/loop/independentVerification.js';
 import type { AgentSessionOwner } from '../../../agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../agent/subagents/BackgroundAgentManager.js';
 import { McpTaskManager } from '../../../mcp/McpTaskManager.js';
 import { Default, Type } from '../../../schema/index.js';
 import { getCwd } from '../../../utils/cwd.js';
+import { isVerificationAuditSubagent } from '../../../utils/shell/readOnlyAudit.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
@@ -382,7 +382,7 @@ async function handleAgentOutput(
       verificationVerdict: session.result?.verificationVerdict,
       modifiedFiles: session.result?.modifiedFiles,
       verificationAgentBuiltin:
-        session.subagentType === VERIFICATION_SUBAGENT_TYPE &&
+        isVerificationAuditSubagent(session.subagentType) &&
         session.configSnapshot?.source === 'builtin',
     },
   };

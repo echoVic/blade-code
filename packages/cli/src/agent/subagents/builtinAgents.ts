@@ -5,6 +5,7 @@
  * 用户可以通过 ~/.blade/agents/ 或 .blade/agents/ 扩展更多 agent。
  */
 
+import { goalVerificationAgentConfig } from './builtinGoalVerificationAgent.js';
 import { reviewAgentConfig } from './builtinReviewAgent.js';
 import { verificationAgentConfig } from './builtinVerificationAgent.js';
 import type { SubagentConfig } from './types.js';
@@ -109,4 +110,5 @@ Be thorough but concise. Focus on actionable steps.`,
   },
   reviewAgentConfig,
   verificationAgentConfig,
+  goalVerificationAgentConfig,
 ];

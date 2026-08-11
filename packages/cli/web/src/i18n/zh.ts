@@ -586,6 +586,7 @@ export const zh: Dict = {
   // Goal control bar
   'goal.aria.section': '目标控制条',
   'goal.status.active': '目标进行中',
+  'goal.status.verifying': '正在验证完成声明',
   'goal.status.paused': '目标已暂停',
   'goal.status.blocked': '目标已阻塞',
   'goal.status.usageLimited': '用量受限',
@@ -603,6 +604,12 @@ export const zh: Dict = {
   'goal.metrics.tokens': 'tokens',
   'goal.metrics.continuationOne': '续跑 {n} 次',
   'goal.metrics.continuationMany': '续跑 {n} 次',
+  'goal.verification.attempt': '第 {n} 次完成验证',
+  'goal.verification.pending': '等待独立审查',
+  'goal.verification.pass': '独立验证通过',
+  'goal.verification.fail': '独立验证失败',
+  'goal.verification.partial': '独立验证部分通过',
+  'goal.verification.session': '验证会话 {id}',
   'goal.dialog.title': '删除此目标？',
   'goal.dialog.description': '仅移除目标状态，会话历史与工作区文件不会受影响。',
 

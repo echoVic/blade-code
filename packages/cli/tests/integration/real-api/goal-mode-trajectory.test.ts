@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -21,10 +21,135 @@ import {
   isRealApiTestEnabled,
 } from './testConfig.js';
 
-const modelConfigs = isRealApiTestEnabled() ? getEnabledModelConfigs() : [];
+const enabledModels = isRealApiTestEnabled() ? getEnabledModelConfigs() : [];
+const modelConfigs =
+  process.env.REAL_API_RELEASE_MATRIX === '1'
+    ? enabledModels.filter((config) => config.id === 'deepseek').slice(0, 1)
+    : enabledModels;
 const enabled = modelConfigs.length > 0;
 const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
 let originalConfig: RuntimeConfig | null = null;
+
+async function createGoalFixture(
+  workspace: string,
+  resultFile: string,
+  marker: string
+): Promise<void> {
+  await writeFile(
+    path.join(workspace, 'package.json'),
+    `${JSON.stringify({
+      private: true,
+      scripts: { test: 'node --test goal.test.cjs' },
+    })}\n`
+  );
+  await writeFile(
+    path.join(workspace, 'goal.test.cjs'),
+    [
+      "const assert = require('node:assert/strict');",
+      "const fs = require('node:fs');",
+      "const test = require('node:test');",
+      '',
+      "test('goal output', () => {",
+      `  assert.equal(fs.readFileSync('${resultFile}', 'utf8').trim(), '${marker}');`,
+      '});',
+      '',
+    ].join('\n')
+  );
+}
+
+function formatGoalFailure(
+  result: Awaited<ReturnType<typeof drainLoop>>,
+  goal: Awaited<ReturnType<SessionRuntime['getGoal']>>,
+  events: readonly LoopEvent[],
+  runtime: SessionRuntime
+): string {
+  return JSON.stringify(
+    {
+      success: result.success,
+      errorType: result.error?.type,
+      errorMessage: result.error?.message,
+      goalStatus: goal?.status,
+      goalReason: goal?.statusReason,
+      completionVerification: goal?.completionVerification,
+      tools: events.flatMap((event) =>
+        event.kind === 'tool_start' && 'function' in event.toolCall
+          ? [event.toolCall.function.name]
+          : []
+      ),
+      subagents: runtime.listSubagents().map((session) => ({
+        id: session.id,
+        type: session.subagentType,
+        status: session.status,
+        verdict: session.result?.verificationVerdict,
+        error: session.result?.error,
+        message: session.result?.message.slice(0, 500),
+      })),
+    },
+    null,
+    2
+  );
+}
+
+async function waitForWebGoalCompletion(
+  workspace: string,
+  sessionId: string,
+  events: ReadonlyArray<{
+    type: string;
+    sessionId: string;
+    properties: Record<string, unknown>;
+  }>,
+  timeoutMs = 180_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const goal = await new GoalStore(workspace, sessionId).get();
+    if (goal?.status === 'complete') return;
+    if (goal && goal.status !== 'active' && goal.status !== 'verifying') {
+      throw new Error(formatWebGoalFailure(goal, events));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const goal = await new GoalStore(workspace, sessionId).get();
+  throw new Error(formatWebGoalFailure(goal, events, 'timeout'));
+}
+
+function formatWebGoalFailure(
+  goal: Awaited<ReturnType<GoalStore['get']>>,
+  events: ReadonlyArray<{
+    type: string;
+    sessionId: string;
+    properties: Record<string, unknown>;
+  }>,
+  reason = 'terminal'
+): string {
+  return JSON.stringify(
+    {
+      reason,
+      goal,
+      tools: events.flatMap((event) =>
+        event.type === 'tool.start' && typeof event.properties.toolName === 'string'
+          ? [event.properties.toolName]
+          : []
+      ),
+      subagents: events
+        .filter((event) => event.type === 'subagent.complete')
+        .map((event) => event.properties),
+      failures: events
+        .filter(
+          (event) =>
+            event.type === 'session.failed' ||
+            event.type === 'run.error' ||
+            event.type === 'task.status'
+        )
+        .map((event) => ({
+          type: event.type,
+          properties: event.properties,
+        })),
+    },
+    null,
+    2
+  );
+}
 
 beforeAll(() => {
   if (!enabled) return;
@@ -44,7 +169,7 @@ afterAll(() => {
 
 describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
   for (const modelConfig of modelConfigs) {
-    it(`${modelConfig.model} verifies the objective and lets the model complete the goal`, async () => {
+    it(`${modelConfig.model} completes only after an independent host verifier PASS`, async () => {
       const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-goal-mode-'));
       process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
       getState().config.actions.setConfig(buildRealApiRuntimeConfig(modelConfig));
@@ -54,6 +179,7 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
       let agent: Agent | undefined;
 
       try {
+        await createGoalFixture(workspace, 'goal-result.txt', 'GOAL_MODE_COMPLETE');
         runtime = await SessionRuntime.create({
           sessionId,
           workspaceRoot: workspace,
@@ -61,9 +187,9 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
         const created = await runtime.createGoal({
           objective:
             'Create goal-result.txt in the workspace with the exact content ' +
-            'GOAL_MODE_COMPLETE. Read the file after writing it and verify the exact ' +
-            'content. Only after that verification, call UpdateGoal with status complete.',
-          tokenBudget: 200_000,
+            'GOAL_MODE_COMPLETE. Read the file after writing it, run npm test, and ' +
+            'verify the exact content. Only after that verification, call UpdateGoal ' +
+            'with status complete.',
         });
         expect(created.status).toBe('active');
 
@@ -86,12 +212,24 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
           }
         );
 
-        expect(result.success).toBe(true);
+        const currentGoal = await runtime.getGoal();
+        expect(
+          result.success,
+          formatGoalFailure(result, currentGoal, events, runtime)
+        ).toBe(true);
         await expect(access(resultPath)).resolves.toBeUndefined();
         expect((await readFile(resultPath, 'utf8')).trim()).toBe('GOAL_MODE_COMPLETE');
-        await expect(runtime.getGoal()).resolves.toMatchObject({
+        const completedGoal = await runtime.getGoal();
+        expect(completedGoal).toMatchObject({
           status: 'complete',
           objective: created.objective,
+          completionVerification: {
+            attempt: 1,
+            status: 'pass',
+            verifierSessionId: expect.any(String),
+            summary: 'Independent verifier returned PASS.',
+            evidenceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
         });
 
         const toolNames = events.flatMap((event) =>
@@ -104,7 +242,36 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
         );
         expect(toolNames).toContain('Read');
         expect(toolNames).toContain('UpdateGoal');
+        expect(toolNames).toContain('Task');
         expect(toolNames.indexOf('Read')).toBeLessThan(toolNames.indexOf('UpdateGoal'));
+        expect(toolNames.indexOf('UpdateGoal')).toBeLessThan(
+          toolNames.lastIndexOf('Task')
+        );
+        expect(
+          events.some(
+            (event) =>
+              event.kind === 'goal_updated' && event.goal?.status === 'verifying'
+          )
+        ).toBe(true);
+        expect(
+          events.some(
+            (event) =>
+              event.kind === 'subagent_completed' &&
+              event.type === 'goal-verification' &&
+              event.verificationVerdict === 'pass'
+          )
+        ).toBe(true);
+        expect(
+          runtime
+            .listSubagents()
+            .some(
+              (session) =>
+                session.id ===
+                  completedGoal?.completionVerification?.verifierSessionId &&
+                session.subagentType === 'goal-verification' &&
+                session.result?.verificationVerdict === 'pass'
+            )
+        ).toBe(true);
         expect(events).toContainEqual(
           expect.objectContaining({
             kind: 'goal_continuation_started',
@@ -151,6 +318,7 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
       let sessionId = '';
 
       try {
+        await createGoalFixture(workspace, 'web-goal-result.txt', 'WEB_GOAL_COMPLETE');
         const createdSession = await app.request('/', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -168,8 +336,8 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
           body: JSON.stringify({
             objective:
               'Create web-goal-result.txt with the exact content WEB_GOAL_COMPLETE. ' +
-              'Read it back, verify the exact content, then call UpdateGoal complete.',
-            tokenBudget: 200_000,
+              'Read it back, run npm test, verify the exact content, then call ' +
+              'UpdateGoal complete.',
             permissionMode: 'yolo',
           }),
         });
@@ -179,26 +347,7 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
           goal: { status: 'active' },
         });
 
-        await vi.waitUntil(
-          async () => {
-            const goal = await new GoalStore(workspace, sessionId).get();
-            if (goal && goal.status !== 'active' && goal.status !== 'complete') {
-              const tools = events.flatMap((event) =>
-                event.type === 'tool.start' &&
-                typeof event.properties.toolName === 'string'
-                  ? [event.properties.toolName]
-                  : []
-              );
-              throw new Error(
-                `Web goal stopped as ${goal.status} after ` +
-                  `${goal.continuationCount} continuations and ` +
-                  `${goal.tokensUsed} tokens; tools=${tools.join(',')}`
-              );
-            }
-            return goal?.status === 'complete';
-          },
-          { timeout: 180_000, interval: 100 }
-        );
+        await waitForWebGoalCompletion(workspace, sessionId, events);
         await vi.waitFor(
           () => {
             expect(
@@ -218,6 +367,33 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
           { timeout: 30_000, interval: 50 }
         );
         expect((await readFile(resultPath, 'utf8')).trim()).toBe('WEB_GOAL_COMPLETE');
+        const webGoal = await new GoalStore(workspace, sessionId).get();
+        expect(webGoal).toMatchObject({
+          status: 'complete',
+          completionVerification: {
+            status: 'pass',
+            verifierSessionId: expect.any(String),
+            evidenceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+        });
+        expect(
+          events.some(
+            (event) =>
+              event.sessionId === sessionId &&
+              event.type === 'goal.updated' &&
+              (event.properties.goal as { status?: string } | undefined)?.status ===
+                'verifying'
+          )
+        ).toBe(true);
+        expect(
+          events.some(
+            (event) =>
+              event.sessionId === sessionId &&
+              event.type === 'subagent.complete' &&
+              event.properties.type === 'goal-verification' &&
+              event.properties.verificationVerdict === 'pass'
+          )
+        ).toBe(true);
       } finally {
         unsubscribe();
         if (sessionId) {
@@ -247,25 +423,54 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
               text:
                 '/goal Create acp-goal-result.txt with the exact content ' +
                 'ACP_GOAL_COMPLETE. Read it back, verify the exact content, then ' +
-                'call UpdateGoal complete. --budget 200000',
+                'call UpdateGoal complete.',
             },
           ],
         });
         expect(response.stopReason).toBe('end_turn');
 
-        await vi.waitFor(
-          async () => {
-            await expect(
-              new GoalStore(workspace, sessionId).get()
-            ).resolves.toMatchObject({
-              status: 'complete',
-            });
-            expect((await readFile(resultPath, 'utf8')).trim()).toBe(
-              'ACP_GOAL_COMPLETE'
-            );
-          },
-          { timeout: 180_000, interval: 100 }
-        );
+        const acpDeadline = Date.now() + 90_000;
+        let acpGoal = await new GoalStore(workspace, sessionId).get();
+        while (acpGoal?.status !== 'complete' && Date.now() < acpDeadline) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          acpGoal = await new GoalStore(workspace, sessionId).get();
+        }
+        if (acpGoal?.status !== 'complete') {
+          const runtime = (
+            session as unknown as {
+              runtime?: SessionRuntime;
+            }
+          ).runtime;
+          throw new Error(
+            JSON.stringify(
+              {
+                goal: acpGoal,
+                subagents: runtime?.listSubagents().map((child) => ({
+                  id: child.id,
+                  type: child.subagentType,
+                  status: child.status,
+                  verdict: child.result?.verificationVerdict,
+                  error: child.result?.error,
+                  message: child.result?.message.slice(0, 500),
+                })),
+                toolUpdates: client.sessionUpdates.flatMap((notification) =>
+                  notification.update.sessionUpdate === 'tool_call'
+                    ? [
+                        {
+                          title: notification.update.title,
+                          status: notification.update.status,
+                        },
+                      ]
+                    : []
+                ),
+                terminalCount: client.terminals.size,
+              },
+              null,
+              2
+            )
+          );
+        }
+        expect((await readFile(resultPath, 'utf8')).trim()).toBe('ACP_GOAL_COMPLETE');
         expect(
           client.sessionUpdates.some(
             (notification) =>
@@ -273,6 +478,21 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
               notification.update.title.includes('UpdateGoal')
           )
         ).toBe(true);
+        expect(
+          client.sessionUpdates.some(
+            (notification) =>
+              notification.update.sessionUpdate === 'tool_call' &&
+              notification.update.title.includes('Task')
+          )
+        ).toBe(true);
+        await expect(new GoalStore(workspace, sessionId).get()).resolves.toMatchObject({
+          status: 'complete',
+          completionVerification: {
+            status: 'pass',
+            verifierSessionId: expect.any(String),
+            evidenceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+        });
         expect(JSON.stringify(client.sessionUpdates)).not.toContain(modelConfig.apiKey);
       } finally {
         await session.destroy().catch(() => undefined);

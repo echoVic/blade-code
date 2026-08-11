@@ -11,7 +11,6 @@
 
 import path from 'node:path';
 import { nanoid } from 'nanoid';
-import { VERIFICATION_SUBAGENT_TYPE } from '../../../agent/loop/independentVerification.js';
 import type { LoopEvent } from '../../../agent/loop/types.js';
 import type { SessionAgentResources } from '../../../agent/resources/WorkspaceAgentResources.js';
 import type { SessionModelResources } from '../../../agent/resources/WorkspaceModelResources.js';
@@ -56,6 +55,7 @@ import {
 } from '../../../ui/utils/toolFormatters.js';
 import { getCwd } from '../../../utils/cwd.js';
 import { createSessionId } from '../../../utils/sessionId.js';
+import { isVerificationAuditSubagent } from '../../../utils/shell/readOnlyAudit.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
@@ -879,7 +879,7 @@ function buildCompletedTaskResult(input: {
     verificationVerdict: input.result.verificationVerdict,
     modifiedFiles: input.result.modifiedFiles,
     verificationAgentBuiltin:
-      input.config.name === VERIFICATION_SUBAGENT_TYPE &&
+      isVerificationAuditSubagent(input.config.name) &&
       input.config.source === 'builtin',
     isolation: input.isolation,
     worktreePath: input.result.worktreePath,

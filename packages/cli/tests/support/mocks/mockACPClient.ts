@@ -5,10 +5,25 @@
  * 注意：这是一个简化的 mock，只实现了测试所需的基本功能
  */
 
+import { type ChildProcess, spawn } from 'node:child_process';
 import type {
   RequestPermissionRequest,
   SessionNotification,
 } from '@agentclientprotocol/sdk';
+
+interface MockTerminalRequest {
+  command: string;
+  cwd?: string;
+  env?: Array<{ name: string; value: string }>;
+}
+
+interface MockTerminalHandle {
+  terminalId: string;
+  currentOutput(): Promise<{ output: string }>;
+  waitForExit(): Promise<{ exitCode: number | null }>;
+  kill(): Promise<void>;
+  release(): Promise<void>;
+}
 
 export interface MockPermissionResponse {
   outcome: {
@@ -23,7 +38,7 @@ export interface MockACPClientInterface {
   requestPermission(params: RequestPermissionRequest): Promise<MockPermissionResponse>;
   readTextFile(path: string): Promise<string>;
   writeTextFile(path: string, content: string): Promise<void>;
-  createTerminal(): Promise<{ terminalId: string }>;
+  createTerminal(request: MockTerminalRequest): Promise<MockTerminalHandle>;
   runTerminalCommand(
     terminalId: string,
     command: string
@@ -39,7 +54,14 @@ export class MockACPClient implements MockACPClientInterface {
   public permissionRequests: RequestPermissionRequest[] = [];
   public permissionResponses: Map<string, MockPermissionResponse> = new Map();
   public files: Map<string, string> = new Map();
-  public terminals: Map<string, { output: string[] }> = new Map();
+  public terminals: Map<
+    string,
+    {
+      output: string[];
+      child?: ChildProcess;
+      exit: Promise<{ exitCode: number | null }>;
+    }
+  > = new Map();
   public notifications: string[] = [];
 
   async sessionUpdate(params: SessionNotification): Promise<void> {
@@ -75,10 +97,41 @@ export class MockACPClient implements MockACPClientInterface {
     this.files.set(path, content);
   }
 
-  async createTerminal(): Promise<{ terminalId: string }> {
+  async createTerminal(request: MockTerminalRequest): Promise<MockTerminalHandle> {
     const terminalId = `terminal-${this.terminals.size + 1}`;
-    this.terminals.set(terminalId, { output: [] });
-    return { terminalId };
+    const output: string[] = [];
+    const environment = {
+      ...process.env,
+      ...Object.fromEntries(
+        (request.env ?? []).map(({ name, value }) => [name, value])
+      ),
+    };
+    const child = spawn(request.command, {
+      cwd: request.cwd,
+      env: environment,
+      shell: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    child.stdout?.on('data', (chunk: Buffer) => output.push(chunk.toString()));
+    child.stderr?.on('data', (chunk: Buffer) => output.push(chunk.toString()));
+    const exit = new Promise<{ exitCode: number | null }>((resolve) => {
+      child.once('exit', (exitCode) => resolve({ exitCode }));
+      child.once('error', () => resolve({ exitCode: null }));
+    });
+    this.terminals.set(terminalId, { output, child, exit });
+    return {
+      terminalId,
+      currentOutput: async () => ({ output: output.join('') }),
+      waitForExit: () => exit,
+      kill: async () => {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill('SIGTERM');
+        }
+      },
+      release: async () => {
+        this.terminals.delete(terminalId);
+      },
+    };
   }
 
   async runTerminalCommand(
@@ -88,6 +141,9 @@ export class MockACPClient implements MockACPClientInterface {
     const terminal = this.terminals.get(terminalId);
     if (!terminal) {
       throw new Error(`Terminal not found: ${terminalId}`);
+    }
+    if (terminal.child) {
+      throw new Error('Terminal is already running a command');
     }
     const output = `Executed: ${command}`;
     terminal.output.push(output);
@@ -103,6 +159,14 @@ export class MockACPClient implements MockACPClientInterface {
   }
 
   async closeTerminal(terminalId: string): Promise<void> {
+    const terminal = this.terminals.get(terminalId);
+    if (
+      terminal?.child &&
+      terminal.child.exitCode === null &&
+      terminal.child.signalCode === null
+    ) {
+      terminal.child.kill('SIGTERM');
+    }
     this.terminals.delete(terminalId);
   }
 
@@ -123,6 +187,15 @@ export class MockACPClient implements MockACPClientInterface {
     this.permissionRequests = [];
     this.permissionResponses.clear();
     this.files.clear();
+    for (const terminal of this.terminals.values()) {
+      if (
+        terminal.child &&
+        terminal.child.exitCode === null &&
+        terminal.child.signalCode === null
+      ) {
+        terminal.child.kill('SIGTERM');
+      }
+    }
     this.terminals.clear();
     this.notifications = [];
   }

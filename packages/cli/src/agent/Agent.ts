@@ -36,9 +36,9 @@ import {
   type IChatService,
   type Message,
 } from '../services/ChatServiceInterface.js';
+import { resolveModelConfig as resolvePiModelConfig } from '../services/pi/resolveModelConfig.js';
 import { SessionService } from '../services/SessionService.js';
 import { createStructuredOutputContract } from '../services/StructuredOutputService.js';
-import { resolveModelConfig as resolvePiModelConfig } from '../services/pi/resolveModelConfig.js';
 import {
   ensureStoreInitialized,
   getAllModels,
@@ -682,6 +682,8 @@ export class Agent {
 
         while (true) {
           const ownedHandle = turnHandle;
+          const persistedGoal =
+            currentGoal ?? (await this.sessionRuntime?.getGoal()) ?? null;
           const loopOptions: LoopOptions = {
             ...options,
             pendingInputOnly,
@@ -690,6 +692,22 @@ export class Agent {
             inputMessageId: pendingInputOnly ? undefined : inputMessageId,
             transientInput: goalContinuation ? 'goal_continuation' : undefined,
             outputSchema: goalContinuation ? undefined : currentOutputSchema,
+            ...(this.sessionRuntime
+              ? {
+                  goalLifecycle: {
+                    snapshot: persistedGoal,
+                    getSnapshot: () => this.sessionRuntime!.getGoal(),
+                    recordVerification: (verification) =>
+                      this.sessionRuntime!.recordGoalCompletionVerification(
+                        verification
+                      ),
+                    invalidateVerification: (reason) =>
+                      this.sessionRuntime!.invalidateGoalCompletionVerification(reason),
+                    finalizeCompletion: () =>
+                      this.sessionRuntime!.finalizeVerifiedGoalCompletion(),
+                  },
+                }
+              : {}),
             signal: currentContext.signal,
             turnSteering:
               this.sessionRuntime && ownedHandle
@@ -814,7 +832,7 @@ export class Agent {
             return result;
           }
           goal = await this.sessionRuntime.getGoal();
-          if (!goal || goal.status !== 'active') {
+          if (!goal || (goal.status !== 'active' && goal.status !== 'verifying')) {
             return result;
           }
 

@@ -5,6 +5,7 @@
  * 转换为 AsyncGenerator 模式，yield LoopEvent 事件流。
  */
 
+import { createHash } from 'node:crypto';
 import { type PermissionMode } from '../../config/index.js';
 import { MAX_AGENT_TURNS } from '../../config/maxTurns.js';
 import { CompactionService } from '../../context/CompactionService.js';
@@ -81,6 +82,12 @@ import {
   recordToolSuccess,
   shouldInjectReflection,
 } from './errorRecovery.js';
+import {
+  buildGoalCompletionVerificationPrompt,
+  checkGoalCompletionVerificationGate,
+  GOAL_VERIFICATION_SUBAGENT_TYPE,
+  isNewGoalCompletionAttempt,
+} from './goalCompletionVerification.js';
 import {
   checkIndependentVerificationGate,
   type IndependentVerificationEvidence,
@@ -901,6 +908,21 @@ validates the object and may return a bounded corrective error.`;
     let independentVerificationRetryCount = 0;
     let independentVerificationTaskRequired = false;
     let independentVerificationExecutionPending = false;
+    let goalVerificationRetryCount = 0;
+    let goalVerificationTaskRequired = false;
+    let goalVerificationExecutionPending = false;
+    let goalVerificationResultPending = false;
+    let goalVerificationRevision = -1;
+    let goalVerificationVerdict: VerificationVerdict | undefined;
+    let goalCompletionRequested =
+      options?.goalLifecycle?.snapshot?.status === 'verifying';
+    let goalCompletionAttempt =
+      options?.goalLifecycle?.snapshot?.completionVerification?.attempt;
+    let goalId = options?.goalLifecycle?.snapshot?.goalId;
+    let goalObjective = options?.goalLifecycle?.snapshot?.objective ?? '';
+    let goalVerifierSessionId: string | undefined;
+    let goalVerifierSummary: string | undefined;
+    let goalVerificationEvidenceSha256: string | undefined;
     let structuredOutputRetryCount = 0;
     let restoredStructuredOutput = structuredOutputContract
       ? restoreStructuredOutput(state.getHistory(), structuredOutputContract)
@@ -914,6 +936,12 @@ validates the object and may return a bounded corrective error.`;
     let verificationRevision = restoredIndependentVerification.verificationRevision;
     let verificationVerdict: VerificationVerdict | undefined =
       restoredIndependentVerification.verificationVerdict;
+    if (goalCompletionRequested) {
+      // A process restart must not trust a pre-candidate or potentially stale
+      // verifier result. The host requires one fresh verdict for this run.
+      verificationRevision = -1;
+      verificationVerdict = undefined;
+    }
     const modifiedFiles = restoredIndependentVerification.modifiedFiles;
     const successfulVerificationCommands = new Set<string>();
     const successfulTools = new Set<string>(
@@ -962,6 +990,17 @@ validates the object and may return a bounded corrective error.`;
         },
       };
     };
+    const invalidateGoalVerification = async (reason: string): Promise<void> => {
+      if (!goalCompletionRequested || !options?.goalLifecycle) return;
+      verificationRevision = -1;
+      verificationVerdict = undefined;
+      goalVerificationRevision = -1;
+      goalVerificationVerdict = undefined;
+      goalVerifierSessionId = undefined;
+      goalVerifierSummary = undefined;
+      goalVerificationEvidenceSha256 = undefined;
+      await options.goalLifecycle.invalidateVerification(reason);
+    };
     const admitToolWithPolicy = (
       toolName: string,
       params: Record<string, unknown>
@@ -992,26 +1031,61 @@ validates the object and may return a bounded corrective error.`;
         }
         return undefined;
       }
-      if (independentVerificationTaskRequired) {
+      if (independentVerificationTaskRequired || goalVerificationTaskRequired) {
         if (toolName !== 'Task') {
           return {
             success: false,
-            llmContent: 'Independent verification requires the Task tool.',
+            llmContent: goalVerificationTaskRequired
+              ? 'Goal completion verification requires the Task tool.'
+              : 'Independent verification requires the Task tool.',
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
-              message: 'Independent verification requires the Task tool',
+              message: goalVerificationTaskRequired
+                ? 'Goal completion verification requires the Task tool'
+                : 'Independent verification requires the Task tool',
             },
-            metadata: { summary: 'Blocked non-verification tool' },
+            metadata: {
+              summary: goalVerificationTaskRequired
+                ? 'Blocked non-goal-verification tool'
+                : 'Blocked non-verification tool',
+            },
           };
         }
+      }
+      if (goalVerificationTaskRequired && toolName === 'Task') {
+        goalVerificationExecutionPending = true;
+        goalVerificationTaskRequired = false;
+        return undefined;
+      }
+      const isGoalVerificationTask =
+        toolName === 'Task' && params.subagent_type === GOAL_VERIFICATION_SUBAGENT_TYPE;
+      if (isGoalVerificationTask && !goalCompletionRequested) {
+        return {
+          success: false,
+          llmContent:
+            'The reserved goal verifier is available only for a host-owned ' +
+            'completion candidate.',
+          error: {
+            type: ToolErrorType.VALIDATION_ERROR,
+            message: 'Goal completion verification is not active',
+          },
+          metadata: { summary: 'Rejected unavailable goal verifier' },
+        };
       }
       const isIndependentVerificationTask =
         toolName === 'Task' &&
         params.subagent_type === VERIFICATION_SUBAGENT_TYPE &&
         requiresIndependentVerification(modifiedFiles);
-      if (independentVerificationTaskRequired || isIndependentVerificationTask) {
+      if (
+        independentVerificationTaskRequired ||
+        isGoalVerificationTask ||
+        isIndependentVerificationTask
+      ) {
+        const expectedType = isGoalVerificationTask
+          ? GOAL_VERIFICATION_SUBAGENT_TYPE
+          : VERIFICATION_SUBAGENT_TYPE;
         if (
-          params.subagent_type !== VERIFICATION_SUBAGENT_TYPE ||
+          params.subagent_type !== expectedType ||
           params.run_in_background === true ||
           (params.isolation !== undefined && params.isolation !== 'none') ||
           params.resume !== undefined ||
@@ -1020,8 +1094,9 @@ validates the object and may return a bounded corrective error.`;
           return {
             success: false,
             llmContent:
-              'Independent verification requires a fresh synchronous Task with ' +
-              'subagent_type="verification", run_in_background=false, and isolation="none".',
+              `Verification requires a fresh synchronous Task with ` +
+              `subagent_type="${expectedType}", run_in_background=false, and ` +
+              'isolation="none".',
             error: {
               type: ToolErrorType.VALIDATION_ERROR,
               message: 'Invalid independent verification Task parameters',
@@ -1029,10 +1104,21 @@ validates the object and may return a bounded corrective error.`;
             metadata: { summary: 'Blocked invalid verification Task' },
           };
         }
-        independentVerificationExecutionPending = true;
+        if (expectedType === GOAL_VERIFICATION_SUBAGENT_TYPE) {
+          goalVerificationExecutionPending = true;
+        } else {
+          independentVerificationExecutionPending = true;
+        }
         independentVerificationTaskRequired = false;
       }
-      if (toolName !== 'Task' || !singleTaskRequired()) return undefined;
+      if (
+        toolName !== 'Task' ||
+        params.subagent_type === VERIFICATION_SUBAGENT_TYPE ||
+        params.subagent_type === GOAL_VERIFICATION_SUBAGENT_TYPE ||
+        !singleTaskRequired()
+      ) {
+        return undefined;
+      }
       if (singleTaskDelegationClaimed) return duplicateTaskResult();
       singleTaskDelegationClaimed = true;
       return undefined;
@@ -1102,7 +1188,37 @@ validates the object and may return a bounded corrective error.`;
           },
         };
       }
+      const toolKind = registry.get(toolName)?.kind;
+      const isVerificationTask =
+        toolName === 'Task' &&
+        (params.subagent_type === VERIFICATION_SUBAGENT_TYPE ||
+          params.subagent_type === GOAL_VERIFICATION_SUBAGENT_TYPE);
       if (
+        goalCompletionRequested &&
+        !isVerificationTask &&
+        (toolKind === 'write' || toolKind === 'execute')
+      ) {
+        await invalidateGoalVerification(
+          `Goal completion evidence invalidated before ${toolName}`
+        );
+      }
+      if (toolName === 'Task' && goalVerificationExecutionPending) {
+        const changedFiles = [...modifiedFiles]
+          .filter((filePath) => filePath !== '<bash-mutation>')
+          .slice(0, 50);
+        params.subagent_type = GOAL_VERIFICATION_SUBAGENT_TYPE;
+        params.description = 'Verify goal completion';
+        params.prompt = buildGoalCompletionVerificationPrompt(
+          goalObjective,
+          changedFiles
+        );
+        params.run_in_background = false;
+        params.isolation = 'none';
+        delete params.resume;
+        delete params.resume_from;
+        goalVerificationExecutionPending = false;
+        goalVerificationResultPending = true;
+      } else if (
         toolName === 'Task' &&
         independentVerificationExecutionPending &&
         params.subagent_type === VERIFICATION_SUBAGENT_TYPE
@@ -1240,6 +1356,16 @@ validates the object and may return a bounded corrective error.`;
     };
 
     try {
+      if (
+        goalCompletionRequested &&
+        options?.goalLifecycle?.snapshot?.completionVerification?.status !== 'pending'
+      ) {
+        await invalidateGoalVerification(
+          'A fresh host run requires new independent completion evidence'
+        );
+        const goal = await options?.goalLifecycle?.getSnapshot();
+        if (goal) yield { kind: 'goal_updated', goal };
+      }
       // eslint-disable-next-line no-constant-condition
       while (true) {
         // 1. 检查中断信号
@@ -2358,6 +2484,9 @@ validates the object and may return a bounded corrective error.`;
               });
 
           if (stopAction.action === 'continue') {
+            await invalidateGoalVerification(
+              'Goal completion evidence invalidated by a Stop hook continuation'
+            );
             // assistant 输出与 continue 控制消息必须走同一条 pending 队列，保证下一轮看到的时序正确
             state.appendAssistant({
               role: 'assistant',
@@ -2395,6 +2524,9 @@ validates the object and may return a bounded corrective error.`;
 
           const completionSteering = await options?.turnSteering?.drainOrSeal();
           if (completionSteering && completionSteering.messages.length > 0) {
+            await invalidateGoalVerification(
+              'Goal completion evidence invalidated by new user steering'
+            );
             structuredOutput = undefined;
             structuredOutputAlreadyCompleted = false;
             structuredOutputRetryCount = 0;
@@ -2419,6 +2551,112 @@ validates the object and may return a bounded corrective error.`;
               delivery: 'current_turn',
             };
             continue;
+          }
+
+          const goalVerificationAction = checkGoalCompletionVerificationGate({
+            requested: goalCompletionRequested,
+            taskAvailable: resolveTools().some((tool) => tool.name === 'Task'),
+            mutationRevision,
+            verificationRevision: goalVerificationRevision,
+            verificationVerdict: goalVerificationVerdict,
+            retryCount: goalVerificationRetryCount,
+          });
+          if (goalVerificationAction.action === 'retry') {
+            goalVerificationRetryCount++;
+            goalVerificationTaskRequired =
+              goalVerificationAction.requireVerificationTask;
+            if (goalVerificationTaskRequired) requiredToolName = 'Task';
+            state.appendAssistant({
+              role: 'assistant',
+              content: turnResult.content || '',
+              reasoningContent: turnResult.reasoningContent,
+            });
+            const goalVerificationAssistantUuid = await saveAssistantMessage(
+              deps,
+              context,
+              turnResult.content || '',
+              lastMessageUuid,
+              turnResult.reasoningContent
+            );
+            if (goalVerificationAssistantUuid) {
+              lastMessageUuid = goalVerificationAssistantUuid;
+            }
+            const goalVerificationMessage: Message = {
+              role: 'user',
+              content: goalVerificationAction.prompt,
+            };
+            state.appendControl('user', goalVerificationMessage);
+            const goalVerificationUserUuid = await saveUserMessage(
+              deps,
+              context,
+              goalVerificationMessage.content as string,
+              lastMessageUuid
+            );
+            if (goalVerificationUserUuid) {
+              lastMessageUuid = goalVerificationUserUuid;
+            }
+            continue;
+          }
+          if (goalVerificationAction.action === 'fail') {
+            state.appendAssistant({
+              role: 'assistant',
+              content: turnResult.content || '',
+              reasoningContent: turnResult.reasoningContent,
+            });
+            const goalVerificationAssistantUuid = await saveAssistantMessage(
+              deps,
+              context,
+              turnResult.content || '',
+              lastMessageUuid,
+              turnResult.reasoningContent
+            );
+            if (goalVerificationAssistantUuid) {
+              lastMessageUuid = goalVerificationAssistantUuid;
+            }
+            return {
+              success: false,
+              error: {
+                type: 'goal_verification_failed',
+                message: goalVerificationAction.message,
+              },
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+                tokensUsed: totalTokens,
+                goalVerificationVerdict,
+                goalVerifierSessionId,
+                goalVerificationEvidenceSha256,
+              },
+            };
+          }
+
+          let goalCompletionVerified = false;
+          if (goalCompletionRequested) {
+            if (!options?.goalLifecycle || goalVerificationVerdict !== 'pass') {
+              return {
+                success: false,
+                error: {
+                  type: 'goal_verification_failed',
+                  message:
+                    'Goal completion reached the final boundary without host-owned ' +
+                    'verification authority and a fresh PASS.',
+                },
+                metadata: {
+                  turnsCount,
+                  toolCallsCount: allToolResults.length,
+                  duration: Date.now() - startTime,
+                  tokensUsed: totalTokens,
+                  goalVerificationVerdict,
+                  goalVerifierSessionId,
+                  goalVerificationEvidenceSha256,
+                },
+              };
+            }
+            const completedGoal = await options.goalLifecycle.finalizeCompletion();
+            goalCompletionRequested = false;
+            goalCompletionVerified = true;
+            yield { kind: 'goal_updated', goal: completedGoal };
           }
 
           const finalMessage = structuredOutput
@@ -2476,6 +2714,16 @@ validates the object and may return a bounded corrective error.`;
                     allToolResults.length
                   : undefined,
               totalToolFailures: failureTracker.totalFailures || undefined,
+              ...(goalCompletionVerified
+                ? {
+                    goalCompletionVerified: true,
+                    goalVerificationVerdict: 'pass' as const,
+                    ...(goalVerifierSessionId ? { goalVerifierSessionId } : {}),
+                    ...(goalVerificationEvidenceSha256
+                      ? { goalVerificationEvidenceSha256 }
+                      : {}),
+                  }
+                : {}),
               ...(structuredOutput && structuredOutputContract
                 ? {
                     structuredOutput,
@@ -2916,6 +3164,52 @@ validates the object and may return a bounded corrective error.`;
               : undefined;
           if (result.success) {
             recordToolSuccess(failureTracker, toolCall.function.name);
+            if (resultMetadata?.goalCompletionRequested === true) {
+              if (!options?.goalLifecycle) {
+                throw new Error(
+                  'Goal completion candidate has no host lifecycle authority'
+                );
+              }
+              goalCompletionRequested = true;
+              const requestedAttempt =
+                typeof resultMetadata.goalCompletionAttempt === 'number'
+                  ? resultMetadata.goalCompletionAttempt
+                  : undefined;
+              if (isNewGoalCompletionAttempt(goalCompletionAttempt, requestedAttempt)) {
+                goalVerificationRetryCount = 0;
+              }
+              goalCompletionAttempt = requestedAttempt ?? goalCompletionAttempt;
+              goalId =
+                typeof resultMetadata.goalId === 'string'
+                  ? resultMetadata.goalId
+                  : goalId;
+              goalObjective =
+                typeof resultMetadata.goalObjective === 'string'
+                  ? resultMetadata.goalObjective
+                  : goalObjective;
+              goalVerificationRevision = -1;
+              goalVerificationVerdict = undefined;
+              goalVerifierSessionId = undefined;
+              goalVerifierSummary = undefined;
+              goalVerificationEvidenceSha256 = undefined;
+              const goal = await options?.goalLifecycle?.getSnapshot();
+              if (goal) yield { kind: 'goal_updated', goal };
+            } else if (
+              toolCall.function.name === 'UpdateGoal' &&
+              resultMetadata?.goalStatus === 'blocked'
+            ) {
+              goalCompletionRequested = false;
+              goalVerificationTaskRequired = false;
+              goalVerificationExecutionPending = false;
+              goalVerificationResultPending = false;
+              goalVerificationVerdict = undefined;
+              goalVerificationRevision = -1;
+              goalVerifierSessionId = undefined;
+              goalVerifierSummary = undefined;
+              goalVerificationEvidenceSha256 = undefined;
+              const goal = await options?.goalLifecycle?.getSnapshot();
+              if (goal) yield { kind: 'goal_updated', goal };
+            }
             const newlyModifiedFiles = recordModifiedFiles(
               modifiedFiles,
               toolCall.function.name,
@@ -2930,12 +3224,28 @@ validates the object and may return a bounded corrective error.`;
               verificationRevision = -1;
               verificationVerdict = undefined;
               independentVerificationRetryCount = 0;
+              if (goalCompletionRequested) {
+                goalVerificationRetryCount = 0;
+                await invalidateGoalVerification(
+                  'Goal completion evidence invalidated by a workspace mutation'
+                );
+                const goal = await options?.goalLifecycle?.getSnapshot();
+                if (goal) yield { kind: 'goal_updated', goal };
+              }
             }
+            const verificationSubagentType =
+              typeof resultMetadata?.subagentType === 'string'
+                ? resultMetadata.subagentType
+                : typeof resultMetadata?.subagent_type === 'string'
+                  ? resultMetadata.subagent_type
+                  : undefined;
+            const isGoalVerificationResult =
+              verificationSubagentType === GOAL_VERIFICATION_SUBAGENT_TYPE;
             const isVerificationResult =
               toolCall.function.name === 'Task' &&
               resultMetadata?.verificationAgentBuiltin === true &&
-              (resultMetadata?.subagentType === VERIFICATION_SUBAGENT_TYPE ||
-                resultMetadata?.subagent_type === VERIFICATION_SUBAGENT_TYPE) &&
+              (verificationSubagentType === VERIFICATION_SUBAGENT_TYPE ||
+                isGoalVerificationResult) &&
               (resultMetadata?.subagentStatus === 'completed' ||
                 resultMetadata?.status === 'completed');
             if (isVerificationResult) {
@@ -2956,6 +3266,44 @@ validates the object and may return a bounded corrective error.`;
                       : undefined
                 );
               verificationRevision = mutationRevision;
+              if (goalVerificationResultPending && isGoalVerificationResult) {
+                goalVerificationResultPending = false;
+                goalVerificationVerdict = verificationVerdict;
+                goalVerificationRevision = mutationRevision;
+                goalVerifierSessionId =
+                  typeof resultMetadata?.subagentSessionId === 'string'
+                    ? resultMetadata.subagentSessionId
+                    : undefined;
+                const privateVerifierEvidence =
+                  typeof result.llmContent === 'string'
+                    ? result.llmContent.slice(0, 4_000)
+                    : typeof resultMetadata?.subagentSummary === 'string'
+                      ? resultMetadata.subagentSummary
+                      : undefined;
+                goalVerifierSummary = goalVerificationVerdict
+                  ? `Independent verifier returned ${goalVerificationVerdict.toUpperCase()}.`
+                  : undefined;
+                if (goalVerificationVerdict && options?.goalLifecycle) {
+                  const evidencePayload = JSON.stringify({
+                    goalId,
+                    objective: goalObjective,
+                    mutationRevision,
+                    verdict: goalVerificationVerdict,
+                    verifierSessionId: goalVerifierSessionId,
+                    evidence: privateVerifierEvidence,
+                  });
+                  goalVerificationEvidenceSha256 = createHash('sha256')
+                    .update(evidencePayload)
+                    .digest('hex');
+                  const goal = await options.goalLifecycle.recordVerification({
+                    verdict: goalVerificationVerdict,
+                    verifierSessionId: goalVerifierSessionId,
+                    summary: goalVerifierSummary,
+                    evidenceSha256: goalVerificationEvidenceSha256,
+                  });
+                  yield { kind: 'goal_updated', goal };
+                }
+              }
             }
             if (newlyModifiedFiles.length > 0 || isVerificationResult) {
               independentVerificationEvidence = {

@@ -250,6 +250,31 @@ const TaskUpdateEventSchema = event({
   tasks: Type.Array(TaskListItemSchema),
 });
 
+const GoalEventSchema = event({
+  type: Type.Literal('goal'),
+  state: StringEnum(['updated', 'cleared']),
+  goal_id: Type.Optional(Type.String()),
+  status: Type.Optional(
+    StringEnum([
+      'active',
+      'verifying',
+      'paused',
+      'blocked',
+      'usage_limited',
+      'budget_limited',
+      'complete',
+    ])
+  ),
+  verification_attempt: Type.Optional(Type.Integer({ minimum: 1 })),
+  verification_status: Type.Optional(
+    StringEnum(['pending', 'pass', 'fail', 'partial'])
+  ),
+  verifier_session_id: Type.Optional(Type.String()),
+  verification_evidence_sha256: Type.Optional(
+    Type.String({ pattern: '^[a-f0-9]{64}$' })
+  ),
+});
+
 const SubagentEventSchema = event({
   type: Type.Literal('subagent'),
   state: StringEnum(['spawned', 'completed']),
@@ -340,6 +365,7 @@ export const HeadlessJsonlEventSchema = Runtime(
     PhaseEventSchema,
     ToolDetailEventSchema,
     TaskUpdateEventSchema,
+    GoalEventSchema,
     SubagentEventSchema,
     TokenUsageEventSchema,
     CompactingEventSchema,

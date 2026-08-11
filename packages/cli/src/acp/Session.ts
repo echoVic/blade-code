@@ -1278,16 +1278,36 @@ export class AcpSession {
         return { stopReason: 'cancelled' };
       }
 
-      return {
-        stopReason: 'end_turn',
+      const responseMeta = {
         ...(loopResult.metadata?.structuredOutput
           ? {
-              _meta: {
-                structuredOutput: loopResult.metadata.structuredOutput,
-                outputSchemaDigest: loopResult.metadata.structuredOutputSchemaDigest,
+              structuredOutput: loopResult.metadata.structuredOutput,
+              outputSchemaDigest: loopResult.metadata.structuredOutputSchemaDigest,
+            }
+          : {}),
+        ...(loopResult.metadata?.goalCompletionVerified
+          ? {
+              goalCompletion: {
+                verified: true,
+                verdict: loopResult.metadata.goalVerificationVerdict,
+                ...(loopResult.metadata.goalVerifierSessionId
+                  ? {
+                      verifierSessionId: loopResult.metadata.goalVerifierSessionId,
+                    }
+                  : {}),
+                ...(loopResult.metadata.goalVerificationEvidenceSha256
+                  ? {
+                      evidenceSha256:
+                        loopResult.metadata.goalVerificationEvidenceSha256,
+                    }
+                  : {}),
               },
             }
           : {}),
+      };
+      return {
+        stopReason: 'end_turn',
+        ...(Object.keys(responseMeta).length > 0 ? { _meta: responseMeta } : {}),
       };
     } catch (error) {
       // 检查是否是取消操作

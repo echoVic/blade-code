@@ -1,5 +1,6 @@
 export const GOAL_STATUSES = [
   'active',
+  'verifying',
   'paused',
   'blocked',
   'usage_limited',
@@ -8,6 +9,26 @@ export const GOAL_STATUSES = [
 ] as const;
 
 export type GoalStatus = (typeof GOAL_STATUSES)[number];
+
+export const GOAL_COMPLETION_VERIFICATION_STATUSES = [
+  'pending',
+  'pass',
+  'fail',
+  'partial',
+] as const;
+
+export type GoalCompletionVerificationStatus =
+  (typeof GOAL_COMPLETION_VERIFICATION_STATUSES)[number];
+
+export interface GoalCompletionVerification {
+  attempt: number;
+  status: GoalCompletionVerificationStatus;
+  requestedAt: string;
+  completedAt?: string;
+  verifierSessionId?: string;
+  summary?: string;
+  evidenceSha256?: string;
+}
 
 export interface GoalSnapshot {
   version: 1;
@@ -20,6 +41,7 @@ export interface GoalSnapshot {
   timeUsedSeconds: number;
   continuationCount: number;
   statusReason?: string;
+  completionVerification?: GoalCompletionVerification;
   createdAt: string;
   updatedAt: string;
 }
@@ -38,4 +60,11 @@ export interface GoalCreateInput {
 export interface GoalProgress {
   tokens: number;
   elapsedMs: number;
+}
+
+export interface GoalCompletionVerificationResult {
+  verdict: Exclude<GoalCompletionVerificationStatus, 'pending'>;
+  verifierSessionId?: string;
+  summary?: string;
+  evidenceSha256?: string;
 }

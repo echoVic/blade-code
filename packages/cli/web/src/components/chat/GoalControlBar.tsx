@@ -40,6 +40,11 @@ const STATUS_PRESENTATION: Record<
     dot: 'bg-[hsl(var(--deck-accent))] shadow-[0_0_6px_hsl(var(--deck-accent-glow)/0.5)]',
     accent: 'text-[hsl(var(--deck-accent))]',
   },
+  verifying: {
+    labelKey: 'goal.status.verifying',
+    dot: 'animate-pulse bg-sky-400',
+    accent: 'text-sky-600 dark:text-sky-300',
+  },
   paused: {
     labelKey: 'goal.status.paused',
     dot: 'bg-amber-400',
@@ -65,6 +70,16 @@ const STATUS_PRESENTATION: Record<
     dot: 'bg-emerald-500',
     accent: 'text-emerald-600 dark:text-emerald-300',
   },
+};
+
+const VERIFICATION_LABEL: Record<
+  NonNullable<Goal['completionVerification']>['status'],
+  TranslationKey
+> = {
+  pending: 'goal.verification.pending',
+  pass: 'goal.verification.pass',
+  fail: 'goal.verification.fail',
+  partial: 'goal.verification.partial',
 };
 
 type PendingAction = 'pause' | 'resume' | 'edit' | 'delete' | null;
@@ -105,8 +120,8 @@ export function GoalControlBar() {
   if (!goal) return null;
 
   const presentation = STATUS_PRESENTATION[goal.status];
-  const canEdit = ['active', 'paused', 'blocked'].includes(goal.status);
-  const canPause = goal.status === 'active';
+  const canEdit = ['active', 'verifying', 'paused', 'blocked'].includes(goal.status);
+  const canPause = goal.status === 'active' || goal.status === 'verifying';
   const canResume = goal.status === 'paused' || goal.status === 'blocked';
   const busy = pendingAction !== null;
 
@@ -311,6 +326,44 @@ export function GoalControlBar() {
                           })}
                     </span>
                   </div>
+                  {goal.completionVerification && (
+                    <div
+                      data-goal-verification={goal.completionVerification.status}
+                      className="mt-2 rounded-md border border-sky-200/50 bg-sky-50/60 px-2.5 py-2 text-[11px] text-sky-900 dark:border-sky-400/15 dark:bg-sky-400/[0.05] dark:text-sky-100"
+                    >
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <span className="font-medium">
+                          {t('goal.verification.attempt', {
+                            n: goal.completionVerification.attempt,
+                          })}
+                        </span>
+                        <span>
+                          {t(VERIFICATION_LABEL[goal.completionVerification.status])}
+                        </span>
+                        {goal.completionVerification.verifierSessionId && (
+                          <span className="font-mono text-[10px] opacity-75">
+                            {t('goal.verification.session', {
+                              id: goal.completionVerification.verifierSessionId.slice(
+                                0,
+                                12
+                              ),
+                            })}
+                          </span>
+                        )}
+                      </div>
+                      {goal.completionVerification.summary && (
+                        <p className="mt-1 line-clamp-3 whitespace-pre-wrap opacity-80">
+                          {goal.completionVerification.summary}
+                        </p>
+                      )}
+                      {goal.completionVerification.evidenceSha256 && (
+                        <p className="mt-1 font-mono text-[10px] opacity-60">
+                          sha256:
+                          {goal.completionVerification.evidenceSha256.slice(0, 12)}
+                        </p>
+                      )}
+                    </div>
+                  )}
                   {goal.statusReason && (
                     <div className="mt-2 rounded-md border border-amber-200/50 bg-amber-50/60 px-2.5 py-1.5 text-[11px] text-amber-800 dark:border-amber-400/15 dark:bg-amber-400/[0.05] dark:text-amber-200">
                       {goal.statusReason}

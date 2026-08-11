@@ -29,7 +29,12 @@ import type {
   SessionTaskWorktree,
 } from '../../context/types.js';
 import { GoalStore } from '../../goals/GoalStore.js';
-import type { GoalCreateInput, GoalProgress, GoalSnapshot } from '../../goals/types.js';
+import type {
+  GoalCompletionVerificationResult,
+  GoalCreateInput,
+  GoalProgress,
+  GoalSnapshot,
+} from '../../goals/types.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { LspSessionManager } from '../../lsp/LspSessionManager.js';
@@ -979,6 +984,20 @@ export class SessionRuntime {
 
   clearGoal(): Promise<boolean> {
     return this.goalStore.clear();
+  }
+
+  recordGoalCompletionVerification(
+    result: GoalCompletionVerificationResult
+  ): Promise<GoalSnapshot> {
+    return this.goalStore.recordCompletionVerification(result);
+  }
+
+  invalidateGoalCompletionVerification(reason: string): Promise<GoalSnapshot> {
+    return this.goalStore.invalidateCompletionVerification(reason);
+  }
+
+  finalizeVerifiedGoalCompletion(): Promise<GoalSnapshot> {
+    return this.goalStore.finalizeVerifiedCompletion();
   }
 
   recordGoalProgress(progress: GoalProgress): Promise<GoalSnapshot | null> {

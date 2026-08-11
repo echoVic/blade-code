@@ -4,6 +4,7 @@
 
 import type { PermissionConfig } from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
+import type { GoalCompletionVerificationResult, GoalSnapshot } from '../goals/types.js';
 import type {
   ChatCompletionMessageToolCall,
   ContentPart,
@@ -129,6 +130,16 @@ export interface LoopOptions {
   transientInput?: 'goal_continuation';
   /** Turn-scoped JSON Schema for the canonical final response. */
   outputSchema?: JsonObject;
+  /** Host-owned completion authority for an active persisted goal. */
+  goalLifecycle?: {
+    snapshot: GoalSnapshot | null;
+    getSnapshot: () => Promise<GoalSnapshot | null>;
+    recordVerification: (
+      result: GoalCompletionVerificationResult
+    ) => Promise<GoalSnapshot>;
+    invalidateVerification: (reason: string) => Promise<GoalSnapshot>;
+    finalizeCompletion: () => Promise<GoalSnapshot>;
+  };
   /** Optional surface-reserved admission used for accurate queued responses. */
   taskAdmission?: TaskAdmissionHandle;
   /** SessionRuntime-owned same-turn user steering source. */
@@ -173,6 +184,7 @@ export interface LoopResult {
       | 'chat_disabled'
       | 'delegation_protocol_failed'
       | 'verification_failed'
+      | 'goal_verification_failed'
       | 'worktree_protocol_failed'
       | 'structured_output_failed';
     message: string;
@@ -195,5 +207,9 @@ export interface LoopResult {
     abortReason?: string; // abort 原因：'user-cancel' | 'interrupt'
     structuredOutput?: JsonObject;
     structuredOutputSchemaDigest?: string;
+    goalCompletionVerified?: boolean;
+    goalVerificationVerdict?: 'pass' | 'fail' | 'partial';
+    goalVerifierSessionId?: string;
+    goalVerificationEvidenceSha256?: string;
   };
 }

@@ -36,7 +36,7 @@ describe('goal tools', () => {
       });
   }
 
-  it('creates, reads, and completes a session-scoped goal', async () => {
+  it('creates, reads, and submits a host-verified completion candidate', async () => {
     const created = await execute('CreateGoal', {
       objective: 'finish the migration',
       tokenBudget: 500,
@@ -64,7 +64,20 @@ describe('goal tools', () => {
 
     await expect(execute('UpdateGoal', { status: 'complete' })).resolves.toMatchObject({
       success: true,
-      llmContent: { goal: { status: 'complete' } },
+      llmContent: {
+        goal: {
+          status: 'verifying',
+          completionVerification: {
+            attempt: 1,
+            status: 'pending',
+          },
+        },
+      },
+      metadata: {
+        goalCompletionRequested: true,
+        goalObjective: 'finish the migration',
+        goalCompletionAttempt: 1,
+      },
     });
   });
 
@@ -74,6 +87,16 @@ describe('goal tools', () => {
     await expect(execute('UpdateGoal', { status: 'blocked' })).resolves.toMatchObject({
       success: false,
       error: { code: 'GOAL_OPERATION_FAILED' },
+    });
+    await expect(
+      execute('UpdateGoal', {
+        status: 'blocked',
+        reason: 'external credential is unavailable',
+      })
+    ).resolves.toMatchObject({
+      success: true,
+      llmContent: { goal: { status: 'blocked' } },
+      metadata: { goalStatus: 'blocked' },
     });
   });
 });

@@ -6,8 +6,10 @@ import writeFileAtomic from 'write-file-atomic';
 import { getSessionGoalFilePath } from '../context/storage/pathUtils.js';
 import { parseSchema, StringEnum, safeParseSchema, Type } from '../schema/index.js';
 import {
+  GOAL_COMPLETION_VERIFICATION_STATUSES,
   GOAL_STATUSES,
   type GoalChangeEvent,
+  type GoalCompletionVerificationResult,
   type GoalCreateInput,
   type GoalProgress,
   type GoalSnapshot,
@@ -15,6 +17,17 @@ import {
 
 const MAX_GOAL_FILE_BYTES = 1024 * 1024;
 const MAX_OBJECTIVE_CHARS = 100_000;
+const MAX_VERIFICATION_SUMMARY_CHARS = 4_000;
+
+const GoalCompletionVerificationSchema = Type.Object({
+  attempt: Type.Integer({ minimum: 1 }),
+  status: StringEnum(GOAL_COMPLETION_VERIFICATION_STATUSES),
+  requestedAt: Type.String({ format: 'date-time' }),
+  completedAt: Type.Optional(Type.String({ format: 'date-time' })),
+  verifierSessionId: Type.Optional(Type.String({ minLength: 1 })),
+  summary: Type.Optional(Type.String({ maxLength: MAX_VERIFICATION_SUMMARY_CHARS })),
+  evidenceSha256: Type.Optional(Type.String({ pattern: '^[a-f0-9]{64}$' })),
+});
 
 const GoalSnapshotSchema = Type.Object({
   version: Type.Literal(1),
@@ -27,6 +40,7 @@ const GoalSnapshotSchema = Type.Object({
   timeUsedSeconds: Type.Integer({ minimum: 0 }),
   continuationCount: Type.Integer({ minimum: 0 }),
   statusReason: Type.Optional(Type.String()),
+  completionVerification: Type.Optional(GoalCompletionVerificationSchema),
   createdAt: Type.String({ format: 'date-time' }),
   updatedAt: Type.String({ format: 'date-time' }),
 });
@@ -54,6 +68,12 @@ function normalizeTokenBudget(tokenBudget: number | undefined): number | undefin
     throw new Error('Goal token budget must be a positive integer');
   }
   return tokenBudget;
+}
+
+function normalizeVerificationSummary(summary: string | undefined): string | undefined {
+  const normalized = summary?.trim();
+  if (!normalized) return undefined;
+  return normalized.slice(0, MAX_VERIFICATION_SUMMARY_CHARS);
 }
 
 export class GoalStore {
@@ -85,7 +105,8 @@ export class GoalStore {
     workspaceRoot: string,
     sessionId: string
   ): Promise<boolean> {
-    return (await new GoalStore(workspaceRoot, sessionId).get())?.status === 'active';
+    const status = (await new GoalStore(workspaceRoot, sessionId).get())?.status;
+    return status === 'active' || status === 'verifying';
   }
 
   async get(): Promise<GoalSnapshot | null> {
@@ -124,12 +145,15 @@ export class GoalStore {
 
   async edit(objective: string): Promise<GoalSnapshot> {
     return this.updateExisting((goal) => {
-      if (!['active', 'paused', 'blocked'].includes(goal.status)) {
+      if (!['active', 'verifying', 'paused', 'blocked'].includes(goal.status)) {
         throw new Error(`Cannot edit goal while status is ${goal.status}`);
       }
       return {
         ...goal,
         objective: normalizeObjective(objective),
+        completionVerification: undefined,
+        status: goal.status === 'verifying' ? 'active' : goal.status,
+        statusReason: goal.status === 'verifying' ? undefined : goal.statusReason,
         updatedAt: new Date().toISOString(),
       };
     });
@@ -137,7 +161,11 @@ export class GoalStore {
 
   async pause(reason = 'paused by user'): Promise<GoalSnapshot> {
     return this.updateExisting((goal) => {
-      if (goal.status !== 'active' && goal.status !== 'blocked') {
+      if (
+        goal.status !== 'active' &&
+        goal.status !== 'verifying' &&
+        goal.status !== 'blocked'
+      ) {
         throw new Error(`Cannot pause goal while status is ${goal.status}`);
       }
       return {
@@ -152,7 +180,9 @@ export class GoalStore {
   async pauseIfActive(reason: string): Promise<GoalSnapshot | null> {
     return this.mutex.runExclusive(async () => {
       const goal = await this.readUnlocked();
-      if (!goal || goal.status !== 'active') return goal;
+      if (!goal || (goal.status !== 'active' && goal.status !== 'verifying')) {
+        return goal;
+      }
       const next: GoalSnapshot = {
         ...goal,
         status: 'paused',
@@ -170,19 +200,115 @@ export class GoalStore {
       if (goal.status !== 'paused' && goal.status !== 'blocked') {
         throw new Error(`Cannot resume goal while status is ${goal.status}`);
       }
+      const completionPending =
+        goal.completionVerification?.status === 'pending' ||
+        goal.completionVerification?.status === 'pass';
       return {
         ...goal,
-        status: 'active',
+        status: completionPending ? 'verifying' : 'active',
         statusReason: undefined,
         updatedAt: new Date().toISOString(),
       };
     });
   }
 
-  async complete(): Promise<GoalSnapshot> {
+  async requestCompletion(): Promise<GoalSnapshot> {
     return this.updateExisting((goal) => {
-      if (!['active', 'paused', 'blocked'].includes(goal.status)) {
-        throw new Error(`Cannot complete goal while status is ${goal.status}`);
+      if (goal.status !== 'active' && goal.status !== 'verifying') {
+        throw new Error(
+          `Cannot request goal completion while status is ${goal.status}`
+        );
+      }
+      if (
+        goal.status === 'verifying' &&
+        (goal.completionVerification?.status === 'pending' ||
+          goal.completionVerification?.status === 'pass')
+      ) {
+        return goal;
+      }
+      const now = new Date().toISOString();
+      return {
+        ...goal,
+        status: 'verifying',
+        statusReason: 'awaiting independent completion verification',
+        completionVerification: {
+          attempt: (goal.completionVerification?.attempt ?? 0) + 1,
+          status: 'pending',
+          requestedAt: now,
+        },
+        updatedAt: now,
+      };
+    });
+  }
+
+  async recordCompletionVerification(
+    result: GoalCompletionVerificationResult
+  ): Promise<GoalSnapshot> {
+    const verifierSessionId = result.verifierSessionId?.trim();
+    if (!verifierSessionId) {
+      throw new Error('Goal verification requires a verifier Session identity');
+    }
+    if (!/^[a-f0-9]{64}$/.test(result.evidenceSha256 ?? '')) {
+      throw new Error('Goal verification requires a SHA-256 evidence digest');
+    }
+    return this.updateExisting((goal) => {
+      if (goal.status !== 'verifying' || !goal.completionVerification) {
+        throw new Error(
+          `Cannot record goal verification while status is ${goal.status}`
+        );
+      }
+      const now = new Date().toISOString();
+      return {
+        ...goal,
+        statusReason:
+          result.verdict === 'pass'
+            ? 'independent completion verification passed'
+            : `independent completion verification returned ${result.verdict}`,
+        completionVerification: {
+          ...goal.completionVerification,
+          status: result.verdict,
+          completedAt: now,
+          verifierSessionId,
+          ...(normalizeVerificationSummary(result.summary)
+            ? { summary: normalizeVerificationSummary(result.summary) }
+            : {}),
+          evidenceSha256: result.evidenceSha256,
+        },
+        updatedAt: now,
+      };
+    });
+  }
+
+  async invalidateCompletionVerification(reason: string): Promise<GoalSnapshot> {
+    return this.updateExisting((goal) => {
+      if (goal.status !== 'verifying' || !goal.completionVerification) {
+        return goal;
+      }
+      const normalizedReason = reason.trim() || 'goal completion evidence became stale';
+      return {
+        ...goal,
+        statusReason: normalizedReason,
+        completionVerification: {
+          attempt: goal.completionVerification.attempt,
+          status: 'pending',
+          requestedAt: goal.completionVerification.requestedAt,
+        },
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }
+
+  async finalizeVerifiedCompletion(): Promise<GoalSnapshot> {
+    return this.updateExisting((goal) => {
+      if (
+        goal.status !== 'verifying' ||
+        goal.completionVerification?.status !== 'pass' ||
+        !goal.completionVerification.verifierSessionId ||
+        !goal.completionVerification.evidenceSha256
+      ) {
+        throw new Error(
+          'Goal completion requires a persisted independent PASS verdict'
+        );
       }
       return {
         ...goal,
@@ -195,7 +321,7 @@ export class GoalStore {
 
   async block(reason: string): Promise<GoalSnapshot> {
     return this.updateExisting((goal) => {
-      if (goal.status !== 'active') {
+      if (goal.status !== 'active' && goal.status !== 'verifying') {
         throw new Error(`Cannot block goal while status is ${goal.status}`);
       }
       const normalizedReason = reason.trim();
@@ -204,6 +330,7 @@ export class GoalStore {
         ...goal,
         status: 'blocked',
         statusReason: normalizedReason,
+        completionVerification: undefined,
         updatedAt: new Date().toISOString(),
       };
     });
@@ -212,7 +339,9 @@ export class GoalStore {
   async recordProgress(progress: GoalProgress): Promise<GoalSnapshot | null> {
     return this.mutex.runExclusive(async () => {
       const goal = await this.readUnlocked();
-      if (!goal || goal.status !== 'active') return goal;
+      if (!goal || (goal.status !== 'active' && goal.status !== 'verifying')) {
+        return goal;
+      }
 
       const tokens = Math.max(0, Math.round(progress.tokens));
       const elapsedSeconds = Math.max(0, Math.round(progress.elapsedMs / 1000));
@@ -235,7 +364,7 @@ export class GoalStore {
 
   async beginContinuation(): Promise<GoalSnapshot> {
     return this.updateExisting((goal) => {
-      if (goal.status !== 'active') {
+      if (goal.status !== 'active' && goal.status !== 'verifying') {
         throw new Error(`Cannot continue goal while status is ${goal.status}`);
       }
       return {
@@ -249,7 +378,9 @@ export class GoalStore {
   async tryBeginContinuation(): Promise<GoalSnapshot | null> {
     return this.mutex.runExclusive(async () => {
       const goal = await this.readUnlocked();
-      if (!goal || goal.status !== 'active') return null;
+      if (!goal || (goal.status !== 'active' && goal.status !== 'verifying')) {
+        return null;
+      }
       const next: GoalSnapshot = {
         ...goal,
         continuationCount: goal.continuationCount + 1,

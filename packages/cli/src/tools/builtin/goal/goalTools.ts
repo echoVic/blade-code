@@ -118,10 +118,15 @@ export function createGoalTools(options: GoalToolOptions) {
       ),
     }),
     description: {
-      short: 'Mark the persisted goal complete or blocked',
-      long: 'Use complete only after the full objective and required verification are finished. Use blocked only when external intervention is required.',
+      short: 'Request verified goal completion or mark the goal blocked',
+      long:
+        'Use complete only after the full objective and required verification are ' +
+        'finished. Complete creates a host-verified candidate; only a fresh ' +
+        'independent PASS can finalize it. Use blocked only when external ' +
+        'intervention is required.',
       important: [
         'Do not mark complete because a single turn ended.',
+        'A completion request is not completion; continue if the host verifier reports gaps.',
         'Do not use blocked for difficult, slow, or uncertain work.',
       ],
     },
@@ -130,7 +135,7 @@ export function createGoalTools(options: GoalToolOptions) {
         const store = getStore(context, options);
         const goal =
           params.status === 'complete'
-            ? await store.complete()
+            ? await store.requestCompletion()
             : await store.block(params.reason ?? '');
         return {
           success: true,
@@ -141,7 +146,18 @@ export function createGoalTools(options: GoalToolOptions) {
                 ? null
                 : Math.max(0, goal.tokenBudget - goal.tokensUsed),
           },
-          metadata: { summary: formatGoalSummary(goal) },
+          metadata: {
+            summary: formatGoalSummary(goal),
+            goalStatus: goal.status,
+            ...(params.status === 'complete' && goal.completionVerification
+              ? {
+                  goalCompletionRequested: true,
+                  goalId: goal.goalId,
+                  goalObjective: goal.objective,
+                  goalCompletionAttempt: goal.completionVerification.attempt,
+                }
+              : {}),
+          },
         };
       } catch (error) {
         return failure(error);

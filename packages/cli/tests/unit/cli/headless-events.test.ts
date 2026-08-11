@@ -196,6 +196,28 @@ describe('headless event contract', () => {
     });
     expect(() => HeadlessJsonlEventSchema.parse(structured)).not.toThrow();
 
+    const goal = createHeadlessJsonlEvent('goal', {
+      state: 'updated',
+      goal_id: 'goal-1',
+      status: 'verifying',
+      verification_attempt: 2,
+      verification_status: 'partial',
+      verifier_session_id: 'verifier-2',
+      verification_evidence_sha256: 'e'.repeat(64),
+    });
+    expect(goal).toEqual({
+      event_version: 1,
+      type: 'goal',
+      state: 'updated',
+      goal_id: 'goal-1',
+      status: 'verifying',
+      verification_attempt: 2,
+      verification_status: 'partial',
+      verifier_session_id: 'verifier-2',
+      verification_evidence_sha256: 'e'.repeat(64),
+    });
+    expect(() => HeadlessJsonlEventSchema.parse(goal)).not.toThrow();
+
     const shellStarted = createHeadlessJsonlEvent('user_shell_started', {
       execution_id: 'shell-1',
       command: 'pwd',

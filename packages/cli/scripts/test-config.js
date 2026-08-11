@@ -29,9 +29,11 @@ export const testTypes = {
       'tests/integration/real-api/permission-mode-recovery-trajectory.test.ts',
       'tests/integration/real-api/acp-model-switch.test.ts',
       'tests/integration/real-api/blade-coding-task.test.ts',
+      'tests/integration/real-api/goal-mode-trajectory.test.ts',
     ],
     env: {
       REAL_API_TEST: '1',
+      REAL_API_RELEASE_MATRIX: '1',
     },
   },
   cli: {

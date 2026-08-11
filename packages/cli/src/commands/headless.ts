@@ -865,6 +865,26 @@ function createEventWriter(
         writeLine(io.stderr, formatTask(task));
       }
     },
+    goal(event: Extract<LoopEvent, { kind: 'goal_updated' }>) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('goal', {
+          state: event.goal ? 'updated' : 'cleared',
+          goal_id: event.goal?.goalId,
+          status: event.goal?.status,
+          verification_attempt: event.goal?.completionVerification?.attempt,
+          verification_status: event.goal?.completionVerification?.status,
+          verifier_session_id: event.goal?.completionVerification?.verifierSessionId,
+          verification_evidence_sha256:
+            event.goal?.completionVerification?.evidenceSha256,
+        });
+        return;
+      }
+      if (event.goal) {
+        writeLine(io.stderr, `[goal:${event.goal.status}] ${event.goal.objective}`);
+      } else {
+        writeLine(io.stderr, '[goal:cleared]');
+      }
+    },
     subagent(
       event: Extract<LoopEvent, { kind: 'subagent_spawned' | 'subagent_completed' }>
     ) {
@@ -1395,8 +1415,10 @@ export async function runHeadless(
 
           case 'steering_applied':
           case 'follow_up_started':
-          case 'goal_updated':
           case 'goal_continuation_started':
+            break;
+          case 'goal_updated':
+            eventWriter.goal(event);
             break;
 
           case 'subagent_spawned':

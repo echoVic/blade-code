@@ -19,6 +19,10 @@ import type { SessionLspResources } from '../../lsp/WorkspaceLspResources.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import { getCwd } from '../../utils/cwd.js';
 import { createSessionId } from '../../utils/sessionId.js';
+import {
+  GOAL_VERIFICATION_SUBAGENT_TYPE,
+  isVerificationAuditSubagent,
+} from '../../utils/shell/readOnlyAudit.js';
 import type { WorktreeSession } from '../../worktree/WorktreeManager.js';
 import { Agent } from '../Agent.js';
 import { recordVerificationEvidence } from '../loop/completionPolicy.js';
@@ -39,6 +43,10 @@ import {
   isAgentSessionOwnedBy,
   normalizeAgentSessionOwner,
 } from './AgentSessionStore.js';
+import {
+  GOAL_VERIFICATION_OUTPUT_SCHEMA,
+  goalVerificationVerdictFromOutput,
+} from './builtinGoalVerificationAgent.js';
 import {
   type SubagentIsolationMode,
   type SubagentWorktreeLease,
@@ -464,6 +472,9 @@ export class BackgroundAgentManager {
       const loopResult = await drainLoop(
         agent.chatStream(prompt, context, {
           signal,
+          ...(config.name === GOAL_VERIFICATION_SUBAGENT_TYPE
+            ? { outputSchema: GOAL_VERIFICATION_OUTPUT_SCHEMA }
+            : {}),
         }),
         async (event) => {
           if (event.kind === 'tool_result' && 'function' in event.toolCall) {
@@ -500,9 +511,13 @@ export class BackgroundAgentManager {
             agentId,
             verificationCommands: [...verificationCommands],
             verificationVerdict:
-              config.name === 'verification'
-                ? parseVerificationVerdict(loopResult.finalMessage)
-                : undefined,
+              config.name === GOAL_VERIFICATION_SUBAGENT_TYPE
+                ? goalVerificationVerdictFromOutput(
+                    loopResult.metadata?.structuredOutput
+                  )
+                : isVerificationAuditSubagent(config.name)
+                  ? parseVerificationVerdict(loopResult.finalMessage)
+                  : undefined,
             modifiedFiles: [...modifiedFiles],
             stats: {
               tokens: loopResult.metadata?.tokensUsed || 0,

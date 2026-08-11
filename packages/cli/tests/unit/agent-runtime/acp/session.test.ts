@@ -2563,6 +2563,47 @@ describe('AcpSession', () => {
     });
   });
 
+  describe('goal completion metadata', () => {
+    beforeEach(async () => {
+      await session.initialize();
+    });
+
+    it('returns only stable host-verified goal evidence in ACP _meta', async () => {
+      const agent = getMockAgent();
+      agent.setChatResult({
+        success: true,
+        finalMessage: 'Goal complete.',
+        metadata: {
+          turnsCount: 4,
+          toolCallsCount: 3,
+          duration: 20,
+          goalCompletionVerified: true,
+          goalVerificationVerdict: 'pass',
+          goalVerifierSessionId: 'verifier-session-opaque',
+          goalVerificationEvidenceSha256: 'a'.repeat(64),
+        },
+      });
+
+      const response = await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'Continue the goal' }],
+      });
+
+      expect(response).toEqual({
+        stopReason: 'end_turn',
+        _meta: {
+          goalCompletion: {
+            verified: true,
+            verdict: 'pass',
+            verifierSessionId: 'verifier-session-opaque',
+            evidenceSha256: 'a'.repeat(64),
+          },
+        },
+      });
+      expect(JSON.stringify(response)).not.toContain('Goal complete.');
+    });
+  });
+
   describe('权限管理', () => {
     beforeEach(async () => {
       await session.initialize();

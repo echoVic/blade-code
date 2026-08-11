@@ -240,7 +240,7 @@ describe('verification agent permission boundary', () => {
   });
 
   it('denies mutating Bash and write tools even when the parent is YOLO', () => {
-    for (const subagentType of ['verification', 'review']) {
+    for (const subagentType of ['verification', 'goal-verification', 'review']) {
       for (const params of [
         { command: 'rm -rf build' },
         { command: 'rm -rf build; bun test' },

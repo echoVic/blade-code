@@ -5,12 +5,19 @@ import yaml from 'yaml';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { WorkspaceTrustService } from '../../security/WorkspaceTrustService.js';
 import { getCwd } from '../../utils/cwd.js';
+import {
+  GOAL_VERIFICATION_SUBAGENT_TYPE,
+  VERIFICATION_SUBAGENT_TYPE,
+} from '../../utils/shell/readOnlyAudit.js';
 import { builtinAgents } from './builtinAgents.js';
 import type { SubagentConfig, SubagentFrontmatter } from './types.js';
 import { mapClaudeCodePermissionMode } from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
-const RESERVED_BUILTIN_SUBAGENTS = new Set(['verification']);
+const RESERVED_BUILTIN_SUBAGENTS = new Set([
+  VERIFICATION_SUBAGENT_TYPE,
+  GOAL_VERIFICATION_SUBAGENT_TYPE,
+]);
 
 /**
  * 配置来源类型（不包含动态的 plugin:xxx 格式）

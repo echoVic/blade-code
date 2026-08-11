@@ -19,6 +19,7 @@ import {
   GeneralSettingsSchema,
   type GeneralSettingsUpdate,
   GeneralSettingsUpdateSchema,
+  GoalSchema,
   type Message,
   MessageSchema,
   type ModelConfig,
@@ -49,6 +50,43 @@ import {
 } from '../../../../src/api/schemas.js';
 
 describe('API Schemas', () => {
+  describe('GoalSchema', () => {
+    it('preserves durable completion verification evidence', () => {
+      const goal = GoalSchema.parse({
+        version: 1,
+        sessionId: 'session-1',
+        goalId: 'goal-1',
+        objective: 'Ship the verified release.',
+        status: 'verifying',
+        tokensUsed: 120,
+        timeUsedSeconds: 4,
+        continuationCount: 2,
+        statusReason: 'independent completion verification returned partial',
+        completionVerification: {
+          attempt: 2,
+          status: 'partial',
+          requestedAt: '2026-08-11T00:00:00.000Z',
+          completedAt: '2026-08-11T00:00:03.000Z',
+          verifierSessionId: 'verifier-2',
+          summary: 'One requirement lacks evidence.',
+          evidenceSha256: 'b'.repeat(64),
+        },
+        createdAt: '2026-08-11T00:00:00.000Z',
+        updatedAt: '2026-08-11T00:00:03.000Z',
+      });
+
+      expect(goal).toMatchObject({
+        status: 'verifying',
+        completionVerification: {
+          attempt: 2,
+          status: 'partial',
+          verifierSessionId: 'verifier-2',
+          evidenceSha256: 'b'.repeat(64),
+        },
+      });
+    });
+  });
+
   describe('PermissionModeSchema', () => {
     it('应该验证有效的权限模式', () => {
       const validModes: PermissionMode[] = ['default', 'autoEdit', 'yolo', 'plan'];
