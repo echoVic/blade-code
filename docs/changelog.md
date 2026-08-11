@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.12] - 2026-08-11
+
+### 🔒 安全修复
+
+- 将 Web 测试运行时从 Vitest 3.2.4 升级到 3.2.7，修复
+  `GHSA-5xrq-8626-4rwp`（Vitest UI server 任意文件读取与执行）
+- 更新 `bun.lock` 以固定已修复的 Vitest 依赖图，恢复
+  `bun audit --audit-level=critical` 和 CI `Security Tests` 门禁
+
+### ✅ 测试相关
+
+- Web 全量测试 391/391 在 Vitest 3.2.7 下通过
+- critical 依赖审计通过，不再包含已修复的 Vitest 公告
+
 ## [0.10.11] - 2026-08-11
 
 ### ✨ 新功能
