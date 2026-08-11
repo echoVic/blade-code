@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.14] - 2026-08-12
+
 ### ✨ 新功能
 
 - 新增统一 Provider Retry Lifecycle：仅在首个真实 stream chunk 前对瞬态
