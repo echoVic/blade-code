@@ -13,21 +13,18 @@ export PATH="$(npm config get prefix)/bin:$PATH"
 ```
 
 **Q: 支持哪些 Node.js 版本？**  
-A: 最低 Node.js 20.0.0。使用 `nvm` 或 `n` 升级。
+A: 最低 Node.js 22.19.0。使用 `nvm` 或 `n` 升级。
 
 ## 配置与模型
 
 **Q: API Key / 模型怎么配置？**  
 A: 两种方式：
-1. 运行 `blade`，按向导选择 pi-ai Provider / 模型并配置凭证
+1. 运行 `blade`，按向导选择 Provider / 模型并配置凭证
 2. 手动编辑 `~/.blade/config.json`（或项目级 `.blade/config.json`），密钥可用 `${VAR}` 引用环境变量
 
 **Q: 支持哪些模型提供商？**  
-A: 支持以下提供商：
-- OpenAI-compatible（任何兼容 OpenAI API 的服务）
-- Anthropic（Claude 系列）
-- Google Gemini
-- Azure OpenAI
+A: Provider 和模型列表由内置目录动态提供，包括官方 Provider、云平台以及自定义
+OpenAI/Anthropic 兼容渠道。运行 `/model add` 可查看当前版本支持的完整列表。
 
 **Q: 如何配置多个模型？**  
 A: 在 `config.json` 的 `models` 数组中添加多个配置，通过 `/model` 命令切换。
@@ -44,7 +41,8 @@ A: 确保输入框聚焦；`/` 开头才会触发命令补全；`Shift+Tab` 仅�
 A: 调整权限模式：
 - `autoEdit`：自动批准文件编辑
 - `yolo`：自动批准所有操作
-- 或在确认弹窗中选择"会话内记住"，系统会把规则写入 `.blade/settings.local.json`
+- 在确认弹窗中选择 `Session`：仅当前 Session 内存生效
+- 明确选择 `Project`：持久化到 `.blade/settings.local.json`
 
 **Q: 会话如何恢复？**  
 A: 启动时加 `--resume`（无参数会弹出选择器）；或在 UI 输入 `/resume`。
@@ -55,16 +53,15 @@ A: 使用 `blade --continue` 或 `blade -c` 继续最近的会话。
 ## 权限模式
 
 **Q: 权限模式如何工作？**  
-A: 五种模式：
+A: 四种模式：
 - `default`：只读工具自动通过，写入和执行需确认
 - `autoEdit`：额外自动放行文件写入
 - `plan`：只读调研模式，拒绝所有修改
 - `yolo`：全部自动放行
-- `spec`：Spec 驱动开发模式，自动放行写入
 
 **Q: 如何快速切换权限模式？**  
 A: 
-- 快捷键：`Shift+Tab` 循环切换
+- 快捷键：`Shift+Tab` 在 `default`、`autoEdit`、`plan` 之间循环切换
 - 命令：`/permissions` 或 `/yolo`
 - 启动参数：`--permission-mode <mode>` 或 `--yolo`
 

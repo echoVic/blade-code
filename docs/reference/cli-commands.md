@@ -131,7 +131,7 @@ prose 作为成功结果。完整契约见
 
 ## 子命令
 
-### blade web（0.2.0 新增）
+### blade web
 
 启动 Web UI 服务器并自动打开浏览器。
 
@@ -162,7 +162,7 @@ blade web --hostname 0.0.0.0 --port 3000
 
 **安全提示**：设置 `BLADE_SERVER_PASSWORD` 环境变量可启用 Basic Auth 认证。
 
-### blade serve（0.2.0 新增）
+### blade serve
 
 启动无头 Web 服务器（不打开浏览器），适合远程访问或集成场景。
 

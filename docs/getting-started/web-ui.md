@@ -1,11 +1,10 @@
 # 🌐 Web UI
 
-> 0.2.0 版本新增功能
-
-Blade Code 现在支持 Web UI 模式，让你可以在浏览器中使用所有核心功能。
+Blade Code 提供与 CLI 共用 Session Runtime 的 Web UI，可在浏览器中派发任务、
+查看执行状态并管理会话。
 
 <div align="center">
-  <img src="../../assets/screenshots/web.png" alt="Blade Code Web UI" width="800" />
+  <img src="../assets/screenshots/web.png" alt="Blade Code Web UI" width="800" />
 </div>
 
 ## 启动 Web UI

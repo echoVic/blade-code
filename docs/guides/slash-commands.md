@@ -387,7 +387,7 @@ tasks 命令只读取或取消当前 Session 创建的 opaque MCP task；server 
 
 环境信息:
 - 工作目录: /path/to/project
-- Node.js: v20.10.0
+- Node.js: v22.19.0 或更高
 ```
 
 ### /version
@@ -401,10 +401,10 @@ tasks 命令只读取或取消当前 Session 创建的 opaque MCP task；server 
 输出示例：
 
 ```
-🗡️ Blade Code v0.1.0
+🗡️ Blade Code vX.Y.Z
 
 构建信息:
-- Node.js: v20.10.0
+- Node.js: v22.19.0 或更高
 - 平台: darwin
 - 架构: arm64
 

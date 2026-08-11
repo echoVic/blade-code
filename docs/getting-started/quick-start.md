@@ -2,8 +2,6 @@
 
 本指南帮助你在 5 分钟内开始使用 Blade。
 
-> **当前版本**: 0.2.0
-
 ## 安装
 
 ```bash
@@ -30,7 +28,7 @@ blade
 blade "帮我分析这个项目的架构"
 ```
 
-### Web UI 模式（0.2.0 新增）
+### Web UI 与服务器模式
 
 ```bash
 # 启动 Web UI 并自动打开浏览器
@@ -44,28 +42,9 @@ blade serve --port 3000 --hostname 0.0.0.0
 
 首次启动需配置模型，输入 `/model add` 启动配置向导：
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  📡 选择 Provider                           [搜索]      │
-│                                                         │
-│  热门 Provider                                          │
-│  ▶ Anthropic (🤖) - Claude 系列                         │
-│    OpenAI (⚡) - GPT 系列                               │
-│    DeepSeek (🌊) - DeepSeek R1 等                       │
-│    Google (✨) - Gemini 系列                            │
-│    Groq (🚀) - 超快推理                                 │
-│    OpenRouter (🔀) - 多模型聚合                         │
-│                                                         │
-│  更多 pi-ai Provider                                    │
-│    Azure, AWS Bedrock, Together AI, Fireworks...        │
-│                                                         │
-│  [↑↓] 选择  [/] 搜索  [Enter] 确认                      │
-└─────────────────────────────────────────────────────────┘
-```
-
 ### 3 步完成配置
 
-1. **选择 Provider** - 从 pi-ai catalog 中选择
+1. **选择 Provider** - 从内置 Provider Catalog 中选择
 2. **输入 API Key** - 向导会显示环境变量名和文档链接
 3. **选择模型** - 从该 Provider 的内置模型列表中选择
 
@@ -107,7 +86,7 @@ Blade: 好的，我来帮你创建一个带搜索功能的下拉选择器组件.
 |------|------|
 | `/help` | 显示帮助信息 |
 | `/model` | 切换/管理模型 |
-| `/model add` | 从 pi-ai catalog 添加模型 |
+| `/model add` | 从 Provider Catalog 添加模型 |
 | `/clear` | 清空对话历史 |
 | `/compact` | 压缩上下文 |
 | `/status` | 查看当前状态 |
@@ -163,11 +142,11 @@ Blade 会在执行敏感操作前请求确认：
 
 凭证存储在 `~/.blade/auth.json`，推荐通过 `/model add` 配置。
 
-更多 Provider 和模型可直接在 TUI 或 Web 的 pi-ai catalog 中选择。
+更多 Provider 和模型可直接在 TUI 或 Web 的 Provider Catalog 中选择。
 
 ## 下一步
 
-- [配置系统](../configuration/config-system.md) - pi-ai 模型与凭证配置
+- [配置系统](../configuration/config-system.md) - 模型与凭证配置
 - [权限控制](../configuration/permissions.md) - 权限规则配置
 - [@ 文件引用](../guides/at-file-mentions.md) - 高级文件引用
 - [Slash 命令](../guides/slash-commands.md) - 所有可用命令

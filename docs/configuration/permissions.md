@@ -14,7 +14,8 @@ Blade 提供完善的权限控制系统，确保 AI 操作的安全性和可控�
 
 ## 权限模式
 
-Blade 提供五种权限模式，可通过 `Shift+Tab` 循环切换（UI 中）或 CLI 参数指定：
+Blade 提供四种权限模式。TUI 中的 `Shift+Tab` 在 `default`、`autoEdit` 和
+`plan` 之间循环切换；`yolo` 必须通过显式命令、启动参数或设置启用。
 
 ### DEFAULT 模式（默认）
 
@@ -153,13 +154,18 @@ Tool(param1:value1, param2:value2)
 ├─────────────────────────────────────────┤
 │ Bash: npm run build                     │
 │                                         │
-│ [Y] 允许  [N] 拒绝  [A] 会话内记住       │
+│ [Once] [Session] [Project] [Deny]        │
 └─────────────────────────────────────────┘
 ```
 
-### 会话内记住
+### 会话授权
 
-选择"会话内记住"会把抽象后的规则写入 `.blade/settings.local.json`：
+选择 `Session` 只会把抽象后的规则保存在当前 Session Runtime 内存中。Session
+结束或 Runtime 释放后，该授权自动失效，不会写入项目文件。
+
+### 项目授权
+
+只有明确选择 `Project` 才会把抽象后的规则写入 `.blade/settings.local.json`：
 
 ```json
 {

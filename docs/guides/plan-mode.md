@@ -187,5 +187,4 @@ ExitPlanMode 由运行时按当前权限模式校验。它只允许在 Plan 模�
 ## 相关资源
 
 - [权限控制](../configuration/permissions.md) - 权限模式详解
-- [Spec 模式](spec-mode.md) - 结构化开发工作流
 - [Subagents](subagents.md) - Plan 子代理

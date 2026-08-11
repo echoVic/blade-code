@@ -1,7 +1,5 @@
 # 📦 安装指南
 
-> **当前版本**: 0.2.0
-
 ## 🚀 安装方式
 
 ### 1. 零安装试用
@@ -37,7 +35,7 @@ blade                    # 进入交互式界面
 blade "帮我分析代码"      # 带首条消息启动
 blade --print "你好"     # 打印模式
 
-# Web UI 模式（0.2.0 新增）
+# Web UI 与服务器模式
 blade web                # 启动 Web UI 并打开浏览器
 blade serve              # 启动无头服务器
 ```
@@ -57,11 +55,11 @@ npx blade "帮我分析代码"
 
 首次运行 `blade` 时输入 `/model add`，依次选择：
 
-1. pi-ai Provider
-2. pi-ai catalog 中的模型
+1. Provider
+2. Provider Catalog 中的模型
 3. Provider 凭证（尚未配置时）
 
-Provider、模型、默认 endpoint、context window 和价格均来自 pi-ai。
+Provider、模型、默认 endpoint、context window 和价格由内置目录动态提供。
 
 ### 手动配置示例
 
@@ -69,10 +67,10 @@ Provider、模型、默认 endpoint、context window 和价格均来自 pi-ai。
 
 ```json
 {
-  "currentModelId": "deepseek",
+  "currentModelId": "primary",
   "models": [
     {
-      "id": "qwen",
+      "id": "primary",
       "displayName": "DeepSeek Pro",
       "provider": "deepseek",
       "model": "deepseek-v4-pro"
@@ -94,16 +92,16 @@ API Key 由向导写入 `~/.blade/auth.json`，不会进入 `config.json`。
 ## ✅ 验证安装
 
 ```bash
-blade --version    # 查看版本（应显示 0.2.0）
+blade --version    # 查看当前安装版本
 blade --help       # 查看帮助
 blade doctor       # 环境检查
 blade --print "测试一下"  # 测试 API 连接
-blade web          # 测试 Web UI（0.2.0 新增）
+blade web          # 测试 Web UI
 ```
 
 ## 🔧 系统要求
 
-- **Node.js**: ≥ 20.0.0
+- **Node.js**: ≥ 22.19.0
 - **终端**: 支持 UTF-8 和彩色输出
 - **系统**: macOS / Linux / Windows 10+
 
@@ -126,7 +124,7 @@ export PATH=~/.npm-global/bin:$PATH
 
 ```bash
 # 使用 nvm
-nvm install 20 && nvm use 20
+nvm install 22.19 && nvm use 22.19
 
 # 或使用 n
 npm install -g n && n latest
@@ -142,12 +140,11 @@ npm install -g blade-code --registry=https://registry.npmmirror.com
 ### 配置/密钥问题
 
 ```bash
-# 检查配置文件
-cat ~/.blade/config.json
-cat .blade/config.json
+# 检查配置和运行环境
+blade doctor
 
-# 检查环境变量
-echo $QWEN_API_KEY
+# 查看不含凭据的模型配置
+cat ~/.blade/config.json
 ```
 
 ## 🔄 更新和卸载

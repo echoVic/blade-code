@@ -7,6 +7,20 @@ import type { DoctorOptions } from '../cli/types.js';
 import { ConfigManager } from '../config/index.js';
 import { getCwd } from '../utils/cwd.js';
 
+const MIN_NODE_VERSION = [22, 19, 0] as const;
+
+export function isSupportedNodeVersion(version: string): boolean {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(version);
+  if (!match) return false;
+  const current = match.slice(1).map(Number);
+  for (let index = 0; index < MIN_NODE_VERSION.length; index++) {
+    const currentPart = current[index] ?? 0;
+    const requiredPart = MIN_NODE_VERSION[index];
+    if (currentPart !== requiredPart) return currentPart > requiredPart;
+  }
+  return true;
+}
+
 export const doctorCommands: CommandModule<{}, DoctorOptions> = {
   command: 'doctor',
   describe: 'Check the health of your Blade installation',
@@ -59,11 +73,10 @@ export const doctorCommands: CommandModule<{}, DoctorOptions> = {
 
     // 检查 Node.js 版本
     const nodeVersion = process.version;
-    const majorVersion = parseInt(nodeVersion.slice(1).split('.')[0]);
-    if (majorVersion >= 18) {
+    if (isSupportedNodeVersion(nodeVersion)) {
       console.log(`[OK] Node.js version: ${nodeVersion}`);
     } else {
-      console.log(`[WARN] Node.js version: ${nodeVersion} (recommended: v18+)`);
+      console.log(`[WARN] Node.js version: ${nodeVersion} (required: >=22.19.0)`);
       issues++;
     }
 

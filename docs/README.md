@@ -1,32 +1,30 @@
 # Blade
 
-**Blade** 是一个强大的 AI 编程助手，支持 CLI 终端、Web UI 和 Headless 三种模式，帮助你高效完成编码任务。
+**Blade** 是一个面向真实工程任务的 AI 编程助手。CLI、Web、Headless 和 ACP
+共享同一套 Session Runtime、工具、权限与持久化语义。
 
-> **当前版本**: 0.8.0 | [更新日志](changelog.md)
+[查看更新日志](changelog.md)
 
 ## 核心特性
 
-### 🌐 三种运行模式
+### 🌐 多种运行入口
 
 - **CLI 模式**: 在终端中使用，支持 Markdown 渲染和语法高亮
 - **Web UI 模式**: 在浏览器中使用，完整的图形界面体验
+- **Headless 模式**: 为脚本、CI 和自动化提供稳定 JSONL 事件
+- **ACP 模式**: 接入支持 Agent Client Protocol 的编辑器和宿主
 
 ```bash
-blade           # CLI 模式
-blade web       # Web UI 模式
-blade serve     # 无头服务器模式
+blade                                      # CLI 模式
+blade web                                  # Web UI 模式
+blade serve                                # 无头 HTTP 服务器
+blade --headless --output-format jsonl "分析项目"  # Headless Agent
 ```
 
-### 📡 pi-ai Provider Catalog
+### 📡 Provider Catalog
 
-集成 [pi-ai](https://github.com/earendil-works/pi) catalog，统一管理 LLM Provider、模型元数据和凭证：
-
-| 分类 | Provider |
-|------|----------|
-| **热门** | Anthropic, OpenAI, DeepSeek, Google, Groq, OpenRouter |
-| **云服务** | Azure, AWS Bedrock, Google Vertex, Cloudflare |
-| **开源友好** | Together AI, Fireworks, Cerebras, Novita AI |
-| **本地部署** | Ollama, LM Studio |
+Provider、模型能力、上下文窗口和价格均从内置目录动态读取，不在文档中维护容易过期的
+静态模型表。官方 Provider、云平台和自定义兼容渠道使用同一配置流程。
 
 3 步配置向导：选择 Provider → 输入 API Key → 选择模型
 
@@ -34,7 +32,7 @@ blade serve     # 无头服务器模式
 
 - 敏感操作前请求确认
 - 支持 glob 模式的权限规则
-- 多级权限模式（default、autoEdit、plan、yolo、spec）
+- 四种权限模式（default、autoEdit、plan、yolo）
 
 ### 🔧 强大的工具集
 
@@ -65,7 +63,7 @@ blade
 # Web UI 模式
 blade web
 
-# 从 pi-ai catalog 添加模型
+# 从 Provider Catalog 添加模型
 # 在 Blade 中输入: /model add
 ```
 
@@ -78,7 +76,7 @@ blade web
 
 ### 配置
 
-- [配置系统](configuration/config-system.md) - pi-ai 模型与凭证配置
+- [配置系统](configuration/config-system.md) - 模型与凭证配置
 - [权限控制](configuration/permissions.md)
 - [Workspace Trust](guides/workspace-trust.md)
 - [主题配置](configuration/themes.md)
@@ -142,39 +140,8 @@ blade web
 
 ## 支持的 Provider
 
-Blade 通过 pi-ai catalog 提供内置 Provider 和模型目录：
-
-**热门 Provider**:
-- Anthropic (Claude)
-- OpenAI (GPT-4, o1)
-- DeepSeek (R1, V3)
-- Google (Gemini)
-- Groq (超快推理)
-- OpenRouter (多模型聚合)
-
-**云服务**:
-- Azure OpenAI
-- AWS Bedrock
-- Google Vertex AI
-- Cloudflare Workers AI
-
-**开源友好**:
-- Together AI
-- Fireworks AI
-- Cerebras
-- Novita AI
-- NVIDIA NIM
-
-**本地部署**:
-- Ollama
-- LM Studio
-
-**其他**:
-- Mistral AI
-- Cohere
-- Perplexity
-- xAI (Grok)
-- 更多...
+运行 `/model add` 可查看当前安装版本支持的 Provider 和模型。自定义 OpenAI 或
+Anthropic 兼容 endpoint 可配置为独立渠道，凭证与其他渠道隔离存储。
 
 ## 许可证
 

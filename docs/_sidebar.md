@@ -1,4 +1,4 @@
-<!-- docs/public/_sidebar.md -->
+<!-- docs/_sidebar.md -->
 
 * 快速开始
   * [安装指南](getting-started/installation.md)
@@ -8,6 +8,7 @@
 * 配置
   * [配置系统](configuration/config-system.md)
   * [权限控制](configuration/permissions.md)
+  * [Workspace Trust](guides/workspace-trust.md)
   * [主题配置](configuration/themes.md)
 
 * 使用指南
@@ -23,6 +24,7 @@
 * 参考
   * [CLI 命令](reference/cli-commands.md)
   * [工具列表](reference/tool-list.md)
+  * [工具并发模型](reference/tool-concurrency.md)
   * [Atomic ApplyPatch](reference/atomic-apply-patch.md)
   * [Native Read-Only Code Review](reference/native-code-review.md)
   * [Schema-Constrained Structured Output](reference/schema-constrained-output.md)
@@ -40,7 +42,9 @@
   * [TUI Terminal Input](reference/tui-terminal-input.md)
   * [Fresh Independent Verification](reference/fresh-independent-verification.md)
   * [Goal Completion Verification](reference/goal-completion-verification.md)
+  * [Workspace Agent 资源隔离](reference/workspace-agent-resources.md)
   * [Workspace Plugin 生命周期](reference/workspace-plugin-lifecycle.md)
+  * [Workspace 模型与 Provider 隔离](reference/workspace-model-resources.md)
   * [Workspace Runtime 环境隔离](reference/workspace-runtime-environment.md)
   * [Session-scoped LSP](reference/lsp-session-intelligence.md)
   * [MCP Elicitation](reference/mcp-elicitation.md)
