@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { SessionRef } from '@api/schemas';
-import { act } from 'react';
+import { act, StrictMode } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -125,6 +125,18 @@ describe('ChatView session event recovery', () => {
     expect(
       container.querySelector<HTMLButtonElement>('[data-testid="chat-input"]')?.disabled
     ).toBe(false);
+  });
+
+  it('keeps the store-owned event subscription across StrictMode effect replay', async () => {
+    await act(async () => {
+      root.render(
+        <StrictMode>
+          <ChatView />
+        </StrictMode>
+      );
+    });
+
+    expect(unsubscribeFromEvents).not.toHaveBeenCalled();
   });
 
   it('announces an in-progress reconnect without exposing duplicate retry actions', async () => {

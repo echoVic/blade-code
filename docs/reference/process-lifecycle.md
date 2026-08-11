@@ -74,6 +74,11 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
 - `SessionEventLog` 将 durable turn 事件按 seq 发布为 `committed.turn_*`。Web SSE
   断点续传可据此恢复 running/idle 状态；CLI/TUI、Web、ACP 与 Headless 共享相同
   JSONL 生命周期，不维护各自独立的终态。
+- Web Session SSE 由 Zustand Session Store 的导航事务持有，而不是由 `ChatView`
+  组件持有。`selectSession` 先等待 history 与新订阅同时 ready，再原子提交 Session
+  状态并替换旧连接；只有切换到临时会话、删除/归档当前 Session、取消或显式终止时
+  才关闭 active subscription。React StrictMode 的 effect replay、Suspense 或 view
+  remount 不得关闭 Store 已提交的连接。
 - user-turn rewind 不截断 transcript，而是追加 `session_rewound` marker。resume、
   catalog、fork、search 和 ContextManager 通过同一 projector 累积计算有效历史，
   被回退的原始事件保留用于审计但不会重新进入模型或 UI。

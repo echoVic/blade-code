@@ -95,7 +95,6 @@ export function ChatView() {
     (state) => state.reconnectSessionEvents
   );
   const clearError = useSessionStore((state) => state.clearError);
-  const unsubscribeFromEvents = useSessionStore((state) => state.unsubscribeFromEvents);
   const [recoveryDraft, setRecoveryDraft] = useState<RecoveryDraft | null>(null);
   const currentSession = currentSessionRef
     ? sessions.find(
@@ -145,12 +144,6 @@ export function ChatView() {
   const isRetryingTask = currentSessionRef
     ? retryingTaskKeys.includes(sessionRefKey(currentSessionRef))
     : false;
-
-  useEffect(() => {
-    return () => {
-      unsubscribeFromEvents();
-    };
-  }, [unsubscribeFromEvents]);
 
   useEffect(() => {
     setRecoveryDraft(null);
