@@ -3,7 +3,10 @@
  * 定义统一的聊天服务接口，支持多种 API 提供商
  */
 
-import type { ModelThinkingLevel } from '@earendil-works/pi-ai';
+import type {
+    ConstrainedSamplingConfig,
+    ModelThinkingLevel,
+} from '@earendil-works/pi-ai';
 
 /** OpenAI-compatible tool call (function variant only — custom tools not used) */
 export interface ToolCallFunction {
@@ -147,6 +150,13 @@ export interface ChatRequestOptions {
   temperature?: number;
 }
 
+export interface ChatToolDefinition {
+  name: string;
+  description: string;
+  parameters: unknown;
+  constrainedSampling?: false | ConstrainedSamplingConfig;
+}
+
 /**
  * 流式 tool_calls 的统一类型：
  * - OpenAI/Azure 流式 delta 期间的 tool call（id 等字段可能是可选的）
@@ -176,11 +186,7 @@ export interface IChatService {
    */
   chat(
     messages: Message[],
-    tools?: Array<{
-      name: string;
-      description: string;
-      parameters: unknown;
-    }>,
+    tools?: ChatToolDefinition[],
     signal?: AbortSignal,
     options?: ChatRequestOptions
   ): Promise<ChatResponse>;
@@ -190,11 +196,7 @@ export interface IChatService {
    */
   streamChat(
     messages: Message[],
-    tools?: Array<{
-      name: string;
-      description: string;
-      parameters: unknown;
-    }>,
+    tools?: ChatToolDefinition[],
     signal?: AbortSignal,
     options?: ChatRequestOptions
   ): AsyncGenerator<StreamChunk, void, unknown>;

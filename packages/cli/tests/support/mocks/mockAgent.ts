@@ -25,6 +25,7 @@ export class MockAgent implements Partial<Agent> {
   public chatResponses: Map<string, string> = new Map();
   public chatResult: LoopResult | null = null;
   public shouldThrow: Error | null = null;
+  public events: LoopEvent[] = [];
 
   // 模拟 destroy 方法
   async destroy(): Promise<void> {
@@ -41,6 +42,7 @@ export class MockAgent implements Partial<Agent> {
     this.calls.push({ message, context, options });
     // yield 至少一个事件以满足 lint 规则
     yield { kind: 'turn_start', turn: 1, maxTurns: 1 } as LoopEvent;
+    for (const event of this.events) yield event;
 
     // 检查是否应该抛出错误
     if (this.shouldThrow) {
@@ -119,6 +121,7 @@ export class MockAgent implements Partial<Agent> {
     this.chatResponses.clear();
     this.chatResult = null;
     this.shouldThrow = null;
+    this.events = [];
   }
 
   // 获取调用次数

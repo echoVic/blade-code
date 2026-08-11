@@ -35,6 +35,7 @@ import type { Message } from '../services/ChatServiceInterface.js';
 import { SessionInteractionService } from '../services/SessionInteractionService.js';
 import { SessionService } from '../services/SessionService.js';
 import { SessionTaskService } from '../services/SessionTaskService.js';
+import { STRUCTURED_OUTPUT_TOOL_NAME } from '../services/StructuredOutputService.js';
 import { getCurrentModel } from '../store/vanilla.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
 import type {
@@ -56,6 +57,7 @@ import {
   normalizeCliInput,
   readCliInput,
 } from './shared/commandInput.js';
+import { resolveCliOutputSchema } from './shared/outputSchema.js';
 import { resolveNonInteractiveSession } from './shared/sessionContext.js';
 
 /** Minimal writable stream contract used by headless output sinks. */
@@ -125,6 +127,8 @@ export const HeadlessOptionsSchema = Type.Object({
   forkSession: Type.Optional(Type.Boolean()),
   taskIsolation: Type.Optional(StringEnum(['local', 'worktree'])),
   outputFormat: Type.Optional(HeadlessOutputFormatSchema),
+  jsonSchema: Type.Optional(Type.String()),
+  outputSchema: Type.Optional(Type.String()),
 });
 
 export interface HeadlessOptions {
@@ -166,6 +170,10 @@ export interface HeadlessOptions {
   taskIsolation?: SessionTaskIsolation;
   /** Terminal output format. */
   outputFormat?: string;
+  /** Inline JSON Schema for the final response. */
+  jsonSchema?: string;
+  /** Path to a JSON Schema file for the final response. */
+  outputSchema?: string;
 }
 
 type ValidatedHeadlessOptions = Static<typeof HeadlessOptionsSchema>;
@@ -273,6 +281,16 @@ function headlessCommand(yargs: Argv) {
           alias: ['outputFormat'],
           choices: ['text', 'jsonl'],
           describe: 'Headless output format',
+          type: 'string',
+        })
+        .option('json-schema', {
+          alias: ['jsonSchema'],
+          describe: 'Inline JSON Schema for the structured final response',
+          type: 'string',
+        })
+        .option('output-schema', {
+          alias: ['outputSchema'],
+          describe: 'Path to a JSON Schema file for the structured final response',
           type: 'string',
         })
         .option('task-isolation', {
@@ -472,7 +490,11 @@ function getPhaseForTool(
   };
 }
 
-function createEventWriter(io: HeadlessIO, outputFormat: HeadlessOutputFormat) {
+function createEventWriter(
+  io: HeadlessIO,
+  outputFormat: HeadlessOutputFormat,
+  structuredOutputExpected = false
+) {
   const writeJsonl = <TType extends HeadlessJsonlEventType>(
     type: TType,
     payload: HeadlessJsonlEventPayload<TType>
@@ -486,6 +508,7 @@ function createEventWriter(io: HeadlessIO, outputFormat: HeadlessOutputFormat) {
         writeJsonl('content_delta', { delta });
         return;
       }
+      if (structuredOutputExpected) return;
       io.stdout.write(delta);
     },
     thinkingDelta(delta: string, openedThinking: boolean): boolean {
@@ -524,6 +547,18 @@ function createEventWriter(io: HeadlessIO, outputFormat: HeadlessOutputFormat) {
         return;
       }
       writeLine(io.stdout, content);
+    },
+    structuredOutput(
+      event: Extract<LoopEvent, { kind: 'structured_output' }>
+    ) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('structured_output', {
+          output: event.output,
+          schema_digest: event.schemaDigest,
+        });
+        return;
+      }
+      writeLine(io.stdout, JSON.stringify(event.output));
     },
     toolStart(
       toolName: string,
@@ -984,7 +1019,8 @@ export async function runHeadless(
   try {
     const validatedOptions = validateHeadlessOptions(options);
     outputFormat = resolveOutputFormat(validatedOptions.outputFormat);
-    eventWriter = createEventWriter(io, outputFormat);
+    const outputSchema = await resolveCliOutputSchema(validatedOptions);
+    eventWriter = createEventWriter(io, outputFormat, Boolean(outputSchema));
 
     await initializeCliPlugins();
 
@@ -1001,6 +1037,9 @@ export async function runHeadless(
       : undefined;
     if (userShellCommand !== undefined && validatedOptions.taskIsolation) {
       throw new Error('User shell commands cannot be combined with --task-isolation');
+    }
+    if (userShellCommand !== undefined && outputSchema) {
+      throw new Error('Output schemas cannot be combined with user shell commands');
     }
 
     if (
@@ -1041,6 +1080,7 @@ export async function runHeadless(
             isolation: validatedOptions.taskIsolation,
             permissionMode,
             ...(taskModelId ? { modelId: taskModelId } : {}),
+            ...(outputSchema ? { outputSchema } : {}),
           },
         })
       : undefined;
@@ -1186,6 +1226,7 @@ export async function runHeadless(
         stream: true,
         signal: abortControl.signal,
         maxTurns: validatedOptions.maxTurns,
+        outputSchema,
         ...(effectiveMaxTurns === -1
           ? {
               onTurnLimitReached: async (data: { turnsCount: number }) => {
@@ -1199,7 +1240,9 @@ export async function runHeadless(
         switch (event.kind) {
           // --- 流式增量 ---
           case 'content_delta':
-            streamState.markAssistantContent();
+            if (!outputSchema || outputFormat === 'jsonl') {
+              streamState.markAssistantContent();
+            }
             eventWriter.contentDelta(event.delta);
             break;
           case 'thinking_delta':
@@ -1222,6 +1265,7 @@ export async function runHeadless(
           case 'tool_start': {
             const toolCall = event.toolCall;
             if (!('function' in toolCall)) break;
+            if (toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
             // 任务列表工具由 task_update 处理，避免重复输出
             if (
               ['TaskCreate', 'TaskUpdate', 'TaskList'].includes(toolCall.function.name)
@@ -1271,6 +1315,7 @@ export async function runHeadless(
           case 'tool_progress': {
             const toolCall = event.toolCall;
             if (!('function' in toolCall)) break;
+            if (toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
             eventWriter.toolProgress(
               toolCall.function.name,
               event.update.message,
@@ -1282,6 +1327,7 @@ export async function runHeadless(
           case 'tool_result': {
             const toolCall = event.toolCall;
             if (!('function' in toolCall)) break;
+            if (toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
             let target: string | undefined;
             try {
               const params = JSON.parse(toolCall.function.arguments);
@@ -1320,6 +1366,9 @@ export async function runHeadless(
           // --- 业务事件 ---
           case 'task_update':
             eventWriter.taskUpdate(event.tasks);
+            break;
+          case 'structured_output':
+            eventWriter.structuredOutput(event);
             break;
           case 'mcp_catalog_changed':
             eventWriter.mcpCatalogChanged(event);

@@ -26,7 +26,13 @@ import type {
   UsageInfo,
 } from '../../services/ChatServiceInterface.js';
 import { SessionInteractionService } from '../../services/SessionInteractionService.js';
-import type { JsonValue } from '../../store/types.js';
+import {
+  createStructuredOutputContract,
+  MAX_STRUCTURED_OUTPUT_RETRIES,
+  restoreStructuredOutput,
+  STRUCTURED_OUTPUT_TOOL_NAME,
+} from '../../services/StructuredOutputService.js';
+import type { JsonObject, JsonValue } from '../../store/types.js';
 import { ToolErrorType } from '../../tools/types/index.js';
 import { isAbortError } from '../../utils/abort.js';
 import { getAbortReason } from '../../utils/abortReason.js';
@@ -42,6 +48,8 @@ import type {
   UserMessageContent,
 } from '../types.js';
 import { ConversationState } from './ConversationState.js';
+import { StreamingToolExecutor } from './StreamingToolExecutor.js';
+import { ToolProgressQueue } from './ToolProgressQueue.js';
 import {
   checkDelegationRequirement,
   checkIncompleteIntent,
@@ -85,8 +93,6 @@ import {
   VERIFICATION_SUBAGENT_TYPE,
   type VerificationVerdict,
 } from './independentVerification.js';
-import { StreamingToolExecutor } from './StreamingToolExecutor.js';
-import { ToolProgressQueue } from './ToolProgressQueue.js';
 import type { FunctionToolCallRef } from './toolDomainPolicy.js';
 import { applyToolDomainEffects } from './toolDomainPolicy.js';
 import type {
@@ -751,10 +757,19 @@ export async function* executeLoopGenerator(
     // 1. 获取可用工具定义
     const registry = deps.toolExecutor.getRegistry();
     const permissionMode = context.permissionMode as PermissionMode | undefined;
-    const resolveTools = () =>
-      deps.applySkillToolRestrictions(
+    const structuredOutputContract = options?.outputSchema
+      ? createStructuredOutputContract(options.outputSchema)
+      : undefined;
+    const resolveTools = () => {
+      const tools = deps.applySkillToolRestrictions(
         registry.getFunctionDeclarationsByMode(permissionMode)
       );
+      if (!structuredOutputContract) return tools;
+      return [
+        ...tools.filter((tool) => tool.name !== STRUCTURED_OUTPUT_TOOL_NAME),
+        structuredOutputContract.declaration,
+      ];
+    };
     const failureTracker = createToolFailureTracker();
     const staleDetector = createStaleLoopDetector();
 
@@ -770,6 +785,14 @@ export async function* executeLoopGenerator(
     // 1.6 注入任务分解与自主规划指令
     if (finalSystemPrompt) {
       finalSystemPrompt += PLANNING_DIRECTIVE;
+    }
+    if (structuredOutputContract) {
+      finalSystemPrompt = `${finalSystemPrompt ?? ''}\n\n# Structured Final Output
+This turn has a required JSON Schema final-output contract. Complete the user's
+work normally, including all required tool use and verification. Then call the
+reserved ${STRUCTURED_OUTPUT_TOOL_NAME} tool exactly once with the final object.
+Do not substitute JSON prose or a fenced code block for the tool call. The host
+validates the object and may return a bounded corrective error.`;
     }
 
     const isFreshConversation = context.messages.length === 0;
@@ -878,6 +901,14 @@ export async function* executeLoopGenerator(
     let independentVerificationRetryCount = 0;
     let independentVerificationTaskRequired = false;
     let independentVerificationExecutionPending = false;
+    let structuredOutputRetryCount = 0;
+    let restoredStructuredOutput = structuredOutputContract
+      ? restoreStructuredOutput(state.getHistory(), structuredOutputContract)
+      : undefined;
+    let structuredOutput: JsonObject | undefined =
+      restoredStructuredOutput?.output;
+    let structuredOutputAlreadyCompleted =
+      restoredStructuredOutput?.completed === true;
     const restoredIndependentVerification = restoreIndependentVerificationState(
       context.messages
     );
@@ -937,6 +968,32 @@ export async function* executeLoopGenerator(
       toolName: string,
       params: Record<string, unknown>
     ): import('../../tools/types/index.js').ToolResult | undefined => {
+      if (toolName === STRUCTURED_OUTPUT_TOOL_NAME) {
+        if (!structuredOutputContract) {
+          return {
+            success: false,
+            llmContent: 'No structured output contract is active for this turn.',
+            error: {
+              type: ToolErrorType.VALIDATION_ERROR,
+              message: 'Structured output contract is unavailable',
+            },
+            metadata: { summary: 'Rejected unavailable structured output' },
+          };
+        }
+        if (structuredOutput) {
+          return {
+            success: false,
+            llmContent:
+              'Structured output was already accepted. Do not submit it more than once.',
+            error: {
+              type: ToolErrorType.VALIDATION_ERROR,
+              message: 'Duplicate structured output submission',
+            },
+            metadata: { summary: 'Rejected duplicate structured output' },
+          };
+        }
+        return undefined;
+      }
       if (independentVerificationTaskRequired) {
         if (toolName !== 'Task') {
           return {
@@ -1003,6 +1060,50 @@ export async function* executeLoopGenerator(
       params: Record<string, unknown>,
       executionContext: import('../../tools/types/index.js').ExecutionContext
     ): Promise<import('../../tools/types/index.js').ToolResult> => {
+      if (toolName === STRUCTURED_OUTPUT_TOOL_NAME && structuredOutputContract) {
+        const validation = structuredOutputContract.validate(params);
+        if (!validation.success) {
+          structuredOutputRetryCount++;
+          const retriesRemaining = Math.max(
+            0,
+            MAX_STRUCTURED_OUTPUT_RETRIES - structuredOutputRetryCount + 1
+          );
+          const message =
+            `Structured output validation failed: ${validation.message}. ` +
+            (retriesRemaining > 0
+              ? `Correct the object and call ${STRUCTURED_OUTPUT_TOOL_NAME} again ` +
+                `(${retriesRemaining} corrective attempt${retriesRemaining === 1 ? '' : 's'} remaining).`
+              : 'The corrective retry budget is exhausted.');
+          return {
+            success: false,
+            llmContent: message,
+            error: {
+              type: ToolErrorType.VALIDATION_ERROR,
+              message,
+            },
+            metadata: {
+              summary: 'Structured output validation failed',
+              structuredOutputRetryExhausted: retriesRemaining === 0,
+            },
+          };
+        }
+        structuredOutput = validation.output;
+        structuredOutputAlreadyCompleted = false;
+        return {
+          success: true,
+          llmContent:
+            'Structured output accepted. Return no additional prose; finish the turn.',
+          metadata: {
+            summary: 'Structured output accepted',
+            structuredOutputAccepted: true,
+            structuredOutputSchemaDigest: structuredOutputContract.schemaDigest,
+            structuredOutput: {
+              output: validation.output,
+              schemaDigest: structuredOutputContract.schemaDigest,
+            },
+          },
+        };
+      }
       if (
         toolName === 'Task' &&
         independentVerificationExecutionPending &&
@@ -1162,11 +1263,20 @@ export async function* executeLoopGenerator(
 
         const queuedSteering = (await options?.turnSteering?.drain()) ?? [];
         if (queuedSteering.length > 0) {
+          structuredOutput = undefined;
+          structuredOutputAlreadyCompleted = false;
+          structuredOutputRetryCount = 0;
           yield {
             kind: 'steering_applied',
             ...(await applySteeringMessages(queuedSteering)),
             delivery: pendingTurnInputApplied ? 'current_turn' : 'next_turn',
           };
+          restoredStructuredOutput = structuredOutputContract
+            ? restoreStructuredOutput(state.getHistory(), structuredOutputContract)
+            : undefined;
+          structuredOutput = restoredStructuredOutput?.output;
+          structuredOutputAlreadyCompleted =
+            restoredStructuredOutput?.completed === true;
           pendingTurnInputApplied = true;
         } else if (!pendingTurnInputApplied) {
           return {
@@ -1176,6 +1286,32 @@ export async function* executeLoopGenerator(
               turnsCount: 0,
               toolCallsCount: 0,
               duration: Date.now() - startTime,
+            },
+          };
+        }
+
+        if (
+          structuredOutputContract &&
+          structuredOutput &&
+          structuredOutputAlreadyCompleted
+        ) {
+          const finalMessage = JSON.stringify(structuredOutput);
+          yield {
+            kind: 'structured_output',
+            output: structuredOutput,
+            schemaDigest: structuredOutputContract.schemaDigest,
+          };
+          return {
+            success: true,
+            finalMessage,
+            metadata: {
+              turnsCount,
+              toolCallsCount: allToolResults.length,
+              duration: Date.now() - startTime,
+              tokensUsed: totalTokens,
+              structuredOutput,
+              structuredOutputSchemaDigest:
+                structuredOutputContract.schemaDigest,
             },
           };
         }
@@ -1709,6 +1845,27 @@ export async function* executeLoopGenerator(
           );
           if (uuid) lastMessageUuid = uuid;
 
+          if (structuredOutputContract) {
+            return {
+              success: false,
+              error: {
+                type: 'structured_output_failed',
+                message:
+                  'The model reached its output budget before submitting a ' +
+                  'schema-valid structured response.',
+              },
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+                tokensUsed: totalTokens,
+                outputTruncated: true,
+                structuredOutputSchemaDigest:
+                  structuredOutputContract.schemaDigest,
+              },
+            };
+          }
+
           return {
             success: true,
             finalMessage: turnResult.content,
@@ -1731,6 +1888,9 @@ export async function* executeLoopGenerator(
         if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
           const queuedSteering = (await options?.turnSteering?.drain()) ?? [];
           if (queuedSteering.length > 0) {
+            structuredOutput = undefined;
+            structuredOutputAlreadyCompleted = false;
+            structuredOutputRetryCount = 0;
             state.appendAssistant({
               role: 'assistant',
               content: turnResult.content || '',
@@ -1751,6 +1911,61 @@ export async function* executeLoopGenerator(
               ...(await applySteeringMessages(queuedSteering)),
               delivery: 'current_turn',
             };
+            continue;
+          }
+
+          if (structuredOutputContract && !structuredOutput) {
+            state.appendAssistant({
+              role: 'assistant',
+              content: turnResult.content || '',
+              reasoningContent: turnResult.reasoningContent,
+            });
+            const retryAssistantUuid = await saveAssistantMessage(
+              deps,
+              context,
+              turnResult.content || '',
+              lastMessageUuid,
+              turnResult.reasoningContent
+            );
+            if (retryAssistantUuid) lastMessageUuid = retryAssistantUuid;
+
+            if (structuredOutputRetryCount >= MAX_STRUCTURED_OUTPUT_RETRIES) {
+              return {
+                success: false,
+                error: {
+                  type: 'structured_output_failed',
+                  message:
+                    `The model did not call ${STRUCTURED_OUTPUT_TOOL_NAME} with a ` +
+                    'schema-valid object before the corrective retry budget was exhausted.',
+                },
+                metadata: {
+                  turnsCount,
+                  toolCallsCount: allToolResults.length,
+                  duration: Date.now() - startTime,
+                  tokensUsed: totalTokens,
+                  structuredOutputSchemaDigest:
+                    structuredOutputContract.schemaDigest,
+                },
+              };
+            }
+
+            structuredOutputRetryCount++;
+            const retryMsg: Message = {
+              role: 'user',
+              content:
+                `The final response is invalid because this turn requires the ` +
+                `${STRUCTURED_OUTPUT_TOOL_NAME} tool. Complete any remaining work, then ` +
+                `call ${STRUCTURED_OUTPUT_TOOL_NAME} exactly once with an object matching ` +
+                'its schema. Do not return JSON as prose.',
+            };
+            state.appendControl('user', retryMsg);
+            const retryUserUuid = await saveUserMessage(
+              deps,
+              context,
+              retryMsg.content as string,
+              lastMessageUuid
+            );
+            if (retryUserUuid) lastMessageUuid = retryUserUuid;
             continue;
           }
 
@@ -2185,6 +2400,9 @@ export async function* executeLoopGenerator(
 
           const completionSteering = await options?.turnSteering?.drainOrSeal();
           if (completionSteering && completionSteering.messages.length > 0) {
+            structuredOutput = undefined;
+            structuredOutputAlreadyCompleted = false;
+            structuredOutputRetryCount = 0;
             state.appendAssistant({
               role: 'assistant',
               content: turnResult.content || '',
@@ -2208,26 +2426,52 @@ export async function* executeLoopGenerator(
             continue;
           }
 
+          const finalMessage = structuredOutput
+            ? JSON.stringify(structuredOutput)
+            : turnResult.content || '';
+          const structuredOutputMetadata =
+            structuredOutput && structuredOutputContract
+            ? {
+                structuredOutput: {
+                  output: structuredOutput,
+                  schemaDigest: structuredOutputContract.schemaDigest,
+                },
+                structuredOutputSchemaDigest: structuredOutputContract.schemaDigest,
+              }
+            : undefined;
+
           // 保存助手最终响应到 JSONL
           // 必须将最终 assistant 消息写入 state，确保 writeback 时 context.messages 包含它
           state.appendAssistant({
             role: 'assistant',
-            content: turnResult.content || '',
-            reasoningContent: turnResult.reasoningContent,
+            content: finalMessage,
+            ...(structuredOutputMetadata
+              ? { metadata: toJsonValue(structuredOutputMetadata) }
+              : {}),
           });
 
           const uuid = await saveAssistantMessage(
             deps,
             context,
-            turnResult.content || '',
+            finalMessage,
             lastMessageUuid,
-            turnResult.reasoningContent
+            structuredOutputMetadata
+              ? undefined
+              : turnResult.reasoningContent,
+            structuredOutputMetadata
           );
           if (uuid) lastMessageUuid = uuid;
+          if (structuredOutput && structuredOutputContract) {
+            yield {
+              kind: 'structured_output',
+              output: structuredOutput,
+              schemaDigest: structuredOutputContract.schemaDigest,
+            };
+          }
 
           return {
             success: true,
-            finalMessage: turnResult.content,
+            finalMessage,
             metadata: {
               turnsCount,
               toolCallsCount: allToolResults.length,
@@ -2239,6 +2483,13 @@ export async function* executeLoopGenerator(
                     allToolResults.length
                   : undefined,
               totalToolFailures: failureTracker.totalFailures || undefined,
+              ...(structuredOutput && structuredOutputContract
+                ? {
+                    structuredOutput,
+                    structuredOutputSchemaDigest:
+                      structuredOutputContract.schemaDigest,
+                  }
+                : {}),
             },
           };
         }
@@ -2679,6 +2930,9 @@ export async function* executeLoopGenerator(
               result
             );
             if (newlyModifiedFiles.length > 0) {
+              structuredOutput = undefined;
+              structuredOutputAlreadyCompleted = false;
+              structuredOutputRetryCount = 0;
               mutationRevision++;
               verificationRevision = -1;
               verificationVerdict = undefined;
@@ -2850,6 +3104,29 @@ export async function* executeLoopGenerator(
               })),
               triggerPaths: projectRules.triggerPaths,
               blockedWrite: result.metadata?.contextualProjectRulesRequired === true,
+            };
+          }
+
+          if (
+            toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME &&
+            result.metadata?.structuredOutputRetryExhausted === true
+          ) {
+            return {
+              success: false,
+              error: {
+                type: 'structured_output_failed',
+                message:
+                  result.error?.message ??
+                  'Structured output validation retry budget was exhausted.',
+              },
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+                tokensUsed: totalTokens,
+                structuredOutputSchemaDigest:
+                  structuredOutputContract?.schemaDigest,
+              },
             };
           }
 

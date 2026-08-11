@@ -1,9 +1,9 @@
-import path from 'node:path';
 import { Mutex } from 'async-mutex';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { LRUCache } from 'lru-cache';
 import { nanoid } from 'nanoid';
+import path from 'node:path';
 import { Agent } from '../../agent/Agent.js';
 import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
@@ -53,7 +53,7 @@ import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
-import { StringEnum, safeParseSchema, Type } from '../../schema/index.js';
+import { safeParseSchema, StringEnum, Type } from '../../schema/index.js';
 import type { ContentPart, Message } from '../../services/ChatServiceInterface.js';
 import {
   type CodeReviewRun,
@@ -76,6 +76,10 @@ import {
   SessionService,
 } from '../../services/SessionService.js';
 import { SessionTaskService } from '../../services/SessionTaskService.js';
+import {
+  createStructuredOutputContract,
+  STRUCTURED_OUTPUT_TOOL_NAME,
+} from '../../services/StructuredOutputService.js';
 import {
   renderUserShellCommandForDisplay,
   userShellCommandRecordFromMetadata,
@@ -918,6 +922,7 @@ export interface DispatchTaskInput {
   responseVerbosity?: ResponseVerbositySelection;
   communicationStyle?: CommunicationStyleSelection;
   attachments?: SessionTaskDispatch['attachments'];
+  outputSchema?: SessionTaskDispatch['outputSchema'];
   retriedFrom?: SessionTaskRetryRef;
 }
 
@@ -1171,6 +1176,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       preparedInputTurn?: PreparedInputTurn;
       goalContinuationOnly?: boolean;
       taskRuntime?: SessionRuntime;
+      outputSchema?: SessionTaskDispatch['outputSchema'];
     } = {}
   ): RunState => {
     const runId = nanoid(12);
@@ -1229,6 +1235,7 @@ export const createSessionRouteController = (): SessionRouteController => {
         pendingInputOnly: options.pendingInputOnly,
         preparedInputTurn: options.preparedInputTurn,
         goalContinuationOnly: options.goalContinuationOnly,
+        outputSchema: options.outputSchema,
         taskAdmission: run.taskAdmission,
         disposeRuntime,
       }
@@ -1241,6 +1248,16 @@ export const createSessionRouteController = (): SessionRouteController => {
   const dispatchTask = async (
     input: DispatchTaskInput
   ): Promise<DispatchTaskResult> => {
+    let outputSchema: SessionTaskDispatch['outputSchema'];
+    if (input.outputSchema) {
+      try {
+        outputSchema = createStructuredOutputContract(input.outputSchema).schema;
+      } catch (error) {
+        throw new BadRequestError(
+          error instanceof Error ? error.message : 'Invalid output schema'
+        );
+      }
+    }
     const sessionId = createSessionId('task', 12);
     const sourceProjectPath = normalizeProjectPathInput(input.sourceProjectPath);
     const requestedModelId = input.modelId?.trim();
@@ -1321,6 +1338,7 @@ export const createSessionRouteController = (): SessionRouteController => {
             })),
           }
         : {}),
+      ...(outputSchema ? { outputSchema } : {}),
     };
     let taskWorktree: SessionTaskWorktree | undefined;
     let session: SessionInfo | undefined;
@@ -1347,13 +1365,16 @@ export const createSessionRouteController = (): SessionRouteController => {
 
       const userContent = buildUserMessageContent(input.prompt, input.attachments);
       const runtime = await getOrCreateRuntime(session);
-      const preparation = await runtime.prepareInputTurn(userContent);
+      const preparation = outputSchema
+        ? await runtime.prepareInputTurn(userContent, { outputSchema })
+        : await runtime.prepareInputTurn(userContent);
       if (!preparation.accepted) {
         throw new ConflictError(`Task prompt was not accepted: ${preparation.reason}`);
       }
       const run = startRun(session, userContent, input.permissionMode, {
         preparedInputTurn: preparation,
         taskRuntime: runtime,
+        outputSchema,
       });
       await run.taskAdmissionUpdate;
       return {
@@ -1458,6 +1479,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       responseVerbosity: dispatch.responseVerbosity,
       communicationStyle: dispatch.communicationStyle,
       attachments: dispatch.attachments,
+      outputSchema: dispatch.outputSchema,
       retriedFrom: ref,
     });
   };
@@ -2938,7 +2960,18 @@ export const createSessionRouteController = (): SessionRouteController => {
       communicationStyle: rawRequestedCommunicationStyle,
       permissionMode: requestedMode,
       projectPath,
+      outputSchema: rawOutputSchema,
     } = parsed.data;
+    let outputSchema: SessionTaskDispatch['outputSchema'];
+    if (rawOutputSchema) {
+      try {
+        outputSchema = createStructuredOutputContract(rawOutputSchema).schema;
+      } catch (error) {
+        throw new BadRequestError(
+          error instanceof Error ? error.message : 'Invalid output schema'
+        );
+      }
+    }
     const requestedCommunicationStyle = rawRequestedCommunicationStyle as
       | CommunicationStyleSelection
       | undefined;
@@ -2968,6 +3001,11 @@ export const createSessionRouteController = (): SessionRouteController => {
     return getMessageSubmissionLock(sessionRef).runExclusive(async () => {
       const currentRun = getRun(session.currentRunId);
       if (isActiveRun(currentRun)) {
+        if (outputSchema) {
+          throw new ConflictError(
+            'Wait for the active turn to finish before setting an output schema'
+          );
+        }
         const runtime = await getOrCreateRuntime(session);
         if (requestedModelId && !runtime.getModelById(requestedModelId)) {
           throw new BadRequestError(`Model not found: ${requestedModelId}`);
@@ -3244,7 +3282,9 @@ export const createSessionRouteController = (): SessionRouteController => {
           throw error;
         }
       }
-      const preparation = await runtime.prepareInputTurn(userContent);
+      const preparation = outputSchema
+        ? await runtime.prepareInputTurn(userContent, { outputSchema })
+        : await runtime.prepareInputTurn(userContent);
       if (!preparation.accepted) {
         return c.json(
           { status: 'rejected', reason: preparation.reason },
@@ -3254,6 +3294,7 @@ export const createSessionRouteController = (): SessionRouteController => {
 
       const run = startRun(session, userContent, permissionMode, {
         preparedInputTurn: preparation,
+        outputSchema,
         ...(session.taskIsolation ? { taskRuntime: runtime } : {}),
       });
       await run.taskAdmissionUpdate;
@@ -3398,6 +3439,7 @@ async function executeRunAsync(
     pendingInputOnly?: boolean;
     preparedInputTurn?: PreparedInputTurn;
     goalContinuationOnly?: boolean;
+    outputSchema?: SessionTaskDispatch['outputSchema'];
     taskAdmission?: TaskAdmissionHandle;
     disposeRuntime?: (session: SessionInfo, runtime?: SessionRuntime) => Promise<void>;
   } = {}
@@ -3477,6 +3519,12 @@ async function executeRunAsync(
 
     runtime = await getOrCreateRuntime(session);
     const runtimeOwner = runtime;
+    const structuredOutputExpected = Boolean(
+      options.outputSchema ??
+        runtimeOwner
+          .getPendingSteeringMessages()
+          .find((pending) => pending.outputSchema)?.outputSchema
+    );
     agent = await Agent.createWithRuntime(runtimeOwner, {
       sessionId,
       ...(session.taskWorktree
@@ -3571,9 +3619,17 @@ async function executeRunAsync(
       switch (event.kind) {
         // --- 流式增量 ---
         case 'content_delta':
+          if (structuredOutputExpected) break;
           emit('message.delta', {
             messageId: ensureAssistantMessage(),
             delta: event.delta,
+          });
+          break;
+        case 'structured_output':
+          emit('structured.output', {
+            messageId: ensureAssistantMessage(),
+            output: event.output,
+            schemaDigest: event.schemaDigest,
           });
           break;
         case 'thinking_delta':
@@ -3586,6 +3642,7 @@ async function executeRunAsync(
         // --- 工具事件 ---
         case 'tool_start':
           if ('function' in event.toolCall) {
+            if (event.toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
             emit('tool.start', {
               messageId: ensureAssistantMessage(),
               toolName: event.toolCall.function.name,
@@ -3597,6 +3654,7 @@ async function executeRunAsync(
           break;
         case 'tool_result':
           if ('function' in event.toolCall) {
+            if (event.toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
             emit('tool.result', {
               messageId: ensureAssistantMessage(),
               toolName: event.toolCall.function.name,
@@ -3612,6 +3670,7 @@ async function executeRunAsync(
           break;
         case 'tool_progress':
           if ('function' in event.toolCall) {
+            if (event.toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
             emit('tool.progress', {
               messageId: ensureAssistantMessage(),
               toolName: event.toolCall.function.name,
@@ -3793,6 +3852,7 @@ async function executeRunAsync(
         pendingInputOnly: options.pendingInputOnly,
         preparedInputTurn: options.preparedInputTurn,
         goalContinuationOnly: options.goalContinuationOnly,
+        outputSchema: options.outputSchema,
         taskAdmission: options.taskAdmission,
       }),
       handleLoopEvent

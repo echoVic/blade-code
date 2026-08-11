@@ -13,6 +13,7 @@ import {
 } from '../../config/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { safeParseSchema } from '../../schema/index.js';
+import type { JsonObject } from '../../store/types.js';
 import { getCwd } from '../../utils/cwd.js';
 import {
   BadRequestError,
@@ -79,6 +80,7 @@ export const TaskRoutes = (controller: SessionRouteController) => {
           | CommunicationStyleSelection
           | undefined,
         attachments: parsed.data.attachments,
+        outputSchema: parsed.data.outputSchema as JsonObject | undefined,
       });
       return c.json(CreateTaskResponseSchema.parse(result), 202);
     } catch (error) {

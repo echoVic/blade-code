@@ -8,10 +8,12 @@ export interface ComposerDraftAttachment {
 export interface ComposerDraftSnapshot {
   content: string;
   attachments: ComposerDraftAttachment[];
+  outputSchema?: string;
 }
 
 const STORAGE_PREFIX = 'blade.composer.draft.';
 const drafts = new Map<string, ComposerDraftSnapshot>();
+const STORAGE_VERSION = 1;
 
 function storage(): Storage | null {
   return typeof sessionStorage === 'undefined' ? null : sessionStorage;
@@ -22,20 +24,39 @@ function storageKey(key: string): string {
 }
 
 export function readComposerDraft(key?: string): ComposerDraftSnapshot {
-  if (!key) return { content: '', attachments: [] };
+  if (!key) return { content: '', attachments: [], outputSchema: undefined };
   const memoryDraft = drafts.get(key);
   if (memoryDraft) {
     return {
       content: memoryDraft.content,
       attachments: [...memoryDraft.attachments],
+      outputSchema: memoryDraft.outputSchema,
     };
   }
 
   try {
-    const content = storage()?.getItem(storageKey(key)) ?? '';
-    return { content, attachments: [] };
+    const raw = storage()?.getItem(storageKey(key)) ?? '';
+    if (!raw) return { content: '', attachments: [], outputSchema: undefined };
+    try {
+      const value = JSON.parse(raw) as Record<string, unknown>;
+      if (
+        value.version === STORAGE_VERSION &&
+        typeof value.content === 'string' &&
+        (value.outputSchema === undefined ||
+          typeof value.outputSchema === 'string')
+      ) {
+        return {
+          content: value.content,
+          attachments: [],
+          outputSchema: value.outputSchema as string | undefined,
+        };
+      }
+    } catch {
+      // Legacy drafts stored the raw composer text.
+    }
+    return { content: raw, attachments: [], outputSchema: undefined };
   } catch {
-    return { content: '', attachments: [] };
+    return { content: '', attachments: [], outputSchema: undefined };
   }
 }
 
@@ -44,7 +65,9 @@ export function writeComposerDraft(
   draft: ComposerDraftSnapshot
 ): void {
   if (!key) return;
-  if (!draft.content && draft.attachments.length === 0) {
+  const current = drafts.get(key);
+  const outputSchema = draft.outputSchema ?? current?.outputSchema;
+  if (!draft.content && draft.attachments.length === 0 && !outputSchema) {
     clearComposerDraft(key);
     return;
   }
@@ -52,10 +75,18 @@ export function writeComposerDraft(
   drafts.set(key, {
     content: draft.content,
     attachments: [...draft.attachments],
+    outputSchema,
   });
   try {
-    if (draft.content) {
-      storage()?.setItem(storageKey(key), draft.content);
+    if (draft.content || outputSchema) {
+      storage()?.setItem(
+        storageKey(key),
+        JSON.stringify({
+          version: STORAGE_VERSION,
+          content: draft.content,
+          ...(outputSchema ? { outputSchema } : {}),
+        })
+      );
     } else {
       storage()?.removeItem(storageKey(key));
     }

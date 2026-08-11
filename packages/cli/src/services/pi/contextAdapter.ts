@@ -10,7 +10,11 @@ import type {
   TSchema,
 } from '@earendil-works/pi-ai';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
-import type { ContentPart, Message } from '../ChatServiceInterface.js';
+import type {
+  ChatToolDefinition,
+  ContentPart,
+  Message,
+} from '../ChatServiceInterface.js';
 
 const logger = createLogger(LogCategory.CHAT);
 const ZERO_USAGE = {
@@ -78,7 +82,7 @@ async function imageContent(
 export async function createPiContext(
   messages: Message[],
   model: Model<Api>,
-  tools?: Array<{ name: string; description: string; parameters: unknown }>,
+  tools?: ChatToolDefinition[],
   signal?: AbortSignal,
   requiredToolName?: string
 ): Promise<Context> {
@@ -160,6 +164,7 @@ export async function createPiContext(
       name: tool.name,
       description: tool.description,
       parameters: tool.parameters as TSchema,
+      constrainedSampling: tool.constrainedSampling,
     }));
   return {
     ...(systemPrompt ? { systemPrompt } : {}),

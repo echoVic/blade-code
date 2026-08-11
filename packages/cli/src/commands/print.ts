@@ -22,6 +22,7 @@ import {
   normalizeCliInput,
   readCliInput,
 } from './shared/commandInput.js';
+import { resolveCliOutputSchema } from './shared/outputSchema.js';
 import { resolveNonInteractiveSession } from './shared/sessionContext.js';
 
 interface PrintOptions {
@@ -29,6 +30,8 @@ interface PrintOptions {
   model?: string;
   print?: boolean;
   outputFormat?: string;
+  jsonSchema?: string;
+  outputSchema?: string;
   includePartialMessages?: boolean;
   inputFormat?: string;
   systemPrompt?: string;
@@ -83,6 +86,16 @@ function printCommand(yargs: Argv) {
           type: 'string',
           default: 'text',
         })
+        .option('json-schema', {
+          alias: ['jsonSchema'],
+          describe: 'Inline JSON Schema for the structured final response',
+          type: 'string',
+        })
+        .option('output-schema', {
+          alias: ['outputSchema'],
+          describe: 'Path to a JSON Schema file for the structured final response',
+          type: 'string',
+        })
         .option('model', {
           describe: 'Model for the current session',
           type: 'string',
@@ -133,9 +146,13 @@ export async function runPrint(
       return normalized.exitCode ?? 0;
     }
     const input = normalized.content;
+    const outputSchema = await resolveCliOutputSchema(options);
     const userShellCommand = input.trimStart().startsWith('!')
       ? input.trimStart().slice(1).trim()
       : undefined;
+    if (userShellCommand !== undefined && outputSchema) {
+      throw new Error('Output schemas cannot be combined with user shell commands');
+    }
 
     const { sessionId, messages, metadata } = await resolveNonInteractiveSession({
       sessionId: options.sessionId,
@@ -217,21 +234,36 @@ export async function runPrint(
     });
 
     const loopResult = await drainLoop(
-      agent.chatStream(input, {
-        messages: [...contextMessages],
-        userId: 'cli-user',
-        sessionId,
-        workspaceRoot,
-        permissionMode,
-      })
+      agent.chatStream(
+        input,
+        {
+          messages: [...contextMessages],
+          userId: 'cli-user',
+          sessionId,
+          workspaceRoot,
+          permissionMode,
+        },
+        { outputSchema }
+      )
     );
+    if (!loopResult.success) {
+      throw new Error(loopResult.error?.message ?? 'Agent execution failed');
+    }
     const response = loopResult.finalMessage || '';
+    const structuredOutput = loopResult.metadata?.structuredOutput;
 
     if (options.outputFormat === 'json') {
       io.stdout.write(
         `${JSON.stringify(
           {
             response,
+            ...(structuredOutput
+              ? {
+                  structured_output: structuredOutput,
+                  output_schema_digest:
+                    loopResult.metadata?.structuredOutputSchemaDigest,
+                }
+              : {}),
             input,
             model: options.model,
             timestamp: new Date().toISOString(),
@@ -241,7 +273,18 @@ export async function runPrint(
         )}\n`
       );
     } else if (options.outputFormat === 'stream-json') {
-      io.stdout.write(`${JSON.stringify({ type: 'response', content: response })}\n`);
+      io.stdout.write(
+        `${JSON.stringify(
+          structuredOutput
+            ? {
+                type: 'structured_output',
+                output: structuredOutput,
+                schema_digest:
+                  loopResult.metadata?.structuredOutputSchemaDigest,
+              }
+            : { type: 'response', content: response }
+        )}\n`
+      );
     } else {
       io.stdout.write(`${response}\n`);
     }

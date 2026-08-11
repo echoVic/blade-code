@@ -46,6 +46,12 @@ const ContentEventSchema = event({
   content: Type.String(),
 });
 
+const StructuredOutputEventSchema = event({
+  type: Type.Literal('structured_output'),
+  output: Type.Record(Type.String(), Type.Unknown()),
+  schema_digest: Type.String({ pattern: '^[a-f0-9]{64}$' }),
+});
+
 const ToolKindSchema = StringEnum(['readonly', 'write', 'execute']);
 
 const ToolStartEventSchema = event({
@@ -316,6 +322,7 @@ export const HeadlessJsonlEventSchema = Runtime(
     ThinkingEventSchema,
     StreamEndEventSchema,
     ContentEventSchema,
+    StructuredOutputEventSchema,
     ToolStartEventSchema,
     ToolProgressEventSchema,
     ToolResultEventSchema,

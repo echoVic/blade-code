@@ -44,6 +44,18 @@ export const globalOptions = {
       'Output format: --print supports text|json|stream-json; --headless supports text|jsonl',
     group: 'Output Options:',
   },
+  'json-schema': {
+    alias: ['jsonSchema'],
+    type: 'string',
+    describe: 'Inline JSON Schema for the turn-scoped structured final response',
+    group: 'Output Options:',
+  },
+  'output-schema': {
+    alias: ['outputSchema'],
+    type: 'string',
+    describe: 'Path to a JSON Schema file for the structured final response',
+    group: 'Output Options:',
+  },
   'include-partial-messages': {
     alias: ['includePartialMessages'],
     type: 'boolean',

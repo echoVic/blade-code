@@ -9,6 +9,7 @@ import type {
   ContentPart,
   Message,
 } from '../services/ChatServiceInterface.js';
+import type { JsonObject } from '../store/types.js';
 import type { ConfirmationHandler } from '../tools/types/ExecutionTypes.js';
 import type { ToolResult } from '../tools/types/ToolTypes.js';
 import type {
@@ -126,6 +127,8 @@ export interface LoopOptions {
   goalContinuationOnly?: boolean;
   /** Model-visible control input that must not remain in transcript history. */
   transientInput?: 'goal_continuation';
+  /** Turn-scoped JSON Schema for the canonical final response. */
+  outputSchema?: JsonObject;
   /** Optional surface-reserved admission used for accurate queued responses. */
   taskAdmission?: TaskAdmissionHandle;
   /** SessionRuntime-owned same-turn user steering source. */
@@ -170,7 +173,8 @@ export interface LoopResult {
       | 'chat_disabled'
       | 'delegation_protocol_failed'
       | 'verification_failed'
-      | 'worktree_protocol_failed';
+      | 'worktree_protocol_failed'
+      | 'structured_output_failed';
     message: string;
     details?: unknown;
   };
@@ -189,5 +193,7 @@ export interface LoopResult {
     planContent?: string; // Plan 模式批准后的方案内容
     outputTruncated?: boolean; // finishReason === 'length' 且 recovery 达上限时标记截断
     abortReason?: string; // abort 原因：'user-cancel' | 'interrupt'
+    structuredOutput?: JsonObject;
+    structuredOutputSchemaDigest?: string;
   };
 }

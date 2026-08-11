@@ -37,6 +37,7 @@ import {
   type Message,
 } from '../services/ChatServiceInterface.js';
 import { SessionService } from '../services/SessionService.js';
+import { createStructuredOutputContract } from '../services/StructuredOutputService.js';
 import { resolveModelConfig as resolvePiModelConfig } from '../services/pi/resolveModelConfig.js';
 import {
   ensureStoreInitialized,
@@ -533,6 +534,9 @@ export class Agent {
     if (requestedGoalContinuationOnly && (!context || !this.sessionRuntime)) {
       throw new Error('goalContinuationOnly requires a SessionRuntime and ChatContext');
     }
+    const requestedOutputSchema = options?.outputSchema
+      ? createStructuredOutputContract(options.outputSchema).schema
+      : undefined;
 
     let preparedInputTurn = options?.preparedInputTurn;
     if (
@@ -542,7 +546,11 @@ export class Agent {
       !requestedGoalContinuationOnly
     ) {
       if (!preparedInputTurn) {
-        const preparation = await this.sessionRuntime.prepareInputTurn(message);
+        const preparation = requestedOutputSchema
+          ? await this.sessionRuntime.prepareInputTurn(message, {
+              outputSchema: requestedOutputSchema,
+            })
+          : await this.sessionRuntime.prepareInputTurn(message);
         if (!preparation.accepted) {
           throw new Error(
             preparation.reason === 'queue_full'
@@ -586,6 +594,9 @@ export class Agent {
       let currentContext = context;
       let pendingInputOnly = requestedPendingInputOnly;
       let goalContinuation = requestedGoalContinuationOnly;
+      let currentOutputSchema = goalContinuation
+        ? undefined
+        : requestedOutputSchema;
       let currentGoal = initialGoal;
       let inputMessageId: string | undefined;
       let turnHandle: ActiveTurnHandle | undefined;
@@ -627,6 +638,24 @@ export class Agent {
             );
           }),
         }));
+      const pendingOutputSchema = () => {
+        const schemas = this.sessionRuntime!
+          .getPendingSteeringMessages()
+          .flatMap((pending) =>
+            pending.outputSchema ? [pending.outputSchema] : []
+          );
+        if (schemas.length <= 1) return schemas[0];
+        const first = JSON.stringify(schemas[0]);
+        if (schemas.some((schema) => JSON.stringify(schema) !== first)) {
+          throw new Error(
+            'Queued inputs contain conflicting structured output schemas'
+          );
+        }
+        return schemas[0];
+      };
+      if (pendingInputOnly && this.sessionRuntime) {
+        currentOutputSchema = pendingOutputSchema();
+      }
       const enhancePendingMessages = async (
         messages: SteeringMessage[]
       ): Promise<SteeringMessage[]> =>
@@ -664,6 +693,7 @@ export class Agent {
             preparedInputTurn: undefined,
             inputMessageId: pendingInputOnly ? undefined : inputMessageId,
             transientInput: goalContinuation ? 'goal_continuation' : undefined,
+            outputSchema: goalContinuation ? undefined : currentOutputSchema,
             signal: currentContext.signal,
             turnSteering:
               this.sessionRuntime && ownedHandle
@@ -774,6 +804,7 @@ export class Agent {
             currentGoal = null;
             currentMessage = '';
             inputMessageId = undefined;
+            currentOutputSchema = pendingOutputSchema();
             yield {
               kind: 'follow_up_started',
               queued: this.sessionRuntime.getPendingSteeringCount(),
@@ -800,6 +831,7 @@ export class Agent {
           goalContinuation = true;
           currentMessage = buildGoalContinuationPrompt(currentGoal);
           inputMessageId = undefined;
+          currentOutputSchema = undefined;
           yield {
             kind: 'goal_continuation_started',
             goal: currentGoal,

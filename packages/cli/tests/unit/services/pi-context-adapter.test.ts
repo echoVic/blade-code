@@ -63,3 +63,33 @@ describe('createPiContext image capabilities', () => {
     });
   });
 });
+
+describe('createPiContext constrained tools', () => {
+  it('preserves provider constrained-sampling preferences', async () => {
+    const context = await createPiContext([], model(['text']), [
+      {
+        name: 'StructuredOutput',
+        description: 'Submit output',
+        parameters: {
+          type: 'object',
+          properties: { value: { type: 'string' } },
+          required: ['value'],
+        },
+        constrainedSampling: {
+          type: 'json_schema',
+          strict: 'prefer',
+        },
+      },
+    ]);
+
+    expect(context.tools).toEqual([
+      expect.objectContaining({
+        name: 'StructuredOutput',
+        constrainedSampling: {
+          type: 'json_schema',
+          strict: 'prefer',
+        },
+      }),
+    ]);
+  });
+});

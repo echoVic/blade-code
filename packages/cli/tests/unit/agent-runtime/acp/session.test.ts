@@ -41,6 +41,7 @@ const runtimeState = vi.hoisted(() => ({
       queued: 1,
     })),
     getPendingSteeringCount: vi.fn(() => 0),
+    getPendingSteeringMessages: vi.fn(() => []),
     getCurrentModelId: vi.fn(() => 'model-1'),
     getReasoningConfiguration: vi.fn(() => ({
       selection: 'off' as const,
@@ -240,6 +241,7 @@ describe('AcpSession', () => {
     runtimeState.runtime.dispose.mockReset().mockResolvedValue(undefined);
     runtimeState.runtime.getCurrentModelId.mockReturnValue('model-1');
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+    runtimeState.runtime.getPendingSteeringMessages.mockReturnValue([]);
     runtimeState.runtime.listRewindCheckpoints.mockReset().mockResolvedValue([]);
     runtimeState.runtime.rewindSession.mockReset();
     runtimeState.runtime.listSubagents.mockReset().mockReturnValue([]);
@@ -2455,6 +2457,81 @@ describe('AcpSession', () => {
 
       const response = await session.prompt(secondPrompt);
       expect(response.stopReason).toBe('end_turn');
+    });
+  });
+
+  describe('structured output metadata', () => {
+    beforeEach(async () => {
+      await session.initialize();
+    });
+
+    it('accepts an ACP output schema and returns the validated payload in _meta', async () => {
+      const schema = {
+        type: 'object',
+        properties: { answer: { type: 'string' } },
+        required: ['answer'],
+        additionalProperties: false,
+      };
+      const output = { answer: 'done' };
+      const digest = 'a'.repeat(64);
+      const agent = getMockAgent();
+      agent.events = [
+        {
+          kind: 'structured_output',
+          output,
+          schemaDigest: digest,
+        },
+      ];
+      agent.setChatResult({
+        success: true,
+        finalMessage: JSON.stringify(output),
+        metadata: {
+          turnsCount: 2,
+          toolCallsCount: 1,
+          duration: 10,
+          structuredOutput: output,
+          structuredOutputSchemaDigest: digest,
+        },
+      });
+
+      const response = await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'Return an answer' }],
+        _meta: { outputSchema: schema },
+      });
+
+      expect(agent.getLastCall()?.options?.outputSchema).toEqual(schema);
+      expect(response).toEqual({
+        stopReason: 'end_turn',
+        _meta: {
+          structuredOutput: output,
+          outputSchemaDigest: digest,
+        },
+      });
+      expect(mockConnection.sessionUpdates.map((entry) => entry.update)).toContainEqual(
+        expect.objectContaining({
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: JSON.stringify(output) },
+        })
+      );
+    });
+
+    it('rejects schema changes while another ACP turn is active', async () => {
+      (session as unknown as { pendingPrompt: AbortController | null }).pendingPrompt =
+        new AbortController();
+
+      await expect(
+        session.prompt({
+          sessionId: 'test-session-id',
+          prompt: [{ type: 'text', text: 'steer' }],
+          _meta: {
+            outputSchema: {
+              type: 'object',
+              properties: {},
+            },
+          },
+        })
+      ).rejects.toThrow('active turn');
     });
   });
 

@@ -1,8 +1,8 @@
 import { Default, Runtime, type Static, StringEnum, Type } from '../schema/index.js';
 import {
-  MAX_INLINE_ATTACHMENT_BYTES,
-  MAX_INLINE_ATTACHMENT_COUNT,
-  MAX_USER_MESSAGE_TEXT_CHARS,
+    MAX_INLINE_ATTACHMENT_BYTES,
+    MAX_INLINE_ATTACHMENT_COUNT,
+    MAX_USER_MESSAGE_TEXT_CHARS,
 } from './attachmentLimits.js';
 
 export { parseSchema } from '../schema/index.js';
@@ -498,6 +498,8 @@ export const TaskAttachmentSchema = Type.Object({
   name: Type.Optional(Type.String()),
 });
 
+export const OutputSchemaSchema = Type.Record(Type.String(), Type.Unknown());
+
 export const CreateTaskRequestSchema = Runtime(
   Type.Object({
     prompt: Type.String({
@@ -517,6 +519,7 @@ export const CreateTaskRequestSchema = Runtime(
     attachments: Type.Optional(
       Type.Array(TaskAttachmentSchema, { maxItems: MAX_INLINE_ATTACHMENT_COUNT })
     ),
+    outputSchema: Type.Optional(OutputSchemaSchema),
   })
 );
 export type CreateTaskRequest = Static<typeof CreateTaskRequestSchema>;
@@ -556,6 +559,7 @@ export const SendMessageRequestSchema = Runtime(
     attachments: Type.Optional(
       Type.Array(TaskAttachmentSchema, { maxItems: MAX_INLINE_ATTACHMENT_COUNT })
     ),
+    outputSchema: Type.Optional(OutputSchemaSchema),
   })
 );
 export type SendMessageRequest = Static<typeof SendMessageRequestSchema>;

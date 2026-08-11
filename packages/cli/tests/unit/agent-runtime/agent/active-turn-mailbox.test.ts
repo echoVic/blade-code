@@ -234,6 +234,31 @@ describe('ActiveTurnMailbox', () => {
     ]);
   });
 
+  it('persists a validated turn-scoped output schema with direct input', async () => {
+    const outputSchema = {
+      type: 'object',
+      properties: { answer: { type: 'string' } },
+      required: ['answer'],
+      additionalProperties: false,
+    };
+    const first = await createMailbox('schema-direct-input');
+    const prepared = await first.prepareInputTurn('return an answer', {
+      outputSchema,
+    });
+    if (!prepared.accepted) throw new Error('Expected input preparation to succeed');
+    await first.finishTurn(prepared.handle);
+
+    const recovered = await createMailbox('schema-direct-input');
+    const retryTurn = await recovered.beginPendingTurn();
+    await expect(recovered.drain(retryTurn!)).resolves.toEqual([
+      expect.objectContaining({
+        content: 'return an answer',
+        outputSchema,
+        recovered: true,
+      }),
+    ]);
+  });
+
   it('persists accepted guidance with owner-only permissions', async () => {
     const mailbox = await createMailbox('permission-session');
     await mailbox.enqueue('private guidance', { allowBeforeTurn: true });

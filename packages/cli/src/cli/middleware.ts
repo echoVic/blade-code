@@ -123,6 +123,14 @@ function validateSessionOptions(argv: Record<string, unknown>): void {
  * 输出格式验证中间件
  */
 export const validateOutput: MiddlewareFunction = (argv) => {
+  if (argv.jsonSchema && argv.outputSchema) {
+    throw new Error('--json-schema cannot be combined with --output-schema');
+  }
+  if ((argv.jsonSchema || argv.outputSchema) && !argv.print && !argv.headless) {
+    throw new Error(
+      '--json-schema and --output-schema can only be used with --print or --headless'
+    );
+  }
   // 验证输出格式组合
   if (
     argv.outputFormat &&

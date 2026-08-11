@@ -2,26 +2,26 @@ import type { Api, Model, MutableModels } from '@earendil-works/pi-ai';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { abortableSleep, combineAbortSignals } from '../utils/abort.js';
 import type {
-  ChatCompletionMessageToolCall,
-  ChatConfig,
-  ChatRequestOptions,
-  ChatResponse,
-  IChatService,
-  Message,
-  StreamChunk,
-  UsageInfo,
+    ChatCompletionMessageToolCall,
+    ChatConfig,
+    ChatRequestOptions,
+    ChatResponse,
+    ChatToolDefinition,
+    IChatService,
+    Message,
+    StreamChunk,
+    UsageInfo,
 } from './ChatServiceInterface.js';
 import { createPiContext } from './pi/contextAdapter.js';
 import {
-  filterOrphanToolMessages,
-  hasNonThinkingToolHistory,
+    filterOrphanToolMessages,
+    hasNonThinkingToolHistory,
 } from './pi/messageHistory.js';
 import { createFallbackModel, createPiRuntime } from './pi/modelRuntime.js';
 import { buildPiOptions, isFallbackablePiError } from './pi/requestOptions.js';
 import { DEFAULT_STREAM_IDLE_TIMEOUT_MS, streamPiModel } from './pi/streamAdapter.js';
 
 const logger = createLogger(LogCategory.CHAT);
-type ToolDefinition = { name: string; description: string; parameters: unknown };
 
 function hasImageContent(message: Message | undefined): boolean {
   return Boolean(
@@ -55,7 +55,7 @@ export class PiAIChatService implements IChatService {
 
   async chat(
     messages: Message[],
-    tools?: ToolDefinition[],
+    tools?: ChatToolDefinition[],
     signal?: AbortSignal,
     requestOptions?: ChatRequestOptions
   ): Promise<ChatResponse> {
@@ -93,7 +93,7 @@ export class PiAIChatService implements IChatService {
 
   async *streamChat(
     messages: Message[],
-    tools?: ToolDefinition[],
+    tools?: ChatToolDefinition[],
     signal?: AbortSignal,
     requestOptions?: ChatRequestOptions
   ): AsyncGenerator<StreamChunk, void, unknown> {

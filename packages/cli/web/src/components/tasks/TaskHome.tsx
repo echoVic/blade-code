@@ -205,11 +205,15 @@ export function TaskHome() {
       responseVerbosity?: ResponseVerbosity;
       communicationStyle?: CommunicationStyle;
       attachments: ComposerImageAttachment[];
+      outputSchema?: Record<string, unknown>;
     }) => {
       const trimmed = payload.content.trim();
       if (trimmed === '/review' || trimmed.startsWith('/review ')) {
         if (payload.attachments.length > 0) {
           throw new Error(t('taskHome.review.attachmentsUnsupported'));
+        }
+        if (payload.outputSchema) {
+          throw new Error(t('taskHome.review.outputSchemaUnsupported'));
         }
         const parts = trimmed.split(/\s+/);
         const kind = parts[1] || 'uncommitted';
@@ -246,6 +250,7 @@ export function TaskHome() {
         serviceTier: payload.serviceTier,
         responseVerbosity: payload.responseVerbosity,
         communicationStyle: payload.communicationStyle,
+        ...(payload.outputSchema ? { outputSchema: payload.outputSchema } : {}),
         attachments: payload.attachments.map((attachment) => ({
           type: 'image' as const,
           content: attachment.dataUrl,

@@ -41,6 +41,7 @@ import type {
 } from '@api/schemas';
 import {
   AlertCircle,
+  Braces,
   Check,
   ChevronDown,
   ClipboardList,
@@ -73,6 +74,7 @@ interface ChatInputProps {
     responseVerbosity?: ResponseVerbosity;
     communicationStyle?: CommunicationStyle;
     attachments: ComposerImageAttachment[];
+    outputSchema?: Record<string, unknown>;
   }) => boolean | void | Promise<boolean | void>;
   onAbort?: () => void | Promise<unknown>;
   disabled?: boolean;
@@ -163,6 +165,12 @@ export function ChatInput({
   );
   const inputRef = useRef(input);
   const attachmentsRef = useRef(attachments);
+  const [outputSchemaText, setOutputSchemaText] = useState(
+    initialDraft.current.outputSchema ?? ''
+  );
+  const outputSchemaRef = useRef(outputSchemaText);
+  const [outputSchemaOpen, setOutputSchemaOpen] = useState(false);
+  const [outputSchemaError, setOutputSchemaError] = useState<string | null>(null);
   const [cursorPosition, setCursorPosition] = useState<number | undefined>(undefined);
   const [modelOpen, setModelOpen] = useState(false);
   const [effortOpen, setEffortOpen] = useState(false);
@@ -312,6 +320,7 @@ export function ChatInput({
       setEffortOpen(false);
       setServiceTierOpen(false);
       setResponseVerbosityOpen(false);
+      setOutputSchemaOpen(false);
     }
   }, [isStreaming]);
 
@@ -376,6 +385,7 @@ export function ChatInput({
       writeComposerDraft(draftKey, {
         content: inputRef.current,
         attachments: attachmentsRef.current,
+        outputSchema: outputSchemaRef.current,
       });
     };
   }, [draftKey]);
@@ -405,6 +415,25 @@ export function ChatInput({
     ) {
       return;
     }
+    let outputSchema: Record<string, unknown> | undefined;
+    if (outputSchemaText.trim()) {
+      if (isShellMode) {
+        setOutputSchemaError(t('chat.input.outputSchema.shellUnsupported'));
+        setOutputSchemaOpen(true);
+        return;
+      }
+      try {
+        const parsed = JSON.parse(outputSchemaText) as unknown;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('schema root must be an object');
+        }
+        outputSchema = parsed as Record<string, unknown>;
+      } catch {
+        setOutputSchemaError(t('chat.input.outputSchema.invalid'));
+        setOutputSchemaOpen(true);
+        return;
+      }
+    }
     if (input.trim()) {
       inputHistory.addToHistory(input);
     }
@@ -420,13 +449,17 @@ export function ChatInput({
         responseVerbosity: effectiveResponseVerbosity,
         communicationStyle: effectiveCommunicationStyle,
         attachments,
+        ...(outputSchema ? { outputSchema } : {}),
       });
       if (accepted === false) return;
       clearComposerDraft(submittedDraftKey);
       inputRef.current = '';
       attachmentsRef.current = [];
+      outputSchemaRef.current = '';
       setInput('');
       setAttachments([]);
+      setOutputSchemaText('');
+      setOutputSchemaError(null);
       setAttachmentError(null);
       setAttachmentNotice(null);
       attachmentCapabilityErrorRef.current = null;
@@ -442,6 +475,7 @@ export function ChatInput({
     attachmentsIncompatible,
     draftKey,
     input,
+    isShellMode,
     disabled,
     effectiveModelId,
     effectiveReasoningEffort,
@@ -450,7 +484,9 @@ export function ChatInput({
     effectiveServiceTier,
     effectiveSubmitDisabled,
     onSend,
+    outputSchemaText,
     inputHistory,
+    t,
   ]);
 
   const removeAttachment = useCallback(
@@ -1312,6 +1348,125 @@ export function ChatInput({
                   </PopoverContent>
                 </Popover>
               )}
+
+              <Popover
+                open={outputSchemaOpen}
+                onOpenChange={(open) => {
+                  if (!isStreaming && !isSubmitting) {
+                    setOutputSchemaOpen(open);
+                  }
+                }}
+              >
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    disabled={isStreaming || isSubmitting}
+                    aria-label={t('chat.input.outputSchema.change')}
+                    title={
+                      isStreaming
+                        ? t('chat.input.outputSchema.locked')
+                        : t('chat.input.outputSchema.change')
+                    }
+                    className={`flex h-7 items-center gap-1 rounded px-1.5 font-mono text-[10.5px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))] disabled:cursor-not-allowed disabled:opacity-55 ${
+                      outputSchemaText.trim()
+                        ? 'bg-[hsl(var(--deck-accent-soft))] text-[hsl(var(--deck-accent))]'
+                        : 'text-[#6B7280] hover:bg-[#E5E7EB] hover:text-[#111827] dark:text-zinc-500 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-200'
+                    }`}
+                  >
+                    <Braces className="h-3.5 w-3.5" />
+                    {outputSchemaText.trim() && 'JSON'}
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-[min(440px,calc(100vw-24px))] border border-[#E5E7EB] bg-white p-0 dark:border-zinc-700 dark:bg-zinc-900"
+                  align="start"
+                >
+                  <div className="border-b border-[#E5E7EB] px-3 py-2.5 dark:border-zinc-800">
+                    <div className="font-mono text-[11px] font-semibold text-[#111827] dark:text-zinc-100">
+                      {t('chat.input.outputSchema.title')}
+                    </div>
+                    <div className="mt-0.5 text-[10.5px] leading-4 text-[#6B7280] dark:text-zinc-500">
+                      {t('chat.input.outputSchema.description')}
+                    </div>
+                  </div>
+                  <div className="p-3">
+                    <Textarea
+                      value={outputSchemaText}
+                      onChange={(event) => {
+                        const next = event.target.value;
+                        outputSchemaRef.current = next;
+                        setOutputSchemaText(next);
+                        setOutputSchemaError(null);
+                        writeComposerDraft(draftKey, {
+                          content: inputRef.current,
+                          attachments: attachmentsRef.current,
+                          outputSchema: next,
+                        });
+                      }}
+                      spellCheck={false}
+                      aria-label={t('chat.input.outputSchema.editor')}
+                      aria-invalid={Boolean(outputSchemaError)}
+                      placeholder={t('chat.input.outputSchema.placeholder')}
+                      className="min-h-[180px] resize-y border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-canvas))] font-mono text-[11px] leading-5 focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))]"
+                    />
+                    {outputSchemaError && (
+                      <div
+                        role="alert"
+                        className="mt-2 flex items-center gap-1.5 text-[10.5px] text-red-600 dark:text-red-400"
+                      >
+                        <AlertCircle className="h-3.5 w-3.5" />
+                        {outputSchemaError}
+                      </div>
+                    )}
+                    <div className="mt-2.5 flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const example = JSON.stringify(
+                            {
+                              type: 'object',
+                              properties: {
+                                summary: { type: 'string' },
+                              },
+                              required: ['summary'],
+                              additionalProperties: false,
+                            },
+                            null,
+                            2
+                          );
+                          outputSchemaRef.current = example;
+                          setOutputSchemaText(example);
+                          setOutputSchemaError(null);
+                          writeComposerDraft(draftKey, {
+                            content: inputRef.current,
+                            attachments: attachmentsRef.current,
+                            outputSchema: example,
+                          });
+                        }}
+                        className="rounded px-2 py-1 font-mono text-[10.5px] text-[hsl(var(--deck-accent))] hover:bg-[hsl(var(--deck-accent-soft))]"
+                      >
+                        {t('chat.input.outputSchema.example')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          outputSchemaRef.current = '';
+                          setOutputSchemaText('');
+                          setOutputSchemaError(null);
+                          writeComposerDraft(draftKey, {
+                            content: inputRef.current,
+                            attachments: attachmentsRef.current,
+                            outputSchema: '',
+                          });
+                        }}
+                        className="rounded px-2 py-1 font-mono text-[10.5px] text-[#6B7280] hover:bg-[#F3F4F6] dark:text-zinc-400 dark:hover:bg-zinc-800"
+                      >
+                        {t('chat.input.outputSchema.clear')}
+                      </button>
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
 
               <Popover open={modeOpen} onOpenChange={setModeOpen}>
                 <PopoverTrigger asChild>

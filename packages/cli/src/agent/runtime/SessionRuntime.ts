@@ -100,7 +100,7 @@ import {
   type UserShellCommandRecord,
   type UserShellExecutor,
 } from '../../services/UserShellCommandService.js';
-import type { JsonValue } from '../../store/types.js';
+import type { JsonObject, JsonValue } from '../../store/types.js';
 import { ensureStoreInitialized, getConfig } from '../../store/vanilla.js';
 import { FileAccessTracker } from '../../tools/builtin/file/FileAccessTracker.js';
 import { recoverWorkspacePatchTransactions } from '../../tools/builtin/file/PatchTransactionCoordinator.js';
@@ -1157,13 +1157,16 @@ export class SessionRuntime {
     return this.getActiveTurnMailbox().beginTurn();
   }
 
-  async prepareInputTurn(content: UserMessageContent): Promise<InputTurnPreparation> {
-    return this.getActiveTurnMailbox().prepareInputTurn(content);
+  async prepareInputTurn(
+    content: UserMessageContent,
+    options?: { outputSchema?: JsonObject }
+  ): Promise<InputTurnPreparation> {
+    return this.getActiveTurnMailbox().prepareInputTurn(content, options);
   }
 
   async enqueueSteering(
     content: UserMessageContent,
-    options?: { allowBeforeTurn?: boolean }
+    options?: { allowBeforeTurn?: boolean; outputSchema?: JsonObject }
   ): Promise<SteeringEnqueueResult> {
     return this.getActiveTurnMailbox().enqueue(content, options);
   }

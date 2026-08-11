@@ -56,6 +56,10 @@ import {
   SessionService,
 } from '../services/SessionService.js';
 import {
+  createStructuredOutputContract,
+  STRUCTURED_OUTPUT_TOOL_NAME,
+} from '../services/StructuredOutputService.js';
+import {
   renderUserShellCommandForDisplay,
   type UserShellCommandRecord,
   userShellCommandRecordFromMetadata,
@@ -862,10 +866,31 @@ export class AcpSession {
     const resolvedPrompt = this.resolvePrompt(params.prompt);
     const message = resolvedPrompt.content;
     const messageText = resolvedPrompt.displayText;
+    const rawOutputSchema =
+      params._meta?.outputSchema ??
+      (internalOptions.pendingInputOnly
+        ? this.runtime.getPendingSteeringMessages().find(
+            (pending) => pending.outputSchema
+          )?.outputSchema
+        : undefined);
+    let outputSchema: ReturnType<
+      typeof createStructuredOutputContract
+    >['schema'] | undefined;
+    if (rawOutputSchema !== undefined) {
+      outputSchema = createStructuredOutputContract(rawOutputSchema).schema;
+    }
     if (messageText.trimStart().startsWith('!')) {
+      if (outputSchema) {
+        throw new Error('Output schemas cannot be combined with user shell commands');
+      }
       return this.handleUserShellCommand(messageText);
     }
     if (this.pendingPrompt) {
+      if (outputSchema) {
+        throw new Error(
+          'Wait for the active turn to finish before setting an output schema'
+        );
+      }
       if (/^\/goal(?:\s|$)/i.test(messageText.trim())) {
         return this.handleSlashCommand(messageText, this.pendingPrompt.signal);
       }
@@ -899,6 +924,9 @@ export class AcpSession {
 
       // 2. 检查是否是 slash command
       if (isSlashCommand(messageText)) {
+        if (outputSchema) {
+          throw new Error('Output schemas cannot be combined with slash commands');
+        }
         // 重要：使用 await 确保 finally 块在 handleSlashCommand 完成后才执行
         // 否则 finally 会在返回 Promise 后立即执行，导致 pendingPrompt 被提前清空
         return await this.handleSlashCommand(messageText, abortController.signal);
@@ -933,15 +961,17 @@ export class AcpSession {
 
       // 4. 调用 Agent chatStream（Phase 4: 事件驱动消费）
       // stream_end 不外发给 ACP 客户端（保持内部语义）
-      await drainLoop(
+      const loopResult = await drainLoop(
         this.agent.chatStream(message, context, {
           pendingInputOnly: internalOptions.pendingInputOnly,
           goalContinuationOnly: internalOptions.goalContinuationOnly,
+          outputSchema,
         }),
         async (event: LoopEvent) => {
           switch (event.kind) {
             // --- 流式内容（delta 是唯一内容信号） ---
             case 'content_delta':
+              if (outputSchema) break;
               this.sendUpdate({
                 sessionUpdate: 'agent_message_chunk',
                 content: { type: 'text', text: event.delta },
@@ -958,6 +988,7 @@ export class AcpSession {
             case 'tool_start': {
               const toolCall = event.toolCall;
               const toolName = toolCall.function.name;
+              if (toolName === STRUCTURED_OUTPUT_TOOL_NAME) break;
               const acpKind = this.mapToolKind(event.toolKind);
               let title = `Executing ${toolName}`;
               if (toolName === 'Task' && 'function' in toolCall) {
@@ -986,6 +1017,7 @@ export class AcpSession {
             }
             case 'tool_progress': {
               const toolCall = event.toolCall;
+              if (toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
               this.sendUpdate({
                 sessionUpdate: 'tool_call_update',
                 toolCallId: toolCall.id,
@@ -1004,6 +1036,7 @@ export class AcpSession {
             }
             case 'tool_result': {
               const toolCall = event.toolCall;
+              if (toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
               const result = event.result;
               const content: ToolCallContent[] = [];
 
@@ -1079,6 +1112,15 @@ export class AcpSession {
               });
               break;
             }
+            case 'structured_output':
+              this.sendUpdate({
+                sessionUpdate: 'agent_message_chunk',
+                content: {
+                  type: 'text',
+                  text: JSON.stringify(event.output),
+                },
+              });
+              break;
             case 'mcp_catalog_changed':
               this.sendUpdate({
                 sessionUpdate: 'agent_message_chunk',
@@ -1220,6 +1262,9 @@ export class AcpSession {
           }
         }
       );
+      if (!loopResult.success) {
+        throw new Error(loopResult.error?.message ?? 'Agent execution failed');
+      }
 
       // 5. 使用 chatContext.messages 作为完整历史（Phase 4: 不再手工构造）
       this.messages = [...context.messages];
@@ -1229,7 +1274,18 @@ export class AcpSession {
         return { stopReason: 'cancelled' };
       }
 
-      return { stopReason: 'end_turn' };
+      return {
+        stopReason: 'end_turn',
+        ...(loopResult.metadata?.structuredOutput
+          ? {
+              _meta: {
+                structuredOutput: loopResult.metadata.structuredOutput,
+                outputSchemaDigest:
+                  loopResult.metadata.structuredOutputSchemaDigest,
+              },
+            }
+          : {}),
+      };
     } catch (error) {
       // 检查是否是取消操作
       if (

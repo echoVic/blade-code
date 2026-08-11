@@ -160,6 +160,38 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
       get().session.actions.addMessage(message);
     },
 
+    replaceLastAssistantMessage: (content: string) => {
+      set((state) => {
+        const index = state.session.messages.findLastIndex(
+          (message) => message.role === 'assistant'
+        );
+        if (index < 0) {
+          return {
+            session: {
+              ...state.session,
+              messages: [
+                ...state.session.messages,
+                {
+                  id: `assistant-${Date.now()}-${Math.random()}`,
+                  role: 'assistant' as const,
+                  content,
+                  timestamp: Date.now(),
+                },
+              ],
+            },
+          };
+        }
+        return {
+          session: {
+            ...state.session,
+            messages: state.session.messages.map((message, messageIndex) =>
+              messageIndex === index ? { ...message, content } : message
+            ),
+          },
+        };
+      });
+    },
+
     /**
      * 添加助手消息并同时清空 thinking 内容（原子操作）
      * 用于流式接收完成后，避免两次 state 更新导致的闪烁

@@ -210,6 +210,43 @@ const handleMessageComplete: EventHandler = (props, get) => {
   }
 };
 
+const handleStructuredOutput: EventHandler = (props, get) => {
+  const { currentSessionId, messages, updateMessage } = get();
+  if (props.sessionId !== currentSessionId) return;
+  const messageId = props.messageId as string;
+  const message = messages.find((candidate) => candidate.id === messageId);
+  const output = props.output;
+  if (
+    !message ||
+    !output ||
+    typeof output !== 'object' ||
+    Array.isArray(output)
+  ) {
+    return;
+  }
+  const content = JSON.stringify(output, null, 2);
+  updateMessage(messageId, {
+    content,
+    metadata: {
+      ...message.metadata,
+      structuredOutput: {
+        output,
+        schemaDigest: props.schemaDigest,
+      },
+    },
+    agentContent: message.agentContent
+      ? {
+          ...message.agentContent,
+          textBefore: '',
+          textAfter: '',
+          timeline: message.agentContent.timeline?.filter(
+            (block) => block.type !== 'text'
+          ),
+        }
+      : undefined,
+  });
+};
+
 const handleThinkingDelta: EventHandler = (props, get, set) => {
   const { currentSessionId, appendThinking } = get();
   if (props.sessionId !== currentSessionId) return;
@@ -1948,6 +1985,7 @@ const eventHandlers: Record<string, EventHandler> = {
   'message.created': handleMessageCreated,
   'message.delta': handleMessageDelta,
   'message.complete': handleMessageComplete,
+  'structured.output': handleStructuredOutput,
   'thinking.delta': handleThinkingDelta,
   'thinking.completed': handleThinkingCompleted,
   'tool.start': handleToolStart,

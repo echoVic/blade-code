@@ -95,6 +95,7 @@ export interface SendMessagePayload {
   responseVerbosity?: ResponseVerbosity;
   communicationStyle?: CommunicationStyle;
   attachments?: ImageAttachmentInput[];
+  outputSchema?: Record<string, unknown>;
 }
 
 export interface TaskDispatchInput {
@@ -109,6 +110,7 @@ export interface TaskDispatchInput {
   isolation: SessionTaskIsolation;
   permissionMode?: PermissionMode;
   attachments?: ImageAttachmentInput[];
+  outputSchema?: Record<string, unknown>;
 }
 
 export interface CodeReviewDispatchInput {

@@ -282,6 +282,7 @@ export interface SessionTaskDispatch {
   communicationStyleDigest?: string;
   projectInstructionsDigest?: string;
   attachments?: SessionTaskAttachment[];
+  outputSchema?: JsonObject;
 }
 
 export interface SessionTaskRetryRef {
@@ -381,6 +382,8 @@ export interface MessagePersistenceMetadata {
   triggerPaths?: string[];
   userShellCommand?: JsonValue;
   codeReview?: JsonValue;
+  structuredOutput?: JsonValue;
+  structuredOutputSchemaDigest?: string;
 }
 
 export interface InboxAcknowledgementInfo {

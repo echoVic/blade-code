@@ -1,3 +1,4 @@
+import type { ConstrainedSamplingConfig } from '@earendil-works/pi-ai';
 import type { JSONSchema7 } from 'json-schema';
 import type { PermissionMode } from '../../config/types.js';
 import type { ExecutionContext } from './ExecutionTypes.js';
@@ -408,6 +409,7 @@ export interface FunctionDeclaration {
   name: string;
   description: string;
   parameters: JSONSchema7;
+  constrainedSampling?: false | ConstrainedSamplingConfig;
 }
 
 /**

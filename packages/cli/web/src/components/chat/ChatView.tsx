@@ -1,18 +1,3 @@
-import type {
-  CommunicationStyle,
-  ReasoningEffort,
-  ResponseVerbosity,
-  ServiceTier,
-} from '@api/schemas';
-import {
-  AlertCircle,
-  Loader2,
-  Pencil,
-  RefreshCw,
-  RotateCcw,
-  WifiOff,
-} from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
 import { TaskArtifactBar } from '@/components/tasks/TaskArtifactBar';
 import { useT } from '@/i18n';
 import { focusBladeComposer } from '@/lib/composerFocus';
@@ -20,6 +5,21 @@ import { taskFailureIsRetryable, taskFailureMessageKey } from '@/lib/taskFailure
 import { useAppStore } from '@/store/AppStore';
 import { useSessionStore } from '@/store/session';
 import { sameSessionRef, sessionRefKey } from '@/store/session/sessionIdentity';
+import type {
+    CommunicationStyle,
+    ReasoningEffort,
+    ResponseVerbosity,
+    ServiceTier,
+} from '@api/schemas';
+import {
+    AlertCircle,
+    Loader2,
+    Pencil,
+    RefreshCw,
+    RotateCcw,
+    WifiOff,
+} from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ComposerImageAttachment } from './ChatInput';
 import { ChatInput } from './ChatInput';
 import { ChatList } from './ChatList';
@@ -164,6 +164,7 @@ export function ChatView() {
     responseVerbosity?: ResponseVerbosity;
     communicationStyle?: CommunicationStyle;
     attachments: ComposerImageAttachment[];
+    outputSchema?: Record<string, unknown>;
   }) => {
     return sendMessage({
       content: payload.content,
@@ -172,6 +173,7 @@ export function ChatView() {
       serviceTier: payload.serviceTier,
       responseVerbosity: payload.responseVerbosity,
       communicationStyle: payload.communicationStyle,
+      ...(payload.outputSchema ? { outputSchema: payload.outputSchema } : {}),
       attachments: payload.attachments.map((attachment) => ({
         type: 'image' as const,
         content: attachment.dataUrl,

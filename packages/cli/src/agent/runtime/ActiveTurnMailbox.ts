@@ -4,6 +4,7 @@ import {
   MAX_INLINE_ATTACHMENT_BYTES,
   MAX_USER_MESSAGE_TEXT_CHARS,
 } from '../../api/attachmentLimits.js';
+import type { JsonObject } from '../../store/types.js';
 import type { UserMessageContent } from '../types.js';
 import {
   DurableSteeringInbox,
@@ -57,6 +58,10 @@ export function getSteeringContentSize(content: UserMessageContent): number {
   }, 0);
 }
 
+function getOutputSchemaSize(outputSchema: JsonObject | undefined): number {
+  return outputSchema ? Buffer.byteLength(JSON.stringify(outputSchema)) : 0;
+}
+
 export class ActiveTurnMailbox {
   private readonly transitionMutex = new Mutex();
   private activeTurn?: ActiveTurnState;
@@ -87,6 +92,7 @@ export class ActiveTurnMailbox {
       allowBeforeTurn?: boolean;
       messageId?: string;
       persisted?: boolean;
+      outputSchema?: JsonObject;
     } = {}
   ): Promise<SteeringEnqueueResult> {
     return this.transitionMutex.runExclusive(async () => {
@@ -106,7 +112,10 @@ export class ActiveTurnMailbox {
     });
   }
 
-  async prepareInputTurn(content: UserMessageContent): Promise<InputTurnPreparation> {
+  async prepareInputTurn(
+    content: UserMessageContent,
+    options: { outputSchema?: JsonObject } = {}
+  ): Promise<InputTurnPreparation> {
     return this.transitionMutex.runExclusive(async () => {
       if (this.activeTurn) {
         return {
@@ -117,7 +126,7 @@ export class ActiveTurnMailbox {
       }
 
       const hadPendingInput = this.inbox.count() > 0;
-      const queued = await this.enqueueDurably(content, 'next_turn');
+      const queued = await this.enqueueDurably(content, 'next_turn', options);
       if (!queued.accepted || !queued.messageId) {
         return {
           accepted: false,
@@ -250,13 +259,18 @@ export class ActiveTurnMailbox {
   private async enqueueDurably(
     content: UserMessageContent,
     delivery: 'current_turn' | 'next_turn',
-    options: { messageId?: string; persisted?: boolean } = {}
+    options: {
+      messageId?: string;
+      persisted?: boolean;
+      outputSchema?: JsonObject;
+    } = {}
   ): Promise<SteeringEnqueueResult> {
     const message = {
       id: options.messageId ?? nanoid(12),
       content,
       queuedAt: Date.now(),
       ...(options.persisted ? { persisted: true } : {}),
+      ...(options.outputSchema ? { outputSchema: options.outputSchema } : {}),
     };
     const accepted = await this.inbox.enqueue(message, (pending) => {
       if (pending.length >= MAX_PENDING_STEERS) return false;
@@ -264,7 +278,17 @@ export class ActiveTurnMailbox {
         (total, candidate) => total + getSteeringContentSize(candidate.content),
         0
       );
-      return pendingSize + getSteeringContentSize(content) <= MAX_PENDING_STEER_CHARS;
+      const pendingSchemaSize = pending.reduce(
+        (total, candidate) => total + getOutputSchemaSize(candidate.outputSchema),
+        0
+      );
+      return (
+        pendingSize +
+          pendingSchemaSize +
+          getSteeringContentSize(content) +
+          getOutputSchemaSize(options.outputSchema) <=
+        MAX_PENDING_STEER_CHARS
+      );
     });
     if (!accepted) {
       return {

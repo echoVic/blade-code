@@ -8,6 +8,8 @@ import {
   getSessionInboxFilePath,
 } from '../../context/storage/pathUtils.js';
 import type { SessionEvent } from '../../context/types.js';
+import { createStructuredOutputContract } from '../../services/StructuredOutputService.js';
+import type { JsonObject } from '../../store/types.js';
 import type { UserMessageContent } from '../types.js';
 
 const INBOX_VERSION = 1;
@@ -19,6 +21,7 @@ export interface DurableSteeringMessage {
   queuedAt: number;
   recovered: boolean;
   persisted?: boolean;
+  outputSchema?: JsonObject;
 }
 
 interface InboxRecord {
@@ -89,10 +92,19 @@ function parseInboxRecord(
       !isUserMessageContent(message.content) ||
       !('queuedAt' in message) ||
       typeof message.queuedAt !== 'number' ||
-      ('persisted' in message && typeof message.persisted !== 'boolean')
+      ('persisted' in message && typeof message.persisted !== 'boolean') ||
+      ('outputSchema' in message &&
+        message.outputSchema !== undefined &&
+        (!message.outputSchema ||
+          typeof message.outputSchema !== 'object' ||
+          Array.isArray(message.outputSchema)))
     ) {
       throw new Error(`Invalid steering inbox message: ${filePath}`);
     }
+    const outputSchema =
+      'outputSchema' in message && message.outputSchema !== undefined
+        ? createStructuredOutputContract(message.outputSchema).schema
+        : undefined;
     return {
       id: message.id,
       content: message.content,
@@ -100,6 +112,7 @@ function parseInboxRecord(
       ...('persisted' in message && message.persisted === true
         ? { persisted: true }
         : {}),
+      ...(outputSchema ? { outputSchema } : {}),
     };
   });
 
@@ -173,6 +186,13 @@ export class DurableSteeringInbox {
                 ? { ...part }
                 : { ...part, image_url: { ...part.image_url } }
             ),
+      ...(message.outputSchema
+        ? {
+            outputSchema: JSON.parse(
+              JSON.stringify(message.outputSchema)
+            ) as JsonObject,
+          }
+        : {}),
     }));
   }
 

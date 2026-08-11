@@ -21,6 +21,7 @@
 import type { LoopEvent } from '../../agent/loop/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { streamDebug } from '../../logging/StreamDebugLogger.js';
+import { STRUCTURED_OUTPUT_TOOL_NAME } from '../../services/StructuredOutputService.js';
 import type {
   useAppActions,
   useCommandActions,
@@ -155,6 +156,7 @@ export function createLoopEventHandler(
       case 'tool_start': {
         const toolCall = event.toolCall;
         if (!('function' in toolCall)) break;
+        if (toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
         logger.debug('[loopEventHandler] tool_start', {
           toolName: toolCall.function.name,
           toolKind: event.toolKind,
@@ -179,6 +181,7 @@ export function createLoopEventHandler(
       case 'tool_progress': {
         const toolCall = event.toolCall;
         if (!('function' in toolCall)) break;
+        if (toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
         const percentage =
           event.update.total !== undefined
             ? ` ${Math.max(
@@ -201,6 +204,7 @@ export function createLoopEventHandler(
       case 'tool_result': {
         const toolCall = event.toolCall;
         if (!('function' in toolCall)) break;
+        if (toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
         logger.debug('[loopEventHandler] tool_result', {
           toolName: toolCall.function.name,
           success: event.result.success,
@@ -215,6 +219,11 @@ export function createLoopEventHandler(
         });
         break;
       }
+      case 'structured_output':
+        deps.sessionActions.replaceLastAssistantMessage(
+          JSON.stringify(event.output, null, 2)
+        );
+        break;
 
       // --- Token 使用 ---
       case 'token_usage':

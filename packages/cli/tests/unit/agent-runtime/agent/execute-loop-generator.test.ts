@@ -4283,4 +4283,147 @@ describe('executeLoopGenerator', () => {
     expect(providerMessages).toContain('\\\\u003c/system-reminder\\\\u003e');
     expect(providerMessages).not.toContain('instructions="</system-reminder>');
   });
+
+  describe('structured final output', () => {
+    const outputSchema = {
+      type: 'object',
+      properties: {
+        answer: { type: 'string' },
+      },
+      required: ['answer'],
+      additionalProperties: false,
+    };
+
+    it('advertises the reserved schema tool and returns only host-validated output', async () => {
+      const deps = createMockDeps();
+      const chat = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chat
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'structured-1',
+              type: 'function',
+              function: {
+                name: 'StructuredOutput',
+                arguments: '{"answer":"validated"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'internal completion prose',
+          finishReason: 'stop',
+        });
+
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Return a structured answer.',
+          createMockContext(),
+          { stream: false, outputSchema },
+          undefined
+        )
+      );
+
+      const declarations = chat.mock.calls[0]?.[1] as Array<Record<string, unknown>>;
+      expect(declarations).toContainEqual(
+        expect.objectContaining({
+          name: 'StructuredOutput',
+          parameters: outputSchema,
+          constrainedSampling: {
+            type: 'json_schema',
+            strict: 'prefer',
+          },
+        })
+      );
+      expect(deps.toolExecutor.execute).not.toHaveBeenCalledWith(
+        'StructuredOutput',
+        expect.anything(),
+        expect.anything()
+      );
+      expect(events).toContainEqual({
+        kind: 'structured_output',
+        output: { answer: 'validated' },
+        schemaDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: '{"answer":"validated"}',
+        metadata: {
+          structuredOutput: { answer: 'validated' },
+          structuredOutputSchemaDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+      });
+    });
+
+    it('returns a bounded failure after three invalid tool submissions', async () => {
+      const deps = createMockDeps();
+      const chat = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        chat.mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: `structured-invalid-${attempt}`,
+              type: 'function',
+              function: {
+                name: 'StructuredOutput',
+                arguments: '{"answer":42}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        });
+      }
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Return a structured answer.',
+          createMockContext(),
+          { stream: false, outputSchema },
+          undefined
+        )
+      );
+
+      expect(chat).toHaveBeenCalledTimes(3);
+      expect(result).toMatchObject({
+        success: false,
+        error: {
+          type: 'structured_output_failed',
+          message: expect.stringContaining('retry budget'),
+        },
+      });
+    });
+
+    it('rejects plain-text completion after two corrective retries', async () => {
+      const deps = createMockDeps();
+      const chat = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chat.mockResolvedValue({
+        content: '{"answer":"not a tool call"}',
+        finishReason: 'stop',
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Return a structured answer.',
+          createMockContext(),
+          { stream: false, outputSchema },
+          undefined
+        )
+      );
+
+      expect(chat).toHaveBeenCalledTimes(3);
+      expect(result).toMatchObject({
+        success: false,
+        error: {
+          type: 'structured_output_failed',
+          message: expect.stringContaining('did not call StructuredOutput'),
+        },
+      });
+    });
+  });
 });

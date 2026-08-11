@@ -10,6 +10,7 @@ import type {
   ChatCompletionMessageToolCall,
   IChatService,
 } from '../../services/ChatServiceInterface.js';
+import type { JsonObject } from '../../store/types.js';
 import type { TaskListItem } from '../../tools/builtin/task/taskListTypes.js';
 import type { ToolExecutor } from '../../tools/execution/ToolExecutor.js';
 import type { ToolProgressUpdate } from '../../tools/types/ExecutionTypes.js';
@@ -58,6 +59,11 @@ export type SystemEvent =
 /** 业务事件 */
 export type DomainEvent =
   | { kind: 'task_update'; tasks: TaskListItem[] }
+  | {
+      kind: 'structured_output';
+      output: JsonObject;
+      schemaDigest: string;
+    }
   | {
       kind: 'steering_applied';
       messageIds: string[];

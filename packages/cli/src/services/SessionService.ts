@@ -61,7 +61,7 @@ import type {
   SessionTaskWorktree,
 } from '../context/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
-import type { JsonValue, SessionMessage } from '../store/types.js';
+import type { JsonObject, JsonValue, SessionMessage } from '../store/types.js';
 import { FileAccessTracker } from '../tools/builtin/file/FileAccessTracker.js';
 import { SnapshotManager } from '../tools/builtin/file/SnapshotManager.js';
 import { getVersion } from '../utils/packageInfo.js';
@@ -70,6 +70,7 @@ import { isCommunicationStyleSelection } from './communicationStyle.js';
 import { isReasoningEffortSelection } from './pi/reasoningEffort.js';
 import { isResponseVerbositySelection } from './pi/responseVerbosity.js';
 import { isServiceTierSelection } from './pi/serviceTier.js';
+import { createStructuredOutputContract } from './StructuredOutputService.js';
 import {
   renderSessionMarkdown,
   type SessionMarkdownExport,
@@ -210,6 +211,14 @@ function parseTaskDiffStat(value: unknown): SessionTaskDiffStat | undefined {
 function parseTaskDispatch(value: unknown): SessionTaskDispatch | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const dispatch = value as Record<string, unknown>;
+  let outputSchema: JsonObject | undefined;
+  if (dispatch.outputSchema !== undefined) {
+    try {
+      outputSchema = createStructuredOutputContract(dispatch.outputSchema).schema;
+    } catch {
+      return undefined;
+    }
+  }
   if (
     dispatch.version !== 1 ||
     typeof dispatch.prompt !== 'string' ||
@@ -309,6 +318,7 @@ function parseTaskDispatch(value: unknown): SessionTaskDispatch | undefined {
       ? { projectInstructionsDigest: dispatch.projectInstructionsDigest }
       : {}),
     ...(attachments ? { attachments } : {}),
+    ...(outputSchema ? { outputSchema } : {}),
   };
 }
 
