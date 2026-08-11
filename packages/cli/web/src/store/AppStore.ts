@@ -8,6 +8,7 @@ export type SettingsSection =
   | 'mcp'
   | 'skills'
   | 'plugins'
+  | 'schedules'
   | 'trust'
   | 'hooks'
   | 'shortcuts';

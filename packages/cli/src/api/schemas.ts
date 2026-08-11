@@ -546,6 +546,118 @@ export type SessionTaskDeliveryRequest = Static<
   typeof SessionTaskDeliveryRequestSchema
 >;
 
+// ── Scheduled tasks ───────────────────────────────────────────────────────────
+// A schedule fires a headless task run on a cron/interval/one-shot trigger.
+// The trigger is normalized to a cron expression + timezone for recurring
+// schedules, or an ISO timestamp for one-shot schedules. Dispatch options
+// mirror the CreateTask contract so a fired schedule reuses the same run path.
+
+export const ScheduleTriggerSchema = Runtime(
+  Type.Object({
+    kind: StringEnum(['cron', 'interval', 'once']),
+    // cron: standard 5-field expression (min hour dom mon dow), local timezone.
+    cron: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+    // interval: milliseconds between runs (normalized from Ns/Nm/Nh/Nd input).
+    intervalMs: Type.Optional(Type.Integer({ minimum: 60_000 })),
+    // once: ISO-8601 timestamp of the single future run.
+    runAt: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
+    // IANA timezone the cron/interval is interpreted in; defaults to the host.
+    timezone: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
+  })
+);
+export type ScheduleTrigger = Static<typeof ScheduleTriggerSchema>;
+
+export const ScheduleDispatchSchema = Runtime(
+  Type.Object({
+    modelId: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+    reasoningEffort: Type.Optional(ReasoningEffortSchema),
+    serviceTier: Type.Optional(ServiceTierSchema),
+    responseVerbosity: Type.Optional(ResponseVerbositySchema),
+    communicationStyle: Type.Optional(CommunicationStyleSchema),
+    isolation: Default(SessionTaskIsolationSchema, 'worktree'),
+    permissionMode: Default(PermissionModeSchema, 'default'),
+  })
+);
+export type ScheduleDispatch = Static<typeof ScheduleDispatchSchema>;
+
+export const ScheduleSchema = Runtime(
+  Type.Object({
+    id: Type.String(),
+    title: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+    prompt: Type.String({ minLength: 1, maxLength: 32_000, pattern: '\\S' }),
+    projectPath: Type.String({ minLength: 1 }),
+    trigger: ScheduleTriggerSchema,
+    dispatch: ScheduleDispatchSchema,
+    enabled: Type.Boolean(),
+    createdAt: Type.String(),
+    updatedAt: Type.String(),
+    // Next fire time (ISO) computed from the trigger; null when finished.
+    nextRunAt: Type.Union([Type.String(), Type.Null()]),
+    // Recurring schedules auto-expire (ISO); null for one-shot / no expiry.
+    expiresAt: Type.Union([Type.String(), Type.Null()]),
+    lastRunAt: Type.Optional(Type.String()),
+    lastRunSessionId: Type.Optional(Type.String()),
+    lastStatus: Type.Optional(
+      StringEnum([
+        'queued',
+        'running',
+        'completed',
+        'failed',
+        'cancelled',
+        'interrupted',
+        'error',
+      ])
+    ),
+    lastError: Type.Optional(Type.String()),
+    runCount: Type.Integer({ minimum: 0 }),
+  })
+);
+export type Schedule = Static<typeof ScheduleSchema>;
+
+export const CreateScheduleRequestSchema = Runtime(
+  Type.Object({
+    title: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+    prompt: Type.String({ minLength: 1, maxLength: 32_000, pattern: '\\S' }),
+    projectPath: Type.String({ minLength: 1 }),
+    trigger: ScheduleTriggerSchema,
+    modelId: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+    reasoningEffort: Type.Optional(ReasoningEffortSchema),
+    serviceTier: Type.Optional(ServiceTierSchema),
+    responseVerbosity: Type.Optional(ResponseVerbositySchema),
+    communicationStyle: Type.Optional(CommunicationStyleSchema),
+    isolation: Default(SessionTaskIsolationSchema, 'worktree'),
+    permissionMode: Default(PermissionModeSchema, 'default'),
+    enabled: Default(Type.Boolean(), true),
+  })
+);
+export type CreateScheduleRequest = Static<typeof CreateScheduleRequestSchema>;
+
+export const UpdateScheduleRequestSchema = Runtime(
+  Type.Object({
+    title: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+    prompt: Type.Optional(
+      Type.String({ minLength: 1, maxLength: 32_000, pattern: '\\S' })
+    ),
+    trigger: Type.Optional(ScheduleTriggerSchema),
+    modelId: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+    reasoningEffort: Type.Optional(ReasoningEffortSchema),
+    serviceTier: Type.Optional(ServiceTierSchema),
+    responseVerbosity: Type.Optional(ResponseVerbositySchema),
+    communicationStyle: Type.Optional(CommunicationStyleSchema),
+    isolation: Type.Optional(SessionTaskIsolationSchema),
+    permissionMode: Type.Optional(PermissionModeSchema),
+    enabled: Type.Optional(Type.Boolean()),
+  })
+);
+export type UpdateScheduleRequest = Static<typeof UpdateScheduleRequestSchema>;
+
+export const ScheduleListResponseSchema = Runtime(
+  Type.Object({
+    schedules: Type.Array(ScheduleSchema),
+  })
+);
+export type ScheduleListResponse = Static<typeof ScheduleListResponseSchema>;
+
 export const SendMessageRequestSchema = Runtime(
   Type.Object({
     content: Type.String({ maxLength: MAX_USER_MESSAGE_TEXT_CHARS }),

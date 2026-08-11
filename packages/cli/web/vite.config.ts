@@ -140,6 +140,10 @@ export default defineConfig(({ mode }) => {
           target: apiTarget,
           changeOrigin: true,
         },
+        '/schedules': {
+          target: apiTarget,
+          changeOrigin: true,
+        },
         '/hooks': {
           target: apiTarget,
           changeOrigin: true,

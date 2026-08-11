@@ -19,6 +19,7 @@ vi.mock('../../../src/services', () => ({
 }));
 
 import { useConfigStore } from '../../../src/store/ConfigStore';
+import { useScheduleStore } from '../../../src/store/ScheduleStore';
 import { useSessionStore } from '../../../src/store/session';
 
 const actualSelectSession = useSessionStore.getState().selectSession;
@@ -70,6 +71,9 @@ describe('taskListSlice', () => {
     serviceMocks.deliverTask.mockReset();
     useConfigStore.setState({
       loadModels: vi.fn().mockResolvedValue(undefined),
+    });
+    useScheduleStore.setState({
+      loadSchedules: vi.fn().mockResolvedValue(undefined),
     });
     localStorage.clear();
     useSessionStore.getState().unsubscribeFromTaskEvents();
@@ -136,6 +140,23 @@ describe('taskListSlice', () => {
       taskStatus: 'completed',
       taskCompletedAt: '2026-08-05T10:00:00.000Z',
     });
+  });
+
+  it('refreshes scheduled tasks when a schedule fires', () => {
+    const loadSchedules = vi.fn().mockResolvedValue(undefined);
+    useScheduleStore.setState({ loadSchedules });
+
+    useSessionStore.getState().handleTaskEvent({
+      type: 'schedule.fired',
+      properties: {
+        scheduleId: 'schedule-1',
+        sessionId: 'scheduled-session',
+        projectPath: '/workspace/a',
+        firedAt: '2026-08-11T09:00:00.000Z',
+      },
+    });
+
+    expect(loadSchedules).toHaveBeenCalledOnce();
   });
 
   it('projects safe task failures and clears them when the task restarts', () => {

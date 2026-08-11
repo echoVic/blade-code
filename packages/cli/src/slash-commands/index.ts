@@ -22,6 +22,7 @@ import modelCommand from './model.js';
 import permissionsCommand from './permissions.js';
 import pluginsCommand from './plugins.js';
 import reviewCommand from './review.js';
+import scheduleCommand from './schedule.js';
 import searchCommand from './search.js';
 import skillsCommand from './skills.js';
 import tasksCommand from './tasks.js';
@@ -51,6 +52,7 @@ const slashCommands: SlashCommandRegistry = {
   tasks: tasksCommand,
   plugins: pluginsCommand,
   review: reviewCommand,
+  schedule: scheduleCommand,
   trust: trustCommand,
 };
 

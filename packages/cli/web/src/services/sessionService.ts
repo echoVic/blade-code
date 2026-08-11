@@ -6,6 +6,7 @@ import {
   type CodeReviewStartResponse,
   CodeReviewStartResponseSchema,
   type CommunicationStyle,
+  type CreateScheduleRequest,
   type CreateTaskResponse,
   CreateTaskResponseSchema,
   type ForkSessionResponse,
@@ -21,6 +22,10 @@ import {
   type ResponseVerbosity,
   type ResumeSubagentResponse,
   ResumeSubagentResponseSchema,
+  type Schedule,
+  type ScheduleListResponse,
+  ScheduleListResponseSchema,
+  ScheduleSchema,
   type ServiceTier,
   type Session,
   type SessionArchiveResponse,
@@ -45,6 +50,7 @@ import {
   type SubagentSession,
   SubagentSessionSchema,
   Type,
+  type UpdateScheduleRequest,
   type UserShellCommandResponse,
   UserShellCommandResponseSchema,
 } from '@api/schemas';
@@ -1073,6 +1079,104 @@ export const sessionService = {
     });
     if (!res.ok) throw new Error('Failed to get git info');
     return res.json();
+  },
+
+  listSchedules: async (): Promise<Schedule[]> => {
+    const res = await fetch(`${API_BASE}/schedules`);
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message || t('schedule.error.loadFailed'));
+    }
+    const parsed = ScheduleListResponseSchema.parse(
+      await res.json()
+    ) as ScheduleListResponse;
+    return parsed.schedules;
+  },
+
+  createSchedule: async (input: CreateScheduleRequest): Promise<Schedule> => {
+    const res = await fetch(`${API_BASE}/schedules`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message || t('schedule.error.createFailed'));
+    }
+    return ScheduleSchema.parse(await res.json());
+  },
+
+  updateSchedule: async (
+    id: string,
+    patch: UpdateScheduleRequest
+  ): Promise<Schedule> => {
+    const res = await fetch(`${API_BASE}/schedules/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message || t('schedule.error.updateFailed'));
+    }
+    return ScheduleSchema.parse(await res.json());
+  },
+
+  deleteSchedule: async (id: string): Promise<void> => {
+    const res = await fetch(`${API_BASE}/schedules/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message || t('schedule.error.deleteFailed'));
+    }
+  },
+
+  enableSchedule: async (id: string): Promise<Schedule> => {
+    const res = await fetch(`${API_BASE}/schedules/${encodeURIComponent(id)}/enable`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message || t('schedule.error.toggleFailed'));
+    }
+    return ScheduleSchema.parse(await res.json());
+  },
+
+  disableSchedule: async (id: string): Promise<Schedule> => {
+    const res = await fetch(`${API_BASE}/schedules/${encodeURIComponent(id)}/disable`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message || t('schedule.error.toggleFailed'));
+    }
+    return ScheduleSchema.parse(await res.json());
+  },
+
+  runSchedule: async (id: string): Promise<Schedule> => {
+    const res = await fetch(`${API_BASE}/schedules/${encodeURIComponent(id)}/run`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message || t('schedule.error.runFailed'));
+    }
+    return ScheduleSchema.parse(await res.json());
   },
 };
 

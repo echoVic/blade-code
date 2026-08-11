@@ -178,6 +178,25 @@ describe('EventRoutes global task feed', () => {
       expect(deliveryEvent).toContain('"taskWorktreeRemoved":true');
       expect(deliveryEvent).not.toContain('/private/worktree');
       expect(deliveryEvent).not.toContain('private delivery metadata');
+
+      Bus.publish(
+        { sessionId: 'scheduled-session', projectPath: '/workspace/scheduled' },
+        'schedule.fired',
+        {
+          scheduleId: 'schedule-1',
+          firedAt: '2026-08-11T09:00:00.000Z',
+          runId: 'run-1',
+          status: 'running',
+          prompt: 'private scheduled prompt',
+        }
+      );
+
+      const scheduleEvent = await readSseEvent(reader, decoder);
+      expect(scheduleEvent).toContain('"type":"schedule.fired"');
+      expect(scheduleEvent).toContain('"scheduleId":"schedule-1"');
+      expect(scheduleEvent).toContain('"sessionId":"scheduled-session"');
+      expect(scheduleEvent).toContain('"runId":"run-1"');
+      expect(scheduleEvent).not.toContain('private scheduled prompt');
     } finally {
       controller.abort();
       await reader.cancel();

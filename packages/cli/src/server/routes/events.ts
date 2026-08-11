@@ -9,6 +9,7 @@ const GLOBAL_TASK_EVENT_TYPES = new Set([
   'session.created',
   'session.updated',
   'session.deleted',
+  'schedule.fired',
   'permission.asked',
   'question.required',
   'elicitation.required',
@@ -191,6 +192,32 @@ export const EventRoutes = () => {
                     : {}),
                   ...(typeof event.properties.updatedAt === 'string'
                     ? { updatedAt: event.properties.updatedAt }
+                    : {}),
+                },
+              }),
+            })
+            .catch(terminate);
+          return;
+        }
+
+        if (event.type === 'schedule.fired') {
+          const scheduleId = event.properties.scheduleId;
+          const firedAt = event.properties.firedAt;
+          if (typeof scheduleId !== 'string' || typeof firedAt !== 'string') return;
+          stream
+            .writeSSE({
+              data: JSON.stringify({
+                type: event.type,
+                properties: {
+                  scheduleId,
+                  firedAt,
+                  sessionId: event.sessionId,
+                  projectPath: event.projectPath,
+                  ...(typeof event.properties.runId === 'string'
+                    ? { runId: event.properties.runId }
+                    : {}),
+                  ...(typeof event.properties.status === 'string'
+                    ? { status: event.properties.status }
                     : {}),
                 },
               }),

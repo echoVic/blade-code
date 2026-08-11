@@ -7,6 +7,7 @@ import {
 } from '@/lib/taskFailure';
 import { sessionService } from '@/services';
 import { useConfigStore } from '@/store/ConfigStore';
+import { useScheduleStore } from '@/store/ScheduleStore';
 import { useSettingsStore } from '@/store/SettingsStore';
 import {
   sameSessionRef,
@@ -494,6 +495,10 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
               : session
           ),
         }));
+        return;
+      }
+      if (event.type === 'schedule.fired') {
+        void useScheduleStore.getState().loadSchedules();
         return;
       }
       if (event.type !== 'task.status') return;

@@ -1,18 +1,3 @@
-import { McpPanel } from '@/components/mcp/McpModal';
-import { SkillsPanel } from '@/components/skills/SkillsModal';
-import { Select } from '@/components/ui/select';
-import { type TranslationKey, useLocale, useT } from '@/i18n';
-import { DEFAULT_COMMUNICATION_STYLES } from '@/lib/communicationStyles';
-import { requestJson } from '@/lib/http';
-import {
-  KEYBOARD_SHORTCUTS,
-  type ShortcutId,
-  shortcutKeyLabels,
-} from '@/lib/keyboardShortcuts';
-import { cn } from '@/lib/utils';
-import { type SettingsSection, useAppStore } from '@/store/AppStore';
-import { type ModelConfig, useConfigStore } from '@/store/ConfigStore';
-import { useSettingsStore } from '@/store/SettingsStore';
 import {
   Activity,
   AlertCircle,
@@ -31,6 +16,22 @@ import {
   useRef,
   useState,
 } from 'react';
+import { McpPanel } from '@/components/mcp/McpModal';
+import { ScheduleManager } from '@/components/schedules/ScheduleManager';
+import { SkillsPanel } from '@/components/skills/SkillsModal';
+import { Select } from '@/components/ui/select';
+import { type TranslationKey, useLocale, useT } from '@/i18n';
+import { DEFAULT_COMMUNICATION_STYLES } from '@/lib/communicationStyles';
+import { requestJson } from '@/lib/http';
+import {
+  KEYBOARD_SHORTCUTS,
+  type ShortcutId,
+  shortcutKeyLabels,
+} from '@/lib/keyboardShortcuts';
+import { cn } from '@/lib/utils';
+import { type SettingsSection, useAppStore } from '@/store/AppStore';
+import { type ModelConfig, useConfigStore } from '@/store/ConfigStore';
+import { useSettingsStore } from '@/store/SettingsStore';
 import { AddModelModal, type ModelFormData } from './AddModelModal';
 import { EditModelModal } from './EditModelModal';
 import {
@@ -170,6 +171,11 @@ export function SettingsModal() {
     {
       value: 'hooks',
       label: t('settings.tab.hooks'),
+      category: t('settings.category.integrations'),
+    },
+    {
+      value: 'schedules',
+      label: t('settings.tab.schedules'),
       category: t('settings.category.integrations'),
     },
   ];
@@ -1289,6 +1295,17 @@ export function SettingsModal() {
                   className="flex-1 min-h-0"
                 >
                   <PluginPanel />
+                </div>
+              )}
+
+              {activeTab === 'schedules' && (
+                <div
+                  id="settings-panel-schedules"
+                  role="tabpanel"
+                  aria-labelledby="settings-tab-schedules"
+                  className="flex-1 min-h-0"
+                >
+                  <ScheduleManager active={activeTab === 'schedules'} />
                 </div>
               )}
 

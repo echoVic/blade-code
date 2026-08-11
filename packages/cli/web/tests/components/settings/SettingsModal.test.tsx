@@ -7,6 +7,7 @@ import { SettingsModal } from '../../../src/components/settings/SettingsModal';
 import { setLocale } from '../../../src/i18n';
 import { useAppStore } from '../../../src/store/AppStore';
 import { useConfigStore } from '../../../src/store/ConfigStore';
+import { useScheduleStore } from '../../../src/store/ScheduleStore';
 import { useSettingsStore } from '../../../src/store/SettingsStore';
 
 function SettingsHarness() {
@@ -30,6 +31,7 @@ describe('SettingsModal', () => {
   let root: ReactDOM.Root;
   const loadModels = vi.fn().mockResolvedValue(undefined);
   const loadSettings = vi.fn().mockResolvedValue(undefined);
+  const loadSchedules = vi.fn().mockResolvedValue(undefined);
 
   beforeEach(() => {
     setLocale('en');
@@ -38,6 +40,7 @@ describe('SettingsModal', () => {
     root = ReactDOM.createRoot(container);
     loadModels.mockClear();
     loadSettings.mockClear();
+    loadSchedules.mockClear();
     useConfigStore.setState({
       currentModelId: null,
       configuredModels: [],
@@ -48,6 +51,13 @@ describe('SettingsModal', () => {
       loadModels,
     });
     useSettingsStore.setState({ loadSettings });
+    useScheduleStore.setState({
+      schedules: [],
+      isLoading: false,
+      hasLoaded: true,
+      error: null,
+      loadSchedules,
+    });
     useAppStore.setState({
       isSettingsOpen: false,
       settingsSection: 'general',
@@ -100,11 +110,11 @@ describe('SettingsModal', () => {
     const generalTab = document.body.querySelector<HTMLButtonElement>(
       '#settings-tab-general'
     );
+    const schedulesTab = document.body.querySelector<HTMLButtonElement>(
+      '#settings-tab-schedules'
+    );
     const hooksTab =
       document.body.querySelector<HTMLButtonElement>('#settings-tab-hooks');
-    const pluginsTab = document.body.querySelector<HTMLButtonElement>(
-      '#settings-tab-plugins'
-    );
     const backButton = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>('[data-settings-panel] button')
     ).find((button) => button.textContent?.trim() === 'Back');
@@ -116,16 +126,16 @@ describe('SettingsModal', () => {
         new KeyboardEvent('keydown', { key: 'End', bubbles: true })
       );
     });
-    expect(hooksTab?.getAttribute('aria-selected')).toBe('true');
-    expect(document.activeElement).toBe(hooksTab);
+    expect(schedulesTab?.getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(schedulesTab);
 
     await act(async () => {
-      hooksTab?.dispatchEvent(
+      schedulesTab?.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })
       );
     });
-    expect(pluginsTab?.getAttribute('aria-selected')).toBe('true');
-    expect(document.activeElement).toBe(pluginsTab);
+    expect(hooksTab?.getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(hooksTab);
   });
 
   it('recomputes shortcut labels when the locale changes while open', async () => {
@@ -163,6 +173,24 @@ describe('SettingsModal', () => {
         (button) => button.textContent === 'Open MCP Panel'
       )
     ).toBe(false);
+  });
+
+  it('renders scheduled tasks inline within the settings page', async () => {
+    useAppStore.getState().openSettings('schedules');
+
+    await act(async () => {
+      root.render(<SettingsModal />);
+      await Promise.resolve();
+    });
+
+    const schedulesTab = document.body.querySelector<HTMLButtonElement>(
+      '#settings-tab-schedules'
+    );
+    expect(schedulesTab?.getAttribute('aria-selected')).toBe('true');
+    expect(document.body.querySelector('#settings-panel-schedules')).not.toBeNull();
+    expect(document.body.textContent).toContain('Scheduled Tasks');
+    expect(document.body.textContent).toContain('No schedules yet');
+    expect(loadSchedules).toHaveBeenCalledOnce();
   });
 
   it('closes with Escape and restores focus to the opening trigger', async () => {

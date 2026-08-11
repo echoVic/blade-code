@@ -7,7 +7,9 @@ import { brotliCompressSync, gzipSync, constants as zlibConstants } from 'node:z
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { WebSocketServer } from 'ws';
+import { TaskScheduler } from '../agent/runtime/TaskScheduler.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
+import { scheduleStore } from '../services/ScheduleStore.js';
 import { getCwd } from '../utils/cwd.js';
 import { getVersion } from '../utils/packageInfo.js';
 import { BladeServerError } from './error.js';
@@ -21,6 +23,7 @@ import { PermissionRoutes } from './routes/permission.js';
 import { PluginRoutes } from './routes/plugins.js';
 import { ProjectRoutes } from './routes/projects.js';
 import { ProviderRoutes } from './routes/provider.js';
+import { ScheduleRoutes } from './routes/schedule.js';
 import { createSessionRouteController } from './routes/session.js';
 import { SkillsRoutes } from './routes/skills.js';
 import { SuggestionsRoutes } from './routes/suggestions.js';
@@ -44,6 +47,7 @@ export interface ServerOptions {
 
 let corsWhitelist: string[] = [];
 let recoverQueuedTasksOnStart: (() => Promise<unknown>) | undefined;
+let taskScheduler: TaskScheduler | undefined;
 const staticAssetContentCache = new Map<string, Buffer>();
 const staticAssetCompressionCache = new Map<string, Buffer>();
 const COMPRESSIBLE_ASSET_EXTENSIONS = new Set([
@@ -260,10 +264,15 @@ function createApp(): Hono<{ Variables: Variables }> {
 
   const sessionController = createSessionRouteController();
   recoverQueuedTasksOnStart = sessionController.recoverQueuedTasks;
+  taskScheduler = new TaskScheduler({
+    dispatch: (input) => sessionController.dispatchTask(input),
+    store: scheduleStore,
+  });
   app.route('/global', GlobalRoutes());
   app.route('/events', EventRoutes());
   app.route('/sessions', sessionController.app);
   app.route('/tasks', TaskRoutes(sessionController));
+  app.route('/schedules', ScheduleRoutes(scheduleStore, taskScheduler));
   app.route('/configs', ConfigRoutes());
   app.route('/permissions', PermissionRoutes());
   app.route('/plugins', PluginRoutes());
@@ -660,6 +669,7 @@ export namespace BladeServer {
     void recoverQueuedTasksOnStart?.().catch((error) => {
       logger.warn('[Server] Failed to recover queued tasks:', error);
     });
+    taskScheduler?.start();
 
     return {
       url: handle.url,
@@ -667,6 +677,7 @@ export namespace BladeServer {
       hostname: handle.hostname,
       stop: async () => {
         if (serverHandle) {
+          taskScheduler?.stop();
           await serverHandle.stop();
           serverHandle = undefined;
           app = undefined;
@@ -700,6 +711,7 @@ export namespace BladeServer {
     } catch (error) {
       logger.warn('[Server] Failed to recover queued tasks:', error);
     }
+    taskScheduler?.start();
 
     return {
       url: handle.url,
@@ -707,6 +719,7 @@ export namespace BladeServer {
       hostname: handle.hostname,
       stop: async () => {
         if (serverHandle) {
+          taskScheduler?.stop();
           await serverHandle.stop();
           serverHandle = undefined;
           app = undefined;
