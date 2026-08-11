@@ -31,6 +31,8 @@ All notable changes to this project will be documented in this file.
   release-matrix 回归；CLI Unit 2630、Integration 133、CLI 8、Web 385 均通过
 - DeepSeek Flash 真实 API 在 Runtime、Web REST/SSE、ACP slash 三入口完成
   `active → verifying → goal-verification PASS → complete`，3/3 通过
+- 固定 release-blocking real matrix 通过 20/20；22 条开放式多文件、compaction、
+  进程树与 crash-recovery 长轨迹显式保留在完整付费 soak
 - Production Web GUI 验证 live verifier、最终 PASS/Session/SHA 证据、fresh tab
   恢复和中英文切换；fresh tab console 无应用错误
 

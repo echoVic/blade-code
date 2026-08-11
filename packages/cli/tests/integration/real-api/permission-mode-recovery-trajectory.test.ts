@@ -3,9 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BladeAgent } from '../../../src/acp/BladeAgent.js';
+import { runHeadless } from '../../../src/commands/headless.js';
 import { PermissionMode } from '../../../src/config/types.js';
 import { Logger } from '../../../src/logging/Logger.js';
-import { runHeadless } from '../../../src/commands/headless.js';
 import { Bus } from '../../../src/server/bus.js';
 import { SessionRoutes } from '../../../src/server/routes/session.js';
 import { SessionService } from '../../../src/services/SessionService.js';
@@ -78,46 +78,45 @@ describeReal('Session permission mode recovery trajectory (real API)', () => {
     else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
   });
 
-  it('restores durable YOLO across Web, ACP, and headless cold starts', async () => {
+  async function createFixture(surface: 'web' | 'acp' | 'headless') {
     if (!gpt) throw new Error('GPT qualification channel is unavailable');
     const root = await mkdtemp(path.join(os.tmpdir(), 'blade-real-mode-recovery-'));
-    const webWorkspace = path.join(root, 'web');
-    const acpWorkspace = path.join(root, 'acp');
-    const headlessWorkspace = path.join(root, 'headless');
+    const workspace = path.join(root, surface);
     const originalConfig = getState().config.config;
     const config = {
       ...buildRealApiRuntimeConfig(gpt),
       permissionMode: PermissionMode.DEFAULT,
     };
+    process.env.BLADE_STORAGE_ROOT = path.join(root, 'storage');
+    await mkdir(workspace, { recursive: true });
+    getState().config.actions.setConfig(config);
+    const sessionId = `mode-${surface}-${Date.now()}`;
+    await SessionService.createSessionMetadata(sessionId, workspace, {
+      taskStatus: 'completed',
+      selectedModelId: config.currentModelId,
+      permissionMode: 'yolo',
+    });
+    return { root, workspace, originalConfig, config, sessionId };
+  }
+
+  it('restores durable YOLO for a Web cold start', async () => {
+    if (!gpt) throw new Error('GPT qualification channel is unavailable');
+    const fixture = await createFixture('web');
     const app = SessionRoutes();
     const loggerError = vi.spyOn(Logger.prototype, 'error');
-    const acpClient = createMockACPClient();
-    const acpAgent = new BladeAgent(acpClient as never);
-    const evidence: Record<string, unknown> = {};
 
     try {
-      process.env.BLADE_STORAGE_ROOT = path.join(root, 'storage');
-      await Promise.all(
-        [webWorkspace, acpWorkspace, headlessWorkspace].map((workspace) =>
-          mkdir(workspace, { recursive: true })
-        )
+      const webCompletion = await waitForWebCompletion(
+        fixture.sessionId,
+        fixture.workspace
       );
-      getState().config.actions.setConfig(config);
-
-      const webSessionId = `mode-web-${Date.now()}`;
-      await SessionService.createSessionMetadata(webSessionId, webWorkspace, {
-        taskStatus: 'completed',
-        selectedModelId: config.currentModelId,
-        permissionMode: 'yolo',
-      });
-      const webCompletion = await waitForWebCompletion(webSessionId, webWorkspace);
-      const webResponse = await runWithCwdOverride(webWorkspace, () =>
-        app.request(`/${webSessionId}/message`, {
+      const webResponse = await runWithCwdOverride(fixture.workspace, () =>
+        app.request(`/${fixture.sessionId}/message`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             content: writePrompt('web-mode.txt', 'WEB_MODE_RECOVERED'),
-            projectPath: webWorkspace,
+            projectPath: fixture.workspace,
           }),
         })
       );
@@ -140,35 +139,46 @@ describeReal('Session permission mode recovery trajectory (real API)', () => {
         }).replaceAll(gpt.apiKey, '[redacted]')
       ).toBe(202);
       await webCompletion.promise;
-      expect(await readFile(path.join(webWorkspace, 'web-mode.txt'), 'utf8')).toBe(
+      expect(await readFile(path.join(fixture.workspace, 'web-mode.txt'), 'utf8')).toBe(
         'WEB_MODE_RECOVERED\n'
       );
-      evidence.web = await SessionService.findSessionMetadata(
-        webSessionId,
-        webWorkspace
+      const metadata = await SessionService.findSessionMetadata(
+        fixture.sessionId,
+        fixture.workspace
       );
+      expect(metadata).toMatchObject({ permissionMode: 'yolo' });
+      assertNoSecrets(metadata, [gpt.apiKey]);
       await app.request(
-        `/${webSessionId}?projectPath=${encodeURIComponent(webWorkspace)}`,
+        `/${fixture.sessionId}?projectPath=${encodeURIComponent(fixture.workspace)}`,
         { method: 'DELETE' }
       );
+    } finally {
+      loggerError.mockRestore();
+      if (fixture.originalConfig) {
+        getState().config.actions.setConfig(fixture.originalConfig);
+      }
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  }, 180_000);
 
-      const acpSessionId = `mode-acp-${Date.now()}`;
-      await SessionService.createSessionMetadata(acpSessionId, acpWorkspace, {
-        taskStatus: 'completed',
-        selectedModelId: config.currentModelId,
-        permissionMode: 'yolo',
-      });
-      const acpSetup = await runWithCwdOverride(acpWorkspace, () =>
+  it('restores durable YOLO for an ACP cold start', async () => {
+    if (!gpt) throw new Error('GPT qualification channel is unavailable');
+    const fixture = await createFixture('acp');
+    const acpClient = createMockACPClient();
+    const acpAgent = new BladeAgent(acpClient as never);
+
+    try {
+      const acpSetup = await runWithCwdOverride(fixture.workspace, () =>
         acpAgent.loadSession({
-          sessionId: acpSessionId,
-          cwd: acpWorkspace,
+          sessionId: fixture.sessionId,
+          cwd: fixture.workspace,
           mcpServers: [],
         })
       );
       expect(acpSetup.modes?.currentModeId).toBe('yolo');
-      const acpResponse = await runWithCwdOverride(acpWorkspace, () =>
+      const acpResponse = await runWithCwdOverride(fixture.workspace, () =>
         acpAgent.prompt({
-          sessionId: acpSessionId,
+          sessionId: fixture.sessionId,
           prompt: [
             {
               type: 'text',
@@ -180,7 +190,7 @@ describeReal('Session permission mode recovery trajectory (real API)', () => {
       expect(acpResponse.stopReason).toBe('end_turn');
       expect(acpClient.permissionRequests).toHaveLength(0);
       const acpHostFile = await readFile(
-        path.join(acpWorkspace, 'acp-mode.txt'),
+        path.join(fixture.workspace, 'acp-mode.txt'),
         'utf8'
       ).catch(() => undefined);
       const acpClientFile = [...acpClient.files.values()].find(
@@ -190,18 +200,31 @@ describeReal('Session permission mode recovery trajectory (real API)', () => {
         acpHostFile ?? acpClientFile,
         JSON.stringify(acpClient.sessionUpdates).replaceAll(gpt.apiKey, '[redacted]')
       ).toBe('ACP_MODE_RECOVERED\n');
-      evidence.acp = {
-        setup: acpSetup,
-        updates: acpClient.sessionUpdates,
-      };
-      await acpAgent.destroy();
+      assertNoSecrets(
+        {
+          metadata: await SessionService.findSessionMetadata(
+            fixture.sessionId,
+            fixture.workspace
+          ),
+          setup: acpSetup,
+          updates: acpClient.sessionUpdates,
+        },
+        [gpt.apiKey]
+      );
+    } finally {
+      await acpAgent.destroy().catch(() => undefined);
+      if (fixture.originalConfig) {
+        getState().config.actions.setConfig(fixture.originalConfig);
+      }
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  }, 180_000);
 
-      const headlessSessionId = `mode-headless-${Date.now()}`;
-      await SessionService.createSessionMetadata(headlessSessionId, headlessWorkspace, {
-        taskStatus: 'completed',
-        selectedModelId: config.currentModelId,
-        permissionMode: 'yolo',
-      });
+  it('restores durable YOLO for a headless cold start', async () => {
+    if (!gpt) throw new Error('GPT qualification channel is unavailable');
+    const fixture = await createFixture('headless');
+
+    try {
       const stdout = { write: (_chunk: string) => true };
       const stderrChunks: string[] = [];
       const stderr = {
@@ -210,34 +233,41 @@ describeReal('Session permission mode recovery trajectory (real API)', () => {
           return true;
         },
       };
-      const headlessExit = await runWithCwdOverride(headlessWorkspace, () =>
+      const headlessExit = await runWithCwdOverride(fixture.workspace, () =>
         runHeadless(
           {
             headless: true,
             message: writePrompt('headless-mode.txt', 'HEADLESS_MODE_RECOVERED'),
-            resume: headlessSessionId,
+            resume: fixture.sessionId,
           },
           { stdout, stderr }
         )
       );
-      expect(headlessExit).toBe(0);
       expect(
-        await readFile(path.join(headlessWorkspace, 'headless-mode.txt'), 'utf8')
+        headlessExit,
+        stderrChunks.join('').replaceAll(gpt.apiKey, '[redacted]')
+      ).toBe(0);
+      expect(
+        await readFile(path.join(fixture.workspace, 'headless-mode.txt'), 'utf8')
       ).toBe('HEADLESS_MODE_RECOVERED\n');
       expect(stderrChunks.join('')).not.toContain('requires user confirmation');
-      evidence.headless = await SessionService.findSessionMetadata(
-        headlessSessionId,
-        headlessWorkspace
+      const metadata = await SessionService.findSessionMetadata(
+        fixture.sessionId,
+        fixture.workspace
       );
-
-      expect(evidence.web).toMatchObject({ permissionMode: 'yolo' });
-      expect(evidence.headless).toMatchObject({ permissionMode: 'yolo' });
-      assertNoSecrets(evidence, [gpt.apiKey]);
+      expect(metadata).toMatchObject({ permissionMode: 'yolo' });
+      assertNoSecrets(
+        {
+          metadata,
+          stderr: stderrChunks,
+        },
+        [gpt.apiKey]
+      );
     } finally {
-      await acpAgent.destroy().catch(() => undefined);
-      loggerError.mockRestore();
-      if (originalConfig) getState().config.actions.setConfig(originalConfig);
-      await rm(root, { recursive: true, force: true });
+      if (fixture.originalConfig) {
+        getState().config.actions.setConfig(fixture.originalConfig);
+      }
+      await rm(fixture.root, { recursive: true, force: true });
     }
-  }, 360_000);
+  }, 180_000);
 });

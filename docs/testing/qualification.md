@@ -47,11 +47,12 @@ credential 可以由 secret manager 注入测试子进程环境，也可以放�
 bun run qualify:production
 ```
 
-该命令运行固定的 release-blocking real matrix：真实 DeepSeek Flash/Pro coding 与可靠性
-轨迹、GPT Web structured output、Claude ACP structured output、DeepSeek headless
-structured output、Web/ACP/TUI code review、durable interaction recovery、permission
-recovery、ACP model switch，以及 DeepSeek Flash 的 Runtime/Web/ACP host-authoritative
-Goal completion verification。完整的高成本 provider/capability soak 由以下命令单独运行：
+该命令运行固定的 release-blocking real matrix：真实 DeepSeek Flash/Pro Edit+rewind
+与 CLI bugfix、GPT Web structured output、Claude ACP structured output、DeepSeek
+headless structured output、Web/ACP/TUI code review、durable interaction recovery、
+permission recovery、ACP model switch，以及 DeepSeek Flash 的 Runtime/Web/ACP
+host-authoritative Goal completion verification。开放式多文件迁移、compaction、进程树、
+并发 owner 与 crash-tail 等高成本 provider/capability soak 由以下命令单独运行：
 
 ```bash
 bun run test:real-api
