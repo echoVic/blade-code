@@ -43,6 +43,66 @@ import {
 
 class TurnLifecycleNoop extends Error {}
 
+export const PROCESS_RESTART_TOOL_RESULT =
+  'Tool execution was interrupted by a process restart. The operation may have ' +
+  'partially completed. Inspect the workspace, running processes, and external ' +
+  'state before deciding whether to retry it.';
+
+interface DurableToolCall {
+  toolCallId: string;
+  toolName: string;
+}
+
+function durableToolCalls(
+  source: readonly SessionEvent[],
+  turnId?: string
+): { all: DurableToolCall[]; orphaned: DurableToolCall[] } {
+  const events = materializeSessionEvents(source);
+  const turnStartIndex = turnId
+    ? events.findLastIndex(
+        (event) => event.type === 'turn_started' && event.data.turnId === turnId
+      )
+    : -1;
+  if (turnId && turnStartIndex < 0) return { all: [], orphaned: [] };
+
+  const calls = new Map<string, DurableToolCall>();
+  const results = new Set<string>();
+  const interactionCalls = new Set<string>();
+  for (const event of events.slice(turnStartIndex + 1)) {
+    if (event.type === 'interaction_requested') {
+      interactionCalls.add(event.data.toolCallId);
+      continue;
+    }
+    if (event.type !== 'part_created') continue;
+    const payload =
+      event.data.payload &&
+      typeof event.data.payload === 'object' &&
+      !Array.isArray(event.data.payload)
+        ? (event.data.payload as Record<string, unknown>)
+        : {};
+    const toolCallId =
+      typeof payload.toolCallId === 'string' ? payload.toolCallId : event.data.partId;
+    if (event.data.partType === 'tool_call') {
+      calls.set(toolCallId, {
+        toolCallId,
+        toolName: typeof payload.toolName === 'string' ? payload.toolName : 'unknown',
+      });
+    } else if (event.data.partType === 'tool_result') {
+      results.add(toolCallId);
+      results.add(event.data.partId);
+      results.add(event.data.messageId);
+    }
+  }
+
+  const all = [...calls.values()];
+  return {
+    all,
+    orphaned: all.filter(
+      (call) => !results.has(call.toolCallId) && !interactionCalls.has(call.toolCallId)
+    ),
+  };
+}
+
 /**
  * 持久化存储实现 - JSONL 格式
  * 存储路径: ~/.blade/projects/{escaped-path}/{sessionId}.jsonl
@@ -278,21 +338,52 @@ export class PersistentStore {
     await this.ensureSessionCreated(sessionId);
     let recoveredTurnId: string | undefined;
     try {
-      await this.log(sessionId).commitValidated((events) => {
-        const active = projectTurnLifecycle(materializeSessionEvents(events)).active;
-        if (!active) throw new TurnLifecycleNoop();
-        recoveredTurnId = active.turnId;
-        const startedAt = Date.parse(active.startedAt);
-        return this.createEvent('turn_aborted', sessionId, {
-          turnId: active.turnId,
-          cause: 'process_restart',
-          abortedAt: new Date().toISOString(),
-          turnsCount: 0,
-          toolCallsCount: 0,
-          durationMs: Number.isFinite(startedAt)
-            ? Math.max(0, Date.now() - startedAt)
-            : 0,
-        });
+      await this.log(sessionId).commitValidatedBatch((events) => {
+        const projected = materializeSessionEvents(events);
+        const active = projectTurnLifecycle(projected).active;
+        const toolCalls = durableToolCalls(projected);
+        if (!active && toolCalls.orphaned.length === 0) {
+          throw new TurnLifecycleNoop();
+        }
+        recoveredTurnId = active?.turnId;
+        const activeToolCalls = active
+          ? durableToolCalls(projected, active.turnId).all.length
+          : 0;
+        const now = new Date().toISOString();
+        const startedAt = active ? Date.parse(active.startedAt) : Number.NaN;
+        const recoveryResults = toolCalls.orphaned.map((call) =>
+          this.createEvent('part_created', sessionId, {
+            partId: call.toolCallId,
+            messageId: call.toolCallId,
+            partType: 'tool_result',
+            payload: {
+              toolCallId: call.toolCallId,
+              toolName: call.toolName,
+              output: null,
+              error: PROCESS_RESTART_TOOL_RESULT,
+              metadata: {
+                processRestartRecovery: true,
+                sideEffectsUncertain: true,
+              },
+            },
+            createdAt: now,
+          })
+        );
+        return active
+          ? [
+              ...recoveryResults,
+              this.createEvent('turn_aborted', sessionId, {
+                turnId: active.turnId,
+                cause: 'process_restart',
+                abortedAt: now,
+                turnsCount: 0,
+                toolCallsCount: activeToolCalls,
+                durationMs: Number.isFinite(startedAt)
+                  ? Math.max(0, Date.now() - startedAt)
+                  : 0,
+              }),
+            ]
+          : recoveryResults;
       });
     } catch (error) {
       if (!(error instanceof TurnLifecycleNoop)) throw error;

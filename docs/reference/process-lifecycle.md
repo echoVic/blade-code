@@ -71,6 +71,16 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
 - turn start 与 terminal append 在 transcript 文件锁内校验：同一事件可幂等重试，
   不同 ID 的第二个 active turn fail closed。新 Runtime 只有在取得 `SessionLease`
   并确认旧 owner 已释放后，才会把未闭合 turn 标记为 `process_restart`。
+- 工具执行必须先提交 durable `tool_call`；CLI/TUI、Web、ACP、Headless 以及 streaming
+  prelaunch/queued 路径在该提交失败时统一阻止工具启动，不允许无 journal 的文件、
+  shell 或外部副作用继续执行。执行抛错、取消和 epoch discard 始终保留原 durable
+  tool-call ID，使失败结果精确闭合对应调用。
+- 新 Runtime 取得 Session lease 后，会在同一个 validated batch 中修复 materialized
+  transcript 的 orphan tool calls。每个 orphan 先获得 synthetic error
+  `tool_result`，明确标记 `processRestartRecovery` 与 `sideEffectsUncertain`，随后 active
+  turn 才提交 `turn_aborted(process_restart)`；已终止 turn 遗留的 orphan 同样会修复。
+  重复恢复不会重复写 receipt。存在 pending durable interaction 的调用由专用问答/权限
+  recovery 接管，不会被通用 crash receipt 提前关闭。
 - `SessionEventLog` 将 durable turn 事件按 seq 发布为 `committed.turn_*`。Web SSE
   断点续传可据此恢复 running/idle 状态；CLI/TUI、Web、ACP 与 Headless 共享相同
   JSONL 生命周期，不维护各自独立的终态。

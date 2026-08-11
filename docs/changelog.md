@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.17] - 2026-08-12
+
+### ✨ 新功能
+
+- 新增 Durable Tool Crash Receipt：进程在工具副作用后、`tool_result` fsync 前退出时，
+  新 Runtime 获取 Session lease 后会为 orphan tool call 提交
+  `sideEffectsUncertain` synthetic error result，再关闭中断 turn
+- 已终止 turn 遗留的 orphan 同样会在 resume 前修复；pending question、permission 与
+  elicitation 仍由专用 durable interaction recovery 接管
+
+### 🛡️ 稳定性
+
+- streaming prelaunch、queued 与 non-streaming 工具现在都要求先提交 durable
+  `tool_call`；提交失败时在任何文件、shell 或外部副作用前 fail closed
+- 工具执行抛错、取消或 stream epoch discard 时保留原 durable tool-call ID，确保失败
+  result 精确闭合调用；validated recovery batch 可幂等修复 crash tail，不会重复 receipt
+
+### ✅ 测试相关
+
+- 新增 active/terminal orphan、重复恢复、interaction 例外、合法 Provider
+  tool call/result 对，以及 streaming/non-streaming 持久化失败回归
+- release-blocking 真实 DeepSeek 轨迹构造“外部文件已写、result 未落盘”的 crash
+  window，验证第二 Runtime 修复 receipt 后只读检查文件且零 Write/Edit 重放
+
 ## [0.10.16] - 2026-08-12
 
 ### ✨ 新功能

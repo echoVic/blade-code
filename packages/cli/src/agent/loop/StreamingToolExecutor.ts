@@ -26,6 +26,7 @@ import type {
 import type { ToolResult } from '../../tools/types/index.js';
 import { ToolErrorType } from '../../tools/types/index.js';
 import { combineAbortSignals } from '../../utils/abort.js';
+import { DURABLE_TOOL_USE_FAILURE_MESSAGE } from './conversationPersistence.js';
 import type { ToolExecResult } from './types.js';
 
 export type ToolExecutionPolicy = (
@@ -105,7 +106,8 @@ export class StreamingToolExecutor {
       subagentType: string;
       isSidechain: boolean;
     },
-    private progressSink?: ToolProgressSink
+    private progressSink?: ToolProgressSink,
+    private requireDurableToolUse = false
   ) {}
 
   setExecutionPolicy(executeTool: ToolExecutionPolicy): void {
@@ -262,7 +264,11 @@ export class StreamingToolExecutor {
   }
 
   /** 构建 abort/discard 结果 */
-  private makeAbortResult(toolCall: FunctionToolCall, message: string): ToolExecResult {
+  private makeAbortResult(
+    toolCall: FunctionToolCall,
+    message: string,
+    toolUseUuid: string | null = null
+  ): ToolExecResult {
     return {
       toolCall,
       result: {
@@ -276,7 +282,7 @@ export class StreamingToolExecutor {
           abortedBeforeLaunch: true,
         },
       },
-      toolUseUuid: null,
+      toolUseUuid,
     };
   }
 
@@ -333,6 +339,7 @@ export class StreamingToolExecutor {
     // 为此工具创建独立的 AbortController
     const perToolAc = new AbortController();
     this.activeAborts.set(toolCall.id, perToolAc);
+    let toolUseUuid: string | null = null;
 
     // Capture current executor-level signal at dispatch time
     const executorSignal = this.abortController.signal;
@@ -343,7 +350,6 @@ export class StreamingToolExecutor {
         return this.makeAbortResult(toolCall, 'Tool execution aborted due to discard');
       }
 
-      let toolUseUuid: string | null = null;
       try {
         if (this.contextMgr && this.sessionId) {
           toolUseUuid = await this.contextMgr.saveToolUse(
@@ -353,9 +359,32 @@ export class StreamingToolExecutor {
             this.lastMessageUuid ?? null,
             this.subagentInfo
           );
+        } else if (this.requireDurableToolUse && this.sessionId) {
+          throw new Error('Durable tool-use storage is unavailable');
         }
-      } catch (err) {
-        logger.warn('[StreamingToolExecutor] 保存工具调用失败:', err);
+      } catch (error) {
+        logger.warn('[StreamingToolExecutor] 保存工具调用失败:', error);
+        if (!this.requireDurableToolUse) {
+          toolUseUuid = null;
+        } else {
+          return {
+            toolCall,
+            result: {
+              success: false,
+              llmContent: DURABLE_TOOL_USE_FAILURE_MESSAGE,
+              error: {
+                type: ToolErrorType.EXECUTION_ERROR,
+                message: DURABLE_TOOL_USE_FAILURE_MESSAGE,
+              },
+              metadata: {
+                durableToolUseFailed: true,
+                summary: 'Blocked tool before execution',
+              },
+            },
+            toolUseUuid: null,
+            error: error instanceof Error ? error : new Error(String(error)),
+          };
+        }
       }
 
       // Merge executor signal, per-tool signal, and user signal
@@ -404,7 +433,8 @@ export class StreamingToolExecutor {
         );
         return this.makeAbortResult(
           toolCall,
-          'Tool execution aborted due to epoch mismatch (discard)'
+          'Tool execution aborted due to epoch mismatch (discard)',
+          toolUseUuid
         );
       }
 
@@ -426,7 +456,8 @@ export class StreamingToolExecutor {
       if (startEpoch !== this.epoch) {
         return this.makeAbortResult(
           toolCall,
-          'Tool execution aborted due to epoch mismatch (discard)'
+          'Tool execution aborted due to epoch mismatch (discard)',
+          toolUseUuid
         );
       }
 
@@ -446,7 +477,7 @@ export class StreamingToolExecutor {
       const execResult: ToolExecResult = {
         toolCall,
         result: errorResult,
-        toolUseUuid: null,
+        toolUseUuid,
         error: error instanceof Error ? error : new Error('Unknown error'),
       };
 

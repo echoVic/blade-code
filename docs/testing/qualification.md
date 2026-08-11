@@ -532,6 +532,10 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
 - 上下文超限恢复：本地代理让首个模型请求返回 `413 context_length_exceeded`，随后
   透明转发真实摘要与恢复请求；Headless 必须完成 paired compaction lifecycle、持久化
   replacement checkpoint，并由第二个 Runtime 仅依赖该 checkpoint 回答此前 marker；
+- 工具崩溃恢复：构造 durable `tool_call` 已提交、外部文件副作用已发生但
+  `tool_result` 未提交的 crash window；第二个 Runtime 必须先写
+  `sideEffectsUncertain` receipt 再关闭 turn，真实模型 resume 只能读取并确认既有文件，
+  不得再次调用 Write/Edit；
 - 计划模式恢复：跨两个 CLI 进程恢复会话并完成修改；
 - 模式边界恢复：在 Yolo 中故意调用一次 ExitPlanMode，运行时必须返回 `validation_error`，模型随后继续 Write/Bash，证明过期规划状态不能终止已经批准的工作；
 - 失败恢复：先重现测试失败，再修改，最后验证通过；

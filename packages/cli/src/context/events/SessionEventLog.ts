@@ -97,6 +97,15 @@ export class SessionEventLog {
     return stamped;
   }
 
+  /** Validate latest committed state and persist one ordered recovery batch. */
+  async commitValidatedBatch(
+    buildEvents: (events: readonly SessionEvent[]) => SessionEvent[]
+  ): Promise<SessionEvent[]> {
+    const stamped = await this.store.appendValidatedBatch(buildEvents);
+    for (const event of stamped) this.record(event);
+    return stamped;
+  }
+
   /** Fan out an ephemeral delta. Not persisted, not sequenced. */
   emitDelta(delta: EphemeralDelta): void {
     for (const subscriber of this.subscribers) {

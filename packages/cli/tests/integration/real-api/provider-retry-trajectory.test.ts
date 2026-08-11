@@ -6,9 +6,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import { runHeadless } from '../../../src/commands/headless.js';
 import { HeadlessJsonlEventSchema } from '../../../src/commands/headlessEvents.js';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
+import {
+  PersistentStore,
+  PROCESS_RESTART_TOOL_RESULT,
+} from '../../../src/context/storage/PersistentStore.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
@@ -620,6 +625,127 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
       );
     } finally {
       await proxy.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  it('closes an uncertain tool crash receipt before real API resume', async () => {
+    if (!modelConfig) throw new Error('DeepSeek Flash configuration is required');
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-tool-crash-'));
+    const sessionId = `real-tool-crash-${Date.now()}`;
+    const markerPath = path.join(workspace, 'crash-marker.txt');
+    let output = '';
+    let errorOutput = '';
+
+    try {
+      process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+      getState().config.actions.setConfig({
+        ...buildRealApiRuntimeConfig(modelConfig),
+        permissionMode: PermissionMode.YOLO,
+      });
+      const store = new PersistentStore(workspace);
+      await store.initialize();
+      await store.saveTurnStart(sessionId, {
+        turnId: 'crashed-tool-turn',
+        kind: 'user',
+        startedAt: new Date(Date.now() - 1000).toISOString(),
+      });
+      const toolCallId = await store.saveToolUse(
+        sessionId,
+        'Write',
+        {
+          file_path: markerPath,
+          content: 'SIDE_EFFECT_ALREADY_APPLIED\n',
+        },
+        null
+      );
+      await writeFile(markerPath, 'SIDE_EFFECT_ALREADY_APPLIED\n');
+
+      const recoveredRuntime = await runWithCwdOverride(workspace, () =>
+        SessionRuntime.create({ sessionId, workspaceRoot: workspace })
+      );
+      await recoveredRuntime.dispose();
+
+      const recoveredEvents = await store.loadEvents(sessionId);
+      if (!recoveredEvents) {
+        throw new Error('Recovered tool crash transcript is missing');
+      }
+      const receiptIndex = recoveredEvents.findIndex(
+        (event) =>
+          event.type === 'part_created' &&
+          event.data.partType === 'tool_result' &&
+          event.data.partId === toolCallId
+      );
+      const abortIndex = recoveredEvents.findIndex(
+        (event) =>
+          event.type === 'turn_aborted' && event.data.turnId === 'crashed-tool-turn'
+      );
+      expect(receiptIndex).toBeGreaterThanOrEqual(0);
+      expect(abortIndex).toBeGreaterThan(receiptIndex);
+      expect(recoveredEvents[receiptIndex]).toMatchObject({
+        data: {
+          payload: {
+            toolCallId,
+            toolName: 'Write',
+            error: PROCESS_RESTART_TOOL_RESULT,
+            metadata: {
+              processRestartRecovery: true,
+              sideEffectsUncertain: true,
+            },
+          },
+        },
+      });
+
+      const exitCode = await runWithCwdOverride(workspace, () =>
+        runHeadless(
+          {
+            headless: true,
+            outputFormat: 'jsonl',
+            resume: sessionId,
+            maxTurns: 2,
+            message:
+              'Inspect crash-marker.txt without modifying it. The previous Write may ' +
+              'already have completed. Reply with exactly TOOL_CRASH_RECEIPT_OK.',
+          },
+          {
+            stdout: {
+              write(chunk: string) {
+                output += chunk;
+                return true;
+              },
+            },
+            stderr: {
+              write(chunk: string) {
+                errorOutput += chunk;
+                return true;
+              },
+            },
+          }
+        )
+      );
+      const events = output
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+      const content = events
+        .filter((event) => event.type === 'content_delta')
+        .map((event) => event.delta)
+        .join('');
+
+      expect(exitCode, errorOutput.replaceAll(modelConfig.apiKey, '[redacted]')).toBe(
+        0
+      );
+      expect(content).toContain('TOOL_CRASH_RECEIPT_OK');
+      expect(await readFile(markerPath, 'utf8')).toBe('SIDE_EFFECT_ALREADY_APPLIED\n');
+      expect(
+        events.filter(
+          (event) =>
+            event.type === 'tool_start' &&
+            ['Write', 'Edit'].includes(event.tool_name ?? '')
+        )
+      ).toHaveLength(0);
+      expect(`${output}\n${errorOutput}`).not.toContain(modelConfig.apiKey);
+    } finally {
       await rm(workspace, { recursive: true, force: true });
     }
   }, 180_000);

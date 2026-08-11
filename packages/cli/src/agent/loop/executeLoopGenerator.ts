@@ -66,6 +66,7 @@ import {
   resolveSingleTaskDelegationRequirement,
 } from './completionPolicy.js';
 import {
+  DURABLE_TOOL_USE_FAILURE_MESSAGE,
   INTERRUPTED_TURN_MARKER,
   saveCompaction as persistCompaction,
   saveToolResult as persistToolResult,
@@ -1821,7 +1822,8 @@ validates the object and may return a bounded corrective error.`;
               context.subagentInfo,
               (toolCall, update) => {
                 toolProgressQueue.push({ toolCall, update });
-              }
+              },
+              deps.executionEngine !== undefined
             );
             streamingExecutor.setAdmissionPolicy(admitToolWithPolicy);
             streamingExecutor.setAdmissionRollback(rollbackSingleTaskAdmission);
@@ -2947,6 +2949,7 @@ validates the object and may return a bounded corrective error.`;
 
           // 并行执行所有工具
           const executeToolCall = async (toolCall: (typeof functionCalls)[0]) => {
+            let toolUseUuid: string | null = null;
             try {
               const admissionRejection = admissionRejections.get(toolCall.id);
               if (admissionRejection) {
@@ -2979,14 +2982,34 @@ validates the object and may return a bounded corrective error.`;
               ) {
                 params.subagent_session_id = createSessionId('agent');
               }
-              let toolUseUuid: string | null = null;
-              toolUseUuid = await saveToolUse(
-                deps,
-                context,
-                toolCall.function.name,
-                params as unknown as JsonValue,
-                lastMessageUuid
-              );
+              try {
+                toolUseUuid = await saveToolUse(
+                  deps,
+                  context,
+                  toolCall.function.name,
+                  params as unknown as JsonValue,
+                  lastMessageUuid,
+                  { required: deps.executionEngine !== undefined }
+                );
+              } catch (error) {
+                return {
+                  toolCall,
+                  result: {
+                    success: false,
+                    llmContent: DURABLE_TOOL_USE_FAILURE_MESSAGE,
+                    error: {
+                      type: ToolErrorType.EXECUTION_ERROR,
+                      message: DURABLE_TOOL_USE_FAILURE_MESSAGE,
+                    },
+                    metadata: {
+                      durableToolUseFailed: true,
+                      summary: 'Blocked tool before execution',
+                    },
+                  } as import('../../tools/types/index.js').ToolResult,
+                  toolUseUuid: null,
+                  error: error instanceof Error ? error : new Error(String(error)),
+                };
+              }
 
               const exitingBeforeVerification =
                 toolCall.function.name === 'ExitWorktree' &&
@@ -3074,7 +3097,7 @@ validates the object and may return a bounded corrective error.`;
                   },
                   metadata: undefined,
                 } as import('../../tools/types/index.js').ToolResult,
-                toolUseUuid: null,
+                toolUseUuid,
                 error: error instanceof Error ? error : new Error('Unknown error'),
               };
             }
@@ -3232,18 +3255,20 @@ validates the object and may return a bounded corrective error.`;
                   return toJsonValue(rest);
                 })()
               : undefined;
-            const uuid = await persistToolResult(
-              deps,
-              context,
-              toolUseUuid ?? toolCall.id,
-              toolCall.function.name,
-              result.success ? toJsonValue(result.llmContent) : null,
-              toolUseUuid,
-              result.success ? undefined : result.error?.message,
-              subagentRef,
-              durableMetadata
-            );
-            if (uuid) lastMessageUuid = uuid;
+            if (metadata?.durableToolUseFailed !== true) {
+              const uuid = await persistToolResult(
+                deps,
+                context,
+                toolUseUuid ?? toolCall.id,
+                toolCall.function.name,
+                result.success ? toJsonValue(result.llmContent) : null,
+                toolUseUuid,
+                result.success ? undefined : result.error?.message,
+                subagentRef,
+                durableMetadata
+              );
+              if (uuid) lastMessageUuid = uuid;
+            }
           }
 
           // 领域副作用 (via toolDomainPolicy)
@@ -3521,6 +3546,22 @@ validates the object and may return a bounded corrective error.`;
                 }
               : {}),
           });
+
+          if (resultMetadata?.durableToolUseFailed === true) {
+            return {
+              success: false,
+              error: {
+                type: 'tool_persistence_failed',
+                message: DURABLE_TOOL_USE_FAILURE_MESSAGE,
+                details: result.error,
+              },
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+              },
+            };
+          }
 
           const projectRuleParams =
             parseToolArguments(toolCall.function.arguments) ?? {};

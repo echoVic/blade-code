@@ -382,6 +382,35 @@ export class JSONLStore {
     return this.appendValidatedAsync(async (entries) => buildEntry(entries));
   }
 
+  async appendValidatedBatch(
+    buildEntries: (entries: readonly SessionEvent[]) => SessionEvent[]
+  ): Promise<SessionEvent[]> {
+    return this.appendValidatedBatchAsync(async (entries) => buildEntries(entries));
+  }
+
+  async appendValidatedBatchAsync(
+    buildEntries: (entries: readonly SessionEvent[]) => Promise<SessionEvent[]>
+  ): Promise<SessionEvent[]> {
+    return this.enqueue(async () => {
+      const handle = await fs.open(this.filePath, 'r+');
+      try {
+        const { entries, separator, size } = await this.readCommittedState(
+          handle,
+          'session transcript'
+        );
+        const pending = await buildEntries(entries);
+        if (pending.length === 0) return [];
+        const stamped = JSONLStore.stampSeq(pending, entries);
+        const content = `${stamped.map((entry) => JSON.stringify(entry)).join('\n')}\n`;
+        await handle.write(separator + content, size, 'utf8');
+        await handle.sync();
+        return stamped;
+      } finally {
+        await handle.close();
+      }
+    });
+  }
+
   async appendValidatedAsync(
     buildEntry: (entries: readonly SessionEvent[]) => Promise<SessionEvent>
   ): Promise<SessionEvent> {

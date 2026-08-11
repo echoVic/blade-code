@@ -533,7 +533,7 @@ describe('StreamingToolExecutor', () => {
       expect(collected[0].toolUseUuid).toBe('uuid-123');
     });
 
-    it('saveToolUse failure does not break execution', async () => {
+    it('saveToolUse failure blocks execution before side effects', async () => {
       const mockContextMgr = {
         saveToolUse: vi.fn().mockRejectedValue(new Error('db-down')),
       };
@@ -543,7 +543,11 @@ describe('StreamingToolExecutor', () => {
         execContext,
         registry as unknown as ToolRegistry,
         mockContextMgr as any,
-        'session-2'
+        'session-2',
+        undefined,
+        undefined,
+        undefined,
+        true
       );
 
       pipeline.execute.mockResolvedValue(makeSuccessResult('ok'));
@@ -552,15 +556,34 @@ describe('StreamingToolExecutor', () => {
 
       const collected = await collectAsync(executor.getRemainingResults());
 
-      // Execution should succeed despite saveToolUse failure
       expect(collected).toHaveLength(1);
-      expect(collected[0].result.success).toBe(true);
+      expect(collected[0].result).toMatchObject({
+        success: false,
+        metadata: { durableToolUseFailed: true },
+      });
       expect(collected[0].toolUseUuid).toBeNull();
-      expect(pipeline.execute).toHaveBeenCalledWith(
-        'Read',
-        {},
-        expect.objectContaining({ messageId: 'ctx2' })
+      expect(pipeline.execute).not.toHaveBeenCalled();
+    });
+
+    it('preserves the durable tool ID when execution throws', async () => {
+      const mockContextMgr = {
+        saveToolUse: vi.fn().mockResolvedValue('uuid-error'),
+      };
+
+      executor = new StreamingToolExecutor(
+        pipeline as unknown as ToolExecutor,
+        execContext,
+        registry as unknown as ToolRegistry,
+        mockContextMgr as any,
+        'session-error'
       );
+      pipeline.execute.mockRejectedValue(new Error('execution failed'));
+
+      executor.addTool(makeToolCall('provider-error', 'Read'), {});
+      const [collected] = await collectAsync(executor.getRemainingResults());
+
+      expect(collected.result.success).toBe(false);
+      expect(collected.toolUseUuid).toBe('uuid-error');
     });
 
     it('skips saveToolUse when contextMgr is not provided', async () => {

@@ -1738,7 +1738,7 @@ describe('executeLoopGenerator', () => {
       ]);
     });
 
-    it('falls back to the provider tool ID when durable tool-use persistence fails', async () => {
+    it('fails closed before tool execution when durable tool-use persistence fails', async () => {
       const { deps, saveToolResult } = createTypedPersistenceHarness({
         rejectToolUse: true,
       });
@@ -1768,7 +1768,7 @@ describe('executeLoopGenerator', () => {
         llmContent: 'file content',
       });
 
-      await drainGenerator(
+      const { result } = await drainGenerator(
         executeLoopGenerator(
           deps,
           'Read the file',
@@ -1778,19 +1778,61 @@ describe('executeLoopGenerator', () => {
         )
       );
 
+      expect(result).toMatchObject({
+        success: false,
+        error: { type: 'tool_persistence_failed' },
+      });
+      expect(deps.toolExecutor.execute).not.toHaveBeenCalled();
+      expect(saveToolResult).not.toHaveBeenCalled();
+      expect(context.messages).toContainEqual(
+        expect.objectContaining({ role: 'tool', tool_call_id: 'tc1' })
+      );
+    });
+
+    it('persists thrown execution errors against the durable tool ID', async () => {
+      const { deps, saveToolResult } = createTypedPersistenceHarness();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'provider-tool-id',
+              type: 'function',
+              function: { name: 'Read', arguments: '{"path":"foo"}' },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Handled.',
+          toolCalls: undefined,
+          finishReason: 'stop',
+        });
+      (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error('read failed')
+      );
+
+      await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Read the file',
+          createMockContext(),
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
       expect(saveToolResult).toHaveBeenCalledWith(
         'test-session',
-        'tc1',
+        'durable-tool-id',
         'Read',
-        'file content',
         null,
-        undefined,
+        'durable-tool-id',
+        'read failed',
         undefined,
         undefined,
         undefined
-      );
-      expect(context.messages).toContainEqual(
-        expect.objectContaining({ role: 'tool', tool_call_id: 'tc1' })
       );
     });
 
@@ -3828,7 +3870,7 @@ describe('executeLoopGenerator', () => {
       ).toBe(true);
     });
 
-    it('should close only in-memory history when aborted tool-use persistence failed', async () => {
+    it('should not launch an abortable tool when tool-use persistence failed', async () => {
       const { deps, saveToolResult } = createTypedPersistenceHarness({
         rejectToolUse: true,
       });
@@ -3873,7 +3915,11 @@ describe('executeLoopGenerator', () => {
         )
       );
 
-      expect(result.success).toBe(false);
+      expect(result).toMatchObject({
+        success: false,
+        error: { type: 'tool_persistence_failed' },
+      });
+      expect(deps.toolExecutor.execute).not.toHaveBeenCalled();
       expect(saveToolResult).not.toHaveBeenCalled();
       expect(context.messages).toContainEqual(
         expect.objectContaining({

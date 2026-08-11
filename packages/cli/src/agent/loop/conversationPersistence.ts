@@ -76,6 +76,10 @@ export const INTERRUPTED_TURN_MARKER = `<turn_aborted>
 The previous turn was interrupted. Commands or tool calls may have partially completed; inspect the workspace and running processes before retrying.
 </turn_aborted>`;
 
+export const DURABLE_TOOL_USE_FAILURE_MESSAGE =
+  'Tool execution was blocked because its durable call record could not be ' +
+  'committed. No tool side effect was started.';
+
 /** 获取 ContextManager（可能为 undefined） */
 function getContextMgr(deps: LoopDependencies) {
   return deps.executionEngine?.getContextManager();
@@ -218,21 +222,30 @@ export async function saveToolUse(
   context: ChatContext,
   toolName: string,
   params: JsonValue,
-  parentUuid: string | null
+  parentUuid: string | null,
+  options: { required?: boolean } = {}
 ): Promise<string | null> {
   try {
     const contextMgr = getContextMgr(deps);
     if (contextMgr && context.sessionId) {
-      return await contextMgr.saveToolUse(
+      const toolCallId = await contextMgr.saveToolUse(
         context.sessionId,
         toolName,
         params,
         parentUuid,
         context.subagentInfo
       );
+      if (options.required && !toolCallId) {
+        throw new Error('Durable tool-use commit returned no identity');
+      }
+      return toolCallId;
+    }
+    if (options.required && context.sessionId) {
+      throw new Error('Durable tool-use storage is unavailable');
     }
   } catch (error) {
     logger.warn('[Loop] 保存工具调用失败:', error);
+    if (options.required) throw error;
   }
   return null;
 }
