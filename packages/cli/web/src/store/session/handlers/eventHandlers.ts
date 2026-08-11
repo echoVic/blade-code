@@ -4,6 +4,7 @@ import type { Message as ServiceMessage, StreamEvent } from '@/services';
 import type {
   Message,
   ProviderRetryInfo,
+  ProviderStallInfo,
   SessionStoreState,
   SubagentProgress,
   TaskItem,
@@ -1607,7 +1608,11 @@ const handleCompactionCompleted: EventHandler = (props, get, set) => {
 
 const handleModelFallback: EventHandler = (props, get, set) => {
   if (props.sessionId !== get().currentSessionId) return;
-  set({ agentPhase: 'switching_model', providerRetry: null });
+  set({
+    agentPhase: 'switching_model',
+    providerRetry: null,
+    providerStall: null,
+  });
 };
 
 const handleProviderRetry: EventHandler = (props, get, set) => {
@@ -1616,6 +1621,15 @@ const handleProviderRetry: EventHandler = (props, get, set) => {
     agentPhase: 'running',
     providerRetry:
       props.phase === 'recovered' ? null : (props as unknown as ProviderRetryInfo),
+  });
+};
+
+const handleProviderStall: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  set({
+    agentPhase: 'running',
+    providerStall:
+      props.phase === 'detected' ? (props as unknown as ProviderStallInfo) : null,
   });
 };
 
@@ -1753,6 +1767,7 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
       isStopping: false,
       agentPhase: 'idle',
       providerRetry: null,
+      providerStall: null,
       currentRunId: null,
       pendingSteeringCount: 0,
       pendingInputDelivery: null,
@@ -1787,6 +1802,7 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
       isStopping: false,
       agentPhase: 'error',
       providerRetry: null,
+      providerStall: null,
       currentRunId: null,
       pendingSteeringCount: 0,
       pendingInputDelivery: null,
@@ -1932,6 +1948,7 @@ const handleSessionRewound: EventHandler = (props, get, set) => {
     isStopping: false,
     agentPhase: 'idle',
     providerRetry: null,
+    providerStall: null,
     currentRunId: null,
     pendingSteeringCount: 0,
     pendingInputDelivery: null,
@@ -2041,6 +2058,7 @@ const eventHandlers: Record<string, EventHandler> = {
   'committed.turn_completed': handleSessionCompleted,
   'committed.turn_aborted': handleSessionCompleted,
   'provider.retry': handleProviderRetry,
+  'provider.stall': handleProviderStall,
   'compaction.started': handleCompactionStarted,
   'compaction.completed': handleCompactionCompleted,
   'model.fallback': handleModelFallback,

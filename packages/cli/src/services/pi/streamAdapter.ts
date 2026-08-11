@@ -6,9 +6,11 @@ import type {
   Models,
 } from '@earendil-works/pi-ai';
 import type { StreamChunk } from '../ChatServiceInterface.js';
+import type { ProviderStallEvent } from './providerStall.js';
 import { convertPiUsage } from './requestOptions.js';
 
 export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000;
+export const DEFAULT_STREAM_STALL_WARNING_MS = 30_000;
 
 export class StreamIdleTimeoutError extends Error {
   readonly code = 'STREAM_IDLE_TIMEOUT';
@@ -30,6 +32,7 @@ export class ProviderStreamClosedError extends Error {
 
 export interface StreamWatchdogOptions {
   idleTimeoutMs?: number;
+  stallWarningMs?: number;
   signal?: AbortSignal;
   abort?: (reason: Error) => void;
 }
@@ -40,60 +43,125 @@ function abortReason(signal: AbortSignal): Error {
     : new DOMException('Aborted', 'AbortError');
 }
 
-function nextWithIdleTimeout<T>(
-  iterator: AsyncIterator<T>,
-  options: StreamWatchdogOptions
-): Promise<IteratorResult<T>> {
-  const idleTimeoutMs =
-    options.idleTimeoutMs && options.idleTimeoutMs > 0
-      ? options.idleTimeoutMs
-      : DEFAULT_STREAM_IDLE_TIMEOUT_MS;
-  if (options.signal?.aborted) {
-    return Promise.reject(abortReason(options.signal));
-  }
+interface StreamWatchdogState {
+  stallCount: number;
+  outputStarted: boolean;
+}
 
-  return new Promise<IteratorResult<T>>((resolve, reject) => {
+type PendingNextOutcome<T> =
+  | { kind: 'next'; result: IteratorResult<T> }
+  | { kind: 'timer' };
+
+function resolveIdleTimeoutMs(options: StreamWatchdogOptions): number {
+  return options.idleTimeoutMs && options.idleTimeoutMs > 0
+    ? options.idleTimeoutMs
+    : DEFAULT_STREAM_IDLE_TIMEOUT_MS;
+}
+
+export function resolveStreamStallWarningMs(
+  idleTimeoutMs: number,
+  configuredWarningMs?: number
+): number | undefined {
+  if (configuredWarningMs === 0) return undefined;
+  const requested =
+    configuredWarningMs !== undefined && configuredWarningMs > 0
+      ? configuredWarningMs
+      : DEFAULT_STREAM_STALL_WARNING_MS;
+  return Math.max(1, Math.min(requested, Math.floor(idleTimeoutMs / 2)));
+}
+
+function waitForPendingNext<T>(
+  pendingNext: Promise<IteratorResult<T>>,
+  delayMs: number,
+  signal?: AbortSignal
+): Promise<PendingNextOutcome<T>> {
+  if (signal?.aborted) return Promise.reject(abortReason(signal));
+
+  return new Promise<PendingNextOutcome<T>>((resolve, reject) => {
     let settled = false;
     const cleanup = () => {
       clearTimeout(timer);
-      options.signal?.removeEventListener('abort', onAbort);
+      signal?.removeEventListener('abort', onAbort);
     };
-    const finishResolve = (value: IteratorResult<T>) => {
+    const finish = (outcome: PendingNextOutcome<T>) => {
       if (settled) return;
       settled = true;
       cleanup();
-      resolve(value);
+      resolve(outcome);
     };
-    const finishReject = (error: Error) => {
+    const finishReject = (error: unknown) => {
       if (settled) return;
       settled = true;
       cleanup();
-      reject(error);
+      reject(error instanceof Error ? error : new Error(String(error)));
     };
     const onAbort = () => {
-      if (!options.signal) return;
-      finishReject(abortReason(options.signal));
+      if (signal) finishReject(abortReason(signal));
     };
-    const timer = setTimeout(() => {
-      if (settled) return;
-      const error = new StreamIdleTimeoutError(idleTimeoutMs);
-      settled = true;
-      options.signal?.removeEventListener('abort', onAbort);
-      options.abort?.(error);
-      reject(error);
-    }, idleTimeoutMs);
-    options.signal?.addEventListener('abort', onAbort, { once: true });
-    if (options.signal?.aborted) {
+    const timer = setTimeout(() => finish({ kind: 'timer' }), Math.max(0, delayMs));
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) {
       onAbort();
       return;
     }
-
-    void Promise.resolve()
-      .then(() => iterator.next())
-      .then(finishResolve, (error: unknown) =>
-        finishReject(error instanceof Error ? error : new Error(String(error)))
-      );
+    pendingNext.then((result) => finish({ kind: 'next', result }), finishReject);
   });
+}
+
+async function* nextWithIdleWatchdog<T>(
+  iterator: AsyncIterator<T>,
+  options: StreamWatchdogOptions,
+  state: StreamWatchdogState
+): AsyncGenerator<ProviderStallEvent, IteratorResult<T>, void> {
+  const idleTimeoutMs = resolveIdleTimeoutMs(options);
+  const stallWarningMs = resolveStreamStallWarningMs(
+    idleTimeoutMs,
+    options.stallWarningMs
+  );
+  if (options.signal?.aborted) {
+    throw abortReason(options.signal);
+  }
+
+  const startedAt = Date.now();
+  const pendingNext = Promise.resolve().then(() => iterator.next());
+  let stall: ProviderStallEvent | undefined;
+
+  for (;;) {
+    const deadlineMs = stall ? idleTimeoutMs : (stallWarningMs ?? idleTimeoutMs);
+    const outcome = await waitForPendingNext(
+      pendingNext,
+      deadlineMs - (Date.now() - startedAt),
+      options.signal
+    );
+    if (outcome.kind === 'next') {
+      if (stall) {
+        yield {
+          ...stall,
+          phase: 'recovered',
+          durationMs: Math.max(stall.durationMs, Date.now() - startedAt),
+        };
+      }
+      return outcome.result;
+    }
+
+    if (!stall && stallWarningMs !== undefined) {
+      state.stallCount++;
+      stall = {
+        phase: 'detected',
+        stallCount: state.stallCount,
+        durationMs: stallWarningMs,
+        warningAfterMs: stallWarningMs,
+        timeoutMs: idleTimeoutMs,
+        outputStarted: state.outputStarted,
+      };
+      yield stall;
+      continue;
+    }
+
+    const error = new StreamIdleTimeoutError(idleTimeoutMs);
+    options.abort?.(error);
+    throw error;
+  }
 }
 
 export async function* streamPiModel(
@@ -107,22 +175,39 @@ export async function* streamPiModel(
   const iterator = stream[Symbol.asyncIterator]();
   let toolCallIndex = 0;
   let completed = false;
+  const watchdogState: StreamWatchdogState = {
+    stallCount: 0,
+    outputStarted: false,
+  };
 
   try {
     while (true) {
-      const next = await nextWithIdleTimeout<AssistantMessageEvent>(iterator, watchdog);
-      if (next.done) {
+      const pending = nextWithIdleWatchdog<AssistantMessageEvent>(
+        iterator,
+        watchdog,
+        watchdogState
+      );
+      let next = await pending.next();
+      while (!next.done) {
+        yield { providerStall: next.value };
+        next = await pending.next();
+      }
+      const result = next.value;
+      if (result.done) {
         throw new ProviderStreamClosedError();
       }
-      const event = next.value;
+      const event = result.value;
       switch (event.type) {
         case 'text_delta':
+          watchdogState.outputStarted = true;
           yield { content: event.delta };
           break;
         case 'thinking_delta':
+          watchdogState.outputStarted = true;
           yield { reasoningContent: event.delta };
           break;
         case 'toolcall_end':
+          watchdogState.outputStarted = true;
           yield {
             toolCalls: [
               {

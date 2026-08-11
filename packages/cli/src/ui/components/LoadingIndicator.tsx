@@ -12,6 +12,7 @@ import {
   useIsProcessing,
   useIsReady,
   useProviderRetry,
+  useProviderStall,
   useTheme,
 } from '../../store/selectors/index.js';
 import { useLoadingIndicator } from '../hooks/useLoadingIndicator.js';
@@ -59,6 +60,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
     const isProcessing = useIsProcessing();
     const isReady = useIsReady();
     const providerRetry = useProviderRetry();
+    const providerStall = useProviderStall();
     const visible = isProcessing || !isReady;
 
     const [spinnerFrame, setSpinnerFrame] = useState(0);
@@ -102,7 +104,13 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
         : providerRetry?.phase === 'attempt'
           ? `正在重试 Provider (${providerRetry.attempt}/${providerRetry.maxRetries})`
           : null;
-    const displayMessage = retryMessage || message || currentPhrase || '正在思考中...';
+    const stallMessage = providerStall
+      ? providerStall.outputStarted
+        ? `Provider 流已暂停 ${Math.ceil(providerStall.durationMs / 1000)}s，仍在等待（空闲超时上限 ${Math.ceil(providerStall.timeoutMs / 1000)}s）`
+        : `Provider 尚未返回流数据，已等待 ${Math.ceil(providerStall.durationMs / 1000)}s（空闲超时上限 ${Math.ceil(providerStall.timeoutMs / 1000)}s）`
+      : null;
+    const displayMessage =
+      stallMessage || retryMessage || message || currentPhrase || '正在思考中...';
 
     // 统一显示：短语 + 计时器 + 取消提示
     if (isWideScreen) {

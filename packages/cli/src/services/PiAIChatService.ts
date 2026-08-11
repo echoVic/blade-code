@@ -161,6 +161,10 @@ export class PiAIChatService implements IChatService {
         try {
           let recoveredEmitted = false;
           for await (const chunk of streamFrom(model)) {
+            if (chunk.providerStall) {
+              yield chunk;
+              continue;
+            }
             if (attempt > 0 && retryReason && !recoveredEmitted) {
               recoveredEmitted = true;
               yield {

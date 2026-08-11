@@ -63,6 +63,7 @@ function createMockDeps(overrides?: Partial<LoopEventDeps>): LoopEventDeps {
       updateTokenUsage: vi.fn(),
       setCompacting: vi.fn(),
       setProviderRetry: vi.fn(),
+      setProviderStall: vi.fn(),
       resetContextUsage: vi.fn(),
       resetTokenUsage: vi.fn(),
     } as any,
@@ -125,6 +126,36 @@ describe('createLoopEventHandler', () => {
 
     handler({ ...retry, phase: 'recovered' });
     expect(deps.sessionActions.setProviderRetry).toHaveBeenLastCalledWith(null);
+  });
+
+  it('projects a recoverable Provider stall without committing stream content', () => {
+    const deps = createMockDeps();
+    const handler = createLoopEventHandler(deps, createMockStats());
+    const stall = {
+      kind: 'provider_stall',
+      phase: 'detected',
+      stallCount: 1,
+      durationMs: 30_000,
+      warningAfterMs: 30_000,
+      timeoutMs: 300_000,
+      outputStarted: true,
+    } as const;
+
+    handler(stall);
+
+    expect(deps.sessionActions.setProviderStall).toHaveBeenCalledWith({
+      phase: 'detected',
+      stallCount: 1,
+      durationMs: 30_000,
+      warningAfterMs: 30_000,
+      timeoutMs: 300_000,
+      outputStarted: true,
+    });
+    expect(deps.sessionActions.finalizeStreamingMessage).not.toHaveBeenCalled();
+    expect(deps.streamingBuffer.resetStreamingBuffers).not.toHaveBeenCalled();
+
+    handler({ ...stall, phase: 'recovered', durationMs: 31_500 });
+    expect(deps.sessionActions.setProviderStall).toHaveBeenLastCalledWith(null);
   });
 
   // ==================== 场景 1: 正常 stream_end ====================

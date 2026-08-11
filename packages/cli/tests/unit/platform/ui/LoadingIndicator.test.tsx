@@ -18,6 +18,17 @@ const mockUseProviderRetry = vi.fn(
       delayMs?: number;
     } | null
 );
+const mockUseProviderStall = vi.fn(
+  () =>
+    null as {
+      phase: 'detected';
+      stallCount: number;
+      durationMs: number;
+      warningAfterMs: number;
+      timeoutMs: number;
+      outputStarted: boolean;
+    } | null
+);
 
 vi.mock('ink', () => ({
   Box: ({ children }: { children?: React.ReactNode }) =>
@@ -30,6 +41,7 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
   useIsProcessing: () => true,
   useIsReady: () => true,
   useProviderRetry: () => mockUseProviderRetry(),
+  useProviderStall: () => mockUseProviderStall(),
   useTheme: () => ({
     colors: {
       warning: 'yellow',
@@ -64,6 +76,8 @@ describe('LoadingIndicator', () => {
     mockUseTerminalWidth.mockReturnValue(120);
     mockUseProviderRetry.mockReset();
     mockUseProviderRetry.mockReturnValue(null);
+    mockUseProviderStall.mockReset();
+    mockUseProviderStall.mockReturnValue(null);
   });
 
   it('短时间加载时应该优先显示中性文案而不是趣味短语', async () => {
@@ -95,6 +109,28 @@ describe('LoadingIndicator', () => {
     expect(html).toContain('Provider 暂时不可用');
     expect(html).toContain('1/2');
     expect(html).toContain('2s');
+    expect(html).toContain('Esc 取消');
+    expect(html).not.toContain('炼化代码灵气...');
+  });
+
+  it('在 Provider stall 时显示空闲上限并保留取消入口', async () => {
+    mockUseProviderStall.mockReturnValue({
+      phase: 'detected',
+      stallCount: 1,
+      durationMs: 30_000,
+      warningAfterMs: 30_000,
+      timeoutMs: 300_000,
+      outputStarted: false,
+    });
+    const { LoadingIndicator } = await import(
+      '../../../../src/ui/components/LoadingIndicator.js'
+    );
+
+    const html = renderToStaticMarkup(React.createElement(LoadingIndicator));
+
+    expect(html).toContain('Provider 尚未返回流数据');
+    expect(html).toContain('30s');
+    expect(html).toContain('300s');
     expect(html).toContain('Esc 取消');
     expect(html).not.toContain('炼化代码灵气...');
   });

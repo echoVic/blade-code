@@ -30,16 +30,19 @@ export function StatusBar() {
   const isStreaming = useSessionStore((state) => state.isStreaming);
   const agentPhase = useSessionStore((state) => state.agentPhase);
   const providerRetry = useSessionStore((state) => state.providerRetry);
+  const providerStall = useSessionStore((state) => state.providerStall);
   const phaseKey = PHASE_LABEL_KEYS[agentPhase] ?? '';
   const retryDelay =
     providerRetry?.delayMs !== undefined
       ? ` · ${Math.max(0, Math.ceil(providerRetry.delayMs / 1000))}s`
       : '';
-  const phaseLabel = providerRetry
-    ? `Provider · ${t('chat.error.action.retryingTask')} · ${providerRetry.attempt}/${providerRetry.maxRetries}${retryDelay}`
-    : phaseKey
-      ? t(phaseKey)
-      : '';
+  const phaseLabel = providerStall
+    ? `${t('status.phase.providerStall')} · ${Math.ceil(providerStall.durationMs / 1000)}s / ${Math.ceil(providerStall.timeoutMs / 1000)}s`
+    : providerRetry
+      ? `Provider · ${t('chat.error.action.retryingTask')} · ${providerRetry.attempt}/${providerRetry.maxRetries}${retryDelay}`
+      : phaseKey
+        ? t(phaseKey)
+        : '';
 
   const usagePercent =
     tokenUsage.maxContextTokens > 0

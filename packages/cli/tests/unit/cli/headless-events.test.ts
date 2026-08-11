@@ -64,6 +64,26 @@ describe('headless event contract', () => {
     });
     expect(() => HeadlessJsonlEventSchema.parse(providerRetry)).not.toThrow();
 
+    const providerStall = createHeadlessJsonlEvent('provider_stall', {
+      phase: 'detected',
+      stall_count: 1,
+      duration_ms: 30_000,
+      warning_after_ms: 30_000,
+      timeout_ms: 300_000,
+      output_started: true,
+    });
+    expect(providerStall).toEqual({
+      event_version: 1,
+      type: 'provider_stall',
+      phase: 'detected',
+      stall_count: 1,
+      duration_ms: 30_000,
+      warning_after_ms: 30_000,
+      timeout_ms: 300_000,
+      output_started: true,
+    });
+    expect(() => HeadlessJsonlEventSchema.parse(providerStall)).not.toThrow();
+
     expect(
       createHeadlessJsonlEvent('mcp_catalog_changed', {
         revision: 2,

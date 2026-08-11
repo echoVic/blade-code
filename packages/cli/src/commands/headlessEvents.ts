@@ -321,6 +321,16 @@ const ProviderRetryEventSchema = event({
   next_retry_at: Type.Optional(Type.Integer({ minimum: 0 })),
 });
 
+const ProviderStallEventSchema = event({
+  type: Type.Literal('provider_stall'),
+  phase: StringEnum(['detected', 'recovered']),
+  stall_count: Type.Integer({ minimum: 1 }),
+  duration_ms: Type.Integer({ minimum: 0 }),
+  warning_after_ms: Type.Integer({ minimum: 1 }),
+  timeout_ms: Type.Integer({ minimum: 1 }),
+  output_started: Type.Boolean(),
+});
+
 const TurnLimitEventSchema = event({
   type: Type.Literal('turn_limit'),
   turns_count: Type.Number(),
@@ -387,6 +397,7 @@ export const HeadlessJsonlEventSchema = Runtime(
     TokenUsageEventSchema,
     CompactingEventSchema,
     ProviderRetryEventSchema,
+    ProviderStallEventSchema,
     TurnLimitEventSchema,
     TaskSessionEventSchema,
     TaskAdmissionEventSchema,

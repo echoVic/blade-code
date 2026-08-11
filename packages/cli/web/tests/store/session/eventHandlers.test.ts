@@ -66,6 +66,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     isStopping: false,
     agentPhase: 'idle',
     providerRetry: null,
+    providerStall: null,
     sessionEventConnectionState: 'idle',
     currentRunId: null,
     pendingSteeringCount: 0,
@@ -1371,6 +1372,7 @@ describe('eventHandlers', () => {
     expect(set).toHaveBeenLastCalledWith({
       agentPhase: 'switching_model',
       providerRetry: null,
+      providerStall: null,
     });
   });
 
@@ -1424,6 +1426,55 @@ describe('eventHandlers', () => {
     });
     expect(state.agentPhase).toBe('running');
     expect(state.providerRetry).toBeNull();
+  });
+
+  test('tracks Provider stall detection and recovery', () => {
+    const state = createState();
+    state.agentPhase = 'running';
+    state.isStreaming = true;
+    const set = vi.fn((partial) => {
+      if (typeof partial === 'function') Object.assign(state, partial(state));
+      else Object.assign(state, partial);
+    });
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'provider.stall',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        phase: 'detected',
+        stallCount: 1,
+        durationMs: 30_000,
+        warningAfterMs: 30_000,
+        timeoutMs: 300_000,
+        outputStarted: true,
+      },
+    });
+    expect(state.providerStall).toMatchObject({
+      phase: 'detected',
+      stallCount: 1,
+      durationMs: 30_000,
+      warningAfterMs: 30_000,
+      timeoutMs: 300_000,
+      outputStarted: true,
+    });
+
+    dispatch({
+      type: 'provider.stall',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        phase: 'recovered',
+        stallCount: 1,
+        durationMs: 31_250,
+        warningAfterMs: 30_000,
+        timeoutMs: 300_000,
+        outputStarted: true,
+      },
+    });
+    expect(state.agentPhase).toBe('running');
+    expect(state.providerStall).toBeNull();
   });
 
   test('tracks queued and applied steering depth from SSE events', () => {
@@ -1530,6 +1581,7 @@ describe('eventHandlers', () => {
       pendingInputDelivery: null,
       recoveredSteeringCount: 0,
       providerRetry: null,
+      providerStall: null,
     });
   });
 

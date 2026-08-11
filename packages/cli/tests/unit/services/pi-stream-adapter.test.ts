@@ -10,6 +10,7 @@ import type {
 import { describe, expect, it, vi } from 'vitest';
 import {
   ProviderStreamClosedError,
+  resolveStreamStallWarningMs,
   streamPiModel,
   StreamIdleTimeoutError,
 } from '../../../src/services/pi/streamAdapter.js';
@@ -57,6 +58,13 @@ function streamFrom(
 }
 
 describe('pi stream adapter watchdog', () => {
+  it('derives a bounded stall warning before the hard idle timeout', () => {
+    expect(resolveStreamStallWarningMs(300_000)).toBe(30_000);
+    expect(resolveStreamStallWarningMs(20_000)).toBe(10_000);
+    expect(resolveStreamStallWarningMs(20_000, 4_000)).toBe(4_000);
+    expect(resolveStreamStallWarningMs(20_000, 0)).toBeUndefined();
+  });
+
   it('keeps idle timeouts fatal while allowing a clean pre-output EOF retry', () => {
     expect(isFallbackablePiError(new StreamIdleTimeoutError(20))).toBe(false);
     expect(isFallbackablePiError(new ProviderStreamClosedError())).toBe(true);
@@ -86,9 +94,187 @@ describe('pi stream adapter watchdog', () => {
       }
     );
 
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: {
+        providerStall: {
+          phase: 'detected',
+          stallCount: 1,
+          durationMs: 10,
+          warningAfterMs: 10,
+          timeoutMs: 20,
+          outputStarted: false,
+        },
+      },
+      done: false,
+    });
     await expect(iterator.next()).rejects.toBeInstanceOf(StreamIdleTimeoutError);
     expect(controller.signal.reason).toBeInstanceOf(StreamIdleTimeoutError);
     await vi.waitFor(() => expect(returnStream).toHaveBeenCalledOnce());
+  });
+
+  it('reports recovery on the same pending provider read', async () => {
+    let resolveNext:
+      | ((result: IteratorResult<AssistantMessageEvent>) => void)
+      | undefined;
+    const nextProviderEvent = vi.fn(
+      () =>
+        new Promise<IteratorResult<AssistantMessageEvent>>((resolve) => {
+          resolveNext = resolve;
+        })
+    );
+    const returnStream = vi.fn(async () => ({
+      done: true as const,
+      value: undefined,
+    }));
+    const stream = {
+      [Symbol.asyncIterator]: () => ({
+        next: nextProviderEvent,
+        return: returnStream,
+      }),
+    };
+    const iterator = streamPiModel(
+      modelsFor(stream),
+      model,
+      context,
+      {},
+      {
+        idleTimeoutMs: 100,
+        stallWarningMs: 10,
+      }
+    );
+
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: {
+        providerStall: {
+          phase: 'detected',
+          stallCount: 1,
+          outputStarted: false,
+        },
+      },
+    });
+    expect(nextProviderEvent).toHaveBeenCalledOnce();
+
+    const recovered = iterator.next();
+    resolveNext?.({
+      done: false,
+      value: {
+        type: 'text_delta',
+        contentIndex: 0,
+        delta: 'ok',
+        partial,
+      },
+    });
+    await expect(recovered).resolves.toMatchObject({
+      value: {
+        providerStall: {
+          phase: 'recovered',
+          stallCount: 1,
+          outputStarted: false,
+        },
+      },
+    });
+    expect(nextProviderEvent).toHaveBeenCalledOnce();
+    await expect(iterator.next()).resolves.toEqual({
+      value: { content: 'ok' },
+      done: false,
+    });
+    expect(nextProviderEvent).toHaveBeenCalledOnce();
+    await iterator.return();
+    expect(returnStream).toHaveBeenCalledOnce();
+  });
+
+  it('cancels the same pending read after a stall warning', async () => {
+    const nextProviderEvent = vi.fn(
+      () => new Promise<IteratorResult<AssistantMessageEvent>>(() => undefined)
+    );
+    const returnStream = vi.fn(async () => ({
+      done: true as const,
+      value: undefined,
+    }));
+    const stream = {
+      [Symbol.asyncIterator]: () => ({
+        next: nextProviderEvent,
+        return: returnStream,
+      }),
+    };
+    const controller = new AbortController();
+    const iterator = streamPiModel(
+      modelsFor(stream),
+      model,
+      context,
+      {},
+      {
+        idleTimeoutMs: 100,
+        stallWarningMs: 10,
+        signal: controller.signal,
+      }
+    );
+
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: { providerStall: { phase: 'detected' } },
+    });
+    const pending = iterator.next();
+    controller.abort(new Error('cancelled by caller'));
+
+    await expect(pending).rejects.toThrow('cancelled by caller');
+    expect(nextProviderEvent).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(returnStream).toHaveBeenCalledOnce());
+  });
+
+  it('marks a recovered gap as mid-stream after visible output', async () => {
+    const stream = streamFrom(async function* () {
+      yield { type: 'text_delta', contentIndex: 0, delta: 'partial', partial };
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      yield { type: 'done', reason: 'stop', message: partial };
+    });
+    const chunks = [];
+
+    for await (const chunk of streamPiModel(
+      modelsFor(stream),
+      model,
+      context,
+      {},
+      {
+        idleTimeoutMs: 80,
+        stallWarningMs: 10,
+      }
+    )) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual([
+      { content: 'partial' },
+      {
+        providerStall: {
+          phase: 'detected',
+          stallCount: 1,
+          durationMs: 10,
+          warningAfterMs: 10,
+          timeoutMs: 80,
+          outputStarted: true,
+        },
+      },
+      {
+        providerStall: {
+          phase: 'recovered',
+          stallCount: 1,
+          durationMs: expect.any(Number),
+          warningAfterMs: 10,
+          timeoutMs: 80,
+          outputStarted: true,
+        },
+      },
+      {
+        finishReason: 'stop',
+        usage: {
+          promptTokens: 4,
+          completionTokens: 2,
+          totalTokens: 6,
+          costUsd: 0,
+        },
+      },
+    ]);
+    expect(chunks[2]?.providerStall?.durationMs).toBeGreaterThanOrEqual(10);
   });
 
   it('resets the idle deadline after every provider event', async () => {
@@ -108,6 +294,7 @@ describe('pi stream adapter watchdog', () => {
       {},
       {
         idleTimeoutMs: 25,
+        stallWarningMs: 0,
       }
     )) {
       chunks.push(chunk);

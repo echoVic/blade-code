@@ -1235,6 +1235,22 @@ export class AcpSession {
                 },
               });
               break;
+            case 'provider_stall':
+              this.sendUpdate({
+                sessionUpdate: 'session_info_update',
+                updatedAt: new Date().toISOString(),
+                _meta: {
+                  'blade/providerStall': {
+                    phase: event.phase,
+                    stallCount: event.stallCount,
+                    durationMs: event.durationMs,
+                    warningAfterMs: event.warningAfterMs,
+                    timeoutMs: event.timeoutMs,
+                    outputStarted: event.outputStarted,
+                  },
+                },
+              });
+              break;
 
             // --- 业务事件 ---
             case 'task_update':

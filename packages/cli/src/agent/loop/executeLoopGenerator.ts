@@ -436,6 +436,10 @@ async function* processStreamResponse(
         yield { kind: 'provider_retry', ...chunk.providerRetry };
         continue;
       }
+      if (chunk.providerStall) {
+        yield { kind: 'provider_stall', ...chunk.providerStall };
+        continue;
+      }
 
       chunkCount++;
       if (chunk.modelFallback) {

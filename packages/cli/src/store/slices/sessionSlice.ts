@@ -107,6 +107,7 @@ const initialSessionState: SessionState = {
   currentStreamingVersion: 0, // NEW: 流式缓冲版本号
   finalizingStreamingMessageId: null, // 流式转最终渲染中的消息 ID
   providerRetry: null,
+  providerStall: null,
 };
 
 /**
@@ -685,6 +686,12 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
     setProviderRetry: (providerRetry) => {
       set((state) => ({
         session: { ...state.session, providerRetry },
+      }));
+    },
+
+    setProviderStall: (providerStall) => {
+      set((state) => ({
+        session: { ...state.session, providerStall },
       }));
     },
 

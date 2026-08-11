@@ -50,6 +50,9 @@ export const useSessionCost = () =>
 export const useProviderRetry = () =>
   useBladeStore((state) => state.session.providerRetry);
 
+export const useProviderStall = () =>
+  useBladeStore((state) => state.session.providerStall);
+
 /**
  * 获取 Session Actions
  */

@@ -94,6 +94,14 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   headers、URL 或 credential。TUI loading、Web StatusBar、ACP
   `session_info_update._meta["blade/providerRetry"]`、Headless JSONL 和 subagent SSE
   消费同一协议；元事件不计为内容 chunk，不触发 stream commit 或工具执行。
+- 每次 Provider stream read 同时受 stall warning 和 hard idle timeout 约束。warning
+  默认为 30 秒，并在较短 hard timeout 下收窄到其一半；runtime 始终保留同一个 pending
+  `iterator.next()`，不能因为 warning 启动重叠读取或第二个请求。超过 warning 产生
+  `provider_stall: detected`，下一 Provider event 到达后产生 `recovered`；事件包含
+  bounded duration、warning/hard deadline、stall count 和 `outputStarted`，不包含
+  Provider payload。stall 元事件与 retry 元事件一样不计入 replay boundary、内容
+  chunk、stream commit 或工具执行，并统一投影到 TUI、Web、ACP、Headless 与
+  subagent SSE。hard timeout、caller abort 和部分输出后的故障仍 fail closed。
 - user-turn rewind 不截断 transcript，而是追加 `session_rewound` marker。resume、
   catalog、fork、search 和 ContextManager 通过同一 projector 累积计算有效历史，
   被回退的原始事件保留用于审计但不会重新进入模型或 UI。

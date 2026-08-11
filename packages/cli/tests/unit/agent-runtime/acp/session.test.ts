@@ -946,6 +946,71 @@ describe('AcpSession', () => {
       );
     });
 
+    it('projects Provider stall lifecycle through ACP session metadata', async () => {
+      const mockAgent = getMockAgent();
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield {
+          kind: 'provider_stall',
+          phase: 'detected',
+          stallCount: 1,
+          durationMs: 30_000,
+          warningAfterMs: 30_000,
+          timeoutMs: 300_000,
+          outputStarted: true,
+        } as LoopEvent;
+        yield {
+          kind: 'provider_stall',
+          phase: 'recovered',
+          stallCount: 1,
+          durationMs: 31_250,
+          warningAfterMs: 30_000,
+          timeoutMs: 300_000,
+          outputStarted: true,
+        } as LoopEvent;
+        return { success: true, finalMessage: 'recovered' };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'wait for the provider' }],
+      });
+
+      expect(mockConnection.sessionUpdates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'session_info_update',
+              _meta: {
+                'blade/providerStall': {
+                  phase: 'detected',
+                  stallCount: 1,
+                  durationMs: 30_000,
+                  warningAfterMs: 30_000,
+                  timeoutMs: 300_000,
+                  outputStarted: true,
+                },
+              },
+            }),
+          }),
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'session_info_update',
+              _meta: {
+                'blade/providerStall': {
+                  phase: 'recovered',
+                  stallCount: 1,
+                  durationMs: 31_250,
+                  warningAfterMs: 30_000,
+                  timeoutMs: 300_000,
+                  outputStarted: true,
+                },
+              },
+            }),
+          }),
+        ])
+      );
+    });
+
     it('fails closed with a typed ACP error when the agent loop fails', async () => {
       const mockAgent = getMockAgent();
       mockAgent.chatStream = vi.fn(async function* () {

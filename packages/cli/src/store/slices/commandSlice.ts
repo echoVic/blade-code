@@ -45,7 +45,11 @@ export const createCommandSlice: StateCreator<BladeStore, [], [], CommandSlice> 
         command: { ...state.command, isProcessing },
         ...(!isProcessing
           ? {
-              session: { ...state.session, providerRetry: null },
+              session: {
+                ...state.session,
+                providerRetry: null,
+                providerStall: null,
+              },
             }
           : {}),
       }));
@@ -122,7 +126,11 @@ export const createCommandSlice: StateCreator<BladeStore, [], [], CommandSlice> 
           // 不清空 abortController，让后续代码能检测 signal.aborted
           pendingCommands: [],
         },
-        session: { ...state.session, providerRetry: null },
+        session: {
+          ...state.session,
+          providerRetry: null,
+          providerStall: null,
+        },
       }));
     },
 

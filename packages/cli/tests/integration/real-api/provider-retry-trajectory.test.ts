@@ -149,6 +149,119 @@ async function startTransientProxy(baseUrl: string) {
   };
 }
 
+function isContentFrame(frame: string): boolean {
+  for (const line of frame.split('\n')) {
+    if (!line.startsWith('data:')) continue;
+    const payload = line.slice('data:'.length).trim();
+    if (!payload || payload === '[DONE]') continue;
+    try {
+      const parsed = JSON.parse(payload) as {
+        choices?: Array<{ delta?: { content?: unknown } }>;
+      };
+      if (
+        parsed.choices?.some(
+          (choice) =>
+            typeof choice.delta?.content === 'string' && choice.delta.content.length > 0
+        )
+      ) {
+        return true;
+      }
+    } catch {
+      // Non-JSON SSE metadata is forwarded unchanged.
+    }
+  }
+  return false;
+}
+
+async function startMidStreamStallProxy(baseUrl: string, delayMs: number) {
+  let requestCount = 0;
+  let injectedStalls = 0;
+  const server = createServer((request, response) => {
+    void (async () => {
+      const body = await readRequestBody(request);
+      requestCount++;
+      const headers = new Headers();
+      for (const [name, value] of Object.entries(request.headers)) {
+        if (!value || name === 'host' || name === 'content-length') continue;
+        headers.set(name, Array.isArray(value) ? value.join(', ') : value);
+      }
+      const upstream = await fetch(upstreamUrl(baseUrl, request.url), {
+        method: request.method ?? 'POST',
+        headers,
+        body: request.method === 'GET' || request.method === 'HEAD' ? undefined : body,
+        redirect: 'manual',
+      });
+      const responseHeaders: Record<string, string> = {};
+      upstream.headers.forEach((value, name) => {
+        if (
+          ![
+            'connection',
+            'content-encoding',
+            'content-length',
+            'transfer-encoding',
+          ].includes(name)
+        ) {
+          responseHeaders[name] = value;
+        }
+      });
+      response.writeHead(upstream.status, responseHeaders);
+      if (!upstream.body) {
+        response.end();
+        return;
+      }
+
+      const reader = upstream.body.getReader();
+      const decoder = new TextDecoder();
+      let buffered = '';
+      for (;;) {
+        const chunk = await reader.read();
+        buffered += decoder.decode(chunk.value, { stream: !chunk.done });
+        let boundary = buffered.indexOf('\n\n');
+        while (boundary >= 0) {
+          const frame = buffered.slice(0, boundary);
+          buffered = buffered.slice(boundary + 2);
+          response.write(`${frame}\n\n`);
+          if (injectedStalls === 0 && isContentFrame(frame)) {
+            injectedStalls++;
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          }
+          boundary = buffered.indexOf('\n\n');
+        }
+        if (chunk.done) break;
+      }
+      if (buffered) response.write(buffered);
+      response.end();
+    })().catch((error: unknown) => {
+      if (response.headersSent) {
+        response.destroy(error instanceof Error ? error : undefined);
+        return;
+      }
+      response.writeHead(502, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: { type: 'proxy_error' } }));
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  const address = server.address() as AddressInfo;
+  return {
+    baseURL: `http://127.0.0.1:${address.port}`,
+    requestCount: () => requestCount,
+    injectedStalls: () => injectedStalls,
+    close: async () => {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    },
+  };
+}
+
 describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
   it('recovers one coding turn from an injected pre-stream 503', async () => {
     if (!modelConfig) throw new Error('DeepSeek Flash configuration is required');
@@ -266,6 +379,96 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
       });
       expect(verification.stdout).toContain('pass 1');
       expect(`${output}\n${errorOutput}`).not.toContain(proxy.privateBodyMarker);
+      expect(`${output}\n${errorOutput}`).not.toContain(modelConfig.apiKey);
+    } finally {
+      await proxy.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  it('recovers a real mid-stream stall without replaying the request', async () => {
+    if (!modelConfig) throw new Error('DeepSeek Flash configuration is required');
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-provider-stall-'));
+    const proxy = await startMidStreamStallProxy(
+      modelConfig.baseURL ?? 'https://api.deepseek.com',
+      7_000
+    );
+    let output = '';
+    let errorOutput = '';
+
+    try {
+      process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+      const runtimeConfig = buildRealApiRuntimeConfig({
+        ...modelConfig,
+        baseURL: proxy.baseURL,
+      });
+      getState().config.actions.setConfig({
+        ...runtimeConfig,
+        permissionMode: PermissionMode.YOLO,
+        models: runtimeConfig.models.map((model) => ({
+          ...model,
+          overrides: {
+            ...model.overrides,
+            streamIdleTimeout: 12_000,
+          },
+        })),
+      });
+
+      const exitCode = await runWithCwdOverride(workspace, () =>
+        runHeadless(
+          {
+            headless: true,
+            outputFormat: 'jsonl',
+            maxTurns: 1,
+            message: 'Reply with exactly STALL_REAL_API_OK and nothing else.',
+          },
+          {
+            stdout: {
+              write(chunk: string) {
+                output += chunk;
+                return true;
+              },
+            },
+            stderr: {
+              write(chunk: string) {
+                errorOutput += chunk;
+                return true;
+              },
+            },
+          }
+        )
+      );
+      const events = output
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+      const stallEvents = events
+        .filter((event) => event.type === 'provider_stall')
+        .filter((event) => event.output_started);
+
+      expect(exitCode, errorOutput.replaceAll(modelConfig.apiKey, '[redacted]')).toBe(
+        0
+      );
+      expect(proxy.injectedStalls()).toBe(1);
+      expect(proxy.requestCount()).toBe(1);
+      expect(stallEvents.map((event) => event.phase)).toEqual([
+        'detected',
+        'recovered',
+      ]);
+      expect(stallEvents[0]).toMatchObject({
+        stall_count: expect.any(Number),
+        duration_ms: 6_000,
+        warning_after_ms: 6_000,
+        timeout_ms: 12_000,
+        output_started: true,
+      });
+      expect(events.filter((event) => event.type === 'provider_retry')).toHaveLength(0);
+      expect(
+        events
+          .filter((event) => event.type === 'content_delta')
+          .map((event) => event.delta)
+          .join('')
+      ).toBe('STALL_REAL_API_OK');
       expect(`${output}\n${errorOutput}`).not.toContain(modelConfig.apiKey);
     } finally {
       await proxy.close();

@@ -12,6 +12,7 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
     isStopping: false,
     agentPhase: 'idle',
     providerRetry: null,
+    providerStall: null,
     sessionEventConnectionState: 'idle',
     currentRunId: null,
     pendingSteeringCount: 0,
@@ -73,6 +74,7 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
         isStreaming: true,
         agentPhase: 'running',
         providerRetry: null,
+        providerStall: null,
       });
     },
 
@@ -85,6 +87,7 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
         isStopping: false,
         agentPhase: 'idle',
         providerRetry: null,
+        providerStall: null,
         currentRunId: null,
         pendingSteeringCount: 0,
         pendingInputDelivery: null,

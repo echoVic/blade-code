@@ -35,6 +35,7 @@ import { getProviderHeaders } from '../ui/components/model-config/types.js';
 import { PiAIChatService } from './PiAIChatService.js';
 import type { PiModelCatalog } from './pi/PiModelCatalog.js';
 import type { ProviderRetryEvent } from './pi/providerRetry.js';
+import type { ProviderStallEvent } from './pi/providerStall.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -176,6 +177,7 @@ export interface StreamChunk {
   usage?: UsageInfo;
   modelFallback?: boolean;
   providerRetry?: ProviderRetryEvent;
+  providerStall?: ProviderStallEvent;
 }
 
 /**

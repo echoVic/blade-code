@@ -511,6 +511,17 @@ function publishSubagentLoopEvent(
         nextRetryAt: event.nextRetryAt,
       });
       break;
+    case 'provider_stall':
+      Bus.publish(ref, 'subagent.provider.stall', {
+        subagentSessionId,
+        phase: event.phase,
+        stallCount: event.stallCount,
+        durationMs: event.durationMs,
+        warningAfterMs: event.warningAfterMs,
+        timeoutMs: event.timeoutMs,
+        outputStarted: event.outputStarted,
+      });
+      break;
     case 'mcp_catalog_changed':
       Bus.publish(ref, 'subagent.mcp.catalog.changed', {
         subagentSessionId,
@@ -3741,6 +3752,16 @@ async function executeRunAsync(
             statusCode: event.statusCode,
             delayMs: event.delayMs,
             nextRetryAt: event.nextRetryAt,
+          });
+          break;
+        case 'provider_stall':
+          emit('provider.stall', {
+            phase: event.phase,
+            stallCount: event.stallCount,
+            durationMs: event.durationMs,
+            warningAfterMs: event.warningAfterMs,
+            timeoutMs: event.timeoutMs,
+            outputStarted: event.outputStarted,
           });
           break;
         case 'mcp_catalog_changed':

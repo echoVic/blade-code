@@ -2146,6 +2146,15 @@ describe('SessionRoutes runtime reuse', () => {
         delayMs: 750,
         nextRetryAt: 1_750,
       };
+      yield {
+        kind: 'provider_stall',
+        phase: 'detected',
+        stallCount: 1,
+        durationMs: 30_000,
+        warningAfterMs: 30_000,
+        timeoutMs: 300_000,
+        outputStarted: false,
+      };
       yield { kind: 'thinking_delta', delta: 'inspect the failure' };
       yield {
         kind: 'follow_up_started',
@@ -2241,6 +2250,18 @@ describe('SessionRoutes runtime reuse', () => {
         statusCode: 503,
         delayMs: 750,
         nextRetryAt: 1_750,
+      }
+    );
+    expect(Bus.publish).toHaveBeenCalledWith(
+      refFor('surface-events'),
+      'provider.stall',
+      {
+        phase: 'detected',
+        stallCount: 1,
+        durationMs: 30_000,
+        warningAfterMs: 30_000,
+        timeoutMs: 300_000,
+        outputStarted: false,
       }
     );
     expect(Bus.publish).toHaveBeenCalledWith(

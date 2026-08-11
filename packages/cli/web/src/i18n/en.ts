@@ -550,6 +550,7 @@ export const en = {
   'status.tokenLimitTooltip':
     'Token limit is estimated. It updates when the model reports its context size.',
   'status.phase.running': 'Generating...',
+  'status.phase.providerStall': 'Provider stream paused',
   'status.phase.compacting': 'Compacting context...',
   'status.phase.switchingModel': 'Switching model...',
   'status.phase.waitingPermission': 'Waiting for permission...',

@@ -105,6 +105,7 @@ export function createLoopEventHandler(
       // --- stream_end：原子提交（flush 缓冲区 + finalize 消息）---
       case 'stream_end': {
         deps.sessionActions.setProviderRetry(null);
+        deps.sessionActions.setProviderStall(null);
         logger.debug('[loopEventHandler] stream_end', {
           contentDeltaCount: stats.contentDeltaCount,
           contentDeltaTotalLen: stats.contentDeltaTotalLen,
@@ -149,6 +150,7 @@ export function createLoopEventHandler(
         // 标记流已终结，防止后续 late stream_end 复活内容
         streamFinalized = true;
         deps.sessionActions.setProviderRetry(null);
+        deps.sessionActions.setProviderStall(null);
         deps.streamingBuffer.resetStreamingBuffers();
         deps.sessionActions.discardStreamingMessage();
         deps.sessionActions.setCurrentThinkingContent(null);
@@ -158,6 +160,11 @@ export function createLoopEventHandler(
         deps.sessionActions.setProviderRetry(
           event.phase === 'scheduled' || event.phase === 'attempt' ? retry : null
         );
+        break;
+      }
+      case 'provider_stall': {
+        const { kind: _kind, ...stall } = event;
+        deps.sessionActions.setProviderStall(event.phase === 'detected' ? stall : null);
         break;
       }
 
@@ -255,6 +262,7 @@ export function createLoopEventHandler(
         });
         deps.sessionActions.updateTokenUsage({ turnCount: event.turn });
         deps.sessionActions.setProviderRetry(null);
+        deps.sessionActions.setProviderStall(null);
         streamFinalized = false;
         break;
       case 'task_update':

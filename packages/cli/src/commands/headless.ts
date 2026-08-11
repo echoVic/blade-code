@@ -968,6 +968,23 @@ function createEventWriter(
         `[provider-retry:${event.phase}] ${event.attempt}/${event.maxRetries} ${event.reason}${delay}`
       );
     },
+    providerStall(event: Extract<LoopEvent, { kind: 'provider_stall' }>) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('provider_stall', {
+          phase: event.phase,
+          stall_count: event.stallCount,
+          duration_ms: event.durationMs,
+          warning_after_ms: event.warningAfterMs,
+          timeout_ms: event.timeoutMs,
+          output_started: event.outputStarted,
+        });
+        return;
+      }
+      writeLine(
+        io.stderr,
+        `[provider-stall:${event.phase}] ${event.durationMs}ms / ${event.timeoutMs}ms`
+      );
+    },
     turnLimit(turnsCount: number) {
       if (outputFormat === 'jsonl') {
         writeJsonl('turn_limit', {
@@ -1454,6 +1471,9 @@ export async function runHeadless(
             break;
           case 'provider_retry':
             eventWriter.providerRetry(event);
+            break;
+          case 'provider_stall':
+            eventWriter.providerStall(event);
             break;
 
           // --- 系统事件 ---

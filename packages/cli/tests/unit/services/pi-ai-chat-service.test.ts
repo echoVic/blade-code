@@ -359,4 +359,51 @@ describe('PiAIChatService', () => {
       vi.useRealTimers();
     }
   });
+
+  it('does not let a stall warning cross the safe replay boundary', async () => {
+    vi.useFakeTimers();
+    streamPiModel
+      .mockReturnValueOnce(
+        chunks([
+          {
+            providerStall: {
+              phase: 'detected',
+              stallCount: 1,
+              durationMs: 100,
+              warningAfterMs: 100,
+              timeoutMs: 200,
+              outputStarted: false,
+            },
+          },
+          new Error('status 503'),
+        ])
+      )
+      .mockReturnValueOnce(chunks([{ content: 'recovered' }]));
+    const stream = (await service({ maxRetries: 1 })).streamChat([
+      { role: 'user', content: 'hello' },
+    ]);
+
+    try {
+      await expect(stream.next()).resolves.toMatchObject({
+        value: { providerStall: { phase: 'detected' } },
+      });
+      await expect(stream.next()).resolves.toMatchObject({
+        value: { providerRetry: { phase: 'scheduled', attempt: 1 } },
+      });
+      const attempt = stream.next();
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(attempt).resolves.toMatchObject({
+        value: { providerRetry: { phase: 'attempt', attempt: 1 } },
+      });
+      await expect(stream.next()).resolves.toMatchObject({
+        value: { providerRetry: { phase: 'recovered', attempt: 1 } },
+      });
+      await expect(stream.next()).resolves.toMatchObject({
+        value: { content: 'recovered' },
+      });
+      expect(streamPiModel).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PiAIChatService } from '../../src/services/PiAIChatService.js';
 
-type StreamMode = 'silent' | 'partial';
+type StreamMode = 'silent' | 'partial' | 'delayed';
 
 describe('pi provider stream watchdog integration', () => {
   let createHttpServer: typeof import('node:http').createServer;
@@ -28,24 +28,51 @@ describe('pi provider stream watchdog integration', () => {
         connection: 'keep-alive',
       });
       response.flushHeaders();
-      if (mode === 'partial') {
-        response.write(
-          'data: ' +
-            JSON.stringify({
-              id: `watchdog-${requestCount}`,
-              object: 'chat.completion.chunk',
-              created: 1,
-              model: 'deepseek-v4-flash',
-              choices: [
-                {
-                  index: 0,
-                  delta: { content: 'partial' },
-                  finish_reason: null,
-                },
-              ],
-            }) +
-            '\n\n'
-        );
+      if (mode === 'partial' || mode === 'delayed') {
+        const writeResponse = () => {
+          if (response.destroyed) return;
+          response.write(
+            'data: ' +
+              JSON.stringify({
+                id: `watchdog-${requestCount}`,
+                object: 'chat.completion.chunk',
+                created: 1,
+                model: 'deepseek-v4-flash',
+                choices: [
+                  {
+                    index: 0,
+                    delta: { content: 'partial' },
+                    finish_reason: null,
+                  },
+                ],
+              }) +
+              '\n\n'
+          );
+          if (mode === 'delayed') {
+            response.write(
+              'data: ' +
+                JSON.stringify({
+                  id: `watchdog-${requestCount}`,
+                  object: 'chat.completion.chunk',
+                  created: 1,
+                  model: 'deepseek-v4-flash',
+                  choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+                  usage: {
+                    prompt_tokens: 4,
+                    completion_tokens: 1,
+                    total_tokens: 5,
+                  },
+                }) +
+                '\n\n'
+            );
+            response.end('data: [DONE]\n\n');
+          }
+        };
+        if (mode === 'delayed') {
+          setTimeout(writeResponse, 150);
+          return;
+        }
+        writeResponse();
       }
     });
     server = activeServer;
@@ -87,8 +114,49 @@ describe('pi provider stream watchdog integration', () => {
       value: { content: 'partial' },
       done: false,
     });
+    await expect(stream.next()).resolves.toMatchObject({
+      value: {
+        providerStall: {
+          phase: 'detected',
+          outputStarted: true,
+          warningAfterMs: 125,
+          timeoutMs: 250,
+        },
+      },
+      done: false,
+    });
     await expect(stream.next()).rejects.toThrow('stream idle timeout');
     expect(requestCount).toBe(1);
+  });
+
+  it('surfaces a delayed stream and recovers without a second request', async () => {
+    mode = 'delayed';
+    const service = createService({ maxRetries: 2 });
+    const chunks = [];
+
+    for await (const chunk of service.streamChat([
+      { role: 'user', content: 'hello' },
+    ])) {
+      chunks.push(chunk);
+    }
+
+    expect(requestCount).toBe(1);
+    expect(
+      chunks.flatMap((chunk) =>
+        chunk.providerStall ? [chunk.providerStall.phase] : []
+      )
+    ).toEqual(['detected', 'recovered']);
+    expect(chunks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          providerStall: expect.objectContaining({
+            phase: 'detected',
+            outputStarted: false,
+          }),
+        }),
+        { content: 'partial' },
+      ])
+    );
   });
 
   function createService(overrides: { maxRetries: number }): PiAIChatService {

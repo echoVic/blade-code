@@ -1007,6 +1007,79 @@ describe('headless runner', () => {
     expect(stderr.write).not.toHaveBeenCalled();
   });
 
+  it('emits sanitized Provider stall lifecycle events in JSONL mode', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    agentState.chatStream.mockImplementationOnce(
+      mockChatGenerator([
+        {
+          kind: 'provider_stall',
+          phase: 'detected',
+          stallCount: 1,
+          durationMs: 30_000,
+          warningAfterMs: 30_000,
+          timeoutMs: 300_000,
+          outputStarted: true,
+        },
+        {
+          kind: 'provider_stall',
+          phase: 'recovered',
+          stallCount: 1,
+          durationMs: 31_250,
+          warningAfterMs: 30_000,
+          timeoutMs: 300_000,
+          outputStarted: true,
+        },
+      ])
+    );
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const { HeadlessJsonlEventSchema } = await import(
+      '../../../src/commands/headlessEvents.js'
+    );
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        outputFormat: 'jsonl',
+        message: 'wait for the provider',
+      },
+      { stdout, stderr }
+    );
+    const events = stdout.write.mock.calls
+      .map((call) => String(call[0] ?? ''))
+      .join('')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)))
+      .filter((event) => event.type === 'provider_stall');
+
+    expect(exitCode).toBe(0);
+    expect(events).toEqual([
+      {
+        event_version: 1,
+        type: 'provider_stall',
+        phase: 'detected',
+        stall_count: 1,
+        duration_ms: 30_000,
+        warning_after_ms: 30_000,
+        timeout_ms: 300_000,
+        output_started: true,
+      },
+      {
+        event_version: 1,
+        type: 'provider_stall',
+        phase: 'recovered',
+        stall_count: 1,
+        duration_ms: 31_250,
+        warning_after_ms: 30_000,
+        timeout_ms: 300_000,
+        output_started: true,
+      },
+    ]);
+    expect(stderr.write).not.toHaveBeenCalled();
+  });
+
   it('prints structured error events when agent execution fails', async () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };

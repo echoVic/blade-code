@@ -24,6 +24,10 @@ const sessionState = vi.hoisted(() => ({
     maxRetries: number;
     delayMs?: number;
   } | null,
+  providerStall: null as {
+    durationMs: number;
+    timeoutMs: number;
+  } | null,
 }));
 
 vi.mock('@/store/session', () => ({
@@ -41,6 +45,7 @@ describe('StatusBar', () => {
     sessionState.isStreaming = true;
     sessionState.agentPhase = 'compacting';
     sessionState.providerRetry = null;
+    sessionState.providerStall = null;
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -77,5 +82,21 @@ describe('StatusBar', () => {
     expect(container.textContent).toContain('Retrying');
     expect(container.textContent).toContain('1/2');
     expect(container.textContent).toContain('2s');
+  });
+
+  it('renders Provider stall duration ahead of the normal phase', () => {
+    sessionState.agentPhase = 'running';
+    sessionState.providerStall = {
+      durationMs: 30_000,
+      timeoutMs: 300_000,
+    };
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    expect(container.textContent).toContain('Provider stream paused');
+    expect(container.textContent).toContain('30s');
+    expect(container.textContent).toContain('300s');
+    expect(container.textContent).not.toContain('Generating...');
   });
 });

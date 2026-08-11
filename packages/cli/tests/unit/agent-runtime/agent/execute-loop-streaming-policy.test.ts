@@ -338,6 +338,26 @@ class ProviderRetryStreamingChatService implements IChatService {
 
   async *streamChat(): AsyncGenerator<StreamChunk, void, unknown> {
     yield {
+      providerStall: {
+        phase: 'detected',
+        stallCount: 1,
+        durationMs: 30_000,
+        warningAfterMs: 30_000,
+        timeoutMs: 300_000,
+        outputStarted: false,
+      },
+    };
+    yield {
+      providerStall: {
+        phase: 'recovered',
+        stallCount: 1,
+        durationMs: 31_250,
+        warningAfterMs: 30_000,
+        timeoutMs: 300_000,
+        outputStarted: false,
+      },
+    };
+    yield {
       providerRetry: {
         phase: 'scheduled',
         attempt: 1,
@@ -471,7 +491,7 @@ function deferred() {
 }
 
 describe('executeLoopGenerator streaming tool policy', () => {
-  it('projects Provider retry metadata without treating it as model output', async () => {
+  it('projects Provider recovery metadata without treating it as model output', async () => {
     const registry = new ToolRegistry();
     const dependencies: LoopDependencies = {
       chatService: new ProviderRetryStreamingChatService(),
@@ -507,6 +527,11 @@ describe('executeLoopGenerator streaming tool policy', () => {
         .filter((event) => event.kind === 'provider_retry')
         .map((event) => event.phase)
     ).toEqual(['scheduled', 'attempt', 'recovered']);
+    expect(
+      events
+        .filter((event) => event.kind === 'provider_stall')
+        .map((event) => event.phase)
+    ).toEqual(['detected', 'recovered']);
     expect(events.filter((event) => event.kind === 'content_delta')).toEqual([
       { kind: 'content_delta', delta: 'Recovered exactly once.' },
     ]);

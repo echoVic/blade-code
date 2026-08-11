@@ -193,6 +193,7 @@ describe('sessionSlice multimodal sendMessage', () => {
       isStopping: false,
       agentPhase: 'idle',
       providerRetry: null,
+      providerStall: null,
       sessionEventConnectionState: 'idle',
       currentRunId: null,
       pendingSteeringCount: 0,

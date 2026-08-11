@@ -21,6 +21,7 @@ import type { EphemeralDelta } from '../context/events/EphemeralDelta.js';
 import type { SessionEvent } from '../context/types.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import type { ProviderRetryEvent } from '../services/pi/providerRetry.js';
+import type { ProviderStallEvent } from '../services/pi/providerStall.js';
 import type { SessionMetadata } from '../services/SessionService.js';
 import type { SessionSelectionIntent } from '../slash-commands/types.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
@@ -114,6 +115,7 @@ export interface SessionState {
   currentStreamingVersion: number; // NEW: 流式缓冲版本号（用于触发订阅更新）
   finalizingStreamingMessageId: string | null; // 正在从流式切换到最终渲染的消息 ID
   providerRetry: ProviderRetryEvent | null; // 首字节前可安全重放的 Provider retry 状态
+  providerStall: ProviderStallEvent | null; // Provider 流事件间隙的可恢复 stall 状态
 }
 
 /**
@@ -160,6 +162,7 @@ export interface SessionActions {
   clearFinalizingStreamingMessageId: () => void; // 清理最终渲染标记
   discardStreamingMessage: () => void; // 丢弃流式消息（不提交，用于模型降级场景）
   setProviderRetry: (retry: ProviderRetryEvent | null) => void;
+  setProviderStall: (stall: ProviderStallEvent | null) => void;
   // 事件溯源投影 actions (CQRS read-model)
   applyCommittedEvent: (event: SessionEvent) => void; // 折叠 committed 事件到投影
   applyStreamingDelta: (delta: EphemeralDelta) => void; // 叠加 ephemeral streaming delta

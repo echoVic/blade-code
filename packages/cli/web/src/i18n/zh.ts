@@ -514,6 +514,7 @@ export const zh: Dict = {
   'status.context': '上下文',
   'status.tokenLimitTooltip': '此为估算的 token 上限，模型回报上下文尺寸后会自动更新。',
   'status.phase.running': '生成中…',
+  'status.phase.providerStall': 'Provider 流暂无数据',
   'status.phase.compacting': '正在压缩上下文…',
   'status.phase.switchingModel': '正在切换模型…',
   'status.phase.waitingPermission': '等待授权…',

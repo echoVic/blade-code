@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.15] - 2026-08-12
+
+### ✨ 新功能
+
+- 新增 Provider Stream Stall Lifecycle：每个 stream read 在 hard idle timeout 前先
+  触发 bounded warning，并在下一 Provider event 到达时产生 `detected → recovered`
+- stall 状态通过统一 LoopEvent 投影到 CLI/TUI、Web、ACP、Headless 和 subagent；
+  TUI 显示等待时长、空闲上限与 Esc 取消，Web StatusBar 显示 stall duration/deadline
+
+### 🛡️ 稳定性
+
+- stall warning 始终复用同一个 pending `iterator.next()`，不会启动重叠读取或第二个
+  Provider 请求；stall 元事件不跨越 replay boundary，不计入内容、stream commit 或
+  工具副作用
+- 首事件前与部分输出后的 stall 都可观察；hard timeout 和 caller abort 仍 fail
+  closed，部分输出后绝不自动重放
+
+### ✅ 测试相关
+
+- 新增 warning/recovery、mid-stream stall、hard timeout、warning 后取消、deadline
+  reset 与单 pending-read 确定性回归，并覆盖 Server SSE、TUI、Web、ACP 和 Headless
+- release-blocking 真实 API 轨迹使用透明 SSE 代理在真实内容后暂停 7 秒，验证
+  `detected → recovered`、单次 Provider 请求、零 retry 与最终回复成功；固定矩阵增至
+  20 条真实轨迹
+- Production Web GUI 实际显示 `Provider 流暂无数据 · 6s / 12s`，恢复后无刷新完成且
+  fresh tab 恢复两轮结果、console 零消息；真实 raw PTY TUI 显示 stall、hard deadline
+  与 Esc 取消入口后完成同一 marker
+
 ## [0.10.14] - 2026-08-12
 
 ### ✨ 新功能

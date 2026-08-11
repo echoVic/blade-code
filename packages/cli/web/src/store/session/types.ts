@@ -68,6 +68,15 @@ export interface ProviderRetryInfo {
   delayMs?: number;
 }
 
+export interface ProviderStallInfo {
+  phase: 'detected';
+  stallCount: number;
+  durationMs: number;
+  warningAfterMs: number;
+  timeoutMs: number;
+  outputStarted: boolean;
+}
+
 export interface TaskItem {
   id: string;
   subject: string;
@@ -301,6 +310,7 @@ export interface StreamingSlice {
   isStopping: boolean;
   agentPhase: AgentPhase;
   providerRetry: ProviderRetryInfo | null;
+  providerStall: ProviderStallInfo | null;
   sessionEventConnectionState: TaskEventConnectionState | 'idle';
   currentRunId: string | null;
   pendingSteeringCount: number;

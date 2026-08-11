@@ -50,8 +50,8 @@ bun run qualify:production
 该命令运行固定的 release-blocking real matrix：真实 DeepSeek Flash/Pro Headless
 bugfix、GPT Web structured output、Claude ACP structured output、DeepSeek headless
 structured output、Web/ACP/TUI code review、durable interaction recovery、permission
-recovery、ACP model switch、透明 503 proxy Provider recovery，以及 DeepSeek Flash
-的 Runtime/Web/ACP host-authoritative Goal completion verification。Edit+rewind、
+recovery、ACP model switch、透明 503 retry proxy、真实 mid-stream stall proxy，以及
+DeepSeek Flash 的 Runtime/Web/ACP host-authoritative Goal completion verification。Edit+rewind、
 开放式多文件迁移、compaction、进程树、
 并发 owner 与 crash-tail 等高成本 provider/capability soak 由以下命令单独运行：
 
@@ -129,6 +129,16 @@ StatusBar 显示 retry attempt 与有界等待，随后无刷新完成，fresh t
 browser console 无 application error。TUI 条件允许时通过 Computer Use 验证 loading
 状态和 Esc 取消；ACP 必须通过 `session_info_update` metadata 投影且不污染 assistant
 正文。
+
+Provider Stall 资格必须让透明 SSE 代理先转发真实模型内容，再在 hard idle timeout
+之前暂停后续事件。Headless JSONL 必须按同一 stall count 输出 sanitized
+`detected → recovered`，标记 `output_started=true`，随后完成真实回复；代理必须证明
+只收到一个 Provider 请求，且不能出现 retry、重叠 `iterator.next()`、重复内容或工具
+副作用。确定性 transport 测试另行覆盖首事件前 stall、mid-stream stall、warning 后
+hard timeout、caller abort、deadline reset 和 warning 后仍只有一个 pending read。
+Production Web GUI 必须在 StatusBar 显示 stall duration/hard deadline，恢复后无刷新
+完成且 console 无 application error；TUI 必须显示 stall 状态、hard deadline 与 Esc
+取消入口；ACP 和 Headless 只投影 metadata，不污染 assistant 正文或 durable transcript。
 
 工具并发资格要求 GPT 在同一个 production stream 中同时调用两个已加载工具。两个
 工具在执行函数内互相等待，只有都进入 shared gate 才能释放；因此单纯缩短总耗时或
