@@ -70,8 +70,6 @@ export function TaskSwitcher() {
   const openFilePreview = useAppStore((state) => state.openFilePreview);
   const toggleTerminal = useAppStore((state) => state.toggleTerminal);
   const openSettings = useAppStore((state) => state.openSettings);
-  const toggleMcp = useAppStore((state) => state.toggleMcp);
-  const toggleSkills = useAppStore((state) => state.toggleSkills);
   const sessions = useSessionStore((state) => state.sessions);
   const isLoading = useSessionStore((state) => state.isLoading);
   const catalogLoadState = useSessionStore((state) => state.catalogLoadState);
@@ -170,7 +168,7 @@ export function TaskSwitcher() {
         description: t('commandCenter.action.skillsDescription'),
         keywords: 'capabilities workflow',
         icon: Sparkles,
-        run: toggleSkills,
+        run: () => openSettings('skills'),
       },
       {
         id: 'open-mcp',
@@ -178,7 +176,7 @@ export function TaskSwitcher() {
         description: t('commandCenter.action.mcpDescription'),
         keywords: 'server tools protocol integration',
         icon: Server,
-        run: toggleMcp,
+        run: () => openSettings('mcp'),
       },
       {
         id: 'toggle-sidebar',
@@ -199,9 +197,7 @@ export function TaskSwitcher() {
       setFilePreviewOpen,
       startTemporarySession,
       t,
-      toggleMcp,
       toggleSidebar,
-      toggleSkills,
       toggleTerminal,
     ]
   );

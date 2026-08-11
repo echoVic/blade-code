@@ -56,10 +56,6 @@ interface AppState {
   settingsSection: SettingsSection;
   toggleSettings: () => void;
   openSettings: (section?: SettingsSection) => void;
-  isMcpOpen: boolean;
-  toggleMcp: () => void;
-  isSkillsOpen: boolean;
-  toggleSkills: () => void;
   isTerminalOpen: boolean;
   toggleTerminal: () => void;
   isTaskSwitcherOpen: boolean;
@@ -114,10 +110,6 @@ export const useAppStore = create<AppState>((set) => ({
       isSettingsOpen: true,
       settingsSection: section,
     }),
-  isMcpOpen: false,
-  toggleMcp: () => set((state) => ({ isMcpOpen: !state.isMcpOpen })),
-  isSkillsOpen: false,
-  toggleSkills: () => set((state) => ({ isSkillsOpen: !state.isSkillsOpen })),
   isTerminalOpen: false,
   toggleTerminal: () => set((state) => ({ isTerminalOpen: !state.isTerminalOpen })),
   isTaskSwitcherOpen: false,

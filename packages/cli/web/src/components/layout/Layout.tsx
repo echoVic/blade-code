@@ -21,16 +21,6 @@ const SettingsModal = lazy(() =>
     default: module.SettingsModal,
   }))
 );
-const McpModal = lazy(() =>
-  import('@/components/mcp/McpModal').then((module) => ({
-    default: module.McpModal,
-  }))
-);
-const SkillsModal = lazy(() =>
-  import('@/components/skills/SkillsModal').then((module) => ({
-    default: module.SkillsModal,
-  }))
-);
 const loadTaskSwitcher = () =>
   import('@/components/tasks/TaskSwitcher').then((module) => ({
     default: module.TaskSwitcher,
@@ -72,8 +62,6 @@ export function Layout({ children }: LayoutProps) {
   const {
     isSidebarOpen,
     isFilePreviewOpen,
-    isMcpOpen,
-    isSkillsOpen,
     isSettingsOpen,
     isTerminalOpen,
     isTaskSwitcherOpen,
@@ -449,16 +437,6 @@ export function Layout({ children }: LayoutProps) {
       {isTaskSwitcherOpen && (
         <Suspense fallback={null}>
           <TaskSwitcher />
-        </Suspense>
-      )}
-      {isMcpOpen && (
-        <Suspense fallback={null}>
-          <McpModal />
-        </Suspense>
-      )}
-      {isSkillsOpen && (
-        <Suspense fallback={null}>
-          <SkillsModal />
         </Suspense>
       )}
       <RewindDialog open={isRewindOpen} onOpenChange={setIsRewindOpen} />

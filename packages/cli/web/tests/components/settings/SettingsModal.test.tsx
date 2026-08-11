@@ -50,7 +50,6 @@ describe('SettingsModal', () => {
     useSettingsStore.setState({ loadSettings });
     useAppStore.setState({
       isSettingsOpen: false,
-      isMcpOpen: false,
       settingsSection: 'general',
     });
     vi.stubGlobal(
@@ -66,7 +65,7 @@ describe('SettingsModal', () => {
     act(() => root.unmount());
     setLocale('en');
     container.remove();
-    useAppStore.setState({ isSettingsOpen: false, isMcpOpen: false });
+    useAppStore.setState({ isSettingsOpen: false });
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -145,26 +144,25 @@ describe('SettingsModal', () => {
     expect(document.body.textContent).not.toContain('Search tasks');
   });
 
-  it('opens the mounted MCP panel instead of looping back to settings', async () => {
+  it('renders the MCP panel inline within the settings page', async () => {
     useAppStore.getState().openSettings('mcp');
 
     await act(async () => {
       root.render(<SettingsModal />);
       await Promise.resolve();
     });
-    const openMcp = Array.from(
-      document.body.querySelectorAll<HTMLButtonElement>('button')
-    ).find((button) => button.textContent === 'Open MCP Panel');
 
-    await act(async () => {
-      openMcp?.click();
-      await Promise.resolve();
-    });
-
-    expect(useAppStore.getState()).toMatchObject({
-      isSettingsOpen: true,
-      isMcpOpen: true,
-    });
+    // The MCP tab is selected and its panel is mounted inline — there is no
+    // longer an intermediate "Open MCP Panel" button that pops a floating
+    // dialog; the full server-management UI lives directly in the settings tab.
+    const mcpTab = document.body.querySelector<HTMLButtonElement>('#settings-tab-mcp');
+    expect(mcpTab?.getAttribute('aria-selected')).toBe('true');
+    expect(document.body.querySelector('#settings-panel-mcp')).not.toBeNull();
+    expect(
+      Array.from(document.body.querySelectorAll('button')).some(
+        (button) => button.textContent === 'Open MCP Panel'
+      )
+    ).toBe(false);
   });
 
   it('closes with Escape and restores focus to the opening trigger', async () => {

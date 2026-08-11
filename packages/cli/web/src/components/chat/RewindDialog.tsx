@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+import { useT } from '@/i18n';
 import type { SessionRewindCheckpoint } from '@/services';
 import { sessionService } from '@/services';
 import { useSessionStore } from '@/store/session';
@@ -31,6 +32,7 @@ function formatCheckpointTime(value: string): string {
 }
 
 export function RewindDialog({ open, onOpenChange }: RewindDialogProps) {
+  const t = useT();
   const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
   const isStreaming = useSessionStore((state) => state.isStreaming);
   const isTemporarySession = useSessionStore((state) => state.isTemporarySession);
@@ -61,9 +63,7 @@ export function RewindDialog({ open, onOpenChange }: RewindDialogProps) {
       .catch((loadError) => {
         if (!cancelled) {
           setError(
-            loadError instanceof Error
-              ? loadError.message
-              : 'Failed to load rewind checkpoints'
+            loadError instanceof Error ? loadError.message : t('chat.rewind.loadFailed')
           );
         }
       })
@@ -99,7 +99,7 @@ export function RewindDialog({ open, onOpenChange }: RewindDialogProps) {
     if (succeeded) {
       onOpenChange(false);
     } else {
-      setError('Rewind failed. Review the session error and try again.');
+      setError(t('chat.rewind.failed'));
     }
   };
 
@@ -113,10 +113,10 @@ export function RewindDialog({ open, onOpenChange }: RewindDialogProps) {
             </div>
             <div>
               <DialogTitle className="text-[15px] font-semibold text-[#111827] dark:text-zinc-100">
-                Rewind session
+                {t('chat.rewind.title')}
               </DialogTitle>
               <DialogDescription className="mt-1 text-[12px] text-[#6B7280] dark:text-zinc-400">
-                Return to the point before a user message.
+                {t('chat.rewind.description')}
               </DialogDescription>
             </div>
           </div>
@@ -126,7 +126,7 @@ export function RewindDialog({ open, onOpenChange }: RewindDialogProps) {
           {isLoading && (
             <div className="flex h-[220px] items-center justify-center text-[#6B7280] dark:text-zinc-400">
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              <span className="text-xs font-mono">Loading checkpoints</span>
+              <span className="text-xs font-mono">{t('chat.rewind.loading')}</span>
             </div>
           )}
 
@@ -143,7 +143,7 @@ export function RewindDialog({ open, onOpenChange }: RewindDialogProps) {
             <div className="flex h-[220px] flex-col items-center justify-center text-center">
               <History className="mb-3 h-5 w-5 text-[#9CA3AF] dark:text-zinc-600" />
               <p className="text-sm text-[#4B5563] dark:text-zinc-300">
-                Nothing to rewind to yet
+                {t('chat.rewind.empty')}
               </p>
             </div>
           )}
@@ -151,7 +151,7 @@ export function RewindDialog({ open, onOpenChange }: RewindDialogProps) {
           {!isLoading && checkpoints.length > 0 && (
             <div
               role="radiogroup"
-              aria-label="Rewind checkpoint"
+              aria-label={t('chat.rewind.checkpointAria')}
               className="max-h-[310px] space-y-1 overflow-y-auto"
             >
               {checkpoints.map((checkpoint) => {
@@ -172,7 +172,7 @@ export function RewindDialog({ open, onOpenChange }: RewindDialogProps) {
                   >
                     <div className="flex items-start justify-between gap-4">
                       <p className="line-clamp-2 text-[13px] leading-5 text-[#111827] dark:text-zinc-100">
-                        {checkpoint.preview || 'User message'}
+                        {checkpoint.preview || t('chat.rewind.userMessage')}
                       </p>
                       <span className="shrink-0 text-[10px] font-mono text-[#9CA3AF] dark:text-zinc-500">
                         {formatCheckpointTime(checkpoint.createdAt)}
@@ -183,8 +183,13 @@ export function RewindDialog({ open, onOpenChange }: RewindDialogProps) {
                       {checkpoint.fileCount > 0 && (
                         <span className="inline-flex items-center gap-1">
                           <FileCode2 className="h-3 w-3" />
-                          {checkpoint.fileCount}{' '}
-                          {checkpoint.fileCount === 1 ? 'file' : 'files'}
+                          {checkpoint.fileCount === 1
+                            ? t('chat.rewind.fileCountOne', {
+                                count: checkpoint.fileCount,
+                              })
+                            : t('chat.rewind.fileCountMany', {
+                                count: checkpoint.fileCount,
+                              })}
                         </span>
                       )}
                     </div>
@@ -206,10 +211,10 @@ export function RewindDialog({ open, onOpenChange }: RewindDialogProps) {
             />
             <span>
               <span className="block text-[12px] font-medium text-[#374151] dark:text-zinc-200">
-                Restore code changes
+                {t('chat.rewind.restoreCode')}
               </span>
               <span className="mt-0.5 block text-[11px] text-[#6B7280] dark:text-zinc-500">
-                Revert files changed at and after this checkpoint.
+                {t('chat.rewind.restoreCodeHint')}
               </span>
             </span>
           </label>
@@ -221,7 +226,7 @@ export function RewindDialog({ open, onOpenChange }: RewindDialogProps) {
             onClick={() => onOpenChange(false)}
             disabled={isSubmitting}
           >
-            Cancel
+            {t('chat.rewind.cancel')}
           </Button>
           <Button
             onClick={() => void handleSubmit()}
@@ -233,7 +238,7 @@ export function RewindDialog({ open, onOpenChange }: RewindDialogProps) {
             ) : (
               <RotateCcw className="mr-2 h-4 w-4" />
             )}
-            Rewind
+            {t('chat.rewind.confirm')}
           </Button>
         </DialogFooter>
       </DialogContent>

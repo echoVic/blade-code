@@ -3,8 +3,7 @@
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { McpModal } from '../../../src/components/mcp/McpModal';
-import { useAppStore } from '../../../src/store/AppStore';
+import { McpPanel } from '../../../src/components/mcp/McpModal';
 
 const requestJson = vi.hoisted(() => vi.fn());
 
@@ -32,13 +31,11 @@ describe('McpModal OAuth lifecycle', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
-    useAppStore.setState({ isMcpOpen: true });
   });
 
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
-    useAppStore.setState({ isMcpOpen: false });
     vi.unstubAllGlobals();
   });
 
@@ -61,7 +58,7 @@ describe('McpModal OAuth lifecycle', () => {
       throw new Error(`Unexpected request: ${url}`);
     });
     await act(async () => {
-      root.render(<McpModal />);
+      root.render(<McpPanel active />);
     });
     await vi.waitFor(() =>
       expect(document.body.textContent).toContain('Authorization required')
@@ -114,7 +111,7 @@ describe('McpModal OAuth lifecycle', () => {
     });
 
     await act(async () => {
-      root.render(<McpModal />);
+      root.render(<McpPanel active />);
     });
     await vi.waitFor(() => expect(document.body.textContent).toContain('Authorized'));
     const signOut = Array.from(
@@ -166,7 +163,7 @@ describe('McpModal OAuth lifecycle', () => {
     });
 
     await act(async () => {
-      root.render(<McpModal />);
+      root.render(<McpPanel active />);
     });
     await vi.waitFor(() =>
       expect(document.body.textContent).toContain('Recovering 2/5')
@@ -235,7 +232,7 @@ describe('McpModal OAuth lifecycle', () => {
     });
 
     await act(async () => {
-      root.render(<McpModal />);
+      root.render(<McpPanel active />);
     });
     await vi.waitFor(() =>
       expect(document.body.textContent).toContain('SAFE_LOG_MARKER')
@@ -309,7 +306,7 @@ describe('McpModal OAuth lifecycle', () => {
     });
 
     await act(async () => {
-      root.render(<McpModal />);
+      root.render(<McpPanel active />);
     });
     const input = await vi.waitFor(() => {
       const element = document.body.querySelector<HTMLInputElement>(

@@ -73,8 +73,6 @@ describe('FilePreview', () => {
       previewTargetPath: null,
       previewRequestId: 0,
       isSettingsOpen: false,
-      isMcpOpen: false,
-      isSkillsOpen: false,
       isTerminalOpen: false,
     });
 

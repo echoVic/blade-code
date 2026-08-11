@@ -174,11 +174,15 @@ export function PluginPanel() {
       if (requestGeneration !== generation.current) return;
       setPlugins(next);
       setMarketplaces(nextMarketplaces);
-      setPolicy(nextPolicy.policy);
-      setEnvironmentRequiresSha(nextPolicy.environmentRequiresSha);
-      setGitHosts(nextPolicy.policy.allowedGitHosts.join(', '));
-      setAllowedMarketplaces(nextPolicy.policy.allowedMarketplaces.join(', '));
-      setLocalRoots(nextPolicy.policy.allowedLocalRoots.join(', '));
+      // The policy endpoint should always return `{ policy, environmentRequiresSha }`,
+      // but guard against a malformed or empty body (e.g. a dev proxy miss returning
+      // the SPA shell) so the panel degrades to defaults instead of crashing.
+      const resolvedPolicy = nextPolicy?.policy ?? DEFAULT_POLICY;
+      setPolicy(resolvedPolicy);
+      setEnvironmentRequiresSha(nextPolicy?.environmentRequiresSha ?? false);
+      setGitHosts(resolvedPolicy.allowedGitHosts.join(', '));
+      setAllowedMarketplaces(resolvedPolicy.allowedMarketplaces.join(', '));
+      setLocalRoots(resolvedPolicy.allowedLocalRoots.join(', '));
       setLoadedProjectPath(projectPath);
     } catch (loadError) {
       if (requestGeneration !== generation.current) return;

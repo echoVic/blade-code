@@ -69,8 +69,6 @@ describe('Layout', () => {
       isSidebarOpen: true,
       isFilePreviewOpen: false,
       isSettingsOpen: false,
-      isMcpOpen: false,
-      isSkillsOpen: false,
       isTerminalOpen: false,
     });
 

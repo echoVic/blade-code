@@ -1,3 +1,18 @@
+import { McpPanel } from '@/components/mcp/McpModal';
+import { SkillsPanel } from '@/components/skills/SkillsModal';
+import { Select } from '@/components/ui/select';
+import { type TranslationKey, useLocale, useT } from '@/i18n';
+import { DEFAULT_COMMUNICATION_STYLES } from '@/lib/communicationStyles';
+import { requestJson } from '@/lib/http';
+import {
+  KEYBOARD_SHORTCUTS,
+  type ShortcutId,
+  shortcutKeyLabels,
+} from '@/lib/keyboardShortcuts';
+import { cn } from '@/lib/utils';
+import { type SettingsSection, useAppStore } from '@/store/AppStore';
+import { type ModelConfig, useConfigStore } from '@/store/ConfigStore';
+import { useSettingsStore } from '@/store/SettingsStore';
 import {
   Activity,
   AlertCircle,
@@ -16,19 +31,6 @@ import {
   useRef,
   useState,
 } from 'react';
-import { Select } from '@/components/ui/select';
-import { type TranslationKey, useLocale, useT } from '@/i18n';
-import { DEFAULT_COMMUNICATION_STYLES } from '@/lib/communicationStyles';
-import { requestJson } from '@/lib/http';
-import {
-  KEYBOARD_SHORTCUTS,
-  type ShortcutId,
-  shortcutKeyLabels,
-} from '@/lib/keyboardShortcuts';
-import { cn } from '@/lib/utils';
-import { type SettingsSection, useAppStore } from '@/store/AppStore';
-import { type ModelConfig, useConfigStore } from '@/store/ConfigStore';
-import { useSettingsStore } from '@/store/SettingsStore';
 import { AddModelModal, type ModelFormData } from './AddModelModal';
 import { EditModelModal } from './EditModelModal';
 import {
@@ -497,7 +499,7 @@ export function SettingsModal() {
           aria-label={t('settings.nav.aria')}
           className="flex h-full w-[220px] shrink-0 flex-col border-r border-[#E5E7EB] bg-[#F9FAFB] dark:border-zinc-800 dark:bg-[#111113]"
         >
-          <div className="shrink-0 p-4">
+          <div className="p-4 shrink-0">
             <button
               ref={backButtonRef}
               type="button"
@@ -508,7 +510,7 @@ export function SettingsModal() {
               {t('settings.action.back')}
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto px-3 pb-4">
+          <div className="overflow-y-auto flex-1 px-3 pb-4">
             {Object.entries(
               tabs.reduce(
                 (acc, tab) => {
@@ -549,8 +551,8 @@ export function SettingsModal() {
         </nav>
 
         {/* Right content panel */}
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="flex-1 overflow-y-auto p-6 sm:p-10">
+        <div className="flex overflow-hidden flex-col flex-1 min-h-0">
+          <div className="overflow-y-auto flex-1 p-6 sm:p-10">
             <div className="mx-auto max-w-2xl">
               <h1 className="mb-6 text-xl font-semibold text-[#111827] dark:text-[#E5E5E5]">
                 {tabs.find((tab) => tab.value === activeTab)?.label ??
@@ -572,11 +574,11 @@ export function SettingsModal() {
                   className="flex shrink-0 items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-mono text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
                 >
                   <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span className="min-w-0 flex-1">{settings.error}</span>
+                  <span className="flex-1 min-w-0">{settings.error}</span>
                   <button
                     type="button"
                     onClick={() => void settings.loadSettings()}
-                    className="shrink-0 underline"
+                    className="underline shrink-0"
                   >
                     {t('settings.common.retry')}
                   </button>
@@ -588,7 +590,7 @@ export function SettingsModal() {
                   id="settings-panel-models"
                   role="tabpanel"
                   aria-labelledby="settings-tab-models"
-                  className="flex flex-col gap-6 flex-1 min-h-0 overflow-hidden"
+                  className="flex overflow-hidden flex-col flex-1 gap-6 min-h-0"
                 >
                   <p className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono shrink-0">
                     {t('settings.models.description')}
@@ -600,7 +602,7 @@ export function SettingsModal() {
                       className="flex shrink-0 items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-mono text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
                     >
                       <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                      <span className="min-w-0 flex-1">
+                      <span className="flex-1 min-w-0">
                         {providerActionError || modelActionError || modelsError}
                       </span>
                       <button
@@ -610,7 +612,7 @@ export function SettingsModal() {
                           setProviderActionError(null);
                           if (modelsError) void loadModels();
                         }}
-                        className="shrink-0 underline"
+                        className="underline shrink-0"
                       >
                         {modelsError
                           ? t('settings.common.retry')
@@ -625,14 +627,14 @@ export function SettingsModal() {
                       aria-label={t('settings.models.deleteModelAria', {
                         name: deleteModel.displayName || deleteModel.model,
                       })}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 dark:border-red-900/60 dark:bg-red-950/30"
+                      className="flex flex-wrap gap-2 justify-between items-center px-3 py-2 bg-red-50 rounded-md border border-red-200 dark:border-red-900/60 dark:bg-red-950/30"
                     >
                       <span className="text-[11px] font-mono text-red-700 dark:text-red-300">
                         {t('settings.models.deleteModelPrompt', {
                           name: deleteModel.displayName || deleteModel.model,
                         })}
                       </span>
-                      <div className="flex items-center gap-2">
+                      <div className="flex gap-2 items-center">
                         <button
                           type="button"
                           onClick={() => setDeleteModel(null)}
@@ -660,7 +662,7 @@ export function SettingsModal() {
                       aria-label={t('settings.models.deleteChannelAria', {
                         name: deleteProvider.name,
                       })}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 dark:border-red-900/60 dark:bg-red-950/30"
+                      className="flex flex-wrap gap-2 justify-between items-center px-3 py-2 bg-red-50 rounded-md border border-red-200 dark:border-red-900/60 dark:bg-red-950/30"
                     >
                       <span className="text-[11px] font-mono text-red-700 dark:text-red-300">
                         {t('settings.models.deleteChannelPrompt', {
@@ -668,7 +670,7 @@ export function SettingsModal() {
                           count: groupedModels[deleteProvider.id]?.length ?? 0,
                         })}
                       </span>
-                      <div className="flex items-center gap-2">
+                      <div className="flex gap-2 items-center">
                         <button
                           type="button"
                           onClick={() => setDeleteProvider(null)}
@@ -690,14 +692,14 @@ export function SettingsModal() {
                     </div>
                   )}
 
-                  <div className="flex-1 overflow-y-auto min-h-0">
+                  <div className="overflow-y-auto flex-1 min-h-0">
                     <div className="flex flex-col gap-2 pr-2">
                       {modelsLoading && configuredModels.length === 0 && (
                         <div
                           role="status"
                           className="flex items-center justify-center gap-2 py-8 text-sm font-mono text-[#9CA3AF] dark:text-[#71717a]"
                         >
-                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <Loader2 className="w-4 h-4 animate-spin" />
                           {t('settings.models.loading')}
                         </div>
                       )}
@@ -723,9 +725,9 @@ export function SettingsModal() {
                                 onClick={() => toggleProvider(provider)}
                                 className="flex min-w-0 flex-1 items-center justify-between p-4 text-left transition-colors hover:bg-[#E5E7EB] dark:hover:bg-[#1f1f23]"
                               >
-                                <div className="flex min-w-0 items-center gap-3">
+                                <div className="flex gap-3 items-center min-w-0">
                                   <div
-                                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-xs font-bold text-white"
+                                    className="flex justify-center items-center w-8 h-8 text-xs font-bold text-white rounded shrink-0"
                                     style={{ backgroundColor: iconInfo.bg }}
                                   >
                                     {iconInfo.label}
@@ -746,7 +748,7 @@ export function SettingsModal() {
                                     </span>
                                   </div>
                                 </div>
-                                <div className="flex shrink-0 items-center gap-3">
+                                <div className="flex gap-3 items-center shrink-0">
                                   <span
                                     className={cn(
                                       'text-xs font-mono',
@@ -769,7 +771,7 @@ export function SettingsModal() {
                                 </div>
                               </button>
                               {channel?.custom && (
-                                <div className="flex shrink-0 items-center gap-1 pr-3">
+                                <div className="flex gap-1 items-center pr-3 shrink-0">
                                   <button
                                     type="button"
                                     onClick={() =>
@@ -857,7 +859,7 @@ export function SettingsModal() {
                                           t('settings.models.defaultEndpoint')}
                                       </span>
                                     </div>
-                                    <div className="flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                                    <div className="flex gap-2 items-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                                       <button
                                         data-edit-model-trigger={model.id}
                                         onClick={() => {
@@ -930,7 +932,7 @@ export function SettingsModal() {
                     <h3 className="text-[14px] text-[#111827] dark:text-[#E5E5E5] font-mono font-semibold">
                       {t('settings.tab.general')}
                     </h3>
-                    <div className="flex items-center justify-between py-2">
+                    <div className="flex justify-between items-center py-2">
                       <div className="flex flex-col gap-1">
                         <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
                           {t('settings.general.responseLanguage')}
@@ -958,7 +960,7 @@ export function SettingsModal() {
                         ]}
                       />
                     </div>
-                    <div className="flex items-center justify-between py-2">
+                    <div className="flex justify-between items-center py-2">
                       <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
                         {t('settings.general.autoSave')}
                       </span>
@@ -970,7 +972,7 @@ export function SettingsModal() {
                         }
                       />
                     </div>
-                    <div className="flex items-center justify-between py-2">
+                    <div className="flex justify-between items-center py-2">
                       <div className="flex flex-col gap-1">
                         <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
                           {t('settings.general.communicationStyle')}
@@ -1002,7 +1004,7 @@ export function SettingsModal() {
                     <h3 className="text-[14px] text-[#111827] dark:text-[#E5E5E5] font-mono font-semibold">
                       {t('settings.appearance.heading')}
                     </h3>
-                    <div className="flex items-center justify-between py-2">
+                    <div className="flex justify-between items-center py-2">
                       <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
                         {t('settings.appearance.theme')}
                       </span>
@@ -1027,7 +1029,7 @@ export function SettingsModal() {
                         ))}
                       </div>
                     </div>
-                    <div className="flex items-center justify-between py-2">
+                    <div className="flex justify-between items-center py-2">
                       <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
                         {t('settings.appearance.compactSidebar')}
                       </span>
@@ -1037,7 +1039,7 @@ export function SettingsModal() {
                         onChange={(value) => setSidebarOpen(!value)}
                       />
                     </div>
-                    <div className="flex items-center justify-between py-2">
+                    <div className="flex justify-between items-center py-2">
                       <div className="flex flex-col gap-1">
                         <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
                           {t('settings.appearance.codeTheme')}
@@ -1074,7 +1076,7 @@ export function SettingsModal() {
                     <h3 className="text-[14px] text-[#111827] dark:text-[#E5E5E5] font-mono font-semibold">
                       {t('settings.notifications.heading')}
                     </h3>
-                    <div className="flex items-center justify-between py-2">
+                    <div className="flex justify-between items-center py-2">
                       <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
                         {t('settings.notifications.buildFinished')}
                       </span>
@@ -1084,7 +1086,7 @@ export function SettingsModal() {
                         onChange={(v) => settings.updateSettings({ notifyBuild: v })}
                       />
                     </div>
-                    <div className="flex items-center justify-between py-2">
+                    <div className="flex justify-between items-center py-2">
                       <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
                         {t('settings.notifications.errorsOnly')}
                       </span>
@@ -1094,7 +1096,7 @@ export function SettingsModal() {
                         onChange={(v) => settings.updateSettings({ notifyErrors: v })}
                       />
                     </div>
-                    <div className="flex items-center justify-between py-2">
+                    <div className="flex justify-between items-center py-2">
                       <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
                         {t('settings.notifications.systemSounds')}
                       </span>
@@ -1131,7 +1133,7 @@ export function SettingsModal() {
                     <h3 className="text-[14px] text-[#111827] dark:text-[#E5E5E5] font-mono font-semibold">
                       {t('settings.privacy.heading')}
                     </h3>
-                    <div className="flex items-center justify-between py-2">
+                    <div className="flex justify-between items-center py-2">
                       <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
                         {t('settings.privacy.telemetry')}
                       </span>
@@ -1143,7 +1145,7 @@ export function SettingsModal() {
                         }
                       />
                     </div>
-                    <div className="flex items-center justify-between py-2">
+                    <div className="flex justify-between items-center py-2">
                       <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
                         {t('settings.privacy.crash')}
                       </span>
@@ -1162,9 +1164,9 @@ export function SettingsModal() {
                   id="settings-panel-shortcuts"
                   role="tabpanel"
                   aria-labelledby="settings-tab-shortcuts"
-                  className="flex flex-col gap-4 flex-1 min-h-0 overflow-hidden"
+                  className="flex overflow-hidden flex-col flex-1 gap-4 min-h-0"
                 >
-                  <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                  <div className="flex flex-col gap-2 shrink-0 sm:flex-row sm:items-center sm:gap-3">
                     <input
                       aria-label={t('settings.shortcuts.searchPlaceholder')}
                       value={shortcutQuery}
@@ -1220,7 +1222,7 @@ export function SettingsModal() {
                         <span className="text-[#111827] dark:text-[#E5E5E5]">
                           {shortcut.action}
                         </span>
-                        <div className="flex items-center gap-1">
+                        <div className="flex gap-1 items-center">
                           {shortcut.combo.map((key) => (
                             <span
                               key={key}
@@ -1251,18 +1253,9 @@ export function SettingsModal() {
                   id="settings-panel-mcp"
                   role="tabpanel"
                   aria-labelledby="settings-tab-mcp"
-                  className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa]"
+                  className="flex-1 min-h-0"
                 >
-                  <p>{t('settings.mcp.description')}</p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      useAppStore.getState().toggleMcp();
-                    }}
-                    className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-md border border-[#E5E7EB] px-3 text-[12px] font-medium text-[#111827] transition-colors hover:bg-[#F3F4F6] dark:border-zinc-700 dark:text-[#E5E5E5] dark:hover:bg-[#27272a]"
-                  >
-                    {t('settings.mcp.open')}
-                  </button>
+                  <McpPanel active={activeTab === 'mcp'} />
                 </div>
               )}
 
@@ -1271,18 +1264,9 @@ export function SettingsModal() {
                   id="settings-panel-skills"
                   role="tabpanel"
                   aria-labelledby="settings-tab-skills"
-                  className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa]"
+                  className="flex-1 min-h-0"
                 >
-                  <p>{t('settings.skills.description')}</p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      useAppStore.getState().toggleSkills();
-                    }}
-                    className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-md border border-[#E5E7EB] px-3 text-[12px] font-medium text-[#111827] transition-colors hover:bg-[#F3F4F6] dark:border-zinc-700 dark:text-[#E5E5E5] dark:hover:bg-[#27272a]"
-                  >
-                    {t('settings.skills.open')}
-                  </button>
+                  <SkillsPanel active={activeTab === 'skills'} />
                 </div>
               )}
 
@@ -1291,7 +1275,7 @@ export function SettingsModal() {
                   id="settings-panel-hooks"
                   role="tabpanel"
                   aria-labelledby="settings-tab-hooks"
-                  className="min-h-0 flex-1"
+                  className="flex-1 min-h-0"
                 >
                   <HookTrustPanel />
                 </div>
@@ -1302,7 +1286,7 @@ export function SettingsModal() {
                   id="settings-panel-plugins"
                   role="tabpanel"
                   aria-labelledby="settings-tab-plugins"
-                  className="min-h-0 flex-1"
+                  className="flex-1 min-h-0"
                 >
                   <PluginPanel />
                 </div>
@@ -1313,7 +1297,7 @@ export function SettingsModal() {
                   id="settings-panel-trust"
                   role="tabpanel"
                   aria-labelledby="settings-tab-trust"
-                  className="min-h-0 flex-1"
+                  className="flex-1 min-h-0"
                 >
                   <WorkspaceTrustPanel />
                 </div>

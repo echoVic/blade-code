@@ -1,5 +1,6 @@
 import type { GeneralSettings, UiTheme } from '@api/schemas';
 import { create } from 'zustand';
+import { t } from '@/i18n';
 
 interface SettingsState extends GeneralSettings {
   isLoading: boolean;
@@ -57,7 +58,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const response = await fetch('/configs');
-      if (!response.ok) throw new Error('Failed to load settings');
+      if (!response.ok) throw new Error(t('settings.general.loadError'));
       const config = await response.json();
 
       const newUiTheme = config.uiTheme ?? DEFAULT_SETTINGS.uiTheme;
@@ -98,7 +99,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           options: { scope: 'global' },
         }),
       });
-      if (!response.ok) throw new Error('Failed to save settings');
+      if (!response.ok) throw new Error(t('settings.general.saveError'));
     } catch (err) {
       set({
         language: prevState.language,

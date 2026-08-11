@@ -4,6 +4,7 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '@/lib/utils';
 import { useIsDark } from '@/store/SettingsStore';
+import { useT } from '@/i18n';
 
 interface MarkdownRendererProps {
   content: string;
@@ -191,6 +192,7 @@ function PlainCodeBlock({ className, code }: { className?: string; code: string 
 }
 
 function CopyButton({ content }: { content: string }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -203,7 +205,7 @@ function CopyButton({ content }: { content: string }) {
     <button
       onClick={handleCopy}
       className="p-1 hover:bg-[#E5E7EB] dark:hover:bg-[#3f3f46] rounded-md transition-colors text-[#9CA3AF] dark:text-[#a1a1aa] hover:text-[#111827] dark:hover:text-[#E5E5E5]"
-      title="Copy code"
+      title={t('chat.markdown.copyCode')}
     >
       {copied ? (
         <Check className="h-3.5 w-3.5 text-[#22C55E]" />

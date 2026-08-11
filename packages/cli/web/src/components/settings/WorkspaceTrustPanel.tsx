@@ -147,12 +147,12 @@ export function WorkspaceTrustPanel() {
   const needsReview = activeStatus?.state === 'untrusted';
 
   return (
-    <div className="flex min-h-0 flex-col gap-3 font-mono">
+    <div className="flex flex-col gap-3 min-h-0 font-mono">
       <div className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-[#E5E7EB] bg-[#F9FAFB] p-3 dark:border-[#27272a] dark:bg-[#111113]">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex gap-2 items-center">
             {trusted ? (
-              <ShieldCheck className="h-4 w-4 text-emerald-600" />
+              <ShieldCheck className="w-4 h-4 text-emerald-600" />
             ) : (
               <AlertTriangle
                 className={cn(
@@ -244,7 +244,7 @@ export function WorkspaceTrustPanel() {
               ? t('settings.trust.trustWorkspace')
               : t('settings.trust.revokeAria')
           }
-          className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 dark:border-amber-900/70 dark:bg-amber-950/30"
+          className="flex flex-wrap gap-3 justify-between items-center px-3 py-2 bg-amber-50 rounded-md border border-amber-300 dark:border-amber-900/70 dark:bg-amber-950/30"
         >
           <span className="max-w-[620px] text-[11px] text-amber-900 dark:text-amber-200">
             {pendingAction === 'trust'
@@ -253,7 +253,7 @@ export function WorkspaceTrustPanel() {
                 })
               : t('settings.trust.confirmRevoke')}
           </span>
-          <div className="flex items-center gap-2">
+          <div className="flex gap-2 items-center">
             <button
               type="button"
               onClick={() => setPendingAction(null)}

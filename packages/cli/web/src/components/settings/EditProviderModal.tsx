@@ -113,7 +113,7 @@ export function EditProviderModal({
         <DialogTitle className="sr-only">
           {t('settings.models.editProvider.title')}
         </DialogTitle>
-        <div className="flex items-center justify-between">
+        <div className="flex justify-between items-center">
           <div>
             <h2 className="font-mono font-semibold">
               {t('settings.models.editProvider.title')}
@@ -124,9 +124,9 @@ export function EditProviderModal({
             type="button"
             onClick={() => onOpenChange(false)}
             aria-label={t('settings.models.editProvider.close')}
-            className="flex h-8 w-8 items-center justify-center rounded-md"
+            className="flex justify-center items-center w-8 h-8 rounded-md"
           >
-            <X className="h-4 w-4" />
+            <X className="w-4 h-4" />
           </button>
         </div>
 
@@ -202,9 +202,9 @@ export function EditProviderModal({
           type="button"
           onClick={() => void save()}
           disabled={saving}
-          className="flex min-h-9 items-center justify-center gap-2 rounded-md bg-green-600 px-4 py-2 text-white disabled:opacity-60"
+          className="flex gap-2 justify-center items-center px-4 py-2 text-white bg-green-600 rounded-md min-h-9 disabled:opacity-60"
         >
-          {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+          {saving && <Loader2 className="w-4 h-4 animate-spin" />}
           {saving
             ? t('settings.models.editProvider.saving')
             : t('settings.models.editProvider.save')}

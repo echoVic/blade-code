@@ -1,13 +1,3 @@
-import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Copy,
-  FileText,
-  Loader2,
-  RotateCcw,
-} from 'lucide-react';
-import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
 import { BladeMark } from '@/components/layout/BladeMark';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -26,8 +16,22 @@ import {
   getTimelineText,
 } from '@/store/session/utils/agentTimeline';
 import { aggregateMessages } from '@/store/session/utils/aggregateMessages';
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  FileText,
+  Loader2,
+  RotateCcw,
+} from 'lucide-react';
+import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
 import { CodeReviewReport, parseCodeReviewReport } from './CodeReviewReport';
 import { McpElicitationSection } from './McpElicitationSection';
+import {
+  parseStructuredOutputReport,
+  StructuredOutputReport,
+} from './StructuredOutputReport';
 
 export type { Message };
 
@@ -547,6 +551,7 @@ function ChangedFilesSection({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
 }
 
 function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagent'] }) {
+  const t = useT();
   const [manualToggle, setManualToggle] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadedToolCalls, setLoadedToolCalls] = useState<ToolCallInfo[] | null>(null);
@@ -705,7 +710,7 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
       setManualToggle(true);
     } catch (error) {
       setResumeError(
-        error instanceof Error ? error.message : 'Failed to resume subagent'
+        error instanceof Error ? error.message : t('chat.subagent.resumeFailed')
       );
     } finally {
       setResumeSubmitting(false);
@@ -756,9 +761,13 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
           {subagent.resumedFrom && (
             <span
               className="rounded bg-[#EDE9FE] px-1.5 py-0.5 text-[10px] font-mono text-[#6D28D9] dark:bg-[#2E1065] dark:text-[#C4B5FD]"
-              title={`Resumed from ${subagent.resumedFrom}`}
+              title={t('chat.subagent.resumedFromTitle', {
+                id: subagent.resumedFrom,
+              })}
             >
-              resumed · depth {subagent.resumeDepth ?? 1}
+              {t('chat.subagent.resumedDepth', {
+                depth: subagent.resumeDepth ?? 1,
+              })}
             </span>
           )}
         </div>
@@ -790,15 +799,18 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
           {loading && (
             <div className="flex items-center gap-2 text-[11px] text-[hsl(var(--deck-ink-muted))] font-mono">
               <Loader2 className="w-3 h-3 animate-spin" />
-              Loading subagent logs...
+              {t('chat.subagent.loadingLogs')}
             </div>
           )}
           {!loading && toolCalls.length > 0 && <ToolCallsList toolCalls={toolCalls} />}
           {resumedChild && (
             <div className="rounded-md border border-[#DDD6FE] bg-[#F5F3FF] p-2 text-[11px] font-mono text-[#5B21B6] dark:border-[#4C1D95] dark:bg-[#1E1B4B] dark:text-[#C4B5FD]">
               <div>
-                Resumed as {resumedChild.id} · {resumedChild.status} · depth{' '}
-                {resumedChild.resumeDepth}
+                {t('chat.subagent.resumedAs', {
+                  id: resumedChild.id,
+                  status: resumedChild.status,
+                  depth: resumedChild.resumeDepth ?? 1,
+                })}
               </div>
               {(resumedChild.result?.message || resumedChild.result?.error) && (
                 <div className="mt-1 whitespace-pre-wrap text-[hsl(var(--deck-ink))]">
@@ -812,20 +824,20 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
               {!resumeOpen ? (
                 <button
                   type="button"
-                  aria-label="Resume subagent"
+                  aria-label={t('chat.subagent.resumeAria')}
                   onClick={() => setResumeOpen(true)}
                   className="flex items-center gap-1.5 rounded-md border border-[#D1D5DB] px-2 py-1 text-[11px] font-medium text-[#374151] transition-colors hover:bg-[#F3F4F6] dark:border-[#3f3f46] dark:text-[#d4d4d8] dark:hover:bg-[#27272a]"
                 >
                   <RotateCcw className="w-3 h-3" />
-                  Resume
+                  {t('chat.subagent.resume')}
                 </button>
               ) : (
                 <div className="space-y-2 rounded-md border border-[#E5E7EB] bg-white p-2 dark:border-[#27272a] dark:bg-[#111113]">
                   <textarea
-                    aria-label="Subagent follow-up"
+                    aria-label={t('chat.subagent.followUpAria')}
                     value={resumePrompt}
                     onChange={(event) => setResumePrompt(event.target.value)}
-                    placeholder="Describe the follow-up work"
+                    placeholder={t('chat.subagent.followUpPlaceholder')}
                     rows={3}
                     className="w-full resize-y rounded border border-[#D1D5DB] bg-white p-2 text-[11px] text-[#111827] outline-none focus:border-[#8B5CF6] dark:border-[#3f3f46] dark:bg-[#18181b] dark:text-[#f4f4f5]"
                   />
@@ -838,7 +850,7 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
                       }}
                       className="rounded px-2 py-1 text-[11px] text-[#6B7280] hover:bg-[#F3F4F6] dark:hover:bg-[#27272a]"
                     >
-                      Cancel
+                      {t('chat.subagent.cancel')}
                     </button>
                     <button
                       type="button"
@@ -847,7 +859,7 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
                       className="flex items-center gap-1 rounded bg-[#7C3AED] px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
                     >
                       {resumeSubmitting && <Loader2 className="w-3 h-3 animate-spin" />}
-                      Resume agent
+                      {t('chat.subagent.resumeAgent')}
                     </button>
                   </div>
                 </div>
@@ -1331,6 +1343,9 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
 
   const assistantText = getAssistantCopyText(message);
   const codeReviewReport = parseCodeReviewReport(message.metadata?.codeReview);
+  const structuredOutputReport = parseStructuredOutputReport(
+    message.metadata?.structuredOutput
+  );
   return (
     <div
       data-chat-message-id={message.id}
@@ -1343,10 +1358,12 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
       <div className="overflow-hidden flex-1 min-w-0">
         {codeReviewReport ? (
           <CodeReviewReport report={codeReviewReport} />
+        ) : structuredOutputReport ? (
+          <StructuredOutputReport report={structuredOutputReport} />
         ) : (
           <AgentMessageContent message={message} />
         )}
-        {assistantText.trim() && (
+        {!structuredOutputReport && assistantText.trim() && (
           <div className="mt-1.5 flex opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
             <CopyButton text={assistantText} label="Copy response" />
           </div>

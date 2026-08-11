@@ -164,8 +164,6 @@ describe('Sidebar', () => {
       sidebarView: 'project',
       isFilePreviewOpen: false,
       isSettingsOpen: false,
-      isMcpOpen: false,
-      isSkillsOpen: false,
       isTerminalOpen: false,
     });
 
