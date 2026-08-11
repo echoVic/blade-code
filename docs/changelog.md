@@ -4,6 +4,41 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.11] - 2026-08-11
+
+### ✨ 新功能
+
+- Session turn 升级为 durable 生命周期：Runtime 在模型执行前 fsync
+  `turn_started`，正常完成写入 `turn_completed`，失败、取消或 generator 提前关闭写入
+  `turn_aborted`；事件只包含 turn identity、来源和有界计数指标，不持久化 prompt、
+  provider 错误正文或凭据
+- 新 Runtime 只有在成功取得 `SessionLease` 后才检查未闭合 turn，并原子追加
+  `process_restart` 终态；同一 turn 的 start/terminal 重试幂等，第二个 active turn
+  fail closed
+- Web Session SSE 通过 `committed.turn_*` 恢复运行态与终态，CLI/TUI、Web、ACP 和
+  Headless 继续复用同一 `SessionRuntime` 与 JSONL 事实源
+
+### 🐛 问题修复
+
+- 修复进程异常退出后 transcript 无法区分正常结束与中途丢失的问题；恢复后的 durable
+  inbox 会在新的 pending turn 中继续，而旧 turn 保留明确的 interrupted 审计边界
+- Conversation rewind 现在同时移除目标 user input 对应的 turn start/terminal 事件，
+  避免回退后的历史在下次 Runtime 初始化时被误判为 orphaned active turn
+- Web SSE 逐事件诊断日志限制为开发环境，减少生产长任务期间的主线程与控制台开销，
+  并保持 initial entry gzip 在发布预算内
+
+### ✅ 测试相关
+
+- 新增 turn lifecycle projector、幂等提交、single-active、process restart、Runtime
+  lease recovery、rewind 与 Web GUI 状态投影回归
+- 真实 DeepSeek Web HTTP/SSE coding trajectory 验证
+  `turn_started → assistant/tool history → turn_completed`、同一 turn ID、零 aborted 和
+  零 credential 泄漏
+- TUI 真实 DeepSeek Flash/Pro 2/2 通过；ACP 真实 DeepSeek、Claude、GPT、Qwen
+  structured coding turn 4/4 通过
+- Web GUI 浏览器验证 live running 状态、固定模型回复、JSONL 终态与 fresh reload
+  恢复；测试任务与 worktree 已清理
+
 ## [0.10.10] - 2026-08-11
 
 ### ✨ 新功能
