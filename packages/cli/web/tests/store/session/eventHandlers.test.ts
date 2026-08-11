@@ -1938,6 +1938,67 @@ describe('eventHandlers', () => {
     ]);
   });
 
+  test('restores the GUI running phase from durable turn lifecycle events', () => {
+    const state = createState();
+    state.endAgentResponse = vi.fn(() => {
+      state.isStreaming = false;
+      state.isStopping = false;
+      state.agentPhase = 'idle';
+    });
+    const set = vi.fn(
+      (
+        update:
+          | Partial<SessionStoreState>
+          | ((current: SessionStoreState) => Partial<SessionStoreState>)
+      ) => {
+        Object.assign(state, typeof update === 'function' ? update(state) : update);
+      }
+    );
+    const dispatch = createEventDispatcher(() => state, set);
+    const properties = {
+      sessionId: 'session-1',
+      projectPath: '/workspace/a',
+    };
+
+    dispatch({
+      type: 'committed.turn_started',
+      properties: {
+        ...properties,
+        event: {
+          type: 'turn_started',
+          data: {
+            turnId: 'turn-1',
+            kind: 'user',
+            startedAt: '2026-08-11T10:00:00.000Z',
+          },
+        },
+      },
+    });
+
+    expect(state.isStreaming).toBe(true);
+    expect(state.agentPhase).toBe('running');
+
+    dispatch({
+      type: 'committed.turn_completed',
+      properties: {
+        ...properties,
+        event: {
+          type: 'turn_completed',
+          data: {
+            turnId: 'turn-1',
+            completedAt: '2026-08-11T10:00:01.000Z',
+            turnsCount: 1,
+            toolCallsCount: 0,
+            durationMs: 1000,
+          },
+        },
+      },
+    });
+
+    expect(state.isStreaming).toBe(false);
+    expect(state.agentPhase).toBe('idle');
+  });
+
   test('projects user shell lifecycle as a user-owned command card', () => {
     const state = createState({ messages: [] });
     const set = vi.fn(

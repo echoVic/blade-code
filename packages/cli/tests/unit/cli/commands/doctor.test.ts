@@ -122,33 +122,34 @@ describe('commands/doctor', () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  it.each(['v20.20.0', 'v22.18.99'])(
-    '低于最低 Node.js 版本时应该失败: %s',
-    async (nodeVersion) => {
-      const { doctorCommands, exitSpy, logSpy } = await setupDoctorCommand({
-        nodeVersion,
-      });
+  it.each([
+    'v20.20.0',
+    'v22.18.99',
+  ])('低于最低 Node.js 版本时应该失败: %s', async (nodeVersion) => {
+    const { doctorCommands, exitSpy, logSpy } = await setupDoctorCommand({
+      nodeVersion,
+    });
 
-      await doctorCommands.handler({} as any);
+    await doctorCommands.handler({} as any);
 
-      expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining('(required: >=22.19.0)')
-      );
-      expect(exitSpy).toHaveBeenCalledWith(1);
-    }
-  );
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining('(required: >=22.19.0)')
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
 
-  it.each(['v22.19.0', 'v22.20.0', 'v23.0.0'])(
-    '满足最低 Node.js 版本时应该通过: %s',
-    async (nodeVersion) => {
-      const { doctorCommands, exitSpy, logSpy } = await setupDoctorCommand({
-        nodeVersion,
-      });
+  it.each([
+    'v22.19.0',
+    'v22.20.0',
+    'v23.0.0',
+  ])('满足最低 Node.js 版本时应该通过: %s', async (nodeVersion) => {
+    const { doctorCommands, exitSpy, logSpy } = await setupDoctorCommand({
+      nodeVersion,
+    });
 
-      await doctorCommands.handler({} as any);
+    await doctorCommands.handler({} as any);
 
-      expect(logSpy).toHaveBeenCalledWith(`[OK] Node.js version: ${nodeVersion}`);
-      expect(exitSpy).not.toHaveBeenCalled();
-    }
-  );
+    expect(logSpy).toHaveBeenCalledWith(`[OK] Node.js version: ${nodeVersion}`);
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
 });

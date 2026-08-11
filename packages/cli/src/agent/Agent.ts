@@ -580,7 +580,15 @@ export class Agent {
       } catch (error) {
         if (this.sessionRuntime && preparedInputTurn) {
           await this.sessionRuntime
-            .finishTurn(preparedInputTurn.handle)
+            .finishTurn(preparedInputTurn.handle, {
+              outcome: {
+                status: 'aborted',
+                cause: 'failed',
+                turnsCount: 0,
+                toolCallsCount: 0,
+                durationMs: 0,
+              },
+            })
             .catch(() => undefined);
         }
         throw error;
@@ -600,7 +608,7 @@ export class Agent {
       let turnHandle: ActiveTurnHandle | undefined;
       if (this.sessionRuntime) {
         if (goalContinuation) {
-          turnHandle = this.sessionRuntime.beginTurn();
+          turnHandle = await this.sessionRuntime.beginTurn('goal');
         } else if (pendingInputOnly) {
           turnHandle = await this.sessionRuntime.beginPendingTurn();
         } else {
@@ -810,6 +818,21 @@ export class Agent {
             result.success && !currentContext.signal?.aborted && chainedFollowUps < 20;
           turnHandle = await this.sessionRuntime.finishTurn(ownedHandle, {
             continuePending,
+            outcome:
+              result.success && !currentContext.signal?.aborted
+                ? {
+                    status: 'completed',
+                    turnsCount: result.metadata?.turnsCount ?? 0,
+                    toolCallsCount: result.metadata?.toolCallsCount ?? 0,
+                    durationMs: result.metadata?.duration ?? 0,
+                  }
+                : {
+                    status: 'aborted',
+                    cause: currentContext.signal?.aborted ? 'cancelled' : 'failed',
+                    turnsCount: result.metadata?.turnsCount ?? 0,
+                    toolCallsCount: result.metadata?.toolCallsCount ?? 0,
+                    durationMs: result.metadata?.duration ?? 0,
+                  },
           });
           if (turnHandle) {
             chainedFollowUps++;
@@ -840,7 +863,7 @@ export class Agent {
           if (!currentGoal) {
             return result;
           }
-          turnHandle = this.sessionRuntime.beginTurn();
+          turnHandle = await this.sessionRuntime.beginTurn('goal');
           pendingInputOnly = false;
           goalContinuation = true;
           currentMessage = buildGoalContinuationPrompt(currentGoal);

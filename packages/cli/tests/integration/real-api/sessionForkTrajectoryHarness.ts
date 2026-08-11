@@ -85,6 +85,10 @@ function isOptionalString(value: unknown): value is string | undefined {
   return value === undefined || isString(value);
 }
 
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
 function hasValidSessionInfo(data: Record<string, unknown>, partial: boolean): boolean {
   if (!partial) {
     if (
@@ -150,6 +154,33 @@ function isSessionEvent(value: unknown): value is SessionEvent {
         Array.isArray(data.restoredFiles) &&
         data.restoredFiles.every(isString) &&
         isString(data.createdAt)
+      );
+    case 'turn_started':
+      return (
+        isString(data.turnId) &&
+        ['user', 'pending', 'goal'].includes(String(data.kind)) &&
+        isString(data.startedAt) &&
+        (data.inputMessageIds === undefined ||
+          (Array.isArray(data.inputMessageIds) && data.inputMessageIds.every(isString)))
+      );
+    case 'turn_completed':
+      return (
+        isString(data.turnId) &&
+        isString(data.completedAt) &&
+        isNonNegativeInteger(data.turnsCount) &&
+        isNonNegativeInteger(data.toolCallsCount) &&
+        isNonNegativeInteger(data.durationMs)
+      );
+    case 'turn_aborted':
+      return (
+        isString(data.turnId) &&
+        ['failed', 'cancelled', 'interrupted', 'process_restart'].includes(
+          String(data.cause)
+        ) &&
+        isString(data.abortedAt) &&
+        isNonNegativeInteger(data.turnsCount) &&
+        isNonNegativeInteger(data.toolCallsCount) &&
+        isNonNegativeInteger(data.durationMs)
       );
     case 'message_created':
       return (

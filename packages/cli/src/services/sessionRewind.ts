@@ -20,6 +20,9 @@ function isConversationEvent(event: SessionEvent): boolean {
     event.type === 'message_created' ||
     event.type === 'part_created' ||
     event.type === 'part_updated' ||
+    event.type === 'turn_started' ||
+    event.type === 'turn_completed' ||
+    event.type === 'turn_aborted' ||
     event.type === 'interaction_requested' ||
     event.type === 'interaction_responded' ||
     event.type === 'interaction_recovered' ||
@@ -90,10 +93,32 @@ function projectBeforeCheckpoint(
     (event) =>
       event.type === 'message_created' && event.data.messageId === targetMessageId
   );
-
-  return entries.filter(
-    (event, index) => index < targetIndex || !isConversationEvent(event)
+  const targetMessage = entries[targetIndex];
+  const targetInboxMessageId =
+    targetMessage?.type === 'message_created'
+      ? targetMessage.data.inboxMessageId
+      : undefined;
+  const targetTurnIds = new Set(
+    entries.flatMap((event) =>
+      event.type === 'turn_started' &&
+      targetInboxMessageId &&
+      event.data.inputMessageIds?.includes(targetInboxMessageId)
+        ? [event.data.turnId]
+        : []
+    )
   );
+
+  return entries.filter((event, index) => {
+    if (
+      (event.type === 'turn_started' ||
+        event.type === 'turn_completed' ||
+        event.type === 'turn_aborted') &&
+      targetTurnIds.has(event.data.turnId)
+    ) {
+      return false;
+    }
+    return index < targetIndex || !isConversationEvent(event);
+  });
 }
 
 export function materializeSessionEvents(

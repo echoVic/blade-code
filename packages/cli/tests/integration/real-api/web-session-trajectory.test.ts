@@ -840,6 +840,8 @@ describeWebRegression('Web session trajectory regressions (real API)', () => {
             .slice(eventBoundary)
             .map((event) => event.type);
           expect(types).toContain('turn.started');
+          expect(types).toContain('committed.turn_started');
+          expect(types).toContain('committed.turn_completed');
           expect(types).toContain('tool.start');
           expect(types).toContain('tool.result');
           expect(types).not.toContain('session.error');
@@ -866,7 +868,33 @@ describeWebRegression('Web session trajectory regressions (real API)', () => {
           expect(
             existsSync(getSessionInboxFilePath(fixture.workspace, ref.sessionId))
           ).toBe(false);
+          const transcript = readSessionEvents(
+            findSessionTranscript(fixture.storageRoot, ref.sessionId)
+          );
+          const starts = transcript.filter((event) => event.type === 'turn_started');
+          const completions = transcript.filter(
+            (event) => event.type === 'turn_completed'
+          );
+          expect(starts).toEqual([
+            expect.objectContaining({
+              data: expect.objectContaining({
+                kind: 'user',
+                inputMessageIds: [accepted.messageId],
+              }),
+            }),
+          ]);
+          expect(completions).toEqual([
+            expect.objectContaining({
+              data: expect.objectContaining({
+                turnId: starts[0]?.data.turnId,
+              }),
+            }),
+          ]);
+          expect(transcript.filter((event) => event.type === 'turn_aborted')).toEqual(
+            []
+          );
           assertNoSecrets(collector.events, [modelConfig.apiKey]);
+          assertNoSecrets(transcript, [modelConfig.apiKey]);
           assertCollectorIdentity(collector, ref);
         }
       );

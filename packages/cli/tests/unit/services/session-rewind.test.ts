@@ -86,6 +86,35 @@ function toolCall(messageId: string, partId: string): SessionEvent {
   };
 }
 
+function turnStarted(turnId: string, inputMessageId: string): SessionEvent {
+  const event = base('turn_started');
+  return {
+    ...event,
+    type: 'turn_started',
+    data: {
+      turnId,
+      kind: 'user',
+      startedAt: event.timestamp,
+      inputMessageIds: [inputMessageId],
+    },
+  };
+}
+
+function turnCompleted(turnId: string): SessionEvent {
+  const event = base('turn_completed');
+  return {
+    ...event,
+    type: 'turn_completed',
+    data: {
+      turnId,
+      completedAt: event.timestamp,
+      turnsCount: 1,
+      toolCallsCount: 0,
+      durationMs: 10,
+    },
+  };
+}
+
 function rewound(
   targetMessageId: string,
   mode: 'conversation' | 'code' | 'both' = 'conversation'
@@ -185,6 +214,39 @@ describe('session rewind projection', () => {
     expect(plan.removedTurns).toBe(1);
     expect(plan.snapshotMessageIds).toEqual(['tool-after']);
     expect(messageIds(plan.projectedEntries)).toEqual(['user-1', 'assistant-1']);
+  });
+
+  it('removes the durable lifecycle boundary for the rewound input', () => {
+    sequence = 0;
+    const entries = [
+      created(),
+      turnStarted('turn-1', 'inbox-1'),
+      ...message('user-1', 'user', 'first', { inboxMessageId: 'inbox-1' }),
+      ...message('assistant-1', 'assistant', 'done', {
+        parentMessageId: 'user-1',
+      }),
+      turnCompleted('turn-1'),
+      turnStarted('turn-2', 'inbox-2'),
+      ...message('user-2', 'user', 'second', { inboxMessageId: 'inbox-2' }),
+      ...message('assistant-2', 'assistant', 'done', {
+        parentMessageId: 'user-2',
+      }),
+      turnCompleted('turn-2'),
+      rewound('user-2'),
+    ];
+
+    const projected = materializeSessionEvents(entries);
+
+    expect(
+      projected.flatMap((event) =>
+        event.type === 'turn_started' ? [event.data.turnId] : []
+      )
+    ).toEqual(['turn-1']);
+    expect(
+      projected.flatMap((event) =>
+        event.type === 'turn_completed' ? [event.data.turnId] : []
+      )
+    ).toEqual(['turn-1']);
   });
 
   it('fails closed when a rewind marker references a missing checkpoint', () => {

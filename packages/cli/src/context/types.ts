@@ -125,6 +125,9 @@ export type JSONLEventType =
   | 'session_created'
   | 'session_updated'
   | 'session_rewound'
+  | 'turn_started'
+  | 'turn_completed'
+  | 'turn_aborted'
   | 'inbox_acknowledged'
   | 'interaction_requested'
   | 'interaction_responded'
@@ -401,6 +404,38 @@ export interface SessionRewindInfo {
   createdAt: string;
 }
 
+export type SessionTurnKind = 'user' | 'pending' | 'goal';
+
+export interface SessionTurnStartInfo {
+  turnId: string;
+  kind: SessionTurnKind;
+  startedAt: string;
+  inputMessageIds?: string[];
+}
+
+export interface SessionTurnMetrics {
+  turnsCount: number;
+  toolCallsCount: number;
+  durationMs: number;
+}
+
+export interface SessionTurnCompletionInfo extends SessionTurnMetrics {
+  turnId: string;
+  completedAt: string;
+}
+
+export type SessionTurnAbortCause =
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted'
+  | 'process_restart';
+
+export interface SessionTurnAbortInfo extends SessionTurnMetrics {
+  turnId: string;
+  cause: SessionTurnAbortCause;
+  abortedAt: string;
+}
+
 export interface SubagentRunRef {
   subagentSessionId: string;
   subagentType: string;
@@ -442,6 +477,12 @@ export type SessionEvent =
   | (SessionEventBase & { type: 'session_created'; data: SessionInfo })
   | (SessionEventBase & { type: 'session_updated'; data: Partial<SessionInfo> })
   | (SessionEventBase & { type: 'session_rewound'; data: SessionRewindInfo })
+  | (SessionEventBase & { type: 'turn_started'; data: SessionTurnStartInfo })
+  | (SessionEventBase & {
+      type: 'turn_completed';
+      data: SessionTurnCompletionInfo;
+    })
+  | (SessionEventBase & { type: 'turn_aborted'; data: SessionTurnAbortInfo })
   | (SessionEventBase & {
       type: 'inbox_acknowledged';
       data: InboxAcknowledgementInfo;

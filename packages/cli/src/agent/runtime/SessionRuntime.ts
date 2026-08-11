@@ -27,6 +27,9 @@ import type {
   SessionTaskIsolation,
   SessionTaskStatus,
   SessionTaskWorktree,
+  SessionTurnAbortCause,
+  SessionTurnKind,
+  SessionTurnMetrics,
 } from '../../context/types.js';
 import { GoalStore } from '../../goals/GoalStore.js';
 import type {
@@ -223,6 +226,13 @@ export interface SessionRuntimeOptions {
   taskIsolation?: SessionTaskIsolation;
   userShellExecutor?: UserShellExecutor;
 }
+
+export type SessionTurnOutcome =
+  | ({ status: 'completed' } & SessionTurnMetrics)
+  | ({
+      status: 'aborted';
+      cause: Exclude<SessionTurnAbortCause, 'process_restart'>;
+    } & SessionTurnMetrics);
 
 export interface SessionUserShellCommandResult {
   executionId: string;
@@ -1172,15 +1182,38 @@ export class SessionRuntime {
     return { source: resumed.source, session };
   }
 
-  beginTurn(): ActiveTurnHandle {
-    return this.getActiveTurnMailbox().beginTurn();
+  async beginTurn(kind: SessionTurnKind = 'goal'): Promise<ActiveTurnHandle> {
+    const handle = this.getActiveTurnMailbox().beginTurn();
+    try {
+      await this.saveTurnStart(handle, kind);
+      return handle;
+    } catch (error) {
+      await this.getActiveTurnMailbox()
+        .finishTurn(handle)
+        .catch(() => undefined);
+      throw error;
+    }
   }
 
   async prepareInputTurn(
     content: UserMessageContent,
     options?: { outputSchema?: JsonObject }
   ): Promise<InputTurnPreparation> {
-    return this.getActiveTurnMailbox().prepareInputTurn(content, options);
+    const mailbox = this.getActiveTurnMailbox();
+    const preparation = await mailbox.prepareInputTurn(content, options);
+    if (!preparation.accepted) return preparation;
+
+    try {
+      await this.saveTurnStart(
+        preparation.handle,
+        preparation.mode === 'direct' ? 'user' : 'pending',
+        mailbox.pendingMessages().map((message) => message.id)
+      );
+      return preparation;
+    } catch (error) {
+      await mailbox.finishTurn(preparation.handle).catch(() => undefined);
+      throw error;
+    }
   }
 
   async enqueueSteering(
@@ -1223,13 +1256,73 @@ export class SessionRuntime {
 
   async finishTurn(
     handle: ActiveTurnHandle,
-    options?: { continuePending?: boolean }
+    options: {
+      continuePending?: boolean;
+      outcome?: SessionTurnOutcome;
+    } = {}
   ): Promise<ActiveTurnHandle | undefined> {
-    return this.getActiveTurnMailbox().finishTurn(handle, options);
+    const outcome = options.outcome ?? {
+      status: 'aborted',
+      cause: 'interrupted',
+      turnsCount: 0,
+      toolCallsCount: 0,
+      durationMs: 0,
+    };
+    const persistentStore =
+      this.getExecutionEngine().getContextManager().persistentStore;
+    if (outcome.status === 'completed') {
+      await persistentStore.saveTurnCompletion(this.sessionId, {
+        turnId: handle.id,
+        completedAt: new Date().toISOString(),
+        turnsCount: outcome.turnsCount,
+        toolCallsCount: outcome.toolCallsCount,
+        durationMs: outcome.durationMs,
+      });
+    } else {
+      await persistentStore.saveTurnAbort(this.sessionId, {
+        turnId: handle.id,
+        cause: outcome.cause,
+        abortedAt: new Date().toISOString(),
+        turnsCount: outcome.turnsCount,
+        toolCallsCount: outcome.toolCallsCount,
+        durationMs: outcome.durationMs,
+      });
+    }
+
+    const next = await this.getActiveTurnMailbox().finishTurn(handle, options);
+    if (!next) return undefined;
+    try {
+      await this.saveTurnStart(
+        next,
+        'pending',
+        this.getActiveTurnMailbox()
+          .pendingMessages()
+          .map((message) => message.id)
+      );
+      return next;
+    } catch (error) {
+      await this.getActiveTurnMailbox()
+        .finishTurn(next)
+        .catch(() => undefined);
+      throw error;
+    }
   }
 
   async beginPendingTurn(): Promise<ActiveTurnHandle | undefined> {
-    return this.getActiveTurnMailbox().beginPendingTurn();
+    const mailbox = this.getActiveTurnMailbox();
+    const handle = await mailbox.beginPendingTurn();
+    if (!handle) return undefined;
+    try {
+      await this.saveTurnStart(
+        handle,
+        'pending',
+        mailbox.pendingMessages().map((message) => message.id)
+      );
+      return handle;
+    } catch (error) {
+      await mailbox.finishTurn(handle).catch(() => undefined);
+      throw error;
+    }
   }
 
   hasActiveTurn(): boolean {
@@ -1467,6 +1560,14 @@ export class SessionRuntime {
       await this.getExecutionEngine()
         .getContextManager()
         .persistentStore.initSession(this.sessionId, this.options.subagentInfo);
+      const recoveredTurnId = await this.getExecutionEngine()
+        .getContextManager()
+        .persistentStore.recoverInterruptedTurn(this.sessionId);
+      if (recoveredTurnId) {
+        logger.warn(
+          `[SessionRuntime ${this.sessionId}] recovered interrupted turn ${recoveredTurnId}`
+        );
+      }
 
       this.initialized = true;
       logger.debug(
@@ -1750,6 +1851,21 @@ export class SessionRuntime {
       throw new Error('Session runtime is not initialized');
     }
     return this.activeTurnMailbox;
+  }
+
+  private async saveTurnStart(
+    handle: ActiveTurnHandle,
+    kind: SessionTurnKind,
+    inputMessageIds: string[] = []
+  ): Promise<void> {
+    await this.getExecutionEngine()
+      .getContextManager()
+      .persistentStore.saveTurnStart(this.sessionId, {
+        turnId: handle.id,
+        kind,
+        startedAt: new Date().toISOString(),
+        ...(inputMessageIds.length > 0 ? { inputMessageIds } : {}),
+      });
   }
 
   private assertRewindIdle(): void {

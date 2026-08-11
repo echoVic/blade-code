@@ -1590,7 +1590,7 @@ const handlePermissionTimeout: EventHandler = (props, get, set) => {
 
 const handleTurnStarted: EventHandler = (props, get, set) => {
   if (props.sessionId !== get().currentSessionId) return;
-  set({ agentPhase: 'running' });
+  set({ agentPhase: 'running', isStreaming: true });
 };
 
 const handleCompactionStarted: EventHandler = (props, get, set) => {
@@ -2024,6 +2024,9 @@ const eventHandlers: Record<string, EventHandler> = {
   'permission.asked': handlePermissionAsked,
   'permission.timeout': handlePermissionTimeout,
   'turn.started': handleTurnStarted,
+  'committed.turn_started': handleTurnStarted,
+  'committed.turn_completed': handleSessionCompleted,
+  'committed.turn_aborted': handleSessionCompleted,
   'compaction.started': handleCompactionStarted,
   'compaction.completed': handleCompactionCompleted,
   'model.fallback': handleModelFallback,
@@ -2063,6 +2066,8 @@ const STREAM_END_EVENTS = new Set([
   'session.completed',
   'session.error',
   'run.cancelled',
+  'committed.turn_completed',
+  'committed.turn_aborted',
 ]);
 
 export const createEventDispatcher = (get: GetState, set: SetState) => {
@@ -2078,7 +2083,7 @@ export const createEventDispatcher = (get: GetState, set: SetState) => {
     }
 
     // delta 事件不打印日志，避免大量 console.log 阻塞主线程
-    if (!BUFFERED_EVENTS.has(event.type)) {
+    if (import.meta.env.DEV && !BUFFERED_EVENTS.has(event.type)) {
       console.log('[SSE Event]', event.type, event.properties);
     }
 

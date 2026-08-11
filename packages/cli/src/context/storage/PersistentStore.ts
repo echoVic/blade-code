@@ -8,6 +8,7 @@ import type { JsonValue, MessageRole } from '../../store/types.js';
 import { getCwd } from '../../utils/cwd.js';
 import { getVersion } from '../../utils/packageInfo.js';
 import { SessionEventLog } from '../events/SessionEventLog.js';
+import { projectTurnLifecycle } from '../events/turnLifecycle.js';
 import type {
   ConversationContext,
   MessageInfo,
@@ -21,6 +22,9 @@ import type {
   SessionInteractionResponseInfo,
   SessionReviewCompletionInfo,
   SessionReviewStartInfo,
+  SessionTurnAbortInfo,
+  SessionTurnCompletionInfo,
+  SessionTurnStartInfo,
   SubagentRunRef,
 } from '../types.js';
 import { JSONLStore } from './JSONLStore.js';
@@ -31,6 +35,8 @@ import {
   getSessionInboxFilePath,
   listProjectDirectories,
 } from './pathUtils.js';
+
+class TurnLifecycleNoop extends Error {}
 
 /**
  * 持久化存储实现 - JSONL 格式
@@ -226,6 +232,67 @@ export class PersistentStore {
         acknowledgedAt,
       })
     );
+  }
+
+  async saveTurnStart(sessionId: string, turn: SessionTurnStartInfo): Promise<void> {
+    await this.ensureSessionCreated(sessionId);
+    try {
+      await this.log(sessionId).commitValidated((events) => {
+        const projected = materializeSessionEvents(events);
+        if (
+          projected.some(
+            (event) =>
+              event.type === 'turn_started' && event.data.turnId === turn.turnId
+          )
+        ) {
+          throw new TurnLifecycleNoop();
+        }
+        const active = projectTurnLifecycle(projected).active;
+        if (active) {
+          throw new Error(`Session already has an active turn: ${active.turnId}`);
+        }
+        return this.createEvent('turn_started', sessionId, turn);
+      });
+    } catch (error) {
+      if (!(error instanceof TurnLifecycleNoop)) throw error;
+    }
+  }
+
+  async saveTurnCompletion(
+    sessionId: string,
+    turn: SessionTurnCompletionInfo
+  ): Promise<void> {
+    await this.saveTurnTerminal(sessionId, 'turn_completed', turn);
+  }
+
+  async saveTurnAbort(sessionId: string, turn: SessionTurnAbortInfo): Promise<void> {
+    await this.saveTurnTerminal(sessionId, 'turn_aborted', turn);
+  }
+
+  async recoverInterruptedTurn(sessionId: string): Promise<string | undefined> {
+    await this.ensureSessionCreated(sessionId);
+    let recoveredTurnId: string | undefined;
+    try {
+      await this.log(sessionId).commitValidated((events) => {
+        const active = projectTurnLifecycle(materializeSessionEvents(events)).active;
+        if (!active) throw new TurnLifecycleNoop();
+        recoveredTurnId = active.turnId;
+        const startedAt = Date.parse(active.startedAt);
+        return this.createEvent('turn_aborted', sessionId, {
+          turnId: active.turnId,
+          cause: 'process_restart',
+          abortedAt: new Date().toISOString(),
+          turnsCount: 0,
+          toolCallsCount: 0,
+          durationMs: Number.isFinite(startedAt)
+            ? Math.max(0, Date.now() - startedAt)
+            : 0,
+        });
+      });
+    } catch (error) {
+      if (!(error instanceof TurnLifecycleNoop)) throw error;
+    }
+    return recoveredTurnId;
   }
 
   async saveInteractionRequest(
@@ -767,6 +834,39 @@ export class PersistentStore {
       console.log(`[PersistentStore] 已清理 ${sessionsToDelete.length} 个旧会话`);
     } catch (error) {
       console.error('[PersistentStore] 清理旧会话失败:', error);
+    }
+  }
+
+  private async saveTurnTerminal(
+    sessionId: string,
+    type: 'turn_completed' | 'turn_aborted',
+    turn: SessionTurnCompletionInfo | SessionTurnAbortInfo
+  ): Promise<void> {
+    await this.ensureSessionCreated(sessionId);
+    try {
+      await this.log(sessionId).commitValidated((events) => {
+        const projected = materializeSessionEvents(events);
+        const duplicate = projected.some(
+          (event) =>
+            (event.type === 'turn_completed' || event.type === 'turn_aborted') &&
+            event.data.turnId === turn.turnId
+        );
+        if (duplicate) throw new TurnLifecycleNoop();
+
+        const active = projectTurnLifecycle(projected).active;
+        if (!active || active.turnId !== turn.turnId) {
+          throw new Error(`Turn is not active: ${turn.turnId}`);
+        }
+        return type === 'turn_completed'
+          ? this.createEvent(
+              'turn_completed',
+              sessionId,
+              turn as SessionTurnCompletionInfo
+            )
+          : this.createEvent('turn_aborted', sessionId, turn as SessionTurnAbortInfo);
+      });
+    } catch (error) {
+      if (!(error instanceof TurnLifecycleNoop)) throw error;
     }
   }
 

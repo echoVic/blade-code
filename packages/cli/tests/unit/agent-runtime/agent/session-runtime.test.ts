@@ -563,7 +563,7 @@ describe('SessionRuntime', () => {
         })),
       },
     });
-    const handle = runtime.beginTurn();
+    const handle = await runtime.beginTurn();
 
     const result = await runtime.executeUserShellCommand('echo aux');
     const queued = await runtime.drainSteering(handle);
@@ -990,7 +990,7 @@ describe('SessionRuntime', () => {
       sessionId: 'runtime-rewind-active',
       workspaceRoot: path.join(storageRoot, 'rewind-active-project'),
     });
-    const handle = runtime.beginTurn();
+    const handle = await runtime.beginTurn();
     const rewind = vi.spyOn(SessionService, 'rewindSession');
 
     await expect(
@@ -1135,7 +1135,7 @@ describe('SessionRuntime', () => {
       sessionId: 'runtime-subagent-active',
       workspaceRoot: path.join(storageRoot, 'subagent-active-project'),
     });
-    const handle = runtime.beginTurn();
+    const handle = await runtime.beginTurn();
     const getManager = vi.spyOn(BackgroundAgentManager, 'getInstance');
 
     expect(() =>
@@ -1179,6 +1179,43 @@ describe('SessionRuntime', () => {
     });
     expect(resumed.sessionId).toBe('exclusive-session');
     await resumed.dispose();
+  });
+
+  it('closes an orphaned durable turn after acquiring the released session lease', async () => {
+    const workspaceRoot = path.join(storageRoot, 'orphaned-turn-project');
+    const sessionId = 'orphaned-turn-session';
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const orphaned = await first.beginTurn('user');
+    await first.dispose();
+
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const events = await new PersistentStore(workspaceRoot).loadEvents(sessionId);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'turn_started',
+          data: expect.objectContaining({ turnId: orphaned.id }),
+        }),
+        expect.objectContaining({
+          type: 'turn_aborted',
+          data: expect.objectContaining({
+            turnId: orphaned.id,
+            cause: 'process_restart',
+          }),
+        }),
+      ])
+    );
+
+    const next = await recovered.beginTurn('goal');
+    await recovered.finishTurn(next, {
+      outcome: {
+        status: 'completed',
+        turnsCount: 1,
+        toolCallsCount: 0,
+        durationMs: 1,
+      },
+    });
+    await recovered.dispose();
   });
 
   it('rejects archived sessions before restoring runtime resources', async () => {

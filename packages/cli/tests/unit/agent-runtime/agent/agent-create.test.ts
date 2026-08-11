@@ -171,6 +171,12 @@ describe('Agent runLoop system prompt injection', () => {
     expect(runtime.prepareInputTurn).toHaveBeenCalledWith('hello');
     expect(runtime.finishTurn).toHaveBeenCalledWith(turnHandle, {
       continuePending: true,
+      outcome: {
+        status: 'completed',
+        turnsCount: 1,
+        toolCallsCount: 0,
+        durationMs: 0,
+      },
     });
     expect(runtime.acknowledgeTurn).toHaveBeenCalledWith(turnHandle);
     expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(1, 'running');
@@ -483,7 +489,15 @@ describe('Agent runLoop system prompt injection', () => {
 
     await expect(next).rejects.toThrow('attachment unavailable');
     expect(order).toEqual(['prepare', 'expand']);
-    expect(runtime.finishTurn).toHaveBeenCalledWith(turnHandle);
+    expect(runtime.finishTurn).toHaveBeenCalledWith(turnHandle, {
+      outcome: {
+        status: 'aborted',
+        cause: 'failed',
+        turnsCount: 0,
+        toolCallsCount: 0,
+        durationMs: 0,
+      },
+    });
     expect((agent as any).runLoop).not.toHaveBeenCalled();
     expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(1, 'running');
     expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(
@@ -548,6 +562,13 @@ describe('Agent runLoop system prompt injection', () => {
     expect(runtime.acknowledgeTurn).not.toHaveBeenCalled();
     expect(runtime.finishTurn).toHaveBeenCalledWith(turnHandle, {
       continuePending: false,
+      outcome: {
+        status: 'aborted',
+        cause: 'failed',
+        turnsCount: 0,
+        toolCallsCount: 0,
+        durationMs: 0,
+      },
     });
     expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(1, 'running');
     expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(
