@@ -37,6 +37,8 @@ All notable changes to this project will be documented in this file.
   compaction、进程树与 crash-recovery 长轨迹保留在完整付费 soak
 - Production Web GUI 验证 live verifier、最终 PASS/Session/SHA 证据、fresh tab
   恢复和中英文切换；fresh tab console 无应用错误
+- 基于已发布 schedule `0.10.9` 的 clean release tree 通过 production
+  qualification 15/15、Web 390/390、Performance 15/15 与 entry bundle budget
 
 ## [0.10.9] - 2026-08-11
 
