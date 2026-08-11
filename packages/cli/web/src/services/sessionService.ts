@@ -3,6 +3,8 @@ import {
   type BoundProject,
   BoundProjectSchema,
   BusEventSchema,
+  type CodeReviewStartResponse,
+  CodeReviewStartResponseSchema,
   type CommunicationStyle,
   type CreateTaskResponse,
   CreateTaskResponseSchema,
@@ -46,6 +48,7 @@ import {
   type UserShellCommandResponse,
   UserShellCommandResponseSchema,
 } from '@api/schemas';
+import { t } from '@/i18n';
 import { requestJson } from '@/lib/http';
 
 export interface StreamEvent {
@@ -106,6 +109,14 @@ export interface TaskDispatchInput {
   isolation: SessionTaskIsolation;
   permissionMode?: PermissionMode;
   attachments?: ImageAttachmentInput[];
+}
+
+export interface CodeReviewDispatchInput {
+  projectPath?: string;
+  kind: 'uncommitted' | 'base' | 'commit';
+  ref?: string;
+  instructions?: string;
+  modelId?: string;
 }
 
 export interface WorkspaceInfo {
@@ -280,6 +291,41 @@ export const sessionService = {
     });
     if (!res.ok) throw new Error('Failed to create session');
     return SessionSchema.parse(await res.json());
+  },
+
+  startCodeReview: async (
+    ref: SessionRef,
+    input: {
+      kind: 'uncommitted' | 'base' | 'commit';
+      ref?: string;
+      instructions?: string;
+      modelId?: string;
+    }
+  ): Promise<CodeReviewStartResponse> => {
+    const res = await fetch(`${API_BASE}/sessions/${ref.sessionId}/review`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...sessionDirectoryHeaders(ref),
+      },
+      body: JSON.stringify({
+        projectPath: ref.projectPath,
+        ...input,
+      }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { error?: { code?: string } }
+        | undefined;
+      const message =
+        body?.error?.code === 'CONFLICT'
+          ? t('taskHome.review.conflict')
+          : body?.error?.code === 'BAD_REQUEST'
+            ? t('taskHome.review.invalidTarget')
+            : t('taskHome.review.startFailed');
+      throw new Error(message);
+    }
+    return CodeReviewStartResponseSchema.parse(await res.json());
   },
 
   getWorkspaceInfo: async (): Promise<WorkspaceInfo> => {

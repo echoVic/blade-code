@@ -131,6 +131,17 @@ const terminalState = vi.hoisted(() => ({
   execute: vi.fn(),
 }));
 
+const codeReviewState = vi.hoisted(() => ({
+  recoverInterrupted: vi.fn().mockResolvedValue(undefined),
+  start: vi.fn(),
+  list: vi.fn(),
+}));
+
+vi.mock('../../../../src/services/CodeReviewService.js', () => ({
+  CodeReviewService: codeReviewState,
+  renderCodeReview: vi.fn(() => '## Code Review'),
+}));
+
 // Mock Agent
 vi.mock('../../../../src/agent/Agent.js', () => {
   const createAgent = (): AgentMockInstance => {
@@ -156,6 +167,7 @@ vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
 }));
 
 const sessionServiceState = vi.hoisted(() => ({
+  loadSession: vi.fn().mockResolvedValue([]),
   setSessionPermissionMode: vi.fn().mockResolvedValue({
     permissionMode: 'default',
   }),
@@ -233,6 +245,10 @@ describe('AcpSession', () => {
     runtimeState.runtime.listSubagents.mockReset().mockReturnValue([]);
     runtimeState.runtime.resumeSubagent.mockReset();
     runtimeState.runtime.executeUserShellCommand.mockReset();
+    sessionServiceState.loadSession.mockReset().mockResolvedValue([]);
+    codeReviewState.recoverInterrupted.mockReset().mockResolvedValue(undefined);
+    codeReviewState.start.mockReset();
+    codeReviewState.list.mockReset();
     sessionServiceState.setSessionPermissionMode
       .mockReset()
       .mockImplementation(async (_sessionId, _cwd, permissionMode) => ({
@@ -1400,6 +1416,70 @@ describe('AcpSession', () => {
       expect(runtimeState.runtime.cancelMcpTask).toHaveBeenCalledWith(
         'mcp_task_safe',
         undefined
+      );
+    });
+
+    it('通过 ACP slash boundary 启动原生只读 Code Review', async () => {
+      const completion = {
+        reviewId: 'review-acp',
+        status: 'completed' as const,
+        overallExplanation: 'Reviewed.',
+        findings: [],
+        completedAt: new Date(0).toISOString(),
+      };
+      codeReviewState.start.mockResolvedValueOnce({
+        reviewId: 'review-acp',
+        completion: Promise.resolve(completion),
+      });
+      codeReviewState.list.mockResolvedValueOnce([
+        {
+          start: {
+            reviewId: 'review-acp',
+            reviewerSessionId: 'review-child',
+            target: {
+              kind: 'uncommitted',
+              label: 'uncommitted changes',
+              headSha: 'a'.repeat(40),
+              digest: 'b'.repeat(64),
+              fileCount: 1,
+            },
+            startedAt: new Date(0).toISOString(),
+          },
+          completion,
+        },
+      ]);
+      const { executeSlashCommand } = await import(
+        '../../../../src/slash-commands/index.js'
+      );
+      vi.mocked(executeSlashCommand).mockImplementationOnce(
+        async (_message, context) => {
+          const result = await context.codeReview?.run({
+            kind: 'uncommitted',
+          });
+          return {
+            success: true,
+            content: result?.content,
+          };
+        }
+      );
+
+      const response = await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: '/review uncommitted' }],
+      });
+
+      expect(response.stopReason).toBe('end_turn');
+      expect(codeReviewState.start).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: 'test-session-id',
+          projectPath: '/tmp/test',
+          runtime: runtimeState.runtime,
+          request: { kind: 'uncommitted' },
+        })
+      );
+      expect(sessionServiceState.loadSession).toHaveBeenCalledWith(
+        'test-session-id',
+        '/tmp/test'
       );
     });
 

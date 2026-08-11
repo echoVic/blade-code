@@ -75,7 +75,7 @@ describe('Bash Tool', () => {
     });
   });
 
-  it('runs local verification commands through a workspace-read-only sandbox', async () => {
+  it('runs local audit commands through a workspace-read-only sandbox', async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-verifier-bash-'));
     const canonicalWorkspace = await realpath(workspace);
     const previousSecret = process.env.DEEPSEEK_API_KEY;
@@ -98,28 +98,33 @@ describe('Bash Tool', () => {
       () => rm(workspace, { recursive: true, force: true })
     );
 
-    const result = await bashTool.execute(
-      {
-        command: 'printf "%s:%s" "$PATH" "${DEEPSEEK_API_KEY-unset}"',
-        timeout: 10_000,
-        env: {},
-        run_in_background: false,
-      },
-      undefined,
-      {
-        workspaceRoot: canonicalWorkspace,
-        subagentType: 'verification',
-      }
-    );
+    for (const subagentType of ['verification', 'review']) {
+      const result = await bashTool.execute(
+        {
+          command:
+            'printf "%s:%s:%s" "$PATH" "${DEEPSEEK_API_KEY-unset}" "$GIT_CONFIG_GLOBAL"',
+          timeout: 10_000,
+          env: {},
+          run_in_background: false,
+        },
+        undefined,
+        {
+          workspaceRoot: canonicalWorkspace,
+          subagentType,
+        }
+      );
 
-    expect(result.success).toBe(true);
-    expect(result.metadata?.sandboxed).toBe(true);
-    expect(result.llmContent).toMatchObject({
-      stdout: expect.stringMatching(/.+:unset$/),
-    });
+      expect(result.success).toBe(true);
+      expect(result.metadata?.sandboxed).toBe(true);
+      expect(result.llmContent).toMatchObject({
+        stdout: expect.stringMatching(/.+:unset:\/dev\/null$/),
+      });
+    }
+    expect(prepare).toHaveBeenCalledTimes(2);
     expect(prepare).toHaveBeenCalledWith(
       expect.objectContaining({
-        command: 'printf "%s:%s" "$PATH" "${DEEPSEEK_API_KEY-unset}"',
+        command:
+          'printf "%s:%s:%s" "$PATH" "${DEEPSEEK_API_KEY-unset}" "$GIT_CONFIG_GLOBAL"',
         cwd: canonicalWorkspace,
         workspaceRoot: canonicalWorkspace,
         access: 'workspace-read-only',

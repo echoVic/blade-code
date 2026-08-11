@@ -17,6 +17,7 @@ import {
   isGitRepository,
   stageAll,
 } from '../utils/git.js';
+import reviewCommand from './review.js';
 import {
   getUI,
   type SlashCommand,
@@ -151,68 +152,7 @@ async function handleDiff(context: SlashCommandContext): Promise<SlashCommandRes
  * AI Code Review
  */
 async function handleReview(context: SlashCommandContext): Promise<SlashCommandResult> {
-  const ui = getUI(context);
-  const { cwd, signal } = context;
-
-  // 检查是否有改动
-  if (!(await hasUncommittedChanges(cwd))) {
-    ui.sendMessage('没有未提交的改动，无需 Review');
-    return { success: true };
-  }
-
-  ui.sendMessage('正在分析代码改动...');
-
-  // 获取 diff
-  const fileList = await getStagedFileList(cwd);
-  const diff = await getStagedDiff(cwd);
-
-  if (!diff && !fileList) {
-    ui.sendMessage('请先使用 `git add` 暂存要 Review 的文件');
-    return { success: true };
-  }
-
-  // 调用 Agent 进行 Review
-  const agent = await Agent.create();
-
-  // 检查 Agent 创建期间是否已被中止
-  if (signal?.aborted) {
-    return { success: false, message: '操作已取消' };
-  }
-
-  const sessionId = getState().session.sessionId;
-
-  const reviewPrompt = `请对以下 Git 改动进行 Code Review。
-
-**暂存文件：**
-${fileList || '(无)'}
-
-**Diff 内容：**
-\`\`\`diff
-${diff || '(无差异)'}
-\`\`\`
-
-请用中文回复，包含以下内容：
-1. **改动概述**：简要描述这次改动做了什么
-2. **代码质量**：评估代码质量（优点和可改进的地方）
-3. **潜在问题**：指出可能的 bug、安全问题或性能问题
-4. **改进建议**：具体的代码改进建议
-
-如果改动很好，也请说明优点。保持简洁专业。`;
-
-  const loopResult = await drainLoop(
-    agent.chatStream(reviewPrompt, {
-      messages: [],
-      userId: 'cli-user',
-      sessionId: sessionId || 'git-review',
-      workspaceRoot: cwd,
-      signal,
-    })
-  );
-  const result = loopResult.finalMessage || '';
-
-  ui.sendMessage(result);
-
-  return { success: true };
+  return reviewCommand.handler(['uncommitted'], context);
 }
 
 /**

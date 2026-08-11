@@ -395,6 +395,21 @@ effective level。活动回合期间拒绝切换，Runtime 替换或 metadata �
 [Session Communication Style](session-communication-style.md) 和
 [Trusted Custom Output Styles](trusted-output-styles.md)。
 
+#### `/review [target]`
+
+启动独立只读 reviewer：
+
+```bash
+/review
+/review uncommitted
+/review base main
+/review commit HEAD
+```
+
+`/git review` 等同 `/review uncommitted`。reviewer 使用独立 Session、diff digest、
+结构化 P0-P3 findings 与 workspace-read-only sandbox；不会修复或修改被审查代码。
+详见 [Native Read-Only Code Review](native-code-review.md)。
+
 #### `/resume [sessionId]`
 
 恢复历史会话。不带 ID 时打开会话选择器。

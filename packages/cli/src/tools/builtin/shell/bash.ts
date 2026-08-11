@@ -7,6 +7,7 @@ import {
   stripSafeEnvVars,
   stripSafeWrappers,
 } from '../../../utils/shell/commandNormalizer.js';
+import { isReadOnlyAuditSubagent } from '../../../utils/shell/readOnlyAudit.js';
 import { createTool } from '../../core/createTool.js';
 import type {
   BashBackgroundMetadata,
@@ -176,13 +177,17 @@ Before executing commands:
   async execute(params, context: ExecutionContext): Promise<ToolResult> {
     const { command, timeout = 30000, cwd, env, run_in_background = false } = params;
     const { updateOutput } = context;
-    const effectiveEnv =
-      context.subagentType === 'verification'
-        ? {}
-        : {
-            ...context.environment,
-            ...env,
-          };
+    const readOnlyAudit = isReadOnlyAuditSubagent(context.subagentType);
+    const effectiveEnv = readOnlyAudit
+      ? {
+          GIT_CONFIG_GLOBAL: '/dev/null',
+          GIT_CONFIG_NOSYSTEM: '1',
+          GIT_OPTIONAL_LOCKS: '0',
+        }
+      : {
+          ...context.environment,
+          ...env,
+        };
     const signal = context.signal ?? new AbortController().signal;
     const workspaceRoot = context.workspaceRoot ?? getCwd();
     const effectiveCwd =
@@ -196,7 +201,7 @@ Before executing commands:
       updateOutput?.(`Executing Bash command: ${command}`);
       const acpMode = isAcpMode(context.sessionId);
       const sandboxedCommand =
-        context.subagentType === 'verification' && !acpMode
+        readOnlyAudit && !acpMode
           ? await workspaceWriteSandbox.prepare({
               command,
               cwd: effectiveCwd,

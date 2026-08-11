@@ -64,7 +64,7 @@ const TASK_TEMPLATES = [
     titleKey: 'taskHome.template.review.title' as const,
     descriptionKey: 'taskHome.template.review.description' as const,
     icon: ScanSearch,
-    prompt: 'Review the current changes for bugs, regressions, and missing tests. ',
+    prompt: '/review uncommitted',
     hintKey: 'taskHome.template.review.hint' as const,
   },
   {
@@ -102,6 +102,7 @@ export function TaskHome() {
     error,
     selectProject,
     dispatchTask,
+    startCodeReview,
     sendMessage,
     startTemporarySession,
     selectSession,
@@ -205,6 +206,28 @@ export function TaskHome() {
       communicationStyle?: CommunicationStyle;
       attachments: ComposerImageAttachment[];
     }) => {
+      const trimmed = payload.content.trim();
+      if (trimmed === '/review' || trimmed.startsWith('/review ')) {
+        if (payload.attachments.length > 0) {
+          throw new Error(t('taskHome.review.attachmentsUnsupported'));
+        }
+        const parts = trimmed.split(/\s+/);
+        const kind = parts[1] || 'uncommitted';
+        if (
+          (kind !== 'uncommitted' && kind !== 'base' && kind !== 'commit') ||
+          (kind === 'uncommitted' && parts.length !== 2 && parts.length !== 1) ||
+          ((kind === 'base' || kind === 'commit') && parts.length !== 3)
+        ) {
+          throw new Error(t('taskHome.review.usage'));
+        }
+        await startCodeReview({
+          projectPath: targetProjectPath,
+          kind,
+          ...(parts[2] ? { ref: parts[2] } : {}),
+          modelId: payload.modelId ?? currentModelId ?? undefined,
+        });
+        return;
+      }
       if (payload.content.trimStart().startsWith('!')) {
         startTemporarySession(targetProjectPath);
         await sendMessage({
@@ -237,8 +260,10 @@ export function TaskHome() {
       dispatchTask,
       isolation,
       sendMessage,
+      startCodeReview,
       startTemporarySession,
       targetProjectPath,
+      t,
     ]
   );
 

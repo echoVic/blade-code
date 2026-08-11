@@ -40,4 +40,12 @@ describe('sessionDisplayTitle', () => {
       )
     ).toBe('Session abcdef');
   });
+
+  it('localizes the durable code review title after language switches', () => {
+    expect(sessionDisplayTitle(session({ title: 'Code Review' }), t)).toBe(
+      'Code Review'
+    );
+    setLocale('zh');
+    expect(sessionDisplayTitle(session({ title: 'Code Review' }), t)).toBe('代码评审');
+  });
 });

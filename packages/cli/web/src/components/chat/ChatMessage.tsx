@@ -26,6 +26,7 @@ import {
   getTimelineText,
 } from '@/store/session/utils/agentTimeline';
 import { aggregateMessages } from '@/store/session/utils/aggregateMessages';
+import { CodeReviewReport, parseCodeReviewReport } from './CodeReviewReport';
 import { McpElicitationSection } from './McpElicitationSection';
 
 export type { Message };
@@ -1329,6 +1330,7 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
   }
 
   const assistantText = getAssistantCopyText(message);
+  const codeReviewReport = parseCodeReviewReport(message.metadata?.codeReview);
   return (
     <div
       data-chat-message-id={message.id}
@@ -1339,7 +1341,11 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
     >
       {showAvatar ? <AIAvatar /> : <div className="w-8 shrink-0" />}
       <div className="overflow-hidden flex-1 min-w-0">
-        <AgentMessageContent message={message} />
+        {codeReviewReport ? (
+          <CodeReviewReport report={codeReviewReport} />
+        ) : (
+          <AgentMessageContent message={message} />
+        )}
         {assistantText.trim() && (
           <div className="mt-1.5 flex opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
             <CopyButton text={assistantText} label="Copy response" />

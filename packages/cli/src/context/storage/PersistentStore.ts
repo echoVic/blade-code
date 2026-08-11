@@ -19,6 +19,8 @@ import type {
   SessionInteractionRecoveryInfo,
   SessionInteractionRequestInfo,
   SessionInteractionResponseInfo,
+  SessionReviewCompletionInfo,
+  SessionReviewStartInfo,
   SubagentRunRef,
 } from '../types.js';
 import { JSONLStore } from './JSONLStore.js';
@@ -293,6 +295,59 @@ export class PersistentStore {
         throw new Error(`Interaction already recovered: ${recovery.requestId}`);
       }
       return this.createEvent('interaction_recovered', sessionId, recovery);
+    });
+  }
+
+  async saveReviewStart(
+    sessionId: string,
+    review: SessionReviewStartInfo
+  ): Promise<void> {
+    await this.ensureSessionCreated(sessionId);
+    await this.log(sessionId).commitValidated((events) => {
+      const duplicate = events.some(
+        (event) =>
+          event.type === 'review_started' && event.data.reviewId === review.reviewId
+      );
+      if (duplicate) {
+        throw new Error(`Review already exists: ${review.reviewId}`);
+      }
+      const active = events.some(
+        (event) =>
+          event.type === 'review_started' &&
+          !events.some(
+            (candidate) =>
+              candidate.type === 'review_completed' &&
+              candidate.data.reviewId === event.data.reviewId
+          )
+      );
+      if (active) {
+        throw new Error('Session already has an active review');
+      }
+      return this.createEvent('review_started', sessionId, review);
+    });
+  }
+
+  async saveReviewCompletion(
+    sessionId: string,
+    review: SessionReviewCompletionInfo
+  ): Promise<void> {
+    await this.ensureSessionCreated(sessionId);
+    await this.log(sessionId).commitValidated((events) => {
+      const started = events.some(
+        (event) =>
+          event.type === 'review_started' && event.data.reviewId === review.reviewId
+      );
+      if (!started) {
+        throw new Error(`Review not found: ${review.reviewId}`);
+      }
+      const duplicate = events.some(
+        (event) =>
+          event.type === 'review_completed' && event.data.reviewId === review.reviewId
+      );
+      if (duplicate) {
+        throw new Error(`Review already completed: ${review.reviewId}`);
+      }
+      return this.createEvent('review_completed', sessionId, review);
     });
   }
 

@@ -1890,6 +1890,60 @@ const handleSessionRewound: EventHandler = (props, get, set) => {
   });
 };
 
+const handleReviewCompleted: EventHandler = (props, get, set) => {
+  const ref = get().currentSessionRef;
+  if (
+    !ref ||
+    props.sessionId !== ref.sessionId ||
+    props.projectPath !== ref.projectPath
+  ) {
+    return;
+  }
+  const reviewStatus = props.status;
+  const taskStatus =
+    reviewStatus === 'completed' || reviewStatus === 'stale'
+      ? 'completed'
+      : reviewStatus === 'aborted'
+        ? 'cancelled'
+        : reviewStatus === 'interrupted'
+          ? 'interrupted'
+          : 'failed';
+  set((state) => ({
+    sessions: state.sessions.map((session) =>
+      session.sessionId === ref.sessionId && session.projectPath === ref.projectPath
+        ? {
+            ...session,
+            taskStatus,
+            taskStatusReason: undefined,
+            taskFailure: undefined,
+            taskCompletedAt: new Date().toISOString(),
+          }
+        : session
+    ),
+  }));
+  void get().selectSession(ref);
+};
+
+const handleReviewToolStarted: EventHandler = (props, get, set) => {
+  handleToolStart(
+    {
+      ...props,
+      messageId: `review-${String(props.reviewId ?? 'active')}`,
+      arguments: '{}',
+    },
+    get,
+    set
+  );
+};
+
+const handleReviewToolProgress: EventHandler = (props, get, set) => {
+  handleToolProgress(props, get, set);
+};
+
+const handleReviewToolCompleted: EventHandler = (props, get, set) => {
+  handleToolResult(props, get, set);
+};
+
 const eventHandlers: Record<string, EventHandler> = {
   'message.created': handleMessageCreated,
   'message.delta': handleMessageDelta,
@@ -1949,6 +2003,10 @@ const eventHandlers: Record<string, EventHandler> = {
   'goal.cleared': handleGoalCleared,
   'goal.continuation.started': handleGoalContinuationStarted,
   'session.rewound': handleSessionRewound,
+  'review.tool.started': handleReviewToolStarted,
+  'review.tool.progress': handleReviewToolProgress,
+  'review.tool.completed': handleReviewToolCompleted,
+  'review.completed': handleReviewCompleted,
 };
 
 // 需要缓冲的高频 delta 事件

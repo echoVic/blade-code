@@ -372,7 +372,8 @@ export async function processSlashCommand(
   serviceTier?: SlashCommandContext['serviceTier'],
   responseVerbosity?: SlashCommandContext['responseVerbosity'],
   communicationStyle?: SlashCommandContext['communicationStyle'],
-  workspaceRoot: string = getCwd()
+  workspaceRoot: string = getCwd(),
+  codeReview?: SlashCommandContext['codeReview']
 ): Promise<SlashRouteResult> {
   const { text: command } = resolved;
 
@@ -402,6 +403,7 @@ export async function processSlashCommand(
     serviceTier,
     responseVerbosity,
     communicationStyle,
+    codeReview,
     signal,
   };
 

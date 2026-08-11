@@ -578,6 +578,10 @@ export class SessionRuntime {
     return this.agentResources;
   }
 
+  getModelResources(): SessionModelResources {
+    return this.modelResources;
+  }
+
   getLspResources(): SessionLspResources {
     return snapshotWorkspaceLspResources(this.lspResources);
   }

@@ -609,6 +609,25 @@ export const UserShellCommandResponseSchema = Runtime(
 );
 export type UserShellCommandResponse = Static<typeof UserShellCommandResponseSchema>;
 
+export const CodeReviewRequestSchema = Runtime(
+  Type.Object({
+    projectPath: Type.String(),
+    kind: StringEnum(['uncommitted', 'base', 'commit']),
+    ref: Type.Optional(Type.String({ maxLength: 200 })),
+    instructions: Type.Optional(Type.String({ maxLength: 4_000 })),
+    modelId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+  })
+);
+export type CodeReviewRequest = Static<typeof CodeReviewRequestSchema>;
+
+export const CodeReviewStartResponseSchema = Runtime(
+  Type.Object({
+    reviewId: Type.String(),
+    status: Type.Literal('running'),
+  })
+);
+export type CodeReviewStartResponse = Static<typeof CodeReviewStartResponseSchema>;
+
 export const SendMessageResponseSchema = Runtime(
   Type.Object({
     messageId: Type.String(),

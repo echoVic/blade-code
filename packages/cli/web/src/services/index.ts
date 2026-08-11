@@ -1,5 +1,6 @@
 export type {
   BoundProject,
+  CodeReviewDispatchInput,
   Goal,
   GoalRunResponse,
   ImageAttachmentInput,

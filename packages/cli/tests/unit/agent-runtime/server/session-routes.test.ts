@@ -269,6 +269,21 @@ const busState = vi.hoisted(() => ({
   ),
 }));
 
+const reviewState = vi.hoisted(() => ({
+  start: vi.fn(async () => ({
+    reviewId: 'review-1',
+    completion: Promise.resolve({
+      reviewId: 'review-1',
+      status: 'completed' as const,
+      overallExplanation: 'Reviewed.',
+      findings: [],
+      completedAt: new Date(0).toISOString(),
+    }),
+  })),
+  recoverInterrupted: vi.fn(async () => undefined),
+  list: vi.fn(async () => []),
+}));
+
 const worktreeState = vi.hoisted(() => ({
   enter: vi.fn(),
   restoreSession: vi.fn(async (session) => session),
@@ -301,6 +316,11 @@ vi.mock('../../../../src/server/bus.js', () => ({
     publish: busState.publish,
     subscribe: busState.subscribe,
   },
+}));
+
+vi.mock('../../../../src/services/CodeReviewService.js', () => ({
+  CodeReviewService: reviewState,
+  renderCodeReview: vi.fn(() => '## Code Review'),
 }));
 
 vi.mock('../../../../src/store/vanilla.js', () => ({
@@ -533,6 +553,9 @@ describe('SessionRoutes runtime reuse', () => {
     vi.clearAllMocks();
     taskRunScheduler.resetForTests();
     busState.subscribers.clear();
+    reviewState.start.mockClear();
+    reviewState.recoverInterrupted.mockClear();
+    reviewState.list.mockClear();
     modelState.current = {
       id: 'model-1',
       provider: 'openai',
@@ -2157,6 +2180,51 @@ describe('SessionRoutes runtime reuse', () => {
       },
       'session.created',
       {}
+    );
+  });
+
+  it('starts a native read-only review for an exact Session workspace', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const app = SessionRoutes();
+    const projectPath = '/tmp/native-review-workspace';
+    const created = await app.request('/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'Review', projectPath }),
+    });
+    const session = (await created.json()) as { sessionId: string };
+
+    const response = await app.request(`/${session.sessionId}/review`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectPath,
+        kind: 'base',
+        ref: 'main',
+        modelId: 'model-1',
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual({
+      reviewId: 'review-1',
+      status: 'running',
+    });
+    expect(reviewState.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: session.sessionId,
+        projectPath,
+        request: { kind: 'base', ref: 'main' },
+        signal: expect.any(AbortSignal),
+      })
+    );
+    expect(reviewState.recoverInterrupted).toHaveBeenCalledWith(
+      projectPath,
+      session.sessionId,
+      expect.objectContaining({
+        sessionId: session.sessionId,
+        workspaceRoot: projectPath,
+      })
     );
   });
 

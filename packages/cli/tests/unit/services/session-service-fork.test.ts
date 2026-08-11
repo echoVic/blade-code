@@ -172,6 +172,18 @@ describe('SessionService.forkSession', () => {
       taskOwnerPid: process.pid,
       taskStartedAt: '2026-08-05T10:00:00.000Z',
     });
+    await persistentStore.saveReviewStart('parent-session', {
+      reviewId: 'parent-live-review',
+      reviewerSessionId: 'parent-review-child',
+      target: {
+        kind: 'uncommitted',
+        label: 'uncommitted changes',
+        headSha: 'a'.repeat(40),
+        digest: 'b'.repeat(64),
+        fileCount: 1,
+      },
+      startedAt: '2026-08-05T10:00:01.000Z',
+    });
 
     const parentPath = getSessionFilePath(projectPath, 'parent-session');
     const parentBeforeFork = await readFile(parentPath, 'utf-8');
@@ -230,6 +242,11 @@ describe('SessionService.forkSession', () => {
     expect(childEvents.every((event) => event.sessionId === 'child-session')).toBe(
       true
     );
+    expect(
+      childEvents.some(
+        (event) => event.type === 'review_started' || event.type === 'review_completed'
+      )
+    ).toBe(false);
     expect(
       childEvents.every(
         (event) => !parentEvents.some((parent) => parent.id === event.id)

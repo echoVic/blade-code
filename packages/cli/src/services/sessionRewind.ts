@@ -22,7 +22,9 @@ function isConversationEvent(event: SessionEvent): boolean {
     event.type === 'part_updated' ||
     event.type === 'interaction_requested' ||
     event.type === 'interaction_responded' ||
-    event.type === 'interaction_recovered'
+    event.type === 'interaction_recovered' ||
+    event.type === 'review_started' ||
+    event.type === 'review_completed'
   );
 }
 

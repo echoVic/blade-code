@@ -13,6 +13,7 @@ describe('TaskHome', () => {
   let container: HTMLDivElement;
   let root: ReactDOM.Root;
   const dispatchTask = vi.fn().mockResolvedValue(undefined);
+  const startCodeReview = vi.fn().mockResolvedValue(undefined);
   const reconnectTaskEvents = vi.fn().mockResolvedValue(undefined);
   const loadModels = vi.fn().mockResolvedValue(undefined);
 
@@ -21,6 +22,7 @@ describe('TaskHome', () => {
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
     dispatchTask.mockClear();
+    startCodeReview.mockClear();
     reconnectTaskEvents.mockClear();
     loadModels.mockClear();
     clearComposerDraft('task:/workspace/blade');
@@ -58,6 +60,7 @@ describe('TaskHome', () => {
       catalogError: null,
       error: null,
       dispatchTask,
+      startCodeReview,
       reconnectTaskEvents,
     });
     useConfigStore.setState({
@@ -78,6 +81,32 @@ describe('TaskHome', () => {
       error: null,
       loadModels,
     });
+  });
+
+  it('routes the Review template through the native read-only review entrypoint', async () => {
+    await act(async () => {
+      root.render(<TaskHome />);
+    });
+
+    const review = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Review')
+    );
+    if (!review) throw new Error('Review template button was not rendered');
+    await act(async () => review.click());
+    expect(container.querySelector('textarea')?.value).toBe('/review uncommitted');
+
+    const send = container.querySelector<HTMLButtonElement>(
+      'button[title="Send message"]'
+    );
+    if (!send) throw new Error('Send button was not rendered');
+    await act(async () => send.click());
+
+    expect(startCodeReview).toHaveBeenCalledWith({
+      projectPath: '/workspace/blade',
+      kind: 'uncommitted',
+      modelId: 'model-1',
+    });
+    expect(dispatchTask).not.toHaveBeenCalled();
   });
 
   afterEach(() => {

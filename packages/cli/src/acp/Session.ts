@@ -49,6 +49,7 @@ import type {
 } from '../mcp/McpElicitation.js';
 import { Bus } from '../server/bus.js';
 import type { ContentPart, Message } from '../services/ChatServiceInterface.js';
+import { CodeReviewService, renderCodeReview } from '../services/CodeReviewService.js';
 import { SessionInteractionService } from '../services/SessionInteractionService.js';
 import {
   SessionMissingCreationError,
@@ -307,6 +308,14 @@ export class AcpSession {
           }
         : {}),
     });
+    const recoveredReview = await CodeReviewService.recoverInterrupted(
+      this.cwd,
+      this.id,
+      this.runtime
+    );
+    if (recoveredReview) {
+      this.messages = await SessionService.loadSession(this.id, this.cwd);
+    }
     this.agent = await this.createAgent();
     await initializeCustomCommands(this.cwd);
 
@@ -623,6 +632,51 @@ export class AcpSession {
           getInstructions: async () => {
             if (!this.runtime) throw new Error('Session runtime is unavailable');
             return this.runtime.getMcpInstructions();
+          },
+        },
+        codeReview: {
+          run: async (request, reviewSignal) => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            const run = await CodeReviewService.start({
+              sessionId: this.id,
+              projectPath: this.cwd,
+              runtime: this.runtime,
+              request,
+              signal: reviewSignal,
+              onEvent: (event) => {
+                if (event.kind === 'tool_start') {
+                  this.sendUpdate({
+                    sessionUpdate: 'tool_call',
+                    toolCallId: event.toolCall.id,
+                    status: 'in_progress' as ToolCallStatus,
+                    title: `Review: ${event.toolCall.function.name}`,
+                    content: [],
+                    kind: this.mapToolKind(event.toolKind),
+                  });
+                } else if (event.kind === 'tool_result') {
+                  this.sendUpdate({
+                    sessionUpdate: 'tool_call_update',
+                    toolCallId: event.toolCall.id,
+                    status: event.result.success
+                      ? ('completed' as ToolCallStatus)
+                      : ('failed' as ToolCallStatus),
+                    content: [],
+                  });
+                }
+              },
+            });
+            const completion = await run.completion;
+            const review = (await CodeReviewService.list(this.cwd, this.id)).find(
+              (candidate) => candidate.start.reviewId === run.reviewId
+            );
+            if (!review) throw new Error(`Review not found: ${run.reviewId}`);
+            this.messages = await SessionService.loadSession(this.id, this.cwd);
+            return {
+              reviewId: run.reviewId,
+              status: completion.status,
+              findings: completion.findings.length,
+              content: renderCodeReview(review.start, completion),
+            };
           },
         },
         signal, // 传递取消信号

@@ -10,8 +10,8 @@ import type { LoopEvent } from '../../agent/loop/types.js';
 import type { SteeringEnqueueResult } from '../../agent/runtime/ActiveTurnMailbox.js';
 import {
   type ResumedSubagent,
-  type SessionUserShellCommandEvent,
   SessionRuntime,
+  type SessionUserShellCommandEvent,
 } from '../../agent/runtime/SessionRuntime.js';
 import type { AgentSession } from '../../agent/subagents/AgentSessionStore.js';
 import type { SubagentConfig } from '../../agent/subagents/types.js';
@@ -30,6 +30,11 @@ import type {
 import type { McpNormalizedPromptResult } from '../../mcp/McpContentCatalog.js';
 import type { McpLogLevel } from '../../mcp/McpLogging.js';
 import type { McpTaskSnapshot } from '../../mcp/McpTasks.js';
+import {
+  type CodeReviewRequest,
+  CodeReviewService,
+  renderCodeReview,
+} from '../../services/CodeReviewService.js';
 import { registerCleanup } from '../../services/GracefulShutdown.js';
 import {
   type RewindSessionOptions,
@@ -880,6 +885,40 @@ export function useAgent(options: AgentOptions) {
     }
   );
 
+  const runCodeReview = useMemoizedFn(
+    async (request: CodeReviewRequest, signal?: AbortSignal) => {
+      const targetSessionId = options.sessionId;
+      if (!targetSessionId) {
+        throw new Error('Code review requires a Session');
+      }
+      const runtime = await getOrCreateSessionRuntime(targetSessionId);
+      await CodeReviewService.recoverInterrupted(
+        runtime.workspaceRoot,
+        targetSessionId,
+        runtime
+      );
+      const run = await CodeReviewService.start({
+        sessionId: targetSessionId,
+        projectPath: runtime.workspaceRoot,
+        runtime,
+        request,
+        signal,
+      });
+      const completion = await run.completion;
+      const projected = (
+        await CodeReviewService.list(runtime.workspaceRoot, targetSessionId)
+      ).find((review) => review.start.reviewId === run.reviewId);
+      if (!projected)
+        throw new Error(`Review not found after completion: ${run.reviewId}`);
+      return {
+        reviewId: run.reviewId,
+        status: completion.status,
+        findings: completion.findings.length,
+        content: renderCodeReview(projected.start, completion),
+      };
+    }
+  );
+
   useEffect(() => {
     const unregisterCleanup = registerCleanup(cleanupAgent);
     return () => {
@@ -893,6 +932,7 @@ export function useAgent(options: AgentOptions) {
     createAgent,
     cleanupAgent,
     steerActiveTurn,
+    runCodeReview,
     executeUserShellCommand,
     listRewindCheckpoints,
     rewindSession,

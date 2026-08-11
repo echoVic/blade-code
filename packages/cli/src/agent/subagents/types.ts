@@ -147,6 +147,7 @@ export interface SubagentContext {
   permissionMode?: PermissionMode;
 
   /** 父 Session 当前的 durable reasoning 策略 */
+  modelId?: string;
   reasoningEffort?: ReasoningEffortSelection;
 
   /** 父 Session 当前的 provider service tier */
@@ -160,6 +161,9 @@ export interface SubagentContext {
 
   /** 子代理会话 ID（用于与主会话关联） */
   subagentSessionId?: string;
+
+  /** Foreground cancellation boundary owned by the invoking surface. */
+  signal?: AbortSignal;
 
   /** Source agent ID for resumed runs */
   resumedFrom?: string;

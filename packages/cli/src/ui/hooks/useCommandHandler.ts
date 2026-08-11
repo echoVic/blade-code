@@ -128,6 +128,7 @@ export const useCommandHandler = (
     setResponseVerbosity,
     getCommunicationStyleConfiguration,
     setCommunicationStyle,
+    runCodeReview,
     executeUserShellCommand,
   } = useAgent({
     sessionId,
@@ -324,7 +325,10 @@ export const useCommandHandler = (
             get: getCommunicationStyleConfiguration,
             set: setCommunicationStyle,
           },
-          workspaceRoot
+          workspaceRoot,
+          {
+            run: runCodeReview,
+          }
         );
 
         if (slashResult.type === 'handled') {

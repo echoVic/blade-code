@@ -1,7 +1,7 @@
 import { ArrowUpRight, Loader2, RotateCcw, Square } from 'lucide-react';
 import { type TranslationKey, useT } from '@/i18n';
 import { sessionDisplayTitle } from '@/lib/sessionDisplayTitle';
-import { taskFailureMessageKey } from '@/lib/taskFailure';
+import { sessionTaskReason } from '@/lib/sessionTaskReason';
 import { compareTaskAttentionThenActivity } from '@/lib/taskOrdering';
 import { cn } from '@/lib/utils';
 import type { Session } from '@/services';
@@ -156,12 +156,7 @@ export function RecentTasksStrip({
               session.taskStatus === 'interrupted' ||
               session.taskStatus === 'cancelled');
           const isUnread = unreadTaskKeys.includes(key);
-          const rawReason = session.taskStatusReason?.trim();
-          const reason = session.taskFailure
-            ? t(taskFailureMessageKey(session.taskFailure.code))
-            : rawReason === 'user-cancel'
-              ? t('session.reason.cancelledByUser')
-              : rawReason || undefined;
+          const reason = sessionTaskReason(session, t);
           return (
             <div
               key={key}

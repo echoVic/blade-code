@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => {
     setResponseVerbosity: vi.fn(),
     getCommunicationStyleConfiguration: vi.fn(),
     setCommunicationStyle: vi.fn(),
+    runCodeReview: vi.fn(),
     executeUserShellCommand: vi.fn(),
     processSlashCommand: vi.fn(),
     abort: vi.fn(),
@@ -88,6 +89,7 @@ vi.mock('../../../../../src/ui/hooks/useAgent.js', () => ({
     setResponseVerbosity: mocks.setResponseVerbosity,
     getCommunicationStyleConfiguration: mocks.getCommunicationStyleConfiguration,
     setCommunicationStyle: mocks.setCommunicationStyle,
+    runCodeReview: mocks.runCodeReview,
     executeUserShellCommand: mocks.executeUserShellCommand,
   }),
 }));
@@ -388,6 +390,9 @@ describe('useCommandHandler durable recovery', () => {
       getLogs: mocks.getMcpLogs,
       setLoggingLevel: mocks.setMcpLoggingLevel,
       getInstructions: mocks.getMcpInstructions,
+    });
+    expect(mocks.processSlashCommand.mock.calls[0]?.[15]).toEqual({
+      run: mocks.runCodeReview,
     });
   });
 

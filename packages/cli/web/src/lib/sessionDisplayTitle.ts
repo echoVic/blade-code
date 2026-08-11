@@ -11,6 +11,7 @@ export function sessionDisplayTitle(
   t: SessionTitleTranslator
 ): string {
   const title = session.title?.trim();
+  if (title === 'Code Review') return t('session.title.codeReview');
   if (title) return title;
 
   const raw = session.firstMessageTime || session.lastMessageTime;

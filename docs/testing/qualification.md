@@ -117,6 +117,20 @@ files 与最终 marker；清空浏览器状态并重启 server 后仍须恢复�
 暴露内部 completion reminder 或 application console error。ACP 必须通过标准 Task
 tool-call update 显示同一 verdict。
 
+Native Read-Only Code Review 资格必须覆盖 `uncommitted`、`base` 与 `commit`
+target、tracked/untracked SHA-256 digest、500 files/8 MiB 边界、精确 changed-line
+校验、stale、abort、process-restart interrupted、fork/rewind 和 single-active-review。
+内置 `review` 与 `verification` 共用 audit authority：写工具、后台命令、env override、
+越界 cwd 和网络必须拒绝；sandbox 中 workspace 不可写、HOME/Blade storage/provider
+key 不可读，同时 Git 通过隔离 config 正常读取目标。
+
+真实 GPT 必须分别经 production Web route、ACP `/review` 与 TUI runtime hook 找出同一
+授权绕过，返回 target 内的结构化 P0/P1 finding，并由宿主证明 review 前后文件 bytes
+与 Git status 完全一致。Production DeepSeek GUI 必须从 Task Home“评审”模板启动，
+实时显示独立运行态、只读工具进度和 completed 报告，无需手动刷新；fresh tab 还须恢复
+priority、relative path、line 与 confidence。结构化 report chrome 必须支持中英文，
+browser console 不得有 application error。
+
 Hook trust 资格要求 GPT 通过 production stream 实际发出工具调用。相同的
 PreToolUse command 在 `untrusted` 状态必须零副作用，只有当前 SHA-256 摘要被显式
 信任后才能执行。确定性安全测试另行覆盖 `0600` 原子存储、symlink/owner/mode

@@ -309,6 +309,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     resetContextUsage: vi.fn(),
     setMaxContextTokens: vi.fn(),
     ...overrides,
+    startCodeReview: overrides.startCodeReview ?? vi.fn(async () => undefined),
   } satisfies SessionStoreState;
 
   return state;
@@ -363,6 +364,83 @@ describe('eventHandlers', () => {
     });
 
     expect(state.resetContextUsage).toHaveBeenCalledOnce();
+  });
+
+  test('reloads the exact session when a native review completes', () => {
+    const state = createState({
+      sessions: [
+        {
+          sessionId: 'session-1',
+          projectPath: '/workspace/a',
+          rootId: 'session-1',
+          taskStatus: 'running',
+          taskPromptSummary: '/review uncommitted',
+          messageCount: 1,
+          firstMessageTime: '2026-08-11T00:00:00.000Z',
+          lastMessageTime: '2026-08-11T00:00:00.000Z',
+          hasErrors: false,
+        },
+      ],
+    });
+    const set = vi.fn(
+      (
+        update:
+          | Partial<SessionStoreState>
+          | ((current: SessionStoreState) => Partial<SessionStoreState>)
+      ) => {
+        Object.assign(state, typeof update === 'function' ? update(state) : update);
+      }
+    );
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'review.completed',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        reviewId: 'review-1',
+        status: 'completed',
+        findings: 1,
+      },
+    });
+
+    expect(state.selectSession).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      projectPath: '/workspace/a',
+    });
+    expect(state.sessions[0]?.taskStatus).toBe('completed');
+  });
+
+  test('projects native review tool progress before the durable report reload', () => {
+    const state = createState({ messages: [] });
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+    const ref = {
+      sessionId: 'session-1',
+      projectPath: '/workspace/a',
+      reviewId: 'review-1',
+      toolCallId: 'review-tool-1',
+      toolName: 'Read',
+    };
+
+    dispatch({ type: 'review.tool.started', properties: ref });
+    dispatch({
+      type: 'review.tool.progress',
+      properties: { ...ref, message: 'Inspecting authorization.ts' },
+    });
+    dispatch({
+      type: 'review.tool.completed',
+      properties: { ...ref, success: true },
+    });
+
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0]?.agentContent?.toolCalls).toEqual([
+      expect.objectContaining({
+        toolCallId: 'review-tool-1',
+        toolName: 'Read',
+        status: 'success',
+        progressMessage: 'Inspecting authorization.ts',
+      }),
+    ]);
   });
 
   test('creates stable fallback tool ids for repeated tool.start events with the same payload', () => {

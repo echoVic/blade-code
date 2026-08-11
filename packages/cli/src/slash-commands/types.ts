@@ -199,6 +199,22 @@ export interface SlashCommandContext {
       selection: CommunicationStyleSelection
     ) => Promise<CommunicationStyleConfiguration>;
   };
+  /** Current surface-owned native read-only code review boundary. */
+  codeReview?: {
+    run: (
+      request: {
+        kind: 'uncommitted' | 'base' | 'commit';
+        ref?: string;
+        instructions?: string;
+      },
+      signal?: AbortSignal
+    ) => Promise<{
+      reviewId: string;
+      status: 'completed' | 'stale' | 'failed' | 'aborted' | 'interrupted';
+      findings: number;
+      content: string;
+    }>;
+  };
   /** 当前表面拥有的 durable subagent 控制边界 */
   subagents?: {
     list: () => Promise<AgentSession[]>;

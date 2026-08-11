@@ -3,6 +3,7 @@ import type { StateCreator } from 'zustand';
 import type {
   Message as BaseMessage,
   BoundProject,
+  CodeReviewDispatchInput,
   Goal,
   ImageAttachmentInput,
   MessageContent,
@@ -19,6 +20,7 @@ import type {
 
 export type {
   BoundProject,
+  CodeReviewDispatchInput,
   Goal,
   ImageAttachmentInput,
   MessageContent,
@@ -255,6 +257,7 @@ export interface TaskListSlice {
   markTaskRead: (ref: SessionRef) => void;
   clearUnreadTasks: () => void;
   dispatchTask: (input: TaskDispatchInput) => Promise<void>;
+  startCodeReview: (input: CodeReviewDispatchInput) => Promise<void>;
 }
 
 export interface MessageSlice {

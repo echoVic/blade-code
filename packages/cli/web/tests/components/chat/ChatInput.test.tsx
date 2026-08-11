@@ -16,14 +16,14 @@ describe('ChatInput', () => {
   let container: HTMLDivElement;
   let root: ReactDOM.Root;
   let originalFileReader: typeof FileReader;
-  let readAsDataUrl: ReturnType<typeof vi.fn>;
+  let readAsDataUrl: ReturnType<typeof vi.fn<(file: File) => void>>;
 
   beforeEach(() => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
     originalFileReader = globalThis.FileReader;
-    readAsDataUrl = vi.fn();
+    readAsDataUrl = vi.fn<(file: File) => void>();
     sessionStorage.clear();
 
     class MockFileReader {

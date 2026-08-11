@@ -26,6 +26,7 @@ import {
 import type { ChatContext, UserMessageContent } from '../../agent/types.js';
 import { MAX_INLINE_ATTACHMENT_BYTES } from '../../api/attachmentLimits.js';
 import {
+  CodeReviewRequestSchema,
   ResumeSubagentRequestSchema,
   SendMessageRequestSchema,
   SessionRewindRequestSchema,
@@ -54,6 +55,11 @@ import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
 import { StringEnum, safeParseSchema, Type } from '../../schema/index.js';
 import type { ContentPart, Message } from '../../services/ChatServiceInterface.js';
+import {
+  type CodeReviewRun,
+  CodeReviewService,
+  renderCodeReview,
+} from '../../services/CodeReviewService.js';
 import {
   type CommunicationStyleConfiguration,
   resolveCommunicationStyle,
@@ -215,6 +221,14 @@ const activeRuns = new Map<string, RunState>();
 const activeUserShellRuns = new Map<
   string,
   {
+    controller: AbortController;
+    completion: Promise<void>;
+  }
+>();
+const activeReviewRuns = new Map<
+  string,
+  {
+    reviewId: string;
     controller: AbortController;
     completion: Promise<void>;
   }
@@ -2075,6 +2089,182 @@ export const createSessionRouteController = (): SessionRouteController => {
     });
   });
 
+  app.get('/:sessionId/review', async (c) => {
+    const sessionId = c.req.param('sessionId');
+    const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
+    const reviews = await CodeReviewService.list(ref.projectPath, ref.sessionId);
+    return c.json({
+      reviews: reviews.map((review) => ({
+        ...review,
+        content: review.completion
+          ? renderCodeReview(review.start, review.completion)
+          : undefined,
+      })),
+    });
+  });
+
+  app.post('/:sessionId/review', async (c) => {
+    const sessionId = c.req.param('sessionId');
+    const parsed = safeParseSchema(CodeReviewRequestSchema, await c.req.json());
+    if (!parsed.success) {
+      throw new BadRequestError('Invalid code review request');
+    }
+    const session = await resolveSessionForWrite(sessionId, parsed.data.projectPath);
+    const ref = sessionRefFromSession(session);
+    const key = sessionRefKey(ref);
+
+    return getMessageSubmissionLock(ref).runExclusive(async () => {
+      if (isActiveRun(getRun(session.currentRunId))) {
+        throw new ConflictError('Cannot start a review during an active turn');
+      }
+      if (activeReviewRuns.has(key)) {
+        throw new ConflictError('Session already has an active review');
+      }
+      const runtime = await getOrCreateRuntime(session);
+      await CodeReviewService.recoverInterrupted(
+        ref.projectPath,
+        ref.sessionId,
+        runtime
+      );
+      if (parsed.data.modelId && !runtime.getModelById(parsed.data.modelId)) {
+        throw new BadRequestError(`Model not found: ${parsed.data.modelId}`);
+      }
+      if (parsed.data.modelId && runtime.getCurrentModelId() !== parsed.data.modelId) {
+        await runtime.refresh({ modelId: parsed.data.modelId });
+      }
+      if (parsed.data.modelId && session.selectedModelId !== parsed.data.modelId) {
+        const metadata = await SessionService.updateSessionMetadata(
+          session.id,
+          session.projectPath,
+          { selectedModelId: parsed.data.modelId }
+        );
+        syncSessionTaskMetadata(session, metadata);
+      }
+      const controller = new AbortController();
+      let run: CodeReviewRun | undefined;
+      try {
+        run = await CodeReviewService.start({
+          sessionId: ref.sessionId,
+          projectPath: ref.projectPath,
+          runtime,
+          request: {
+            kind: parsed.data.kind,
+            ...(parsed.data.ref ? { ref: parsed.data.ref } : {}),
+            ...(parsed.data.instructions
+              ? { instructions: parsed.data.instructions }
+              : {}),
+          },
+          signal: controller.signal,
+          onEvent: (event) => {
+            if (event.kind === 'tool_start') {
+              Bus.publish(ref, 'review.tool.started', {
+                reviewId: run?.reviewId,
+                toolCallId: event.toolCall.id,
+                toolName: event.toolCall.function.name,
+              });
+            } else if (event.kind === 'tool_progress') {
+              Bus.publish(ref, 'review.tool.progress', {
+                reviewId: run?.reviewId,
+                toolCallId: event.toolCall.id,
+                message: event.update.message.slice(0, 1_000),
+              });
+            } else if (event.kind === 'tool_result') {
+              Bus.publish(ref, 'review.tool.completed', {
+                reviewId: run?.reviewId,
+                toolCallId: event.toolCall.id,
+                success: event.result.success,
+              });
+            }
+          },
+        });
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.message.includes('active review') ||
+            error.message.includes('interrupted review') ||
+            error.message.includes('active turn'))
+        ) {
+          throw new ConflictError(error.message);
+        }
+        if (
+          error instanceof Error &&
+          (error.message.includes('review') ||
+            error.message.includes('Git') ||
+            error.message.includes('changes') ||
+            error.message.includes('ref'))
+        ) {
+          throw new BadRequestError(error.message);
+        }
+        throw error;
+      }
+      if (!run) throw new InternalServerError('Code review failed to start');
+      await refreshSessionTaskMetadata(session);
+      Bus.publish(ref, 'review.started', {
+        reviewId: run.reviewId,
+        kind: parsed.data.kind,
+      });
+      Bus.publish(ref, 'task.status', {
+        taskStatus: session.taskStatus,
+        ...(session.taskStatusReason
+          ? { taskStatusReason: session.taskStatusReason }
+          : {}),
+        ...(session.taskStartedAt ? { taskStartedAt: session.taskStartedAt } : {}),
+        ...(session.taskPromptSummary
+          ? { taskPromptSummary: session.taskPromptSummary }
+          : {}),
+        updatedAt: new Date().toISOString(),
+      });
+      const completion = run.completion
+        .then(async (result) => {
+          session.messages = await SessionService.loadSession(
+            ref.sessionId,
+            ref.projectPath
+          );
+          await refreshSessionTaskMetadata(session);
+          Bus.publish(ref, 'task.status', {
+            taskStatus: session.taskStatus,
+            ...(session.taskStatusReason
+              ? { taskStatusReason: session.taskStatusReason }
+              : {}),
+            ...(session.taskFailure ? { taskFailure: session.taskFailure } : {}),
+            ...(session.taskStartedAt ? { taskStartedAt: session.taskStartedAt } : {}),
+            ...(session.taskCompletedAt
+              ? { taskCompletedAt: session.taskCompletedAt }
+              : {}),
+            ...(session.taskPromptSummary
+              ? { taskPromptSummary: session.taskPromptSummary }
+              : {}),
+            updatedAt: new Date().toISOString(),
+          });
+          Bus.publish(ref, 'review.completed', {
+            reviewId: run.reviewId,
+            status: result.status,
+            findings: result.findings.length,
+          });
+        })
+        .catch((error) => {
+          logger.error(`[SessionRoutes] Code review ${run.reviewId} failed:`, error);
+        })
+        .finally(() => {
+          if (activeReviewRuns.get(key)?.reviewId === run.reviewId) {
+            activeReviewRuns.delete(key);
+          }
+        });
+      activeReviewRuns.set(key, {
+        reviewId: run.reviewId,
+        controller,
+        completion,
+      });
+      return c.json(
+        {
+          reviewId: run.reviewId,
+          status: 'running',
+        },
+        202
+      );
+    });
+  });
+
   app.get('/:sessionId/subagents', async (c) => {
     const session = await resolveSessionForWrite(
       c.req.param('sessionId'),
@@ -2415,6 +2605,11 @@ export const createSessionRouteController = (): SessionRouteController => {
           cancelledRunId = run.id;
         }
       }
+      const reviewRun = activeReviewRuns.get(key);
+      if (reviewRun) {
+        reviewRun.controller.abort('session-delete');
+        await reviewRun.completion;
+      }
       if (runtime) {
         await runtime.clearGoal().catch((error) => {
           logger.warn('[SessionRoutes] Failed to clear session goal:', error);
@@ -2636,6 +2831,31 @@ export const createSessionRouteController = (): SessionRouteController => {
           if (stream.aborted || terminated) return;
         }
 
+        if (!currentRun && !activeReviewRuns.has(sessionRefKey(ref))) {
+          const hasPendingReview = (
+            await CodeReviewService.list(ref.projectPath, ref.sessionId)
+          ).some((review) => review.completion === undefined);
+          const recoveredReview = hasPendingReview
+            ? await CodeReviewService.recoverInterrupted(
+                ref.projectPath,
+                ref.sessionId,
+                await getOrCreateRuntime(session)
+              )
+            : undefined;
+          if (recoveredReview) {
+            session.messages = await SessionService.loadSession(
+              ref.sessionId,
+              ref.projectPath
+            );
+            await refreshSessionTaskMetadata(session);
+            Bus.publish(ref, 'review.completed', {
+              reviewId: recoveredReview.reviewId,
+              status: recoveredReview.status,
+              findings: 0,
+              recovered: true,
+            });
+          }
+        }
         if (!currentRun) {
           await SessionInteractionService.recoverResponded(
             ref.projectPath,
@@ -3121,6 +3341,11 @@ export const createSessionRouteController = (): SessionRouteController => {
       shellRun.controller.abort('user-cancel');
       await shellRun.completion;
     }
+    const reviewRun = activeReviewRuns.get(sessionRefKey(ref));
+    if (reviewRun) {
+      reviewRun.controller.abort('user-cancel');
+      await reviewRun.completion;
+    }
 
     return c.json({ success: true });
   });
@@ -3129,6 +3354,15 @@ export const createSessionRouteController = (): SessionRouteController => {
     const sessionId = c.req.param('sessionId');
     const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
     const session = sessions.get(sessionRefKey(ref));
+    const reviewRun = activeReviewRuns.get(sessionRefKey(ref));
+    if (reviewRun) {
+      return c.json({
+        sessionId,
+        projectPath: ref.projectPath,
+        reviewId: reviewRun.reviewId,
+        status: 'reviewing',
+      });
+    }
     if (!session?.currentRunId) {
       return c.json({ sessionId, projectPath: ref.projectPath, status: 'idle' });
     }

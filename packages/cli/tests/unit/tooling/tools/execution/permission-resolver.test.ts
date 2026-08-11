@@ -224,48 +224,50 @@ describe('verification agent permission boundary', () => {
   });
 
   it('denies mutating Bash and write tools even when the parent is YOLO', () => {
-    for (const params of [
-      { command: 'rm -rf build' },
-      { command: 'rm -rf build; bun test' },
-      { command: 'bun test --update' },
-      { command: 'npm test 2>test.log' },
-      { command: 'bun test', run_in_background: true },
-      { command: 'git status --short', env: { PATH: '/tmp/evil' } },
-      { command: 'bun test', cwd: '/tmp' },
-      { command: 'bun test', cwd: '../other-workspace' },
-    ]) {
-      const bashInvocation = bash.build({ command: params.command });
+    for (const subagentType of ['verification', 'review']) {
+      for (const params of [
+        { command: 'rm -rf build' },
+        { command: 'rm -rf build; bun test' },
+        { command: 'bun test --update' },
+        { command: 'npm test 2>test.log' },
+        { command: 'bun test', run_in_background: true },
+        { command: 'git status --short', env: { PATH: '/tmp/evil' } },
+        { command: 'bun test', cwd: '/tmp' },
+        { command: 'bun test', cwd: '../other-workspace' },
+      ]) {
+        const bashInvocation = bash.build({ command: params.command });
+        expect(
+          resolver.resolveRulePermission(
+            bash as unknown as Tool,
+            bashInvocation as ToolInvocation<unknown>,
+            params,
+            {
+              subagentType,
+              permissionMode: PermissionMode.YOLO,
+            }
+          ).decision
+        ).toMatchObject({
+          behavior: 'deny',
+          matchedRule: 'builtin:audit-agent-read-only',
+        });
+      }
+
+      const writeInvocation = write.build({ file_path: '/tmp/changed.txt' });
       expect(
         resolver.resolveRulePermission(
-          bash as unknown as Tool,
-          bashInvocation as ToolInvocation<unknown>,
-          params,
+          write as unknown as Tool,
+          writeInvocation as ToolInvocation<unknown>,
+          { file_path: '/tmp/changed.txt' },
           {
-            subagentType: 'verification',
+            subagentType,
             permissionMode: PermissionMode.YOLO,
           }
         ).decision
       ).toMatchObject({
         behavior: 'deny',
-        matchedRule: 'builtin:verification-agent-read-only',
+        matchedRule: 'builtin:audit-agent-read-only',
       });
     }
-
-    const writeInvocation = write.build({ file_path: '/tmp/changed.txt' });
-    expect(
-      resolver.resolveRulePermission(
-        write as unknown as Tool,
-        writeInvocation as ToolInvocation<unknown>,
-        { file_path: '/tmp/changed.txt' },
-        {
-          subagentType: 'verification',
-          permissionMode: PermissionMode.YOLO,
-        }
-      ).decision
-    ).toMatchObject({
-      behavior: 'deny',
-      matchedRule: 'builtin:verification-agent-read-only',
-    });
   });
 
   it('does not override an explicit Bash deny rule', () => {

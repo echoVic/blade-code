@@ -114,6 +114,7 @@ export const en = {
   'session.action.retry': 'Retry {title}',
   'session.action.retrying': 'Retrying {title}',
   'session.reason.cancelledByUser': 'Cancelled by user',
+  'session.title.codeReview': 'Code Review',
   // Kept EXACTLY as pre-existing English string ("Forked from parent") is
   // asserted by tests; render as `${forkedFrom} ${parentShort}`.
   'session.forkedFrom': 'Forked from',
@@ -209,6 +210,17 @@ export const en = {
   'taskHome.template.review.title': 'Review',
   'taskHome.template.review.description': 'Find correctness and regression risks',
   'taskHome.template.review.hint': 'Audit current changes',
+  'taskHome.review.attachmentsUnsupported': 'Code review does not accept attachments',
+  'taskHome.review.usage': 'Usage: /review [uncommitted | base <ref> | commit <sha>]',
+  'taskHome.review.running': 'Read-only code review in progress',
+  'taskHome.review.stale': 'Review target changed while the reviewer was running',
+  'taskHome.review.aborted': 'Code review aborted',
+  'taskHome.review.interrupted': 'Code review interrupted by process restart',
+  'taskHome.review.failed': 'Code review failed',
+  'taskHome.review.startFailed': 'Failed to start code review',
+  'taskHome.review.invalidTarget':
+    'The selected review target is invalid or has no changes',
+  'taskHome.review.conflict': 'This session already has active work',
   'taskHome.template.fix.title': 'Fix',
   'taskHome.template.fix.description': 'Diagnose and repair a concrete failure',
   'taskHome.template.fix.hint': 'Bisect · reproduce · patch',
@@ -466,6 +478,23 @@ export const en = {
   'chat.input.action.steer': 'Steer active turn',
   'chat.input.action.send': 'Send message',
   'chat.input.action.submitting': 'Submitting message',
+
+  // Chat · Code review report
+  'chat.review.title': 'Code Review',
+  'chat.review.target': 'Target',
+  'chat.review.target.uncommitted': 'Uncommitted changes',
+  'chat.review.target.base': 'Changes against {ref}',
+  'chat.review.target.commit': 'Commit {ref}',
+  'chat.review.status': 'Status',
+  'chat.review.status.completed': 'Completed',
+  'chat.review.status.stale': 'Stale',
+  'chat.review.status.failed': 'Failed',
+  'chat.review.status.aborted': 'Aborted',
+  'chat.review.status.interrupted': 'Interrupted',
+  'chat.review.findings': 'Findings',
+  'chat.review.noFindings': 'No actionable findings',
+  'chat.review.confidence': 'confidence {value}',
+  'chat.review.error': 'Error',
 
   'status.context': 'Context',
   'status.tokenLimitTooltip':

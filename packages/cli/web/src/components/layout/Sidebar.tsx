@@ -13,7 +13,7 @@ import { useT } from '@/i18n';
 import { shortcutHint } from '@/lib/keyboardShortcuts';
 import { sessionDisplayTitle } from '@/lib/sessionDisplayTitle';
 import { downloadSessionMarkdown } from '@/lib/sessionExport';
-import { taskFailureMessageKey } from '@/lib/taskFailure';
+import { sessionTaskReason } from '@/lib/sessionTaskReason';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/AppStore';
 import { useSessionStore } from '@/store/session';
@@ -98,12 +98,7 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
             depth: session.taskQueueDepth ?? session.taskQueuePosition,
           })
         : undefined;
-    const rawReason = session.taskStatusReason?.trim();
-    const reason = session.taskFailure
-      ? t(taskFailureMessageKey(session.taskFailure.code))
-      : rawReason === 'user-cancel'
-        ? t('session.reason.cancelledByUser')
-        : rawReason || undefined;
+    const reason = sessionTaskReason(session, t);
     return { project, environment, diff, queue, reason };
   };
 

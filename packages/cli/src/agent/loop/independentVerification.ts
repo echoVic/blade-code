@@ -1,10 +1,11 @@
 import path from 'node:path';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import type { ToolResult } from '../../tools/types/index.js';
+import { VERIFICATION_SUBAGENT_TYPE } from '../../utils/shell/readOnlyAudit.js';
 import { isReadOnlyBashCommand } from '../../utils/shell/readOnlyValidation.js';
 import { isVerificationCommand } from '../../utils/shell/verificationCommand.js';
 
-export const VERIFICATION_SUBAGENT_TYPE = 'verification';
+export { VERIFICATION_SUBAGENT_TYPE };
 export const BASH_MUTATION_MARKER = '<bash-mutation>';
 export const MAX_INDEPENDENT_VERIFICATION_RETRIES = 3;
 

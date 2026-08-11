@@ -5,6 +5,7 @@ import {
   type ToolInvocationDescriptor,
 } from '../../config/PermissionChecker.js';
 import { type PermissionConfig, PermissionMode } from '../../config/types.js';
+import { isReadOnlyAuditSubagent } from '../../utils/shell/readOnlyAudit.js';
 import { isReadOnlyBashCommand } from '../../utils/shell/readOnlyValidation.js';
 import {
   isSafeVerificationWorkingDirectory,
@@ -60,7 +61,7 @@ export class PermissionResolver {
     };
     const signature = PermissionChecker.buildSignature(descriptor);
     let checkResult = this.permissionChecker.check(descriptor);
-    if (context.subagentType === 'verification') {
+    if (isReadOnlyAuditSubagent(context.subagentType)) {
       const verifierBashAllowed =
         tool.name === 'Bash' &&
         typeof params.command === 'string' &&
@@ -75,9 +76,9 @@ export class PermissionResolver {
           decision: {
             behavior: 'deny',
             source: 'rule',
-            matchedRule: 'builtin:verification-agent-read-only',
+            matchedRule: 'builtin:audit-agent-read-only',
             reason:
-              'Verification agents may only use read-only tools and verification commands',
+              'Audit agents may only use read-only tools and verification commands',
           },
         };
       }
@@ -93,8 +94,8 @@ export class PermissionResolver {
           decision: {
             behavior: 'allow',
             source: 'rule',
-            matchedRule: 'builtin:verification-agent-command',
-            reason: 'Verification command allowed for the read-only verifier',
+            matchedRule: 'builtin:audit-agent-command',
+            reason: 'Verification command allowed for the read-only audit agent',
           },
         };
       }

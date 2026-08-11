@@ -32,6 +32,7 @@ import { isAbortError } from '../../utils/abort.js';
 import { getAbortReason } from '../../utils/abortReason.js';
 import { getCwd } from '../../utils/cwd.js';
 import { createSessionId } from '../../utils/sessionId.js';
+import { isReadOnlyAuditSubagent } from '../../utils/shell/readOnlyAudit.js';
 import type { ProjectRuleReference } from '../resources/WorkspaceProjectRules.js';
 import type { SteeringMessage } from '../runtime/ActiveTurnMailbox.js';
 import type {
@@ -844,6 +845,7 @@ export async function* executeLoopGenerator(
     // === Agentic Loop ===
     const isYoloMode = context.permissionMode === ('yolo' as PermissionMode);
     const isSubagent = !!context.subagentInfo;
+    const readOnlyAudit = isReadOnlyAuditSubagent(context.subagentInfo?.subagentType);
     const configuredMaxTurns =
       deps.runtimeOptions.maxTurns ?? options?.maxTurns ?? deps.config.maxTurns ?? -1;
     const hasExplicitTurnLimit = configuredMaxTurns >= 0;
@@ -1770,11 +1772,13 @@ export async function* executeLoopGenerator(
           }
 
           // 意图未完成检测 (via completionPolicy)
-          const intentAction = checkIncompleteIntent(
-            turnResult.content,
-            incompleteIntentRetryCount,
-            false
-          );
+          const intentAction = readOnlyAudit
+            ? ({ action: 'none' } as const)
+            : checkIncompleteIntent(
+                turnResult.content,
+                incompleteIntentRetryCount,
+                false
+              );
 
           if (intentAction.action === 'retry') {
             incompleteIntentRetryCount++;
@@ -1813,11 +1817,13 @@ export async function* executeLoopGenerator(
           // 正常完成时归零 incompleteIntentRetryCount
           incompleteIntentRetryCount = 0;
 
-          const delegationAction = checkDelegationRequirement(
-            delegationPolicySources,
-            successfulTools,
-            delegationRetryCount
-          );
+          const delegationAction = readOnlyAudit
+            ? ({ action: 'none' } as const)
+            : checkDelegationRequirement(
+                delegationPolicySources,
+                successfulTools,
+                delegationRetryCount
+              );
           if (delegationAction.action === 'retry') {
             delegationRetryCount++;
             requiredToolName = 'Task';
@@ -1890,11 +1896,13 @@ export async function* executeLoopGenerator(
           }
           delegationRetryCount = 0;
 
-          const worktreeAction = checkWorktreeRequirement(
-            activeUserRequest,
-            successfulTools,
-            worktreeRetryCount
-          );
+          const worktreeAction = readOnlyAudit
+            ? ({ action: 'none' } as const)
+            : checkWorktreeRequirement(
+                activeUserRequest,
+                successfulTools,
+                worktreeRetryCount
+              );
           if (worktreeAction.action === 'retry') {
             worktreeRetryCount++;
             state.appendAssistant({
@@ -2049,14 +2057,13 @@ export async function* executeLoopGenerator(
           }
           independentVerificationRetryCount = 0;
 
-          const verificationAction =
-            context.subagentInfo?.subagentType === VERIFICATION_SUBAGENT_TYPE
-              ? ({ action: 'none' } as const)
-              : checkVerificationRequired(
-                  verificationPolicyRequest,
-                  successfulVerificationCommands,
-                  verificationRetryCount
-                );
+          const verificationAction = readOnlyAudit
+            ? ({ action: 'none' } as const)
+            : checkVerificationRequired(
+                verificationPolicyRequest,
+                successfulVerificationCommands,
+                verificationRetryCount
+              );
           if (verificationAction.action === 'retry') {
             verificationRetryCount++;
             requiredToolName = 'Bash';
@@ -2130,13 +2137,15 @@ export async function* executeLoopGenerator(
           verificationRetryCount = 0;
 
           // Stop Hook (via completionPolicy, with timeout)
-          const stopAction = await checkStopHook({
-            sessionId: context.sessionId,
-            workspaceRoot: context.workspaceRoot,
-            permissionMode: context.permissionMode as PermissionMode,
-            reason: turnResult.content,
-            abortSignal: options?.signal,
-          });
+          const stopAction = readOnlyAudit
+            ? ({ action: 'stop' } as const)
+            : await checkStopHook({
+                sessionId: context.sessionId,
+                workspaceRoot: context.workspaceRoot,
+                permissionMode: context.permissionMode as PermissionMode,
+                reason: turnResult.content,
+                abortSignal: options?.signal,
+              });
 
           if (stopAction.action === 'continue') {
             // assistant 输出与 continue 控制消息必须走同一条 pending 队列，保证下一轮看到的时序正确

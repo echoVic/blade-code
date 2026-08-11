@@ -22,6 +22,12 @@ import {
   findPendingSessionInteraction,
   toPendingInteraction,
 } from '../context/interactions.js';
+import {
+  codeReviewMessageMetadata,
+  projectSessionReviews,
+  renderCodeReview,
+  renderReviewStatus,
+} from '../context/reviews.js';
 import { JSONLStore, parseSessionJSONL } from '../context/storage/JSONLStore.js';
 import {
   assertValidSessionId,
@@ -43,6 +49,7 @@ import type {
   SessionEvent,
   SessionPendingInteraction,
   SessionPermissionMode,
+  SessionReviewTargetInfo,
   SessionRewindMode,
   SessionTaskDelivery,
   SessionTaskDiffStat,
@@ -511,6 +518,16 @@ export interface RewoundSession {
 
 function archiveKey(projectPath: string, sessionId: string): string {
   return `${projectPath}\0${sessionId}`;
+}
+
+function reviewPromptFromTarget(target: SessionReviewTargetInfo): string {
+  if (target.kind === 'base') {
+    return `/review base ${target.baseSha ?? target.label}`;
+  }
+  if (target.kind === 'commit') {
+    return `/review commit ${target.commitSha ?? target.label}`;
+  }
+  return '/review uncommitted';
 }
 
 function isValidArchiveTimestamp(value: unknown): value is string {
@@ -1126,7 +1143,9 @@ export class SessionService {
           entry.type !== 'inbox_acknowledged' &&
           entry.type !== 'interaction_requested' &&
           entry.type !== 'interaction_responded' &&
-          entry.type !== 'interaction_recovered'
+          entry.type !== 'interaction_recovered' &&
+          entry.type !== 'review_started' &&
+          entry.type !== 'review_completed'
       )
       .map((entry): SessionEvent => {
         const base = {
@@ -2145,8 +2164,28 @@ export class SessionService {
     const recoveredToolAssistants = new Map<string, Message>();
     const toolCallIdByPartId = new Map<string, string>();
     const assistantMessageByToolCallId = new Map<string, Message>();
-    for (const entry of materializeSessionEvents(entries)) {
+    const materialized = materializeSessionEvents(entries);
+    const materializedReviewIds = new Set<string>();
+    for (const entry of materialized) {
       if (entry.type === 'message_created') {
+        const messageMetadata =
+          entry.data.metadata &&
+          typeof entry.data.metadata === 'object' &&
+          !Array.isArray(entry.data.metadata)
+            ? entry.data.metadata
+            : undefined;
+        const codeReview =
+          messageMetadata?.codeReview &&
+          typeof messageMetadata.codeReview === 'object' &&
+          !Array.isArray(messageMetadata.codeReview)
+            ? messageMetadata.codeReview
+            : undefined;
+        if (
+          codeReview?.phase === 'completed' &&
+          typeof codeReview.reviewId === 'string'
+        ) {
+          materializedReviewIds.add(codeReview.reviewId);
+        }
         const recoveredAssistant =
           entry.data.role === 'assistant' && entry.data.parentMessageId
             ? recoveredToolAssistants.get(entry.data.parentMessageId)
@@ -2281,6 +2320,25 @@ export class SessionService {
           }
         }
       }
+    }
+
+    for (const review of projectSessionReviews(materialized)) {
+      if (
+        review.completion === undefined ||
+        materializedReviewIds.has(review.start.reviewId)
+      ) {
+        continue;
+      }
+      messages.push({
+        role: 'assistant',
+        content: renderCodeReview(review.start, review.completion),
+        metadata: {
+          codeReview: {
+            ...codeReviewMessageMetadata(review.start, review.completion),
+            synthetic: true,
+          },
+        },
+      });
     }
 
     return messages;
@@ -2577,6 +2635,34 @@ export class SessionService {
     const pendingInteraction = toPendingInteraction(
       findPendingSessionInteraction(projected)
     );
+    const reviews = projectSessionReviews(projected);
+    const latestReview = reviews.at(-1);
+    const latestReviewEventIndex = projected.findLastIndex(
+      (entry) =>
+        (entry.type === 'review_started' &&
+          entry.data.reviewId === latestReview?.start.reviewId) ||
+        (entry.type === 'review_completed' &&
+          entry.data.reviewId === latestReview?.start.reviewId)
+    );
+    const latestTaskStatusEventIndex = projected.findLastIndex(
+      (entry) =>
+        (entry.type === 'session_created' || entry.type === 'session_updated') &&
+        Object.hasOwn(entry.data, 'taskStatus')
+    );
+    const reviewOwnsTaskStatus =
+      latestReview !== undefined && latestReviewEventIndex > latestTaskStatusEventIndex;
+    const reviewTaskStatus: SessionTaskStatus | undefined = reviewOwnsTaskStatus
+      ? latestReview.completion === undefined
+        ? 'running'
+        : latestReview.completion.status === 'completed' ||
+            latestReview.completion.status === 'stale'
+          ? 'completed'
+          : latestReview.completion.status === 'aborted'
+            ? 'cancelled'
+            : latestReview.completion.status === 'interrupted'
+              ? 'interrupted'
+              : 'failed'
+      : undefined;
 
     const messageCount = projected.filter(
       (entry) =>
@@ -2594,7 +2680,8 @@ export class SessionService {
     )
       ? (durable.taskStatus as SessionTaskStatus)
       : undefined;
-    const taskStatus = storedTaskStatus ?? (hasErrors ? 'failed' : 'completed');
+    const taskStatus =
+      reviewTaskStatus ?? storedTaskStatus ?? (hasErrors ? 'failed' : 'completed');
     const taskOwnerPid =
       typeof durable.taskOwnerPid === 'number' &&
       Number.isInteger(durable.taskOwnerPid) &&
@@ -2690,11 +2777,22 @@ export class SessionService {
       durable.taskConcurrencyLimit > 0
         ? durable.taskConcurrencyLimit
         : undefined;
-    const taskFailure = isSessionTaskFailure(durable.taskFailure)
-      ? durable.taskFailure
-      : taskStatus === 'failed' && typeof durable.taskStatusReason === 'string'
-        ? toTaskFailure(durable.taskStatusReason)
-        : undefined;
+    const reviewTaskReason = reviewOwnsTaskStatus
+      ? latestReview?.completion
+        ? latestReview.completion.status === 'completed'
+          ? undefined
+          : `Code review ${renderReviewStatus(latestReview.completion.status)}`
+        : `Reviewing ${latestReview?.start.target.label ?? 'changes'}`
+      : undefined;
+    const taskFailure = reviewOwnsTaskStatus
+      ? taskStatus === 'failed' && reviewTaskReason
+        ? toTaskFailure(reviewTaskReason)
+        : undefined
+      : isSessionTaskFailure(durable.taskFailure)
+        ? durable.taskFailure
+        : taskStatus === 'failed' && typeof durable.taskStatusReason === 'string'
+          ? toTaskFailure(durable.taskStatusReason)
+          : undefined;
 
     return {
       sessionId,
@@ -2721,18 +2819,26 @@ export class SessionService {
       taskStatus,
       taskStatusReason:
         taskFailure?.message ??
+        reviewTaskReason ??
         (typeof durable.taskStatusReason === 'string'
           ? durable.taskStatusReason
           : undefined),
       taskFailure,
-      taskStartedAt:
-        typeof durable.taskStartedAt === 'string' ? durable.taskStartedAt : undefined,
-      taskCompletedAt:
-        typeof durable.taskCompletedAt === 'string'
+      taskStartedAt: reviewOwnsTaskStatus
+        ? latestReview?.start.startedAt
+        : typeof durable.taskStartedAt === 'string'
+          ? durable.taskStartedAt
+          : undefined,
+      taskCompletedAt: reviewOwnsTaskStatus
+        ? latestReview?.completion?.completedAt
+        : typeof durable.taskCompletedAt === 'string'
           ? durable.taskCompletedAt
           : undefined,
-      taskPromptSummary:
-        typeof durable.taskPromptSummary === 'string'
+      taskPromptSummary: reviewOwnsTaskStatus
+        ? latestReview
+          ? reviewPromptFromTarget(latestReview.start.target)
+          : '/review uncommitted'
+        : typeof durable.taskPromptSummary === 'string'
           ? durable.taskPromptSummary
           : undefined,
       taskModelId,
@@ -2749,7 +2855,7 @@ export class SessionService {
       taskQueueDepth,
       taskConcurrencyLimit,
       archivedAt,
-      taskOwnerPid,
+      taskOwnerPid: reviewOwnsTaskStatus ? undefined : taskOwnerPid,
       taskWorktree,
       taskDispatch,
       messageCount,

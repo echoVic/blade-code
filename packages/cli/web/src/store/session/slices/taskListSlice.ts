@@ -1,4 +1,5 @@
 import { t } from '@/i18n';
+import { sessionTaskReason } from '@/lib/sessionTaskReason';
 import {
   taskFailureCode,
   taskFailureIsRetryable,
@@ -566,12 +567,28 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
               : taskStatus === 'failed'
                 ? t('attention.notification.failed')
                 : t('attention.notification.interrupted');
-          const reason =
-            taskFailure(event.properties.taskFailure)?.message ??
-            (typeof event.properties.taskStatusReason === 'string'
-              ? event.properties.taskStatusReason
-              : (previousSession?.taskFailure?.message ??
-                previousSession?.taskStatusReason));
+          const eventFailure = taskFailure(event.properties.taskFailure);
+          const reason = previousSession
+            ? sessionTaskReason(
+                {
+                  ...previousSession,
+                  taskStatus,
+                  taskFailure: eventFailure ?? previousSession.taskFailure,
+                  taskStatusReason:
+                    typeof event.properties.taskStatusReason === 'string'
+                      ? event.properties.taskStatusReason
+                      : previousSession.taskStatusReason,
+                  taskPromptSummary:
+                    typeof event.properties.taskPromptSummary === 'string'
+                      ? event.properties.taskPromptSummary
+                      : previousSession.taskPromptSummary,
+                },
+                t
+              )
+            : (eventFailure?.message ??
+              (typeof event.properties.taskStatusReason === 'string'
+                ? event.properties.taskStatusReason
+                : undefined));
           const displayTitle =
             previousSession?.title ?? previousSession?.sessionId ?? sessionId;
           showTaskNotification({
@@ -612,6 +629,10 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
                   taskStatus === 'failed'
                     ? (taskFailure(event.properties.taskFailure) ?? session.taskFailure)
                     : undefined,
+                taskPromptSummary:
+                  typeof event.properties.taskPromptSummary === 'string'
+                    ? event.properties.taskPromptSummary
+                    : session.taskPromptSummary,
                 taskStartedAt:
                   typeof event.properties.taskStartedAt === 'string'
                     ? event.properties.taskStartedAt
@@ -998,6 +1019,65 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
             ? {
                 error:
                   error instanceof Error ? error.message : 'Failed to dispatch task',
+              }
+            : {}),
+        });
+        throw error;
+      }
+    },
+
+    startCodeReview: async (input) => {
+      const navigationVersion = get().getNavigationVersion();
+      const selectedProjectPath = get().selectedProjectPath;
+      const projectPath = input.projectPath ?? selectedProjectPath ?? undefined;
+      const ownsNavigation = (): boolean =>
+        get().getNavigationVersion() === navigationVersion &&
+        get().selectedProjectPath === selectedProjectPath;
+      set({
+        isDispatchingTask: true,
+        error: null,
+        errorContext: null,
+      });
+
+      let created: Session | undefined;
+      let started = false;
+      try {
+        created = await sessionService.createSession(projectPath, 'Code Review');
+        const ref = sessionRefFromSession(created);
+        await sessionService.startCodeReview(ref, {
+          kind: input.kind,
+          ...(input.ref ? { ref: input.ref } : {}),
+          ...(input.instructions ? { instructions: input.instructions } : {}),
+          ...(input.modelId ? { modelId: input.modelId } : {}),
+        });
+        started = true;
+        const running: Session = {
+          ...created,
+          taskStatus: 'running',
+          taskStatusReason: t('taskHome.review.running'),
+          taskPromptSummary: `/review ${input.kind}${input.ref ? ` ${input.ref}` : ''}`,
+        };
+        set((state) => ({
+          sessions: upsertSessionByRef(state.sessions, running),
+          isDispatchingTask: false,
+        }));
+        if (ownsNavigation()) {
+          await get().selectSession(ref);
+        }
+      } catch (error) {
+        if (created && !started) {
+          await sessionService
+            .deleteSession(sessionRefFromSession(created))
+            .catch(() => undefined);
+        }
+        set({
+          isDispatchingTask: false,
+          ...(ownsNavigation()
+            ? {
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : t('taskHome.review.startFailed'),
               }
             : {}),
         });

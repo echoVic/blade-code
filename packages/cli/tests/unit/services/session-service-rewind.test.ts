@@ -2,10 +2,12 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { projectSessionReviews } from '../../../src/context/reviews.js';
 import { parseSessionJSONL } from '../../../src/context/storage/JSONLStore.js';
 import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
 import { getSessionFilePath } from '../../../src/context/storage/pathUtils.js';
 import { SessionService } from '../../../src/services/SessionService.js';
+import { materializeSessionEvents } from '../../../src/services/sessionRewind.js';
 import { SnapshotManager } from '../../../src/tools/builtin/file/SnapshotManager.js';
 
 describe('SessionService durable rewind', () => {
@@ -143,6 +145,40 @@ describe('SessionService durable rewind', () => {
 
     expect(result.restoredFiles).toEqual([]);
     await expect(readFile(targetFile, 'utf8')).resolves.toBe('changed');
+  });
+
+  it('removes review lifecycle created after the rewind checkpoint', async () => {
+    const { secondUser } = await createTwoTurnSession();
+    const persistent = new PersistentStore(workspace, 100, 'test');
+    await persistent.saveReviewStart(sessionId, {
+      reviewId: 'rewound-review',
+      reviewerSessionId: 'rewound-review-child',
+      target: {
+        kind: 'uncommitted',
+        label: 'uncommitted changes',
+        headSha: 'a'.repeat(40),
+        digest: 'b'.repeat(64),
+        fileCount: 1,
+      },
+      startedAt: '2026-08-11T00:00:00.000Z',
+    });
+    await persistent.saveReviewCompletion(sessionId, {
+      reviewId: 'rewound-review',
+      status: 'completed',
+      overallExplanation: 'This report belongs to the removed turn.',
+      findings: [],
+      completedAt: '2026-08-11T00:00:01.000Z',
+    });
+
+    await SessionService.rewindSession(sessionId, workspace, {
+      targetMessageId: secondUser,
+      mode: 'conversation',
+    });
+
+    const raw = await readFile(getSessionFilePath(workspace, sessionId), 'utf8');
+    expect(
+      projectSessionReviews(materializeSessionEvents(parseSessionJSONL(raw)))
+    ).toEqual([]);
   });
 
   it('fails before appending the marker when code changed externally', async () => {

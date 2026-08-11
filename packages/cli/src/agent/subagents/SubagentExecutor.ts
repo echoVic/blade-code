@@ -50,7 +50,7 @@ export class SubagentExecutor {
       const modelId =
         this.config.model && this.config.model !== 'inherit'
           ? this.config.model
-          : undefined;
+          : context.modelId;
       const permissionMode = this.config.permissionMode ?? context.permissionMode;
       const subagentInfo = {
         parentSessionId: context.parentSessionId || '',
@@ -110,6 +110,7 @@ export class SubagentExecutor {
         worktreeActive: context.worktreeActive,
         permissionMode,
         subagentInfo,
+        signal: context.signal,
       };
 
       /**

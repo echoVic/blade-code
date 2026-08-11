@@ -145,10 +145,25 @@ Git 仓库查询和 AI 辅助：
 /git status     # 显示 Git 状态
 /git log [n]    # 显示最近 n 条提交（默认 5）
 /git diff       # 显示暂存区 diff
-/git review     # AI 代码审查
+/git review     # 原生只读审查（等同 /review uncommitted）
 /git commit     # AI 生成 commit message 并提交
 /git pre-commit # AI 生成 commit message（不提交）
 ```
+
+### /review
+
+在独立只读 reviewer 中审查当前改动、base branch 或单个 commit：
+
+```bash
+/review
+/review uncommitted
+/review base main
+/review commit <sha>
+```
+
+reviewer 不能写文件、修改 Git 或访问网络；结果以 P0-P3 finding、relative path、
+line range 和 confidence 结构化持久化。详见
+[Native Read-Only Code Review](../reference/native-code-review.md)。
 
 ### /agents
 

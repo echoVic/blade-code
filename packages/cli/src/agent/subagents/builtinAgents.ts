@@ -5,6 +5,7 @@
  * 用户可以通过 ~/.blade/agents/ 或 .blade/agents/ 扩展更多 agent。
  */
 
+import { reviewAgentConfig } from './builtinReviewAgent.js';
 import { verificationAgentConfig } from './builtinVerificationAgent.js';
 import type { SubagentConfig } from './types.js';
 
@@ -106,5 +107,6 @@ Be thorough but concise. Focus on actionable steps.`,
       "Use this agent to configure the user's Claude Code status line setting.",
     tools: ['Read', 'Edit'],
   },
+  reviewAgentConfig,
   verificationAgentConfig,
 ];

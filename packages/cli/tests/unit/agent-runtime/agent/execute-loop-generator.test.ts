@@ -570,6 +570,43 @@ describe('executeLoopGenerator', () => {
       expect(result.metadata?.toolCallsCount).toBe(0);
     });
 
+    it('does not apply implementation completion gates to read-only review agents', async () => {
+      const deps = createMockDeps();
+      const reviewOutput = JSON.stringify({
+        overall_explanation: 'The correct code should use strict equality.',
+        findings: [],
+      });
+      vi.mocked(deps.chatService.chat).mockResolvedValueOnce({
+        content: reviewOutput,
+        toolCalls: undefined,
+        finishReason: 'stop',
+      });
+      const context = createMockContext({
+        subagentInfo: {
+          parentSessionId: 'parent-session',
+          subagentType: 'review',
+          isSidechain: false,
+        },
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Review the current diff.',
+          context,
+          { stream: false },
+          undefined
+        )
+      );
+
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: reviewOutput,
+        metadata: { turnsCount: 1 },
+      });
+      expect(deps.chatService.chat).toHaveBeenCalledOnce();
+    });
+
     it('persists a direct durable input with its inbox identity', async () => {
       const contextManager = createMockContextManager();
       const deps = createMockDeps({

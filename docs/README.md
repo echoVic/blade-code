@@ -98,6 +98,7 @@ blade web
 - [CLI 命令](reference/cli-commands.md)
 - [工具列表](reference/tool-list.md)
 - [Atomic ApplyPatch](reference/atomic-apply-patch.md)
+- [Native Read-Only Code Review](reference/native-code-review.md)
 - [Durable Session Archive](reference/session-archive.md)
 - [Portable Session Markdown Export](reference/session-markdown-export.md)
 - [Durable Pending Interactions](reference/durable-pending-interactions.md)
