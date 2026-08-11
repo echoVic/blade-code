@@ -1,4 +1,3 @@
-# Blade Code CI Pipeline
 name: CI/CD
 
 on:
@@ -10,6 +9,8 @@ on:
 env:
   CI: true
   NODE_ENV: test
+  BUN_VERSION: "1.3.11"
+  NODE_VERSION: "22.x"
 
 jobs:
   quality-gate:
@@ -17,72 +18,138 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.11
+          bun-version: ${{ env.BUN_VERSION }}
 
-      - name: Verify Bun runtime
-        run: bun --version
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: "20.x"
+          node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+      - name: Cache bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
 
-      - name: Build CLI package
-        run: bun run build:cli
+      - run: bun install --frozen-lockfile
 
-      - name: Run CLI type check
+      - name: Build
+        run: bun run build
+
+      - name: Type check (CLI)
         run: bun run type-check
 
-      - name: Run web type check
+      - name: Type check (Web)
         run: bun run type-check:web
 
-      - name: Run web session lint
+      - name: Lint (Web)
         run: bun run lint:web
 
-      - name: Run web regression tests
+      - name: Test (Web)
         run: bun run test:web
-
-      - name: Build all packages
-        run: bun run build
 
   core-headless-gate:
     name: Headless Core Gate
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.11
+          bun-version: ${{ env.BUN_VERSION }}
 
-      - name: Verify Bun runtime
-        run: bun --version
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: "20.x"
+          node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+      - name: Cache bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
 
-      - name: Build CLI package
+      - run: bun install --frozen-lockfile
+
+      - name: Build CLI
         run: bun run build:cli
 
       - name: Run headless core regression suite
         run: bun run test:headless-core
+
+  security-tests:
+    name: Security Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build CLI
+        run: bun run build:cli
+
+      - name: Run security tests
+        run: bun run --filter blade-code test:security
+
+      - name: Audit dependencies
+        run: bun audit --audit-level=critical
+
+  cross-platform-smoke:
+    name: Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build
+
+      - name: Test CLI help
+        run: bun run --filter blade-code start -- --help
+
+      - name: Test headless help
+        run: bun run --filter blade-code start -- --headless /help
 
   coverage:
     name: Test Coverage
@@ -90,26 +157,26 @@ jobs:
     needs: [quality-gate, core-headless-gate]
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.11
+          bun-version: ${{ env.BUN_VERSION }}
 
-      - name: Verify Bun runtime
-        run: bun --version
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: "20.x"
+          node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+      - name: Cache bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
 
-      - name: Build CLI package
+      - run: bun install --frozen-lockfile
+
+      - name: Build CLI
         run: bun run build:cli
 
       - name: Run tests with coverage
@@ -133,71 +200,20 @@ jobs:
           path: packages/cli/coverage/
           retention-days: 7
 
-  security-tests:
-    name: Security Tests
+  ci-pass:
+    name: CI Pass
+    if: always()
+    needs: [quality-gate, core-headless-gate, coverage, security-tests, cross-platform-smoke]
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.11
-
-      - name: Verify Bun runtime
-        run: bun --version
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: "20.x"
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build CLI package
-        run: bun run build:cli
-
-      - name: Run security tests
-        run: bun run --filter blade-code test:security
-
-      - name: Run Bun audit
-        run: bun audit --audit-level=high || true
-
-  cross-platform-smoke:
-    name: Cross Platform Smoke (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.11
-
-      - name: Verify Bun runtime
-        run: bun --version
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: "20.x"
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build all packages
-        run: bun run build
-
-      - name: Test CLI help
-        run: bun run --filter blade-code start -- --help
-
-      - name: Test headless help
-        run: bun run --filter blade-code start -- --headless /help
+      - name: Verify all jobs succeeded
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "::error::One or more CI jobs failed"
+            exit 1
+          fi
+          if [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "::error::One or more CI jobs were cancelled"
+            exit 1
+          fi
+          echo "All CI jobs passed"

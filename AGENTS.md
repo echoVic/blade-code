@@ -1,12 +1,10 @@
-# CLAUDE.md
+# AGENTS.md
 
-always respond in Chinese
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Always respond in Chinese.
 
 ## Project Overview
 
-Blade Code is a modern AI-powered coding assistant with CLI + Web UI, built with React + Ink (CLI) and React + Vite (Web), using TypeScript. Current version: **0.8.0**.
+Blade Code is a modern AI-powered coding assistant with CLI + Web UI, built with React + Ink (CLI) and React + Vite (Web), using TypeScript.
 
 ## Quick Commands
 
@@ -78,19 +76,23 @@ Blade/
 - Test framework: Vitest
 - Tests location: `packages/cli/tests/`
 - Run tests: `bun run test:all`
+- Integration tests must use real API calls, no mocks
+
+## Release Process
+
+1. Bump version in `packages/cli/package.json`
+2. Update `CHANGELOG.md` with the new version's changes (what was added/changed/fixed)
+3. Update related documentation if the feature affects user-facing behavior (docs/, README.md, AGENTS.md, etc.)
+4. Build and run full test suite: `bun run build && bun run test:all`
+5. Commit and tag: `git tag v<version>`
+6. Push tag: `git push origin v<version>`
+7. GitHub Actions (`publish.yml`) automatically publishes to npm and creates GitHub Release
+8. Verify: `npm view blade-code version`
+
+Each independent feature or fix must be released as a separate npm patch version.
 
 ## Documentation
 
 - User docs: `docs/`
-
-## gstack
-
-Use the /browse skill from gstack for all web browsing, never use mcp__claude-in-chrome__* tools.
-
-Available skills: /office-hours, /plan-ceo-review, /plan-eng-review, /plan-design-review, /design-consultation, /design-shotgun, /design-html, /review, /ship, /land-and-deploy, /canary, /benchmark, /browse, /connect-chrome, /qa, /qa-only, /design-review, /setup-browser-cookies, /setup-deploy, /retro, /investigate, /document-release, /codex, /cso, /autoplan, /plan-devex-review, /devex-review, /careful, /freeze, /guard, /unfreeze, /gstack-upgrade, /learn.
-
-## More Information
-
 - [README.md](README.md) - Project overview
 - [CONTRIBUTING.md](CONTRIBUTING.md) - Contribution guide
-- [BLADE.md](BLADE.md) - Detailed project context (Chinese)
