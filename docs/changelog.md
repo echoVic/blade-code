@@ -19,8 +19,20 @@ All notable changes to this project will be documented in this file.
   失效，模型改为 blocked 时取消完成候选
 - Goal verifier 使用不可覆盖的专用只读 agent 与 schema-constrained verdict；宿主强制
   规范 Task type/background/resume/isolation，避免模型参数绕过或错误类型导致无限拒绝
+- 修复长生命周期进程切换隔离 storage root 后，subagent sidecar 单例仍写入已删除旧目录
+  的问题；cache 按 root 隔离，写前自动恢复私有 sessions 目录
 - ACP 测试客户端实现真实 SDK terminal handle，测试命令按 cwd/env 执行，不再用固定
   “Executed” 文本伪造成功
+
+### ✅ 测试相关
+
+- 新增 GoalStore authority、fresh verdict、bounded retry、mutation/steering/restart
+  invalidation、read-only sandbox、Headless JSONL、ACP `_meta`、Web evidence card 与
+  release-matrix 回归；CLI Unit 2630、Integration 133、CLI 8、Web 385 均通过
+- DeepSeek Flash 真实 API 在 Runtime、Web REST/SSE、ACP slash 三入口完成
+  `active → verifying → goal-verification PASS → complete`，3/3 通过
+- Production Web GUI 验证 live verifier、最终 PASS/Session/SHA 证据、fresh tab
+  恢复和中英文切换；fresh tab console 无应用错误
 
 ## [0.10.9] - 2026-08-11
 

@@ -62,6 +62,29 @@ describe('AgentSessionStore', () => {
     expect(statSync(directory).mode & 0o777).toBe(0o700);
   });
 
+  it('scopes the singleton and cache to the current storage root', async () => {
+    store.saveSession(makeSession('agent-first-root'));
+    const secondRoot = mkdtempSync(path.join(os.tmpdir(), 'blade-agent-store-'));
+
+    try {
+      process.env.BLADE_STORAGE_ROOT = secondRoot;
+      const secondStore = AgentSessionStore.getInstance();
+
+      expect(secondStore).not.toBe(store);
+      expect(secondStore.loadSession('agent-first-root')).toBeUndefined();
+      secondStore.saveSession(makeSession('agent-second-root'));
+      expect(
+        readFileSync(
+          path.join(secondRoot, 'agents', 'sessions', 'agent-second-root.json'),
+          'utf8'
+        )
+      ).toContain('"id": "agent-second-root"');
+    } finally {
+      process.env.BLADE_STORAGE_ROOT = storageRoot;
+      await rm(secondRoot, { recursive: true, force: true });
+    }
+  });
+
   it('atomically persists schema v2 sidecars with private permissions', () => {
     const session = makeSession('agent-save');
     store.saveSession(session);
@@ -76,6 +99,20 @@ describe('AgentSessionStore', () => {
       resumeDepth: 0,
     });
     expect(store.loadSession('agent-save')).toEqual(session);
+  });
+
+  it('recreates the private session directory before each write', async () => {
+    await rm(path.join(storageRoot, 'agents'), {
+      recursive: true,
+      force: true,
+    });
+
+    store.saveSession(makeSession('agent-recovered-directory'));
+
+    const directory = path.join(storageRoot, 'agents', 'sessions');
+    const filePath = path.join(directory, 'agent-recovered-directory.json');
+    expect(statSync(directory).mode & 0o777).toBe(0o700);
+    expect(statSync(filePath).mode & 0o777).toBe(0o600);
   });
 
   it('rejects unsafe IDs before filesystem access', () => {

@@ -224,18 +224,24 @@ export function isAgentSessionOwnedBy(
  */
 export class AgentSessionStore {
   private static instance: AgentSessionStore | null = null;
-  private sessionsDir: string;
+  private readonly storageRoot: string;
+  private readonly sessionsDir: string;
 
   // 内存缓存（避免频繁读取文件）
   private cache = new Map<string, AgentSession>();
 
   private constructor() {
-    this.sessionsDir = join(getBladeStorageRoot(), 'agents', 'sessions');
+    this.storageRoot = path.resolve(getBladeStorageRoot());
+    this.sessionsDir = join(this.storageRoot, 'agents', 'sessions');
     this.ensureDirectory();
   }
 
   static getInstance(): AgentSessionStore {
-    if (!AgentSessionStore.instance) {
+    const storageRoot = path.resolve(getBladeStorageRoot());
+    if (
+      !AgentSessionStore.instance ||
+      AgentSessionStore.instance.storageRoot !== storageRoot
+    ) {
       AgentSessionStore.instance = new AgentSessionStore();
     }
     return AgentSessionStore.instance;
@@ -265,6 +271,7 @@ export class AgentSessionStore {
    */
   saveSession(session: AgentSession): void {
     const normalized = this.normalizeSession(session, session.id);
+    this.ensureDirectory();
     const filePath = this.getSessionPath(normalized.id);
     const data = `${JSON.stringify(normalized, null, 2)}\n`;
     writeFileAtomic.sync(filePath, data, {
