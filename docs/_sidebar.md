@@ -55,6 +55,7 @@
   * [MCP Resources、Prompts 与订阅](reference/mcp-resources-prompts.md)
   * [MCP 故障恢复](reference/mcp-fault-recovery.md)
   * [MCP Session 隔离](reference/mcp-session-isolation.md)
+  * [Scheduled Tasks 定时任务](reference/scheduled-tasks.md)
   * [模型传输恢复](reference/model-transport-recovery.md)
   * [子进程生命周期](reference/process-lifecycle.md)
 

@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.9] - 2026-08-11
+
+### ✨ 新功能
+
+- 新增持久化定时任务调度器，支持 cron（5 段标准表达式 + 时区）、interval（最小 1 分钟）
+  和 one-shot（ISO 时间点，单次执行后自动停用）三种触发模式
+- `blade serve` 内置 TaskScheduler：30 秒 tick、同 schedule 重叠防护、离线 misfire 只补
+  跑一次、手动运行不扰动 recurring 周期、终态由 Bus `task.status` 回写
+- CLI `blade schedule` 命令组：create / list / show / remove / enable / disable / run，
+  支持 `--cron`、`--every`、`--at` 快捷语法和 `--project-path` / `--model` 等分发选项
+- Web Settings 新增 Scheduled Tasks 内联面板，提供 cron/interval/once 分段切换、
+  自定义 Select（模型/权限/隔离）、创建/编辑/启停/删除/手动运行、二次确认和状态显示
+- ACP `/schedule` slash command 提供 list/create/remove/enable/disable/run，自动纳入
+  `available_commands_update`，支持 cron 表达式空格重组和 `--` prompt 分隔
+- HTTP API（GET/POST/PATCH/DELETE `/schedules`、`/schedules/:id/enable|disable|run`）
+  与 SSE `schedule.fired` 事件（安全投影，不泄漏 prompt）
+- 持久化 `~/.blade/schedules.json`：write-file-atomic、权限 0600、串行写链、损坏行隔离
+
+### 🐛 问题修复
+
+- 修复 Web Schedule 面板模型字段误用原生 `<select>`，统一为项目自定义 Select 组件
+- 修复 Web ScheduleStore 中重复调用 DELETE 的问题
+- 修复 CLI schedule 命令 `-p` alias 与全局 `--print` 冲突导致 project 回退 cwd
+
+### ✅ 测试相关
+
+- 新增 schedule-timing（cron parser、timezone、Sunday 7、interval、once、过期）、
+  task-scheduler（dispatch、one-shot disable、manual nextRun、terminal status）、
+  schedule-routes（HTTP CRUD、run）、schedule-store（持久化、并发、malformed）、
+  schedule-command（ACP slash bridge、registry）、Web ScheduleStore（CRUD + delete once）
+  等单元测试
+- 真实 API 验证：one-shot `c0yYIF-X20` 完成后自动停用、recurring `RIDO0KQBrp` 手动运行
+  保持原 nextRunAt；两个 Session 均通过 DeepSeek V4 Flash 返回预期文本
+- Web GUI 浏览器验证：Settings > Scheduled Tasks 面板中英文、创建 2h 任务、停用/启用/
+  编辑/删除、自定义 Select（模型列表 + Use current model）均通过
+
 ## [0.10.8] - 2026-08-11
 
 ### ✨ 新功能
