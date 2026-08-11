@@ -184,7 +184,7 @@ describe('durable turn lifecycle', () => {
     );
   });
 
-  it('repairs a terminal turn orphan without appending another turn terminal', async () => {
+  it('repairs every terminal turn orphan without appending another turn terminal', async () => {
     const store = new PersistentStore(workspaceRoot);
     await store.initialize();
     await store.saveTurnStart('session-terminal-orphan', {
@@ -192,10 +192,16 @@ describe('durable turn lifecycle', () => {
       kind: 'user',
       startedAt: new Date().toISOString(),
     });
-    const toolCallId = await store.saveToolUse(
+    const firstToolCallId = await store.saveToolUse(
       'session-terminal-orphan',
       'Bash',
       { command: 'external-side-effect' },
+      null
+    );
+    const secondToolCallId = await store.saveToolUse(
+      'session-terminal-orphan',
+      'Write',
+      { file_path: '/workspace/concurrent.txt', content: 'done' },
       null
     );
     await store.saveTurnAbort('session-terminal-orphan', {
@@ -218,14 +224,16 @@ describe('durable turn lifecycle', () => {
       getSessionFilePath(workspaceRoot, 'session-terminal-orphan')
     ).readAll();
     expect(events.filter((event) => event.type === 'turn_aborted')).toHaveLength(1);
-    expect(
-      events.filter(
-        (event) =>
-          event.type === 'part_created' &&
-          event.data.partType === 'tool_result' &&
-          event.data.partId === toolCallId
-      )
-    ).toHaveLength(1);
+    for (const toolCallId of [firstToolCallId, secondToolCallId]) {
+      expect(
+        events.filter(
+          (event) =>
+            event.type === 'part_created' &&
+            event.data.partType === 'tool_result' &&
+            event.data.partId === toolCallId
+        )
+      ).toHaveLength(1);
+    }
   });
 
   it('leaves pending durable interactions to their dedicated recovery flow', async () => {

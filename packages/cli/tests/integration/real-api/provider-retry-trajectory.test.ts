@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import { runHeadless } from '../../../src/commands/headless.js';
 import { HeadlessJsonlEventSchema } from '../../../src/commands/headlessEvents.js';
@@ -634,6 +634,7 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-tool-crash-'));
     const sessionId = `real-tool-crash-${Date.now()}`;
     const markerPath = path.join(workspace, 'crash-marker.txt');
+    let failedOutput = '';
     let output = '';
     let errorOutput = '';
 
@@ -645,21 +646,85 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
       });
       const store = new PersistentStore(workspace);
       await store.initialize();
-      await store.saveTurnStart(sessionId, {
-        turnId: 'crashed-tool-turn',
-        kind: 'user',
-        startedAt: new Date(Date.now() - 1000).toISOString(),
-      });
-      const toolCallId = await store.saveToolUse(
-        sessionId,
-        'Write',
-        {
-          file_path: markerPath,
-          content: 'SIDE_EFFECT_ALREADY_APPLIED\n',
-        },
-        null
+      const resultPersistence = vi
+        .spyOn(PersistentStore.prototype, 'saveToolResult')
+        .mockRejectedValueOnce(new Error('injected durable result fsync failure'));
+      let failedExitCode: number;
+      try {
+        failedExitCode = await runWithCwdOverride(workspace, () =>
+          runHeadless(
+            {
+              headless: true,
+              outputFormat: 'jsonl',
+              sessionId,
+              maxTurns: 2,
+              allowedTools: ['Write'],
+              appendSystemPrompt:
+                'You must call Write exactly once before responding. Do not use plain text first.',
+              message:
+                `Call Write exactly once with file_path "${markerPath}" and content ` +
+                '"SIDE_EFFECT_ALREADY_APPLIED\\n".',
+            },
+            {
+              stdout: {
+                write(chunk: string) {
+                  failedOutput += chunk;
+                  return true;
+                },
+              },
+              stderr: {
+                write(chunk: string) {
+                  errorOutput += chunk;
+                  return true;
+                },
+              },
+            }
+          )
+        );
+      } finally {
+        resultPersistence.mockRestore();
+      }
+
+      const failedEvents = failedOutput
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+      expect(failedExitCode).not.toBe(0);
+      expect(
+        failedEvents.filter(
+          (event) => event.type === 'tool_start' && event.tool_name === 'Write'
+        )
+      ).toHaveLength(1);
+      expect(failedEvents.filter((event) => event.type === 'tool_result')).toHaveLength(
+        0
       );
-      await writeFile(markerPath, 'SIDE_EFFECT_ALREADY_APPLIED\n');
+      expect(await readFile(markerPath, 'utf8')).toBe('SIDE_EFFECT_ALREADY_APPLIED\n');
+
+      const interruptedEvents = await store.loadEvents(sessionId);
+      const toolCallEvent = interruptedEvents?.find((event) => {
+        if (event.type !== 'part_created' || event.data.partType !== 'tool_call') {
+          return false;
+        }
+        const payload = event.data.payload;
+        return (
+          payload !== null &&
+          typeof payload === 'object' &&
+          !Array.isArray(payload) &&
+          payload.toolName === 'Write'
+        );
+      });
+      if (!toolCallEvent || toolCallEvent.type !== 'part_created') {
+        throw new Error('Durable Write call was not committed before execution');
+      }
+      const toolCallId = toolCallEvent.data.partId;
+      expect(
+        interruptedEvents?.some(
+          (event) =>
+            event.type === 'part_created' &&
+            event.data.partType === 'tool_result' &&
+            event.data.partId === toolCallId
+        )
+      ).toBe(false);
 
       const recoveredRuntime = await runWithCwdOverride(workspace, () =>
         SessionRuntime.create({ sessionId, workspaceRoot: workspace })
@@ -677,11 +742,11 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
           event.data.partId === toolCallId
       );
       const abortIndex = recoveredEvents.findIndex(
-        (event) =>
-          event.type === 'turn_aborted' && event.data.turnId === 'crashed-tool-turn'
+        (event) => event.type === 'turn_aborted'
       );
+      expect(abortIndex).toBeGreaterThanOrEqual(0);
       expect(receiptIndex).toBeGreaterThanOrEqual(0);
-      expect(abortIndex).toBeGreaterThan(receiptIndex);
+      expect(receiptIndex).toBeGreaterThan(abortIndex);
       expect(recoveredEvents[receiptIndex]).toMatchObject({
         data: {
           payload: {

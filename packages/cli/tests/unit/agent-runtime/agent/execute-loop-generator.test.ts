@@ -221,7 +221,10 @@ function createMockContextManager() {
   };
 }
 
-function createTypedPersistenceHarness(options?: { rejectToolUse?: boolean }) {
+function createTypedPersistenceHarness(options?: {
+  rejectToolUse?: boolean;
+  rejectToolResult?: boolean;
+}) {
   const baseDeps = createMockDeps();
   const contextManager = new ContextManager({
     projectPath: '/tmp/blade-execute-loop-durable-identity',
@@ -238,7 +241,12 @@ function createTypedPersistenceHarness(options?: { rejectToolUse?: boolean }) {
   }
   const saveToolResult = vi
     .spyOn(contextManager, 'saveToolResult')
-    .mockResolvedValue('durable-result-message-id');
+    .mockImplementation(async () => {
+      if (options?.rejectToolResult) {
+        throw new Error('durable tool-result persistence failed');
+      }
+      return 'durable-result-message-id';
+    });
   const executionEngine = new ExecutionEngine(
     baseDeps.chatService,
     contextManager,
@@ -3796,6 +3804,7 @@ describe('executeLoopGenerator', () => {
     it('should close a durable tool call when the tool aborts before launch', async () => {
       const contextManager = createMockContextManager();
       contextManager.saveToolUse.mockResolvedValue('durable-aborted-tool-id');
+      contextManager.saveToolResult.mockResolvedValue('durable-aborted-result-id');
       const deps = createMockDeps({
         executionEngine: {
           getContextManager: vi.fn().mockReturnValue(contextManager),
@@ -3928,6 +3937,62 @@ describe('executeLoopGenerator', () => {
           name: 'Edit',
         })
       );
+    });
+
+    it('stops before result publication and Provider replay when tool-result persistence fails', async () => {
+      const { deps, saveToolResult } = createTypedPersistenceHarness({
+        rejectToolResult: true,
+      });
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'provider-tool-id',
+              type: 'function',
+              function: {
+                name: 'Edit',
+                arguments: '{"file_path":"/tmp/demo.ts"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'This response must never be requested.',
+          toolCalls: undefined,
+          finishReason: 'stop',
+        });
+      (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true,
+        llmContent: 'edited',
+        metadata: { summary: 'Edited demo.ts' },
+      });
+
+      const { result, events } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Edit the file',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(deps.toolExecutor.execute).toHaveBeenCalledTimes(1);
+      expect(saveToolResult).toHaveBeenCalledTimes(1);
+      expect(chatMock).toHaveBeenCalledTimes(1);
+      expect(events.some((event) => event.kind === 'tool_result')).toBe(false);
+      expect(context.messages.some((message) => message.role === 'tool')).toBe(false);
+      expect(result).toMatchObject({
+        success: false,
+        error: {
+          type: 'tool_persistence_failed',
+          message: expect.stringContaining('durable result record'),
+        },
+      });
     });
 
     it('should preserve planContent when a tool exits the loop successfully', async () => {

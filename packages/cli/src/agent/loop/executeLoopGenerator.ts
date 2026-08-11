@@ -66,6 +66,7 @@ import {
   resolveSingleTaskDelegationRequirement,
 } from './completionPolicy.js';
 import {
+  DURABLE_TOOL_RESULT_FAILURE_MESSAGE,
   DURABLE_TOOL_USE_FAILURE_MESSAGE,
   INTERRUPTED_TURN_MARKER,
   saveCompaction as persistCompaction,
@@ -778,6 +779,25 @@ function makeAbortResult(
       toolCallsCount,
       duration: Date.now() - startTime,
       abortReason: reason,
+    },
+  };
+}
+
+function makeToolResultPersistenceFailure(
+  turnsCount: number,
+  toolCallsCount: number,
+  startTime: number
+): LoopResult {
+  return {
+    success: false,
+    error: {
+      type: 'tool_persistence_failed',
+      message: DURABLE_TOOL_RESULT_FAILURE_MESSAGE,
+    },
+    metadata: {
+      turnsCount,
+      toolCallsCount,
+      duration: Date.now() - startTime,
     },
   };
 }
@@ -3160,16 +3180,27 @@ validates the object and may return a bounded corrective error.`;
           if (result.metadata?.abortedBeforeLaunch) {
             const abortMessage = result.error?.message ?? '任务已被用户中止';
             if (toolUseUuid) {
-              const uuid = await persistToolResult(
-                deps,
-                context,
-                toolUseUuid,
-                toolCall.function.name,
-                null,
-                toolUseUuid,
-                abortMessage
-              );
-              if (uuid) lastMessageUuid = uuid;
+              try {
+                const uuid = await persistToolResult(
+                  deps,
+                  context,
+                  toolUseUuid,
+                  toolCall.function.name,
+                  null,
+                  toolUseUuid,
+                  abortMessage,
+                  undefined,
+                  undefined,
+                  { required: deps.executionEngine !== undefined }
+                );
+                if (uuid) lastMessageUuid = uuid;
+              } catch {
+                return makeToolResultPersistenceFailure(
+                  turnsCount,
+                  allToolResults.length,
+                  startTime
+                );
+              }
             }
             state.appendToolResult({
               role: 'tool',
@@ -3183,13 +3214,6 @@ validates the object and may return a bounded corrective error.`;
               options?.signal
             );
           }
-
-          // Yield tool_result 事件
-          yield {
-            kind: 'tool_result',
-            toolCall: toolCall as ToolCallRef,
-            result,
-          };
 
           // 保存 tool_result 到 JSONL (via conversationPersistence)
           {
@@ -3255,21 +3279,41 @@ validates the object and may return a bounded corrective error.`;
                   return toJsonValue(rest);
                 })()
               : undefined;
-            if (metadata?.durableToolUseFailed !== true) {
-              const uuid = await persistToolResult(
-                deps,
-                context,
-                toolUseUuid ?? toolCall.id,
-                toolCall.function.name,
-                result.success ? toJsonValue(result.llmContent) : null,
-                toolUseUuid,
-                result.success ? undefined : result.error?.message,
-                subagentRef,
-                durableMetadata
-              );
-              if (uuid) lastMessageUuid = uuid;
+            const shouldPersistResult =
+              metadata?.durableToolUseFailed !== true &&
+              (toolUseUuid !== null || deps.executionEngine === undefined);
+            if (shouldPersistResult) {
+              try {
+                const uuid = await persistToolResult(
+                  deps,
+                  context,
+                  toolUseUuid ?? toolCall.id,
+                  toolCall.function.name,
+                  result.success ? toJsonValue(result.llmContent) : null,
+                  toolUseUuid,
+                  result.success ? undefined : result.error?.message,
+                  subagentRef,
+                  durableMetadata,
+                  { required: deps.executionEngine !== undefined }
+                );
+                if (uuid) lastMessageUuid = uuid;
+              } catch {
+                return makeToolResultPersistenceFailure(
+                  turnsCount,
+                  allToolResults.length,
+                  startTime
+                );
+              }
             }
           }
+
+          // Publish only committed results. This keeps CLI, Web, and ACP aligned with
+          // the model-visible durable transcript after a storage failure.
+          yield {
+            kind: 'tool_result',
+            toolCall: toolCall as ToolCallRef,
+            result,
+          };
 
           // 领域副作用 (via toolDomainPolicy)
           const taskAction = await applyToolDomainEffects(

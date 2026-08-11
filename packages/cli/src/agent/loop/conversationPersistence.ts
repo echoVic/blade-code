@@ -80,6 +80,11 @@ export const DURABLE_TOOL_USE_FAILURE_MESSAGE =
   'Tool execution was blocked because its durable call record could not be ' +
   'committed. No tool side effect was started.';
 
+export const DURABLE_TOOL_RESULT_FAILURE_MESSAGE =
+  'Tool execution completed, but its durable result record could not be committed. ' +
+  'Further model and tool execution was stopped. The operation may have completed; ' +
+  'inspect external state before retrying.';
+
 /** 获取 ContextManager（可能为 undefined） */
 function getContextMgr(deps: LoopDependencies) {
   return deps.executionEngine?.getContextManager();
@@ -262,12 +267,13 @@ export async function saveToolResult(
   parentUuid: string | null,
   error?: string,
   subagentRef?: SubagentRunRef,
-  toolMetadata?: JsonValue
+  toolMetadata?: JsonValue,
+  options: { required?: boolean } = {}
 ): Promise<string | null> {
   try {
     const contextMgr = getContextMgr(deps);
     if (contextMgr && context.sessionId) {
-      return await contextMgr.saveToolResult(
+      const resultId = await contextMgr.saveToolResult(
         context.sessionId,
         toolId,
         toolName,
@@ -278,9 +284,17 @@ export async function saveToolResult(
         subagentRef,
         toolMetadata
       );
+      if (options.required && !resultId) {
+        throw new Error('Durable tool-result commit returned no identity');
+      }
+      return resultId;
+    }
+    if (options.required && context.sessionId) {
+      throw new Error('Durable tool-result storage is unavailable');
     }
   } catch (error_) {
     logger.warn('[Loop] 保存工具结果失败:', error_);
+    if (options.required) throw error_;
   }
   return null;
 }

@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.18] - 2026-08-12
+
+### 🛡️ 稳定性
+
+- 新增 Durable Tool Result Commit Barrier：工具执行完成后，`tool_result` 必须 durable
+  commit 成功，才能进入模型上下文、发布到 CLI/Web/ACP/Headless 或应用领域投影
+- result commit 失败会立即返回 `tool_persistence_failed`，禁止后续 Provider 请求和更多
+  工具推进；已发生的副作用保留为 orphan call，由冷启动
+  `sideEffectsUncertain` receipt 接管，避免静默丢失恢复边界
+- 生产路径不再为缺少 durable call identity 的 admission rejection 写入 orphan result；
+  streaming、non-streaming、abort 和并行工具共享同一 durable-first 发布语义
+
+### ✅ 测试相关
+
+- 新增 non-streaming 与真实 streaming executor 的 result fsync 失败回归，验证副作用已执行
+  但 result 不发布、模型不重放、领域投影不继续
+- release-blocking DeepSeek 轨迹现在通过生产 Headless 执行真实 Write 后注入 result
+  持久化失败，再冷启动修复 terminal orphan 并用真实 API 只读恢复；并行 orphan 恢复覆盖
+  全部 call 且保持幂等
+
 ## [0.10.17] - 2026-08-12
 
 ### ✨ 新功能

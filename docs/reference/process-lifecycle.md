@@ -75,6 +75,11 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   prelaunch/queued 路径在该提交失败时统一阻止工具启动，不允许无 journal 的文件、
   shell 或外部副作用继续执行。执行抛错、取消和 epoch discard 始终保留原 durable
   tool-call ID，使失败结果精确闭合对应调用。
+- 工具执行完成后必须先 durable commit 对应 `tool_result`，才能把结果发布给
+  CLI/TUI、Web、ACP、Headless、写入下一轮 Provider context 或应用领域投影。result
+  commit 失败统一返回 `tool_persistence_failed` 并停止本次 run；不会发起下一次
+  Provider 请求，也不会继续执行由该结果驱动的工作。此时副作用可能已经发生，durable
+  call 保持 orphan，交由下一 Runtime 的 `sideEffectsUncertain` receipt 修复。
 - 新 Runtime 取得 Session lease 后，会在同一个 validated batch 中修复 materialized
   transcript 的 orphan tool calls。每个 orphan 先获得 synthetic error
   `tool_result`，明确标记 `processRestartRecovery` 与 `sideEffectsUncertain`，随后 active

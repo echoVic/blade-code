@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ExecutionEngine } from '../../../../src/agent/ExecutionEngine.js';
 import { executeLoopGenerator } from '../../../../src/agent/loop/executeLoopGenerator.js';
 import type { LoopDependencies, LoopEvent } from '../../../../src/agent/loop/types.js';
 import type { ChatContext, LoopResult } from '../../../../src/agent/types.js';
 import { DEFAULT_CONFIG } from '../../../../src/config/defaults.js';
 import { PermissionMode } from '../../../../src/config/types.js';
+import { ContextManager } from '../../../../src/context/ContextManager.js';
 import { Type } from '../../../../src/schema/index.js';
 import type {
   ChatConfig,
@@ -491,6 +493,116 @@ function deferred() {
 }
 
 describe('executeLoopGenerator streaming tool policy', () => {
+  it('stops before publishing a streaming result when its durable commit fails', async () => {
+    let providerRequests = 0;
+    const chatService: IChatService = {
+      async chat() {
+        throw new Error('Durable streaming result test must not use chat');
+      },
+      async *streamChat() {
+        providerRequests++;
+        if (providerRequests === 1) {
+          yield {
+            toolCalls: [
+              {
+                index: 0,
+                id: 'stream-edit',
+                type: 'function',
+                function: {
+                  name: 'Edit',
+                  arguments: '{"file_path":"/tmp/result-barrier.ts"}',
+                },
+              },
+            ],
+            finishReason: 'tool_calls',
+          };
+          return;
+        }
+        yield {
+          content: 'This response must never be requested.',
+          finishReason: 'stop',
+        };
+      },
+      getConfig() {
+        return {
+          provider: 'openai-compatible',
+          apiKey: 'test-key',
+          baseUrl: 'https://example.invalid/v1',
+          model: 'test-model',
+          maxContextTokens: 64_000,
+          maxOutputTokens: 4_096,
+        };
+      },
+      updateConfig(newConfig: Partial<ChatConfig>) {
+        void newConfig;
+      },
+    };
+    const editExecution = vi.fn(async () => ({
+      success: true,
+      llmContent: 'edited',
+    }));
+    const registry = new ToolRegistry();
+    registry.register(
+      createTool({
+        name: 'Edit',
+        displayName: 'Edit',
+        kind: ToolKind.Write,
+        isConcurrencySafe: false,
+        description: { short: 'Edit a file' },
+        schema: Type.Unknown(),
+        execute: editExecution as any,
+      })
+    );
+    const contextManager = new ContextManager({
+      projectPath: '/tmp/blade-streaming-result-barrier',
+    });
+    vi.spyOn(contextManager, 'saveMessage').mockResolvedValue('durable-message');
+    vi.spyOn(contextManager, 'saveToolUse').mockResolvedValue('durable-tool-call');
+    vi.spyOn(contextManager, 'saveToolResult').mockRejectedValue(
+      new Error('durable result fsync failed')
+    );
+    const dependencies: LoopDependencies = {
+      chatService,
+      toolExecutor: new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+      }),
+      executionEngine: new ExecutionEngine(
+        chatService,
+        contextManager,
+        '/tmp/blade-streaming-result-barrier'
+      ),
+      config: DEFAULT_CONFIG,
+      runtimeOptions: {},
+      currentModelMaxContextTokens: 64_000,
+      applySkillToolRestrictions: (tools) => tools,
+    };
+    const context: ChatContext = {
+      messages: [],
+      userId: 'stream-result-barrier-user',
+      sessionId: 'stream-result-barrier-session',
+      workspaceRoot: '/tmp/blade-streaming-result-barrier',
+      permissionMode: PermissionMode.YOLO,
+    };
+
+    const { events, result } = await drain(
+      executeLoopGenerator(
+        dependencies,
+        'Edit the file.',
+        context,
+        { stream: true },
+        undefined
+      )
+    );
+
+    expect(editExecution).toHaveBeenCalledTimes(1);
+    expect(providerRequests).toBe(1);
+    expect(events.some((event) => event.kind === 'tool_result')).toBe(false);
+    expect(result).toMatchObject({
+      success: false,
+      error: { type: 'tool_persistence_failed' },
+    });
+  });
+
   it('projects Provider recovery metadata without treating it as model output', async () => {
     const registry = new ToolRegistry();
     const dependencies: LoopDependencies = {
