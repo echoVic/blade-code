@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.10] - 2026-08-11
+
 ### ✨ 新功能
 
 - Goal `complete` 改为宿主权威的两阶段状态机：模型调用 `UpdateGoal complete`
@@ -28,7 +30,7 @@ All notable changes to this project will be documented in this file.
 
 - 新增 GoalStore authority、fresh verdict、bounded retry、mutation/steering/restart
   invalidation、read-only sandbox、Headless JSONL、ACP `_meta`、Web evidence card 与
-  release-matrix 回归；CLI Unit 2630、Integration 133、CLI 8、Web 385 均通过
+  release-matrix 回归；CLI Unit 2651、Integration 133、CLI 8、Web 390 均通过
 - DeepSeek Flash 真实 API 在 Runtime、Web REST/SSE、ACP slash 三入口完成
   `active → verifying → goal-verification PASS → complete`，3/3 通过
 - 固定 release-blocking real matrix 通过 20/20；22 条开放式多文件、compaction、
