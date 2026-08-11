@@ -4,6 +4,43 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.7] - 2026-08-11
+
+### ✨ 新功能
+
+- 新增 Session-native 独立只读 Code Review，支持 `/review uncommitted`、
+  `/review base <ref>`、`/review commit <sha>` 与 `/git review`；CLI/TUI、Web、
+  ACP 使用同一 target resolver、reviewer child Session 和 structured finding 协议
+- target digest 绑定 resolved commit identity、tracked/staged/unstaged/untracked
+  内容与精确 changed line，统一限制为 500 个文件和 8 MiB；review 期间 target 变化
+  会标记 `stale`，越界 path/line、错误 priority 或非法输出整体 fail closed
+- 内置 reviewer 只允许 Read/Glob/Grep 与分类后的只读 Bash；OS sandbox 禁止 workspace
+  写入和网络，屏蔽 HOME、Blade storage、provider credentials，并用隔离 Git config
+  保持本地目标可读
+- `review_started` / `review_completed` 形成 durable 生命周期；restart 不重放模型，
+  completion 后崩溃可从事件恢复报告，abort/delete、fork、rewind 均有明确终态语义
+- Web Task Home 原生评审入口实时显示只读工具与完成报告，无需刷新；structured report
+  chrome、任务状态与标题支持中英文切换，fresh tab 可恢复相同结果
+
+### 🐛 问题修复
+
+- Web TypeScript target/lib 升级到 ES2022，消除 `tsc --incremental` 缓存对
+  `Array.prototype.at` 配置错误的掩盖，并收窄 FileReader test mock 的 callable 类型
+
+### ✅ 测试相关
+
+- 新增三类 target、aggregate budget、target identity、deleted-line、single-active、
+  abort、stale、interrupted、crash projection、fork/rewind、finding contract、
+  audit permission/sandbox、Web live SSE 与双语 report 回归
+- 真实 GPT API 分别通过 production Web route、ACP `/review` 与 TUI runtime hook
+  找出同一授权绕过，且文件 bytes 与 Git status 不变
+- Production DeepSeek Web GUI 在 1 秒内显示两个只读工具、3 秒内无需刷新完成 P0；
+  中文/英文与 fresh-tab 均恢复 `authorization.ts:L8`、confidence `0.99` 和 completed，
+  console 仅有 idle info，目标 SHA-256 与 Git status 保持不变
+- 最终 feature tree 在 detached clean worktree 通过 14/14 qualification，包括
+  2590 个 unit、379 个 Web、integration/security、production build、bundle 和
+  performance 门禁
+
 ## [0.10.6] - 2026-08-11
 
 ### ✨ 新功能
