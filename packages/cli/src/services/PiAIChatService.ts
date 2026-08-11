@@ -2,20 +2,20 @@ import type { Api, Model, MutableModels } from '@earendil-works/pi-ai';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { abortableSleep, combineAbortSignals } from '../utils/abort.js';
 import type {
-    ChatCompletionMessageToolCall,
-    ChatConfig,
-    ChatRequestOptions,
-    ChatResponse,
-    ChatToolDefinition,
-    IChatService,
-    Message,
-    StreamChunk,
-    UsageInfo,
+  ChatCompletionMessageToolCall,
+  ChatConfig,
+  ChatRequestOptions,
+  ChatResponse,
+  ChatToolDefinition,
+  IChatService,
+  Message,
+  StreamChunk,
+  UsageInfo,
 } from './ChatServiceInterface.js';
 import { createPiContext } from './pi/contextAdapter.js';
 import {
-    filterOrphanToolMessages,
-    hasNonThinkingToolHistory,
+  filterOrphanToolMessages,
+  hasNonThinkingToolHistory,
 } from './pi/messageHistory.js';
 import { createFallbackModel, createPiRuntime } from './pi/modelRuntime.js';
 import { buildPiOptions, isFallbackablePiError } from './pi/requestOptions.js';

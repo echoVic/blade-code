@@ -124,6 +124,7 @@ function createMockSessionActions(): SessionActions {
     addMessage: vi.fn(),
     addUserMessage: vi.fn(),
     addAssistantMessage: vi.fn(),
+    replaceLastAssistantMessage: vi.fn(),
     addAssistantMessageAndClearThinking: vi.fn(),
     addToolMessage: vi.fn(),
     setCompacting: vi.fn(),

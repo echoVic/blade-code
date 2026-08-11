@@ -678,17 +678,50 @@ function sessionInfoFromMetadata(
 }
 
 function projectClientMessages(messages: readonly Message[]): Message[] {
-  return messages
-    .filter((message) => message.role !== 'system')
-    .map((message) => {
-      const record = userShellCommandRecordFromMetadata(message.metadata);
-      return record
+  return messages.flatMap((message) => {
+    if (
+      message.role === 'system' ||
+      (message.role === 'tool' && message.name === STRUCTURED_OUTPUT_TOOL_NAME)
+    ) {
+      return [];
+    }
+    const visibleToolCalls = message.tool_calls?.filter(
+      (toolCall) =>
+        !('function' in toolCall) ||
+        toolCall.function.name !== STRUCTURED_OUTPUT_TOOL_NAME
+    );
+    const content = typeof message.content === 'string' ? message.content.trim() : '';
+    if (
+      message.role === 'assistant' &&
+      message.tool_calls?.length &&
+      !visibleToolCalls?.length &&
+      !content &&
+      !message.reasoningContent &&
+      !message.metadata
+    ) {
+      return [];
+    }
+    const projected = {
+      ...message,
+      ...(message.tool_calls
         ? {
-            ...message,
+            tool_calls:
+              visibleToolCalls && visibleToolCalls.length > 0
+                ? visibleToolCalls
+                : undefined,
+          }
+        : {}),
+    };
+    const record = userShellCommandRecordFromMetadata(message.metadata);
+    return [
+      record
+        ? {
+            ...projected,
             content: renderUserShellCommandForDisplay(record),
           }
-        : message;
-    });
+        : projected,
+    ];
+  });
 }
 
 function syncSessionTaskMetadata(

@@ -1,8 +1,8 @@
 import { Default, Runtime, type Static, StringEnum, Type } from '../schema/index.js';
 import {
-    MAX_INLINE_ATTACHMENT_BYTES,
-    MAX_INLINE_ATTACHMENT_COUNT,
-    MAX_USER_MESSAGE_TEXT_CHARS,
+  MAX_INLINE_ATTACHMENT_BYTES,
+  MAX_INLINE_ATTACHMENT_COUNT,
+  MAX_USER_MESSAGE_TEXT_CHARS,
 } from './attachmentLimits.js';
 
 export { parseSchema } from '../schema/index.js';

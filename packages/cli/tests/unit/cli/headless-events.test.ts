@@ -184,6 +184,17 @@ describe('headless event contract', () => {
       type: 'project_rules_loaded',
       blocked_write: true,
     });
+    const structured = createHeadlessJsonlEvent('structured_output', {
+      output: { answer: 'done' },
+      schema_digest: 'd'.repeat(64),
+    });
+    expect(structured).toEqual({
+      event_version: 1,
+      type: 'structured_output',
+      output: { answer: 'done' },
+      schema_digest: 'd'.repeat(64),
+    });
+    expect(() => HeadlessJsonlEventSchema.parse(structured)).not.toThrow();
 
     const shellStarted = createHeadlessJsonlEvent('user_shell_started', {
       execution_id: 'shell-1',

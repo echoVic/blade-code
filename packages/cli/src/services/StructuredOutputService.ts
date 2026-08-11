@@ -199,13 +199,8 @@ function outputFromMetadata(
   contract: StructuredOutputContract
 ): JsonObject | undefined {
   if (!isObject(value)) return undefined;
-  const candidate = isObject(value.structuredOutput)
-    ? value.structuredOutput
-    : value;
-  if (
-    candidate.schemaDigest !== contract.schemaDigest ||
-    !('output' in candidate)
-  ) {
+  const candidate = isObject(value.structuredOutput) ? value.structuredOutput : value;
+  if (candidate.schemaDigest !== contract.schemaDigest || !('output' in candidate)) {
     return undefined;
   }
   const validation = contract.validate(candidate.output);

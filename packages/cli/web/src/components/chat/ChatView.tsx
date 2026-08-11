@@ -6,18 +6,18 @@ import { useAppStore } from '@/store/AppStore';
 import { useSessionStore } from '@/store/session';
 import { sameSessionRef, sessionRefKey } from '@/store/session/sessionIdentity';
 import type {
-    CommunicationStyle,
-    ReasoningEffort,
-    ResponseVerbosity,
-    ServiceTier,
+  CommunicationStyle,
+  ReasoningEffort,
+  ResponseVerbosity,
+  ServiceTier,
 } from '@api/schemas';
 import {
-    AlertCircle,
-    Loader2,
-    Pencil,
-    RefreshCw,
-    RotateCcw,
-    WifiOff,
+  AlertCircle,
+  Loader2,
+  Pencil,
+  RefreshCw,
+  RotateCcw,
+  WifiOff,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ComposerImageAttachment } from './ChatInput';

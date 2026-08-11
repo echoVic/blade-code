@@ -1110,4 +1110,59 @@ describe('ChatInput', () => {
       })
     );
   });
+
+  test('submits a turn-scoped JSON Schema from the structured output control', async () => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    await act(async () => {
+      root.render(<ChatInput draftKey="schema-draft" onSend={onSend} />);
+    });
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Set structured output schema"]'
+        )
+        ?.click();
+    });
+    const schemaEditor = document.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="JSON Schema editor"]'
+    );
+    expect(schemaEditor).toBeInstanceOf(HTMLTextAreaElement);
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    const schema = {
+      type: 'object',
+      properties: { answer: { type: 'string' } },
+      required: ['answer'],
+      additionalProperties: false,
+    };
+    await act(async () => {
+      valueSetter?.call(schemaEditor, JSON.stringify(schema));
+      schemaEditor?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    const composer = container.querySelector<HTMLTextAreaElement>(
+      'textarea[data-blade-composer]'
+    );
+    await act(async () => {
+      valueSetter?.call(composer, 'Return a structured answer');
+      composer?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="Send message"]')
+        ?.click();
+      await Promise.resolve();
+    });
+
+    expect(onSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: 'Return a structured answer',
+        outputSchema: schema,
+      })
+    );
+    expect(sessionStorage.getItem('blade.composer.draft.schema-draft')).toBeNull();
+  });
 });

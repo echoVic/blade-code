@@ -594,9 +594,7 @@ export class Agent {
       let currentContext = context;
       let pendingInputOnly = requestedPendingInputOnly;
       let goalContinuation = requestedGoalContinuationOnly;
-      let currentOutputSchema = goalContinuation
-        ? undefined
-        : requestedOutputSchema;
+      let currentOutputSchema = goalContinuation ? undefined : requestedOutputSchema;
       let currentGoal = initialGoal;
       let inputMessageId: string | undefined;
       let turnHandle: ActiveTurnHandle | undefined;
@@ -639,11 +637,9 @@ export class Agent {
           }),
         }));
       const pendingOutputSchema = () => {
-        const schemas = this.sessionRuntime!
-          .getPendingSteeringMessages()
-          .flatMap((pending) =>
-            pending.outputSchema ? [pending.outputSchema] : []
-          );
+        const schemas = this.sessionRuntime!.getPendingSteeringMessages().flatMap(
+          (pending) => (pending.outputSchema ? [pending.outputSchema] : [])
+        );
         if (schemas.length <= 1) return schemas[0];
         const first = JSON.stringify(schemas[0]);
         if (schemas.some((schema) => JSON.stringify(schema) !== first)) {

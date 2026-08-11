@@ -548,9 +548,7 @@ function createEventWriter(
       }
       writeLine(io.stdout, content);
     },
-    structuredOutput(
-      event: Extract<LoopEvent, { kind: 'structured_output' }>
-    ) {
+    structuredOutput(event: Extract<LoopEvent, { kind: 'structured_output' }>) {
       if (outputFormat === 'jsonl') {
         writeJsonl('structured_output', {
           output: event.output,

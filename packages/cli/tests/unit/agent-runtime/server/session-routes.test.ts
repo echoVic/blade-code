@@ -196,6 +196,7 @@ const runtimeState = vi.hoisted(() => ({
     ),
     finishTurn: vi.fn().mockResolvedValue(undefined),
     getPendingSteeringCount: vi.fn(() => 0),
+    getPendingSteeringMessages: vi.fn(() => []),
     getRecoveredSteeringCount: vi.fn(() => 0),
     hasActiveTurn: vi.fn(() => false),
     hasTurnOwner: vi.fn(() => false),
@@ -582,6 +583,7 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.enqueueSteering.mockResolvedValue(makeSteeringEnqueueResult());
     runtimeState.runtime.finishTurn.mockClear();
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+    runtimeState.runtime.getPendingSteeringMessages.mockReturnValue([]);
     runtimeState.runtime.getRecoveredSteeringCount.mockReturnValue(0);
     runtimeState.runtime.hasActiveTurn.mockReturnValue(false);
     runtimeState.runtime.hasTurnOwner.mockReturnValue(false);
@@ -1593,6 +1595,122 @@ describe('SessionRoutes runtime reuse', () => {
       expect.any(Object),
       expect.any(Object)
     );
+  });
+
+  it('validates and durably prepares a turn-scoped output schema', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('structured-session');
+    const outputSchema = {
+      type: 'object',
+      properties: { answer: { type: 'string' } },
+      required: ['answer'],
+      additionalProperties: false,
+    };
+
+    const response = await SessionRoutes().request('/structured-session/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        content: 'return a structured answer',
+        outputSchema,
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(runtimeState.runtime.prepareInputTurn).toHaveBeenCalledWith(
+      'return a structured answer',
+      { outputSchema }
+    );
+    await vi.waitFor(() => {
+      expect(agentState.chatStream).toHaveBeenCalledWith(
+        'return a structured answer',
+        expect.any(Object),
+        expect.objectContaining({ outputSchema })
+      );
+    });
+  });
+
+  it('rejects an invalid output schema before preparing durable input', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('invalid-structured-session');
+
+    const response = await SessionRoutes().request(
+      '/invalid-structured-session/message',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          content: 'return a structured answer',
+          outputSchema: {
+            type: 'object',
+            properties: {
+              answer: { $ref: 'https://example.com/remote.json' },
+            },
+          },
+        }),
+      }
+    );
+
+    expect(response.status).toBe(400);
+    expect(runtimeState.runtime.prepareInputTurn).not.toHaveBeenCalled();
+    expect(agentState.chatStream).not.toHaveBeenCalled();
+  });
+
+  it('hides the reserved structured-output tool from client history', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('structured-history-session');
+    vi.mocked(SessionService.loadSession).mockResolvedValue([
+      { role: 'user', content: 'return structured output' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'structured-call',
+            type: 'function',
+            function: {
+              name: 'StructuredOutput',
+              arguments: '{"answer":"done"}',
+            },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        name: 'StructuredOutput',
+        tool_call_id: 'structured-call',
+        content: 'Structured output accepted.',
+      },
+      {
+        role: 'assistant',
+        content: '{"answer":"done"}',
+        metadata: {
+          structuredOutput: {
+            output: { answer: 'done' },
+            schemaDigest: 'a'.repeat(64),
+          },
+        },
+      },
+    ]);
+
+    const response = await SessionRoutes().request(
+      '/structured-history-session/message'
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([
+      { role: 'user', content: 'return structured output' },
+      {
+        role: 'assistant',
+        content: '{"answer":"done"}',
+        metadata: {
+          structuredOutput: {
+            output: { answer: 'done' },
+            schemaDigest: 'a'.repeat(64),
+          },
+        },
+      },
+    ]);
   });
 
   it('refreshes an idle session runtime to the model selected for the message', async () => {

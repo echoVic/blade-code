@@ -42,8 +42,7 @@ export function readComposerDraft(key?: string): ComposerDraftSnapshot {
       if (
         value.version === STORAGE_VERSION &&
         typeof value.content === 'string' &&
-        (value.outputSchema === undefined ||
-          typeof value.outputSchema === 'string')
+        (value.outputSchema === undefined || typeof value.outputSchema === 'string')
       ) {
         return {
           content: value.content,

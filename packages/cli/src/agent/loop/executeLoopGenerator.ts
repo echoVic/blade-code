@@ -905,10 +905,8 @@ validates the object and may return a bounded corrective error.`;
     let restoredStructuredOutput = structuredOutputContract
       ? restoreStructuredOutput(state.getHistory(), structuredOutputContract)
       : undefined;
-    let structuredOutput: JsonObject | undefined =
-      restoredStructuredOutput?.output;
-    let structuredOutputAlreadyCompleted =
-      restoredStructuredOutput?.completed === true;
+    let structuredOutput: JsonObject | undefined = restoredStructuredOutput?.output;
+    let structuredOutputAlreadyCompleted = restoredStructuredOutput?.completed === true;
     const restoredIndependentVerification = restoreIndependentVerificationState(
       context.messages
     );
@@ -1310,8 +1308,7 @@ validates the object and may return a bounded corrective error.`;
               duration: Date.now() - startTime,
               tokensUsed: totalTokens,
               structuredOutput,
-              structuredOutputSchemaDigest:
-                structuredOutputContract.schemaDigest,
+              structuredOutputSchemaDigest: structuredOutputContract.schemaDigest,
             },
           };
         }
@@ -1860,8 +1857,7 @@ validates the object and may return a bounded corrective error.`;
                 duration: Date.now() - startTime,
                 tokensUsed: totalTokens,
                 outputTruncated: true,
-                structuredOutputSchemaDigest:
-                  structuredOutputContract.schemaDigest,
+                structuredOutputSchemaDigest: structuredOutputContract.schemaDigest,
               },
             };
           }
@@ -1943,8 +1939,7 @@ validates the object and may return a bounded corrective error.`;
                   toolCallsCount: allToolResults.length,
                   duration: Date.now() - startTime,
                   tokensUsed: totalTokens,
-                  structuredOutputSchemaDigest:
-                    structuredOutputContract.schemaDigest,
+                  structuredOutputSchemaDigest: structuredOutputContract.schemaDigest,
                 },
               };
             }
@@ -2431,14 +2426,14 @@ validates the object and may return a bounded corrective error.`;
             : turnResult.content || '';
           const structuredOutputMetadata =
             structuredOutput && structuredOutputContract
-            ? {
-                structuredOutput: {
-                  output: structuredOutput,
-                  schemaDigest: structuredOutputContract.schemaDigest,
-                },
-                structuredOutputSchemaDigest: structuredOutputContract.schemaDigest,
-              }
-            : undefined;
+              ? {
+                  structuredOutput: {
+                    output: structuredOutput,
+                    schemaDigest: structuredOutputContract.schemaDigest,
+                  },
+                  structuredOutputSchemaDigest: structuredOutputContract.schemaDigest,
+                }
+              : undefined;
 
           // 保存助手最终响应到 JSONL
           // 必须将最终 assistant 消息写入 state，确保 writeback 时 context.messages 包含它
@@ -2455,9 +2450,7 @@ validates the object and may return a bounded corrective error.`;
             context,
             finalMessage,
             lastMessageUuid,
-            structuredOutputMetadata
-              ? undefined
-              : turnResult.reasoningContent,
+            structuredOutputMetadata ? undefined : turnResult.reasoningContent,
             structuredOutputMetadata
           );
           if (uuid) lastMessageUuid = uuid;
@@ -2486,8 +2479,7 @@ validates the object and may return a bounded corrective error.`;
               ...(structuredOutput && structuredOutputContract
                 ? {
                     structuredOutput,
-                    structuredOutputSchemaDigest:
-                      structuredOutputContract.schemaDigest,
+                    structuredOutputSchemaDigest: structuredOutputContract.schemaDigest,
                   }
                 : {}),
             },
@@ -3124,8 +3116,7 @@ validates the object and may return a bounded corrective error.`;
                 toolCallsCount: allToolResults.length,
                 duration: Date.now() - startTime,
                 tokensUsed: totalTokens,
-                structuredOutputSchemaDigest:
-                  structuredOutputContract?.schemaDigest,
+                structuredOutputSchemaDigest: structuredOutputContract?.schemaDigest,
               },
             };
           }

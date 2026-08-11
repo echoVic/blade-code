@@ -210,22 +210,23 @@ const handleMessageComplete: EventHandler = (props, get) => {
   }
 };
 
-const handleStructuredOutput: EventHandler = (props, get) => {
-  const { currentSessionId, messages, updateMessage } = get();
+const handleStructuredOutput: EventHandler = (props, get, set) => {
+  const { currentSessionId } = get();
   if (props.sessionId !== currentSessionId) return;
-  const messageId = props.messageId as string;
-  const message = messages.find((candidate) => candidate.id === messageId);
   const output = props.output;
-  if (
-    !message ||
-    !output ||
-    typeof output !== 'object' ||
-    Array.isArray(output)
-  ) {
+  if (!output || typeof output !== 'object' || Array.isArray(output)) {
     return;
   }
+  const messageId = ensureAssistantMessage(
+    get,
+    set,
+    props.messageId as string | undefined
+  );
+  if (!messageId) return;
+  const message = get().messages.find((candidate) => candidate.id === messageId);
+  if (!message) return;
   const content = JSON.stringify(output, null, 2);
-  updateMessage(messageId, {
+  get().updateMessage(messageId, {
     content,
     metadata: {
       ...message.metadata,

@@ -6,7 +6,10 @@
  */
 
 import { deriveSessionTitleFromContent } from '../../api/sessionTitle.js';
-import type { SubagentRunRef } from '../../context/types.js';
+import type {
+  MessagePersistenceMetadata,
+  SubagentRunRef,
+} from '../../context/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { Bus } from '../../server/bus.js';
 import type { ContentPart } from '../../services/ChatServiceInterface.js';
@@ -124,7 +127,8 @@ export async function saveAssistantMessage(
   context: ChatContext,
   content: string,
   parentUuid: string | null,
-  reasoningContent?: string
+  reasoningContent?: string,
+  metadata?: MessagePersistenceMetadata
 ): Promise<string | null> {
   try {
     const contextMgr = getContextMgr(deps);
@@ -138,7 +142,7 @@ export async function saveAssistantMessage(
         'assistant',
         content,
         parentUuid,
-        undefined,
+        metadata,
         context.subagentInfo,
         reasoningContent
       );

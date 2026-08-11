@@ -1845,6 +1845,99 @@ describe('eventHandlers', () => {
     expect(state.messages[1]?.agentContent?.textBefore).toBe('');
   });
 
+  test('replaces transient prose with canonical structured output metadata', () => {
+    const state = createState({
+      messages: [
+        {
+          id: 'assistant-structured',
+          role: 'assistant',
+          content: 'internal completion prose',
+          timestamp: 1700000000000,
+          agentContent: {
+            ...createEmptyAgentContent(),
+            textBefore: 'internal completion prose',
+            timeline: [
+              {
+                id: 'text-1',
+                type: 'text',
+                content: 'internal completion prose',
+              },
+            ],
+          },
+        },
+      ],
+      currentAssistantMessageId: 'assistant-structured',
+    });
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+
+    dispatch({
+      type: 'structured.output',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        messageId: 'assistant-structured',
+        output: { answer: 'done' },
+        schemaDigest: 'a'.repeat(64),
+      },
+    });
+
+    expect(state.messages[0]).toMatchObject({
+      content: '{\n  "answer": "done"\n}',
+      metadata: {
+        structuredOutput: {
+          output: { answer: 'done' },
+          schemaDigest: 'a'.repeat(64),
+        },
+      },
+      agentContent: {
+        textBefore: '',
+        textAfter: '',
+        timeline: [],
+      },
+    });
+  });
+
+  test('materializes structured output when Task subscription missed message.created', () => {
+    const state = createState({
+      messages: [],
+      currentAssistantMessageId: null,
+    });
+    const set = vi.fn(
+      (
+        update:
+          | Partial<SessionStoreState>
+          | ((current: SessionStoreState) => Partial<SessionStoreState>)
+      ) => {
+        Object.assign(state, typeof update === 'function' ? update(state) : update);
+      }
+    );
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'structured.output',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        messageId: 'assistant-late-subscription',
+        output: { answer: 'recovered live' },
+        schemaDigest: 'b'.repeat(64),
+      },
+    });
+
+    expect(state.messages).toEqual([
+      expect.objectContaining({
+        id: 'assistant-late-subscription',
+        content: '{\n  "answer": "recovered live"\n}',
+        metadata: {
+          structuredOutput: {
+            output: { answer: 'recovered live' },
+            schemaDigest: 'b'.repeat(64),
+          },
+        },
+      }),
+    ]);
+  });
+
   test('projects user shell lifecycle as a user-owned command card', () => {
     const state = createState({ messages: [] });
     const set = vi.fn(

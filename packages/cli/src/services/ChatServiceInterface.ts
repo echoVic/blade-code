@@ -4,8 +4,8 @@
  */
 
 import type {
-    ConstrainedSamplingConfig,
-    ModelThinkingLevel,
+  ConstrainedSamplingConfig,
+  ModelThinkingLevel,
 } from '@earendil-works/pi-ai';
 
 /** OpenAI-compatible tool call (function variant only — custom tools not used) */

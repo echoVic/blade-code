@@ -40,6 +40,8 @@ blade --debug "!chat,!loop"
 | `--print` | `-p` | 打印模式，输出结果后退出 |
 | `--output-format <format>` | | 输出格式：`text` / `json` / `stream-json` |
 | `--include-partial-messages` | | 包含流式消息片段 |
+| `--json-schema <json>` | | 为 print/headless 当前 turn 设置 inline JSON Schema |
+| `--output-schema <file>` | | 从文件加载当前 turn 的 JSON Schema |
 
 ### 输入选项
 
@@ -122,6 +124,10 @@ blade -p --output-format stream-json "写一段代码"
 blade -p '! pwd'
 blade -p --output-format stream-json '! npm test'
 ```
+
+`--json-schema` 与 `--output-schema` 互斥。结构化输出由宿主校验，不接受普通 JSON
+prose 作为成功结果。完整契约见
+[Schema-Constrained Structured Output](schema-constrained-output.md)。
 
 ## 子命令
 

@@ -233,18 +233,17 @@ export async function runPrint(
       strictMcpConfig: options.strictMcpConfig,
     });
 
+    const chatContext = {
+      messages: [...contextMessages],
+      userId: 'cli-user',
+      sessionId,
+      workspaceRoot,
+      permissionMode,
+    };
     const loopResult = await drainLoop(
-      agent.chatStream(
-        input,
-        {
-          messages: [...contextMessages],
-          userId: 'cli-user',
-          sessionId,
-          workspaceRoot,
-          permissionMode,
-        },
-        { outputSchema }
-      )
+      outputSchema
+        ? agent.chatStream(input, chatContext, { outputSchema })
+        : agent.chatStream(input, chatContext)
     );
     if (!loopResult.success) {
       throw new Error(loopResult.error?.message ?? 'Agent execution failed');
@@ -279,8 +278,7 @@ export async function runPrint(
             ? {
                 type: 'structured_output',
                 output: structuredOutput,
-                schema_digest:
-                  loopResult.metadata?.structuredOutputSchemaDigest,
+                schema_digest: loopResult.metadata?.structuredOutputSchemaDigest,
               }
             : { type: 'response', content: response }
         )}\n`

@@ -869,13 +869,13 @@ export class AcpSession {
     const rawOutputSchema =
       params._meta?.outputSchema ??
       (internalOptions.pendingInputOnly
-        ? this.runtime.getPendingSteeringMessages().find(
-            (pending) => pending.outputSchema
-          )?.outputSchema
+        ? this.runtime
+            .getPendingSteeringMessages()
+            .find((pending) => pending.outputSchema)?.outputSchema
         : undefined);
-    let outputSchema: ReturnType<
-      typeof createStructuredOutputContract
-    >['schema'] | undefined;
+    let outputSchema:
+      | ReturnType<typeof createStructuredOutputContract>['schema']
+      | undefined;
     if (rawOutputSchema !== undefined) {
       outputSchema = createStructuredOutputContract(rawOutputSchema).schema;
     }
@@ -1280,8 +1280,7 @@ export class AcpSession {
           ? {
               _meta: {
                 structuredOutput: loopResult.metadata.structuredOutput,
-                outputSchemaDigest:
-                  loopResult.metadata.structuredOutputSchemaDigest,
+                outputSchemaDigest: loopResult.metadata.structuredOutputSchemaDigest,
               },
             }
           : {}),
