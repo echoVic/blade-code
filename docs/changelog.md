@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.13] - 2026-08-12
+
+### 🐛 问题修复
+
+- 修复 Web 从 Task Home 首次激活 Session 时，`ChatView` 的 React StrictMode effect
+  replay 会关闭 Store 已提交 EventSource 的竞态；真实任务完成后 UI 现在无需刷新即可
+  收到 `turn_completed`、`session.completed` 和最终 `idle` 状态
+- Session SSE 生命周期统一由 Zustand 导航事务持有；组件 remount、Suspense 与
+  StrictMode 不再错误接管全局连接 cleanup，临时会话、切换、删除、归档与显式终止仍
+  通过 Store 精确回收连接
+
+### ✅ 测试相关
+
+- 新增 StrictMode effect replay GUI 回归，并通过 Web 全量 392/392、类型检查、lint
+  与 production bundle budget
+- Production DeepSeek Web GUI 从 Task Home 首次派发后无刷新恢复最终 marker，
+  网络保持 global + Session 两条 SSE，fresh tab 恢复同一结果且无 application error
+- DeepSeek Flash/Pro Web task dispatch 真实 API 矩阵 2/2 通过，覆盖 worktree 隔离、
+  queued/running/completed、真实修改、项目测试与清理
+
 ## [0.10.12] - 2026-08-11
 
 ### 🔒 安全修复
