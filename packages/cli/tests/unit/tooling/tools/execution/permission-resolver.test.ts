@@ -221,6 +221,22 @@ describe('verification agent permission boundary', () => {
       behavior: 'allow',
       source: 'rule',
     });
+    const wrappedCommand = 'cd /workspace/project/packages/cli && npm test';
+    expect(
+      resolver.resolveRulePermission(
+        bash as unknown as Tool,
+        bash.build({ command: wrappedCommand }) as ToolInvocation<unknown>,
+        { command: wrappedCommand },
+        {
+          subagentType: 'verification',
+          permissionMode: PermissionMode.YOLO,
+          workspaceRoot: '/workspace/project',
+        }
+      ).decision
+    ).toMatchObject({
+      behavior: 'allow',
+      source: 'rule',
+    });
   });
 
   it('denies mutating Bash and write tools even when the parent is YOLO', () => {
@@ -251,6 +267,23 @@ describe('verification agent permission boundary', () => {
           matchedRule: 'builtin:audit-agent-read-only',
         });
       }
+
+      const escapedCommand = 'cd /workspace/other && npm test';
+      expect(
+        resolver.resolveRulePermission(
+          bash as unknown as Tool,
+          bash.build({ command: escapedCommand }) as ToolInvocation<unknown>,
+          { command: escapedCommand },
+          {
+            subagentType,
+            permissionMode: PermissionMode.YOLO,
+            workspaceRoot: '/workspace/project',
+          }
+        ).decision
+      ).toMatchObject({
+        behavior: 'deny',
+        matchedRule: 'builtin:audit-agent-read-only',
+      });
 
       const writeInvocation = write.build({ file_path: '/tmp/changed.txt' });
       expect(

@@ -878,6 +878,34 @@ describe('AcpSession', () => {
       expect(response.stopReason).toBe('end_turn');
     });
 
+    it('fails closed with a typed ACP error when the agent loop fails', async () => {
+      const mockAgent = getMockAgent();
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield* [] as LoopEvent[];
+        return {
+          success: false,
+          error: {
+            type: 'intent_fulfillment_failed',
+            message: 'provider-specific failure details',
+          },
+        };
+      }) as typeof mockAgent.chatStream;
+
+      await expect(
+        session.prompt({
+          sessionId: 'test-session-id',
+          prompt: [{ type: 'text', text: 'complete the task' }],
+        })
+      ).rejects.toMatchObject({
+        name: 'RequestError',
+        code: -32603,
+        message: 'Internal error: Agent turn failed (intent_fulfillment_failed)',
+        data: {
+          failureType: 'intent_fulfillment_failed',
+        },
+      });
+    });
+
     it('应该把 ApplyPatch 的每个文件投影为标准 ACP diff', async () => {
       const mockAgent = getMockAgent();
       const toolCall = {

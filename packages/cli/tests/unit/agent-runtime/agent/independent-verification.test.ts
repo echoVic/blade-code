@@ -72,6 +72,26 @@ describe('independent verification policy', () => {
     expect(
       collectModifiedFiles(
         'Bash',
+        successfulResult({
+          command: 'cd /workspace/project && bun run test:all',
+          exit_code: 0,
+        }),
+        '/workspace/project'
+      )
+    ).toEqual([]);
+    expect(
+      collectModifiedFiles(
+        'Bash',
+        successfulResult({
+          command: 'cd /workspace/other && bun run test:all',
+          exit_code: 0,
+        }),
+        '/workspace/project'
+      )
+    ).toEqual([BASH_MUTATION_MARKER]);
+    expect(
+      collectModifiedFiles(
+        'Bash',
         successfulResult({ command: 'printf x > generated.txt', exit_code: 0 })
       )
     ).toEqual([BASH_MUTATION_MARKER]);

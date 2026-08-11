@@ -69,7 +69,7 @@ export class PermissionResolver {
         params.env === undefined &&
         isSafeVerificationWorkingDirectory(params.cwd, context.workspaceRoot) &&
         (isReadOnlyBashCommand(stripSafeStderrMerge(params.command)) ||
-          isVerificationCommand(params.command));
+          isVerificationCommand(params.command, context.workspaceRoot));
       if (!isReadOnlyKind(tool.kind) && !verifierBashAllowed) {
         return {
           signature,

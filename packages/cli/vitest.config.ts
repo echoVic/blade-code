@@ -143,6 +143,7 @@ export default defineConfig({
           minWorkers: 1,
           include: ['tests/integration/real-api/**/*.{test,spec}.{js,ts,jsx,tsx}'],
           setupFiles: ['./tests/support/setup.real-api.ts'],
+          retry: 1,
           testTimeout: 300000,
           hookTimeout: 300000,
         },

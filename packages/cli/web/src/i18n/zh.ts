@@ -420,8 +420,7 @@ export const zh: Dict = {
   'chat.input.responseVerbosity.option': '使用 {verbosity} 响应详略',
   'chat.input.responseVerbosity.autoHint': '模型默认',
   'chat.input.outputSchema.title': '结构化输出',
-  'chat.input.outputSchema.description':
-    '要求本轮最终返回符合该 JSON Schema 的对象。',
+  'chat.input.outputSchema.description': '要求本轮最终返回符合该 JSON Schema 的对象。',
   'chat.input.outputSchema.change': '设置结构化输出 Schema',
   'chat.input.outputSchema.locked': '请等待当前轮次结束后再修改输出 Schema',
   'chat.input.outputSchema.editor': 'JSON Schema 编辑器',

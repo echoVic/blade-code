@@ -470,12 +470,14 @@ export class BackgroundAgentManager {
             recordModifiedFiles(
               modifiedFiles,
               event.toolCall.function.name,
-              event.result
+              event.result,
+              context.workspaceRoot
             );
             recordVerificationEvidence(
               verificationCommands,
               event.toolCall.function.name,
-              event.result
+              event.result,
+              context.workspaceRoot
             );
           }
           try {

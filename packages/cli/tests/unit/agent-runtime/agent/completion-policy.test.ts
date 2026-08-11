@@ -9,6 +9,7 @@ import {
   DELEGATION_RETRY_PROMPT,
   isExplicitWorktreeRequest,
   isSingleTaskDelegationRequired,
+  isVerificationCommand,
   MAX_DELEGATION_RETRIES,
   MAX_INCOMPLETE_INTENT_RETRIES,
   MAX_OUTPUT_RECOVERY_LIMIT,
@@ -125,6 +126,28 @@ describe('completionPolicy', () => {
   });
 
   describe('checkVerificationRequired', () => {
+    it('accepts a verification command after a safe workspace cd', () => {
+      expect(
+        isVerificationCommand('cd /workspace/project && npm test', '/workspace/project')
+      ).toBe(true);
+      expect(
+        isVerificationCommand(
+          'cd /workspace/project/packages/cli && npm test',
+          '/workspace/project'
+        )
+      ).toBe(true);
+      expect(
+        isVerificationCommand('cd /workspace/other && npm test', '/workspace/project')
+      ).toBe(false);
+      expect(isVerificationCommand('cd /workspace/project && npm test')).toBe(false);
+      expect(
+        isVerificationCommand(
+          'cd /workspace/project && npm test && npm run build',
+          '/workspace/project'
+        )
+      ).toBe(false);
+    });
+
     it('requires Bash when the user explicitly asks to run tests', () => {
       expect(
         checkVerificationRequired(

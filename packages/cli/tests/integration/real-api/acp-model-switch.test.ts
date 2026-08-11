@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BladeAgent } from '../../../src/acp/BladeAgent.js';
 import { DEFAULT_CONFIG } from '../../../src/config/defaults.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
+import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import {
@@ -218,7 +219,7 @@ describe.skipIf(!enabled)('ACP session model switch trajectory (real API)', () =
       await execFileAsync('git', ['add', '.'], { cwd: workspace });
       await execFileAsync('git', ['commit', '-qm', 'fixture'], { cwd: workspace });
 
-      getState().config.actions.setConfig({
+      const modelConfig: RuntimeConfig = {
         ...DEFAULT_CONFIG,
         currentModelId: flashModelId,
         models: [
@@ -245,7 +246,18 @@ describe.skipIf(!enabled)('ACP session model switch trajectory (real API)', () =
             },
           },
         ],
-      });
+      };
+      getState().config.actions.setConfig(modelConfig);
+      await mkdir(path.join(workspace, '.blade'), { recursive: true });
+      await writeFile(
+        path.join(workspace, '.blade', 'config.json'),
+        JSON.stringify({
+          currentModelId: modelConfig.currentModelId,
+          models: modelConfig.models,
+        })
+      );
+      WorkspaceTrustService.resetInstance();
+      await WorkspaceTrustService.getInstance().trust(workspace);
 
       await runWithCwdOverride(workspace, async () => {
         await harness.connection.initialize({
@@ -314,6 +326,7 @@ describe.skipIf(!enabled)('ACP session model switch trajectory (real API)', () =
     } finally {
       await harness.agent.destroy().catch(() => undefined);
       await proxy.close();
+      WorkspaceTrustService.resetInstance();
       await rm(workspace, { recursive: true, force: true });
     }
   }, 300_000);

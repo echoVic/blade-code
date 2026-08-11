@@ -35,6 +35,13 @@ export interface ProductionEnvironmentOptions {
   hasConfiguredDeepSeekApiKey?: boolean;
 }
 
+const REAL_API_PROVIDER_PREFIXES = [
+  'DEEPSEEK',
+  'CLAUDE',
+  'GPT',
+  'DOMESTIC',
+] as const;
+
 const REQUIRED_DEEPSEEK_MODELS = [
   'deepseek-v4-flash',
   'deepseek-v4-pro',
@@ -103,9 +110,9 @@ export function createQualificationPlan(
   if (mode === 'production') {
     plan.push({
       id: 'real-api',
-      name: 'Real API coding trajectories',
+      name: 'Release-blocking real API trajectories',
       command: 'bun',
-      args: ['run', 'test:real-api'],
+      args: ['run', 'test:real-api:qualification'],
       network: 'paid-api',
     });
   }
@@ -153,6 +160,35 @@ export function resolveProductionEnvironment(
     DEEPSEEK_MODEL: configuredModels[0],
     REAL_API_TEST: '1',
   };
+}
+
+export function resolveQualificationCheckEnvironment(
+  check: QualificationCheck,
+  baseEnvironment: Readonly<Record<string, string | undefined>>,
+  paidApiEnvironment: Readonly<Record<string, string | undefined>>
+): Record<string, string | undefined> {
+  if (check.network === 'paid-api') {
+    const environment = { ...paidApiEnvironment };
+    if (environment.REAL_API_INCLUDE_OPTIONAL_PROVIDERS !== '1') {
+      delete environment.DOMESTIC_API_KEY;
+      delete environment.DOMESTIC_BASE_URL;
+      delete environment.DOMESTIC_MODEL;
+      delete environment.DOMESTIC_MODELS;
+    }
+    return environment;
+  }
+
+  const environment = { ...baseEnvironment };
+  delete environment.REAL_API_TEST;
+  delete environment.BLADE_REAL_API_CONFIG_ROOT;
+  delete environment.BLADE_REAL_API_CREDENTIALS_FILE;
+  for (const prefix of REAL_API_PROVIDER_PREFIXES) {
+    delete environment[`${prefix}_API_KEY`];
+    delete environment[`${prefix}_BASE_URL`];
+    delete environment[`${prefix}_MODEL`];
+    delete environment[`${prefix}_MODELS`];
+  }
+  return environment;
 }
 
 export async function runQualification(

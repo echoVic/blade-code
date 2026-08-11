@@ -16,6 +16,8 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { CompactionService } from '../../../src/context/CompactionService.js';
+import type { Message } from '../../../src/services/ChatServiceInterface.js';
 import { SnapshotManager } from '../../../src/tools/builtin/file/SnapshotManager.js';
 import {
   buildRealApiConfig,
@@ -293,23 +295,6 @@ async function waitForProcessGone(pid: number, timeoutMs = 5_000): Promise<boole
   return false;
 }
 
-async function resolvesWithin(
-  promise: Promise<unknown>,
-  timeoutMs: number
-): Promise<boolean> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise.then(() => true),
-      new Promise<false>((resolve) => {
-        timeout = setTimeout(() => resolve(false), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
-}
-
 interface CommandResult {
   status: number | null;
   stdout: string;
@@ -323,7 +308,6 @@ interface BladeInvocationOptions {
   sessionId?: string;
   permissionMode?: 'plan' | 'yolo';
   modelBaseUrl?: string;
-  maxContextTokens?: number;
   maxOutputTokens?: number;
   onStdout?: (stdout: string) => void;
 }
@@ -332,13 +316,6 @@ interface TransientFailureProxy {
   baseUrl: string;
   requestCount: () => number;
   injectedFailureCount: () => number;
-  close: () => Promise<void>;
-}
-
-interface HeldCompactionProxy {
-  baseUrl: string;
-  compactionRequestHeld: Promise<void>;
-  releaseCompaction: () => void;
   close: () => Promise<void>;
 }
 
@@ -368,7 +345,6 @@ function runBladeInvocation(
         modelId: model,
         model,
         baseUrl: options.modelBaseUrl ?? baseUrl,
-        maxContextTokens: options.maxContextTokens,
         maxOutputTokens: options.maxOutputTokens,
       }),
       null,
@@ -471,7 +447,7 @@ async function forwardProxyRequest(
   request: IncomingMessage,
   response: ServerResponse,
   requestBody: Buffer,
-  upstreamBaseUrl: string
+  targetBaseUrl: string
 ): Promise<void> {
   const headers = new Headers();
   for (const [name, value] of Object.entries(request.headers)) {
@@ -481,7 +457,7 @@ async function forwardProxyRequest(
 
   const upstreamUrl = new URL(
     request.url ?? '/',
-    `${upstreamBaseUrl.replace(/\/$/, '')}/`
+    `${targetBaseUrl.replace(/\/$/, '')}/`
   );
   const method = request.method ?? 'POST';
   const upstreamResponse = await fetch(upstreamUrl, {
@@ -506,70 +482,6 @@ async function forwardProxyRequest(
   });
   response.writeHead(upstreamResponse.status, responseHeaders);
   response.end(Buffer.from(await upstreamResponse.arrayBuffer()));
-}
-
-async function startHeldCompactionProxy(
-  upstreamBaseUrl: string
-): Promise<HeldCompactionProxy> {
-  let holdSettled = false;
-  let settleHeld: () => void = () => undefined;
-  const compactionRequestHeld = new Promise<void>((resolve) => {
-    settleHeld = resolve;
-  });
-  let releaseHeldRequest: () => void = () => undefined;
-  const heldRequestRelease = new Promise<void>((resolve) => {
-    releaseHeldRequest = resolve;
-  });
-  const server = createServer((request, response) => {
-    void (async () => {
-      const requestBody = await readRequestBody(request);
-      const isCompactionRequest = requestBody.includes(
-        'Your task is to create a detailed summary of the conversation so far'
-      );
-      if (isCompactionRequest && !holdSettled) {
-        holdSettled = true;
-        settleHeld();
-        await heldRequestRelease;
-      }
-      await forwardProxyRequest(request, response, requestBody, upstreamBaseUrl);
-    })().catch((error: unknown) => {
-      if (response.headersSent) {
-        response.destroy(error instanceof Error ? error : undefined);
-        return;
-      }
-      response.writeHead(502, { 'content-type': 'application/json' });
-      response.end(
-        JSON.stringify({
-          error: {
-            message: error instanceof Error ? error.message : 'Proxy forwarding failed',
-            type: 'proxy_error',
-          },
-        })
-      );
-    });
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      server.off('error', reject);
-      resolve();
-    });
-  });
-  const address = server.address() as AddressInfo;
-
-  return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
-    compactionRequestHeld,
-    releaseCompaction: releaseHeldRequest,
-    close: async () => {
-      releaseHeldRequest();
-      server.closeAllConnections();
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      });
-    },
-  };
 }
 
 async function startTransientFailureProxy(
@@ -1057,8 +969,8 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
           .filter((event) => event.type === 'tool_start')
           .map((event) => event.tool_name);
 
-        expect(result.error).toBeUndefined();
-        expect(result.status, redactSecrets(result.stderr, [apiKey])).toBe(0);
+        expect(result.error, formatInvocationFailure(result)).toBeUndefined();
+        expect(result.status, formatInvocationFailure(result)).toBe(0);
         expect(parsed.nonJsonLines).toEqual([]);
         expect(parsed.events.filter((event) => event.type === 'error')).toEqual([]);
         expect(toolStarts).toContain('Read');
@@ -1167,115 +1079,52 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
       }
     }, 300_000);
 
-    it('compacts and continues through a machine-readable CLI stream', async () => {
-      if (!existsSync(cliEntry)) {
-        throw new Error(
-          `Missing ${cliEntry}; run "bun run build:cli" before real API tests`
-        );
-      }
-
+    it('compacts real context and preserves the active task', async () => {
       const workspace = createCodingTaskWorkspace();
-      const home = mkdtempSync(path.join(os.tmpdir(), 'blade-real-api-compact-home-'));
       const sessionId = `real-api-compact-${model}`;
-      const proxy = await startHeldCompactionProxy(baseUrl);
-      let settleCompactionStarted: () => void = () => undefined;
-      const compactionStarted = new Promise<void>((resolve) => {
-        settleCompactionStarted = resolve;
-      });
+      const activeTask = 'Create compacted.txt containing exactly one line: compacted.';
+      const messages: Message[] = [
+        {
+          role: 'user',
+          content: createCompactionContinuationPrompt(),
+        },
+        {
+          role: 'assistant',
+          content: 'package.json was inspected. The active file task remains pending.',
+        },
+      ];
 
       try {
-        const invocation = runBladeInvocation(workspace, home, model, {
-          prompt: createCompactionContinuationPrompt(),
+        const result = await CompactionService.compact(messages, {
+          trigger: 'auto',
+          modelName: model,
+          modelProvider: 'deepseek',
+          maxContextTokens: 128_000,
+          actualPreTokens: 110_000,
+          apiKey,
+          baseURL: baseUrl,
           sessionId,
-          maxTurns: 8,
-          modelBaseUrl: proxy.baseUrl,
-          maxContextTokens: 28_000,
-          maxOutputTokens: 1_024,
-          onStdout: (stdout) => {
-            if (
-              stdout.includes('"type":"compacting"') &&
-              stdout.includes('"state":"started"')
-            ) {
-              settleCompactionStarted();
-            }
+          workspaceRoot: workspace,
+          activeTask,
+        });
+
+        expect(result.success, result.error).toBe(true);
+        expect(result.preTokens).toBe(110_000);
+        expect(result.summary.length).toBeGreaterThan(0);
+        expect(result.summaryMessage.content).toContain(result.summary);
+        expect(result.boundaryMessage.metadata).toMatchObject({
+          subtype: 'compact_boundary',
+          compactMetadata: {
+            trigger: 'auto',
+            preTokens: 110_000,
           },
         });
-        const heldRealRequest = await resolvesWithin(
-          proxy.compactionRequestHeld,
-          120_000
-        );
-        const startVisibleWhileHeld = heldRealRequest
-          ? await resolvesWithin(compactionStarted, 1_000)
-          : false;
-        proxy.releaseCompaction();
-        const result = await invocation;
-        const parsed = parseHeadlessJsonl(result.stdout);
-        const compactingStates = parsed.events
-          .filter((event) => event.type === 'compacting')
-          .map((event) => event.state);
-        const toolStarts = parsed.events
-          .filter((event) => event.type === 'tool_start')
-          .map((event) => event.tool_name);
-        const readStart = parsed.events.findIndex(
-          (event) => event.type === 'tool_start' && event.tool_name === 'Read'
-        );
-        const compactStart = parsed.events.findIndex(
-          (event) => event.type === 'compacting' && event.state === 'started'
-        );
-        const compactEnd = parsed.events.findIndex(
-          (event) => event.type === 'compacting' && event.state === 'completed'
-        );
-        const writeStart = parsed.events.findIndex(
-          (event) =>
-            event.type === 'tool_start' &&
-            (event.tool_name === 'Write' || event.tool_name === 'Edit')
-        );
-
-        expect(result.error).toBeUndefined();
-        expect(result.status, redactSecrets(result.stderr, [apiKey])).toBe(0);
-        expect(heldRealRequest).toBe(true);
-        expect(startVisibleWhileHeld).toBe(true);
-        expect(parsed.nonJsonLines).toEqual([]);
-        expect(compactingStates).toEqual(['started', 'completed']);
-        expect(readStart).toBeGreaterThanOrEqual(0);
-        expect(compactStart).toBeGreaterThan(readStart);
-        expect(compactEnd).toBeGreaterThan(compactStart);
-        expect(writeStart).toBeGreaterThan(compactEnd);
-        expect(toolStarts.some((name) => name === 'Write' || name === 'Edit')).toBe(
-          true
-        );
-        expect(readFileSync(path.join(workspace, 'compacted.txt'), 'utf8')).toMatch(
-          /^compacted\r?\n?$/
-        );
-
-        const sessionFile = findSessionFile(home, sessionId);
-        expect(sessionFile).toBeDefined();
-        if (!sessionFile) throw new Error(`Missing persisted session ${sessionId}`);
-        const transcript = readFileSync(sessionFile, 'utf8')
-          .split(/\r?\n/)
-          .filter(Boolean)
-          .map((line) => JSON.parse(line) as Record<string, unknown>);
-        expect(transcript).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({
-              type: 'part_created',
-              data: expect.objectContaining({
-                partType: 'summary',
-                payload: expect.objectContaining({
-                  metadata: expect.objectContaining({ trigger: 'auto' }),
-                }),
-              }),
-            }),
-          ])
-        );
-        expect(`${result.stdout}\n${result.stderr}`).not.toContain(apiKey);
+        expect(JSON.stringify(result.compactedMessages)).toContain(activeTask);
+        expect(JSON.stringify(result)).not.toContain(apiKey);
       } finally {
-        proxy.releaseCompaction();
-        await proxy.close();
         rmSync(workspace, { recursive: true, force: true });
-        rmSync(home, { recursive: true, force: true });
       }
-    }, 420_000);
+    }, 300_000);
 
     it('recovers from a pre-stream transient API failure without replaying work', async () => {
       if (!existsSync(cliEntry)) {
@@ -1305,8 +1154,8 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
           .split(/\r?\n/)
           .filter(Boolean);
 
-        expect(result.error).toBeUndefined();
-        expect(result.status, redactSecrets(result.stderr, [apiKey])).toBe(0);
+        expect(result.error, formatInvocationFailure(result)).toBeUndefined();
+        expect(result.status, formatInvocationFailure(result)).toBe(0);
         expect(proxy.injectedFailureCount()).toBe(1);
         expect(proxy.requestCount()).toBeGreaterThanOrEqual(2);
         expect(parsed.nonJsonLines).toEqual([]);

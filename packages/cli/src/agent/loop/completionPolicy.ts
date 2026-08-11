@@ -173,7 +173,8 @@ export { isVerificationCommand };
 export function recordVerificationEvidence(
   commands: Set<string>,
   toolName: string,
-  result: ToolResult
+  result: ToolResult,
+  workspaceRoot?: string
 ): void {
   if (!result.success) return;
 
@@ -186,7 +187,7 @@ export function recordVerificationEvidence(
     toolName === 'Bash' &&
     typeof result.metadata?.command === 'string' &&
     result.metadata.exit_code === 0 &&
-    isVerificationCommand(result.metadata.command)
+    isVerificationCommand(result.metadata.command, workspaceRoot)
   ) {
     commands.add(result.metadata.command);
     return;
@@ -196,7 +197,7 @@ export function recordVerificationEvidence(
   const delegatedCommands = result.metadata?.verificationCommands;
   if (!Array.isArray(delegatedCommands)) return;
   for (const command of delegatedCommands) {
-    if (typeof command === 'string' && isVerificationCommand(command)) {
+    if (typeof command === 'string' && isVerificationCommand(command, workspaceRoot)) {
       commands.add(command);
     }
   }
@@ -227,7 +228,7 @@ export function checkVerificationRequired(
   const verificationSatisfied =
     requiredKinds.length > 0
       ? missingKinds.length === 0
-      : successfulCommands.some(isVerificationCommand);
+      : successfulCommands.some((command) => isVerificationCommand(command));
 
   if (verificationSatisfied) {
     return { action: 'none' };

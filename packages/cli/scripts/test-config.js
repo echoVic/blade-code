@@ -17,6 +17,23 @@ export const testTypes = {
       REAL_API_TEST: '1',
     },
   },
+  realApiQualification: {
+    name: '发布阻断真实 API 集成测试',
+    project: 'real-api',
+    timeout: 30 * 60 * 1_000,
+    files: [
+      'tests/integration/real-api/agent-trajectory.test.ts',
+      'tests/integration/real-api/structured-output-trajectory.test.ts',
+      'tests/integration/real-api/code-review-trajectory.test.tsx',
+      'tests/integration/real-api/durable-interaction-recovery-trajectory.test.ts',
+      'tests/integration/real-api/permission-mode-recovery-trajectory.test.ts',
+      'tests/integration/real-api/acp-model-switch.test.ts',
+      'tests/integration/real-api/blade-coding-task.test.ts',
+    ],
+    env: {
+      REAL_API_TEST: '1',
+    },
+  },
   cli: {
     name: 'CLI 测试',
     project: 'cli',

@@ -20,6 +20,7 @@ function printUsage() {
   unit        运行单元测试
   integration 运行集成测试
   realApi     运行真实 API 与生产 Agent 轨迹测试
+  realApiQualification 运行发布阻断真实 API 轨迹
   cli         运行 CLI 行为测试
   headlessCore 运行 headless 与核心 runtime 回归测试
   e2e         运行端到端测试

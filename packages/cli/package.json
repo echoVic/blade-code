@@ -1,6 +1,6 @@
 {
   "name": "blade-code",
-  "version": "0.10.7",
+  "version": "0.10.8",
   "private": false,
   "description": "🗡️ Blade Code - 智能代码助手命令行工具",
   "type": "module",
@@ -22,6 +22,7 @@
     "test:unit": "node scripts/test.js unit",
     "test:integration": "node scripts/test.js integration",
     "test:real-api": "node scripts/test.js realApi",
+    "test:real-api:qualification": "node scripts/test.js realApiQualification",
     "test:cli": "node scripts/test.js cli",
     "test:headless-core": "node scripts/test.js headlessCore",
     "test:e2e": "node scripts/test.js e2e",

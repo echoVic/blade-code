@@ -5,21 +5,22 @@
  * 将 Agent 的流式输出转发给 IDE。
  */
 
-import type {
-  AgentSideConnection,
-  AvailableCommand,
-  ClientCapabilities,
-  ContentBlock,
-  McpServer,
-  PlanEntry,
-  PlanEntryPriority,
-  PromptRequest,
-  PromptResponse,
-  RequestPermissionRequest,
-  SessionNotification,
-  ToolCallContent,
-  ToolCallStatus,
-  ToolKind,
+import {
+  type AgentSideConnection,
+  type AvailableCommand,
+  type ClientCapabilities,
+  type ContentBlock,
+  type McpServer,
+  type PlanEntry,
+  type PlanEntryPriority,
+  type PromptRequest,
+  type PromptResponse,
+  RequestError,
+  type RequestPermissionRequest,
+  type SessionNotification,
+  type ToolCallContent,
+  type ToolCallStatus,
+  type ToolKind,
 } from '@agentclientprotocol/sdk';
 import { nanoid } from 'nanoid';
 import { Agent } from '../agent/Agent.js';
@@ -1262,12 +1263,15 @@ export class AcpSession {
           }
         }
       );
-      if (!loopResult.success) {
-        throw new Error(loopResult.error?.message ?? 'Agent execution failed');
-      }
-
       // 5. 使用 chatContext.messages 作为完整历史（Phase 4: 不再手工构造）
       this.messages = [...context.messages];
+      if (!loopResult.success) {
+        const failureType = loopResult.error?.type ?? 'unknown';
+        throw RequestError.internalError(
+          { failureType },
+          `Agent turn failed (${failureType})`
+        );
+      }
 
       // 6. 检查是否被取消
       if (abortController.signal.aborted) {

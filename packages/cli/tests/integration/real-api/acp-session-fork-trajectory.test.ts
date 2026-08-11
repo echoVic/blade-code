@@ -758,7 +758,13 @@ describeTrajectory('ACP durable fork trajectory (real API)', () => {
           const { sessionId: _parentId, ...newSetup } = created;
           const { sessionId: childId, ...forkSetup } = forked;
           expect(childId).not.toBe(parentId);
-          expect(forkSetup).toMatchObject(newSetup);
+          expect(forkSetup).toMatchObject({
+            ...newSetup,
+            modes: {
+              ...newSetup.modes,
+              currentModeId: 'yolo',
+            },
+          });
           expect(forkSetup._meta).toMatchObject({
             'blade/taskIsolation': 'local',
             'blade/taskSourceProjectPath': fixture.workspace,

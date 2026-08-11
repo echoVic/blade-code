@@ -46,6 +46,7 @@ export class SubagentExecutor {
 
     try {
       const appendSystemPrompt = this.getAppendSystemPrompt();
+      const workspaceRoot = context.workspaceRoot || getCwd();
 
       const modelId =
         this.config.model && this.config.model !== 'inherit'
@@ -62,7 +63,7 @@ export class SubagentExecutor {
       };
       runtime = await SessionRuntime.create({
         sessionId: agentId,
-        workspaceRoot: context.workspaceRoot || getCwd(),
+        workspaceRoot,
         modelId,
         reasoningEffort: context.reasoningEffort,
         serviceTier: context.serviceTier,
@@ -105,7 +106,7 @@ export class SubagentExecutor {
         messages: [...(context.existingMessages ?? [])],
         userId: 'subagent',
         sessionId: agentId,
-        workspaceRoot: context.workspaceRoot || getCwd(),
+        workspaceRoot,
         completionRequirements: appendSystemPrompt,
         worktreeActive: context.worktreeActive,
         permissionMode,
@@ -121,12 +122,14 @@ export class SubagentExecutor {
           recordModifiedFiles(
             modifiedFiles,
             event.toolCall.function.name,
-            event.result
+            event.result,
+            workspaceRoot
           );
           recordVerificationEvidence(
             verificationCommands,
             event.toolCall.function.name,
-            event.result
+            event.result,
+            workspaceRoot
           );
         }
         await context.onEvent?.(event);

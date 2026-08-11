@@ -261,6 +261,8 @@ describe('isFallbackablePiError', () => {
   it.each([
     'Upstream service temporarily unavailable',
     '{"type":"upstream_error","message":"Upstream request failed"}',
+    '503: {"message":"Injected transient failure","type":"server_error"}',
+    'Error: 429 rate limited',
   ])('retries an explicit transient upstream failure: %s', (message) => {
     expect(isFallbackablePiError(new Error(message))).toBe(true);
   });

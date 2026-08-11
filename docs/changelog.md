@@ -4,6 +4,48 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.8] - 2026-08-11
+
+### ✨ 新功能
+
+- 新增 turn-scoped JSON Schema 最终输出契约：每轮按需注入保留的
+  `StructuredOutput` 工具，支持 provider constrained sampling，并由宿主 AJV
+  统一校验、限制 schema/output 复杂度、执行最多两次纠正重试
+- structured payload、schema digest 与 durable inbox/Task dispatch 一并持久化；
+  provider tool result 和 canonical assistant message 覆盖两个崩溃窗口，重启后
+  不重复采样已完成结果，后续 steering、写操作或新回合会使旧 payload 失效
+- Print/Headless 支持 `--json-schema` 与 `--output-schema`，提供 text、JSON、
+  stream-json/JSONL 稳定投影；Web API/SSE、ACP `_meta` 和 TUI 复用同一 canonical
+  object，不从 prose 猜测或修复结果
+- Web composer 新增持久化 JSON Schema 编辑器，完成结果以带 digest 和复制操作的
+ 结构化报告展示；live Task 即使错过初始 `message.created` 也无需刷新即可渲染，
+  fresh tab 可从 durable history 恢复相同对象
+- MCP 与 Skills 管理从独立浮层收口到全页 Settings 内联面板；补齐 MCP、Skills、
+  rewind、subagent resume、设置错误与代码复制等中英文文案
+
+### 🐛 问题修复
+
+- reserved `StructuredOutput` 工具不再出现在 Web/ACP/TUI 的工具卡片或历史命令中，
+ 但仍保留完整模型历史和 crash recovery 证据
+- schema 在 durable prepare 前 fail closed；Task retry 继承原契约，活动回合禁止
+  临时切换 schema，shell/slash/review 等不兼容入口给出明确错误
+- structured completion 继续通过 intent、delegation、worktree、verification 和
+  stop hook 门禁；普通非结构化响应继续保留 reasoning content 与既有调用兼容性
+
+### ✅ 测试相关
+
+- 新增 schema authority、provider passthrough、bounded retry、crash recovery、
+  durable mailbox、Task retry、CLI loader、Headless JSONL、ACP `_meta`、Web SSE
+  race、composer draft、report card 和 TUI projection 回归
+- 真实 GPT Web route、Claude ACP 与 DeepSeek Headless 分别在 3.229s、2.278s、
+  2.999s 返回宿主验证后的对象，3/3 通过且输出、事件、历史均无 credential 泄漏
+- Production DeepSeek Web GUI 无刷新显示
+  `{"surface":"gui","ok":true,"summary":"Production DeepSeek GUI verified","metrics":{"count":7}}`；
+  fresh tab、中英文、digest `8c723790cc`、内部工具隐藏与零 console error 均通过
+- clean release tree 通过 CLI 2818 个 deterministic tests、15 个 performance
+  tests、Web 384 个 tests、CLI/Web type-check 与 lint、production build 和 bundle
+  budget
+
 ## [0.10.7] - 2026-08-11
 
 ### ✨ 新功能

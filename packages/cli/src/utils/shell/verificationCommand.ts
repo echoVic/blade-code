@@ -41,19 +41,44 @@ export function stripSafeStderrMerge(command: string): string {
   return command.replace(/\s+2>&1\s*$/, '').trim();
 }
 
-export function isVerificationCommand(command: string): boolean {
+function unwrapWorkspaceDirectory(
+  command: string,
+  parts: readonly string[],
+  workspaceRoot: string | undefined
+): string | undefined {
+  if (!workspaceRoot || parts.length !== 2) return undefined;
+  const wrapper = /^(.+?)[ \t]+&&[ \t]+([\s\S]+)$/.exec(command);
+  if (!wrapper) return undefined;
+  const cdTokens = tokenize(wrapper[1] ?? '');
+  if (cdTokens.length !== 2 || cdTokens[0] !== 'cd') return undefined;
+  const target = cdTokens[1];
+  if (!target || target === '-') return undefined;
+  const resolvedTarget = path.isAbsolute(target)
+    ? path.resolve(target)
+    : path.resolve(workspaceRoot, target);
+  if (!PathSecurity.isWithinWorkspace(resolvedTarget, workspaceRoot)) {
+    return undefined;
+  }
+  return wrapper[2]?.trim() || undefined;
+}
+
+export function isVerificationCommand(
+  command: string,
+  workspaceRoot?: string
+): boolean {
   const normalized = stripSafeEnvVars(stripSafeStderrMerge(command));
   const parts = splitCompoundCommand(normalized);
-  if (
-    !parts ||
-    parts.length !== 1 ||
-    containsUnsafePatterns(normalized) ||
-    /[\r\n]/.test(normalized)
-  ) {
+  if (!parts || containsUnsafePatterns(normalized) || /[\r\n]/.test(normalized)) {
     return false;
   }
 
-  const tokens = tokenize(normalized);
+  const verificationCommand =
+    parts.length === 1
+      ? parts[0]
+      : unwrapWorkspaceDirectory(normalized, parts, workspaceRoot);
+  if (!verificationCommand) return false;
+
+  const tokens = tokenize(verificationCommand);
   if (
     tokens.length === 0 ||
     tokens.some((token) =>

@@ -18,6 +18,7 @@ import { AcpSession } from '../../../src/acp/Session.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
 import { getSessionInboxFilePath } from '../../../src/context/storage/pathUtils.js';
+import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustService.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
@@ -142,7 +143,22 @@ function configureModel(modelConfig: TestModelConfig): string {
 }
 
 async function initializeGitWorkspace(workspace: string): Promise<void> {
-  await writeFile(path.join(workspace, 'baseline.txt'), 'source-checkout\n');
+  await Promise.all([
+    writeFile(path.join(workspace, 'baseline.txt'), 'source-checkout\n'),
+    writeFile(
+      path.join(workspace, 'selected-channel.test.cjs'),
+      [
+        "const assert = require('node:assert/strict');",
+        "const fs = require('node:fs');",
+        "const test = require('node:test');",
+        '',
+        "test('selected release channel', () => {",
+        "  assert.equal(fs.readFileSync('selected-channel.txt', 'utf8'), 'Canary\\n');",
+        '});',
+        '',
+      ].join('\n')
+    ),
+  ]);
   await execFileAsync('git', ['init', '-q'], { cwd: workspace });
   await execFileAsync('git', ['config', 'user.email', 'blade@example.test'], {
     cwd: workspace,
@@ -262,7 +278,7 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
                   '- options in order: Stable, then Canary',
                   '- multiSelect: false',
                   'After the user answers, write only the selected label and a newline to selected-channel.txt.',
-                  "Then invoke Bash with: node -e \"const fs=require('node:fs');if(fs.readFileSync('selected-channel.txt','utf8').trim()!=='Canary')process.exit(1)\"",
+                  'Then invoke Bash with exactly: node --test selected-channel.test.cjs',
                   'Finish only after Bash succeeds.',
                 ].join('\n'),
               },
@@ -419,6 +435,8 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
     it(`${modelConfig.model} persists ACP allow_always for the project and reloads it`, async () => {
       const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-scope-'));
       process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+      WorkspaceTrustService.resetInstance();
+      await WorkspaceTrustService.getInstance().trust(workspace);
       configureModel(modelConfig);
       const client = new RecordingClient(async (request) => ({
         outcome: {
@@ -429,7 +447,9 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
         },
       }));
       const harness = createHarness(client);
-      const command = "printf 'acp-scope\\n' > acp-permission-scope.log";
+      const firstPath = path.join(workspace, 'acp-permission-first.txt');
+      const secondPath = path.join(workspace, 'acp-permission-second.txt');
+      const content = 'acp-scope\n';
 
       try {
         await runWithCwdOverride(workspace, async () => {
@@ -446,7 +466,9 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
             prompt: [
               {
                 type: 'text',
-                text: `Call Bash exactly once with ${JSON.stringify(command)} and finish after it succeeds.`,
+                text:
+                  `Call Write exactly once with file_path ${JSON.stringify(firstPath)} ` +
+                  `and content ${JSON.stringify(content)}. Finish after it succeeds.`,
               },
             ],
           });
@@ -459,7 +481,7 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
             )
           ) as { permissions?: { allow?: string[] } };
           expect(settings.permissions?.allow).toEqual([
-            expect.stringContaining('Bash'),
+            expect.stringContaining('Write'),
           ]);
 
           const updatesBeforeReloadedPrompt = client.updates.length;
@@ -472,7 +494,9 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
             prompt: [
               {
                 type: 'text',
-                text: `Call Bash exactly once with ${JSON.stringify(command)} and finish after it succeeds.`,
+                text:
+                  `Call Write exactly once with file_path ${JSON.stringify(secondPath)} ` +
+                  `and content ${JSON.stringify(content)}. Finish after it succeeds.`,
               },
             ],
           });
@@ -484,12 +508,11 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
               .some(
                 (notification) =>
                   notification.update.sessionUpdate === 'tool_call' &&
-                  notification.update.title.includes('Bash')
+                  notification.update.title.includes('Write')
               )
           ).toBe(true);
-          expect(
-            await readFile(path.join(workspace, 'acp-permission-scope.log'), 'utf8')
-          ).toBe('acp-scope\n');
+          await expect(readFile(firstPath, 'utf8')).resolves.toBe(content);
+          await expect(readFile(secondPath, 'utf8')).resolves.toBe(content);
           expect(JSON.stringify(client.updates)).not.toContain(modelConfig.apiKey);
           expect(JSON.stringify(client.permissionRequests)).not.toContain(
             modelConfig.apiKey
@@ -497,6 +520,7 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
         });
       } finally {
         await harness.close().catch(() => undefined);
+        WorkspaceTrustService.resetInstance();
         await rm(workspace, { recursive: true, force: true });
       }
     }, 360_000);

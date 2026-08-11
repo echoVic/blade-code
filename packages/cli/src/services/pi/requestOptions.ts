@@ -238,6 +238,7 @@ export function isFallbackablePiError(error: unknown): boolean {
     'request too large',
   ];
   if (contextErrors.some((marker) => message.includes(marker))) return false;
+  if (/^(?:error:\s*)?(?:408|409|429|5\d\d)\b/.test(message)) return true;
   const statusMatch = message.match(
     /\b(?:status(?:\s+code)?|http)[:\s]+(408|409|429|5\d\d)\b/
   );

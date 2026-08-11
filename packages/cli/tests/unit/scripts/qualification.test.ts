@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createQualificationPlan,
   resolveProductionEnvironment,
+  resolveQualificationCheckEnvironment,
   resolveQualificationRoot,
   runQualification,
 } from '../../../scripts/qualification.js';
@@ -26,6 +27,9 @@ describe('production qualification contract', () => {
     );
     expect(packageJson.scripts?.['qualify:production']).toBe(
       'node scripts/run-bun.js run scripts/qualify.ts production'
+    );
+    expect(packageJson.scripts?.['test:real-api:qualification']).toBe(
+      'node scripts/test.js realApiQualification'
     );
     expect(packageJson.scripts?.ready).toBe(
       'node scripts/run-bun.js run scripts/qualify.ts production'
@@ -93,7 +97,7 @@ describe('production qualification contract', () => {
     expect(realApiIndex).toBeGreaterThan(buildIndex);
     expect(plan[realApiIndex]).toMatchObject({
       command: 'bun',
-      args: ['run', 'test:real-api'],
+      args: ['run', 'test:real-api:qualification'],
       network: 'paid-api',
     });
   });
@@ -130,6 +134,71 @@ describe('production qualification contract', () => {
     expect(env.DEEPSEEK_MODEL).toBe('deepseek-v4-flash');
     expect(env.DEEPSEEK_BASE_URL).toBe('https://api.deepseek.com');
     expect(env.REAL_API_TEST).toBe('1');
+  });
+
+  it('exposes credentials only to the paid real API check', () => {
+    const base = {
+      PATH: '/usr/bin',
+      DEEPSEEK_API_KEY: 'ambient-secret',
+      GPT_MODEL: 'ambient-gpt',
+      REAL_API_TEST: '1',
+      BLADE_REAL_API_CREDENTIALS_FILE: '/private/credentials.json',
+    };
+    const paid = {
+      ...base,
+      DEEPSEEK_API_KEY: 'materialized-secret',
+      CLAUDE_API_KEY: 'claude-secret',
+      DOMESTIC_API_KEY: 'optional-domestic-secret',
+    };
+    const requiredPaid = {
+      ...base,
+      DEEPSEEK_API_KEY: 'materialized-secret',
+      CLAUDE_API_KEY: 'claude-secret',
+    };
+
+    expect(
+      resolveQualificationCheckEnvironment(
+        { id: 'unit', name: 'Unit', command: 'bun', args: [] },
+        base,
+        paid
+      )
+    ).toEqual({ PATH: '/usr/bin' });
+    expect(
+      resolveQualificationCheckEnvironment(
+        {
+          id: 'real-api',
+          name: 'Real API',
+          command: 'bun',
+          args: [],
+          network: 'paid-api',
+        },
+        base,
+        paid
+      )
+    ).toEqual(requiredPaid);
+  });
+
+  it('includes optional paid providers only when explicitly requested', () => {
+    const paid = {
+      REAL_API_TEST: '1',
+      REAL_API_INCLUDE_OPTIONAL_PROVIDERS: '1',
+      DOMESTIC_API_KEY: 'optional-domestic-secret',
+      DOMESTIC_MODEL: 'domestic-model',
+    };
+
+    expect(
+      resolveQualificationCheckEnvironment(
+        {
+          id: 'real-api',
+          name: 'Real API',
+          command: 'bun',
+          args: [],
+          network: 'paid-api',
+        },
+        {},
+        paid
+      )
+    ).toEqual(paid);
   });
 
   it('executes checks in order and stops at the first failure', async () => {

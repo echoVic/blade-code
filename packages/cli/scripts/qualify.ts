@@ -3,6 +3,7 @@
 import { FileCredentialStore } from '../src/services/pi/FileCredentialStore.js';
 import {
   createQualificationPlan,
+  resolveQualificationCheckEnvironment,
   resolveQualificationRoot,
   resolveProductionEnvironment,
   runQualification,
@@ -20,14 +21,15 @@ if (mode !== 'local' && mode !== 'production') {
 const qualificationMode = mode as QualificationMode;
 const repositoryRoot = resolveQualificationRoot(import.meta.dir);
 
-let environment: Record<string, string | undefined> = {
+const environment: Record<string, string | undefined> = {
   ...process.env,
 };
+let paidApiEnvironment = environment;
 if (qualificationMode === 'production') {
   try {
     const credentialEnvironment = materializeRealApiEnvironment(environment);
     const deepSeekCredential = await new FileCredentialStore().read('deepseek');
-    environment = {
+    paidApiEnvironment = {
       ...credentialEnvironment,
       ...resolveProductionEnvironment(credentialEnvironment, {
         hasConfiguredDeepSeekApiKey:
@@ -49,9 +51,14 @@ const result = await runQualification(checks, {
   cwd: repositoryRoot,
   env: environment,
   execute: async (check, context) => {
+    const checkEnvironment = resolveQualificationCheckEnvironment(
+      check,
+      context.env,
+      paidApiEnvironment
+    );
     const child = Bun.spawn([check.command, ...check.args], {
       cwd: context.cwd,
-      env: context.env,
+      env: checkEnvironment,
       stdout: 'inherit',
       stderr: 'inherit',
     });

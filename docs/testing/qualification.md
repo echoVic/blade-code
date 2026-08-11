@@ -47,6 +47,20 @@ credential 可以由 secret manager 注入测试子进程环境，也可以放�
 bun run qualify:production
 ```
 
+该命令运行固定的 release-blocking real matrix：真实 DeepSeek Flash/Pro coding 与可靠性
+轨迹、GPT Web structured output、Claude ACP structured output、DeepSeek headless
+structured output、Web/ACP/TUI code review、durable interaction recovery、permission
+recovery 和 ACP model switch。完整的高成本 provider/capability soak 由以下命令单独运行：
+
+```bash
+bun run test:real-api
+```
+
+国产模型通道属于可选 soak provider，不进入默认发布阻断矩阵。需要显式加入时设置
+`REAL_API_INCLUDE_OPTIONAL_PROVIDERS=1`；余额不足或共享通道限流不会降低 DeepSeek、
+Claude、GPT 的必需准出标准。下文按能力列出的扩展 required matrix 描述完整 soak
+contract，不表示每个 patch 都要同步阻塞发布。
+
 凭据文件格式如下，`baseURL` 和单模型 `model` 可省略：
 
 ```json
@@ -91,7 +105,8 @@ bun run qualify:production
   自己的 provider-level endpoint 和专属进程凭据槽，同协议渠道不会串 key；
 - API key 不写入项目配置、源码、命令参数、日志、JSONL 或快照。
 
-required matrix 固定包含 DeepSeek Flash 和 Pro。显式配置的 Claude、GPT 和 domestic
+release-blocking matrix 固定包含 DeepSeek Flash 和 Pro，并通过 Claude、GPT 验证
+跨 provider 的 Web/ACP 结构化输出。完整 soak 中显式启用的 Claude、GPT 和 domestic
 模型还必须通过基础 chat、streaming、usage、finish、tool calling，以及
 Runtime、TUI、Web、ACP 四条 production entrypoint。仅收到文本或 HTTP `200` 不算通过。
 跨端 fork 轨迹必须让 pi-ai 从自定义渠道解析凭据，不得通过模型级 `apiKey` 参数旁路。

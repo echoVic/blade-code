@@ -79,7 +79,11 @@ export function parseVerificationVerdict(
   return matches.length === 1 ? (matches[0] as VerificationVerdict) : undefined;
 }
 
-export function collectModifiedFiles(toolName: string, result: ToolResult): string[] {
+export function collectModifiedFiles(
+  toolName: string,
+  result: ToolResult,
+  workspaceRoot?: string
+): string[] {
   if (!result.success) return [];
   const metadata = result.metadata;
   if (!metadata || typeof metadata !== 'object') return [];
@@ -113,7 +117,10 @@ export function collectModifiedFiles(toolName: string, result: ToolResult): stri
 
   if (toolName === 'Bash' && typeof metadata.command === 'string') {
     const command = metadata.command;
-    if (!isVerificationCommand(command) && !isReadOnlyBashCommand(command)) {
+    if (
+      !isVerificationCommand(command, workspaceRoot) &&
+      !isReadOnlyBashCommand(command)
+    ) {
       return [BASH_MUTATION_MARKER];
     }
   }
@@ -124,9 +131,10 @@ export function collectModifiedFiles(toolName: string, result: ToolResult): stri
 export function recordModifiedFiles(
   modifiedFiles: Set<string>,
   toolName: string,
-  result: ToolResult
+  result: ToolResult,
+  workspaceRoot?: string
 ): string[] {
-  const recorded = collectModifiedFiles(toolName, result);
+  const recorded = collectModifiedFiles(toolName, result, workspaceRoot);
   for (const filePath of recorded) modifiedFiles.add(filePath);
   return recorded;
 }

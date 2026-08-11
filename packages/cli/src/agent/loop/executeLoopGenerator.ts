@@ -48,8 +48,6 @@ import type {
   UserMessageContent,
 } from '../types.js';
 import { ConversationState } from './ConversationState.js';
-import { StreamingToolExecutor } from './StreamingToolExecutor.js';
-import { ToolProgressQueue } from './ToolProgressQueue.js';
 import {
   checkDelegationRequirement,
   checkIncompleteIntent,
@@ -93,6 +91,8 @@ import {
   VERIFICATION_SUBAGENT_TYPE,
   type VerificationVerdict,
 } from './independentVerification.js';
+import { StreamingToolExecutor } from './StreamingToolExecutor.js';
+import { ToolProgressQueue } from './ToolProgressQueue.js';
 import type { FunctionToolCallRef } from './toolDomainPolicy.js';
 import { applyToolDomainEffects } from './toolDomainPolicy.js';
 import type {
@@ -2919,7 +2919,8 @@ validates the object and may return a bounded corrective error.`;
             const newlyModifiedFiles = recordModifiedFiles(
               modifiedFiles,
               toolCall.function.name,
-              result
+              result,
+              context.workspaceRoot
             );
             if (newlyModifiedFiles.length > 0) {
               structuredOutput = undefined;
@@ -2996,7 +2997,8 @@ validates the object and may return a bounded corrective error.`;
             recordVerificationEvidence(
               successfulVerificationCommands,
               toolCall.function.name,
-              result
+              result,
+              context.workspaceRoot
             );
           } else {
             recordToolFailure(failureTracker, toolCall.function.name);
