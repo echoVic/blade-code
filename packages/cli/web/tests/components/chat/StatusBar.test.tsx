@@ -67,6 +67,16 @@ describe('StatusBar', () => {
     expect(container.textContent).not.toContain('Generating...');
   });
 
+  it('renders context-limit recovery as a distinct lifecycle phase', () => {
+    sessionState.agentPhase = 'recovering_context';
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    expect(container.textContent).toContain('Recovering context limit...');
+    expect(container.textContent).not.toContain('Compacting context...');
+  });
+
   it('renders the Provider retry attempt and bounded wait', () => {
     sessionState.agentPhase = 'running';
     sessionState.providerRetry = {

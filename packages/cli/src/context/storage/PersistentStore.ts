@@ -7,6 +7,11 @@ import { materializeSessionEvents } from '../../services/sessionRewind.js';
 import type { JsonValue, MessageRole } from '../../store/types.js';
 import { getCwd } from '../../utils/cwd.js';
 import { getVersion } from '../../utils/packageInfo.js';
+import {
+  COMPACTION_CHECKPOINT_VERSION,
+  type CompactionPersistenceMetadata,
+  serializeCompactionReplacementMessages,
+} from '../compactionCheckpoint.js';
 import { SessionEventLog } from '../events/SessionEventLog.js';
 import { projectTurnLifecycle } from '../events/turnLifecycle.js';
 import type {
@@ -111,18 +116,18 @@ export class PersistentStore {
     await this.log(sessionId).commit(entry);
   }
 
-  private buildCompactionMetadata(metadata: {
-    trigger: 'auto' | 'manual';
-    preTokens: number;
-    postTokens?: number;
-    filesIncluded?: string[];
-  }): JsonValue {
+  private buildCompactionMetadata(metadata: CompactionPersistenceMetadata): JsonValue {
     const result: Record<string, JsonValue> = {
       trigger: metadata.trigger,
       preTokens: metadata.preTokens,
     };
+    if (metadata.reason) result.reason = metadata.reason;
+    if (metadata.strategy) result.strategy = metadata.strategy;
     if (metadata.postTokens !== undefined) result.postTokens = metadata.postTokens;
     if (metadata.filesIncluded) result.filesIncluded = metadata.filesIncluded;
+    if (metadata.replacementMessages) {
+      result.checkpointVersion = COMPACTION_CHECKPOINT_VERSION;
+    }
     return result;
   }
 
@@ -581,12 +586,7 @@ export class PersistentStore {
   async saveCompaction(
     sessionId: string,
     summary: string,
-    metadata: {
-      trigger: 'auto' | 'manual';
-      preTokens: number;
-      postTokens?: number;
-      filesIncluded?: string[];
-    },
+    metadata: CompactionPersistenceMetadata,
     parentUuid: string | null = null
   ): Promise<string> {
     try {
@@ -604,7 +604,17 @@ export class PersistentStore {
         partId: nanoid(),
         messageId,
         partType: 'summary',
-        payload: { text: summary, metadata: compactMetadata },
+        payload: {
+          text: summary,
+          metadata: compactMetadata,
+          ...(metadata.replacementMessages
+            ? {
+                replacementMessages: serializeCompactionReplacementMessages(
+                  metadata.replacementMessages
+                ),
+              }
+            : {}),
+        },
         createdAt: now,
       };
       const entries = [

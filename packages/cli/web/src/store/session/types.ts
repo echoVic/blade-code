@@ -57,6 +57,7 @@ export type AgentPhase =
   | 'idle'
   | 'running'
   | 'compacting'
+  | 'recovering_context'
   | 'switching_model'
   | 'waiting_permission'
   | 'error';

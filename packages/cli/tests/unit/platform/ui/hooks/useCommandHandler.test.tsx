@@ -42,6 +42,7 @@ const mocks = vi.hoisted(() => {
     addAssistantMessage: vi.fn(),
     addMessage: vi.fn(),
     setCommand: vi.fn(),
+    setCompactedContext: vi.fn(),
     isProcessing: false,
     storeProcessing: false,
     setProcessing: vi.fn(),
@@ -49,6 +50,9 @@ const mocks = vi.hoisted(() => {
     setCurrentThinkingContent: vi.fn(),
     resetStreamingBuffers: vi.fn(),
     clearFinalizingStreamingMessageId: vi.fn(),
+    buildContextMessagesFromSession: vi.fn<
+      (_session: unknown) => Array<{ role: string; content: string }>
+    >(() => []),
   };
 });
 
@@ -112,6 +116,7 @@ vi.mock('../../../../../src/store/selectors/index.js', () => ({
     addUserMessage: mocks.addUserMessage,
     addMessage: mocks.addMessage,
     setCommand: mocks.setCommand,
+    setCompactedContext: mocks.setCompactedContext,
     setError: vi.fn(),
   }),
   useAppActions: () => ({
@@ -164,7 +169,22 @@ vi.mock('../../../../../src/ui/hooks/useStreamingBuffer.js', () => ({
 }));
 
 vi.mock('../../../../../src/ui/utils/loopEventHandler.js', () => ({
-  createLoopEventHandler: () => vi.fn(),
+  createLoopEventHandler:
+    (
+      _deps: unknown,
+      stats: {
+        compactionCount?: number;
+      }
+    ) =>
+    (event: { kind?: string; phase?: string; outcome?: string }) => {
+      if (
+        event.kind === 'compaction' &&
+        event.phase === 'end' &&
+        event.outcome !== 'failed'
+      ) {
+        stats.compactionCount = (stats.compactionCount ?? 0) + 1;
+      }
+    },
 }));
 
 vi.mock('../../../../../src/ui/utils/slashCommandRouter.js', () => ({
@@ -172,7 +192,7 @@ vi.mock('../../../../../src/ui/utils/slashCommandRouter.js', () => ({
 }));
 
 vi.mock('../../../../../src/ui/utils/sessionContext.js', () => ({
-  buildContextMessagesFromSession: () => [],
+  buildContextMessagesFromSession: mocks.buildContextMessagesFromSession,
 }));
 
 import { useCommandHandler } from '../../../../../src/ui/hooks/useCommandHandler.js';
@@ -206,6 +226,7 @@ describe('useCommandHandler durable recovery', () => {
     mocks.hasActiveGoal.mockResolvedValue(false);
     mocks.resolvePendingWithHandler.mockResolvedValue(true);
     mocks.cancelPendingNonInteractive.mockResolvedValue(false);
+    mocks.buildContextMessagesFromSession.mockReset().mockReturnValue([]);
     mocks.createAgent.mockResolvedValue({
       chatStream: vi.fn(async function* (
         _message: string,
@@ -267,6 +288,74 @@ describe('useCommandHandler durable recovery', () => {
     expect(mocks.resolvePendingWithHandler.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.hasPendingInbox.mock.invocationCallOrder[0]!
     );
+  });
+
+  it('retains the compacted model context after an automatic recovery', async () => {
+    const replacement = [{ role: 'user', content: 'durable summary' }];
+    mocks.createAgent.mockResolvedValueOnce({
+      chatStream: vi.fn(async function* (
+        _message: string,
+        context: { messages: typeof replacement }
+      ) {
+        yield {
+          kind: 'compaction',
+          phase: 'start',
+          reason: 'context_limit',
+        };
+        context.messages.push(...replacement);
+        yield {
+          kind: 'compaction',
+          phase: 'end',
+          reason: 'context_limit',
+          strategy: 'llm',
+          outcome: 'completed',
+        };
+        return {
+          success: true,
+          finalMessage: 'resumed',
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      }),
+    });
+
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.setCompactedContext).toHaveBeenCalledWith(replacement);
+    });
+  });
+
+  it('snapshots prior context before adding the optimistic user message', async () => {
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    mocks.processSlashCommand.mockResolvedValueOnce({ type: 'not_slash' });
+    const priorContext = [{ role: 'assistant', content: 'prior answer' }];
+    mocks.buildContextMessagesFromSession.mockReturnValueOnce(priorContext);
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await hook?.executeCommand({
+        displayText: 'current request',
+        text: 'current request',
+        images: [],
+        parts: [{ type: 'text', text: 'current request' }],
+      });
+    });
+
+    const agent = await mocks.createAgent.mock.results[0]?.value;
+    expect(agent.chatStream).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ messages: priorContext }),
+      expect.any(Object)
+    );
+    expect(
+      mocks.buildContextMessagesFromSession.mock.invocationCallOrder[0]
+    ).toBeLessThan(mocks.addUserMessage.mock.invocationCallOrder[0]!);
   });
 
   it('routes bang input to the Session shell without creating an Agent', async () => {

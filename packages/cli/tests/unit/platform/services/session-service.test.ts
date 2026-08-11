@@ -363,6 +363,164 @@ describe('SessionService with mocked filesystem', () => {
     ]);
   });
 
+  it('projects the latest durable compaction checkpoint only for model context', () => {
+    const entries = [
+      {
+        id: 'old-message',
+        sessionId: 'session-compacted',
+        type: 'message_created',
+        timestamp: '2024-01-01T00:00:00Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          messageId: 'old-user',
+          role: 'user',
+          createdAt: '2024-01-01T00:00:00Z',
+        },
+      },
+      {
+        id: 'old-text',
+        sessionId: 'session-compacted',
+        type: 'part_created',
+        timestamp: '2024-01-01T00:00:01Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          partId: 'old-text-part',
+          messageId: 'old-user',
+          partType: 'text',
+          payload: { text: 'oversized history' },
+          createdAt: '2024-01-01T00:00:01Z',
+        },
+      },
+      {
+        id: 'checkpoint-message',
+        sessionId: 'session-compacted',
+        type: 'message_created',
+        timestamp: '2024-01-01T00:00:02Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          messageId: 'checkpoint',
+          role: 'system',
+          createdAt: '2024-01-01T00:00:02Z',
+        },
+      },
+      {
+        id: 'checkpoint-part',
+        sessionId: 'session-compacted',
+        type: 'part_created',
+        timestamp: '2024-01-01T00:00:03Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          partId: 'checkpoint-summary',
+          messageId: 'checkpoint',
+          partType: 'summary',
+          payload: {
+            text: 'checkpoint summary',
+            metadata: { checkpointVersion: 1 },
+            replacementMessages: [
+              {
+                role: 'user',
+                content: 'checkpoint summary',
+                metadata: { isCompactSummary: true },
+              },
+              { role: 'user', content: 'active task' },
+            ],
+          },
+          createdAt: '2024-01-01T00:00:03Z',
+        },
+      },
+      {
+        id: 'new-message',
+        sessionId: 'session-compacted',
+        type: 'message_created',
+        timestamp: '2024-01-01T00:00:04Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          messageId: 'new-assistant',
+          role: 'assistant',
+          createdAt: '2024-01-01T00:00:04Z',
+        },
+      },
+      {
+        id: 'new-text',
+        sessionId: 'session-compacted',
+        type: 'part_created',
+        timestamp: '2024-01-01T00:00:05Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          partId: 'new-text-part',
+          messageId: 'new-assistant',
+          partType: 'text',
+          payload: { text: 'continued safely' },
+          createdAt: '2024-01-01T00:00:05Z',
+        },
+      },
+    ] as any;
+
+    expect(SessionService.convertJSONLToMessages(entries)).toContainEqual({
+      role: 'user',
+      content: 'oversized history',
+    });
+    expect(SessionService.convertJSONLToModelContext(entries)).toEqual([
+      {
+        role: 'user',
+        content: 'checkpoint summary',
+        metadata: { isCompactSummary: true },
+      },
+      { role: 'user', content: 'active task' },
+      { role: 'assistant', content: 'continued safely' },
+    ]);
+  });
+
+  it('falls back to a summary-only model projection for legacy checkpoints', () => {
+    const entries = [
+      {
+        id: 'old-message',
+        sessionId: 'legacy-compacted',
+        type: 'message_created',
+        timestamp: '2024-01-01T00:00:00Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          messageId: 'old-user',
+          role: 'user',
+          createdAt: '2024-01-01T00:00:00Z',
+        },
+      },
+      {
+        id: 'checkpoint-part',
+        sessionId: 'legacy-compacted',
+        type: 'part_created',
+        timestamp: '2024-01-01T00:00:01Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          partId: 'checkpoint-summary',
+          messageId: 'checkpoint',
+          partType: 'summary',
+          payload: { text: 'legacy summary', metadata: { trigger: 'auto' } },
+          createdAt: '2024-01-01T00:00:01Z',
+        },
+      },
+    ] as any;
+
+    expect(SessionService.convertJSONLToModelContext(entries)).toEqual([
+      {
+        role: 'user',
+        content: 'legacy summary',
+        metadata: {
+          text: 'legacy summary',
+          metadata: { trigger: 'auto' },
+        },
+      },
+    ]);
+  });
+
   it('convertJSONLToMessages 应修复流式工具调用被挂到 user 消息的历史', () => {
     const messages = SessionService.convertJSONLToMessages([
       {

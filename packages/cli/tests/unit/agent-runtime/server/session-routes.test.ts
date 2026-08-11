@@ -400,6 +400,7 @@ vi.mock('../../../../src/services/SessionService.js', () => ({
     findSessionTaskWorktree: vi.fn(async () => undefined),
     findSessionTaskDispatch: vi.fn(async () => undefined),
     loadSession: vi.fn(async () => []),
+    loadSessionModelContext: vi.fn(async () => []),
     exportSessionMarkdown: vi.fn(async () => ({
       filename: 'blade-session-test.md',
       markdown: '# Blade conversation\n',
@@ -617,6 +618,9 @@ describe('SessionRoutes runtime reuse', () => {
     vi.mocked(SessionService.findSessionTaskWorktree).mockResolvedValue(undefined);
     vi.mocked(SessionService.findSessionTaskDispatch).mockResolvedValue(undefined);
     vi.mocked(SessionService.loadSession).mockResolvedValue(makeMessages());
+    vi.mocked(SessionService.loadSessionModelContext).mockImplementation(
+      (sessionId, projectPath) => SessionService.loadSession(sessionId, projectPath)
+    );
     vi.mocked(SessionService.setSessionPermissionMode).mockImplementation(
       async (sessionId: string, projectPath: string, permissionMode) =>
         makeSessionMetadata({
@@ -2133,8 +2137,20 @@ describe('SessionRoutes runtime reuse', () => {
 
     agentState.chatStream.mockImplementationOnce(async function* () {
       yield { kind: 'turn_start', turn: 2, maxTurns: 8 };
-      yield { kind: 'compaction', phase: 'start' };
-      yield { kind: 'compaction', phase: 'end' };
+      yield {
+        kind: 'compaction',
+        phase: 'start',
+        reason: 'context_limit',
+      };
+      yield {
+        kind: 'compaction',
+        phase: 'end',
+        reason: 'context_limit',
+        strategy: 'llm',
+        outcome: 'completed',
+        preTokens: 120_000,
+        postTokens: 2_000,
+      };
       yield { kind: 'model_fallback' };
       yield {
         kind: 'provider_retry',
@@ -2227,12 +2243,18 @@ describe('SessionRoutes runtime reuse', () => {
     expect(Bus.publish).toHaveBeenCalledWith(
       refFor('surface-events'),
       'compaction.started',
-      {}
+      { reason: 'context_limit' }
     );
     expect(Bus.publish).toHaveBeenCalledWith(
       refFor('surface-events'),
       'compaction.completed',
-      {}
+      {
+        reason: 'context_limit',
+        strategy: 'llm',
+        outcome: 'completed',
+        preTokens: 120_000,
+        postTokens: 2_000,
+      }
     );
     expect(Bus.publish).toHaveBeenCalledWith(
       refFor('surface-events'),

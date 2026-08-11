@@ -302,6 +302,13 @@ const TokenUsageEventSchema = event({
 const CompactingEventSchema = event({
   type: Type.Literal('compacting'),
   state: StringEnum(['started', 'completed']),
+  reason: Type.Optional(
+    StringEnum(['threshold', 'context_limit', 'turn_limit', 'manual'])
+  ),
+  strategy: Type.Optional(StringEnum(['llm', 'fallback', 'snip'])),
+  outcome: Type.Optional(StringEnum(['completed', 'fallback', 'failed'])),
+  pre_tokens: Type.Optional(Type.Number({ minimum: 0 })),
+  post_tokens: Type.Optional(Type.Number({ minimum: 0 })),
 });
 
 const ProviderRetryEventSchema = event({

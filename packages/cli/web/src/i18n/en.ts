@@ -552,6 +552,7 @@ export const en = {
   'status.phase.running': 'Generating...',
   'status.phase.providerStall': 'Provider stream paused',
   'status.phase.compacting': 'Compacting context...',
+  'status.phase.recoveringContext': 'Recovering context limit...',
   'status.phase.switchingModel': 'Switching model...',
   'status.phase.waitingPermission': 'Waiting for permission...',
   'status.phase.error': 'Run failed',

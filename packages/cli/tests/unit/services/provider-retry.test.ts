@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyProviderRetry,
   computeProviderRetryDelay,
+  isProviderContextLimitError,
   MAX_PROVIDER_RETRY_DELAY_MS,
+  markProviderReplayBoundary,
+  providerReplayBoundaryCrossed,
 } from '../../../src/services/pi/providerRetry.js';
 
 describe('provider retry policy', () => {
@@ -53,6 +56,25 @@ describe('provider retry policy', () => {
         })
       )
     ).toEqual({ retryable: false });
+  });
+
+  it('tracks replay boundaries by error identity without exposing payload data', () => {
+    const beforeOutput = new Error('context length exceeded');
+    const afterOutput = new Error('context length exceeded');
+
+    markProviderReplayBoundary(afterOutput);
+
+    expect(providerReplayBoundaryCrossed(beforeOutput)).toBe(false);
+    expect(providerReplayBoundaryCrossed(afterOutput)).toBe(true);
+    expect(providerReplayBoundaryCrossed('context length exceeded')).toBe(false);
+  });
+
+  it('recognizes provider-specific context-limit spellings consistently', () => {
+    expect(isProviderContextLimitError(new Error('context_length_exceeded'))).toBe(
+      true
+    );
+    expect(isProviderContextLimitError(new Error('prompt_too_long'))).toBe(true);
+    expect(isProviderContextLimitError(new Error('status 503'))).toBe(false);
   });
 
   it('honors numeric and date Retry-After values within a bounded delay', () => {

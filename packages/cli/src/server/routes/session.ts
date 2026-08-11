@@ -1,9 +1,9 @@
+import path from 'node:path';
 import { Mutex } from 'async-mutex';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { LRUCache } from 'lru-cache';
 import { nanoid } from 'nanoid';
-import path from 'node:path';
 import { Agent } from '../../agent/Agent.js';
 import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
@@ -53,7 +53,7 @@ import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { McpRegistry } from '../../mcp/McpRegistry.js';
-import { safeParseSchema, StringEnum, Type } from '../../schema/index.js';
+import { StringEnum, safeParseSchema, Type } from '../../schema/index.js';
 import type { ContentPart, Message } from '../../services/ChatServiceInterface.js';
 import {
   type CodeReviewRun,
@@ -3641,8 +3641,12 @@ async function executeRunAsync(
       return response;
     };
 
+    const modelContext = await SessionService.loadSessionModelContext(
+      session.id,
+      session.projectPath
+    );
     const chatContext: ChatContext = {
-      messages: [...session.messages],
+      messages: modelContext,
       userId: 'web-user',
       sessionId,
       workspaceRoot: session.projectPath,
@@ -3906,7 +3910,15 @@ async function executeRunAsync(
         case 'compaction':
           emit(
             event.phase === 'start' ? 'compaction.started' : 'compaction.completed',
-            {}
+            {
+              ...(event.reason ? { reason: event.reason } : {}),
+              ...(event.strategy ? { strategy: event.strategy } : {}),
+              ...(event.outcome ? { outcome: event.outcome } : {}),
+              ...(event.preTokens !== undefined ? { preTokens: event.preTokens } : {}),
+              ...(event.postTokens !== undefined
+                ? { postTokens: event.postTokens }
+                : {}),
+            }
           );
           break;
         case 'model_fallback':
@@ -3959,8 +3971,11 @@ async function executeRunAsync(
       }
     }
 
-    // Phase 4: 使用 chatContext.messages 作为完整历史（不再手工构造）
-    session.messages = [...chatContext.messages];
+    // Keep the visible transcript separate from the compacted model projection.
+    session.messages = await SessionService.loadSession(
+      session.id,
+      session.projectPath
+    );
     session.updatedAt = new Date();
     await refreshSessionTaskMetadata(session);
 

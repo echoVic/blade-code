@@ -178,7 +178,7 @@ export async function runPrint(
         sessionId
       );
     const contextMessages = recoveredInteraction
-      ? await SessionService.loadSession(sessionId, workspaceRoot)
+      ? await SessionService.loadSessionModelContext(sessionId, workspaceRoot)
       : messages;
 
     runtime = await SessionRuntime.create({

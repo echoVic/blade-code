@@ -516,6 +516,7 @@ export const zh: Dict = {
   'status.phase.running': '生成中…',
   'status.phase.providerStall': 'Provider 流暂无数据',
   'status.phase.compacting': '正在压缩上下文…',
+  'status.phase.recoveringContext': '上下文超限，正在恢复…',
   'status.phase.switchingModel': '正在切换模型…',
   'status.phase.waitingPermission': '等待授权…',
   'status.phase.error': '运行失败',

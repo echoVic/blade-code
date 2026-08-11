@@ -6,6 +6,7 @@
  */
 
 import { deriveSessionTitleFromContent } from '../../api/sessionTitle.js';
+import type { CompactionPersistenceMetadata } from '../../context/compactionCheckpoint.js';
 import type {
   MessagePersistenceMetadata,
   SubagentRunRef,
@@ -278,25 +279,29 @@ export async function saveCompaction(
   deps: LoopDependencies,
   context: ChatContext,
   summary: string,
-  metadata: {
-    trigger: 'auto' | 'manual';
-    preTokens: number;
-    postTokens?: number;
-    filesIncluded?: string[];
-  }
+  metadata: CompactionPersistenceMetadata,
+  options: { required?: boolean } = {}
 ): Promise<string | null> {
   try {
     const contextMgr = getContextMgr(deps);
     if (contextMgr && context.sessionId) {
-      return await contextMgr.saveCompaction(
+      const checkpointId = await contextMgr.saveCompaction(
         context.sessionId,
         summary,
         metadata,
         null
       );
+      if (options.required && !checkpointId) {
+        throw new Error('Compaction checkpoint commit returned no identity');
+      }
+      return checkpointId || null;
+    }
+    if (options.required && context.sessionId) {
+      throw new Error('Compaction checkpoint storage is unavailable');
     }
   } catch (error) {
     logger.warn('[Loop] 保存压缩数据失败:', error);
+    if (options.required) throw error;
   }
   return null;
 }

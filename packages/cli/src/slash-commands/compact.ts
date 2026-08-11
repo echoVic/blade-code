@@ -95,31 +95,29 @@ async function compactCommandHandler(
       sessionId,
     });
 
-    if (result.success) {
-      // 保存压缩数据到 JSONL
-      try {
-        if (sessionId) {
-          const contextMgr = new ContextManager({
-            projectPath: context.workspaceRoot ?? context.cwd,
-          });
-          await contextMgr.saveCompaction(
-            sessionId,
-            result.summary,
-            {
-              trigger: 'manual',
-              preTokens: result.preTokens,
-              postTokens: result.postTokens,
-              filesIncluded: result.filesIncluded,
-            },
-            null
-          );
-          console.log('[/compact] 压缩数据已保存到 JSONL');
-        }
-      } catch (saveError) {
-        console.warn('[/compact] 保存压缩数据失败:', saveError);
-        // 不阻塞用户反馈
-      }
+    // Apply the replacement context only after its durable checkpoint commits.
+    if (sessionId) {
+      const contextMgr = new ContextManager({
+        projectPath: context.workspaceRoot ?? context.cwd,
+      });
+      await contextMgr.saveCompaction(
+        sessionId,
+        result.summary,
+        {
+          trigger: 'manual',
+          reason: 'manual',
+          strategy: result.success ? 'llm' : 'fallback',
+          preTokens: result.preTokens,
+          postTokens: result.postTokens,
+          filesIncluded: result.filesIncluded,
+          replacementMessages: result.compactedMessages,
+        },
+        null
+      );
+      console.log('[/compact] 压缩数据已保存到 JSONL');
+    }
 
+    if (result.success) {
       // 显示成功信息
       let successMessage = `[OK] **压缩完成！**
 

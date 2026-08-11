@@ -76,6 +76,10 @@ export async function activateSessionSelection(
       sourceProjectPath: resolvedWorkspace,
       targetProjectPath: resolvedWorkspace,
     });
+    const modelContext = await SessionService.loadSessionModelContext(
+      forked.sessionId,
+      forked.metadata.projectPath
+    );
     const visibleMessages = [...SessionService.toUISafeMessages(forked.messages)];
     if (announceFork !== false) {
       const announcementTimestamp = Date.parse(forked.metadata.lastMessageTime);
@@ -98,27 +102,32 @@ export async function activateSessionSelection(
     actions.restoreSession(
       forked.sessionId,
       visibleMessages,
-      forked.messages,
+      modelContext,
       forked.metadata.projectPath
     );
     return {
       sessionId: forked.sessionId,
-      messages: forked.messages,
+      messages: modelContext,
     };
   }
 
   await SessionService.assertSessionWritable(session.sessionId, session.projectPath);
-  const messages = await SessionService.loadSession(
-    session.sessionId,
-    session.projectPath
-  );
+  const [messages, modelContext] = await Promise.all([
+    SessionService.loadSession(session.sessionId, session.projectPath),
+    SessionService.loadSessionModelContext(session.sessionId, session.projectPath),
+  ]);
   const uiMessages = SessionService.toUISafeMessages(messages);
   await cleanupAgent();
   activatePermissionModeInMemory(permissionModeOverride ?? session.permissionMode);
   activateModelInMemory(session.selectedModelId);
-  actions.restoreSession(session.sessionId, uiMessages, messages, session.projectPath);
+  actions.restoreSession(
+    session.sessionId,
+    uiMessages,
+    modelContext,
+    session.projectPath
+  );
   return {
     sessionId: session.sessionId,
-    messages,
+    messages: modelContext,
   };
 }

@@ -4,8 +4,8 @@ import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 vi.mock('../../../../src/context/CompactionService.js');
 vi.mock('../../../../src/context/SnipCompaction.js');
 
-import { ReactiveCompaction } from '../../../../src/context/ReactiveCompaction.js';
 import { CompactionService } from '../../../../src/context/CompactionService.js';
+import { ReactiveCompaction } from '../../../../src/context/ReactiveCompaction.js';
 import { snipCompact } from '../../../../src/context/SnipCompaction.js';
 
 const mockedSnipCompact = vi.mocked(snipCompact);
@@ -49,12 +49,23 @@ describe('ReactiveCompaction', () => {
     });
     mockedCompact.mockResolvedValue({
       success: true,
+      summary: 'durable summary',
+      preTokens: 96,
+      postTokens: 24,
+      filesIncluded: [],
       compactedMessages: compactedMsgs,
     } as any);
 
     const result = await rc.tryReactiveCompact(originalMsgs, defaultOptions);
 
-    expect(result).toEqual({ success: true, messages: compactedMsgs });
+    expect(result).toMatchObject({
+      success: true,
+      messages: compactedMsgs,
+      strategy: 'llm',
+      summary: 'durable summary',
+      preTokens: 96,
+      postTokens: 24,
+    });
     expect(mockedSnipCompact).toHaveBeenCalledWith(originalMsgs, {
       keepRecentTurns: 3,
       minMessagesForSnip: 10,
@@ -78,10 +89,15 @@ describe('ReactiveCompaction', () => {
     });
     mockedCompact.mockResolvedValue({
       success: true,
+      summary: 'durable summary',
+      preTokens: 96,
+      postTokens: 24,
+      filesIncluded: [],
       compactedMessages: compactedMsgs,
     } as any);
 
     await rc.tryReactiveCompact(originalMsgs, defaultOptions);
+    expect(rc.canAttempt()).toBe(false);
 
     const secondResult = await rc.tryReactiveCompact(originalMsgs, defaultOptions);
 
@@ -98,6 +114,10 @@ describe('ReactiveCompaction', () => {
     });
     mockedCompact.mockResolvedValue({
       success: true,
+      summary: 'durable summary',
+      preTokens: 96,
+      postTokens: 24,
+      filesIncluded: [],
       compactedMessages: compactedMsgs,
     } as any);
 
@@ -105,9 +125,14 @@ describe('ReactiveCompaction', () => {
     expect(firstResult.success).toBe(true);
 
     rc.reset();
+    expect(rc.canAttempt()).toBe(true);
 
     const secondResult = await rc.tryReactiveCompact(originalMsgs, defaultOptions);
-    expect(secondResult).toEqual({ success: true, messages: compactedMsgs });
+    expect(secondResult).toMatchObject({
+      success: true,
+      messages: compactedMsgs,
+      strategy: 'llm',
+    });
     expect(mockedSnipCompact).toHaveBeenCalledTimes(2);
     expect(mockedCompact).toHaveBeenCalledTimes(2);
   });
@@ -120,12 +145,47 @@ describe('ReactiveCompaction', () => {
     });
     mockedCompact.mockResolvedValue({
       success: false,
+      summary: '',
       compactedMessages: [],
     } as any);
 
     const result = await rc.tryReactiveCompact(originalMsgs, defaultOptions);
 
-    expect(result).toEqual({ success: true, messages: snippedMsgs });
+    expect(result).toMatchObject({
+      success: true,
+      messages: snippedMsgs,
+      strategy: 'snip',
+      preTokens: expect.any(Number),
+      postTokens: expect.any(Number),
+    });
+  });
+
+  it('uses the deterministic CompactionService fallback as a durable checkpoint', async () => {
+    const fallbackMessages = makeMessages(2, 'fallback');
+    mockedSnipCompact.mockReturnValue({
+      messages: snippedMsgs,
+      snippedCount: 3,
+      estimatedTokensFreed: 800,
+    });
+    mockedCompact.mockResolvedValue({
+      success: false,
+      summary: 'fallback checkpoint',
+      preTokens: 96,
+      postTokens: 16,
+      filesIncluded: [],
+      compactedMessages: fallbackMessages,
+    } as any);
+
+    const result = await rc.tryReactiveCompact(originalMsgs, defaultOptions);
+
+    expect(result).toMatchObject({
+      success: true,
+      messages: fallbackMessages,
+      strategy: 'fallback',
+      summary: 'fallback checkpoint',
+      preTokens: 96,
+      postTokens: 16,
+    });
   });
 
   it('falls back to snipped messages when compact throws but snip had effect', async () => {
@@ -138,7 +198,11 @@ describe('ReactiveCompaction', () => {
 
     const result = await rc.tryReactiveCompact(originalMsgs, defaultOptions);
 
-    expect(result).toEqual({ success: true, messages: snippedMsgs });
+    expect(result).toMatchObject({
+      success: true,
+      messages: snippedMsgs,
+      strategy: 'snip',
+    });
   });
 
   it('returns false when compact fails and snip had no effect', async () => {
@@ -149,6 +213,7 @@ describe('ReactiveCompaction', () => {
     });
     mockedCompact.mockResolvedValue({
       success: false,
+      summary: '',
       compactedMessages: [],
     } as any);
 

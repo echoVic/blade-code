@@ -12,6 +12,7 @@ import { useSessionStore } from '@/store/session';
 const PHASE_LABEL_KEYS: Record<string, TranslationKey | ''> = {
   running: 'status.phase.running',
   compacting: 'status.phase.compacting',
+  recovering_context: 'status.phase.recoveringContext',
   switching_model: 'status.phase.switchingModel',
   waiting_permission: 'status.phase.waitingPermission',
   error: 'status.phase.error',

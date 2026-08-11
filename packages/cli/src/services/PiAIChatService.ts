@@ -21,6 +21,7 @@ import { createFallbackModel, createPiRuntime } from './pi/modelRuntime.js';
 import {
   classifyProviderRetry,
   computeProviderRetryDelay,
+  markProviderReplayBoundary,
   type ProviderResponseMetadata,
 } from './pi/providerRetry.js';
 import { buildPiOptions, observePiProviderResponses } from './pi/requestOptions.js';
@@ -189,7 +190,10 @@ export class PiAIChatService implements IChatService {
           service.logIdleTimeout(error, emitted, model);
           await service.handleAbort(signal);
           const classification = classifyProviderRetry(error, responseMetadata);
-          if (emitted) throw error;
+          if (emitted) {
+            markProviderReplayBoundary(error);
+            throw error;
+          }
           if (!classification.retryable || !classification.reason) {
             if (attempt > 0 && retryReason) {
               yield {

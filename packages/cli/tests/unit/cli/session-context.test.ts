@@ -24,6 +24,9 @@ describe('resolveNonInteractiveSession', () => {
     vi.restoreAllMocks();
     vi.spyOn(SessionService, 'listSessions').mockResolvedValue([]);
     vi.spyOn(SessionService, 'loadSession').mockResolvedValue([]);
+    vi.spyOn(SessionService, 'loadSessionModelContext').mockResolvedValue([
+      { role: 'assistant', content: 'inherited history' },
+    ]);
     vi.spyOn(SessionService, 'findSessionMetadata').mockResolvedValue(undefined);
     vi.spyOn(SessionService, 'forkSession').mockResolvedValue({
       sessionId: 'child-session',
@@ -64,6 +67,10 @@ describe('resolveNonInteractiveSession', () => {
       targetProjectPath: '/workspace',
     });
     expect(SessionService.loadSession).not.toHaveBeenCalled();
+    expect(SessionService.loadSessionModelContext).toHaveBeenCalledWith(
+      'child-session',
+      '/workspace'
+    );
   });
 
   it('scopes forked continue discovery to the current workspace', async () => {
@@ -93,7 +100,7 @@ describe('resolveNonInteractiveSession', () => {
     vi.mocked(SessionService.listSessions).mockResolvedValue([
       makeMetadata('global-latest', '/another-workspace'),
     ]);
-    vi.mocked(SessionService.loadSession).mockResolvedValue([
+    vi.mocked(SessionService.loadSessionModelContext).mockResolvedValue([
       { role: 'assistant', content: 'global history' },
     ]);
     const { resolveNonInteractiveSession } = await import(
@@ -112,7 +119,9 @@ describe('resolveNonInteractiveSession', () => {
     });
 
     expect(SessionService.listSessions).toHaveBeenCalledWith();
-    expect(SessionService.loadSession).toHaveBeenCalledWith('global-latest');
+    expect(SessionService.loadSessionModelContext).toHaveBeenCalledWith(
+      'global-latest'
+    );
     expect(SessionService.forkSession).not.toHaveBeenCalled();
   });
 
@@ -122,7 +131,7 @@ describe('resolveNonInteractiveSession', () => {
       permissionMode: 'plan' as const,
     };
     vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
-    vi.mocked(SessionService.loadSession).mockResolvedValue([
+    vi.mocked(SessionService.loadSessionModelContext).mockResolvedValue([
       { role: 'assistant', content: 'resume history' },
     ]);
     const { resolveNonInteractiveSession } = await import(

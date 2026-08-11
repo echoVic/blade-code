@@ -169,6 +169,7 @@ vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
 
 const sessionServiceState = vi.hoisted(() => ({
   loadSession: vi.fn().mockResolvedValue([]),
+  loadSessionModelContext: vi.fn().mockResolvedValue([]),
   setSessionPermissionMode: vi.fn().mockResolvedValue({
     permissionMode: 'default',
   }),
@@ -248,6 +249,11 @@ describe('AcpSession', () => {
     runtimeState.runtime.resumeSubagent.mockReset();
     runtimeState.runtime.executeUserShellCommand.mockReset();
     sessionServiceState.loadSession.mockReset().mockResolvedValue([]);
+    sessionServiceState.loadSessionModelContext
+      .mockReset()
+      .mockImplementation((...args: unknown[]) =>
+        sessionServiceState.loadSession(...args)
+      );
     codeReviewState.recoverInterrupted.mockReset().mockResolvedValue(undefined);
     codeReviewState.start.mockReset();
     codeReviewState.list.mockReset();
@@ -1009,6 +1015,70 @@ describe('AcpSession', () => {
           }),
         ])
       );
+    });
+
+    it('projects reactive compaction lifecycle through ACP metadata only', async () => {
+      const mockAgent = getMockAgent();
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield {
+          kind: 'compaction',
+          phase: 'start',
+          reason: 'context_limit',
+        } as LoopEvent;
+        yield {
+          kind: 'compaction',
+          phase: 'end',
+          reason: 'context_limit',
+          strategy: 'llm',
+          outcome: 'completed',
+          preTokens: 120_000,
+          postTokens: 2_000,
+        } as LoopEvent;
+        return { success: true, finalMessage: 'recovered' };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'recover context' }],
+      });
+
+      expect(mockConnection.sessionUpdates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'session_info_update',
+              _meta: {
+                'blade/compaction': {
+                  phase: 'start',
+                  reason: 'context_limit',
+                },
+              },
+            }),
+          }),
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'session_info_update',
+              _meta: {
+                'blade/compaction': {
+                  phase: 'end',
+                  reason: 'context_limit',
+                  strategy: 'llm',
+                  outcome: 'completed',
+                  preTokens: 120_000,
+                  postTokens: 2_000,
+                },
+              },
+            }),
+          }),
+        ])
+      );
+      expect(
+        mockConnection.sessionUpdates.filter(
+          (update) =>
+            update.update.sessionUpdate === 'agent_message_chunk' &&
+            JSON.stringify(update).includes('compaction')
+        )
+      ).toEqual([]);
     });
 
     it('fails closed with a typed ACP error when the agent loop fails', async () => {

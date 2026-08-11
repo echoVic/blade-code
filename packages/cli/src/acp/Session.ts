@@ -202,6 +202,7 @@ export class AcpSession {
   private taskStatusUnsubscribe?: () => void;
   private destroyed = false;
   private messages: Message[];
+  private contextMessages: Message[];
   private mode: AcpModeId;
 
   constructor(
@@ -212,7 +213,22 @@ export class AcpSession {
     private readonly options: AcpSessionOptions = {}
   ) {
     this.messages = [...(options.initialMessages ?? [])];
+    this.contextMessages = [...this.messages];
     this.mode = this.mapPermissionModeToMode(options.permissionMode);
+  }
+
+  private async refreshPersistedMessages(): Promise<void> {
+    const [messages, contextMessages] = await Promise.all([
+      SessionService.loadSession(this.id, this.cwd),
+      SessionService.loadSessionModelContext(this.id, this.cwd),
+    ]);
+    if (messages.length > 0) this.messages = messages;
+    if (contextMessages.length > 0) this.contextMessages = contextMessages;
+  }
+
+  private async loadModelContextOr(fallback: Message[]): Promise<Message[]> {
+    const persisted = await SessionService.loadSessionModelContext(this.id, this.cwd);
+    return persisted.length > 0 ? persisted : [...fallback];
   }
 
   private mapPermissionModeToMode(
@@ -268,7 +284,11 @@ export class AcpSession {
         requestConfirmation: (details) => this.requestPermission(details),
       });
     if (recoveredInteraction) {
-      this.messages = await SessionService.loadSession(this.id, this.cwd);
+      await this.refreshPersistedMessages();
+    } else if ((this.options.initialMessages?.length ?? 0) > 0) {
+      this.contextMessages = await this.loadModelContextOr(
+        this.options.initialMessages ?? []
+      );
     }
 
     const mcpServers = this.options.mcpServers
@@ -319,7 +339,7 @@ export class AcpSession {
       this.runtime
     );
     if (recoveredReview) {
-      this.messages = await SessionService.loadSession(this.id, this.cwd);
+      await this.refreshPersistedMessages();
     }
     this.agent = await this.createAgent();
     await initializeCustomCommands(this.cwd);
@@ -474,7 +494,7 @@ export class AcpSession {
         surface: 'acp',
         workspaceRoot: this.cwd,
         sessionId: this.id,
-        messages: [...this.messages],
+        messages: [...this.contextMessages],
         rewind: {
           listCheckpoints: async () => {
             if (!this.runtime) throw new Error('Session runtime is unavailable');
@@ -484,6 +504,7 @@ export class AcpSession {
             if (!this.runtime) throw new Error('Session runtime is unavailable');
             const result = await this.runtime.rewindSession(options);
             this.messages = [...result.messages];
+            this.contextMessages = await this.loadModelContextOr(result.messages);
             await this.agent?.destroy();
             this.agent = await this.createAgent();
             return result;
@@ -675,7 +696,7 @@ export class AcpSession {
               (candidate) => candidate.start.reviewId === run.reviewId
             );
             if (!review) throw new Error(`Review not found: ${run.reviewId}`);
-            this.messages = await SessionService.loadSession(this.id, this.cwd);
+            await this.refreshPersistedMessages();
             return {
               reviewId: run.reviewId,
               status: completion.status,
@@ -739,13 +760,18 @@ export class AcpSession {
       }
       if (action === 'rewind_session' && Array.isArray(result.data?.messages)) {
         this.messages = [...(result.data.messages as Message[])];
+        this.contextMessages = await this.loadModelContextOr(
+          result.data.messages as Message[]
+        );
       }
       if (
         (result.message === 'compact_completed' ||
           result.message === 'compact_fallback') &&
         result.data?.compactedMessages
       ) {
-        this.messages = [...result.data.compactedMessages];
+        this.contextMessages = [...result.data.compactedMessages];
+        const persistedMessages = await SessionService.loadSession(this.id, this.cwd);
+        if (persistedMessages.length > 0) this.messages = persistedMessages;
       }
 
       // 发送结果给 IDE
@@ -938,7 +964,7 @@ export class AcpSession {
         sessionId: this.id,
         userId: 'acp-user',
         workspaceRoot: this.cwd,
-        messages: [...this.messages],
+        messages: [...this.contextMessages],
         signal: abortController.signal,
         // 根据 ACP 模式映射到 Blade 权限模式
         permissionMode: this.mapModeToPermissionMode(),
@@ -1291,17 +1317,39 @@ export class AcpSession {
               break;
             case 'goal_continuation_started':
               break;
+            case 'compaction':
+              this.sendUpdate({
+                sessionUpdate: 'session_info_update',
+                updatedAt: new Date().toISOString(),
+                _meta: {
+                  'blade/compaction': {
+                    phase: event.phase,
+                    ...(event.reason ? { reason: event.reason } : {}),
+                    ...(event.strategy ? { strategy: event.strategy } : {}),
+                    ...(event.outcome ? { outcome: event.outcome } : {}),
+                    ...(event.preTokens !== undefined
+                      ? { preTokens: event.preTokens }
+                      : {}),
+                    ...(event.postTokens !== undefined
+                      ? { postTokens: event.postTokens }
+                      : {}),
+                  },
+                },
+              });
+              break;
 
             // --- 系统事件不外发 ---
             // stream_end: 内部 per-turn 信号，不外发
-            // turn_start, compaction, token_usage, model_fallback: 内部事件
+            // turn_start, token_usage, model_fallback: 内部事件
             default:
               break;
           }
         }
       );
-      // 5. 使用 chatContext.messages 作为完整历史（Phase 4: 不再手工构造）
-      this.messages = [...context.messages];
+      this.contextMessages = [...context.messages];
+      const persistedMessages = await SessionService.loadSession(this.id, this.cwd);
+      this.messages =
+        persistedMessages.length > 0 ? persistedMessages : [...context.messages];
       if (!loopResult.success) {
         const failureType = loopResult.error?.type ?? 'unknown';
         throw RequestError.internalError(
@@ -1433,13 +1481,15 @@ export class AcpSession {
           });
         },
       });
-      this.messages.push({
+      const message: Message = {
         role: 'user',
         content: result.modelContent,
         metadata: {
           userShellCommand: JSON.parse(JSON.stringify(result.record)) as JsonValue,
         },
-      });
+      };
+      this.messages.push(message);
+      this.contextMessages.push(message);
       if (result.delivery === 'next_turn') this.schedulePendingResume();
       return {
         stopReason: result.record.status === 'aborted' ? 'cancelled' : 'end_turn',

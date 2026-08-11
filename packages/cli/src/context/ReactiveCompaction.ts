@@ -8,7 +8,9 @@
 import type { Message, UsageInfo } from '../services/ChatServiceInterface.js';
 import { isAbortError } from '../utils/abort.js';
 import { CompactionService } from './CompactionService.js';
+import type { CompactionStrategy } from './compactionCheckpoint.js';
 import { snipCompact } from './SnipCompaction.js';
+import { TokenCounter } from './TokenCounter.js';
 
 export interface ReactiveCompactOptions {
   modelName: string;
@@ -22,8 +24,26 @@ export interface ReactiveCompactOptions {
   sessionId?: string;
 }
 
+export interface ReactiveCompactResult {
+  success: boolean;
+  messages: Message[];
+  strategy?: CompactionStrategy;
+  summary?: string;
+  preTokens?: number;
+  postTokens?: number;
+  filesIncluded?: string[];
+  usage?: UsageInfo;
+}
+
+const SNIP_RECOVERY_SUMMARY =
+  '[Reactive context recovery applied deterministic tool-output snipping.]';
+
 export class ReactiveCompaction {
   private hasAttempted = false;
+
+  canAttempt(): boolean {
+    return !this.hasAttempted;
+  }
 
   /**
    * 尝试反应式压缩。每轮最多一次。
@@ -32,7 +52,7 @@ export class ReactiveCompaction {
   async tryReactiveCompact(
     messages: Message[],
     options: ReactiveCompactOptions
-  ): Promise<{ success: boolean; messages: Message[]; usage?: UsageInfo }> {
+  ): Promise<ReactiveCompactResult> {
     if (this.hasAttempted) {
       return { success: false, messages };
     }
@@ -61,15 +81,20 @@ export class ReactiveCompaction {
         sessionId: options.sessionId,
       });
 
-      if (compactResult.success) {
+      if (compactResult.success || compactResult.summary.trim()) {
         return {
           success: true,
           messages: compactResult.compactedMessages,
+          strategy: compactResult.success ? 'llm' : 'fallback',
+          summary: compactResult.summary,
+          preTokens: compactResult.preTokens,
+          postTokens: compactResult.postTokens,
+          filesIncluded: compactResult.filesIncluded,
           usage: compactResult.usage,
         };
       }
       if (snipResult.snippedCount > 0) {
-        return { success: true, messages: currentMessages };
+        return this.snipRecovery(messages, currentMessages, options.modelName);
       }
       return { success: false, messages };
     } catch (error) {
@@ -79,10 +104,26 @@ export class ReactiveCompaction {
       }
       // 如果 snip 至少释放了一些空间，也算部分成功
       if (snipResult.snippedCount > 0) {
-        return { success: true, messages: currentMessages };
+        return this.snipRecovery(messages, currentMessages, options.modelName);
       }
       return { success: false, messages };
     }
+  }
+
+  private snipRecovery(
+    originalMessages: Message[],
+    messages: Message[],
+    modelName: string
+  ): ReactiveCompactResult {
+    return {
+      success: true,
+      messages,
+      strategy: 'snip',
+      summary: SNIP_RECOVERY_SUMMARY,
+      preTokens: TokenCounter.countTokens(originalMessages, modelName),
+      postTokens: TokenCounter.countTokens(messages, modelName),
+      filesIncluded: [],
+    };
   }
 
   /** 重置状态（新轮次开始时调用） */

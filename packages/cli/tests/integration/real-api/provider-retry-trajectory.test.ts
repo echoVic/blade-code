@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runHeadless } from '../../../src/commands/headless.js';
 import { HeadlessJsonlEventSchema } from '../../../src/commands/headlessEvents.js';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
+import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import {
@@ -78,6 +79,95 @@ async function startTransientProxy(baseUrl: string) {
         response.end(
           JSON.stringify({
             error: { type: 'server_error', message: privateBodyMarker },
+          })
+        );
+        return;
+      }
+
+      const headers = new Headers();
+      for (const [name, value] of Object.entries(request.headers)) {
+        if (!value || name === 'host' || name === 'content-length') continue;
+        headers.set(name, Array.isArray(value) ? value.join(', ') : value);
+      }
+      const upstream = await fetch(upstreamUrl(baseUrl, request.url), {
+        method: request.method ?? 'POST',
+        headers,
+        body: request.method === 'GET' || request.method === 'HEAD' ? undefined : body,
+        redirect: 'manual',
+      });
+      const responseHeaders: Record<string, string> = {};
+      upstream.headers.forEach((value, name) => {
+        if (
+          ![
+            'connection',
+            'content-encoding',
+            'content-length',
+            'transfer-encoding',
+          ].includes(name)
+        ) {
+          responseHeaders[name] = value;
+        }
+      });
+      response.writeHead(upstream.status, responseHeaders);
+      if (upstream.body) {
+        const reader = upstream.body.getReader();
+        for (;;) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          response.write(Buffer.from(chunk.value));
+        }
+      }
+      response.end();
+    })().catch((error: unknown) => {
+      if (response.headersSent) {
+        response.destroy(error instanceof Error ? error : undefined);
+        return;
+      }
+      response.writeHead(502, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: { type: 'proxy_error' } }));
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  const address = server.address() as AddressInfo;
+  return {
+    baseURL: `http://127.0.0.1:${address.port}`,
+    privateBodyMarker,
+    requestCount: () => requestCount,
+    injectedFailures: () => injectedFailures,
+    close: async () => {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    },
+  };
+}
+
+async function startContextLimitProxy(baseUrl: string) {
+  let requestCount = 0;
+  let injectedFailures = 0;
+  const privateBodyMarker = 'PRIVATE_CONTEXT_LIMIT_BODY_MUST_NOT_SURFACE';
+  const server = createServer((request, response) => {
+    void (async () => {
+      const body = await readRequestBody(request);
+      requestCount++;
+      if (injectedFailures === 0) {
+        injectedFailures++;
+        response.writeHead(413, { 'content-type': 'application/json' });
+        response.end(
+          JSON.stringify({
+            error: {
+              type: 'invalid_request_error',
+              code: 'context_length_exceeded',
+              message: `context_length_exceeded ${privateBodyMarker}`,
+            },
           })
         );
         return;
@@ -380,6 +470,154 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
       expect(verification.stdout).toContain('pass 1');
       expect(`${output}\n${errorOutput}`).not.toContain(proxy.privateBodyMarker);
       expect(`${output}\n${errorOutput}`).not.toContain(modelConfig.apiKey);
+    } finally {
+      await proxy.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  it('durably recovers a context-limit turn and resumes from its checkpoint', async () => {
+    if (!modelConfig) throw new Error('DeepSeek Flash configuration is required');
+    const workspace = await mkdtemp(
+      path.join(os.tmpdir(), 'blade-reactive-compaction-')
+    );
+    const proxy = await startContextLimitProxy(
+      modelConfig.baseURL ?? 'https://api.deepseek.com'
+    );
+    const sessionId = `real-reactive-compaction-${Date.now()}`;
+    const durableMarker = 'DURABLE_CONTEXT_MARKER_7319';
+    let output = '';
+    let resumeOutput = '';
+    let errorOutput = '';
+
+    try {
+      process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+      getState().config.actions.setConfig({
+        ...buildRealApiRuntimeConfig({ ...modelConfig, baseURL: proxy.baseURL }),
+        permissionMode: PermissionMode.YOLO,
+      });
+
+      const exitCode = await runWithCwdOverride(workspace, () =>
+        runHeadless(
+          {
+            headless: true,
+            outputFormat: 'jsonl',
+            sessionId,
+            maxTurns: 1,
+            message:
+              `Remember the exact marker ${durableMarker}. ` +
+              'Reply with exactly REACTIVE_CONTEXT_OK and nothing else.',
+          },
+          {
+            stdout: {
+              write(chunk: string) {
+                output += chunk;
+                return true;
+              },
+            },
+            stderr: {
+              write(chunk: string) {
+                errorOutput += chunk;
+                return true;
+              },
+            },
+          }
+        )
+      );
+      const events = output
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+      const compactionEvents = events.filter((event) => event.type === 'compacting');
+      const content = events
+        .filter((event) => event.type === 'content_delta')
+        .map((event) => event.delta)
+        .join('');
+
+      expect(exitCode, errorOutput.replaceAll(modelConfig.apiKey, '[redacted]')).toBe(
+        0
+      );
+      expect(proxy.injectedFailures()).toBe(1);
+      expect(compactionEvents).toEqual([
+        expect.objectContaining({
+          state: 'started',
+          reason: 'context_limit',
+        }),
+        expect.objectContaining({
+          state: 'completed',
+          reason: 'context_limit',
+          strategy: 'llm',
+          outcome: 'completed',
+          pre_tokens: expect.any(Number),
+          post_tokens: expect.any(Number),
+        }),
+      ]);
+      expect(events.filter((event) => event.type === 'provider_retry')).toHaveLength(0);
+      expect(content.trim()).toBe('REACTIVE_CONTEXT_OK');
+
+      const recoveredContext = await SessionService.loadSessionModelContext(
+        sessionId,
+        workspace
+      );
+      expect(
+        recoveredContext.some(
+          (message) =>
+            message.metadata !== null &&
+            typeof message.metadata === 'object' &&
+            !Array.isArray(message.metadata) &&
+            message.metadata.isCompactSummary === true
+        )
+      ).toBe(true);
+      expect(JSON.stringify(recoveredContext)).toContain(durableMarker);
+
+      const resumeExitCode = await runWithCwdOverride(workspace, () =>
+        runHeadless(
+          {
+            headless: true,
+            outputFormat: 'jsonl',
+            resume: sessionId,
+            maxTurns: 1,
+            message:
+              'Reply with exactly the marker I asked you to remember earlier ' +
+              'and nothing else.',
+          },
+          {
+            stdout: {
+              write(chunk: string) {
+                resumeOutput += chunk;
+                return true;
+              },
+            },
+            stderr: {
+              write(chunk: string) {
+                errorOutput += chunk;
+                return true;
+              },
+            },
+          }
+        )
+      );
+      const resumeEvents = resumeOutput
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+      const resumedContent = resumeEvents
+        .filter((event) => event.type === 'content_delta')
+        .map((event) => event.delta)
+        .join('');
+
+      expect(
+        resumeExitCode,
+        errorOutput.replaceAll(modelConfig.apiKey, '[redacted]')
+      ).toBe(0);
+      expect(resumedContent.trim()).toBe(durableMarker);
+      expect(proxy.requestCount()).toBeGreaterThanOrEqual(4);
+      expect(`${output}\n${resumeOutput}\n${errorOutput}`).not.toContain(
+        proxy.privateBodyMarker
+      );
+      expect(`${output}\n${resumeOutput}\n${errorOutput}`).not.toContain(
+        modelConfig.apiKey
+      );
     } finally {
       await proxy.close();
       await rm(workspace, { recursive: true, force: true });

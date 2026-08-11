@@ -844,10 +844,31 @@ describe('createLoopEventHandler', () => {
       const stats = createMockStats();
       const handler = createLoopEventHandler(deps, stats);
 
-      handler({ kind: 'compaction', phase: 'end' } as LoopEvent);
+      handler({
+        kind: 'compaction',
+        phase: 'end',
+        reason: 'context_limit',
+        outcome: 'completed',
+      } as LoopEvent);
 
       expect(deps.sessionActions.setCompacting).toHaveBeenCalledWith(false);
       expect(deps.sessionActions.resetContextUsage).toHaveBeenCalled();
+      expect(stats.compactionCount).toBe(1);
+    });
+
+    it('failed compaction does not replace the retained CLI model context', () => {
+      const deps = createMockDeps();
+      const stats = createMockStats();
+      const handler = createLoopEventHandler(deps, stats);
+
+      handler({
+        kind: 'compaction',
+        phase: 'end',
+        reason: 'context_limit',
+        outcome: 'failed',
+      } as LoopEvent);
+
+      expect(stats.compactionCount).toBeUndefined();
     });
 
     it('task_update 应该更新 tasks', () => {

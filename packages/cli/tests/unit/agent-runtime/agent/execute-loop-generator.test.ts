@@ -17,10 +17,12 @@ vi.mock('../../../../src/context/CompactionService.js', () => ({
 
 vi.mock('../../../../src/context/ReactiveCompaction.js', () => {
   const tryReactiveCompact = vi.fn();
+  const canAttempt = vi.fn(() => true);
   const reset = vi.fn();
   return {
     ReactiveCompaction: class MockReactiveCompaction {
       tryReactiveCompact = tryReactiveCompact;
+      canAttempt = canAttempt;
       reset = reset;
     },
   };
@@ -106,11 +108,13 @@ import { PermissionMode } from '../../../../src/config/types.js';
 import { CompactionService } from '../../../../src/context/CompactionService.js';
 import { ContextManager } from '../../../../src/context/ContextManager.js';
 import { ReactiveCompaction } from '../../../../src/context/ReactiveCompaction.js';
+import { markProviderReplayBoundary } from '../../../../src/services/pi/providerRetry.js';
 
 // Access the shared mock functions via a probe instance of the mocked class
 const reactiveCompactionState = new (
   ReactiveCompaction as unknown as new () => {
     tryReactiveCompact: ReturnType<typeof vi.fn>;
+    canAttempt: ReturnType<typeof vi.fn>;
     reset: ReturnType<typeof vi.fn>;
   }
 )();
@@ -287,10 +291,13 @@ function contextualRuleResolution() {
 describe('executeLoopGenerator', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    reactiveCompactionState.tryReactiveCompact.mockResolvedValue({
+    vi.mocked(CompactionService.compact).mockReset();
+    reactiveCompactionState.tryReactiveCompact.mockReset().mockResolvedValue({
       success: false,
       messages: [],
     });
+    reactiveCompactionState.canAttempt.mockReset().mockReturnValue(true);
+    reactiveCompactionState.reset.mockReset();
   });
 
   describe('compaction lifecycle', () => {
@@ -352,6 +359,13 @@ describe('executeLoopGenerator', () => {
 
     it('yields start while the compaction request is still pending', async () => {
       const deps = createMockDeps();
+      (deps.chatService.getConfig as ReturnType<typeof vi.fn>).mockReturnValue({
+        stream: false,
+        model: 'test-model',
+        apiKey: 'key',
+        maxContextTokens: 100_000,
+        maxOutputTokens: 4_096,
+      });
       const context = createMockContext();
       const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
       chatMock
@@ -2784,6 +2798,11 @@ describe('executeLoopGenerator', () => {
       reactiveCompactionState.tryReactiveCompact.mockResolvedValueOnce({
         success: true,
         messages: context.messages,
+        strategy: 'llm',
+        summary: 'reactive checkpoint',
+        preTokens: 100_000,
+        postTokens: 1_000,
+        filesIncluded: [],
       });
       (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         success: true,
@@ -2807,6 +2826,211 @@ describe('executeLoopGenerator', () => {
       expect(chatMock.mock.calls[2]?.[3]).toEqual({
         toolChoice: { type: 'tool', toolName: 'Task' },
       });
+    });
+
+    it('persists a reactive checkpoint before replaying a context-limit request', async () => {
+      const contextManager = createMockContextManager();
+      contextManager.saveCompaction.mockResolvedValue('reactive-checkpoint');
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: () => contextManager,
+        } as unknown as ExecutionEngine,
+      });
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockRejectedValueOnce(new Error('context_length_exceeded'))
+        .mockResolvedValueOnce({
+          content: 'Recovered.',
+          finishReason: 'stop',
+          usage: { promptTokens: 20, completionTokens: 5, totalTokens: 25 },
+        });
+      (deps.chatService.getConfig as ReturnType<typeof vi.fn>).mockReturnValue({
+        stream: false,
+        model: 'test-model',
+        provider: 'openai',
+        maxContextTokens: 100_000,
+        maxOutputTokens: 4_096,
+      });
+      const replacement = [{ role: 'user' as const, content: 'durable summary' }];
+      reactiveCompactionState.tryReactiveCompact.mockResolvedValueOnce({
+        success: true,
+        messages: replacement,
+        strategy: 'llm',
+        summary: 'durable summary',
+        preTokens: 100_000,
+        postTokens: 20,
+        filesIncluded: [],
+      });
+
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Complete the recovery.',
+          createMockContext(),
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success, JSON.stringify(result)).toBe(true);
+      expect(chatMock).toHaveBeenCalledTimes(2);
+      expect(contextManager.saveCompaction).toHaveBeenCalledWith(
+        'test-session',
+        'durable summary',
+        expect.objectContaining({
+          reason: 'context_limit',
+          strategy: 'llm',
+          replacementMessages: replacement,
+        }),
+        null
+      );
+      expect(contextManager.saveCompaction.mock.invocationCallOrder[0]).toBeLessThan(
+        chatMock.mock.invocationCallOrder[1]!
+      );
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'compaction',
+            phase: 'start',
+            reason: 'context_limit',
+          }),
+          expect.objectContaining({
+            kind: 'compaction',
+            phase: 'end',
+            reason: 'context_limit',
+            outcome: 'completed',
+            strategy: 'llm',
+          }),
+        ])
+      );
+    });
+
+    it('does not hot-loop when the replayed request still exceeds context', async () => {
+      const contextManager = createMockContextManager();
+      contextManager.saveCompaction.mockResolvedValue('reactive-checkpoint');
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: () => contextManager,
+        } as unknown as ExecutionEngine,
+      });
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock.mockRejectedValue(
+        new Error('maximum context length exceeded; status 413')
+      );
+      (deps.chatService.getConfig as ReturnType<typeof vi.fn>).mockReturnValue({
+        stream: false,
+        model: 'test-model',
+        provider: 'openai',
+        maxContextTokens: 100_000,
+        maxOutputTokens: 4_096,
+      });
+      reactiveCompactionState.tryReactiveCompact
+        .mockResolvedValueOnce({
+          success: true,
+          messages: [{ role: 'user', content: 'smaller context' }],
+          strategy: 'llm',
+          summary: 'smaller context',
+          preTokens: 100_000,
+          postTokens: 20,
+          filesIncluded: [],
+        })
+        .mockResolvedValueOnce({
+          success: false,
+          messages: [{ role: 'user', content: 'smaller context' }],
+        });
+      reactiveCompactionState.canAttempt
+        .mockReturnValueOnce(true)
+        .mockReturnValue(false);
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Complete the recovery.',
+          createMockContext(),
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(false);
+      expect(chatMock.mock.calls, JSON.stringify(chatMock.mock.calls)).toHaveLength(2);
+      expect(contextManager.saveCompaction).toHaveBeenCalledTimes(1);
+      expect(reactiveCompactionState.tryReactiveCompact).toHaveBeenCalledOnce();
+    });
+
+    it('refuses reactive replay after the Provider output boundary', async () => {
+      const deps = createMockDeps();
+      const error = new Error('maximum context length exceeded; status 413');
+      markProviderReplayBoundary(error);
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock.mockRejectedValueOnce(error);
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Do not replay partial output.',
+          createMockContext(),
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(false);
+      expect(chatMock).toHaveBeenCalledOnce();
+      expect(reactiveCompactionState.tryReactiveCompact).not.toHaveBeenCalled();
+    });
+
+    it('does not replay when the reactive checkpoint cannot be committed', async () => {
+      const contextManager = createMockContextManager();
+      contextManager.saveCompaction.mockRejectedValue(
+        new Error('checkpoint fsync failed')
+      );
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: () => contextManager,
+        } as unknown as ExecutionEngine,
+      });
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock.mockRejectedValueOnce(
+        new Error('maximum context length exceeded; status 413')
+      );
+      (deps.chatService.getConfig as ReturnType<typeof vi.fn>).mockReturnValue({
+        stream: false,
+        model: 'test-model',
+        provider: 'openai',
+        maxContextTokens: 100_000,
+        maxOutputTokens: 4_096,
+      });
+      reactiveCompactionState.tryReactiveCompact.mockResolvedValueOnce({
+        success: true,
+        messages: [{ role: 'user', content: 'durable summary' }],
+        strategy: 'llm',
+        summary: 'durable summary',
+        preTokens: 100_000,
+        postTokens: 20,
+        filesIncluded: [],
+      });
+
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Complete the recovery.',
+          createMockContext(),
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(false);
+      expect(chatMock).toHaveBeenCalledOnce();
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          kind: 'compaction',
+          phase: 'end',
+          reason: 'context_limit',
+          outcome: 'failed',
+        })
+      );
     });
 
     it('does not execute Task again after an exactly-once delegation succeeds', async () => {

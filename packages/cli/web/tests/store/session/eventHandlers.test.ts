@@ -1360,6 +1360,18 @@ describe('eventHandlers', () => {
     expect(set).toHaveBeenLastCalledWith({ agentPhase: 'compacting' });
 
     dispatch({
+      type: 'compaction.started',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        reason: 'context_limit',
+      },
+    });
+    expect(set).toHaveBeenLastCalledWith({
+      agentPhase: 'recovering_context',
+    });
+
+    dispatch({
       type: 'compaction.completed',
       properties: { sessionId: 'session-1', projectPath: '/workspace/a' },
     });

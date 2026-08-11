@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.16] - 2026-08-12
+
+### ✨ 新功能
+
+- 新增 Durable Reactive Compaction Lifecycle：Provider 返回
+  `413/context_length_exceeded` 时，Agent 会在首个输出边界前执行一次压缩、原子提交
+  replacement-context checkpoint，再重放同一 Provider step
+- 压缩原因、策略、结果与前后 token 通过统一 lifecycle 投影到 CLI/TUI、Web、ACP、
+  Headless 和 Server SSE；Web 对 context-limit recovery 提供独立状态提示
+
+### 🛡️ 稳定性
+
+- Session JSONL 同时保留完整可见 transcript 与有界 model-context checkpoint；重启、
+  resume、fork 和 rewind 从最后一个有效 checkpoint 恢复，不再重新加载已压缩的超限历史
+- Provider 内容、thinking、usage 或 tool output 一旦越过 replay boundary，context-limit
+  错误立即 fail closed；每个 Provider step 最多执行一次 reactive recovery，持久化失败时
+  绝不重放
+- proactive、turn-limit 与手动压缩同样先提交 exact replacement context 再切换内存状态；
+  CLI 在 optimistic UI 写入前冻结模型历史，避免当前用户 prompt 被重复发送
+
+### ✅ 测试相关
+
+- 新增 JSONL checkpoint/resume、legacy summary、rewind、单次 413、二次超限、partial
+  output、持久化失败及 CLI/Web/ACP/Headless 生命周期确定性回归
+- release-blocking 真实 DeepSeek 轨迹通过透明 413 proxy 验证 LLM compaction、durable
+  checkpoint、Provider replay 与第二进程 resume；Web SSE 真实轨迹验证
+  `context_limit` 成对事件后继续完成 Write
+- Production Web GUI 实际显示“上下文超限，正在恢复…”，恢复后完成并由 fresh runtime
+  保留 checkpoint memory；raw PTY TUI 显示压缩和 Esc 取消入口后完成同一恢复轨迹
+
 ## [0.10.15] - 2026-08-12
 
 ### ✨ 新功能

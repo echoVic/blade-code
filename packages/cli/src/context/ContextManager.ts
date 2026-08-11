@@ -6,6 +6,7 @@ import type { JsonObject, JsonValue } from '../store/types.js';
 import { getCwd } from '../utils/cwd.js';
 import { createSessionId } from '../utils/sessionId.js';
 import { ContextAssembler } from './ContextAssembler.js';
+import type { CompactionPersistenceMetadata } from './compactionCheckpoint.js';
 import { ContextCompressor } from './processors/ContextCompressor.js';
 import { ContextFilter } from './processors/ContextFilter.js';
 import { CacheStore } from './storage/CacheStore.js';
@@ -324,12 +325,7 @@ export class ContextManager {
   async saveCompaction(
     sessionId: string,
     summary: string,
-    metadata: {
-      trigger: 'auto' | 'manual';
-      preTokens: number;
-      postTokens?: number;
-      filesIncluded?: string[];
-    },
+    metadata: CompactionPersistenceMetadata,
     parentUuid: string | null = null
   ): Promise<string> {
     return this.persistent.saveCompaction(sessionId, summary, metadata, parentUuid);

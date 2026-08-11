@@ -50,7 +50,8 @@ bun run qualify:production
 该命令运行固定的 release-blocking real matrix：真实 DeepSeek Flash/Pro Headless
 bugfix、GPT Web structured output、Claude ACP structured output、DeepSeek headless
 structured output、Web/ACP/TUI code review、durable interaction recovery、permission
-recovery、ACP model switch、透明 503 retry proxy、真实 mid-stream stall proxy，以及
+recovery、ACP model switch、透明 503 retry proxy、durable 413 compaction proxy、真实
+mid-stream stall proxy，以及
 DeepSeek Flash 的 Runtime/Web/ACP host-authoritative Goal completion verification。Edit+rewind、
 开放式多文件迁移、compaction、进程树、
 并发 owner 与 crash-tail 等高成本 provider/capability soak 由以下命令单独运行：
@@ -139,6 +140,17 @@ hard timeout、caller abort、deadline reset 和 warning 后仍只有一个 pend
 Production Web GUI 必须在 StatusBar 显示 stall duration/hard deadline，恢复后无刷新
 完成且 console 无 application error；TUI 必须显示 stall 状态、hard deadline 与 Esc
 取消入口；ACP 和 Headless 只投影 metadata，不污染 assistant 正文或 durable transcript。
+
+Reactive Compaction 资格必须让透明代理在首个真实 turn 返回一次
+`413 context_length_exceeded`，后续压缩摘要和恢复请求原样转发到真实 Provider。
+runtime 必须在零输出 replay boundary 内发出 paired compaction lifecycle，先提交含
+exact replacement messages 的 JSONL checkpoint，再重试同一 turn；不得产生
+`provider_retry`、重复工具副作用或无限 compaction loop。第二个独立 Runtime 必须仅从
+checkpoint model projection 恢复此前 marker，同时完整 transcript 仍可供 UI 展示。
+Production Web GUI 必须显示“上下文超限，正在恢复…”，无刷新完成最终回复；fresh tab
+恢复可见历史并继续回答 checkpoint marker，browser console 零 application error。
+真实 raw PTY TUI 必须显示“压缩中”与 Esc 入口并完成同一 marker；ACP、Server SSE 和
+Headless JSONL 只暴露 reason/strategy/outcome/token metadata，不外泄 Provider 错误体。
 
 工具并发资格要求 GPT 在同一个 production stream 中同时调用两个已加载工具。两个
 工具在执行函数内互相等待，只有都进入 shared gate 才能释放；因此单纯缩短总耗时或
@@ -517,6 +529,9 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
 - 临时 CLI 设置：从启动目录加载 `--settings` 文件，在代理转发首轮请求前删除该文件，验证隐藏系统指令已经进入模型上下文，并完成 Read/Edit/Bash、独立测试和 diff 校验；
 - 分层项目指令：从 Git 根到 CLI 启动目录按作用域注入 `CLAUDE.md`、`AGENTS.md` 和 `BLADE.md`，在 32 KiB 预算内优先保留深层规则；透明代理验证首轮模型请求中的来源、顺序和覆盖值，并在转发前移除规则文件，证明最终修改不依赖工具补读；
 - 瞬时 API 恢复：本地代理让首个模型请求返回 `503`，随后转发真实 API，CLI 必须在零输出边界内重试并完成代码修改与测试；
+- 上下文超限恢复：本地代理让首个模型请求返回 `413 context_length_exceeded`，随后
+  透明转发真实摘要与恢复请求；Headless 必须完成 paired compaction lifecycle、持久化
+  replacement checkpoint，并由第二个 Runtime 仅依赖该 checkpoint 回答此前 marker；
 - 计划模式恢复：跨两个 CLI 进程恢复会话并完成修改；
 - 模式边界恢复：在 Yolo 中故意调用一次 ExitPlanMode，运行时必须返回 `validation_error`，模型随后继续 Write/Bash，证明过期规划状态不能终止已经批准的工作；
 - 失败恢复：先重现测试失败，再修改，最后验证通过；

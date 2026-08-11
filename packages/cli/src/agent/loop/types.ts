@@ -5,6 +5,11 @@
  */
 
 import type { BladeConfig } from '../../config/index.js';
+import type {
+  CompactionOutcome,
+  CompactionReason,
+  CompactionStrategy,
+} from '../../context/compactionCheckpoint.js';
 import type { GoalSnapshot } from '../../goals/types.js';
 import type {
   ChatCompletionMessageToolCall,
@@ -55,7 +60,15 @@ export type ToolEvent =
 /** 循环控制事件 */
 export type SystemEvent =
   | { kind: 'turn_start'; turn: number; maxTurns: number }
-  | { kind: 'compaction'; phase: 'start' | 'end' }
+  | {
+      kind: 'compaction';
+      phase: 'start' | 'end';
+      reason?: CompactionReason;
+      strategy?: CompactionStrategy;
+      outcome?: CompactionOutcome;
+      preTokens?: number;
+      postTokens?: number;
+    }
   | { kind: 'token_usage'; usage: TokenUsageInfo }
   | ({ kind: 'provider_retry' } & ProviderRetryEvent)
   | ({ kind: 'provider_stall' } & ProviderStallEvent);

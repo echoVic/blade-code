@@ -4,6 +4,7 @@ import type {
   ChatConfig,
   StreamChunk,
 } from '../../../src/services/ChatServiceInterface.js';
+import { providerReplayBoundaryCrossed } from '../../../src/services/pi/providerRetry.js';
 
 // pi-ai runtime metadata fixture, not Blade's persisted ModelConfig.
 const piModelFixture: Model<Api> = {
@@ -267,6 +268,24 @@ describe('PiAIChatService', () => {
     await expect(
       (await service({ maxRetries: 2 })).chat([{ role: 'user', content: 'hello' }])
     ).rejects.toThrow('stream idle timeout');
+    expect(streamPiModel).toHaveBeenCalledOnce();
+  });
+
+  it('marks a context error after partial output as replay-unsafe', async () => {
+    const failure = new Error('maximum context length exceeded; status 413');
+    streamPiModel.mockReturnValue(chunks([{ content: 'partial' }, failure]));
+
+    let observed: unknown;
+    try {
+      await (await service({ maxRetries: 2 })).chat([
+        { role: 'user', content: 'hello' },
+      ]);
+    } catch (error) {
+      observed = error;
+    }
+
+    expect(observed).toBe(failure);
+    expect(providerReplayBoundaryCrossed(observed)).toBe(true);
     expect(streamPiModel).toHaveBeenCalledOnce();
   });
 

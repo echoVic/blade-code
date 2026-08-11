@@ -30,7 +30,7 @@ function isMissingSessionError(error: unknown): boolean {
 
 async function tryLoadSession(sessionId: string): Promise<Message[] | null> {
   try {
-    return await SessionService.loadSession(sessionId, getCwd());
+    return await SessionService.loadSessionModelContext(sessionId, getCwd());
   } catch (error) {
     if (isMissingSessionError(error)) {
       return null;
@@ -51,14 +51,21 @@ export async function resolveNonInteractiveSession(
   if (typeof options.resume === 'string' && options.resume.length > 0) {
     if (options.forkSession) {
       const workspace = getCwd();
-      return SessionService.forkSession(options.resume, {
+      const forked = await SessionService.forkSession(options.resume, {
         newSessionId: options.sessionId,
         sourceProjectPath: workspace,
         targetProjectPath: workspace,
       });
+      return {
+        ...forked,
+        messages: await SessionService.loadSessionModelContext(
+          forked.sessionId,
+          workspace
+        ),
+      };
     }
     const [messages, metadata] = await Promise.all([
-      SessionService.loadSession(options.resume),
+      SessionService.loadSessionModelContext(options.resume),
       SessionService.findSessionMetadata(options.resume),
     ]);
     return {
@@ -76,15 +83,22 @@ export async function resolveNonInteractiveSession(
       const sessionId = sessions[0].sessionId;
       if (options.forkSession) {
         const workspace = getCwd();
-        return SessionService.forkSession(sessionId, {
+        const forked = await SessionService.forkSession(sessionId, {
           newSessionId: options.sessionId,
           sourceProjectPath: workspace,
           targetProjectPath: workspace,
         });
+        return {
+          ...forked,
+          messages: await SessionService.loadSessionModelContext(
+            forked.sessionId,
+            workspace
+          ),
+        };
       }
       return {
         sessionId,
-        messages: await SessionService.loadSession(sessionId),
+        messages: await SessionService.loadSessionModelContext(sessionId),
         metadata: sessions[0],
       };
     }

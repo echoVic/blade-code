@@ -18,6 +18,7 @@ import type {
   ResponseVerbositySelection,
   ServiceTierSelection,
 } from '../config/types.js';
+import { parseCompactionReplacementMessages } from '../context/compactionCheckpoint.js';
 import {
   findPendingSessionInteraction,
   toPendingInteraction,
@@ -70,12 +71,12 @@ import { isCommunicationStyleSelection } from './communicationStyle.js';
 import { isReasoningEffortSelection } from './pi/reasoningEffort.js';
 import { isResponseVerbositySelection } from './pi/responseVerbosity.js';
 import { isServiceTierSelection } from './pi/serviceTier.js';
-import { createStructuredOutputContract } from './StructuredOutputService.js';
 import {
   renderSessionMarkdown,
   type SessionMarkdownExport,
   type SessionMarkdownExportOptions,
 } from './SessionMarkdownExporter.js';
+import { createStructuredOutputContract } from './StructuredOutputService.js';
 import {
   compareSessionCatalogItems,
   type NormalizedSessionListOptions,
@@ -898,6 +899,50 @@ export class SessionService {
       return await this.loadSessionFromFile(session.filePath, sessionId);
     } catch (error) {
       logger.error(`[SessionService] 加载会话失败 (${sessionId}):`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Load the model-visible context projection.
+   *
+   * Unlike loadSession(), this applies the latest durable compaction checkpoint
+   * while keeping the full transcript available to UI/history consumers.
+   */
+  static async loadSessionModelContext(
+    sessionId: string,
+    projectPath?: string
+  ): Promise<Message[]> {
+    try {
+      if (projectPath) {
+        if (!path.isAbsolute(projectPath)) {
+          throw new Error('Session catalog cwd must be absolute');
+        }
+        const resolvedProjectPath = path.resolve(projectPath);
+        const filePath = this.getSessionFilePath(resolvedProjectPath, sessionId);
+        try {
+          return await this.loadSessionModelContextFromFile(
+            filePath,
+            sessionId,
+            resolvedProjectPath
+          );
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            throw new Error(`未找到会话: ${sessionId}`);
+          }
+          throw error;
+        }
+      }
+
+      const session = (await this.scanStoredSessions(undefined, true, 0, null)).find(
+        (candidate) => candidate.sessionId === sessionId
+      );
+      if (!session) {
+        throw new Error(`未找到会话: ${sessionId}`);
+      }
+      return await this.loadSessionModelContextFromFile(session.filePath, sessionId);
+    } catch (error) {
+      logger.error(`[SessionService] 加载模型上下文失败 (${sessionId}):`, error);
       throw error;
     }
   }
@@ -2162,6 +2207,64 @@ export class SessionService {
       }
     }
     return this.convertJSONLToMessages(entries);
+  }
+
+  private static async loadSessionModelContextFromFile(
+    filePath: string,
+    sessionId: string,
+    projectPath?: string
+  ): Promise<Message[]> {
+    const content = await readFile(filePath, 'utf-8');
+    const entries = this.parseStoredSession(content, sessionId);
+    if (projectPath !== undefined) {
+      const stored = this.projectMetadataFromEntries(
+        entries,
+        sessionId,
+        projectPath,
+        filePath
+      );
+      if (stored.projectPath !== projectPath) {
+        throw new Error(`未找到会话: ${sessionId}`);
+      }
+    }
+    return this.convertJSONLToModelContext(entries);
+  }
+
+  static convertJSONLToModelContext(entries: SessionEvent[]): Message[] {
+    const materialized = materializeSessionEvents(entries);
+    let checkpointIndex = -1;
+    let replacementMessages: Message[] | undefined;
+
+    for (let index = 0; index < materialized.length; index++) {
+      const entry = materialized[index];
+      if (entry?.type !== 'part_created' || entry.data.partType !== 'summary') {
+        continue;
+      }
+      const payload = entry.data.payload as {
+        text?: string;
+        replacementMessages?: unknown;
+      };
+      checkpointIndex = index;
+      replacementMessages = parseCompactionReplacementMessages(
+        payload.replacementMessages
+      );
+      if (!replacementMessages) {
+        replacementMessages = [
+          {
+            role: 'user',
+            content: payload.text ?? '',
+            metadata: entry.data.payload as JsonValue,
+          },
+        ];
+      }
+    }
+
+    if (checkpointIndex < 0 || !replacementMessages) {
+      return this.convertJSONLToMessages(materialized);
+    }
+
+    const suffix = this.convertJSONLToMessages(materialized.slice(checkpointIndex + 1));
+    return [...replacementMessages, ...suffix];
   }
 
   /**

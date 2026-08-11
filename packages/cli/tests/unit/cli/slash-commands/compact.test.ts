@@ -146,7 +146,12 @@ describe('/compact slash command', () => {
     expect(contextManagerState.saveCompaction).toHaveBeenCalledWith(
       'shared-session',
       'summary',
-      expect.objectContaining({ trigger: 'manual' }),
+      expect.objectContaining({
+        trigger: 'manual',
+        reason: 'manual',
+        strategy: 'llm',
+        replacementMessages: [{ role: 'user', content: 'summary' }],
+      }),
       null
     );
   });

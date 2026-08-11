@@ -26,6 +26,10 @@ import type {
   StreamToolCall,
   UsageInfo,
 } from '../../services/ChatServiceInterface.js';
+import {
+  isProviderContextLimitError,
+  providerReplayBoundaryCrossed,
+} from '../../services/pi/providerRetry.js';
 import { SessionInteractionService } from '../../services/SessionInteractionService.js';
 import {
   createStructuredOutputContract,
@@ -352,12 +356,8 @@ function formatToolError(
 
 function isPromptTooLongError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  const msg = error.message.toLowerCase();
   return (
-    msg.includes('prompt_too_long') ||
-    msg.includes('prompt is too long') ||
-    msg.includes('maximum context length') ||
-    msg.includes('request too large') ||
+    isProviderContextLimitError(error) ||
     (error as Error & { status?: number }).status === 413
   );
 }
@@ -612,6 +612,13 @@ export async function* checkAndCompactInLoop(
     );
 
   const availableForInput = maxContextTokens - maxOutputTokens;
+  if (maxContextTokens <= 0 || availableForInput <= 0) {
+    if (didSnip) {
+      context.messages = snipResult.messages;
+    }
+    logger.debug(`[Loop] [轮次 ${currentTurn}] 压缩检查: 跳过（模型上下文窗口未知）`);
+    return didSnip ? 'snipped' : 'none';
+  }
   const threshold = Math.floor(availableForInput * 0.8);
 
   logger.debug(`[Loop] [轮次 ${currentTurn}] 压缩检查:`, {
@@ -657,7 +664,11 @@ export async function* checkAndCompactInLoop(
       : `[Loop] [轮次 ${currentTurn}] 触发循环内自动压缩`
   );
 
-  yield { kind: 'compaction', phase: 'start' };
+  let outcome: 'completed' | 'fallback' | 'failed' = 'failed';
+  let strategy: 'llm' | 'fallback' | undefined;
+  let preTokens: number | undefined;
+  let postTokens: number | undefined;
+  yield { kind: 'compaction', phase: 'start', reason: 'threshold' };
   try {
     // LLM compaction 使用 snip 后的消息（如有），但不提前写入 context.messages
     const messagesForCompact = didSnip ? snipResult.messages : context.messages;
@@ -681,10 +692,9 @@ export async function* checkAndCompactInLoop(
       };
     }
 
-    context.messages = result.compactedMessages;
-    if (compactionState) {
-      compactionState.lastCompactionTurn = currentTurn;
-    }
+    strategy = result.success ? 'llm' : 'fallback';
+    preTokens = result.preTokens;
+    postTokens = result.postTokens;
     if (result.success) {
       logger.debug(
         `[Loop] [轮次 ${currentTurn}] 压缩完成: ${result.preTokens} -> ${result.postTokens} tokens`
@@ -696,13 +706,29 @@ export async function* checkAndCompactInLoop(
     }
 
     // 保存压缩数据到 JSONL
-    await persistCompaction(deps, context, result.summary, {
-      trigger: 'auto',
-      preTokens: result.preTokens,
-      postTokens: result.postTokens,
-      filesIncluded: result.filesIncluded,
-    });
+    await persistCompaction(
+      deps,
+      context,
+      result.summary,
+      {
+        trigger: 'auto',
+        reason: 'threshold',
+        strategy,
+        preTokens: result.preTokens,
+        postTokens: result.postTokens,
+        filesIncluded: result.filesIncluded,
+        replacementMessages: result.compactedMessages,
+      },
+      {
+        required: deps.executionEngine !== undefined,
+      }
+    );
 
+    context.messages = result.compactedMessages;
+    if (compactionState) {
+      compactionState.lastCompactionTurn = currentTurn;
+    }
+    outcome = result.success ? 'completed' : 'fallback';
     return 'compacted';
   } catch (error) {
     // AbortError（宽口径）: 返回 'none' 让控制流回到主循环的下一个 signal 检查点
@@ -718,7 +744,15 @@ export async function* checkAndCompactInLoop(
     logger.error(`[Loop] [轮次 ${currentTurn}] 压缩失败，继续执行`, error);
     return didSnip ? 'snipped' : 'none';
   } finally {
-    yield { kind: 'compaction', phase: 'end' };
+    yield {
+      kind: 'compaction',
+      phase: 'end',
+      reason: 'threshold',
+      outcome,
+      strategy,
+      preTokens,
+      postTokens,
+    };
   }
 }
 
@@ -1709,7 +1743,6 @@ validates the object and may return a bounded corrective error.`;
 
         // 3. 轮次计数
         turnsCount++;
-        reactiveCompaction.reset();
         yield { kind: 'turn_start', turn: turnsCount, maxTurns };
 
         if (options?.signal?.aborted) {
@@ -1812,44 +1845,118 @@ validates the object and may return a bounded corrective error.`;
           }
         } catch (llmError) {
           // Check if it's a 413 / prompt_too_long error
-          if (isPromptTooLongError(llmError)) {
+          if (
+            isPromptTooLongError(llmError) &&
+            !providerReplayBoundaryCrossed(llmError) &&
+            reactiveCompaction.canAttempt()
+          ) {
             logger.warn('[Loop] 检测到 prompt_too_long 错误，尝试反应式压缩');
             const chatConfig = deps.chatService.getConfig();
-            const result = await reactiveCompaction.tryReactiveCompact(
-              context.messages,
-              {
-                modelName: chatConfig.model,
-                modelProvider: chatConfig.provider,
-                maxContextTokens: chatConfig.maxContextTokens ?? 0,
-                apiKey: chatConfig.apiKey,
-                baseURL: chatConfig.baseUrl,
-                signal: options?.signal,
-                activeTask: activeUserRequest,
-                workspaceRoot: context.workspaceRoot || getCwd(),
-                sessionId: context.sessionId,
+            let recovered = false;
+            let outcome: 'completed' | 'fallback' | 'failed' = 'failed';
+            let strategy: 'llm' | 'fallback' | 'snip' | undefined;
+            let preTokens: number | undefined;
+            let postTokens: number | undefined;
+            yield {
+              kind: 'compaction',
+              phase: 'start',
+              reason: 'context_limit',
+            };
+            try {
+              streamingExecutor?.discard();
+              const result = await reactiveCompaction.tryReactiveCompact(
+                context.messages,
+                {
+                  modelName: chatConfig.model,
+                  modelProvider: chatConfig.provider,
+                  maxContextTokens: chatConfig.maxContextTokens ?? 0,
+                  apiKey: chatConfig.apiKey,
+                  baseURL: chatConfig.baseUrl,
+                  signal: options?.signal,
+                  activeTask: activeUserRequest,
+                  workspaceRoot: context.workspaceRoot || getCwd(),
+                  sessionId: context.sessionId,
+                }
+              );
+              strategy = result.strategy;
+              preTokens = result.preTokens;
+              postTokens = result.postTokens;
+              if (
+                result.success &&
+                result.strategy &&
+                result.summary !== undefined &&
+                result.preTokens !== undefined
+              ) {
+                if (result.usage) {
+                  yield {
+                    kind: 'token_usage',
+                    usage: toTokenUsageInfo(
+                      result.usage,
+                      chatConfig.maxContextTokens ?? 0
+                    ),
+                  };
+                }
+                await persistCompaction(
+                  deps,
+                  context,
+                  result.summary,
+                  {
+                    trigger: 'auto',
+                    reason: 'context_limit',
+                    strategy: result.strategy,
+                    preTokens: result.preTokens,
+                    postTokens: result.postTokens,
+                    filesIncluded: result.filesIncluded,
+                    replacementMessages: result.messages,
+                  },
+                  { required: deps.executionEngine !== undefined }
+                );
+                context.messages = result.messages;
+                // 同步到 state（此时 pending 已被 writeback() commit，为空）
+                state.replaceHistory(context.messages);
+                requiredToolName = turnRequiredToolName;
+                outcome = result.strategy === 'llm' ? 'completed' : 'fallback';
+                recovered = true;
+                logger.info('[Loop] 反应式压缩成功，重试 LLM 调用');
               }
-            );
-            if (result.success) {
-              if (result.usage) {
-                yield {
-                  kind: 'token_usage',
-                  usage: toTokenUsageInfo(
-                    result.usage,
-                    chatConfig.maxContextTokens ?? 0
-                  ),
-                };
-              }
-              context.messages = result.messages;
-              // 同步到 state（此时 pending 已被 writeback() commit，为空）
-              state.replaceHistory(context.messages);
-              requiredToolName = turnRequiredToolName;
-              logger.info('[Loop] 反应式压缩成功，重试 LLM 调用');
-              turnsCount--;
-              continue; // Retry the turn
+            } catch (compactionError) {
+              if (isAbortError(compactionError)) throw compactionError;
+              logger.error(
+                '[Loop] 反应式压缩失败，不重放 Provider 请求',
+                compactionError
+              );
+            } finally {
+              yield {
+                kind: 'compaction',
+                phase: 'end',
+                reason: 'context_limit',
+                outcome,
+                strategy,
+                preTokens,
+                postTokens,
+              };
             }
+            if (recovered) {
+              turnsCount--;
+              continue; // Retry the turn without resetting the one-shot recovery guard.
+            }
+          } else if (
+            isPromptTooLongError(llmError) &&
+            providerReplayBoundaryCrossed(llmError)
+          ) {
+            logger.warn(
+              '[Loop] prompt_too_long arrived after Provider output; refusing replay'
+            );
+          } else if (isPromptTooLongError(llmError)) {
+            logger.warn(
+              '[Loop] reactive context recovery already attempted; refusing another replay'
+            );
           }
           throw llmError; // Re-throw if not recoverable
         }
+
+        // A successful Provider boundary starts a fresh one-shot recovery scope.
+        reactiveCompaction.reset();
 
         // Token 使用量
         lastApiCallTime = Date.now();
@@ -3526,6 +3633,15 @@ validates the object and may return a bounded corrective error.`;
               // 用户选择继续，压缩上下文
               // 先同步 state 到 context，确保压缩读取到完整历史
               state.writeback();
+              let compactionOutcome: 'completed' | 'fallback' | 'failed' = 'failed';
+              let compactionStrategy: 'llm' | 'fallback' | undefined;
+              let compactionPreTokens: number | undefined;
+              let compactionPostTokens: number | undefined;
+              yield {
+                kind: 'compaction',
+                phase: 'start',
+                reason: 'turn_limit',
+              };
               try {
                 const chatConfig = deps.chatService.getConfig();
                 const compactResult = await CompactionService.compact(
@@ -3554,9 +3670,6 @@ validates the object and may return a bounded corrective error.`;
                   };
                 }
 
-                context.messages = compactResult.compactedMessages;
-                state.replaceHistory(context.messages);
-
                 const continueMessage: Message = {
                   role: 'user',
                   content:
@@ -3565,21 +3678,46 @@ validates the object and may return a bounded corrective error.`;
                     'Please continue the conversation from where we left it off without asking the user any further questions. ' +
                     'Continue with the last task that you were asked to work on.',
                 };
-                state.appendToHistory(continueMessage);
+                const replacementMessages = [
+                  ...compactResult.compactedMessages,
+                  continueMessage,
+                ];
+                compactionStrategy = compactResult.success ? 'llm' : 'fallback';
+                compactionPreTokens = compactResult.preTokens;
+                compactionPostTokens = compactResult.postTokens;
 
                 // 保存压缩数据到 JSONL
-                await persistCompaction(deps, context, compactResult.summary, {
-                  trigger: 'auto',
-                  preTokens: compactResult.preTokens,
-                  postTokens: compactResult.postTokens,
-                  filesIncluded: compactResult.filesIncluded,
-                });
+                await persistCompaction(
+                  deps,
+                  context,
+                  compactResult.summary,
+                  {
+                    trigger: 'auto',
+                    reason: 'turn_limit',
+                    strategy: compactionStrategy,
+                    preTokens: compactResult.preTokens,
+                    postTokens: compactResult.postTokens,
+                    filesIncluded: compactResult.filesIncluded,
+                    replacementMessages,
+                  },
+                  { required: deps.executionEngine !== undefined }
+                );
+                context.messages = replacementMessages;
+                state.replaceHistory(context.messages);
+                compactionOutcome = compactResult.success ? 'completed' : 'fallback';
               } catch (compactError) {
-                // 降级处理：保留最近 80 条消息
-                logger.error('[Loop] 压缩失败，使用降级策略:', compactError);
-                const currentHistory = state.getHistory();
-                const recentHistory = currentHistory.slice(-80);
-                state.replaceHistory(recentHistory);
+                logger.error('[Loop] 轮次上限压缩失败，停止继续执行:', compactError);
+                throw compactError;
+              } finally {
+                yield {
+                  kind: 'compaction',
+                  phase: 'end',
+                  reason: 'turn_limit',
+                  outcome: compactionOutcome,
+                  strategy: compactionStrategy,
+                  preTokens: compactionPreTokens,
+                  postTokens: compactionPostTokens,
+                };
               }
 
               turnsCount = 0;

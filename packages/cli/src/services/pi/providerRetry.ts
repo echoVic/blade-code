@@ -33,6 +33,7 @@ export interface ProviderRetryClassification {
 export const MAX_PROVIDER_RETRY_DELAY_MS = 60_000;
 const BASE_PROVIDER_RETRY_DELAY_MS = 500;
 const MAX_EXPONENTIAL_RETRY_DELAY_MS = 8_000;
+const replayBoundaryErrors = new WeakSet<object>();
 
 const NON_RETRYABLE_LIMIT_MARKERS = [
   'gousagelimiterror',
@@ -79,6 +80,21 @@ function errorMessage(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).toLowerCase();
 }
 
+export function isProviderContextLimitError(error: unknown): boolean {
+  const message = errorMessage(error);
+  return NON_RETRYABLE_CONTEXT_MARKERS.some((marker) => message.includes(marker));
+}
+
+export function markProviderReplayBoundary(error: unknown): void {
+  if (error !== null && typeof error === 'object') {
+    replayBoundaryErrors.add(error);
+  }
+}
+
+export function providerReplayBoundaryCrossed(error: unknown): boolean {
+  return error !== null && typeof error === 'object' && replayBoundaryErrors.has(error);
+}
+
 function errorCode(error: unknown): unknown {
   return error !== null && typeof error === 'object' && 'code' in error
     ? error.code
@@ -118,7 +134,7 @@ export function classifyProviderRetry(
   }
   if (
     NON_RETRYABLE_LIMIT_MARKERS.some((marker) => message.includes(marker)) ||
-    NON_RETRYABLE_CONTEXT_MARKERS.some((marker) => message.includes(marker))
+    isProviderContextLimitError(error)
   ) {
     return { retryable: false };
   }

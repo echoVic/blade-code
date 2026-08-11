@@ -934,6 +934,71 @@ describe('headless runner', () => {
     expect(stderrOutput).toContain('[context] compacting completed');
   });
 
+  it('emits reactive compaction metadata in JSONL mode', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    agentState.chatStream.mockImplementationOnce(
+      mockChatGenerator([
+        {
+          kind: 'compaction',
+          phase: 'start',
+          reason: 'context_limit',
+        },
+        {
+          kind: 'compaction',
+          phase: 'end',
+          reason: 'context_limit',
+          strategy: 'llm',
+          outcome: 'completed',
+          preTokens: 120_000,
+          postTokens: 2_000,
+        },
+      ])
+    );
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const { HeadlessJsonlEventSchema } = await import(
+      '../../../src/commands/headlessEvents.js'
+    );
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        outputFormat: 'jsonl',
+        message: 'recover context',
+      },
+      { stdout, stderr }
+    );
+    const events = stdout.write.mock.calls
+      .map((call) => String(call[0] ?? ''))
+      .join('')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)))
+      .filter((event) => event.type === 'compacting');
+
+    expect(exitCode).toBe(0);
+    expect(events).toEqual([
+      {
+        event_version: 1,
+        type: 'compacting',
+        state: 'started',
+        reason: 'context_limit',
+      },
+      {
+        event_version: 1,
+        type: 'compacting',
+        state: 'completed',
+        reason: 'context_limit',
+        strategy: 'llm',
+        outcome: 'completed',
+        pre_tokens: 120_000,
+        post_tokens: 2_000,
+      },
+    ]);
+    expect(stderr.write).not.toHaveBeenCalled();
+  });
+
   it('emits sanitized Provider retry lifecycle events in JSONL mode', async () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };

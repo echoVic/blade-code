@@ -1597,7 +1597,9 @@ const handleTurnStarted: EventHandler = (props, get, set) => {
 
 const handleCompactionStarted: EventHandler = (props, get, set) => {
   if (props.sessionId !== get().currentSessionId) return;
-  set({ agentPhase: 'compacting' });
+  set({
+    agentPhase: props.reason === 'context_limit' ? 'recovering_context' : 'compacting',
+  });
 };
 
 const handleCompactionCompleted: EventHandler = (props, get, set) => {

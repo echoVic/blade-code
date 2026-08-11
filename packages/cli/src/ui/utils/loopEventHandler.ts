@@ -60,6 +60,7 @@ export interface LoopEventDeps {
 export interface LoopEventStats {
   contentDeltaCount: number;
   contentDeltaTotalLen: number;
+  compactionCount?: number;
 }
 
 // ==================== 工厂函数 ====================
@@ -251,6 +252,9 @@ export function createLoopEventHandler(
         deps.sessionActions.setCompacting(event.phase === 'start');
         if (event.phase === 'end') {
           deps.sessionActions.resetContextUsage();
+          if (event.outcome !== 'failed') {
+            stats.compactionCount = (stats.compactionCount ?? 0) + 1;
+          }
         }
         break;
 

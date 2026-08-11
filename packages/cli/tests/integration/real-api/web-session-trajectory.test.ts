@@ -25,6 +25,7 @@ import {
 import { BladeServer } from '../../../src/server/server.js';
 import { SkillRegistry } from '../../../src/skills/SkillRegistry.js';
 import { ensureStoreInitialized, getState } from '../../../src/store/vanilla.js';
+import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import {
   assertForkChildToolTrace,
   assertForkLineage,
@@ -38,6 +39,7 @@ import {
   type ForkFixture,
   findSessionTranscript,
   readSessionEvents,
+  startContextLimitProviderProxy,
   startHeldProviderProxy,
 } from './sessionForkTrajectoryHarness.js';
 import {
@@ -291,7 +293,10 @@ async function sendMessage(
     }
   );
   if (response.status !== 202) {
-    throw new Error(`send message failed with HTTP ${response.status}`);
+    const detail = (await response.text()).slice(0, 500);
+    throw new Error(
+      `send message failed with HTTP ${response.status}: ${detail || '<empty>'}`
+    );
   }
   return parseSchema(AcceptedMessageSchema, await response.json());
 }
@@ -662,19 +667,11 @@ function codingPrompt(): string {
 }
 
 function compactionPrompt(): string {
-  const archivedContext = Array.from(
-    { length: 1_000 },
-    (_, index) =>
-      `Archived diagnostic record ${index}: historical-only context; preserve the active file task.`
-  ).join('\n');
   return [
     'Perform a context-compaction continuation audit in this repository.',
     'First call Read for package.json and wait for its result.',
     'Then use Write to create compacted.txt containing exactly the single line compacted.',
     'Do not read or modify any other file. Finish immediately after Write succeeds.',
-    '<archived-context>',
-    archivedContext,
-    '</archived-context>',
   ].join('\n');
 }
 
@@ -683,7 +680,10 @@ interface RegressionCaseContext {
   server: TestServer;
   trackRef(ref: SessionRef): void;
   trackCollector(collector: EventCollector): void;
-  setRuntimeConfig(maxContextTokens?: number): RuntimeConfig;
+  setRuntimeConfig(options?: {
+    baseURL?: string;
+    maxOutputTokens?: number;
+  }): RuntimeConfig;
 }
 
 async function withRegressionCase(
@@ -708,24 +708,28 @@ async function withRegressionCase(
     initializeIsolatedExtensions(fixture);
     await ensureStoreInitialized();
     originalConfig = getState().config.config;
-    server = await BladeServer.listenAsync({ port: 0, hostname: '127.0.0.1' });
-    const activeServer = server;
-    await run({
-      fixture,
-      server: activeServer,
-      trackRef: (ref) => refs.push(ref),
-      trackCollector: (collector) => collectors.push(collector),
-      setRuntimeConfig: (maxContextTokens = 64_000) => {
-        const config = createResolvedConfig(modelConfig, []);
-        const selected = config.models[0];
-        if (!selected) throw new Error('Regression model config is empty');
-        selected.overrides = {
-          ...selected.overrides,
-          maxOutputTokens: Math.min(4096, maxContextTokens),
-        };
-        getState().config.actions.setConfig(config);
-        return config;
-      },
+    await runWithCwdOverride(fixture.workspace, async () => {
+      server = await BladeServer.listenAsync({ port: 0, hostname: '127.0.0.1' });
+      const activeServer = server;
+      await run({
+        fixture,
+        server: activeServer,
+        trackRef: (ref) => refs.push(ref),
+        trackCollector: (collector) => collectors.push(collector),
+        setRuntimeConfig: (options = {}) => {
+          const config = createResolvedConfig(modelConfig, [], {
+            baseURL: options.baseURL,
+          });
+          const selected = config.models[0];
+          if (!selected) throw new Error('Regression model config is empty');
+          selected.overrides = {
+            ...selected.overrides,
+            maxOutputTokens: options.maxOutputTokens ?? 4096,
+          };
+          getState().config.actions.setConfig(config);
+          return config;
+        },
+      });
     });
   } finally {
     for (const collector of collectors.reverse()) {
@@ -906,43 +910,55 @@ describeWebRegression('Web session trajectory regressions (real API)', () => {
         modelLabel,
         'compaction',
         async ({ fixture, server, trackCollector, trackRef, setRuntimeConfig }) => {
-          initializeCodingWorkspace(fixture);
-          setRuntimeConfig(28_000);
-          const ref = await createSession(server, fixture.workspace);
-          trackRef(ref);
-          const collector = await collectEvents(server, ref);
-          trackCollector(collector);
-          const eventBoundary = collector.events.length;
-          const accepted = await sendMessage(server, ref, compactionPrompt());
-          await waitForRunCompletion(
-            server,
-            ref,
-            collector,
-            accepted.runId,
-            eventBoundary,
-            300_000
+          const proxy = await startContextLimitProviderProxy(
+            modelConfig.baseURL ?? 'https://api.deepseek.com'
           );
+          try {
+            initializeCodingWorkspace(fixture);
+            setRuntimeConfig({ baseURL: proxy.baseUrl });
+            const ref = await createSession(server, fixture.workspace);
+            trackRef(ref);
+            const collector = await collectEvents(server, ref);
+            trackCollector(collector);
+            const eventBoundary = collector.events.length;
+            const accepted = await sendMessage(server, ref, compactionPrompt());
+            await waitForRunCompletion(
+              server,
+              ref,
+              collector,
+              accepted.runId,
+              eventBoundary,
+              300_000
+            );
 
-          const scopedEvents = collector.events.slice(eventBoundary);
-          const compactStart = scopedEvents.findIndex(
-            (event) => event.type === 'compaction.started'
-          );
-          const compactEnd = scopedEvents.findIndex(
-            (event) => event.type === 'compaction.completed'
-          );
-          const writeStart = scopedEvents.findIndex(
-            (event) =>
-              event.type === 'tool.start' &&
-              ['Write', 'Edit'].includes(String(event.properties.toolName))
-          );
-          expect(compactStart).toBeGreaterThanOrEqual(0);
-          expect(compactEnd).toBeGreaterThan(compactStart);
-          expect(writeStart).toBeGreaterThan(compactEnd);
-          expect(
-            readFileSync(path.join(fixture.workspace, 'compacted.txt'), 'utf8')
-          ).toMatch(/^compacted\r?\n?$/);
-          assertNoSecrets(collector.events, [modelConfig.apiKey]);
-          assertCollectorIdentity(collector, ref);
+            const scopedEvents = collector.events.slice(eventBoundary);
+            const compactStart = scopedEvents.findIndex(
+              (event) =>
+                event.type === 'compaction.started' &&
+                event.properties.reason === 'context_limit'
+            );
+            const compactEnd = scopedEvents.findIndex(
+              (event) =>
+                event.type === 'compaction.completed' &&
+                event.properties.reason === 'context_limit'
+            );
+            const writeStart = scopedEvents.findIndex(
+              (event) =>
+                event.type === 'tool.start' &&
+                ['Write', 'Edit'].includes(String(event.properties.toolName))
+            );
+            expect(proxy.injectedFailures()).toBe(1);
+            expect(compactStart).toBeGreaterThanOrEqual(0);
+            expect(compactEnd).toBeGreaterThan(compactStart);
+            expect(writeStart).toBeGreaterThan(compactEnd);
+            expect(
+              readFileSync(path.join(fixture.workspace, 'compacted.txt'), 'utf8')
+            ).toMatch(/^compacted\r?\n?$/);
+            assertNoSecrets(collector.events, [modelConfig.apiKey]);
+            assertCollectorIdentity(collector, ref);
+          } finally {
+            await proxy.close();
+          }
         }
       );
     }, 360_000);

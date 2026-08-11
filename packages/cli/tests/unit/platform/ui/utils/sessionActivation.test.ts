@@ -12,6 +12,7 @@ const serviceMocks = vi.hoisted(() => ({
   forkSession: vi.fn(),
   listSessions: vi.fn(),
   loadSession: vi.fn(),
+  loadSessionModelContext: vi.fn(),
   toUISafeMessages: vi.fn(),
 }));
 const modelMocks = vi.hoisted(() => ({
@@ -30,6 +31,7 @@ vi.mock('../../../../../src/services/SessionService.js', async () => {
       forkSession: serviceMocks.forkSession,
       listSessions: serviceMocks.listSessions,
       loadSession: serviceMocks.loadSession,
+      loadSessionModelContext: serviceMocks.loadSessionModelContext,
       toUISafeMessages: serviceMocks.toUISafeMessages,
     },
   };
@@ -128,6 +130,8 @@ describe('activateSessionSelection', () => {
     serviceMocks.forkSession.mockReset();
     serviceMocks.listSessions.mockReset();
     serviceMocks.loadSession.mockReset();
+    serviceMocks.loadSessionModelContext.mockReset();
+    serviceMocks.loadSessionModelContext.mockResolvedValue(childMessages);
     serviceMocks.toUISafeMessages.mockReset();
     actions.restoreSession.mockReset();
     actions.addAssistantMessage.mockReset();

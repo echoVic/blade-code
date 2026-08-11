@@ -934,16 +934,24 @@ function createEventWriter(
         `[tokens] in=${usage.inputTokens} out=${usage.outputTokens} total=${usage.totalTokens} / ${usage.maxContextTokens}`
       );
     },
-    compacting(isCompacting: boolean) {
+    compacting(event: Extract<LoopEvent, { kind: 'compaction' }>) {
+      const isCompacting = event.phase === 'start';
       if (outputFormat === 'jsonl') {
         writeJsonl('compacting', {
           state: isCompacting ? 'started' : 'completed',
+          reason: event.reason,
+          strategy: event.strategy,
+          outcome: event.outcome,
+          pre_tokens: event.preTokens,
+          post_tokens: event.postTokens,
         });
         return;
       }
       writeLine(
         io.stderr,
-        isCompacting ? '[context] compacting started' : '[context] compacting completed'
+        isCompacting
+          ? `[context] compacting started${event.reason ? ` (${event.reason})` : ''}`
+          : `[context] compacting ${event.outcome ?? 'completed'}`
       );
     },
     providerRetry(event: Extract<LoopEvent, { kind: 'provider_retry' }>) {
@@ -1190,7 +1198,7 @@ export async function runHeadless(
       });
     }
     const contextMessages: Message[] = recoveredInteraction
-      ? await SessionService.loadSession(sessionId, workspaceRoot)
+      ? await SessionService.loadSessionModelContext(sessionId, workspaceRoot)
       : [...messages];
     const chatContext: ChatContext = {
       messages: contextMessages,
@@ -1417,7 +1425,7 @@ export async function runHeadless(
 
           // --- 压缩 ---
           case 'compaction':
-            eventWriter.compacting(event.phase === 'start');
+            eventWriter.compacting(event);
             break;
 
           // --- 业务事件 ---

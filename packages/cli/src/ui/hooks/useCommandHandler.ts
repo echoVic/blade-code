@@ -237,7 +237,11 @@ export const useCommandHandler = (
       stream: AsyncGenerator<LoopEvent, LoopResult, void>,
       abortController: AbortController
     ) => {
-      const stats = { contentDeltaCount: 0, contentDeltaTotalLen: 0 };
+      const stats = {
+        contentDeltaCount: 0,
+        contentDeltaTotalLen: 0,
+        compactionCount: 0,
+      };
       const eventHandler = createLoopEventHandler(
         {
           sessionActions,
@@ -280,6 +284,9 @@ export const useCommandHandler = (
         // 导致 executeCommand 的 finally 中 isOurTask 检查失败，isProcessing 永远不被重置。
         const abortController =
           commandActions.getAbortController() ?? commandActions.createAbortController();
+        // Snapshot prior model context before the optimistic UI message is added.
+        // The loop appends agentInput exactly once at its durable input boundary.
+        const contextMessages = buildContextMessagesFromSession(getState().session);
 
         const slashResult = await processSlashCommand(
           resolved,
@@ -400,8 +407,6 @@ export const useCommandHandler = (
           return { success: false, error: 'aborted' };
         }
 
-        const contextMessages = buildContextMessagesFromSession(getState().session);
-
         if (hookContextInjection) {
           contextMessages.push({
             role: 'system',
@@ -446,6 +451,9 @@ export const useCommandHandler = (
           }),
           abortController
         );
+        if (stats.compactionCount > 0) {
+          sessionActions.setCompactedContext(chatContext.messages);
+        }
 
         // --- 6. 后处理 ---
         if (loopResult.metadata?.outputTruncated) {
@@ -537,7 +545,7 @@ export const useCommandHandler = (
           await configActions().setPermissionMode(nextMode);
         },
       };
-      const { loopResult } = await consumeAgentStream(
+      const { loopResult, stats } = await consumeAgentStream(
         agent.chatStream('', chatContext, {
           stream: true,
           pendingInputOnly: hasPending,
@@ -545,6 +553,9 @@ export const useCommandHandler = (
         }),
         abortController
       );
+      if (stats.compactionCount > 0) {
+        sessionActions.setCompactedContext(chatContext.messages);
+      }
 
       if (loopResult.metadata?.outputTruncated) {
         sessionActions.addAssistantMessage(

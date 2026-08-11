@@ -1070,3 +1070,120 @@ export async function startHeldProviderProxy(upstreamBaseUrl: string): Promise<{
     }),
   };
 }
+
+export async function startContextLimitProviderProxy(upstreamBaseUrl: string): Promise<{
+  baseUrl: string;
+  injectedFailures(): number;
+  close(): Promise<void>;
+}> {
+  let upstream: URL;
+  try {
+    upstream = new URL(upstreamBaseUrl);
+  } catch {
+    throw new Error('Context-limit proxy requires a valid upstream base URL');
+  }
+  if (!['http:', 'https:'].includes(upstream.protocol)) {
+    throw new Error('Context-limit proxy upstream must use HTTP or HTTPS');
+  }
+
+  let injectedFailures = 0;
+  let closePromise: Promise<void> | undefined;
+  const controllers = new Set<AbortController>();
+  const server = createServer((request, response) => {
+    void (async () => {
+      const requestBody = await readRequestBody(request);
+      if (injectedFailures === 0) {
+        injectedFailures++;
+        response.writeHead(413, { 'content-type': 'application/json' });
+        response.end(
+          JSON.stringify({
+            error: {
+              type: 'invalid_request_error',
+              code: 'context_length_exceeded',
+              message: 'context_length_exceeded',
+            },
+          })
+        );
+        return;
+      }
+
+      const controller = new AbortController();
+      controllers.add(controller);
+      let responseComplete = false;
+      const abortUpstream = (): void => {
+        if (!responseComplete) controller.abort();
+      };
+      request.once('aborted', abortUpstream);
+      response.once('close', abortUpstream);
+      try {
+        const method = request.method ?? 'POST';
+        const upstreamResponse = await fetch(
+          buildUpstreamUrl(upstream, request.url ?? '/'),
+          {
+            method,
+            headers: copyRequestHeaders(request),
+            body:
+              method === 'GET' || method === 'HEAD' || requestBody.length === 0
+                ? undefined
+                : Uint8Array.from(requestBody),
+            redirect: 'manual',
+            signal: controller.signal,
+          }
+        );
+        if (response.destroyed) {
+          await upstreamResponse.body?.cancel().catch(() => undefined);
+          return;
+        }
+        response.writeHead(
+          upstreamResponse.status,
+          copyResponseHeaders(upstreamResponse.headers)
+        );
+        await writeResponseBody(upstreamResponse.body, response);
+        responseComplete = true;
+      } finally {
+        responseComplete = true;
+        controllers.delete(controller);
+        request.off('aborted', abortUpstream);
+        response.off('close', abortUpstream);
+      }
+    })().catch(() => {
+      if (response.destroyed) return;
+      if (response.headersSent) {
+        response.destroy();
+        return;
+      }
+      response.writeHead(502, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          error: {
+            message: 'Provider proxy forwarding failed',
+            type: 'proxy_error',
+          },
+        })
+      );
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  const address = server.address() as AddressInfo;
+
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    injectedFailures: () => injectedFailures,
+    close: () => {
+      if (closePromise) return closePromise;
+      for (const controller of controllers) controller.abort();
+      server.closeAllConnections();
+      closePromise = new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+      return closePromise;
+    },
+  };
+}
