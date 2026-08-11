@@ -1214,6 +1214,27 @@ export class AcpSession {
                 },
               });
               break;
+            case 'provider_retry':
+              this.sendUpdate({
+                sessionUpdate: 'session_info_update',
+                updatedAt: new Date().toISOString(),
+                _meta: {
+                  'blade/providerRetry': {
+                    phase: event.phase,
+                    attempt: event.attempt,
+                    maxRetries: event.maxRetries,
+                    reason: event.reason,
+                    ...(event.statusCode !== undefined
+                      ? { statusCode: event.statusCode }
+                      : {}),
+                    ...(event.delayMs !== undefined ? { delayMs: event.delayMs } : {}),
+                    ...(event.nextRetryAt !== undefined
+                      ? { nextRetryAt: event.nextRetryAt }
+                      : {}),
+                  },
+                },
+              });
+              break;
 
             // --- 业务事件 ---
             case 'task_update':

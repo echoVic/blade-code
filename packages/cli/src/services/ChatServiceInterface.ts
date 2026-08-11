@@ -34,6 +34,7 @@ import type { JsonValue, MessageRole } from '../store/types.js';
 import { getProviderHeaders } from '../ui/components/model-config/types.js';
 import { PiAIChatService } from './PiAIChatService.js';
 import type { PiModelCatalog } from './pi/PiModelCatalog.js';
+import type { ProviderRetryEvent } from './pi/providerRetry.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -174,6 +175,7 @@ export interface StreamChunk {
   finishReason?: string;
   usage?: UsageInfo;
   modelFallback?: boolean;
+  providerRetry?: ProviderRetryEvent;
 }
 
 /**

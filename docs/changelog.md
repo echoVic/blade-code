@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### ✨ 新功能
+
+- 新增统一 Provider Retry Lifecycle：仅在首个真实 stream chunk 前对瞬态
+  `408/409/429/5xx`、transport failure 与 premature stream close 自动重试，支持
+  `Retry-After` / `retry-after-ms`、有界 jitter backoff 和即时 AbortSignal 取消
+- `scheduled`、`attempt`、`recovered`、`exhausted` 通过同一 LoopEvent 投影到
+  CLI/TUI、Web、ACP、Headless 与 subagent；Web StatusBar 和 TUI loading 会显示当前
+  attempt 与等待时间，不再让恢复中的请求表现为静默卡死
+
+### 🔒 安全修复
+
+- Provider 内容、thinking、usage 或 tool call 一旦进入 Agent surface，后续故障立即
+  fail closed，不会自动重放可能重复副作用的请求；quota、billing、context overflow、
+  caller abort 和 stream idle watchdog 同样不进入 retry loop
+- Retry 事件只暴露分类原因、attempt、有界 delay 和可选 HTTP status，不记录原始
+  response body、headers、URL 或 credential
+
+### ✅ 测试相关
+
+- 新增真实 HTTP transport 故障注入，验证首个 `503 + retry-after-ms` 后自动恢复、
+  `scheduled → attempt → recovered` 顺序、一次内容提交和零敏感正文泄漏
+- 真实 DeepSeek coding trajectory 现在必须通过透明 503 proxy 自动恢复并输出稳定
+  Headless JSONL retry lifecycle，同时保持一次代码修改和项目测试通过
+- 增加 jitter/cap、Retry-After、取消、部分输出不重放、stream watchdog、LoopEvent、
+  TUI、Web、ACP、Headless、Server SSE 与 subagent 状态投影回归
+- Production Web GUI 实际显示 Provider retry attempt，随后无刷新完成并由 fresh tab
+  恢复最终回复，browser console 零错误；真实 TUI 显示 5 秒等待和 Esc 取消提示后完成
+  同一恢复轨迹
+- Release-blocking 真实 API 矩阵增加独立 Provider retry qualification，当前共 19 条
+  真实轨迹
+
 ## [0.10.13] - 2026-08-12
 
 ### 🐛 问题修复

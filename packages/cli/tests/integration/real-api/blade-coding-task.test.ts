@@ -1160,6 +1160,25 @@ describe.skipIf(!enabled)('Blade coding task (real API)', () => {
         expect(proxy.requestCount()).toBeGreaterThanOrEqual(2);
         expect(parsed.nonJsonLines).toEqual([]);
         expect(parsed.events.filter((event) => event.type === 'error')).toEqual([]);
+        expect(
+          parsed.events
+            .filter((event) => event.type === 'provider_retry')
+            .map((event) => event.phase)
+        ).toEqual(['scheduled', 'attempt', 'recovered']);
+        expect(
+          parsed.events.filter((event) => event.type === 'provider_retry')
+        ).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              phase: 'scheduled',
+              attempt: 1,
+              max_retries: 2,
+              reason: 'server_error',
+              status_code: 503,
+              delay_ms: 0,
+            }),
+          ])
+        );
         expect(toolStarts).toContain('Edit');
         expect(toolStarts).toContain('Bash');
         expect(diffNames).toEqual(['src/math.js']);

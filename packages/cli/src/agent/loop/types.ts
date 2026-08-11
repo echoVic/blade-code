@@ -10,6 +10,7 @@ import type {
   ChatCompletionMessageToolCall,
   IChatService,
 } from '../../services/ChatServiceInterface.js';
+import type { ProviderRetryEvent } from '../../services/pi/providerRetry.js';
 import type { JsonObject } from '../../store/types.js';
 import type { TaskListItem } from '../../tools/builtin/task/taskListTypes.js';
 import type { ToolExecutor } from '../../tools/execution/ToolExecutor.js';
@@ -54,7 +55,8 @@ export type ToolEvent =
 export type SystemEvent =
   | { kind: 'turn_start'; turn: number; maxTurns: number }
   | { kind: 'compaction'; phase: 'start' | 'end' }
-  | { kind: 'token_usage'; usage: TokenUsageInfo };
+  | { kind: 'token_usage'; usage: TokenUsageInfo }
+  | ({ kind: 'provider_retry' } & ProviderRetryEvent);
 
 /** 业务事件 */
 export type DomainEvent =

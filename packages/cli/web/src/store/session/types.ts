@@ -61,6 +61,13 @@ export type AgentPhase =
   | 'waiting_permission'
   | 'error';
 
+export interface ProviderRetryInfo {
+  phase: 'scheduled' | 'attempt' | 'exhausted';
+  attempt: number;
+  maxRetries: number;
+  delayMs?: number;
+}
+
 export interface TaskItem {
   id: string;
   subject: string;
@@ -293,6 +300,7 @@ export interface StreamingSlice {
   isStreaming: boolean;
   isStopping: boolean;
   agentPhase: AgentPhase;
+  providerRetry: ProviderRetryInfo | null;
   sessionEventConnectionState: TaskEventConnectionState | 'idle';
   currentRunId: string | null;
   pendingSteeringCount: number;

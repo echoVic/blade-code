@@ -62,6 +62,7 @@ function createMockDeps(overrides?: Partial<LoopEventDeps>): LoopEventDeps {
       addToolMessage: vi.fn(),
       updateTokenUsage: vi.fn(),
       setCompacting: vi.fn(),
+      setProviderRetry: vi.fn(),
       resetContextUsage: vi.fn(),
       resetTokenUsage: vi.fn(),
     } as any,
@@ -94,6 +95,38 @@ function createMockStats(): LoopEventStats {
 // ==================== 测试 ====================
 
 describe('createLoopEventHandler', () => {
+  it('projects Provider retry state without crossing the stream finalize boundary', () => {
+    const deps = createMockDeps();
+    const handler = createLoopEventHandler(deps, createMockStats());
+    const retry = {
+      kind: 'provider_retry',
+      phase: 'scheduled',
+      attempt: 1,
+      maxRetries: 2,
+      reason: 'server_error',
+      statusCode: 503,
+      delayMs: 1_000,
+      nextRetryAt: 2_000,
+    } as const;
+
+    handler(retry);
+
+    expect(deps.sessionActions.setProviderRetry).toHaveBeenCalledWith({
+      phase: 'scheduled',
+      attempt: 1,
+      maxRetries: 2,
+      reason: 'server_error',
+      statusCode: 503,
+      delayMs: 1_000,
+      nextRetryAt: 2_000,
+    });
+    expect(deps.sessionActions.finalizeStreamingMessage).not.toHaveBeenCalled();
+    expect(deps.streamingBuffer.resetStreamingBuffers).not.toHaveBeenCalled();
+
+    handler({ ...retry, phase: 'recovered' });
+    expect(deps.sessionActions.setProviderRetry).toHaveBeenLastCalledWith(null);
+  });
+
   // ==================== 场景 1: 正常 stream_end ====================
 
   describe('正常 stream_end 提交', () => {

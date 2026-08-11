@@ -106,6 +106,7 @@ const initialSessionState: SessionState = {
   currentStreamingLineCount: 0, // NEW: 已完成行总数
   currentStreamingVersion: 0, // NEW: 流式缓冲版本号
   finalizingStreamingMessageId: null, // 流式转最终渲染中的消息 ID
+  providerRetry: null,
 };
 
 /**
@@ -678,6 +679,12 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
           // 注意：不清理 currentThinkingContent，由调用方按需清理
           finalizingStreamingMessageId: null,
         },
+      }));
+    },
+
+    setProviderRetry: (providerRetry) => {
+      set((state) => ({
+        session: { ...state.session, providerRetry },
       }));
     },
 

@@ -79,6 +79,21 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   状态并替换旧连接；只有切换到临时会话、删除/归档当前 Session、取消或显式终止时
   才关闭 active subscription。React StrictMode 的 effect replay、Suspense 或 view
   remount 不得关闭 Store 已提交的连接。
+- Provider 请求重试只允许发生在首个真实 stream chunk 进入 Agent loop 之前。内容、
+  thinking、usage 或完整 tool call 一旦向上游 surface 发布，后续 transport/stream
+  故障必须 fail closed，不能重放请求或重复工具副作用。stream idle watchdog 超时同样
+  不自动重试，避免长时间静默后形成重叠请求或 retry storm。
+- Blade 关闭 pi-ai/Provider SDK 的内部自动重试，由单一 runtime policy 处理
+  `408`、`409`、`429`、`5xx`、网络故障和首 chunk 前的 stream close。策略优先遵守
+  `retry-after-ms` / `Retry-After`，否则使用带 jitter 的指数退避；单次等待最多
+  60 秒，全部 sleep 都响应 turn `AbortSignal`。quota/billing、context overflow、
+  caller abort 和显式 `x-should-retry: false` 立即失败。
+- Retry lifecycle 通过统一的 `provider_retry` LoopEvent 投影
+  `scheduled → attempt → recovered|exhausted`。事件只包含 attempt、max retries、
+  bounded delay、分类原因和可选 HTTP status，不包含 Provider response body、原始
+  headers、URL 或 credential。TUI loading、Web StatusBar、ACP
+  `session_info_update._meta["blade/providerRetry"]`、Headless JSONL 和 subagent SSE
+  消费同一协议；元事件不计为内容 chunk，不触发 stream commit 或工具执行。
 - user-turn rewind 不截断 transcript，而是追加 `session_rewound` marker。resume、
   catalog、fork、search 和 ContextManager 通过同一 projector 累积计算有效历史，
   被回退的原始事件保留用于审计但不会重新进入模型或 UI。

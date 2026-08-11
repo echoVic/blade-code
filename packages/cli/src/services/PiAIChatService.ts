@@ -18,7 +18,12 @@ import {
   hasNonThinkingToolHistory,
 } from './pi/messageHistory.js';
 import { createFallbackModel, createPiRuntime } from './pi/modelRuntime.js';
-import { buildPiOptions, isFallbackablePiError } from './pi/requestOptions.js';
+import {
+  classifyProviderRetry,
+  computeProviderRetryDelay,
+  type ProviderResponseMetadata,
+} from './pi/providerRetry.js';
+import { buildPiOptions, observePiProviderResponses } from './pi/requestOptions.js';
 import { DEFAULT_STREAM_IDLE_TIMEOUT_MS, streamPiModel } from './pi/streamAdapter.js';
 
 const logger = createLogger(LogCategory.CHAT);
@@ -118,72 +123,168 @@ export class PiAIChatService implements IChatService {
       signal,
       requiredTool
     );
+    let responseMetadata: ProviderResponseMetadata | undefined;
     const streamFrom = (model: Model<Api>) => {
+      responseMetadata = undefined;
       const watchdogController = new AbortController();
       const requestSignal = signal
         ? combineAbortSignals(signal, watchdogController.signal)
         : watchdogController.signal;
-      return streamPiModel(
-        this.models,
+      const piOptions = buildPiOptions(
+        this.config,
         model,
-        context,
-        buildPiOptions(
-          this.config,
-          model,
-          requestSignal,
-          requestOptions,
-          disableThinking
-        ),
-        {
-          idleTimeoutMs:
-            this.config.streamIdleTimeout ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
-          signal: requestSignal,
-          abort: (reason) => watchdogController.abort(reason),
-        }
+        requestSignal,
+        requestOptions,
+        disableThinking
       );
+      observePiProviderResponses(piOptions, model, (response) => {
+        responseMetadata = response;
+      });
+      return streamPiModel(this.models, model, context, piOptions, {
+        idleTimeoutMs: this.config.streamIdleTimeout ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+        signal: requestSignal,
+        abort: (reason) => watchdogController.abort(reason),
+      });
     };
 
     const maxRetries = this.config.maxRetries ?? 2;
+    const service = this;
+    const streamWithRetries = async function* (
+      model: Model<Api>,
+      onRealChunk: () => void
+    ): AsyncGenerator<StreamChunk, void, unknown> {
+      let lastRetryError: unknown;
+      let emitted = false;
+      let retryReason: ReturnType<typeof classifyProviderRetry>['reason'];
+      let retryStatusCode: number | undefined;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          let recoveredEmitted = false;
+          for await (const chunk of streamFrom(model)) {
+            if (attempt > 0 && retryReason && !recoveredEmitted) {
+              recoveredEmitted = true;
+              yield {
+                providerRetry: {
+                  phase: 'recovered',
+                  attempt,
+                  maxRetries,
+                  reason: retryReason,
+                  ...(retryStatusCode !== undefined
+                    ? { statusCode: retryStatusCode }
+                    : {}),
+                },
+              };
+            }
+            emitted = true;
+            onRealChunk();
+            yield chunk;
+          }
+          return;
+        } catch (error) {
+          lastRetryError = error;
+          service.logIdleTimeout(error, emitted, model);
+          await service.handleAbort(signal);
+          const classification = classifyProviderRetry(error, responseMetadata);
+          if (emitted) throw error;
+          if (!classification.retryable || !classification.reason) {
+            if (attempt > 0 && retryReason) {
+              yield {
+                providerRetry: {
+                  phase: 'exhausted',
+                  attempt,
+                  maxRetries,
+                  reason: retryReason,
+                  ...(retryStatusCode !== undefined
+                    ? { statusCode: retryStatusCode }
+                    : {}),
+                },
+              };
+            }
+            throw error;
+          }
+          retryReason = classification.reason;
+          retryStatusCode = classification.statusCode;
+          if (attempt < maxRetries) {
+            const retryAttempt = attempt + 1;
+            const delayMs = computeProviderRetryDelay(retryAttempt, responseMetadata);
+            yield {
+              providerRetry: {
+                phase: 'scheduled',
+                attempt: retryAttempt,
+                maxRetries,
+                reason: classification.reason,
+                ...(classification.statusCode !== undefined
+                  ? { statusCode: classification.statusCode }
+                  : {}),
+                delayMs,
+                nextRetryAt: Date.now() + delayMs,
+              },
+            };
+            await abortableSleep(delayMs, signal, { throwOnAbort: true });
+            yield {
+              providerRetry: {
+                phase: 'attempt',
+                attempt: retryAttempt,
+                maxRetries,
+                reason: classification.reason,
+                ...(classification.statusCode !== undefined
+                  ? { statusCode: classification.statusCode }
+                  : {}),
+              },
+            };
+          } else {
+            yield {
+              providerRetry: {
+                phase: 'exhausted',
+                attempt,
+                maxRetries,
+                reason: classification.reason,
+                ...(classification.statusCode !== undefined
+                  ? { statusCode: classification.statusCode }
+                  : {}),
+              },
+            };
+          }
+        }
+      }
+      throw lastRetryError;
+    };
+
     let lastError: unknown;
-    let emitted = false;
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        for await (const chunk of streamFrom(this.model)) {
-          emitted = true;
-          yield chunk;
-        }
-        return;
-      } catch (error) {
-        lastError = error;
-        this.logIdleTimeout(error, emitted, this.model);
-        await this.handleAbort(signal);
-        if (emitted || !isFallbackablePiError(error)) throw error;
-        if (attempt < maxRetries) {
-          await abortableSleep(1000 * 2 ** attempt, signal, {
-            throwOnAbort: true,
-          });
-        }
+    let primaryEmitted = false;
+    try {
+      for await (const chunk of streamWithRetries(this.model, () => {
+        primaryEmitted = true;
+      })) {
+        yield chunk;
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+      if (primaryEmitted || !classifyProviderRetry(error, responseMetadata).retryable) {
+        throw error;
       }
     }
 
     for (const fallback of this.config.fallbackModels ?? []) {
       yield { modelFallback: true };
       let fallbackEmitted = false;
-      let fallbackModel: Model<Api> | undefined;
       try {
-        fallbackModel = createFallbackModel(this.config, fallback);
-        for await (const chunk of streamFrom(fallbackModel)) {
+        const fallbackModel = createFallbackModel(this.config, fallback);
+        for await (const chunk of streamWithRetries(fallbackModel, () => {
           fallbackEmitted = true;
+        })) {
           yield chunk;
         }
         return;
       } catch (error) {
         lastError = error;
-        if (fallbackModel) {
-          this.logIdleTimeout(error, fallbackEmitted, fallbackModel);
+        if (
+          fallbackEmitted ||
+          !classifyProviderRetry(error, responseMetadata).retryable
+        ) {
+          throw error;
         }
-        await this.handleAbort(signal);
-        if (fallbackEmitted || !isFallbackablePiError(error)) throw error;
       }
     }
     throw lastError;

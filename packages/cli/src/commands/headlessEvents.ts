@@ -304,6 +304,23 @@ const CompactingEventSchema = event({
   state: StringEnum(['started', 'completed']),
 });
 
+const ProviderRetryEventSchema = event({
+  type: Type.Literal('provider_retry'),
+  phase: StringEnum(['scheduled', 'attempt', 'recovered', 'exhausted']),
+  attempt: Type.Integer({ minimum: 0 }),
+  max_retries: Type.Integer({ minimum: 0 }),
+  reason: StringEnum([
+    'rate_limit',
+    'server_error',
+    'timeout',
+    'transport',
+    'stream_closed',
+  ]),
+  status_code: Type.Optional(Type.Integer({ minimum: 100, maximum: 599 })),
+  delay_ms: Type.Optional(Type.Integer({ minimum: 0 })),
+  next_retry_at: Type.Optional(Type.Integer({ minimum: 0 })),
+});
+
 const TurnLimitEventSchema = event({
   type: Type.Literal('turn_limit'),
   turns_count: Type.Number(),
@@ -369,6 +386,7 @@ export const HeadlessJsonlEventSchema = Runtime(
     SubagentEventSchema,
     TokenUsageEventSchema,
     CompactingEventSchema,
+    ProviderRetryEventSchema,
     TurnLimitEventSchema,
     TaskSessionEventSchema,
     TaskAdmissionEventSchema,

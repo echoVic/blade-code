@@ -50,8 +50,9 @@ bun run qualify:production
 该命令运行固定的 release-blocking real matrix：真实 DeepSeek Flash/Pro Headless
 bugfix、GPT Web structured output、Claude ACP structured output、DeepSeek headless
 structured output、Web/ACP/TUI code review、durable interaction recovery、permission
-recovery、ACP model switch，以及 DeepSeek Flash 的 Runtime/Web/ACP host-authoritative
-Goal completion verification。Edit+rewind、开放式多文件迁移、compaction、进程树、
+recovery、ACP model switch、透明 503 proxy Provider recovery，以及 DeepSeek Flash
+的 Runtime/Web/ACP host-authoritative Goal completion verification。Edit+rewind、
+开放式多文件迁移、compaction、进程树、
 并发 owner 与 crash-tail 等高成本 provider/capability soak 由以下命令单独运行：
 
 ```bash
@@ -115,6 +116,19 @@ Runtime、TUI、Web、ACP 四条 production entrypoint。仅收到文本或 HTTP
 渠道健康资格还会分别从 Web route、TUI `/doctor` 和 ACP callback 对 GPT、domestic、
 Claude 发送最多 8 tokens 的真实 probe；结果必须使用 canonical failure 投影且不得
 包含模型原文、原始错误或 API key。
+
+Provider Retry 资格必须通过透明本地代理在第一次真实模型请求返回带
+`Retry-After` 的 `429` 或 `503`，第二次请求原样转发到真实 Provider。单个用户 turn
+必须在不依赖测试框架重跑的情况下完成真实工具修改与项目测试；Headless JSONL 必须
+依次出现 sanitized `provider_retry` 的 `scheduled`、`attempt`、`recovered`，只产生
+一次最终内容和一次工具副作用。确定性 transport 测试另行覆盖 jitter/cap、
+HTTP-date、`retry-after-ms`、backoff cancellation、quota/context fail-fast、部分输出
+后不重放、exhausted 与 fallback；Provider response body、headers 和 key 不得进入
+LoopEvent、SSE、ACP、JSONL 或 transcript。Production Web GUI 必须在同一 Session
+StatusBar 显示 retry attempt 与有界等待，随后无刷新完成，fresh tab 恢复最终结果且
+browser console 无 application error。TUI 条件允许时通过 Computer Use 验证 loading
+状态和 Esc 取消；ACP 必须通过 `session_info_update` metadata 投影且不污染 assistant
+正文。
 
 工具并发资格要求 GPT 在同一个 production stream 中同时调用两个已加载工具。两个
 工具在执行函数内互相等待，只有都进入 shared gate 才能释放；因此单纯缩短总耗时或

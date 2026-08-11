@@ -934,6 +934,79 @@ describe('headless runner', () => {
     expect(stderrOutput).toContain('[context] compacting completed');
   });
 
+  it('emits sanitized Provider retry lifecycle events in JSONL mode', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    agentState.chatStream.mockImplementationOnce(
+      mockChatGenerator([
+        {
+          kind: 'provider_retry',
+          phase: 'scheduled',
+          attempt: 1,
+          maxRetries: 2,
+          reason: 'server_error',
+          statusCode: 503,
+          delayMs: 750,
+          nextRetryAt: 1_750,
+        },
+        {
+          kind: 'provider_retry',
+          phase: 'recovered',
+          attempt: 1,
+          maxRetries: 2,
+          reason: 'server_error',
+          statusCode: 503,
+        },
+      ])
+    );
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const { HeadlessJsonlEventSchema } = await import(
+      '../../../src/commands/headlessEvents.js'
+    );
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        outputFormat: 'jsonl',
+        message: 'recover transparently',
+      },
+      { stdout, stderr }
+    );
+    const events = stdout.write.mock.calls
+      .map((call) => String(call[0] ?? ''))
+      .join('')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)))
+      .filter((event) => event.type === 'provider_retry');
+
+    expect(exitCode).toBe(0);
+    expect(events).toEqual([
+      {
+        event_version: 1,
+        type: 'provider_retry',
+        phase: 'scheduled',
+        attempt: 1,
+        max_retries: 2,
+        reason: 'server_error',
+        status_code: 503,
+        delay_ms: 750,
+        next_retry_at: 1_750,
+      },
+      {
+        event_version: 1,
+        type: 'provider_retry',
+        phase: 'recovered',
+        attempt: 1,
+        max_retries: 2,
+        reason: 'server_error',
+        status_code: 503,
+      },
+    ]);
+    expect(stderr.write).not.toHaveBeenCalled();
+  });
+
   it('prints structured error events when agent execution fails', async () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };

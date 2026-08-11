@@ -430,9 +430,14 @@ async function* processStreamResponse(
     let chunkCount = 0;
 
     for await (const chunk of stream) {
-      chunkCount++;
       if (signal?.aborted) break;
 
+      if (chunk.providerRetry) {
+        yield { kind: 'provider_retry', ...chunk.providerRetry };
+        continue;
+      }
+
+      chunkCount++;
       if (chunk.modelFallback) {
         executor?.discard();
         fullContent = '';

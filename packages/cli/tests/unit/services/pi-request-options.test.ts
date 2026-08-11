@@ -1,10 +1,11 @@
 import type { Api, Model, Usage } from '@earendil-works/pi-ai';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ChatConfig } from '../../../src/services/ChatServiceInterface.js';
 import {
   buildPiOptions,
   convertPiUsage,
   isFallbackablePiError,
+  observePiProviderResponses,
 } from '../../../src/services/pi/requestOptions.js';
 
 describe('convertPiUsage', () => {
@@ -269,5 +270,48 @@ describe('isFallbackablePiError', () => {
 
   it('does not classify a generic client error as retryable', () => {
     expect(isFallbackablePiError(new Error('status 400 invalid request'))).toBe(false);
+  });
+});
+
+describe('observePiProviderResponses', () => {
+  it('captures bounded retry directives from failed HTTP responses', async () => {
+    const previousFetch = globalThis.fetch;
+    const fetchMock = vi.fn(
+      async () =>
+        new Response('unavailable', {
+          status: 503,
+          headers: {
+            'retry-after': '4',
+            'retry-after-ms': '3500',
+            'x-should-retry': 'true',
+          },
+        })
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const observed: unknown[] = [];
+    const options: Record<string, unknown> = {};
+
+    try {
+      observePiProviderResponses(
+        options,
+        { api: 'openai-completions' } as Model<Api>,
+        (response) => observed.push(response)
+      );
+      const response = await (options.fetch as typeof fetch)(
+        'https://provider.example/v1/chat/completions'
+      );
+
+      expect(response.status).toBe(503);
+      expect(observed).toEqual([
+        {
+          statusCode: 503,
+          retryAfter: '4',
+          retryAfterMs: '3500',
+          shouldRetry: 'true',
+        },
+      ]);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
   });
 });

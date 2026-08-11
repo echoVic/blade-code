@@ -65,6 +65,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     isStreaming: false,
     isStopping: false,
     agentPhase: 'idle',
+    providerRetry: null,
     sessionEventConnectionState: 'idle',
     currentRunId: null,
     pendingSteeringCount: 0,
@@ -1367,7 +1368,62 @@ describe('eventHandlers', () => {
       type: 'model.fallback',
       properties: { sessionId: 'session-1', projectPath: '/workspace/a' },
     });
-    expect(set).toHaveBeenLastCalledWith({ agentPhase: 'switching_model' });
+    expect(set).toHaveBeenLastCalledWith({
+      agentPhase: 'switching_model',
+      providerRetry: null,
+    });
+  });
+
+  test('tracks bounded Provider retry lifecycle without exposing error details', () => {
+    const state = createState();
+    state.agentPhase = 'running';
+    state.isStreaming = true;
+    const set = vi.fn((partial) => {
+      if (typeof partial === 'function') Object.assign(state, partial(state));
+      else Object.assign(state, partial);
+    });
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'provider.retry',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        phase: 'scheduled',
+        attempt: 1,
+        maxRetries: 2,
+        reason: 'server_error',
+        statusCode: 503,
+        delayMs: 1_250,
+        nextRetryAt: 5_000,
+      },
+    });
+    expect(state).toMatchObject({
+      isStreaming: true,
+      agentPhase: 'running',
+      providerRetry: {
+        attempt: 1,
+        maxRetries: 2,
+        reason: 'server_error',
+        statusCode: 503,
+        delayMs: 1_250,
+        nextRetryAt: 5_000,
+      },
+    });
+
+    dispatch({
+      type: 'provider.retry',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        phase: 'recovered',
+        attempt: 1,
+        maxRetries: 2,
+        reason: 'server_error',
+      },
+    });
+    expect(state.agentPhase).toBe('running');
+    expect(state.providerRetry).toBeNull();
   });
 
   test('tracks queued and applied steering depth from SSE events', () => {
@@ -1473,6 +1529,7 @@ describe('eventHandlers', () => {
       pendingSteeringCount: 0,
       pendingInputDelivery: null,
       recoveredSteeringCount: 0,
+      providerRetry: null,
     });
   });
 

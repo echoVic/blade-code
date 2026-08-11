@@ -331,6 +331,60 @@ class MissingRequiredTaskChatService implements IChatService {
   }
 }
 
+class ProviderRetryStreamingChatService implements IChatService {
+  async chat(): Promise<ChatResponse> {
+    throw new Error('Provider retry test must not use non-streaming chat');
+  }
+
+  async *streamChat(): AsyncGenerator<StreamChunk, void, unknown> {
+    yield {
+      providerRetry: {
+        phase: 'scheduled',
+        attempt: 1,
+        maxRetries: 2,
+        reason: 'server_error',
+        statusCode: 503,
+        delayMs: 750,
+        nextRetryAt: 1_750,
+      },
+    };
+    yield {
+      providerRetry: {
+        phase: 'attempt',
+        attempt: 1,
+        maxRetries: 2,
+        reason: 'server_error',
+        statusCode: 503,
+      },
+    };
+    yield {
+      providerRetry: {
+        phase: 'recovered',
+        attempt: 1,
+        maxRetries: 2,
+        reason: 'server_error',
+        statusCode: 503,
+      },
+    };
+    yield { content: 'Recovered exactly once.', finishReason: 'stop' };
+  }
+
+  getConfig(): ChatConfig {
+    return {
+      provider: 'openai-compatible',
+      apiKey: 'test-key',
+      baseUrl: 'https://example.invalid/v1',
+      model: 'test-model',
+      maxContextTokens: 64_000,
+      maxOutputTokens: 4_096,
+    };
+  }
+
+  updateConfig(_newConfig: Partial<ChatConfig>): void {
+    void _newConfig;
+  }
+}
+
 function createTaskLoopDependencies(
   chatService: IChatService,
   taskExecution: ReturnType<typeof vi.fn>,
@@ -417,6 +471,51 @@ function deferred() {
 }
 
 describe('executeLoopGenerator streaming tool policy', () => {
+  it('projects Provider retry metadata without treating it as model output', async () => {
+    const registry = new ToolRegistry();
+    const dependencies: LoopDependencies = {
+      chatService: new ProviderRetryStreamingChatService(),
+      toolExecutor: new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+      }),
+      executionEngine: undefined,
+      config: DEFAULT_CONFIG,
+      runtimeOptions: {},
+      currentModelMaxContextTokens: 64_000,
+      applySkillToolRestrictions: (tools) => tools,
+    };
+    const context: ChatContext = {
+      messages: [],
+      userId: 'provider-retry-user',
+      sessionId: 'provider-retry-session',
+      workspaceRoot: process.cwd(),
+      permissionMode: PermissionMode.YOLO,
+    };
+
+    const { events, result } = await drain(
+      executeLoopGenerator(
+        dependencies,
+        'Recover from a transient provider failure.',
+        context,
+        { stream: true },
+        undefined
+      )
+    );
+
+    expect(
+      events
+        .filter((event) => event.kind === 'provider_retry')
+        .map((event) => event.phase)
+    ).toEqual(['scheduled', 'attempt', 'recovered']);
+    expect(events.filter((event) => event.kind === 'content_delta')).toEqual([
+      { kind: 'content_delta', delta: 'Recovered exactly once.' },
+    ]);
+    expect(result).toMatchObject({
+      success: true,
+      finalMessage: 'Recovered exactly once.',
+    });
+  });
+
   it('requires Task at the provider boundary when delegation is explicit', async () => {
     const taskExecution = vi.fn(async () => ({
       success: true,

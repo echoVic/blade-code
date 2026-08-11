@@ -42,6 +42,28 @@ describe('headless event contract', () => {
       total: 4,
     });
 
+    const providerRetry = createHeadlessJsonlEvent('provider_retry', {
+      phase: 'scheduled',
+      attempt: 1,
+      max_retries: 2,
+      reason: 'server_error',
+      status_code: 503,
+      delay_ms: 750,
+      next_retry_at: 1_750,
+    });
+    expect(providerRetry).toEqual({
+      event_version: 1,
+      type: 'provider_retry',
+      phase: 'scheduled',
+      attempt: 1,
+      max_retries: 2,
+      reason: 'server_error',
+      status_code: 503,
+      delay_ms: 750,
+      next_retry_at: 1_750,
+    });
+    expect(() => HeadlessJsonlEventSchema.parse(providerRetry)).not.toThrow();
+
     expect(
       createHeadlessJsonlEvent('mcp_catalog_changed', {
         revision: 2,

@@ -19,6 +19,11 @@ const sessionState = vi.hoisted(() => ({
   },
   isStreaming: true,
   agentPhase: 'compacting',
+  providerRetry: null as {
+    attempt: number;
+    maxRetries: number;
+    delayMs?: number;
+  } | null,
 }));
 
 vi.mock('@/store/session', () => ({
@@ -35,6 +40,7 @@ describe('StatusBar', () => {
   beforeEach(() => {
     sessionState.isStreaming = true;
     sessionState.agentPhase = 'compacting';
+    sessionState.providerRetry = null;
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -54,5 +60,22 @@ describe('StatusBar', () => {
 
     expect(container.textContent).toContain('Compacting context...');
     expect(container.textContent).not.toContain('Generating...');
+  });
+
+  it('renders the Provider retry attempt and bounded wait', () => {
+    sessionState.agentPhase = 'running';
+    sessionState.providerRetry = {
+      attempt: 1,
+      maxRetries: 2,
+      delayMs: 1_250,
+    };
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    expect(container.textContent).toContain('Provider');
+    expect(container.textContent).toContain('Retrying');
+    expect(container.textContent).toContain('1/2');
+    expect(container.textContent).toContain('2s');
   });
 });

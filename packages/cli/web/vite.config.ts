@@ -15,6 +15,9 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         output: {
           manualChunks(id) {
+            if (id.endsWith('/store/session/handlers/eventHandlers.ts')) {
+              return 'session-events'
+            }
             if (!id.includes('node_modules')) return undefined
 
             if (

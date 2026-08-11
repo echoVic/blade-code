@@ -8,7 +8,12 @@
 
 import { Box, Text } from 'ink';
 import React, { useEffect, useState } from 'react';
-import { useIsProcessing, useIsReady, useTheme } from '../../store/selectors/index.js';
+import {
+  useIsProcessing,
+  useIsReady,
+  useProviderRetry,
+  useTheme,
+} from '../../store/selectors/index.js';
 import { useLoadingIndicator } from '../hooks/useLoadingIndicator.js';
 import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
 
@@ -53,6 +58,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
     // 使用 Zustand selectors 获取状态
     const isProcessing = useIsProcessing();
     const isReady = useIsReady();
+    const providerRetry = useProviderRetry();
     const visible = isProcessing || !isReady;
 
     const [spinnerFrame, setSpinnerFrame] = useState(0);
@@ -90,7 +96,13 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
     }
 
     // 显示优先级：message（中性/真实动作）> currentPhrase（趣味短语）
-    const displayMessage = message || currentPhrase || '正在思考中...';
+    const retryMessage =
+      providerRetry?.phase === 'scheduled'
+        ? `Provider 暂时不可用，${providerRetry.attempt}/${providerRetry.maxRetries} 次重试将在 ${Math.max(0, Math.ceil((providerRetry.delayMs ?? 0) / 1000))}s 后开始`
+        : providerRetry?.phase === 'attempt'
+          ? `正在重试 Provider (${providerRetry.attempt}/${providerRetry.maxRetries})`
+          : null;
+    const displayMessage = retryMessage || message || currentPhrase || '正在思考中...';
 
     // 统一显示：短语 + 计时器 + 取消提示
     if (isWideScreen) {

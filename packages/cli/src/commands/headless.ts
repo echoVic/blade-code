@@ -946,6 +946,28 @@ function createEventWriter(
         isCompacting ? '[context] compacting started' : '[context] compacting completed'
       );
     },
+    providerRetry(event: Extract<LoopEvent, { kind: 'provider_retry' }>) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('provider_retry', {
+          phase: event.phase,
+          attempt: event.attempt,
+          max_retries: event.maxRetries,
+          reason: event.reason,
+          status_code: event.statusCode,
+          delay_ms: event.delayMs,
+          next_retry_at: event.nextRetryAt,
+        });
+        return;
+      }
+      const delay =
+        event.delayMs !== undefined
+          ? ` in ${Math.max(0, Math.ceil(event.delayMs / 1000))}s`
+          : '';
+      writeLine(
+        io.stderr,
+        `[provider-retry:${event.phase}] ${event.attempt}/${event.maxRetries} ${event.reason}${delay}`
+      );
+    },
     turnLimit(turnsCount: number) {
       if (outputFormat === 'jsonl') {
         writeJsonl('turn_limit', {
@@ -1429,6 +1451,9 @@ export async function runHeadless(
           // --- 模型降级 ---
           case 'model_fallback':
             // 在 headless 模式下不需要特殊处理
+            break;
+          case 'provider_retry':
+            eventWriter.providerRetry(event);
             break;
 
           // --- 系统事件 ---

@@ -2136,6 +2136,16 @@ describe('SessionRoutes runtime reuse', () => {
       yield { kind: 'compaction', phase: 'start' };
       yield { kind: 'compaction', phase: 'end' };
       yield { kind: 'model_fallback' };
+      yield {
+        kind: 'provider_retry',
+        phase: 'scheduled',
+        attempt: 1,
+        maxRetries: 2,
+        reason: 'server_error',
+        statusCode: 503,
+        delayMs: 750,
+        nextRetryAt: 1_750,
+      };
       yield { kind: 'thinking_delta', delta: 'inspect the failure' };
       yield {
         kind: 'follow_up_started',
@@ -2219,6 +2229,19 @@ describe('SessionRoutes runtime reuse', () => {
       refFor('surface-events'),
       'model.fallback',
       {}
+    );
+    expect(Bus.publish).toHaveBeenCalledWith(
+      refFor('surface-events'),
+      'provider.retry',
+      {
+        phase: 'scheduled',
+        attempt: 1,
+        maxRetries: 2,
+        reason: 'server_error',
+        statusCode: 503,
+        delayMs: 750,
+        nextRetryAt: 1_750,
+      }
     );
     expect(Bus.publish).toHaveBeenCalledWith(
       refFor('surface-events'),

@@ -878,6 +878,74 @@ describe('AcpSession', () => {
       expect(response.stopReason).toBe('end_turn');
     });
 
+    it('projects Provider retry lifecycle through ACP session metadata', async () => {
+      const mockAgent = getMockAgent();
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield {
+          kind: 'provider_retry',
+          phase: 'scheduled',
+          attempt: 1,
+          maxRetries: 2,
+          reason: 'rate_limit',
+          statusCode: 429,
+          delayMs: 2_000,
+          nextRetryAt: 3_000,
+        } as LoopEvent;
+        yield {
+          kind: 'provider_retry',
+          phase: 'recovered',
+          attempt: 1,
+          maxRetries: 2,
+          reason: 'rate_limit',
+          statusCode: 429,
+        } as LoopEvent;
+        return { success: true, finalMessage: 'recovered' };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'recover the provider' }],
+      });
+
+      expect(mockConnection.sessionUpdates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'session_info_update',
+              _meta: {
+                'blade/providerRetry': {
+                  phase: 'scheduled',
+                  attempt: 1,
+                  maxRetries: 2,
+                  reason: 'rate_limit',
+                  statusCode: 429,
+                  delayMs: 2_000,
+                  nextRetryAt: 3_000,
+                },
+              },
+            }),
+          }),
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'session_info_update',
+              _meta: {
+                'blade/providerRetry': {
+                  phase: 'recovered',
+                  attempt: 1,
+                  maxRetries: 2,
+                  reason: 'rate_limit',
+                  statusCode: 429,
+                },
+              },
+            }),
+          }),
+        ])
+      );
+      expect(JSON.stringify(mockConnection.sessionUpdates)).not.toContain(
+        'provider-specific'
+      );
+    });
+
     it('fails closed with a typed ACP error when the agent loop fails', async () => {
       const mockAgent = getMockAgent();
       mockAgent.chatStream = vi.fn(async function* () {

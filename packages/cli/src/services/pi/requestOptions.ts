@@ -4,12 +4,21 @@ import type {
   ChatRequestOptions,
   UsageInfo,
 } from '../ChatServiceInterface.js';
+import {
+  classifyProviderRetry,
+  type ProviderResponseMetadata,
+} from './providerRetry.js';
 import { resolveResponseVerbosity } from './responseVerbosity.js';
 
 type PayloadHook = (
   payload: unknown,
   model: Model<Api>
 ) => unknown | undefined | Promise<unknown | undefined>;
+
+type ResponseHook = (
+  response: { status: number; headers: Record<string, string> },
+  model: Model<Api>
+) => void | Promise<void>;
 
 function addPayloadTransform(
   options: Record<string, unknown>,
@@ -206,6 +215,64 @@ export function buildPiOptions(
   return options;
 }
 
+function projectProviderResponse(
+  statusCode: number,
+  headers: Pick<Headers, 'get'>
+): ProviderResponseMetadata {
+  const shouldRetry = headers.get('x-should-retry');
+  return {
+    statusCode,
+    ...(headers.get('retry-after') !== null
+      ? { retryAfter: headers.get('retry-after') ?? undefined }
+      : {}),
+    ...(headers.get('retry-after-ms') !== null
+      ? { retryAfterMs: headers.get('retry-after-ms') ?? undefined }
+      : {}),
+    ...(shouldRetry === 'true' || shouldRetry === 'false' ? { shouldRetry } : {}),
+  };
+}
+
+const FETCH_OBSERVABLE_APIS = new Set<Api>([
+  'anthropic-messages',
+  'openai-completions',
+  'openai-responses',
+  'openai-codex-responses',
+  'azure-openai-responses',
+  'pi-messages',
+]);
+
+export function observePiProviderResponses(
+  options: Record<string, unknown>,
+  model: Model<Api>,
+  onResponse: (response: ProviderResponseMetadata) => void
+): void {
+  const previous = options.onResponse as ResponseHook | undefined;
+  options.onResponse = async (
+    response: { status: number; headers: Record<string, string> },
+    responseModel: Model<Api>
+  ) => {
+    const headers = new Headers(response.headers);
+    onResponse(projectProviderResponse(response.status, headers));
+    await previous?.(response, responseModel);
+  };
+
+  if (!FETCH_OBSERVABLE_APIS.has(model.api) || typeof globalThis.fetch !== 'function') {
+    return;
+  }
+  const providerFetch =
+    typeof options.fetch === 'function'
+      ? (options.fetch as typeof globalThis.fetch)
+      : globalThis.fetch.bind(globalThis);
+  options.fetch = async (
+    input: RequestInfo | URL,
+    init?: RequestInit
+  ): Promise<Response> => {
+    const response = await providerFetch(input, init);
+    onResponse(projectProviderResponse(response.status, response.headers));
+    return response;
+  };
+}
+
 export function convertPiUsage(usage: Usage): UsageInfo {
   return {
     promptTokens: usage.input + usage.cacheRead + usage.cacheWrite,
@@ -219,44 +286,5 @@ export function convertPiUsage(usage: Usage): UsageInfo {
 }
 
 export function isFallbackablePiError(error: unknown): boolean {
-  if (
-    error !== null &&
-    typeof error === 'object' &&
-    'code' in error &&
-    error.code === 'STREAM_IDLE_TIMEOUT'
-  ) {
-    return false;
-  }
-  const message =
-    error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-  const contextErrors = [
-    'prompt_too_long',
-    'prompt is too long',
-    'maximum context length',
-    'context length exceeded',
-    'context_length_exceeded',
-    'request too large',
-  ];
-  if (contextErrors.some((marker) => message.includes(marker))) return false;
-  if (/^(?:error:\s*)?(?:408|409|429|5\d\d)\b/.test(message)) return true;
-  const statusMatch = message.match(
-    /\b(?:status(?:\s+code)?|http)[:\s]+(408|409|429|5\d\d)\b/
-  );
-  if (statusMatch) return true;
-
-  return [
-    'timeout',
-    'timed out',
-    'econnreset',
-    'econnrefused',
-    'enotfound',
-    'eai_again',
-    'etimedout',
-    'fetch failed',
-    'network error',
-    'socket hang up',
-    'stream closed before completion',
-    'temporarily unavailable',
-    'upstream_error',
-  ].some((marker) => message.includes(marker));
+  return classifyProviderRetry(error).retryable;
 }

@@ -29,7 +29,7 @@ const createPiRuntime = vi.fn(() => ({
   model: piModelFixture,
 }));
 const buildPiOptions = vi.fn(() => ({}));
-const isFallbackablePiError = vi.fn(() => false);
+const observePiProviderResponses = vi.fn();
 const streamPiModel = vi.fn();
 
 vi.mock('../../../src/logging/Logger.js', () => ({
@@ -54,7 +54,7 @@ vi.mock('../../../src/services/pi/modelRuntime.js', () => ({
 
 vi.mock('../../../src/services/pi/requestOptions.js', () => ({
   buildPiOptions,
-  isFallbackablePiError,
+  observePiProviderResponses,
 }));
 
 vi.mock('../../../src/services/pi/streamAdapter.js', () => ({
@@ -91,7 +91,6 @@ describe('PiAIChatService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     createPiRuntime.mockReturnValue({ models: {}, model: piModelFixture });
-    isFallbackablePiError.mockReturnValue(false);
   });
 
   it('rejects a required tool that is unavailable', async () => {
@@ -245,7 +244,6 @@ describe('PiAIChatService', () => {
   });
 
   it('retries a fallbackable error before emitting output', async () => {
-    isFallbackablePiError.mockReturnValue(true);
     streamPiModel
       .mockReturnValueOnce(chunks([new Error('status 503')]))
       .mockReturnValueOnce(chunks([{ content: 'recovered' }]));
@@ -259,7 +257,6 @@ describe('PiAIChatService', () => {
   });
 
   it('does not replay a provider failure after partial output was emitted', async () => {
-    isFallbackablePiError.mockReturnValue(true);
     streamPiModel.mockReturnValue(
       chunks([
         { content: 'partial' },
@@ -274,7 +271,6 @@ describe('PiAIChatService', () => {
   });
 
   it('uses configured fallback models after primary retries fail', async () => {
-    isFallbackablePiError.mockReturnValue(true);
     streamPiModel
       .mockReturnValueOnce(chunks([new Error('status 503')]))
       .mockReturnValueOnce(chunks([{ content: 'fallback' }]));
@@ -290,5 +286,77 @@ describe('PiAIChatService', () => {
       provider: 'test',
       model: 'backup',
     });
+  });
+
+  it('emits an observable retry lifecycle before the replay boundary', async () => {
+    vi.useFakeTimers();
+    streamPiModel
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([{ content: 'recovered' }]));
+    const stream = (await service({ maxRetries: 1 })).streamChat([
+      { role: 'user', content: 'hello' },
+    ]);
+
+    try {
+      await expect(stream.next()).resolves.toMatchObject({
+        value: {
+          providerRetry: {
+            phase: 'scheduled',
+            attempt: 1,
+            maxRetries: 1,
+            reason: 'server_error',
+            statusCode: 503,
+          },
+        },
+      });
+      const attempt = stream.next();
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(attempt).resolves.toMatchObject({
+        value: {
+          providerRetry: {
+            phase: 'attempt',
+            attempt: 1,
+            maxRetries: 1,
+            reason: 'server_error',
+          },
+        },
+      });
+      await expect(stream.next()).resolves.toMatchObject({
+        value: {
+          providerRetry: {
+            phase: 'recovered',
+            attempt: 1,
+            maxRetries: 1,
+            reason: 'server_error',
+          },
+        },
+      });
+      await expect(stream.next()).resolves.toMatchObject({
+        value: { content: 'recovered' },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels an in-flight retry backoff without replaying the request', async () => {
+    vi.useFakeTimers();
+    streamPiModel.mockReturnValue(chunks([new Error('status 503')]));
+    const controller = new AbortController();
+    const stream = (await service({ maxRetries: 2 })).streamChat(
+      [{ role: 'user', content: 'hello' }],
+      undefined,
+      controller.signal
+    );
+
+    try {
+      await stream.next();
+      const pendingAttempt = stream.next();
+      controller.abort(new DOMException('Stopped', 'AbortError'));
+      await expect(pendingAttempt).rejects.toMatchObject({ name: 'AbortError' });
+      expect(streamPiModel).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -104,6 +104,7 @@ export function createLoopEventHandler(
 
       // --- stream_end：原子提交（flush 缓冲区 + finalize 消息）---
       case 'stream_end': {
+        deps.sessionActions.setProviderRetry(null);
         logger.debug('[loopEventHandler] stream_end', {
           contentDeltaCount: stats.contentDeltaCount,
           contentDeltaTotalLen: stats.contentDeltaTotalLen,
@@ -147,10 +148,18 @@ export function createLoopEventHandler(
       case 'model_fallback':
         // 标记流已终结，防止后续 late stream_end 复活内容
         streamFinalized = true;
+        deps.sessionActions.setProviderRetry(null);
         deps.streamingBuffer.resetStreamingBuffers();
         deps.sessionActions.discardStreamingMessage();
         deps.sessionActions.setCurrentThinkingContent(null);
         break;
+      case 'provider_retry': {
+        const { kind: _kind, ...retry } = event;
+        deps.sessionActions.setProviderRetry(
+          event.phase === 'scheduled' || event.phase === 'attempt' ? retry : null
+        );
+        break;
+      }
 
       // --- 工具事件 ---
       case 'tool_start': {
@@ -245,6 +254,7 @@ export function createLoopEventHandler(
           maxTurns: event.maxTurns,
         });
         deps.sessionActions.updateTokenUsage({ turnCount: event.turn });
+        deps.sessionActions.setProviderRetry(null);
         streamFinalized = false;
         break;
       case 'task_update':

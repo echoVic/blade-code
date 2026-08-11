@@ -3,6 +3,7 @@ import { taskFailureCode } from '@/lib/taskFailure';
 import type { Message as ServiceMessage, StreamEvent } from '@/services';
 import type {
   Message,
+  ProviderRetryInfo,
   SessionStoreState,
   SubagentProgress,
   TaskItem,
@@ -1606,7 +1607,16 @@ const handleCompactionCompleted: EventHandler = (props, get, set) => {
 
 const handleModelFallback: EventHandler = (props, get, set) => {
   if (props.sessionId !== get().currentSessionId) return;
-  set({ agentPhase: 'switching_model' });
+  set({ agentPhase: 'switching_model', providerRetry: null });
+};
+
+const handleProviderRetry: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  set({
+    agentPhase: 'running',
+    providerRetry:
+      props.phase === 'recovered' ? null : (props as unknown as ProviderRetryInfo),
+  });
 };
 
 const handleQuestionRequired: EventHandler = (props, get, set) => {
@@ -1742,6 +1752,7 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
       isStreaming: false,
       isStopping: false,
       agentPhase: 'idle',
+      providerRetry: null,
       currentRunId: null,
       pendingSteeringCount: 0,
       pendingInputDelivery: null,
@@ -1775,6 +1786,7 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
       isStreaming: false,
       isStopping: false,
       agentPhase: 'error',
+      providerRetry: null,
       currentRunId: null,
       pendingSteeringCount: 0,
       pendingInputDelivery: null,
@@ -1919,6 +1931,7 @@ const handleSessionRewound: EventHandler = (props, get, set) => {
     isStreaming: false,
     isStopping: false,
     agentPhase: 'idle',
+    providerRetry: null,
     currentRunId: null,
     pendingSteeringCount: 0,
     pendingInputDelivery: null,
@@ -2027,6 +2040,7 @@ const eventHandlers: Record<string, EventHandler> = {
   'committed.turn_started': handleTurnStarted,
   'committed.turn_completed': handleSessionCompleted,
   'committed.turn_aborted': handleSessionCompleted,
+  'provider.retry': handleProviderRetry,
   'compaction.started': handleCompactionStarted,
   'compaction.completed': handleCompactionCompleted,
   'model.fallback': handleModelFallback,

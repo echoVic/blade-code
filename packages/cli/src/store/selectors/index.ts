@@ -47,6 +47,9 @@ export const useIsCompacting = () =>
 export const useSessionCost = () =>
   useBladeStore((state) => state.session.tokenUsage.estimatedCostUsd);
 
+export const useProviderRetry = () =>
+  useBladeStore((state) => state.session.providerRetry);
+
 /**
  * 获取 Session Actions
  */
