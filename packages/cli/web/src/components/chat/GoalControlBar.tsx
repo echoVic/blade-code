@@ -27,7 +27,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { type TranslationKey, useT } from '@/i18n';
+import { type TranslationKey, useLocale, useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { type Goal, useSessionStore } from '@/store/session';
 
@@ -41,7 +41,7 @@ const STATUS_PRESENTATION: Record<
     accent: 'text-[hsl(var(--deck-accent))]',
   },
   verifying: {
-    labelKey: 'goal.status.verifying',
+    labelKey: 'goal.status.active',
     dot: 'animate-pulse bg-sky-400',
     accent: 'text-sky-600 dark:text-sky-300',
   },
@@ -72,16 +72,6 @@ const STATUS_PRESENTATION: Record<
   },
 };
 
-const VERIFICATION_LABEL: Record<
-  NonNullable<Goal['completionVerification']>['status'],
-  TranslationKey
-> = {
-  pending: 'goal.verification.pending',
-  pass: 'goal.verification.pass',
-  fail: 'goal.verification.fail',
-  partial: 'goal.verification.partial',
-};
-
 type PendingAction = 'pause' | 'resume' | 'edit' | 'delete' | null;
 
 function formatTokens(tokens: number): string {
@@ -99,6 +89,7 @@ function formatDuration(seconds: number): string {
 
 export function GoalControlBar() {
   const t = useT();
+  const { locale } = useLocale();
   const goal = useSessionStore((state) => state.goal);
   const pauseGoal = useSessionStore((state) => state.pauseGoal);
   const resumeGoal = useSessionStore((state) => state.resumeGoal);
@@ -186,7 +177,11 @@ export function GoalControlBar() {
                 presentation.accent
               )}
             >
-              {t(presentation.labelKey)}
+              {goal.status === 'verifying'
+                ? locale === 'zh'
+                  ? '验证中'
+                  : 'Verifying'
+                : t(presentation.labelKey)}
             </span>
 
             <span className="h-3 w-px shrink-0 bg-[hsl(var(--deck-hairline))]" />
@@ -331,26 +326,12 @@ export function GoalControlBar() {
                       data-goal-verification={goal.completionVerification.status}
                       className="mt-2 rounded-md border border-sky-200/50 bg-sky-50/60 px-2.5 py-2 text-[11px] text-sky-900 dark:border-sky-400/15 dark:bg-sky-400/[0.05] dark:text-sky-100"
                     >
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                        <span className="font-medium">
-                          {t('goal.verification.attempt', {
-                            n: goal.completionVerification.attempt,
-                          })}
-                        </span>
-                        <span>
-                          {t(VERIFICATION_LABEL[goal.completionVerification.status])}
-                        </span>
-                        {goal.completionVerification.verifierSessionId && (
-                          <span className="font-mono text-[10px] opacity-75">
-                            {t('goal.verification.session', {
-                              id: goal.completionVerification.verifierSessionId.slice(
-                                0,
-                                12
-                              ),
-                            })}
-                          </span>
-                        )}
-                      </div>
+                      <p className="font-mono font-medium">
+                        #{goal.completionVerification.attempt} ·{' '}
+                        {goal.completionVerification.status.toUpperCase()} ·{' '}
+                        {goal.completionVerification.verifierSessionId?.slice(0, 12) ??
+                          '-'}
+                      </p>
                       {goal.completionVerification.summary && (
                         <p className="mt-1 line-clamp-3 whitespace-pre-wrap opacity-80">
                           {goal.completionVerification.summary}

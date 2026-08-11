@@ -121,7 +121,7 @@ describe('GoalControlBar', () => {
       root.render(<GoalControlBar />);
     });
 
-    expect(container.textContent).toContain('Verifying completion');
+    expect(container.textContent).toContain('Verifying');
     expect(container.querySelector('[aria-label="Pause goal"]')).toBeTruthy();
     await act(async () => {
       container
@@ -131,8 +131,7 @@ describe('GoalControlBar', () => {
     });
 
     expect(container.querySelector('[data-goal-verification="partial"]')).toBeTruthy();
-    expect(container.textContent).toContain('Verification attempt 2');
-    expect(container.textContent).toContain('Independent PARTIAL');
+    expect(container.textContent).toContain('#2 · PARTIAL');
     expect(container.textContent).toContain('verifier-ses');
     expect(container.textContent).toContain('Independent verifier returned PARTIAL.');
     expect(container.textContent).toContain('sha256:aaaaaaaaaaaa');
