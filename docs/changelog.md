@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.20] - 2026-08-12
+
+### 🛡️ 稳定性
+
+- 新增 Durable Turn Finalization Receipt：最终 assistant 与 turn ID、有界 input IDs 和
+  turns/tool-calls/duration 指标同批提交，覆盖“响应已落盘、inbox ack/terminal 未落盘”的
+  进程退出窗口
+- 正常成功路径将 `inbox_acknowledged + turn_completed` 作为一个 validated batch fsync，
+  batch 成功后才清理 mailbox sidecar；不再允许单独提前 ack 成功输入
+- 冷启动看到 active turn + final receipt 且无 orphan tool call 时，会提交同一完成 batch
+  并重载 mailbox；旧输入不会重放，receipt 未声明的 follow-up 保持 pending
+
+### ✅ 测试相关
+
+- 新增正常原子完成、重复完成幂等、final-ready 冷恢复、sidecar reconcile、receipt
+  有界投影和未声明 follow-up 保留测试
+- release-blocking 真实 DeepSeek 轨迹在最终 assistant 提交后注入 terminal crash，验证
+  第二 Runtime 零重放旧输入、只处理新 marker，且历史产生两个 completed、零 aborted turn
+
 ## [0.10.19] - 2026-08-12
 
 ### 🛡️ 稳定性

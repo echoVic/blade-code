@@ -16,7 +16,11 @@ import {
   applyToolResultBudget,
   MessageBudgetTracker,
 } from '../../context/ToolResultBudget.js';
-import type { SubagentRunRef } from '../../context/types.js';
+import type {
+  MessagePersistenceMetadata,
+  SessionTurnFinalizationInfo,
+  SubagentRunRef,
+} from '../../context/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { renderMcpInstructionReminder } from '../../mcp/McpServerInstructions.js';
 import type {
@@ -888,6 +892,19 @@ validates the object and may return a bounded corrective error.`;
     // 2. 构建消息历史 — 使用 ConversationState 单一消息源
     const initialContextMessages = [...context.messages];
     const state = new ConversationState(context, finalSystemPrompt);
+    const buildTurnFinalization = async (): Promise<
+      SessionTurnFinalizationInfo | undefined
+    > => {
+      const finalization = options?.turnFinalization;
+      if (!finalization) return undefined;
+      return {
+        turnId: finalization.turnId,
+        inputMessageIds: await finalization.getInputMessageIds(),
+        turnsCount,
+        toolCallsCount: allToolResults.length,
+        durationMs: Math.max(0, Date.now() - startTime),
+      };
+    };
     if (
       isFreshConversation &&
       deps.staticProjectRules &&
@@ -2091,6 +2108,9 @@ validates the object and may return a bounded corrective error.`;
           recoveryAction.action === 'truncated' ||
           recoveryAction.action === 'budget_stop'
         ) {
+          const turnFinalization = await buildTurnFinalization();
+          const persistenceMetadata: MessagePersistenceMetadata | undefined =
+            turnFinalization ? { turnFinalization } : undefined;
           // 截断：recovery 达上限或 budget 递减收益，标记截断并正常结束
           // 必须将最终 assistant 消息写入 state，确保 writeback 时 context.messages 包含它
           state.appendAssistant({
@@ -2098,6 +2118,9 @@ validates the object and may return a bounded corrective error.`;
             content: turnResult.content || '',
             reasoningContent: turnResult.reasoningContent,
             tool_calls: turnResult.toolCalls,
+            ...(persistenceMetadata
+              ? { metadata: toJsonValue(persistenceMetadata) }
+              : {}),
           });
 
           const uuid = await saveAssistantMessage(
@@ -2105,7 +2128,8 @@ validates the object and may return a bounded corrective error.`;
             context,
             turnResult.content || '',
             lastMessageUuid,
-            turnResult.reasoningContent
+            turnResult.reasoningContent,
+            persistenceMetadata
           );
           if (uuid) lastMessageUuid = uuid;
 
@@ -2811,14 +2835,22 @@ validates the object and may return a bounded corrective error.`;
                   structuredOutputSchemaDigest: structuredOutputContract.schemaDigest,
                 }
               : undefined;
+          const turnFinalization = await buildTurnFinalization();
+          const finalPersistenceMetadata: MessagePersistenceMetadata | undefined =
+            structuredOutputMetadata || turnFinalization
+              ? {
+                  ...structuredOutputMetadata,
+                  ...(turnFinalization ? { turnFinalization } : {}),
+                }
+              : undefined;
 
           // 保存助手最终响应到 JSONL
           // 必须将最终 assistant 消息写入 state，确保 writeback 时 context.messages 包含它
           state.appendAssistant({
             role: 'assistant',
             content: finalMessage,
-            ...(structuredOutputMetadata
-              ? { metadata: toJsonValue(structuredOutputMetadata) }
+            ...(finalPersistenceMetadata
+              ? { metadata: toJsonValue(finalPersistenceMetadata) }
               : {}),
           });
 
@@ -2828,7 +2860,7 @@ validates the object and may return a bounded corrective error.`;
             finalMessage,
             lastMessageUuid,
             structuredOutputMetadata ? undefined : turnResult.reasoningContent,
-            structuredOutputMetadata
+            finalPersistenceMetadata
           );
           if (uuid) lastMessageUuid = uuid;
           if (goalCompletionReady && options?.goalLifecycle) {

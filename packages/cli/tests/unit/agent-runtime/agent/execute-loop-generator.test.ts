@@ -782,6 +782,53 @@ describe('executeLoopGenerator', () => {
       expect(result.error).not.toHaveProperty('details');
     });
 
+    it('commits a bounded turn-finalization receipt with the final response', async () => {
+      const { deps, saveMessage } = createTypedPersistenceHarness();
+      const getInputMessageIds = vi.fn().mockResolvedValue(['input-final']);
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock.mockResolvedValueOnce({
+        content: 'Durable final response',
+        toolCalls: undefined,
+        finishReason: 'stop',
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Return a final response.',
+          createMockContext(),
+          {
+            stream: false,
+            turnFinalization: {
+              turnId: 'turn-final',
+              getInputMessageIds,
+            },
+          },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(getInputMessageIds).toHaveBeenCalledOnce();
+      expect(saveMessage).toHaveBeenCalledWith(
+        'test-session',
+        'assistant',
+        'Durable final response',
+        expect.any(String),
+        {
+          turnFinalization: {
+            turnId: 'turn-final',
+            inputMessageIds: ['input-final'],
+            turnsCount: 1,
+            toolCallsCount: 0,
+            durationMs: expect.any(Number),
+          },
+        },
+        undefined,
+        undefined
+      );
+    });
+
     it('applies mid-turn steering before accepting the model final response', async () => {
       const contextManager = createMockContextManager();
       const deps = createMockDeps({

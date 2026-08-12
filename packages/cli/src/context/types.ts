@@ -387,6 +387,7 @@ export interface MessagePersistenceMetadata {
   codeReview?: JsonValue;
   structuredOutput?: JsonValue;
   structuredOutputSchemaDigest?: string;
+  turnFinalization?: SessionTurnFinalizationInfo;
 }
 
 export interface InboxAcknowledgementInfo {
@@ -422,6 +423,11 @@ export interface SessionTurnMetrics {
 export interface SessionTurnCompletionInfo extends SessionTurnMetrics {
   turnId: string;
   completedAt: string;
+}
+
+export interface SessionTurnFinalizationInfo extends SessionTurnMetrics {
+  turnId: string;
+  inputMessageIds: string[];
 }
 
 export type SessionTurnAbortCause =

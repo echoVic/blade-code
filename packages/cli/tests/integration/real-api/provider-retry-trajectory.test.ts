@@ -967,6 +967,154 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
     }
   }, 180_000);
 
+  it('recovers a committed final response without replaying its input', async () => {
+    if (!modelConfig) throw new Error('DeepSeek Flash configuration is required');
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-turn-final-'));
+    const sessionId = `real-turn-final-${Date.now()}`;
+    const firstMarker = 'TURN_FINAL_RECEIPT_COMMITTED';
+    const nextMarker = 'TURN_FINAL_NEXT_INPUT_OK';
+    let firstOutput = '';
+    let nextOutput = '';
+    let errorOutput = '';
+
+    try {
+      process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+      getState().config.actions.setConfig({
+        ...buildRealApiRuntimeConfig(modelConfig),
+        permissionMode: PermissionMode.YOLO,
+      });
+      const finalizationCrash = vi
+        .spyOn(SessionRuntime.prototype, 'finishTurn')
+        .mockRejectedValue(new Error('injected crash before turn terminal'));
+      let firstExitCode = 1;
+      try {
+        firstExitCode = await runWithCwdOverride(workspace, () =>
+          runHeadless(
+            {
+              headless: true,
+              outputFormat: 'jsonl',
+              sessionId,
+              maxTurns: 1,
+              message: `Reply with exactly ${firstMarker} and nothing else.`,
+            },
+            {
+              stdout: {
+                write(chunk: string) {
+                  firstOutput += chunk;
+                  return true;
+                },
+              },
+              stderr: {
+                write(chunk: string) {
+                  errorOutput += chunk;
+                  return true;
+                },
+              },
+            }
+          )
+        );
+      } catch {
+        firstExitCode = 1;
+      } finally {
+        finalizationCrash.mockRestore();
+      }
+
+      const firstEvents = firstOutput
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+      const firstContent = firstEvents
+        .filter((event) => event.type === 'content_delta')
+        .map((event) => event.delta)
+        .join('');
+      expect(firstExitCode).not.toBe(0);
+      expect(firstContent.trim()).toBe(firstMarker);
+
+      const store = new PersistentStore(workspace);
+      await store.initialize();
+      const interruptedEvents = await store.loadEvents(sessionId);
+      expect(
+        interruptedEvents?.filter((event) => event.type === 'turn_started')
+      ).toHaveLength(1);
+      expect(
+        interruptedEvents?.some(
+          (event) =>
+            event.type === 'message_created' &&
+            event.data.role === 'assistant' &&
+            event.data.metadata !== null &&
+            typeof event.data.metadata === 'object' &&
+            !Array.isArray(event.data.metadata) &&
+            event.data.metadata.turnFinalization !== undefined
+        )
+      ).toBe(true);
+      expect(
+        interruptedEvents?.some(
+          (event) =>
+            event.type === 'turn_completed' ||
+            event.type === 'turn_aborted' ||
+            event.type === 'inbox_acknowledged'
+        )
+      ).toBe(false);
+
+      const nextExitCode = await runWithCwdOverride(workspace, () =>
+        runHeadless(
+          {
+            headless: true,
+            outputFormat: 'jsonl',
+            resume: sessionId,
+            maxTurns: 1,
+            message: `Reply with exactly ${nextMarker} and nothing else.`,
+          },
+          {
+            stdout: {
+              write(chunk: string) {
+                nextOutput += chunk;
+                return true;
+              },
+            },
+            stderr: {
+              write(chunk: string) {
+                errorOutput += chunk;
+                return true;
+              },
+            },
+          }
+        )
+      );
+      const nextEvents = nextOutput
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+      const nextContent = nextEvents
+        .filter((event) => event.type === 'content_delta')
+        .map((event) => event.delta)
+        .join('');
+
+      expect(
+        nextExitCode,
+        errorOutput.replaceAll(modelConfig.apiKey, '[redacted]')
+      ).toBe(0);
+      expect(nextContent.trim()).toBe(nextMarker);
+      const recoveredEvents = await store.loadEvents(sessionId);
+      expect(
+        recoveredEvents?.filter((event) => event.type === 'turn_completed')
+      ).toHaveLength(2);
+      expect(
+        recoveredEvents?.filter((event) => event.type === 'turn_aborted')
+      ).toHaveLength(0);
+      expect(
+        nextEvents.filter(
+          (event) => event.type === 'content_delta' && event.delta.includes(firstMarker)
+        )
+      ).toHaveLength(0);
+      expect(`${firstOutput}\n${nextOutput}\n${errorOutput}`).not.toContain(
+        modelConfig.apiKey
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  }, 180_000);
+
   it('recovers a real mid-stream stall without replaying the request', async () => {
     if (!modelConfig) throw new Error('DeepSeek Flash configuration is required');
     const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-provider-stall-'));

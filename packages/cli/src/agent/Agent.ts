@@ -734,6 +734,14 @@ export class Agent {
                     },
                   }
                 : undefined,
+            turnFinalization:
+              this.sessionRuntime && ownedHandle
+                ? {
+                    turnId: ownedHandle.id,
+                    getInputMessageIds: () =>
+                      this.sessionRuntime!.getClaimedTurnMessageIds(ownedHandle),
+                  }
+                : undefined,
           };
 
           // 选择对应模式的 generator
@@ -794,9 +802,6 @@ export class Agent {
             return result;
           }
 
-          if (result.success && !currentContext.signal?.aborted) {
-            await this.sessionRuntime.acknowledgeTurn(ownedHandle);
-          }
           let goal = await this.sessionRuntime.recordGoalProgress({
             tokens: result.metadata?.tokensUsed ?? 0,
             elapsedMs: result.metadata?.duration ?? 0,

@@ -178,7 +178,7 @@ describe('Agent runLoop system prompt injection', () => {
         durationMs: 0,
       },
     });
-    expect(runtime.acknowledgeTurn).toHaveBeenCalledWith(turnHandle);
+    expect(runtime.acknowledgeTurn).not.toHaveBeenCalled();
     expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(1, 'running');
     expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(2, 'completed', undefined);
   });
@@ -443,7 +443,7 @@ describe('Agent runLoop system prompt injection', () => {
     expect(result.done).toBe(true);
     expect(runtime.prepareInputTurn).not.toHaveBeenCalled();
     expect(receivedOptions?.inputMessageId).toBe('prepared-input');
-    expect(runtime.acknowledgeTurn).toHaveBeenCalledWith(turnHandle);
+    expect(runtime.acknowledgeTurn).not.toHaveBeenCalled();
   });
 
   it('prepares input before async prompt expansion and releases ownership on failure', async () => {
@@ -774,8 +774,25 @@ describe('Agent runLoop system prompt injection', () => {
       success: true,
       finalMessage: 'follow-up',
     });
-    expect(runtime.acknowledgeTurn).toHaveBeenNthCalledWith(1, firstTurn);
-    expect(runtime.acknowledgeTurn).toHaveBeenNthCalledWith(2, secondTurn);
+    expect(runtime.acknowledgeTurn).not.toHaveBeenCalled();
+    expect(runtime.finishTurn).toHaveBeenNthCalledWith(1, firstTurn, {
+      continuePending: true,
+      outcome: {
+        status: 'completed',
+        turnsCount: 1,
+        toolCallsCount: 0,
+        durationMs: 0,
+      },
+    });
+    expect(runtime.finishTurn).toHaveBeenNthCalledWith(2, secondTurn, {
+      continuePending: true,
+      outcome: {
+        status: 'completed',
+        turnsCount: 1,
+        toolCallsCount: 0,
+        durationMs: 0,
+      },
+    });
   });
 
   it('queues a new prompt behind durable input before starting an idle turn', async () => {

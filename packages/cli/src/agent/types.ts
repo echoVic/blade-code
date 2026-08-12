@@ -150,6 +150,11 @@ export interface LoopOptions {
       sealed: boolean;
     }>;
   };
+  /** Runtime ownership needed to make a final assistant step recoverably terminal. */
+  turnFinalization?: {
+    turnId: string;
+    getInputMessageIds: () => Promise<string[]>;
+  };
 
   // 行为回调（影响循环控制流，不是事件通知）
   /** 工具审批门控 - 返回 false 阻止工具执行 */

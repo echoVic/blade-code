@@ -1218,6 +1218,44 @@ describe('SessionRuntime', () => {
     await recovered.dispose();
   });
 
+  it('recovers a final-ready turn without replaying its durable input', async () => {
+    const workspaceRoot = path.join(storageRoot, 'final-ready-turn-project');
+    const sessionId = 'final-ready-turn-session';
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const prepared = await first.prepareInputTurn('complete this exactly once');
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    await first
+      .getExecutionEngine()
+      .getContextManager()
+      .saveMessage(sessionId, 'assistant', 'completed exactly once', null, {
+        turnFinalization: {
+          turnId: prepared.handle.id,
+          inputMessageIds: [prepared.messageId],
+          turnsCount: 1,
+          toolCallsCount: 0,
+          durationMs: 10,
+        },
+      });
+    await first.dispose();
+
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    expect(recovered.getPendingSteeringCount()).toBe(0);
+    await expect(
+      SessionRuntime.hasPendingInbox(workspaceRoot, sessionId)
+    ).resolves.toBe(false);
+    const events = await new PersistentStore(workspaceRoot).loadEvents(sessionId);
+    expect(events?.filter((event) => event.type === 'turn_completed')).toHaveLength(1);
+    expect(events?.filter((event) => event.type === 'turn_aborted')).toHaveLength(0);
+    expect(
+      events?.some(
+        (event) =>
+          event.type === 'inbox_acknowledged' &&
+          event.data.messageIds.includes(prepared.messageId)
+      )
+    ).toBe(true);
+    await recovered.dispose();
+  });
+
   it('rejects archived sessions before restoring runtime resources', async () => {
     const workspaceRoot = path.join(storageRoot, 'archived-runtime-project');
     const sessionId = 'archived-runtime-session';

@@ -42,26 +42,40 @@ describe('durable turn lifecycle', () => {
       startedAt: '2026-08-11T10:00:00.000Z',
       inputMessageIds: ['input-1'],
     });
-    await store.saveTurnCompletion('session-1', {
-      turnId: 'turn-1',
-      completedAt: '2026-08-11T10:00:01.000Z',
-      turnsCount: 2,
-      toolCallsCount: 1,
-      durationMs: 1000,
-    });
-    await store.saveTurnCompletion('session-1', {
-      turnId: 'turn-1',
-      completedAt: '2026-08-11T10:00:01.000Z',
-      turnsCount: 2,
-      toolCallsCount: 1,
-      durationMs: 1000,
-    });
+    await store.saveTurnCompletion(
+      'session-1',
+      {
+        turnId: 'turn-1',
+        completedAt: '2026-08-11T10:00:01.000Z',
+        turnsCount: 2,
+        toolCallsCount: 1,
+        durationMs: 1000,
+      },
+      ['input-1']
+    );
+    await store.saveTurnCompletion(
+      'session-1',
+      {
+        turnId: 'turn-1',
+        completedAt: '2026-08-11T10:00:01.000Z',
+        turnsCount: 2,
+        toolCallsCount: 1,
+        durationMs: 1000,
+      },
+      ['input-1']
+    );
 
     const events = await new JSONLStore(
       getSessionFilePath(workspaceRoot, 'session-1')
     ).readAll();
     expect(events.filter((event) => event.type === 'turn_started')).toHaveLength(1);
     expect(events.filter((event) => event.type === 'turn_completed')).toHaveLength(1);
+    const acknowledgement = events.find((event) => event.type === 'inbox_acknowledged');
+    const completion = events.find((event) => event.type === 'turn_completed');
+    expect(acknowledgement).toMatchObject({
+      data: { messageIds: ['input-1'] },
+    });
+    expect(completion?.seq).toBe((acknowledgement?.seq ?? 0) + 1);
     expect(projectTurnLifecycle(events)).toMatchObject({
       active: null,
       lastTerminal: {
@@ -86,9 +100,10 @@ describe('durable turn lifecycle', () => {
       inputMessageIds: ['pending-1'],
     });
 
-    await expect(store.recoverInterruptedTurn('session-2')).resolves.toBe(
-      'turn-orphan'
-    );
+    await expect(store.recoverInterruptedTurn('session-2')).resolves.toEqual({
+      turnId: 'turn-orphan',
+      outcome: 'aborted',
+    });
     await expect(store.recoverInterruptedTurn('session-2')).resolves.toBeUndefined();
 
     const events = await new JSONLStore(
@@ -120,9 +135,10 @@ describe('durable turn lifecycle', () => {
       null
     );
 
-    await expect(store.recoverInterruptedTurn('session-tool-crash')).resolves.toBe(
-      'turn-tool-crash'
-    );
+    await expect(store.recoverInterruptedTurn('session-tool-crash')).resolves.toEqual({
+      turnId: 'turn-tool-crash',
+      outcome: 'aborted',
+    });
     await expect(
       store.recoverInterruptedTurn('session-tool-crash')
     ).resolves.toBeUndefined();
@@ -182,6 +198,116 @@ describe('durable turn lifecycle', () => {
         }),
       ])
     );
+  });
+
+  it('completes and acknowledges a final-ready turn after runtime restart', async () => {
+    const store = new PersistentStore(workspaceRoot);
+    await store.initialize();
+    await store.saveTurnStart('session-final-ready', {
+      turnId: 'turn-final-ready',
+      kind: 'user',
+      startedAt: new Date(Date.now() - 1000).toISOString(),
+      inputMessageIds: ['input-final', 'follow-up-not-claimed'],
+    });
+    await store.saveMessage(
+      'session-final-ready',
+      'user',
+      'Finish exactly once.',
+      null,
+      { inboxMessageId: 'input-final' }
+    );
+    await store.saveMessage(
+      'session-final-ready',
+      'assistant',
+      'Completed exactly once.',
+      null,
+      {
+        turnFinalization: {
+          turnId: 'turn-final-ready',
+          inputMessageIds: ['input-final'],
+          turnsCount: 2,
+          toolCallsCount: 1,
+          durationMs: 900,
+        },
+      }
+    );
+
+    await expect(store.recoverInterruptedTurn('session-final-ready')).resolves.toEqual({
+      turnId: 'turn-final-ready',
+      outcome: 'completed',
+    });
+    await expect(
+      store.recoverInterruptedTurn('session-final-ready')
+    ).resolves.toBeUndefined();
+
+    const events = await new JSONLStore(
+      getSessionFilePath(workspaceRoot, 'session-final-ready')
+    ).readAll();
+    expect(events.filter((event) => event.type === 'turn_aborted')).toHaveLength(0);
+    const acknowledgement = events.find((event) => event.type === 'inbox_acknowledged');
+    const completion = events.find((event) => event.type === 'turn_completed');
+    expect(acknowledgement).toMatchObject({
+      data: { messageIds: ['input-final'] },
+    });
+    expect(completion).toMatchObject({
+      data: {
+        turnId: 'turn-final-ready',
+        turnsCount: 2,
+        toolCallsCount: 1,
+        durationMs: 900,
+      },
+    });
+    expect(completion?.seq).toBe((acknowledgement?.seq ?? 0) + 1);
+    expect(
+      events.some(
+        (event) =>
+          event.type === 'inbox_acknowledged' &&
+          event.data.messageIds.includes('follow-up-not-claimed')
+      )
+    ).toBe(false);
+  });
+
+  it('never acknowledges input when completion races an aborted terminal', async () => {
+    const store = new PersistentStore(workspaceRoot);
+    await store.initialize();
+    await store.saveTurnStart('session-abort-race', {
+      turnId: 'turn-abort-race',
+      kind: 'user',
+      startedAt: new Date().toISOString(),
+      inputMessageIds: ['input-retry'],
+    });
+    await store.saveTurnAbort('session-abort-race', {
+      turnId: 'turn-abort-race',
+      cause: 'failed',
+      abortedAt: new Date().toISOString(),
+      turnsCount: 1,
+      toolCallsCount: 0,
+      durationMs: 1,
+    });
+    await store.saveTurnCompletion(
+      'session-abort-race',
+      {
+        turnId: 'turn-abort-race',
+        completedAt: new Date().toISOString(),
+        turnsCount: 1,
+        toolCallsCount: 0,
+        durationMs: 1,
+      },
+      ['input-retry']
+    );
+
+    const events = await new JSONLStore(
+      getSessionFilePath(workspaceRoot, 'session-abort-race')
+    ).readAll();
+    expect(events.filter((event) => event.type === 'turn_aborted')).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'turn_completed')).toHaveLength(0);
+    expect(
+      events.some(
+        (event) =>
+          event.type === 'inbox_acknowledged' &&
+          event.data.messageIds.includes('input-retry')
+      )
+    ).toBe(false);
   });
 
   it('repairs every terminal turn orphan without appending another turn terminal', async () => {

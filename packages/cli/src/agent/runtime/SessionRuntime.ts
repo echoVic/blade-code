@@ -1234,14 +1234,8 @@ export class SessionRuntime {
     return this.getActiveTurnMailbox().drainOrSeal(handle);
   }
 
-  async acknowledgeTurn(handle: ActiveTurnHandle): Promise<void> {
-    const mailbox = this.getActiveTurnMailbox();
-    const ids = await mailbox.claimedMessageIds(handle);
-    if (ids.length === 0) return;
-    await this.getExecutionEngine()
-      .getContextManager()
-      .persistentStore.acknowledgeInboxMessages(this.sessionId, ids);
-    await mailbox.acknowledge(ids);
+  async getClaimedTurnMessageIds(handle: ActiveTurnHandle): Promise<string[]> {
+    return this.getActiveTurnMailbox().claimedMessageIds(handle);
   }
 
   async discardPendingInput(): Promise<void> {
@@ -1271,13 +1265,20 @@ export class SessionRuntime {
     const persistentStore =
       this.getExecutionEngine().getContextManager().persistentStore;
     if (outcome.status === 'completed') {
-      await persistentStore.saveTurnCompletion(this.sessionId, {
-        turnId: handle.id,
-        completedAt: new Date().toISOString(),
-        turnsCount: outcome.turnsCount,
-        toolCallsCount: outcome.toolCallsCount,
-        durationMs: outcome.durationMs,
-      });
+      const inputMessageIds =
+        await this.getActiveTurnMailbox().claimedMessageIds(handle);
+      await persistentStore.saveTurnCompletion(
+        this.sessionId,
+        {
+          turnId: handle.id,
+          completedAt: new Date().toISOString(),
+          turnsCount: outcome.turnsCount,
+          toolCallsCount: outcome.toolCallsCount,
+          durationMs: outcome.durationMs,
+        },
+        inputMessageIds
+      );
+      await this.getActiveTurnMailbox().acknowledge(inputMessageIds);
     } else {
       await persistentStore.saveTurnAbort(this.sessionId, {
         turnId: handle.id,
@@ -1560,12 +1561,15 @@ export class SessionRuntime {
       await this.getExecutionEngine()
         .getContextManager()
         .persistentStore.initSession(this.sessionId, this.options.subagentInfo);
-      const recoveredTurnId = await this.getExecutionEngine()
+      const recovery = await this.getExecutionEngine()
         .getContextManager()
         .persistentStore.recoverInterruptedTurn(this.sessionId);
-      if (recoveredTurnId) {
+      if (recovery?.outcome === 'completed') {
+        await this.reloadPendingInbox();
+      }
+      if (recovery) {
         logger.warn(
-          `[SessionRuntime ${this.sessionId}] recovered interrupted turn ${recoveredTurnId}`
+          `[SessionRuntime ${this.sessionId}] recovered ${recovery.outcome} turn ${recovery.turnId}`
         );
       }
 

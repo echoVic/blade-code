@@ -86,6 +86,12 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   `message_persistence_failed`，从 JSONL model-context projection 重建当前 Runtime
   内存并清除未提交消息。streaming delta 可以先作为临时进度显示，但不构成成功或恢复
   证据；失败 turn 不确认 inbox，冷启动会优先重新执行该 durable input。
+- 最终 assistant message 同批携带有界 `turnFinalization` receipt，只记录 turn ID、
+  本 turn 已 claim 的 inbox IDs 和 turns/tool-calls/duration 指标。正常成功路径把这些
+  inbox IDs 的 `inbox_acknowledged` 与 `turn_completed` 作为一个 validated batch fsync，
+  成功后才更新 mailbox sidecar。若进程在 receipt 后、terminal batch 前退出，新 Runtime
+  在确认没有 orphan tool call 后提交相同完成 batch 并重载 sidecar；已完成输入不会重放，
+  receipt 未列出的 late follow-up 不会被误确认。
 - 新 Runtime 取得 Session lease 后，会在同一个 validated batch 中修复 materialized
   transcript 的 orphan tool calls。每个 orphan 先获得 synthetic error
   `tool_result`，明确标记 `processRestartRecovery` 与 `sideEffectsUncertain`，随后 active

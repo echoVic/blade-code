@@ -29,6 +29,7 @@ import type {
   SessionReviewStartInfo,
   SessionTurnAbortInfo,
   SessionTurnCompletionInfo,
+  SessionTurnFinalizationInfo,
   SessionTurnStartInfo,
   SubagentRunRef,
 } from '../types.js';
@@ -48,9 +49,85 @@ export const PROCESS_RESTART_TOOL_RESULT =
   'partially completed. Inspect the workspace, running processes, and external ' +
   'state before deciding whether to retry it.';
 
+export interface SessionTurnRecovery {
+  turnId: string;
+  outcome: 'completed' | 'aborted';
+}
+
 interface DurableToolCall {
   toolCallId: string;
   toolName: string;
+}
+
+const MAX_TURN_FINALIZATION_INPUTS = 20;
+const MAX_TURN_FINALIZATION_TURNS = 10_000;
+const MAX_TURN_FINALIZATION_TOOL_CALLS = 100_000;
+const MAX_TURN_FINALIZATION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
+
+function durableTurnFinalization(
+  source: readonly SessionEvent[],
+  turnId: string
+): SessionTurnFinalizationInfo | undefined {
+  const events = materializeSessionEvents(source);
+  const turnStartIndex = events.findLastIndex(
+    (event) => event.type === 'turn_started' && event.data.turnId === turnId
+  );
+  if (turnStartIndex < 0) return undefined;
+
+  for (let index = events.length - 1; index > turnStartIndex; index--) {
+    const event = events[index];
+    if (event?.type !== 'message_created') continue;
+    const metadata = event.data.metadata;
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+      continue;
+    }
+    const receipt = metadata.turnFinalization;
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) {
+      continue;
+    }
+    const inputMessageIds = receipt.inputMessageIds;
+    const turnsCount = receipt.turnsCount;
+    const toolCallsCount = receipt.toolCallsCount;
+    const durationMs = receipt.durationMs;
+    const validInputMessageIds = Array.isArray(inputMessageIds)
+      ? inputMessageIds.filter(
+          (messageId): messageId is string =>
+            typeof messageId === 'string' &&
+            messageId.length > 0 &&
+            messageId.length <= 128
+        )
+      : [];
+    if (
+      receipt.turnId !== turnId ||
+      turnId.length === 0 ||
+      turnId.length > 128 ||
+      !Array.isArray(inputMessageIds) ||
+      inputMessageIds.length > MAX_TURN_FINALIZATION_INPUTS ||
+      validInputMessageIds.length !== inputMessageIds.length ||
+      typeof turnsCount !== 'number' ||
+      !Number.isSafeInteger(turnsCount) ||
+      turnsCount < 0 ||
+      turnsCount > MAX_TURN_FINALIZATION_TURNS ||
+      typeof toolCallsCount !== 'number' ||
+      !Number.isSafeInteger(toolCallsCount) ||
+      toolCallsCount < 0 ||
+      toolCallsCount > MAX_TURN_FINALIZATION_TOOL_CALLS ||
+      typeof durationMs !== 'number' ||
+      !Number.isSafeInteger(durationMs) ||
+      durationMs < 0 ||
+      durationMs > MAX_TURN_FINALIZATION_DURATION_MS
+    ) {
+      continue;
+    }
+    return {
+      turnId,
+      inputMessageIds: [...new Set(validInputMessageIds)],
+      turnsCount,
+      toolCallsCount,
+      durationMs,
+    };
+  }
+  return undefined;
 }
 
 function durableToolCalls(
@@ -325,18 +402,68 @@ export class PersistentStore {
 
   async saveTurnCompletion(
     sessionId: string,
-    turn: SessionTurnCompletionInfo
+    turn: SessionTurnCompletionInfo,
+    inputMessageIds: readonly string[] = []
   ): Promise<void> {
-    await this.saveTurnTerminal(sessionId, 'turn_completed', turn);
+    await this.ensureSessionCreated(sessionId);
+    try {
+      await this.log(sessionId).commitValidatedBatch((events) => {
+        const projected = materializeSessionEvents(events);
+        const acknowledgedIds = new Set(
+          projected.flatMap((event) =>
+            event.type === 'inbox_acknowledged' ? event.data.messageIds : []
+          )
+        );
+        const missingIds = [...new Set(inputMessageIds)].filter(
+          (messageId) => !acknowledgedIds.has(messageId)
+        );
+        const terminal = projected.findLast(
+          (event) =>
+            (event.type === 'turn_completed' || event.type === 'turn_aborted') &&
+            event.data.turnId === turn.turnId
+        );
+        if (terminal) {
+          if (terminal.type === 'turn_aborted' || missingIds.length === 0) {
+            throw new TurnLifecycleNoop();
+          }
+          return [
+            this.createEvent('inbox_acknowledged', sessionId, {
+              messageIds: missingIds,
+              acknowledgedAt: turn.completedAt,
+            }),
+          ];
+        }
+
+        const active = projectTurnLifecycle(projected).active;
+        if (!active || active.turnId !== turn.turnId) {
+          throw new Error(`Turn is not active: ${turn.turnId}`);
+        }
+        return [
+          ...(missingIds.length > 0
+            ? [
+                this.createEvent('inbox_acknowledged', sessionId, {
+                  messageIds: missingIds,
+                  acknowledgedAt: turn.completedAt,
+                }),
+              ]
+            : []),
+          this.createEvent('turn_completed', sessionId, turn),
+        ];
+      });
+    } catch (error) {
+      if (!(error instanceof TurnLifecycleNoop)) throw error;
+    }
   }
 
   async saveTurnAbort(sessionId: string, turn: SessionTurnAbortInfo): Promise<void> {
     await this.saveTurnTerminal(sessionId, 'turn_aborted', turn);
   }
 
-  async recoverInterruptedTurn(sessionId: string): Promise<string | undefined> {
+  async recoverInterruptedTurn(
+    sessionId: string
+  ): Promise<SessionTurnRecovery | undefined> {
     await this.ensureSessionCreated(sessionId);
-    let recoveredTurnId: string | undefined;
+    let recovery: SessionTurnRecovery | undefined;
     try {
       await this.log(sessionId).commitValidatedBatch((events) => {
         const projected = materializeSessionEvents(events);
@@ -345,7 +472,39 @@ export class PersistentStore {
         if (!active && toolCalls.orphaned.length === 0) {
           throw new TurnLifecycleNoop();
         }
-        recoveredTurnId = active?.turnId;
+        const finalization = active
+          ? durableTurnFinalization(projected, active.turnId)
+          : undefined;
+        if (active && finalization && toolCalls.orphaned.length === 0) {
+          recovery = { turnId: active.turnId, outcome: 'completed' };
+          const acknowledgedIds = new Set(
+            projected.flatMap((event) =>
+              event.type === 'inbox_acknowledged' ? event.data.messageIds : []
+            )
+          );
+          const missingIds = finalization.inputMessageIds.filter(
+            (messageId) => !acknowledgedIds.has(messageId)
+          );
+          const completedAt = new Date().toISOString();
+          return [
+            ...(missingIds.length > 0
+              ? [
+                  this.createEvent('inbox_acknowledged', sessionId, {
+                    messageIds: missingIds,
+                    acknowledgedAt: completedAt,
+                  }),
+                ]
+              : []),
+            this.createEvent('turn_completed', sessionId, {
+              turnId: active.turnId,
+              completedAt,
+              turnsCount: finalization.turnsCount,
+              toolCallsCount: finalization.toolCallsCount,
+              durationMs: finalization.durationMs,
+            }),
+          ];
+        }
+        recovery = active ? { turnId: active.turnId, outcome: 'aborted' } : undefined;
         const activeToolCalls = active
           ? durableToolCalls(projected, active.turnId).all.length
           : 0;
@@ -388,7 +547,7 @@ export class PersistentStore {
     } catch (error) {
       if (!(error instanceof TurnLifecycleNoop)) throw error;
     }
-    return recoveredTurnId;
+    return recovery;
   }
 
   async saveInteractionRequest(
