@@ -2,17 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.10.25] - 2026-08-12
 
 ### ✨ 新功能
 
 - Headless 新增 `--no-verification-agent`，允许 CI/评测关闭内置独立验证
   Subagent；显式要求的测试、lint、类型检查和构建仍由主 Agent 执行
+- `--max-turns` 移除 100 轮硬上限，接受任意正整数或 -1（无限制）；默认值
+  改为 -1，模型通过 end_turn 自行终止（对齐 Claude Code / Grok Build）
 
 ### 🛡️ 稳定性
 
 - 内置 verification agent 使用独立的 12 轮预算，并禁止重复读取、搜索或执行已经
   给出结论的检查，避免验证阶段空转耗尽主任务轮次
+- 子代理（verification/review/goal）轮次与主会话完全隔离，各自持有独立预算
 - Session catalog 在投影读取路径同步校验 task owner PID，进程异常退出后将残留的
   `running` 任务持久化为 `interrupted`，Web 不再保留无效 Stop 状态
 - Server 启动时及每小时清理超过 24 小时且仅含 `session_created` 的空会话；清理前
