@@ -3,6 +3,8 @@ import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import {
   OwnedProcessTree,
+  processGroupIsRunning,
+  terminateProcessGroupByPid,
   terminateProcessTreeByPid,
 } from '../../../../src/utils/process/OwnedProcessTree.js';
 
@@ -19,6 +21,61 @@ function asChild(child: FakeChild): ChildProcess {
 }
 
 describe('OwnedProcessTree', () => {
+  it('probes a POSIX process group independently from its leader PID', () => {
+    const present = vi.fn(() => true);
+    const missing = vi.fn(() => {
+      throw Object.assign(new Error('missing'), { code: 'ESRCH' });
+    });
+
+    expect(processGroupIsRunning(42_420, 'linux', present)).toBe(true);
+    expect(processGroupIsRunning(42_421, 'darwin', missing)).toBe(false);
+    expect(processGroupIsRunning(42_422, 'win32', present)).toBe(false);
+    expect(present.mock.calls).toEqual([[-42_420, 0]]);
+    expect(missing.mock.calls).toEqual([[-42_421, 0]]);
+  });
+
+  it('terminates a leaderless POSIX group without signaling the reused PID', async () => {
+    const killProcess = vi.fn(() => true);
+
+    await expect(
+      terminateProcessGroupByPid(42_428, {
+        platform: 'darwin',
+        killProcess,
+        wait: async () => undefined,
+        validatePidOwnership: () => true,
+      })
+    ).resolves.toEqual({
+      success: true,
+      alreadyExited: false,
+      forced: true,
+    });
+    expect(killProcess.mock.calls).toEqual([
+      [-42_428, 'SIGTERM'],
+      [-42_428, 'SIGKILL'],
+    ]);
+  });
+
+  it('does not force a leaderless group after its root PID is reused', async () => {
+    let rootPidAbsent = true;
+    const killProcess = vi.fn(() => true);
+
+    await expect(
+      terminateProcessGroupByPid(42_429, {
+        platform: 'linux',
+        killProcess,
+        wait: async () => {
+          rootPidAbsent = false;
+        },
+        validatePidOwnership: () => rootPidAbsent,
+      })
+    ).resolves.toEqual({
+      success: false,
+      alreadyExited: false,
+      forced: false,
+    });
+    expect(killProcess.mock.calls).toEqual([[-42_429, 'SIGTERM']]);
+  });
+
   it('revalidates PID ownership before forcing an orphan tree', async () => {
     let ownsPid = true;
     const killProcess = vi.fn(() => true);

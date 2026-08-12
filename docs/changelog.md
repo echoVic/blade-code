@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.24] - 2026-08-12
+
+### 🛡️ 稳定性
+
+- 新增 Durable POSIX Leaderless Process Group Reaping：durable process lease 的 root
+  PID 已退出时不再直接判定 stale，而是探测负 PGID；同组后代仍存活时执行
+  `SIGTERM → grace → SIGKILL`
+- leaderless 强制终止前再次验证 root PID 仍未出现；grace period 内 PID 被复用时停止
+  KILL、保留 lease 并标记 protected，既不向正 PID fallback，也不误杀新进程
+- command admission gate 的 owned tree 不再在 wrapper `close` 时自动释放；前台 Bash、
+  ACP local terminal fallback 与后台 Bash 都在确认整个 POSIX process group 已空后才
+  删除 lease 并发布 terminal result
+- 显式 `cmd &`、stdio 全重定向或 shell leader 提前退出时，隐藏后代会在正常 tool/task
+  completion 前回收；若 Blade 在 finalize barrier 中硬崩溃，sidecar 仍保留给冷启动
+  Runtime 继续处理
+- Windows 继续使用 live-root `taskkill /T` 树回收协议；本版本的 leaderless PGID 分支仅
+  适用于 Linux/macOS，不把 POSIX 组语义伪装到 Windows
+
+### ✅ 测试相关
+
+- 新增 process-group 独立探测、仅负 PGID TERM/KILL、grace 期间 PID reuse、防止正 PID
+  fallback、foreground/background 重定向后代 finalize 和 ACP local leaderless 回归
+- 将 release-blocking DeepSeek parent hard-kill 轨迹升级为真实 leaderless foreground
+  group：gate/root PID 在 owner 被杀前已退出，延迟副作用后代仍须由冷 Runtime 回收；
+  真实 subagent live-root 轨迹继续验证 child Session lease 分区
+- permission-mode 真实 API 能力测试将单次 Provider timeout 收窄到 120 秒并关闭该轨迹
+  内部 retry，Web 在 150 秒主动 abort/delete runtime；避免 180 秒 Vitest timeout 后旧
+  `finally` 与新 retry 并发覆盖全局模型配置，Provider retry 继续由专用故障注入轨迹验证
+
 ## [0.10.23] - 2026-08-12
 
 ### 🛡️ 稳定性

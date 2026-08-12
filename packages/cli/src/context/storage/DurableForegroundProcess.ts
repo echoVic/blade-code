@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import {
+  finalizeCommandAdmissionGate,
   releaseCommandAdmissionGate,
   spawnCommandAdmissionGate,
 } from '../../utils/process/CommandAdmissionGate.js';
@@ -17,6 +18,7 @@ export interface PreparedForegroundProcess {
   processTree: OwnedProcessTree;
   processId: string;
   release(): Promise<void>;
+  finalize(): Promise<void>;
 }
 
 export async function prepareForegroundProcess(
@@ -46,10 +48,8 @@ export async function prepareForegroundProcess(
     throw error;
   }
 
-  const removeLease = () => leaseStore?.remove(processId);
-  child.once('close', removeLease);
-  child.once('error', removeLease);
   let releasePromise: Promise<void> | undefined;
+  let finalizePromise: Promise<void> | undefined;
 
   return {
     child,
@@ -63,6 +63,16 @@ export async function prepareForegroundProcess(
         });
       });
       return releasePromise;
+    },
+    finalize() {
+      finalizePromise ??= (async () => {
+        const result = await finalizeCommandAdmissionGate(child, processTree);
+        if (!result.success) {
+          throw new Error('Failed to finalize foreground command process group');
+        }
+        leaseStore?.remove(processId);
+      })();
+      return finalizePromise;
     },
   };
 }

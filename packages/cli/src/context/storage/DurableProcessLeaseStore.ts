@@ -2,7 +2,11 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import writeFileAtomic from 'write-file-atomic';
-import { terminateProcessTreeByPid } from '../../utils/process/OwnedProcessTree.js';
+import {
+  processGroupIsRunning,
+  terminateProcessGroupByPid,
+  terminateProcessTreeByPid,
+} from '../../utils/process/OwnedProcessTree.js';
 import {
   captureProcessIdentity,
   isProcessIdentity,
@@ -125,7 +129,23 @@ export class DurableProcessLeaseStore {
         continue;
       }
       if (!isRunning(lease.rootPid)) {
-        stale++;
+        if (process.platform !== 'win32' && processGroupIsRunning(lease.rootPid)) {
+          const result = await terminateProcessGroupByPid(lease.rootPid, {
+            validatePidOwnership: () => !isRunning(lease.rootPid),
+          });
+          if (isRunning(lease.rootPid)) {
+            protectedCount++;
+            continue;
+          }
+          if (!result.success) {
+            throw new Error(
+              `Failed to reap leaderless ${this.options.label} ${lease.processId}`
+            );
+          }
+          reaped++;
+        } else {
+          stale++;
+        }
         this.remove(lease.processId);
         continue;
       }

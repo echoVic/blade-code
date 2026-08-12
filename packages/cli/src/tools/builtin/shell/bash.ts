@@ -646,6 +646,7 @@ async function executeWithTimeout(
     let timedOut = false;
     let settled = false;
     let admissionError: Error | undefined;
+    let finalizationError: Error | undefined;
     let terminationPromise: ReturnType<typeof processTree.terminate> | undefined;
     const terminateProcessTree = () => {
       terminationPromise ??= processTree.terminate();
@@ -690,10 +691,18 @@ async function executeWithTimeout(
     if (signal.aborted) abortHandler();
 
     bashProcess.on('close', async (code, sig) => {
-      const executionTime = Date.now() - startTime;
       if (timedOut || signal.aborted || admissionError) {
         await terminateProcessTree();
       }
+      try {
+        await prepared.finalize();
+      } catch (error) {
+        finalizationError =
+          error instanceof Error
+            ? error
+            : new Error('Foreground command finalization failed');
+      }
+      const executionTime = Date.now() - startTime;
 
       if (timedOut) {
         settle({
@@ -747,6 +756,24 @@ async function executeWithTimeout(
             command,
             sandboxed: Boolean(sandboxedCommand),
             admission_failed: true,
+            execution_time: executionTime,
+          },
+        });
+        return;
+      }
+
+      if (finalizationError) {
+        settle({
+          success: false,
+          llmContent: 'Command process group could not be finalized',
+          error: {
+            type: ToolErrorType.EXECUTION_ERROR,
+            message: 'Foreground command finalization failed',
+          },
+          metadata: {
+            command,
+            sandboxed: Boolean(sandboxedCommand),
+            finalization_failed: true,
             execution_time: executionTime,
           },
         });
@@ -836,26 +863,41 @@ async function executeWithTimeout(
       if (timedOut || signal.aborted || admissionError) {
         await terminateProcessTree();
       }
+      try {
+        await prepared.finalize();
+      } catch (finalizeError) {
+        finalizationError =
+          finalizeError instanceof Error
+            ? finalizeError
+            : new Error('Foreground command finalization failed');
+      }
       settle({
         success: false,
         llmContent: admissionError
           ? 'Command execution blocked before durable admission'
-          : `Command execution failed: ${error.message}`,
+          : finalizationError
+            ? 'Command process group could not be finalized'
+            : `Command execution failed: ${error.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
           message: admissionError
             ? 'Foreground command admission failed'
-            : error.message,
-          ...(admissionError ? {} : { details: error }),
+            : finalizationError
+              ? 'Foreground command finalization failed'
+              : error.message,
+          ...(admissionError || finalizationError ? {} : { details: error }),
         },
-        metadata: admissionError
-          ? {
-              command,
-              sandboxed: Boolean(sandboxedCommand),
-              admission_failed: true,
-              execution_time: Date.now() - startTime,
-            }
-          : undefined,
+        metadata:
+          admissionError || finalizationError
+            ? {
+                command,
+                sandboxed: Boolean(sandboxedCommand),
+                ...(admissionError
+                  ? { admission_failed: true }
+                  : { finalization_failed: true }),
+                execution_time: Date.now() - startTime,
+              }
+            : undefined,
       });
     });
 
@@ -864,6 +906,7 @@ async function executeWithTimeout(
         admissionError =
           error instanceof Error ? error : new Error('Command admission failed');
         await terminateProcessTree();
+        await prepared.finalize().catch(() => undefined);
         settle({
           success: false,
           llmContent: 'Command execution blocked before durable admission',

@@ -2,6 +2,7 @@ import type { ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import { getCwd } from '../../../utils/cwd.js';
 import {
+  finalizeCommandAdmissionGate,
   releaseCommandAdmissionGate,
   spawnCommandAdmissionGate,
 } from '../../../utils/process/CommandAdmissionGate.js';
@@ -168,39 +169,67 @@ export class BackgroundShellManager {
       processInfo.pendingStderr.append(chunk);
     });
 
+    let terminalSettled = false;
+    let finalizationPromise: Promise<boolean> | undefined;
+    const finalizeProcessGroup = () => {
+      finalizationPromise ??= finalizeCommandAdmissionGate(child, processTree)
+        .then((result) => {
+          if (result.success) {
+            processInfo.leaseStore?.remove(processInfo.id);
+            return true;
+          }
+          return false;
+        })
+        .catch(() => false);
+      return finalizationPromise;
+    };
+
     child.on('close', (code, signal) => {
-      processInfo.leaseStore?.remove(processInfo.id);
-      options.sandboxedCommand?.cleanup();
-      const sandboxFailure =
-        processInfo.sandboxed &&
-        isWorkspaceSandboxRuntimeFailure(
-          code,
-          processInfo.pendingStderr.peek().content
-        );
-      processInfo.status =
-        processInfo.status === 'killed'
-          ? 'killed'
-          : sandboxFailure
-            ? 'error'
-            : 'exited';
-      processInfo.exitCode = code;
-      processInfo.signal = signal;
-      if (sandboxFailure) {
-        processInfo.errorMessage =
-          'Workspace sandbox failed to start; command was not executed';
-      }
-      processInfo.endTime = Date.now();
-      processInfo.process = undefined;
+      void (async () => {
+        const finalized = await finalizeProcessGroup();
+        if (terminalSettled) return;
+        terminalSettled = true;
+        options.sandboxedCommand?.cleanup();
+        const sandboxFailure =
+          processInfo.sandboxed &&
+          isWorkspaceSandboxRuntimeFailure(
+            code,
+            processInfo.pendingStderr.peek().content
+          );
+        processInfo.status =
+          processInfo.status === 'killed'
+            ? 'killed'
+            : sandboxFailure || !finalized
+              ? 'error'
+              : 'exited';
+        processInfo.exitCode = code;
+        processInfo.signal = signal;
+        if (sandboxFailure) {
+          processInfo.errorMessage =
+            'Workspace sandbox failed to start; command was not executed';
+        } else if (!finalized) {
+          processInfo.errorMessage =
+            'Background command process group could not be finalized';
+        }
+        processInfo.endTime = Date.now();
+        processInfo.process = undefined;
+      })();
     });
 
     child.on('error', (error) => {
-      processInfo.leaseStore?.remove(processInfo.id);
-      options.sandboxedCommand?.cleanup();
-      processInfo.status = 'error';
-      processInfo.errorMessage = error.message;
-      processInfo.endTime = Date.now();
-      processInfo.process = undefined;
-      processInfo.pendingStderr.append(`\n[error] ${error.message}`);
+      void (async () => {
+        const finalized = await finalizeProcessGroup();
+        if (terminalSettled) return;
+        terminalSettled = true;
+        options.sandboxedCommand?.cleanup();
+        processInfo.status = 'error';
+        processInfo.errorMessage = finalized
+          ? error.message
+          : 'Background command process group could not be finalized';
+        processInfo.endTime = Date.now();
+        processInfo.process = undefined;
+        processInfo.pendingStderr.append(`\n[error] ${error.message}`);
+      })();
     });
 
     this.processes.set(shellId, processInfo);

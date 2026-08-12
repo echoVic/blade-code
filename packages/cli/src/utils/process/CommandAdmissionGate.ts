@@ -1,8 +1,11 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import {
   type OwnedProcessTreeOptions,
+  type ProcessTreeTerminationResult,
   type SpawnedOwnedProcess,
+  processGroupIsRunning,
   spawnOwnedProcess,
+  terminateProcessGroupByPid,
 } from './OwnedProcessTree.js';
 
 const COMMAND_ADMISSION_GATE = String.raw`
@@ -127,7 +130,7 @@ export function spawnCommandAdmissionGate(
     process.execPath,
     ['-e', COMMAND_ADMISSION_GATE, String(process.pid), executable, ...args],
     options,
-    processTreeOptions
+    { releaseOnExit: false, ...processTreeOptions }
   );
 }
 
@@ -148,4 +151,34 @@ export async function releaseCommandAdmissionGate(child: ChildProcess): Promise<
       else resolve();
     });
   });
+}
+
+function processIsRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (
+      error instanceof Error &&
+      'code' in error &&
+      (error as NodeJS.ErrnoException).code === 'EPERM'
+    );
+  }
+}
+
+export async function finalizeCommandAdmissionGate(
+  child: ChildProcess,
+  processTree: SpawnedOwnedProcess['processTree']
+): Promise<ProcessTreeTerminationResult> {
+  const pid = child.pid;
+  if (process.platform === 'win32' || !pid || !processGroupIsRunning(pid)) {
+    processTree.release();
+    return { success: true, alreadyExited: true, forced: false };
+  }
+
+  const result = await terminateProcessGroupByPid(pid, {
+    validatePidOwnership: () => !processIsRunning(pid),
+  });
+  if (result.success) processTree.release();
+  return result;
 }

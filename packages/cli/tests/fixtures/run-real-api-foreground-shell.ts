@@ -23,9 +23,16 @@ getState().config.actions.setConfig({
   permissionMode: PermissionMode.YOLO,
 });
 
+const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+const script =
+  `const fs=require('fs');` +
+  `fs.writeFileSync('foreground-root.pid',String(process.pid));` +
+  `process.on('SIGTERM',()=>{});` +
+  `setTimeout(()=>fs.writeFileSync('forbidden-late-effect.txt','late'),5000);` +
+  `setInterval(()=>{},1000);`;
 const command =
-  `printf '%s' "$$" > foreground-root.pid; ` +
-  `trap '' TERM; sleep 5; printf late > forbidden-late-effect.txt; sleep 300`;
+  `${shellQuote(process.execPath)} -e ${shellQuote(script)} ` + `</dev/null &`;
+`</dev/null & ` + `while [ ! -s foreground-root.pid ]; do sleep 0.01; done`;
 const exitCode = await runWithCwdOverride(workspace, () =>
   runHeadless({
     headless: true,

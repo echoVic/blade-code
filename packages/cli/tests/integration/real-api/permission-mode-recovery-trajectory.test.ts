@@ -43,7 +43,7 @@ async function waitForWebCompletion(
     timeout = setTimeout(() => {
       unsubscribe();
       reject(new Error('Timed out waiting for permission recovery Web run'));
-    }, 180_000);
+    }, 150_000);
     unsubscribe = Bus.subscribe((event) => {
       if (event.sessionId !== sessionId || event.projectPath !== projectPath) return;
       if (event.type === 'permission.asked') {
@@ -83,9 +83,18 @@ describeReal('Session permission mode recovery trajectory (real API)', () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'blade-real-mode-recovery-'));
     const workspace = path.join(root, surface);
     const originalConfig = getState().config.config;
+    const baseConfig = buildRealApiRuntimeConfig(gpt);
     const config = {
-      ...buildRealApiRuntimeConfig(gpt),
+      ...baseConfig,
       permissionMode: PermissionMode.DEFAULT,
+      models: baseConfig.models.map((model) => ({
+        ...model,
+        overrides: {
+          ...model.overrides,
+          timeout: 120_000,
+          maxRetries: 0,
+        },
+      })),
     };
     process.env.BLADE_STORAGE_ROOT = path.join(root, 'storage');
     await mkdir(workspace, { recursive: true });
@@ -104,12 +113,10 @@ describeReal('Session permission mode recovery trajectory (real API)', () => {
     const fixture = await createFixture('web');
     const app = SessionRoutes();
     const loggerError = vi.spyOn(Logger.prototype, 'error');
+    let webCompletion: Awaited<ReturnType<typeof waitForWebCompletion>> | undefined;
 
     try {
-      const webCompletion = await waitForWebCompletion(
-        fixture.sessionId,
-        fixture.workspace
-      );
+      webCompletion = await waitForWebCompletion(fixture.sessionId, fixture.workspace);
       const webResponse = await runWithCwdOverride(fixture.workspace, () =>
         app.request(`/${fixture.sessionId}/message`, {
           method: 'POST',
@@ -148,11 +155,22 @@ describeReal('Session permission mode recovery trajectory (real API)', () => {
       );
       expect(metadata).toMatchObject({ permissionMode: 'yolo' });
       assertNoSecrets(metadata, [gpt.apiKey]);
-      await app.request(
-        `/${fixture.sessionId}?projectPath=${encodeURIComponent(fixture.workspace)}`,
-        { method: 'DELETE' }
-      );
     } finally {
+      webCompletion?.cancel();
+      await Promise.resolve(
+        app.request(
+          `/${fixture.sessionId}/abort?projectPath=${encodeURIComponent(
+            fixture.workspace
+          )}`,
+          { method: 'POST' }
+        )
+      ).catch(() => undefined);
+      await Promise.resolve(
+        app.request(
+          `/${fixture.sessionId}?projectPath=${encodeURIComponent(fixture.workspace)}`,
+          { method: 'DELETE' }
+        )
+      ).catch(() => undefined);
       loggerError.mockRestore();
       if (fixture.originalConfig) {
         getState().config.actions.setConfig(fixture.originalConfig);

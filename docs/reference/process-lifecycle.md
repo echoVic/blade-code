@@ -7,6 +7,8 @@ Blade Code 把自己启动的命令视为一棵 owned process tree。超时、�
 - POSIX：子进程以独立进程组启动，先向进程组发送 `SIGTERM`，等待 500ms，再以 `SIGKILL` 清理仍存活的成员。
 - Windows：先等待 `taskkill /PID <pid> /T`，等待 500ms，再执行 `taskkill /PID <pid> /T /F`。如果系统命令不可用，则退化为直接终止 child。
 - 自然退出：child 的 `close` 或 `error` 事件会释放所有权，之后不会再向旧 PID 发送信号。
+- admission-gated 用户命令是例外：wrapper `close` 后先探测整个 POSIX PGID，只有确认
+  无其他成员或完成 group finalize 才释放 ownership 并删除 lease。
 - 幂等性：同一进程树的并发终止请求共享一个 Promise，不会重复执行终止序列。
 - 安全边界：PID 0、PID 1 和 Blade 自身 PID 不会被当作 POSIX 进程组广播目标。
 
@@ -47,6 +49,15 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   fail closed。orphan subagent reconciliation 在取得 child Session lease 后执行同一组
   reaper，再修复 child turn/tool receipt。ACP 客户端真正创建的 remote terminal 继续
   由客户端 terminal handle 所有，本地 lease 只用于 ACP local fallback。
+- Linux/macOS 不能把 root PID 退出等同于 process group 退出。reaper 会独立探测
+  `kill(-pgid, 0)`：PGID 不存在才清 stale lease；仍有成员时只向负 PGID 发送 TERM，
+  grace 后确认 root PID 仍未被复用才发送 KILL。任何时刻 root PID 重新出现都会保留
+  lease、标记 protected，绝不 fallback 到该正 PID。Windows 不使用这一 POSIX 分支，
+  live-root tree 仍由 `taskkill /PID <pid> /T` 管理。
+- foreground、background 和 ACP local fallback 的正常 close/error 路径也共享
+  process-group finalize barrier。即使用户命令用 `&` 启动后代并重定向全部 stdio，
+  terminal ToolResult/TaskOutput 也只能在后代回收后发布；finalize 失败时返回结构化错误
+  并保留 durable lease。
 - 后台 Bash 在启动时绑定当前 session。`WriteStdin`、`TaskOutput`、`KillShell` 和 `/tasks` 只能读取或操作该 session 的 shell；对其他 session 的 ID 按不存在处理。
 - 后台 Bash 的 stdin 由 runtime 持有。`WriteStdin` 等待写入回调并处理 pipe error；`close_stdin=true` 显式发送 EOF。进程已经退出、stdin 已关闭或缺失 session 时 fail closed。
 - 后台 Bash 先启动一个不执行用户命令的 detached gate wrapper，写入并 fsync durable
@@ -201,6 +212,8 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
 - parent 和 subagent 分别启动含延迟副作用的前台 Bash，宿主在 tool result 前硬杀
   Blade owner；新 Runtime 必须在各自 Session lease 临界区回收 identity-matched
   process tree、闭合 orphan tool receipt，并证明 sidecar 不含命令、环境、输出或 API key；
+- parent 轨迹中的 shell/gate leader 必须在宿主 `SIGKILL` 前已经退出，而
+  TERM-ignoring 延迟后代仍存活于原 PGID；冷 Runtime 不得把 lease 误判为 stale。
 - 模型启动后台 Bash 但不主动终止，正常结束 headless 会话，然后验证 session dispose 已等待整棵进程树回收。
 - 模型在 TUI、Web 和 ACP 中启动等待输入的后台 Bash，读取动态 `shell_id`，通过 `WriteStdin` 写入并关闭 stdin，再由 `TaskOutput` 等待退出；Flash 和 Pro 都必须产生正确宿主文件且三个工具事件完整可见。
 - 模型在 TUI、Web 和 ACP 中启动产生超过 1 MiB 输出的后台 Bash，再由 `TaskOutput` 验证尾部标记、结构化省略字节数和共享展示摘要；Flash 和 Pro 都必须在截断后继续完成宿主文件写入。

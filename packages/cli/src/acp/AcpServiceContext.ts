@@ -112,6 +112,7 @@ class LocalTerminalService implements TerminalService {
       let stderr = '';
       let killed = false;
       let admissionFailed = false;
+      let finalizationFailed = false;
       let settled = false;
 
       const timeoutId = options?.timeout
@@ -162,22 +163,34 @@ class LocalTerminalService implements TerminalService {
         if (killed || admissionFailed) {
           await terminateProcessTree();
         }
+        try {
+          await prepared.finalize();
+        } catch {
+          finalizationFailed = true;
+        }
         settle({
-          success: code === 0 && !killed && !admissionFailed,
+          success: code === 0 && !killed && !admissionFailed && !finalizationFailed,
           stdout,
           stderr,
           exitCode: code,
           error: admissionFailed
             ? 'Foreground command admission failed'
-            : killed
-              ? 'Command was terminated'
-              : undefined,
+            : finalizationFailed
+              ? 'Foreground command finalization failed'
+              : killed
+                ? 'Command was terminated'
+                : undefined,
         });
       });
 
       proc.on('error', async (error) => {
         if (killed || admissionFailed) {
           await terminateProcessTree();
+        }
+        try {
+          await prepared.finalize();
+        } catch {
+          finalizationFailed = true;
         }
         settle({
           success: false,
@@ -186,7 +199,9 @@ class LocalTerminalService implements TerminalService {
           exitCode: null,
           error: admissionFailed
             ? 'Foreground command admission failed'
-            : error.message,
+            : finalizationFailed
+              ? 'Foreground command finalization failed'
+              : error.message,
         });
       });
 
@@ -194,6 +209,7 @@ class LocalTerminalService implements TerminalService {
         void prepared.release().catch(async () => {
           admissionFailed = true;
           await terminateProcessTree();
+          await prepared.finalize().catch(() => undefined);
           settle({
             success: false,
             stdout,

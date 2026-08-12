@@ -47,6 +47,11 @@ credential 可以由 secret manager 注入测试子进程环境，也可以放�
 bun run qualify:production
 ```
 
+每条 capability 轨迹的 Provider timeout 必须短于 Vitest test timeout，并为 abort、
+runtime dispose、临时目录删除和全局配置恢复保留确定性清理窗口。验证 permission
+recovery 的轨迹关闭 Provider retry；retry/backoff 只在专用故障注入轨迹中测试，避免
+测试框架 timeout 后旧 `finally` 与 Vitest retry 并发运行。
+
 该命令运行固定的 release-blocking real matrix：真实 DeepSeek Flash/Pro Headless
 bugfix、GPT Web structured output、Claude ACP structured output、DeepSeek headless
 structured output、Web/ACP/TUI code review、durable interaction recovery、permission
@@ -561,6 +566,11 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
   receipt。延迟文件不得出现，lease commit/gate release 失败必须零执行，PID identity
   mismatch 不得误杀，损坏 sidecar 必须阻断恢复，sidecar 与 CLI 输出不得包含命令、
   环境、输出或 API key；
+- leaderless process group：parent 真实 API 轨迹必须先证明 shell/gate root PID 已退出、
+  TERM-ignoring 后代仍存活，再硬杀 Blade owner。Linux/macOS reaper 必须独立探测负
+  PGID 并在延迟副作用前完成 TERM/KILL；root PID 在 grace 中复用时禁止 KILL 并保留
+  lease。正常 foreground/background/ACP local close 也要验证全重定向后代在 terminal
+  result 前回收；Windows 继续验证 live-root `taskkill /T`，不宣称 POSIX PGID 语义；
 - session 退出回收：模型启动后台进程后正常结束 CLI，验证 runtime dispose 等待整棵进程树终止；
 - 中断恢复：真实信号中断活动工具调用，持久化一次模型可见的中断边界，再由第二个 CLI 安全恢复；
 - session 独占：活动 runtime 拒绝第二个同 session CLI 且不持久化其输入，owner 退出后允许恢复并继续验证；

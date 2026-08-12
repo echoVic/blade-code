@@ -4,6 +4,7 @@ const DEFAULT_TERM_GRACE_MS = 500;
 
 type ProcessSignal = 'SIGTERM' | 'SIGKILL';
 type KillProcess = (pid: number, signal: ProcessSignal) => boolean;
+type ProbeProcessGroup = (pid: number, signal: 0) => boolean;
 type Taskkill = (pid: number, force: boolean) => Promise<boolean>;
 type Wait = (milliseconds: number) => Promise<void>;
 
@@ -36,6 +37,30 @@ function errorCode(error: unknown): string | undefined {
   return error && typeof error === 'object' && 'code' in error
     ? String((error as { code?: unknown }).code)
     : undefined;
+}
+
+export function processGroupIsRunning(
+  pid: number,
+  platform: NodeJS.Platform = process.platform,
+  probe: ProbeProcessGroup = process.kill.bind(process)
+): boolean {
+  if (
+    platform === 'win32' ||
+    !Number.isInteger(pid) ||
+    pid <= 1 ||
+    pid === process.pid
+  ) {
+    return false;
+  }
+  try {
+    probe(-pid, 0);
+    return true;
+  } catch (error) {
+    const code = errorCode(error);
+    if (code === 'ESRCH') return false;
+    if (code === 'EPERM') return true;
+    throw error;
+  }
 }
 
 function runTaskkill(pid: number, force: boolean): Promise<boolean> {
@@ -107,6 +132,53 @@ export async function terminateProcessTreeByPid(
     success: graceful || forced,
     alreadyExited: false,
     forced,
+  };
+}
+
+export async function terminateProcessGroupByPid(
+  pid: number,
+  options: OwnedProcessTreeOptions = {}
+): Promise<ProcessTreeTerminationResult> {
+  if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) {
+    return { success: false, alreadyExited: false, forced: false };
+  }
+  const platform = options.platform ?? process.platform;
+  if (platform === 'win32') {
+    return { success: false, alreadyExited: false, forced: false };
+  }
+  const gracePeriodMs = options.gracePeriodMs ?? DEFAULT_TERM_GRACE_MS;
+  const killProcess = options.killProcess ?? process.kill.bind(process);
+  const waitFor = options.wait ?? wait;
+  const ownsPid = options.validatePidOwnership ?? (() => true);
+  if (!ownsPid()) {
+    return { success: false, alreadyExited: false, forced: false };
+  }
+
+  const signalGroup = (processSignal: ProcessSignal): 'sent' | 'missing' | 'failed' => {
+    try {
+      killProcess(-pid, processSignal);
+      return 'sent';
+    } catch (error) {
+      return errorCode(error) === 'ESRCH' ? 'missing' : 'failed';
+    }
+  };
+
+  const graceful = signalGroup('SIGTERM');
+  if (graceful === 'missing') {
+    return { success: true, alreadyExited: true, forced: false };
+  }
+  if (graceful === 'failed') {
+    return { success: false, alreadyExited: false, forced: false };
+  }
+  await waitFor(gracePeriodMs);
+  if (!ownsPid()) {
+    return { success: false, alreadyExited: false, forced: false };
+  }
+  const forced = signalGroup('SIGKILL');
+  return {
+    success: forced !== 'failed',
+    alreadyExited: forced === 'missing',
+    forced: forced === 'sent',
   };
 }
 

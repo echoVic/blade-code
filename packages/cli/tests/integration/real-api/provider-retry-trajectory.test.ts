@@ -536,7 +536,7 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
   );
 
   it.skipIf(process.platform === 'win32')(
-    'stops a real-API foreground shell before its delayed post-crash side effect',
+    'stops a real-API leaderless foreground group before its delayed side effect',
     async () => {
       if (!modelConfig) throw new Error('DeepSeek Flash configuration is required');
       const childProcess =
@@ -638,6 +638,15 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
         expect(launched.leaseContents).not.toContain('DEEPSEEK_API_KEY');
         expect(launched.leaseContents).not.toContain(modelConfig.apiKey);
         expect(stdout).toContain('"tool_name":"Bash"');
+        await waitForValue(async () => {
+          try {
+            process.kill(gatePid!, 0);
+            return undefined;
+          } catch {
+            return true;
+          }
+        }, 10_000);
+        expect(() => process.kill(commandPid!, 0)).not.toThrow();
 
         expect(child.kill('SIGKILL')).toBe(true);
         await childClosed;
