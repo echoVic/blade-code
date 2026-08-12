@@ -100,15 +100,43 @@ describe('OwnedProcessTree', () => {
 
   it('does not signal an orphan tree whose initial PID identity changed', async () => {
     const killProcess = vi.fn(() => true);
+    const validatePidOwnership = vi.fn(() => false);
 
     await expect(
       terminateProcessTreeByPid(42_422, {
         platform: 'linux',
         killProcess,
-        validatePidOwnership: () => false,
+        validatePidOwnership,
       })
     ).resolves.toMatchObject({ success: false, forced: false });
+    expect(validatePidOwnership).toHaveBeenCalledTimes(2);
     expect(killProcess).not.toHaveBeenCalled();
+  });
+
+  it('recovers from one transient initial ownership probe failure', async () => {
+    const killProcess = vi.fn(() => true);
+    const validatePidOwnership = vi
+      .fn<() => boolean>()
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true);
+
+    await expect(
+      terminateProcessTreeByPid(42_430, {
+        platform: 'darwin',
+        killProcess,
+        wait: async () => undefined,
+        validatePidOwnership,
+      })
+    ).resolves.toEqual({
+      success: true,
+      alreadyExited: false,
+      forced: true,
+    });
+    expect(validatePidOwnership).toHaveBeenCalledTimes(3);
+    expect(killProcess.mock.calls).toEqual([
+      [-42_430, 'SIGTERM'],
+      [-42_430, 'SIGKILL'],
+    ]);
   });
 
   it('terminates an owned POSIX group gracefully before forcing survivors', async () => {

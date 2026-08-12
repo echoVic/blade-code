@@ -39,6 +39,12 @@ function errorCode(error: unknown): string | undefined {
     : undefined;
 }
 
+function validateInitialOwnership(ownsPid: () => boolean): boolean {
+  // The root can exit between the caller's liveness and identity probes.
+  // Retry only before TERM; the pre-KILL ownership check remains strict.
+  return ownsPid() || ownsPid();
+}
+
 export function processGroupIsRunning(
   pid: number,
   platform: NodeJS.Platform = process.platform,
@@ -97,7 +103,7 @@ export async function terminateProcessTreeByPid(
   const waitFor = options.wait ?? wait;
   const ownsPid = options.validatePidOwnership ?? (() => true);
 
-  if (!ownsPid()) {
+  if (!validateInitialOwnership(ownsPid)) {
     return { success: false, alreadyExited: false, forced: false };
   }
 

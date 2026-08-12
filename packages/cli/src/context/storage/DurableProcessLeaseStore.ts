@@ -149,14 +149,15 @@ export class DurableProcessLeaseStore {
         this.remove(lease.processId);
         continue;
       }
-      if (!processIdentityMatches(lease.rootPid, lease.identity)) {
+      const validateRootOwnership = () =>
+        !isRunning(lease.rootPid) ||
+        processIdentityMatches(lease.rootPid, lease.identity);
+      if (!validateRootOwnership()) {
         protectedCount++;
         continue;
       }
       const result = await terminateProcessTreeByPid(lease.rootPid, {
-        validatePidOwnership: () =>
-          !isRunning(lease.rootPid) ||
-          processIdentityMatches(lease.rootPid, lease.identity),
+        validatePidOwnership: validateRootOwnership,
       });
       if (!result.success) {
         throw new Error(`Failed to reap ${this.options.label} ${lease.processId}`);
