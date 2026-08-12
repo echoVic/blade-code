@@ -51,7 +51,7 @@ bun run qualify:production
 bugfix、GPT Web structured output、Claude ACP structured output、DeepSeek headless
 structured output、Web/ACP/TUI code review、durable interaction recovery、permission
 recovery、ACP model switch、透明 503 retry proxy、durable 413 compaction proxy、真实
-mid-stream stall proxy，以及
+mid-stream stall proxy、assistant response fsync fail-stop/cold retry，以及
 DeepSeek Flash 的 Runtime/Web/ACP host-authoritative Goal completion verification。Edit+rewind、
 开放式多文件迁移、compaction、进程树、
 并发 owner 与 crash-tail 等高成本 provider/capability soak 由以下命令单独运行：
@@ -537,6 +537,10 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
   fail closed。第二个 Runtime 必须为已终止 turn 的 orphan 写入
   `sideEffectsUncertain` receipt，真实模型 resume 只能读取并确认既有文件，不得再次调用
   Write/Edit；
+- 响应提交恢复：真实 DeepSeek 产生最终文本后注入 assistant message fsync 失败；临时
+  content delta 可以被观察，但当前 turn 必须 aborted、不得提交 assistant 或
+  `turn_completed`。冷启动由 wake-up 输入触发后必须优先重新执行原 durable inbox，
+  第二次真实响应成功提交且不泄露底层 I/O 错误；
 - 计划模式恢复：跨两个 CLI 进程恢复会话并完成修改；
 - 模式边界恢复：在 Yolo 中故意调用一次 ExitPlanMode，运行时必须返回 `validation_error`，模型随后继续 Write/Bash，证明过期规划状态不能终止已经批准的工作；
 - 失败恢复：先重现测试失败，再修改，最后验证通过；

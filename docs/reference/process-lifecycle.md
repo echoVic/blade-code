@@ -80,6 +80,12 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   commit 失败统一返回 `tool_persistence_failed` 并停止本次 run；不会发起下一次
   Provider 请求，也不会继续执行由该结果驱动的工作。此时副作用可能已经发生，durable
   call 保持 orphan，交由下一 Runtime 的 `sideEffectsUncertain` receipt 修复。
+- 每个模型可见 user/control input 必须在 Provider 请求前 durable commit；每个非空
+  assistant step 必须在下一次 Provider 请求、`structured_output` 发布、Goal finalize
+  或成功 terminal 前 durable commit。失败时返回 canonical
+  `message_persistence_failed`，从 JSONL model-context projection 重建当前 Runtime
+  内存并清除未提交消息。streaming delta 可以先作为临时进度显示，但不构成成功或恢复
+  证据；失败 turn 不确认 inbox，冷启动会优先重新执行该 durable input。
 - 新 Runtime 取得 Session lease 后，会在同一个 validated batch 中修复 materialized
   transcript 的 orphan tool calls。每个 orphan 先获得 synthetic error
   `tool_result`，明确标记 `processRestartRecovery` 与 `sideEffectsUncertain`，随后 active

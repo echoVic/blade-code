@@ -187,6 +187,7 @@ export interface LoopResult {
       | 'goal_verification_failed'
       | 'worktree_protocol_failed'
       | 'structured_output_failed'
+      | 'message_persistence_failed'
       | 'tool_persistence_failed';
     message: string;
     details?: unknown;

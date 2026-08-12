@@ -31,6 +31,7 @@ import {
   providerReplayBoundaryCrossed,
 } from '../../services/pi/providerRetry.js';
 import { SessionInteractionService } from '../../services/SessionInteractionService.js';
+import { SessionService } from '../../services/SessionService.js';
 import {
   createStructuredOutputContract,
   MAX_STRUCTURED_OUTPUT_RETRIES,
@@ -68,6 +69,7 @@ import {
 import {
   DURABLE_TOOL_RESULT_FAILURE_MESSAGE,
   DURABLE_TOOL_USE_FAILURE_MESSAGE,
+  DurableConversationPersistenceError,
   INTERRUPTED_TURN_MARKER,
   saveCompaction as persistCompaction,
   saveToolResult as persistToolResult,
@@ -884,6 +886,7 @@ validates the object and may return a bounded corrective error.`;
     }
 
     // 2. 构建消息历史 — 使用 ConversationState 单一消息源
+    const initialContextMessages = [...context.messages];
     const state = new ConversationState(context, finalSystemPrompt);
     if (
       isFreshConversation &&
@@ -2770,6 +2773,7 @@ validates the object and may return a bounded corrective error.`;
           }
 
           let goalCompletionVerified = false;
+          let goalCompletionReady = false;
           if (goalCompletionRequested) {
             if (!options?.goalLifecycle || goalVerificationVerdict !== 'pass') {
               return {
@@ -2791,10 +2795,7 @@ validates the object and may return a bounded corrective error.`;
                 },
               };
             }
-            const completedGoal = await options.goalLifecycle.finalizeCompletion();
-            goalCompletionRequested = false;
-            goalCompletionVerified = true;
-            yield { kind: 'goal_updated', goal: completedGoal };
+            goalCompletionReady = true;
           }
 
           const finalMessage = structuredOutput
@@ -2830,6 +2831,12 @@ validates the object and may return a bounded corrective error.`;
             structuredOutputMetadata
           );
           if (uuid) lastMessageUuid = uuid;
+          if (goalCompletionReady && options?.goalLifecycle) {
+            const completedGoal = await options.goalLifecycle.finalizeCompletion();
+            goalCompletionRequested = false;
+            goalCompletionVerified = true;
+            yield { kind: 'goal_updated', goal: completedGoal };
+          }
           if (structuredOutput && structuredOutputContract) {
             yield {
               kind: 'structured_output',
@@ -3844,6 +3851,25 @@ validates the object and may return a bounded corrective error.`;
 
         // 继续下一轮循环...
       }
+    } catch (error) {
+      if (error instanceof DurableConversationPersistenceError) {
+        try {
+          const durableHistory = context.sessionId
+            ? await SessionService.loadSessionModelContext(
+                context.sessionId,
+                context.workspaceRoot
+              )
+            : initialContextMessages;
+          state.restoreDurableHistory(durableHistory);
+        } catch (recoveryError) {
+          logger.error(
+            '[Loop] Failed to reload durable context after message commit failure:',
+            recoveryError
+          );
+          state.restoreDurableHistory(initialContextMessages);
+        }
+      }
+      throw error;
     } finally {
       // 确保所有退出路径都将消息回写到 context.messages
       if (options?.transientInput === 'goal_continuation') {
@@ -3862,6 +3888,20 @@ validates the object and may return a bounded corrective error.`;
   } catch (error) {
     if (isAbortError(error)) {
       return makeInterruptedResult(turnsCount, allToolResults.length, options?.signal);
+    }
+    if (error instanceof DurableConversationPersistenceError) {
+      return {
+        success: false,
+        error: {
+          type: 'message_persistence_failed',
+          message: error.message,
+        },
+        metadata: {
+          turnsCount,
+          toolCallsCount: allToolResults.length,
+          duration: Date.now() - startTime,
+        },
+      };
     }
     const friendlyMessage = extractApiErrorMessage(error);
     logger.error(`API 调用失败: ${friendlyMessage}`);

@@ -226,6 +226,19 @@ export class ConversationState {
     );
   }
 
+  /** Replace all mutable state with an authoritative durable projection. */
+  restoreDurableHistory(messages: Message[]): void {
+    this._contextualSystemMessages = messages.filter(
+      isContextualProjectInstructionMessage
+    );
+    this._history = messages.filter(
+      (message) =>
+        !isRootSystemPrompt(message) && !isContextualProjectInstructionMessage(message)
+    );
+    this._pending = [];
+    this.syncContextualSystemMessages();
+  }
+
   removeMessages(predicate: (message: Message) => boolean): void {
     this._history = this._history.filter((message) => !predicate(message));
     this._pending = this._pending.filter((message) => !predicate(message));

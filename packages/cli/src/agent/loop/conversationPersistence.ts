@@ -85,6 +85,23 @@ export const DURABLE_TOOL_RESULT_FAILURE_MESSAGE =
   'Further model and tool execution was stopped. The operation may have completed; ' +
   'inspect external state before retrying.';
 
+export type DurableConversationPersistencePhase = 'user_message' | 'assistant_message';
+
+export class DurableConversationPersistenceError extends Error {
+  constructor(
+    readonly phase: DurableConversationPersistencePhase,
+    options?: ErrorOptions
+  ) {
+    super(
+      phase === 'user_message'
+        ? 'Conversation input could not be committed. No further model request was started.'
+        : 'Model output could not be committed. The run was stopped before any further model request or successful completion.',
+      options
+    );
+    this.name = 'DurableConversationPersistenceError';
+  }
+}
+
 /** 获取 ContextManager（可能为 undefined） */
 function getContextMgr(deps: LoopDependencies) {
   return deps.executionEngine?.getContextManager();
@@ -99,8 +116,10 @@ export async function saveUserMessage(
   context: ChatContext,
   message: UserMessageContent,
   parentUuid: string | null = null,
-  metadata?: { inboxMessageId?: string }
+  metadata?: { inboxMessageId?: string },
+  options: { required?: boolean } = {}
 ): Promise<string | null> {
+  const required = options.required ?? deps.executionEngine !== undefined;
   try {
     const contextMgr = getContextMgr(deps);
     const hasPersistableContent =
@@ -118,12 +137,23 @@ export async function saveUserMessage(
         metadata,
         context.subagentInfo
       );
+      if (required && !uuid) {
+        throw new Error('Durable user-message commit returned no identity');
+      }
       // Backfill a semantic title from the first user message (best-effort).
       void maybeBackfillSessionTitle(context, message);
       return uuid;
     }
+    if (required && context.sessionId && hasPersistableContent) {
+      throw new Error('Durable user-message storage is unavailable');
+    }
   } catch (error) {
     logger.warn('[Loop] 保存用户消息失败:', error);
+    if (required) {
+      throw new DurableConversationPersistenceError('user_message', {
+        cause: error,
+      });
+    }
   }
   return null;
 }
@@ -138,16 +168,15 @@ export async function saveAssistantMessage(
   content: string,
   parentUuid: string | null,
   reasoningContent?: string,
-  metadata?: MessagePersistenceMetadata
+  metadata?: MessagePersistenceMetadata,
+  options: { required?: boolean } = {}
 ): Promise<string | null> {
+  const required = options.required ?? deps.executionEngine !== undefined;
   try {
     const contextMgr = getContextMgr(deps);
-    if (
-      contextMgr &&
-      context.sessionId &&
-      (content.trim() || reasoningContent?.trim())
-    ) {
-      return await contextMgr.saveMessage(
+    const hasPersistableContent = Boolean(content.trim() || reasoningContent?.trim());
+    if (contextMgr && context.sessionId && hasPersistableContent) {
+      const uuid = await contextMgr.saveMessage(
         context.sessionId,
         'assistant',
         content,
@@ -156,9 +185,21 @@ export async function saveAssistantMessage(
         context.subagentInfo,
         reasoningContent
       );
+      if (required && !uuid) {
+        throw new Error('Durable assistant-message commit returned no identity');
+      }
+      return uuid;
+    }
+    if (required && context.sessionId && hasPersistableContent) {
+      throw new Error('Durable assistant-message storage is unavailable');
     }
   } catch (error) {
     logger.warn('[Loop] 保存助手消息失败:', error);
+    if (required) {
+      throw new DurableConversationPersistenceError('assistant_message', {
+        cause: error,
+      });
+    }
   }
   return null;
 }

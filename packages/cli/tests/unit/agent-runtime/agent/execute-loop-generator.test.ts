@@ -109,6 +109,7 @@ import { CompactionService } from '../../../../src/context/CompactionService.js'
 import { ContextManager } from '../../../../src/context/ContextManager.js';
 import { ReactiveCompaction } from '../../../../src/context/ReactiveCompaction.js';
 import { markProviderReplayBoundary } from '../../../../src/services/pi/providerRetry.js';
+import { SessionService } from '../../../../src/services/SessionService.js';
 
 // Access the shared mock functions via a probe instance of the mocked class
 const reactiveCompactionState = new (
@@ -222,6 +223,7 @@ function createMockContextManager() {
 }
 
 function createTypedPersistenceHarness(options?: {
+  rejectAssistantMessage?: boolean;
   rejectToolUse?: boolean;
   rejectToolResult?: boolean;
 }) {
@@ -232,7 +234,12 @@ function createTypedPersistenceHarness(options?: {
   let messageIndex = 0;
   const saveMessage = vi
     .spyOn(contextManager, 'saveMessage')
-    .mockImplementation(async () => `durable-message-${++messageIndex}`);
+    .mockImplementation(async (_sessionId, role) => {
+      if (role === 'assistant' && options?.rejectAssistantMessage) {
+        throw new Error('durable assistant-message persistence failed');
+      }
+      return `durable-message-${++messageIndex}`;
+    });
   const saveToolUse = vi.spyOn(contextManager, 'saveToolUse');
   if (options?.rejectToolUse) {
     saveToolUse.mockRejectedValue(new Error('durable tool-use persistence failed'));
@@ -723,8 +730,56 @@ describe('executeLoopGenerator', () => {
         )
       );
 
-      expect(result.success).toBe(false);
+      expect(result).toMatchObject({
+        success: false,
+        error: {
+          type: 'message_persistence_failed',
+          message: expect.stringContaining('Conversation input could not be committed'),
+        },
+      });
+      expect(result.error).not.toHaveProperty('details');
       expect(chatMock).not.toHaveBeenCalled();
+    });
+
+    it('does not report success when the final assistant response cannot be committed', async () => {
+      const { deps } = createTypedPersistenceHarness({
+        rejectAssistantMessage: true,
+      });
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock.mockResolvedValueOnce({
+        content: 'Ephemeral final response',
+        toolCalls: undefined,
+        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+        finishReason: 'stop',
+      });
+
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Return a final response.',
+          context,
+          { stream: false },
+          undefined
+        )
+      );
+
+      expect(chatMock).toHaveBeenCalledTimes(1);
+      expect(events).toContainEqual({
+        kind: 'content_delta',
+        delta: 'Ephemeral final response',
+      });
+      expect(context.messages.some((message) => message.role === 'assistant')).toBe(
+        false
+      );
+      expect(result).toMatchObject({
+        success: false,
+        error: {
+          type: 'message_persistence_failed',
+          message: expect.stringContaining('Model output could not be committed'),
+        },
+      });
+      expect(result.error).not.toHaveProperty('details');
     });
 
     it('applies mid-turn steering before accepting the model final response', async () => {
@@ -859,15 +914,29 @@ describe('executeLoopGenerator', () => {
       };
 
       const context = createMockContext();
-      const { result } = await drainGenerator(
-        executeLoopGenerator(
-          deps,
-          'Initial request.',
-          context,
-          { stream: false, turnSteering },
-          undefined
-        )
-      );
+      const durableReload = vi
+        .spyOn(SessionService, 'loadSessionModelContext')
+        .mockResolvedValue([
+          {
+            role: 'user',
+            content: 'First durable update.',
+            metadata: { inboxMessageId: 'steer-1' },
+          },
+        ]);
+      let result: LoopResult;
+      try {
+        ({ result } = await drainGenerator(
+          executeLoopGenerator(
+            deps,
+            'Initial request.',
+            context,
+            { stream: false, turnSteering },
+            undefined
+          )
+        ));
+      } finally {
+        durableReload.mockRestore();
+      }
 
       expect(result.success).toBe(false);
       expect(context.messages).toContainEqual(
@@ -2068,7 +2137,7 @@ describe('executeLoopGenerator', () => {
     });
 
     it('finalizes a goal only after an authoritative fresh verifier PASS', async () => {
-      const deps = createMockDeps();
+      const { deps, saveMessage } = createTypedPersistenceHarness();
       const registry = deps.toolExecutor.getRegistry();
       vi.mocked(registry.getFunctionDeclarationsByMode).mockReturnValue([
         { name: 'UpdateGoal', description: 'Update goal', parameters: {} },
@@ -2151,7 +2220,18 @@ describe('executeLoopGenerator', () => {
       const getSnapshot = vi.fn().mockResolvedValue(verifyingGoal);
       const recordVerification = vi.fn().mockResolvedValue(passedGoal);
       const invalidateVerification = vi.fn().mockResolvedValue(verifyingGoal);
-      const finalizeCompletion = vi.fn().mockResolvedValue(completeGoal);
+      const finalizeCompletion = vi.fn().mockImplementation(async () => {
+        expect(saveMessage).toHaveBeenCalledWith(
+          'test-session',
+          'assistant',
+          'Verified completion.',
+          expect.any(String),
+          undefined,
+          undefined,
+          undefined
+        );
+        return completeGoal;
+      });
 
       const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
       executeMock
@@ -5017,6 +5097,48 @@ describe('executeLoopGenerator', () => {
           structuredOutput: { answer: 'validated' },
           structuredOutputSchemaDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
         },
+      });
+    });
+
+    it('does not publish structured output before its final response commit', async () => {
+      const { deps } = createTypedPersistenceHarness({
+        rejectAssistantMessage: true,
+      });
+      const chat = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chat
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'structured-durable-barrier',
+              type: 'function',
+              function: {
+                name: 'StructuredOutput',
+                arguments: '{"answer":"ephemeral"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'internal completion prose',
+          finishReason: 'stop',
+        });
+
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Return a structured answer.',
+          createMockContext(),
+          { stream: false, outputSchema },
+          undefined
+        )
+      );
+
+      expect(events.some((event) => event.kind === 'structured_output')).toBe(false);
+      expect(result).toMatchObject({
+        success: false,
+        error: { type: 'message_persistence_failed' },
       });
     });
 

@@ -815,6 +815,158 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
     }
   }, 180_000);
 
+  it('fails closed when a real final response cannot be committed', async () => {
+    if (!modelConfig) throw new Error('DeepSeek Flash configuration is required');
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-response-commit-'));
+    const sessionId = `real-response-commit-${Date.now()}`;
+    const responseMarker = 'RESPONSE_COMMIT_RETRY_OK';
+    let failedOutput = '';
+    let recoveredOutput = '';
+    let errorOutput = '';
+
+    try {
+      process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+      getState().config.actions.setConfig({
+        ...buildRealApiRuntimeConfig(modelConfig),
+        permissionMode: PermissionMode.YOLO,
+      });
+      const originalSaveMessage = PersistentStore.prototype.saveMessage;
+      let injectedFailures = 0;
+      const responsePersistence = vi
+        .spyOn(PersistentStore.prototype, 'saveMessage')
+        .mockImplementation(async function (
+          this: PersistentStore,
+          ...args: Parameters<PersistentStore['saveMessage']>
+        ) {
+          if (args[1] === 'assistant' && injectedFailures === 0) {
+            injectedFailures++;
+            throw new Error('injected assistant commit failure');
+          }
+          return originalSaveMessage.apply(this, args);
+        });
+
+      let failedExitCode: number;
+      try {
+        failedExitCode = await runWithCwdOverride(workspace, () =>
+          runHeadless(
+            {
+              headless: true,
+              outputFormat: 'jsonl',
+              sessionId,
+              maxTurns: 1,
+              message: `Reply with exactly ${responseMarker} and nothing else.`,
+            },
+            {
+              stdout: {
+                write(chunk: string) {
+                  failedOutput += chunk;
+                  return true;
+                },
+              },
+              stderr: {
+                write(chunk: string) {
+                  errorOutput += chunk;
+                  return true;
+                },
+              },
+            }
+          )
+        );
+      } finally {
+        responsePersistence.mockRestore();
+      }
+
+      const failedEvents = failedOutput
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+      const failedContent = failedEvents
+        .filter((event) => event.type === 'content_delta')
+        .map((event) => event.delta)
+        .join('');
+      expect(failedExitCode).not.toBe(0);
+      expect(injectedFailures).toBe(1);
+      expect(failedContent).toContain(responseMarker);
+
+      const store = new PersistentStore(workspace);
+      await store.initialize();
+      const failedTranscript = await store.loadEvents(sessionId);
+      expect(failedTranscript?.some((event) => event.type === 'turn_aborted')).toBe(
+        true
+      );
+      expect(failedTranscript?.some((event) => event.type === 'turn_completed')).toBe(
+        false
+      );
+      const failedContext = await SessionService.loadSessionModelContext(
+        sessionId,
+        workspace
+      );
+      expect(
+        JSON.stringify(failedContext.filter((message) => message.role === 'assistant'))
+      ).not.toContain(responseMarker);
+
+      const recoveredExitCode = await runWithCwdOverride(workspace, () =>
+        runHeadless(
+          {
+            headless: true,
+            outputFormat: 'jsonl',
+            resume: sessionId,
+            maxTurns: 1,
+            message: 'Resume the durable unfinished input before this follow-up.',
+          },
+          {
+            stdout: {
+              write(chunk: string) {
+                recoveredOutput += chunk;
+                return true;
+              },
+            },
+            stderr: {
+              write(chunk: string) {
+                errorOutput += chunk;
+                return true;
+              },
+            },
+          }
+        )
+      );
+      const recoveredEvents = recoveredOutput
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+      const recoveredContent = recoveredEvents
+        .filter((event) => event.type === 'content_delta')
+        .map((event) => event.delta)
+        .join('');
+
+      expect(
+        recoveredExitCode,
+        errorOutput.replaceAll(modelConfig.apiKey, '[redacted]')
+      ).toBe(0);
+      expect(recoveredContent.trim()).toBe(responseMarker);
+      const recoveredContext = await SessionService.loadSessionModelContext(
+        sessionId,
+        workspace
+      );
+      const recoveredAssistantContext = JSON.stringify(
+        recoveredContext.filter((message) => message.role === 'assistant')
+      );
+      expect(recoveredAssistantContext).toContain(responseMarker);
+      const recoveredTranscript = await store.loadEvents(sessionId);
+      expect(
+        recoveredTranscript?.filter((event) => event.type === 'turn_completed')
+      ).toHaveLength(1);
+      expect(`${failedOutput}\n${recoveredOutput}\n${errorOutput}`).not.toContain(
+        modelConfig.apiKey
+      );
+      expect(`${failedOutput}\n${recoveredOutput}\n${errorOutput}`).not.toContain(
+        'injected assistant commit failure'
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  }, 180_000);
+
   it('recovers a real mid-stream stall without replaying the request', async () => {
     if (!modelConfig) throw new Error('DeepSeek Flash configuration is required');
     const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-provider-stall-'));

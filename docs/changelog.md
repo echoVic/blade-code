@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.19] - 2026-08-12
+
+### 🛡️ 稳定性
+
+- 新增 Durable Conversation Step Barrier：生产 Runtime 的模型可见 user/control input
+  必须在 Provider 请求前提交，assistant step 必须在下一次 Provider、结构化输出发布、
+  Goal finalize 或成功终态前提交
+- assistant commit 失败统一返回 canonical `message_persistence_failed`，不会携带底层
+  I/O 错误或路径；当前 Runtime 从 authoritative JSONL model context 重建内存，清除仅存在
+  于 streaming/UI 的未提交消息
+- 失败 turn 不确认 durable inbox，冷启动会优先重新执行未完成输入；流式 delta 仍可作为
+  临时进度展示，但不能被误报为成功或进入恢复 transcript
+
+### ✅ 测试相关
+
+- 新增 direct input、non-streaming final、真实 streaming、structured output、Goal
+  finalize 顺序及 partial steering commit 回归
+- release-blocking 真实 DeepSeek 轨迹注入最终 assistant fsync 失败，验证首轮答案可见但
+  JSONL 无 assistant、turn 仅 aborted；冷启动重新执行同一 durable input 后成功提交答案
+
 ## [0.10.18] - 2026-08-12
 
 ### 🛡️ 稳定性

@@ -493,6 +493,92 @@ function deferred() {
 }
 
 describe('executeLoopGenerator streaming tool policy', () => {
+  it('does not complete a streamed response when its assistant commit fails', async () => {
+    let providerRequests = 0;
+    const chatService: IChatService = {
+      async chat() {
+        throw new Error('Durable streaming response test must not use chat');
+      },
+      async *streamChat() {
+        providerRequests++;
+        yield {
+          content: 'Ephemeral streamed response',
+          finishReason: 'stop',
+        };
+      },
+      getConfig() {
+        return {
+          provider: 'openai-compatible',
+          apiKey: 'test-key',
+          baseUrl: 'https://example.invalid/v1',
+          model: 'test-model',
+          maxContextTokens: 64_000,
+          maxOutputTokens: 4_096,
+        };
+      },
+      updateConfig(newConfig: Partial<ChatConfig>) {
+        void newConfig;
+      },
+    };
+    const registry = new ToolRegistry();
+    const contextManager = new ContextManager({
+      projectPath: '/tmp/blade-streaming-response-barrier',
+    });
+    vi.spyOn(contextManager, 'saveMessage').mockImplementation(
+      async (_sessionId, role) => {
+        if (role === 'assistant') {
+          throw new Error('durable assistant fsync failed');
+        }
+        return 'durable-user-message';
+      }
+    );
+    const dependencies: LoopDependencies = {
+      chatService,
+      toolExecutor: new ToolExecutor(registry, {
+        permissionMode: PermissionMode.YOLO,
+      }),
+      executionEngine: new ExecutionEngine(
+        chatService,
+        contextManager,
+        '/tmp/blade-streaming-response-barrier'
+      ),
+      config: DEFAULT_CONFIG,
+      runtimeOptions: {},
+      currentModelMaxContextTokens: 64_000,
+      applySkillToolRestrictions: (tools) => tools,
+    };
+    const context: ChatContext = {
+      messages: [],
+      userId: 'stream-response-barrier-user',
+      sessionId: 'stream-response-barrier-session',
+      workspaceRoot: '/tmp/blade-streaming-response-barrier',
+      permissionMode: PermissionMode.YOLO,
+    };
+
+    const { events, result } = await drain(
+      executeLoopGenerator(
+        dependencies,
+        'Return a streamed response.',
+        context,
+        { stream: true },
+        undefined
+      )
+    );
+
+    expect(providerRequests).toBe(1);
+    expect(events).toContainEqual({
+      kind: 'content_delta',
+      delta: 'Ephemeral streamed response',
+    });
+    expect(context.messages.some((message) => message.role === 'assistant')).toBe(
+      false
+    );
+    expect(result).toMatchObject({
+      success: false,
+      error: { type: 'message_persistence_failed' },
+    });
+  });
+
   it('stops before publishing a streaming result when its durable commit fails', async () => {
     let providerRequests = 0;
     const chatService: IChatService = {
