@@ -7,6 +7,10 @@ import {
   requiresIndependentVerification,
   restoreIndependentVerificationState,
 } from '../../../../src/agent/loop/independentVerification.js';
+import {
+  INDEPENDENT_VERIFICATION_OUTPUT_SCHEMA,
+  independentVerificationVerdictFromOutput,
+} from '../../../../src/agent/subagents/builtinVerificationAgent.js';
 import type { ToolResult } from '../../../../src/tools/types/index.js';
 
 function successfulResult(metadata: Record<string, unknown>): ToolResult {
@@ -21,6 +25,7 @@ function gateInput(
   overrides: Partial<Parameters<typeof checkIndependentVerificationGate>[0]> = {}
 ): Parameters<typeof checkIndependentVerificationGate>[0] {
   return {
+    enabled: true,
     isSubagent: false,
     taskAvailable: true,
     delegationForbidden: false,
@@ -52,6 +57,21 @@ describe('independent verification policy', () => {
       )
     ).toBeUndefined();
     expect(parseVerificationVerdict('PASS')).toBeUndefined();
+    expect(
+      independentVerificationVerdictFromOutput({
+        verdict: 'pass',
+        summary: 'All checks passed.',
+        findings: [],
+      })
+    ).toBe('pass');
+    expect(independentVerificationVerdictFromOutput({ verdict: 'unknown' })).toBe(
+      undefined
+    );
+    expect(INDEPENDENT_VERIFICATION_OUTPUT_SCHEMA.required).toEqual([
+      'verdict',
+      'summary',
+      'findings',
+    ]);
   });
 
   it('records write metadata while distinguishing verification Bash commands', () => {
@@ -220,6 +240,7 @@ describe('independent verification policy', () => {
 
   it('skips incompatible execution surfaces and fails closed at the retry limit', () => {
     for (const overrides of [
+      { enabled: false },
       { isSubagent: true },
       { taskAvailable: false },
       { delegationForbidden: true },

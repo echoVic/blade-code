@@ -973,10 +973,7 @@ validates the object and may return a bounded corrective error.`;
       };
     }
 
-    const maxTurns =
-      configuredMaxTurns === -1
-        ? Infinity
-        : configuredMaxTurns;
+    const maxTurns = configuredMaxTurns === -1 ? Infinity : configuredMaxTurns;
 
     let totalTokens = 0;
     let lastPromptTokens: number | undefined;
@@ -1113,7 +1110,10 @@ validates the object and may return a bounded corrective error.`;
         }
         return undefined;
       }
-      if (independentVerificationTaskRequired || goalVerificationTaskRequired) {
+      if (
+        (builtinVerificationEnabled && independentVerificationTaskRequired) ||
+        goalVerificationTaskRequired
+      ) {
         if (toolName !== 'Task') {
           return {
             success: false,
@@ -2489,6 +2489,7 @@ validates the object and may return a bounded corrective error.`;
           worktreeRetryCount = 0;
 
           const independentVerificationAction = checkIndependentVerificationGate({
+            enabled: builtinVerificationEnabled,
             isSubagent,
             taskAvailable:
               builtinVerificationEnabled &&

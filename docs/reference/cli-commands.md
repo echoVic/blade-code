@@ -90,6 +90,15 @@ blade --agents '{"reviewer":{"description":"Review code changes","prompt":"Find 
 
 定义必须包含 `description` 和 `prompt`；未知字段、无效类型或格式错误会导致启动失败。完整字段说明见 [Subagents 指南](../guides/subagents.md)。
 
+### Headless 并发与内存
+
+每个 `blade --headless` 都是独立进程，会加载完整模型、工具和会话运行时；内置验证
+Subagent 执行期间还会提高单进程峰值内存。多个独立 CLI 进程之间没有共享的任务
+admission controller。CI 或批量评测应从并发 2 开始，根据实际 RSS 逐步提高，并让
+容器/Runner 保留足够余量。内存受限环境可使用 `--no-verification-agent`，由外部
+流水线执行测试与审查。需要 Blade 统一排队时使用 `blade serve` 及
+`maxConcurrentTasks` / `maxQueuedTasks`，不要并行启动大量 headless 进程。
+
 ### MCP 选项
 
 | 选项 | 说明 |

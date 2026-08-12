@@ -21,6 +21,10 @@ import {
   GOAL_VERIFICATION_OUTPUT_SCHEMA,
   goalVerificationVerdictFromOutput,
 } from './builtinGoalVerificationAgent.js';
+import {
+  INDEPENDENT_VERIFICATION_OUTPUT_SCHEMA,
+  independentVerificationVerdictFromOutput,
+} from './builtinVerificationAgent.js';
 import type { SubagentConfig, SubagentContext, SubagentResult } from './types.js';
 
 /**
@@ -148,7 +152,11 @@ export class SubagentExecutor {
           ? agent.chatStream(context.prompt, chatContext, {
               outputSchema: GOAL_VERIFICATION_OUTPUT_SCHEMA,
             })
-          : agent.chatStream(context.prompt, chatContext);
+          : isVerificationAuditSubagent(this.config.name)
+            ? agent.chatStream(context.prompt, chatContext, {
+                outputSchema: INDEPENDENT_VERIFICATION_OUTPUT_SCHEMA,
+              })
+            : agent.chatStream(context.prompt, chatContext);
       const loopResult = await drainLoop(stream, onEvent);
 
       if (loopResult.success) {
@@ -171,7 +179,9 @@ export class SubagentExecutor {
           this.config.name === GOAL_VERIFICATION_SUBAGENT_TYPE
             ? goalVerificationVerdictFromOutput(loopResult.metadata?.structuredOutput)
             : isVerificationAuditSubagent(this.config.name)
-              ? parseVerificationVerdict(finalMessage)
+              ? (independentVerificationVerdictFromOutput(
+                  loopResult.metadata?.structuredOutput
+                ) ?? parseVerificationVerdict(finalMessage))
               : undefined,
         modifiedFiles: [...modifiedFiles],
         stats: {

@@ -59,6 +59,10 @@ import {
   goalVerificationVerdictFromOutput,
 } from './builtinGoalVerificationAgent.js';
 import {
+  INDEPENDENT_VERIFICATION_OUTPUT_SCHEMA,
+  independentVerificationVerdictFromOutput,
+} from './builtinVerificationAgent.js';
+import {
   type SubagentIsolationMode,
   type SubagentWorktreeLease,
   subagentWorktreeLifecycle,
@@ -693,7 +697,9 @@ export class BackgroundAgentManager {
           signal,
           ...(config.name === GOAL_VERIFICATION_SUBAGENT_TYPE
             ? { outputSchema: GOAL_VERIFICATION_OUTPUT_SCHEMA }
-            : {}),
+            : isVerificationAuditSubagent(config.name)
+              ? { outputSchema: INDEPENDENT_VERIFICATION_OUTPUT_SCHEMA }
+              : {}),
         }),
         async (event) => {
           if (event.kind === 'tool_result' && 'function' in event.toolCall) {
@@ -735,7 +741,9 @@ export class BackgroundAgentManager {
                     loopResult.metadata?.structuredOutput
                   )
                 : isVerificationAuditSubagent(config.name)
-                  ? parseVerificationVerdict(loopResult.finalMessage)
+                  ? (independentVerificationVerdictFromOutput(
+                      loopResult.metadata?.structuredOutput
+                    ) ?? parseVerificationVerdict(loopResult.finalMessage))
                   : undefined,
             modifiedFiles: [...modifiedFiles],
             stats: {

@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### 🛡️ 稳定性
+
+- `--no-verification-agent` 现在作为 independent verification gate 的显式
+  host policy，禁用时无条件绕过 gate，不再依赖 Task 工具可用性间接推断
+- 内置 independent verifier 改用 host-validated JSON Schema 输出
+  `verdict/summary/findings`，文本标题仅用于旧会话兼容；预算提升至 24 轮，
+  避免测试通过但 Markdown 标题不精确导致误判和重试耗尽
+- 默认工程提示要求性能测试执行预热、使用相对性能比值，并避免将固定墙钟耗时
+  作为跨硬件正确性断言
+- CLI 文档补充 headless 多进程内存模型、建议并发和 server admission 配置
+
+### ✅ 测试相关
+
+- 新增 verification gate 显式禁用、structured verifier verdict 和性能测试提示回归
+
 ## [0.10.25] - 2026-08-12
 
 ### ✨ 新功能

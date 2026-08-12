@@ -21,6 +21,7 @@ const HIGH_RISK_FILE_PATTERN =
   /(?:^|\/)(?:Dockerfile|docker-compose(?:\.[^/]+)?|wrangler\.(?:jsonc?|toml)|[^/]+\.tf)$/i;
 
 export interface IndependentVerificationGateInput {
+  enabled: boolean;
   isSubagent: boolean;
   taskAvailable: boolean;
   delegationForbidden: boolean;
@@ -244,6 +245,7 @@ export function checkIndependentVerificationGate(
   input: IndependentVerificationGateInput
 ): IndependentVerificationGateAction {
   if (
+    !input.enabled ||
     input.isSubagent ||
     !input.taskAvailable ||
     input.delegationForbidden ||

@@ -213,6 +213,45 @@ describe('SubagentExecutor event forwarding', () => {
     );
   });
 
+  it('uses a host-validated structured verdict for independent verification', async () => {
+    mockChatStream.mockImplementation(
+      createMockGenerator([], {
+        success: true,
+        finalMessage: 'All configured checks passed.',
+        metadata: {
+          turnsCount: 4,
+          toolCallsCount: 3,
+          duration: 100,
+          structuredOutput: {
+            verdict: 'pass',
+            summary: 'All configured checks passed.',
+            findings: [],
+          },
+        },
+      })
+    );
+    const { SubagentExecutor } = await import(
+      '../../../../src/agent/subagents/SubagentExecutor.js'
+    );
+
+    const result = await new SubagentExecutor({
+      name: 'verification',
+      description: 'verify changes',
+      source: 'builtin',
+    }).execute({ prompt: 'verify the implementation' });
+
+    expect(result.verificationVerdict).toBe('pass');
+    expect(mockChatStream).toHaveBeenCalledWith(
+      'verify the implementation',
+      expect.any(Object),
+      expect.objectContaining({
+        outputSchema: expect.objectContaining({
+          required: ['verdict', 'summary', 'findings'],
+        }),
+      })
+    );
+  });
+
   it('passes custom agent policy into completion requirements', async () => {
     mockChatStream.mockImplementation(createMockGenerator([]));
 

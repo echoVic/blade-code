@@ -55,6 +55,10 @@ describe('buildSystemPrompt', () => {
       expect(result.prompt).toContain('You are Blade Code');
       expect(result.prompt).toContain('must not silently return a `T | Promise<T>`');
       expect(result.prompt).toContain('separate explicitly asynchronous method');
+      expect(result.prompt).toContain(
+        'Make performance tests portable across hardware'
+      );
+      expect(result.prompt).toContain('fixed wall-clock duration');
       expect(result.sources).toContainEqual({
         name: 'default',
         loaded: true,

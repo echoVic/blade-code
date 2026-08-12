@@ -6,6 +6,45 @@
  */
 
 import type { SubagentConfig } from './types.js';
+import type { JsonObject } from '../../store/types.js';
+
+export const INDEPENDENT_VERIFICATION_OUTPUT_SCHEMA: JsonObject = {
+  type: 'object',
+  properties: {
+    verdict: {
+      type: 'string',
+      enum: ['pass', 'fail', 'partial'],
+    },
+    summary: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 2_000,
+    },
+    findings: {
+      type: 'array',
+      maxItems: 50,
+      items: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 1_000,
+      },
+    },
+  },
+  required: ['verdict', 'summary', 'findings'],
+  additionalProperties: false,
+};
+
+export function independentVerificationVerdictFromOutput(
+  value: unknown
+): 'pass' | 'fail' | 'partial' | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  const verdict = (value as { verdict?: unknown }).verdict;
+  return verdict === 'pass' || verdict === 'fail' || verdict === 'partial'
+    ? verdict
+    : undefined;
+}
 
 /**
  * 验证 Agent 系统提示
@@ -96,29 +135,12 @@ functionality?
 
 ## Output Format
 
-You MUST end your response with a structured verification report. Emit \
-exactly one \`## Verification Result:\` heading in the entire response:
+Reserve your final model turn for the host-requested structured output object.
+Submit exactly these fields:
 
-\`\`\`
-## Verification Result: PASS | FAIL | PARTIAL
-
-### Automated Checks
-- [ ] Type check: PASS/FAIL — [details]
-- [ ] Tests: PASS/FAIL — [details, including test count]
-- [ ] Lint: PASS/FAIL — [details]
-- [ ] Build: PASS/FAIL — [details]
-
-### Code Review Findings
-- [Issue severity: HIGH/MEDIUM/LOW] [file:line] Description
-  Evidence: [exact code or output]
-
-### Adversarial Analysis
-- [Risk level: HIGH/MEDIUM/LOW] Description
-  Impact: [what could go wrong]
-
-### Summary
-[1-3 sentence overall assessment with specific evidence]
-\`\`\`
+- verdict: pass, fail, or partial
+- summary: concise automated-check and code-review conclusion
+- findings: concrete findings with file, command, or output evidence
 
 ### Verdict Rules
 
@@ -146,7 +168,7 @@ export const verificationAgentConfig: SubagentConfig = {
     ' after completing implementation to get an independent' +
     ' quality assessment.',
   tools: ['Read', 'Glob', 'Grep', 'Bash'],
-  maxTurns: 12,
+  maxTurns: 24,
   systemPrompt: VERIFICATION_SYSTEM_PROMPT,
   source: 'builtin',
 };
