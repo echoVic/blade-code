@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -24,6 +24,11 @@ describe('Blade CLI 版本信息', () => {
 
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+(-.+)?$/);
+    const packageVersion = (
+      JSON.parse(readFileSync(path.resolve('package.json'), 'utf8')) as {
+        version: string;
+      }
+    ).version;
+    expect(result.stdout.trim()).toBe(packageVersion);
   });
 });
