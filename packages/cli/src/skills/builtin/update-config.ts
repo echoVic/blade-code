@@ -45,7 +45,7 @@ Blade 采用三层配置，优先级从低到高：
 | Local | \`.blade/settings.local.json\` | 本地覆盖，.gitignore | \`local\` |
 
 **选择原则：**
-- 个人偏好（theme, language, fontSize）→ \`global\`
+- 个人偏好（codeTheme, language, fontSize）→ \`global\`
 - 团队共享（hooks, permissions, env）→ \`project\`
 - 临时调试（debug, maxTurns）→ \`local\`
 
@@ -104,7 +104,7 @@ ConfigTool({ operation: "list" })
 | maxContextTokens | number | 上下文窗口大小 |
 | maxOutputTokens | number | 输出 token 限制 |
 | timeout | number | HTTP 请求超时（毫秒）|
-| theme | string | 终端主题 |
+| codeTheme | string | 代码与终端主题 |
 | uiTheme | string | Web UI 主题 |
 | language | string | 界面语言 |
 | fontSize | number | 字体大小 |
@@ -302,7 +302,7 @@ ConfigTool({
 1. **hooks 字段使用 deep-merge 策略**：设置新的 hook 不会覆盖已有的 hook。但如果同一事件下设置新的 matcher 数组，会替换该事件的整个 matcher 列表
 2. **permissions 字段使用 replace 策略**：设置 permissions 会完全替换现有值。如果只想添加规则，先 GET 当前值，合并后再 SET
 3. **env 字段使用 deep-merge 策略**：可以逐个添加环境变量
-4. **scope 默认值**：不指定 scope 时，根据字段路由表决定（hooks/permissions/env 默认 local，temperature/theme 等默认 global）
+4. **scope 默认值**：不指定 scope 时，根据字段路由表决定（hooks/permissions/env 默认 local，temperature/codeTheme 等默认 global）
 `;
 
 /**

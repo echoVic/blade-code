@@ -50,7 +50,7 @@ export const setupTestEnvironment = (options: SetupOptions = {}): TestEnvironmen
             model: 'gpt-4',
           },
         ],
-        theme: 'GitHub',
+        codeTheme: 'GitHub',
         language: 'en',
       }),
       'utf-8'

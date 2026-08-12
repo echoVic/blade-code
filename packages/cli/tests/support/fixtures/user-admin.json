@@ -12,7 +12,7 @@
     "updatedAt": "2023-01-01T00:00:00.000Z",
     "isActive": true,
     "preferences": {
-      "theme": "default",
+      "codeTheme": "default",
       "language": "en",
       "notifications": true
     },

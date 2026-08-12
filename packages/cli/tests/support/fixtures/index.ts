@@ -98,7 +98,7 @@ export class BladeDataFactory {
       status: 'active',
       config: {
         workspace: '/test/workspace',
-        theme: 'default',
+        codeTheme: 'default',
         logging: {
           level: 'info',
           format: 'text',
@@ -137,7 +137,7 @@ export class BladeDataFactory {
       updatedAt: () => new Date().toISOString(),
       isActive: true,
       preferences: {
-        theme: 'default',
+        codeTheme: 'default',
         language: 'en',
         notifications: true,
       },
@@ -401,7 +401,7 @@ export class BladeDataFactory {
       topP: 1,
       topK: 0,
       timeout: 30000,
-      theme: 'default',
+      codeTheme: 'default',
       language: 'en',
       fontSize: 14,
       debug: false,

@@ -38,7 +38,7 @@ const applyThemeToDOM = (uiTheme: UiTheme) => {
 
 const DEFAULT_SETTINGS: GeneralSettings = {
   language: 'zh-CN',
-  theme: 'dracula',
+  codeTheme: 'dracula',
   uiTheme: 'system',
   autoSaveSessions: true,
   notifyBuild: true,
@@ -64,7 +64,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       const newUiTheme = config.uiTheme ?? DEFAULT_SETTINGS.uiTheme;
       set({
         language: config.language ?? DEFAULT_SETTINGS.language,
-        theme: config.theme ?? DEFAULT_SETTINGS.theme,
+        codeTheme: config.codeTheme ?? DEFAULT_SETTINGS.codeTheme,
         uiTheme: newUiTheme,
         autoSaveSessions: config.autoSaveSessions ?? DEFAULT_SETTINGS.autoSaveSessions,
         notifyBuild: config.notifyBuild ?? DEFAULT_SETTINGS.notifyBuild,
@@ -103,7 +103,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     } catch (err) {
       set({
         language: prevState.language,
-        theme: prevState.theme,
+        codeTheme: prevState.codeTheme,
         uiTheme: prevState.uiTheme,
         autoSaveSessions: prevState.autoSaveSessions,
         notifyBuild: prevState.notifyBuild,

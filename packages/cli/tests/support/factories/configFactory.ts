@@ -28,7 +28,7 @@ export const createBladeConfig = (overrides?: Partial<BladeConfig>): BladeConfig
     topP: overrides?.topP ?? 1,
     topK: overrides?.topK ?? 0,
     timeout: overrides?.timeout ?? 30000,
-    theme: overrides?.theme || 'GitHub',
+    codeTheme: overrides?.codeTheme || 'GitHub',
     language: overrides?.language || 'en',
     debug: overrides?.debug ?? false,
     mcpEnabled: overrides?.mcpEnabled ?? false,

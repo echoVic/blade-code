@@ -92,7 +92,7 @@ const RuntimeSettingsSchema = Type.Object({
   topP: Type.Optional(Type.Number()),
   topK: Type.Optional(Type.Number()),
   timeout: Type.Optional(PositiveNumber),
-  theme: Type.Optional(Type.String()),
+  codeTheme: Type.Optional(Type.String()),
   uiTheme: Type.Optional(StringEnum(['light', 'dark', 'system'])),
   language: Type.Optional(Type.String()),
   fontSize: Type.Optional(PositiveNumber),

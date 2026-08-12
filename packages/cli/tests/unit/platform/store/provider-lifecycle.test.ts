@@ -70,6 +70,31 @@ describe('custom provider lifecycle store actions', () => {
     installPiModelCatalogForTests(undefined);
   });
 
+  it('generates readable deterministic IDs for models without an explicit ID', async () => {
+    const first = await configActions().addModel({
+      provider: 'deepseek',
+      model: 'deepseek-v4-flash',
+      displayName: 'DeepSeek V4 Flash',
+    });
+    const second = await configActions().addModelWithProvider(
+      {
+        provider: 'another-gateway',
+        model: 'deepseek-v4-flash',
+      },
+      {
+        name: 'Another Gateway',
+        baseUrl: 'https://another.example.test/v1',
+        wireApi: 'openai-completions',
+      }
+    );
+
+    expect(first.id).toBe('deepseek-v4-flash');
+    expect(second.id).toBe('another-gateway-deepseek-v4-flash');
+    expect(getConfig()?.models.map((model) => model.id)).toEqual(
+      expect.arrayContaining(['deepseek-v4-flash', 'another-gateway-deepseek-v4-flash'])
+    );
+  });
+
   it('updates a provider and rebuilds all referenced runtime models', async () => {
     await configActions().updateModelProvider('team-gateway', {
       name: 'Updated Gateway',

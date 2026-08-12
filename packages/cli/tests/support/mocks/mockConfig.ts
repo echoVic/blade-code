@@ -10,7 +10,7 @@ import { PermissionMode } from '../../../src/config/types.js';
 export interface MockConfigOptions {
   currentModelId?: string;
   models?: ModelConfig[];
-  theme?: string;
+  codeTheme?: string;
   language?: string;
   permissionMode?: PermissionMode;
   permissions?: {
@@ -43,7 +43,7 @@ export const createDefaultMockConfig = (
   topP: 1,
   topK: 0,
   timeout: 30000,
-  theme: 'GitHub',
+  codeTheme: 'GitHub',
   uiTheme: 'system',
   language: 'en',
   fontSize: 14,
@@ -82,7 +82,7 @@ export class MockConfigManager {
     this.config = createDefaultMockConfig({
       currentModelId: options?.currentModelId,
       models: options?.models,
-      theme: options?.theme,
+      codeTheme: options?.codeTheme,
       language: options?.language,
       permissionMode: options?.permissionMode,
       permissions: options?.permissions,

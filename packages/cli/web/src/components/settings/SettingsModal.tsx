@@ -1056,8 +1056,8 @@ export function SettingsModal() {
                       </div>
                       <Select
                         aria-label={t('settings.appearance.codeTheme')}
-                        value={settings.theme}
-                        onChange={(val) => settings.updateSettings({ theme: val })}
+                        value={settings.codeTheme}
+                        onChange={(val) => settings.updateSettings({ codeTheme: val })}
                         className="h-8 w-auto min-w-[140px] text-[12px]"
                         options={[
                           { value: 'dracula', label: 'Dracula' },

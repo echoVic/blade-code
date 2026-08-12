@@ -28,9 +28,11 @@ Blade 内置 13 套终端主题，支持运行时切换，无需重启。
 
 ```json
 {
-  "theme": "dracula"
+  "codeTheme": "dracula"
 }
 ```
+
+旧版 `theme` 字段会在启动时自动迁移为 `codeTheme`；Web 明暗模式独立使用 `uiTheme`。
 
 ### 运行时切换
 

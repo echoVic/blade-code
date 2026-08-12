@@ -84,7 +84,7 @@ const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     mergeStrategy: 'replace',
     persistable: true,
   },
-  theme: {
+  codeTheme: {
     target: 'config',
     defaultScope: 'global',
     mergeStrategy: 'replace',
@@ -859,6 +859,13 @@ export class ConfigService {
 
     // 3. 按字段合并策略合并（Modify）
     const mergedConfig = { ...existingConfig }; // 保留未知字段！
+    if (
+      typeof mergedConfig.theme === 'string' &&
+      mergedConfig.codeTheme === undefined
+    ) {
+      mergedConfig.codeTheme = mergedConfig.theme;
+    }
+    delete mergedConfig.theme;
 
     for (const [key, value] of Object.entries(updates)) {
       const routing = FIELD_ROUTING_TABLE[key];

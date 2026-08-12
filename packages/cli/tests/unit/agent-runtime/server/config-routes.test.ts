@@ -25,7 +25,7 @@ describe('ConfigRoutes', () => {
     expect(serialized).not.toContain('models');
     expect(projectPublicConfig(config)).toMatchObject({
       language: DEFAULT_CONFIG.language,
-      theme: DEFAULT_CONFIG.theme,
+      codeTheme: DEFAULT_CONFIG.codeTheme,
       uiTheme: DEFAULT_CONFIG.uiTheme,
     });
   });

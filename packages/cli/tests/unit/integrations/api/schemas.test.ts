@@ -820,7 +820,7 @@ describe('API Schemas', () => {
     it('应该验证完整的设置', () => {
       const fullSettings: GeneralSettings = {
         language: 'zh-CN',
-        theme: 'dark',
+        codeTheme: 'dracula',
         uiTheme: 'dark',
         autoSaveSessions: true,
         notifyBuild: false,
@@ -838,7 +838,7 @@ describe('API Schemas', () => {
     it('应该验证部分更新', () => {
       const partialUpdate: GeneralSettingsUpdate = {
         language: 'en-US',
-        theme: 'light',
+        codeTheme: 'github',
       };
 
       expect(() => GeneralSettingsUpdateSchema.parse(partialUpdate)).not.toThrow();

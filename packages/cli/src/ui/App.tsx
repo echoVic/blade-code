@@ -111,7 +111,7 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
       }
 
       // 5. 加载主题
-      const savedTheme = mergedConfig.theme;
+      const savedTheme = mergedConfig.codeTheme;
       if (savedTheme && themeManager.hasTheme(savedTheme)) {
         themeManager.setTheme(savedTheme);
         if (props.debug) {

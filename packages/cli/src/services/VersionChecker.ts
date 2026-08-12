@@ -7,7 +7,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import semver from 'semver';
-import { fileURLToPath } from 'url';
+import { getVersion } from '../utils/packageInfo.js';
 import { proxyFetch } from '../utils/proxyFetch.js';
 
 // 包名
@@ -30,7 +30,7 @@ const CACHE_TTL = 1 * 60 * 60 * 1000;
 const NPM_REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE_NAME}/latest`;
 
 interface VersionCache {
-  latestVersion: string;
+  latestVersion?: string;
   checkedAt: number;
   skipUntilVersion?: string; // 跳过直到此版本
 }
@@ -49,35 +49,10 @@ export interface VersionCheckResult {
  */
 async function getCurrentVersion(): Promise<string> {
   try {
-    // 方法1：从环境变量获取（构建时注入）
     if (process.env.BLADE_VERSION) {
       return process.env.BLADE_VERSION;
     }
-
-    // 方法2：从 package.json 获取
-    // 获取当前模块的目录
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = path.dirname(__filename);
-
-    // 尝试多个可能的 package.json 位置
-    const possiblePaths = [
-      path.join(__dirname, '..', '..', 'package.json'), // src/services -> root
-      path.join(__dirname, '..', 'package.json'), // dist -> root
-    ];
-
-    for (const pkgPath of possiblePaths) {
-      try {
-        const content = await fs.readFile(pkgPath, 'utf-8');
-        const pkg = JSON.parse(content);
-        if (pkg.name === PACKAGE_NAME && pkg.version) {
-          return pkg.version;
-        }
-      } catch {
-        // 继续尝试下一个路径
-      }
-    }
-
-    return 'unknown';
+    return getVersion();
   } catch {
     return 'unknown';
   }
@@ -165,7 +140,7 @@ export async function checkVersion(forceCheck = false): Promise<VersionCheckResu
 
   // 尝试从缓存读取版本
   let latestVersion: string | null = null;
-  if (!forceCheck && cache && cache.checkedAt > 0) {
+  if (!forceCheck && cache?.latestVersion && cache.checkedAt > 0) {
     latestVersion = cache.latestVersion;
   } else {
     // 从 npm 获取最新版本
@@ -178,10 +153,15 @@ export async function checkVersion(forceCheck = false): Promise<VersionCheckResu
         checkedAt: Date.now(),
         skipUntilVersion,
       });
+    } else if (cache?.latestVersion) {
+      await writeCache({
+        checkedAt: 0,
+        skipUntilVersion,
+      });
     }
   }
 
-  if (!latestVersion) {
+  if (!latestVersion || !semver.valid(latestVersion)) {
     return {
       currentVersion,
       latestVersion: null,
@@ -190,6 +170,15 @@ export async function checkVersion(forceCheck = false): Promise<VersionCheckResu
       releaseNotesUrl,
       error: 'Unable to check for updates',
     };
+  }
+
+  if (semver.lt(latestVersion, currentVersion)) {
+    latestVersion = currentVersion;
+    await writeCache({
+      latestVersion,
+      checkedAt: Date.now(),
+      skipUntilVersion,
+    });
   }
 
   const hasUpdate = semver.gt(latestVersion, currentVersion);
@@ -217,7 +206,7 @@ export async function checkVersion(forceCheck = false): Promise<VersionCheckResu
 export async function setSkipUntilVersion(version: string): Promise<void> {
   const cache = await readCache();
   await writeCache({
-    latestVersion: cache?.latestVersion || version,
+    latestVersion: cache?.latestVersion ?? version,
     checkedAt: cache?.checkedAt || Date.now(),
     skipUntilVersion: version,
   });

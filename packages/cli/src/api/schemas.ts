@@ -862,7 +862,7 @@ export type UiTheme = Static<typeof UiThemeSchema>;
 export const GeneralSettingsSchema = Runtime(
   Type.Object({
     language: Type.String(),
-    theme: Type.String(),
+    codeTheme: Type.String(),
     uiTheme: UiThemeSchema,
     autoSaveSessions: Type.Boolean(),
     notifyBuild: Type.Boolean(),

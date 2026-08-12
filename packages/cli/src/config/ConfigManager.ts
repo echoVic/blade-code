@@ -33,9 +33,11 @@ import {
   type PiModelCatalog,
 } from '../services/pi/PiModelCatalog.js';
 import { getCwd } from '../utils/cwd.js';
+import { ConfigService } from './ConfigService.js';
 import { DEFAULT_CONFIG } from './defaults.js';
 import { normalizeLspServers } from './lspSettings.js';
 import { formatMaxTurnsRange, isValidMaxTurns } from './maxTurns.js';
+import { migrateGeneratedModelIds } from './modelIds.js';
 import { validateModelProviderConfig } from './modelProviders.js';
 import {
   normalizePluginSettings,
@@ -221,7 +223,10 @@ export class ConfigManager {
     let config: Partial<BladeConfig> = {};
 
     // 1. 加载用户配置
-    const userConfig = await this.loadJsonFile(userConfigPath);
+    const rawUserConfig = await this.loadJsonFile(userConfigPath);
+    const userConfig = rawUserConfig
+      ? await this.migrateLegacyUserConfig(rawUserConfig)
+      : null;
     if (userConfig) {
       config = { ...config, ...userConfig };
     }
@@ -267,6 +272,44 @@ export class ConfigManager {
     }
 
     return config;
+  }
+
+  private async migrateLegacyUserConfig(
+    config: Partial<BladeConfig>
+  ): Promise<Partial<BladeConfig>> {
+    const raw = config as Partial<BladeConfig> & { theme?: unknown };
+    const migrated = { ...config };
+    const updates: Partial<BladeConfig> = {};
+    if (migrated.codeTheme === undefined && typeof raw.theme === 'string') {
+      migrated.codeTheme = raw.theme;
+      updates.codeTheme = raw.theme;
+    }
+
+    if (Array.isArray(migrated.models)) {
+      const modelIds = migrateGeneratedModelIds(
+        migrated.models,
+        migrated.currentModelId ?? ''
+      );
+      if (modelIds.changed) {
+        migrated.models = modelIds.models;
+        migrated.currentModelId = modelIds.currentModelId;
+        updates.models = modelIds.models;
+        updates.currentModelId = modelIds.currentModelId;
+      }
+    }
+    delete (migrated as Partial<BladeConfig> & { theme?: unknown }).theme;
+
+    if (Object.keys(updates).length > 0) {
+      try {
+        await ConfigService.getInstance().save(updates, {
+          scope: 'global',
+          immediate: true,
+        });
+      } catch {
+        console.warn('[ConfigManager] Could not persist legacy config migration');
+      }
+    }
+    return migrated;
   }
 
   /**
@@ -995,6 +1038,10 @@ export class ConfigManager {
 
   private normalizeConfig(config: Partial<RuntimeConfig>): Partial<RuntimeConfig> {
     const result = JSON.parse(JSON.stringify(config)) as Record<string, unknown>;
+    if (result.codeTheme === undefined && typeof result.theme === 'string') {
+      result.codeTheme = result.theme;
+    }
+    delete result.theme;
 
     const clean = (s: string): string => s.trim().replace(/^`|`$/g, '');
 

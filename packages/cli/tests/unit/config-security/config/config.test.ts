@@ -44,7 +44,7 @@ describe('配置系统', () => {
 
     it('应该使用默认配置', () => {
       expect(DEFAULT_CONFIG).toBeDefined();
-      expect(DEFAULT_CONFIG.theme).toBe('dracula');
+      expect(DEFAULT_CONFIG.codeTheme).toBe('dracula');
       expect(DEFAULT_CONFIG.currentModelId).toBe('');
       expect(DEFAULT_CONFIG.models).toEqual([]);
       expect(DEFAULT_CONFIG.modelProviders).toEqual({});
@@ -54,7 +54,7 @@ describe('配置系统', () => {
       const config = await configManager.initialize();
 
       expect(config).toBeDefined();
-      expect(config.theme).toBe('dracula');
+      expect(config.codeTheme).toBe('dracula');
       expect(config.currentModelId).toBe('');
       expect(config.models).toEqual([]);
       expect(config.modelProviders).toEqual({});
@@ -64,7 +64,7 @@ describe('配置系统', () => {
       const config = await configManager.initialize();
 
       expect(config).toBeDefined();
-      expect(config.theme).toBe('dracula');
+      expect(config.codeTheme).toBe('dracula');
       expect(config.currentModelId).toBe('');
       expect(config.models).toEqual([]);
     });
@@ -72,13 +72,13 @@ describe('配置系统', () => {
     it('应该能够重置配置', async () => {
       const config = await configManager.initialize();
 
-      expect(config.theme).toBe('dracula');
+      expect(config.codeTheme).toBe('dracula');
 
       ConfigManager.resetInstance();
       configManager = ConfigManager.getInstance();
       const resetConfig = await configManager.initialize();
 
-      expect(resetConfig.theme).toBe('dracula');
+      expect(resetConfig.codeTheme).toBe('dracula');
     });
   });
 

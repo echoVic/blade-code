@@ -11,10 +11,10 @@
  * 3. 单一数据源 - React 和 vanilla 共享同一个 store
  */
 
-import { nanoid } from 'nanoid';
 import { devtools, subscribeWithSelector } from 'zustand/middleware';
 import { createStore } from 'zustand/vanilla';
 import { ConfigManager, getConfigService, type SaveOptions } from '../config/index.js';
+import { createReadableModelId } from '../config/modelIds.js';
 import type {
   BladeConfig,
   McpServerConfig,
@@ -224,7 +224,7 @@ export const configActions = () => ({
    * @param options.scope 持久化范围（默认 'global'）
    *
    * 同时更新：
-   * 1. Store 中的 config.theme（触发订阅者重渲染）
+   * 1. Store 中的 config.codeTheme（触发订阅者重渲染）
    * 2. themeManager 中的当前主题（提供实际主题数据）
    * 3. 持久化到配置文件
    */
@@ -237,10 +237,10 @@ export const configActions = () => ({
       return;
     }
     // 2. 更新 Store（触发 React 组件重渲染）
-    getState().config.actions.updateConfig({ theme: themeName });
+    getState().config.actions.updateConfig({ codeTheme: themeName });
     // 3. 持久化到配置文件
     await getConfigService().save(
-      { theme: themeName },
+      { codeTheme: themeName },
       { scope: 'global', ...options }
     );
   },
@@ -396,9 +396,11 @@ export const configActions = () => ({
     const config = getConfig();
     if (!config) throw new Error('Config not initialized');
 
-    // 如果没有 id，自动生成
+    // 如果没有 id，生成稳定、可读且可分享的模型标识。
     const model: ModelConfig =
-      'id' in modelData ? modelData : { id: nanoid(), ...modelData };
+      'id' in modelData
+        ? modelData
+        : { id: createReadableModelId(modelData, config.models), ...modelData };
     const duplicate = config.models.find(
       (entry) => entry.provider === model.provider && entry.model === model.model
     );
@@ -435,7 +437,9 @@ export const configActions = () => ({
       throw new Error(`Model provider already configured: ${providerId}`);
     }
     const model: ModelConfig =
-      'id' in modelData ? modelData : { id: nanoid(), ...modelData };
+      'id' in modelData
+        ? modelData
+        : { id: createReadableModelId(modelData, config.models), ...modelData };
     const duplicate = config.models.find(
       (entry) => entry.provider === providerId && entry.model === model.model
     );

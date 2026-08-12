@@ -1355,23 +1355,23 @@ function MonacoEditorView({
   content: string;
   filename: string;
 }) {
-  const { theme } = useSettingsStore();
+  const { codeTheme } = useSettingsStore();
   const monacoRef = useRef<Monaco | null>(null);
   const [monacoTheme, setMonacoTheme] = useState('vs-dark');
   const language = getLanguageFromFilename(filename);
 
   const handleEditorWillMount = (monaco: Monaco) => {
     monacoRef.current = monaco;
-    const registeredTheme = registerMonacoTheme(monaco, theme);
+    const registeredTheme = registerMonacoTheme(monaco, codeTheme);
     setMonacoTheme(registeredTheme);
   };
 
   useEffect(() => {
     if (monacoRef.current) {
-      const registeredTheme = registerMonacoTheme(monacoRef.current, theme);
+      const registeredTheme = registerMonacoTheme(monacoRef.current, codeTheme);
       setMonacoTheme(registeredTheme);
     }
-  }, [theme]);
+  }, [codeTheme]);
 
   return (
     <MonacoEditorLazy

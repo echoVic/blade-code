@@ -15,7 +15,7 @@ function createConfig(overrides: Partial<BladeConfig> = {}): BladeConfig {
     topP: 0.9,
     topK: 50,
     timeout: 30000,
-    theme: 'dracula',
+    codeTheme: 'dracula',
     uiTheme: 'system',
     language: 'zh-CN',
     fontSize: 14,

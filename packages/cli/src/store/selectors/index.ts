@@ -182,7 +182,7 @@ export const useTheme = () =>
  * 用于 useThemeSync hook 对比和同步
  */
 export const useThemeName = () =>
-  useBladeStore((state) => state.config.config?.theme ?? 'default');
+  useBladeStore((state) => state.config.config?.codeTheme ?? 'default');
 
 // ==================== Focus 选择器 ====================
 

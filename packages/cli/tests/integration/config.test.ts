@@ -99,14 +99,14 @@ describe('ConfigManager 集成', () => {
     const manager = ConfigManager.getInstance();
     const config = await manager.initialize();
 
-    expect(config.theme).toBe('light');
+    expect(config.codeTheme).toBe('light');
 
     // 使用 store 的 configActions 来更新配置
     const { configActions, ensureStoreInitialized } = await import(
       '../../src/store/vanilla.js'
     );
     await ensureStoreInitialized();
-    await configActions().updateConfig({ theme: 'dark', language: 'zh-CN' });
+    await configActions().updateConfig({ codeTheme: 'dark', language: 'zh-CN' });
 
     // 为了验证持久化，我们需要确保配置已写入磁盘
     await configActions().flush(); // 立即刷新所有待持久化变更
@@ -116,8 +116,42 @@ describe('ConfigManager 集成', () => {
     const persisted = await reloaded.initialize();
 
     // 由于持久化配置可能与内存配置不同，我们验证配置已正确加载
-    expect(persisted.theme).toBe('dark');
+    expect(persisted.codeTheme).toBe('dark');
     expect(persisted.language).toBe('zh-CN');
+    expect(JSON.parse(readFileSync(userConfigPath, 'utf8'))).toMatchObject({
+      codeTheme: 'dark',
+    });
+    expect(JSON.parse(readFileSync(userConfigPath, 'utf8'))).not.toHaveProperty(
+      'theme'
+    );
+  });
+
+  it('应将旧版随机模型 ID 迁移为可读 ID', async () => {
+    const userConfigPath = path.join(tempHome, '.blade', 'config.json');
+    mkdirSync(path.dirname(userConfigPath), { recursive: true });
+    writeFileSync(
+      userConfigPath,
+      JSON.stringify({
+        currentModelId: 'wesO2a9-nJgBgIBI7gm5B',
+        models: [
+          {
+            id: 'wesO2a9-nJgBgIBI7gm5B',
+            displayName: 'DeepSeek V4 Flash',
+            provider: 'deepseek',
+            model: 'deepseek-v4-flash',
+          },
+        ],
+      })
+    );
+
+    const config = await ConfigManager.getInstance().initialize();
+
+    expect(config.currentModelId).toBe('deepseek-v4-flash');
+    expect(config.models[0]?.id).toBe('deepseek-v4-flash');
+    expect(JSON.parse(readFileSync(userConfigPath, 'utf8'))).toMatchObject({
+      currentModelId: 'deepseek-v4-flash',
+      models: [{ id: 'deepseek-v4-flash' }],
+    });
   });
 
   it('应将沟通风格持久化到全局 config.json', async () => {
@@ -159,7 +193,7 @@ describe('ConfigManager 集成', () => {
         topP: 1,
         topK: 0,
         timeout: 30000,
-        theme: 'GitHub',
+        codeTheme: 'GitHub',
         language: 'en',
         fontSize: 14,
         debug: false,
@@ -187,7 +221,7 @@ describe('ConfigManager 集成', () => {
             model: 'deepseek-v4-pro',
           },
         ],
-        theme: 'dark',
+        codeTheme: 'dark',
       }),
       {
         encoding: 'utf-8',
@@ -200,7 +234,7 @@ describe('ConfigManager 集成', () => {
     const config = await manager.initialize();
 
     expect(config.currentModelId).toBe('project-model');
-    expect(config.theme).toBe('dark');
+    expect(config.codeTheme).toBe('dark');
   });
 
   it('未信任项目不能覆盖模型、启动 MCP 或放宽权限', async () => {
@@ -562,7 +596,7 @@ describe('ConfigManager 集成', () => {
         topP: 1,
         topK: 0,
         timeout: 30000,
-        theme: 'GitHub',
+        codeTheme: 'GitHub',
         language: 'en',
         fontSize: 14,
         debug: false,
@@ -611,7 +645,7 @@ describe('ConfigManager 集成', () => {
       topP: 1,
       topK: 0,
       timeout: 30000,
-      theme: 'GitHub',
+      codeTheme: 'GitHub',
       language: 'en',
       fontSize: 14,
       debug: false,

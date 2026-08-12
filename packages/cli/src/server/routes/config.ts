@@ -22,7 +22,7 @@ export function projectPublicConfig(config: BladeConfig) {
     currentModelId: config.currentModelId,
     permissionMode: config.permissionMode,
     language: config.language,
-    theme: config.theme,
+    codeTheme: config.codeTheme,
     uiTheme: config.uiTheme,
     autoSaveSessions: config.autoSaveSessions,
     notifyBuild: config.notifyBuild,

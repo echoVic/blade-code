@@ -13,7 +13,7 @@
     "status": "active",
     "config": {
       "workspace": "/test/workspace",
-      "theme": "default",
+      "codeTheme": "default",
       "logging": {
         "level": "info",
         "format": "text"

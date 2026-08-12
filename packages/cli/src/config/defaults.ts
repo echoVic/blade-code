@@ -23,7 +23,7 @@ export const DEFAULT_CONFIG: BladeConfig = {
   timeout: 180000, // 180秒超时（长上下文 agentic 场景需要更长时间）
 
   // UI
-  theme: 'dracula',
+  codeTheme: 'dracula',
   uiTheme: 'system',
   language: 'zh-CN',
   fontSize: 14,

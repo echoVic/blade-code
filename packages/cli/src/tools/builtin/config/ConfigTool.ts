@@ -26,7 +26,7 @@ const SETTABLE_KEYS = new Set([
   'temperature',
   'maxOutputTokens',
   'timeout',
-  'theme',
+  'codeTheme',
   'uiTheme',
   'language',
   'fontSize',

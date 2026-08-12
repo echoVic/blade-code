@@ -159,7 +159,7 @@ export interface BladeConfig {
   timeout: number; // HTTP 请求超时时间（毫秒）
 
   // UI
-  theme: string;
+  codeTheme: string;
   uiTheme: UiTheme;
   language: string;
   fontSize: number;
