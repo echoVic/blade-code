@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.26] - 2026-08-12
+
+### 🐛 问题修复
+
+- skip unused local npm auth (e692612c)
+- tolerate transient pid ownership probes (fb39c907)
+- hide internal verification controls (c5fc5a11)
+- stabilize production qualification budgets (debd77e5)
+- harden independent verification outcomes (ec937148)
+
+
 ## [Unreleased]
 
 ### 🛡️ 稳定性
