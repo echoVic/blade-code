@@ -955,7 +955,6 @@ validates the object and may return a bounded corrective error.`;
     }
 
     // === Agentic Loop ===
-    const isYoloMode = context.permissionMode === ('yolo' as PermissionMode);
     const isSubagent = !!context.subagentInfo;
     const readOnlyAudit = isReadOnlyAuditSubagent(context.subagentInfo?.subagentType);
     const builtinVerificationEnabled = options?.builtinVerification !== false;
