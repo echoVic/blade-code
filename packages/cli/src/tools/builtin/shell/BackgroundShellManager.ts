@@ -5,6 +5,7 @@ import {
   type OwnedProcessTree,
   spawnOwnedProcess,
 } from '../../../utils/process/OwnedProcessTree.js';
+import { BackgroundShellLeaseStore } from './BackgroundShellLeaseStore.js';
 import { BoundedOutputBuffer } from './BoundedOutputBuffer.js';
 import {
   isWorkspaceSandboxRuntimeFailure,
@@ -13,9 +14,32 @@ import {
 
 type BackgroundShellStatus = 'running' | 'exited' | 'killed' | 'error';
 
+const BACKGROUND_COMMAND_GATE = String.raw`
+const { spawn } = require('node:child_process');
+const [command, ...args] = process.argv.slice(1);
+process.stdin.once('data', (chunk) => {
+  if (!command || chunk[0] !== 1) process.exit(125);
+  const child = spawn(command, args, {
+    env: process.env,
+    stdio: ['pipe', 'inherit', 'inherit'],
+    windowsHide: true,
+  });
+  child.once('error', (error) => {
+    process.stderr.write(String(error && error.message ? error.message : error));
+    process.exit(126);
+  });
+  child.once('close', (code) => {
+    process.exit(code === null ? 1 : code);
+  });
+  if (chunk.length > 1) child.stdin.write(chunk.subarray(1));
+  process.stdin.pipe(child.stdin);
+});
+`;
+
 interface StartOptions {
   command: string;
   sessionId: string;
+  projectPath?: string;
   cwd?: string;
   env?: Record<string, string | undefined>;
   sandboxedCommand?: SandboxedCommand;
@@ -39,6 +63,7 @@ export interface BackgroundShellProcess {
   pendingStdout: BoundedOutputBuffer;
   pendingStderr: BoundedOutputBuffer;
   sandboxed: boolean;
+  leaseStore?: BackgroundShellLeaseStore;
 }
 
 export interface ShellOutputSnapshot {
@@ -103,11 +128,42 @@ export class BackgroundShellManager {
 
     const executable = options.sandboxedCommand?.executable ?? 'bash';
     const args = options.sandboxedCommand?.args ?? ['-c', options.command];
-    const { child, processTree } = spawnOwnedProcess(executable, args, {
-      cwd: options.cwd || getCwd(),
-      env: mergedEnv,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    const { child, processTree } = spawnOwnedProcess(
+      process.execPath,
+      ['-e', BACKGROUND_COMMAND_GATE, executable, ...args],
+      {
+        cwd: options.cwd || getCwd(),
+        env: mergedEnv,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }
+    );
+    if (!child.pid) {
+      void processTree.terminate();
+      throw new Error('Background process did not expose a PID');
+    }
+    const leaseStore = new BackgroundShellLeaseStore(
+      options.projectPath ?? options.cwd ?? getCwd(),
+      options.sessionId
+    );
+    try {
+      leaseStore.register(shellId, child.pid);
+    } catch (error) {
+      let running = true;
+      try {
+        process.kill(child.pid, 0);
+      } catch (processError) {
+        running =
+          processError instanceof Error &&
+          'code' in processError &&
+          (processError as NodeJS.ErrnoException).code === 'EPERM';
+      }
+      if (running) {
+        child.kill('SIGKILL');
+        void processTree.terminate();
+        options.sandboxedCommand?.cleanup();
+        throw error;
+      }
+    }
 
     const processInfo: BackgroundShellProcess = {
       id: shellId,
@@ -123,6 +179,7 @@ export class BackgroundShellManager {
       pendingStdout: new BoundedOutputBuffer(),
       pendingStderr: new BoundedOutputBuffer(),
       sandboxed: Boolean(options.sandboxedCommand),
+      leaseStore,
     };
 
     child.stdout?.setEncoding('utf8');
@@ -137,6 +194,7 @@ export class BackgroundShellManager {
     });
 
     child.on('close', (code, signal) => {
+      processInfo.leaseStore?.remove(processInfo.id);
       options.sandboxedCommand?.cleanup();
       const sandboxFailure =
         processInfo.sandboxed &&
@@ -161,6 +219,7 @@ export class BackgroundShellManager {
     });
 
     child.on('error', (error) => {
+      processInfo.leaseStore?.remove(processInfo.id);
       options.sandboxedCommand?.cleanup();
       processInfo.status = 'error';
       processInfo.errorMessage = error.message;
@@ -170,6 +229,7 @@ export class BackgroundShellManager {
     });
 
     this.processes.set(shellId, processInfo);
+    child.stdin?.write(Buffer.from([1]));
     return processInfo;
   }
 
@@ -298,6 +358,13 @@ export class BackgroundShellManager {
     }
   }
 
+  reapOrphanedSession(
+    sessionId: string,
+    projectPath: string
+  ): Promise<{ reaped: number; stale: number; active: number; protected: number }> {
+    return new BackgroundShellLeaseStore(projectPath, sessionId).reapOrphans();
+  }
+
   private async terminateProcess(
     processInfo: BackgroundShellProcess
   ): Promise<KillResult> {
@@ -327,6 +394,7 @@ export class BackgroundShellManager {
         signal: processInfo.signal,
       };
     }
+    processInfo.leaseStore?.remove(processInfo.id);
 
     return {
       success: true,

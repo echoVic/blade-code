@@ -1,23 +1,37 @@
 import { spawn } from 'node:child_process';
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { getTerminalService } from '../../src/acp/AcpServiceContext.js';
 import { PermissionMode } from '../../src/config/types.js';
+import { getProjectStoragePath } from '../../src/context/storage/pathUtils.js';
 import { SecureProcessExecutor } from '../../src/hooks/SecureProcessExecutor.js';
 import { HookEvent } from '../../src/hooks/types/HookTypes.js';
+import { BackgroundShellLeaseStore } from '../../src/tools/builtin/shell/BackgroundShellLeaseStore.js';
 import { BackgroundShellManager } from '../../src/tools/builtin/shell/BackgroundShellManager.js';
 import { bashTool } from '../../src/tools/builtin/shell/bash.js';
 
 const tempRoots: string[] = [];
 const descendantPids = new Set<number>();
 const FIXTURE_COMMAND_TIMEOUT_MS = 3_000;
+const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
+let suiteStorageRoot: string;
 
 beforeAll(async () => {
+  suiteStorageRoot = await mkdtemp(
+    path.join(os.tmpdir(), 'blade-process-tree-storage-')
+  );
+  process.env.BLADE_STORAGE_ROOT = suiteStorageRoot;
   const childProcess =
     await vi.importActual<typeof import('node:child_process')>('node:child_process');
   vi.mocked(spawn).mockImplementation(childProcess.spawn);
+});
+
+afterAll(async () => {
+  if (originalStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
+  else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
+  await rm(suiteStorageRoot, { recursive: true, force: true });
 });
 
 function shellQuote(value: string): string {
@@ -34,6 +48,46 @@ async function waitFor(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return predicate();
+}
+
+async function launchOrphanBackgroundShell(
+  workspace: string,
+  sessionId: string
+): Promise<number> {
+  const fixture = path.join(
+    import.meta.dirname,
+    '..',
+    'fixtures',
+    'launch-orphan-background-shell.ts'
+  );
+  const launcher = spawn(
+    process.env.BUN_EXEC_PATH ?? 'bun',
+    [fixture, workspace, sessionId],
+    { stdio: ['ignore', 'pipe', 'pipe'] }
+  );
+  const launched = await new Promise<{ pid: number }>((resolve, reject) => {
+    let stderr = '';
+    launcher.once('error', reject);
+    launcher.stderr.setEncoding('utf8');
+    launcher.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    launcher.once('close', (code) => {
+      reject(new Error(`Orphan shell launcher exited ${code}: ${stderr}`));
+    });
+    launcher.stdout.setEncoding('utf8');
+    launcher.stdout.once('data', (chunk: string) => {
+      resolve(JSON.parse(chunk.trim()) as { pid: number });
+    });
+  });
+  const closed = new Promise<void>((resolve) =>
+    launcher.once('close', () => resolve())
+  );
+  if (!launcher.kill('SIGKILL')) {
+    throw new Error('Failed to hard-exit background shell owner');
+  }
+  await closed;
+  return launched.pid;
 }
 
 async function processIsGone(pid: number): Promise<boolean> {
@@ -130,6 +184,121 @@ afterEach(async () => {
 });
 
 describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', () => {
+  it('does not admit a background command before its lease commits', async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-shell-gate-'));
+    tempRoots.push(workspace);
+    const marker = path.join(workspace, 'must-not-run');
+    const register = vi
+      .spyOn(BackgroundShellLeaseStore.prototype, 'register')
+      .mockImplementationOnce(() => {
+        throw new Error('injected lease commit failure');
+      });
+
+    try {
+      expect(() =>
+        BackgroundShellManager.getInstance().startBackgroundProcess({
+          command: `printf admitted > ${shellQuote(marker)}`,
+          sessionId: `shell-gate-${Date.now()}`,
+          projectPath: workspace,
+          cwd: workspace,
+        })
+      ).toThrow('injected lease commit failure');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      register.mockRestore();
+    }
+  });
+
+  it('reaps a durable background shell after its owner hard-exits', async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-orphan-shell-'));
+    tempRoots.push(workspace);
+    const sessionId = `orphan-shell-${Date.now()}`;
+    const rootPid = await launchOrphanBackgroundShell(workspace, sessionId);
+    descendantPids.add(rootPid);
+
+    const result = await BackgroundShellManager.getInstance().reapOrphanedSession(
+      sessionId,
+      workspace
+    );
+
+    expect(result).toMatchObject({ reaped: 1, protected: 0 });
+    expect(await waitFor(() => processIsGone(rootPid))).toBe(true);
+    descendantPids.delete(rootPid);
+  });
+
+  it('protects a reused PID when the durable identity does not match', async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-reused-shell-'));
+    tempRoots.push(workspace);
+    const sessionId = `reused-shell-${Date.now()}`;
+    const rootPid = await launchOrphanBackgroundShell(workspace, sessionId);
+    descendantPids.add(rootPid);
+
+    try {
+      const leaseRoot = path.join(
+        getProjectStoragePath(workspace),
+        '.background-shells'
+      );
+      const leaseNames = await readdir(leaseRoot, { recursive: true });
+      const leaseName = leaseNames.find((name) => name.endsWith('.json'));
+      expect(leaseName).toBeDefined();
+      const leasePath = path.join(leaseRoot, leaseName!);
+      const lease = JSON.parse(await readFile(leasePath, 'utf8')) as {
+        identity: { fingerprint: string };
+      };
+      lease.identity.fingerprint = '0'.repeat(64);
+      await writeFile(leasePath, `${JSON.stringify(lease)}\n`, { mode: 0o600 });
+
+      const result = await BackgroundShellManager.getInstance().reapOrphanedSession(
+        sessionId,
+        workspace
+      );
+
+      expect(result).toMatchObject({ reaped: 0, protected: 1 });
+      expect(() => process.kill(rootPid, 0)).not.toThrow();
+    } finally {
+      try {
+        process.kill(-rootPid, 'SIGKILL');
+      } catch {
+        // The process group has already exited.
+      }
+      await waitFor(() => processIsGone(rootPid));
+      descendantPids.delete(rootPid);
+    }
+  });
+
+  it('fails closed when a durable shell lease is malformed', async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-corrupt-shell-'));
+    tempRoots.push(workspace);
+    const sessionId = `corrupt-shell-${Date.now()}`;
+    const rootPid = await launchOrphanBackgroundShell(workspace, sessionId);
+    descendantPids.add(rootPid);
+
+    try {
+      const leaseRoot = path.join(
+        getProjectStoragePath(workspace),
+        '.background-shells'
+      );
+      const leaseNames = await readdir(leaseRoot, { recursive: true });
+      const leaseName = leaseNames.find((name) => name.endsWith('.json'));
+      expect(leaseName).toBeDefined();
+      await writeFile(path.join(leaseRoot, leaseName!), '{}\n', { mode: 0o600 });
+
+      await expect(
+        BackgroundShellManager.getInstance().reapOrphanedSession(sessionId, workspace)
+      ).rejects.toThrow('Invalid durable background shell lease');
+      expect(() => process.kill(rootPid, 0)).not.toThrow();
+    } finally {
+      try {
+        process.kill(-rootPid, 'SIGKILL');
+      } catch {
+        // The process group has already exited.
+      }
+      await waitFor(() => processIsGone(rootPid));
+      descendantPids.delete(rootPid);
+    }
+  });
+
   it('kills a TERM-ignoring grandchild after a foreground Bash timeout', async () => {
     const fixture = await createProcessTreeFixture('foreground');
 

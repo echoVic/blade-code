@@ -1,7 +1,10 @@
 import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
-import { OwnedProcessTree } from '../../../../src/utils/process/OwnedProcessTree.js';
+import {
+  OwnedProcessTree,
+  terminateProcessTreeByPid,
+} from '../../../../src/utils/process/OwnedProcessTree.js';
 
 class FakeChild extends EventEmitter {
   readonly kill = vi.fn(() => true);
@@ -16,6 +19,41 @@ function asChild(child: FakeChild): ChildProcess {
 }
 
 describe('OwnedProcessTree', () => {
+  it('revalidates PID ownership before forcing an orphan tree', async () => {
+    let ownsPid = true;
+    const killProcess = vi.fn(() => true);
+    const wait = vi.fn(async () => {
+      ownsPid = false;
+    });
+
+    await expect(
+      terminateProcessTreeByPid(42_423, {
+        platform: 'linux',
+        killProcess,
+        wait,
+        validatePidOwnership: () => ownsPid,
+      })
+    ).resolves.toEqual({
+      success: true,
+      alreadyExited: false,
+      forced: false,
+    });
+    expect(killProcess.mock.calls).toEqual([[-42_423, 'SIGTERM']]);
+  });
+
+  it('does not signal an orphan tree whose initial PID identity changed', async () => {
+    const killProcess = vi.fn(() => true);
+
+    await expect(
+      terminateProcessTreeByPid(42_422, {
+        platform: 'linux',
+        killProcess,
+        validatePidOwnership: () => false,
+      })
+    ).resolves.toMatchObject({ success: false, forced: false });
+    expect(killProcess).not.toHaveBeenCalled();
+  });
+
   it('terminates an owned POSIX group gracefully before forcing survivors', async () => {
     const child = new FakeChild(42_424);
     const killProcess = vi.fn(() => true);

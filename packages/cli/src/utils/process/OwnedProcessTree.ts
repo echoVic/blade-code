@@ -14,6 +14,7 @@ export interface OwnedProcessTreeOptions {
   killProcess?: KillProcess;
   taskkill?: Taskkill;
   wait?: Wait;
+  validatePidOwnership?: () => boolean;
 }
 
 export interface ProcessTreeTerminationResult {
@@ -55,6 +56,58 @@ function runTaskkill(pid: number, force: boolean): Promise<boolean> {
     killer.once('error', () => settle(false));
     killer.once('close', (code) => settle(code === 0));
   });
+}
+
+export async function terminateProcessTreeByPid(
+  pid: number,
+  options: OwnedProcessTreeOptions = {}
+): Promise<ProcessTreeTerminationResult> {
+  if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) {
+    return { success: false, alreadyExited: false, forced: false };
+  }
+  const platform = options.platform ?? process.platform;
+  const gracePeriodMs = options.gracePeriodMs ?? DEFAULT_TERM_GRACE_MS;
+  const killProcess = options.killProcess ?? process.kill.bind(process);
+  const taskkill = options.taskkill ?? runTaskkill;
+  const waitFor = options.wait ?? wait;
+  const ownsPid = options.validatePidOwnership ?? (() => true);
+
+  if (!ownsPid()) {
+    return { success: false, alreadyExited: false, forced: false };
+  }
+
+  if (platform === 'win32') {
+    const graceful = await taskkill(pid, false);
+    await waitFor(gracePeriodMs);
+    if (!ownsPid()) {
+      return { success: graceful, alreadyExited: false, forced: false };
+    }
+    const forced = await taskkill(pid, true);
+    return {
+      success: graceful || forced,
+      alreadyExited: !graceful && !forced,
+      forced,
+    };
+  }
+
+  const signal = (target: number, processSignal: ProcessSignal): boolean => {
+    try {
+      return killProcess(target, processSignal);
+    } catch (error) {
+      return errorCode(error) === 'ESRCH';
+    }
+  };
+  const graceful = signal(-pid, 'SIGTERM') || signal(pid, 'SIGTERM');
+  await waitFor(gracePeriodMs);
+  if (!ownsPid()) {
+    return { success: graceful, alreadyExited: false, forced: false };
+  }
+  const forced = signal(-pid, 'SIGKILL') || signal(pid, 'SIGKILL');
+  return {
+    success: graceful || forced,
+    alreadyExited: false,
+    forced,
+  };
 }
 
 /**

@@ -33,6 +33,13 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
 - runtime 初始化失败或 `dispose()` 完成时只释放 owner token 与自身匹配的 lease。进程异常退出留下的 lease 会在确认 PID 已不存在后由下一 owner 回收。
 - 后台 Bash 在启动时绑定当前 session。`WriteStdin`、`TaskOutput`、`KillShell` 和 `/tasks` 只能读取或操作该 session 的 shell；对其他 session 的 ID 按不存在处理。
 - 后台 Bash 的 stdin 由 runtime 持有。`WriteStdin` 等待写入回调并处理 pipe error；`close_stdin=true` 显式发送 EOF。进程已经退出、stdin 已关闭或缺失 session 时 fail closed。
+- 后台 Bash 先启动一个不执行用户命令的 detached gate wrapper，写入并 fsync durable
+  shell lease 后才放行实际 executable；lease 失败时用户命令零执行。lease 仅包含
+  session/shell identity、owner/root PID、平台启动身份和时间；不包含命令、cwd、env 或输出。新
+  Runtime 获取 Session lease 后先执行 orphan reaper：只有 owner 身份已退出且 root PID
+  启动身份仍匹配时才终止 process group/tree。TERM grace period 后、发送强制信号前会
+  再次校验 ownership。PID 已复用或身份不可验证时绝不发送信号；损坏或超限 lease 会
+  fail closed 并阻止 session 恢复。
 - 每个后台 Bash 的 stdout 和 stderr 分别只保留自上次 `TaskOutput` 消费以来最近 1 MiB 的原始字节，持续输出不会让 runtime 内存无界增长。被丢弃的更早输出按 stream 累计字节数，保留内容从合法 UTF-8 边界开始。
 - `TaskOutput` 会在 1 MiB 运行时边界之上再次按命令类型限制模型和事件表面的文本（3,000-20,000 字符，默认 15,000），保留头尾并返回 `output_truncated`、`stdout_omitted_bytes`、`stderr_omitted_bytes` 和 `truncation_info`。TUI、headless、Web SSE 与 ACP 使用同一结果和展示摘要。
 - `SessionRuntime.dispose()` 会等待当前 session 的所有后台 shell 进程树完成回收，不影响其他活跃 session。

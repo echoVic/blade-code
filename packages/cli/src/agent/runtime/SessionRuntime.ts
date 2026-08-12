@@ -1546,6 +1546,10 @@ export class SessionRuntime {
         });
       }
       await this.validateSystemPromptConfig();
+      await BackgroundShellManager.getInstance().reapOrphanedSession(
+        this.sessionId,
+        this.workspaceRoot
+      );
       this.activeTurnMailbox = await ActiveTurnMailbox.create(
         this.workspaceRoot,
         this.sessionId

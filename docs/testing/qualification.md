@@ -550,6 +550,11 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
 - 模式边界恢复：在 Yolo 中故意调用一次 ExitPlanMode，运行时必须返回 `validation_error`，模型随后继续 Write/Bash，证明过期规划状态不能终止已经批准的工作；
 - 失败恢复：先重现测试失败，再修改，最后验证通过；
 - 超时恢复：回收完整进程树后继续工具循环，并确认没有后代进程遗留；
+- 后台 shell 硬崩溃恢复：独立 Blade owner 启动 TERM-ignoring detached process group 并
+  在 dispose 前硬退出；新 Runtime 必须通过 durable lease 与启动身份回收旧树，PID
+  复用/身份不匹配及 TERM grace period 内的 ownership 变化不得误杀，损坏 lease 必须
+  fail closed，lease 提交失败时 gate wrapper 不得执行用户命令，sidecar 不得包含命令、
+  环境、输出或凭据；
 - session 退出回收：模型启动后台进程后正常结束 CLI，验证 runtime dispose 等待整棵进程树终止；
 - 中断恢复：真实信号中断活动工具调用，持久化一次模型可见的中断边界，再由第二个 CLI 安全恢复；
 - session 独占：活动 runtime 拒绝第二个同 session CLI 且不持久化其输入，owner 退出后允许恢复并继续验证；

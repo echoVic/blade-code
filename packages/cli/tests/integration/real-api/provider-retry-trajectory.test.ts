@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
@@ -14,6 +14,7 @@ import {
   PersistentStore,
   PROCESS_RESTART_TOOL_RESULT,
 } from '../../../src/context/storage/PersistentStore.js';
+import { getProjectStoragePath } from '../../../src/context/storage/pathUtils.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
@@ -54,6 +55,19 @@ async function readRequestBody(request: import('node:http').IncomingMessage) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   return Buffer.concat(chunks);
+}
+
+async function waitForValue<T>(
+  read: () => Promise<T | undefined>,
+  timeoutMs = 120_000
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await read();
+    if (value !== undefined) return value;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out after ${timeoutMs}ms`);
 }
 
 function upstreamUrl(baseUrl: string, requestUrl: string | undefined): URL {
@@ -358,6 +372,140 @@ async function startMidStreamStallProxy(baseUrl: string, delayMs: number) {
 }
 
 describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
+  it.skipIf(process.platform === 'win32')(
+    'reaps a real-API background shell after its Blade owner hard-exits',
+    async () => {
+      if (!modelConfig) throw new Error('DeepSeek Flash configuration is required');
+      const childProcess =
+        await vi.importActual<typeof import('node:child_process')>(
+          'node:child_process'
+        );
+      const workspace = await mkdtemp(
+        path.join(os.tmpdir(), 'blade-real-api-orphan-shell-')
+      );
+      const storageRoot = path.join(workspace, '.blade-storage');
+      const sessionId = `real-api-orphan-shell-${Date.now()}`;
+      const fixture = path.join(
+        import.meta.dirname,
+        '..',
+        '..',
+        'fixtures',
+        'run-real-api-background-shell.ts'
+      );
+      let stdout = '';
+      let stderr = '';
+      let rootPid: number | undefined;
+      let runtime: SessionRuntime | undefined;
+      const previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
+      const runtimeConfig = buildRealApiRuntimeConfig(modelConfig);
+      process.env.BLADE_STORAGE_ROOT = storageRoot;
+      getState().config.actions.setConfig({
+        ...runtimeConfig,
+        permissionMode: PermissionMode.YOLO,
+      });
+      const child = childProcess.spawn(
+        process.env.BUN_EXEC_PATH ?? 'bun',
+        [fixture, workspace, storageRoot, sessionId, modelConfig.qualificationId],
+        {
+          cwd: workspace,
+          env: {
+            ...process.env,
+            BLADE_STORAGE_ROOT: storageRoot,
+            BLADE_TELEMETRY_DISABLED: '1',
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }
+      );
+      child.stdout.setEncoding('utf8');
+      child.stderr.setEncoding('utf8');
+      child.stdout.on('data', (chunk: string) => {
+        stdout += chunk;
+      });
+      child.stderr.on('data', (chunk: string) => {
+        stderr += chunk;
+      });
+      const childClosed = new Promise<number | null>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('close', resolve);
+      });
+
+      try {
+        const leaseRoot = path.join(
+          getProjectStoragePath(workspace),
+          '.background-shells'
+        );
+        const launched = await Promise.race([
+          waitForValue(async () => {
+            try {
+              const value = Number.parseInt(
+                await readFile(path.join(workspace, 'orphan-root.pid'), 'utf8'),
+                10
+              );
+              const leaseNames = await readdir(leaseRoot, { recursive: true });
+              const leaseName = leaseNames.find((name) => name.endsWith('.json'));
+              return Number.isSafeInteger(value) && value > 1 && leaseName
+                ? { rootPid: value, leaseName }
+                : undefined;
+            } catch {
+              return undefined;
+            }
+          }),
+          childClosed.then((status) => {
+            throw new Error(
+              `Real API shell owner exited before launch (${status}): ${stderr}`
+            );
+          }),
+        ]);
+        rootPid = launched.rootPid;
+
+        expect(child.kill('SIGKILL')).toBe(true);
+        await childClosed;
+        expect(() => process.kill(rootPid!, 0)).not.toThrow();
+        expect(stdout).toContain('"tool_name":"Bash"');
+
+        const leaseContents = await readFile(
+          path.join(leaseRoot, launched.leaseName),
+          'utf8'
+        );
+        expect(leaseContents).not.toContain('orphan-root.pid');
+        expect(leaseContents).not.toContain('DEEPSEEK_API_KEY');
+        expect(leaseContents).not.toContain(modelConfig.apiKey);
+
+        runtime = await runWithCwdOverride(workspace, () =>
+          SessionRuntime.create({
+            sessionId,
+            workspaceRoot: workspace,
+            modelId: runtimeConfig.currentModelId,
+            permissionMode: PermissionMode.YOLO,
+          })
+        );
+        await waitForValue(async () => {
+          try {
+            process.kill(rootPid!, 0);
+            return undefined;
+          } catch {
+            return true;
+          }
+        }, 10_000);
+        expect(`${stdout}\n${stderr}`).not.toContain(modelConfig.apiKey);
+      } finally {
+        child.kill('SIGKILL');
+        await runtime?.dispose().catch(() => undefined);
+        if (rootPid) {
+          try {
+            process.kill(-rootPid, 'SIGKILL');
+          } catch {
+            // The durable orphan reaper already terminated the process group.
+          }
+        }
+        if (previousStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
+        else process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
+        await rm(workspace, { recursive: true, force: true });
+      }
+    },
+    180_000
+  );
+
   it('recovers one coding turn from an injected pre-stream 503', async () => {
     if (!modelConfig) throw new Error('DeepSeek Flash configuration is required');
     const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-provider-retry-'));

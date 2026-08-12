@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.21] - 2026-08-12
+
+### 🛡️ 稳定性
+
+- 新增 Durable Background Shell Lease：后台 Bash 启动后、返回 tool result 前原子提交
+  session/shell/owner/root PID 与平台进程启动身份，不持久化命令、环境、输出或凭据
+- 后台命令先在 detached gate wrapper 中阻塞，lease fsync 成功后才放行实际 executable；
+  lease 提交失败时用户命令零执行，阻塞 wrapper 立即回收
+- 新 Runtime 取得 Session lease 后，会在任何 Provider/tool 工作前回收 owner 已退出且
+  root 身份匹配的 detached process tree；PID 已退出只清理 stale lease，PID 身份不匹配
+  则标记 protected 并绝不发送信号
+- TERM grace period 前后都会重新验证 PID ownership，阻止原进程退出并发生 PID 复用时
+  的强制信号误杀；损坏或超限 lease 会阻断恢复并保留现场，不会被静默忽略
+- Linux 使用 `/proc` start ticks，macOS 使用 `ps lstart`，Windows 使用 CIM
+  CreationDate；身份无法采集的存活进程立即回收并 fail closed，已自然退出的短任务不误报
+
+### ✅ 测试相关
+
+- 新增真实硬退出 launcher 集成测试，证明 TERM-ignoring orphan process group 可由新
+  Runtime 身份校验后回收；覆盖稳定指纹、PID 复用拒绝、session 隔离和原有进程树生命周期
+- 新增 DeepSeek 真实 API 子进程轨迹：模型启动后台 Bash 后硬杀 Blade owner，由第二
+  Runtime 回收旧 process group，并验证 sidecar 不含命令、环境变量名或 API key
+
 ## [0.10.20] - 2026-08-12
 
 ### 🛡️ 稳定性

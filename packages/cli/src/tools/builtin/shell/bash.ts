@@ -225,6 +225,7 @@ Before executing commands:
           effectiveCwd,
           effectiveEnv,
           context.sessionId,
+          workspaceRoot,
           sandboxedCommand
         );
       }
@@ -372,6 +373,7 @@ function executeInBackground(
   cwd?: string,
   env?: Record<string, string>,
   sessionId?: string,
+  projectPath: string = getCwd(),
   sandboxedCommand?: SandboxedCommand
 ): ToolResult {
   if (!sessionId) {
@@ -391,6 +393,7 @@ function executeInBackground(
   const backgroundProcess = manager.startBackgroundProcess({
     command,
     sessionId,
+    projectPath,
     cwd: cwd || getCwd(),
     env,
     sandboxedCommand,
