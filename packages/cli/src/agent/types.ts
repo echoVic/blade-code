@@ -130,6 +130,8 @@ export interface LoopOptions {
   transientInput?: 'goal_continuation';
   /** Turn-scoped JSON Schema for the canonical final response. */
   outputSchema?: JsonObject;
+  /** Whether the host may require the built-in independent verification subagent. */
+  builtinVerification?: boolean;
   /** Host-owned completion authority for an active persisted goal. */
   goalLifecycle?: {
     snapshot: GoalSnapshot | null;

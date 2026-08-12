@@ -108,6 +108,7 @@ export const HeadlessOptionsSchema = Type.Object({
   model: Type.Optional(Type.String()),
   systemPrompt: Type.Optional(Type.String()),
   appendSystemPrompt: Type.Optional(Type.String()),
+  verificationAgent: Type.Optional(Type.Boolean()),
   maxTurns: Type.Optional(
     Type.Refine(
       Type.Integer({ maximum: MAX_AGENT_TURNS }),
@@ -144,6 +145,8 @@ export interface HeadlessOptions {
   systemPrompt?: string;
   /** Appends to the default system prompt when provided. */
   appendSystemPrompt?: string;
+  /** Enables the built-in independent verification subagent. */
+  verificationAgent?: boolean;
   /** Maximum number of agent turns for this run. */
   maxTurns?: number;
   /** Permission mode override; defaults to YOLO in headless mode. */
@@ -271,6 +274,12 @@ function headlessCommand(yargs: Argv) {
         .option('append-system-prompt', {
           describe: 'Append a system prompt to the default system prompt',
           type: 'string',
+        })
+        .option('verification-agent', {
+          describe:
+            'Run the built-in independent verification agent after non-trivial changes',
+          type: 'boolean',
+          default: true,
         })
         .option('max-turns', {
           alias: ['maxTurns'],
@@ -1291,6 +1300,7 @@ export async function runHeadless(
         stream: true,
         signal: abortControl.signal,
         maxTurns: validatedOptions.maxTurns,
+        builtinVerification: validatedOptions.verificationAgent !== false,
         outputSchema,
         ...(effectiveMaxTurns === -1
           ? {

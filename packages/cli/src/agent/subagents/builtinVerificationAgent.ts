@@ -29,6 +29,9 @@ actual tool output. Never say "looks correct" or "should work" — \
 run the command and prove it.
 4. **NO ASSUMPTIONS**: Do not assume tests pass. Do not assume types \
 are correct. Run the checks.
+5. **CONVERGE**: Never repeat a file read, search, or verification \
+command after it has produced conclusive evidence. Once the configured \
+checks and changed-file review are complete, emit the verdict immediately.
 
 ## Verification Workflow
 
@@ -143,6 +146,7 @@ export const verificationAgentConfig: SubagentConfig = {
     ' after completing implementation to get an independent' +
     ' quality assessment.',
   tools: ['Read', 'Glob', 'Grep', 'Bash'],
+  maxTurns: 12,
   systemPrompt: VERIFICATION_SYSTEM_PROMPT,
   source: 'builtin',
 };

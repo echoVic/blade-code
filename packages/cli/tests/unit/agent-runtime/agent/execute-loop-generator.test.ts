@@ -2183,6 +2183,61 @@ describe('executeLoopGenerator', () => {
       );
     });
 
+    it('skips the independent verification gate when the host disables it', async () => {
+      const deps = createMockDeps();
+      exposeIndependentVerificationTools(deps);
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'non-trivial-patch',
+              type: 'function',
+              function: {
+                name: 'ApplyPatch',
+                arguments: '{"patch":"*** Begin Patch\\n*** End Patch"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Implementation complete.',
+          toolCalls: undefined,
+          finishReason: 'stop',
+        });
+      (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true,
+        llmContent: 'Applied three files.',
+        metadata: {
+          affected_paths: ['src/a.ts', 'src/b.ts', 'src/c.ts'],
+        },
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Implement the requested production feature.',
+          context,
+          { stream: false, builtinVerification: false } as LoopOptions,
+          undefined
+        )
+      );
+
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: 'Implementation complete.',
+      });
+      expect(chatMock).toHaveBeenCalledTimes(2);
+      expect(deps.toolExecutor.execute).not.toHaveBeenCalledWith(
+        'Task',
+        expect.anything(),
+        expect.anything()
+      );
+    });
+
     it('finalizes a goal only after an authoritative fresh verifier PASS', async () => {
       const { deps, saveMessage } = createTypedPersistenceHarness();
       const registry = deps.toolExecutor.getRegistry();

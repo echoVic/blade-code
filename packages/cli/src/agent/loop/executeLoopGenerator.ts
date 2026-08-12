@@ -960,6 +960,7 @@ validates the object and may return a bounded corrective error.`;
     const isYoloMode = context.permissionMode === ('yolo' as PermissionMode);
     const isSubagent = !!context.subagentInfo;
     const readOnlyAudit = isReadOnlyAuditSubagent(context.subagentInfo?.subagentType);
+    const builtinVerificationEnabled = options?.builtinVerification !== false;
     const configuredMaxTurns =
       deps.runtimeOptions.maxTurns ?? options?.maxTurns ?? deps.config.maxTurns ?? -1;
     const hasExplicitTurnLimit = configuredMaxTurns >= 0;
@@ -1143,6 +1144,21 @@ validates the object and may return a bounded corrective error.`;
       }
       const isGoalVerificationTask =
         toolName === 'Task' && params.subagent_type === GOAL_VERIFICATION_SUBAGENT_TYPE;
+      const isIndependentVerificationTaskRequest =
+        toolName === 'Task' && params.subagent_type === VERIFICATION_SUBAGENT_TYPE;
+      if (isIndependentVerificationTaskRequest && !builtinVerificationEnabled) {
+        return {
+          success: false,
+          llmContent:
+            'The built-in independent verification agent is disabled for this run. ' +
+            'Use the project verification commands directly and finish.',
+          error: {
+            type: ToolErrorType.VALIDATION_ERROR,
+            message: 'Built-in independent verification is disabled',
+          },
+          metadata: { summary: 'Rejected disabled verification agent' },
+        };
+      }
       if (isGoalVerificationTask && !goalCompletionRequested) {
         return {
           success: false,
@@ -1157,8 +1173,8 @@ validates the object and may return a bounded corrective error.`;
         };
       }
       const isIndependentVerificationTask =
-        toolName === 'Task' &&
-        params.subagent_type === VERIFICATION_SUBAGENT_TYPE &&
+        builtinVerificationEnabled &&
+        isIndependentVerificationTaskRequest &&
         requiresIndependentVerification(modifiedFiles);
       if (
         independentVerificationTaskRequired ||
@@ -2477,7 +2493,9 @@ validates the object and may return a bounded corrective error.`;
 
           const independentVerificationAction = checkIndependentVerificationGate({
             isSubagent,
-            taskAvailable: resolveTools().some((tool) => tool.name === 'Task'),
+            taskAvailable:
+              builtinVerificationEnabled &&
+              resolveTools().some((tool) => tool.name === 'Task'),
             delegationForbidden: delegationPolicySources.some(isDelegationForbidden),
             singleTaskDelegationRequired: singleTaskRequired(),
             modifiedFiles,

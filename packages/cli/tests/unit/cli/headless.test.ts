@@ -125,6 +125,28 @@ describe('headless runner', () => {
     );
   });
 
+  it('disables only the built-in independent verifier when requested', async () => {
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        message: 'implement and run the requested tests',
+        verificationAgent: false,
+      },
+      { stdout, stderr }
+    );
+
+    expect(exitCode).toBe(0);
+    expect(agentState.chatStream).toHaveBeenCalledWith(
+      'implement and run the requested tests',
+      expect.any(Object),
+      expect.objectContaining({ builtinVerification: false })
+    );
+  });
+
   it('executes bang input without creating an Agent or calling a model', async () => {
     runtimeState.executeUserShellCommand.mockImplementationOnce(
       async (_command, options) => {

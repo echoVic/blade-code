@@ -53,6 +53,8 @@ describe('buildSystemPrompt', () => {
       const result = await buildSystemPrompt({ includeEnvironment: false });
 
       expect(result.prompt).toContain('You are Blade Code');
+      expect(result.prompt).toContain('must not silently return a `T | Promise<T>`');
+      expect(result.prompt).toContain('separate explicitly asynchronous method');
       expect(result.sources).toContainEqual({
         name: 'default',
         loaded: true,
