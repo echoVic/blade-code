@@ -7,7 +7,6 @@
 
 import { createHash } from 'node:crypto';
 import { type PermissionMode } from '../../config/index.js';
-import { MAX_AGENT_TURNS } from '../../config/maxTurns.js';
 import { CompactionService } from '../../context/CompactionService.js';
 import { ReactiveCompaction } from '../../context/ReactiveCompaction.js';
 import { microCompact, snipCompact } from '../../context/SnipCompaction.js';
@@ -57,7 +56,6 @@ import type {
   LoopResult,
   UserMessageContent,
 } from '../types.js';
-import { ConversationState } from './ConversationState.js';
 import {
   checkDelegationRequirement,
   checkIncompleteIntent,
@@ -83,6 +81,7 @@ import {
   saveToolUse,
   saveUserMessage,
 } from './conversationPersistence.js';
+import { ConversationState } from './ConversationState.js';
 import {
   createStaleLoopDetector,
   createToolFailureTracker,
@@ -111,9 +110,9 @@ import {
   type VerificationVerdict,
 } from './independentVerification.js';
 import { StreamingToolExecutor } from './StreamingToolExecutor.js';
-import { ToolProgressQueue } from './ToolProgressQueue.js';
 import type { FunctionToolCallRef } from './toolDomainPolicy.js';
 import { applyToolDomainEffects } from './toolDomainPolicy.js';
+import { ToolProgressQueue } from './ToolProgressQueue.js';
 import type {
   LoopDependencies,
   LoopEvent,
@@ -128,7 +127,6 @@ const COMPACTION_FALLBACK_MIN_OUTPUT_TOKENS = 8192;
 const COMPACTION_FALLBACK_MAX_OUTPUT_TOKENS = 32768;
 const COMPACTION_COOLDOWN_TURNS = 2;
 const COMPACTION_EMERGENCY_INPUT_RATIO = 0.95;
-const SAFETY_LIMIT = MAX_AGENT_TURNS;
 
 function toTokenUsageInfo(usage: UsageInfo, maxContextTokens: number): TokenUsageInfo {
   return {
@@ -978,8 +976,8 @@ validates the object and may return a bounded corrective error.`;
 
     const maxTurns =
       configuredMaxTurns === -1
-        ? SAFETY_LIMIT
-        : Math.min(configuredMaxTurns, SAFETY_LIMIT);
+        ? Infinity
+        : configuredMaxTurns;
 
     let totalTokens = 0;
     let lastPromptTokens: number | undefined;
@@ -3761,12 +3759,10 @@ validates the object and may return a bounded corrective error.`;
         }
 
         // 9. 检查轮次上限
-        const reachedSafetyLimit = turnsCount >= SAFETY_LIMIT;
-        const reachedConfiguredLimit =
-          turnsCount >= maxTurns && (hasExplicitTurnLimit || !isYoloMode || isSubagent);
-        if (reachedSafetyLimit || reachedConfiguredLimit) {
-          const enforcedTurnLimit = reachedSafetyLimit ? SAFETY_LIMIT : maxTurns;
-          logger.info(`Warning: 达到轮次上限 ${enforcedTurnLimit} 轮`);
+        const reachedTurnLimit =
+          turnsCount >= maxTurns && (hasExplicitTurnLimit || isSubagent);
+        if (reachedTurnLimit) {
+          logger.info(`Warning: 达到轮次上限 ${maxTurns} 轮`);
 
           if (options?.onTurnLimitReached) {
             const response = await options.onTurnLimitReached({ turnsCount });
@@ -3885,10 +3881,8 @@ validates the object and may return a bounded corrective error.`;
             error: {
               type: 'max_turns_exceeded',
               message: isSubagent
-                ? `子代理已达到轮次上限 (${enforcedTurnLimit} 轮)。`
-                : `已达到${
-                    reachedSafetyLimit ? '安全' : '显式'
-                  }轮次上限 (${enforcedTurnLimit} 轮)。`,
+                ? `子代理已达到轮次上限 (${maxTurns} 轮)。`
+                : `已达到轮次上限 (${maxTurns} 轮)。`,
             },
             metadata: {
               turnsCount,

@@ -1,9 +1,7 @@
-export const MAX_AGENT_TURNS = 100;
-
 export function isValidMaxTurns(value: number): boolean {
-  return Number.isInteger(value) && value >= -1 && value <= MAX_AGENT_TURNS;
+  return Number.isInteger(value) && (value === -1 || value >= 0);
 }
 
 export function formatMaxTurnsRange(): string {
-  return `-1, 0, or an integer from 1 to ${MAX_AGENT_TURNS}`;
+  return `-1 (unlimited), 0 (disabled), or any positive integer`;
 }

@@ -240,7 +240,7 @@ export const DEFAULT_CONFIG: BladeConfig = {
   disableAllHooks: false,
 
   // Agentic Loop 配置
-  maxTurns: -1, // 默认无限制（受安全上限 100 保护）
+  maxTurns: -1, // 默认无限制
   maxConcurrentTasks: 3,
   maxQueuedTasks: 100,
 };

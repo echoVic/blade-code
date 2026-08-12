@@ -166,7 +166,7 @@ describe('--settings middleware', () => {
       loadConfiguration({ settings: '{"maxContextTokens":"many"}' } as never)
     ).rejects.toThrow('Unknown --settings field: maxContextTokens');
     await expect(
-      loadConfiguration({ settings: '{"maxTurns":101}' } as never)
+      loadConfiguration({ settings: '{"maxTurns":-2}' } as never)
     ).rejects.toThrow('Invalid --settings value: maxTurns');
   });
 

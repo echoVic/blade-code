@@ -1,6 +1,5 @@
 import type { SubagentConfig } from '../agent/subagents/types.js';
 import { mapClaudeCodePermissionMode } from '../agent/subagents/types.js';
-import { MAX_AGENT_TURNS } from '../config/maxTurns.js';
 import { StringEnum, safeParseSchema, Type } from '../schema/index.js';
 
 const AgentNameSchema = Type.String({
@@ -41,7 +40,7 @@ const CliAgentDefinitionSchema = Type.Object(
         'ignore',
       ])
     ),
-    maxTurns: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_AGENT_TURNS })),
+    maxTurns: Type.Optional(Type.Integer({ minimum: 1 })),
     isolation: Type.Optional(StringEnum(['none', 'worktree'])),
   },
   { additionalProperties: false }

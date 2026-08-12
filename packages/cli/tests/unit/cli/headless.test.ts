@@ -896,23 +896,25 @@ describe('headless runner', () => {
     expect(stderrOutput).toContain('outputFormat');
   });
 
-  it('rejects maxTurns above the documented safety limit', async () => {
+  it('accepts arbitrarily large maxTurns without upper cap', async () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const { runHeadless } = await import('../../../src/commands/headless.js');
 
+    agentState.chatStream.mockImplementationOnce(
+      mockChatGenerator([{ kind: 'turn_start', turn: 1, maxTurns: 500 }])
+    );
+
     const exitCode = await runHeadless(
       {
         headless: true,
-        message: 'inspect this repo',
-        maxTurns: 101,
+        message: 'large task',
+        maxTurns: 500,
       },
       { stdout, stderr }
     );
 
-    expect(exitCode).toBe(1);
-    expect(runtimeState.create).not.toHaveBeenCalled();
-    expect(stderr.write.mock.calls.flat().join('')).toContain('maxTurns');
+    expect(exitCode).toBe(0);
   });
 
   it('emits compacting markers and resets streamed state across stream cycles', async () => {

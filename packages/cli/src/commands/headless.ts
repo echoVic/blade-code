@@ -20,7 +20,6 @@ import {
   validateOutput,
   validatePermissions,
 } from '../cli/middleware.js';
-import { MAX_AGENT_TURNS } from '../config/maxTurns.js';
 import { PermissionMode } from '../config/types.js';
 import type { SessionTaskIsolation } from '../context/types.js';
 import {
@@ -111,9 +110,9 @@ export const HeadlessOptionsSchema = Type.Object({
   verificationAgent: Type.Optional(Type.Boolean()),
   maxTurns: Type.Optional(
     Type.Refine(
-      Type.Integer({ maximum: MAX_AGENT_TURNS }),
+      Type.Integer(),
       (value) => value === -1 || value > 0,
-      () => 'must be -1 or a positive integer'
+      () => 'must be -1 (unlimited) or a positive integer'
     )
   ),
   permissionMode: Type.Optional(Type.Enum(PermissionMode)),

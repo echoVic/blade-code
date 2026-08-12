@@ -2,7 +2,6 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { getOriginalCwd } from '../bootstrap/state.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
-import { MAX_AGENT_TURNS } from '../config/maxTurns.js';
 import {
   MAX_CONCURRENT_TASKS,
   MAX_QUEUED_TASKS,
@@ -128,7 +127,7 @@ const RuntimeSettingsSchema = Type.Object({
     )
   ),
   permissionMode: Type.Optional(Type.Enum(PermissionMode)),
-  maxTurns: Type.Optional(Type.Integer({ minimum: -1, maximum: MAX_AGENT_TURNS })),
+  maxTurns: Type.Optional(Type.Integer({ minimum: -1 })),
   maxConcurrentTasks: Type.Optional(
     Type.Integer({
       minimum: MIN_CONCURRENT_TASKS,
