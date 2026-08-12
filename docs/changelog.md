@@ -11,13 +11,18 @@ All notable changes to this project will be documented in this file.
 - 内置 independent verifier 改用 host-validated JSON Schema 输出
   `verdict/summary/findings`，文本标题仅用于旧会话兼容；预算提升至 24 轮，
   避免测试通过但 Markdown 标题不精确导致误判和重试耗尽
+- verification completion reminder 现在持久化为 client-hidden control message；
+  Web/TUI fresh reload 统一过滤，新版本同时兼容无元数据的旧会话
 - 默认工程提示要求性能测试执行预热、使用相对性能比值，并避免将固定墙钟耗时
   作为跨硬件正确性断言
 - CLI 文档补充 headless 多进程内存模型、建议并发和 server admission 配置
 
 ### ✅ 测试相关
 
-- 新增 verification gate 显式禁用、structured verifier verdict 和性能测试提示回归
+- 单元 suite watchdog 随测试规模调整为 120 秒；Web Vitest 固定最多 4 workers，
+  性能资格改用预热后的相对比值，避免高负载机器上的假失败
+- 新增 verification gate 显式禁用、structured verifier verdict、隐藏 control
+  message 新旧会话投影和性能测试提示回归
 
 ## [0.10.25] - 2026-08-12
 

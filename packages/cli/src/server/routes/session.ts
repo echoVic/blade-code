@@ -64,6 +64,7 @@ import {
   type CommunicationStyleConfiguration,
   resolveCommunicationStyle,
 } from '../../services/communicationStyle.js';
+import { isClientVisibleMessage } from '../../services/clientMessageVisibility.js';
 import { resolveReasoningEffort } from '../../services/pi/reasoningEffort.js';
 import { resolveResponseVerbosity } from '../../services/pi/responseVerbosity.js';
 import { resolveServiceTier } from '../../services/pi/serviceTier.js';
@@ -703,6 +704,7 @@ function sessionInfoFromMetadata(
 function projectClientMessages(messages: readonly Message[]): Message[] {
   return messages.flatMap((message) => {
     if (
+      !isClientVisibleMessage(message) ||
       message.role === 'system' ||
       (message.role === 'tool' && message.name === STRUCTURED_OUTPUT_TOOL_NAME)
     ) {

@@ -9,6 +9,18 @@ describe('SessionService.toUISafeMessages', () => {
       { role: 'system', content: 'internal summary' },
       {
         role: 'user',
+        content: 'internal control',
+        metadata: { clientVisible: false },
+      },
+      {
+        role: 'user',
+        content:
+          'This turn made a non-trivial implementation. Before finishing, call Task ' +
+          'with subagent_type="verification". Only a fresh structured PASS verdict ' +
+          'allows completion.',
+      },
+      {
+        role: 'user',
         content: [
           { type: 'text', text: 'Look at ' },
           { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },

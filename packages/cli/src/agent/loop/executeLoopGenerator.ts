@@ -29,6 +29,7 @@ import type {
   StreamToolCall,
   UsageInfo,
 } from '../../services/ChatServiceInterface.js';
+import { INTERNAL_CONTROL_MESSAGE_METADATA } from '../../services/clientMessageVisibility.js';
 import {
   isProviderContextLimitError,
   providerReplayBoundaryCrossed,
@@ -2529,13 +2530,15 @@ validates the object and may return a bounded corrective error.`;
             const verificationGateMsg: Message = {
               role: 'user',
               content: independentVerificationAction.prompt,
+              metadata: INTERNAL_CONTROL_MESSAGE_METADATA,
             };
             state.appendControl('user', verificationGateMsg);
             const verificationGateUserUuid = await saveUserMessage(
               deps,
               context,
               verificationGateMsg.content as string,
-              lastMessageUuid
+              lastMessageUuid,
+              INTERNAL_CONTROL_MESSAGE_METADATA
             );
             if (verificationGateUserUuid) {
               lastMessageUuid = verificationGateUserUuid;

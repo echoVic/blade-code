@@ -68,6 +68,7 @@ import { FileAccessTracker } from '../tools/builtin/file/FileAccessTracker.js';
 import { SnapshotManager } from '../tools/builtin/file/SnapshotManager.js';
 import { getVersion } from '../utils/packageInfo.js';
 import type { ContentPart, Message } from './ChatServiceInterface.js';
+import { isClientVisibleMessage } from './clientMessageVisibility.js';
 import { isCommunicationStyleSelection } from './communicationStyle.js';
 import { isReasoningEffortSelection } from './pi/reasoningEffort.js';
 import { isResponseVerbositySelection } from './pi/responseVerbosity.js';
@@ -613,7 +614,12 @@ export class SessionService {
     const result: SessionMessage[] = [];
 
     messages.forEach((msg, index) => {
-      if (msg.role !== 'user' && msg.role !== 'assistant') return;
+      if (
+        (msg.role !== 'user' && msg.role !== 'assistant') ||
+        !isClientVisibleMessage(msg)
+      ) {
+        return;
+      }
 
       let content: string;
       if (typeof msg.content === 'string') {

@@ -380,6 +380,7 @@ export interface MessagePersistenceMetadata {
   model?: string;
   usage?: { input_tokens: number; output_tokens: number };
   inboxMessageId?: string;
+  clientVisible?: boolean;
   contextualProjectRules?: boolean;
   ruleReferences?: JsonValue;
   triggerPaths?: string[];

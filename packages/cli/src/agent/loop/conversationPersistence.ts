@@ -116,7 +116,7 @@ export async function saveUserMessage(
   context: ChatContext,
   message: UserMessageContent,
   parentUuid: string | null = null,
-  metadata?: { inboxMessageId?: string },
+  metadata?: MessagePersistenceMetadata,
   options: { required?: boolean } = {}
 ): Promise<string | null> {
   const required = options.required ?? deps.executionEngine !== undefined;
@@ -141,7 +141,9 @@ export async function saveUserMessage(
         throw new Error('Durable user-message commit returned no identity');
       }
       // Backfill a semantic title from the first user message (best-effort).
-      void maybeBackfillSessionTitle(context, message);
+      if (metadata?.clientVisible !== false) {
+        void maybeBackfillSessionTitle(context, message);
+      }
       return uuid;
     }
     if (required && context.sessionId && hasPersistableContent) {

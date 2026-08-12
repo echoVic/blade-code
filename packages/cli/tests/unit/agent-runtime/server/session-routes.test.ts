@@ -1664,6 +1664,18 @@ describe('SessionRoutes runtime reuse', () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     mockResolvedSession('structured-history-session');
     vi.mocked(SessionService.loadSession).mockResolvedValue([
+      {
+        role: 'user',
+        content: 'hidden control',
+        metadata: { clientVisible: false },
+      },
+      {
+        role: 'user',
+        content:
+          'This turn made a non-trivial implementation. Before finishing, call Task ' +
+          'with subagent_type="verification". Only a fresh structured PASS verdict ' +
+          'allows completion.',
+      },
       { role: 'user', content: 'return structured output' },
       {
         role: 'assistant',

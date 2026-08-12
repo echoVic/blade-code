@@ -2179,6 +2179,7 @@ describe('executeLoopGenerator', () => {
         expect.objectContaining({
           role: 'user',
           content: expect.stringContaining('non-trivial implementation'),
+          metadata: { clientVisible: false },
         })
       );
     });
