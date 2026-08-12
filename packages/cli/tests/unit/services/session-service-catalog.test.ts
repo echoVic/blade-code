@@ -291,6 +291,82 @@ describe('SessionService strict session catalog', () => {
     }
   });
 
+  it('reconciles a dead running owner through the projected catalog path', async () => {
+    await writeTranscript(workspaceA, 'projected-dead-owner', [
+      makeCreatedEvent('projected-dead-owner', workspaceA, '2024-01-01T00:00:00.000Z', {
+        taskStatus: 'running',
+        taskOwnerPid: 2_147_483_647,
+        taskStartedAt: '2024-01-01T00:00:00.000Z',
+      }),
+    ]);
+
+    const page = await SessionService.listSessionPage({ cwd: workspaceA });
+
+    expect(page.sessions).toContainEqual(
+      expect.objectContaining({
+        sessionId: 'projected-dead-owner',
+        taskStatus: 'interrupted',
+        taskStatusReason: 'Task owner process exited before completion',
+      })
+    );
+    expect(
+      parseSessionJSONL(
+        await readFile(getSessionFilePath(workspaceA, 'projected-dead-owner'), 'utf8')
+      ).at(-1)
+    ).toMatchObject({
+      type: 'session_updated',
+      data: { taskStatus: 'interrupted' },
+    });
+  });
+
+  it('collects only stale empty session shells', async () => {
+    const stale = 'stale-empty';
+    const recent = 'recent-empty';
+    const active = 'stale-active';
+    const subagent = 'stale-subagent';
+    await writeTranscript(workspaceA, stale, [
+      makeCreatedEvent(stale, workspaceA, '2024-01-01T00:00:00.000Z'),
+    ]);
+    await writeTranscript(workspaceA, recent, [
+      makeCreatedEvent(recent, workspaceA, '2024-01-01T00:00:00.000Z'),
+    ]);
+    await writeTranscript(workspaceA, active, [
+      makeCreatedEvent(active, workspaceA, '2024-01-01T00:00:00.000Z'),
+      ...makeMessageEvents(active, workspaceA, '2024-01-01T00:01:00.000Z', 'hello'),
+    ]);
+    await writeTranscript(workspaceA, subagent, [
+      makeCreatedEvent(subagent, workspaceA, '2024-01-01T00:00:00.000Z', {
+        relationType: 'subagent',
+        parentId: active,
+      }),
+    ]);
+    const now = Date.now();
+    const old = new Date(now - 25 * 60 * 60 * 1000);
+    const { utimes } = await import('node:fs/promises');
+    await Promise.all(
+      [stale, active, subagent].map((sessionId) =>
+        utimes(getSessionFilePath(workspaceA, sessionId), old, old)
+      )
+    );
+
+    await expect(
+      SessionService.collectStaleEmptySessions({
+        projectPath: workspaceA,
+        now,
+      })
+    ).resolves.toBe(1);
+    await expect(access(getSessionFilePath(workspaceA, stale))).rejects.toThrow();
+    await expect(
+      access(getSessionFilePath(workspaceA, recent))
+    ).resolves.toBeUndefined();
+    await expect(
+      access(getSessionFilePath(workspaceA, active))
+    ).resolves.toBeUndefined();
+    await expect(
+      access(getSessionFilePath(workspaceA, subagent))
+    ).resolves.toBeUndefined();
+  });
+
   it('projects only public metadata fields and applies latest session_updated metadata', async () => {
     await writeTranscript(workspaceA, 'metadata-session', [
       makeCreatedEvent('metadata-session', workspaceA, '2024-01-01T00:00:00.000Z'),

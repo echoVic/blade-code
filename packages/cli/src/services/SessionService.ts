@@ -37,6 +37,7 @@ import {
   getProjectStoragePath,
   getSessionFilePath,
   getSessionGoalFilePath,
+  isValidSessionId,
   unescapeProjectPath,
 } from '../context/storage/pathUtils.js';
 import {
@@ -114,6 +115,7 @@ const SESSION_PERMISSION_MODES = new Set<SessionPermissionMode>([
   'plan',
 ]);
 const SESSION_TASK_DELIVERY_STATUSES = new Set(['applied', 'discarded', 'conflicted']);
+export const STALE_EMPTY_SESSION_AGE_MS = 24 * 60 * 60 * 1000;
 
 class SessionTaskReconciliationSkipped extends Error {}
 
@@ -758,22 +760,24 @@ export class SessionService {
           archive_root_id: string | null;
           effective_archived_at: string | null;
         }>(...parameters, options.limit + 1);
-      const sessions = rows.map((row) => {
-        const metadata = JSON.parse(row.metadata_json) as StoredSessionMetadata;
-        if (row.archive_root_id && row.effective_archived_at) {
-          return {
-            ...metadata,
-            archivedAt: row.effective_archived_at,
-            archivedBySessionId: row.archive_root_id,
-          };
-        }
-        const {
-          archivedAt: _archivedAt,
-          archivedBySessionId: _archivedBySessionId,
-          ...active
-        } = metadata;
-        return active;
-      });
+      const sessions = await Promise.all(
+        rows.map(async (row) => {
+          const metadata = JSON.parse(row.metadata_json) as StoredSessionMetadata;
+          if (row.archive_root_id && row.effective_archived_at) {
+            return this.reconcileInterruptedTask({
+              ...metadata,
+              archivedAt: row.effective_archived_at,
+              archivedBySessionId: row.archive_root_id,
+            });
+          }
+          const {
+            archivedAt: _archivedAt,
+            archivedBySessionId: _archivedBySessionId,
+            ...active
+          } = metadata;
+          return this.reconcileInterruptedTask(active);
+        })
+      );
       const page = paginateSessionCatalog(sessions, options);
       return {
         sessions: page.sessions.map((session) => this.toPublicMetadata(session)),
@@ -805,6 +809,100 @@ export class SessionService {
       seenSessions.add(key);
       return [this.toPublicMetadata(session)];
     });
+  }
+
+  /**
+   * Removes abandoned session shells that never progressed past session_created.
+   * A cross-process lease and an in-lock transcript check make the deletion safe
+   * against a task starting while the collector is scanning.
+   */
+  static async collectStaleEmptySessions(
+    options: { projectPath?: string; olderThanMs?: number; now?: number } = {}
+  ): Promise<number> {
+    const now = options.now ?? Date.now();
+    const olderThanMs = options.olderThanMs ?? STALE_EMPTY_SESSION_AGE_MS;
+    if (!Number.isFinite(olderThanMs) || olderThanMs < 0) {
+      throw new Error('Stale empty session age must be a non-negative number');
+    }
+    const projectDirs = options.projectPath
+      ? [
+          {
+            storagePath: getProjectStoragePath(
+              this.resolveCatalogWorkspace(options.projectPath)
+            ),
+            projectPath: this.resolveCatalogWorkspace(options.projectPath),
+          },
+        ]
+      : await this.listAllProjectStorageDirectories();
+    let deleted = 0;
+
+    for (const project of projectDirs) {
+      let files: string[];
+      try {
+        files = await readdir(project.storagePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        throw error;
+      }
+
+      for (const file of files) {
+        if (!file.endsWith('.jsonl')) continue;
+        const sessionId = file.slice(0, -'.jsonl'.length);
+        if (!isValidSessionId(sessionId)) continue;
+        const filePath = path.join(project.storagePath, file);
+        try {
+          const fileStat = await stat(filePath);
+          if (now - fileStat.mtimeMs < olderThanMs) continue;
+          const hasDurableSidecar = await Promise.all([
+            stat(path.join(project.storagePath, `${sessionId}.inbox.json`))
+              .then(() => true)
+              .catch(() => false),
+            stat(getSessionGoalFilePath(project.projectPath, sessionId))
+              .then(() => true)
+              .catch(() => false),
+          ]).then((present) => present.some(Boolean));
+          if (hasDurableSidecar) continue;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+          throw error;
+        }
+
+        let lease: SessionLease;
+        try {
+          lease = await SessionLease.acquire(sessionId, project.projectPath);
+        } catch (error) {
+          if (error instanceof SessionInUseError) continue;
+          throw error;
+        }
+
+        try {
+          const removed = await new JSONLStore(filePath).deleteValidated(
+            (entries) =>
+              entries.length === 1 &&
+              entries[0]?.type === 'session_created' &&
+              entries[0].data.relationType !== 'subagent'
+          );
+          if (!removed) continue;
+          deleted++;
+          await rm(path.join(project.storagePath, `${sessionId}.inbox.json`), {
+            force: true,
+          });
+          await rm(getSessionGoalFilePath(project.projectPath, sessionId), {
+            force: true,
+          });
+          await this.removeFromProjection(sessionId, project.projectPath);
+        } catch (error) {
+          logger.warn(
+            `[SessionService] Skipping stale empty session cleanup: ${sessionId}`,
+            error
+          );
+        } finally {
+          await lease.release();
+        }
+      }
+    }
+
+    return deleted;
   }
 
   static async findSessionMetadata(
@@ -2523,7 +2621,12 @@ export class SessionService {
           // 损坏行跳过；下次 syncAll 会重建。
         }
       }
-      return filterArchiveState(sessions, archived);
+      return filterArchiveState(
+        await Promise.all(
+          sessions.map((session) => this.reconcileInterruptedTask(session))
+        ),
+        archived
+      );
     } catch {
       return null;
     }

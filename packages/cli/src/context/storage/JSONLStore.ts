@@ -7,6 +7,14 @@ import type { SessionEvent } from '../types.js';
 
 const TAIL_SCAN_CHUNK_SIZE = 64 * 1024;
 
+function serializeSessionEvent(entry: SessionEvent): string {
+  const data = (entry as { data?: unknown }).data;
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('Session event data must be a JSON object');
+  }
+  return JSON.stringify(entry);
+}
+
 function parseCommittedLine(
   line: string,
   lineNumber: number,
@@ -150,7 +158,7 @@ export class JSONLStore {
         const separator = await this.repairIncompleteTail(handle);
         const baseSeq = await this.readTailSeq(handle);
         const stamped = JSONLStore.stampSeqFrom(entries, baseSeq);
-        const content = `${stamped.map((entry) => JSON.stringify(entry)).join('\n')}\n`;
+        const content = `${stamped.map(serializeSessionEvent).join('\n')}\n`;
         await handle.appendFile(separator + content, 'utf8');
         await handle.sync();
         return stamped;
@@ -171,7 +179,7 @@ export class JSONLStore {
     try {
       handle = await fs.open(this.filePath, 'wx', 0o600);
       const stamped = JSONLStore.stampSeq(entries, []);
-      const content = `${stamped.map((entry) => JSON.stringify(entry)).join('\n')}\n`;
+      const content = `${stamped.map(serializeSessionEvent).join('\n')}\n`;
       await handle.writeFile(content, 'utf-8');
       await handle.sync();
     } catch (error) {
@@ -401,7 +409,7 @@ export class JSONLStore {
         const pending = await buildEntries(entries);
         if (pending.length === 0) return [];
         const stamped = JSONLStore.stampSeq(pending, entries);
-        const content = `${stamped.map((entry) => JSON.stringify(entry)).join('\n')}\n`;
+        const content = `${stamped.map(serializeSessionEvent).join('\n')}\n`;
         await handle.write(separator + content, size, 'utf8');
         await handle.sync();
         return stamped;
@@ -423,7 +431,7 @@ export class JSONLStore {
         );
         const entry = await buildEntry(entries);
         const [stamped] = JSONLStore.stampSeq([entry], entries);
-        const line = `${separator}${JSON.stringify(stamped)}\n`;
+        const line = `${separator}${serializeSessionEvent(stamped)}\n`;
         await handle.write(line, size, 'utf8');
         await handle.sync();
         return stamped;

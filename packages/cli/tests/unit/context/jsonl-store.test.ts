@@ -99,6 +99,35 @@ describe('JSONLStore.appendValidated', () => {
     await expect(access(filePath)).rejects.toThrow();
   });
 
+  it('persists data as an object and rejects string-shaped event payloads', async () => {
+    const store = new JSONLStore(filePath);
+    const created = createSessionCreated(
+      'session-1',
+      '/workspace',
+      '2024-01-01T00:00:00.000Z'
+    );
+    await store.createExclusive([created]);
+
+    const raw = JSON.parse((await readFile(filePath, 'utf8')).trim()) as {
+      data: unknown;
+    };
+    expect(raw.data).toEqual(created.data);
+    expect(typeof raw.data).toBe('object');
+
+    const invalid = {
+      ...createSessionUpdated(
+        'session-1',
+        '/workspace',
+        '2024-01-01T00:00:01.000Z',
+        'renamed'
+      ),
+      data: "{'title': 'renamed'}",
+    } as unknown as SessionEvent;
+    await expect(store.append(invalid)).rejects.toThrow(
+      'Session event data must be a JSON object'
+    );
+  });
+
   it('repairs a crash tail, passes committed entries to the callback, and appends one durable event', async () => {
     const created = createSessionCreated(
       'session-1',

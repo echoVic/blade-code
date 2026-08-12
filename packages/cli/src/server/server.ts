@@ -10,6 +10,7 @@ import { WebSocketServer } from 'ws';
 import { TaskScheduler } from '../agent/runtime/TaskScheduler.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { scheduleStore } from '../services/ScheduleStore.js';
+import { SessionService } from '../services/SessionService.js';
 import { getCwd } from '../utils/cwd.js';
 import { getVersion } from '../utils/packageInfo.js';
 import { BladeServerError } from './error.js';
@@ -48,6 +49,7 @@ export interface ServerOptions {
 let corsWhitelist: string[] = [];
 let recoverQueuedTasksOnStart: (() => Promise<unknown>) | undefined;
 let taskScheduler: TaskScheduler | undefined;
+let staleSessionGcTimer: ReturnType<typeof setInterval> | undefined;
 const staticAssetContentCache = new Map<string, Buffer>();
 const staticAssetCompressionCache = new Map<string, Buffer>();
 const COMPRESSIBLE_ASSET_EXTENSIONS = new Set([
@@ -58,6 +60,7 @@ const COMPRESSIBLE_ASSET_EXTENSIONS = new Set([
   '.svg',
 ]);
 const STATIC_COMPRESSION_MIN_BYTES = 1024;
+const STALE_SESSION_GC_INTERVAL_MS = 60 * 60 * 1000;
 
 type Variables = {
   directory: string;
@@ -86,6 +89,30 @@ function acceptedEncodingQuality(
     entries.find((entry) => entry.name === '*')?.quality ??
     0
   );
+}
+
+function startStaleSessionGc(): void {
+  if (staleSessionGcTimer) return;
+  const collect = () => {
+    void SessionService.collectStaleEmptySessions()
+      .then((removed) => {
+        if (removed > 0) {
+          logger.info(`[SessionGC] removed ${removed} stale empty session(s)`);
+        }
+      })
+      .catch((error) => {
+        logger.warn('[SessionGC] failed to collect stale empty sessions:', error);
+      });
+  };
+  collect();
+  staleSessionGcTimer = setInterval(collect, STALE_SESSION_GC_INTERVAL_MS);
+  staleSessionGcTimer.unref?.();
+}
+
+function stopStaleSessionGc(): void {
+  if (!staleSessionGcTimer) return;
+  clearInterval(staleSessionGcTimer);
+  staleSessionGcTimer = undefined;
 }
 
 export function selectStaticContentEncoding(
@@ -670,6 +697,7 @@ export namespace BladeServer {
       logger.warn('[Server] Failed to recover queued tasks:', error);
     });
     taskScheduler?.start();
+    startStaleSessionGc();
 
     return {
       url: handle.url,
@@ -678,6 +706,7 @@ export namespace BladeServer {
       stop: async () => {
         if (serverHandle) {
           taskScheduler?.stop();
+          stopStaleSessionGc();
           await serverHandle.stop();
           serverHandle = undefined;
           app = undefined;
@@ -712,6 +741,7 @@ export namespace BladeServer {
       logger.warn('[Server] Failed to recover queued tasks:', error);
     }
     taskScheduler?.start();
+    startStaleSessionGc();
 
     return {
       url: handle.url,
@@ -720,6 +750,7 @@ export namespace BladeServer {
       stop: async () => {
         if (serverHandle) {
           taskScheduler?.stop();
+          stopStaleSessionGc();
           await serverHandle.stop();
           serverHandle = undefined;
           app = undefined;

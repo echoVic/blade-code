@@ -2655,11 +2655,13 @@ describe('sessionSlice multimodal sendMessage', () => {
   it('waits for a matching connected event and rejects pre-ready errors/timeouts', async () => {
     class FakeEventSource {
       static instances: FakeEventSource[] = [];
+      static readonly CLOSED = 2;
 
       public onopen: (() => void) | null = null;
       public onmessage: ((event: { data: string }) => void) | null = null;
       public onerror: (() => void) | null = null;
       public closed = false;
+      public readyState = 0;
 
       constructor(public readonly url: string) {
         FakeEventSource.instances.push(this);
@@ -2667,6 +2669,7 @@ describe('sessionSlice multimodal sendMessage', () => {
 
       close(): void {
         this.closed = true;
+        this.readyState = FakeEventSource.CLOSED;
       }
     }
 
@@ -2809,6 +2812,33 @@ describe('sessionSlice multimodal sendMessage', () => {
         'offline',
       ]);
       exhaustedUnsubscribe();
+
+      const closedStates: string[] = [];
+      const closedPromise = actualService.openEventSubscription(
+        createRef('shared-id', '/tmp/project-f'),
+        onEvent,
+        {
+          onConnectionStateChange: (state) => closedStates.push(state),
+        }
+      );
+      const closedSource = FakeEventSource.instances[6];
+      closedSource?.onmessage?.({
+        data: JSON.stringify({
+          type: 'connected',
+          properties: {
+            sessionId: 'shared-id',
+            projectPath: '/tmp/project-f',
+            status: 'idle',
+          },
+        }),
+      });
+      const closedUnsubscribe = await closedPromise;
+      if (closedSource) closedSource.readyState = FakeEventSource.CLOSED;
+      closedSource?.onerror?.();
+      vi.advanceTimersByTime(30_000);
+      expect(closedStates).toEqual(['connecting', 'connected', 'offline']);
+      expect(FakeEventSource.instances).toHaveLength(7);
+      closedUnsubscribe();
     } finally {
       vi.useRealTimers();
       if (previousDescriptor) {

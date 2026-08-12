@@ -876,14 +876,22 @@ export const sessionService = {
 
       eventSource.onerror = () => {
         if (isManualClose) return;
+        const closedByServer = eventSource?.readyState === EventSource.CLOSED;
         clearHeartbeatMonitor();
         closeCurrentConnection();
+        if (closedByServer) {
+          onConnectionChange?.(false);
+          onConnectionStateChange?.('offline');
+          if (!isSubscriptionReady) {
+            failReady(new Error('Event subscription closed before it was ready'));
+          }
+          return;
+        }
         if (!isSubscriptionReady) {
           onConnectionStateChange?.('offline');
           failReady(new Error('Failed to open event subscription'));
           return;
         }
-        console.error('SSE connection error');
         onConnectionChange?.(false);
         scheduleReconnect();
       };
