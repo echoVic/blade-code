@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 
 const configPath = path.resolve(__dirname, '../../../release.config.js');
+const releaseScriptPath = path.resolve(__dirname, '../../../scripts/release.js');
 const workflowsPath = path.resolve(__dirname, '../../../../../.github/workflows');
 const publishWorkflowPath = path.join(workflowsPath, 'publish.yml');
 
@@ -39,9 +40,12 @@ describe('release ownership contract', () => {
       fs.readFileSync(path.join(workflowsPath, file), 'utf8').includes('npm publish')
     );
     const publishWorkflow = fs.readFileSync(publishWorkflowPath, 'utf8');
+    const releaseScript = fs.readFileSync(releaseScriptPath, 'utf8');
 
     expect(releaseConfig.publish.npm).toBe(false);
     expect(releaseConfig.publish.git).toBe(true);
+    expect(releaseScript).toContain('if (!config.publish?.npm)');
+    expect(releaseScript).toContain('npm 由 tag workflow 发布');
     expect(npmPublishers).toEqual(['publish.yml']);
     expect(publishWorkflow).toContain("- 'v*.*.*'");
     expect(publishWorkflow).toContain('oven-sh/setup-bun@v2');

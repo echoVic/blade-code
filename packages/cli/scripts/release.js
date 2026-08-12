@@ -787,19 +787,26 @@ function preReleaseCheck() {
   }
 
   console.log(chalk.yellow('\n📦 npm 检查'));
-  
-  // 检查 npm 登录状态
-  try {
-    const whoami = exec('npm whoami', { allowFailure: true, allowInDryRun: true });
-    if (whoami) {
-      console.log(chalk.green(`✅ npm 已登录: ${whoami}`));
-    } else {
-      console.log(chalk.red('❌ 未登录 npm'));
+
+  if (!config.publish?.npm) {
+    console.log(chalk.gray('⏭️  npm 由 tag workflow 发布，跳过本地登录检查'));
+  } else {
+    // 仅在本地脚本拥有 npm publish 权限时检查登录状态。
+    try {
+      const whoami = exec('npm whoami', {
+        allowFailure: true,
+        allowInDryRun: true,
+      });
+      if (whoami) {
+        console.log(chalk.green(`✅ npm 已登录: ${whoami}`));
+      } else {
+        console.log(chalk.red('❌ 未登录 npm'));
+        allChecks = false;
+      }
+    } catch (error) {
+      console.log(chalk.red('❌ npm 登录检查失败'));
       allChecks = false;
     }
-  } catch (error) {
-    console.log(chalk.red('❌ npm 登录检查失败'));
-    allChecks = false;
   }
 
   if (!allChecks) {

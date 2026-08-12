@@ -16,6 +16,8 @@ All notable changes to this project will be documented in this file.
 - POSIX orphan process tree 在发送首个信号前允许一次即时 PID ownership
   复核，吸收 macOS 进程退出期间的瞬时身份读取失败；SIGKILL 前仍执行
   单次严格复核，持续不匹配时保持 fail closed
+- release script 在 npm 由 tag workflow 发布时不再错误要求本地 npm 登录；
+  本地 publish 启用时仍保持登录检查 fail closed
 - 默认工程提示要求性能测试执行预热、使用相对性能比值，并避免将固定墙钟耗时
   作为跨硬件正确性断言
 - CLI 文档补充 headless 多进程内存模型、建议并发和 server admission 配置
