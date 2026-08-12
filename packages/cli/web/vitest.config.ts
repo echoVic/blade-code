@@ -9,6 +9,10 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.{test,spec}.{ts,tsx}'],
     setupFiles: [resolve(__dirname, '../tests/support/setup.ts')],
+    pool: 'threads',
+    fileParallelism: true,
+    minWorkers: 1,
+    maxWorkers: 4,
     testTimeout: 15000,
     hookTimeout: 15000,
     server: {

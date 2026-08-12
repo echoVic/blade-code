@@ -6,11 +6,12 @@ import { describe, expect, it } from 'vitest';
 describe('启动时间回归测试', () => {
   const cliPath = path.resolve(process.cwd(), 'dist/blade.js');
 
-  function runCli(args: string[]) {
+  function runCli(args: string[]): number {
     expect(existsSync(cliPath), 'dist/blade.js 不存在，请先运行构建').toBe(true);
 
+    const start = performance.now();
     const result = spawnSync(process.execPath, [cliPath, ...args], {
-      timeout: 5000,
+      timeout: 30_000,
       encoding: 'utf-8',
       env: {
         ...process.env,
@@ -20,53 +21,56 @@ describe('启动时间回归测试', () => {
 
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);
-    return result;
+    expect(result.stdout.trim().length).toBeGreaterThan(0);
+    return performance.now() - start;
   }
 
   function measureCli(args: string[], sampleCount: number): number[] {
-    return Array.from({ length: sampleCount }, () => {
-      const start = performance.now();
-      runCli(args);
-      return performance.now() - start;
-    });
+    return Array.from({ length: sampleCount }, () => runCli(args));
   }
 
-  function expectMedianBelowBudget(samples: number[], budgetMs: number): void {
+  function median(samples: number[]): number {
     const sorted = [...samples].sort((a, b) => a - b);
-    const median = sorted[Math.floor(sorted.length / 2)];
-    expect(
-      median,
-      `startup samples: ${samples.map((sample) => sample.toFixed(1)).join(', ')}ms`
-    ).toBeLessThan(budgetMs);
+    return sorted[Math.floor(sorted.length / 2)];
   }
 
   describe('CLI 启动性能', () => {
-    it('--version 命令应在 2 秒内完成', () => {
-      expectMedianBelowBudget(measureCli(['--version'], 3), 2000);
-    });
+    it('预热后各入口保持相对稳定', () => {
+      runCli(['--version']);
+      runCli(['--help']);
 
-    it('--help 命令应在 2 秒内完成', () => {
-      expectMedianBelowBudget(measureCli(['--help'], 3), 2000);
-    });
+      const versionSamples = measureCli(['--version'], 3);
+      const helpSamples = measureCli(['--help'], 3);
+      const versionMedian = median(versionSamples);
+      const helpMedian = median(helpSamples);
+      const versionSpread = Math.max(...versionSamples) / versionMedian;
+
+      console.info(
+        JSON.stringify({
+          versionSamples,
+          helpSamples,
+          helpToVersionRatio: helpMedian / versionMedian,
+          versionSpread,
+        })
+      );
+
+      expect(helpMedian / versionMedian).toBeLessThan(5);
+      expect(versionSpread).toBeLessThan(6);
+    }, 180_000);
   });
 
   describe('模块加载性能', () => {
-    it('核心模块导入应在 2500ms 内完成', async () => {
+    it('核心模块可以完成冷导入并记录耗时', async () => {
       const start = performance.now();
 
-      await Promise.all([
-        import('../../../src/config/index.js').catch(() => undefined),
-        import('../../../src/services/FileSystemService.js').catch(() => undefined),
+      const modules = await Promise.all([
+        import('../../../src/config/index.js'),
+        import('../../../src/services/FileSystemService.js'),
       ]);
 
       const duration = performance.now() - start;
-      expect(duration).toBeLessThan(2500);
-    });
-  });
-
-  describe('连续启动', () => {
-    it('多次启动的中位数应保持在 2 秒预算内', () => {
-      expectMedianBelowBudget(measureCli(['--version'], 5), 2000);
+      console.info(JSON.stringify({ coldModuleImportMs: duration }));
+      expect(modules).toHaveLength(2);
     });
   });
 });

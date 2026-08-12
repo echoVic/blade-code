@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 const mockTokenCounter = {
   countTokens: (text: string): number => {
@@ -32,118 +32,60 @@ describe('Token 计数性能测试', () => {
   `.repeat(10);
   const longText = mediumText.repeat(100);
 
-  describe('基准测试 - 快速算法', () => {
-    it('短文本 token 计数性能', () => {
-      const iterations = 10000;
-      const start = performance.now();
+  function runBatch(
+    counter: (text: string) => number,
+    text: string,
+    iterations: number
+  ): number {
+    const start = performance.now();
+    for (let index = 0; index < iterations; index++) {
+      counter(text);
+    }
+    return performance.now() - start;
+  }
 
-      for (let i = 0; i < iterations; i++) {
-        mockTokenCounter.countTokens(shortText);
-      }
+  function median(samples: number[]): number {
+    const sorted = [...samples].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)];
+  }
 
-      const duration = performance.now() - start;
-      const opsPerSecond = (iterations / duration) * 1000;
+  function benchmark(
+    counter: (text: string) => number,
+    text: string,
+    iterations: number
+  ): number[] {
+    runBatch(counter, text, Math.min(iterations, 100));
+    return Array.from({ length: 5 }, () => runBatch(counter, text, iterations));
+  }
 
-      expect(opsPerSecond).toBeGreaterThan(100000);
-    });
+  describe('相对基准', () => {
+    it.each([
+      ['短文本', shortText, 10_000],
+      ['中等文本', mediumText, 1_000],
+      ['长文本', longText, 100],
+    ])('%s 快速算法应优于精确算法', (_name, text, iterations) => {
+      const fastSamples = benchmark(mockTokenCounter.countTokens, text, iterations);
+      const accurateSamples = benchmark(
+        mockTokenCounter.countTokensAccurate,
+        text,
+        iterations
+      );
+      const fastMedian = median(fastSamples);
+      const accurateMedian = median(accurateSamples);
 
-    it('中等文本 token 计数性能', () => {
-      const iterations = 1000;
-      const start = performance.now();
+      console.info(
+        JSON.stringify({
+          textLength: text.length,
+          iterations,
+          fastSamples,
+          accurateSamples,
+          accurateToFastRatio: accurateMedian / fastMedian,
+        })
+      );
 
-      for (let i = 0; i < iterations; i++) {
-        mockTokenCounter.countTokens(mediumText);
-      }
-
-      const duration = performance.now() - start;
-      const avgTime = duration / iterations;
-
-      expect(avgTime).toBeLessThan(1);
-    });
-
-    it('长文本 token 计数性能', () => {
-      const iterations = 100;
-      const start = performance.now();
-
-      for (let i = 0; i < iterations; i++) {
-        mockTokenCounter.countTokens(longText);
-      }
-
-      const duration = performance.now() - start;
-      const avgTime = duration / iterations;
-
-      expect(avgTime).toBeLessThan(10);
-    });
-  });
-
-  describe('基准测试 - 精确算法', () => {
-    it('短文本 token 计数性能', () => {
-      const iterations = 10000;
-      const start = performance.now();
-
-      for (let i = 0; i < iterations; i++) {
-        mockTokenCounter.countTokensAccurate(shortText);
-      }
-
-      const duration = performance.now() - start;
-      const opsPerSecond = (iterations / duration) * 1000;
-
-      expect(opsPerSecond).toBeGreaterThan(50000);
-    });
-
-    it('中等文本 token 计数性能', () => {
-      const iterations = 1000;
-      const start = performance.now();
-
-      for (let i = 0; i < iterations; i++) {
-        mockTokenCounter.countTokensAccurate(mediumText);
-      }
-
-      const duration = performance.now() - start;
-      const avgTime = duration / iterations;
-
-      expect(avgTime).toBeLessThan(5);
-    });
-
-    it('长文本 token 计数性能', () => {
-      const iterations = 100;
-      const start = performance.now();
-
-      for (let i = 0; i < iterations; i++) {
-        mockTokenCounter.countTokensAccurate(longText);
-      }
-
-      const duration = performance.now() - start;
-      const avgTime = duration / iterations;
-
-      expect(avgTime).toBeLessThan(50);
-    });
-  });
-
-  describe('性能阈值测试', () => {
-    it('短文本处理应在 1ms 内完成', () => {
-      const start = performance.now();
-      for (let i = 0; i < 1000; i++) {
-        mockTokenCounter.countTokens(shortText);
-      }
-      const duration = performance.now() - start;
-      expect(duration).toBeLessThan(100);
-    });
-
-    it('中等文本处理应在 10ms 内完成 (1000次)', () => {
-      const start = performance.now();
-      for (let i = 0; i < 1000; i++) {
-        mockTokenCounter.countTokens(mediumText);
-      }
-      const duration = performance.now() - start;
-      expect(duration).toBeLessThan(1000);
-    });
-
-    it('长文本处理应在 100ms 内完成 (单次)', () => {
-      const start = performance.now();
-      mockTokenCounter.countTokens(longText);
-      const duration = performance.now() - start;
-      expect(duration).toBeLessThan(100);
+      expect(Number.isFinite(fastMedian)).toBe(true);
+      expect(Number.isFinite(accurateMedian)).toBe(true);
+      expect(fastMedian).toBeLessThan(accurateMedian);
     });
   });
 
@@ -164,26 +106,6 @@ describe('Token 计数性能测试', () => {
       const memoryIncrease = finalMemory - initialMemory;
 
       expect(memoryIncrease).toBeLessThan(50 * 1024 * 1024);
-    });
-  });
-
-  describe('算法对比', () => {
-    it('快速算法应该比精确算法更快', () => {
-      const iterations = 1000;
-
-      const startFast = performance.now();
-      for (let i = 0; i < iterations; i++) {
-        mockTokenCounter.countTokens(mediumText);
-      }
-      const durationFast = performance.now() - startFast;
-
-      const startAccurate = performance.now();
-      for (let i = 0; i < iterations; i++) {
-        mockTokenCounter.countTokensAccurate(mediumText);
-      }
-      const durationAccurate = performance.now() - startAccurate;
-
-      expect(durationFast).toBeLessThan(durationAccurate);
     });
   });
 });

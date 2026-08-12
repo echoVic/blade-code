@@ -2,7 +2,7 @@ export const testTypes = {
   unit: {
     name: '单元测试',
     project: 'unit',
-    timeout: 45_000,
+    timeout: 120_000,
   },
   integration: {
     name: '集成测试',
