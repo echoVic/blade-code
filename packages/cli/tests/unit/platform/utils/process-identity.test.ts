@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   captureProcessIdentity,
+  isProcessIdentity,
   type ProcessIdentitySource,
   processIdentityMatches,
 } from '../../../../src/utils/process/ProcessIdentity.js';
@@ -27,6 +28,27 @@ describe('process identity', () => {
   it('rejects unsafe process identifiers', () => {
     expect(captureProcessIdentity(0)).toBeUndefined();
     expect(captureProcessIdentity(-1)).toBeUndefined();
+  });
+
+  it('validates only supported fixed-length process identities', () => {
+    expect(
+      isProcessIdentity({
+        platform: 'linux',
+        fingerprint: 'a'.repeat(64),
+      })
+    ).toBe(true);
+    expect(
+      isProcessIdentity({
+        platform: 'freebsd',
+        fingerprint: 'a'.repeat(64),
+      })
+    ).toBe(false);
+    expect(
+      isProcessIdentity({
+        platform: 'linux',
+        fingerprint: 'not-a-fingerprint',
+      })
+    ).toBe(false);
   });
 
   it('parses Linux start ticks after a command containing parentheses', () => {

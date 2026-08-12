@@ -958,6 +958,75 @@ describe('ChatMessage', () => {
     expect(container.querySelector('textarea')).toBeTruthy();
   });
 
+  test('disables GUI resume when durable crash recovery failed', async () => {
+    const recoveryError =
+      'Subagent execution was interrupted, and its durable history could not be validated.';
+    serviceMocks.listSubagents.mockResolvedValue([
+      {
+        id: 'agent-unrecoverable',
+        subagentType: 'Explore',
+        description: 'Inspect code',
+        status: 'failed',
+        rootAgentId: 'agent-unrecoverable',
+        resumeDepth: 0,
+        createdAt: 1,
+        lastActiveAt: 2,
+        restartRecovery: {
+          outcome: 'failed',
+          recoveredAt: 2,
+        },
+        result: {
+          success: false,
+          message: '',
+          error: recoveryError,
+        },
+      },
+    ]);
+    const message: Message = {
+      id: 'assistant-subagent-unrecoverable',
+      role: 'assistant',
+      content: '',
+      timestamp: 1700000000006,
+      agentContent: {
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: {
+          id: 'subagent-unrecoverable-card',
+          type: 'Explore',
+          description: 'Inspect code',
+          status: 'failed',
+          startTime: 1,
+          sessionId: 'agent-unrecoverable',
+          rootAgentId: 'agent-unrecoverable',
+          resumeDepth: 0,
+        },
+        confirmation: null,
+        question: null,
+      },
+    };
+
+    await act(async () => {
+      root.render(<ChatMessage message={message} />);
+      await Promise.resolve();
+    });
+    const cardToggle = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Explore: Inspect code')
+    );
+    await act(async () => {
+      cardToggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('button[aria-label="Resume subagent"]')).toBeNull();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      recoveryError
+    );
+    expect(serviceMocks.resumeSubagent).not.toHaveBeenCalled();
+  });
+
   test('hides subagent resume controls while the parent session is streaming', async () => {
     useSessionStore.setState({ isStreaming: true, agentPhase: 'running' });
     const message: Message = {

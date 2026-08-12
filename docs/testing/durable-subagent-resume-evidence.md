@@ -10,6 +10,39 @@
 - Runtime, TUI, Web, ACP and headless JSONL integration;
 - Web GUI resume, polling, retry, disabled state and refresh reconstruction.
 
+## v0.10.22 Crash Reconciliation Evidence
+
+- `qualify:local`: 14/14 checks, exit 0;
+- `qualify:production`: 15/15 checks, exit 0;
+- deterministic integration suite: 145/145;
+- Web GUI suite: 398/398;
+- release-blocking real API suite: 26/26.
+
+The added crash matrix proves:
+
+- a child owner PID is paired with a platform process-start identity, and a reused
+  live PID does not block Session or subagent recovery;
+- parent cold Runtime acquires the child Session lease, commits interrupted
+  turn/orphan-tool receipts, and merges authoritative child JSONL history into
+  inherited sidecar history exactly once;
+- a final-ready child with a current-run assistant result recovers as completed,
+  while an empty final cannot reuse an inherited assistant result;
+- interrupted worktree changes are preserved, completed clean worktrees are
+  removed, and stale missing worktree leases are cleared;
+- corrupt child JSONL produces a bounded recovery-failed receipt and disables
+  resume without blocking the parent Session;
+- a real DeepSeek stream was held after its first content delta, the Blade owner
+  was killed, and a new immutable child recovered a token absent from the
+  follow-up prompt;
+- Web hides Resume and renders the durable error for recovery-failed sources;
+  ACP does not emit a false in-progress tool call; TaskOutput exposes only the
+  bounded restart outcome and timestamp.
+- the first complete Local Qualification run exposed a high-load background
+  shell gate race: the owner could exit before the release byte reached the
+  wrapper pipe. `startBackgroundProcess()` now waits for the write callback
+  before returning its tool result; the focused shell matrix, final Local
+  Qualification, and both hard-kill real API trajectories passed afterward.
+
 ## Deterministic Evidence
 
 - focused Runtime/TUI/Web/ACP and persistence matrix: 18 files, 295 passed;

@@ -1886,6 +1886,65 @@ describe('AcpSession', () => {
       );
     });
 
+    it('不为 durable recovery failed 的 subagent 发送虚假 resume tool call', async () => {
+      const source = {
+        id: 'agent-unrecoverable',
+        subagentType: 'Explore',
+        status: 'failed',
+        rootAgentId: 'agent-unrecoverable',
+        resumeDepth: 0,
+        restartRecovery: {
+          outcome: 'failed',
+          recoveredAt: 2,
+        },
+      };
+      runtimeState.runtime.listSubagents.mockReturnValue([source] as never[]);
+      runtimeState.runtime.resumeSubagent.mockImplementation(() => {
+        throw new Error('Subagent cannot be resumed: agent-unrecoverable');
+      });
+      const { executeSlashCommand } = await import(
+        '../../../../src/slash-commands/index.js'
+      );
+      vi.mocked(executeSlashCommand).mockImplementationOnce(
+        async (_message, context) => {
+          try {
+            await context.subagents?.resume(source.id, 'Continue');
+            return { success: true, message: 'unexpected' };
+          } catch (error) {
+            return {
+              success: false,
+              message: error instanceof Error ? error.message : String(error),
+            };
+          }
+        }
+      );
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [
+          {
+            type: 'text',
+            text: '/tasks resume agent-unrecoverable Continue',
+          },
+        ],
+      });
+
+      expect(runtimeState.runtime.resumeSubagent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentId: source.id,
+          prompt: 'Continue',
+        })
+      );
+      expect(mockConnection.sessionUpdates).not.toContainEqual(
+        expect.objectContaining({
+          update: expect.objectContaining({
+            sessionUpdate: 'tool_call',
+            title: expect.stringContaining('Resuming'),
+          }),
+        })
+      );
+    });
+
     it('应该发送文本消息给 IDE', async () => {
       const promptParams = {
         sessionId: 'test-session-id',

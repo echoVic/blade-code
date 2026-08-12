@@ -54,6 +54,30 @@ describe('SessionLease', () => {
     await expect(lease.release()).resolves.toBeUndefined();
   });
 
+  it('recovers a reused live PID when the process identity changed', async () => {
+    const sessionId = 'reused-pid-session';
+    const lockPath = getLeasePath(sessionId);
+    mkdirSync(path.dirname(lockPath), { recursive: true });
+    writeFileSync(
+      lockPath,
+      `${JSON.stringify({
+        version: 1,
+        sessionId,
+        ownerId: 'reused-owner',
+        pid: process.pid,
+        processIdentity: {
+          platform: process.platform,
+          fingerprint: '0'.repeat(64),
+        },
+        acquiredAt: '2026-01-01T00:00:00.000Z',
+      })}\n`
+    );
+
+    const lease = await SessionLease.acquire(sessionId, projectPath);
+
+    await expect(lease.release()).resolves.toBeUndefined();
+  });
+
   it('does not remove a replacement lease owned by another runtime', async () => {
     const sessionId = 'replacement-session';
     const lockPath = getLeasePath(sessionId);

@@ -7,6 +7,8 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
+import { AgentSessionStore } from '../../../src/agent/subagents/AgentSessionStore.js';
+import { BackgroundAgentManager } from '../../../src/agent/subagents/BackgroundAgentManager.js';
 import { runHeadless } from '../../../src/commands/headless.js';
 import { HeadlessJsonlEventSchema } from '../../../src/commands/headlessEvents.js';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
@@ -68,6 +70,25 @@ async function waitForValue<T>(
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error(`Timed out after ${timeoutMs}ms`);
+}
+
+function resetBackgroundAgentState(): void {
+  const existing = (
+    BackgroundAgentManager as unknown as {
+      instance?: BackgroundAgentManager | null;
+    }
+  ).instance;
+  existing?.killAll();
+  (
+    BackgroundAgentManager as unknown as {
+      instance: BackgroundAgentManager | null;
+    }
+  ).instance = null;
+  (
+    AgentSessionStore as unknown as {
+      instance: AgentSessionStore | null;
+    }
+  ).instance = null;
 }
 
 function upstreamUrl(baseUrl: string, requestUrl: string | undefined): URL {
@@ -504,6 +525,148 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
       }
     },
     180_000
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'recovers a hard-killed real-API subagent transcript before immutable resume',
+    async () => {
+      if (!modelConfig) throw new Error('DeepSeek Flash configuration is required');
+      const childProcess =
+        await vi.importActual<typeof import('node:child_process')>(
+          'node:child_process'
+        );
+      const workspace = await mkdtemp(
+        path.join(os.tmpdir(), 'blade-real-api-subagent-crash-')
+      );
+      const storageRoot = path.join(workspace, '.blade-storage');
+      const parentSessionId = `subagent-crash-parent-${Date.now()}`;
+      const sourceAgentId = `agent-subagent-crash-${Date.now()}`;
+      const token = `crash-module-${Date.now()}`;
+      const fixture = path.join(
+        import.meta.dirname,
+        '..',
+        '..',
+        'fixtures',
+        'run-real-api-crashing-subagent.ts'
+      );
+      const proxy = await startMidStreamStallProxy(
+        modelConfig.baseURL ?? 'https://api.deepseek.com',
+        10_000
+      );
+      const runtimeConfig = buildRealApiRuntimeConfig(modelConfig);
+      const previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
+      let stdout = '';
+      let stderr = '';
+      let runtime: SessionRuntime | undefined;
+      let child: import('node:child_process').ChildProcess | undefined;
+
+      try {
+        process.env.BLADE_STORAGE_ROOT = storageRoot;
+        resetBackgroundAgentState();
+        getState().config.actions.setConfig({
+          ...runtimeConfig,
+          permissionMode: PermissionMode.YOLO,
+        });
+        child = childProcess.spawn(
+          process.env.BUN_EXEC_PATH ?? 'bun',
+          [
+            fixture,
+            workspace,
+            storageRoot,
+            parentSessionId,
+            sourceAgentId,
+            modelConfig.qualificationId,
+            token,
+            proxy.baseURL,
+          ],
+          {
+            cwd: workspace,
+            env: {
+              ...process.env,
+              BLADE_STORAGE_ROOT: storageRoot,
+              BLADE_TELEMETRY_DISABLED: '1',
+            },
+            stdio: ['ignore', 'pipe', 'pipe'],
+          }
+        );
+        child.stdout?.setEncoding('utf8');
+        child.stderr?.setEncoding('utf8');
+        child.stdout?.on('data', (chunk: string) => {
+          stdout += chunk;
+        });
+        child.stderr?.on('data', (chunk: string) => {
+          stderr += chunk;
+        });
+        const childClosed = new Promise<number | null>((resolve, reject) => {
+          child?.once('error', reject);
+          child?.once('close', resolve);
+        });
+        await Promise.race([
+          waitForValue(async () =>
+            stdout.includes('SUBAGENT_STREAM_STARTED') ? true : undefined
+          ),
+          childClosed.then((status) => {
+            throw new Error(
+              `Real API subagent owner exited before streaming (${status}): ${stderr}`
+            );
+          }),
+        ]);
+        expect(child.kill('SIGKILL')).toBe(true);
+        await childClosed;
+        expect(proxy.injectedStalls()).toBe(1);
+
+        resetBackgroundAgentState();
+        runtime = await runWithCwdOverride(workspace, () =>
+          SessionRuntime.create({
+            sessionId: parentSessionId,
+            workspaceRoot: workspace,
+            modelId: runtimeConfig.currentModelId,
+            permissionMode: PermissionMode.YOLO,
+          })
+        );
+        const source = AgentSessionStore.getInstance().loadSession(sourceAgentId);
+        expect(source).toMatchObject({
+          status: 'failed',
+          restartRecovery: { outcome: 'interrupted' },
+        });
+        expect(JSON.stringify(source?.messages)).toContain(token);
+
+        const resumed = runtime.resumeSubagent({
+          agentId: sourceAgentId,
+          prompt:
+            'What private module codename did I ask you to remember? ' +
+            'Reply with the codename only and do not use tools.',
+        });
+        const completed = await BackgroundAgentManager.getInstance().waitForCompletion(
+          resumed.session.id,
+          180_000,
+          {
+            sessionId: parentSessionId,
+            projectPath: workspace,
+          }
+        );
+        expect(completed).toMatchObject({
+          status: 'completed',
+          resumedFrom: sourceAgentId,
+          rootAgentId: sourceAgentId,
+          resumeDepth: 1,
+        });
+        expect(completed?.id).not.toBe(sourceAgentId);
+        expect(completed?.result?.message).toContain(token);
+        expect(`${stdout}\n${stderr}\n${JSON.stringify(completed)}`).not.toContain(
+          modelConfig.apiKey
+        );
+      } finally {
+        child?.kill('SIGKILL');
+        await runtime?.dispose().catch(() => undefined);
+        resetBackgroundAgentState();
+        await proxy.close();
+        if (previousStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
+        else process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
+        await rm(workspace, { recursive: true, force: true });
+      }
+    },
+    240_000
   );
 
   it('recovers one coding turn from an injected pre-stream 503', async () => {

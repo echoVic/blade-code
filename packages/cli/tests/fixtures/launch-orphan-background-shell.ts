@@ -3,7 +3,7 @@ import { BackgroundShellManager } from '../../src/tools/builtin/shell/Background
 const [projectPath, sessionId] = process.argv.slice(2);
 if (!projectPath || !sessionId) process.exit(2);
 
-const shell = BackgroundShellManager.getInstance().startBackgroundProcess({
+const shell = await BackgroundShellManager.getInstance().startBackgroundProcess({
   command: 'trap "" TERM; sleep 300',
   sessionId,
   projectPath,

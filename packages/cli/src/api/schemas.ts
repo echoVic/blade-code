@@ -423,6 +423,12 @@ export const SubagentSessionSchema = Runtime(
     createdAt: Type.Number(),
     lastActiveAt: Type.Number(),
     completedAt: Type.Optional(Type.Number()),
+    restartRecovery: Type.Optional(
+      Type.Object({
+        outcome: StringEnum(['completed', 'interrupted', 'failed']),
+        recoveredAt: Type.Number(),
+      })
+    ),
     result: Type.Optional(
       Type.Object({
         success: Type.Boolean(),

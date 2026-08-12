@@ -111,7 +111,7 @@ export class BackgroundShellManager {
     return BackgroundShellManager.instance;
   }
 
-  startBackgroundProcess(options: StartOptions): BackgroundShellProcess {
+  async startBackgroundProcess(options: StartOptions): Promise<BackgroundShellProcess> {
     const shellId = `bash_${randomUUID()}`;
     const mergedEnv: Record<string, string> = {};
 
@@ -229,8 +229,38 @@ export class BackgroundShellManager {
     });
 
     this.processes.set(shellId, processInfo);
-    child.stdin?.write(Buffer.from([1]));
+    try {
+      await this.releaseCommandGate(child);
+    } catch (error) {
+      processInfo.status = 'killed';
+      processInfo.endTime = Date.now();
+      await processTree.terminate();
+      processInfo.leaseStore?.remove(processInfo.id);
+      this.processes.delete(shellId);
+      throw new Error('Failed to release durable background command gate', {
+        cause: error,
+      });
+    }
     return processInfo;
+  }
+
+  private async releaseCommandGate(child: ChildProcess): Promise<void> {
+    const stdin = child.stdin;
+    if (!stdin || stdin.destroyed || stdin.writableEnded) {
+      throw new Error('Background command gate stdin is unavailable');
+    }
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => {
+        stdin.off('error', onError);
+        reject(error);
+      };
+      stdin.once('error', onError);
+      stdin.write(Buffer.from([1]), (error?: Error | null) => {
+        stdin.off('error', onError);
+        if (error) reject(error);
+        else resolve();
+      });
+    });
   }
 
   consumeOutput(shellId: string, sessionId: string): ShellOutputSnapshot | undefined {

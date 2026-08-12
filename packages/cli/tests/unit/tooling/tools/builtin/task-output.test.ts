@@ -277,6 +277,10 @@ describe('TaskOutput Tool', () => {
           duration: 1000,
           toolCalls: 5,
         },
+        restartRecovery: {
+          outcome: 'completed',
+          recoveredAt: 2000,
+        },
       };
       mockAgentManager.getAgent.mockReturnValue(mockSession);
 
@@ -297,6 +301,10 @@ describe('TaskOutput Tool', () => {
         status: 'completed',
         subagent_type: 'verification',
         description: 'Find files',
+        restart_recovery: {
+          outcome: 'completed',
+          recoveredAt: 2000,
+        },
       });
       expect(result.metadata?.verificationCommands).toEqual(['npm test']);
       expect(result.metadata).toMatchObject({

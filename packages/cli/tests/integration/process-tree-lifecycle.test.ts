@@ -195,14 +195,14 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
       });
 
     try {
-      expect(() =>
+      await expect(
         BackgroundShellManager.getInstance().startBackgroundProcess({
           command: `printf admitted > ${shellQuote(marker)}`,
           sessionId: `shell-gate-${Date.now()}`,
           projectPath: workspace,
           cwd: workspace,
         })
-      ).toThrow('injected lease commit failure');
+      ).rejects.toThrow('injected lease commit failure');
       await new Promise((resolve) => setTimeout(resolve, 100));
       await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
@@ -341,7 +341,7 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
   it('kills the full tree for a managed background shell', async () => {
     const fixture = await createProcessTreeFixture('background');
     const manager = BackgroundShellManager.getInstance();
-    const shell = manager.startBackgroundProcess({
+    const shell = await manager.startBackgroundProcess({
       command: fixture.command,
       sessionId: 'process-tree-test',
     });

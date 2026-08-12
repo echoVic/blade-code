@@ -8,6 +8,7 @@ import {
   type AgentSessionOwner,
   AgentSessionStore,
   isAgentSessionOwnedBy,
+  toPublicAgentSession,
 } from '../../../../src/agent/subagents/AgentSessionStore.js';
 
 describe('AgentSessionStore', () => {
@@ -181,6 +182,30 @@ describe('AgentSessionStore', () => {
         projectPath: '/workspace/a',
       })
     ).toBe(false);
+  });
+
+  it('projects restart recovery without exposing owner process identity', () => {
+    const session = makeSession('agent-public-recovery', {
+      processId: 1234,
+      processIdentity: {
+        platform: 'linux',
+        fingerprint: 'a'.repeat(64),
+      },
+      restartRecovery: {
+        outcome: 'interrupted',
+        recoveredAt: 2_000,
+      },
+    });
+
+    expect(toPublicAgentSession(session)).toMatchObject({
+      id: session.id,
+      restartRecovery: {
+        outcome: 'interrupted',
+        recoveredAt: 2_000,
+      },
+    });
+    expect(toPublicAgentSession(session)).not.toHaveProperty('processId');
+    expect(toPublicAgentSession(session)).not.toHaveProperty('processIdentity');
   });
 
   it('updates messages and marks terminal results durably', () => {

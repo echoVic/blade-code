@@ -82,7 +82,7 @@ describe.skipIf(process.platform === 'win32')(
 
     it('denies TaskOutput access from another session', async () => {
       const manager = BackgroundShellManager.getInstance();
-      const shell = manager.startBackgroundProcess({
+      const shell = await manager.startBackgroundProcess({
         command: longRunningCommand('private-output'),
         sessionId: 'session-owner',
         cwd: os.tmpdir(),
@@ -101,7 +101,7 @@ describe.skipIf(process.platform === 'win32')(
 
     it('denies KillShell from another session while allowing the owner', async () => {
       const manager = BackgroundShellManager.getInstance();
-      const shell = manager.startBackgroundProcess({
+      const shell = await manager.startBackgroundProcess({
         command: longRunningCommand(),
         sessionId: 'session-owner',
         cwd: os.tmpdir(),
@@ -130,7 +130,7 @@ describe.skipIf(process.platform === 'win32')(
         "process.stdin.on('data', (chunk) => { input += chunk })",
         "process.stdin.on('end', () => process.stdout.write(`received:${input}`))",
       ].join(';');
-      const shell = manager.startBackgroundProcess({
+      const shell = await manager.startBackgroundProcess({
         command: `${shellQuote(process.execPath)} -e ${shellQuote(script)}`,
         sessionId: 'session-owner',
         cwd: os.tmpdir(),
@@ -157,7 +157,7 @@ describe.skipIf(process.platform === 'win32')(
 
     it('denies stdin writes from another session', async () => {
       const manager = BackgroundShellManager.getInstance();
-      const shell = manager.startBackgroundProcess({
+      const shell = await manager.startBackgroundProcess({
         command: longRunningCommand(),
         sessionId: 'session-owner',
         cwd: os.tmpdir(),
@@ -185,7 +185,7 @@ describe.skipIf(process.platform === 'win32')(
         `process.stderr.write('b'.repeat(${outputBytes}))`,
         `process.stderr.write('${stderrTail}')`,
       ].join(';');
-      const shell = manager.startBackgroundProcess({
+      const shell = await manager.startBackgroundProcess({
         command: `${shellQuote(process.execPath)} -e ${shellQuote(script)}`,
         sessionId: 'session-bounded-output',
         cwd: os.tmpdir(),
@@ -204,12 +204,12 @@ describe.skipIf(process.platform === 'win32')(
 
     it('reclaims only the disposing runtime session shells', async () => {
       const manager = BackgroundShellManager.getInstance();
-      const owned = manager.startBackgroundProcess({
+      const owned = await manager.startBackgroundProcess({
         command: longRunningCommand(),
         sessionId: 'session-disposed',
         cwd: os.tmpdir(),
       });
-      const unrelated = manager.startBackgroundProcess({
+      const unrelated = await manager.startBackgroundProcess({
         command: longRunningCommand(),
         sessionId: 'session-still-active',
         cwd: os.tmpdir(),

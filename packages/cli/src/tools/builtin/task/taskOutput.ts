@@ -353,6 +353,7 @@ async function handleAgentOutput(
     root_agent_id: session.rootAgentId,
     resume_depth: session.resumeDepth,
     resume_from_hint: session.id,
+    restart_recovery: session.restartRecovery,
   };
 
   const subagentStatus =
@@ -360,7 +361,9 @@ async function handleAgentOutput(
       ? 'completed'
       : session.status === 'failed'
         ? 'failed'
-        : 'running';
+        : session.status === 'cancelled'
+          ? 'cancelled'
+          : 'running';
 
   return {
     success: true,

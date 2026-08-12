@@ -239,7 +239,9 @@ background 运行都会持久化；每次 resume 创建新的不可变 child ID�
 **类型**: ReadOnly
 **输出边界**: 后台 Shell 的 stdout/stderr 各保留最近 1 MiB；模型和 TUI/Web/ACP 事件中的文本会继续按命令类型截断并保留头尾。返回值通过 `output_truncated`、`stdout_omitted_bytes`、`stderr_omitted_bytes` 和 `truncation_info` 明确报告截断，不会静默丢失边界信息。
 **Agent 输出**: 包含 `resumed_from`、`root_agent_id`、`resume_depth` 和
-`resume_from_hint`，可在进程重启后继续同一 lineage。
+`resume_from_hint`，可在进程重启后继续同一 lineage。hard restart 后还会返回
+`restart_recovery.outcome`（`completed`、`interrupted` 或 `failed`）和
+`recoveredAt`；`failed` 表示 durable history 无法验证，禁止 resume。
 
 ### TaskCreate
 

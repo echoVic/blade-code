@@ -54,6 +54,7 @@ import {
   renderToolDisplayToString,
 } from '../../../ui/utils/toolFormatters.js';
 import { getCwd } from '../../../utils/cwd.js';
+import { captureProcessIdentity } from '../../../utils/process/ProcessIdentity.js';
 import { createSessionId } from '../../../utils/sessionId.js';
 import { isVerificationAuditSubagent } from '../../../utils/shell/readOnlyAudit.js';
 import { createTool } from '../../core/createTool.js';
@@ -667,6 +668,7 @@ async function executeForegroundTask(input: ForegroundTaskInput): Promise<ToolRe
       createdAt: now,
       lastActiveAt: now,
       processId: process.pid,
+      processIdentity: captureProcessIdentity(process.pid),
       parentSessionId: owner.sessionId,
       parentProjectPath: owner.projectPath,
       rootAgentId,

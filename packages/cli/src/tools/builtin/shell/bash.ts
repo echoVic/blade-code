@@ -368,14 +368,14 @@ Before executing commands:
 /**
  * 后台执行命令
  */
-function executeInBackground(
+async function executeInBackground(
   command: string,
   cwd?: string,
   env?: Record<string, string>,
   sessionId?: string,
   projectPath: string = getCwd(),
   sandboxedCommand?: SandboxedCommand
-): ToolResult {
+): Promise<ToolResult> {
   if (!sessionId) {
     sandboxedCommand?.cleanup();
     return {
@@ -390,7 +390,7 @@ function executeInBackground(
   }
 
   const manager = BackgroundShellManager.getInstance();
-  const backgroundProcess = manager.startBackgroundProcess({
+  const backgroundProcess = await manager.startBackgroundProcess({
     command,
     sessionId,
     projectPath,

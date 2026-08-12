@@ -17,6 +17,10 @@ import {
 } from '../../context/storage/pathUtils.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
+import {
+  isProcessIdentity,
+  type ProcessIdentity,
+} from '../../utils/process/ProcessIdentity.js';
 import type { WorktreeSession } from '../../worktree/WorktreeManager.js';
 import type { VerificationVerdict } from '../loop/independentVerification.js';
 import type { SubagentIsolationMode } from './SubagentWorktreeLifecycle.js';
@@ -28,6 +32,12 @@ const logger = createLogger(LogCategory.AGENT);
  * Agent 会话状态
  */
 export type AgentSessionStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+export type AgentRestartRecoveryOutcome = 'completed' | 'interrupted' | 'failed';
+
+export interface AgentRestartRecovery {
+  outcome: AgentRestartRecoveryOutcome;
+  recoveredAt: number;
+}
 
 export interface AgentSessionOwner {
   sessionId: string;
@@ -118,6 +128,12 @@ export interface AgentSession {
   /** 写入 running sidecar 的 Blade 进程，用于跨进程 orphan 判定 */
   processId?: number;
 
+  /** owner PID 的启动身份，防止 PID 复用被误判为仍在运行 */
+  processIdentity?: ProcessIdentity;
+
+  /** hard restart 后从 child JSONL 恢复 sidecar 的结果 */
+  restartRecovery?: AgentRestartRecovery;
+
   /** 完成时间（如果已完成） */
   completedAt?: number;
 
@@ -166,6 +182,7 @@ export type PublicAgentSession = Pick<
   | 'completedAt'
   | 'result'
   | 'stats'
+  | 'restartRecovery'
 >;
 
 export function toPublicAgentSession(session: AgentSession): PublicAgentSession {
@@ -182,6 +199,7 @@ export function toPublicAgentSession(session: AgentSession): PublicAgentSession 
     completedAt: session.completedAt,
     result: session.result,
     stats: session.stats,
+    restartRecovery: session.restartRecovery,
   };
 }
 
@@ -371,9 +389,27 @@ export class AgentSessionStore {
         : 0;
     const processId =
       typeof value.processId === 'number' &&
-      Number.isInteger(value.processId) &&
-      value.processId > 0
+      Number.isSafeInteger(value.processId) &&
+      value.processId > 1
         ? value.processId
+        : undefined;
+    const processIdentity = isProcessIdentity(value.processIdentity)
+      ? value.processIdentity
+      : undefined;
+    const restartRecoveryValue = value.restartRecovery as
+      | Partial<AgentRestartRecovery>
+      | undefined;
+    const restartRecovery =
+      restartRecoveryValue &&
+      (restartRecoveryValue.outcome === 'completed' ||
+        restartRecoveryValue.outcome === 'interrupted' ||
+        restartRecoveryValue.outcome === 'failed') &&
+      typeof restartRecoveryValue.recoveredAt === 'number' &&
+      Number.isFinite(restartRecoveryValue.recoveredAt)
+        ? {
+            outcome: restartRecoveryValue.outcome,
+            recoveredAt: restartRecoveryValue.recoveredAt,
+          }
         : undefined;
 
     return {
@@ -383,6 +419,8 @@ export class AgentSessionStore {
       rootAgentId,
       resumeDepth,
       processId,
+      processIdentity,
+      restartRecovery,
       workspaceRoot,
       parentProjectPath,
     };

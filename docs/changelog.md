@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.22] - 2026-08-12
+
+### 🛡️ 稳定性
+
+- 新增 Durable Subagent Crash Reconciliation：parent Runtime 取得 Session lease 后，
+  会按 compound owner 获取 orphan child lease，先闭合 interrupted turn 和 orphan tool
+  receipt，再从 child JSONL 重建并合并 sidecar messages
+- final-ready 或已提交 `turn_completed` 且存在当前 run 最终 assistant 的 child 会恢复为
+  completed；其余 child 写入 canonical interrupted receipt，并可通过新 immutable child
+  ID 从 committed history 继续
+- agent sidecar 与 Session lease 均记录平台进程启动身份，PID 已复用时不会被误判为
+  live owner；旧 lease 无身份时继续采用保守兼容语义
+- crash recovery 复用正常 worktree finalize：interrupted worktree 保留，completed clean
+  worktree 删除，含改动 worktree 保留，已不存在的 stale lease 从 sidecar 清除
+- child JSONL 损坏或无法验证时写 recovery-failed receipt 并禁止 resume，但不会阻断
+  parent Session；`TaskOutput` 与公共 subagent schema 投影有界 `restart_recovery`
+- 后台 Bash admission gate 在返回 tool result 前等待 release byte 的 pipe write callback，
+  修复 owner 在高负载下先退出导致 gate leader 未启动命令、lease 变 protected 的窗口
+
+### ✅ 测试相关
+
+- 新增 active/final-ready/empty-final/corrupt JSONL、PID 复用、Session lease、worktree 和
+  exactly-once sidecar reconciliation 测试
+- 新增 DeepSeek 真实 API mid-stream hard-kill 轨迹：第二 Runtime 冷恢复 child history，
+  follow-up 不包含原 token，resume child 仍须返回正确上下文
+- Web GUI 对 recovery-failed source 隐藏 Resume 并显示 durable error；ACP 不发送虚假的
+  resume `tool_call in_progress`
+
 ## [0.10.21] - 2026-08-12
 
 ### 🛡️ 稳定性

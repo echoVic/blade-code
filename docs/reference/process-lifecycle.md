@@ -34,7 +34,8 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
 - 后台 Bash 在启动时绑定当前 session。`WriteStdin`、`TaskOutput`、`KillShell` 和 `/tasks` 只能读取或操作该 session 的 shell；对其他 session 的 ID 按不存在处理。
 - 后台 Bash 的 stdin 由 runtime 持有。`WriteStdin` 等待写入回调并处理 pipe error；`close_stdin=true` 显式发送 EOF。进程已经退出、stdin 已关闭或缺失 session 时 fail closed。
 - 后台 Bash 先启动一个不执行用户命令的 detached gate wrapper，写入并 fsync durable
-  shell lease 后才放行实际 executable；lease 失败时用户命令零执行。lease 仅包含
+  shell lease 后，再等待 gate release byte 的 pipe write callback 成功，才返回 tool
+  result 并放行实际 executable；lease 或 gate write 失败时用户命令零执行。lease 仅包含
   session/shell identity、owner/root PID、平台启动身份和时间；不包含命令、cwd、env 或输出。新
   Runtime 获取 Session lease 后先执行 orphan reaper：只有 owner 身份已退出且 root PID
   启动身份仍匹配时才终止 process group/tree。TERM grace period 后、发送强制信号前会
@@ -55,9 +56,17 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   messages、配置快照、workspace 或 owner PID。
 - agent 的列举、输出、恢复和清理按 `parent sessionId + canonical projectPath`
   复合身份隔离。相同 parent ID 在不同 workspace 中不能读取或恢复彼此的 agent。
-- running sidecar 记录 owner PID。新 Blade 进程只会把 PID 已退出的记录立即标记为
-  orphan；没有 PID 的 legacy sidecar 保留 30 分钟兼容窗口，不会误伤另一个仍存活
-  进程中的 agent。
+- running sidecar 记录 owner PID 和平台进程启动身份；Session lease 使用同一身份校验。
+  新 Blade 进程只有在 owner 已退出或 PID 身份变化，并成功取得 child lease 后才恢复
+  orphan；没有身份的 legacy 记录继续按 PID 保守判断，没有 PID 的近期 sidecar 保留
+  30 分钟兼容窗口。
+- orphan child 恢复先执行 durable turn/tool crash receipt，再从 child JSONL 重建当前 run
+  的 model context，并与 sidecar 已继承的 source history 做 suffix/prefix 合并。只有
+  `turn_completed` 且当前 run 有最终 assistant 文本时恢复 completed；其余记录为
+  interrupted failed，可用新的 immutable child ID resume。损坏 JSONL 写 recovery-failed
+  receipt 并禁止 resume，但不阻断 parent Session。
+- crash reconciliation 复用正常 worktree finalize：interrupted 或含改动 worktree 保留，
+  completed clean worktree 删除；旧进程已删除的 worktree lease 会从 sidecar 清除。
 - 每次 resume 创建新的不可变 child ID，并记录 `rootAgentId`、`resumedFrom` 和
   `resumeDepth`。child 继承源 transcript 和冻结的模型、权限、工具、系统提示与隔离
   配置；worktree lease 继续由原 owner ID 管理，不会被 child ID 错误接管。

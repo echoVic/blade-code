@@ -113,7 +113,10 @@ vi.mock('nanoid', () => ({
 import { Agent } from '../../../../src/agent/Agent.js';
 import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
 import { AgentSessionStore } from '../../../../src/agent/subagents/AgentSessionStore.js';
-import { BackgroundAgentManager } from '../../../../src/agent/subagents/BackgroundAgentManager.js';
+import {
+  BackgroundAgentManager,
+  PROCESS_RESTART_SUBAGENT_RECOVERY_FAILED,
+} from '../../../../src/agent/subagents/BackgroundAgentManager.js';
 
 describe('BackgroundAgentManager', () => {
   let manager: BackgroundAgentManager;
@@ -172,7 +175,7 @@ describe('BackgroundAgentManager', () => {
   });
 
   describe('orphan cleanup', () => {
-    it('保留仍由存活 Blade 进程拥有的 running sidecar', () => {
+    it('保留仍由存活 Blade 进程拥有的 running sidecar', async () => {
       (BackgroundAgentManager as any).instance = null;
       const mockStore = AgentSessionStore.getInstance();
       vi.mocked(mockStore.listSessions).mockReturnValue([
@@ -185,11 +188,12 @@ describe('BackgroundAgentManager', () => {
       ] as any);
 
       manager = BackgroundAgentManager.getInstance();
+      await manager.reconcileOrphanedSessions();
 
       expect(mockStore.updateSession).not.toHaveBeenCalled();
     });
 
-    it('只把 owner PID 已退出的 running sidecar 标记为失败', () => {
+    it('只把无法恢复的 owner-dead sidecar 标记为 recovery failed', async () => {
       const missingPid = 42424242;
       const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
         if (pid === missingPid && signal === 0) {
@@ -210,14 +214,16 @@ describe('BackgroundAgentManager', () => {
         ] as any);
 
         manager = BackgroundAgentManager.getInstance();
+        await manager.reconcileOrphanedSessions();
 
         expect(mockStore.updateSession).toHaveBeenCalledWith(
           'agent_orphan',
           expect.objectContaining({
             status: 'failed',
             result: expect.objectContaining({
-              error: 'Session was orphaned (process restart or timeout)',
+              error: PROCESS_RESTART_SUBAGENT_RECOVERY_FAILED,
             }),
+            restartRecovery: expect.objectContaining({ outcome: 'failed' }),
           })
         );
       } finally {
@@ -225,7 +231,7 @@ describe('BackgroundAgentManager', () => {
       }
     });
 
-    it('为没有 PID 的近期 legacy sidecar 保留兼容窗口', () => {
+    it('为没有 PID 的近期 legacy sidecar 保留兼容窗口', async () => {
       (BackgroundAgentManager as any).instance = null;
       const mockStore = AgentSessionStore.getInstance();
       vi.mocked(mockStore.listSessions).mockReturnValue([
@@ -237,6 +243,7 @@ describe('BackgroundAgentManager', () => {
       ] as any);
 
       manager = BackgroundAgentManager.getInstance();
+      await manager.reconcileOrphanedSessions();
 
       expect(mockStore.updateSession).not.toHaveBeenCalled();
     });

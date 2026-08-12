@@ -12,6 +12,20 @@ export interface ProcessIdentitySource {
   execFile(command: string, args: readonly string[]): string;
 }
 
+const PROCESS_IDENTITY_FINGERPRINT = /^[a-f0-9]{64}$/;
+
+export function isProcessIdentity(value: unknown): value is ProcessIdentity {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<ProcessIdentity>;
+  return (
+    (candidate.platform === 'linux' ||
+      candidate.platform === 'darwin' ||
+      candidate.platform === 'win32') &&
+    typeof candidate.fingerprint === 'string' &&
+    PROCESS_IDENTITY_FINGERPRINT.test(candidate.fingerprint)
+  );
+}
+
 const defaultSource: ProcessIdentitySource = {
   readFile: (filePath) => readFileSync(filePath, 'utf8'),
   execFile: (command, args) =>

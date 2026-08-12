@@ -1,3 +1,13 @@
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  FileText,
+  Loader2,
+  RotateCcw,
+} from 'lucide-react';
+import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
 import { BladeMark } from '@/components/layout/BladeMark';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -16,16 +26,6 @@ import {
   getTimelineText,
 } from '@/store/session/utils/agentTimeline';
 import { aggregateMessages } from '@/store/session/utils/aggregateMessages';
-import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Copy,
-  FileText,
-  Loader2,
-  RotateCcw,
-} from 'lucide-react';
-import { lazy, memo, Suspense, useEffect, useMemo, useState } from 'react';
 import { CodeReviewReport, parseCodeReviewReport } from './CodeReviewReport';
 import { McpElicitationSection } from './McpElicitationSection';
 import {
@@ -560,6 +560,7 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
   const [resumeSubmitting, setResumeSubmitting] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [resumedChild, setResumedChild] = useState<SubagentSession | null>(null);
+  const [sourceSession, setSourceSession] = useState<SubagentSession | null>(null);
   const currentSessionRef = useSessionStore((state) => state.currentSessionRef);
   const isStreaming = useSessionStore((state) => state.isStreaming);
   const isTemporarySession = useSessionStore((state) => state.isTemporarySession);
@@ -571,14 +572,15 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
   const toolCalls = subagent.toolCalls || loadedToolCalls || [];
   const hasContent =
     subagent.output || subagent.thinking || toolCalls.length > 0 || subagent.sessionId;
-  const resumeTarget =
-    resumedChild && resumedChild.status !== 'running'
-      ? resumedChild.id
-      : subagent.sessionId;
+  const resumeSession =
+    resumedChild && resumedChild.status !== 'running' ? resumedChild : sourceSession;
+  const resumeTarget = resumeSession?.id ?? subagent.sessionId;
+  const recoveryFailed = resumeSession?.restartRecovery?.outcome === 'failed';
   const canResume =
     !isRunning &&
     !isStreaming &&
     !isTemporarySession &&
+    !recoveryFailed &&
     resumedChild?.status !== 'running' &&
     Boolean(resumeTarget && currentSessionRef);
 
@@ -638,6 +640,9 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
       .listSubagents(currentSessionRef)
       .then((sessions) => {
         if (!mounted) return;
+        setSourceSession(
+          sessions.find((session) => session.id === subagent.sessionId) ?? null
+        );
         const latest = sessions
           .filter(
             (session) =>
@@ -817,6 +822,11 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
                   {resumedChild.result.message || resumedChild.result.error}
                 </div>
               )}
+            </div>
+          )}
+          {recoveryFailed && resumeSession?.result?.error && (
+            <div role="alert" className="text-[11px] text-red-600">
+              {resumeSession.result.error}
             </div>
           )}
           {canResume && (

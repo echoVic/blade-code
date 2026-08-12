@@ -584,6 +584,10 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
   child ID 新建、lineage 深度递增、冻结模型/权限生效及无密钥泄漏。Web 还要通过真实
   浏览器验证 depth 1 → 2、刷新后 2 → 3、禁用态和零 console error。实际结果记录在
   [durable subagent resume 证据账本](./durable-subagent-resume-evidence.md)；
+- durable Subagent crash recovery：真实 child Provider stream 在首个 content delta 后
+  由透明代理保持，宿主 SIGKILL Blade owner；第二 Runtime 必须先闭合 child turn/tool
+  receipt 并从 JSONL 重建 sidecar history，再以新 immutable child ID resume。follow-up
+  不得包含原 token，恢复失败不得允许 Web/ACP 发起虚假 resume；
 - 输出协议、工具调用、错误事件和 key 泄漏检查。
 
 ### Durable Subagent resume 轨迹

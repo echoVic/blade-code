@@ -6,13 +6,13 @@ import { getProjectStoragePath } from '../../../context/storage/pathUtils.js';
 import { terminateProcessTreeByPid } from '../../../utils/process/OwnedProcessTree.js';
 import {
   captureProcessIdentity,
+  isProcessIdentity,
   type ProcessIdentity,
   processIdentityMatches,
 } from '../../../utils/process/ProcessIdentity.js';
 
 const VERSION = 1;
 const MAX_LEASE_BYTES = 16 * 1024;
-const FINGERPRINT_PATTERN = /^[a-f0-9]{64}$/;
 
 export interface BackgroundShellLease {
   version: typeof VERSION;
@@ -40,18 +40,6 @@ function isRunning(pid: number): boolean {
       (error as NodeJS.ErrnoException).code === 'EPERM'
     );
   }
-}
-
-function isProcessIdentity(value: unknown): value is ProcessIdentity {
-  if (!value || typeof value !== 'object') return false;
-  const candidate = value as Partial<ProcessIdentity>;
-  return (
-    (candidate.platform === 'linux' ||
-      candidate.platform === 'darwin' ||
-      candidate.platform === 'win32') &&
-    typeof candidate.fingerprint === 'string' &&
-    FINGERPRINT_PATTERN.test(candidate.fingerprint)
-  );
 }
 
 function isBackgroundShellLease(

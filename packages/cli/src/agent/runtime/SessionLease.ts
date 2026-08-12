@@ -3,6 +3,12 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { getProjectStoragePath } from '../../context/storage/pathUtils.js';
 import { getCwd } from '../../utils/cwd.js';
+import {
+  captureProcessIdentity,
+  isProcessIdentity,
+  type ProcessIdentity,
+  processIdentityMatches,
+} from '../../utils/process/ProcessIdentity.js';
 
 const SESSION_LEASE_VERSION = 1;
 
@@ -11,6 +17,7 @@ interface SessionLeaseRecord {
   sessionId: string;
   ownerId: string;
   pid: number;
+  processIdentity?: ProcessIdentity;
   acquiredAt: string;
 }
 
@@ -38,6 +45,8 @@ async function readLease(filePath: string): Promise<SessionLeaseRecord | undefin
       typeof value.ownerId !== 'string' ||
       !Number.isInteger(value.pid) ||
       (value.pid ?? 0) <= 0 ||
+      (value.processIdentity !== undefined &&
+        !isProcessIdentity(value.processIdentity)) ||
       typeof value.acquiredAt !== 'string'
     ) {
       return undefined;
@@ -117,6 +126,7 @@ export class SessionLease {
       sessionId,
       ownerId: randomUUID(),
       pid: process.pid,
+      processIdentity: captureProcessIdentity(process.pid),
       acquiredAt: new Date().toISOString(),
     };
 
@@ -126,7 +136,12 @@ export class SessionLease {
     }
 
     const existing = await readLeaseAfterCreate(filePath);
-    if (existing && isProcessRunning(existing.pid)) {
+    if (
+      existing &&
+      isProcessRunning(existing.pid) &&
+      (!existing.processIdentity ||
+        processIdentityMatches(existing.pid, existing.processIdentity))
+    ) {
       throw new SessionInUseError(existing.pid);
     }
 

@@ -7,6 +7,7 @@
  * - 支持等待完成、恢复、终止
  */
 
+import { stat } from 'node:fs/promises';
 import type {
   CommunicationStyleSelection,
   PermissionMode,
@@ -14,10 +15,17 @@ import type {
   ResponseVerbositySelection,
   ServiceTierSelection,
 } from '../../config/types.js';
+import { projectTurnLifecycle } from '../../context/events/turnLifecycle.js';
+import { PersistentStore } from '../../context/storage/PersistentStore.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { SessionLspResources } from '../../lsp/WorkspaceLspResources.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
+import { SessionService } from '../../services/SessionService.js';
 import { getCwd } from '../../utils/cwd.js';
+import {
+  captureProcessIdentity,
+  processIdentityMatches,
+} from '../../utils/process/ProcessIdentity.js';
 import { createSessionId } from '../../utils/sessionId.js';
 import {
   GOAL_VERIFICATION_SUBAGENT_TYPE,
@@ -34,6 +42,7 @@ import { drainLoop } from '../loop/index.js';
 import type { LoopEvent } from '../loop/types.js';
 import type { SessionAgentResources } from '../resources/WorkspaceAgentResources.js';
 import type { SessionModelResources } from '../resources/WorkspaceModelResources.js';
+import { SessionInUseError, SessionLease } from '../runtime/SessionLease.js';
 import { SessionRuntime } from '../runtime/SessionRuntime.js';
 import {
   type AgentSession,
@@ -56,6 +65,15 @@ import type { SubagentConfig, SubagentResult } from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
 
+export const PROCESS_RESTART_SUBAGENT_ERROR =
+  'Subagent execution was interrupted by a process restart. Durable progress was ' +
+  'recovered; resume this agent to continue from the committed history.';
+export const PROCESS_RESTART_SUBAGENT_RECOVERY_FAILED =
+  'Subagent execution was interrupted by a process restart, and its durable ' +
+  'history could not be validated. Resume is disabled for this run.';
+const LEGACY_ORPHANED_SUBAGENT_ERROR =
+  'Session was orphaned (process restart or timeout)';
+
 function isProcessRunning(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -67,6 +85,57 @@ function isProcessRunning(pid: number): boolean {
       (error as NodeJS.ErrnoException).code === 'EPERM'
     );
   }
+}
+
+function isSessionOwnerRunning(session: AgentSession): boolean | undefined {
+  if (session.processId === undefined) return undefined;
+  if (!isProcessRunning(session.processId)) return false;
+  return session.processIdentity
+    ? processIdentityMatches(session.processId, session.processIdentity)
+    : true;
+}
+
+function messageKey(message: Message): string {
+  return JSON.stringify(message);
+}
+
+function mergeRecoveredMessages(
+  existing: readonly Message[],
+  recovered: readonly Message[]
+): Message[] {
+  const maxOverlap = Math.min(existing.length, recovered.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap--) {
+    const existingStart = existing.length - overlap;
+    let matches = true;
+    for (let index = 0; index < overlap; index++) {
+      if (
+        messageKey(existing[existingStart + index]!) !== messageKey(recovered[index]!)
+      ) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return [...existing, ...recovered.slice(overlap)];
+  }
+  return [...existing, ...recovered];
+}
+
+function messageText(message: Message): string {
+  if (typeof message.content === 'string') return message.content;
+  return message.content
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
+    .join('');
+}
+
+function lastAssistantText(messages: readonly Message[]): string {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]!;
+    if (message.role !== 'assistant') continue;
+    const text = messageText(message).trim();
+    if (text) return text;
+  }
+  return '';
 }
 
 /**
@@ -188,9 +257,7 @@ export class BackgroundAgentManager {
   // 会话存储
   private sessionStore = AgentSessionStore.getInstance();
 
-  private constructor() {
-    this.cleanupOrphanedSessions();
-  }
+  private constructor() {}
 
   static getInstance(): BackgroundAgentManager {
     if (!BackgroundAgentManager.instance) {
@@ -199,34 +266,178 @@ export class BackgroundAgentManager {
     return BackgroundAgentManager.instance;
   }
 
-  private cleanupOrphanedSessions(): void {
-    const sessions = this.sessionStore.listSessions();
+  private async cleanupOrphanedSessions(owner?: AgentSessionOwner): Promise<void> {
+    const normalizedOwner = owner ? normalizeAgentSessionOwner(owner) : undefined;
+    const sessions = this.sessionStore
+      .listSessions()
+      .filter(
+        (session) => !normalizedOwner || isAgentSessionOwnedBy(session, normalizedOwner)
+      );
     const now = Date.now();
     const maxOrphanAge = 30 * 60 * 1000;
 
     for (const session of sessions) {
+      const isInMemory = this.runningAgents.has(session.id);
+      const ownerProcessRunning = isSessionOwnerRunning(session);
+      if (
+        !isInMemory &&
+        ownerProcessRunning !== true &&
+        session.status === 'failed' &&
+        session.restartRecovery === undefined &&
+        (session.result?.error === LEGACY_ORPHANED_SUBAGENT_ERROR ||
+          session.result?.error === PROCESS_RESTART_SUBAGENT_ERROR)
+      ) {
+        await this.reconcileOrphanedSession(session);
+        continue;
+      }
       if (session.status === 'running') {
-        const isInMemory = this.runningAgents.has(session.id);
         const age = now - session.lastActiveAt;
-        const ownerProcessRunning =
-          session.processId !== undefined && isProcessRunning(session.processId);
         const legacySessionMayBeRunning =
           session.processId === undefined && age <= maxOrphanAge;
 
-        if (!isInMemory && !ownerProcessRunning && !legacySessionMayBeRunning) {
+        if (
+          !isInMemory &&
+          ownerProcessRunning === false &&
+          !legacySessionMayBeRunning
+        ) {
           logger.warn(`Cleaning up orphaned agent session: ${session.id}`);
-          this.sessionStore.updateSession(session.id, {
-            status: 'failed',
-            result: {
-              success: false,
-              message: '',
-              error: 'Session was orphaned (process restart or timeout)',
-            },
-            completedAt: now,
-          });
+          await this.reconcileOrphanedSession(session);
+        } else if (
+          !isInMemory &&
+          ownerProcessRunning === undefined &&
+          !legacySessionMayBeRunning
+        ) {
+          await this.reconcileOrphanedSession(session);
         }
       }
     }
+  }
+
+  private async reconcileOrphanedSession(session: AgentSession): Promise<void> {
+    const recoveredAt = Date.now();
+    const projectPath =
+      session.worktree?.workspaceRoot ??
+      session.workspaceRoot ??
+      session.parentProjectPath;
+    if (!projectPath) {
+      this.markRecoveryFailed(session.id, recoveredAt);
+      return;
+    }
+
+    let lease: SessionLease;
+    try {
+      lease = await SessionLease.acquire(session.id, projectPath);
+    } catch (error) {
+      if (error instanceof SessionInUseError) return;
+      this.markRecoveryFailed(session.id, recoveredAt);
+      return;
+    }
+
+    try {
+      const persistentStore = new PersistentStore(projectPath);
+      await persistentStore.initialize();
+      await persistentStore.recoverInterruptedTurn(session.id);
+      const [events, recoveredMessages] = await Promise.all([
+        persistentStore.loadEvents(session.id),
+        SessionService.loadSessionModelContext(session.id, projectPath),
+      ]);
+      if (!events) {
+        this.markRecoveryFailed(session.id, recoveredAt);
+        return;
+      }
+      const messages = mergeRecoveredMessages(session.messages, recoveredMessages);
+      const lifecycle = projectTurnLifecycle(events);
+      const completed = lifecycle.lastTerminal?.type === 'turn_completed';
+      const finalMessage = completed ? lastAssistantText(recoveredMessages) : '';
+      const outcome = completed && finalMessage ? 'completed' : 'interrupted';
+      const terminal = lifecycle.lastTerminal?.data;
+      const worktree = await this.reconcileOrphanedWorktree(
+        session,
+        outcome === 'completed'
+      );
+      this.sessionStore.updateSession(session.id, {
+        status: outcome === 'completed' ? 'completed' : 'failed',
+        messages,
+        result: {
+          success: outcome === 'completed',
+          message: finalMessage,
+          ...(outcome === 'completed' ? {} : { error: PROCESS_RESTART_SUBAGENT_ERROR }),
+        },
+        completedAt: recoveredAt,
+        processId: undefined,
+        processIdentity: undefined,
+        worktree,
+        restartRecovery: { outcome, recoveredAt },
+        ...(terminal
+          ? {
+              stats: {
+                toolCalls: terminal.toolCallsCount,
+                duration: terminal.durationMs,
+              },
+            }
+          : {}),
+      });
+    } catch (error) {
+      logger.warn(`Failed to reconcile orphaned agent ${session.id}`, error);
+      this.markRecoveryFailed(session.id, recoveredAt);
+    } finally {
+      await lease.release().catch((error) => {
+        logger.warn(`Failed to release recovered agent lease ${session.id}`, error);
+      });
+    }
+  }
+
+  private async reconcileOrphanedWorktree(
+    session: AgentSession,
+    success: boolean
+  ): Promise<WorktreeSession | undefined> {
+    if (!session.worktree) return undefined;
+    try {
+      await stat(session.worktree.worktreeRoot);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      logger.warn(`Failed to inspect recovered worktree ${session.id}`, error);
+      return session.worktree;
+    }
+    try {
+      const lease = await subagentWorktreeLifecycle.prepare({
+        agentId: session.id,
+        sourceWorkspaceRoot:
+          session.workspaceRoot ??
+          session.parentProjectPath ??
+          session.worktree.originalWorkspaceRoot,
+        isolation: 'worktree',
+        restoredWorktree: session.worktree,
+      });
+      const outcome = await subagentWorktreeLifecycle.finalize({
+        agentId: session.id,
+        lease,
+        success,
+      });
+      return outcome.worktree;
+    } catch (error) {
+      logger.warn(`Failed to finalize recovered worktree ${session.id}`, error);
+      return session.worktree;
+    }
+  }
+
+  private markRecoveryFailed(agentId: string, recoveredAt: number): void {
+    this.sessionStore.updateSession(agentId, {
+      status: 'failed',
+      result: {
+        success: false,
+        message: '',
+        error: PROCESS_RESTART_SUBAGENT_RECOVERY_FAILED,
+      },
+      completedAt: recoveredAt,
+      processId: undefined,
+      processIdentity: undefined,
+      restartRecovery: { outcome: 'failed', recoveredAt },
+    });
+  }
+
+  async reconcileOrphanedSessions(owner?: AgentSessionOwner): Promise<void> {
+    await this.cleanupOrphanedSessions(owner);
   }
 
   /**
@@ -282,6 +493,7 @@ export class BackgroundAgentManager {
       createdAt: Date.now(),
       lastActiveAt: Date.now(),
       processId: process.pid,
+      processIdentity: captureProcessIdentity(process.pid),
       parentSessionId,
       parentProjectPath,
       rootAgentId: rootAgentId ?? id,
@@ -720,6 +932,11 @@ export class BackgroundAgentManager {
       logger.warn(
         `Cannot resume agent ${agentId}: requested type ${config.name} does not match ${session.subagentType}`
       );
+      return undefined;
+    }
+
+    if (session.restartRecovery?.outcome === 'failed') {
+      logger.warn(`Cannot resume agent ${agentId}: restart recovery failed`);
       return undefined;
     }
 

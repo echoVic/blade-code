@@ -401,9 +401,7 @@ export class SessionRuntime {
       ) {
         selectedCommunicationStyleDigest ??= storedMetadata?.communicationStyleDigest;
       }
-      await cleanupStaleWorktreesOnce(workspaceRoot);
       selectedProjectInstructionsDigest ??= storedMetadata?.projectInstructionsDigest;
-      await cleanupStaleWorktreesOnce(workspaceRoot);
       if (
         !options.subagentInfo &&
         (!taskWorktree || !taskIsolation || !selectedModelId)
@@ -1474,6 +1472,15 @@ export class SessionRuntime {
       if (!isAcpMode(this.sessionId)) {
         await recoverWorkspacePatchTransactions(this.workspaceRoot);
       }
+      await BackgroundShellManager.getInstance().reapOrphanedSession(
+        this.sessionId,
+        this.workspaceRoot
+      );
+      await BackgroundAgentManager.getInstance().reconcileOrphanedSessions({
+        sessionId: this.sessionId,
+        projectPath: this.workspaceRoot,
+      });
+      await cleanupStaleWorktreesOnce(this.workspaceRoot);
       const hookManager = HookManager.getInstance();
       hookManager.loadConfig(
         this.config.disableAllHooks
@@ -1546,10 +1553,6 @@ export class SessionRuntime {
         });
       }
       await this.validateSystemPromptConfig();
-      await BackgroundShellManager.getInstance().reapOrphanedSession(
-        this.sessionId,
-        this.workspaceRoot
-      );
       this.activeTurnMailbox = await ActiveTurnMailbox.create(
         this.workspaceRoot,
         this.sessionId
