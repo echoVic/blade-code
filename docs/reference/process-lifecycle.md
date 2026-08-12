@@ -10,13 +10,15 @@ Blade Code 把自己启动的命令视为一棵 owned process tree。超时、�
 - 幂等性：同一进程树的并发终止请求共享一个 Promise，不会重复执行终止序列。
 - 安全边界：PID 0、PID 1 和 Blade 自身 PID 不会被当作 POSIX 进程组广播目标。
 
-统一实现位于 `packages/cli/src/utils/process/OwnedProcessTree.ts`。需要执行任意用户命令的入口应使用 `spawnOwnedProcess()`，不要自行组合 `child.kill()` 和定时器。
+统一终止实现位于 `packages/cli/src/utils/process/OwnedProcessTree.ts`。Session-owned
+用户命令还必须使用 `CommandAdmissionGate` 与 durable process lease，不能只依赖
+`spawnOwnedProcess()` 的进程内句柄，也不要自行组合 `child.kill()` 和定时器。
 
 ## 已接入入口
 
-- 前台 Bash 的 timeout 和 abort；
+- 前台 Bash 的 admission、timeout、abort 和进程硬崩溃恢复；
 - 后台 Bash 的单任务终止和应用退出清理；
-- ACP 本地 terminal fallback 的 timeout 和 abort；
+- ACP 本地 terminal fallback 的 admission、timeout、abort 和进程硬崩溃恢复；
 - command hook 的 timeout、abort 和输入写入失败。
 - trusted+YOLO Session 的 post-edit `type-check` 自动验证。
 - Session 私有 LSP server 的 startup、request、shutdown、crash restart 和 dispose。
@@ -31,6 +33,20 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   fail closed，详见 [Durable Session Archive](session-archive.md)。
 - 活 owner 存在时创建 runtime 会 fail closed，并返回 `BLADE_SESSION_IN_USE`；被拒绝的输入不会写入 transcript，也不会发起模型请求。
 - runtime 初始化失败或 `dispose()` 完成时只释放 owner token 与自身匹配的 lease。进程异常退出留下的 lease 会在确认 PID 已不存在后由下一 owner 回收。
+- 本地前台 Bash 和 ACP local terminal fallback 先启动不执行用户命令的 detached gate，
+  写入并 fsync `.foreground-processes` lease 后才通过 pipe release command。lease 或
+  release write 失败时等待整棵 gate tree 回收后返回结构化错误，用户命令零执行。gate
+  同时监听 owner pipe；owner 硬退出后会主动终止 attached command，下一 Runtime 的
+  identity-checked reaper 覆盖 wrapper 同时退出或未完成清理的窗口。
+- foreground lease 仅包含 session/process identity、owner/root PID、平台启动身份和
+  时间，使用 `0600` 文件、`0700` 目录和 atomic write + fsync；不包含命令、cwd、env、
+  stdout/stderr 或凭据。自然退出、spawn error、timeout 和 abort 都会删除 lease。
+- 新 Runtime 取得 Session lease 后先依次回收 foreground、background orphan process，
+  再恢复 workspace patch transaction、subagent 和其他 Runtime 资源。只有 owner 已退出
+  且 root PID 启动身份仍匹配时才发送 TERM/KILL；PID reuse、损坏或超限 sidecar 均
+  fail closed。orphan subagent reconciliation 在取得 child Session lease 后执行同一组
+  reaper，再修复 child turn/tool receipt。ACP 客户端真正创建的 remote terminal 继续
+  由客户端 terminal handle 所有，本地 lease 只用于 ACP local fallback。
 - 后台 Bash 在启动时绑定当前 session。`WriteStdin`、`TaskOutput`、`KillShell` 和 `/tasks` 只能读取或操作该 session 的 shell；对其他 session 的 ID 按不存在处理。
 - 后台 Bash 的 stdin 由 runtime 持有。`WriteStdin` 等待写入回调并处理 pipe error；`close_stdin=true` 显式发送 EOF。进程已经退出、stdin 已关闭或缺失 session 时 fail closed。
 - 后台 Bash 先启动一个不执行用户命令的 detached gate wrapper，写入并 fsync durable
@@ -182,6 +198,9 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
 生产资格门禁还会要求 `deepseek-v4-flash` 和 `deepseek-v4-pro` 通过以下真实 CLI 进程轨迹：
 
 - 模型触发一个必然超时的 Bash 进程树，收到结构化 `timeout_error` 后继续使用 Write 工具完成恢复任务，同时验证没有后代进程遗留；
+- parent 和 subagent 分别启动含延迟副作用的前台 Bash，宿主在 tool result 前硬杀
+  Blade owner；新 Runtime 必须在各自 Session lease 临界区回收 identity-matched
+  process tree、闭合 orphan tool receipt，并证明 sidecar 不含命令、环境、输出或 API key；
 - 模型启动后台 Bash 但不主动终止，正常结束 headless 会话，然后验证 session dispose 已等待整棵进程树回收。
 - 模型在 TUI、Web 和 ACP 中启动等待输入的后台 Bash，读取动态 `shell_id`，通过 `WriteStdin` 写入并关闭 stdin，再由 `TaskOutput` 等待退出；Flash 和 Pro 都必须产生正确宿主文件且三个工具事件完整可见。
 - 模型在 TUI、Web 和 ACP 中启动产生超过 1 MiB 输出的后台 Bash，再由 `TaskOutput` 验证尾部标记、结构化省略字节数和共享展示摘要；Flash 和 Pro 都必须在截断后继续完成宿主文件写入。

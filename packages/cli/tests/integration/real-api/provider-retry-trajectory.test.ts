@@ -1,5 +1,13 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
@@ -517,6 +525,374 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
             process.kill(-rootPid, 'SIGKILL');
           } catch {
             // The durable orphan reaper already terminated the process group.
+          }
+        }
+        if (previousStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
+        else process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
+        await rm(workspace, { recursive: true, force: true });
+      }
+    },
+    180_000
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'stops a real-API foreground shell before its delayed post-crash side effect',
+    async () => {
+      if (!modelConfig) throw new Error('DeepSeek Flash configuration is required');
+      const childProcess =
+        await vi.importActual<typeof import('node:child_process')>(
+          'node:child_process'
+        );
+      const workspace = await mkdtemp(
+        path.join(os.tmpdir(), 'blade-real-api-foreground-shell-')
+      );
+      const storageRoot = path.join(workspace, '.blade-storage');
+      const sessionId = `real-api-foreground-shell-${Date.now()}`;
+      const fixture = path.join(
+        import.meta.dirname,
+        '..',
+        '..',
+        'fixtures',
+        'run-real-api-foreground-shell.ts'
+      );
+      const previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
+      const runtimeConfig = buildRealApiRuntimeConfig(modelConfig);
+      let stdout = '';
+      let stderr = '';
+      let commandPid: number | undefined;
+      let gatePid: number | undefined;
+      let runtime: SessionRuntime | undefined;
+      process.env.BLADE_STORAGE_ROOT = storageRoot;
+      getState().config.actions.setConfig({
+        ...runtimeConfig,
+        permissionMode: PermissionMode.YOLO,
+      });
+      const child = childProcess.spawn(
+        process.env.BUN_EXEC_PATH ?? 'bun',
+        [fixture, workspace, storageRoot, sessionId, modelConfig.qualificationId],
+        {
+          cwd: workspace,
+          env: {
+            ...process.env,
+            BLADE_STORAGE_ROOT: storageRoot,
+            BLADE_TELEMETRY_DISABLED: '1',
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }
+      );
+      child.stdout.setEncoding('utf8');
+      child.stderr.setEncoding('utf8');
+      child.stdout.on('data', (chunk: string) => {
+        stdout += chunk;
+      });
+      child.stderr.on('data', (chunk: string) => {
+        stderr += chunk;
+      });
+      const childClosed = new Promise<number | null>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('close', resolve);
+      });
+
+      try {
+        const leaseRoot = path.join(
+          getProjectStoragePath(workspace),
+          '.foreground-processes'
+        );
+        const launched = await Promise.race([
+          waitForValue(async () => {
+            try {
+              const value = Number.parseInt(
+                await readFile(path.join(workspace, 'foreground-root.pid'), 'utf8'),
+                10
+              );
+              const leaseNames = await readdir(leaseRoot, { recursive: true });
+              const leaseName = leaseNames.find((name) => name.endsWith('.json'));
+              if (!Number.isSafeInteger(value) || value <= 1 || !leaseName) {
+                return undefined;
+              }
+              const leaseContents = await readFile(
+                path.join(leaseRoot, leaseName),
+                'utf8'
+              );
+              const lease = JSON.parse(leaseContents) as { rootPid: number };
+              return {
+                commandPid: value,
+                gatePid: lease.rootPid,
+                leaseContents,
+              };
+            } catch {
+              return undefined;
+            }
+          }),
+          childClosed.then((status) => {
+            throw new Error(
+              `Real API foreground owner exited before launch (${status}): ${stderr}`
+            );
+          }),
+        ]);
+        const commandStartedAt = Date.now();
+        commandPid = launched.commandPid;
+        gatePid = launched.gatePid;
+        expect(launched.leaseContents).not.toContain('foreground-root.pid');
+        expect(launched.leaseContents).not.toContain('forbidden-late-effect');
+        expect(launched.leaseContents).not.toContain('DEEPSEEK_API_KEY');
+        expect(launched.leaseContents).not.toContain(modelConfig.apiKey);
+        expect(stdout).toContain('"tool_name":"Bash"');
+
+        expect(child.kill('SIGKILL')).toBe(true);
+        await childClosed;
+        runtime = await runWithCwdOverride(workspace, () =>
+          SessionRuntime.create({
+            sessionId,
+            workspaceRoot: workspace,
+            modelId: runtimeConfig.currentModelId,
+            permissionMode: PermissionMode.YOLO,
+          })
+        );
+        await waitForValue(async () => {
+          try {
+            process.kill(commandPid!, 0);
+            return undefined;
+          } catch {
+            return true;
+          }
+        }, 10_000);
+
+        const remainingDelay = 5_500 - (Date.now() - commandStartedAt);
+        if (remainingDelay > 0) {
+          await new Promise((resolve) => setTimeout(resolve, remainingDelay));
+        }
+        await expect(
+          access(path.join(workspace, 'forbidden-late-effect.txt'))
+        ).rejects.toMatchObject({ code: 'ENOENT' });
+
+        const store = new PersistentStore(workspace);
+        await store.initialize();
+        const events = await store.loadEvents(sessionId);
+        const bashCall = events?.find(
+          (event) =>
+            event.type === 'part_created' &&
+            event.data.partType === 'tool_call' &&
+            event.data.payload !== null &&
+            typeof event.data.payload === 'object' &&
+            !Array.isArray(event.data.payload) &&
+            event.data.payload.toolName === 'Bash'
+        );
+        expect(bashCall?.type).toBe('part_created');
+        expect(
+          events?.some(
+            (event) =>
+              event.type === 'part_created' &&
+              event.data.partType === 'tool_result' &&
+              event.data.partId ===
+                (bashCall?.type === 'part_created'
+                  ? bashCall.data.partId
+                  : undefined) &&
+              event.data.payload !== null &&
+              typeof event.data.payload === 'object' &&
+              !Array.isArray(event.data.payload) &&
+              event.data.payload.error === PROCESS_RESTART_TOOL_RESULT
+          )
+        ).toBe(true);
+        expect(`${stdout}\n${stderr}`).not.toContain(modelConfig.apiKey);
+      } finally {
+        child.kill('SIGKILL');
+        await runtime?.dispose().catch(() => undefined);
+        for (const pid of [gatePid, commandPid]) {
+          if (!pid) continue;
+          try {
+            process.kill(-pid, 'SIGKILL');
+          } catch {
+            try {
+              process.kill(pid, 'SIGKILL');
+            } catch {
+              // The durable orphan reaper already terminated the process.
+            }
+          }
+        }
+        if (previousStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
+        else process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
+        await rm(workspace, { recursive: true, force: true });
+      }
+    },
+    180_000
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'reaps a hard-killed real-API subagent foreground shell',
+    async () => {
+      if (!modelConfig) throw new Error('DeepSeek Flash configuration is required');
+      const childProcess =
+        await vi.importActual<typeof import('node:child_process')>(
+          'node:child_process'
+        );
+      const workspace = await mkdtemp(
+        path.join(os.tmpdir(), 'blade-real-api-subagent-shell-')
+      );
+      const storageRoot = path.join(workspace, '.blade-storage');
+      const parentSessionId = `subagent-shell-parent-${Date.now()}`;
+      const sourceAgentId = `agent-subagent-shell-${Date.now()}`;
+      const fixture = path.join(
+        import.meta.dirname,
+        '..',
+        '..',
+        'fixtures',
+        'run-real-api-crashing-subagent-shell.ts'
+      );
+      const runtimeConfig = buildRealApiRuntimeConfig(modelConfig);
+      const previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
+      let stdout = '';
+      let stderr = '';
+      let commandPid: number | undefined;
+      let gatePid: number | undefined;
+      let runtime: SessionRuntime | undefined;
+      let child: import('node:child_process').ChildProcess | undefined;
+
+      try {
+        process.env.BLADE_STORAGE_ROOT = storageRoot;
+        resetBackgroundAgentState();
+        getState().config.actions.setConfig({
+          ...runtimeConfig,
+          permissionMode: PermissionMode.YOLO,
+        });
+        child = childProcess.spawn(
+          process.env.BUN_EXEC_PATH ?? 'bun',
+          [
+            fixture,
+            workspace,
+            storageRoot,
+            parentSessionId,
+            sourceAgentId,
+            modelConfig.qualificationId,
+          ],
+          {
+            cwd: workspace,
+            env: {
+              ...process.env,
+              BLADE_STORAGE_ROOT: storageRoot,
+              BLADE_TELEMETRY_DISABLED: '1',
+            },
+            stdio: ['ignore', 'pipe', 'pipe'],
+          }
+        );
+        child.stdout?.setEncoding('utf8');
+        child.stderr?.setEncoding('utf8');
+        child.stdout?.on('data', (chunk: string) => {
+          stdout += chunk;
+        });
+        child.stderr?.on('data', (chunk: string) => {
+          stderr += chunk;
+        });
+        const childClosed = new Promise<number | null>((resolve, reject) => {
+          child?.once('error', reject);
+          child?.once('close', resolve);
+        });
+        const launched = await Promise.race([
+          waitForValue(async () => {
+            for (const line of stdout.split('\n')) {
+              try {
+                const value = JSON.parse(line) as {
+                  commandPid?: unknown;
+                  leaseName?: unknown;
+                };
+                if (
+                  Number.isSafeInteger(value.commandPid) &&
+                  Number(value.commandPid) > 1 &&
+                  typeof value.leaseName === 'string'
+                ) {
+                  return {
+                    commandPid: Number(value.commandPid),
+                    leaseName: value.leaseName,
+                  };
+                }
+              } catch {
+                // Ignore non-JSON progress lines.
+              }
+            }
+            return undefined;
+          }),
+          childClosed.then((status) => {
+            throw new Error(
+              `Real API subagent shell owner exited before launch (${status}): ` +
+                stderr
+            );
+          }),
+        ]);
+        const commandStartedAt = Date.now();
+        commandPid = launched.commandPid;
+        const leasePath = path.join(
+          getProjectStoragePath(workspace),
+          '.foreground-processes',
+          launched.leaseName
+        );
+        const leaseContents = await readFile(leasePath, 'utf8');
+        gatePid = (JSON.parse(leaseContents) as { rootPid: number }).rootPid;
+        expect(leaseContents).not.toContain('child-foreground.pid');
+        expect(leaseContents).not.toContain('forbidden-child-late-effect');
+        expect(leaseContents).not.toContain(modelConfig.apiKey);
+
+        expect(child.kill('SIGKILL')).toBe(true);
+        await childClosed;
+        resetBackgroundAgentState();
+        runtime = await runWithCwdOverride(workspace, () =>
+          SessionRuntime.create({
+            sessionId: parentSessionId,
+            workspaceRoot: workspace,
+            modelId: runtimeConfig.currentModelId,
+            permissionMode: PermissionMode.YOLO,
+          })
+        );
+        await waitForValue(async () => {
+          try {
+            process.kill(commandPid!, 0);
+            return undefined;
+          } catch {
+            return true;
+          }
+        }, 10_000);
+        const remainingDelay = 5_500 - (Date.now() - commandStartedAt);
+        if (remainingDelay > 0) {
+          await new Promise((resolve) => setTimeout(resolve, remainingDelay));
+        }
+        await expect(
+          access(path.join(workspace, 'forbidden-child-late-effect.txt'))
+        ).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(
+          AgentSessionStore.getInstance().loadSession(sourceAgentId)
+        ).toMatchObject({
+          status: 'failed',
+          restartRecovery: { outcome: 'interrupted' },
+        });
+
+        const store = new PersistentStore(workspace);
+        await store.initialize();
+        const events = await store.loadEvents(sourceAgentId);
+        expect(
+          events?.some(
+            (event) =>
+              event.type === 'part_created' &&
+              event.data.partType === 'tool_result' &&
+              event.data.payload !== null &&
+              typeof event.data.payload === 'object' &&
+              !Array.isArray(event.data.payload) &&
+              event.data.payload.error === PROCESS_RESTART_TOOL_RESULT
+          )
+        ).toBe(true);
+        expect(`${stdout}\n${stderr}`).not.toContain(modelConfig.apiKey);
+      } finally {
+        child?.kill('SIGKILL');
+        await runtime?.dispose().catch(() => undefined);
+        resetBackgroundAgentState();
+        for (const pid of [gatePid, commandPid]) {
+          if (!pid) continue;
+          try {
+            process.kill(-pid, 'SIGKILL');
+          } catch {
+            try {
+              process.kill(pid, 'SIGKILL');
+            } catch {
+              // The child reconciliation already terminated the process.
+            }
           }
         }
         if (previousStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;

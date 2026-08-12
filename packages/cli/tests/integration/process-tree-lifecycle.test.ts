@@ -1,16 +1,18 @@
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { access, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { getTerminalService } from '../../src/acp/AcpServiceContext.js';
 import { PermissionMode } from '../../src/config/types.js';
+import { ForegroundProcessLeaseStore } from '../../src/context/storage/ForegroundProcessLeaseStore.js';
 import { getProjectStoragePath } from '../../src/context/storage/pathUtils.js';
 import { SecureProcessExecutor } from '../../src/hooks/SecureProcessExecutor.js';
 import { HookEvent } from '../../src/hooks/types/HookTypes.js';
 import { BackgroundShellLeaseStore } from '../../src/tools/builtin/shell/BackgroundShellLeaseStore.js';
 import { BackgroundShellManager } from '../../src/tools/builtin/shell/BackgroundShellManager.js';
 import { bashTool } from '../../src/tools/builtin/shell/bash.js';
+import * as CommandAdmissionGate from '../../src/utils/process/CommandAdmissionGate.js';
 
 const tempRoots: string[] = [];
 const descendantPids = new Set<number>();
@@ -50,10 +52,14 @@ async function waitFor(
   return predicate();
 }
 
-async function launchOrphanBackgroundShell(
+async function startBackgroundShellOwner(
   workspace: string,
   sessionId: string
-): Promise<number> {
+): Promise<{
+  launcher: ChildProcess;
+  closed: Promise<void>;
+  rootPid: number;
+}> {
   const fixture = path.join(
     import.meta.dirname,
     '..',
@@ -83,11 +89,88 @@ async function launchOrphanBackgroundShell(
   const closed = new Promise<void>((resolve) =>
     launcher.once('close', () => resolve())
   );
-  if (!launcher.kill('SIGKILL')) {
+  return { launcher, closed, rootPid: launched.pid };
+}
+
+async function launchOrphanBackgroundShell(
+  workspace: string,
+  sessionId: string
+): Promise<number> {
+  const owner = await startBackgroundShellOwner(workspace, sessionId);
+  if (!owner.launcher.kill('SIGKILL')) {
     throw new Error('Failed to hard-exit background shell owner');
   }
-  await closed;
-  return launched.pid;
+  await owner.closed;
+  return owner.rootPid;
+}
+
+async function startForegroundShellOwner(
+  workspace: string,
+  sessionId: string
+): Promise<{
+  launcher: ChildProcess;
+  closed: Promise<void>;
+  commandPid: number;
+}> {
+  const fixture = path.join(
+    import.meta.dirname,
+    '..',
+    'fixtures',
+    'launch-orphan-foreground-shell.ts'
+  );
+  const launcher = spawn(
+    process.env.BUN_EXEC_PATH ?? 'bun',
+    [fixture, workspace, sessionId],
+    { stdio: ['ignore', 'pipe', 'pipe'] }
+  );
+  const launched = await new Promise<{ commandPid: number }>((resolve, reject) => {
+    let stderr = '';
+    launcher.once('error', reject);
+    launcher.stderr.setEncoding('utf8');
+    launcher.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    launcher.once('close', (code) => {
+      reject(new Error(`Foreground shell launcher exited ${code}: ${stderr}`));
+    });
+    launcher.stdout.setEncoding('utf8');
+    launcher.stdout.once('data', (chunk: string) => {
+      resolve(JSON.parse(chunk.trim()) as { commandPid: number });
+    });
+  });
+  const closed = new Promise<void>((resolve) =>
+    launcher.once('close', () => resolve())
+  );
+  return { launcher, closed, commandPid: launched.commandPid };
+}
+
+async function readForegroundLease(workspace: string): Promise<{
+  filePath: string;
+  contents: string;
+  value: {
+    ownerIdentity: { fingerprint: string };
+    rootPid: number;
+    identity: { fingerprint: string };
+  };
+}> {
+  const leaseRoot = path.join(
+    getProjectStoragePath(workspace),
+    '.foreground-processes'
+  );
+  const leaseNames = await readdir(leaseRoot, { recursive: true });
+  const leaseName = leaseNames.find((name) => name.endsWith('.json'));
+  if (!leaseName) throw new Error('Foreground process lease was not committed');
+  const filePath = path.join(leaseRoot, leaseName);
+  const contents = await readFile(filePath, 'utf8');
+  return {
+    filePath,
+    contents,
+    value: JSON.parse(contents) as {
+      ownerIdentity: { fingerprint: string };
+      rootPid: number;
+      identity: { fingerprint: string };
+    },
+  };
 }
 
 async function processIsGone(pid: number): Promise<boolean> {
@@ -231,7 +314,8 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
     const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-reused-shell-'));
     tempRoots.push(workspace);
     const sessionId = `reused-shell-${Date.now()}`;
-    const rootPid = await launchOrphanBackgroundShell(workspace, sessionId);
+    const owner = await startBackgroundShellOwner(workspace, sessionId);
+    const rootPid = owner.rootPid;
     descendantPids.add(rootPid);
 
     try {
@@ -244,8 +328,10 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
       expect(leaseName).toBeDefined();
       const leasePath = path.join(leaseRoot, leaseName!);
       const lease = JSON.parse(await readFile(leasePath, 'utf8')) as {
+        ownerIdentity: { fingerprint: string };
         identity: { fingerprint: string };
       };
+      lease.ownerIdentity.fingerprint = '1'.repeat(64);
       lease.identity.fingerprint = '0'.repeat(64);
       await writeFile(leasePath, `${JSON.stringify(lease)}\n`, { mode: 0o600 });
 
@@ -257,6 +343,8 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
       expect(result).toMatchObject({ reaped: 0, protected: 1 });
       expect(() => process.kill(rootPid, 0)).not.toThrow();
     } finally {
+      owner.launcher.kill('SIGKILL');
+      await owner.closed;
       try {
         process.kill(-rootPid, 'SIGKILL');
       } catch {
@@ -271,7 +359,8 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
     const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-corrupt-shell-'));
     tempRoots.push(workspace);
     const sessionId = `corrupt-shell-${Date.now()}`;
-    const rootPid = await launchOrphanBackgroundShell(workspace, sessionId);
+    const owner = await startBackgroundShellOwner(workspace, sessionId);
+    const rootPid = owner.rootPid;
     descendantPids.add(rootPid);
 
     try {
@@ -289,6 +378,8 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
       ).rejects.toThrow('Invalid durable background shell lease');
       expect(() => process.kill(rootPid, 0)).not.toThrow();
     } finally {
+      owner.launcher.kill('SIGKILL');
+      await owner.closed;
       try {
         process.kill(-rootPid, 'SIGKILL');
       } catch {
@@ -296,6 +387,216 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
       }
       await waitFor(() => processIsGone(rootPid));
       descendantPids.delete(rootPid);
+    }
+  });
+
+  it('does not admit a foreground command before its lease commits', async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-foreground-gate-'));
+    tempRoots.push(workspace);
+    const marker = path.join(workspace, 'must-not-run');
+    const register = vi
+      .spyOn(ForegroundProcessLeaseStore.prototype, 'register')
+      .mockImplementationOnce(() => {
+        throw new Error('injected foreground lease failure');
+      });
+
+    try {
+      const result = await bashTool.execute(
+        {
+          command: `printf admitted > ${shellQuote(marker)}`,
+          timeout: 2_000,
+          env: {},
+          run_in_background: false,
+        },
+        new AbortController().signal,
+        {
+          sessionId: `foreground-gate-${Date.now()}`,
+          workspaceRoot: workspace,
+        }
+      );
+
+      expect(result.success).toBe(false);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      register.mockRestore();
+    }
+  });
+
+  it('waits for cleanup when the foreground gate cannot be released', async () => {
+    const workspace = await mkdtemp(
+      path.join(os.tmpdir(), 'blade-foreground-release-')
+    );
+    tempRoots.push(workspace);
+    const marker = path.join(workspace, 'must-not-run');
+    const release = vi
+      .spyOn(CommandAdmissionGate, 'releaseCommandAdmissionGate')
+      .mockRejectedValueOnce(new Error('injected foreground gate write failure'));
+
+    try {
+      const result = await bashTool.execute(
+        {
+          command: `printf admitted > ${shellQuote(marker)}`,
+          timeout: 2_000,
+          env: {},
+          run_in_background: false,
+        },
+        new AbortController().signal,
+        {
+          sessionId: `foreground-release-${Date.now()}`,
+          workspaceRoot: workspace,
+        }
+      );
+
+      expect(result).toMatchObject({
+        success: false,
+        error: { message: 'Foreground command admission failed' },
+        metadata: { admission_failed: true },
+      });
+      await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+      const names = await readdir(
+        path.join(getProjectStoragePath(workspace), '.foreground-processes'),
+        { recursive: true }
+      );
+      expect(names.some((name) => name.endsWith('.json'))).toBe(false);
+    } finally {
+      release.mockRestore();
+    }
+  });
+
+  it('removes a durable foreground lease after natural exit', async () => {
+    const workspace = await mkdtemp(
+      path.join(os.tmpdir(), 'blade-foreground-natural-')
+    );
+    tempRoots.push(workspace);
+    const marker = path.join(workspace, 'completed');
+    const sessionId = `foreground-natural-${Date.now()}`;
+
+    const result = await bashTool.execute(
+      {
+        command: `printf completed > ${shellQuote(marker)}`,
+        timeout: 2_000,
+        env: {},
+        run_in_background: false,
+      },
+      new AbortController().signal,
+      { sessionId, workspaceRoot: workspace }
+    );
+
+    expect(result.success).toBe(true);
+    expect(await readFile(marker, 'utf8')).toBe('completed');
+    const leaseRoot = path.join(
+      getProjectStoragePath(workspace),
+      '.foreground-processes'
+    );
+    const names = await readdir(leaseRoot, { recursive: true });
+    expect(names.some((name) => name.endsWith('.json'))).toBe(false);
+  });
+
+  it('reaps a durable foreground command after its owner hard-exits', async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-orphan-foreground-'));
+    tempRoots.push(workspace);
+    const sessionId = `orphan-foreground-${Date.now()}`;
+    const owner = await startForegroundShellOwner(workspace, sessionId);
+    descendantPids.add(owner.commandPid);
+    const lease = await readForegroundLease(workspace);
+
+    try {
+      expect(lease.contents).not.toContain('foreground-command.pid');
+      expect(lease.contents).not.toContain('BLADE_STORAGE_ROOT');
+      expect(owner.launcher.kill('SIGKILL')).toBe(true);
+      await owner.closed;
+
+      const result = await new ForegroundProcessLeaseStore(
+        workspace,
+        sessionId
+      ).reapOrphans();
+
+      expect(result.reaped + result.stale).toBe(1);
+      expect(result.protected).toBe(0);
+      expect(await waitFor(() => processIsGone(owner.commandPid))).toBe(true);
+      descendantPids.delete(owner.commandPid);
+    } finally {
+      owner.launcher.kill('SIGKILL');
+      try {
+        process.kill(-lease.value.rootPid, 'SIGKILL');
+      } catch {
+        // The durable orphan reaper already terminated the process group.
+      }
+      await waitFor(() => processIsGone(owner.commandPid));
+      descendantPids.delete(owner.commandPid);
+    }
+  });
+
+  it('protects a foreground lease whose root PID identity changed', async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-reused-foreground-'));
+    tempRoots.push(workspace);
+    const sessionId = `reused-foreground-${Date.now()}`;
+    const owner = await startForegroundShellOwner(workspace, sessionId);
+    descendantPids.add(owner.commandPid);
+    const lease = await readForegroundLease(workspace);
+
+    try {
+      lease.value.ownerIdentity.fingerprint = '1'.repeat(64);
+      lease.value.identity.fingerprint = '0'.repeat(64);
+      await writeFile(lease.filePath, `${JSON.stringify(lease.value)}\n`, {
+        mode: 0o600,
+      });
+
+      const result = await new ForegroundProcessLeaseStore(
+        workspace,
+        sessionId
+      ).reapOrphans();
+
+      expect(result).toMatchObject({ reaped: 0, protected: 1 });
+      expect(() => process.kill(lease.value.rootPid, 0)).not.toThrow();
+    } finally {
+      owner.launcher.kill('SIGKILL');
+      await owner.closed;
+      try {
+        process.kill(-lease.value.rootPid, 'SIGKILL');
+      } catch {
+        // The process group has already exited.
+      }
+      await waitFor(() => processIsGone(owner.commandPid));
+      descendantPids.delete(owner.commandPid);
+    }
+  });
+
+  it('fails closed for a malformed durable foreground lease', async () => {
+    const workspace = await mkdtemp(
+      path.join(os.tmpdir(), 'blade-corrupt-foreground-')
+    );
+    tempRoots.push(workspace);
+    const sessionId = `corrupt-foreground-${Date.now()}`;
+    const owner = await startForegroundShellOwner(workspace, sessionId);
+    descendantPids.add(owner.commandPid);
+    const lease = await readForegroundLease(workspace);
+
+    try {
+      await writeFile(
+        lease.filePath,
+        `${JSON.stringify({ ...lease.value, command: 'must-not-persist' })}\n`,
+        { mode: 0o600 }
+      );
+      await expect(
+        new ForegroundProcessLeaseStore(workspace, sessionId).reapOrphans()
+      ).rejects.toThrow('Invalid durable foreground process lease');
+      await writeFile(lease.filePath, '{}\n', { mode: 0o600 });
+      await expect(
+        new ForegroundProcessLeaseStore(workspace, sessionId).reapOrphans()
+      ).rejects.toThrow('Invalid durable foreground process lease');
+      expect(() => process.kill(lease.value.rootPid, 0)).not.toThrow();
+    } finally {
+      owner.launcher.kill('SIGKILL');
+      await owner.closed;
+      try {
+        process.kill(-lease.value.rootPid, 'SIGKILL');
+      } catch {
+        // The process group has already exited.
+      }
+      await waitFor(() => processIsGone(owner.commandPid));
+      descendantPids.delete(owner.commandPid);
     }
   });
 
@@ -355,14 +656,22 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
 
   it('kills the full tree when the ACP local terminal fallback times out', async () => {
     const fixture = await createProcessTreeFixture('acp-fallback');
+    const workspace = path.dirname(fixture.descendantPidFile);
+    const sessionId = `acp-foreground-${Date.now()}`;
 
     const result = await getTerminalService().execute(fixture.command, {
       timeout: FIXTURE_COMMAND_TIMEOUT_MS,
+      durableOwnership: { sessionId, projectPath: workspace },
     });
     const descendantPid = await fixture.readDescendantPid();
 
     expect(result).toMatchObject({ success: false, error: 'Command was terminated' });
     await expectTreeTerminated(fixture.cleanupMarker, descendantPid);
+    const names = await readdir(
+      path.join(getProjectStoragePath(workspace), '.foreground-processes'),
+      { recursive: true }
+    );
+    expect(names.some((name) => name.endsWith('.json'))).toBe(false);
   }, 20_000);
 
   it('kills the full tree when a command hook times out', async () => {

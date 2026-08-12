@@ -1,8 +1,11 @@
 import { isAbsolute, resolve } from 'node:path';
 import { getTerminalService, isAcpMode } from '../../../acp/AcpServiceContext.js';
+import {
+  type ForegroundProcessOwnership,
+  prepareForegroundProcess,
+} from '../../../context/storage/DurableForegroundProcess.js';
 import { Default, Type } from '../../../schema/index.js';
 import { getCwd } from '../../../utils/cwd.js';
-import { spawnOwnedProcess } from '../../../utils/process/OwnedProcessTree.js';
 import {
   stripSafeEnvVars,
   stripSafeWrappers,
@@ -196,6 +199,12 @@ Before executing commands:
         : isAbsolute(cwd)
           ? cwd
           : resolve(workspaceRoot, cwd);
+    const foregroundOwnership = context.sessionId
+      ? {
+          sessionId: context.sessionId,
+          projectPath: workspaceRoot,
+        }
+      : undefined;
 
     try {
       updateOutput?.(`Executing Bash command: ${command}`);
@@ -220,7 +229,7 @@ Before executing commands:
             : undefined;
 
       if (run_in_background) {
-        return executeInBackground(
+        return await executeInBackground(
           command,
           effectiveCwd,
           effectiveEnv,
@@ -235,24 +244,25 @@ Before executing commands:
       if (useAcp) {
         // ACP 模式：通过 IDE 终端执行命令
         updateOutput?.('通过 IDE 终端执行命令...');
-        return executeWithAcpTerminal(
+        return await executeWithAcpTerminal(
           command,
           effectiveCwd,
           effectiveEnv,
           timeout,
           signal,
           context.sessionId,
-          updateOutput
+          updateOutput,
+          foregroundOwnership
         );
       } else {
-        return executeWithTimeout(
+        return await executeWithTimeout(
           command,
           effectiveCwd,
           effectiveEnv,
           timeout,
           signal,
-          updateOutput,
-          sandboxedCommand
+          sandboxedCommand,
+          foregroundOwnership
         );
       }
     } catch (error: unknown) {
@@ -455,7 +465,8 @@ async function executeWithAcpTerminal(
   timeout: number,
   signal: AbortSignal,
   sessionId?: string,
-  updateOutput?: (output: string) => void
+  updateOutput?: (output: string) => void,
+  ownership?: ForegroundProcessOwnership
 ): Promise<ToolResult> {
   const startTime = Date.now();
 
@@ -469,6 +480,7 @@ async function executeWithAcpTerminal(
       onOutput: (output) => {
         updateOutput?.(output);
       },
+      durableOwnership: ownership,
     });
 
     const executionTime = Date.now() - startTime;
@@ -595,61 +607,81 @@ async function executeWithTimeout(
   env: Record<string, string> | undefined,
   timeout: number,
   signal: AbortSignal,
-  updateOutput?: (output: string) => void,
-  sandboxedCommand?: SandboxedCommand
+  sandboxedCommand?: SandboxedCommand,
+  ownership?: ForegroundProcessOwnership
 ): Promise<ToolResult> {
+  const startTime = Date.now();
+  const executable = sandboxedCommand?.executable ?? 'bash';
+  const args = sandboxedCommand?.args ?? ['-c', command];
+  const inheritedEnvironment =
+    sandboxedCommand?.inheritProcessEnv === false
+      ? selectVerificationEnvironment(process.env)
+      : process.env;
+  let prepared: Awaited<ReturnType<typeof prepareForegroundProcess>>;
+  try {
+    prepared = await prepareForegroundProcess(
+      executable,
+      args,
+      {
+        cwd: cwd || getCwd(),
+        env: {
+          ...inheritedEnvironment,
+          ...env,
+          ...sandboxedCommand?.env,
+          BLADE_CLI: '1',
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+      ownership
+    );
+  } catch (error) {
+    sandboxedCommand?.cleanup();
+    throw error;
+  }
+
   return new Promise((resolve) => {
-    const startTime = Date.now();
+    const { child: bashProcess, processTree } = prepared;
     let stdout = '';
     let stderr = '';
     let timedOut = false;
-
-    // 创建进程
-    const executable = sandboxedCommand?.executable ?? 'bash';
-    const args = sandboxedCommand?.args ?? ['-c', command];
-    const inheritedEnvironment =
-      sandboxedCommand?.inheritProcessEnv === false
-        ? selectVerificationEnvironment(process.env)
-        : process.env;
-    const { child: bashProcess, processTree } = spawnOwnedProcess(executable, args, {
-      cwd: cwd || getCwd(),
-      env: {
-        ...inheritedEnvironment,
-        ...env,
-        ...sandboxedCommand?.env,
-        BLADE_CLI: '1',
-      },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    let settled = false;
+    let admissionError: Error | undefined;
     let terminationPromise: ReturnType<typeof processTree.terminate> | undefined;
     const terminateProcessTree = () => {
       terminationPromise ??= processTree.terminate();
       return terminationPromise;
     };
-
-    // 收集 stdout
-    bashProcess.stdout?.on('data', (data) => {
-      stdout += data.toString();
-    });
-
-    // 收集 stderr
-    bashProcess.stderr?.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    // 设置超时
     const timeoutHandle = setTimeout(() => {
       timedOut = true;
       void terminateProcessTree();
     }, timeout);
-
-    // 处理中止信号
     const abortHandler = () => {
       void terminateProcessTree();
       clearTimeout(timeoutHandle);
     };
+    const cleanup = () => {
+      sandboxedCommand?.cleanup();
+      clearTimeout(timeoutHandle);
+      if (signal.removeEventListener) {
+        signal.removeEventListener('abort', abortHandler);
+      } else if ('onabort' in signal) {
+        (signal as unknown as { onabort: null }).onabort = null;
+      }
+    };
+    const settle = (result: ToolResult) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
 
-    // 兼容不同版本的 AbortSignal API
+    bashProcess.stdout?.on('data', (data) => {
+      stdout += data.toString();
+    });
+    bashProcess.stderr?.on('data', (data) => {
+      stderr += data.toString();
+    });
+
     if (signal.addEventListener) {
       signal.addEventListener('abort', abortHandler);
     } else if ('onabort' in signal) {
@@ -657,26 +689,14 @@ async function executeWithTimeout(
     }
     if (signal.aborted) abortHandler();
 
-    // 监听进程完成事件 - 业界标准做法
     bashProcess.on('close', async (code, sig) => {
-      sandboxedCommand?.cleanup();
-      clearTimeout(timeoutHandle);
-      // 移除中止监听器
-      if (signal.removeEventListener) {
-        signal.removeEventListener('abort', abortHandler);
-      } else if ('onabort' in signal) {
-        (signal as unknown as { onabort: null }).onabort = null;
-      }
-
       const executionTime = Date.now() - startTime;
-
-      if (timedOut || signal.aborted) {
+      if (timedOut || signal.aborted || admissionError) {
         await terminateProcessTree();
       }
 
-      // 如果超时
       if (timedOut) {
-        resolve({
+        settle({
           success: false,
           llmContent: `Command execution timed out (${timeout}ms)`,
           error: {
@@ -695,9 +715,8 @@ async function executeWithTimeout(
         return;
       }
 
-      // 如果被中止
       if (signal.aborted) {
-        resolve({
+        settle({
           success: false,
           llmContent: 'Command execution aborted by user',
           error: {
@@ -716,8 +735,26 @@ async function executeWithTimeout(
         return;
       }
 
+      if (admissionError) {
+        settle({
+          success: false,
+          llmContent: 'Command execution blocked before durable admission',
+          error: {
+            type: ToolErrorType.EXECUTION_ERROR,
+            message: 'Foreground command admission failed',
+          },
+          metadata: {
+            command,
+            sandboxed: Boolean(sandboxedCommand),
+            admission_failed: true,
+            execution_time: executionTime,
+          },
+        });
+        return;
+      }
+
       if (sandboxedCommand && isWorkspaceSandboxRuntimeFailure(code, stderr)) {
-        resolve({
+        settle({
           success: false,
           llmContent:
             'Workspace sandbox could not start, so the Bash command was not executed.',
@@ -738,8 +775,6 @@ async function executeWithTimeout(
         return;
       }
 
-      // 正常完成
-      // 生成 summary 用于流式显示
       const cmdPreview =
         command.length > 30 ? `${command.substring(0, 30)}...` : command;
       const summary =
@@ -777,7 +812,7 @@ async function executeWithTimeout(
       };
       const success = code === 0;
 
-      resolve({
+      settle({
         success,
         llmContent,
         ...(success
@@ -797,27 +832,54 @@ async function executeWithTimeout(
       });
     });
 
-    // 监听进程错误
-    bashProcess.on('error', (error) => {
-      sandboxedCommand?.cleanup();
-      clearTimeout(timeoutHandle);
-      // 移除中止监听器
-      if (signal.removeEventListener) {
-        signal.removeEventListener('abort', abortHandler);
-      } else if ('onabort' in signal) {
-        (signal as unknown as { onabort: null }).onabort = null;
+    bashProcess.on('error', async (error) => {
+      if (timedOut || signal.aborted || admissionError) {
+        await terminateProcessTree();
       }
-
-      resolve({
+      settle({
         success: false,
-        llmContent: `Command execution failed: ${error.message}`,
+        llmContent: admissionError
+          ? 'Command execution blocked before durable admission'
+          : `Command execution failed: ${error.message}`,
         error: {
           type: ToolErrorType.EXECUTION_ERROR,
-          message: error.message,
-          details: error,
+          message: admissionError
+            ? 'Foreground command admission failed'
+            : error.message,
+          ...(admissionError ? {} : { details: error }),
         },
+        metadata: admissionError
+          ? {
+              command,
+              sandboxed: Boolean(sandboxedCommand),
+              admission_failed: true,
+              execution_time: Date.now() - startTime,
+            }
+          : undefined,
       });
     });
+
+    if (!signal.aborted) {
+      void prepared.release().catch(async (error: unknown) => {
+        admissionError =
+          error instanceof Error ? error : new Error('Command admission failed');
+        await terminateProcessTree();
+        settle({
+          success: false,
+          llmContent: 'Command execution blocked before durable admission',
+          error: {
+            type: ToolErrorType.EXECUTION_ERROR,
+            message: 'Foreground command admission failed',
+          },
+          metadata: {
+            command,
+            sandboxed: Boolean(sandboxedCommand),
+            admission_failed: true,
+            execution_time: Date.now() - startTime,
+          },
+        });
+      });
+    }
   });
 }
 

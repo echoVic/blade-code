@@ -52,7 +52,7 @@ bugfix、GPT Web structured output、Claude ACP structured output、DeepSeek hea
 structured output、Web/ACP/TUI code review、durable interaction recovery、permission
 recovery、ACP model switch、透明 503 retry proxy、durable 413 compaction proxy、真实
 mid-stream stall proxy、assistant response fsync fail-stop/cold retry、turn-final
-receipt exactly-once recovery，以及
+receipt exactly-once recovery、foreground/background shell hard-crash recovery，以及
 DeepSeek Flash 的 Runtime/Web/ACP host-authoritative Goal completion verification。Edit+rewind、
 开放式多文件迁移、compaction、进程树、
 并发 owner 与 crash-tail 等高成本 provider/capability soak 由以下命令单独运行：
@@ -555,6 +555,12 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
   复用/身份不匹配及 TERM grace period 内的 ownership 变化不得误杀，损坏 lease 必须
   fail closed，lease 提交失败时 gate wrapper 不得执行用户命令，sidecar 不得包含命令、
   环境、输出或凭据；
+- 前台 shell 硬崩溃恢复：真实 DeepSeek 必须分别从 parent 和 subagent 发起含延迟写入的
+  foreground Bash；宿主在 tool result 前 `SIGKILL` 独立 Blade owner，新 Runtime 取得
+  parent/child Session lease 后必须先回收对应 foreground tree，再闭合 orphan Bash tool
+  receipt。延迟文件不得出现，lease commit/gate release 失败必须零执行，PID identity
+  mismatch 不得误杀，损坏 sidecar 必须阻断恢复，sidecar 与 CLI 输出不得包含命令、
+  环境、输出或 API key；
 - session 退出回收：模型启动后台进程后正常结束 CLI，验证 runtime dispose 等待整棵进程树终止；
 - 中断恢复：真实信号中断活动工具调用，持久化一次模型可见的中断边界，再由第二个 CLI 安全恢复；
 - session 独占：活动 runtime 拒绝第二个同 session CLI 且不持久化其输入，owner 退出后允许恢复并继续验证；

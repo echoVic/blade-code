@@ -17,8 +17,11 @@ import {
   type FileSystemService,
   LocalFileSystemService,
 } from '../services/FileSystemService.js';
+import {
+  type ForegroundProcessOwnership,
+  prepareForegroundProcess,
+} from '../context/storage/DurableForegroundProcess.js';
 import { getCwd } from '../utils/cwd.js';
-import { spawnOwnedProcess } from '../utils/process/OwnedProcessTree.js';
 import { AcpFileSystemService } from './AcpFileSystemService.js';
 
 const logger = createLogger(LogCategory.AGENT);
@@ -51,6 +54,7 @@ export interface TerminalExecuteOptions {
   signal?: AbortSignal;
   onOutput?: (output: string) => void;
   allowLocalFallback?: boolean;
+  durableOwnership?: ForegroundProcessOwnership;
 }
 
 export interface TerminalExecuteResult {
@@ -69,16 +73,35 @@ class LocalTerminalService implements TerminalService {
     command: string,
     options?: TerminalExecuteOptions
   ): Promise<TerminalExecuteResult> {
-    return new Promise((resolve) => {
-      const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/bash';
-      const shellArgs =
-        process.platform === 'win32' ? ['/c', command] : ['-c', command];
+    const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/bash';
+    const shellArgs = process.platform === 'win32' ? ['/c', command] : ['-c', command];
+    let prepared: Awaited<ReturnType<typeof prepareForegroundProcess>>;
+    try {
+      prepared = await prepareForegroundProcess(
+        shell,
+        shellArgs,
+        {
+          cwd: options?.cwd || getCwd(),
+          env: { ...process.env, ...options?.env },
+          stdio: ['pipe', 'pipe', 'pipe'],
+        },
+        options?.durableOwnership
+      );
+    } catch (error) {
+      return {
+        success: false,
+        stdout: '',
+        stderr: '',
+        exitCode: null,
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Foreground command admission failed',
+      };
+    }
 
-      const { child: proc, processTree } = spawnOwnedProcess(shell, shellArgs, {
-        cwd: options?.cwd || getCwd(),
-        env: { ...process.env, ...options?.env },
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+    return new Promise((resolve) => {
+      const { child: proc, processTree } = prepared;
       let terminationPromise: ReturnType<typeof processTree.terminate> | undefined;
       const terminateProcessTree = () => {
         terminationPromise ??= processTree.terminate();
@@ -88,8 +111,9 @@ class LocalTerminalService implements TerminalService {
       let stdout = '';
       let stderr = '';
       let killed = false;
+      let admissionFailed = false;
+      let settled = false;
 
-      // 设置超时
       const timeoutId = options?.timeout
         ? setTimeout(() => {
             killed = true;
@@ -97,7 +121,6 @@ class LocalTerminalService implements TerminalService {
           }, options.timeout)
         : null;
 
-      // 保存 abort handler 引用以便后续移除，避免 MaxListenersExceededWarning
       let abortHandler: (() => void) | null = null;
 
       const cleanup = () => {
@@ -107,8 +130,13 @@ class LocalTerminalService implements TerminalService {
           abortHandler = null;
         }
       };
+      const settle = (result: TerminalExecuteResult) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(result);
+      };
 
-      // 处理中止信号
       if (options?.signal) {
         abortHandler = () => {
           killed = true;
@@ -131,32 +159,50 @@ class LocalTerminalService implements TerminalService {
       });
 
       proc.on('close', async (code) => {
-        cleanup();
-
-        if (killed) {
+        if (killed || admissionFailed) {
           await terminateProcessTree();
         }
-
-        resolve({
-          success: code === 0 && !killed,
+        settle({
+          success: code === 0 && !killed && !admissionFailed,
           stdout,
           stderr,
           exitCode: code,
-          error: killed ? 'Command was terminated' : undefined,
+          error: admissionFailed
+            ? 'Foreground command admission failed'
+            : killed
+              ? 'Command was terminated'
+              : undefined,
         });
       });
 
-      proc.on('error', (error) => {
-        cleanup();
-
-        resolve({
+      proc.on('error', async (error) => {
+        if (killed || admissionFailed) {
+          await terminateProcessTree();
+        }
+        settle({
           success: false,
           stdout,
           stderr,
           exitCode: null,
-          error: error.message,
+          error: admissionFailed
+            ? 'Foreground command admission failed'
+            : error.message,
         });
       });
+
+      if (!options?.signal?.aborted) {
+        void prepared.release().catch(async () => {
+          admissionFailed = true;
+          await terminateProcessTree();
+          settle({
+            success: false,
+            stdout,
+            stderr,
+            exitCode: null,
+            error: 'Foreground command admission failed',
+          });
+        });
+      }
     });
   }
 

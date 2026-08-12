@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.23] - 2026-08-12
+
+### 🛡️ 稳定性
+
+- 新增 Durable Foreground Process Lease：本地前台 Bash 与 ACP local fallback 在执行
+  用户命令前先启动 admission gate，原子提交 session/process/owner/root PID 与平台启动
+  身份并 fsync；lease 或 gate release 失败时用户命令零执行
+- foreground sidecar 使用 `0600` 文件与 `0700` 目录，只保存有界 ownership 元数据，
+  不保存命令、cwd、环境、stdout/stderr 或凭据；自然退出、spawn error、timeout 和 abort
+  都会清理 lease
+- 新 Runtime 取得 Session lease 后先回收 foreground/background orphan process tree，
+  再恢复 workspace patch transaction、subagent 与 Provider/tool 资源，避免旧命令继续与
+  恢复逻辑并发产生副作用
+- foreground/background 共用 owner-aware command gate；owner pipe 断开时 wrapper 会终止
+  仍在运行的 attached tree，冷启动 reaper 继续覆盖 wrapper 崩溃和 PID 复用边界
+- 抽取共享 durable process lease store，同时保留旧 `.background-shells` 路径、
+  `shellId` schema 与升级恢复兼容性
+- Bash 工具在异步 foreground/background admission 边界显式等待 Promise，确保 fsync、
+  gate write 或 cleanup 失败始终转换为结构化 ToolResult，不穿透 Agent loop
+
+### ✅ 测试相关
+
+- 新增 foreground lease commit/gate write 零执行、自然退出清理、owner hard-kill、
+  PID identity mismatch、损坏 sidecar fail-closed 和 ACP local fallback 回归
+- 新增两条 release-blocking DeepSeek 真实 API 轨迹：parent 与 subagent 分别启动延迟
+  写入的前台 Bash，宿主 `SIGKILL` Blade owner，新 Runtime 必须在各自 Session lease
+  临界区回收进程树、提交 orphan tool receipt，并证明延迟副作用未发生且 sidecar/输出
+  不含 API key
+
 ## [0.10.22] - 2026-08-12
 
 ### 🛡️ 稳定性

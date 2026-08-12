@@ -2,9 +2,10 @@ import type { ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import { getCwd } from '../../../utils/cwd.js';
 import {
-  type OwnedProcessTree,
-  spawnOwnedProcess,
-} from '../../../utils/process/OwnedProcessTree.js';
+  releaseCommandAdmissionGate,
+  spawnCommandAdmissionGate,
+} from '../../../utils/process/CommandAdmissionGate.js';
+import type { OwnedProcessTree } from '../../../utils/process/OwnedProcessTree.js';
 import { BackgroundShellLeaseStore } from './BackgroundShellLeaseStore.js';
 import { BoundedOutputBuffer } from './BoundedOutputBuffer.js';
 import {
@@ -13,28 +14,6 @@ import {
 } from './WorkspaceWriteSandbox.js';
 
 type BackgroundShellStatus = 'running' | 'exited' | 'killed' | 'error';
-
-const BACKGROUND_COMMAND_GATE = String.raw`
-const { spawn } = require('node:child_process');
-const [command, ...args] = process.argv.slice(1);
-process.stdin.once('data', (chunk) => {
-  if (!command || chunk[0] !== 1) process.exit(125);
-  const child = spawn(command, args, {
-    env: process.env,
-    stdio: ['pipe', 'inherit', 'inherit'],
-    windowsHide: true,
-  });
-  child.once('error', (error) => {
-    process.stderr.write(String(error && error.message ? error.message : error));
-    process.exit(126);
-  });
-  child.once('close', (code) => {
-    process.exit(code === null ? 1 : code);
-  });
-  if (chunk.length > 1) child.stdin.write(chunk.subarray(1));
-  process.stdin.pipe(child.stdin);
-});
-`;
 
 interface StartOptions {
   command: string;
@@ -128,15 +107,11 @@ export class BackgroundShellManager {
 
     const executable = options.sandboxedCommand?.executable ?? 'bash';
     const args = options.sandboxedCommand?.args ?? ['-c', options.command];
-    const { child, processTree } = spawnOwnedProcess(
-      process.execPath,
-      ['-e', BACKGROUND_COMMAND_GATE, executable, ...args],
-      {
-        cwd: options.cwd || getCwd(),
-        env: mergedEnv,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      }
-    );
+    const { child, processTree } = spawnCommandAdmissionGate(executable, args, {
+      cwd: options.cwd || getCwd(),
+      env: mergedEnv,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
     if (!child.pid) {
       void processTree.terminate();
       throw new Error('Background process did not expose a PID');
@@ -230,7 +205,7 @@ export class BackgroundShellManager {
 
     this.processes.set(shellId, processInfo);
     try {
-      await this.releaseCommandGate(child);
+      await releaseCommandAdmissionGate(child);
     } catch (error) {
       processInfo.status = 'killed';
       processInfo.endTime = Date.now();
@@ -242,25 +217,6 @@ export class BackgroundShellManager {
       });
     }
     return processInfo;
-  }
-
-  private async releaseCommandGate(child: ChildProcess): Promise<void> {
-    const stdin = child.stdin;
-    if (!stdin || stdin.destroyed || stdin.writableEnded) {
-      throw new Error('Background command gate stdin is unavailable');
-    }
-    await new Promise<void>((resolve, reject) => {
-      const onError = (error: Error) => {
-        stdin.off('error', onError);
-        reject(error);
-      };
-      stdin.once('error', onError);
-      stdin.write(Buffer.from([1]), (error?: Error | null) => {
-        stdin.off('error', onError);
-        if (error) reject(error);
-        else resolve();
-      });
-    });
   }
 
   consumeOutput(shellId: string, sessionId: string): ShellOutputSnapshot | undefined {

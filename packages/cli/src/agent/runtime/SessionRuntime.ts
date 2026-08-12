@@ -19,6 +19,7 @@ import type {
   ResponseVerbositySelection,
   ServiceTierSelection,
 } from '../../config/types.js';
+import { ForegroundProcessLeaseStore } from '../../context/storage/ForegroundProcessLeaseStore.js';
 import { getSessionInboxFilePath } from '../../context/storage/pathUtils.js';
 import { toTaskFailure } from '../../context/taskFailure.js';
 import type {
@@ -1469,13 +1470,17 @@ export class SessionRuntime {
 
     this.sessionLease = await SessionLease.acquire(this.sessionId, this.workspaceRoot);
     try {
-      if (!isAcpMode(this.sessionId)) {
-        await recoverWorkspacePatchTransactions(this.workspaceRoot);
-      }
+      await new ForegroundProcessLeaseStore(
+        this.workspaceRoot,
+        this.sessionId
+      ).reapOrphans();
       await BackgroundShellManager.getInstance().reapOrphanedSession(
         this.sessionId,
         this.workspaceRoot
       );
+      if (!isAcpMode(this.sessionId)) {
+        await recoverWorkspacePatchTransactions(this.workspaceRoot);
+      }
       await BackgroundAgentManager.getInstance().reconcileOrphanedSessions({
         sessionId: this.sessionId,
         projectPath: this.workspaceRoot,

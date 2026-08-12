@@ -15,8 +15,10 @@ import {
 } from '../../src/agent/subagents/BackgroundAgentManager.js';
 import { subagentWorktreeLifecycle } from '../../src/agent/subagents/SubagentWorktreeLifecycle.js';
 import { projectTurnLifecycle } from '../../src/context/events/turnLifecycle.js';
+import { ForegroundProcessLeaseStore } from '../../src/context/storage/ForegroundProcessLeaseStore.js';
 import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
 import { getSessionFilePath } from '../../src/context/storage/pathUtils.js';
+import { BackgroundShellManager } from '../../src/tools/builtin/shell/BackgroundShellManager.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -154,6 +156,47 @@ describe('durable subagent crash recovery', () => {
         cause: 'process_restart',
       },
     });
+  });
+
+  it('reaps child foreground and background processes before transcript recovery', async () => {
+    const agentId = 'agent-crash-process-order';
+    saveRunningSidecar(agentId);
+    const persistent = new PersistentStore(workspace);
+    await persistent.initialize();
+    await persistent.saveTurnStart(agentId, {
+      turnId: 'turn-crash-process-order',
+      kind: 'user',
+      startedAt: new Date(Date.now() - 500).toISOString(),
+    });
+    const order: string[] = [];
+    const foreground = vi
+      .spyOn(ForegroundProcessLeaseStore.prototype, 'reapOrphans')
+      .mockImplementationOnce(async () => {
+        order.push('foreground');
+        return { reaped: 0, stale: 0, active: 0, protected: 0 };
+      });
+    const background = vi
+      .spyOn(BackgroundShellManager.prototype, 'reapOrphanedSession')
+      .mockImplementationOnce(async () => {
+        order.push('background');
+        return { reaped: 0, stale: 0, active: 0, protected: 0 };
+      });
+    const originalRecover = PersistentStore.prototype.recoverInterruptedTurn;
+    const recover = vi
+      .spyOn(PersistentStore.prototype, 'recoverInterruptedTurn')
+      .mockImplementationOnce(async function (...args) {
+        order.push('transcript');
+        return await originalRecover.apply(this, args);
+      });
+
+    try {
+      await BackgroundAgentManager.getInstance().reconcileOrphanedSessions(owner);
+      expect(order).toEqual(['foreground', 'background', 'transcript']);
+    } finally {
+      foreground.mockRestore();
+      background.mockRestore();
+      recover.mockRestore();
+    }
   });
 
   it('recovers a final-ready child as completed exactly once', async () => {

@@ -16,6 +16,7 @@ import type {
   ServiceTierSelection,
 } from '../../config/types.js';
 import { projectTurnLifecycle } from '../../context/events/turnLifecycle.js';
+import { ForegroundProcessLeaseStore } from '../../context/storage/ForegroundProcessLeaseStore.js';
 import { PersistentStore } from '../../context/storage/PersistentStore.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { SessionLspResources } from '../../lsp/WorkspaceLspResources.js';
@@ -42,6 +43,7 @@ import { drainLoop } from '../loop/index.js';
 import type { LoopEvent } from '../loop/types.js';
 import type { SessionAgentResources } from '../resources/WorkspaceAgentResources.js';
 import type { SessionModelResources } from '../resources/WorkspaceModelResources.js';
+import { BackgroundShellManager } from '../../tools/builtin/shell/BackgroundShellManager.js';
 import { SessionInUseError, SessionLease } from '../runtime/SessionLease.js';
 import { SessionRuntime } from '../runtime/SessionRuntime.js';
 import {
@@ -334,6 +336,11 @@ export class BackgroundAgentManager {
     }
 
     try {
+      await new ForegroundProcessLeaseStore(projectPath, session.id).reapOrphans();
+      await BackgroundShellManager.getInstance().reapOrphanedSession(
+        session.id,
+        projectPath
+      );
       const persistentStore = new PersistentStore(projectPath);
       await persistentStore.initialize();
       await persistentStore.recoverInterruptedTurn(session.id);
