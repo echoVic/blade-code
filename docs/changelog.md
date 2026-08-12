@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### ✨ 新功能
+
+- Headless 新增 `--no-verification-agent`，允许 CI/评测关闭内置独立验证
+  Subagent；显式要求的测试、lint、类型检查和构建仍由主 Agent 执行
+
+### 🛡️ 稳定性
+
+- 内置 verification agent 使用独立的 12 轮预算，并禁止重复读取、搜索或执行已经
+  给出结论的检查，避免验证阶段空转耗尽主任务轮次
+- Session catalog 在投影读取路径同步校验 task owner PID，进程异常退出后将残留的
+  `running` 任务持久化为 `interrupted`，Web 不再保留无效 Stop 状态
+- Server 启动时及每小时清理超过 24 小时且仅含 `session_created` 的空会话；清理前
+  校验 durable sidecar、获取跨进程 Session Lease，并在锁内复核 transcript
+- Web SSE 将 `EventSource.CLOSED` 作为正常离线生命周期处理，不记录错误或无意义重连
+- JSONL 所有写入路径统一要求事件 `data` 为 JSON 对象，拒绝 repr 风格字符串和数组
+- `getVersion()` 改为运行时读取安装目录 `package.json`，`npm pack/publish` 通过
+  `prepack` 强制重建，避免旧 `dist` 输出错误版本
+
+### ⚙️ 配置
+
+- 新模型默认使用可读、确定性的模型 ID；旧版 21 位随机 ID 会连同
+  `currentModelId` 自动迁移，显式语义 ID 保持不变
+- 代码/终端配色字段由含糊的 `theme` 迁移为 `codeTheme`，与 Web 明暗模式
+  `uiTheme` 明确区分；旧字段启动时自动迁移
+- 版本缓存以当前安装版本为下限，registry 刷新失败时清除陈旧
+  `latestVersion`，避免长期展示过时版本
+- 默认工程提示新增同步/异步 API 契约规则，禁止将同步方法静默改为
+  `T | Promise<T>`，可选异步行为优先使用独立异步方法
+
+### ✅ 测试相关
+
+- 新增 verifier 开关与独立预算、投影状态收敛、空会话 GC、JSONL data 约束、
+  版本缓存、随机模型 ID/主题迁移、SSE 正常关闭和 dist 版本一致性回归
+
 ## [0.10.24] - 2026-08-12
 
 ### 🛡️ 稳定性
