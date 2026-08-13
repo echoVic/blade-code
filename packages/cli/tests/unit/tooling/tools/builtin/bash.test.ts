@@ -204,6 +204,7 @@ describe('Bash Tool', () => {
       expect(result.metadata?.stdout).not.toContain(prefix);
       expect(String(result.metadata?.stdout).length).toBeLessThan(outputBudget);
       expect(result.metadata).toMatchObject({
+        has_stderr: false,
         output_accounting_complete: true,
         terminal_transport: 'local',
         terminal_output_merged: false,

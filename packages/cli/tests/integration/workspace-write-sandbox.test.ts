@@ -199,6 +199,7 @@ describe('Bash workspace-write sandbox integration', () => {
       success: false,
       error: { type: 'permission_denied' },
       metadata: {
+        has_stderr: true,
         output_accounting_complete: true,
         terminal_transport: 'local',
         terminal_output_merged: false,

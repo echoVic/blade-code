@@ -700,6 +700,7 @@ async function executeWithTimeout(
         stderr_retained_bytes: snapshot.stderr.retainedBytes,
         stderr_omitted_bytes: snapshot.stderr.omittedBytes,
         raw_output_bytes: snapshot.stdout.totalBytes + snapshot.stderr.totalBytes,
+        has_stderr: snapshot.stderr.totalBytes > 0 || snapshot.stderr.totalChars > 0,
         output_accounting_complete:
           snapshot.stdout.accountingComplete && snapshot.stderr.accountingComplete,
         terminal_transport: 'local' as const,
@@ -899,9 +900,6 @@ async function executeWithTimeout(
         execution_time: executionTime,
         exit_code: code,
         signal: sig,
-        has_stderr:
-          projected.snapshot.stderr.totalBytes > 0 ||
-          projected.snapshot.stderr.totalChars > 0,
         sandboxed: Boolean(sandboxedCommand),
         summary,
       };
