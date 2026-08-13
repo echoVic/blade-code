@@ -34,13 +34,13 @@ export async function createForegroundBoundedOutputFixture(
   const stderrTail = `STDERR_RETAINED_TAIL_${nonce}`;
   const scriptPath = path.join(workspace, `bounded-foreground-${nonce}.mjs`);
   const script = [
-    "const totalBytes = 1024 * 1024 + 64 * 1024;",
+    'const totalBytes = 1024 * 1024 + 64 * 1024;',
     `const stdoutPrefix = Buffer.from(${JSON.stringify(`${stdoutPrefixSentinel}\n`)});`,
     `const stderrPrefix = Buffer.from(${JSON.stringify(`${stderrPrefixSentinel}\n`)});`,
     `const stdoutTail = Buffer.from(${JSON.stringify(`\n${stdoutTail}\n`)});`,
     `const stderrTail = Buffer.from(${JSON.stringify(`\n${stderrTail}\n`)});`,
-    "const stdoutFiller = Buffer.alloc(totalBytes - stdoutPrefix.length - stdoutTail.length, 0x78);",
-    "const stderrFiller = Buffer.alloc(totalBytes - stderrPrefix.length - stderrTail.length, 0x79);",
+    'const stdoutFiller = Buffer.alloc(totalBytes - stdoutPrefix.length - stdoutTail.length, 0x78);',
+    'const stderrFiller = Buffer.alloc(totalBytes - stderrPrefix.length - stderrTail.length, 0x79);',
     'process.stdout.write(stdoutPrefix);',
     'process.stdout.write(stdoutFiller);',
     'process.stderr.write(stderrPrefix);',

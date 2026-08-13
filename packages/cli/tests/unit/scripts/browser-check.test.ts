@@ -22,9 +22,7 @@ describe('Chromium qualification preflight', () => {
         }),
         launch,
       })
-    ).rejects.toThrow(
-      'Install with: bun run --filter blade-code browser:install'
-    );
+    ).rejects.toThrow('Install with: bun run --filter blade-code browser:install');
     expect(launch).not.toHaveBeenCalled();
   });
 

@@ -26,9 +26,7 @@ describe('foreground bounded output qualification harness', () => {
   });
 
   async function fixture(): Promise<ForegroundBoundedOutputFixture> {
-    const workspace = await mkdtemp(
-      path.join(tmpdir(), 'blade-foreground-bounded-')
-    );
+    const workspace = await mkdtemp(path.join(tmpdir(), 'blade-foreground-bounded-'));
     roots.push(workspace);
     return createForegroundBoundedOutputFixture(workspace, 'unit_nonce');
   }
@@ -116,18 +114,14 @@ describe('foreground bounded output qualification harness', () => {
       )
     ).toThrow('sentinel');
     expect(() =>
-      assertForegroundBoundedOutputEvidenceSafe(
-        { output: 'test-secret' },
-        created,
-        ['test-secret']
-      )
+      assertForegroundBoundedOutputEvidenceSafe({ output: 'test-secret' }, created, [
+        'test-secret',
+      ])
     ).toThrow('Secret material');
   });
 
   it('requires bounded retained bytes and exact durable transport facts', () => {
-    const makeEvent = (
-      metadata: Record<string, unknown>
-    ): SessionEvent =>
+    const makeEvent = (metadata: Record<string, unknown>): SessionEvent =>
       ({
         id: 'result',
         sessionId: 'bounded-session',

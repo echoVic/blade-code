@@ -562,9 +562,7 @@ async function executeWithAcpTerminal(
         metadata: {
           command,
           aborted: true,
-          ...(projected
-            ? { stdout: projected.stdout, stderr: projected.stderr }
-            : {}),
+          ...(projected ? { stdout: projected.stdout, stderr: projected.stderr } : {}),
           execution_time: executionTime,
           exit_code: result.exitCode,
           acp_mode: true,
@@ -584,9 +582,7 @@ async function executeWithAcpTerminal(
         metadata: {
           command,
           timeout: true,
-          ...(projected
-            ? { stdout: projected.stdout, stderr: projected.stderr }
-            : {}),
+          ...(projected ? { stdout: projected.stdout, stderr: projected.stderr } : {}),
           execution_time: executionTime,
           exit_code: result.exitCode,
           acp_mode: true,
@@ -596,12 +592,11 @@ async function executeWithAcpTerminal(
     }
 
     const cmdPreview = command.length > 30 ? `${command.substring(0, 30)}...` : command;
-    const summary =
-      result.success
-        ? `执行命令成功 (${executionTime}ms): ${cmdPreview}`
-        : result.failureKind
-          ? `执行命令失败 (${result.failureKind}, ${executionTime}ms): ${cmdPreview}`
-          : `执行命令完成 (退出码 ${result.exitCode}, ${executionTime}ms): ${cmdPreview}`;
+    const summary = result.success
+      ? `执行命令成功 (${executionTime}ms): ${cmdPreview}`
+      : result.failureKind
+        ? `执行命令失败 (${result.failureKind}, ${executionTime}ms): ${cmdPreview}`
+        : `执行命令完成 (退出码 ${result.exitCode}, ${executionTime}ms): ${cmdPreview}`;
 
     const metadata: BashForegroundMetadata = {
       command,
@@ -627,11 +622,7 @@ async function executeWithAcpTerminal(
 
     return {
       success: result.success,
-      llmContent: normalShellLlmContent(
-        projected,
-        executionTime,
-        result.exitCode
-      ),
+      llmContent: normalShellLlmContent(projected, executionTime, result.exitCode),
       ...(result.success
         ? {}
         : {

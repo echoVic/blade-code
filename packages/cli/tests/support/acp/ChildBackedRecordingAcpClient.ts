@@ -184,9 +184,7 @@ export class ChildBackedRecordingAcpClient implements acp.Client {
       if (!state.exited) {
         await this.killTerminal({ sessionId: '', terminalId }).catch(() => undefined);
       }
-      await this.releaseTerminal({ sessionId: '', terminalId }).catch(
-        () => undefined
-      );
+      await this.releaseTerminal({ sessionId: '', terminalId }).catch(() => undefined);
     }
   }
 

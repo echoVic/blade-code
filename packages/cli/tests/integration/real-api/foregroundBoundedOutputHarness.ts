@@ -17,11 +17,7 @@ function requireNumber(
   field: string,
   predicate: (candidate: number) => boolean
 ): number {
-  if (
-    typeof value !== 'number' ||
-    !Number.isSafeInteger(value) ||
-    !predicate(value)
-  ) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || !predicate(value)) {
     throw new Error(`Bounded output trace has invalid ${field}`);
   }
   return value;
@@ -33,7 +29,9 @@ export function assertForegroundBoundedOutputToolTrace(
   transport: Transport
 ): void {
   if (trace.length !== 1) {
-    throw new Error(`Expected exactly one foreground Bash call; received ${trace.length}`);
+    throw new Error(
+      `Expected exactly one foreground Bash call; received ${trace.length}`
+    );
   }
   const record = trace[0];
   if (
@@ -50,10 +48,7 @@ export function assertForegroundBoundedOutputToolTrace(
   }
 
   const output = record.output;
-  if (
-    output.output_truncated !== true ||
-    output.output_accounting_complete !== true
-  ) {
+  if (output.output_truncated !== true || output.output_accounting_complete !== true) {
     throw new Error('Foreground bounded output result lacks complete truncation facts');
   }
   const stdoutTotal = requireNumber(

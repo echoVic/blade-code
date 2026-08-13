@@ -67,9 +67,7 @@ function createHarness(): PairedHarness {
   };
 }
 
-function finalAgentText(
-  notifications: readonly acp.SessionNotification[]
-): string {
+function finalAgentText(notifications: readonly acp.SessionNotification[]): string {
   return notifications
     .flatMap((notification) =>
       notification.update.sessionUpdate === 'agent_message_chunk' &&
@@ -145,7 +143,9 @@ export async function runForegroundBoundedOutputAcpDriver(input: {
         notification.update.title.includes('Bash')
     );
     if (bashStarts.length !== 1) {
-      throw new Error(`ACP bounded output expected one Bash call, got ${bashStarts.length}`);
+      throw new Error(
+        `ACP bounded output expected one Bash call, got ${bashStarts.length}`
+      );
     }
     const terminalUpdates = updates.filter(
       (notification) =>
@@ -167,8 +167,7 @@ export async function runForegroundBoundedOutputAcpDriver(input: {
     if (
       terminalUpdates.some(
         (notification) =>
-          '_meta' in notification.update &&
-          notification.update._meta !== undefined
+          '_meta' in notification.update && notification.update._meta !== undefined
       )
     ) {
       throw new Error('ACP live tool update exposed a private metadata extension');

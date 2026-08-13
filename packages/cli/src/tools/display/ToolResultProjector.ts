@@ -64,11 +64,7 @@ export function projectDurableToolResult(
 function safeHead(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   let end = Math.max(0, maxChars);
-  if (
-    end > 0 &&
-    end < value.length &&
-    /[\uD800-\uDBFF]/.test(value.charAt(end - 1))
-  ) {
+  if (end > 0 && end < value.length && /[\uD800-\uDBFF]/.test(value.charAt(end - 1))) {
     end -= 1;
   }
   return value.slice(0, end);
@@ -100,10 +96,7 @@ function fitSection(section: string, maxChars: number): string {
   const headChars = Math.min(Math.floor(available / 3), content.length);
   const tailChars = Math.max(0, available - headChars);
   return (
-    firstLine +
-    safeHead(content, headChars) +
-    marker +
-    safeTail(content, tailChars)
+    firstLine + safeHead(content, headChars) + marker + safeTail(content, tailChars)
   );
 }
 
@@ -124,10 +117,7 @@ function splitStreamSections(body: string): string[] {
   const stderrMarker = '\nstderr:\n';
   const stderrIndex = body.indexOf(stderrMarker);
   if (!body.startsWith('stdout:\n') || stderrIndex < 0) return [body];
-  return [
-    body.slice(0, stderrIndex),
-    body.slice(stderrIndex + 1),
-  ];
+  return [body.slice(0, stderrIndex), body.slice(stderrIndex + 1)];
 }
 
 export function fitToolDisplayForSurface(

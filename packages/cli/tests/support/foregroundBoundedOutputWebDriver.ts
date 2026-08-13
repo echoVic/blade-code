@@ -31,9 +31,7 @@ export function isExpectedBrowserRequestFailure(
 ): boolean {
   if (failure.closing) return true;
   if (!failure.refreshing) return false;
-  const aborted = /ERR_ABORTED|NS_BINDING_ABORTED|cancelled/i.test(
-    failure.errorText
-  );
+  const aborted = /ERR_ABORTED|NS_BINDING_ABORTED|cancelled/i.test(failure.errorText);
   if (!aborted) return false;
   return (
     failure.resourceType === 'document' ||
@@ -234,16 +232,12 @@ export async function runForegroundBoundedOutputWebDriver(input: {
     import.meta.dirname,
     'launch-foreground-bounded-output-gui.ts'
   );
-  const child = spawn(
-    'bun',
-    [launcherScript, input.root, String(port), input.model],
-    {
-      cwd: path.resolve(import.meta.dirname, '../..'),
-      env: process.env,
-      detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }
-  );
+  const child = spawn('bun', [launcherScript, input.root, String(port), input.model], {
+    cwd: path.resolve(import.meta.dirname, '../..'),
+    env: process.env,
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   const identity = child.pid ? captureProcessIdentity(child.pid) : undefined;
   let stderrTail = '';
   child.stderr?.on('data', (chunk: Buffer | string) => {
@@ -324,7 +318,9 @@ export async function runForegroundBoundedOutputWebDriver(input: {
     const reloadOutputChars = await expandAndReadBashCard(page, input.fixture);
 
     if (faults.length > 0) {
-      throw new Error(`Browser faults: ${redact(JSON.stringify(faults), input.secrets)}`);
+      throw new Error(
+        `Browser faults: ${redact(JSON.stringify(faults), input.secrets)}`
+      );
     }
     return {
       sessionId,

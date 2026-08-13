@@ -874,9 +874,7 @@ describe('headless runner', () => {
     expect(detail).toContain('STDOUT_TAIL');
     expect(detail).toContain('STDERR_TAIL');
     expect(detail.split('Output truncated')).toHaveLength(2);
-    expect(detail.split('\n').at(-1)).toBe(
-      'Output truncated: earliest bytes omitted'
-    );
+    expect(detail.split('\n').at(-1)).toBe('Output truncated: earliest bytes omitted');
     expect(stderr.write).not.toHaveBeenCalled();
   });
 
@@ -909,10 +907,7 @@ describe('headless runner', () => {
     );
     const { runHeadless } = await import('../../../src/commands/headless.js');
 
-    await runHeadless(
-      { headless: true, message: 'run fixture' },
-      { stdout, stderr }
-    );
+    await runHeadless({ headless: true, message: 'run fixture' }, { stdout, stderr });
 
     const stdoutText = stdout.write.mock.calls.map(([chunk]) => String(chunk)).join('');
     const stderrText = stderr.write.mock.calls.map(([chunk]) => String(chunk)).join('');

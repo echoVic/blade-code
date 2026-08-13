@@ -280,9 +280,7 @@ function fitToolOutputForCard(output: string): {
 function ToolCallItem({ tool }: { tool: ToolCallInfo }) {
   const [expanded, setExpanded] = useState(false);
   const args = formatToolArguments(tool.arguments);
-  const projectedOutput = tool.output
-    ? fitToolOutputForCard(tool.output)
-    : undefined;
+  const projectedOutput = tool.output ? fitToolOutputForCard(tool.output) : undefined;
 
   return (
     <div
@@ -378,9 +376,7 @@ function ToolCallItem({ tool }: { tool: ToolCallInfo }) {
                 {projectedOutput.notice && (
                   <>
                     {'\n'}
-                    <span data-tool-truncation-notice>
-                      {projectedOutput.notice}
-                    </span>
+                    <span data-tool-truncation-notice>{projectedOutput.notice}</span>
                   </>
                 )}
               </pre>

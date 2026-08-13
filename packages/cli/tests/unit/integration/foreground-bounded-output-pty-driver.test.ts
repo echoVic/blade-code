@@ -6,11 +6,7 @@ import {
 
 describe('foreground bounded output PTY driver', () => {
   it('retains only the latest bounded ANSI evidence', () => {
-    const output = appendBoundedPtyEvidence(
-      'prefix-',
-      `${'x'.repeat(100)}TAIL`,
-      16
-    );
+    const output = appendBoundedPtyEvidence('prefix-', `${'x'.repeat(100)}TAIL`, 16);
 
     expect(output).toHaveLength(16);
     expect(output).toContain('TAIL');
@@ -40,9 +36,9 @@ describe('foreground bounded output PTY driver', () => {
         JSON.stringify({ success: false, output: 'failed' })
       )
     ).toThrow('incomplete');
-    expect(() =>
-      parseForegroundBoundedOutputPtyEvidence('x'.repeat(30_001))
-    ).toThrow('budget');
+    expect(() => parseForegroundBoundedOutputPtyEvidence('x'.repeat(30_001))).toThrow(
+      'budget'
+    );
     expect(() =>
       parseForegroundBoundedOutputPtyEvidence(
         JSON.stringify({

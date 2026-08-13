@@ -400,12 +400,7 @@ const handleToolResult: EventHandler = (props, get, set) => {
   const targetMessageId =
     messageWithTool?.id ||
     messageWithSubagent?.id ||
-    ensureAssistantMessage(
-      get,
-      set,
-      props.messageId as string | undefined,
-      true
-    );
+    ensureAssistantMessage(get, set, props.messageId as string | undefined, true);
 
   if (!targetMessageId) return;
 

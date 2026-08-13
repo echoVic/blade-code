@@ -258,9 +258,9 @@ describe('ChatMessage', () => {
     expect(renderedOutput).toContain('STDOUT_TAIL');
     expect(renderedOutput).toContain('STDERR_TAIL');
     expect(renderedOutput.split('Output truncated')).toHaveLength(2);
-    expect(
-      card?.querySelector('[data-tool-truncation-notice]')?.textContent
-    ).toBe('Output truncated: earliest bytes omitted');
+    expect(card?.querySelector('[data-tool-truncation-notice]')?.textContent).toBe(
+      'Output truncated: earliest bytes omitted'
+    );
   });
 
   test('renders the assistant timeline chronologically with two-level collapsed tools', () => {

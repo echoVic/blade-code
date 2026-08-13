@@ -911,13 +911,10 @@ export function projectClientMessages(messages: readonly Message[]): Message[] {
             ...projected,
             name: toolName,
             content: renderToolDisplayToString(display),
-            metadata: sanitizeToolMetadata(
-              toolName,
-              {
-                ...restored.metadata,
-                status: restored.success ? 'completed' : 'failed',
-              }
-            ) as Message['metadata'],
+            metadata: sanitizeToolMetadata(toolName, {
+              ...restored.metadata,
+              status: restored.success ? 'completed' : 'failed',
+            }) as Message['metadata'],
           },
         ];
       }
@@ -3092,9 +3089,7 @@ export const createSessionRouteController = (): SessionRouteController => {
                   ...(typeof event.seq === 'number' ? { id: String(event.seq) } : {}),
                   data: JSON.stringify({
                     type: projected.type,
-                    ...(projected.seq !== undefined
-                      ? { seq: projected.seq }
-                      : {}),
+                    ...(projected.seq !== undefined ? { seq: projected.seq } : {}),
                     properties: {
                       ...projected.properties,
                       sessionId: ref.sessionId,

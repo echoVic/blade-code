@@ -228,9 +228,7 @@ describe('createLoopEventHandler', () => {
     expect(detail).toContain('STDOUT_TAIL');
     expect(detail).toContain('STDERR_TAIL');
     expect(detail.split('Output truncated')).toHaveLength(2);
-    expect(detail.split('\n').at(-1)).toBe(
-      'Output truncated: earliest bytes omitted'
-    );
+    expect(detail.split('\n').at(-1)).toBe('Output truncated: earliest bytes omitted');
   });
 
   // ==================== 场景 1: 正常 stream_end ====================
