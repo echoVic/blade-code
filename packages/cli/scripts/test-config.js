@@ -33,6 +33,7 @@ export const testTypes = {
       'tests/integration/real-api/action-stationarity-trajectory.test.ts',
       'tests/integration/real-api/goal-mode-trajectory.test.ts',
       'tests/integration/real-api/root-turn-auto-resume-trajectory.test.ts',
+      'tests/integration/real-api/goal-finalization-handoff-trajectory.test.ts',
       'tests/integration/real-api/foreground-bounded-output-trajectory.test.ts',
     ],
     env: {
