@@ -36,8 +36,8 @@ describe('projectShellOutput', () => {
     expect(projected.projectionTruncated).toBe(true);
     expect(projected.stdoutProjectionTruncated).toBe(true);
     expect(projected.stderrProjectionTruncated).toBe(true);
-    expect(projected.truncationInfo).toContain('stdout:');
-    expect(projected.truncationInfo).toContain('stderr:');
+    expect(projected.truncationInfo).toContain('stdout: 100 lines -> 25 lines');
+    expect(projected.truncationInfo).toContain('stderr: 100 lines -> 25 lines');
   });
 
   it('combines capture omission and projection truncation in one bounded notice', () => {
