@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Bus } from '../../../src/server/bus.js';
 
@@ -79,6 +80,8 @@ describe('headless runner', () => {
     runtimeState.create.mockResolvedValue({
       dispose: runtimeState.dispose,
       getConfig: () => ({ maxTurns: -1 }),
+      getPendingSteeringCount: () => 0,
+      getGoal: async () => null,
       executeUserShellCommand: runtimeState.executeUserShellCommand,
     });
     runtimeState.executeUserShellCommand.mockReset();
@@ -89,6 +92,61 @@ describe('headless runner', () => {
     agentState.createWithRuntime.mockResolvedValue({
       chatStream: agentState.chatStream,
     });
+  });
+
+  it('resumes durable input without creating a synthetic wake-up prompt', async () => {
+    runtimeState.create.mockResolvedValueOnce({
+      dispose: runtimeState.dispose,
+      getConfig: () => ({ maxTurns: -1 }),
+      getPendingSteeringCount: () => 1,
+      getGoal: async () => null,
+      executeUserShellCommand: runtimeState.executeUserShellCommand,
+    });
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        resume: 'headless-session',
+      },
+      { stdout, stderr },
+      { stdin: Readable.from([]) as NodeJS.ReadStream }
+    );
+
+    expect(exitCode).toBe(0);
+    expect(agentState.chatStream).toHaveBeenCalledWith(
+      '',
+      expect.objectContaining({
+        sessionId: 'headless-session',
+      }),
+      expect.objectContaining({
+        pendingInputOnly: true,
+        goalContinuationOnly: false,
+      })
+    );
+  });
+
+  it('fails closed when a bare resume has no unfinished work', async () => {
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        resume: 'headless-session',
+      },
+      { stdout, stderr },
+      { stdin: Readable.from([]) as NodeJS.ReadStream }
+    );
+
+    expect(exitCode).toBe(1);
+    expect(agentState.chatStream).not.toHaveBeenCalled();
+    expect(stderr.write).toHaveBeenCalledWith(
+      'Error: No unfinished turn or active goal to resume\n'
+    );
   });
 
   it('parses custom agents and passes them to the session runtime', async () => {

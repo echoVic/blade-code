@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Readable } from 'node:stream';
 
 const pluginState = {
   resolveWorkspaceAgentResources: vi.fn(),
@@ -135,6 +136,29 @@ describe('command input helpers', () => {
 
     await initializeCliPlugins();
     expect(pluginState.resolveWorkspaceAgentResources).toHaveBeenCalledOnce();
+  });
+
+  it('distinguishes missing recovery input from an explicit prompt', async () => {
+    const { readOptionalCliInput } = await import(
+      '../../../src/commands/shared/commandInput.js'
+    );
+
+    await expect(
+      readOptionalCliInput({
+        message: 'continue the migration',
+        stdin: Readable.from([]) as NodeJS.ReadStream,
+      })
+    ).resolves.toBe('continue the migration');
+    await expect(
+      readOptionalCliInput({
+        stdin: Readable.from([]) as NodeJS.ReadStream,
+      })
+    ).resolves.toBeUndefined();
+    await expect(
+      readOptionalCliInput({
+        stdin: Readable.from(['  durable prompt  ']) as NodeJS.ReadStream,
+      })
+    ).resolves.toBe('durable prompt');
   });
 
   it('normalizes slash command requests into agent prompts', async () => {

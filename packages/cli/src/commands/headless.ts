@@ -59,6 +59,7 @@ import {
   initializeCliPlugins,
   normalizeCliInput,
   readCliInput,
+  readOptionalCliInput,
 } from './shared/commandInput.js';
 import { resolveCliOutputSchema } from './shared/outputSchema.js';
 import { resolveNonInteractiveSession } from './shared/sessionContext.js';
@@ -76,6 +77,7 @@ interface HeadlessIO {
 
 interface HeadlessRunControl {
   signal?: AbortSignal;
+  stdin?: NodeJS.ReadStream;
 }
 
 function createHeadlessAbortSignal(control?: HeadlessRunControl): {
@@ -1118,8 +1120,25 @@ export async function runHeadless(
 
     await initializeCliPlugins();
 
-    const rawInput = await readCliInput(validatedOptions);
-    const normalized = await normalizeCliInput(rawInput);
+    const acceptsInputlessResume =
+      validatedOptions.forkSession !== true &&
+      (validatedOptions.continue === true ||
+        (typeof validatedOptions.resume === 'string' &&
+          validatedOptions.resume.length > 0));
+    const rawInput = acceptsInputlessResume
+      ? await readOptionalCliInput({
+          message: validatedOptions.message,
+          _: validatedOptions._,
+          stdin: control?.stdin,
+        })
+      : await readCliInput({
+          ...validatedOptions,
+          stdin: control?.stdin,
+        });
+    const inputlessResume = rawInput === undefined;
+    const normalized = inputlessResume
+      ? ({ mode: 'agent', content: '' } as const)
+      : await normalizeCliInput(rawInput);
     if (normalized.mode === 'output') {
       if (normalized.content) {
         eventWriter.output(normalized.content, normalized.exitCode ?? 0);
@@ -1263,6 +1282,14 @@ export async function runHeadless(
           }
         : {}),
     });
+    const pendingInputOnly = inputlessResume && runtime.getPendingSteeringCount() > 0;
+    const resumedGoal =
+      inputlessResume && !pendingInputOnly ? await runtime.getGoal() : null;
+    const goalContinuationOnly =
+      resumedGoal?.status === 'active' || resumedGoal?.status === 'verifying';
+    if (inputlessResume && !pendingInputOnly && !goalContinuationOnly) {
+      throw new Error('No unfinished turn or active goal to resume');
+    }
     if (userShellCommand !== undefined) {
       const result = await runtime.executeUserShellCommand(userShellCommand, {
         signal: abortControl.signal,
@@ -1322,6 +1349,8 @@ export async function runHeadless(
         maxTurns: validatedOptions.maxTurns,
         builtinVerification: validatedOptions.verificationAgent !== false,
         outputSchema,
+        pendingInputOnly,
+        goalContinuationOnly,
         ...(effectiveMaxTurns === -1
           ? {
               onTurnLimitReached: async (data: { turnsCount: number }) => {

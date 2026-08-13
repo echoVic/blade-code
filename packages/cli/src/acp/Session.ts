@@ -426,7 +426,11 @@ export class AcpSession {
       });
     });
     const activeGoal = await this.runtime.getGoal();
-    if (this.runtime.getPendingSteeringCount() > 0 || activeGoal?.status === 'active') {
+    if (
+      this.runtime.getPendingSteeringCount() > 0 ||
+      activeGoal?.status === 'active' ||
+      activeGoal?.status === 'verifying'
+    ) {
       if (this.options.initialMessages === undefined) {
         this.schedulePendingResume();
       } else {
@@ -1555,7 +1559,7 @@ export class AcpSession {
       return;
     const hasPending = this.runtime.getPendingSteeringCount() > 0;
     const goal = hasPending ? null : await this.runtime.getGoal();
-    const hasActiveGoal = goal?.status === 'active';
+    const hasActiveGoal = goal?.status === 'active' || goal?.status === 'verifying';
     if (!hasPending && !hasActiveGoal) {
       this.pendingResumeRequested = false;
       return;

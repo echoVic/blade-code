@@ -243,6 +243,7 @@ describe('AcpSession', () => {
     runtimeState.runtime.getCurrentModelId.mockReturnValue('model-1');
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
     runtimeState.runtime.getPendingSteeringMessages.mockReturnValue([]);
+    runtimeState.runtime.getGoal.mockReset().mockResolvedValue(null);
     runtimeState.runtime.listRewindCheckpoints.mockReset().mockResolvedValue([]);
     runtimeState.runtime.rewindSession.mockReset();
     runtimeState.runtime.listSubagents.mockReset().mockReturnValue([]);
@@ -375,6 +376,20 @@ describe('AcpSession', () => {
         expect(getMockAgent().calls[0]).toMatchObject({
           message: '',
           options: { pendingInputOnly: true },
+        });
+      });
+    });
+
+    it('应该在初始化后自动恢复 verifying Goal', async () => {
+      runtimeState.runtime.getGoal.mockResolvedValue({
+        status: 'verifying',
+      });
+      await session.initialize();
+
+      await vi.waitFor(() => {
+        expect(getMockAgent().calls[0]).toMatchObject({
+          message: '',
+          options: { goalContinuationOnly: true },
         });
       });
     });

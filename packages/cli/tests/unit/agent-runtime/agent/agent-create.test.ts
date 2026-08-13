@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Agent } from '../../../../src/agent/Agent.js';
+import type { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
 import { taskRunScheduler } from '../../../../src/agent/runtime/TaskRunScheduler.js';
 import { type BladeConfig, PermissionMode } from '../../../../src/config/types.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
+import type { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 
 function createConfig(overrides: Partial<BladeConfig> = {}): BladeConfig {
   return {
@@ -67,6 +69,7 @@ function createGoalRuntimeMocks() {
     recordGoalProgress: vi.fn().mockResolvedValue(null),
     getGoal: vi.fn().mockResolvedValue(null),
     pauseActiveGoal: vi.fn().mockResolvedValue(null),
+    loadModelContext: vi.fn().mockResolvedValue([]),
   };
 }
 
@@ -795,6 +798,77 @@ describe('Agent runLoop system prompt injection', () => {
     });
   });
 
+  it('replaces stale caller context after runtime recovery before pending input', async () => {
+    const turn = { id: 'recovered-turn' };
+    const runtime = {
+      ...createGoalRuntimeMocks(),
+      sessionId: 'recovered-session',
+      workspaceRoot: '/workspace/recovered',
+      beginPendingTurn: vi.fn().mockResolvedValue(turn),
+      drainSteering: vi.fn(async () => []),
+      drainSteeringOrSeal: vi.fn(async () => ({
+        messages: [],
+        sealed: true,
+      })),
+      finishTurn: vi.fn().mockResolvedValue(undefined),
+      getPendingSteeringCount: vi.fn(() => 1),
+      getRecoveredSteeringCount: vi.fn(() => 1),
+      getPendingSteeringMessages: vi.fn(() => []),
+    };
+    const agent = new Agent(
+      createConfig(),
+      {},
+      {
+        getRegistry: () => ({ getAll: () => [] }),
+      } as unknown as ToolExecutor,
+      runtime as unknown as SessionRuntime
+    );
+    const durableContext = [
+      {
+        role: 'assistant' as const,
+        content: 'Process restart receipt',
+        metadata: {
+          processRestartRecovery: true,
+          sideEffectsUncertain: true,
+        },
+      },
+    ];
+    runtime.loadModelContext.mockResolvedValue(durableContext);
+    const context = {
+      messages: [{ role: 'assistant' as const, content: 'stale snapshot' }],
+      userId: 'user-1',
+      sessionId: 'recovered-session',
+      workspaceRoot: '/workspace/recovered',
+    };
+    const runLoop = vi.fn(async function* (
+      message: string,
+      loopContext: typeof context,
+      options: { pendingInputOnly?: boolean }
+    ) {
+      if (Date.now() < 0) yield undefined;
+      expect(message).toBe('');
+      expect(options.pendingInputOnly).toBe(true);
+      expect(loopContext.messages).toEqual(durableContext);
+      return {
+        success: true,
+        finalMessage: 'recovered',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+    Object.assign(agent, { isInitialized: true, runLoop });
+
+    const iterator = agent.chatStream('', context, { pendingInputOnly: true });
+    let step = await iterator.next();
+    while (!step.done) step = await iterator.next();
+
+    expect(runtime.loadModelContext).toHaveBeenCalledOnce();
+    expect(context.messages).toEqual(durableContext);
+    expect(step.value).toMatchObject({
+      success: true,
+      finalMessage: 'recovered',
+    });
+  });
+
   it('queues a new prompt behind durable input before starting an idle turn', async () => {
     const pendingTurn = { id: 'pending-turn' };
     const runtime = {
@@ -827,6 +901,13 @@ describe('Agent runLoop system prompt injection', () => {
           content: 'newer',
           queuedAt: Date.now(),
           recovered: false,
+        },
+      ]),
+      loadModelContext: vi.fn().mockResolvedValue([
+        {
+          role: 'user',
+          content: 'older',
+          metadata: { inboxMessageId: 'older-durable' },
         },
       ]),
     };
@@ -875,6 +956,7 @@ describe('Agent runLoop system prompt injection', () => {
     }
 
     expect(runtime.prepareInputTurn).toHaveBeenCalledWith('newer');
+    expect(runtime.loadModelContext).toHaveBeenCalledOnce();
     expect(events).toContainEqual(
       expect.objectContaining({
         kind: 'follow_up_started',

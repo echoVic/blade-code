@@ -21,6 +21,7 @@ import {
   initializeCliPlugins,
   normalizeCliInput,
   readCliInput,
+  readOptionalCliInput,
 } from './shared/commandInput.js';
 import { resolveCliOutputSchema } from './shared/outputSchema.js';
 import { resolveNonInteractiveSession } from './shared/sessionContext.js';
@@ -133,12 +134,24 @@ export async function runPrint(
   try {
     await initializeCliPlugins();
 
-    const rawInput = await readCliInput({
-      message: options.message,
-      _: options._,
-      defaultMessage: 'Hello',
-    });
-    const normalized = await normalizeCliInput(rawInput);
+    const acceptsInputlessResume =
+      options.forkSession !== true &&
+      (options.continue === true ||
+        (typeof options.resume === 'string' && options.resume.length > 0));
+    const rawInput = acceptsInputlessResume
+      ? await readOptionalCliInput({
+          message: options.message,
+          _: options._,
+        })
+      : await readCliInput({
+          message: options.message,
+          _: options._,
+          defaultMessage: 'Hello',
+        });
+    const inputlessResume = rawInput === undefined;
+    const normalized = inputlessResume
+      ? ({ mode: 'agent', content: '' } as const)
+      : await normalizeCliInput(rawInput);
     if (normalized.mode === 'output') {
       if (normalized.content) {
         io.stdout.write(`${normalized.content}\n`);
@@ -198,6 +211,14 @@ export async function runPrint(
           }
         : {}),
     });
+    const pendingInputOnly = inputlessResume && runtime.getPendingSteeringCount() > 0;
+    const resumedGoal =
+      inputlessResume && !pendingInputOnly ? await runtime.getGoal() : null;
+    const goalContinuationOnly =
+      resumedGoal?.status === 'active' || resumedGoal?.status === 'verifying';
+    if (inputlessResume && !pendingInputOnly && !goalContinuationOnly) {
+      throw new Error('No unfinished turn or active goal to resume');
+    }
     if (userShellCommand !== undefined) {
       const result = await runtime.executeUserShellCommand(userShellCommand);
       if (options.outputFormat === 'json') {
@@ -241,8 +262,12 @@ export async function runPrint(
       permissionMode,
     };
     const loopResult = await drainLoop(
-      outputSchema
-        ? agent.chatStream(input, chatContext, { outputSchema })
+      outputSchema || inputlessResume
+        ? agent.chatStream(input, chatContext, {
+            ...(outputSchema ? { outputSchema } : {}),
+            pendingInputOnly,
+            goalContinuationOnly,
+          })
         : agent.chatStream(input, chatContext)
     );
     if (!loopResult.success) {

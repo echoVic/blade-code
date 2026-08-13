@@ -81,6 +81,7 @@ import { Bus } from '../../server/bus.js';
 import {
   createChatServiceAsync,
   type IChatService,
+  type Message,
 } from '../../services/ChatServiceInterface.js';
 import {
   BUILTIN_COMMUNICATION_STYLE_CATALOG,
@@ -690,6 +691,13 @@ export class SessionRuntime {
       throw new Error('Session runtime is not initialized');
     }
     return this.executionEngine;
+  }
+
+  async loadModelContext(): Promise<Message[]> {
+    if (!this.initialized) {
+      throw new Error('Session runtime is not initialized');
+    }
+    return SessionService.loadSessionModelContext(this.sessionId, this.workspaceRoot);
   }
 
   getAttachmentCollector(): AttachmentCollector {

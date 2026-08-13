@@ -561,6 +561,16 @@ export class Agent {
         preparedInputTurn = preparation;
       }
     }
+    if (
+      context &&
+      this.sessionRuntime &&
+      (requestedPendingInputOnly ||
+        requestedGoalContinuationOnly ||
+        preparedInputTurn?.mode === 'pending')
+    ) {
+      const durableContext = await this.sessionRuntime.loadModelContext();
+      context.messages.splice(0, context.messages.length, ...durableContext);
+    }
 
     let enhancedMessage = message;
     let initialGoal: GoalSnapshot | null = null;

@@ -8,7 +8,10 @@ import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js'
 import type { AgentSession } from '../../../../src/agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../../src/agent/subagents/BackgroundAgentManager.js';
 import { PermissionMode } from '../../../../src/config/types.js';
-import { PersistentStore } from '../../../../src/context/storage/PersistentStore.js';
+import {
+  PersistentStore,
+  PROCESS_RESTART_TOOL_RESULT,
+} from '../../../../src/context/storage/PersistentStore.js';
 import { getSessionFilePath } from '../../../../src/context/storage/pathUtils.js';
 import { HookManager } from '../../../../src/hooks/HookManager.js';
 import { HookEvent } from '../../../../src/hooks/types/HookTypes.js';
@@ -1186,6 +1189,13 @@ describe('SessionRuntime', () => {
     const sessionId = 'orphaned-turn-session';
     const first = await SessionRuntime.create({ sessionId, workspaceRoot });
     const orphaned = await first.beginTurn('user');
+    await first
+      .getExecutionEngine()
+      .getContextManager()
+      .saveToolUse(sessionId, 'Write', {
+        file_path: path.join(workspaceRoot, 'possibly-written.txt'),
+        content: 'already applied\n',
+      });
     await first.dispose();
 
     const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
@@ -1205,6 +1215,9 @@ describe('SessionRuntime', () => {
         }),
       ])
     );
+    const recoveredContext = await recovered.loadModelContext();
+    expect(JSON.stringify(recoveredContext)).toContain(PROCESS_RESTART_TOOL_RESULT);
+    expect(JSON.stringify(recoveredContext)).toContain('sideEffectsUncertain');
 
     const next = await recovered.beginTurn('goal');
     await recovered.finishTurn(next, {

@@ -38,6 +38,25 @@ export async function readCliInput(options: ReadCliInputOptions): Promise<string
   throw new Error('No input provided');
 }
 
+export async function readOptionalCliInput(
+  options: Omit<ReadCliInputOptions, 'defaultMessage'>
+): Promise<string | undefined> {
+  const message = options.message || options._?.[0];
+  if (typeof message === 'string' && message.trim()) {
+    return message;
+  }
+
+  const stdin = options.stdin ?? process.stdin;
+  if (stdin.isTTY) return undefined;
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  const input = Buffer.concat(chunks).toString('utf-8').trim();
+  return input || undefined;
+}
+
 export async function normalizeCliInput(input: string): Promise<{
   mode: 'agent' | 'output';
   content: string;

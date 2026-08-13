@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const commandInputState = vi.hoisted(() => ({
   initializeCliPlugins: vi.fn(),
   readCliInput: vi.fn(),
+  readOptionalCliInput: vi.fn(),
   normalizeCliInput: vi.fn(),
 }));
 
@@ -31,6 +32,7 @@ const sessionServiceState = vi.hoisted(() => ({
 vi.mock('../../../../src/commands/shared/commandInput.js', () => ({
   initializeCliPlugins: commandInputState.initializeCliPlugins,
   readCliInput: commandInputState.readCliInput,
+  readOptionalCliInput: commandInputState.readOptionalCliInput,
   normalizeCliInput: commandInputState.normalizeCliInput,
 }));
 
@@ -64,6 +66,7 @@ describe('print command runner', () => {
 
     commandInputState.initializeCliPlugins.mockResolvedValue(undefined);
     commandInputState.readCliInput.mockResolvedValue('hello');
+    commandInputState.readOptionalCliInput.mockResolvedValue('hello');
     commandInputState.normalizeCliInput.mockResolvedValue({
       mode: 'agent',
       content: 'hello',
@@ -76,6 +79,8 @@ describe('print command runner', () => {
     runtimeState.create.mockResolvedValue({
       dispose: runtimeState.dispose,
       getConfig: () => ({ permissionMode: 'default' }),
+      getPendingSteeringCount: () => 0,
+      getGoal: async () => null,
     });
     sessionServiceState.setSessionPermissionMode.mockResolvedValue({
       permissionMode: 'default',
@@ -89,6 +94,73 @@ describe('print command runner', () => {
       finalMessage: 'final answer',
       metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
     });
+  });
+
+  it('resumes durable input without the default Hello prompt', async () => {
+    commandInputState.readOptionalCliInput.mockResolvedValueOnce(undefined);
+    runtimeState.create.mockResolvedValueOnce({
+      dispose: runtimeState.dispose,
+      getConfig: () => ({ permissionMode: 'default' }),
+      getPendingSteeringCount: () => 1,
+      getGoal: async () => null,
+    });
+    const { runPrint } = await import('../../../../src/commands/print.js');
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    const exitCode = await runPrint(
+      {
+        print: true,
+        resume: 'print-session',
+      },
+      { stdout, stderr } as unknown as Pick<typeof process, 'stdout' | 'stderr'>
+    );
+
+    expect(exitCode).toBe(0);
+    expect(commandInputState.readCliInput).not.toHaveBeenCalled();
+    expect(commandInputState.normalizeCliInput).not.toHaveBeenCalled();
+    expect(agentState.chatStream).toHaveBeenCalledWith(
+      '',
+      expect.objectContaining({
+        sessionId: 'print-session',
+      }),
+      expect.objectContaining({
+        pendingInputOnly: true,
+        goalContinuationOnly: false,
+      })
+    );
+  });
+
+  it('continues a verifying goal without a wake-up prompt', async () => {
+    commandInputState.readOptionalCliInput.mockResolvedValueOnce(undefined);
+    runtimeState.create.mockResolvedValueOnce({
+      dispose: runtimeState.dispose,
+      getConfig: () => ({ permissionMode: 'default' }),
+      getPendingSteeringCount: () => 0,
+      getGoal: async () => ({ status: 'verifying' }),
+    });
+    const { runPrint } = await import('../../../../src/commands/print.js');
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    await expect(
+      runPrint(
+        {
+          print: true,
+          continue: true,
+        },
+        { stdout, stderr } as unknown as Pick<typeof process, 'stdout' | 'stderr'>
+      )
+    ).resolves.toBe(0);
+
+    expect(agentState.chatStream).toHaveBeenCalledWith(
+      '',
+      expect.any(Object),
+      expect.objectContaining({
+        pendingInputOnly: false,
+        goalContinuationOnly: true,
+      })
+    );
   });
 
   it('uses resolved session/runtime and forwards tool restrictions', async () => {
