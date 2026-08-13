@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.30] - 2026-08-14
+
+### 🛡️ 稳定性
+
+- 最终 assistant 的 `turnFinalization` 现在可携带 host-owned Goal handoff receipt；
+  Runtime 重启时仅在 goal ID、verification attempt、verifier Session、evidence digest
+  与 Goal sidecar revision 全部精确匹配时，才幂等把 `verifying/pass` 收敛为
+  `complete`，不再重复运行 verifier 或生成第二份终答
+- Goal sidecar 写失败时 Runtime 初始化 fail closed；后续启动即使 turn terminal 已经
+  修复，也会从 canonical JSONL 再次重试 handoff。缺少 receipt 或 receipt 不匹配时继续
+  保持原有 fresh verifier 规则
+- Headless/Print bare resume 可回放本次启动刚修复的最终响应且不调用 Provider；TUI 与
+  Web 在 Runtime 初始化后重新读取 pending/Goal 状态，避免用恢复前 `verifying` 快照
+  启动空回合；ACP `session/load` 投影稳定的 `blade/goal` metadata
+
+### ✅ 测试相关
+
+- 新增 DeepSeek Flash/Pro × Headless、真实 raw PTY TUI、production Chromium Web GUI
+  与真实 ACP `session/load` 八格 Goal finalization crash 资格矩阵；每格证明恢复阶段
+  零 Provider 请求、原终答与 receipt 恰好一次、Goal/inbox 原子收敛，并在同一 surface
+  完成真实 API follow-up、reload 与资源清理
+
 ## [0.10.29] - 2026-08-13
 
 ### 🛡️ 稳定性

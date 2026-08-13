@@ -64,8 +64,8 @@ blade --debug "!chat,!loop"
 
 | 选项 | 别名 | 说明 |
 |------|------|------|
-| `--continue` | `-c` | 继续最近的会话；print/headless 无新输入时恢复未完成 durable turn 或 Goal |
-| `--resume [id]` | `-r` | 恢复指定会话（TUI 无参数时交互选择）；print/headless 可不提供唤醒 prompt |
+| `--continue` | `-c` | 继续最近的会话；print/headless 无新输入时恢复未完成 durable turn / Goal，或回放本次启动刚修复的最终响应 |
+| `--resume [id]` | `-r` | 恢复指定会话（TUI 无参数时交互选择）；print/headless 可不提供唤醒 prompt，final-ready crash 不会再次调用 Provider |
 | `--fork-session` | | 与 `--resume`/`--continue` 配合，将历史复制到独立子会话，父会话保持不变 |
 | `--session-id <id>` | | 指定新会话 ID；与恢复参数同时使用时必须启用 `--fork-session` |
 

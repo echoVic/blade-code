@@ -147,6 +147,11 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   成功后才更新 mailbox sidecar。若进程在 receipt 后、terminal batch 前退出，新 Runtime
   在确认没有 orphan tool call 后提交相同完成 batch 并重载 sidecar；已完成输入不会重放，
   receipt 未列出的 late follow-up 不会被误确认。
+- Goal 完成候选的 receipt 还可嵌入 goal ID、verification attempt、verifier Session、
+  evidence digest 与 Goal revision。最终 assistant commit 后才允许 Goal sidecar finalize；
+  新 Runtime 对 exact `verifying/pass` receipt 幂等补写 `complete`。跨文件写失败会阻止
+  Runtime 就绪，并在下次启动从 JSONL receipt 重试；stale/mismatched receipt 继续要求
+  fresh verifier。
 - 新 Runtime 取得 Session lease 后，会在同一个 validated batch 中修复 materialized
   transcript 的 orphan tool calls。每个 orphan 先获得 synthetic error
   `tool_result`，明确标记 `processRestartRecovery` 与 `sideEffectsUncertain`，随后 active

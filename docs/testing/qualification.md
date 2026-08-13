@@ -71,6 +71,8 @@ ACP SDK terminal 六格；单格 Provider deadline 180 秒、测试 timeout 240 
 realApiQualification watchdog 为 45 分钟。Root-turn crash auto-resume 另固定运行
 DeepSeek Flash/Pro × Headless/raw PTY TUI/production Chromium Web/真实 ACP
 `session/load` 八格，所有入口都不得依赖额外 wake-up prompt。Edit+rewind、
+Goal finalization crash handoff 使用同一 Flash/Pro × 四入口八格矩阵，恢复阶段必须
+零 Provider 请求，随后再从同一 surface 完成真实 API follow-up。
 开放式多文件迁移、compaction、进程树、
 并发 owner 与 crash-tail 等高成本 provider/capability soak 由以下命令单独运行：
 
@@ -568,6 +570,11 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
   inbox ack/terminal 前注入进程退出；冷启动必须先原子补
   `inbox_acknowledged + turn_completed` 并重载 sidecar，随后只处理新输入。旧输入不得
   再次请求 Provider，最终历史必须有两个 completed、零 aborted turn；
+- Goal finalization handoff：最终 assistant 的 host receipt 已提交、Goal sidecar 仍为
+  `verifying/pass` 时退出。新 Runtime 必须用 exact goal ID、attempt、verifier Session、
+  evidence digest 与 revision 幂等补 `complete`；Headless 回放、raw PTY、production
+  Web GUI 和 ACP `session/load` 均不得为旧 Goal 发起 Provider 请求。随后同一入口发送
+  新 prompt 并通过透明代理完成真实 Flash/Pro 响应，证明恢复后仍可继续工作；
 - 计划模式恢复：跨两个 CLI 进程恢复会话并完成修改；
 - 模式边界恢复：在 Yolo 中故意调用一次 ExitPlanMode，运行时必须返回 `validation_error`，模型随后继续 Write/Bash，证明过期规划状态不能终止已经批准的工作；
 - 失败恢复：先重现测试失败，再修改，最后验证通过；

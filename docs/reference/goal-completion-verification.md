@@ -71,10 +71,16 @@ completion candidate 之后发生以下事件时，旧 verdict 立即失效：
 - Edit、Write、ApplyPatch、NotebookEdit 或会改变 workspace 的 Bash；
 - Stop hook 要求继续；
 - 用户 steering 到达；
-- process restart 恢复一个仍处于 `verifying` 的 Goal。
+- process restart 恢复一个仍处于 `verifying`、但没有 exact host finalization receipt
+  的 Goal。
 
 重启时即使磁盘上已有旧 PASS，宿主也会重新运行 fresh verifier。这样可以覆盖
-“verdict 已落盘但 complete 尚未落盘”和外部 workspace 变化窗口。
+“verdict 已落盘但最终响应尚未提交”和外部 workspace 变化窗口。
+
+唯一例外是最终 assistant 已经携带 host-owned `turnFinalization.goalFinalization`
+receipt durable commit。Runtime 只在 receipt 的 goal ID、attempt、verifier Session ID、
+evidence SHA-256 与 Goal `updatedAt` 全部匹配当前 `verifying/pass` sidecar 时，幂等
+finalize 为 `complete`。receipt 缺失、损坏或不匹配时不会信任旧 PASS。
 
 ## 跨端投影
 
@@ -133,10 +139,13 @@ ACP projection 不包含 verifier 原文、宿主路径或 credential。
 - mutation、steering、restart 和 Stop continuation 使证据失效；
 - reserved agent、只读 sandbox、权限边界和 structured verdict；
 - GoalStore `0600` 原子持久化；
+- final assistant 与 Goal sidecar 之间的 crash handoff、幂等重试和 stale receipt 拒绝；
 - CLI JSONL、TUI、Web bilingual/fresh-tab 与 ACP `_meta`。
 
 真实 API 资格使用 DeepSeek Flash 分别经过 Runtime、Web REST/SSE 和 ACP slash：
 执行 Agent 完成目标后，必须出现独立 `goal-verification` child Session、宿主验证的
 PASS payload、持久化 evidence digest，随后才允许 `complete`。Production Web GUI
 还需验证 live `verifying` 状态、完成证据、fresh-tab 恢复与零 application console
-error。
+error。独立 crash 矩阵还使用 Flash/Pro 覆盖 Headless、raw PTY、Web GUI 与 ACP：
+恢复阶段不得发起 Provider 请求，原终答只回放一次，随后同一 surface 必须完成新的
+真实 API follow-up。
