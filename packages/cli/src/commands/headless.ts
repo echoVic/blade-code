@@ -1001,6 +1001,23 @@ function createEventWriter(
         `[provider-stall:${event.phase}] ${event.durationMs}ms / ${event.timeoutMs}ms`
       );
     },
+    actionStationarity(event: Extract<LoopEvent, { kind: 'action_stationarity' }>) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('action_stationarity', {
+          phase: event.phase,
+          tool_name: event.toolName,
+          run_length: event.runLength,
+          nudge_threshold: event.nudgeThreshold,
+          halt_threshold: event.haltThreshold,
+          progress_aware: event.progressAware,
+        });
+        return;
+      }
+      writeLine(
+        io.stderr,
+        `[action-stationarity:${event.phase}] ${event.toolName} ${event.runLength}/${event.haltThreshold}`
+      );
+    },
     turnLimit(turnsCount: number) {
       if (outputFormat === 'jsonl') {
         writeJsonl('turn_limit', {
@@ -1491,6 +1508,9 @@ export async function runHeadless(
             break;
           case 'provider_stall':
             eventWriter.providerStall(event);
+            break;
+          case 'action_stationarity':
+            eventWriter.actionStationarity(event);
             break;
 
           // --- 系统事件 ---

@@ -78,6 +78,15 @@ export interface ProviderStallInfo {
   outputStarted: boolean;
 }
 
+export interface ActionStationarityInfo {
+  phase: 'detected' | 'halted';
+  toolName: string;
+  runLength: number;
+  nudgeThreshold: number;
+  haltThreshold: number;
+  progressAware: boolean;
+}
+
 export interface TaskItem {
   id: string;
   subject: string;
@@ -312,6 +321,7 @@ export interface StreamingSlice {
   agentPhase: AgentPhase;
   providerRetry: ProviderRetryInfo | null;
   providerStall: ProviderStallInfo | null;
+  actionStationarity: ActionStationarityInfo | null;
   sessionEventConnectionState: TaskEventConnectionState | 'idle';
   currentRunId: string | null;
   pendingSteeringCount: number;

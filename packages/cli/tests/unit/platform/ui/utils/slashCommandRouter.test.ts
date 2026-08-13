@@ -152,6 +152,7 @@ function createMockSessionActions(): SessionActions {
     discardStreamingMessage: vi.fn(),
     setProviderRetry: vi.fn(),
     setProviderStall: vi.fn(),
+    setActionStationarity: vi.fn(),
     applyCommittedEvent: vi.fn(),
     applyStreamingDelta: vi.fn(),
     resetConversationProjection: vi.fn(),

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { runHeadless } from '../../src/commands/headless.js';
 import { PermissionMode } from '../../src/config/types.js';
 import { getState } from '../../src/store/vanilla.js';
@@ -30,9 +31,10 @@ const script =
   `process.on('SIGTERM',()=>{});` +
   `setTimeout(()=>fs.writeFileSync('forbidden-late-effect.txt','late'),5000);` +
   `setInterval(()=>{},1000);`;
+const releaseMarker = path.join(workspace, 'foreground-gate.release');
 const command =
-  `${shellQuote(process.execPath)} -e ${shellQuote(script)} ` + `</dev/null &`;
-`</dev/null & ` + `while [ ! -s foreground-root.pid ]; do sleep 0.01; done`;
+  `${shellQuote(process.execPath)} -e ${shellQuote(script)} </dev/null & ` +
+  `while [ ! -f ${shellQuote(releaseMarker)} ]; do sleep 0.01; done`;
 const exitCode = await runWithCwdOverride(workspace, () =>
   runHeadless({
     headless: true,

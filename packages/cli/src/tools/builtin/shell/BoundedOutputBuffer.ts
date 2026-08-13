@@ -3,6 +3,7 @@ export const BACKGROUND_SHELL_OUTPUT_MAX_BYTES = 1024 * 1024;
 export interface BoundedOutputSnapshot {
   content: string;
   omittedBytes: number;
+  totalBytes: number;
 }
 
 function findUtf8Boundary(buffer: Buffer, start: number): number {
@@ -17,6 +18,7 @@ export class BoundedOutputBuffer {
   private readonly chunks: Buffer[] = [];
   private retainedBytes = 0;
   private omittedBytes = 0;
+  private totalBytes = 0;
 
   constructor(private readonly maxBytes: number = BACKGROUND_SHELL_OUTPUT_MAX_BYTES) {
     if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
@@ -32,6 +34,7 @@ export class BoundedOutputBuffer {
 
     this.chunks.push(chunk);
     this.retainedBytes += chunk.length;
+    this.totalBytes += chunk.length;
     this.trimToLimit();
   }
 
@@ -39,6 +42,7 @@ export class BoundedOutputBuffer {
     return {
       content: Buffer.concat(this.chunks, this.retainedBytes).toString('utf8'),
       omittedBytes: this.omittedBytes,
+      totalBytes: this.totalBytes,
     };
   }
 

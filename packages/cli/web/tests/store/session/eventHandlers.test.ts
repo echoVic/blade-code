@@ -311,6 +311,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     resetContextUsage: vi.fn(),
     setMaxContextTokens: vi.fn(),
     ...overrides,
+    actionStationarity: overrides.actionStationarity ?? null,
     startCodeReview: overrides.startCodeReview ?? vi.fn(async () => undefined),
   } satisfies SessionStoreState;
 
@@ -1385,6 +1386,7 @@ describe('eventHandlers', () => {
       agentPhase: 'switching_model',
       providerRetry: null,
       providerStall: null,
+      actionStationarity: null,
     });
   });
 
@@ -1487,6 +1489,50 @@ describe('eventHandlers', () => {
     });
     expect(state.agentPhase).toBe('running');
     expect(state.providerStall).toBeNull();
+  });
+
+  test('tracks action stationarity detection and recovery', () => {
+    const state = createState();
+    const set = vi.fn((partial) => {
+      if (typeof partial === 'function') Object.assign(state, partial(state));
+      else Object.assign(state, partial);
+    });
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'action.stationarity',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        phase: 'detected',
+        toolName: 'TaskOutput',
+        runLength: 8,
+        nudgeThreshold: 8,
+        haltThreshold: 16,
+        progressAware: true,
+      },
+    });
+    expect(state.actionStationarity).toMatchObject({
+      phase: 'detected',
+      toolName: 'TaskOutput',
+      runLength: 8,
+      progressAware: true,
+    });
+
+    dispatch({
+      type: 'action.stationarity',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        phase: 'recovered',
+        toolName: 'TaskOutput',
+        runLength: 1,
+        nudgeThreshold: 8,
+        haltThreshold: 16,
+        progressAware: true,
+      },
+    });
+    expect(state.actionStationarity).toBeNull();
   });
 
   test('tracks queued and applied steering depth from SSE events', () => {
@@ -1594,6 +1640,7 @@ describe('eventHandlers', () => {
       recoveredSteeringCount: 0,
       providerRetry: null,
       providerStall: null,
+      actionStationarity: null,
     });
   });
 

@@ -9,6 +9,7 @@
 import { Box, Text } from 'ink';
 import React, { useEffect, useState } from 'react';
 import {
+  useActionStationarity,
   useIsProcessing,
   useIsReady,
   useProviderRetry,
@@ -61,6 +62,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
     const isReady = useIsReady();
     const providerRetry = useProviderRetry();
     const providerStall = useProviderStall();
+    const actionStationarity = useActionStationarity();
     const visible = isProcessing || !isReady;
 
     const [spinnerFrame, setSpinnerFrame] = useState(0);
@@ -109,8 +111,19 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
         ? `Provider 流已暂停 ${Math.ceil(providerStall.durationMs / 1000)}s，仍在等待（空闲超时上限 ${Math.ceil(providerStall.timeoutMs / 1000)}s）`
         : `Provider 尚未返回流数据，已等待 ${Math.ceil(providerStall.durationMs / 1000)}s（空闲超时上限 ${Math.ceil(providerStall.timeoutMs / 1000)}s）`
       : null;
+    const stationarityMessage =
+      actionStationarity?.phase === 'detected'
+        ? `检测到 ${actionStationarity.toolName} 连续 ${actionStationarity.runLength} 次无进展，正在要求 Agent 切换策略`
+        : actionStationarity?.phase === 'halted'
+          ? `已停止 ${actionStationarity.toolName} 空转循环`
+          : null;
     const displayMessage =
-      stallMessage || retryMessage || message || currentPhrase || '正在思考中...';
+      stationarityMessage ||
+      stallMessage ||
+      retryMessage ||
+      message ||
+      currentPhrase ||
+      '正在思考中...';
 
     // 统一显示：短语 + 计时器 + 取消提示
     if (isWideScreen) {

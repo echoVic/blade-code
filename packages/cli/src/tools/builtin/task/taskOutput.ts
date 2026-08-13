@@ -172,6 +172,7 @@ async function handleMcpTaskOutput(
     status_message: task.statusMessage,
     created_at: new Date(task.createdAt).toISOString(),
     updated_at: new Date(task.updatedAt).toISOString(),
+    progress_updated_at: task.updatedAt,
     completed_at: task.completedAt
       ? new Date(task.completedAt).toISOString()
       : undefined,
@@ -273,6 +274,9 @@ async function handleShellOutput(
       stdoutOmittedBytes > 0 ||
       stderrOmittedBytes > 0 ||
       Boolean(retainedOutput.truncationInfo),
+    raw_output_bytes:
+      (snapshot.stdoutTotalBytes ?? Buffer.byteLength(snapshot.stdout)) +
+      (snapshot.stderrTotalBytes ?? Buffer.byteLength(snapshot.stderr)),
     stdout_omitted_bytes: stdoutOmittedBytes,
     stderr_omitted_bytes: stderrOmittedBytes,
     truncation_info: retainedOutput.truncationInfo,
@@ -344,6 +348,7 @@ async function handleAgentOutput(
     completed_at: session.completedAt
       ? new Date(session.completedAt).toISOString()
       : undefined,
+    progress_updated_at: session.lastActiveAt,
     result: session.result,
     stats: session.stats,
     isolation: session.isolation,

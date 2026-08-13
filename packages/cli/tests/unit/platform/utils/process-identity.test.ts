@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   captureProcessIdentity,
   isProcessIdentity,
   type ProcessIdentitySource,
   processIdentityMatches,
+  processIdentityMatchesOrIsGone,
 } from '../../../../src/utils/process/ProcessIdentity.js';
 
 describe('process identity', () => {
@@ -101,5 +102,50 @@ describe('process identity', () => {
 
     expect(captureProcessIdentity(42, 'linux', source)).toBeUndefined();
     expect(captureProcessIdentity(42, 'freebsd', source)).toBeUndefined();
+  });
+
+  it('accepts a leased PID that exits while its identity is sampled', () => {
+    const source: ProcessIdentitySource = {
+      readFile: () => {
+        throw new Error('process exited');
+      },
+      execFile: () => {
+        throw new Error('process exited');
+      },
+    };
+    const isRunning = vi.fn(() => false);
+
+    expect(
+      processIdentityMatchesOrIsGone(
+        42,
+        { platform: 'darwin', fingerprint: 'a'.repeat(64) },
+        source,
+        isRunning
+      )
+    ).toBe(true);
+    expect(isRunning).toHaveBeenCalledWith(42);
+  });
+
+  it('fails closed after observing a concrete reused PID identity', () => {
+    const expectedSource: ProcessIdentitySource = {
+      readFile: () => {
+        throw new Error('unexpected read');
+      },
+      execFile: () => 'Mon Aug 12 10:00:00 2026\n',
+    };
+    const reusedSource: ProcessIdentitySource = {
+      readFile: () => {
+        throw new Error('unexpected read');
+      },
+      execFile: () => 'Mon Aug 12 10:00:01 2026\n',
+    };
+    const expected = captureProcessIdentity(42, 'darwin', expectedSource);
+    const isRunning = vi.fn(() => false);
+
+    expect(expected).toBeDefined();
+    expect(processIdentityMatchesOrIsGone(42, expected!, reusedSource, isRunning)).toBe(
+      false
+    );
+    expect(isRunning).not.toHaveBeenCalled();
   });
 });

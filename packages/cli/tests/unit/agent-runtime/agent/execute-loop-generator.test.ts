@@ -1246,6 +1246,141 @@ describe('executeLoopGenerator', () => {
     expect(chatMock).toHaveBeenCalledTimes(1);
   });
 
+  it('durably nudges repeated TaskOutput polling before halting it', async () => {
+    const { deps, saveMessage } = createTypedPersistenceHarness();
+    const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+    for (let run = 1; run <= 8; run++) {
+      chatMock.mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            id: `task-output-${run}`,
+            type: 'function',
+            function: {
+              name: 'TaskOutput',
+              arguments: JSON.stringify({
+                task_id: 'bash-stagnant',
+                block: run % 2 === 0,
+                timeout: run * 1_000,
+              }),
+            },
+          },
+        ],
+        finishReason: 'tool_calls',
+      });
+    }
+    chatMock.mockResolvedValueOnce({
+      content: 'Changed strategy and stopped polling.',
+      finishReason: 'stop',
+    });
+    (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      llmContent: {
+        task_id: 'bash-stagnant',
+        type: 'shell',
+        status: 'running',
+        raw_output_bytes: 0,
+      },
+    });
+
+    const { events, result } = await drainGenerator(
+      executeLoopGenerator(
+        deps,
+        'Monitor the background task without wasting turns.',
+        createMockContext(),
+        { stream: false },
+        undefined
+      )
+    );
+
+    expect(result.success).toBe(true);
+    expect(events).toContainEqual({
+      kind: 'action_stationarity',
+      phase: 'detected',
+      toolName: 'TaskOutput',
+      runLength: 8,
+      nudgeThreshold: 8,
+      haltThreshold: 16,
+      progressAware: true,
+    });
+    expect(events).toContainEqual({
+      kind: 'action_stationarity',
+      phase: 'recovered',
+      toolName: 'TaskOutput',
+      runLength: 8,
+      nudgeThreshold: 8,
+      haltThreshold: 16,
+      progressAware: true,
+    });
+    expect(saveMessage).toHaveBeenCalledWith(
+      'test-session',
+      'user',
+      expect.stringContaining('without observable progress'),
+      expect.any(String),
+      { clientVisible: false },
+      undefined
+    );
+  });
+
+  it('halts a turn after sixteen repeated identical tool calls', async () => {
+    const deps = createMockDeps({
+      runtimeOptions: { maxTurns: 20 } as any,
+    });
+    const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+    for (let run = 1; run <= 16; run++) {
+      chatMock.mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            id: `read-loop-${run}`,
+            type: 'function',
+            function: {
+              name: 'Read',
+              arguments: '{"file_path":"src/index.ts"}',
+            },
+          },
+        ],
+        finishReason: 'tool_calls',
+      });
+    }
+    (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      llmContent: 'unchanged file',
+    });
+
+    const { events, result } = await drainGenerator(
+      executeLoopGenerator(
+        deps,
+        'Inspect the implementation.',
+        createMockContext(),
+        { stream: false },
+        undefined
+      )
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: {
+        type: 'loop_detected',
+        message: expect.stringContaining('16 repeated Read calls'),
+      },
+      metadata: {
+        turnsCount: 16,
+        toolCallsCount: 16,
+      },
+    });
+    expect(events).toContainEqual({
+      kind: 'action_stationarity',
+      phase: 'halted',
+      toolName: 'Read',
+      runLength: 16,
+      nudgeThreshold: 8,
+      haltThreshold: 16,
+      progressAware: false,
+    });
+    expect(chatMock).toHaveBeenCalledTimes(16);
+  });
+
   it('lets the built-in verifier own its structured completion contract', async () => {
     const deps = createMockDeps();
     const context = createMockContext({

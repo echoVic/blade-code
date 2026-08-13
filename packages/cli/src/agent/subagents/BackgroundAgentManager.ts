@@ -79,6 +79,7 @@ export const PROCESS_RESTART_SUBAGENT_RECOVERY_FAILED =
   'history could not be validated. Resume is disabled for this run.';
 const LEGACY_ORPHANED_SUBAGENT_ERROR =
   'Session was orphaned (process restart or timeout)';
+const SUBAGENT_ACTIVITY_PERSIST_INTERVAL_MS = 1_000;
 
 function isProcessRunning(pid: number): boolean {
   try {
@@ -692,6 +693,7 @@ export class BackgroundAgentManager {
 
       const verificationCommands = new Set<string>();
       const modifiedFiles = new Set<string>();
+      let lastActivityPersistedAt = startTime;
       const loopResult = await drainLoop(
         agent.chatStream(prompt, context, {
           signal,
@@ -702,6 +704,11 @@ export class BackgroundAgentManager {
               : {}),
         }),
         async (event) => {
+          const now = Date.now();
+          if (now - lastActivityPersistedAt >= SUBAGENT_ACTIVITY_PERSIST_INTERVAL_MS) {
+            this.sessionStore.updateSession(agentId, {});
+            lastActivityPersistedAt = now;
+          }
           if (event.kind === 'tool_result' && 'function' in event.toolCall) {
             recordModifiedFiles(
               modifiedFiles,

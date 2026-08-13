@@ -2,12 +2,12 @@ export const testTypes = {
   unit: {
     name: '单元测试',
     project: 'unit',
-    timeout: 120_000,
+    timeout: 240_000,
   },
   integration: {
     name: '集成测试',
     project: 'integration',
-    timeout: 180_000,
+    timeout: 300_000,
   },
   realApi: {
     name: '真实 API 集成测试',
@@ -30,6 +30,7 @@ export const testTypes = {
       'tests/integration/real-api/acp-model-switch.test.ts',
       'tests/integration/real-api/release-coding-trajectory.test.ts',
       'tests/integration/real-api/provider-retry-trajectory.test.ts',
+      'tests/integration/real-api/action-stationarity-trajectory.test.ts',
       'tests/integration/real-api/goal-mode-trajectory.test.ts',
     ],
     env: {

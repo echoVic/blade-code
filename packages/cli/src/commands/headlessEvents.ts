@@ -338,6 +338,16 @@ const ProviderStallEventSchema = event({
   output_started: Type.Boolean(),
 });
 
+const ActionStationarityEventSchema = event({
+  type: Type.Literal('action_stationarity'),
+  phase: StringEnum(['detected', 'recovered', 'halted']),
+  tool_name: Type.String(),
+  run_length: Type.Integer({ minimum: 1 }),
+  nudge_threshold: Type.Integer({ minimum: 1 }),
+  halt_threshold: Type.Integer({ minimum: 1 }),
+  progress_aware: Type.Boolean(),
+});
+
 const TurnLimitEventSchema = event({
   type: Type.Literal('turn_limit'),
   turns_count: Type.Number(),
@@ -405,6 +415,7 @@ export const HeadlessJsonlEventSchema = Runtime(
     CompactingEventSchema,
     ProviderRetryEventSchema,
     ProviderStallEventSchema,
+    ActionStationarityEventSchema,
     TurnLimitEventSchema,
     TaskSessionEventSchema,
     TaskAdmissionEventSchema,

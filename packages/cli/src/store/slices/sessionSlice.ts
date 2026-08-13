@@ -108,6 +108,7 @@ const initialSessionState: SessionState = {
   finalizingStreamingMessageId: null, // 流式转最终渲染中的消息 ID
   providerRetry: null,
   providerStall: null,
+  actionStationarity: null,
 };
 
 /**
@@ -692,6 +693,12 @@ export const createSessionSlice: StateCreator<BladeStore, [], [], SessionSlice> 
     setProviderStall: (providerStall) => {
       set((state) => ({
         session: { ...state.session, providerStall },
+      }));
+    },
+
+    setActionStationarity: (actionStationarity) => {
+      set((state) => ({
+        session: { ...state.session, actionStationarity },
       }));
     },
 

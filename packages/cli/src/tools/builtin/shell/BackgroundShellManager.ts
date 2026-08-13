@@ -54,6 +54,8 @@ export interface ShellOutputSnapshot {
   stderr: string;
   stdoutOmittedBytes: number;
   stderrOmittedBytes: number;
+  stdoutTotalBytes: number;
+  stderrTotalBytes: number;
   exitCode?: number | null;
   signal?: string | null;
   pid?: number;
@@ -264,6 +266,8 @@ export class BackgroundShellManager {
       stderr: stderr.content,
       stdoutOmittedBytes: stdout.omittedBytes,
       stderrOmittedBytes: stderr.omittedBytes,
+      stdoutTotalBytes: stdout.totalBytes,
+      stderrTotalBytes: stderr.totalBytes,
       exitCode: processInfo.exitCode,
       signal: processInfo.signal,
       pid: processInfo.pid,

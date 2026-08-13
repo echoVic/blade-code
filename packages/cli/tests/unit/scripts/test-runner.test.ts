@@ -61,6 +61,9 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
     expect(testTypes.realApiQualification.files).toContain(
       'tests/integration/real-api/provider-retry-trajectory.test.ts'
     );
+    expect(testTypes.realApiQualification.files).toContain(
+      'tests/integration/real-api/action-stationarity-trajectory.test.ts'
+    );
     expect(testTypes.realApiQualification.files).not.toContain(
       'tests/integration/real-api/blade-coding-task.test.ts'
     );
@@ -71,11 +74,11 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
   });
 
   it('keeps the process-heavy integration suite above fixture command budgets', () => {
-    expect(testTypes.integration.timeout).toBe(180_000);
+    expect(testTypes.integration.timeout).toBe(300_000);
   });
 
   it('allows the complete unit suite to scale beyond the legacy 45 second budget', () => {
-    expect(testTypes.unit.timeout).toBe(120_000);
+    expect(testTypes.unit.timeout).toBe(240_000);
   });
 
   it('keeps wall-clock performance tests out of the coverage matrix', () => {

@@ -10,6 +10,7 @@ describe('BoundedOutputBuffer', () => {
     expect(buffer.peek()).toEqual({
       content: '字a',
       omittedBytes: Buffer.byteLength('汉'),
+      totalBytes: Buffer.byteLength('汉字a'),
     });
     expect(buffer.peek().content).not.toContain('\uFFFD');
   });
@@ -18,10 +19,18 @@ describe('BoundedOutputBuffer', () => {
     const buffer = new BoundedOutputBuffer(5);
     buffer.append('abcdef');
 
-    expect(buffer.consume()).toEqual({ content: 'bcdef', omittedBytes: 1 });
-    expect(buffer.peek()).toEqual({ content: '', omittedBytes: 0 });
+    expect(buffer.consume()).toEqual({
+      content: 'bcdef',
+      omittedBytes: 1,
+      totalBytes: 6,
+    });
+    expect(buffer.peek()).toEqual({ content: '', omittedBytes: 0, totalBytes: 6 });
 
     buffer.append('后');
-    expect(buffer.peek()).toEqual({ content: '后', omittedBytes: 0 });
+    expect(buffer.peek()).toEqual({
+      content: '后',
+      omittedBytes: 0,
+      totalBytes: 9,
+    });
   });
 });

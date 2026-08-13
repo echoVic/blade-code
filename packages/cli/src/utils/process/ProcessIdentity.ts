@@ -12,6 +12,8 @@ export interface ProcessIdentitySource {
   execFile(command: string, args: readonly string[]): string;
 }
 
+export type ProcessLivenessProbe = (pid: number) => boolean;
+
 const PROCESS_IDENTITY_FINGERPRINT = /^[a-f0-9]{64}$/;
 
 export function isProcessIdentity(value: unknown): value is ProcessIdentity {
@@ -34,6 +36,19 @@ const defaultSource: ProcessIdentitySource = {
       timeout: command === 'powershell.exe' ? 3_000 : 2_000,
       windowsHide: true,
     }),
+};
+
+const defaultLivenessProbe: ProcessLivenessProbe = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (
+      error instanceof Error &&
+      'code' in error &&
+      (error as NodeJS.ErrnoException).code === 'EPERM'
+    );
+  }
 };
 
 function hashIdentity(platform: NodeJS.Platform, value: string): ProcessIdentity {
@@ -97,4 +112,20 @@ export function processIdentityMatches(
 ): boolean {
   const current = captureProcessIdentity(pid, expected.platform);
   return current?.fingerprint === expected.fingerprint;
+}
+
+/**
+ * Validates a PID-backed lease without confusing an exit between probes with
+ * PID reuse. A concrete fingerprint mismatch always fails closed.
+ */
+export function processIdentityMatchesOrIsGone(
+  pid: number,
+  expected: ProcessIdentity,
+  source: ProcessIdentitySource = defaultSource,
+  isRunning: ProcessLivenessProbe = defaultLivenessProbe
+): boolean {
+  if (!Number.isInteger(pid) || pid <= 1) return false;
+  const current = captureProcessIdentity(pid, expected.platform, source);
+  if (current) return current.fingerprint === expected.fingerprint;
+  return !isRunning(pid);
 }

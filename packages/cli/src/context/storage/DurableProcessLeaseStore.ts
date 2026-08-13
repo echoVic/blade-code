@@ -12,6 +12,7 @@ import {
   isProcessIdentity,
   type ProcessIdentity,
   processIdentityMatches,
+  processIdentityMatchesOrIsGone,
 } from '../../utils/process/ProcessIdentity.js';
 import { getProjectStoragePath } from './pathUtils.js';
 
@@ -150,8 +151,7 @@ export class DurableProcessLeaseStore {
         continue;
       }
       const validateRootOwnership = () =>
-        !isRunning(lease.rootPid) ||
-        processIdentityMatches(lease.rootPid, lease.identity);
+        processIdentityMatchesOrIsGone(lease.rootPid, lease.identity);
       if (!validateRootOwnership()) {
         protectedCount++;
         continue;

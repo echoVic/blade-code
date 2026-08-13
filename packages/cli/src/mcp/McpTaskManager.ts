@@ -22,6 +22,7 @@ interface McpTaskRecord {
   client: McpClient;
   serverTaskId: string;
   serverCreatedAt: string;
+  serverUpdatedAt: string;
   status: McpTaskSnapshot['status'];
   statusMessage?: string;
   createdAt: number;
@@ -109,6 +110,7 @@ export class McpTaskManager extends EventEmitter {
       client: input.client,
       serverTaskId: created.taskId,
       serverCreatedAt: created.createdAt,
+      serverUpdatedAt: created.lastUpdatedAt,
       status: created.status,
       statusMessage: created.statusMessage,
       createdAt: now,
@@ -343,6 +345,7 @@ export class McpTaskManager extends EventEmitter {
     this.update(record, {
       status: state.status,
       statusMessage: state.statusMessage,
+      serverUpdatedAt: state.lastUpdatedAt,
     });
   }
 
@@ -351,24 +354,33 @@ export class McpTaskManager extends EventEmitter {
     values: Partial<
       Pick<
         McpTaskRecord,
-        'status' | 'statusMessage' | 'completedAt' | 'hasResult' | 'result' | 'error'
+        | 'status'
+        | 'statusMessage'
+        | 'completedAt'
+        | 'hasResult'
+        | 'result'
+        | 'error'
+        | 'serverUpdatedAt'
       >
     >
   ): void {
     const before = JSON.stringify({
       status: record.status,
       statusMessage: record.statusMessage,
+      serverUpdatedAt: record.serverUpdatedAt,
       hasResult: record.hasResult,
       error: record.error,
     });
-    Object.assign(record, values, { updatedAt: Date.now() });
+    Object.assign(record, values);
     const after = JSON.stringify({
       status: record.status,
       statusMessage: record.statusMessage,
+      serverUpdatedAt: record.serverUpdatedAt,
       hasResult: record.hasResult,
       error: record.error,
     });
     if (before !== after || values.completedAt !== undefined) {
+      record.updatedAt = Date.now();
       this.publish(record);
     }
   }

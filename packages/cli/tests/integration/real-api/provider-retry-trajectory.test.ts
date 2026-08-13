@@ -638,6 +638,11 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
         expect(launched.leaseContents).not.toContain('DEEPSEEK_API_KEY');
         expect(launched.leaseContents).not.toContain(modelConfig.apiKey);
         expect(stdout).toContain('"tool_name":"Bash"');
+        await writeFile(
+          path.join(workspace, 'foreground-gate.release'),
+          'release',
+          'utf8'
+        );
         await waitForValue(async () => {
           try {
             process.kill(gatePid!, 0);

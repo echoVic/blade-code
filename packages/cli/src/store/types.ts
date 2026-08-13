@@ -25,6 +25,7 @@ import type { ProviderStallEvent } from '../services/pi/providerStall.js';
 import type { SessionMetadata } from '../services/SessionService.js';
 import type { SessionSelectionIntent } from '../slash-commands/types.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
+import type { ActionStationarityEvent } from '../agent/loop/actionStationarity.js';
 
 // ==================== Session Types ====================
 
@@ -116,6 +117,7 @@ export interface SessionState {
   finalizingStreamingMessageId: string | null; // 正在从流式切换到最终渲染的消息 ID
   providerRetry: ProviderRetryEvent | null; // 首字节前可安全重放的 Provider retry 状态
   providerStall: ProviderStallEvent | null; // Provider 流事件间隙的可恢复 stall 状态
+  actionStationarity: ActionStationarityEvent | null; // 连续工具调用无进展状态
 }
 
 /**
@@ -163,6 +165,7 @@ export interface SessionActions {
   discardStreamingMessage: () => void; // 丢弃流式消息（不提交，用于模型降级场景）
   setProviderRetry: (retry: ProviderRetryEvent | null) => void;
   setProviderStall: (stall: ProviderStallEvent | null) => void;
+  setActionStationarity: (stationarity: ActionStationarityEvent | null) => void;
   // 事件溯源投影 actions (CQRS read-model)
   applyCommittedEvent: (event: SessionEvent) => void; // 折叠 committed 事件到投影
   applyStreamingDelta: (delta: EphemeralDelta) => void; // 叠加 ephemeral streaming delta

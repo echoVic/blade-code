@@ -1277,6 +1277,22 @@ export class AcpSession {
                 },
               });
               break;
+            case 'action_stationarity':
+              this.sendUpdate({
+                sessionUpdate: 'session_info_update',
+                updatedAt: new Date().toISOString(),
+                _meta: {
+                  'blade/actionStationarity': {
+                    phase: event.phase,
+                    toolName: event.toolName,
+                    runLength: event.runLength,
+                    nudgeThreshold: event.nudgeThreshold,
+                    haltThreshold: event.haltThreshold,
+                    progressAware: event.progressAware,
+                  },
+                },
+              });
+              break;
 
             // --- 业务事件 ---
             case 'task_update':

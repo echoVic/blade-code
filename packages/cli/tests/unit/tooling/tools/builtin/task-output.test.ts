@@ -86,6 +86,8 @@ describe('TaskOutput Tool', () => {
         status: 'exited',
         stdout: 'hello\n',
         stderr: '',
+        stdoutTotalBytes: 6,
+        stderrTotalBytes: 0,
         exitCode: 0,
         pid: 12345,
         startedAt: 1000,
@@ -105,6 +107,7 @@ describe('TaskOutput Tool', () => {
         status: 'exited',
         stdout: 'hello\n',
         exit_code: 0,
+        raw_output_bytes: 6,
       });
     });
 
@@ -121,6 +124,8 @@ describe('TaskOutput Tool', () => {
         stderr: 'latest stderr',
         stdoutOmittedBytes: 4096,
         stderrOmittedBytes: 2048,
+        stdoutTotalBytes: 8192,
+        stderrTotalBytes: 4096,
         exitCode: 0,
         pid: 12345,
         startedAt: 1000,
@@ -139,6 +144,7 @@ describe('TaskOutput Tool', () => {
         output_truncated: true,
         stdout_omitted_bytes: 4096,
         stderr_omitted_bytes: 2048,
+        raw_output_bytes: 12288,
       });
       expect(result.metadata).toMatchObject({
         output_truncated: true,
@@ -301,6 +307,7 @@ describe('TaskOutput Tool', () => {
         status: 'completed',
         subagent_type: 'verification',
         description: 'Find files',
+        progress_updated_at: 2000,
         restart_recovery: {
           outcome: 'completed',
           recoveredAt: 2000,

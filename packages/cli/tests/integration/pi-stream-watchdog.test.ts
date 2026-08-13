@@ -5,6 +5,10 @@ import { PiAIChatService } from '../../src/services/PiAIChatService.js';
 
 type StreamMode = 'silent' | 'partial' | 'delayed';
 
+const STREAM_IDLE_TIMEOUT_MS = 1_000;
+const STREAM_STALL_WARNING_MS = STREAM_IDLE_TIMEOUT_MS / 2;
+const DELAYED_RESPONSE_MS = STREAM_STALL_WARNING_MS + 100;
+
 describe('pi provider stream watchdog integration', () => {
   let createHttpServer: typeof import('node:http').createServer;
   let server: Server | undefined;
@@ -69,7 +73,7 @@ describe('pi provider stream watchdog integration', () => {
           }
         };
         if (mode === 'delayed') {
-          setTimeout(writeResponse, 150);
+          setTimeout(writeResponse, DELAYED_RESPONSE_MS);
           return;
         }
         writeResponse();
@@ -119,8 +123,8 @@ describe('pi provider stream watchdog integration', () => {
         providerStall: {
           phase: 'detected',
           outputStarted: true,
-          warningAfterMs: 125,
-          timeoutMs: 250,
+          warningAfterMs: STREAM_STALL_WARNING_MS,
+          timeoutMs: STREAM_IDLE_TIMEOUT_MS,
         },
       },
       done: false,
@@ -167,7 +171,7 @@ describe('pi provider stream watchdog integration', () => {
       model: 'deepseek-v4-flash',
       maxOutputTokens: 64,
       timeout: 5_000,
-      streamIdleTimeout: 250,
+      streamIdleTimeout: STREAM_IDLE_TIMEOUT_MS,
       maxRetries: overrides.maxRetries,
     });
   }

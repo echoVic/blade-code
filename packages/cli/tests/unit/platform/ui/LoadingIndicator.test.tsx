@@ -29,6 +29,17 @@ const mockUseProviderStall = vi.fn(
       outputStarted: boolean;
     } | null
 );
+const mockUseActionStationarity = vi.fn(
+  () =>
+    null as {
+      phase: 'detected' | 'recovered' | 'halted';
+      toolName: string;
+      runLength: number;
+      nudgeThreshold: number;
+      haltThreshold: number;
+      progressAware: boolean;
+    } | null
+);
 
 vi.mock('ink', () => ({
   Box: ({ children }: { children?: React.ReactNode }) =>
@@ -42,6 +53,7 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
   useIsReady: () => true,
   useProviderRetry: () => mockUseProviderRetry(),
   useProviderStall: () => mockUseProviderStall(),
+  useActionStationarity: () => mockUseActionStationarity(),
   useTheme: () => ({
     colors: {
       warning: 'yellow',
@@ -78,6 +90,8 @@ describe('LoadingIndicator', () => {
     mockUseProviderRetry.mockReturnValue(null);
     mockUseProviderStall.mockReset();
     mockUseProviderStall.mockReturnValue(null);
+    mockUseActionStationarity.mockReset();
+    mockUseActionStationarity.mockReturnValue(null);
   });
 
   it('短时间加载时应该优先显示中性文案而不是趣味短语', async () => {
@@ -133,5 +147,45 @@ describe('LoadingIndicator', () => {
     expect(html).toContain('300s');
     expect(html).toContain('Esc 取消');
     expect(html).not.toContain('炼化代码灵气...');
+  });
+
+  it('检测到工具空转时优先显示纠偏状态', async () => {
+    mockUseActionStationarity.mockReturnValue({
+      phase: 'detected',
+      toolName: 'TaskOutput',
+      runLength: 8,
+      nudgeThreshold: 8,
+      haltThreshold: 16,
+      progressAware: true,
+    });
+    const { LoadingIndicator } = await import(
+      '../../../../src/ui/components/LoadingIndicator.js'
+    );
+
+    const html = renderToStaticMarkup(React.createElement(LoadingIndicator));
+
+    expect(html).toContain('检测到 TaskOutput 连续 8 次无进展');
+    expect(html).toContain('正在要求 Agent 切换策略');
+    expect(html).toContain('Esc 取消');
+    expect(html).not.toContain('炼化代码灵气...');
+  });
+
+  it('stationarity 达到停止阈值时显示终止状态', async () => {
+    mockUseActionStationarity.mockReturnValue({
+      phase: 'halted',
+      toolName: 'Read',
+      runLength: 16,
+      nudgeThreshold: 8,
+      haltThreshold: 16,
+      progressAware: false,
+    });
+    const { LoadingIndicator } = await import(
+      '../../../../src/ui/components/LoadingIndicator.js'
+    );
+
+    const html = renderToStaticMarkup(React.createElement(LoadingIndicator));
+
+    expect(html).toContain('已停止 Read 空转循环');
+    expect(html).toContain('Esc 取消');
   });
 });

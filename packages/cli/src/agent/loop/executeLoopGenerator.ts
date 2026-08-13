@@ -58,6 +58,11 @@ import type {
   UserMessageContent,
 } from '../types.js';
 import {
+  createActionStationarityDetector,
+  getActionStationarityPrompt,
+  observeActionStationarity,
+} from './actionStationarity.js';
+import {
   checkDelegationRequirement,
   checkIncompleteIntent,
   checkOutputRecovery,
@@ -848,6 +853,7 @@ export async function* executeLoopGenerator(
     };
     const failureTracker = createToolFailureTracker();
     const staleDetector = createStaleLoopDetector();
+    const actionStationarity = createActionStationarityDetector();
 
     // 1.5 注入 deferred tools listing 到系统提示
     let finalSystemPrompt = systemPrompt;
@@ -2187,6 +2193,14 @@ validates the object and may return a bounded corrective error.`;
 
         // 5. 检查是否需要工具调用
         if (!turnResult.toolCalls || turnResult.toolCalls.length === 0) {
+          const stationarityRecovery = observeActionStationarity(
+            actionStationarity,
+            [],
+            []
+          );
+          if (stationarityRecovery) {
+            yield { kind: 'action_stationarity', ...stationarityRecovery };
+          }
           const queuedSteering = (await options?.turnSteering?.drain()) ?? [];
           if (queuedSteering.length > 0) {
             structuredOutput = undefined;
@@ -3749,6 +3763,51 @@ validates the object and may return a bounded corrective error.`;
                     : undefined,
               },
             };
+          }
+        }
+
+        const stationarityEvent = observeActionStationarity(
+          actionStationarity,
+          functionCalls,
+          executionResults.map(({ result }) => result)
+        );
+        if (stationarityEvent) {
+          yield { kind: 'action_stationarity', ...stationarityEvent };
+          if (stationarityEvent.phase === 'halted') {
+            return {
+              success: false,
+              error: {
+                type: 'loop_detected',
+                message:
+                  `Stopped after ${stationarityEvent.runLength} repeated ` +
+                  `${stationarityEvent.toolName} calls without observable progress.`,
+              },
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+                tokensUsed: totalTokens,
+              },
+            };
+          }
+          if (stationarityEvent.phase === 'detected') {
+            const correctiveMessage: Message = {
+              role: 'user',
+              content:
+                `\n\n<system-reminder>\n` +
+                `${getActionStationarityPrompt(stationarityEvent)}\n` +
+                `</system-reminder>`,
+              metadata: INTERNAL_CONTROL_MESSAGE_METADATA,
+            };
+            state.appendControl('user', correctiveMessage);
+            const correctiveUuid = await saveUserMessage(
+              deps,
+              context,
+              correctiveMessage.content as string,
+              lastMessageUuid,
+              INTERNAL_CONTROL_MESSAGE_METADATA
+            );
+            if (correctiveUuid) lastMessageUuid = correctiveUuid;
           }
         }
 

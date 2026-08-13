@@ -29,6 +29,7 @@ import type {
 } from '../resources/WorkspaceProjectRules.js';
 import type { SteeringMessage } from '../runtime/ActiveTurnMailbox.js';
 import type { AgentOptions } from '../types.js';
+import type { ActionStationarityEvent } from './actionStationarity.js';
 
 // ===== Loop Event Subtypes =====
 
@@ -71,7 +72,8 @@ export type SystemEvent =
     }
   | { kind: 'token_usage'; usage: TokenUsageInfo }
   | ({ kind: 'provider_retry' } & ProviderRetryEvent)
-  | ({ kind: 'provider_stall' } & ProviderStallEvent);
+  | ({ kind: 'provider_stall' } & ProviderStallEvent)
+  | ({ kind: 'action_stationarity' } & ActionStationarityEvent);
 
 /** 业务事件 */
 export type DomainEvent =

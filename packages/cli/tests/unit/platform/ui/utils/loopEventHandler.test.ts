@@ -64,6 +64,7 @@ function createMockDeps(overrides?: Partial<LoopEventDeps>): LoopEventDeps {
       setCompacting: vi.fn(),
       setProviderRetry: vi.fn(),
       setProviderStall: vi.fn(),
+      setActionStationarity: vi.fn(),
       resetContextUsage: vi.fn(),
       resetTokenUsage: vi.fn(),
     } as any,
@@ -156,6 +157,35 @@ describe('createLoopEventHandler', () => {
 
     handler({ ...stall, phase: 'recovered', durationMs: 31_500 });
     expect(deps.sessionActions.setProviderStall).toHaveBeenLastCalledWith(null);
+  });
+
+  it('projects action stationarity until progress recovers', () => {
+    const deps = createMockDeps();
+    const handler = createLoopEventHandler(deps, createMockStats());
+    const detected = {
+      kind: 'action_stationarity',
+      phase: 'detected',
+      toolName: 'TaskOutput',
+      runLength: 8,
+      nudgeThreshold: 8,
+      haltThreshold: 16,
+      progressAware: true,
+    } as const;
+
+    handler(detected);
+
+    expect(deps.sessionActions.setActionStationarity).toHaveBeenCalledWith({
+      phase: 'detected',
+      toolName: 'TaskOutput',
+      runLength: 8,
+      nudgeThreshold: 8,
+      haltThreshold: 16,
+      progressAware: true,
+    });
+    expect(deps.sessionActions.finalizeStreamingMessage).not.toHaveBeenCalled();
+
+    handler({ ...detected, phase: 'recovered', runLength: 1 });
+    expect(deps.sessionActions.setActionStationarity).toHaveBeenLastCalledWith(null);
   });
 
   // ==================== 场景 1: 正常 stream_end ====================

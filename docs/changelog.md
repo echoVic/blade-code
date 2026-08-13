@@ -17,6 +17,13 @@ All notable changes to this project will be documented in this file.
 
 ### 🛡️ 稳定性
 
+- Agent loop 新增 progress-aware action stationarity：连续 8 次相同工具调用且
+  无可观察进展时注入一次 durable hidden correction，持续到 16 次则以
+  `loop_detected` 停止，避免长任务中的工具轮询和重复副作用无限消耗 token
+- `TaskOutput` 使用任务状态、终态、后台 shell 单调累计输出字节、subagent
+  活跃时间和 MCP 服务端更新时间区分真实进展；timeout 参数变化不再伪装成进展
+- CLI、Web SSE/GUI、headless JSONL 和 ACP 统一投影
+  `detected/recovered/halted` stationarity 生命周期；Web 状态栏显示工具名和阈值
 - `--no-verification-agent` 现在作为 independent verification gate 的显式
   host policy，禁用时无条件绕过 gate，不再依赖 Task 工具可用性间接推断
 - 内置 independent verifier 改用 host-validated JSON Schema 输出
@@ -24,9 +31,9 @@ All notable changes to this project will be documented in this file.
   避免测试通过但 Markdown 标题不精确导致误判和重试耗尽
 - verification completion reminder 现在持久化为 client-hidden control message；
   Web/TUI fresh reload 统一过滤，新版本同时兼容无元数据的旧会话
-- POSIX orphan process tree 在发送首个信号前允许一次即时 PID ownership
-  复核，吸收 macOS 进程退出期间的瞬时身份读取失败；SIGKILL 前仍执行
-  单次严格复核，持续不匹配时保持 fail closed
+- POSIX orphan process tree 改为先采集 identity，再确认无法采集 identity 的 PID
+  是否已经退出，消除 macOS 进程恰好在两次探测间结束导致的误保护；一旦读到
+  具体不同 fingerprint 仍保持 fail closed，SIGKILL 前继续严格复核
 - release script 在 npm 由 tag workflow 发布时不再错误要求本地 npm 登录；
   本地 publish 启用时仍保持登录检查 fail closed
 - 默认工程提示要求性能测试执行预热、使用相对性能比值，并避免将固定墙钟耗时
@@ -35,10 +42,16 @@ All notable changes to this project will be documented in this file.
 
 ### ✅ 测试相关
 
-- 单元 suite watchdog 随测试规模调整为 120 秒；Web Vitest 固定最多 4 workers，
-  性能资格改用预热后的相对比值，避免高负载机器上的假失败
+- 单元/集成 suite 总 watchdog 随测试规模调整为 240/300 秒，局部用例 timeout
+  保持不变；Web Vitest 固定最多 4 workers，性能资格改用预热后的相对比值，
+  避免高负载机器上的假失败
+- 真实 API leaderless foreground 轨迹使用 release-marker 显式握手，父测试确认
+  PID 与 durable lease 后才释放 Bash gate；provider stream watchdog 集成窗口扩大
+  到 1 秒，避免高负载时本地 HTTP handler 尚未调度就形成假失败
 - 新增 verification gate 显式禁用、structured verifier verdict、隐藏 control
   message 新旧会话投影、瞬时 PID ownership 探测恢复和性能测试提示回归
+- 新增 action stationarity detector、durable correction、TaskOutput 进度签名、
+  CLI/Web/ACP 协议投影、真实 DeepSeek 恢复轨迹和 Web GUI 中间态回归
 
 ## [0.10.25] - 2026-08-12
 

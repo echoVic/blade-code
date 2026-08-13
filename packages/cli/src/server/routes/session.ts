@@ -523,6 +523,17 @@ function publishSubagentLoopEvent(
         outputStarted: event.outputStarted,
       });
       break;
+    case 'action_stationarity':
+      Bus.publish(ref, 'subagent.action.stationarity', {
+        subagentSessionId,
+        phase: event.phase,
+        toolName: event.toolName,
+        runLength: event.runLength,
+        nudgeThreshold: event.nudgeThreshold,
+        haltThreshold: event.haltThreshold,
+        progressAware: event.progressAware,
+      });
+      break;
     case 'mcp_catalog_changed':
       Bus.publish(ref, 'subagent.mcp.catalog.changed', {
         subagentSessionId,
@@ -3768,6 +3779,16 @@ async function executeRunAsync(
             warningAfterMs: event.warningAfterMs,
             timeoutMs: event.timeoutMs,
             outputStarted: event.outputStarted,
+          });
+          break;
+        case 'action_stationarity':
+          emit('action.stationarity', {
+            phase: event.phase,
+            toolName: event.toolName,
+            runLength: event.runLength,
+            nudgeThreshold: event.nudgeThreshold,
+            haltThreshold: event.haltThreshold,
+            progressAware: event.progressAware,
           });
           break;
         case 'mcp_catalog_changed':

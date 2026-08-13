@@ -28,6 +28,12 @@ const sessionState = vi.hoisted(() => ({
     durationMs: number;
     timeoutMs: number;
   } | null,
+  actionStationarity: null as {
+    phase: 'detected' | 'halted';
+    toolName: string;
+    runLength: number;
+    haltThreshold: number;
+  } | null,
 }));
 
 vi.mock('@/store/session', () => ({
@@ -46,6 +52,7 @@ describe('StatusBar', () => {
     sessionState.agentPhase = 'compacting';
     sessionState.providerRetry = null;
     sessionState.providerStall = null;
+    sessionState.actionStationarity = null;
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -108,5 +115,27 @@ describe('StatusBar', () => {
     expect(container.textContent).toContain('30s');
     expect(container.textContent).toContain('300s');
     expect(container.textContent).not.toContain('Generating...');
+  });
+
+  it('renders action stationarity ahead of provider lifecycle state', () => {
+    sessionState.agentPhase = 'running';
+    sessionState.providerStall = {
+      durationMs: 30_000,
+      timeoutMs: 300_000,
+    };
+    sessionState.actionStationarity = {
+      phase: 'detected',
+      toolName: 'TaskOutput',
+      runLength: 8,
+      haltThreshold: 16,
+    };
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    expect(container.textContent).toContain('Recovering');
+    expect(container.textContent).toContain('TaskOutput');
+    expect(container.textContent).toContain('8/16');
+    expect(container.textContent).not.toContain('Provider stream paused');
   });
 });

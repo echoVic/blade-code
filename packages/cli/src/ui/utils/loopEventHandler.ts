@@ -168,6 +168,13 @@ export function createLoopEventHandler(
         deps.sessionActions.setProviderStall(event.phase === 'detected' ? stall : null);
         break;
       }
+      case 'action_stationarity': {
+        const { kind: _kind, ...stationarity } = event;
+        deps.sessionActions.setActionStationarity(
+          event.phase === 'recovered' ? null : stationarity
+        );
+        break;
+      }
 
       // --- 工具事件 ---
       case 'tool_start': {

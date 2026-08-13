@@ -84,6 +84,26 @@ describe('headless event contract', () => {
     });
     expect(() => HeadlessJsonlEventSchema.parse(providerStall)).not.toThrow();
 
+    const actionStationarity = createHeadlessJsonlEvent('action_stationarity', {
+      phase: 'detected',
+      tool_name: 'TaskOutput',
+      run_length: 8,
+      nudge_threshold: 8,
+      halt_threshold: 16,
+      progress_aware: true,
+    });
+    expect(actionStationarity).toEqual({
+      event_version: 1,
+      type: 'action_stationarity',
+      phase: 'detected',
+      tool_name: 'TaskOutput',
+      run_length: 8,
+      nudge_threshold: 8,
+      halt_threshold: 16,
+      progress_aware: true,
+    });
+    expect(() => HeadlessJsonlEventSchema.parse(actionStationarity)).not.toThrow();
+
     expect(
       createHeadlessJsonlEvent('mcp_catalog_changed', {
         revision: 2,
