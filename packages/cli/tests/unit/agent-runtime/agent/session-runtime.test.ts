@@ -1344,6 +1344,25 @@ describe('SessionRuntime', () => {
     expect(JSON.stringify(await recovered.loadModelContext())).toContain(
       'RUNTIME_CHILD_DURABLE_MARKER'
     );
+    expect(recovered.takeStartupAdoptedToolResults()).toEqual([
+      expect.objectContaining({
+        call: expect.objectContaining({
+          toolCallId,
+          messageId: assistantMessageId,
+          toolName: 'Task',
+        }),
+        result: expect.objectContaining({
+          toolCallId,
+          toolName: 'Task',
+          output: expect.stringContaining('RUNTIME_CHILD_DURABLE_MARKER'),
+          metadata: expect.objectContaining({
+            subagentResultAdopted: true,
+            sideEffectsUncertain: false,
+          }),
+        }),
+      }),
+    ]);
+    expect(recovered.takeStartupAdoptedToolResults()).toEqual([]);
     expect(AgentSessionStore.getInstance().loadSession(childSessionId)).toEqual(
       expect.objectContaining({
         id: childSessionId,
@@ -1357,6 +1376,7 @@ describe('SessionRuntime', () => {
     await recovered.dispose();
 
     const second = await SessionRuntime.create({ sessionId, workspaceRoot });
+    expect(second.takeStartupAdoptedToolResults()).toEqual([]);
     const events = await new PersistentStore(workspaceRoot).loadEvents(sessionId);
     expect(
       events?.filter(

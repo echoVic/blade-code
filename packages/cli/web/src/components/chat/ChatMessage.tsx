@@ -802,6 +802,7 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
   return (
     <div
       data-subagent-id={subagent.id}
+      data-subagent-session-id={subagent.sessionId}
       className="bg-[hsl(var(--deck-surface-2))] border border-[hsl(var(--deck-border))] rounded-lg px-3 py-2"
     >
       <button
@@ -862,6 +863,14 @@ function SubagentSection({ subagent }: { subagent: AgentResponseContent['subagen
           />
         )}
       </button>
+      {!expanded && !isRunning && subagent.output && (
+        <div
+          data-subagent-output-summary
+          className="mt-2 max-h-10 overflow-hidden whitespace-pre-wrap break-words font-mono text-[11px] text-[hsl(var(--deck-ink))]"
+        >
+          {subagent.output}
+        </div>
+      )}
       {expanded && (
         <div className="mt-2 space-y-2">
           {(subagent.output || subagent.thinking) && (

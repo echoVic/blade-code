@@ -198,6 +198,46 @@ describe('ChatMessage', () => {
     expect(container.textContent).toContain('/tmp/demo.ts');
   });
 
+  test('keeps a completed subagent result visible while its card is collapsed', () => {
+    const [message] = aggregateMessages([
+      {
+        id: 'assistant-adopted-child',
+        role: 'assistant',
+        content: '',
+        metadata: {
+          subtaskRef: {
+            childSessionId: 'agent-adopted-child',
+            agentType: 'Explore',
+            description: 'Inspect durable state',
+            status: 'completed',
+            summary: 'ADOPTED_CHILD_VISIBLE_RESULT',
+          },
+        },
+        tool_calls: [
+          {
+            id: 'task-adopted-child',
+            function: {
+              name: 'Task',
+              arguments:
+                '{"subagent_type":"Explore","description":"Inspect durable state"}',
+            },
+          },
+        ],
+      },
+    ] as never);
+
+    act(() => root.render(<ChatMessage message={message} />));
+
+    const card = container.querySelector(
+      '[data-subagent-session-id="agent-adopted-child"]'
+    );
+    expect(card).toBeTruthy();
+    expect(card?.getAttribute('data-subagent-id')).toBe('task-adopted-child');
+    expect(
+      card?.querySelector('[data-subagent-output-summary]')?.textContent
+    ).toContain('ADOPTED_CHILD_VISIBLE_RESULT');
+  });
+
   test('renders bounded Bash tails with stable browser-test selectors', () => {
     const output =
       '[OK] Command completed\n' +

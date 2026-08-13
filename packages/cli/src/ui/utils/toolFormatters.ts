@@ -160,6 +160,7 @@ export function shouldShowToolDetail(toolName: string, result: ToolResult): bool
     case 'Glob':
     case 'Grep':
     case 'Bash':
+    case 'Task':
     case 'TaskOutput':
       // 这些工具总是显示紧凑预览
       return true;
@@ -195,7 +196,7 @@ export function generateToolDetail(
   toolName: string,
   result: ToolResult
 ): string | null {
-  if (!result?.success && toolName !== 'Bash') return null;
+  if (!result?.success && toolName !== 'Bash' && toolName !== 'Task') return null;
 
   switch (toolName) {
     case 'Glob': {

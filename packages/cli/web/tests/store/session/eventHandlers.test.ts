@@ -553,6 +553,53 @@ describe('eventHandlers', () => {
     expect(secondId).toBe(firstId);
   });
 
+  test('projects a terminal Task result onto the existing subagent card', () => {
+    const state = createState();
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+    const ref = {
+      sessionId: 'session-1',
+      projectPath: '/workspace/a',
+      messageId: 'assistant-1',
+      toolCallId: 'task-adopted',
+      toolName: 'Task',
+    };
+
+    dispatch({
+      type: 'tool.start',
+      properties: {
+        ...ref,
+        arguments: JSON.stringify({
+          description: 'Inspect durable state',
+          subagent_type: 'Explore',
+          subagent_session_id: 'agent-adopted',
+        }),
+      },
+    });
+    dispatch({
+      type: 'tool.result',
+      properties: {
+        ...ref,
+        success: true,
+        output: '[OK] Explore 任务完成\nADOPTED_CHILD_RESULT',
+        metadata: {
+          subagentSessionId: 'agent-adopted',
+          subagentType: 'Explore',
+          subagentStatus: 'completed',
+          subagentSummary: 'ADOPTED_CHILD_RESULT',
+          subagentResultAdopted: true,
+          sideEffectsUncertain: false,
+        },
+      },
+    });
+
+    expect(state.messages[0]?.agentContent?.subagent).toMatchObject({
+      id: 'task-adopted',
+      sessionId: 'agent-adopted',
+      status: 'completed',
+      output: 'ADOPTED_CHILD_RESULT',
+    });
+  });
+
   test('preserves resumed subagent lineage across start and completion events', () => {
     const state = createState();
     const set = vi.fn(

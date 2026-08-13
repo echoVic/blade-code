@@ -22,6 +22,7 @@ import type {
 import { ForegroundProcessLeaseStore } from '../../context/storage/ForegroundProcessLeaseStore.js';
 import type {
   SessionAdoptedToolResult,
+  SessionInterruptedToolCall,
   SessionTurnRecovery,
 } from '../../context/storage/PersistentStore.js';
 import { getSessionInboxFilePath } from '../../context/storage/pathUtils.js';
@@ -295,6 +296,11 @@ export interface RecoveredFinalResponse {
   structuredOutputSchemaDigest?: string;
 }
 
+export interface StartupAdoptedToolResult {
+  call: SessionInterruptedToolCall;
+  result: SessionAdoptedToolResult;
+}
+
 function messageTurnFinalization(
   message: Message
 ): SessionTurnFinalizationInfo | undefined {
@@ -334,6 +340,7 @@ export class SessionRuntime {
   private currentModelMaxContextTokens?: number;
   private initialized = false;
   private startupTurnRecovery?: SessionTurnRecovery;
+  private startupAdoptedToolResults: StartupAdoptedToolResult[] = [];
   private sessionLease?: SessionLease;
   private sessionMcpRegistry?: McpRegistry;
   private mcpCatalogListener?: (change: McpCatalogChange) => void;
@@ -779,6 +786,12 @@ export class SessionRuntime {
           }
         : {}),
     };
+  }
+
+  takeStartupAdoptedToolResults(): StartupAdoptedToolResult[] {
+    const results = this.startupAdoptedToolResults;
+    this.startupAdoptedToolResults = [];
+    return structuredClone(results);
   }
 
   getAttachmentCollector(): AttachmentCollector {
@@ -1692,6 +1705,12 @@ export class SessionRuntime {
       const recovery = await persistentStore.recoverInterruptedTurn(this.sessionId, {
         adoptedToolResults,
       });
+      if (recovery) {
+        this.startupAdoptedToolResults = interruptedToolCalls.flatMap((call) => {
+          const result = adoptedToolResults.get(call.toolCallId);
+          return result ? [{ call, result }] : [];
+        });
+      }
       const goalHandoff = await persistentStore.loadLatestGoalFinalization(
         this.sessionId
       );
@@ -1903,6 +1922,7 @@ export class SessionRuntime {
     this.executionEngine = undefined;
     this.activeTurnMailbox = undefined;
     this.startupTurnRecovery = undefined;
+    this.startupAdoptedToolResults = [];
     this.currentModelMaxContextTokens = undefined;
     this.baseRegistry = new ToolRegistry();
     this.sessionMcpRegistry = undefined;

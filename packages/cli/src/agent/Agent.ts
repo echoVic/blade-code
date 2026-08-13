@@ -51,10 +51,15 @@ import { getBuiltinTools } from '../tools/builtin/index.js';
 import { createMcpContentTools } from '../tools/builtin/mcp/index.js';
 import { ToolExecutor } from '../tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../tools/registry/ToolRegistry.js';
-import type { Tool } from '../tools/types/index.js';
+import { type Tool, ToolErrorType, type ToolResult } from '../tools/types/index.js';
 import { getCwd } from '../utils/cwd.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
 import { executeLoopGenerator } from './loop/index.js';
+import {
+  type FunctionToolCallRef,
+  handleSubagentLifecycle,
+} from './loop/toolDomainPolicy.js';
+import type { LoopEvent } from './loop/types.js';
 import {
   resolveWorkspaceAgentResources,
   type SessionAgentResources,
@@ -571,6 +576,9 @@ export class Agent {
       const durableContext = await this.sessionRuntime.loadModelContext();
       context.messages.splice(0, context.messages.length, ...durableContext);
     }
+    for (const event of this.takeStartupAdoptedToolResultEvents()) {
+      yield event;
+    }
 
     let enhancedMessage = message;
     let initialGoal: GoalSnapshot | null = null;
@@ -1051,6 +1059,58 @@ export class Agent {
     }
     const deps = this.buildLoopDependencies();
     return executeLoopGenerator(deps, message, context, options, systemPrompt);
+  }
+
+  private takeStartupAdoptedToolResultEvents(): LoopEvent[] {
+    const adoptedResults = this.sessionRuntime?.takeStartupAdoptedToolResults() ?? [];
+    return adoptedResults.flatMap(({ call, result }) => {
+      const toolCall: FunctionToolCallRef = {
+        id: call.toolCallId,
+        type: 'function',
+        function: {
+          name: call.toolName,
+          arguments: JSON.stringify(call.input),
+        },
+      };
+      const metadata =
+        result.metadata &&
+        typeof result.metadata === 'object' &&
+        !Array.isArray(result.metadata)
+          ? (result.metadata as ToolResult['metadata'])
+          : undefined;
+      const success = result.error === undefined;
+      const output = result.output;
+      const toolResult: ToolResult = {
+        success,
+        llmContent:
+          typeof output === 'string' || (output !== null && typeof output === 'object')
+            ? output
+            : output === null
+              ? result.error
+                ? `Subagent execution failed: ${result.error}.`
+                : ''
+              : String(output),
+        ...(result.error
+          ? {
+              error: {
+                type: ToolErrorType.EXECUTION_ERROR,
+                message: result.error,
+              },
+            }
+          : {}),
+        ...(metadata ? { metadata } : {}),
+      };
+      const events: LoopEvent[] = [
+        {
+          kind: 'tool_result',
+          toolCall,
+          result: toolResult,
+        },
+      ];
+      const lifecycle = handleSubagentLifecycle(toolCall, toolResult);
+      if (lifecycle) events.push(lifecycle);
+      return events;
+    });
   }
 
   /**

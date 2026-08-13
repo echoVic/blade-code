@@ -21,6 +21,8 @@ const parseSubtaskRef = (
   ref: Record<string, unknown>
 ): SubagentProgress | null => {
   if (!ref || typeof ref !== 'object') return null;
+  const status = normalizeSubagentStatus(ref.status);
+  const summary = typeof ref.summary === 'string' ? ref.summary : undefined;
 
   return {
     id: makeSubagentId({
@@ -33,7 +35,7 @@ const parseSubtaskRef = (
     }),
     type: (ref.agentType as string) || 'subagent',
     description: (ref.description as string) || (ref.summary as string) || '',
-    status: normalizeSubagentStatus(ref.status),
+    status,
     startTime: Date.now(),
     sessionId: ref.childSessionId as string | undefined,
     resumedFrom: ref.resumedFrom as string | undefined,
@@ -45,6 +47,7 @@ const parseSubtaskRef = (
       ref.verificationVerdict === 'partial'
         ? ref.verificationVerdict
         : undefined,
+    output: status === 'running' ? undefined : summary,
   };
 };
 
@@ -251,6 +254,10 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
                     independentVerification?.verificationVerdict === 'partial'
                   ? independentVerification.verificationVerdict
                   : current.verificationVerdict,
+            output:
+              typeof toolMetadata?.subagentSummary === 'string'
+                ? toolMetadata.subagentSummary
+                : getTextContent(raw.content) || current.output,
           };
           currentAssistant.agentContent = withSubagents(
             currentAssistant.agentContent,

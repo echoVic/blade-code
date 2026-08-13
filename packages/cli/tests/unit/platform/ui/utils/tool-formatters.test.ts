@@ -3,6 +3,7 @@ import {
   fitToolDisplayForSurface,
   projectDurableToolResult,
 } from '../../../../../src/tools/display/ToolResultProjector.js';
+import { ToolErrorType } from '../../../../../src/tools/types/index.js';
 import {
   formatToolCallSummary,
   formatToolDisplay,
@@ -40,6 +41,38 @@ describe('tool formatters', () => {
     expect(display.detail).toContain('latest stdout marker');
     expect(display.detail).toContain('latest stderr marker');
     expect(display.detail?.length).toBeLessThanOrEqual(500);
+  });
+
+  it.each([
+    {
+      success: true,
+      summary: 'Explore 任务完成',
+      childSummary: 'CHILD_SUCCESS_RESULT',
+      error: undefined,
+    },
+    {
+      success: false,
+      summary: 'Explore 任务失败',
+      childSummary: 'CHILD_FAILED_RESULT',
+      error: {
+        type: ToolErrorType.EXECUTION_ERROR,
+        message: 'child failed',
+      },
+    },
+  ])('shows a bounded terminal Task result when success=$success', (fixture) => {
+    const display = formatToolDisplay('Task', {
+      success: fixture.success,
+      llmContent: fixture.childSummary,
+      ...(fixture.error ? { error: fixture.error } : {}),
+      metadata: {
+        summary: fixture.summary,
+        subagentSummary: fixture.childSummary,
+      },
+    });
+
+    expect(display.summary).toBe(fixture.summary);
+    expect(display.detail).toBe(fixture.childSummary);
+    expect(renderToolDisplayToString(display)).toContain(fixture.childSummary);
   });
 
   it('summarizes ApplyPatch without exposing the full patch body', () => {

@@ -305,6 +305,7 @@ describe('aggregateMessages', () => {
       rootAgentId: 'agent-root',
       resumeDepth: 2,
       verificationVerdict: 'pass',
+      output: 'Follow-up complete',
     });
   });
 
@@ -449,11 +450,13 @@ describe('aggregateMessages', () => {
         id: 'task-a',
         sessionId: 'agent-a',
         status: 'completed',
+        output: 'API inspected',
       }),
       expect.objectContaining({
         id: 'task-b',
         sessionId: 'agent-b',
         status: 'failed',
+        output: 'Tests need work',
       }),
     ]);
   });

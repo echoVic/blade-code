@@ -496,6 +496,7 @@ const handleToolResult: EventHandler = (props, get, set) => {
       rootAgentId: subagentRootId || matchingSubagent.rootAgentId,
       resumeDepth: subagentResumeDepth ?? matchingSubagent.resumeDepth,
       verificationVerdict: verificationVerdict ?? matchingSubagent.verificationVerdict,
+      output: subagentSummary || matchingSubagent.output,
     });
   }
 

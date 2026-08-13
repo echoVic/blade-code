@@ -70,6 +70,7 @@ function createGoalRuntimeMocks() {
     getGoal: vi.fn().mockResolvedValue(null),
     pauseActiveGoal: vi.fn().mockResolvedValue(null),
     loadModelContext: vi.fn().mockResolvedValue([]),
+    takeStartupAdoptedToolResults: vi.fn(() => []),
   };
 }
 
@@ -867,6 +868,195 @@ describe('Agent runLoop system prompt injection', () => {
       success: true,
       finalMessage: 'recovered',
     });
+  });
+
+  it('projects startup-adopted Task results once before the resumed model loop', async () => {
+    const turn = { id: 'adopted-result-turn' };
+    const marker = 'STARTUP_ADOPTED_CHILD_MARKER';
+    const adoptedResults = [
+      {
+        call: {
+          toolCallId: 'task-success',
+          messageId: 'assistant-orphaned',
+          toolName: 'Task',
+          input: {
+            description: 'Recover successful child',
+            prompt: 'Return the marker.',
+            subagent_type: 'Explore',
+            subagent_session_id: 'agent-success',
+          },
+        },
+        result: {
+          toolCallId: 'task-success',
+          toolName: 'Task',
+          output: marker,
+          metadata: {
+            summary: 'Explore 任务完成',
+            subagentSessionId: 'agent-success',
+            subagentType: 'Explore',
+            subagentStatus: 'completed',
+            subagentSummary: marker,
+            subagentRootId: 'agent-success',
+            subagentResumeDepth: 0,
+            processRestartRecovery: true,
+            subagentResultAdopted: true,
+            sideEffectsUncertain: false,
+          },
+        },
+      },
+      {
+        call: {
+          toolCallId: 'task-failed',
+          messageId: 'assistant-orphaned',
+          toolName: 'Task',
+          input: {
+            description: 'Recover failed child',
+            prompt: 'Report the failure.',
+            subagent_type: 'Explore',
+            subagent_session_id: 'agent-failed',
+          },
+        },
+        result: {
+          toolCallId: 'task-failed',
+          toolName: 'Task',
+          output: null,
+          error: 'durable child failure',
+          metadata: {
+            summary: 'Explore 任务失败',
+            subagentSessionId: 'agent-failed',
+            subagentType: 'Explore',
+            subagentStatus: 'failed',
+            subagentSummary: 'durable child failure',
+            subagentRootId: 'agent-failed',
+            subagentResumeDepth: 0,
+            processRestartRecovery: true,
+            subagentResultAdopted: true,
+            sideEffectsUncertain: false,
+          },
+        },
+      },
+    ];
+    const durableContext = [
+      {
+        role: 'assistant' as const,
+        content: marker,
+        metadata: {
+          processRestartRecovery: true,
+          subagentResultAdopted: true,
+        },
+      },
+    ];
+    const runtime = {
+      ...createGoalRuntimeMocks(),
+      sessionId: 'adopted-result-session',
+      workspaceRoot: '/workspace/adopted-result',
+      beginPendingTurn: vi.fn().mockResolvedValue(turn),
+      drainSteering: vi.fn(async () => []),
+      drainSteeringOrSeal: vi.fn(async () => ({
+        messages: [],
+        sealed: true,
+      })),
+      finishTurn: vi.fn().mockResolvedValue(undefined),
+      getPendingSteeringCount: vi.fn(() => 1),
+      getRecoveredSteeringCount: vi.fn(() => 1),
+      getPendingSteeringMessages: vi.fn(() => []),
+      loadModelContext: vi.fn().mockResolvedValue(durableContext),
+      takeStartupAdoptedToolResults: vi
+        .fn()
+        .mockReturnValueOnce(adoptedResults)
+        .mockReturnValue([]),
+    };
+    const agent = new Agent(
+      createConfig(),
+      {},
+      {
+        getRegistry: () => ({ getAll: () => [] }),
+      } as unknown as ToolExecutor,
+      runtime as unknown as SessionRuntime
+    );
+    const context = {
+      messages: [{ role: 'assistant' as const, content: 'stale running child' }],
+      userId: 'user-1',
+      sessionId: 'adopted-result-session',
+      workspaceRoot: '/workspace/adopted-result',
+    };
+    const runLoop = vi.fn(async function* (
+      _message: string,
+      loopContext: typeof context
+    ) {
+      expect(loopContext.messages).toEqual(durableContext);
+      yield { kind: 'turn_start' as const, turn: 1, maxTurns: 20 };
+      return {
+        success: true,
+        finalMessage: 'resumed',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+    Object.assign(agent, { isInitialized: true, runLoop });
+
+    const collectEvents = async () => {
+      const events = [];
+      const stream = agent.chatStream('', context, { pendingInputOnly: true });
+      let step = await stream.next();
+      while (!step.done) {
+        events.push(step.value);
+        step = await stream.next();
+      }
+      return events;
+    };
+    const firstEvents = await collectEvents();
+    const secondEvents = await collectEvents();
+
+    expect(firstEvents.map((event) => event.kind)).toEqual([
+      'tool_result',
+      'subagent_completed',
+      'tool_result',
+      'subagent_completed',
+      'follow_up_started',
+      'turn_start',
+    ]);
+    expect(firstEvents[0]).toMatchObject({
+      kind: 'tool_result',
+      toolCall: { id: 'task-success', function: { name: 'Task' } },
+      result: {
+        success: true,
+        llmContent: marker,
+        metadata: {
+          subagentResultAdopted: true,
+          sideEffectsUncertain: false,
+        },
+      },
+    });
+    expect(firstEvents[1]).toMatchObject({
+      kind: 'subagent_completed',
+      sessionId: 'agent-success',
+      success: true,
+      summary: marker,
+    });
+    expect(firstEvents[2]).toMatchObject({
+      kind: 'tool_result',
+      toolCall: { id: 'task-failed', function: { name: 'Task' } },
+      result: {
+        success: false,
+        llmContent: 'Subagent execution failed: durable child failure.',
+        error: {
+          type: 'execution_error',
+          message: 'durable child failure',
+        },
+      },
+    });
+    expect(firstEvents[3]).toMatchObject({
+      kind: 'subagent_completed',
+      sessionId: 'agent-failed',
+      success: false,
+      summary: 'durable child failure',
+    });
+    expect(secondEvents.map((event) => event.kind)).toEqual([
+      'follow_up_started',
+      'turn_start',
+    ]);
+    expect(runtime.takeStartupAdoptedToolResults).toHaveBeenCalledTimes(2);
+    expect(runLoop).toHaveBeenCalledTimes(2);
   });
 
   it('queues a new prompt behind durable input before starting an idle turn', async () => {
