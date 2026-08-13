@@ -1,81 +1,418 @@
+import type * as acp from '@agentclientprotocol/sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.unmock('node:child_process');
+vi.unmock('child_process');
+
 import {
   AcpServiceContext,
   getAcpFileSystemService,
   getTerminalService,
 } from '../../../../src/acp/AcpServiceContext.js';
+import { ControlledTerminalClient } from '../../../support/acp/ControlledTerminalClient.js';
+import {
+  createPairedAcpHarness,
+  type PairedAcpHarness,
+} from '../../../support/acp/createPairedAcpHarness.js';
 
-function connection(label: string) {
-  return {
-    readTextFile: vi.fn(
-      async ({ path, sessionId }: { path: string; sessionId: string }) => ({
-        content: `${label}:${sessionId}:${path}`,
-      })
-    ),
-    writeTextFile: vi.fn(async () => undefined),
-    createTerminal: vi.fn(
-      async ({ sessionId, cwd }: { sessionId: string; cwd?: string }) => ({
-        currentOutput: vi.fn(async () => ({
-          output: `${label}:${sessionId}:${cwd ?? ''}`,
-        })),
-        waitForExit: vi.fn(async () => ({ exitCode: 0 })),
-        kill: vi.fn(async () => undefined),
-        release: vi.fn(async () => undefined),
-      })
-    ),
-  };
-}
+const capabilities: acp.ClientCapabilities = {
+  fs: { readTextFile: true, writeTextFile: true },
+  terminal: true,
+};
 
 describe('AcpServiceContext session isolation', () => {
-  afterEach(() => {
+  const harnesses: PairedAcpHarness[] = [];
+
+  afterEach(async () => {
     AcpServiceContext.destroySession('session-a');
     AcpServiceContext.destroySession('session-b');
+    await Promise.all(harnesses.splice(0).map((harness) => harness.close()));
   });
 
-  it('resolves file services by session instead of the global current session', async () => {
-    const connectionA = connection('a');
-    const connectionB = connection('b');
-    const capabilities = {
-      fs: {
-        readTextFile: true,
-        writeTextFile: true,
-      },
-    };
+  it('resolves file and terminal services by session through paired SDK connections', async () => {
+    const clientA = new ControlledTerminalClient();
+    const clientB = new ControlledTerminalClient();
+    const harnessA = createPairedAcpHarness(clientA);
+    const harnessB = createPairedAcpHarness(clientB);
+    harnesses.push(harnessA, harnessB);
+    clientA.enqueueOutput({ output: 'a:session-a:/workspace/a', truncated: false });
+    clientA.enqueueOutput({ output: 'a:session-a:/workspace/a', truncated: false });
+    clientA.resolveWait({ exitCode: 0 });
 
     AcpServiceContext.initializeSession(
-      connectionA as never,
+      harnessA.agentConnection,
       'session-a',
-      capabilities as never,
+      capabilities,
       '/workspace/a'
     );
     AcpServiceContext.initializeSession(
-      connectionB as never,
+      harnessB.agentConnection,
       'session-b',
-      capabilities as never,
+      capabilities,
       '/workspace/b'
     );
     AcpServiceContext.setCurrentSession('session-b');
 
     await expect(
       getAcpFileSystemService('session-a').readTextFile('/workspace/a/file.ts')
-    ).resolves.toBe('a:session-a:/workspace/a/file.ts');
+    ).resolves.toBe('controlled:session-a:/workspace/a/file.ts');
     await expect(
       getAcpFileSystemService('session-b').readTextFile('/workspace/b/file.ts')
-    ).resolves.toBe('b:session-b:/workspace/b/file.ts');
+    ).resolves.toBe('controlled:session-b:/workspace/b/file.ts');
 
     await expect(
-      getTerminalService('session-a').execute('git status', {
-        cwd: '/workspace/a',
-      })
+      getTerminalService('session-a').execute('git status', { cwd: '/workspace/a' })
     ).resolves.toMatchObject({
       success: true,
       stdout: 'a:session-a:/workspace/a',
+      transport: 'acp',
     });
-    expect(connectionA.createTerminal).toHaveBeenCalledWith(
+    expect(clientA.createRequests).toEqual([
       expect.objectContaining({
         sessionId: 'session-a',
         cwd: '/workspace/a',
-      })
+      }),
+    ]);
+  });
+
+  it('serializes cumulative ACP output reads and exposes a merged bounded capture', async () => {
+    const client = new ControlledTerminalClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const firstRead = client.enqueueBlockedOutput({ output: 'a', truncated: false });
+    client.enqueueOutput({ output: 'ab', truncated: false });
+    client.resolveWait({ exitCode: 0 });
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      capabilities,
+      '/workspace/a'
     );
+
+    const execution = getTerminalService('session-a').execute('printf ab');
+    await vi.waitFor(() => expect(client.activeOutputReads).toBe(1));
+    firstRead.release();
+
+    await expect(execution).resolves.toMatchObject({
+      success: true,
+      stdout: 'ab',
+      stderr: '',
+      transport: 'acp',
+      capture: {
+        terminalOutputMerged: true,
+        stdout: { accountingComplete: true },
+        stderr: { content: '', totalBytes: 0 },
+      },
+    });
+    expect(client.maxConcurrentOutputReads).toBe(1);
+  });
+
+  it('preserves nonzero ACP output without classifying a terminal failure', async () => {
+    const client = new ControlledTerminalClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const firstRead = client.enqueueBlockedOutput({
+      output: 'nonzero-output',
+      truncated: false,
+    });
+    client.enqueueOutput({ output: 'nonzero-output', truncated: false });
+    client.resolveWait({ exitCode: 7 });
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      capabilities,
+      '/workspace/a'
+    );
+
+    const execution = getTerminalService('session-a').execute('exit 7');
+    await vi.waitFor(() => expect(client.activeOutputReads).toBe(1));
+    firstRead.release();
+
+    const result = await execution;
+    expect(result).toMatchObject({
+      success: false,
+      stdout: 'nonzero-output',
+      exitCode: 7,
+      transport: 'acp',
+    });
+    expect(result.failureKind).toBeUndefined();
+  });
+
+  it('rebuilds a complete final capture after poll output regresses', async () => {
+    const client = new ControlledTerminalClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const firstRead = client.enqueueBlockedOutput({
+      output: 'abcdef',
+      truncated: false,
+    });
+    client.enqueueOutput({ output: 'abc', truncated: false });
+    client.enqueueOutput({ output: 'complete', truncated: false });
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      capabilities,
+      '/workspace/a'
+    );
+
+    const execution = getTerminalService('session-a').execute('printf complete');
+    await vi.waitFor(() => expect(client.activeOutputReads).toBe(1));
+    firstRead.release();
+    await vi.waitFor(() => expect(client.outputRequests).toHaveLength(2));
+    await vi.waitFor(() => expect(client.activeOutputReads).toBe(0));
+    client.resolveWait({ exitCode: 0 });
+
+    await expect(execution).resolves.toMatchObject({
+      stdout: 'complete',
+      transport: 'acp',
+      capture: {
+        stdout: { totalBytes: 8, accountingComplete: true },
+      },
+    });
+  });
+
+  it('marks capture accounting incomplete when final ACP output is truncated', async () => {
+    const client = new ControlledTerminalClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    client.enqueueOutput({ output: 'tail', truncated: true });
+    client.enqueueOutput({ output: 'tail', truncated: true });
+    client.resolveWait({ exitCode: 0 });
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      capabilities,
+      '/workspace/a'
+    );
+
+    await expect(
+      getTerminalService('session-a').execute('printf tail')
+    ).resolves.toMatchObject({
+      stdout: 'tail',
+      stderr: '',
+      capture: {
+        terminalOutputMerged: true,
+        stdout: { accountingComplete: false },
+        stderr: { accountingComplete: false },
+      },
+    });
+  });
+
+  it('restores complete accounting when a failed poll is followed by a complete final read', async () => {
+    const client = new ControlledTerminalClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const firstRead = client.enqueueBlockedOutputError(new Error('poll failed'));
+    client.enqueueOutput({ output: 'recovered', truncated: false });
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      capabilities,
+      '/workspace/a'
+    );
+
+    const execution = getTerminalService('session-a').execute('printf recovered');
+    await vi.waitFor(() => expect(client.activeOutputReads).toBe(1));
+    firstRead.release();
+    await vi.waitFor(() => expect(client.outputRequests).toHaveLength(1));
+    await vi.waitFor(() => expect(client.activeOutputReads).toBe(0));
+    client.resolveWait({ exitCode: 0 });
+
+    await expect(execution).resolves.toMatchObject({
+      stdout: 'recovered',
+      capture: { stdout: { accountingComplete: true } },
+    });
+  });
+
+  it('keeps the lower-bound poll capture when final ACP output read fails', async () => {
+    const client = new ControlledTerminalClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const firstRead = client.enqueueBlockedOutput({
+      output: 'lower-bound',
+      truncated: false,
+    });
+    client.enqueueOutputError(new Error('final read failed'));
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      capabilities,
+      '/workspace/a'
+    );
+
+    const execution = getTerminalService('session-a').execute('printf lower-bound');
+    await vi.waitFor(() => expect(client.activeOutputReads).toBe(1));
+    firstRead.release();
+    await vi.waitFor(() => expect(client.outputRequests).toHaveLength(1));
+    await vi.waitFor(() => expect(client.activeOutputReads).toBe(0));
+    client.resolveWait({ exitCode: 0 });
+
+    await expect(execution).resolves.toMatchObject({
+      stdout: 'lower-bound',
+      capture: {
+        stdout: { accountingComplete: false },
+      },
+    });
+  });
+
+  it('awaits kill, final output, and release before resolving timeout', async () => {
+    const client = new ControlledTerminalClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    client.enqueueOutput({ output: 'after-kill', truncated: false });
+    client.enqueueOutput({ output: 'after-kill', truncated: false });
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      capabilities,
+      '/workspace/a'
+    );
+
+    await expect(
+      getTerminalService('session-a').execute('sleep 10', { timeout: 1 })
+    ).resolves.toMatchObject({
+      success: false,
+      stdout: 'after-kill',
+      error: 'Command timed out',
+      failureKind: 'timeout',
+      transport: 'acp',
+    });
+    expect(client.callOrder).toContain('kill');
+    expect(client.callOrder).toContain('release');
+    expect(client.callOrder.indexOf('kill')).toBeLessThan(
+      client.callOrder.lastIndexOf('output')
+    );
+    expect(client.callOrder.lastIndexOf('output')).toBeLessThan(
+      client.callOrder.indexOf('release')
+    );
+  });
+
+  it('awaits kill, final output, and release before resolving an abort', async () => {
+    const client = new ControlledTerminalClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    client.enqueueOutput({ output: 'after-abort', truncated: false });
+    client.enqueueOutput({ output: 'after-abort', truncated: false });
+    const controller = new AbortController();
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      capabilities,
+      '/workspace/a'
+    );
+
+    const execution = getTerminalService('session-a').execute('sleep 10', {
+      signal: controller.signal,
+    });
+    controller.abort();
+
+    await expect(execution).resolves.toMatchObject({
+      success: false,
+      stdout: 'after-abort',
+      error: 'Command was aborted',
+      failureKind: 'aborted',
+      transport: 'acp',
+    });
+    expect(client.callOrder.indexOf('kill')).toBeLessThan(
+      client.callOrder.lastIndexOf('output')
+    );
+    expect(client.callOrder.lastIndexOf('output')).toBeLessThan(
+      client.callOrder.indexOf('release')
+    );
+  });
+
+  it('fails closed when ACP terminal creation fails without an explicit fallback opt-in', async () => {
+    const client = new ControlledTerminalClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    client.failCreate(new Error('offline'));
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      capabilities,
+      '/workspace/a'
+    );
+
+    await expect(
+      getTerminalService('session-a').execute('printf local')
+    ).resolves.toMatchObject({
+      success: false,
+      error: expect.stringMatching(/^ACP terminal unavailable:/),
+      failureKind: 'unavailable',
+      transport: 'acp',
+    });
+  });
+
+  it('uses local fallback only with explicit opt-in and labels its transport', async () => {
+    const client = new ControlledTerminalClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    client.failCreate(new Error('offline'));
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      capabilities,
+      '/workspace/a'
+    );
+
+    const command = [
+      JSON.stringify(process.execPath),
+      '-e',
+      JSON.stringify("process.stdout.write('local-fallback')"),
+    ].join(' ');
+    await expect(
+      getTerminalService('session-a').execute(command, {
+        allowLocalFallback: true,
+      })
+    ).resolves.toMatchObject({
+      success: true,
+      stdout: 'local-fallback',
+      transport: 'local_fallback',
+    });
+  });
+
+  it('bounds local split output and classifies timeout and abort separately', async () => {
+    AcpServiceContext.destroySession('session-a');
+    const service = getTerminalService();
+    const oversized = 1024 * 1024 + 64;
+    const outputProgram =
+      `process.stdout.write('o'.repeat(${oversized}));` +
+      `process.stderr.write('e'.repeat(${oversized}))`;
+    const foreverProgram = 'setInterval(() => {}, 1_000)';
+    const command = [
+      JSON.stringify(process.execPath),
+      '-e',
+      JSON.stringify(outputProgram),
+    ].join(' ');
+    const forever = [
+      JSON.stringify(process.execPath),
+      '-e',
+      JSON.stringify(foreverProgram),
+    ].join(' ');
+
+    await expect(service.execute(command)).resolves.toMatchObject({
+      success: true,
+      transport: 'local',
+      capture: {
+        terminalOutputMerged: false,
+        stdout: { totalBytes: oversized, omittedBytes: 64 },
+        stderr: { totalBytes: oversized, omittedBytes: 64 },
+      },
+    });
+    await expect(service.execute(forever, { timeout: 1 })).resolves.toMatchObject({
+      success: false,
+      error: 'Command was terminated',
+      failureKind: 'timeout',
+      transport: 'local',
+    });
+    const controller = new AbortController();
+    const aborted = service.execute(forever, { signal: controller.signal });
+    controller.abort();
+    await expect(aborted).resolves.toMatchObject({
+      success: false,
+      error: 'Command was terminated',
+      failureKind: 'aborted',
+      transport: 'local',
+    });
   });
 });

@@ -12,15 +12,19 @@ import type {
   ToolCallStatus,
   ToolKind,
 } from '@agentclientprotocol/sdk';
+import {
+  type ForegroundProcessOwnership,
+  prepareForegroundProcess,
+} from '../context/storage/DurableForegroundProcess.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import {
   type FileSystemService,
   LocalFileSystemService,
 } from '../services/FileSystemService.js';
 import {
-  type ForegroundProcessOwnership,
-  prepareForegroundProcess,
-} from '../context/storage/DurableForegroundProcess.js';
+  ShellOutputCapture,
+  type ShellOutputCaptureSnapshot,
+} from '../tools/builtin/shell/ShellOutputCapture.js';
 import { getCwd } from '../utils/cwd.js';
 import { AcpFileSystemService } from './AcpFileSystemService.js';
 
@@ -57,12 +61,25 @@ export interface TerminalExecuteOptions {
   durableOwnership?: ForegroundProcessOwnership;
 }
 
+export type TerminalFailureKind =
+  | 'timeout'
+  | 'aborted'
+  | 'admission'
+  | 'finalization'
+  | 'unavailable'
+  | 'spawn';
+
+export type TerminalTransport = 'local' | 'acp' | 'local_fallback';
+
 export interface TerminalExecuteResult {
   success: boolean;
   stdout: string;
   stderr: string;
   exitCode: number | null;
   error?: string;
+  failureKind?: TerminalFailureKind;
+  transport: TerminalTransport;
+  capture?: ShellOutputCaptureSnapshot;
 }
 
 /**
@@ -97,6 +114,8 @@ class LocalTerminalService implements TerminalService {
           error instanceof Error
             ? error.message
             : 'Foreground command admission failed',
+        failureKind: 'admission',
+        transport: 'local',
       };
     }
 
@@ -108,16 +127,18 @@ class LocalTerminalService implements TerminalService {
         return terminationPromise;
       };
 
-      let stdout = '';
-      let stderr = '';
-      let killed = false;
+      const capture = new ShellOutputCapture();
+      let terminalEvent: 'timeout' | 'aborted' | 'admission' | undefined;
       let admissionFailed = false;
       let finalizationFailed = false;
       let settled = false;
+      let terminalHandlingStarted = false;
+      let completionPromise: Promise<void> | undefined;
+      let releasePromise: Promise<void> | undefined;
 
       const timeoutId = options?.timeout
         ? setTimeout(() => {
-            killed = true;
+            if (!terminalHandlingStarted && !terminalEvent) terminalEvent = 'timeout';
             void terminateProcessTree();
           }, options.timeout)
         : null;
@@ -140,7 +161,7 @@ class LocalTerminalService implements TerminalService {
 
       if (options?.signal) {
         abortHandler = () => {
-          killed = true;
+          if (!terminalHandlingStarted && !terminalEvent) terminalEvent = 'aborted';
           void terminateProcessTree();
         };
         options.signal.addEventListener('abort', abortHandler);
@@ -148,77 +169,70 @@ class LocalTerminalService implements TerminalService {
       }
 
       proc.stdout?.on('data', (data) => {
+        capture.append('stdout', data);
         const chunk = data.toString();
-        stdout += chunk;
         options?.onOutput?.(chunk);
       });
 
       proc.stderr?.on('data', (data) => {
+        capture.append('stderr', data);
         const chunk = data.toString();
-        stderr += chunk;
         options?.onOutput?.(chunk);
       });
 
-      proc.on('close', async (code) => {
-        if (killed || admissionFailed) {
-          await terminateProcessTree();
-        }
-        try {
-          await prepared.finalize();
-        } catch {
-          finalizationFailed = true;
-        }
-        settle({
-          success: code === 0 && !killed && !admissionFailed && !finalizationFailed,
-          stdout,
-          stderr,
-          exitCode: code,
-          error: admissionFailed
-            ? 'Foreground command admission failed'
-            : finalizationFailed
-              ? 'Foreground command finalization failed'
-              : killed
-                ? 'Command was terminated'
-                : undefined,
-        });
-      });
-
-      proc.on('error', async (error) => {
-        if (killed || admissionFailed) {
-          await terminateProcessTree();
-        }
-        try {
-          await prepared.finalize();
-        } catch {
-          finalizationFailed = true;
-        }
-        settle({
-          success: false,
-          stdout,
-          stderr,
-          exitCode: null,
-          error: admissionFailed
-            ? 'Foreground command admission failed'
-            : finalizationFailed
-              ? 'Foreground command finalization failed'
-              : error.message,
-        });
-      });
-
-      if (!options?.signal?.aborted) {
-        void prepared.release().catch(async () => {
-          admissionFailed = true;
-          await terminateProcessTree();
-          await prepared.finalize().catch(() => undefined);
+      const finish = (code: number | null, spawnError?: Error) => {
+        terminalHandlingStarted = true;
+        cleanup();
+        completionPromise ??= (async () => {
+          await releasePromise;
+          if (terminalEvent || admissionFailed) await terminateProcessTree();
+          try {
+            await prepared.finalize();
+          } catch {
+            finalizationFailed = true;
+          }
+          capture.finish();
+          const snapshot = capture.snapshot();
+          const failureKind: TerminalFailureKind | undefined =
+            terminalEvent === 'timeout'
+              ? 'timeout'
+              : terminalEvent === 'aborted'
+                ? 'aborted'
+                : admissionFailed
+                  ? 'admission'
+                  : finalizationFailed
+                    ? 'finalization'
+                    : spawnError
+                      ? 'spawn'
+                      : undefined;
           settle({
-            success: false,
-            stdout,
-            stderr,
-            exitCode: null,
-            error: 'Foreground command admission failed',
+            success: code === 0 && !failureKind,
+            stdout: snapshot.stdout.content,
+            stderr: snapshot.stderr.content,
+            exitCode: code,
+            error:
+              failureKind === 'timeout' || failureKind === 'aborted'
+                ? 'Command was terminated'
+                : failureKind === 'admission'
+                  ? 'Foreground command admission failed'
+                  : failureKind === 'finalization'
+                    ? 'Foreground command finalization failed'
+                    : spawnError?.message,
+            failureKind,
+            transport: 'local',
+            capture: snapshot,
           });
-        });
-      }
+        })();
+        void completionPromise;
+      };
+
+      proc.once('close', (code) => finish(code));
+      proc.once('error', (error) => finish(null, error));
+      releasePromise = prepared.release().catch(async () => {
+        admissionFailed = true;
+        if (!terminalEvent) terminalEvent = 'admission';
+        await terminateProcessTree();
+      });
     });
   }
 
@@ -242,11 +256,12 @@ class AcpTerminalService implements TerminalService {
     command: string,
     options?: TerminalExecuteOptions
   ): Promise<TerminalExecuteResult> {
+    let terminal:
+      | Awaited<ReturnType<AgentSideConnection['createTerminal']>>
+      | undefined;
     try {
       logger.debug(`[AcpTerminal] Executing command via ACP: ${command}`);
-
-      // 创建终端
-      const terminal = await this.connection.createTerminal({
+      terminal = await this.connection.createTerminal({
         sessionId: this.sessionId,
         command,
         cwd: options?.cwd,
@@ -254,150 +269,136 @@ class AcpTerminalService implements TerminalService {
           ? Object.entries(options.env).map(([name, value]) => ({ name, value }))
           : undefined,
       });
+      const activeTerminal = terminal;
 
-      let lastOutputLength = 0;
+      let capture = new ShellOutputCapture(undefined, true);
+      let observedOutput = '';
+      let emittedOutput = '';
+      let pollingStopped = false;
+      let wakePoll: (() => void) | undefined;
 
-      // 流式输出轮询（如果提供了 onOutput）
-      let pollIntervalId: ReturnType<typeof setInterval> | null = null;
-      if (options?.onOutput) {
-        pollIntervalId = setInterval(async () => {
-          try {
-            const output = await terminal.currentOutput();
-            const fullOutput = output.output || '';
-            if (fullOutput.length > lastOutputLength) {
-              const newContent = fullOutput.slice(lastOutputLength);
-              lastOutputLength = fullOutput.length;
-              options.onOutput?.(newContent);
-            }
-          } catch {
-            // 忽略轮询错误
-          }
-        }, 100);
-      }
-
-      // 清理函数（后台执行，不阻塞返回）
-      const cleanup = (shouldKill: boolean = false) => {
-        if (pollIntervalId) {
-          clearInterval(pollIntervalId);
-          pollIntervalId = null;
+      const emitNew = (output: string) => {
+        if (output.startsWith(emittedOutput)) {
+          const delta = output.slice(emittedOutput.length);
+          if (delta) options?.onOutput?.(delta);
+          emittedOutput = output;
         }
-        // 后台清理：如需终止则先 kill 再 release
-        const doCleanup = shouldKill
-          ? terminal
-              .kill()
-              .then(() => logger.debug(`[AcpTerminal] Killed remote command`))
-              .catch(() => {
-                /* 忽略 kill 错误（命令可能已结束）*/
-              })
-              .then(() => terminal.release())
-              .catch(() => {
-                /* 忽略 release 错误 */
-              })
-          : terminal.release().catch(() => {
-              /* 忽略 release 错误 */
-            });
-
-        // 不等待，后台执行
-        doCleanup.catch(() => {
-          /* 忽略清理错误 */
-        });
       };
-
-      // 构建竞争 Promise
-      const racePromises: Promise<
+      const appendPoll = (response: { output: string; truncated: boolean }) => {
+        if (!response.truncated && response.output.startsWith(observedOutput)) {
+          const delta = response.output.slice(observedOutput.length);
+          if (delta) capture.append('stdout', delta);
+          emitNew(response.output);
+          observedOutput = response.output;
+          return;
+        }
+        capture = new ShellOutputCapture(undefined, true);
+        capture.append('stdout', response.output);
+        capture.markAccountingIncomplete();
+        emitNew(response.output);
+        observedOutput = response.output;
+      };
+      const polling = (async () => {
+        while (!pollingStopped) {
+          try {
+            appendPoll(await activeTerminal.currentOutput());
+          } catch {
+            capture.markAccountingIncomplete();
+          }
+          if (pollingStopped) break;
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, 100);
+            wakePoll = () => {
+              clearTimeout(timer);
+              resolve();
+            };
+          });
+          wakePoll = undefined;
+        }
+      })();
+      const stopPolling = async () => {
+        pollingStopped = true;
+        wakePoll?.();
+        await polling;
+      };
+      const raced = await new Promise<
         | { type: 'completed'; exitCode: number | null }
         | { type: 'timeout' }
         | { type: 'aborted' }
-      >[] = [];
-
-      // 1. 命令完成
-      racePromises.push(
-        terminal.waitForExit().then((result) => ({
-          type: 'completed' as const,
-          exitCode: result.exitCode ?? null,
-        }))
-      );
-
-      // 2. 超时
-      if (options?.timeout) {
-        racePromises.push(
-          new Promise((resolve) => {
-            setTimeout(() => resolve({ type: 'timeout' as const }), options.timeout);
-          })
-        );
+        | { type: 'failed'; error: unknown }
+      >((resolve) => {
+        let resolved = false;
+        const settleRace = (
+          value:
+            | { type: 'completed'; exitCode: number | null }
+            | { type: 'timeout' }
+            | { type: 'aborted' }
+            | { type: 'failed'; error: unknown }
+        ) => {
+          if (resolved) return;
+          resolved = true;
+          if (timeoutId) clearTimeout(timeoutId);
+          options?.signal?.removeEventListener('abort', onAbort);
+          resolve(value);
+        };
+        const timeoutId = options?.timeout
+          ? setTimeout(() => settleRace({ type: 'timeout' }), options.timeout)
+          : undefined;
+        const onAbort = () => settleRace({ type: 'aborted' });
+        if (options?.signal?.aborted) onAbort();
+        else options?.signal?.addEventListener('abort', onAbort, { once: true });
+        void activeTerminal
+          .waitForExit()
+          .then((result) =>
+            settleRace({ type: 'completed', exitCode: result.exitCode ?? null })
+          )
+          .catch((error: unknown) => settleRace({ type: 'failed', error }));
+      });
+      await stopPolling();
+      if (raced.type !== 'completed') {
+        await activeTerminal.kill().catch(() => undefined);
       }
-
-      // 3. 取消信号
-      if (options?.signal) {
-        racePromises.push(
-          new Promise((resolve) => {
-            if (options.signal!.aborted) {
-              resolve({ type: 'aborted' as const });
-            } else {
-              options.signal!.addEventListener(
-                'abort',
-                () => resolve({ type: 'aborted' as const }),
-                { once: true }
-              );
-            }
-          })
-        );
-      }
-
-      // 使用 Promise.race 实现真正的中断
-      const raceResult = await Promise.race(racePromises);
-
-      // 获取当前输出（尽力获取，可能失败）
-      let fullOutput = '';
       try {
-        const output = await terminal.currentOutput();
-        fullOutput = output.output || '';
-        // 发送剩余输出
-        if (options?.onOutput && fullOutput.length > lastOutputLength) {
-          options.onOutput(fullOutput.slice(lastOutputLength));
-        }
+        const finalOutput = await activeTerminal.currentOutput();
+        capture = new ShellOutputCapture(undefined, true);
+        capture.append('stdout', finalOutput.output);
+        if (finalOutput.truncated) capture.markAccountingIncomplete();
+        emitNew(finalOutput.output);
       } catch {
-        // 忽略获取输出失败
+        capture.markAccountingIncomplete();
       }
-
-      // 根据结果返回（同时清理资源）
-      switch (raceResult.type) {
-        case 'completed':
-          // 正常完成：只释放资源，不需要 kill
-          cleanup(false);
-          return {
-            success: raceResult.exitCode === 0,
-            stdout: fullOutput,
-            stderr: '',
-            exitCode: raceResult.exitCode,
-          };
-
-        case 'timeout':
-          // 超时：先 kill 远端命令再释放
-          logger.debug(`[AcpTerminal] Command timed out, killing: ${command}`);
-          cleanup(true);
-          return {
-            success: false,
-            stdout: fullOutput,
-            stderr: '',
-            exitCode: null,
-            error: 'Command timed out',
-          };
-
-        case 'aborted':
-          // 取消：先 kill 远端命令再释放
-          logger.debug(`[AcpTerminal] Command aborted, killing: ${command}`);
-          cleanup(true);
-          return {
-            success: false,
-            stdout: fullOutput,
-            stderr: '',
-            exitCode: null,
-            error: 'Command was aborted',
-          };
-      }
+      await activeTerminal.release().catch(() => undefined);
+      capture.finish();
+      const snapshot = capture.snapshot();
+      return {
+        success: raced.type === 'completed' && raced.exitCode === 0,
+        stdout: snapshot.stdout.content,
+        stderr: '',
+        exitCode: raced.type === 'completed' ? raced.exitCode : null,
+        error:
+          raced.type === 'timeout'
+            ? 'Command timed out'
+            : raced.type === 'aborted'
+              ? 'Command was aborted'
+              : raced.type === 'failed'
+                ? raced.error instanceof Error
+                  ? `ACP terminal unavailable: ${raced.error.message}`
+                  : 'ACP terminal unavailable'
+                : undefined,
+        failureKind:
+          raced.type === 'timeout'
+            ? 'timeout'
+            : raced.type === 'aborted'
+              ? 'aborted'
+              : raced.type === 'failed'
+                ? 'unavailable'
+                : undefined,
+        transport: 'acp',
+        capture: snapshot,
+      };
     } catch (error) {
-      if (options?.allowLocalFallback === false) {
+      if (terminal) await terminal.release().catch(() => undefined);
+      if (options?.allowLocalFallback !== true) {
         return {
           success: false,
           stdout: '',
@@ -407,10 +408,13 @@ class AcpTerminalService implements TerminalService {
             error instanceof Error
               ? `ACP terminal unavailable: ${error.message}`
               : 'ACP terminal unavailable',
+          failureKind: 'unavailable',
+          transport: 'acp',
         };
       }
       logger.warn(`[AcpTerminal] ACP terminal failed, using fallback:`, error);
-      return this.fallback.execute(command, options);
+      const fallbackResult = await this.fallback.execute(command, options);
+      return { ...fallbackResult, transport: 'local_fallback' };
     }
   }
 
