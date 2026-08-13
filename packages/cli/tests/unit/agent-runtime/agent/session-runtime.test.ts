@@ -13,6 +13,7 @@ import {
   PROCESS_RESTART_TOOL_RESULT,
 } from '../../../../src/context/storage/PersistentStore.js';
 import { getSessionFilePath } from '../../../../src/context/storage/pathUtils.js';
+import { GoalStore } from '../../../../src/goals/GoalStore.js';
 import { HookManager } from '../../../../src/hooks/HookManager.js';
 import { HookEvent } from '../../../../src/hooks/types/HookTypes.js';
 import { McpRegistry } from '../../../../src/mcp/McpRegistry.js';
@@ -1266,6 +1267,126 @@ describe('SessionRuntime', () => {
           event.data.messageIds.includes(prepared.messageId)
       )
     ).toBe(true);
+    await recovered.dispose();
+  });
+
+  it('finalizes a matching Goal handoff while recovering its final-ready turn', async () => {
+    const workspaceRoot = path.join(storageRoot, 'goal-final-ready-project');
+    const sessionId = 'goal-final-ready-session';
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const prepared = await first.prepareInputTurn('finish the durable goal');
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    const goalStore = new GoalStore(workspaceRoot, sessionId);
+    const created = await goalStore.create({ objective: 'finish the durable goal' });
+    await goalStore.requestCompletion();
+    const passed = await goalStore.recordCompletionVerification({
+      verdict: 'pass',
+      verifierSessionId: 'verifier-goal-final-ready',
+      evidenceSha256: 'e'.repeat(64),
+    });
+    await first
+      .getExecutionEngine()
+      .getContextManager()
+      .saveMessage(sessionId, 'assistant', 'GOAL_FINALIZATION_RECOVERED', null, {
+        turnFinalization: {
+          turnId: prepared.handle.id,
+          inputMessageIds: [prepared.messageId],
+          turnsCount: 3,
+          toolCallsCount: 2,
+          durationMs: 1200,
+          goalFinalization: {
+            goalId: created.goalId,
+            verificationAttempt: passed.completionVerification!.attempt,
+            verifierSessionId: 'verifier-goal-final-ready',
+            evidenceSha256: 'e'.repeat(64),
+            goalUpdatedAt: passed.updatedAt,
+          },
+        },
+      });
+    await first.dispose();
+
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    await expect(new GoalStore(workspaceRoot, sessionId).get()).resolves.toMatchObject({
+      goalId: created.goalId,
+      status: 'complete',
+    });
+    expect(recovered.getStartupTurnRecovery()).toMatchObject({
+      turnId: prepared.handle.id,
+      outcome: 'completed',
+    });
+    await expect(recovered.getRecoveredFinalResponse()).resolves.toMatchObject({
+      turnId: prepared.handle.id,
+      content: 'GOAL_FINALIZATION_RECOVERED',
+    });
+    expect(recovered.getPendingSteeringCount()).toBe(0);
+    await recovered.dispose();
+  });
+
+  it('retries Goal handoff reconciliation after the turn terminal already exists', async () => {
+    const workspaceRoot = path.join(storageRoot, 'goal-terminal-handoff-project');
+    const sessionId = 'goal-terminal-handoff-session';
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const prepared = await first.prepareInputTurn('finish before sidecar commit');
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    const goalStore = new GoalStore(workspaceRoot, sessionId);
+    const created = await goalStore.create({
+      objective: 'finish before sidecar commit',
+    });
+    await goalStore.requestCompletion();
+    const passed = await goalStore.recordCompletionVerification({
+      verdict: 'pass',
+      verifierSessionId: 'verifier-terminal-handoff',
+      evidenceSha256: 'f'.repeat(64),
+    });
+    const persistentStore = first
+      .getExecutionEngine()
+      .getContextManager().persistentStore;
+    await first
+      .getExecutionEngine()
+      .getContextManager()
+      .saveMessage(sessionId, 'assistant', 'TERMINAL_HANDOFF_RECOVERED', null, {
+        turnFinalization: {
+          turnId: prepared.handle.id,
+          inputMessageIds: [prepared.messageId],
+          turnsCount: 2,
+          toolCallsCount: 1,
+          durationMs: 800,
+          goalFinalization: {
+            goalId: created.goalId,
+            verificationAttempt: passed.completionVerification!.attempt,
+            verifierSessionId: 'verifier-terminal-handoff',
+            evidenceSha256: 'f'.repeat(64),
+            goalUpdatedAt: passed.updatedAt,
+          },
+        },
+      });
+    await persistentStore.saveTurnCompletion(
+      sessionId,
+      {
+        turnId: prepared.handle.id,
+        completedAt: new Date().toISOString(),
+        turnsCount: 2,
+        toolCallsCount: 1,
+        durationMs: 800,
+      },
+      [prepared.messageId]
+    );
+    await first.dispose();
+
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    await expect(new GoalStore(workspaceRoot, sessionId).get()).resolves.toMatchObject({
+      goalId: created.goalId,
+      status: 'complete',
+    });
+    expect(recovered.getStartupTurnRecovery()).toMatchObject({
+      turnId: prepared.handle.id,
+      outcome: 'completed',
+    });
+    await expect(recovered.getRecoveredFinalResponse()).resolves.toMatchObject({
+      turnId: prepared.handle.id,
+      content: 'TERMINAL_HANDOFF_RECOVERED',
+    });
+    expect(recovered.getPendingSteeringCount()).toBe(0);
     await recovered.dispose();
   });
 

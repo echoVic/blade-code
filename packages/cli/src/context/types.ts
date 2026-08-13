@@ -426,9 +426,18 @@ export interface SessionTurnCompletionInfo extends SessionTurnMetrics {
   completedAt: string;
 }
 
+export interface SessionGoalFinalizationInfo {
+  goalId: string;
+  verificationAttempt: number;
+  verifierSessionId: string;
+  evidenceSha256: string;
+  goalUpdatedAt: string;
+}
+
 export interface SessionTurnFinalizationInfo extends SessionTurnMetrics {
   turnId: string;
   inputMessageIds: string[];
+  goalFinalization?: SessionGoalFinalizationInfo;
 }
 
 export type SessionTurnAbortCause =

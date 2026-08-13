@@ -2434,6 +2434,18 @@ describe('executeLoopGenerator', () => {
         createdAt: '2026-08-11T00:00:00.000Z',
         updatedAt: '2026-08-11T00:00:00.000Z',
       };
+      const expectedEvidenceSha256 = createHash('sha256')
+        .update(
+          JSON.stringify({
+            goalId: activeGoal.goalId,
+            objective: activeGoal.objective,
+            mutationRevision: 0,
+            verdict: 'pass',
+            verifierSessionId: 'verifier-session',
+            evidence: '## Verification Result: PASS',
+          })
+        )
+        .digest('hex');
       const verifyingGoal = {
         ...activeGoal,
         status: 'verifying' as const,
@@ -2448,8 +2460,11 @@ describe('executeLoopGenerator', () => {
         completionVerification: {
           ...verifyingGoal.completionVerification,
           status: 'pass' as const,
+          completedAt: '2026-08-11T00:00:02.000Z',
           verifierSessionId: 'verifier-session',
+          evidenceSha256: expectedEvidenceSha256,
         },
+        updatedAt: '2026-08-11T00:00:02.000Z',
       };
       const completeGoal = {
         ...passedGoal,
@@ -2464,7 +2479,19 @@ describe('executeLoopGenerator', () => {
           'assistant',
           'Verified completion.',
           expect.any(String),
-          undefined,
+          expect.objectContaining({
+            turnFinalization: expect.objectContaining({
+              turnId: 'turn-goal-finalization',
+              inputMessageIds: ['input-goal-finalization'],
+              goalFinalization: {
+                goalId: activeGoal.goalId,
+                verificationAttempt: 1,
+                verifierSessionId: 'verifier-session',
+                evidenceSha256: expectedEvidenceSha256,
+                goalUpdatedAt: passedGoal.updatedAt,
+              },
+            }),
+          }),
           undefined,
           undefined
         );
@@ -2510,6 +2537,12 @@ describe('executeLoopGenerator', () => {
               invalidateVerification,
               finalizeCompletion,
             },
+            turnFinalization: {
+              turnId: 'turn-goal-finalization',
+              getInputMessageIds: vi
+                .fn()
+                .mockResolvedValue(['input-goal-finalization']),
+            },
           } as LoopOptions,
           undefined
         )
@@ -2523,18 +2556,6 @@ describe('executeLoopGenerator', () => {
           goalVerifierSessionId: 'verifier-session',
         },
       });
-      const expectedEvidenceSha256 = createHash('sha256')
-        .update(
-          JSON.stringify({
-            goalId: activeGoal.goalId,
-            objective: activeGoal.objective,
-            mutationRevision: 0,
-            verdict: 'pass',
-            verifierSessionId: 'verifier-session',
-            evidence: '## Verification Result: PASS',
-          })
-        )
-        .digest('hex');
       expect(recordVerification).toHaveBeenCalledWith({
         verdict: 'pass',
         verifierSessionId: 'verifier-session',

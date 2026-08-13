@@ -21,6 +21,7 @@ import type {
   PartInfo,
   SessionContext,
   SessionEvent,
+  SessionGoalFinalizationInfo,
   SessionInfo,
   SessionInteractionRecoveryInfo,
   SessionInteractionRequestInfo,
@@ -52,6 +53,7 @@ export const PROCESS_RESTART_TOOL_RESULT =
 export interface SessionTurnRecovery {
   turnId: string;
   outcome: 'completed' | 'aborted';
+  finalization?: SessionTurnFinalizationInfo;
 }
 
 interface DurableToolCall {
@@ -63,6 +65,107 @@ const MAX_TURN_FINALIZATION_INPUTS = 20;
 const MAX_TURN_FINALIZATION_TURNS = 10_000;
 const MAX_TURN_FINALIZATION_TOOL_CALLS = 100_000;
 const MAX_TURN_FINALIZATION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_GOAL_FINALIZATION_ID_CHARS = 128;
+const MAX_GOAL_FINALIZATION_ATTEMPTS = 1_000_000;
+
+function parseGoalFinalization(
+  value: unknown
+): SessionGoalFinalizationInfo | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  const receipt = value as Record<string, unknown>;
+  if (
+    typeof receipt.goalId !== 'string' ||
+    receipt.goalId.length === 0 ||
+    receipt.goalId.length > MAX_GOAL_FINALIZATION_ID_CHARS ||
+    typeof receipt.verificationAttempt !== 'number' ||
+    !Number.isSafeInteger(receipt.verificationAttempt) ||
+    receipt.verificationAttempt < 1 ||
+    receipt.verificationAttempt > MAX_GOAL_FINALIZATION_ATTEMPTS ||
+    typeof receipt.verifierSessionId !== 'string' ||
+    receipt.verifierSessionId.length === 0 ||
+    receipt.verifierSessionId.length > MAX_GOAL_FINALIZATION_ID_CHARS ||
+    typeof receipt.evidenceSha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(receipt.evidenceSha256) ||
+    typeof receipt.goalUpdatedAt !== 'string' ||
+    !Number.isFinite(Date.parse(receipt.goalUpdatedAt))
+  ) {
+    return undefined;
+  }
+  return {
+    goalId: receipt.goalId,
+    verificationAttempt: receipt.verificationAttempt,
+    verifierSessionId: receipt.verifierSessionId,
+    evidenceSha256: receipt.evidenceSha256,
+    goalUpdatedAt: receipt.goalUpdatedAt,
+  };
+}
+
+function parseTurnFinalization(
+  event: Extract<SessionEvent, { type: 'message_created' }>,
+  expectedTurnId?: string
+): SessionTurnFinalizationInfo | undefined {
+  const metadata = event.data.metadata;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return undefined;
+  }
+  const receipt = (metadata as Record<string, unknown>).turnFinalization;
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) {
+    return undefined;
+  }
+  const record = receipt as Record<string, unknown>;
+  const turnId = record.turnId;
+  const inputMessageIds = record.inputMessageIds;
+  const turnsCount = record.turnsCount;
+  const toolCallsCount = record.toolCallsCount;
+  const durationMs = record.durationMs;
+  const validInputMessageIds = Array.isArray(inputMessageIds)
+    ? inputMessageIds.filter(
+        (messageId): messageId is string =>
+          typeof messageId === 'string' &&
+          messageId.length > 0 &&
+          messageId.length <= 128
+      )
+    : [];
+  if (
+    typeof turnId !== 'string' ||
+    turnId.length === 0 ||
+    turnId.length > 128 ||
+    (expectedTurnId !== undefined && turnId !== expectedTurnId) ||
+    !Array.isArray(inputMessageIds) ||
+    inputMessageIds.length > MAX_TURN_FINALIZATION_INPUTS ||
+    validInputMessageIds.length !== inputMessageIds.length ||
+    typeof turnsCount !== 'number' ||
+    !Number.isSafeInteger(turnsCount) ||
+    turnsCount < 0 ||
+    turnsCount > MAX_TURN_FINALIZATION_TURNS ||
+    typeof toolCallsCount !== 'number' ||
+    !Number.isSafeInteger(toolCallsCount) ||
+    toolCallsCount < 0 ||
+    toolCallsCount > MAX_TURN_FINALIZATION_TOOL_CALLS ||
+    typeof durationMs !== 'number' ||
+    !Number.isSafeInteger(durationMs) ||
+    durationMs < 0 ||
+    durationMs > MAX_TURN_FINALIZATION_DURATION_MS
+  ) {
+    return undefined;
+  }
+
+  let goalFinalization: SessionGoalFinalizationInfo | undefined;
+  if ('goalFinalization' in record) {
+    goalFinalization = parseGoalFinalization(record.goalFinalization);
+    if (!goalFinalization) return undefined;
+  }
+  return {
+    turnId,
+    inputMessageIds: [...new Set(validInputMessageIds)],
+    turnsCount,
+    toolCallsCount,
+    durationMs,
+    ...(goalFinalization ? { goalFinalization } : {}),
+  };
+}
 
 function durableTurnFinalization(
   source: readonly SessionEvent[],
@@ -77,54 +180,32 @@ function durableTurnFinalization(
   for (let index = events.length - 1; index > turnStartIndex; index--) {
     const event = events[index];
     if (event?.type !== 'message_created') continue;
-    const metadata = event.data.metadata;
-    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
-      continue;
-    }
-    const receipt = metadata.turnFinalization;
-    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) {
-      continue;
-    }
-    const inputMessageIds = receipt.inputMessageIds;
-    const turnsCount = receipt.turnsCount;
-    const toolCallsCount = receipt.toolCallsCount;
-    const durationMs = receipt.durationMs;
-    const validInputMessageIds = Array.isArray(inputMessageIds)
-      ? inputMessageIds.filter(
-          (messageId): messageId is string =>
-            typeof messageId === 'string' &&
-            messageId.length > 0 &&
-            messageId.length <= 128
-        )
-      : [];
-    if (
-      receipt.turnId !== turnId ||
-      turnId.length === 0 ||
-      turnId.length > 128 ||
-      !Array.isArray(inputMessageIds) ||
-      inputMessageIds.length > MAX_TURN_FINALIZATION_INPUTS ||
-      validInputMessageIds.length !== inputMessageIds.length ||
-      typeof turnsCount !== 'number' ||
-      !Number.isSafeInteger(turnsCount) ||
-      turnsCount < 0 ||
-      turnsCount > MAX_TURN_FINALIZATION_TURNS ||
-      typeof toolCallsCount !== 'number' ||
-      !Number.isSafeInteger(toolCallsCount) ||
-      toolCallsCount < 0 ||
-      toolCallsCount > MAX_TURN_FINALIZATION_TOOL_CALLS ||
-      typeof durationMs !== 'number' ||
-      !Number.isSafeInteger(durationMs) ||
-      durationMs < 0 ||
-      durationMs > MAX_TURN_FINALIZATION_DURATION_MS
-    ) {
-      continue;
-    }
+    const finalization = parseTurnFinalization(event, turnId);
+    if (finalization) return finalization;
+  }
+  return undefined;
+}
+
+function latestGoalFinalization(
+  source: readonly SessionEvent[]
+): { turnId: string; finalization: SessionTurnFinalizationInfo } | undefined {
+  const events = materializeSessionEvents(source);
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    if (event?.type !== 'message_created') continue;
+    const finalization = parseTurnFinalization(event);
+    if (!finalization?.goalFinalization) continue;
+    const hasEarlierStart = events
+      .slice(0, index)
+      .some(
+        (candidate) =>
+          candidate.type === 'turn_started' &&
+          candidate.data.turnId === finalization.turnId
+      );
+    if (!hasEarlierStart) continue;
     return {
-      turnId,
-      inputMessageIds: [...new Set(validInputMessageIds)],
-      turnsCount,
-      toolCallsCount,
-      durationMs,
+      turnId: finalization.turnId,
+      finalization,
     };
   }
   return undefined;
@@ -476,7 +557,11 @@ export class PersistentStore {
           ? durableTurnFinalization(projected, active.turnId)
           : undefined;
         if (active && finalization && toolCalls.orphaned.length === 0) {
-          recovery = { turnId: active.turnId, outcome: 'completed' };
+          recovery = {
+            turnId: active.turnId,
+            outcome: 'completed',
+            finalization,
+          };
           const acknowledgedIds = new Set(
             projected.flatMap((event) =>
               event.type === 'inbox_acknowledged' ? event.data.messageIds : []
@@ -548,6 +633,15 @@ export class PersistentStore {
       if (!(error instanceof TurnLifecycleNoop)) throw error;
     }
     return recovery;
+  }
+
+  async loadLatestGoalFinalization(
+    sessionId: string
+  ): Promise<
+    { turnId: string; finalization: SessionTurnFinalizationInfo } | undefined
+  > {
+    const events = await this.loadEvents(sessionId);
+    return events ? latestGoalFinalization(events) : undefined;
   }
 
   async saveInteractionRequest(

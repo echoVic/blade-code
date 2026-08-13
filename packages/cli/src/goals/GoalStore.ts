@@ -4,6 +4,7 @@ import { Mutex } from 'async-mutex';
 import { nanoid } from 'nanoid';
 import writeFileAtomic from 'write-file-atomic';
 import { getSessionGoalFilePath } from '../context/storage/pathUtils.js';
+import type { SessionGoalFinalizationInfo } from '../context/types.js';
 import { parseSchema, StringEnum, safeParseSchema, Type } from '../schema/index.js';
 import {
   GOAL_COMPLETION_VERIFICATION_STATUSES,
@@ -18,6 +19,11 @@ import {
 const MAX_GOAL_FILE_BYTES = 1024 * 1024;
 const MAX_OBJECTIVE_CHARS = 100_000;
 const MAX_VERIFICATION_SUMMARY_CHARS = 4_000;
+
+export interface GoalFinalizationReconciliation {
+  goal: GoalSnapshot;
+  finalized: boolean;
+}
 
 const GoalCompletionVerificationSchema = Type.Object({
   attempt: Type.Integer({ minimum: 1 }),
@@ -316,6 +322,40 @@ export class GoalStore {
         statusReason: undefined,
         updatedAt: new Date().toISOString(),
       };
+    });
+  }
+
+  async reconcileFinalizationReceipt(
+    receipt: SessionGoalFinalizationInfo
+  ): Promise<GoalFinalizationReconciliation | null> {
+    return this.mutex.runExclusive(async () => {
+      const goal = await this.readUnlocked();
+      if (!goal || goal.goalId !== receipt.goalId) return null;
+
+      const verification = goal.completionVerification;
+      const verificationMatches =
+        verification?.status === 'pass' &&
+        verification.attempt === receipt.verificationAttempt &&
+        verification.verifierSessionId === receipt.verifierSessionId &&
+        verification.evidenceSha256 === receipt.evidenceSha256;
+      if (!verificationMatches) return null;
+
+      if (goal.status === 'complete') {
+        return { goal, finalized: false };
+      }
+      if (goal.status !== 'verifying' || goal.updatedAt !== receipt.goalUpdatedAt) {
+        return null;
+      }
+
+      const next = parseSchema(GoalSnapshotSchema, {
+        ...goal,
+        status: 'complete',
+        statusReason: undefined,
+        updatedAt: new Date().toISOString(),
+      });
+      await this.persistUnlocked(next);
+      this.emit(next);
+      return { goal: next, finalized: true };
     });
   }
 

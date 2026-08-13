@@ -228,17 +228,53 @@ describe('durable turn lifecycle', () => {
           turnsCount: 2,
           toolCallsCount: 1,
           durationMs: 900,
+          goalFinalization: {
+            goalId: 'goal-final-ready',
+            verificationAttempt: 2,
+            verifierSessionId: 'verifier-final-ready',
+            evidenceSha256: 'a'.repeat(64),
+            goalUpdatedAt: '2026-08-11T10:00:00.000Z',
+          },
         },
       }
     );
 
-    await expect(store.recoverInterruptedTurn('session-final-ready')).resolves.toEqual({
+    await expect(
+      store.recoverInterruptedTurn('session-final-ready')
+    ).resolves.toMatchObject({
       turnId: 'turn-final-ready',
       outcome: 'completed',
+      finalization: {
+        goalFinalization: {
+          goalId: 'goal-final-ready',
+          verificationAttempt: 2,
+          verifierSessionId: 'verifier-final-ready',
+          evidenceSha256: 'a'.repeat(64),
+        },
+      },
     });
     await expect(
       store.recoverInterruptedTurn('session-final-ready')
     ).resolves.toBeUndefined();
+    await expect(
+      store.loadLatestGoalFinalization('session-final-ready')
+    ).resolves.toEqual({
+      turnId: 'turn-final-ready',
+      finalization: {
+        turnId: 'turn-final-ready',
+        inputMessageIds: ['input-final'],
+        turnsCount: 2,
+        toolCallsCount: 1,
+        durationMs: 900,
+        goalFinalization: {
+          goalId: 'goal-final-ready',
+          verificationAttempt: 2,
+          verifierSessionId: 'verifier-final-ready',
+          evidenceSha256: 'a'.repeat(64),
+          goalUpdatedAt: '2026-08-11T10:00:00.000Z',
+        },
+      },
+    });
 
     const events = await new JSONLStore(
       getSessionFilePath(workspaceRoot, 'session-final-ready')
@@ -400,6 +436,58 @@ describe('durable turn lifecycle', () => {
     expect(findPendingSessionInteraction(events)?.request.requestId).toBe(
       'request-crash'
     );
+  });
+
+  it('does not complete a final-ready turn with a malformed Goal receipt', async () => {
+    const store = new PersistentStore(workspaceRoot);
+    await store.initialize();
+    await store.saveTurnStart('session-invalid-goal-finalization', {
+      turnId: 'turn-invalid-goal-finalization',
+      kind: 'user',
+      startedAt: new Date(Date.now() - 1000).toISOString(),
+      inputMessageIds: ['input-invalid-goal'],
+    });
+    await store.saveMessage(
+      'session-invalid-goal-finalization',
+      'assistant',
+      'This must not become authoritative.',
+      null,
+      {
+        turnFinalization: {
+          turnId: 'turn-invalid-goal-finalization',
+          inputMessageIds: ['input-invalid-goal'],
+          turnsCount: 1,
+          toolCallsCount: 0,
+          durationMs: 100,
+          goalFinalization: {
+            goalId: 'goal-invalid',
+            verificationAttempt: 1,
+            verifierSessionId: 'verifier-invalid',
+            evidenceSha256: 'not-a-digest',
+            goalUpdatedAt: new Date().toISOString(),
+          },
+        },
+      }
+    );
+
+    await expect(
+      store.recoverInterruptedTurn('session-invalid-goal-finalization')
+    ).resolves.toEqual({
+      turnId: 'turn-invalid-goal-finalization',
+      outcome: 'aborted',
+    });
+    const events = await new JSONLStore(
+      getSessionFilePath(workspaceRoot, 'session-invalid-goal-finalization')
+    ).readAll();
+    expect(events.filter((event) => event.type === 'turn_completed')).toHaveLength(0);
+    expect(events.filter((event) => event.type === 'turn_aborted')).toHaveLength(1);
+    expect(
+      events.some(
+        (event) =>
+          event.type === 'inbox_acknowledged' &&
+          event.data.messageIds.includes('input-invalid-goal')
+      )
+    ).toBe(false);
   });
 
   it('rejects a second active turn before the first reaches a terminal state', async () => {

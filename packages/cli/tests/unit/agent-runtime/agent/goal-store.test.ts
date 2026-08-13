@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getSessionGoalFilePath } from '../../../../src/context/storage/pathUtils.js';
+import type { SessionGoalFinalizationInfo } from '../../../../src/context/types.js';
 import { GoalStore } from '../../../../src/goals/GoalStore.js';
 
 describe('GoalStore', () => {
@@ -150,6 +151,91 @@ describe('GoalStore', () => {
     await expect(new GoalStore(workspaceRoot, sessionId).get()).resolves.toEqual(
       completed
     );
+  });
+
+  it('reconciles an exact durable finalization receipt idempotently', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    const created = await store.create({ objective: 'finish across a crash' });
+    await store.requestCompletion();
+    const passed = await store.recordCompletionVerification({
+      verdict: 'pass',
+      verifierSessionId: 'verifier-final',
+      summary: 'All requirements passed.',
+      evidenceSha256: 'b'.repeat(64),
+    });
+    const receipt: SessionGoalFinalizationInfo = {
+      goalId: created.goalId,
+      verificationAttempt: passed.completionVerification!.attempt,
+      verifierSessionId: 'verifier-final',
+      evidenceSha256: 'b'.repeat(64),
+      goalUpdatedAt: passed.updatedAt,
+    };
+
+    await expect(store.reconcileFinalizationReceipt(receipt)).resolves.toMatchObject({
+      finalized: true,
+      goal: {
+        goalId: created.goalId,
+        status: 'complete',
+        completionVerification: {
+          status: 'pass',
+          verifierSessionId: 'verifier-final',
+          evidenceSha256: 'b'.repeat(64),
+        },
+      },
+    });
+    await expect(store.reconcileFinalizationReceipt(receipt)).resolves.toMatchObject({
+      finalized: false,
+      goal: {
+        goalId: created.goalId,
+        status: 'complete',
+      },
+    });
+  });
+
+  it('ignores stale or mismatched durable finalization receipts', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    const created = await store.create({ objective: 'preserve fresh verification' });
+    await store.requestCompletion();
+    const passed = await store.recordCompletionVerification({
+      verdict: 'pass',
+      verifierSessionId: 'verifier-current',
+      evidenceSha256: 'c'.repeat(64),
+    });
+    const receipt: SessionGoalFinalizationInfo = {
+      goalId: created.goalId,
+      verificationAttempt: passed.completionVerification!.attempt,
+      verifierSessionId: 'verifier-current',
+      evidenceSha256: 'c'.repeat(64),
+      goalUpdatedAt: passed.updatedAt,
+    };
+
+    await expect(
+      store.reconcileFinalizationReceipt({
+        ...receipt,
+        evidenceSha256: 'd'.repeat(64),
+      })
+    ).resolves.toBeNull();
+    await expect(
+      store.reconcileFinalizationReceipt({
+        ...receipt,
+        goalUpdatedAt: new Date(Date.now() + 1000).toISOString(),
+      })
+    ).resolves.toBeNull();
+    await expect(store.get()).resolves.toMatchObject({
+      status: 'verifying',
+      completionVerification: {
+        status: 'pass',
+        evidenceSha256: 'c'.repeat(64),
+      },
+    });
+
+    await store.finalizeVerifiedCompletion();
+    const replacement = await store.create({ objective: 'new goal' });
+    await expect(store.reconcileFinalizationReceipt(receipt)).resolves.toBeNull();
+    await expect(store.get()).resolves.toMatchObject({
+      goalId: replacement.goalId,
+      status: 'active',
+    });
   });
 
   it('resumes a paused verification candidate without trusting stale completion', async () => {

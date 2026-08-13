@@ -20,6 +20,7 @@ import type {
   ServiceTierSelection,
 } from '../../config/types.js';
 import { ForegroundProcessLeaseStore } from '../../context/storage/ForegroundProcessLeaseStore.js';
+import type { SessionTurnRecovery } from '../../context/storage/PersistentStore.js';
 import { getSessionInboxFilePath } from '../../context/storage/pathUtils.js';
 import { toTaskFailure } from '../../context/taskFailure.js';
 import type {
@@ -29,6 +30,7 @@ import type {
   SessionTaskStatus,
   SessionTaskWorktree,
   SessionTurnAbortCause,
+  SessionTurnFinalizationInfo,
   SessionTurnKind,
   SessionTurnMetrics,
 } from '../../context/types.js';
@@ -279,6 +281,31 @@ export interface SessionMcpContentSnapshot {
   prompts: McpRegisteredPrompt[];
 }
 
+export interface RecoveredFinalResponse {
+  turnId: string;
+  content: string;
+  structuredOutput?: JsonObject;
+  structuredOutputSchemaDigest?: string;
+}
+
+function messageTurnFinalization(
+  message: Message
+): SessionTurnFinalizationInfo | undefined {
+  const metadata = message.metadata;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return undefined;
+  }
+  const finalization = metadata.turnFinalization;
+  if (
+    !finalization ||
+    typeof finalization !== 'object' ||
+    Array.isArray(finalization)
+  ) {
+    return undefined;
+  }
+  return finalization as unknown as SessionTurnFinalizationInfo;
+}
+
 export class SessionRuntime {
   private readonly approvalStore = new InMemorySessionApprovalStore();
   private baseRegistry = new ToolRegistry();
@@ -299,6 +326,7 @@ export class SessionRuntime {
   private currentModelId?: string;
   private currentModelMaxContextTokens?: number;
   private initialized = false;
+  private startupTurnRecovery?: SessionTurnRecovery;
   private sessionLease?: SessionLease;
   private sessionMcpRegistry?: McpRegistry;
   private mcpCatalogListener?: (change: McpCatalogChange) => void;
@@ -698,6 +726,52 @@ export class SessionRuntime {
       throw new Error('Session runtime is not initialized');
     }
     return SessionService.loadSessionModelContext(this.sessionId, this.workspaceRoot);
+  }
+
+  getStartupTurnRecovery(): SessionTurnRecovery | undefined {
+    return this.startupTurnRecovery
+      ? structuredClone(this.startupTurnRecovery)
+      : undefined;
+  }
+
+  async getRecoveredFinalResponse(): Promise<RecoveredFinalResponse | undefined> {
+    const recovery = this.startupTurnRecovery;
+    if (!recovery || recovery.outcome !== 'completed') return undefined;
+    const messages = await this.loadModelContext();
+    const message = messages.findLast(
+      (candidate) =>
+        candidate.role === 'assistant' &&
+        messageTurnFinalization(candidate)?.turnId === recovery.turnId &&
+        JSON.stringify(messageTurnFinalization(candidate)) ===
+          JSON.stringify(recovery.finalization)
+    );
+    if (!message || typeof message.content !== 'string') return undefined;
+    const metadata =
+      message.metadata &&
+      typeof message.metadata === 'object' &&
+      !Array.isArray(message.metadata)
+        ? message.metadata
+        : undefined;
+    const structuredOutput = metadata?.structuredOutput;
+    const output =
+      structuredOutput &&
+      typeof structuredOutput === 'object' &&
+      !Array.isArray(structuredOutput) &&
+      structuredOutput.output &&
+      typeof structuredOutput.output === 'object' &&
+      !Array.isArray(structuredOutput.output)
+        ? (structuredOutput.output as JsonObject)
+        : undefined;
+    return {
+      turnId: recovery.turnId,
+      content: message.content,
+      ...(output ? { structuredOutput: output } : {}),
+      ...(typeof metadata?.structuredOutputSchemaDigest === 'string'
+        ? {
+            structuredOutputSchemaDigest: metadata.structuredOutputSchemaDigest,
+          }
+        : {}),
+    };
   }
 
   getAttachmentCollector(): AttachmentCollector {
@@ -1581,10 +1655,27 @@ export class SessionRuntime {
       await this.getExecutionEngine()
         .getContextManager()
         .persistentStore.initSession(this.sessionId, this.options.subagentInfo);
-      const recovery = await this.getExecutionEngine()
-        .getContextManager()
-        .persistentStore.recoverInterruptedTurn(this.sessionId);
-      if (recovery?.outcome === 'completed') {
+      const persistentStore =
+        this.getExecutionEngine().getContextManager().persistentStore;
+      const recovery = await persistentStore.recoverInterruptedTurn(this.sessionId);
+      const goalHandoff = await persistentStore.loadLatestGoalFinalization(
+        this.sessionId
+      );
+      const goalReconciliation = goalHandoff
+        ? await this.goalStore.reconcileFinalizationReceipt(
+            goalHandoff.finalization.goalFinalization!
+          )
+        : null;
+      this.startupTurnRecovery =
+        recovery ??
+        (goalHandoff && goalReconciliation?.finalized
+          ? {
+              turnId: goalHandoff.turnId,
+              outcome: 'completed',
+              finalization: goalHandoff.finalization,
+            }
+          : undefined);
+      if (this.startupTurnRecovery?.outcome === 'completed') {
         await this.reloadPendingInbox();
       }
       if (recovery) {
@@ -1770,6 +1861,7 @@ export class SessionRuntime {
     this.chatService = undefined;
     this.executionEngine = undefined;
     this.activeTurnMailbox = undefined;
+    this.startupTurnRecovery = undefined;
     this.currentModelMaxContextTokens = undefined;
     this.baseRegistry = new ToolRegistry();
     this.sessionMcpRegistry = undefined;

@@ -17,9 +17,11 @@ import {
 } from '../../context/ToolResultBudget.js';
 import type {
   MessagePersistenceMetadata,
+  SessionGoalFinalizationInfo,
   SessionTurnFinalizationInfo,
   SubagentRunRef,
 } from '../../context/types.js';
+import type { GoalSnapshot } from '../../goals/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { renderMcpInstructionReminder } from '../../mcp/McpServerInstructions.js';
 import type {
@@ -62,6 +64,7 @@ import {
   getActionStationarityPrompt,
   observeActionStationarity,
 } from './actionStationarity.js';
+import { ConversationState } from './ConversationState.js';
 import {
   checkDelegationRequirement,
   checkIncompleteIntent,
@@ -87,7 +90,6 @@ import {
   saveToolUse,
   saveUserMessage,
 } from './conversationPersistence.js';
-import { ConversationState } from './ConversationState.js';
 import {
   createStaleLoopDetector,
   createToolFailureTracker,
@@ -116,9 +118,9 @@ import {
   type VerificationVerdict,
 } from './independentVerification.js';
 import { StreamingToolExecutor } from './StreamingToolExecutor.js';
+import { ToolProgressQueue } from './ToolProgressQueue.js';
 import type { FunctionToolCallRef } from './toolDomainPolicy.js';
 import { applyToolDomainEffects } from './toolDomainPolicy.js';
-import { ToolProgressQueue } from './ToolProgressQueue.js';
 import type {
   LoopDependencies,
   LoopEvent,
@@ -897,9 +899,9 @@ validates the object and may return a bounded corrective error.`;
     // 2. 构建消息历史 — 使用 ConversationState 单一消息源
     const initialContextMessages = [...context.messages];
     const state = new ConversationState(context, finalSystemPrompt);
-    const buildTurnFinalization = async (): Promise<
-      SessionTurnFinalizationInfo | undefined
-    > => {
+    const buildTurnFinalization = async (
+      goalFinalization?: SessionGoalFinalizationInfo
+    ): Promise<SessionTurnFinalizationInfo | undefined> => {
       const finalization = options?.turnFinalization;
       if (!finalization) return undefined;
       return {
@@ -908,6 +910,7 @@ validates the object and may return a bounded corrective error.`;
         turnsCount,
         toolCallsCount: allToolResults.length,
         durationMs: Math.max(0, Date.now() - startTime),
+        ...(goalFinalization ? { goalFinalization } : {}),
       };
     };
     if (
@@ -1009,6 +1012,7 @@ validates the object and may return a bounded corrective error.`;
     let goalVerifierSessionId: string | undefined;
     let goalVerifierSummary: string | undefined;
     let goalVerificationEvidenceSha256: string | undefined;
+    let goalFinalizationSnapshot: GoalSnapshot | undefined;
     let structuredOutputRetryCount = 0;
     let restoredStructuredOutput = structuredOutputContract
       ? restoreStructuredOutput(state.getHistory(), structuredOutputContract)
@@ -1085,6 +1089,7 @@ validates the object and may return a bounded corrective error.`;
       goalVerifierSessionId = undefined;
       goalVerifierSummary = undefined;
       goalVerificationEvidenceSha256 = undefined;
+      goalFinalizationSnapshot = undefined;
       await options.goalLifecycle.invalidateVerification(reason);
     };
     const admitToolWithPolicy = (
@@ -2868,7 +2873,32 @@ validates the object and may return a bounded corrective error.`;
                   structuredOutputSchemaDigest: structuredOutputContract.schemaDigest,
                 }
               : undefined;
-          const turnFinalization = await buildTurnFinalization();
+          let goalFinalization: SessionGoalFinalizationInfo | undefined;
+          if (goalCompletionReady) {
+            const verification = goalFinalizationSnapshot?.completionVerification;
+            if (
+              goalFinalizationSnapshot?.status !== 'verifying' ||
+              goalFinalizationSnapshot.goalId !== goalId ||
+              verification?.status !== 'pass' ||
+              verification.attempt !== goalCompletionAttempt ||
+              typeof verification.verifierSessionId !== 'string' ||
+              verification.verifierSessionId !== goalVerifierSessionId ||
+              typeof verification.evidenceSha256 !== 'string' ||
+              verification.evidenceSha256 !== goalVerificationEvidenceSha256
+            ) {
+              throw new Error(
+                'Goal completion lost its persisted verification receipt before finalization'
+              );
+            }
+            goalFinalization = {
+              goalId: goalFinalizationSnapshot.goalId,
+              verificationAttempt: verification.attempt,
+              verifierSessionId: verification.verifierSessionId,
+              evidenceSha256: verification.evidenceSha256,
+              goalUpdatedAt: goalFinalizationSnapshot.updatedAt,
+            };
+          }
+          const turnFinalization = await buildTurnFinalization(goalFinalization);
           const finalPersistenceMetadata: MessagePersistenceMetadata | undefined =
             structuredOutputMetadata || turnFinalization
               ? {
@@ -3449,6 +3479,7 @@ validates the object and may return a bounded corrective error.`;
               goalVerifierSessionId = undefined;
               goalVerifierSummary = undefined;
               goalVerificationEvidenceSha256 = undefined;
+              goalFinalizationSnapshot = undefined;
               const goal = await options?.goalLifecycle?.getSnapshot();
               if (goal) yield { kind: 'goal_updated', goal };
             } else if (
@@ -3464,6 +3495,7 @@ validates the object and may return a bounded corrective error.`;
               goalVerifierSessionId = undefined;
               goalVerifierSummary = undefined;
               goalVerificationEvidenceSha256 = undefined;
+              goalFinalizationSnapshot = undefined;
               const goal = await options?.goalLifecycle?.getSnapshot();
               if (goal) yield { kind: 'goal_updated', goal };
             }
@@ -3558,6 +3590,7 @@ validates the object and may return a bounded corrective error.`;
                     summary: goalVerifierSummary,
                     evidenceSha256: goalVerificationEvidenceSha256,
                   });
+                  goalFinalizationSnapshot = goal;
                   yield { kind: 'goal_updated', goal };
                 }
               }
