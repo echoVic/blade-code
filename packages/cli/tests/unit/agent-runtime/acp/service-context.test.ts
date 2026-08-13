@@ -1,3 +1,6 @@
+import { access, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type * as acp from '@agentclientprotocol/sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -79,6 +82,7 @@ describe('AcpServiceContext session isolation', () => {
     const client = new ControlledTerminalClient();
     const harness = createPairedAcpHarness(client);
     harnesses.push(harness);
+    const outputChunks: string[] = [];
     const firstRead = client.enqueueBlockedOutput({ output: 'a', truncated: false });
     client.enqueueOutput({ output: 'ab', truncated: false });
     client.resolveWait({ exitCode: 0 });
@@ -89,9 +93,17 @@ describe('AcpServiceContext session isolation', () => {
       '/workspace/a'
     );
 
-    const execution = getTerminalService('session-a').execute('printf ab');
+    const execution = getTerminalService('session-a').execute('printf ab', {
+      onOutput: (output) => outputChunks.push(output),
+    });
     await vi.waitFor(() => expect(client.activeOutputReads).toBe(1));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(client.outputRequests).toHaveLength(1);
+    expect(client.maxConcurrentOutputReads).toBe(1);
     firstRead.release();
+    await vi.waitFor(() => expect(client.outputRequests).toHaveLength(2));
+    await vi.waitFor(() => expect(client.activeOutputReads).toBe(0));
+    client.resolveWait({ exitCode: 0 });
 
     await expect(execution).resolves.toMatchObject({
       success: true,
@@ -105,6 +117,34 @@ describe('AcpServiceContext session isolation', () => {
       },
     });
     expect(client.maxConcurrentOutputReads).toBe(1);
+    expect(outputChunks.join('')).toBe('ab');
+  }, 5000);
+
+  it('fails closed when local execution is pre-aborted', async () => {
+    AcpServiceContext.destroySession('session-a');
+    const directory = await mkdtemp(join(tmpdir(), 'blade-acp-pre-abort-'));
+    const marker = join(directory, 'marker');
+    const controller = new AbortController();
+    controller.abort();
+    const program = `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`;
+    const command = [
+      JSON.stringify(process.execPath),
+      '-e',
+      JSON.stringify(program),
+    ].join(' ');
+
+    try {
+      await expect(
+        getTerminalService().execute(command, { signal: controller.signal })
+      ).resolves.toMatchObject({
+        failureKind: 'aborted',
+        transport: 'local',
+        error: 'Command was terminated',
+      });
+      await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('preserves nonzero ACP output without classifying a terminal failure', async () => {

@@ -72,12 +72,9 @@ export function createPairedAcpHarness(client: acp.Client): PairedAcpHarness {
           closeWriter(clientToAgent.writable),
           closeWriter(agentToClient.writable),
         ]);
-        await Promise.race([
-          Promise.all([
-            clientConnection.closed.catch(() => undefined),
-            agentConnection.closed.catch(() => undefined),
-          ]),
-          new Promise<void>((resolve) => setTimeout(resolve, 10)),
+        await Promise.all([
+          clientConnection.closed.catch(() => undefined),
+          agentConnection.closed.catch(() => undefined),
         ]);
       })();
       return closePromise;

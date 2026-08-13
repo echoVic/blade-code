@@ -138,7 +138,8 @@ class LocalTerminalService implements TerminalService {
 
       const timeoutId = options?.timeout
         ? setTimeout(() => {
-            if (!terminalHandlingStarted && !terminalEvent) terminalEvent = 'timeout';
+            if (terminalHandlingStarted) return;
+            if (!terminalEvent) terminalEvent = 'timeout';
             void terminateProcessTree();
           }, options.timeout)
         : null;
@@ -161,7 +162,8 @@ class LocalTerminalService implements TerminalService {
 
       if (options?.signal) {
         abortHandler = () => {
-          if (!terminalHandlingStarted && !terminalEvent) terminalEvent = 'aborted';
+          if (terminalHandlingStarted) return;
+          if (!terminalEvent) terminalEvent = 'aborted';
           void terminateProcessTree();
         };
         options.signal.addEventListener('abort', abortHandler);
@@ -228,11 +230,17 @@ class LocalTerminalService implements TerminalService {
 
       proc.once('close', (code) => finish(code));
       proc.once('error', (error) => finish(null, error));
-      releasePromise = prepared.release().catch(async () => {
-        admissionFailed = true;
-        if (!terminalEvent) terminalEvent = 'admission';
-        await terminateProcessTree();
-      });
+      if (options?.signal?.aborted) {
+        terminalEvent = 'aborted';
+        releasePromise = Promise.resolve();
+        void terminateProcessTree();
+      } else {
+        releasePromise = prepared.release().catch(async () => {
+          admissionFailed = true;
+          if (!terminalEvent) terminalEvent = 'admission';
+          await terminateProcessTree();
+        });
+      }
     });
   }
 
@@ -272,31 +280,33 @@ class AcpTerminalService implements TerminalService {
       const activeTerminal = terminal;
 
       let capture = new ShellOutputCapture(undefined, true);
-      let observedOutput = '';
-      let emittedOutput = '';
+      let observedLength = 0;
+      let emittedLength = 0;
       let pollingStopped = false;
       let wakePoll: (() => void) | undefined;
 
       const emitNew = (output: string) => {
-        if (output.startsWith(emittedOutput)) {
-          const delta = output.slice(emittedOutput.length);
+        const len = output.length;
+        if (len >= emittedLength) {
+          const delta = output.slice(emittedLength);
           if (delta) options?.onOutput?.(delta);
-          emittedOutput = output;
+          emittedLength = len;
         }
       };
       const appendPoll = (response: { output: string; truncated: boolean }) => {
-        if (!response.truncated && response.output.startsWith(observedOutput)) {
-          const delta = response.output.slice(observedOutput.length);
+        const len = response.output.length;
+        if (!response.truncated && len >= observedLength) {
+          const delta = response.output.slice(observedLength);
           if (delta) capture.append('stdout', delta);
           emitNew(response.output);
-          observedOutput = response.output;
+          observedLength = len;
           return;
         }
         capture = new ShellOutputCapture(undefined, true);
         capture.append('stdout', response.output);
         capture.markAccountingIncomplete();
-        emitNew(response.output);
-        observedOutput = response.output;
+        emittedLength = len;
+        observedLength = len;
       };
       const polling = (async () => {
         while (!pollingStopped) {
@@ -360,10 +370,13 @@ class AcpTerminalService implements TerminalService {
       }
       try {
         const finalOutput = await activeTerminal.currentOutput();
+        const finalLen = finalOutput.output.length;
+        if (finalLen >= emittedLength) {
+          emitNew(finalOutput.output);
+        }
         capture = new ShellOutputCapture(undefined, true);
         capture.append('stdout', finalOutput.output);
         if (finalOutput.truncated) capture.markAccountingIncomplete();
-        emitNew(finalOutput.output);
       } catch {
         capture.markAccountingIncomplete();
       }
