@@ -1323,7 +1323,11 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
   if (isSystem) {
     const content = getTextContent(message.content);
     return (
-      <div data-chat-message-id={message.id} className="flex justify-center p-2 w-full">
+      <div
+        data-chat-message-id={message.id}
+        data-chat-role="system"
+        className="flex justify-center p-2 w-full"
+      >
         <div className="text-xs text-[hsl(var(--deck-ink-muted))] bg-[#F3F4F6] dark:bg-[#18181b] px-3 py-1 rounded-full font-mono">
           {content}
         </div>
@@ -1362,6 +1366,7 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
       return (
         <div
           data-chat-message-id={message.id}
+          data-chat-role="user"
           data-user-shell-command
           className="flex w-full justify-end p-4"
         >
@@ -1436,6 +1441,7 @@ function ChatMessageComponent({ message, showAvatar = true }: ChatMessageProps) 
   return (
     <div
       data-chat-message-id={message.id}
+      data-chat-role="assistant"
       className={cn(
         'group flex gap-4 justify-start w-full',
         showAvatar ? 'p-4' : 'px-4 pt-0 pb-3'

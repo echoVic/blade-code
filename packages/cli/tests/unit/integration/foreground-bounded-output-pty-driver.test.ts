@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   appendBoundedPtyEvidence,
   parseForegroundBoundedOutputPtyEvidence,
+  projectForegroundBoundedPtyOutput,
 } from '../../support/foregroundBoundedOutputPtyDriver.js';
 
 describe('foreground bounded output PTY driver', () => {
@@ -28,6 +29,27 @@ describe('foreground bounded output PTY driver', () => {
     );
 
     expect(evidence.output).toContain('STDERR_TAIL');
+  });
+
+  it('bounds ANSI-rich terminal output before serializing evidence', () => {
+    const ansiOutput =
+      '\u001B[31m' + 'x'.repeat(24_000) + '\u001B[0m\nSTDOUT_TAIL\nSTDERR_TAIL';
+    const output = projectForegroundBoundedPtyOutput(ansiOutput);
+    const serialized = JSON.stringify({
+      success: true,
+      sawExpected: true,
+      sawStdoutTail: true,
+      sawStderrTail: true,
+      noticeBeforeResize: true,
+      noticeAfterResize: true,
+      output,
+    });
+
+    expect(output).not.toContain('\u001B[');
+    expect(output).toContain('STDOUT_TAIL');
+    expect(output).toContain('STDERR_TAIL');
+    expect(serialized.length).toBeLessThan(30_000);
+    expect(() => parseForegroundBoundedOutputPtyEvidence(serialized)).not.toThrow();
   });
 
   it('rejects incomplete, oversized, and secret-bearing evidence', () => {

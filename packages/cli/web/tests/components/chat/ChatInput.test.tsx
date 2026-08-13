@@ -99,6 +99,30 @@ describe('ChatInput', () => {
     container.remove();
   });
 
+  test('exposes stable selectors for permission mode qualification', async () => {
+    act(() => {
+      root.render(<ChatInput onSend={vi.fn()} />);
+    });
+
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[data-blade-permission-mode="default"]'
+    );
+    expect(trigger).toBeTruthy();
+    await act(async () => {
+      trigger?.click();
+      await Promise.resolve();
+    });
+    const yolo = document.querySelector<HTMLButtonElement>(
+      '[data-blade-permission-option="yolo"]'
+    );
+    expect(yolo).toBeTruthy();
+    await act(async () => {
+      yolo?.click();
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[data-blade-yolo-confirm]')).toBeTruthy();
+  });
+
   test('adds pasted images as attachments and allows removal', async () => {
     const onSend = vi.fn();
 

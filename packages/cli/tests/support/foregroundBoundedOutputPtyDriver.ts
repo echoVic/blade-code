@@ -1,9 +1,11 @@
 import { execFile } from 'node:child_process';
 import path from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 import { promisify } from 'node:util';
 import type { ForegroundBoundedOutputFixture } from '../integration/real-api/foregroundBoundedOutputFixture.js';
 
 const execFileAsync = promisify(execFile);
+const SERIALIZED_PTY_OUTPUT_MAX_CHARS = 8_000;
 
 export interface ForegroundBoundedOutputPtyEvidence {
   success: boolean;
@@ -21,6 +23,16 @@ export function appendBoundedPtyEvidence(
   maxChars: number = 24_000
 ): string {
   return `${current}${chunk}`.slice(-maxChars);
+}
+
+export function projectForegroundBoundedPtyOutput(output: string): string {
+  const plain = [...stripVTControlCharacters(output)]
+    .filter((character) => {
+      const code = character.charCodeAt(0);
+      return code === 9 || code === 10 || code === 13 || (code >= 32 && code !== 127);
+    })
+    .join('');
+  return appendBoundedPtyEvidence('', plain, SERIALIZED_PTY_OUTPUT_MAX_CHARS);
 }
 
 export function parseForegroundBoundedOutputPtyEvidence(

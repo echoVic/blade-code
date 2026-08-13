@@ -359,7 +359,43 @@ describe('AcpServiceContext session isolation', () => {
     expect(client.releaseRequests).toHaveLength(1);
     expect(client.maxConcurrentOutputReads).toBe(1);
     blocked.release();
-  }, 5_000);
+  }, 10_000);
+
+  it('does not classify a slow bounded ACP output response as stalled', async () => {
+    const client = new ControlledTerminalClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const firstRead = client.enqueueBlockedOutput({
+      output: 'slow-complete-output',
+      truncated: false,
+    });
+    client.enqueueOutput({
+      output: 'slow-complete-output',
+      truncated: false,
+    });
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      capabilities,
+      '/workspace/a'
+    );
+
+    const execution = getTerminalService('session-a').execute('printf slow');
+    await vi.waitFor(() => expect(client.activeOutputReads).toBe(1));
+    await new Promise((resolve) => setTimeout(resolve, 1_250));
+    firstRead.release();
+    await vi.waitFor(() => expect(client.activeOutputReads).toBe(0));
+    client.resolveWait({ exitCode: 0 });
+
+    await expect(execution).resolves.toMatchObject({
+      success: true,
+      stdout: 'slow-complete-output',
+      capture: {
+        stdout: { accountingComplete: true },
+      },
+    });
+    expect(client.maxConcurrentOutputReads).toBe(1);
+  }, 10_000);
 
   it('awaits kill, final output, and release before resolving an abort', async () => {
     const client = new ControlledTerminalClient();

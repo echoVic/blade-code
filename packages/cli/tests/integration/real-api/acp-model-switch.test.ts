@@ -13,6 +13,7 @@ import type { RuntimeConfig } from '../../../src/config/types.js';
 import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
+import { ChildProcessRecordingAcpClient } from '../../support/acp/ChildProcessRecordingAcpClient.js';
 import {
   isRealApiTestEnabled,
   resolveDeepSeekQualificationSettings,
@@ -30,24 +31,7 @@ const enabled = Boolean(qualification);
 const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
 let originalConfig: RuntimeConfig | null = null;
 
-class RecordingClient implements acp.Client {
-  readonly updates: acp.SessionNotification[] = [];
-
-  async requestPermission(): Promise<acp.RequestPermissionResponse> {
-    return {
-      outcome: {
-        outcome: 'selected',
-        optionId: 'allow_once',
-      },
-    };
-  }
-
-  async sessionUpdate(params: acp.SessionNotification): Promise<void> {
-    this.updates.push(params);
-  }
-}
-
-function createHarness(client: RecordingClient): {
+function createHarness(client: ChildProcessRecordingAcpClient): {
   connection: acp.ClientSideConnection;
   agent: BladeAgent;
 } {
@@ -179,7 +163,7 @@ describe.skipIf(!enabled)('ACP session model switch trajectory (real API)', () =
   it('routes the next coding turn through the selected model', async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-model-switch-'));
     const proxy = await startModelRecordingProxy();
-    const client = new RecordingClient();
+    const client = new ChildProcessRecordingAcpClient();
     const harness = createHarness(client);
     process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
     const flashModelId = `acp-switch-${flashModel}`;
@@ -262,7 +246,7 @@ describe.skipIf(!enabled)('ACP session model switch trajectory (real API)', () =
       await runWithCwdOverride(workspace, async () => {
         await harness.connection.initialize({
           protocolVersion: acp.PROTOCOL_VERSION,
-          clientCapabilities: {},
+          clientCapabilities: { terminal: true },
         });
         const session = await harness.connection.newSession({
           cwd: workspace,
@@ -313,7 +297,7 @@ describe.skipIf(!enabled)('ACP session model switch trajectory (real API)', () =
         cwd: workspace,
       });
       expect(diff.stdout.trim()).toBe('src/value.js');
-      const toolTitles = client.updates
+      const toolTitles = client.sessionUpdates
         .map((notification) => notification.update)
         .filter((update) => update.sessionUpdate === 'tool_call')
         .map((update) => update.title);
@@ -322,9 +306,14 @@ describe.skipIf(!enabled)('ACP session model switch trajectory (real API)', () =
         toolTitles.some((title) => title.includes('Edit') || title.includes('Write'))
       ).toBe(true);
       expect(toolTitles.some((title) => title.includes('Bash'))).toBe(true);
-      expect(JSON.stringify(client.updates)).not.toContain(apiKey);
+      expect(
+        client.createRequests.some((request) => request.command === 'node --test')
+      ).toBe(true);
+      expect(client.activeTerminalCount()).toBe(0);
+      expect(JSON.stringify(client.sessionUpdates)).not.toContain(apiKey);
     } finally {
       await harness.agent.destroy().catch(() => undefined);
+      await client.close().catch(() => undefined);
       await proxy.close();
       WorkspaceTrustService.resetInstance();
       await rm(workspace, { recursive: true, force: true });

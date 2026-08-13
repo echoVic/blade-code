@@ -1471,6 +1471,7 @@ export function ChatInput({
               <Popover open={modeOpen} onOpenChange={setModeOpen}>
                 <PopoverTrigger asChild>
                   <button
+                    data-blade-permission-mode={currentMode}
                     className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
                       currentModeConfig.tone === 'danger'
                         ? 'text-amber-600 hover:bg-amber-500/10 dark:text-amber-400'
@@ -1498,6 +1499,7 @@ export function ChatInput({
                         <button
                           key={mode.value}
                           type="button"
+                          data-blade-permission-option={mode.value}
                           aria-pressed={selected}
                           className={`flex w-full items-start gap-2.5 rounded-md px-2 py-2 text-left transition-colors ${
                             selected
@@ -1650,6 +1652,7 @@ export function ChatInput({
               </button>
               <button
                 type="button"
+                data-blade-yolo-confirm
                 onClick={() => {
                   setMode(PermissionModeEnum.YOLO);
                   setYoloConfirmOpen(false);

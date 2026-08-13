@@ -1,20 +1,14 @@
 import { spawn } from 'bun-pty';
-
-const MAX_EVIDENCE_CHARS = 24_000;
+import {
+  appendBoundedPtyEvidence,
+  projectForegroundBoundedPtyOutput,
+} from './foregroundBoundedOutputPtyDriver.js';
 
 const required = (name: string): string => {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing required bounded PTY setting: ${name}`);
   return value;
 };
-
-function appendBoundedPtyEvidence(
-  current: string,
-  chunk: string,
-  maxChars: number = MAX_EVIDENCE_CHARS
-): string {
-  return `${current}${chunk}`.slice(-maxChars);
-}
 
 function waitFor(
   predicate: () => boolean,
@@ -123,7 +117,9 @@ async function main(): Promise<void> {
       sawStderrTail: output.includes(stderrTail),
       noticeBeforeResize,
       noticeAfterResize: output.includes('Output truncated'),
-      output: secret ? output.replaceAll(secret, '[REDACTED]') : output,
+      output: projectForegroundBoundedPtyOutput(
+        secret ? output.replaceAll(secret, '[REDACTED]') : output
+      ),
     };
     process.stdout.write(JSON.stringify(evidence));
   } catch (error) {
@@ -131,7 +127,9 @@ async function main(): Promise<void> {
       JSON.stringify({
         success: false,
         error: error instanceof Error ? error.message : String(error),
-        output: secret ? output.replaceAll(secret, '[REDACTED]') : output,
+        output: projectForegroundBoundedPtyOutput(
+          secret ? output.replaceAll(secret, '[REDACTED]') : output
+        ),
       })
     );
     process.exitCode = 1;

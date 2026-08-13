@@ -84,7 +84,9 @@ describe('ChatMessage', () => {
     expect(container.textContent).toContain('pwd');
     expect(container.textContent).toContain('/workspace');
     expect(container.textContent).not.toContain('private model context');
-    expect(document.querySelector('[data-user-shell-command]')).toBeTruthy();
+    expect(
+      document.querySelector('[data-user-shell-command][data-chat-role="user"]')
+    ).toBeTruthy();
   });
 
   let container: HTMLDivElement;
@@ -238,6 +240,7 @@ describe('ChatMessage', () => {
     };
 
     act(() => root.render(<ChatMessage message={message} />));
+    expect(container.querySelector('[data-chat-role="assistant"]')).toBeTruthy();
     const groupToggle = container.querySelector<HTMLButtonElement>(
       '[data-agent-tool-group] > button'
     );

@@ -1,9 +1,15 @@
+import { execFile } from 'node:child_process';
+import path from 'node:path';
+import { promisify } from 'node:util';
 import * as acp from '@agentclientprotocol/sdk';
 import { BladeAgent } from '../../src/acp/BladeAgent.js';
 import { runWithCwdOverride } from '../../src/utils/cwd.js';
 import type { ProcessIdentity } from '../../src/utils/process/ProcessIdentity.js';
 import type { ForegroundBoundedOutputFixture } from '../integration/real-api/foregroundBoundedOutputFixture.js';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
+
+const execFileAsync = promisify(execFile);
+const ACP_EVIDENCE_PREFIX = '__BLADE_BOUNDED_ACP_EVIDENCE__';
 
 interface PairedHarness {
   client: ChildBackedRecordingAcpClient;
@@ -88,7 +94,73 @@ export interface ForegroundBoundedOutputAcpEvidence {
   processes: Array<{ pid: number; identity: ProcessIdentity }>;
 }
 
-export async function runForegroundBoundedOutputAcpDriver(input: {
+export interface ForegroundBoundedOutputAcpToolFacts {
+  finalCount: number;
+  finalStatus: string | null | undefined;
+  progressContainsRawOutput: boolean;
+  hasStdoutTail: boolean;
+  hasStderrTail: boolean;
+  hasStdoutPrefix: boolean;
+  hasStderrPrefix: boolean;
+  finalText: string;
+}
+
+type AcpToolCallUpdateNotification = acp.SessionNotification & {
+  update: Extract<
+    acp.SessionNotification['update'],
+    { sessionUpdate: 'tool_call_update' }
+  >;
+};
+
+function isToolCallUpdate(
+  notification: acp.SessionNotification
+): notification is AcpToolCallUpdateNotification {
+  return notification.update.sessionUpdate === 'tool_call_update';
+}
+
+export function inspectForegroundBoundedOutputAcpToolUpdates(
+  updates: readonly acp.SessionNotification[],
+  toolCallId: string,
+  fixture: Pick<
+    ForegroundBoundedOutputFixture,
+    'stdoutPrefixSentinel' | 'stderrPrefixSentinel' | 'stdoutTail' | 'stderrTail'
+  >
+): ForegroundBoundedOutputAcpToolFacts {
+  const matching = updates
+    .filter(isToolCallUpdate)
+    .filter((notification) => notification.update.toolCallId === toolCallId);
+  const progressText = JSON.stringify(
+    matching.filter((notification) => notification.update.status === 'in_progress')
+  );
+  const finals = matching.filter(
+    (notification) =>
+      notification.update.status === 'completed' ||
+      notification.update.status === 'failed'
+  );
+  const final = finals.at(-1);
+  const finalText = final ? JSON.stringify(final) : '';
+  const rawMarkers = [
+    fixture.stdoutPrefixSentinel,
+    fixture.stderrPrefixSentinel,
+    fixture.stdoutTail,
+    fixture.stderrTail,
+  ];
+
+  return {
+    finalCount: finals.length,
+    finalStatus: final?.update.status,
+    progressContainsRawOutput: rawMarkers.some((marker) =>
+      progressText.includes(marker)
+    ),
+    hasStdoutTail: finalText.includes(fixture.stdoutTail),
+    hasStderrTail: finalText.includes(fixture.stderrTail),
+    hasStdoutPrefix: finalText.includes(fixture.stdoutPrefixSentinel),
+    hasStderrPrefix: finalText.includes(fixture.stderrPrefixSentinel),
+    finalText,
+  };
+}
+
+export async function runForegroundBoundedOutputAcpDriverInProcess(input: {
   workspace: string;
   fixture: ForegroundBoundedOutputFixture;
   secret: string;
@@ -147,22 +219,44 @@ export async function runForegroundBoundedOutputAcpDriver(input: {
         `ACP bounded output expected one Bash call, got ${bashStarts.length}`
       );
     }
+    const toolCallId =
+      bashStarts[0]?.update.sessionUpdate === 'tool_call'
+        ? bashStarts[0].update.toolCallId
+        : '';
     const terminalUpdates = updates.filter(
       (notification) =>
         notification.update.sessionUpdate === 'tool_call_update' &&
-        notification.update.toolCallId ===
-          (bashStarts[0]?.update.sessionUpdate === 'tool_call'
-            ? bashStarts[0].update.toolCallId
-            : undefined)
+        notification.update.toolCallId === toolCallId
     );
-    toolUpdateText = JSON.stringify(terminalUpdates);
+    const toolFacts = inspectForegroundBoundedOutputAcpToolUpdates(
+      updates,
+      toolCallId,
+      input.fixture
+    );
+    toolUpdateText = toolFacts.finalText;
     if (
-      !toolUpdateText.includes(input.fixture.stdoutTail) ||
-      !toolUpdateText.includes(input.fixture.stderrTail) ||
-      toolUpdateText.includes(input.fixture.stdoutPrefixSentinel) ||
-      toolUpdateText.includes(input.fixture.stderrPrefixSentinel)
+      toolFacts.finalCount !== 1 ||
+      toolFacts.finalStatus !== 'completed' ||
+      toolFacts.progressContainsRawOutput ||
+      !toolFacts.hasStdoutTail ||
+      !toolFacts.hasStderrTail ||
+      toolFacts.hasStdoutPrefix ||
+      toolFacts.hasStderrPrefix
     ) {
-      throw new Error('ACP live tool update violated bounded output markers');
+      throw new Error(
+        `ACP live tool update violated bounded output markers: ${JSON.stringify({
+          finalCount: toolFacts.finalCount,
+          finalStatus: toolFacts.finalStatus,
+          progressContainsRawOutput: toolFacts.progressContainsRawOutput,
+          hasStdoutTail: toolFacts.hasStdoutTail,
+          hasStderrTail: toolFacts.hasStderrTail,
+          hasStdoutPrefix: toolFacts.hasStdoutPrefix,
+          hasStderrPrefix: toolFacts.hasStderrPrefix,
+          finalPreview: toolFacts.finalText
+            .replaceAll(input.secret, '[REDACTED]')
+            .slice(-1_000),
+        })}`
+      );
     }
     if (
       terminalUpdates.some(
@@ -232,4 +326,42 @@ export async function runForegroundBoundedOutputAcpDriver(input: {
     updates,
     processes,
   };
+}
+
+export async function runForegroundBoundedOutputAcpDriver(input: {
+  workspace: string;
+  fixture: ForegroundBoundedOutputFixture;
+  secret: string;
+  timeoutMs?: number;
+}): Promise<ForegroundBoundedOutputAcpEvidence> {
+  const runner = path.resolve(
+    import.meta.dirname,
+    'foregroundBoundedOutputAcpRunner.ts'
+  );
+  const encodedInput = Buffer.from(JSON.stringify(input), 'utf8').toString('base64');
+  const result = await execFileAsync('bun', [runner], {
+    cwd: path.resolve(import.meta.dirname, '../..'),
+    env: {
+      ...process.env,
+      BLADE_BOUNDED_ACP_INPUT: encodedInput,
+    },
+    timeout: input.timeoutMs ?? 180_000,
+    maxBuffer: 1024 * 1024,
+    killSignal: 'SIGKILL',
+  });
+  const evidenceLine = result.stdout
+    .split(/\r?\n/)
+    .findLast((line) => line.startsWith(ACP_EVIDENCE_PREFIX));
+  if (!evidenceLine) {
+    throw new Error('Bun ACP runner did not return bounded evidence');
+  }
+  return JSON.parse(
+    evidenceLine.slice(ACP_EVIDENCE_PREFIX.length)
+  ) as ForegroundBoundedOutputAcpEvidence;
+}
+
+export function encodeForegroundBoundedOutputAcpEvidence(
+  evidence: ForegroundBoundedOutputAcpEvidence
+): string {
+  return `${ACP_EVIDENCE_PREFIX}${JSON.stringify(evidence)}`;
 }

@@ -29,7 +29,7 @@ import { getCwd } from '../utils/cwd.js';
 import { AcpFileSystemService } from './AcpFileSystemService.js';
 
 const logger = createLogger(LogCategory.AGENT);
-const ACP_TERMINAL_OUTPUT_READ_TIMEOUT_MS = 1_000;
+const ACP_TERMINAL_OUTPUT_READ_TIMEOUT_MS = 5_000;
 
 /**
  * 终端服务接口

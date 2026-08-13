@@ -8,12 +8,22 @@ vi.unmock('child_process');
 import {
   captureForegroundGuiLauncherIdentity,
   isExpectedBrowserRequestFailure,
+  isTerminalForegroundWebRunStatus,
   parseForegroundGuiReadyLine,
   stopForegroundGuiLauncher,
   waitForForegroundGuiLauncherReady,
 } from '../../support/foregroundBoundedOutputWebDriver.js';
 
 describe('foreground bounded output Web driver', () => {
+  it('classifies only terminal Web run states as terminal', () => {
+    for (const status of ['completed', 'failed', 'cancelled', 'interrupted']) {
+      expect(isTerminalForegroundWebRunStatus(status)).toBe(true);
+    }
+    for (const status of ['idle', 'queued', 'running', 'waiting_permission']) {
+      expect(isTerminalForegroundWebRunStatus(status)).toBe(false);
+    }
+  });
+
   it('accepts only a safe minimal launcher ready record', () => {
     expect(parseForegroundGuiReadyLine('{"ready":true,"port":4312}')).toEqual({
       ready: true,
@@ -60,6 +70,15 @@ describe('foreground bounded output Web driver', () => {
         url: 'http://127.0.0.1:4312/sessions/s/events',
         resourceType: 'eventsource',
         errorText: 'net::ERR_ABORTED',
+        refreshing: false,
+        closing: false,
+      })
+    ).toBe(true);
+    expect(
+      isExpectedBrowserRequestFailure({
+        url: 'http://127.0.0.1:4312/sessions/s/events',
+        resourceType: 'eventsource',
+        errorText: 'net::ERR_FAILED',
         refreshing: false,
         closing: false,
       })

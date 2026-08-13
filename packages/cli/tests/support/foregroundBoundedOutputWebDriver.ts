@@ -33,12 +33,18 @@ export function isExpectedBrowserRequestFailure(
   failure: BrowserRequestFailure
 ): boolean {
   if (failure.closing) return true;
-  if (!failure.refreshing) return false;
   const aborted = /ERR_ABORTED|NS_BINDING_ABORTED|cancelled/i.test(failure.errorText);
   if (!aborted) return false;
+  if (new URL(failure.url).pathname.endsWith('/events')) return true;
+  return failure.refreshing && failure.resourceType === 'document';
+}
+
+export function isTerminalForegroundWebRunStatus(status: unknown): boolean {
   return (
-    failure.resourceType === 'document' ||
-    new URL(failure.url).pathname.endsWith('/events')
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'interrupted'
   );
 }
 
@@ -206,6 +212,80 @@ async function waitForHttp(url: string, timeoutMs: number): Promise<void> {
   throw new Error(`Blade Web server did not become ready (status ${lastStatus})`);
 }
 
+async function waitForAssistantMarker(input: {
+  page: Page;
+  origin: string;
+  sessionId: string;
+  workspace: string;
+  marker: string;
+  timeoutMs: number;
+}): Promise<void> {
+  const marker = input.page
+    .locator('[data-chat-role="assistant"]')
+    .filter({ hasText: input.marker })
+    .last();
+  const deadline = Date.now() + input.timeoutMs;
+  let lastStatus: unknown = 'unknown';
+
+  while (Date.now() < deadline) {
+    if ((await marker.count()) > 0 && (await marker.isVisible())) return;
+    try {
+      const statusResponse = await fetch(
+        `${input.origin}/sessions/${encodeURIComponent(
+          input.sessionId
+        )}/status?projectPath=${encodeURIComponent(input.workspace)}`
+      );
+      if (statusResponse.ok) {
+        const status = (await statusResponse.json()) as { status?: unknown };
+        lastStatus = status.status;
+        if (lastStatus === 'waiting_permission') {
+          throw new Error(
+            'Web bounded output qualification unexpectedly requested permission'
+          );
+        }
+        if (isTerminalForegroundWebRunStatus(lastStatus)) {
+          await input.page.waitForTimeout(500);
+          if ((await marker.count()) > 0 && (await marker.isVisible())) return;
+          const cards = await input.page
+            .locator('[data-tool-name]')
+            .evaluateAll((elements) =>
+              elements.map((element) => ({
+                name: element.getAttribute('data-tool-name'),
+                status: element.getAttribute('data-tool-status'),
+              }))
+            );
+          throw new Error(
+            `Web run reached ${String(
+              lastStatus
+            )} without the assistant marker; visibleToolCards=${JSON.stringify(cards)}`
+          );
+        }
+      }
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message.startsWith('Web run reached ') ||
+          error.message.includes('unexpectedly requested permission'))
+      ) {
+        throw error;
+      }
+    }
+    await input.page.waitForTimeout(250);
+  }
+
+  const cards = await input.page.locator('[data-tool-name]').evaluateAll((elements) =>
+    elements.map((element) => ({
+      name: element.getAttribute('data-tool-name'),
+      status: element.getAttribute('data-tool-status'),
+    }))
+  );
+  throw new Error(
+    `Timed out waiting for assistant marker (run status ${String(
+      lastStatus
+    )}); visibleToolCards=${JSON.stringify(cards)}`
+  );
+}
+
 function launcherExited(child: ChildProcess): boolean {
   return child.exitCode !== null || child.signalCode !== null;
 }
@@ -277,14 +357,50 @@ export async function stopForegroundGuiLauncher(
 
 async function expandAndReadBashCard(
   page: Page,
-  fixture: ForegroundBoundedOutputFixture
+  fixture: ForegroundBoundedOutputFixture,
+  timeoutMs: number,
+  freshHistorySummary: () => Promise<string>
 ): Promise<number> {
   const cardSelector = '[data-tool-name="Bash"][data-tool-status="success"]';
   if ((await page.locator(cardSelector).count()) === 0) {
-    await page.locator('[data-agent-tool-group] > button').last().click();
+    const groupButtons = page.locator('[data-agent-tool-group] > button');
+    try {
+      await groupButtons.first().waitFor({
+        state: 'visible',
+        timeout: Math.min(timeoutMs, 5_000),
+      });
+    } catch (error) {
+      throw new Error(
+        `${
+          error instanceof Error ? error.message : String(error)
+        }; freshHistory=${await freshHistorySummary()}`
+      );
+    }
+    const groupCount = await groupButtons.count();
+    for (let index = groupCount - 1; index >= 0; index -= 1) {
+      const button = groupButtons.nth(index);
+      if ((await button.getAttribute('aria-expanded')) !== 'true') {
+        await button.click();
+      }
+      if ((await page.locator(cardSelector).count()) > 0) break;
+    }
   }
   const card = page.locator(cardSelector).last();
-  await card.waitFor({ state: 'visible' });
+  try {
+    await card.waitFor({ state: 'visible', timeout: timeoutMs });
+  } catch (error) {
+    const cards = await page.locator('[data-tool-name]').evaluateAll((elements) =>
+      elements.map((element) => ({
+        name: element.getAttribute('data-tool-name'),
+        status: element.getAttribute('data-tool-status'),
+      }))
+    );
+    throw new Error(
+      `${
+        error instanceof Error ? error.message : String(error)
+      }; visibleToolCards=${JSON.stringify(cards)}`
+    );
+  }
   if ((await card.getAttribute('data-tool-truncated')) !== 'true') {
     throw new Error('Bash browser card did not expose truncation state');
   }
@@ -362,6 +478,42 @@ export async function runForegroundBoundedOutputWebDriver(input: {
       throw new Error('Session creation did not return an ID');
     }
     const sessionId = created.sessionId;
+    const freshHistorySummary = async (): Promise<string> => {
+      const history = await fetch(
+        `${origin}/sessions/${encodeURIComponent(
+          sessionId
+        )}/message?projectPath=${encodeURIComponent(workspace)}`
+      );
+      if (!history.ok) return `http-${history.status}`;
+      const messages = (await history.json()) as Array<Record<string, unknown>>;
+      return JSON.stringify(
+        messages.map((message) => ({
+          role: message.role,
+          name: message.name,
+          toolCallId: message.tool_call_id,
+          toolCalls: Array.isArray(message.tool_calls)
+            ? message.tool_calls.map((toolCall) => {
+                const record =
+                  toolCall && typeof toolCall === 'object'
+                    ? (toolCall as Record<string, unknown>)
+                    : {};
+                const functionRecord =
+                  record.function && typeof record.function === 'object'
+                    ? (record.function as Record<string, unknown>)
+                    : {};
+                return {
+                  id: record.id,
+                  name: functionRecord.name,
+                };
+              })
+            : [],
+          status:
+            message.metadata && typeof message.metadata === 'object'
+              ? (message.metadata as Record<string, unknown>).status
+              : undefined,
+        }))
+      );
+    };
 
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext();
@@ -394,23 +546,50 @@ export async function runForegroundBoundedOutputWebDriver(input: {
     await page.goto(navigation.href, { waitUntil: 'domcontentloaded' });
     const composer = page.locator('textarea[data-blade-composer]');
     await composer.waitFor({ state: 'visible' });
+    const permissionMode = page.locator('[data-blade-permission-mode]');
+    await permissionMode.waitFor({ state: 'visible' });
+    if ((await permissionMode.getAttribute('data-blade-permission-mode')) !== 'yolo') {
+      await permissionMode.click();
+      await page.locator('[data-blade-permission-option="yolo"]').click();
+      await page.locator('[data-blade-yolo-confirm]').click();
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector('[data-blade-permission-mode]')
+            ?.getAttribute('data-blade-permission-mode') === 'yolo'
+      );
+    }
     await composer.fill(input.fixture.localPrompt);
     await composer.press('Enter');
     const marker = `BOUNDED_FOREGROUND_OK_${input.fixture.stdoutTail.replace(
       'STDOUT_RETAINED_TAIL_',
       ''
     )}`;
-    await page.getByText(marker, { exact: false }).waitFor({
-      state: 'visible',
-      timeout: timeoutMs,
+    await waitForAssistantMarker({
+      page,
+      origin,
+      sessionId,
+      workspace,
+      marker,
+      timeoutMs,
     });
-    const outputChars = await expandAndReadBashCard(page, input.fixture);
+    const outputChars = await expandAndReadBashCard(
+      page,
+      input.fixture,
+      timeoutMs,
+      freshHistorySummary
+    );
 
     refreshing = true;
     await page.reload({ waitUntil: 'domcontentloaded' });
-    refreshing = false;
     await composer.waitFor({ state: 'visible' });
-    const reloadOutputChars = await expandAndReadBashCard(page, input.fixture);
+    const reloadOutputChars = await expandAndReadBashCard(
+      page,
+      input.fixture,
+      timeoutMs,
+      freshHistorySummary
+    );
+    await page.waitForTimeout(1_000);
 
     if (faults.length > 0) {
       throw new Error(
