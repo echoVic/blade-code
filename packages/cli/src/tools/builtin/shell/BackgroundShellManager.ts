@@ -160,9 +160,6 @@ export class BackgroundShellManager {
       leaseStore,
     };
 
-    child.stdout?.setEncoding('utf8');
-    child.stderr?.setEncoding('utf8');
-
     child.stdout?.on('data', (chunk: Buffer | string) => {
       processInfo.pendingStdout.append(chunk);
     });
