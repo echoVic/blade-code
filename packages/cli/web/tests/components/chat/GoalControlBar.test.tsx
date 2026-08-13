@@ -71,9 +71,7 @@ describe('GoalControlBar', () => {
 
     expect(container.textContent).toContain('Goal paused');
     expect(container.textContent).toContain('Finish the migration');
-    expect(
-      container.querySelector('[data-blade-goal-status="paused"]')
-    ).toBeTruthy();
+    expect(container.querySelector('[data-blade-goal-status="paused"]')).toBeTruthy();
     expect(container.querySelector('[aria-label="Resume goal"]')).toBeTruthy();
     expect(container.querySelector('[aria-label="Pause goal"]')).toBeNull();
 
