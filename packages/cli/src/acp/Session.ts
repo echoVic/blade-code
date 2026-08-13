@@ -43,6 +43,7 @@ import {
   type ServiceTierSelection,
 } from '../config/types.js';
 import type { SessionTaskIsolation, SessionTaskWorktree } from '../context/types.js';
+import type { GoalSnapshot } from '../goals/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import type {
   McpElicitationContent,
@@ -459,6 +460,13 @@ export class AcpSession {
         if (!this.canSendUpdates()) return;
         if (!(await this.sendUpdateAndWait({ sessionUpdate, content }))) return;
       }
+    }
+    const restoredGoal = await this.runtime?.getGoal();
+    if (
+      restoredGoal &&
+      !(await this.sendUpdateAndWait(this.goalSessionUpdate(restoredGoal)))
+    ) {
+      return;
     }
     if (this.pendingResumeRequested) {
       this.schedulePendingResume();
@@ -1332,6 +1340,9 @@ export class AcpSession {
               }
               break;
             case 'goal_updated':
+              if (event.goal) {
+                this.sendUpdate(this.goalSessionUpdate(event.goal));
+              }
               if (event.goal && event.goal.status !== 'active') {
                 this.sendUpdate({
                   sessionUpdate: 'agent_message_chunk',
@@ -2037,6 +2048,23 @@ export class AcpSession {
     if (!this.canSendUpdates()) return false;
     await this.connection.sessionUpdate({ sessionId: this.id, update });
     return this.canSendUpdates();
+  }
+
+  private goalSessionUpdate(goal: GoalSnapshot): SessionNotification['update'] {
+    return {
+      sessionUpdate: 'session_info_update',
+      updatedAt: goal.updatedAt,
+      _meta: {
+        'blade/goal': {
+          goalId: goal.goalId,
+          status: goal.status,
+          verificationAttempt: goal.completionVerification?.attempt,
+          verificationStatus: goal.completionVerification?.status,
+          verifierSessionId: goal.completionVerification?.verifierSessionId,
+          verificationEvidenceSha256: goal.completionVerification?.evidenceSha256,
+        },
+      },
+    };
   }
 
   private sendUpdate(update: SessionNotification['update']): void {

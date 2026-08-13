@@ -61,11 +61,11 @@ import {
   CodeReviewService,
   renderCodeReview,
 } from '../../services/CodeReviewService.js';
+import { isClientVisibleMessage } from '../../services/clientMessageVisibility.js';
 import {
   type CommunicationStyleConfiguration,
   resolveCommunicationStyle,
 } from '../../services/communicationStyle.js';
-import { isClientVisibleMessage } from '../../services/clientMessageVisibility.js';
 import { resolveReasoningEffort } from '../../services/pi/reasoningEffort.js';
 import { resolveResponseVerbosity } from '../../services/pi/responseVerbosity.js';
 import { resolveServiceTier } from '../../services/pi/serviceTier.js';
@@ -88,16 +88,16 @@ import {
 } from '../../services/UserShellCommandService.js';
 import { getConfig } from '../../store/vanilla.js';
 import {
+  fitToolDisplayForSurface,
+  projectDurableToolResult,
+  SERVER_TOOL_DETAIL_MAX_CHARS,
+} from '../../tools/display/ToolResultProjector.js';
+import {
   CONFIRMATION_ABORTED_REASON,
   type ConfirmationDetails,
   type ConfirmationResponse,
 } from '../../tools/types/ExecutionTypes.js';
 import type { ToolResultMetadata } from '../../tools/types/ToolTypes.js';
-import {
-  fitToolDisplayForSurface,
-  projectDurableToolResult,
-  SERVER_TOOL_DETAIL_MAX_CHARS,
-} from '../../tools/display/ToolResultProjector.js';
 import {
   formatToolDisplay,
   renderToolDisplayToString,
@@ -1907,7 +1907,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     }
     const hasPending = runtime.getPendingSteeringCount() > 0;
     const goal = hasPending ? null : await runtime.getGoal();
-    const hasActiveGoal = goal?.status === 'active' || hasActiveGoalOnDisk;
+    const hasActiveGoal = goal?.status === 'active' || goal?.status === 'verifying';
     if ((!hasPending && !hasActiveGoal) || runtime.hasTurnOwner()) {
       return;
     }

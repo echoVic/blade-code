@@ -37,14 +37,14 @@ import { SessionTaskService } from '../services/SessionTaskService.js';
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../services/StructuredOutputService.js';
 import { getCurrentModel } from '../store/vanilla.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
-import type {
-  ConfirmationDetails,
-  ConfirmationResponse,
-} from '../tools/types/ExecutionTypes.js';
 import {
   fitToolDisplayForSurface,
   HEADLESS_TOOL_DETAIL_MAX_CHARS,
 } from '../tools/display/ToolResultProjector.js';
+import type {
+  ConfirmationDetails,
+  ConfirmationResponse,
+} from '../tools/types/ExecutionTypes.js';
 import {
   formatToolCallSummary,
   formatToolDisplay,
@@ -1287,8 +1287,31 @@ export async function runHeadless(
       inputlessResume && !pendingInputOnly ? await runtime.getGoal() : null;
     const goalContinuationOnly =
       resumedGoal?.status === 'active' || resumedGoal?.status === 'verifying';
+    const recoveredFinalResponse =
+      inputlessResume && !pendingInputOnly && !goalContinuationOnly
+        ? await runtime.getRecoveredFinalResponse()
+        : undefined;
     if (inputlessResume && !pendingInputOnly && !goalContinuationOnly) {
-      throw new Error('No unfinished turn or active goal to resume');
+      if (!recoveredFinalResponse) {
+        throw new Error('No unfinished turn or active goal to resume');
+      }
+      if (resumedGoal) {
+        eventWriter.goal({ kind: 'goal_updated', goal: resumedGoal });
+      }
+      if (
+        recoveredFinalResponse.structuredOutput &&
+        recoveredFinalResponse.structuredOutputSchemaDigest
+      ) {
+        eventWriter.structuredOutput({
+          kind: 'structured_output',
+          output: recoveredFinalResponse.structuredOutput,
+          schemaDigest: recoveredFinalResponse.structuredOutputSchemaDigest,
+        });
+      } else {
+        eventWriter.content(recoveredFinalResponse.content);
+      }
+      eventWriter.phase('completed', 'done', 'Recovered headless run completed');
+      return 0;
     }
     if (userShellCommand !== undefined) {
       const result = await runtime.executeUserShellCommand(userShellCommand, {

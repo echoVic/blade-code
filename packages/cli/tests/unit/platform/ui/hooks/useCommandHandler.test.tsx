@@ -440,6 +440,28 @@ describe('useCommandHandler durable recovery', () => {
     expect(mocks.setProcessing).toHaveBeenLastCalledWith(false);
   });
 
+  it('does not start a Goal turn after Runtime initialization finalizes its handoff', async () => {
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    mocks.hasActiveGoal
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValue(false);
+
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(mocks.createAgent).toHaveBeenCalledOnce();
+      expect(mocks.setProcessing).toHaveBeenLastCalledWith(false);
+    });
+
+    const agent = await mocks.createAgent.mock.results[0]?.value;
+    expect(agent.chatStream).not.toHaveBeenCalled();
+    expect(mocks.hasActiveGoal).toHaveBeenCalledTimes(3);
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalled();
+  });
+
   it('exposes agent cleanup to orchestration owners', async () => {
     mocks.hasPendingInbox.mockResolvedValue(false);
     await act(async () => {

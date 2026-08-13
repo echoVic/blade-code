@@ -15,6 +15,7 @@ import { PermissionMode } from '../config/types.js';
 import { SessionInteractionService } from '../services/SessionInteractionService.js';
 import { SessionService } from '../services/SessionService.js';
 import { renderUserShellCommandForDisplay } from '../services/UserShellCommandService.js';
+import type { JsonObject } from '../store/types.js';
 import { getConfig } from '../store/vanilla.js';
 import { getCwd } from '../utils/cwd.js';
 import {
@@ -56,6 +57,50 @@ const PERMISSION_MODES: ReadonlySet<string> = new Set(Object.values(PermissionMo
 function toPermissionMode(value?: string): PermissionMode | undefined {
   if (value && PERMISSION_MODES.has(value)) return value as PermissionMode;
   return undefined;
+}
+
+function writePrintResponse(input: {
+  io: Pick<typeof process, 'stdout' | 'stderr'>;
+  options: PrintOptions;
+  response: string;
+  requestInput: string;
+  structuredOutput?: JsonObject;
+  structuredOutputSchemaDigest?: string;
+}): void {
+  if (input.options.outputFormat === 'json') {
+    input.io.stdout.write(
+      `${JSON.stringify(
+        {
+          response: input.response,
+          ...(input.structuredOutput
+            ? {
+                structured_output: input.structuredOutput,
+                output_schema_digest: input.structuredOutputSchemaDigest,
+              }
+            : {}),
+          input: input.requestInput,
+          model: input.options.model,
+          timestamp: new Date().toISOString(),
+        },
+        null,
+        2
+      )}\n`
+    );
+  } else if (input.options.outputFormat === 'stream-json') {
+    input.io.stdout.write(
+      `${JSON.stringify(
+        input.structuredOutput
+          ? {
+              type: 'structured_output',
+              output: input.structuredOutput,
+              schema_digest: input.structuredOutputSchemaDigest,
+            }
+          : { type: 'response', content: input.response }
+      )}\n`
+    );
+  } else {
+    input.io.stdout.write(`${input.response}\n`);
+  }
 }
 
 function printCommand(yargs: Argv) {
@@ -216,8 +261,24 @@ export async function runPrint(
       inputlessResume && !pendingInputOnly ? await runtime.getGoal() : null;
     const goalContinuationOnly =
       resumedGoal?.status === 'active' || resumedGoal?.status === 'verifying';
+    const recoveredFinalResponse =
+      inputlessResume && !pendingInputOnly && !goalContinuationOnly
+        ? await runtime.getRecoveredFinalResponse()
+        : undefined;
     if (inputlessResume && !pendingInputOnly && !goalContinuationOnly) {
-      throw new Error('No unfinished turn or active goal to resume');
+      if (!recoveredFinalResponse) {
+        throw new Error('No unfinished turn or active goal to resume');
+      }
+      writePrintResponse({
+        io,
+        options,
+        response: recoveredFinalResponse.content,
+        requestInput: input,
+        structuredOutput: recoveredFinalResponse.structuredOutput,
+        structuredOutputSchemaDigest:
+          recoveredFinalResponse.structuredOutputSchemaDigest,
+      });
+      return 0;
     }
     if (userShellCommand !== undefined) {
       const result = await runtime.executeUserShellCommand(userShellCommand);
@@ -276,41 +337,14 @@ export async function runPrint(
     const response = loopResult.finalMessage || '';
     const structuredOutput = loopResult.metadata?.structuredOutput;
 
-    if (options.outputFormat === 'json') {
-      io.stdout.write(
-        `${JSON.stringify(
-          {
-            response,
-            ...(structuredOutput
-              ? {
-                  structured_output: structuredOutput,
-                  output_schema_digest:
-                    loopResult.metadata?.structuredOutputSchemaDigest,
-                }
-              : {}),
-            input,
-            model: options.model,
-            timestamp: new Date().toISOString(),
-          },
-          null,
-          2
-        )}\n`
-      );
-    } else if (options.outputFormat === 'stream-json') {
-      io.stdout.write(
-        `${JSON.stringify(
-          structuredOutput
-            ? {
-                type: 'structured_output',
-                output: structuredOutput,
-                schema_digest: loopResult.metadata?.structuredOutputSchemaDigest,
-              }
-            : { type: 'response', content: response }
-        )}\n`
-      );
-    } else {
-      io.stdout.write(`${response}\n`);
-    }
+    writePrintResponse({
+      io,
+      options,
+      response,
+      requestInput: input,
+      structuredOutput,
+      structuredOutputSchemaDigest: loopResult.metadata?.structuredOutputSchemaDigest,
+    });
 
     return 0;
   } catch (error) {

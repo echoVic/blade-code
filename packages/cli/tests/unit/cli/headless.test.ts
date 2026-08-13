@@ -82,6 +82,7 @@ describe('headless runner', () => {
       getConfig: () => ({ maxTurns: -1 }),
       getPendingSteeringCount: () => 0,
       getGoal: async () => null,
+      getRecoveredFinalResponse: async () => undefined,
       executeUserShellCommand: runtimeState.executeUserShellCommand,
     });
     runtimeState.executeUserShellCommand.mockReset();
@@ -100,6 +101,7 @@ describe('headless runner', () => {
       getConfig: () => ({ maxTurns: -1 }),
       getPendingSteeringCount: () => 1,
       getGoal: async () => null,
+      getRecoveredFinalResponse: async () => undefined,
       executeUserShellCommand: runtimeState.executeUserShellCommand,
     });
     const { runHeadless } = await import('../../../src/commands/headless.js');
@@ -125,6 +127,59 @@ describe('headless runner', () => {
         pendingInputOnly: true,
         goalContinuationOnly: false,
       })
+    );
+  });
+
+  it('replays a final response recovered by this startup without calling a model', async () => {
+    runtimeState.create.mockResolvedValueOnce({
+      dispose: runtimeState.dispose,
+      getConfig: () => ({ maxTurns: -1 }),
+      getPendingSteeringCount: () => 0,
+      getGoal: async () => ({
+        goalId: 'goal-recovered',
+        status: 'complete',
+        objective: 'recover exactly once',
+      }),
+      getRecoveredFinalResponse: async () => ({
+        turnId: 'turn-recovered',
+        content: 'GOAL_FINALIZATION_RECOVERED',
+      }),
+      executeUserShellCommand: runtimeState.executeUserShellCommand,
+    });
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        resume: 'headless-session',
+        outputFormat: 'jsonl',
+      },
+      { stdout, stderr },
+      { stdin: Readable.from([]) as NodeJS.ReadStream }
+    );
+
+    expect(exitCode).toBe(0);
+    expect(agentState.createWithRuntime).not.toHaveBeenCalled();
+    expect(agentState.chatStream).not.toHaveBeenCalled();
+    expect(stdout.write.mock.calls.map(([chunk]) => JSON.parse(chunk))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'goal',
+          goal_id: 'goal-recovered',
+          status: 'complete',
+        }),
+        expect.objectContaining({
+          type: 'content',
+          content: 'GOAL_FINALIZATION_RECOVERED',
+        }),
+        expect.objectContaining({
+          type: 'phase',
+          phase: 'completed',
+          status: 'done',
+        }),
+      ])
     );
   });
 

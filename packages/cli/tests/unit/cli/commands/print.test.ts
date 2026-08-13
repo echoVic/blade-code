@@ -81,6 +81,7 @@ describe('print command runner', () => {
       getConfig: () => ({ permissionMode: 'default' }),
       getPendingSteeringCount: () => 0,
       getGoal: async () => null,
+      getRecoveredFinalResponse: async () => undefined,
     });
     sessionServiceState.setSessionPermissionMode.mockResolvedValue({
       permissionMode: 'default',
@@ -103,6 +104,7 @@ describe('print command runner', () => {
       getConfig: () => ({ permissionMode: 'default' }),
       getPendingSteeringCount: () => 1,
       getGoal: async () => null,
+      getRecoveredFinalResponse: async () => undefined,
     });
     const { runPrint } = await import('../../../../src/commands/print.js');
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
@@ -131,6 +133,43 @@ describe('print command runner', () => {
     );
   });
 
+  it('prints a final response recovered by this startup without calling a model', async () => {
+    commandInputState.readOptionalCliInput.mockResolvedValueOnce(undefined);
+    runtimeState.create.mockResolvedValueOnce({
+      dispose: runtimeState.dispose,
+      getConfig: () => ({ permissionMode: 'default' }),
+      getPendingSteeringCount: () => 0,
+      getGoal: async () => ({ status: 'complete' }),
+      getRecoveredFinalResponse: async () => ({
+        turnId: 'turn-print-recovered',
+        content: 'PRINT_GOAL_FINALIZATION_RECOVERED',
+      }),
+    });
+    const { runPrint } = await import('../../../../src/commands/print.js');
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    await expect(
+      runPrint(
+        {
+          print: true,
+          resume: 'print-session',
+          outputFormat: 'json',
+        },
+        { stdout, stderr } as unknown as Pick<typeof process, 'stdout' | 'stderr'>
+      )
+    ).resolves.toBe(0);
+
+    expect(agentState.createWithRuntime).not.toHaveBeenCalled();
+    expect(agentState.chatStream).not.toHaveBeenCalled();
+    expect(loopState.drainLoop).not.toHaveBeenCalled();
+    expect(JSON.parse(stdout.write.mock.calls[0]![0])).toMatchObject({
+      response: 'PRINT_GOAL_FINALIZATION_RECOVERED',
+      input: '',
+    });
+    expect(stderr.write).not.toHaveBeenCalled();
+  });
+
   it('continues a verifying goal without a wake-up prompt', async () => {
     commandInputState.readOptionalCliInput.mockResolvedValueOnce(undefined);
     runtimeState.create.mockResolvedValueOnce({
@@ -138,6 +177,7 @@ describe('print command runner', () => {
       getConfig: () => ({ permissionMode: 'default' }),
       getPendingSteeringCount: () => 0,
       getGoal: async () => ({ status: 'verifying' }),
+      getRecoveredFinalResponse: async () => undefined,
     });
     const { runPrint } = await import('../../../../src/commands/print.js');
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };

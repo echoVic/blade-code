@@ -801,6 +801,75 @@ describe('AcpSession', () => {
       ]);
     });
 
+    it('回放恢复后的 final assistant 与 durable complete Goal 且不启动模型', async () => {
+      const history: Message[] = [
+        { role: 'user', content: 'Finish the durable goal.' },
+        { role: 'assistant', content: 'ACP_GOAL_FINALIZATION_RECOVERED' },
+      ];
+      runtimeState.runtime.getGoal.mockResolvedValue({
+        version: 1,
+        sessionId: 'test-session-id',
+        goalId: 'goal-acp-recovered',
+        objective: 'Finish the durable goal.',
+        status: 'complete',
+        tokensUsed: 100,
+        timeUsedSeconds: 2,
+        continuationCount: 1,
+        completionVerification: {
+          attempt: 1,
+          status: 'pass',
+          requestedAt: '2026-08-14T00:00:00.000Z',
+          completedAt: '2026-08-14T00:00:01.000Z',
+          verifierSessionId: 'verifier-acp-recovered',
+          evidenceSha256: 'a'.repeat(64),
+        },
+        createdAt: '2026-08-14T00:00:00.000Z',
+        updatedAt: '2026-08-14T00:00:02.000Z',
+      });
+      session = new AcpSession(
+        'test-session-id',
+        '/tmp/test',
+        mockConnection as any,
+        undefined,
+        { initialMessages: history }
+      );
+      await session.initialize();
+      mockConnection.sessionUpdates = [];
+
+      await session.replayHistory();
+
+      expect(mockConnection.sessionUpdates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: {
+                type: 'text',
+                text: 'ACP_GOAL_FINALIZATION_RECOVERED',
+              },
+            },
+          }),
+          expect.objectContaining({
+            update: {
+              sessionUpdate: 'session_info_update',
+              updatedAt: '2026-08-14T00:00:02.000Z',
+              _meta: {
+                'blade/goal': {
+                  goalId: 'goal-acp-recovered',
+                  status: 'complete',
+                  verificationAttempt: 1,
+                  verificationStatus: 'pass',
+                  verifierSessionId: 'verifier-acp-recovered',
+                  verificationEvidenceSha256: 'a'.repeat(64),
+                },
+              },
+            },
+          }),
+        ])
+      );
+      expect(getMockAgent().calls).toHaveLength(0);
+    });
+
     it('恢复后的下一次 prompt 应携带完整模型历史', async () => {
       const history: Message[] = [
         { role: 'user', content: 'Remember marker ACP_RESUME_MARKER.' },

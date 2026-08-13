@@ -301,6 +301,7 @@ vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
   SessionRuntime: {
     create: vi.fn(async () => runtimeState.runtime),
     hasPendingInbox: vi.fn(async () => false),
+    hasActiveGoal: vi.fn(async () => false),
   },
 }));
 
@@ -613,6 +614,7 @@ describe('SessionRoutes runtime reuse', () => {
         })
     );
     vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(false);
+    vi.mocked(SessionRuntime.hasActiveGoal).mockResolvedValue(false);
     vi.mocked(SessionService.listSessions).mockResolvedValue([]);
     vi.mocked(SessionService.listSessionPage).mockResolvedValue({ sessions: [] });
     vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(undefined);
@@ -1637,6 +1639,55 @@ describe('SessionRoutes runtime reuse', () => {
       firstResponse.body?.cancel().catch(() => undefined),
       secondResponse.body?.cancel().catch(() => undefined),
     ]);
+  });
+
+  it('does not start a Goal run after Runtime startup finalizes its durable handoff', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { SessionService } = await import(
+      '../../../../src/services/SessionService.js'
+    );
+    const recoveredMetadata = metadataFor(
+      'goal-handoff-web-session',
+      '/goal-handoff-workspace',
+      { permissionMode: 'yolo' }
+    );
+    vi.mocked(SessionService.listSessions).mockResolvedValue([recoveredMetadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath?: string) =>
+        sessionId === recoveredMetadata.sessionId &&
+        projectPath === recoveredMetadata.projectPath
+          ? recoveredMetadata
+          : undefined
+    );
+    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(false);
+    vi.mocked(SessionRuntime.hasActiveGoal).mockResolvedValue(true);
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+    runtimeState.runtime.getGoal.mockResolvedValue({
+      status: 'complete',
+      goalId: 'goal-handoff-complete',
+    });
+
+    const controller = new AbortController();
+    const app = SessionRoutes();
+    const response = await app.request(
+      `/goal-handoff-web-session/events?projectPath=${encodeURIComponent(
+        recoveredMetadata.projectPath
+      )}`,
+      { signal: controller.signal }
+    );
+    expect(response.status).toBe(200);
+    await vi.waitFor(() => {
+      expect(SessionRuntime.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: recoveredMetadata.sessionId,
+          workspaceRoot: recoveredMetadata.projectPath,
+        })
+      );
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(agentState.chatStream).not.toHaveBeenCalled();
+    controller.abort();
+    await response.body?.cancel().catch(() => undefined);
   });
 
   it('does not wake residual inbox input for a terminal task on Web SSE reconnect', async () => {

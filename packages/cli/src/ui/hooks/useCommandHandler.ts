@@ -532,6 +532,14 @@ export const useCommandHandler = (
     try {
       const agent = await createAgent();
       if (abortController.signal.aborted) return;
+      const pendingAfterInitialization = await SessionRuntime.hasPendingInbox(
+        workspaceRoot,
+        sessionId
+      );
+      const goalAfterInitialization =
+        !pendingAfterInitialization &&
+        (await SessionRuntime.hasActiveGoal(workspaceRoot, sessionId));
+      if (!pendingAfterInitialization && !goalAfterInitialization) return;
 
       const chatContext = {
         messages: buildContextMessagesFromSession(getState().session),
@@ -548,8 +556,8 @@ export const useCommandHandler = (
       const { loopResult, stats } = await consumeAgentStream(
         agent.chatStream('', chatContext, {
           stream: true,
-          pendingInputOnly: hasPending,
-          goalContinuationOnly: hasActiveGoal,
+          pendingInputOnly: pendingAfterInitialization,
+          goalContinuationOnly: goalAfterInitialization,
         }),
         abortController
       );
