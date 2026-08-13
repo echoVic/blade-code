@@ -12,6 +12,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
@@ -1364,7 +1365,10 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
                 'You must call Write exactly once before responding. Do not use plain text first.',
               message:
                 `Call Write exactly once with file_path "${markerPath}" and content ` +
-                '"SIDE_EFFECT_ALREADY_APPLIED\\n".',
+                '"SIDE_EFFECT_ALREADY_APPLIED\\n". If this durable prompt is resumed ' +
+                'after a process-restart receipt says the Write side effects are ' +
+                'uncertain, inspect crash-marker.txt without modifying it, do not ' +
+                'call Write again, and reply exactly TOOL_CRASH_RECEIPT_OK.',
             },
             {
               stdout: {
@@ -1427,41 +1431,6 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
         )
       ).toBe(false);
 
-      const recoveredRuntime = await runWithCwdOverride(workspace, () =>
-        SessionRuntime.create({ sessionId, workspaceRoot: workspace })
-      );
-      await recoveredRuntime.dispose();
-
-      const recoveredEvents = await store.loadEvents(sessionId);
-      if (!recoveredEvents) {
-        throw new Error('Recovered tool crash transcript is missing');
-      }
-      const receiptIndex = recoveredEvents.findIndex(
-        (event) =>
-          event.type === 'part_created' &&
-          event.data.partType === 'tool_result' &&
-          event.data.partId === toolCallId
-      );
-      const abortIndex = recoveredEvents.findIndex(
-        (event) => event.type === 'turn_aborted'
-      );
-      expect(abortIndex).toBeGreaterThanOrEqual(0);
-      expect(receiptIndex).toBeGreaterThanOrEqual(0);
-      expect(receiptIndex).toBeGreaterThan(abortIndex);
-      expect(recoveredEvents[receiptIndex]).toMatchObject({
-        data: {
-          payload: {
-            toolCallId,
-            toolName: 'Write',
-            error: PROCESS_RESTART_TOOL_RESULT,
-            metadata: {
-              processRestartRecovery: true,
-              sideEffectsUncertain: true,
-            },
-          },
-        },
-      });
-
       const exitCode = await runWithCwdOverride(workspace, () =>
         runHeadless(
           {
@@ -1469,9 +1438,7 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
             outputFormat: 'jsonl',
             resume: sessionId,
             maxTurns: 2,
-            message:
-              'Inspect crash-marker.txt without modifying it. The previous Write may ' +
-              'already have completed. Reply with exactly TOOL_CRASH_RECEIPT_OK.',
+            allowedTools: ['Read', 'Write'],
           },
           {
             stdout: {
@@ -1486,7 +1453,8 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
                 return true;
               },
             },
-          }
+          },
+          { stdin: Readable.from([]) as NodeJS.ReadStream }
         )
       );
       const events = output
@@ -1511,6 +1479,35 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
         )
       ).toHaveLength(0);
       expect(`${output}\n${errorOutput}`).not.toContain(modelConfig.apiKey);
+
+      const recoveredEvents = await store.loadEvents(sessionId);
+      if (!recoveredEvents) {
+        throw new Error('Recovered tool crash transcript is missing');
+      }
+      const receiptIndex = recoveredEvents.findIndex(
+        (event) =>
+          event.type === 'part_created' &&
+          event.data.partType === 'tool_result' &&
+          event.data.partId === toolCallId
+      );
+      const abortIndex = recoveredEvents.findIndex(
+        (event) => event.type === 'turn_aborted'
+      );
+      expect(abortIndex).toBeGreaterThanOrEqual(0);
+      expect(receiptIndex).toBeGreaterThan(abortIndex);
+      expect(recoveredEvents[receiptIndex]).toMatchObject({
+        data: {
+          payload: {
+            toolCallId,
+            toolName: 'Write',
+            error: PROCESS_RESTART_TOOL_RESULT,
+            metadata: {
+              processRestartRecovery: true,
+              sideEffectsUncertain: true,
+            },
+          },
+        },
+      });
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }

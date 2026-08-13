@@ -64,8 +64,8 @@ blade --debug "!chat,!loop"
 
 | 选项 | 别名 | 说明 |
 |------|------|------|
-| `--continue` | `-c` | 继续最近的会话 |
-| `--resume [id]` | `-r` | 恢复指定会话（无参数时交互选择） |
+| `--continue` | `-c` | 继续最近的会话；print/headless 无新输入时恢复未完成 durable turn 或 Goal |
+| `--resume [id]` | `-r` | 恢复指定会话（TUI 无参数时交互选择）；print/headless 可不提供唤醒 prompt |
 | `--fork-session` | | 与 `--resume`/`--continue` 配合，将历史复制到独立子会话，父会话保持不变 |
 | `--session-id <id>` | | 指定新会话 ID；与恢复参数同时使用时必须启用 `--fork-session` |
 
@@ -572,6 +572,10 @@ blade --resume
 
 # 指定会话 ID 恢复
 blade --resume 2024-12-foo-session
+
+# 非交互模式直接恢复未完成 turn，不创建额外用户消息
+blade --headless --resume 2024-12-foo-session
+blade --print --continue
 
 # 从历史创建独立子会话（TUI、print、headless 均支持）
 blade --resume 2024-12-foo-session --fork-session --session-id experiment-1

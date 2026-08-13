@@ -68,7 +68,9 @@ receipt exactly-once recovery、foreground/background shell hard-crash recovery�
 DeepSeek Flash 的 Runtime/Web/ACP host-authoritative Goal completion verification。
 前台有界输出固定运行 DeepSeek Flash/Pro × production Chromium Web/raw PTY TUI/真实
 ACP SDK terminal 六格；单格 Provider deadline 180 秒、测试 timeout 240 秒，完整
-realApiQualification watchdog 为 45 分钟。Edit+rewind、
+realApiQualification watchdog 为 45 分钟。Root-turn crash auto-resume 另固定运行
+DeepSeek Flash/Pro × Headless/raw PTY TUI/production Chromium Web 六格，所有入口
+都不得依赖额外 wake-up prompt。Edit+rewind、
 开放式多文件迁移、compaction、进程树、
 并发 owner 与 crash-tail 等高成本 provider/capability soak 由以下命令单独运行：
 
@@ -553,6 +555,11 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
   fail closed。第二个 Runtime 必须为已终止 turn 的 orphan 写入
   `sideEffectsUncertain` receipt，真实模型 resume 只能读取并确认既有文件，不得再次调用
   Write/Edit；
+- 根回合自动恢复：持久化原始 inbox message、未闭合 Write 和已落盘 marker 后释放
+  Session owner；新 Runtime 必须先提交 restart receipt，再从 canonical JSONL model
+  projection 恢复原输入。Headless bare `--resume`、TUI `--resume` 和 Web GUI SSE
+  reconnect 均只能执行一次 Read，Write/receipt/Read 各恰好一次，GUI reload 后结果仍
+  可见且浏览器无 application/network error；
 - 响应提交恢复：真实 DeepSeek 产生最终文本后注入 assistant message fsync 失败；临时
   content delta 可以被观察，但当前 turn 必须 aborted、不得提交 assistant 或
   `turn_completed`。冷启动由 wake-up 输入触发后必须优先重新执行原 durable inbox，

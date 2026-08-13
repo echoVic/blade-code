@@ -48,6 +48,7 @@ import {
   resolveForkQualificationModels,
   type TestModelConfig,
 } from './testConfig.js';
+import { seedRootTurnAutoResumeFixture } from './rootTurnAutoResumeFixture.js';
 
 const enabled = isRealApiTestEnabled();
 const modelConfigs = enabled
@@ -1047,73 +1048,72 @@ describeWebRegression('Web session trajectory regressions (real API)', () => {
             projectPath: fixture.workspace,
           });
           trackRef(ref);
-          let runtime: SessionRuntime | undefined;
-          try {
-            runtime = await SessionRuntime.create({
-              sessionId: ref.sessionId,
-              workspaceRoot: ref.projectPath,
-              modelId: runtimeConfig.currentModelId,
-              mcpServers: {},
-              agents: [],
-            });
-            const durablePrompt =
-              'The old value was ALPHA_WEB_RECOVERY. The newest value is ' +
-              'BETA_WEB_RECOVERY. Reply with the newest value only.';
-            const prepared = await runtime.prepareInputTurn(durablePrompt);
-            expect(prepared).toMatchObject({
-              accepted: true,
-              mode: 'direct',
-              queued: 1,
-            });
-            if (!prepared.accepted) {
-              throw new Error('Expected durable input preparation to succeed');
-            }
-            const inboxMessageId = prepared.messageId;
-            await runtime.dispose();
-            runtime = undefined;
+          const marker = `WEB_ROOT_AUTO_RESUME_${Date.now()}`;
+          const seeded = await seedRootTurnAutoResumeFixture({
+            workspace: ref.projectPath,
+            sessionId: ref.sessionId,
+            marker,
+            modelId: runtimeConfig.currentModelId,
+          });
 
-            const collector = await collectEvents(server, ref);
-            trackCollector(collector);
-            const eventBoundary = 0;
-            await collector.waitFor((event) => event.type === 'follow_up.started', {
-              afterIndex: eventBoundary,
-              label: 'follow_up.started',
-            });
-            const completion = await collector.waitFor(
-              (event) => event.type === 'session.completed',
-              { afterIndex: eventBoundary, label: 'session.completed' }
-            );
-            const runId = parseSchema(Type.String(), completion.properties.runId);
-            await waitForRunCompletion(server, ref, collector, runId, eventBoundary);
+          const collector = await collectEvents(server, ref);
+          trackCollector(collector);
+          const eventBoundary = 0;
+          await collector.waitFor((event) => event.type === 'follow_up.started', {
+            afterIndex: eventBoundary,
+            label: 'follow_up.started',
+          });
+          const completion = await collector.waitFor(
+            (event) => event.type === 'session.completed',
+            { afterIndex: eventBoundary, label: 'session.completed' }
+          );
+          const runId = parseSchema(Type.String(), completion.properties.runId);
+          await waitForRunCompletion(server, ref, collector, runId, eventBoundary);
 
-            const recoveredUser = collector.events.find(
+          const output = collector.events
+            .filter((event) => event.type === 'message.delta')
+            .map((event) => String(event.properties.delta ?? ''))
+            .join('');
+          expect(output).toContain(marker);
+          expect(readFileSync(seeded.markerPath, 'utf8')).toBe(`${marker}\n`);
+          expect(
+            collector.events.some(
               (event) =>
-                event.type === 'message.created' &&
-                event.properties.role === 'user' &&
-                event.properties.recovered === true
-            );
-            expect(recoveredUser).toMatchObject({
-              properties: expect.objectContaining({
-                messageId: inboxMessageId,
-                content: durablePrompt,
-              }),
-            });
-            const output = collector.events
-              .filter((event) => event.type === 'message.delta')
-              .map((event) => String(event.properties.delta ?? ''))
-              .join('');
-            expect(output).toContain('BETA_WEB_RECOVERY');
-            expect(collector.events.map((event) => event.type)).not.toContain(
-              'session.error'
-            );
+                event.type === 'tool.start' && event.properties.toolName === 'Read'
+            )
+          ).toBe(true);
+          expect(collector.events.map((event) => event.type)).not.toContain(
+            'session.error'
+          );
+          expect(
+            existsSync(getSessionInboxFilePath(fixture.workspace, ref.sessionId))
+          ).toBe(false);
+          const transcript = readSessionEvents(
+            findSessionTranscript(fixture.storageRoot, ref.sessionId)
+          );
+          expect(
+            transcript.filter(
+              (event) =>
+                event.type === 'message_created' &&
+                event.data.role === 'user' &&
+                event.data.inboxMessageId === seeded.inputMessageId
+            )
+          ).toHaveLength(1);
+          for (const toolName of ['Write', 'Read']) {
             expect(
-              existsSync(getSessionInboxFilePath(fixture.workspace, ref.sessionId))
-            ).toBe(false);
-            assertNoSecrets(collector.events, [modelConfig.apiKey]);
-            assertCollectorIdentity(collector, ref);
-          } finally {
-            await runtime?.dispose().catch(() => undefined);
+              transcript.filter(
+                (event) =>
+                  event.type === 'part_created' &&
+                  event.data.partType === 'tool_call' &&
+                  event.data.payload !== null &&
+                  typeof event.data.payload === 'object' &&
+                  !Array.isArray(event.data.payload) &&
+                  event.data.payload.toolName === toolName
+              )
+            ).toHaveLength(1);
           }
+          assertNoSecrets(collector.events, [modelConfig.apiKey]);
+          assertCollectorIdentity(collector, ref);
         }
       );
     }, 300_000);

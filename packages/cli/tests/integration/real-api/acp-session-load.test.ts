@@ -37,6 +37,7 @@ import {
   isRealApiTestEnabled,
   type TestModelConfig,
 } from './testConfig.js';
+import { seedRootTurnAutoResumeFixture } from './rootTurnAutoResumeFixture.js';
 
 const modelConfigs = isRealApiTestEnabled() ? getEnabledModelConfigs() : [];
 const questionModelConfigs = expandDeepSeekModelMatrix(modelConfigs);
@@ -945,29 +946,16 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
       const client = new RecordingClient();
       const harness = createHarness(client);
       const sessionId = `acp-recovery-${Date.now()}`;
-      let firstRuntime: SessionRuntime | undefined;
       let session: AcpSession | undefined;
 
       try {
         await runWithCwdOverride(workspace, async () => {
-          firstRuntime = await SessionRuntime.create({
+          const marker = `ACP_ROOT_AUTO_RESUME_${Date.now()}`;
+          const seeded = await seedRootTurnAutoResumeFixture({
+            workspace,
             sessionId,
-            workspaceRoot: workspace,
+            marker,
           });
-          const durablePrompt =
-            'The old value was ALPHA_ACP_RECOVERY. The newest value is ' +
-            'BETA_ACP_RECOVERY. Reply with the newest value only.';
-          const prepared = await firstRuntime.prepareInputTurn(durablePrompt);
-          expect(prepared).toMatchObject({
-            accepted: true,
-            mode: 'direct',
-            queued: 1,
-          });
-          if (!prepared.accepted) {
-            throw new Error('Expected durable input preparation to succeed');
-          }
-          await firstRuntime.dispose();
-          firstRuntime = undefined;
 
           const initialMessages = await SessionService.loadSession(
             sessionId,
@@ -993,18 +981,34 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
                     : []
                 )
                 .join('');
-              expect(agentOutput).toContain('BETA_ACP_RECOVERY');
+              expect(agentOutput).toContain(marker);
             },
             { timeout: 120_000, interval: 100 }
           );
+          expect(await readFile(seeded.markerPath, 'utf8')).toBe(`${marker}\n`);
           expect(
             client.updates.filter(
               (update) =>
                 update.update.sessionUpdate === 'user_message_chunk' &&
                 update.update.content.type === 'text' &&
-                update.update.content.text.includes('BETA_ACP_RECOVERY')
+                update.update.content.text.includes(marker)
             )
           ).toHaveLength(1);
+          expect(
+            client.updates.some(
+              (update) =>
+                update.update.sessionUpdate === 'tool_call' &&
+                update.update.title.includes('Read')
+            )
+          ).toBe(true);
+          expect(
+            client.updates.some(
+              (update) =>
+                update.update.sessionUpdate === 'tool_call' &&
+                update.update.title.includes('Write') &&
+                update.update.status !== 'failed'
+            )
+          ).toBe(false);
           await vi.waitFor(
             async () => {
               let inboxExists = true;
@@ -1020,7 +1024,6 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
           expect(JSON.stringify(client.updates)).not.toContain(modelConfig.apiKey);
         });
       } finally {
-        await firstRuntime?.dispose().catch(() => undefined);
         await session?.destroy().catch(() => undefined);
         await harness.close().catch(() => undefined);
         await rm(workspace, { recursive: true, force: true });
