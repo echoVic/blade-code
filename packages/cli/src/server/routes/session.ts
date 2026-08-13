@@ -44,6 +44,7 @@ import { SessionEventLog } from '../../context/events/SessionEventLog.js';
 import { assertValidSessionId } from '../../context/storage/pathUtils.js';
 import { toTaskFailure } from '../../context/taskFailure.js';
 import type {
+  SessionEvent,
   SessionTaskDelivery,
   SessionTaskDispatch,
   SessionTaskRetryRef,
@@ -92,6 +93,11 @@ import {
   type ConfirmationResponse,
 } from '../../tools/types/ExecutionTypes.js';
 import type { ToolResultMetadata } from '../../tools/types/ToolTypes.js';
+import {
+  fitToolDisplayForSurface,
+  projectDurableToolResult,
+  SERVER_TOOL_DETAIL_MAX_CHARS,
+} from '../../tools/display/ToolResultProjector.js';
 import {
   formatToolDisplay,
   renderToolDisplayToString,
@@ -357,9 +363,74 @@ type Variables = {
   directory: string;
 };
 
-export const sanitizeToolMetadata = (metadata: ToolResultMetadata | undefined) => {
+export const sanitizeToolMetadata = (
+  toolName: string,
+  metadata: ToolResultMetadata | undefined
+) => {
   if (!metadata || typeof metadata !== 'object') return metadata;
   const sanitized = { ...(metadata as Record<string, unknown>) };
+  if (toolName === 'Bash') {
+    const projected: Record<string, unknown> = {};
+    const stringFields = ['summary', 'status', 'signal'] as const;
+    const booleanFields = [
+      'aborted',
+      'acp_mode',
+      'admission_failed',
+      'capture_truncated',
+      'finalization_failed',
+      'has_stderr',
+      'output_accounting_complete',
+      'output_truncated',
+      'projection_truncated',
+      'sandbox_required',
+      'sandboxed',
+      'stderr_projection_truncated',
+      'stdout_projection_truncated',
+      'terminal_output_merged',
+      'timeout',
+    ] as const;
+    const numberFields = [
+      'execution_time',
+      'raw_output_bytes',
+      'stderr_length',
+      'stderr_omitted_bytes',
+      'stderr_retained_bytes',
+      'stderr_total_bytes',
+      'stdout_length',
+      'stdout_omitted_bytes',
+      'stdout_retained_bytes',
+      'stdout_total_bytes',
+    ] as const;
+    for (const field of stringFields) {
+      const value = sanitized[field];
+      if (typeof value === 'string') projected[field] = value.slice(0, 8_192);
+    }
+    for (const field of booleanFields) {
+      const value = sanitized[field];
+      if (typeof value === 'boolean') projected[field] = value;
+    }
+    for (const field of numberFields) {
+      const value = sanitized[field];
+      if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
+        projected[field] = value;
+      }
+    }
+    if (
+      sanitized.exit_code === null ||
+      (typeof sanitized.exit_code === 'number' &&
+        Number.isSafeInteger(sanitized.exit_code))
+    ) {
+      projected.exit_code = sanitized.exit_code;
+    }
+    if (
+      sanitized.terminal_transport === 'local' ||
+      sanitized.terminal_transport === 'acp' ||
+      sanitized.terminal_transport === 'local_fallback'
+    ) {
+      projected.terminal_transport = sanitized.terminal_transport;
+    }
+    return projected as ToolResultMetadata;
+  }
   const MAX_INLINE_CONTENT = 200000;
   const safeInteger = (value: unknown, maximum: number): number =>
     typeof value === 'number' &&
@@ -439,6 +510,65 @@ export const sanitizeToolMetadata = (metadata: ToolResultMetadata | undefined) =
   return sanitized as ToolResultMetadata;
 };
 
+export function projectCommittedSessionEvent(event: SessionEvent): {
+  type: string;
+  seq?: number;
+  properties: Record<string, unknown>;
+} {
+  const base = typeof event.seq === 'number' ? { seq: event.seq } : {};
+  if (event.type === 'part_created' && event.data.partType === 'tool_call') {
+    const payload = event.data.payload as {
+      toolCallId?: string;
+      toolName?: string;
+      input?: unknown;
+    };
+    return {
+      type: 'tool.start',
+      ...base,
+      properties: {
+        messageId: event.data.messageId,
+        toolCallId: payload.toolCallId ?? event.data.partId,
+        toolName: payload.toolName ?? 'unknown',
+        arguments: JSON.stringify(payload.input ?? {}),
+      },
+    };
+  }
+  if (event.type === 'part_created' && event.data.partType === 'tool_result') {
+    const payload = event.data.payload as {
+      toolCallId?: string;
+      toolName?: string;
+      output?: unknown;
+      error?: unknown;
+      metadata?: unknown;
+    };
+    const toolName = payload.toolName ?? 'unknown';
+    const restored = projectDurableToolResult(payload);
+    const display = fitToolDisplayForSurface(
+      formatToolDisplay(toolName, restored),
+      SERVER_TOOL_DETAIL_MAX_CHARS
+    );
+    return {
+      type: 'tool.result',
+      ...base,
+      properties: {
+        messageId: event.data.messageId,
+        toolCallId: payload.toolCallId ?? event.data.partId,
+        toolName,
+        success: restored.success,
+        status: restored.success ? 'completed' : 'failed',
+        summary: restored.metadata?.summary,
+        output: renderToolDisplayToString(display),
+        metadata: sanitizeToolMetadata(toolName, restored.metadata),
+      },
+    };
+  }
+  return {
+    type: `committed.${event.type}`,
+    ...base,
+    properties: { event },
+  };
+}
+
 function publishSubagentLoopEvent(
   ref: SessionRef,
   subagentSessionId: string,
@@ -466,12 +596,18 @@ function publishSubagentLoopEvent(
           subagentSessionId,
           toolCallId: event.toolCall.id,
           toolName: event.toolCall.function.name,
-          success: !event.result.error,
+          success: event.result.success,
           summary: event.result.metadata?.summary,
           output: renderToolDisplayToString(
-            formatToolDisplay(event.toolCall.function.name, event.result)
+            fitToolDisplayForSurface(
+              formatToolDisplay(event.toolCall.function.name, event.result),
+              SERVER_TOOL_DETAIL_MAX_CHARS
+            )
           ),
-          metadata: sanitizeToolMetadata(event.result.metadata),
+          metadata: sanitizeToolMetadata(
+            event.toolCall.function.name,
+            event.result.metadata
+          ),
         });
       }
       break;
@@ -712,7 +848,7 @@ function sessionInfoFromMetadata(
   };
 }
 
-function projectClientMessages(messages: readonly Message[]): Message[] {
+export function projectClientMessages(messages: readonly Message[]): Message[] {
   return messages.flatMap((message) => {
     if (
       !isClientVisibleMessage(message) ||
@@ -748,6 +884,51 @@ function projectClientMessages(messages: readonly Message[]): Message[] {
           }
         : {}),
     };
+    if (message.role === 'tool') {
+      const durablePayload =
+        message.metadata &&
+        typeof message.metadata === 'object' &&
+        !Array.isArray(message.metadata)
+          ? (message.metadata as Record<string, unknown>)
+          : undefined;
+      const toolName =
+        message.name ??
+        (typeof durablePayload?.toolName === 'string'
+          ? durablePayload.toolName
+          : 'unknown');
+      const isDurableResult =
+        durablePayload !== undefined &&
+        (Object.hasOwn(durablePayload, 'output') ||
+          Object.hasOwn(durablePayload, 'error'));
+      if (isDurableResult) {
+        const restored = projectDurableToolResult(durablePayload);
+        const display = fitToolDisplayForSurface(
+          formatToolDisplay(toolName, restored),
+          SERVER_TOOL_DETAIL_MAX_CHARS
+        );
+        return [
+          {
+            ...projected,
+            name: toolName,
+            content: renderToolDisplayToString(display),
+            metadata: sanitizeToolMetadata(
+              toolName,
+              restored.metadata
+            ) as Message['metadata'],
+          },
+        ];
+      }
+      return [
+        {
+          ...projected,
+          name: toolName,
+          metadata: sanitizeToolMetadata(
+            toolName,
+            durablePayload as ToolResultMetadata | undefined
+          ) as Message['metadata'],
+        },
+      ];
+    }
     const record = userShellCommandRecordFromMetadata(message.metadata);
     return [
       record
@@ -2903,13 +3084,16 @@ export const createSessionRouteController = (): SessionRouteController => {
             {
               onCommitted: (event) => {
                 if (stream.aborted || terminated) return;
+                const projected = projectCommittedSessionEvent(event);
                 void stream.writeSSE({
                   ...(typeof event.seq === 'number' ? { id: String(event.seq) } : {}),
                   data: JSON.stringify({
-                    type: `committed.${event.type}`,
-                    ...(typeof event.seq === 'number' ? { seq: event.seq } : {}),
+                    type: projected.type,
+                    ...(projected.seq !== undefined
+                      ? { seq: projected.seq }
+                      : {}),
                     properties: {
-                      event,
+                      ...projected.properties,
                       sessionId: ref.sessionId,
                       projectPath: ref.projectPath,
                     },
@@ -3735,9 +3919,15 @@ async function executeRunAsync(
               success: event.result.success,
               summary: event.result.metadata?.summary,
               output: renderToolDisplayToString(
-                formatToolDisplay(event.toolCall.function.name, event.result)
+                fitToolDisplayForSurface(
+                  formatToolDisplay(event.toolCall.function.name, event.result),
+                  SERVER_TOOL_DETAIL_MAX_CHARS
+                )
               ),
-              metadata: sanitizeToolMetadata(event.result.metadata),
+              metadata: sanitizeToolMetadata(
+                event.toolCall.function.name,
+                event.result.metadata
+              ),
             });
           }
           break;

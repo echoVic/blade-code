@@ -177,3 +177,77 @@ describe('SessionService subagent history projection', () => {
     );
   });
 });
+
+describe('SessionService durable tool result restoration', () => {
+  const base = {
+    sessionId: 'durable-tool-session',
+    timestamp: '2026-08-13T00:00:00.000Z',
+    cwd: '/workspace',
+    version: 'test',
+  };
+
+  it('restores object output and failed null output without rendering null', () => {
+    const entries: SessionEvent[] = [
+      {
+        ...base,
+        id: 'assistant-created',
+        type: 'message_created',
+        data: {
+          messageId: 'assistant-message',
+          role: 'assistant',
+          createdAt: base.timestamp,
+        },
+      },
+      {
+        ...base,
+        id: 'success-result',
+        type: 'part_created',
+        data: {
+          partId: 'success-result',
+          messageId: 'assistant-message',
+          partType: 'tool_result',
+          payload: {
+            toolCallId: 'success-call',
+            toolName: 'Bash',
+            output: { stdout: 'SAFE_TAIL', stderr: '' },
+            error: null,
+            metadata: { output_truncated: false },
+          },
+          createdAt: base.timestamp,
+        },
+      },
+      {
+        ...base,
+        id: 'failed-result',
+        type: 'part_created',
+        data: {
+          partId: 'failed-result',
+          messageId: 'assistant-message',
+          partType: 'tool_result',
+          payload: {
+            toolCallId: 'failed-call',
+            toolName: 'Bash',
+            output: null,
+            error: 'Command interrupted because Blade restarted',
+            metadata: { processRestartRecovery: true },
+          },
+          createdAt: base.timestamp,
+        },
+      },
+    ];
+
+    const tools = SessionService.convertJSONLToMessages(entries).filter(
+      (message) => message.role === 'tool'
+    );
+    expect(tools).toHaveLength(2);
+    expect(tools[0]?.content).toBe('{"stdout":"SAFE_TAIL","stderr":""}');
+    expect(tools[1]?.content).toBe(
+      'Error: Command interrupted because Blade restarted'
+    );
+    expect(tools[1]?.content).not.toContain('null');
+    expect(tools[1]?.metadata).toMatchObject({
+      output: null,
+      metadata: { processRestartRecovery: true },
+    });
+  });
+});

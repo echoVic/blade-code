@@ -12,6 +12,7 @@ import {
 import { taskRunScheduler } from '../../../../src/agent/runtime/TaskRunScheduler.js';
 import { MAX_INLINE_ATTACHMENT_BYTES } from '../../../../src/api/attachmentLimits.js';
 import { PermissionMode } from '../../../../src/config/types.js';
+import type { SessionEvent } from '../../../../src/context/types.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import type {
   SessionMetadata,
@@ -682,6 +683,124 @@ describe('SessionRoutes runtime reuse', () => {
   const refFor = (sessionId: string) => ({
     sessionId,
     projectPath: DEFAULT_PROJECT_PATH,
+  });
+
+  it('projects terminal committed Bash results identically for replay and fresh load', async () => {
+    const { projectClientMessages, projectCommittedSessionEvent } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const payload = {
+      toolCallId: 'bash-replay-call',
+      toolName: 'Bash',
+      output: {
+        stdout: 'STDOUT_TAIL',
+        stderr: 'STDERR_TAIL',
+        output_truncated: true,
+        truncation_info: 'Output truncated: earliest bytes omitted',
+      },
+      error: null,
+      metadata: {
+        summary: 'Command completed',
+        output_truncated: true,
+        stdout_total_bytes: 1_100_000,
+        stdout_omitted_bytes: 51_424,
+        stdout: 'RAW_STDOUT_SENTINEL',
+        stderr: 'RAW_STDERR_SENTINEL',
+      },
+    };
+    const event: SessionEvent = {
+      id: 'result-event',
+      seq: 42,
+      sessionId: 'replay-session',
+      timestamp: '2026-08-13T00:00:00.000Z',
+      type: 'part_created',
+      cwd: DEFAULT_PROJECT_PATH,
+      version: 'test',
+      data: {
+        partId: 'result-part',
+        messageId: 'assistant-message',
+        partType: 'tool_result',
+        payload,
+        createdAt: '2026-08-13T00:00:00.000Z',
+      },
+    };
+
+    const replay = projectCommittedSessionEvent(event);
+    const fresh = projectClientMessages([
+      {
+        role: 'tool',
+        name: 'Bash',
+        tool_call_id: payload.toolCallId,
+        content: 'RAW_FRESH_LOAD_CONTENT',
+        metadata: payload,
+      },
+    ]);
+
+    expect(replay).toMatchObject({
+      type: 'tool.result',
+      seq: 42,
+      properties: {
+        messageId: 'assistant-message',
+        toolCallId: payload.toolCallId,
+        toolName: 'Bash',
+        success: true,
+        status: 'completed',
+      },
+    });
+    expect(replay.properties.output).toBe(fresh[0]?.content);
+    expect(replay.properties.output).toContain('STDOUT_TAIL');
+    expect(replay.properties.output).toContain('STDERR_TAIL');
+    expect(replay.properties.metadata).toMatchObject({
+      summary: 'Command completed',
+      stdout_total_bytes: 1_100_000,
+      stdout_omitted_bytes: 51_424,
+    });
+    expect(JSON.stringify(replay)).not.toContain('RAW_');
+    expect(JSON.stringify(fresh)).not.toContain('RAW_');
+  });
+
+  it('projects a committed failed null result as a self-contained terminal event', async () => {
+    const { projectCommittedSessionEvent } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const event: SessionEvent = {
+      id: 'failed-result-event',
+      seq: 43,
+      sessionId: 'replay-session',
+      timestamp: '2026-08-13T00:00:00.000Z',
+      type: 'part_created',
+      cwd: DEFAULT_PROJECT_PATH,
+      version: 'test',
+      data: {
+        partId: 'failed-result-part',
+        messageId: 'failed-assistant-message',
+        partType: 'tool_result',
+        payload: {
+          toolCallId: 'failed-call',
+          toolName: 'Bash',
+          output: null,
+          error: 'Command interrupted because Blade restarted',
+          metadata: { processRestartRecovery: true },
+        },
+        createdAt: '2026-08-13T00:00:00.000Z',
+      },
+    };
+
+    const replay = projectCommittedSessionEvent(event);
+
+    expect(replay).toMatchObject({
+      type: 'tool.result',
+      seq: 43,
+      properties: {
+        messageId: 'failed-assistant-message',
+        toolCallId: 'failed-call',
+        toolName: 'Bash',
+        success: false,
+        status: 'failed',
+        output: expect.stringContaining('Blade restarted'),
+      },
+    });
+    expect(JSON.stringify(replay)).not.toContain('"null"');
   });
 
   const createPermissionsApp = async () => {

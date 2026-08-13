@@ -66,6 +66,7 @@ import { createLogger, LogCategory } from '../logging/Logger.js';
 import type { JsonObject, JsonValue, SessionMessage } from '../store/types.js';
 import { FileAccessTracker } from '../tools/builtin/file/FileAccessTracker.js';
 import { SnapshotManager } from '../tools/builtin/file/SnapshotManager.js';
+import { projectDurableToolResult } from '../tools/display/ToolResultProjector.js';
 import { getVersion } from '../utils/packageInfo.js';
 import type { ContentPart, Message } from './ChatServiceInterface.js';
 import { isClientVisibleMessage } from './clientMessageVisibility.js';
@@ -2500,13 +2501,14 @@ export class SessionService {
             toolName?: string;
             output?: unknown;
             error?: unknown;
+            metadata?: unknown;
           };
-          const content =
-            typeof payload.error === 'string'
-              ? `Error: ${payload.error}`
-              : typeof payload.output === 'string'
-                ? payload.output
-                : JSON.stringify(payload.output ?? '');
+          const restored = projectDurableToolResult(payload);
+          const content = restored.error
+            ? `Error: ${restored.error.message}`
+            : typeof restored.llmContent === 'string'
+              ? restored.llmContent
+              : JSON.stringify(restored.llmContent);
           const metadata = payload as unknown as JsonValue;
           messages.push({
             role: 'tool',
