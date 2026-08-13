@@ -131,6 +131,57 @@ describe('aggregateMessages', () => {
     });
   });
 
+  test('restores server-projected flat Bash metadata without re-stringifying output', () => {
+    const boundedOutput =
+      '[FAIL] Command failed\nstderr:\nSTDERR_TAIL\n' +
+      'Output truncated: earliest bytes omitted';
+    const [message] = aggregateMessages([
+      {
+        id: 'assistant-bash',
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'bash-flat',
+            function: {
+              name: 'Bash',
+              arguments: '{"command":"fixture"}',
+            },
+          },
+        ],
+      },
+      {
+        id: 'tool-bash',
+        role: 'tool',
+        content: boundedOutput,
+        tool_call_id: 'bash-flat',
+        name: 'Bash',
+        metadata: {
+          summary: 'Command failed',
+          status: 'failed',
+          output_truncated: true,
+          stderr_omitted_bytes: 4096,
+        },
+      },
+    ] as never);
+
+    expect(message?.agentContent?.toolCalls[0]).toMatchObject({
+      toolCallId: 'bash-flat',
+      toolName: 'Bash',
+      status: 'error',
+      summary: 'Command failed',
+      output: boundedOutput,
+      metadata: {
+        status: 'failed',
+        output_truncated: true,
+        stderr_omitted_bytes: 4096,
+      },
+    });
+    expect(message?.agentContent?.toolCalls[0]?.output).not.toContain(
+      JSON.stringify(boundedOutput)
+    );
+  });
+
   test('projects durable reasoning, text, and tools into an ordered timeline', () => {
     const [message] = aggregateMessages([
       {

@@ -213,12 +213,84 @@ function formatToolArguments(args?: string | Record<string, unknown>): string {
   return JSON.stringify(args, null, 2);
 }
 
+const TOOL_OUTPUT_MAX_CHARS = 500;
+
+function safeOutputHead(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  let end = Math.max(0, maxChars);
+  if (end > 0 && /[\uD800-\uDBFF]/.test(value.charAt(end - 1))) end -= 1;
+  return value.slice(0, end);
+}
+
+function safeOutputTail(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  let start = Math.max(0, value.length - maxChars);
+  if (/[\uDC00-\uDFFF]/.test(value.charAt(start))) start += 1;
+  return value.slice(start);
+}
+
+function fitOutputSegment(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  if (maxChars <= 0) return '';
+  const marker = '\n... (display clipped) ...\n';
+  const available = maxChars - marker.length;
+  if (available <= 0) return safeOutputTail(value, maxChars);
+  const headChars = Math.floor(available / 3);
+  return `${safeOutputHead(value, headChars)}${marker}${safeOutputTail(
+    value,
+    available - headChars
+  )}`;
+}
+
+function fitToolOutputForCard(output: string): {
+  body: string;
+  notice?: string;
+  truncated: boolean;
+} {
+  const lines = output.split('\n');
+  const lastLine = lines.at(-1);
+  const notice = lastLine?.startsWith('Output truncated') ? lastLine : undefined;
+  const body = notice ? lines.slice(0, -1).join('\n') : output;
+  const noticeText = notice ? `\n${notice}` : '';
+  const bodyBudget = Math.max(0, TOOL_OUTPUT_MAX_CHARS - noticeText.length);
+  const stderrMarker = '\nstderr:\n';
+  const stderrIndex = body.indexOf(stderrMarker);
+  let fittedBody: string;
+
+  if (stderrIndex >= 0 && body.includes('\nstdout:\n')) {
+    const first = body.slice(0, stderrIndex);
+    const second = body.slice(stderrIndex + 1);
+    const available = Math.max(0, bodyBudget - 1);
+    const firstBudget = Math.floor(available / 2);
+    fittedBody = `${fitOutputSegment(first, firstBudget)}\n${fitOutputSegment(
+      second,
+      available - firstBudget
+    )}`;
+  } else {
+    fittedBody = fitOutputSegment(body, bodyBudget);
+  }
+
+  return {
+    body: safeOutputHead(fittedBody, bodyBudget),
+    ...(notice ? { notice } : {}),
+    truncated: Boolean(notice) || output.length > TOOL_OUTPUT_MAX_CHARS,
+  };
+}
+
 function ToolCallItem({ tool }: { tool: ToolCallInfo }) {
   const [expanded, setExpanded] = useState(false);
   const args = formatToolArguments(tool.arguments);
+  const projectedOutput = tool.output
+    ? fitToolOutputForCard(tool.output)
+    : undefined;
 
   return (
-    <div className="bg-white dark:bg-[#18181b] border border-[hsl(var(--deck-border))] rounded-lg overflow-hidden">
+    <div
+      data-tool-name={tool.toolName}
+      data-tool-status={tool.status}
+      data-tool-truncated={projectedOutput?.truncated ? 'true' : 'false'}
+      className="bg-white dark:bg-[#18181b] border border-[hsl(var(--deck-border))] rounded-lg overflow-hidden"
+    >
       <button
         type="button"
         aria-expanded={expanded}
@@ -293,15 +365,24 @@ function ToolCallItem({ tool }: { tool: ToolCallInfo }) {
               </pre>
             </div>
           )}
-          {tool.output && (
+          {projectedOutput && (
             <div className="space-y-1">
               <div className="text-[11px] text-[hsl(var(--deck-ink-muted))] font-mono">
                 Output
               </div>
-              <pre className="text-[11px] text-[hsl(var(--deck-ink))] bg-[hsl(var(--deck-surface-2))] border border-[hsl(var(--deck-border))] rounded-md p-2 overflow-x-auto whitespace-pre-wrap font-mono max-h-[120px] overflow-y-auto">
-                {tool.output.length > 500
-                  ? tool.output.slice(0, 500) + '...'
-                  : tool.output}
+              <pre
+                data-tool-output
+                className="text-[11px] text-[hsl(var(--deck-ink))] bg-[hsl(var(--deck-surface-2))] border border-[hsl(var(--deck-border))] rounded-md p-2 overflow-x-auto whitespace-pre-wrap font-mono max-h-[120px] overflow-y-auto"
+              >
+                {projectedOutput.body}
+                {projectedOutput.notice && (
+                  <>
+                    {'\n'}
+                    <span data-tool-truncation-notice>
+                      {projectedOutput.notice}
+                    </span>
+                  </>
+                )}
               </pre>
             </div>
           )}

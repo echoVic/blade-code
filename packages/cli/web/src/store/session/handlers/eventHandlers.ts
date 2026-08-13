@@ -81,9 +81,30 @@ const findSubagentTarget = (
 const ensureAssistantMessage = (
   get: GetState,
   set: SetState,
-  fallbackId?: string
+  fallbackId?: string,
+  preferFallback = false
 ): string | null => {
   const { currentAssistantMessageId, messages, addMessage, startAgentResponse } = get();
+
+  if (fallbackId && preferFallback) {
+    const existing = messages.find(
+      (m) => m.id === fallbackId && m.role === 'assistant'
+    );
+    if (existing) {
+      startAgentResponse(existing.id);
+      return existing.id;
+    }
+    const message: Message = {
+      id: fallbackId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      agentContent: createEmptyAgentContent(),
+    };
+    addMessage(message);
+    startAgentResponse(fallbackId);
+    return fallbackId;
+  }
 
   // 验证 currentAssistantMessageId 是否是有效的消息 ID（不是 toolCallId）
   if (
@@ -355,7 +376,14 @@ const handleToolProgress: EventHandler = (props, get) => {
 };
 
 const handleToolResult: EventHandler = (props, get, set) => {
-  const { currentSessionId, updateToolCall, updateSubagent, messages } = get();
+  const {
+    currentSessionId,
+    appendToolCall,
+    setHasToolCalls,
+    updateToolCall,
+    updateSubagent,
+    messages,
+  } = get();
   if (props.sessionId !== currentSessionId) return;
 
   const toolCallId = props.toolCallId as string;
@@ -370,37 +398,60 @@ const handleToolResult: EventHandler = (props, get, set) => {
   );
 
   const targetMessageId =
-    (props.messageId as string) ||
     messageWithTool?.id ||
     messageWithSubagent?.id ||
-    [...messages].reverse().find((m) => m.role === 'assistant')?.id;
+    ensureAssistantMessage(
+      get,
+      set,
+      props.messageId as string | undefined,
+      true
+    );
 
-  if (!targetMessageId) {
-    return;
-  }
+  if (!targetMessageId) return;
 
-  const output = props.output as string;
+  const output = typeof props.output === 'string' ? props.output : '';
+  const success = props.success === true || props.status === 'completed';
   const summary =
     (props.summary as string) ||
     (output && output.trim()
       ? output.trim().split('\n')[0].slice(0, 120)
-      : props.success
+      : success
         ? '执行成功'
         : '执行失败');
+  const existingTool = messageWithTool?.agentContent?.toolCalls.find(
+    (tool) => tool.toolCallId === toolCallId
+  );
+  const toolName =
+    typeof props.toolName === 'string'
+      ? props.toolName
+      : (existingTool?.toolName ?? 'Unknown');
+  const metadata = props.metadata as Record<string, unknown> | undefined;
 
-  updateToolCall(targetMessageId, toolCallId, {
-    status: props.success ? 'success' : 'error',
-    summary,
-    output,
-    metadata: props.metadata as Record<string, unknown>,
-  });
+  if (messageWithTool) {
+    updateToolCall(targetMessageId, toolCallId, {
+      status: success ? 'success' : 'error',
+      summary,
+      output,
+      metadata,
+    });
+  } else if (!messageWithSubagent) {
+    setHasToolCalls(true);
+    appendToolCall(targetMessageId, {
+      toolCallId,
+      toolName,
+      status: success ? 'success' : 'error',
+      summary,
+      output,
+      startTime: Date.now(),
+      metadata,
+    });
+  }
 
-  const message = messages.find((m) => m.id === targetMessageId);
+  const message = get().messages.find((m) => m.id === targetMessageId);
   const matchingSubagent = getSubagents(message?.agentContent).find(
     (subagent) => subagent.id === toolCallId
   );
 
-  const metadata = props.metadata as Record<string, unknown> | undefined;
   const subagentSessionId =
     metadata && typeof metadata.subagentSessionId === 'string'
       ? metadata.subagentSessionId

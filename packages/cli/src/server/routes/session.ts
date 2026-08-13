@@ -913,7 +913,10 @@ export function projectClientMessages(messages: readonly Message[]): Message[] {
             content: renderToolDisplayToString(display),
             metadata: sanitizeToolMetadata(
               toolName,
-              restored.metadata
+              {
+                ...restored.metadata,
+                status: restored.success ? 'completed' : 'failed',
+              }
             ) as Message['metadata'],
           },
         ];

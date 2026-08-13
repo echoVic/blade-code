@@ -196,6 +196,73 @@ describe('ChatMessage', () => {
     expect(container.textContent).toContain('/tmp/demo.ts');
   });
 
+  test('renders bounded Bash tails with stable browser-test selectors', () => {
+    const output =
+      '[OK] Command completed\n' +
+      `stdout:\n${'x'.repeat(700)}STDOUT_TAIL\n` +
+      `stderr:\n${'y'.repeat(700)}STDERR_TAIL\n` +
+      'Output truncated: earliest bytes omitted';
+    const message: Message = {
+      id: 'assistant-bounded-bash',
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      agentContent: {
+        timeline: [
+          {
+            id: 'tool-group-bash',
+            type: 'tool_group',
+            toolCallIds: ['bash-bounded'],
+          },
+        ],
+        textBefore: '',
+        toolCalls: [
+          {
+            toolCallId: 'bash-bounded',
+            toolName: 'Bash',
+            arguments: '{"command":"fixture"}',
+            status: 'success',
+            summary: 'Command completed',
+            output,
+            startTime: Date.now(),
+            metadata: { output_truncated: true },
+          },
+        ],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: null,
+        confirmation: null,
+        question: null,
+      },
+    };
+
+    act(() => root.render(<ChatMessage message={message} />));
+    const groupToggle = container.querySelector<HTMLButtonElement>(
+      '[data-agent-tool-group] > button'
+    );
+    act(() => groupToggle?.click());
+
+    const card = container.querySelector<HTMLElement>(
+      '[data-tool-name="Bash"][data-tool-status="success"]'
+    );
+    expect(card?.getAttribute('data-tool-truncated')).toBe('true');
+    const toolToggle = card?.querySelector<HTMLButtonElement>(
+      '[data-tool-call-id="bash-bounded"]'
+    );
+    act(() => toolToggle?.click());
+
+    const outputElement = card?.querySelector('[data-tool-output]');
+    const renderedOutput = outputElement?.textContent ?? '';
+    expect(renderedOutput.length).toBeLessThanOrEqual(500);
+    expect(renderedOutput).toContain('STDOUT_TAIL');
+    expect(renderedOutput).toContain('STDERR_TAIL');
+    expect(renderedOutput.split('Output truncated')).toHaveLength(2);
+    expect(
+      card?.querySelector('[data-tool-truncation-notice]')?.textContent
+    ).toBe('Output truncated: earliest bytes omitted');
+  });
+
   test('renders the assistant timeline chronologically with two-level collapsed tools', () => {
     const message: Message = {
       id: 'assistant-timeline',

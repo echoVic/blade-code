@@ -194,14 +194,17 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
           typeof metadata.metadata === 'object' &&
           !Array.isArray(metadata.metadata)
             ? (metadata.metadata as Record<string, unknown>)
-            : undefined;
+            : metadata;
         const independentVerification =
           metadata?.independentVerification &&
           typeof metadata.independentVerification === 'object' &&
           !Array.isArray(metadata.independentVerification)
             ? (metadata.independentVerification as Record<string, unknown>)
             : undefined;
-        const failed = typeof metadata?.error === 'string' && metadata.error.length > 0;
+        const failed =
+          metadata?.status === 'failed' ||
+          metadata?.status === 'error' ||
+          (typeof metadata?.error === 'string' && metadata.error.length > 0);
         const subagents = getSubagents(currentAssistant.agentContent);
         const subagentIndex = subagents.findIndex(
           (subagent) => subagent.id === toolCallId

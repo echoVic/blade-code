@@ -16,6 +16,7 @@ import {
   upsertSubagent,
   withSubagents,
 } from '../../../src/store/session/utils/agentTimeline';
+import { aggregateMessages } from '../../../src/store/session/utils/aggregateMessages';
 
 function createEmptyAgentContent() {
   return {
@@ -781,6 +782,99 @@ describe('eventHandlers', () => {
       expect.objectContaining({ type: 'tool_group', toolCallIds: ['bash-1'] }),
     ]);
     expect(state.messages[0]?.content).toBe('first\n\nsecond');
+  });
+
+  test('projects live, terminal replay, full replay, and fresh-load Bash cards identically', () => {
+    const output =
+      '[OK] Command completed\n' +
+      'stdout:\nSTDOUT_TAIL\n' +
+      'stderr:\nSTDERR_TAIL\n' +
+      'Output truncated: earliest bytes omitted';
+    const resultProperties = {
+      sessionId: 'session-1',
+      projectPath: '/workspace/a',
+      messageId: 'assistant-bounded',
+      toolCallId: 'bash-bounded',
+      toolName: 'Bash',
+      success: true,
+      status: 'completed',
+      summary: 'Command completed',
+      output,
+      metadata: {
+        summary: 'Command completed',
+        status: 'completed',
+        output_truncated: true,
+      },
+    };
+    const projectEvents = (
+      events: Array<{ type: string; properties: Record<string, unknown> }>
+    ) => {
+      const state = createState({
+        messages: [],
+        currentAssistantMessageId: null,
+      });
+      const dispatch = createEventDispatcher(() => state, vi.fn());
+      for (const event of events) dispatch(event);
+      return state.messages
+        .flatMap((message) => message.agentContent?.toolCalls ?? [])
+        .find((tool) => tool.toolCallId === 'bash-bounded');
+    };
+    const start = {
+      type: 'tool.start',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        messageId: 'assistant-bounded',
+        toolCallId: 'bash-bounded',
+        toolName: 'Bash',
+        arguments: '{"command":"fixture"}',
+      },
+    };
+    const result = { type: 'tool.result', properties: resultProperties };
+    const live = projectEvents([start, result]);
+    const terminalReplay = projectEvents([result]);
+    const fullReplay = projectEvents([start, result]);
+    const [freshMessage] = aggregateMessages([
+      {
+        id: 'assistant-bounded',
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'bash-bounded',
+            function: {
+              name: 'Bash',
+              arguments: '{"command":"fixture"}',
+            },
+          },
+        ],
+      },
+      {
+        id: 'bash-result',
+        role: 'tool',
+        name: 'Bash',
+        tool_call_id: 'bash-bounded',
+        content: output,
+        metadata: resultProperties.metadata,
+      },
+    ] as never);
+    const fresh = freshMessage?.agentContent?.toolCalls[0];
+    const comparable = (tool: ToolCallInfo | undefined) =>
+      tool && {
+        toolCallId: tool.toolCallId,
+        toolName: tool.toolName,
+        status: tool.status,
+        summary: tool.summary,
+        output: tool.output,
+        metadata: tool.metadata,
+      };
+
+    expect(comparable(live)).toEqual(comparable(terminalReplay));
+    expect(comparable(live)).toEqual(comparable(fullReplay));
+    expect(comparable(live)).toEqual(comparable(fresh));
+    expect(terminalReplay?.output).toContain('STDOUT_TAIL');
+    expect(terminalReplay?.output).toContain('STDERR_TAIL');
+    expect(terminalReplay?.output?.split('Output truncated')).toHaveLength(2);
   });
 
   test('projects tool progress onto the active tool call', () => {
