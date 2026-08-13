@@ -22,7 +22,6 @@ import type {
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/toolSchemas.js';
 import { BackgroundShellManager } from './BackgroundShellManager.js';
-import { OutputTruncator } from './OutputTruncator.js';
 import { ShellOutputCapture } from './ShellOutputCapture.js';
 import {
   type ProjectedShellOutput,
@@ -256,7 +255,6 @@ Before executing commands:
           timeout,
           signal,
           context.sessionId,
-          updateOutput,
           foregroundOwnership
         );
       } else {
@@ -459,6 +457,66 @@ function formatCommandFailure(
   return diagnostics.length > 0 ? `${reason}\n${diagnostics.join('\n')}` : reason;
 }
 
+function shellOutputFacts(
+  projected: ProjectedShellOutput,
+  transport: 'local' | 'acp' | 'local_fallback'
+) {
+  const snapshot = projected.snapshot;
+  const accountingComplete =
+    snapshot.stdout.accountingComplete && snapshot.stderr.accountingComplete;
+  return {
+    capture_truncated: projected.captureTruncated,
+    projection_truncated: projected.projectionTruncated,
+    output_truncated: projected.captureTruncated || projected.projectionTruncated,
+    stdout_projection_truncated: projected.stdoutProjectionTruncated,
+    stderr_projection_truncated: projected.stderrProjectionTruncated,
+    stdout_total_bytes: snapshot.stdout.totalBytes,
+    stdout_retained_bytes: snapshot.stdout.retainedBytes,
+    stdout_omitted_bytes: snapshot.stdout.omittedBytes,
+    stderr_total_bytes: snapshot.stderr.totalBytes,
+    stderr_retained_bytes: snapshot.stderr.retainedBytes,
+    stderr_omitted_bytes: snapshot.stderr.omittedBytes,
+    raw_output_bytes: snapshot.stdout.totalBytes + snapshot.stderr.totalBytes,
+    has_stderr: snapshot.stderr.totalBytes > 0 || snapshot.stderr.totalChars > 0,
+    output_accounting_complete: accountingComplete,
+    terminal_transport: transport,
+    terminal_output_merged: snapshot.terminalOutputMerged,
+    ...(accountingComplete
+      ? {
+          stdout_length: snapshot.stdout.totalChars,
+          stderr_length: snapshot.stderr.totalChars,
+        }
+      : {}),
+  };
+}
+
+function normalShellLlmContent(
+  projected: ProjectedShellOutput,
+  executionTime: number,
+  exitCode: number | null,
+  signal?: NodeJS.Signals | null
+) {
+  const snapshot = projected.snapshot;
+  return {
+    stdout: projected.stdout,
+    stderr: projected.stderr,
+    execution_time: executionTime,
+    exit_code: exitCode,
+    ...(signal !== undefined ? { signal } : {}),
+    output_truncated: projected.captureTruncated || projected.projectionTruncated,
+    stdout_omitted_bytes: snapshot.stdout.omittedBytes,
+    stderr_omitted_bytes: snapshot.stderr.omittedBytes,
+    stdout_total_bytes: snapshot.stdout.totalBytes,
+    stderr_total_bytes: snapshot.stderr.totalBytes,
+    output_accounting_complete:
+      snapshot.stdout.accountingComplete && snapshot.stderr.accountingComplete,
+    ...(snapshot.terminalOutputMerged ? { terminal_output_merged: true } : {}),
+    ...(projected.truncationInfo && {
+      truncation_info: projected.truncationInfo,
+    }),
+  };
+}
+
 /**
  * 使用 ACP 终端服务执行命令
  * 通过 IDE 的终端执行命令，支持更好的 IDE 集成体验
@@ -470,7 +528,6 @@ async function executeWithAcpTerminal(
   timeout: number,
   signal: AbortSignal,
   sessionId?: string,
-  updateOutput?: (output: string) => void,
   ownership?: ForegroundProcessOwnership
 ): Promise<ToolResult> {
   const startTime = Date.now();
@@ -482,20 +539,19 @@ async function executeWithAcpTerminal(
       env,
       timeout,
       signal,
-      onOutput: (output) => {
-        updateOutput?.(output);
-      },
+      allowLocalFallback: false,
       durableOwnership: ownership,
     });
 
     const executionTime = Date.now() - startTime;
+    const projected = result.capture
+      ? projectShellOutput(result.capture, command)
+      : undefined;
+    const outputMetadata = projected
+      ? shellOutputFacts(projected, result.transport)
+      : {};
 
-    // 检查是否被中止（支持多种错误消息格式）
-    if (
-      signal.aborted ||
-      result.error === 'Command was aborted' ||
-      result.error === 'Command was terminated'
-    ) {
+    if (result.failureKind === 'aborted') {
       return {
         success: false,
         llmContent: 'Command execution aborted by user',
@@ -506,15 +562,18 @@ async function executeWithAcpTerminal(
         metadata: {
           command,
           aborted: true,
-          stdout: result.stdout,
-          stderr: result.stderr,
+          ...(projected
+            ? { stdout: projected.stdout, stderr: projected.stderr }
+            : {}),
           execution_time: executionTime,
+          exit_code: result.exitCode,
+          acp_mode: true,
+          ...outputMetadata,
         },
       };
     }
 
-    // 检查是否超时（支持多种错误消息格式）
-    if (result.error === 'Command timed out') {
+    if (result.failureKind === 'timeout') {
       return {
         success: false,
         llmContent: `Command execution timed out (${timeout}ms)`,
@@ -525,59 +584,73 @@ async function executeWithAcpTerminal(
         metadata: {
           command,
           timeout: true,
-          stdout: result.stdout,
-          stderr: result.stderr,
+          ...(projected
+            ? { stdout: projected.stdout, stderr: projected.stderr }
+            : {}),
           execution_time: executionTime,
+          exit_code: result.exitCode,
+          acp_mode: true,
+          ...outputMetadata,
         },
       };
     }
 
-    // 生成 summary 用于流式显示
     const cmdPreview = command.length > 30 ? `${command.substring(0, 30)}...` : command;
     const summary =
-      result.exitCode === 0
+      result.success
         ? `执行命令成功 (${executionTime}ms): ${cmdPreview}`
-        : `执行命令完成 (退出码 ${result.exitCode}, ${executionTime}ms): ${cmdPreview}`;
+        : result.failureKind
+          ? `执行命令失败 (${result.failureKind}, ${executionTime}ms): ${cmdPreview}`
+          : `执行命令完成 (退出码 ${result.exitCode}, ${executionTime}ms): ${cmdPreview}`;
 
     const metadata: BashForegroundMetadata = {
       command,
       execution_time: executionTime,
       exit_code: result.exitCode,
-      stdout_length: result.stdout.length,
-      stderr_length: result.stderr.length,
-      has_stderr: result.stderr.length > 0,
       acp_mode: true,
       summary,
+      ...outputMetadata,
     };
 
-    const truncated = OutputTruncator.truncateForLLM(
-      result.stdout.trim(),
-      result.stderr.trim(),
-      command
-    );
-
-    const llmContent = {
-      stdout: truncated.stdout,
-      stderr: truncated.stderr,
-      execution_time: executionTime,
-      exit_code: result.exitCode,
-      ...(truncated.truncationInfo && { truncation_info: truncated.truncationInfo }),
-    };
+    if (!projected) {
+      const message = result.error ?? 'ACP terminal execution failed';
+      return {
+        success: false,
+        llmContent: `Command execution failed: ${message}`,
+        error: {
+          type: ToolErrorType.EXECUTION_ERROR,
+          message,
+        },
+        metadata,
+      };
+    }
 
     return {
       success: result.success,
-      llmContent,
+      llmContent: normalShellLlmContent(
+        projected,
+        executionTime,
+        result.exitCode
+      ),
       ...(result.success
         ? {}
         : {
             error: {
               type: ToolErrorType.EXECUTION_ERROR,
-              message: formatCommandFailure(
-                result.exitCode,
-                undefined,
-                truncated.stdout,
-                truncated.stderr
-              ),
+              message: result.failureKind
+                ? [
+                    result.error ?? `Terminal failure: ${result.failureKind}`,
+                    projected.stderr ? `stderr:\n${projected.stderr}` : '',
+                    projected.stdout ? `stdout:\n${projected.stdout}` : '',
+                  ]
+                    .filter(Boolean)
+                    .join('\n')
+                : formatCommandFailure(
+                    result.exitCode,
+                    undefined,
+                    projected.stdout,
+                    projected.stderr
+                  ),
             },
           }),
       metadata,
@@ -698,37 +771,11 @@ async function executeWithTimeout(
     };
     const metadataFor = (
       projected: ProjectedShellOutput,
-      details: Record<string, unknown>,
-      includeLengths: boolean = true
+      details: Record<string, unknown>
     ) => {
-      const snapshot = projected.snapshot;
-      const outputTruncated =
-        projected.captureTruncated || projected.projectionTruncated;
       return {
         ...details,
-        capture_truncated: projected.captureTruncated,
-        projection_truncated: projected.projectionTruncated,
-        output_truncated: outputTruncated,
-        stdout_projection_truncated: projected.stdoutProjectionTruncated,
-        stderr_projection_truncated: projected.stderrProjectionTruncated,
-        stdout_total_bytes: snapshot.stdout.totalBytes,
-        stdout_retained_bytes: snapshot.stdout.retainedBytes,
-        stdout_omitted_bytes: snapshot.stdout.omittedBytes,
-        stderr_total_bytes: snapshot.stderr.totalBytes,
-        stderr_retained_bytes: snapshot.stderr.retainedBytes,
-        stderr_omitted_bytes: snapshot.stderr.omittedBytes,
-        raw_output_bytes: snapshot.stdout.totalBytes + snapshot.stderr.totalBytes,
-        has_stderr: snapshot.stderr.totalBytes > 0 || snapshot.stderr.totalChars > 0,
-        output_accounting_complete:
-          snapshot.stdout.accountingComplete && snapshot.stderr.accountingComplete,
-        terminal_transport: 'local' as const,
-        terminal_output_merged: snapshot.terminalOutputMerged,
-        ...(includeLengths
-          ? {
-              stdout_length: snapshot.stdout.totalChars,
-              stderr_length: snapshot.stderr.totalChars,
-            }
-          : {}),
+        ...shellOutputFacts(projected, 'local'),
       };
     };
     const normalLlmContent = (
@@ -736,24 +783,7 @@ async function executeWithTimeout(
       executionTime: number,
       code: number | null,
       sig: NodeJS.Signals | null
-    ) => ({
-      stdout: projected.stdout,
-      stderr: projected.stderr,
-      execution_time: executionTime,
-      exit_code: code,
-      signal: sig,
-      output_truncated: projected.captureTruncated || projected.projectionTruncated,
-      stdout_omitted_bytes: projected.snapshot.stdout.omittedBytes,
-      stderr_omitted_bytes: projected.snapshot.stderr.omittedBytes,
-      stdout_total_bytes: projected.snapshot.stdout.totalBytes,
-      stderr_total_bytes: projected.snapshot.stderr.totalBytes,
-      output_accounting_complete:
-        projected.snapshot.stdout.accountingComplete &&
-        projected.snapshot.stderr.accountingComplete,
-      ...(projected.truncationInfo && {
-        truncation_info: projected.truncationInfo,
-      }),
-    });
+    ) => normalShellLlmContent(projected, executionTime, code, sig);
     const settle = (result: ToolResult) => {
       if (settled) return;
       settled = true;

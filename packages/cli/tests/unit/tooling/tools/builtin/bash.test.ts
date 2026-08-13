@@ -2,16 +2,24 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import type * as acp from '@agentclientprotocol/sdk';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { AcpServiceContext } from '../../../../../src/acp/AcpServiceContext.js';
 import { bashTool } from '../../../../../src/tools/builtin/shell/bash.js';
 import {
   installWorkspaceSandboxBackendForTests,
   type WorkspaceSandboxBackend,
 } from '../../../../../src/tools/builtin/shell/WorkspaceWriteSandbox.js';
+import { ControlledTerminalClient } from '../../../../support/acp/ControlledTerminalClient.js';
+import {
+  createPairedAcpHarness,
+  type PairedAcpHarness,
+} from '../../../../support/acp/createPairedAcpHarness.js';
 
 describe('Bash Tool', () => {
   const cleanups: Array<() => void | Promise<void>> = [];
   const outputBudget = 1024 * 1024;
+  const acpCapabilities: acp.ClientCapabilities = { terminal: true };
 
   function commandFor(program: string): string {
     return `${JSON.stringify(process.execPath)} -e ${JSON.stringify(program)}`;
@@ -210,6 +218,106 @@ describe('Bash Tool', () => {
         terminal_output_merged: false,
       });
     }
+  });
+
+  it('projects real ACP terminal capture without forwarding raw output as progress', async () => {
+    const sessionId = 'bash-acp-terminal';
+    const client = new ControlledTerminalClient();
+    const harness = createPairedAcpHarness(client);
+    const sentinel = 'ACP_RAW_OUTPUT_MUST_NOT_ENTER_PROGRESS';
+    const updateOutput = vi.fn<(message: string) => void>();
+    client.enqueueOutput({ output: sentinel, truncated: false });
+    client.enqueueOutput({ output: sentinel, truncated: false });
+    client.resolveWait({ exitCode: 0 });
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      sessionId,
+      acpCapabilities,
+      '/workspace/acp'
+    );
+    cleanups.push(
+      () => AcpServiceContext.destroySession(sessionId),
+      () => harness.close()
+    );
+
+    const result = await bashTool.execute(
+      {
+        command: 'printf remote-output',
+        timeout: 10_000,
+        cwd: '/workspace/acp',
+        env: {},
+        run_in_background: false,
+      },
+      undefined,
+      {
+        sessionId,
+        workspaceRoot: '/workspace/acp',
+        updateOutput,
+      }
+    );
+
+    expect(client.createRequests).toEqual([
+      expect.objectContaining({
+        sessionId,
+        command: 'printf remote-output',
+        cwd: '/workspace/acp',
+      }),
+    ]);
+    expect(result.success).toBe(true);
+    expect(result.llmContent).toMatchObject({
+      stdout: sentinel,
+      stderr: '',
+      terminal_output_merged: true,
+      stdout_total_bytes: Buffer.byteLength(sentinel),
+      stderr_total_bytes: 0,
+      output_accounting_complete: true,
+    });
+    expect(result.metadata).toMatchObject({
+      acp_mode: true,
+      terminal_transport: 'acp',
+      terminal_output_merged: true,
+      stdout_total_bytes: Buffer.byteLength(sentinel),
+      stderr_total_bytes: 0,
+      output_accounting_complete: true,
+    });
+    expect(updateOutput.mock.calls.flat().join('\n')).not.toContain(sentinel);
+  });
+
+  it('fails closed when the real ACP terminal cannot be created', async () => {
+    const sessionId = 'bash-acp-fail-closed';
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-bash-'));
+    const marker = path.join(directory, 'must-not-exist');
+    const client = new ControlledTerminalClient();
+    const harness: PairedAcpHarness = createPairedAcpHarness(client);
+    client.failCreate(new Error('terminal unavailable'));
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      sessionId,
+      acpCapabilities,
+      directory
+    );
+    cleanups.push(
+      () => AcpServiceContext.destroySession(sessionId),
+      () => harness.close(),
+      () => rm(directory, { recursive: true, force: true })
+    );
+
+    const result = await bashTool.execute(
+      {
+        command: commandFor(
+          `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`
+        ),
+        timeout: 10_000,
+        env: {},
+        run_in_background: false,
+      },
+      undefined,
+      { sessionId, workspaceRoot: directory }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.message).toContain('ACP terminal unavailable');
+    await expect(realpath(marker)).rejects.toThrow();
   });
 
   it('merges Session environment before invocation overrides', async () => {

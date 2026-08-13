@@ -319,8 +319,8 @@ export class AcpSession {
             stdout: result.stdout,
             stderr: result.stderr,
             ...(result.error ? { error: result.error } : {}),
-            timedOut: result.error === 'Command timed out',
-            aborted: result.error === 'Command was aborted',
+            timedOut: result.failureKind === 'timeout',
+            aborted: result.failureKind === 'aborted',
           };
         },
       },

@@ -2147,6 +2147,48 @@ describe('AcpSession', () => {
         })
       );
     });
+
+    it('maps terminal timeout and abort from failureKind instead of error text', async () => {
+      const { SessionRuntime } = await import(
+        '../../../../src/agent/runtime/SessionRuntime.js'
+      );
+      const createOptions = vi.mocked(SessionRuntime.create).mock.calls.at(-1)?.[0];
+      const executor = createOptions?.userShellExecutor;
+      terminalState.execute
+        .mockResolvedValueOnce({
+          success: false,
+          stdout: '',
+          stderr: '',
+          exitCode: null,
+          error: 'localized timeout message',
+          failureKind: 'timeout',
+          transport: 'acp',
+        })
+        .mockResolvedValueOnce({
+          success: false,
+          stdout: '',
+          stderr: '',
+          exitCode: null,
+          error: 'localized abort message',
+          failureKind: 'aborted',
+          transport: 'acp',
+        });
+
+      const options = {
+        cwd: '/tmp/test',
+        env: {},
+        timeoutMs: 1000,
+        signal: new AbortController().signal,
+      };
+      await expect(executor?.execute('sleep 10', options)).resolves.toMatchObject({
+        timedOut: true,
+        aborted: false,
+      });
+      await expect(executor?.execute('sleep 10', options)).resolves.toMatchObject({
+        timedOut: false,
+        aborted: true,
+      });
+    });
   });
 
   describe('setMode', () => {
