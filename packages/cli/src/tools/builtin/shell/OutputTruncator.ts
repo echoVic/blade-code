@@ -123,6 +123,31 @@ const COMMAND_PATTERNS: Array<{
   },
 ];
 
+function sliceWithoutSplittingSurrogates(
+  value: string,
+  start: number,
+  end?: number
+): string {
+  let safeStart = start;
+  let safeEnd = end ?? value.length;
+
+  if (safeStart > 0) {
+    const first = value.charCodeAt(safeStart);
+    if (first >= 0xdc00 && first <= 0xdfff) {
+      safeStart += 1;
+    }
+  }
+
+  if (safeEnd < value.length) {
+    const last = value.charCodeAt(safeEnd - 1);
+    if (last >= 0xd800 && last <= 0xdbff) {
+      safeEnd -= 1;
+    }
+  }
+
+  return value.slice(safeStart, safeEnd);
+}
+
 export class OutputTruncator {
   private static getConfigForCommand(command: string): {
     config: TruncationConfig;
@@ -169,8 +194,11 @@ export class OutputTruncator {
 
     if (truncatedContent.length > config.maxChars) {
       const halfMax = Math.floor(config.maxChars / 2) - 50;
-      const head = truncatedContent.slice(0, halfMax);
-      const tail = truncatedContent.slice(-halfMax);
+      const head = sliceWithoutSplittingSurrogates(truncatedContent, 0, halfMax);
+      const tail = sliceWithoutSplittingSurrogates(
+        truncatedContent,
+        truncatedContent.length - halfMax
+      );
       truncatedContent = `${head}\n\n... (content truncated to ${config.maxChars} chars) ...\n\n${tail}`;
     }
 

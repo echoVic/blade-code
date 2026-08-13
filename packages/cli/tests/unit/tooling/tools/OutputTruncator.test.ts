@@ -149,5 +149,53 @@ describe('OutputTruncator', () => {
       expect(result.truncated).toBe(true);
       expect(result.content.length).toBeLessThan(output.length);
     });
+
+    it('does not split emoji surrogate pairs at character truncation boundaries', () => {
+      const output = `${'a'.repeat(1449)}😀${'b'.repeat(4500)}\n${'c'.repeat(3000)}😀`;
+
+      const result = OutputTruncator.truncate(output, 'git rm -r --cached test');
+
+      expect(result.truncated).toBe(true);
+      expect(result.content).toContain('... (content truncated to 3000 chars) ...');
+      expect(result.content).toContain('😀');
+      expect(hasUnpairedSurrogate(result.content)).toBe(false);
+    });
+
+    it('keeps both maxChars head and tail boundaries surrogate-safe', () => {
+      const output = `${'a'.repeat(1450)}😀${'b'.repeat(4000)}😀${'c'.repeat(3000)}`;
+
+      const result = OutputTruncator.truncate(output, 'git rm -r --cached test');
+
+      expect(result.truncated).toBe(true);
+      expect(result.content).toContain('... (content truncated to 3000 chars) ...');
+      expect(hasUnpairedSurrogate(result.content)).toBe(false);
+    });
+
+    it('does not leave an isolated surrogate when a boundary lands on an emoji', () => {
+      const output = `${'a'.repeat(1448)}😀${'b'.repeat(4500)}\n${'c'.repeat(2999)}😀`;
+
+      const result = OutputTruncator.truncate(output, 'git rm -r --cached test');
+
+      expect(result.truncated).toBe(true);
+      expect(hasUnpairedSurrogate(result.content)).toBe(false);
+    });
   });
 });
+
+function hasUnpairedSurrogate(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    const isHighSurrogate = codeUnit >= 0xd800 && codeUnit <= 0xdbff;
+    const isLowSurrogate = codeUnit >= 0xdc00 && codeUnit <= 0xdfff;
+
+    if (isHighSurrogate) {
+      const next = value.charCodeAt(index + 1);
+      if (next < 0xdc00 || next > 0xdfff) return true;
+      index += 1;
+    } else if (isLowSurrogate) {
+      return true;
+    }
+  }
+
+  return false;
+}
