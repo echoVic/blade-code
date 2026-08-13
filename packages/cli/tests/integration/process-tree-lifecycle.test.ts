@@ -442,6 +442,7 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
       );
 
       expect(result.success).toBe(false);
+      expect(result.metadata).toBeUndefined();
       await new Promise((resolve) => setTimeout(resolve, 100));
       await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
@@ -454,15 +455,26 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
       path.join(os.tmpdir(), 'blade-foreground-release-')
     );
     tempRoots.push(workspace);
-    const marker = path.join(workspace, 'must-not-run');
+    const prefix = 'ADMISSION_PREFIX_MUST_NOT_LEAK';
+    const tail = 'ADMISSION_TAIL_RETAINED';
+    const outputBudget = 1024 * 1024;
+    const originalRelease = CommandAdmissionGate.releaseCommandAdmissionGate;
     const release = vi
       .spyOn(CommandAdmissionGate, 'releaseCommandAdmissionGate')
-      .mockRejectedValueOnce(new Error('injected foreground gate write failure'));
+      .mockImplementationOnce(async (child) => {
+        await originalRelease(child);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        throw new Error('injected foreground gate write failure');
+      });
 
     try {
       const result = await bashTool.execute(
         {
-          command: `printf admitted > ${shellQuote(marker)}`,
+          command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(
+            `process.stdout.write(${JSON.stringify(prefix)} + 'x'.repeat(${
+              outputBudget + 4096
+            }) + ${JSON.stringify(tail)}, () => setInterval(() => {}, 1000))`
+          )}`,
           timeout: 2_000,
           env: {},
           run_in_background: false,
@@ -479,7 +491,15 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
         error: { message: 'Foreground command admission failed' },
         metadata: { admission_failed: true },
       });
-      await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(result.metadata).toMatchObject({
+        output_accounting_complete: true,
+        terminal_transport: 'local',
+        terminal_output_merged: false,
+      });
+      expect(result.metadata?.stdout_total_bytes).toBeGreaterThan(outputBudget);
+      expect(result.metadata?.stdout_omitted_bytes).toBeGreaterThan(0);
+      expect(String(result.metadata?.stdout)).toContain(tail);
+      expect(String(result.metadata?.stdout)).not.toContain(prefix);
       const names = await readdir(
         path.join(getProjectStoragePath(workspace), '.foreground-processes'),
         { recursive: true }
@@ -496,6 +516,9 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
     );
     tempRoots.push(workspace);
     const marker = path.join(workspace, 'command-ran');
+    const prefix = 'FINALIZATION_PREFIX_MUST_NOT_LEAK';
+    const tail = 'FINALIZATION_TAIL_RETAINED';
+    const outputBudget = 1024 * 1024;
     const finalize = vi
       .spyOn(CommandAdmissionGate, 'finalizeCommandAdmissionGate')
       .mockResolvedValueOnce({
@@ -507,7 +530,15 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
     try {
       const result = await bashTool.execute(
         {
-          command: `printf admitted > ${shellQuote(marker)}`,
+          command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(
+            `require('node:fs').writeFileSync(${JSON.stringify(
+              marker
+            )}, 'admitted'); process.stdout.write(${JSON.stringify(
+              prefix
+            )} + 'x'.repeat(${outputBudget + 4096}) + ${JSON.stringify(
+              tail
+            )}, () => process.exit(0))`
+          )}`,
           timeout: 2_000,
           env: {},
           run_in_background: false,
@@ -524,6 +555,15 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
         error: { message: 'Foreground command finalization failed' },
         metadata: { finalization_failed: true },
       });
+      expect(result.metadata).toMatchObject({
+        output_accounting_complete: true,
+        terminal_transport: 'local',
+        terminal_output_merged: false,
+      });
+      expect(result.metadata?.stdout_total_bytes).toBeGreaterThan(outputBudget);
+      expect(result.metadata?.stdout_omitted_bytes).toBeGreaterThan(0);
+      expect(String(result.metadata?.stdout)).toContain(tail);
+      expect(String(result.metadata?.stdout)).not.toContain(prefix);
       expect(await readFile(marker, 'utf8')).toBe('admitted');
       const names = await readdir(
         path.join(getProjectStoragePath(workspace), '.foreground-processes'),

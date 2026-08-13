@@ -151,7 +151,66 @@ describe('Bash workspace-write sandbox integration', () => {
 
     expect(result.success).toBe(false);
     expect(result.error?.type).toBe('permission_denied');
+    expect(result.metadata).not.toHaveProperty('stdout_total_bytes');
+    expect(result.metadata).not.toHaveProperty('output_accounting_complete');
+    expect(result.metadata).not.toHaveProperty('stdout');
+    expect(result.metadata).not.toHaveProperty('stderr');
     await expect(access(outsidePath)).rejects.toThrow();
+  });
+
+  it('bounds workspace sandbox runtime failure output with a deterministic backend', async () => {
+    const { workspaceRoot } = await makeWorkspace();
+    const prefix = 'SANDBOX_PREFIX_MUST_NOT_LEAK';
+    const tail = 'SANDBOX_TAIL_RETAINED';
+    const trigger = 'sandbox_apply: operation not permitted';
+    const outputBudget = 1024 * 1024;
+    cleanups.push(
+      installWorkspaceSandboxBackendForTests({
+        prepare: async (): Promise<SandboxedCommand> => ({
+          executable: process.execPath,
+          args: [
+            '-e',
+            `process.stderr.write(${JSON.stringify(prefix)} + 'e'.repeat(${
+              outputBudget + 4096
+            }) + ${JSON.stringify(trigger)} + ${JSON.stringify(
+              tail
+            )}, () => process.exit(1))`,
+          ],
+          env: {},
+          sandboxed: true,
+          cleanup: () => undefined,
+        }),
+      })
+    );
+
+    const result = await bashTool
+      .build({
+        command: 'deterministic sandbox runtime failure',
+        timeout: 30_000,
+        run_in_background: false,
+      })
+      .execute(new AbortController().signal, undefined, {
+        workspaceRoot,
+        worktreeActive: true,
+        permissionMode: PermissionMode.YOLO,
+      });
+
+    expect(result).toMatchObject({
+      success: false,
+      error: { type: 'permission_denied' },
+      metadata: {
+        output_accounting_complete: true,
+        terminal_transport: 'local',
+        terminal_output_merged: false,
+      },
+    });
+    expect(result.error?.message).toContain(trigger);
+    expect(result.error?.message).toContain(tail);
+    expect(result.error?.message).not.toContain(prefix);
+    expect(String(result.metadata?.stderr)).toContain(tail);
+    expect(String(result.metadata?.stderr)).not.toContain(prefix);
+    expect(result.metadata?.stderr_total_bytes).toBeGreaterThan(outputBudget);
+    expect(result.metadata?.stderr_omitted_bytes).toBeGreaterThan(0);
   });
 
   it('routes background worktree commands through the same sandbox backend', async () => {

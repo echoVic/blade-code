@@ -11,6 +11,15 @@ import {
 
 describe('Bash Tool', () => {
   const cleanups: Array<() => void | Promise<void>> = [];
+  const outputBudget = 1024 * 1024;
+
+  function commandFor(program: string): string {
+    return `${JSON.stringify(process.execPath)} -e ${JSON.stringify(program)}`;
+  }
+
+  function rendered(value: unknown): string {
+    return JSON.stringify(value);
+  }
 
   beforeAll(async () => {
     const childProcess =
@@ -48,6 +57,158 @@ describe('Bash Tool', () => {
       exit_code: 7,
       has_stderr: true,
     });
+  });
+
+  it('never includes a command or its output in raw progress', async () => {
+    const sentinel = 'MUST_NOT_ENTER_PROGRESS';
+    const updateOutput = vi.fn<(message: string) => void>();
+    const result = await bashTool.execute(
+      {
+        command: commandFor(`process.stdout.write(${JSON.stringify(sentinel)})`),
+        timeout: 10_000,
+        env: {},
+        run_in_background: false,
+      },
+      undefined,
+      { updateOutput }
+    );
+
+    expect(result.success).toBe(true);
+    expect(updateOutput.mock.calls.flat().join('\n')).not.toContain(sentinel);
+  });
+
+  it('bounds successful stdout capture while retaining its tail and accounting facts', async () => {
+    const prefix = 'SUCCESS_PREFIX_MUST_NOT_LEAK';
+    const tail = 'SUCCESS_TAIL_RETAINED';
+    const result = await bashTool.execute({
+      command: commandFor(
+        `process.stdout.write(${JSON.stringify(prefix)} + 'x'.repeat(${
+          outputBudget + 4096
+        }) + ${JSON.stringify(tail)})`
+      ),
+      timeout: 10_000,
+      env: {},
+      run_in_background: false,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.llmContent).toMatchObject({
+      stdout: expect.stringContaining(tail),
+      output_truncated: true,
+      stdout_omitted_bytes: expect.any(Number),
+      stdout_total_bytes: expect.any(Number),
+      output_accounting_complete: true,
+    });
+    expect(rendered(result.llmContent)).not.toContain(prefix);
+    expect(result.metadata).toMatchObject({
+      capture_truncated: true,
+      output_truncated: true,
+      output_accounting_complete: true,
+      terminal_transport: 'local',
+      terminal_output_merged: false,
+    });
+    expect(result.metadata?.stdout_total_bytes).toBeGreaterThan(outputBudget);
+    expect(result.metadata?.stdout_retained_bytes).toBeLessThanOrEqual(outputBudget);
+    expect(result.metadata?.stdout_omitted_bytes).toBeGreaterThan(0);
+    expect(result.metadata?.raw_output_bytes).toBeGreaterThan(outputBudget);
+    expect(result.metadata?.stdout_length).toBeGreaterThan(outputBudget);
+  });
+
+  it('bounds failed stderr capture and builds the error from the safe projection', async () => {
+    const prefix = 'FAILURE_PREFIX_MUST_NOT_LEAK';
+    const tail = 'FAILURE_TAIL_RETAINED';
+    const result = await bashTool.execute({
+      command: commandFor(
+        `process.stderr.write(${JSON.stringify(prefix)} + 'e'.repeat(${
+          outputBudget + 4096
+        }) + ${JSON.stringify(tail)}, () => process.exit(7))`
+      ),
+      timeout: 10_000,
+      env: {},
+      run_in_background: false,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.message).toContain(tail);
+    expect(result.error?.message).not.toContain(prefix);
+    expect(result.error?.message.length).toBeLessThan(outputBudget);
+    expect(result.llmContent).toMatchObject({
+      stderr: expect.stringContaining(tail),
+      output_truncated: true,
+      stderr_omitted_bytes: expect.any(Number),
+      stderr_total_bytes: expect.any(Number),
+      output_accounting_complete: true,
+    });
+    expect(result.metadata?.stderr_total_bytes).toBeGreaterThan(outputBudget);
+    expect(result.metadata?.stderr_retained_bytes).toBeLessThanOrEqual(outputBudget);
+    expect(result.metadata?.stderr_omitted_bytes).toBeGreaterThan(0);
+  });
+
+  it('keeps independent bounded budgets for stdout and stderr', async () => {
+    const stdoutTail = 'STDOUT_TAIL_RETAINED';
+    const stderrTail = 'STDERR_TAIL_RETAINED';
+    const result = await bashTool.execute({
+      command: commandFor(
+        `process.stdout.write('stdout-prefix' + 'x'.repeat(${
+          outputBudget + 4096
+        }) + ${JSON.stringify(stdoutTail)}); process.stderr.write('stderr-prefix' + 'e'.repeat(${
+          outputBudget + 4096
+        }) + ${JSON.stringify(stderrTail)})`
+      ),
+      timeout: 10_000,
+      env: {},
+      run_in_background: false,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.llmContent).toMatchObject({
+      stdout: expect.stringContaining(stdoutTail),
+      stderr: expect.stringContaining(stderrTail),
+    });
+    expect(result.metadata?.stdout_omitted_bytes).toBeGreaterThan(0);
+    expect(result.metadata?.stderr_omitted_bytes).toBeGreaterThan(0);
+    expect(result.metadata?.stdout_retained_bytes).toBeLessThanOrEqual(outputBudget);
+    expect(result.metadata?.stderr_retained_bytes).toBeLessThanOrEqual(outputBudget);
+  });
+
+  it('uses bounded projected previews for timeout and abort terminal metadata', async () => {
+    const prefix = 'INTERRUPTED_PREFIX_MUST_NOT_LEAK';
+    const tail = 'INTERRUPTED_TAIL_RETAINED';
+    const program = `process.stdout.write(${JSON.stringify(prefix)} + 'x'.repeat(${
+      outputBudget + 4096
+    }) + ${JSON.stringify(tail)}, () => setInterval(() => {}, 1000))`;
+    const timeoutResult = await bashTool.execute({
+      command: commandFor(program),
+      timeout: 2_000,
+      env: {},
+      run_in_background: false,
+    });
+
+    const controller = new AbortController();
+    const abortResultPromise = bashTool.execute(
+      {
+        command: commandFor(program),
+        timeout: 10_000,
+        env: {},
+        run_in_background: false,
+      },
+      controller.signal
+    );
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    controller.abort();
+    const abortResult = await abortResultPromise;
+
+    for (const result of [timeoutResult, abortResult]) {
+      expect(typeof result.llmContent).toBe('string');
+      expect(result.metadata?.stdout).toContain(tail);
+      expect(result.metadata?.stdout).not.toContain(prefix);
+      expect(String(result.metadata?.stdout).length).toBeLessThan(outputBudget);
+      expect(result.metadata).toMatchObject({
+        output_accounting_complete: true,
+        terminal_transport: 'local',
+        terminal_output_merged: false,
+      });
+    }
   });
 
   it('merges Session environment before invocation overrides', async () => {

@@ -23,6 +23,11 @@ import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/toolSchemas.js';
 import { BackgroundShellManager } from './BackgroundShellManager.js';
 import { OutputTruncator } from './OutputTruncator.js';
+import { ShellOutputCapture } from './ShellOutputCapture.js';
+import {
+  type ProjectedShellOutput,
+  projectShellOutput,
+} from './ShellOutputProjection.js';
 import {
   isWorkspaceSandboxRuntimeFailure,
   type SandboxedCommand,
@@ -207,7 +212,7 @@ Before executing commands:
       : undefined;
 
     try {
-      updateOutput?.(`Executing Bash command: ${command}`);
+      updateOutput?.('Executing Bash command...');
       const acpMode = isAcpMode(context.sessionId);
       const sandboxedCommand =
         readOnlyAudit && !acpMode
@@ -641,12 +646,12 @@ async function executeWithTimeout(
 
   return new Promise((resolve) => {
     const { child: bashProcess, processTree } = prepared;
-    let stdout = '';
-    let stderr = '';
+    const capture = new ShellOutputCapture();
     let timedOut = false;
     let settled = false;
     let admissionError: Error | undefined;
     let finalizationError: Error | undefined;
+    let releaseCompletion: Promise<void> | undefined;
     let terminationPromise: ReturnType<typeof processTree.terminate> | undefined;
     const terminateProcessTree = () => {
       terminationPromise ??= processTree.terminate();
@@ -669,6 +674,67 @@ async function executeWithTimeout(
         (signal as unknown as { onabort: null }).onabort = null;
       }
     };
+    const output = (): ProjectedShellOutput => {
+      capture.finish();
+      return projectShellOutput(capture.snapshot(), command);
+    };
+    const metadataFor = (
+      projected: ProjectedShellOutput,
+      details: Record<string, unknown>,
+      includeLengths: boolean = true
+    ) => {
+      const snapshot = projected.snapshot;
+      const outputTruncated =
+        projected.captureTruncated || projected.projectionTruncated;
+      return {
+        ...details,
+        capture_truncated: projected.captureTruncated,
+        projection_truncated: projected.projectionTruncated,
+        output_truncated: outputTruncated,
+        stdout_projection_truncated: projected.stdoutProjectionTruncated,
+        stderr_projection_truncated: projected.stderrProjectionTruncated,
+        stdout_total_bytes: snapshot.stdout.totalBytes,
+        stdout_retained_bytes: snapshot.stdout.retainedBytes,
+        stdout_omitted_bytes: snapshot.stdout.omittedBytes,
+        stderr_total_bytes: snapshot.stderr.totalBytes,
+        stderr_retained_bytes: snapshot.stderr.retainedBytes,
+        stderr_omitted_bytes: snapshot.stderr.omittedBytes,
+        raw_output_bytes: snapshot.stdout.totalBytes + snapshot.stderr.totalBytes,
+        output_accounting_complete:
+          snapshot.stdout.accountingComplete && snapshot.stderr.accountingComplete,
+        terminal_transport: 'local' as const,
+        terminal_output_merged: snapshot.terminalOutputMerged,
+        ...(includeLengths
+          ? {
+              stdout_length: snapshot.stdout.totalChars,
+              stderr_length: snapshot.stderr.totalChars,
+            }
+          : {}),
+      };
+    };
+    const normalLlmContent = (
+      projected: ProjectedShellOutput,
+      executionTime: number,
+      code: number | null,
+      sig: NodeJS.Signals | null
+    ) => ({
+      stdout: projected.stdout,
+      stderr: projected.stderr,
+      execution_time: executionTime,
+      exit_code: code,
+      signal: sig,
+      output_truncated: projected.captureTruncated || projected.projectionTruncated,
+      stdout_omitted_bytes: projected.snapshot.stdout.omittedBytes,
+      stderr_omitted_bytes: projected.snapshot.stderr.omittedBytes,
+      stdout_total_bytes: projected.snapshot.stdout.totalBytes,
+      stderr_total_bytes: projected.snapshot.stderr.totalBytes,
+      output_accounting_complete:
+        projected.snapshot.stdout.accountingComplete &&
+        projected.snapshot.stderr.accountingComplete,
+      ...(projected.truncationInfo && {
+        truncation_info: projected.truncationInfo,
+      }),
+    });
     const settle = (result: ToolResult) => {
       if (settled) return;
       settled = true;
@@ -676,11 +742,11 @@ async function executeWithTimeout(
       resolve(result);
     };
 
-    bashProcess.stdout?.on('data', (data) => {
-      stdout += data.toString();
+    bashProcess.stdout?.on('data', (data: Buffer | string) => {
+      capture.append('stdout', data);
     });
-    bashProcess.stderr?.on('data', (data) => {
-      stderr += data.toString();
+    bashProcess.stderr?.on('data', (data: Buffer | string) => {
+      capture.append('stderr', data);
     });
 
     if (signal.addEventListener) {
@@ -691,6 +757,7 @@ async function executeWithTimeout(
     if (signal.aborted) abortHandler();
 
     bashProcess.on('close', async (code, sig) => {
+      await releaseCompletion;
       if (timedOut || signal.aborted || admissionError) {
         await terminateProcessTree();
       }
@@ -703,6 +770,7 @@ async function executeWithTimeout(
             : new Error('Foreground command finalization failed');
       }
       const executionTime = Date.now() - startTime;
+      const projected = output();
 
       if (timedOut) {
         settle({
@@ -713,11 +781,13 @@ async function executeWithTimeout(
             message: '命令执行超时',
           },
           metadata: {
-            command,
-            sandboxed: Boolean(sandboxedCommand),
+            ...metadataFor(projected, {
+              command,
+              sandboxed: Boolean(sandboxedCommand),
+            }),
             timeout: true,
-            stdout,
-            stderr,
+            stdout: projected.stdout,
+            stderr: projected.stderr,
             execution_time: executionTime,
           },
         });
@@ -733,11 +803,13 @@ async function executeWithTimeout(
             message: '操作被中止',
           },
           metadata: {
-            command,
-            sandboxed: Boolean(sandboxedCommand),
+            ...metadataFor(projected, {
+              command,
+              sandboxed: Boolean(sandboxedCommand),
+            }),
             aborted: true,
-            stdout,
-            stderr,
+            stdout: projected.stdout,
+            stderr: projected.stderr,
             execution_time: executionTime,
           },
         });
@@ -753,9 +825,13 @@ async function executeWithTimeout(
             message: 'Foreground command admission failed',
           },
           metadata: {
-            command,
-            sandboxed: Boolean(sandboxedCommand),
+            ...metadataFor(projected, {
+              command,
+              sandboxed: Boolean(sandboxedCommand),
+            }),
             admission_failed: true,
+            stdout: projected.stdout,
+            stderr: projected.stderr,
             execution_time: executionTime,
           },
         });
@@ -771,31 +847,39 @@ async function executeWithTimeout(
             message: 'Foreground command finalization failed',
           },
           metadata: {
-            command,
-            sandboxed: Boolean(sandboxedCommand),
+            ...metadataFor(projected, {
+              command,
+              sandboxed: Boolean(sandboxedCommand),
+            }),
             finalization_failed: true,
+            stdout: projected.stdout,
+            stderr: projected.stderr,
             execution_time: executionTime,
           },
         });
         return;
       }
 
-      if (sandboxedCommand && isWorkspaceSandboxRuntimeFailure(code, stderr)) {
+      if (
+        sandboxedCommand &&
+        isWorkspaceSandboxRuntimeFailure(code, projected.snapshot.stderr.content)
+      ) {
         settle({
           success: false,
           llmContent:
             'Workspace sandbox could not start, so the Bash command was not executed.',
           error: {
             type: ToolErrorType.PERMISSION_DENIED,
-            message: stderr.trim() || 'Workspace sandbox failed to start',
+            message: projected.stderr || 'Workspace sandbox failed to start',
           },
           metadata: {
-            command,
+            ...metadataFor(projected, { command }),
             sandbox_required: true,
             sandboxed: false,
             execution_time: executionTime,
             exit_code: code,
-            stderr,
+            stdout: projected.stdout,
+            stderr: projected.stderr,
             summary: 'Workspace sandbox failed closed',
           },
         });
@@ -810,33 +894,19 @@ async function executeWithTimeout(
           : `执行命令完成 (退出码 ${code}, ${executionTime}ms): ${cmdPreview}`;
 
       const metadata: BashForegroundMetadata = {
+        ...metadataFor(projected, { command }),
         command,
         execution_time: executionTime,
         exit_code: code,
         signal: sig,
-        stdout_length: stdout.length,
-        stderr_length: stderr.length,
-        has_stderr: stderr.length > 0,
+        has_stderr:
+          projected.snapshot.stderr.totalBytes > 0 ||
+          projected.snapshot.stderr.totalChars > 0,
         sandboxed: Boolean(sandboxedCommand),
         summary,
       };
 
-      const truncated = OutputTruncator.truncateForLLM(
-        stdout.trim(),
-        stderr.trim(),
-        command
-      );
-
-      const llmContent = {
-        stdout: truncated.stdout,
-        stderr: truncated.stderr,
-        execution_time: executionTime,
-        exit_code: code,
-        signal: sig,
-        ...(truncated.truncationInfo && {
-          truncation_info: truncated.truncationInfo,
-        }),
-      };
+      const llmContent = normalLlmContent(projected, executionTime, code, sig);
       const success = code === 0;
 
       settle({
@@ -850,8 +920,8 @@ async function executeWithTimeout(
                 message: formatCommandFailure(
                   code,
                   sig,
-                  truncated.stdout,
-                  truncated.stderr
+                  projected.stdout,
+                  projected.stderr
                 ),
               },
             }),
@@ -860,6 +930,7 @@ async function executeWithTimeout(
     });
 
     bashProcess.on('error', async (error) => {
+      await releaseCompletion;
       if (timedOut || signal.aborted || admissionError) {
         await terminateProcessTree();
       }
@@ -871,56 +942,58 @@ async function executeWithTimeout(
             ? finalizeError
             : new Error('Foreground command finalization failed');
       }
+      const projected = output();
+      const executionTime = Date.now() - startTime;
       settle({
         success: false,
-        llmContent: admissionError
-          ? 'Command execution blocked before durable admission'
-          : finalizationError
-            ? 'Command process group could not be finalized'
-            : `Command execution failed: ${error.message}`,
+        llmContent: timedOut
+          ? `Command execution timed out (${timeout}ms)`
+          : signal.aborted
+            ? 'Command execution aborted by user'
+            : admissionError
+              ? 'Command execution blocked before durable admission'
+              : finalizationError
+                ? 'Command process group could not be finalized'
+                : `Command execution failed: ${error.message}`,
         error: {
-          type: ToolErrorType.EXECUTION_ERROR,
-          message: admissionError
-            ? 'Foreground command admission failed'
-            : finalizationError
-              ? 'Foreground command finalization failed'
-              : error.message,
-          ...(admissionError || finalizationError ? {} : { details: error }),
+          type: timedOut ? ToolErrorType.TIMEOUT_ERROR : ToolErrorType.EXECUTION_ERROR,
+          message: timedOut
+            ? '命令执行超时'
+            : signal.aborted
+              ? '操作被中止'
+              : admissionError
+                ? 'Foreground command admission failed'
+                : finalizationError
+                  ? 'Foreground command finalization failed'
+                  : error.message,
+          ...(timedOut || signal.aborted || admissionError || finalizationError
+            ? {}
+            : { details: error }),
         },
-        metadata:
-          admissionError || finalizationError
-            ? {
-                command,
-                sandboxed: Boolean(sandboxedCommand),
-                ...(admissionError
-                  ? { admission_failed: true }
-                  : { finalization_failed: true }),
-                execution_time: Date.now() - startTime,
-              }
-            : undefined,
+        metadata: metadataFor(projected, {
+          command,
+          sandboxed: Boolean(sandboxedCommand),
+          ...(timedOut
+            ? { timeout: true }
+            : signal.aborted
+              ? { aborted: true }
+              : admissionError
+                ? { admission_failed: true }
+                : finalizationError
+                  ? { finalization_failed: true }
+                  : { error: error.message }),
+          stdout: projected.stdout,
+          stderr: projected.stderr,
+          execution_time: executionTime,
+        }),
       });
     });
 
     if (!signal.aborted) {
-      void prepared.release().catch(async (error: unknown) => {
+      releaseCompletion = prepared.release().catch(async (error: unknown) => {
         admissionError =
           error instanceof Error ? error : new Error('Command admission failed');
         await terminateProcessTree();
-        await prepared.finalize().catch(() => undefined);
-        settle({
-          success: false,
-          llmContent: 'Command execution blocked before durable admission',
-          error: {
-            type: ToolErrorType.EXECUTION_ERROR,
-            message: 'Foreground command admission failed',
-          },
-          metadata: {
-            command,
-            sandboxed: Boolean(sandboxedCommand),
-            admission_failed: true,
-            execution_time: Date.now() - startTime,
-          },
-        });
       });
     }
   });
