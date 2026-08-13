@@ -636,6 +636,14 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
   由透明代理保持，宿主 SIGKILL Blade owner；第二 Runtime 必须先闭合 child turn/tool
   receipt 并从 JSONL 重建 sidecar history，再以新 immutable child ID resume。follow-up
   不得包含原 token，恢复失败不得允许 Web/ACP 发起虚假 resume；
+- durable completed-Subagent result adoption：Flash 和 Pro 都必须先通过真实 foreground
+  Task 生成只存在于 child 结果中的 marker，再保留 active parent turn、durable inbox 与
+  orphan parent Task call，并在 parent `tool_result` 提交前释放 Runtime。Headless、raw
+  PTY TUI、production Chromium Web GUI 和 ACP `session/load` 必须从同一 child sidecar
+  采用结果，不得再次启动 child。每格验证 resumed Provider request 含 child-only marker、
+  adopted result/parent abort/inbox ACK/parent final 各一次、child sidecar 字节不变、
+  compound owner 与 lineage 唯一、`sideEffectsUncertain=false`、Web live/reload 可见、
+  进程/端口/临时根清理及凭据不泄漏；
 - 输出协议、工具调用、错误事件和 key 泄漏检查。
 
 ### Durable Subagent resume 轨迹
@@ -661,6 +669,27 @@ active parent turn 和 durable pending input 都必须 fail closed。
 required matrix 固定包含 `deepseek-v4-flash` 和 `deepseek-v4-pro`。每个模型都要通过
 Runtime、TUI、Web、ACP 四条真实产品入口；worktree resume 另行验证新的 child ID
 继续使用源 lease owner 并保留失败或有改动的 worktree。
+
+### Durable completed-Subagent result adoption 轨迹
+
+该能力验证 child terminal 与 parent Task result 之间的跨存储 commit gap：
+
+1. fixture 必须先通过真实 Provider 运行 foreground Task，并要求模型生成不在 parent
+   input 中出现的 child marker；随后只持久化 parent `tool_call`，不提交 result。
+2. Runtime 只能从 exact compound owner 的 durable sidecar 采用
+   `completed`/`failed` 结果；child ID、description、显式 type、resume lineage、状态或
+   有界结果任一不匹配时必须回退通用 uncertain receipt。
+3. 采用批次必须按原 tool-call/message identity 写入一个 `tool_result`、一个 terminal
+   `subtask_ref` 和一个 `turn_aborted(process_restart)`；第二次启动不能重复写入。
+4. Headless、raw PTY TUI、production Chromium Web GUI 与 ACP `session/load` 必须消费
+   标准 LoopEvent。Web 还要以 durable child Session ID 定位原 card，验证 live terminal
+   summary、parent final、reload 后同一状态和零 browser fault。
+5. 每个 surface 的 resumed Provider request 都必须包含 child-only marker；child sidecar
+   字节、child 数量与 lineage 保持不变，证明没有重复执行 Task。
+
+required matrix 固定包含 `deepseek-v4-flash` 和 `deepseek-v4-pro`，四个 surface 共八格。
+该轨迹属于 release-blocking real API qualification，不得由 mock、HTTP 200、仅 JSONL
+检查或刷新后偶然可见替代。
 
 ### Session discovery 与 durable fork 轨迹
 

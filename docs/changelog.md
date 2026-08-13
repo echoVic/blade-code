@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.31] - 2026-08-14
+
+### 🛡️ 稳定性
+
+- foreground `Task` child 已 durable 完成、但 parent 在提交 `tool_result` 前崩溃时，
+  新 Runtime 会校验 parent workspace/session owner、child ID、description、显式
+  subagent type、resume lineage 与有界终态结果；全部精确匹配后原子提交 canonical
+  `tool_result`、terminal `subtask_ref` 和 parent `turn_aborted(process_restart)`，
+  避免重复执行昂贵或有副作用的 child 工作
+- 正常 Task 完成与 restart adoption 共享同一结果构造器；任何 owner、身份、lineage、
+  状态或结果不匹配仍使用 `sideEffectsUncertain=true` 的保守恢复回执，不会从不可信
+  sidecar 制造成功结果
+- startup adoption 通过标准 `tool_result` 与 `subagent_completed` 事件只投影一次；
+  Headless、ACP、raw PTY TUI 与 Web GUI 使用同一结果语义。TUI 显示有界 child 结果，
+  Web live card 与 fresh reload 都按 durable child Session ID 保留终态和结果摘要
+
+### ✅ 测试相关
+
+- 新增 DeepSeek Flash/Pro × Headless、真实 raw PTY TUI、production Chromium Web GUI
+  与真实 ACP `session/load` 八格 completed-subagent adoption 资格矩阵；每格先通过真实
+  Provider 完成 child，再制造 parent commit gap，并验证 resumed Provider 只看到
+  child-only marker、adoption/abort/inbox ACK 恰好一次、child sidecar 字节不变、没有
+  第二条 child lineage、Web reload 一致、资源与凭据不残留
+
 ## [0.10.30] - 2026-08-14
 
 ### 🛡️ 稳定性

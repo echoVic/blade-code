@@ -104,6 +104,17 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   `turn_completed` 且当前 run 有最终 assistant 文本时恢复 completed；其余记录为
   interrupted failed，可用新的 immutable child ID resume。损坏 JSONL 写 recovery-failed
   receipt 并禁止 resume，但不阻断 parent Session。
+- child sidecar 已经 `completed`/`failed`、但 parent `Task` 尚未提交 `tool_result` 时，
+  parent Runtime 只在 compound owner、child ID、description、显式 type、resume lineage
+  和有界终态结果全部匹配后采用该结果。采用批次按原 tool-call/message identity 原子
+  写入 canonical `tool_result`、terminal `subtask_ref` 与 parent
+  `turn_aborted(process_restart)`；正常完成与恢复共用同一 Task 结果构造器。任一校验
+  失败、child 仍在运行/已取消或结果损坏时，继续写
+  `sideEffectsUncertain=true` 的通用进程重启回执，不猜测 child 结果。
+- 启动时采用的 Task 结果只通过标准 `tool_result` 与 `subagent_completed` 事件投影一次，
+  并在下一次 Provider 请求前进入 canonical JSONL context。TUI、Web、Headless 与 ACP
+  不从 sidecar 单独拼装结果；Web live card 和 fresh load 都使用 durable child Session
+  identity、terminal status 与有界 summary。
 - crash reconciliation 复用正常 worktree finalize：interrupted 或含改动 worktree 保留，
   completed clean worktree 删除；旧进程已删除的 worktree lease 会从 sidecar 清除。
 - 每次 resume 创建新的不可变 child ID，并记录 `rootAgentId`、`resumedFrom` 和
