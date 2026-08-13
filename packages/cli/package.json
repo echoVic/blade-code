@@ -29,6 +29,8 @@
     "test:performance": "node scripts/test.js performance",
     "test:snapshot": "node scripts/test.js snapshot",
     "test:security": "node scripts/test.js security",
+    "browser:install": "playwright install chromium",
+    "browser:check": "node scripts/run-bun.js run scripts/browser-check.ts",
     "test:coverage": "node scripts/test.js all --coverage",
     "test:watch": "vitest --watch --config vitest.config.ts",
     "qualify:local": "node scripts/run-bun.js run scripts/qualify.ts local",
@@ -127,6 +129,7 @@
     "@types/yargs": "^17.0.35",
     "@vitest/coverage-v8": "^4.1.10",
     "jsdom": "^26.0.0",
+    "playwright": "1.62.1",
     "typescript": "^5.9.2",
     "vitest": "^4.1.10"
   }

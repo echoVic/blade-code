@@ -31,6 +31,12 @@ describe('production qualification contract', () => {
     expect(packageJson.scripts?.['test:real-api:qualification']).toBe(
       'node scripts/test.js realApiQualification'
     );
+    expect(packageJson.scripts?.['browser:install']).toBe(
+      'playwright install chromium'
+    );
+    expect(packageJson.scripts?.['browser:check']).toBe(
+      'node scripts/run-bun.js run scripts/browser-check.ts'
+    );
     expect(packageJson.scripts?.ready).toBe(
       'node scripts/run-bun.js run scripts/qualify.ts production'
     );
@@ -90,11 +96,19 @@ describe('production qualification contract', () => {
     const plan = createQualificationPlan('production');
     const buildIndex = plan.findIndex((check) => check.id === 'build');
     const performanceIndex = plan.findIndex((check) => check.id === 'performance');
+    const browserIndex = plan.findIndex((check) => check.id === 'browser-check');
     const realApiIndex = plan.findIndex((check) => check.id === 'real-api');
 
     expect(buildIndex).toBeGreaterThanOrEqual(0);
     expect(performanceIndex).toBeGreaterThan(buildIndex);
+    expect(browserIndex).toBeGreaterThan(performanceIndex);
+    expect(realApiIndex).toBeGreaterThan(browserIndex);
     expect(realApiIndex).toBeGreaterThan(buildIndex);
+    expect(plan).toHaveLength(16);
+    expect(plan[browserIndex]).toMatchObject({
+      command: 'bun',
+      args: ['run', '--filter', 'blade-code', 'browser:check'],
+    });
     expect(plan[realApiIndex]).toMatchObject({
       command: 'bun',
       args: ['run', 'test:real-api:qualification'],
@@ -166,6 +180,18 @@ describe('production qualification contract', () => {
     expect(
       resolveQualificationCheckEnvironment(
         {
+          id: 'browser-check',
+          name: 'Chromium preflight',
+          command: 'bun',
+          args: [],
+        },
+        base,
+        paid
+      )
+    ).toEqual({ PATH: '/usr/bin' });
+    expect(
+      resolveQualificationCheckEnvironment(
+        {
           id: 'real-api',
           name: 'Real API',
           command: 'bun',
@@ -221,6 +247,42 @@ describe('production qualification contract', () => {
 
     expect(started).toEqual(['first', 'second']);
     expect(result).toMatchObject({ passed: false, failedCheck: 'second' });
+  });
+
+  it('prevents paid execution when the Chromium preflight fails', async () => {
+    const started: string[] = [];
+    const result = await runQualification(
+      [
+        {
+          id: 'browser-check',
+          name: 'Chromium preflight',
+          command: 'bun',
+          args: [],
+        },
+        {
+          id: 'real-api',
+          name: 'Real API',
+          command: 'bun',
+          args: [],
+          network: 'paid-api',
+        },
+      ],
+      {
+        cwd: '/workspace',
+        env: {},
+        execute: async (check) => {
+          started.push(check.id);
+          return check.id === 'browser-check' ? 1 : 0;
+        },
+      }
+    );
+
+    expect(started).toEqual(['browser-check']);
+    expect(result).toMatchObject({
+      passed: false,
+      failedCheck: 'browser-check',
+      completedChecks: 0,
+    });
   });
 
   it('reports success only after every check exits zero', async () => {

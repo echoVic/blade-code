@@ -109,6 +109,12 @@ export function createQualificationPlan(
   const plan = LOCAL_CHECKS.map((check) => ({ ...check, args: [...check.args] }));
   if (mode === 'production') {
     plan.push({
+      id: 'browser-check',
+      name: 'Chromium browser preflight',
+      command: 'bun',
+      args: ['run', '--filter', 'blade-code', 'browser:check'],
+    });
+    plan.push({
       id: 'real-api',
       name: 'Release-blocking real API trajectories',
       command: 'bun',
