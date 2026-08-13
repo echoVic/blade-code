@@ -42,6 +42,7 @@ import {
   resolveDeepSeekQualificationSettings,
   resolveForkQualificationModels,
   resolveModelSettings,
+  resolveRequiredDeepSeekQualificationModels,
 } from '../../integration/real-api/testConfig.js';
 
 vi.unmock('http');
@@ -532,6 +533,13 @@ describe('real API coding-task harness', () => {
     expect(configs[0]?.model).toBe('deepseek-v4-flash');
     expect(configs[1]?.model).toBe('deepseek-v4-pro');
     expect(new Set(configs.map((config) => config.qualificationId)).size).toBe(2);
+    expect(
+      resolveRequiredDeepSeekQualificationModels({
+        DEEPSEEK_API_KEY: secret,
+        DEEPSEEK_BASE_URL: 'https://deepseek.invalid',
+        DEEPSEEK_MODELS: 'deepseek-v4-flash,deepseek-v4-pro',
+      }).map((config) => config.model)
+    ).toEqual(['deepseek-v4-flash', 'deepseek-v4-pro']);
     expect(
       JSON.stringify(
         configs.map(({ id, provider, model, qualificationId }) => ({

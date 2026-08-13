@@ -9,4 +9,5 @@ export interface TestTypeConfig {
 
 export const testTypes: Record<string, TestTypeConfig> & {
   realApi: TestTypeConfig;
+  realApiQualification: TestTypeConfig;
 };

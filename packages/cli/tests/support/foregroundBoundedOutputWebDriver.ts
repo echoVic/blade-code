@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { realpath } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { chromium, type Page } from 'playwright';
@@ -257,11 +258,12 @@ export async function runForegroundBoundedOutputWebDriver(input: {
     await waitForLauncherReady(child, 20_000, input.secrets);
     const origin = `http://127.0.0.1:${port}`;
     await waitForHttp(origin, 20_000);
+    const workspace = await realpath(path.join(input.root, 'project'));
     const response = await fetch(`${origin}/sessions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        projectPath: path.join(input.root, 'project'),
+        projectPath: workspace,
         title: 'Bounded foreground output qualification',
       }),
     });
@@ -299,7 +301,7 @@ export async function runForegroundBoundedOutputWebDriver(input: {
 
     const navigation = new URL(origin);
     navigation.searchParams.set('session', sessionId);
-    navigation.searchParams.set('project', path.join(input.root, 'project'));
+    navigation.searchParams.set('project', workspace);
     await page.goto(navigation.href, { waitUntil: 'domcontentloaded' });
     const composer = page.locator('textarea[data-blade-composer]');
     await composer.waitFor({ state: 'visible' });

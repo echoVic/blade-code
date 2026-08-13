@@ -3,12 +3,14 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { SessionEvent } from '../../../src/context/types.js';
 import {
   createForegroundBoundedOutputFixture,
   FOREGROUND_STREAM_BYTES,
   type ForegroundBoundedOutputFixture,
 } from '../../integration/real-api/foregroundBoundedOutputFixture.js';
 import {
+  assertForegroundBoundedOutputDurableMetadata,
   assertForegroundBoundedOutputEvidenceSafe,
   assertForegroundBoundedOutputToolTrace,
 } from '../../integration/real-api/foregroundBoundedOutputHarness.js';
@@ -120,5 +122,72 @@ describe('foreground bounded output qualification harness', () => {
         ['test-secret']
       )
     ).toThrow('Secret material');
+  });
+
+  it('requires bounded retained bytes and exact durable transport facts', () => {
+    const makeEvent = (
+      metadata: Record<string, unknown>
+    ): SessionEvent =>
+      ({
+        id: 'result',
+        sessionId: 'bounded-session',
+        timestamp: '2026-08-13T00:00:00.000Z',
+        type: 'part_created',
+        cwd: '/workspace',
+        version: 'test',
+        data: {
+          partId: 'result',
+          messageId: 'assistant',
+          partType: 'tool_result',
+          payload: {
+            toolCallId: 'bash',
+            toolName: 'Bash',
+            output: {},
+            error: null,
+            metadata,
+          },
+          createdAt: '2026-08-13T00:00:00.000Z',
+        },
+      }) as SessionEvent;
+
+    expect(() =>
+      assertForegroundBoundedOutputDurableMetadata(
+        [
+          makeEvent({
+            terminal_transport: 'local',
+            terminal_output_merged: false,
+            stdout_retained_bytes: 1024 * 1024,
+            stderr_retained_bytes: 1024 * 1024,
+          }),
+        ],
+        'local'
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertForegroundBoundedOutputDurableMetadata(
+        [
+          makeEvent({
+            terminal_transport: 'acp',
+            terminal_output_merged: true,
+            stdout_retained_bytes: 1024 * 1024,
+            stderr_retained_bytes: 0,
+          }),
+        ],
+        'acp'
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertForegroundBoundedOutputDurableMetadata(
+        [
+          makeEvent({
+            terminal_transport: 'local',
+            terminal_output_merged: false,
+            stdout_retained_bytes: 1024 * 1024 + 1,
+            stderr_retained_bytes: 0,
+          }),
+        ],
+        'local'
+      )
+    ).toThrow('stdout_retained_bytes');
   });
 });

@@ -1,6 +1,7 @@
 import type { ProcessIdentity } from '../../../src/utils/process/ProcessIdentity.js';
 import { processIdentityMatches } from '../../../src/utils/process/ProcessIdentity.js';
 import { ForegroundProcessLeaseStore } from '../../../src/context/storage/ForegroundProcessLeaseStore.js';
+import type { SessionEvent } from '../../../src/context/types.js';
 import type { DurableToolTraceRecord } from './sessionForkTrajectoryHarness.js';
 import { assertNoSecrets } from './sessionForkTrajectoryHarness.js';
 import type { ForegroundBoundedOutputFixture } from './foregroundBoundedOutputFixture.js';
@@ -107,6 +108,46 @@ export function assertForegroundBoundedOutputToolTrace(
     stderrOmitted !== 0
   ) {
     throw new Error('ACP foreground bounded output merged accounting is invalid');
+  }
+}
+
+export function assertForegroundBoundedOutputDurableMetadata(
+  events: readonly SessionEvent[],
+  transport: Transport
+): void {
+  const result = events.find(
+    (event) =>
+      event.type === 'part_created' &&
+      event.data.partType === 'tool_result' &&
+      isRecord(event.data.payload) &&
+      event.data.payload.toolName === 'Bash'
+  );
+  if (!result || result.type !== 'part_created') {
+    throw new Error('Foreground bounded output durable Bash result is missing');
+  }
+  const payload = result.data.payload as Record<string, unknown>;
+  const metadata = payload.metadata;
+  if (!isRecord(metadata)) {
+    throw new Error('Foreground bounded output durable metadata is missing');
+  }
+  const stdoutRetained = requireNumber(
+    metadata.stdout_retained_bytes,
+    'stdout_retained_bytes',
+    (value) => value >= 0 && value <= 1024 * 1024
+  );
+  const stderrRetained = requireNumber(
+    metadata.stderr_retained_bytes,
+    'stderr_retained_bytes',
+    (value) => value >= 0 && value <= 1024 * 1024
+  );
+  if (
+    metadata.terminal_transport !== transport ||
+    (transport === 'local' && metadata.terminal_output_merged === true) ||
+    (transport === 'acp' &&
+      (metadata.terminal_output_merged !== true || stderrRetained !== 0)) ||
+    stdoutRetained > 1024 * 1024
+  ) {
+    throw new Error('Foreground bounded output durable transport facts are invalid');
   }
 }
 

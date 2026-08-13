@@ -52,6 +52,7 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
   });
 
   it('keeps goal completion verification in the release-blocking matrix', () => {
+    expect(testTypes.realApiQualification.timeout).toBe(45 * 60 * 1000);
     expect(testTypes.realApiQualification.files).toContain(
       'tests/integration/real-api/goal-mode-trajectory.test.ts'
     );
@@ -63,6 +64,9 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
     );
     expect(testTypes.realApiQualification.files).toContain(
       'tests/integration/real-api/action-stationarity-trajectory.test.ts'
+    );
+    expect(testTypes.realApiQualification.files).toContain(
+      'tests/integration/real-api/foreground-bounded-output-trajectory.test.ts'
     );
     expect(testTypes.realApiQualification.files).not.toContain(
       'tests/integration/real-api/blade-coding-task.test.ts'

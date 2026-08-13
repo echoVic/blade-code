@@ -94,6 +94,7 @@ export async function runForegroundBoundedOutputAcpDriver(input: {
   workspace: string;
   fixture: ForegroundBoundedOutputFixture;
   secret: string;
+  timeoutMs?: number;
 }): Promise<ForegroundBoundedOutputAcpEvidence> {
   const first = createHarness();
   let sessionId = '';
@@ -117,9 +118,19 @@ export async function runForegroundBoundedOutputAcpDriver(input: {
         sessionId,
         modeId: 'yolo',
       });
-      const result = await first.connection.prompt({
+      const prompt = first.connection.prompt({
         sessionId,
         prompt: [{ type: 'text', text: input.fixture.acpPrompt }],
+      });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          void first.connection.cancel({ sessionId });
+          reject(new Error('ACP bounded output prompt timed out'));
+        }, input.timeoutMs ?? 180_000);
+      });
+      const result = await Promise.race([prompt, timeout]).finally(() => {
+        if (timer) clearTimeout(timer);
       });
       if (result.stopReason !== 'end_turn') {
         throw new Error(`ACP bounded output stopped with ${result.stopReason}`);

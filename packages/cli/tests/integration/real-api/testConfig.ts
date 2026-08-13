@@ -364,6 +364,22 @@ export function resolveDeepSeekQualificationSettings(
   };
 }
 
+export function resolveRequiredDeepSeekQualificationModels(
+  env: Readonly<Record<string, string | undefined>> = process.env
+): readonly [TestModelConfig, TestModelConfig] {
+  const configs = resolveForkQualificationModels(env, {
+    requiredDeepSeek: true,
+  }).filter((config) => config.id === 'deepseek');
+  const flash = configs.find((config) => config.model === REQUIRED_DEEPSEEK_MODELS[0]);
+  const pro = configs.find((config) => config.model === REQUIRED_DEEPSEEK_MODELS[1]);
+  if (!flash || !pro) {
+    throw new Error(
+      'DeepSeek qualification requires exactly the Flash and Pro model matrix'
+    );
+  }
+  return [flash, pro];
+}
+
 function resolveLegacyModelConfigs(): TestModelConfig[] {
   const env = materializeRealApiEnvironment(process.env);
   const bladeModel = hasExplicitProviderCredentials(env)
