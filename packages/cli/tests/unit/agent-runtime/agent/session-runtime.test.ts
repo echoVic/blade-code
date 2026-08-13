@@ -1373,11 +1373,28 @@ describe('SessionRuntime', () => {
     );
     await first.dispose();
 
+    const goalUpdates: unknown[] = [];
+    const unsubscribe = Bus.subscribe((event) => {
+      if (
+        event.sessionId === sessionId &&
+        event.projectPath === workspaceRoot &&
+        event.type === 'goal.updated'
+      ) {
+        goalUpdates.push(event.properties.goal);
+      }
+    });
     const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    unsubscribe();
     await expect(new GoalStore(workspaceRoot, sessionId).get()).resolves.toMatchObject({
       goalId: created.goalId,
       status: 'complete',
     });
+    expect(goalUpdates).toEqual([
+      expect.objectContaining({
+        goalId: created.goalId,
+        status: 'complete',
+      }),
+    ]);
     expect(recovered.getStartupTurnRecovery()).toMatchObject({
       turnId: prepared.handle.id,
       outcome: 'completed',

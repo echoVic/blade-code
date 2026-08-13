@@ -153,7 +153,11 @@ export function GoalControlBar() {
   return (
     <>
       <TooltipProvider delayDuration={250}>
-        <section aria-label={t('goal.aria.section')} className="mx-3 mb-1 shrink-0">
+        <section
+          aria-label={t('goal.aria.section')}
+          className="mx-3 mb-1 shrink-0"
+          data-blade-goal-status={goal.status}
+        >
           {/* Compact strip */}
           <div
             className={cn(

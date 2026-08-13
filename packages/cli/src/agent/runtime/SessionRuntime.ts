@@ -1666,6 +1666,13 @@ export class SessionRuntime {
             goalHandoff.finalization.goalFinalization!
           )
         : null;
+      if (goalReconciliation?.finalized) {
+        Bus.publish(
+          { sessionId: this.sessionId, projectPath: this.workspaceRoot },
+          'goal.updated',
+          { goal: goalReconciliation.goal }
+        );
+      }
       this.startupTurnRecovery =
         recovery ??
         (goalHandoff && goalReconciliation?.finalized
