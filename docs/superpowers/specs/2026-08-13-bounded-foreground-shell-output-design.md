@@ -2,7 +2,7 @@
 
 日期：2026-08-13
 
-状态：设计已确认，待书面规格审阅
+状态：书面规格已批准
 
 目标版本：下一个可用 patch 版本；若 main 在实施前未前进，则为 0.10.28
 
@@ -439,10 +439,12 @@ Chromium 时均 fail closed。密钥从受限 config/auth 存储或测试环境 
 
 当前 release.js 配置不运行测试，tag workflow 也只校验版本、构建和发布；因此这里的
 release-blocking 指发布流程要求，而不是已经存在的远端自动保护。本 patch 不把 paid
-API secret 引入公共 tag workflow。发布者必须在待发布 HEAD 上显式运行
-qualify:production，并在 bounded-foreground-output evidence 文档中记录 HEAD、模型矩阵、
-命令、退出码和无密钥检查，然后才允许创建 tag。把该证据机械绑定到 tag 的通用
-qualification receipt 属于后续独立 release-infrastructure patch。
+API secret 引入公共 tag workflow。发布者必须先冻结包含实现、版本、changelog 和
+reference 文档的候选提交，在该候选 SHA 上显式运行 qualify:production。随后 evidence
+文档记录候选 SHA、模型矩阵、命令、退出码和无密钥检查，并作为唯一允许的后续提交；
+创建 tag 前必须机械验证候选 SHA 到 tag HEAD 的 diff 只包含该 evidence 文件，并在 tag
+HEAD 上重新运行无网络的 build、type-check、lint 与 git diff --check。把付费资格
+receipt 与 tag 做通用自动绑定属于后续独立 release-infrastructure patch。
 
 功能作为独立 npm patch 发布。实施完成时按最新 main 解析版本，更新 package version、
 CHANGELOG 和相关文档，执行 qualify:local 与 qualify:production，再走 tag-driven release。
@@ -505,7 +507,8 @@ CHANGELOG 和相关文档，执行 qualify:local 与 qualify:production，再走
 - Chromium、PTY、ACP、process tree、lease、端口和临时根全部清理；
 - bun run qualify:local 退出 0；
 - bun run qualify:production 退出 0；
-- evidence 文档记录待发布 HEAD、六格模型/入口矩阵、精确命令、退出码与 secret 检查；
+- evidence 文档记录已资格验证的候选 SHA、六格模型/入口矩阵、精确命令、退出码与
+  secret 检查；候选到 tag HEAD 的唯一差异是 evidence 文件；
 - git diff --check 退出 0，工作树只含预期改动；
 - 版本、changelog、reference、qualification 文档与实现一致；
 - 独立 patch 经 tag-driven release 后核验 npm 版本。
