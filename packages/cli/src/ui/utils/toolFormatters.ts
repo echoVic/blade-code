@@ -150,7 +150,7 @@ interface ToolResult {
  * 判断是否显示工具详细内容
  */
 export function shouldShowToolDetail(toolName: string, result: ToolResult): boolean {
-  if (!result?.success && !result?.metadata) return false;
+  if (!result?.success && !result?.metadata && toolName !== 'Bash') return false;
 
   switch (toolName) {
     case 'Write':
@@ -195,7 +195,7 @@ export function generateToolDetail(
   toolName: string,
   result: ToolResult
 ): string | null {
-  if (!result?.success) return null;
+  if (!result?.success && toolName !== 'Bash') return null;
 
   switch (toolName) {
     case 'Glob': {
@@ -250,26 +250,85 @@ export function generateToolDetail(
 
     case 'Bash': {
       const llmContent = result.llmContent as
-        | { stdout?: string; stderr?: string }
+        | {
+            stdout?: string;
+            stderr?: string;
+            output_truncated?: boolean;
+            truncation_info?: string;
+          }
         | undefined;
-      const stdout = llmContent?.stdout || '';
-      const stderr = llmContent?.stderr || '';
+      const stdout =
+        llmContent && typeof llmContent === 'object' ? llmContent.stdout || '' : '';
+      const stderr =
+        llmContent && typeof llmContent === 'object' ? llmContent.stderr || '' : '';
+      const compactStream = (content: string): string => {
+        const safeHead = (value: string, count: number) => {
+          let end = Math.min(value.length, count);
+          if (end < value.length && /[\uD800-\uDBFF]/.test(value.charAt(end - 1))) {
+            end -= 1;
+          }
+          return value.slice(0, end);
+        };
+        const safeTail = (value: string, count: number) => {
+          let start = Math.max(0, value.length - count);
+          if (/[\uDC00-\uDFFF]/.test(value.charAt(start))) start += 1;
+          return value.slice(start);
+        };
+        const lines = content.split('\n');
+        const maxLines = 8;
+        const lineBounded =
+          lines.length > maxLines
+            ? [
+                ...lines.slice(0, 4),
+                `... (+${lines.length - maxLines} line(s); tail shown)`,
+                ...lines.slice(-4),
+              ].join('\n')
+            : content;
+        const maxChars = 800;
+        if (lineBounded.length <= maxChars) return lineBounded;
+        const marker = '\n... (middle clipped; tail shown) ...\n';
+        const headChars = 240;
+        const tailChars = maxChars - headChars - marker.length;
+        return `${safeHead(lineBounded, headChars)}${marker}${safeTail(
+          lineBounded,
+          tailChars
+        )}`;
+      };
 
-      let output = stdout || stderr;
-      if (!output) return null;
-
-      const lines = output.split('\n');
-      const maxLines = 8;
-      if (lines.length > maxLines) {
-        output =
-          lines.slice(0, maxLines).join('\n') +
-          `\n... (+${lines.length - maxLines} line(s))`;
+      const sections: string[] = [];
+      if (stdout) sections.push(`stdout:\n${compactStream(stdout)}`);
+      if (stderr) sections.push(`stderr:\n${compactStream(stderr)}`);
+      if (sections.length === 0 && result.error?.message) {
+        sections.push(compactStream(result.error.message));
+      } else if (
+        sections.length === 0 &&
+        typeof result.llmContent === 'string' &&
+        result.llmContent
+      ) {
+        sections.push(compactStream(result.llmContent));
       }
 
-      if (stderr && !stdout) {
-        return `${output}`;
-      }
-      return output;
+      const outputTruncated =
+        llmContent?.output_truncated === true ||
+        result.metadata?.output_truncated === true;
+      const omittedBytes =
+        (typeof result.metadata?.stdout_omitted_bytes === 'number'
+          ? result.metadata.stdout_omitted_bytes
+          : 0) +
+        (typeof result.metadata?.stderr_omitted_bytes === 'number'
+          ? result.metadata.stderr_omitted_bytes
+          : 0);
+      const truncationNotice =
+        typeof llmContent?.truncation_info === 'string'
+          ? llmContent.truncation_info
+          : outputTruncated
+            ? omittedBytes > 0
+              ? `Output truncated: ${omittedBytes} earlier bytes omitted; retained tail shown`
+              : 'Output truncated for display; retained tail shown'
+            : undefined;
+      if (truncationNotice) sections.push(truncationNotice);
+
+      return sections.join('\n') || null;
     }
 
     case 'Write': {
