@@ -5,10 +5,7 @@ import {
   FOREGROUND_SHELL_OUTPUT_MAX_BYTES,
 } from './BoundedOutputBuffer.js';
 
-export enum ShellOutputStream {
-  Stdout = 'stdout',
-  Stderr = 'stderr',
-}
+export type ShellOutputStream = 'stdout' | 'stderr';
 
 export interface ShellOutputStreamSnapshot {
   content: string;
@@ -89,10 +86,9 @@ export class ShellOutputCapture {
     this.stderr.markAccountingIncomplete();
   }
 
-  finish(): ShellOutputCaptureSnapshot {
+  finish(): void {
     this.stdout.finish();
     this.stderr.finish();
-    return this.snapshot();
   }
 
   snapshot(): ShellOutputCaptureSnapshot {
@@ -104,6 +100,6 @@ export class ShellOutputCapture {
   }
 
   private streamFor(stream: ShellOutputStream): StreamOutputCapture {
-    return stream === ShellOutputStream.Stdout ? this.stdout : this.stderr;
+    return stream === 'stdout' ? this.stdout : this.stderr;
   }
 }
