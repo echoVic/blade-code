@@ -5,6 +5,10 @@ import type {
 } from '../types/ToolTypes.js';
 import { ToolErrorType } from '../types/ToolTypes.js';
 
+export const TUI_TOOL_DETAIL_MAX_CHARS = 1_200;
+export const HEADLESS_TOOL_DETAIL_MAX_CHARS = 2_000;
+export const ACP_TOOL_DETAIL_MAX_CHARS = 2_000;
+
 export interface DurableToolResultPayload {
   toolCallId?: string;
   toolName?: string;

@@ -27,6 +27,10 @@ import type {
   useCommandActions,
   useSessionActions,
 } from '../../store/selectors/index.js';
+import {
+  fitToolDisplayForSurface,
+  TUI_TOOL_DETAIL_MAX_CHARS,
+} from '../../tools/display/ToolResultProjector.js';
 import type { StreamingBufferAPI } from '../hooks/useStreamingBuffer.js';
 import {
   appendMarkdownDelta,
@@ -233,7 +237,10 @@ export function createLoopEventHandler(
           toolName: toolCall.function.name,
           success: event.result.success,
         });
-        const display = formatToolDisplay(toolCall.function.name, event.result);
+        const display = fitToolDisplayForSurface(
+          formatToolDisplay(toolCall.function.name, event.result),
+          TUI_TOOL_DETAIL_MAX_CHARS
+        );
         deps.sessionActions.addToolMessage(display.summary, {
           toolCallId: toolCall.id,
           toolName: toolCall.function.name,

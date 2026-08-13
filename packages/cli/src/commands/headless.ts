@@ -42,6 +42,10 @@ import type {
   ConfirmationResponse,
 } from '../tools/types/ExecutionTypes.js';
 import {
+  fitToolDisplayForSurface,
+  HEADLESS_TOOL_DETAIL_MAX_CHARS,
+} from '../tools/display/ToolResultProjector.js';
+import {
   formatToolCallSummary,
   formatToolDisplay,
 } from '../ui/utils/toolFormatters.js';
@@ -1426,7 +1430,10 @@ export async function runHeadless(
             } catch {
               target = undefined;
             }
-            const display = formatToolDisplay(toolCall.function.name, event.result);
+            const display = fitToolDisplayForSurface(
+              formatToolDisplay(toolCall.function.name, event.result),
+              HEADLESS_TOOL_DETAIL_MAX_CHARS
+            );
             eventWriter.toolResult(
               toolCall.function.name,
               display.summary,

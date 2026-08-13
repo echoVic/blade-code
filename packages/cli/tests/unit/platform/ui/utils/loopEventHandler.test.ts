@@ -16,11 +16,19 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import type { LoopEvent } from '../../../../../src/agent/loop/types.js';
+import type { ToolDisplayOutput } from '../../../../../src/tools/types/ToolTypes.js';
 import {
   createLoopEventHandler,
   type LoopEventDeps,
   type LoopEventStats,
 } from '../../../../../src/ui/utils/loopEventHandler.js';
+
+const formatterState = vi.hoisted(() => ({
+  formatToolDisplay: vi.fn<(...args: unknown[]) => ToolDisplayOutput>(() => ({
+    status: 'ok',
+    summary: 'tool summary',
+  })),
+}));
 
 // Mock 外部依赖 — Logger、markdownIncremental、toolFormatters
 vi.mock('../../../../../src/logging/Logger.js', () => ({
@@ -44,6 +52,7 @@ vi.mock('../../../../../src/ui/utils/markdownIncremental.js', () => ({
 
 vi.mock('../../../../../src/ui/utils/toolFormatters.js', () => ({
   formatToolCallSummary: vi.fn(() => 'tool summary'),
+  formatToolDisplay: formatterState.formatToolDisplay,
   generateToolDetail: vi.fn(() => null),
   shouldShowToolDetail: vi.fn(() => false),
 }));
@@ -186,6 +195,42 @@ describe('createLoopEventHandler', () => {
 
     handler({ ...detected, phase: 'recovered', runLength: 1 });
     expect(deps.sessionActions.setActionStationarity).toHaveBeenLastCalledWith(null);
+  });
+
+  it('fits completed Bash details before storing the TUI tool message', () => {
+    const deps = createMockDeps();
+    const handler = createLoopEventHandler(deps, createMockStats());
+    formatterState.formatToolDisplay.mockReturnValueOnce({
+      status: 'ok',
+      summary: 'Command completed',
+      detail:
+        `stdout:\n${'x'.repeat(2_000)}STDOUT_TAIL\n` +
+        `stderr:\n${'y'.repeat(2_000)}STDERR_TAIL\n` +
+        'Output truncated: earliest bytes omitted',
+    });
+
+    handler({
+      kind: 'tool_result',
+      toolCall: {
+        id: 'bash-bounded',
+        type: 'function',
+        function: { name: 'Bash', arguments: '{"command":"fixture"}' },
+      },
+      result: {
+        success: true,
+        llmContent: {},
+      },
+    } as LoopEvent);
+
+    const metadata = vi.mocked(deps.sessionActions.addToolMessage).mock.calls[0]?.[1];
+    const detail = metadata?.detail ?? '';
+    expect(detail.length).toBeLessThanOrEqual(1_200);
+    expect(detail).toContain('STDOUT_TAIL');
+    expect(detail).toContain('STDERR_TAIL');
+    expect(detail.split('Output truncated')).toHaveLength(2);
+    expect(detail.split('\n').at(-1)).toBe(
+      'Output truncated: earliest bytes omitted'
+    );
   });
 
   // ==================== 场景 1: 正常 stream_end ====================

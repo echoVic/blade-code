@@ -1109,6 +1109,62 @@ describe('AcpSession', () => {
       });
     });
 
+    it('projects bounded Bash details through a standard ACP tool update', async () => {
+      const mockAgent = getMockAgent();
+      const toolCall = {
+        id: 'bash-bounded-acp',
+        type: 'function' as const,
+        function: { name: 'Bash', arguments: '{"command":"fixture"}' },
+      };
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield {
+          kind: 'tool_start',
+          toolCall,
+          toolKind: 'execute',
+        } as LoopEvent;
+        yield {
+          kind: 'tool_result',
+          toolCall,
+          result: {
+            success: true,
+            llmContent: {
+              stdout: `${'x'.repeat(3_000)}STDOUT_TAIL`,
+              stderr: `${'y'.repeat(3_000)}STDERR_TAIL`,
+              output_truncated: true,
+              truncation_info: 'Output truncated: earliest bytes omitted',
+            },
+            metadata: {
+              summary: 'Command completed',
+              output_truncated: true,
+            },
+          },
+        } as LoopEvent;
+        return { success: true, finalMessage: 'done' };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'run fixture' }],
+      });
+
+      const notification = mockConnection.sessionUpdates.find(
+        (entry) =>
+          entry.update.sessionUpdate === 'tool_call_update' &&
+          entry.update.toolCallId === toolCall.id
+      );
+      expect(notification?.update).toMatchObject({
+        sessionUpdate: 'tool_call_update',
+        toolCallId: toolCall.id,
+        status: 'completed',
+      });
+      expect(notification?.update).not.toHaveProperty('_meta');
+      const rendered = JSON.stringify(notification?.update);
+      expect(rendered.length).toBeLessThanOrEqual(2_200);
+      expect(rendered).toContain('STDOUT_TAIL');
+      expect(rendered).toContain('STDERR_TAIL');
+      expect(rendered.split('Output truncated')).toHaveLength(2);
+    });
+
     it('应该把 ApplyPatch 的每个文件投影为标准 ACP diff', async () => {
       const mockAgent = getMockAgent();
       const toolCall = {

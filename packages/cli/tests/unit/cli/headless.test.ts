@@ -815,6 +815,111 @@ describe('headless runner', () => {
     );
   });
 
+  it('emits one bounded Bash tool_detail without changing the v1 result event', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    agentState.chatStream.mockImplementationOnce(
+      mockChatGenerator([
+        {
+          kind: 'tool_result',
+          toolCall: {
+            id: 'bash-bounded',
+            type: 'function',
+            function: {
+              name: 'Bash',
+              arguments: '{"command":"fixture"}',
+            },
+          },
+          result: {
+            success: true,
+            llmContent: {
+              stdout: `${'x'.repeat(3_000)}STDOUT_TAIL`,
+              stderr: `${'y'.repeat(3_000)}STDERR_TAIL`,
+              output_truncated: true,
+              truncation_info: 'Output truncated: earliest bytes omitted',
+            },
+            metadata: {
+              summary: 'Command completed',
+              output_truncated: true,
+            },
+          },
+        },
+        { kind: 'stream_end' },
+      ])
+    );
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+
+    await runHeadless(
+      {
+        headless: true,
+        outputFormat: 'jsonl',
+        message: 'run fixture',
+      },
+      { stdout, stderr }
+    );
+
+    const events = stdout.write.mock.calls
+      .map(([chunk]) => String(chunk))
+      .join('')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const results = events.filter((event) => event.type === 'tool_result');
+    const details = events.filter((event) => event.type === 'tool_detail');
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ event_version: 1, tool_name: 'Bash' });
+    expect(details).toHaveLength(1);
+    const detail = String(details[0]?.detail ?? '');
+    expect(detail.length).toBeLessThanOrEqual(2_000);
+    expect(detail).toContain('STDOUT_TAIL');
+    expect(detail).toContain('STDERR_TAIL');
+    expect(detail.split('Output truncated')).toHaveLength(2);
+    expect(detail.split('\n').at(-1)).toBe(
+      'Output truncated: earliest bytes omitted'
+    );
+    expect(stderr.write).not.toHaveBeenCalled();
+  });
+
+  it('writes bounded Bash detail only to stderr in text mode', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    agentState.chatStream.mockImplementationOnce(
+      mockChatGenerator([
+        {
+          kind: 'tool_result',
+          toolCall: {
+            id: 'bash-text',
+            type: 'function',
+            function: {
+              name: 'Bash',
+              arguments: '{"command":"fixture"}',
+            },
+          },
+          result: {
+            success: true,
+            llmContent: {
+              stdout: 'TEXT_MODE_STDOUT_TAIL',
+              stderr: '',
+            },
+            metadata: { summary: 'Command completed' },
+          },
+        },
+        { kind: 'stream_end' },
+      ])
+    );
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+
+    await runHeadless(
+      { headless: true, message: 'run fixture' },
+      { stdout, stderr }
+    );
+
+    const stdoutText = stdout.write.mock.calls.map(([chunk]) => String(chunk)).join('');
+    const stderrText = stderr.write.mock.calls.map(([chunk]) => String(chunk)).join('');
+    expect(stderrText).toContain('TEXT_MODE_STDOUT_TAIL');
+    expect(stdoutText).not.toContain('TEXT_MODE_STDOUT_TAIL');
+  });
+
   it('reuses resolved sessions and forwards tool filters to runtime-backed agents', async () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };

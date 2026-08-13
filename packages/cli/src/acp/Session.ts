@@ -75,6 +75,10 @@ import {
 import type { JsonValue } from '../store/types.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
 import {
+  ACP_TOOL_DETAIL_MAX_CHARS,
+  fitToolDisplayForSurface,
+} from '../tools/display/ToolResultProjector.js';
+import {
   CONFIRMATION_ABORTED_REASON,
   type ConfirmationDetails,
   type ConfirmationResponse,
@@ -1108,7 +1112,10 @@ export class AcpSession {
               } else {
                 const toolName = toolCall.function.name;
                 const displayText = renderToolDisplayToString(
-                  formatToolDisplay(toolName, result)
+                  fitToolDisplayForSurface(
+                    formatToolDisplay(toolName, result),
+                    ACP_TOOL_DETAIL_MAX_CHARS
+                  )
                 );
                 content.push({
                   type: 'content',
