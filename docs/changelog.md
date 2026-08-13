@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.29] - 2026-08-13
+
+### 🛡️ 稳定性
+
+- recovery-only turn 在 runtime 完成 Session lease 获取、进程/工具回执 reconciliation
+  后重新加载 canonical JSONL model context；TUI、Headless、Web 与 ACP 的首个自动恢复
+  回合不再使用 recovery 前快照，避免 orphan tool side effect 被重复执行
+- `--print/--headless --resume <id>` 与 `--continue` 在没有新输入时可直接消费 durable
+  inbox 或继续 active/verifying Goal，不再创建空消息或 `Hello` 唤醒回合；没有未完成工作
+  时明确 fail closed
+
+### ✅ 测试相关
+
+- 新增 DeepSeek Flash/Pro × Headless、真实 raw PTY TUI、production Chromium Web GUI
+  的六格 root-turn crash auto-resume 资格；每格验证原始 Write、restart receipt 和恢复
+  Read 均恰好一次，刷新/清理后 inbox、进程、端口与凭据不残留
+
 ## [0.10.28] - 2026-08-13
 
 ### 🛡️ 稳定性
