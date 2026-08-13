@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.27] - 2026-08-13
+
+### ✨ 新功能
+
+- prevent stationary action loops (a13da197)
+
+
 ## [0.10.26] - 2026-08-12
 
 ### 🐛 问题修复
