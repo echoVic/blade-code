@@ -100,8 +100,14 @@ async function waitForAcpRecovery(input: {
   sessionId: string;
   expectedContent: string;
   expectedText: string;
+  secret: string;
 }): Promise<string> {
-  const deadline = Date.now() + 180_000;
+  const configuredTimeout = Number(process.env.BLADE_DURABLE_ACP_RECOVERY_TIMEOUT_MS);
+  const timeoutMs =
+    Number.isSafeInteger(configuredTimeout) && configuredTimeout > 0
+      ? configuredTimeout
+      : 180_000;
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const hostContent = await readOptionalFile(input.target);
     const clientContent = [...input.client.files.values()].find(
@@ -124,7 +130,35 @@ async function waitForAcpRecovery(input: {
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error('Timed out waiting for durable ACP interaction completion');
+  const [hostContent, transcript, inboxMissing] = await Promise.all([
+    readOptionalFile(input.target),
+    readOptionalFile(getSessionFilePath(input.workspace, input.sessionId)),
+    fileIsMissing(getSessionInboxFilePath(input.workspace, input.sessionId)),
+  ]);
+  const updates = input.client.sessionUpdates.slice(-100).map((notification) => {
+    const update = notification.update;
+    return {
+      sessionUpdate: update.sessionUpdate,
+      ...(update.sessionUpdate === 'agent_message_chunk' &&
+      update.content.type === 'text'
+        ? { text: update.content.text }
+        : {}),
+    };
+  });
+  const diagnostic = JSON.stringify({
+    timeoutMs,
+    hostContent,
+    clientFiles: [...input.client.files.entries()],
+    inboxMissing,
+    permissionRequests: input.client.permissionRequests.length,
+    updates,
+    transcriptTail: transcript?.slice(-12_000),
+  })
+    .replaceAll(input.secret, '[redacted]')
+    .slice(-20_000);
+  throw new Error(
+    `Timed out waiting for durable ACP interaction completion: ${diagnostic}`
+  );
 }
 
 describeReal('durable pending interaction recovery trajectory (real API)', () => {
@@ -382,6 +416,7 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
         sessionId,
         expectedContent: 'Stable\n',
         expectedText: 'ACP_INTERACTION_RECOVERED',
+        secret: gpt.apiKey,
       });
       expect(content).toBe('Stable\n');
       const transcript = await readFile(
