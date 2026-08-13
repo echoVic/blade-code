@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 
+import type { Message as ServiceMessage } from '../../../src/services';
 import { aggregateMessages } from '../../../src/store/session/utils/aggregateMessages';
 
 describe('aggregateMessages', () => {
@@ -135,11 +136,12 @@ describe('aggregateMessages', () => {
     const boundedOutput =
       '[FAIL] Command failed\nstderr:\nSTDERR_TAIL\n' +
       'Output truncated: earliest bytes omitted';
-    const [message] = aggregateMessages([
+    const rawMessages = [
       {
         id: 'assistant-bash',
         role: 'assistant',
         content: '',
+        timestamp: 1700000000000,
         tool_calls: [
           {
             id: 'bash-flat',
@@ -154,6 +156,7 @@ describe('aggregateMessages', () => {
         id: 'tool-bash',
         role: 'tool',
         content: boundedOutput,
+        timestamp: 1700000000001,
         tool_call_id: 'bash-flat',
         name: 'Bash',
         metadata: {
@@ -163,7 +166,8 @@ describe('aggregateMessages', () => {
           stderr_omitted_bytes: 4096,
         },
       },
-    ] as never);
+    ] satisfies ServiceMessage[];
+    const [message] = aggregateMessages(rawMessages);
 
     expect(message?.agentContent?.toolCalls[0]).toMatchObject({
       toolCallId: 'bash-flat',

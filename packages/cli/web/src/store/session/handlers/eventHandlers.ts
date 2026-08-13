@@ -294,7 +294,8 @@ const handleToolStart: EventHandler = (props, get, set) => {
   const targetMessageId = ensureAssistantMessage(
     get,
     set,
-    (props.messageId as string) || (props.toolCallId as string)
+    (props.messageId as string) || (props.toolCallId as string),
+    typeof props.messageId === 'string'
   );
   if (!targetMessageId) return;
 

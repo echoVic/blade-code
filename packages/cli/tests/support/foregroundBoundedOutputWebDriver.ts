@@ -10,6 +10,9 @@ import {
 } from '../../src/utils/process/ProcessIdentity.js';
 import type { ForegroundBoundedOutputFixture } from '../integration/real-api/foregroundBoundedOutputFixture.js';
 
+const GUI_LAUNCHER_IDENTITY_TIMEOUT_MS = 2_000;
+const GUI_LAUNCHER_IDENTITY_RETRY_MS = 25;
+
 export interface ForegroundBoundedOutputWebEvidence {
   sessionId: string;
   markerVisible: boolean;
@@ -84,43 +87,65 @@ function redact(value: string, secrets: readonly string[]): string {
     .reduce((result, secret) => result.replaceAll(secret, '[REDACTED]'), value);
 }
 
-async function waitForLauncherReady(
+export async function waitForForegroundGuiLauncherReady(
   child: ChildProcess,
   timeoutMs: number,
   secrets: readonly string[]
-): Promise<{ ready: true; port: number; output: () => string }> {
+): Promise<{
+  ready: true;
+  port: number;
+  output: () => string;
+  stopDrain: () => void;
+}> {
   let output = '';
   let pending = '';
+  let pendingOverflowed = false;
+  let readyFound = false;
   return await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      cleanup();
+      cleanupReadiness();
+      stopDrain();
       reject(
         new Error(
           `GUI launcher ready timeout: ${redact(output.slice(-2_000), secrets)}`
         )
       );
     }, timeoutMs);
-    const cleanup = () => {
+    const cleanupReadiness = () => {
       clearTimeout(timer);
-      child.stdout?.off('data', onStdout);
       child.off('exit', onExit);
       child.off('error', onError);
     };
+    const stopDrain = () => child.stdout?.off('data', onStdout);
     const onStdout = (chunk: Buffer | string) => {
       output = appendTail(output, chunk);
-      pending += chunk.toString();
-      const lines = pending.split(/\r?\n/);
-      pending = lines.pop() ?? '';
-      for (const line of lines) {
-        const ready = parseForegroundGuiReadyLine(line);
-        if (!ready) continue;
-        cleanup();
-        resolve({ ...ready, output: () => output });
-        return;
+      if (readyFound) return;
+      const text = chunk.toString();
+      let offset = 0;
+      while (offset < text.length) {
+        const newline = text.indexOf('\n', offset);
+        const end = newline >= 0 ? newline : text.length;
+        const segment = text.slice(offset, end);
+        pendingOverflowed ||= pending.length + segment.length > 16_384;
+        pending = appendTail(pending, segment);
+        if (newline < 0) return;
+
+        const line = pending.endsWith('\r') ? pending.slice(0, -1) : pending;
+        const ready = pendingOverflowed ? undefined : parseForegroundGuiReadyLine(line);
+        pending = '';
+        pendingOverflowed = false;
+        if (ready) {
+          readyFound = true;
+          cleanupReadiness();
+          resolve({ ...ready, output: () => output, stopDrain });
+          return;
+        }
+        offset = newline + 1;
       }
     };
     const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-      cleanup();
+      cleanupReadiness();
+      stopDrain();
       reject(
         new Error(
           `GUI launcher exited before ready (${code ?? signal ?? 'unknown'}): ${redact(
@@ -131,13 +156,38 @@ async function waitForLauncherReady(
       );
     };
     const onError = (error: Error) => {
-      cleanup();
+      cleanupReadiness();
+      stopDrain();
       reject(error);
     };
     child.stdout?.on('data', onStdout);
     child.once('exit', onExit);
     child.once('error', onError);
   });
+}
+
+export async function captureForegroundGuiLauncherIdentity(
+  pid: number,
+  options: {
+    timeoutMs?: number;
+    retryMs?: number;
+    capture?: (candidatePid: number) => ProcessIdentity | undefined;
+  } = {}
+): Promise<ProcessIdentity> {
+  const timeoutMs = options.timeoutMs ?? GUI_LAUNCHER_IDENTITY_TIMEOUT_MS;
+  const retryMs = options.retryMs ?? GUI_LAUNCHER_IDENTITY_RETRY_MS;
+  const capture = options.capture ?? captureProcessIdentity;
+  const deadline = Date.now() + timeoutMs;
+
+  do {
+    const identity = capture(pid);
+    if (identity) return identity;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(retryMs, remaining)));
+  } while (Date.now() <= deadline);
+
+  throw new Error('Unable to capture GUI launcher process identity');
 }
 
 async function waitForHttp(url: string, timeoutMs: number): Promise<void> {
@@ -156,31 +206,72 @@ async function waitForHttp(url: string, timeoutMs: number): Promise<void> {
   throw new Error(`Blade Web server did not become ready (status ${lastStatus})`);
 }
 
-async function stopLauncher(
+function launcherExited(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+async function waitForLauncherExit(
+  child: ChildProcess,
+  timeoutMs: number
+): Promise<boolean> {
+  if (launcherExited(child)) return true;
+  return await new Promise((resolve) => {
+    const onExit = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    const timer = setTimeout(() => {
+      child.off('exit', onExit);
+      resolve(false);
+    }, timeoutMs);
+    child.once('exit', onExit);
+    if (launcherExited(child)) {
+      clearTimeout(timer);
+      child.off('exit', onExit);
+      resolve(true);
+    }
+  });
+}
+
+export async function stopForegroundGuiLauncher(
   child: ChildProcess,
   identity: ProcessIdentity | undefined
 ): Promise<void> {
-  if (!child.pid || !identity || !processIdentityMatches(child.pid, identity)) return;
-  const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+  if (launcherExited(child)) return;
+
+  if (!child.pid || !identity) {
+    child.kill('SIGTERM');
+    if (await waitForLauncherExit(child, 5_000)) return;
+    child.kill('SIGKILL');
+    if (!(await waitForLauncherExit(child, 5_000))) {
+      throw new Error('Unidentified GUI launcher process remained after cleanup');
+    }
+    return;
+  }
+
+  if (!processIdentityMatches(child.pid, identity)) {
+    if (launcherExited(child)) return;
+    throw new Error('GUI launcher process identity changed before cleanup');
+  }
   try {
     process.kill(-child.pid, 'SIGTERM');
   } catch {
     child.kill('SIGTERM');
   }
-  const graceful = await Promise.race([
-    exited.then(() => true),
-    new Promise<false>((resolve) => setTimeout(() => resolve(false), 5_000)),
-  ]);
+  const graceful = await waitForLauncherExit(child, 5_000);
   if (!graceful && processIdentityMatches(child.pid, identity)) {
     try {
       process.kill(-child.pid, 'SIGKILL');
     } catch {
       child.kill('SIGKILL');
     }
-    await exited;
+    await waitForLauncherExit(child, 5_000);
   }
-  if (processIdentityMatches(child.pid, identity)) {
-    throw new Error('GUI launcher process remained after cleanup');
+  if (!launcherExited(child)) {
+    if (processIdentityMatches(child.pid, identity)) {
+      throw new Error('GUI launcher process remained after cleanup');
+    }
+    throw new Error('GUI launcher process identity changed during cleanup');
   }
 }
 
@@ -238,7 +329,8 @@ export async function runForegroundBoundedOutputWebDriver(input: {
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  const identity = child.pid ? captureProcessIdentity(child.pid) : undefined;
+  let identity: ProcessIdentity | undefined;
+  let stopStdoutDrain: (() => void) | undefined;
   let stderrTail = '';
   child.stderr?.on('data', (chunk: Buffer | string) => {
     stderrTail = appendTail(stderrTail, chunk);
@@ -249,7 +341,10 @@ export async function runForegroundBoundedOutputWebDriver(input: {
   let refreshing = false;
   const faults: string[] = [];
   try {
-    await waitForLauncherReady(child, 20_000, input.secrets);
+    if (!child.pid) throw new Error('GUI launcher did not expose a process ID');
+    identity = await captureForegroundGuiLauncherIdentity(child.pid);
+    const ready = await waitForForegroundGuiLauncherReady(child, 20_000, input.secrets);
+    stopStdoutDrain = ready.stopDrain;
     const origin = `http://127.0.0.1:${port}`;
     await waitForHttp(origin, 20_000);
     const workspace = await realpath(path.join(input.root, 'project'));
@@ -340,6 +435,10 @@ export async function runForegroundBoundedOutputWebDriver(input: {
   } finally {
     closing = true;
     await browser?.close().catch(() => undefined);
-    await stopLauncher(child, identity);
+    try {
+      await stopForegroundGuiLauncher(child, identity);
+    } finally {
+      stopStdoutDrain?.();
+    }
   }
 }

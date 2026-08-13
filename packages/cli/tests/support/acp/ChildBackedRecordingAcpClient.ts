@@ -5,6 +5,8 @@ import {
   type ProcessIdentity,
 } from '../../../src/utils/process/ProcessIdentity.js';
 
+const ACP_TERMINAL_CAPTURE_MAX_CHARS = 4 * 1024 * 1024;
+
 interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;
@@ -20,6 +22,7 @@ interface PtyProcess {
 interface TerminalState {
   process: PtyProcess;
   output: string;
+  outputTruncated: boolean;
   exit: Deferred<number>;
   exited: boolean;
   exitCode: number | null;
@@ -37,6 +40,16 @@ function deferred<T>(): Deferred<T> {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function appendTerminalOutput(state: TerminalState, chunk: string): void {
+  const next = state.output + chunk;
+  if (next.length <= ACP_TERMINAL_CAPTURE_MAX_CHARS) {
+    state.output = next;
+    return;
+  }
+  state.output = next.slice(-ACP_TERMINAL_CAPTURE_MAX_CHARS);
+  state.outputTruncated = true;
 }
 
 export class ChildBackedRecordingAcpClient implements acp.Client {
@@ -98,6 +111,7 @@ export class ChildBackedRecordingAcpClient implements acp.Client {
     const state: TerminalState = {
       process: processHandle,
       output: '',
+      outputTruncated: false,
       exit,
       exited: false,
       exitCode: null,
@@ -105,7 +119,7 @@ export class ChildBackedRecordingAcpClient implements acp.Client {
       identity: captureProcessIdentity(processHandle.pid) ?? undefined,
     };
     processHandle.onData((chunk) => {
-      state.output += chunk;
+      appendTerminalOutput(state, chunk);
     });
     processHandle.onExit(({ exitCode }) => {
       state.exited = true;
@@ -122,7 +136,7 @@ export class ChildBackedRecordingAcpClient implements acp.Client {
     const state = this.requireTerminal(params.terminalId);
     return {
       output: state.output,
-      truncated: false,
+      truncated: state.outputTruncated,
       ...(state.exited ? { exitStatus: { exitCode: state.exitCode ?? 1 } } : {}),
     };
   }

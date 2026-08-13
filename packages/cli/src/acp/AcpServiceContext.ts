@@ -29,6 +29,7 @@ import { getCwd } from '../utils/cwd.js';
 import { AcpFileSystemService } from './AcpFileSystemService.js';
 
 const logger = createLogger(LogCategory.AGENT);
+const ACP_TERMINAL_OUTPUT_READ_TIMEOUT_MS = 1_000;
 
 /**
  * 终端服务接口
@@ -283,8 +284,32 @@ class AcpTerminalService implements TerminalService {
       let observedLength = 0;
       let emittedLength = 0;
       let pollingStopped = false;
+      let outputReadStalled = false;
       let wakePoll: (() => void) | undefined;
 
+      const readCurrentOutput = async (): Promise<
+        | {
+            type: 'output';
+            response: Awaited<ReturnType<typeof activeTerminal.currentOutput>>;
+          }
+        | { type: 'error' }
+        | { type: 'timeout' }
+      > => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const read = activeTerminal
+          .currentOutput()
+          .then((response) => ({ type: 'output' as const, response }))
+          .catch(() => ({ type: 'error' as const }));
+        const timeout = new Promise<{ type: 'timeout' }>((resolve) => {
+          timer = setTimeout(
+            () => resolve({ type: 'timeout' }),
+            ACP_TERMINAL_OUTPUT_READ_TIMEOUT_MS
+          );
+        });
+        return await Promise.race([read, timeout]).finally(() => {
+          if (timer) clearTimeout(timer);
+        });
+      };
       const emitNew = (output: string) => {
         const len = output.length;
         if (len >= emittedLength) {
@@ -310,10 +335,16 @@ class AcpTerminalService implements TerminalService {
       };
       const polling = (async () => {
         while (!pollingStopped) {
-          try {
-            appendPoll(await activeTerminal.currentOutput());
-          } catch {
+          const read = await readCurrentOutput();
+          if (read.type === 'output') {
+            appendPoll(read.response);
+          } else {
             capture.markAccountingIncomplete();
+            if (read.type === 'timeout') {
+              outputReadStalled = true;
+              pollingStopped = true;
+              break;
+            }
           }
           if (pollingStopped) break;
           await new Promise<void>((resolve) => {
@@ -364,12 +395,15 @@ class AcpTerminalService implements TerminalService {
           )
           .catch((error: unknown) => settleRace({ type: 'failed', error }));
       });
-      await stopPolling();
       if (raced.type !== 'completed') {
         await activeTerminal.kill().catch(() => undefined);
       }
-      try {
-        const finalOutput = await activeTerminal.currentOutput();
+      await stopPolling();
+      const finalRead = outputReadStalled
+        ? ({ type: 'timeout' } as const)
+        : await readCurrentOutput();
+      if (finalRead.type === 'output') {
+        const finalOutput = finalRead.response;
         const finalLen = finalOutput.output.length;
         if (finalLen >= emittedLength) {
           emitNew(finalOutput.output);
@@ -377,7 +411,7 @@ class AcpTerminalService implements TerminalService {
         capture = new ShellOutputCapture(undefined, true);
         capture.append('stdout', finalOutput.output);
         if (finalOutput.truncated) capture.markAccountingIncomplete();
-      } catch {
+      } else {
         capture.markAccountingIncomplete();
       }
       await activeTerminal.release().catch(() => undefined);

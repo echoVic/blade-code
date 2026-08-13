@@ -1,6 +1,7 @@
 import type { SessionRef } from '@api/schemas';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import type { Message as ServiceMessage } from '../../../src/services';
 import { createEventDispatcher } from '../../../src/store/session/handlers/eventHandlers';
 import { globalStreamingBuffer } from '../../../src/store/session/handlers/streamingBuffer';
 import type {
@@ -478,6 +479,46 @@ describe('eventHandlers', () => {
     expect(secondId).toBe(firstId);
   });
 
+  test('replays a tool start into its exact assistant instead of the current message', () => {
+    const state = createState({
+      messages: [
+        {
+          id: 'assistant-history',
+          role: 'assistant',
+          content: '',
+          timestamp: 1,
+          agentContent: createEmptyAgentContent(),
+        },
+        {
+          id: 'assistant-current',
+          role: 'assistant',
+          content: '',
+          timestamp: 2,
+          agentContent: createEmptyAgentContent(),
+        },
+      ],
+      currentAssistantMessageId: 'assistant-current',
+    });
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+
+    dispatch({
+      type: 'tool.start',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        messageId: 'assistant-history',
+        toolCallId: 'replayed-read',
+        toolName: 'Read',
+        arguments: '{"file_path":"README.md"}',
+      },
+    });
+
+    expect(state.messages[0]?.agentContent?.toolCalls).toEqual([
+      expect.objectContaining({ toolCallId: 'replayed-read' }),
+    ]);
+    expect(state.messages[1]?.agentContent?.toolCalls).toEqual([]);
+  });
+
   test('creates stable fallback subagent ids for repeated Task tool.start events with the same payload', () => {
     const state = createState();
     const get = () => state;
@@ -834,11 +875,12 @@ describe('eventHandlers', () => {
     const live = projectEvents([start, result]);
     const terminalReplay = projectEvents([result]);
     const fullReplay = projectEvents([start, result]);
-    const [freshMessage] = aggregateMessages([
+    const freshMessages = [
       {
         id: 'assistant-bounded',
         role: 'assistant',
         content: '',
+        timestamp: 1700000000000,
         tool_calls: [
           {
             id: 'bash-bounded',
@@ -855,9 +897,11 @@ describe('eventHandlers', () => {
         name: 'Bash',
         tool_call_id: 'bash-bounded',
         content: output,
+        timestamp: 1700000000001,
         metadata: resultProperties.metadata,
       },
-    ] as never);
+    ] satisfies ServiceMessage[];
+    const [freshMessage] = aggregateMessages(freshMessages);
     const fresh = freshMessage?.agentContent?.toolCalls[0];
     const comparable = (tool: ToolCallInfo | undefined) =>
       tool && {

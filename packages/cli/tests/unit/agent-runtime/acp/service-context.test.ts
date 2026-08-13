@@ -327,6 +327,40 @@ describe('AcpServiceContext session isolation', () => {
     );
   });
 
+  it('does not let a stalled ACP output read defeat terminal timeout cleanup', async () => {
+    const client = new ControlledTerminalClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const blocked = client.enqueueBlockedOutput({
+      output: 'never-returned',
+      truncated: false,
+    });
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      capabilities,
+      '/workspace/a'
+    );
+
+    const execution = getTerminalService('session-a').execute('sleep 10', {
+      timeout: 1,
+    });
+
+    await expect(execution).resolves.toMatchObject({
+      success: false,
+      stdout: '',
+      failureKind: 'timeout',
+      transport: 'acp',
+      capture: {
+        stdout: { accountingComplete: false },
+      },
+    });
+    expect(client.killRequests).toHaveLength(1);
+    expect(client.releaseRequests).toHaveLength(1);
+    expect(client.maxConcurrentOutputReads).toBe(1);
+    blocked.release();
+  }, 5_000);
+
   it('awaits kill, final output, and release before resolving an abort', async () => {
     const client = new ControlledTerminalClient();
     const harness = createPairedAcpHarness(client);
