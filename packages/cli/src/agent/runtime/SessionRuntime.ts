@@ -20,7 +20,10 @@ import type {
   ServiceTierSelection,
 } from '../../config/types.js';
 import { ForegroundProcessLeaseStore } from '../../context/storage/ForegroundProcessLeaseStore.js';
-import type { SessionTurnRecovery } from '../../context/storage/PersistentStore.js';
+import type {
+  SessionAdoptedToolResult,
+  SessionTurnRecovery,
+} from '../../context/storage/PersistentStore.js';
 import { getSessionInboxFilePath } from '../../context/storage/pathUtils.js';
 import { toTaskFailure } from '../../context/taskFailure.js';
 import type {
@@ -147,12 +150,16 @@ import {
   type ProjectRuleReference,
   type ProjectRuleResolution,
 } from '../resources/WorkspaceProjectRules.js';
-import type { AgentSession } from '../subagents/AgentSessionStore.js';
+import {
+  type AgentSession,
+  AgentSessionStore,
+} from '../subagents/AgentSessionStore.js';
 import {
   BackgroundAgentManager,
   type ResumeAgentResult,
 } from '../subagents/BackgroundAgentManager.js';
 import type { SubagentRegistry } from '../subagents/SubagentRegistry.js';
+import { buildSubagentResultAdoption } from '../subagents/SubagentResultAdoption.js';
 import type { SubagentConfig } from '../subagents/types.js';
 import type {
   AgentOptions,
@@ -1657,7 +1664,34 @@ export class SessionRuntime {
         .persistentStore.initSession(this.sessionId, this.options.subagentInfo);
       const persistentStore =
         this.getExecutionEngine().getContextManager().persistentStore;
-      const recovery = await persistentStore.recoverInterruptedTurn(this.sessionId);
+      const interruptedToolCalls = await persistentStore.loadInterruptedToolCalls(
+        this.sessionId
+      );
+      const adoptedToolResults = new Map<string, SessionAdoptedToolResult>();
+      const subagentSessionStore = AgentSessionStore.getInstance();
+      const subagentOwner = {
+        sessionId: this.sessionId,
+        projectPath: this.workspaceRoot,
+      };
+      for (const call of interruptedToolCalls) {
+        if (
+          call.toolName !== 'Task' ||
+          !call.input ||
+          typeof call.input !== 'object' ||
+          Array.isArray(call.input)
+        ) {
+          continue;
+        }
+        const childId = call.input.subagent_session_id;
+        if (typeof childId !== 'string') continue;
+        const child = subagentSessionStore.loadSession(childId);
+        if (!child) continue;
+        const adoption = buildSubagentResultAdoption(call, child, subagentOwner);
+        if (adoption) adoptedToolResults.set(call.toolCallId, adoption);
+      }
+      const recovery = await persistentStore.recoverInterruptedTurn(this.sessionId, {
+        adoptedToolResults,
+      });
       const goalHandoff = await persistentStore.loadLatestGoalFinalization(
         this.sessionId
       );

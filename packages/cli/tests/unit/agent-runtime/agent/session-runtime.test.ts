@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProjectRuleCatalog } from '../../../../src/agent/resources/WorkspaceProjectRules.js';
 import { DurableSteeringInbox } from '../../../../src/agent/runtime/DurableSteeringInbox.js';
 import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
-import type { AgentSession } from '../../../../src/agent/subagents/AgentSessionStore.js';
+import {
+  type AgentSession,
+  AgentSessionStore,
+} from '../../../../src/agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../../src/agent/subagents/BackgroundAgentManager.js';
 import { PermissionMode } from '../../../../src/config/types.js';
 import {
@@ -1268,6 +1271,104 @@ describe('SessionRuntime', () => {
       )
     ).toBe(true);
     await recovered.dispose();
+  });
+
+  it('adopts a completed child result for an orphan Task call exactly once', async () => {
+    const workspaceRoot = path.join(storageRoot, 'subagent-adoption-project');
+    const sessionId = 'subagent-adoption-parent';
+    const childSessionId = 'agent-adopted-runtime-child';
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const prepared = await first.prepareInputTurn('delegate this work once');
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    const contextManager = first.getExecutionEngine().getContextManager();
+    await contextManager.saveMessage(
+      sessionId,
+      'user',
+      'delegate this work once',
+      null,
+      { inboxMessageId: prepared.messageId }
+    );
+    const assistantMessageId = await contextManager.saveMessage(
+      sessionId,
+      'assistant',
+      ''
+    );
+    const toolCallId = await contextManager.saveToolUse(
+      sessionId,
+      'Task',
+      {
+        description: 'Inspect the durable marker',
+        prompt: 'Find the durable marker and report it.',
+        subagent_type: 'Explore',
+        subagent_session_id: childSessionId,
+      },
+      assistantMessageId
+    );
+    AgentSessionStore.getInstance().saveSession({
+      schemaVersion: 2,
+      id: childSessionId,
+      subagentType: 'Explore',
+      description: 'Inspect the durable marker',
+      prompt: 'Find the durable marker and report it.',
+      messages: [{ role: 'assistant', content: 'RUNTIME_CHILD_DURABLE_MARKER' }],
+      status: 'completed',
+      result: {
+        success: true,
+        message: 'RUNTIME_CHILD_DURABLE_MARKER',
+      },
+      stats: { tokens: 50, toolCalls: 1, duration: 100 },
+      createdAt: Date.now() - 1000,
+      lastActiveAt: Date.now() - 500,
+      completedAt: Date.now() - 500,
+      parentSessionId: sessionId,
+      parentProjectPath: workspaceRoot,
+      rootAgentId: childSessionId,
+      resumeDepth: 0,
+      workspaceRoot,
+      isolation: 'none',
+      configSnapshot: {
+        name: 'Explore',
+        description: 'Explore agent',
+        systemPrompt: 'Inspect code.',
+        source: 'builtin',
+      },
+    });
+    await first.dispose();
+
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    expect(recovered.getStartupTurnRecovery()).toEqual({
+      turnId: prepared.handle.id,
+      outcome: 'aborted',
+    });
+    expect(recovered.getPendingSteeringCount()).toBe(1);
+    expect(JSON.stringify(await recovered.loadModelContext())).toContain(
+      'RUNTIME_CHILD_DURABLE_MARKER'
+    );
+    expect(AgentSessionStore.getInstance().loadSession(childSessionId)).toEqual(
+      expect.objectContaining({
+        id: childSessionId,
+        status: 'completed',
+        result: expect.objectContaining({
+          success: true,
+          message: 'RUNTIME_CHILD_DURABLE_MARKER',
+        }),
+      })
+    );
+    await recovered.dispose();
+
+    const second = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const events = await new PersistentStore(workspaceRoot).loadEvents(sessionId);
+    expect(
+      events?.filter(
+        (event) =>
+          event.type === 'part_created' &&
+          event.data.partType === 'tool_result' &&
+          event.data.partId === toolCallId
+      )
+    ).toHaveLength(1);
+    expect(JSON.stringify(events)).toContain('"subagentResultAdopted":true');
+    expect(JSON.stringify(events)).not.toContain(PROCESS_RESTART_TOOL_RESULT);
+    await second.dispose();
   });
 
   it('finalizes a matching Goal handoff while recovering its final-ready turn', async () => {

@@ -200,6 +200,164 @@ describe('durable turn lifecycle', () => {
     );
   });
 
+  it('atomically adopts a host-validated subagent result before aborting the parent turn', async () => {
+    const store = new PersistentStore(workspaceRoot);
+    await store.initialize();
+    await store.saveTurnStart('session-task-adoption', {
+      turnId: 'turn-task-adoption',
+      kind: 'user',
+      startedAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    const assistantMessageId = await store.saveMessage(
+      'session-task-adoption',
+      'assistant',
+      ''
+    );
+    const toolCallId = await store.saveToolUse(
+      'session-task-adoption',
+      'Task',
+      {
+        description: 'Inspect the durable marker',
+        prompt: 'Find the durable marker and report it.',
+        subagent_type: 'Explore',
+        subagent_session_id: 'agent-adopted-child',
+      },
+      assistantMessageId
+    );
+
+    await expect(
+      store.loadInterruptedToolCalls('session-task-adoption')
+    ).resolves.toEqual([
+      {
+        toolCallId,
+        messageId: assistantMessageId,
+        toolName: 'Task',
+        input: {
+          description: 'Inspect the durable marker',
+          prompt: 'Find the durable marker and report it.',
+          subagent_type: 'Explore',
+          subagent_session_id: 'agent-adopted-child',
+        },
+      },
+    ]);
+    await expect(
+      store.recoverInterruptedTurn('session-task-adoption', {
+        adoptedToolResults: new Map([
+          [
+            toolCallId,
+            {
+              toolCallId,
+              toolName: 'Task',
+              output: 'CHILD_DURABLE_MARKER\n\nAgent ID: agent-adopted-child',
+              metadata: {
+                processRestartRecovery: true,
+                subagentResultAdopted: true,
+                sideEffectsUncertain: false,
+                subagentSessionId: 'agent-adopted-child',
+                subagentType: 'Explore',
+                subagentStatus: 'completed',
+              },
+              subagentRef: {
+                subagentSessionId: 'agent-adopted-child',
+                subagentType: 'Explore',
+                subagentDescription: 'Inspect the durable marker',
+                subagentStatus: 'completed',
+                subagentSummary: 'CHILD_DURABLE_MARKER',
+                subagentRootId: 'agent-adopted-child',
+                subagentResumeDepth: 0,
+              },
+            },
+          ],
+        ]),
+      })
+    ).resolves.toEqual({
+      turnId: 'turn-task-adoption',
+      outcome: 'aborted',
+    });
+    await expect(
+      store.recoverInterruptedTurn('session-task-adoption')
+    ).resolves.toBeUndefined();
+
+    const events = await new JSONLStore(
+      getSessionFilePath(workspaceRoot, 'session-task-adoption')
+    ).readAll();
+    const resultEvents = events.filter(
+      (event) =>
+        event.type === 'part_created' &&
+        event.data.partType === 'tool_result' &&
+        event.data.partId === toolCallId
+    );
+    expect(resultEvents).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({
+          messageId: assistantMessageId,
+          payload: expect.objectContaining({
+            output: expect.stringContaining('CHILD_DURABLE_MARKER'),
+            error: null,
+            metadata: expect.objectContaining({
+              processRestartRecovery: true,
+              subagentResultAdopted: true,
+              sideEffectsUncertain: false,
+            }),
+          }),
+        }),
+      }),
+    ]);
+    expect(
+      events.filter(
+        (event) =>
+          event.type === 'part_created' &&
+          event.data.partType === 'subtask_ref' &&
+          event.data.messageId === assistantMessageId &&
+          event.data.payload !== null &&
+          typeof event.data.payload === 'object' &&
+          !Array.isArray(event.data.payload) &&
+          event.data.payload.status === 'completed'
+      )
+    ).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({
+          payload: expect.objectContaining({
+            childSessionId: 'agent-adopted-child',
+            status: 'completed',
+            summary: 'CHILD_DURABLE_MARKER',
+          }),
+        }),
+      }),
+    ]);
+    const resultIndex = events.indexOf(resultEvents[0]!);
+    const subtaskIndex = events.findIndex(
+      (event) =>
+        event.type === 'part_created' &&
+        event.data.partType === 'subtask_ref' &&
+        event.data.payload !== null &&
+        typeof event.data.payload === 'object' &&
+        !Array.isArray(event.data.payload) &&
+        event.data.payload.status === 'completed'
+    );
+    const abortIndex = events.findIndex((event) => event.type === 'turn_aborted');
+    expect(subtaskIndex).toBeGreaterThan(resultIndex);
+    expect(abortIndex).toBeGreaterThan(subtaskIndex);
+    const modelContext = SessionService.convertJSONLToModelContext(events);
+    expect(JSON.stringify(modelContext)).toContain('CHILD_DURABLE_MARKER');
+    expect(
+      modelContext.find(
+        (message) =>
+          message.role === 'assistant' &&
+          message.tool_calls?.some((toolCall) => toolCall.id === toolCallId)
+      )
+    ).toMatchObject({
+      metadata: {
+        subtaskRef: {
+          childSessionId: 'agent-adopted-child',
+          status: 'completed',
+          summary: 'CHILD_DURABLE_MARKER',
+        },
+      },
+    });
+    expect(JSON.stringify(events)).not.toContain(PROCESS_RESTART_TOOL_RESULT);
+  });
+
   it('completes and acknowledges a final-ready turn after runtime restart', async () => {
     const store = new PersistentStore(workspaceRoot);
     await store.initialize();

@@ -56,10 +56,27 @@ export interface SessionTurnRecovery {
   finalization?: SessionTurnFinalizationInfo;
 }
 
-interface DurableToolCall {
+export interface SessionInterruptedToolCall {
+  toolCallId: string;
+  messageId: string;
+  toolName: string;
+  input: JsonValue;
+}
+
+export interface SessionAdoptedToolResult {
   toolCallId: string;
   toolName: string;
+  output: JsonValue;
+  error?: string;
+  metadata?: JsonValue;
+  subagentRef?: SubagentRunRef;
 }
+
+export interface SessionTurnRecoveryOptions {
+  adoptedToolResults?: ReadonlyMap<string, SessionAdoptedToolResult>;
+}
+
+type DurableToolCall = SessionInterruptedToolCall;
 
 const MAX_TURN_FINALIZATION_INPUTS = 20;
 const MAX_TURN_FINALIZATION_TURNS = 10_000;
@@ -243,7 +260,9 @@ function durableToolCalls(
     if (event.data.partType === 'tool_call') {
       calls.set(toolCallId, {
         toolCallId,
+        messageId: event.data.messageId,
         toolName: typeof payload.toolName === 'string' ? payload.toolName : 'unknown',
+        input: (payload.input ?? null) as JsonValue,
       });
     } else if (event.data.partType === 'tool_result') {
       results.add(toolCallId);
@@ -540,8 +559,24 @@ export class PersistentStore {
     await this.saveTurnTerminal(sessionId, 'turn_aborted', turn);
   }
 
-  async recoverInterruptedTurn(
+  async loadInterruptedToolCalls(
     sessionId: string
+  ): Promise<SessionInterruptedToolCall[]> {
+    const events = await this.loadEvents(sessionId);
+    if (!events) return [];
+    const projected = materializeSessionEvents(events);
+    const active = projectTurnLifecycle(projected).active;
+    return active
+      ? durableToolCalls(projected, active.turnId).orphaned.map((call) => ({
+          ...call,
+          input: structuredClone(call.input),
+        }))
+      : [];
+  }
+
+  async recoverInterruptedTurn(
+    sessionId: string,
+    options: SessionTurnRecoveryOptions = {}
   ): Promise<SessionTurnRecovery | undefined> {
     await this.ensureSessionCreated(sessionId);
     let recovery: SessionTurnRecovery | undefined;
@@ -595,24 +630,64 @@ export class PersistentStore {
           : 0;
         const now = new Date().toISOString();
         const startedAt = active ? Date.parse(active.startedAt) : Number.NaN;
-        const recoveryResults = toolCalls.orphaned.map((call) =>
-          this.createEvent('part_created', sessionId, {
+        const recoveryResults = toolCalls.orphaned.flatMap((call) => {
+          const adopted = options.adoptedToolResults?.get(call.toolCallId);
+          const validAdoption =
+            adopted?.toolCallId === call.toolCallId &&
+            adopted.toolName === call.toolName
+              ? adopted
+              : undefined;
+          const resultEvent = this.createEvent('part_created', sessionId, {
             partId: call.toolCallId,
-            messageId: call.toolCallId,
+            messageId: validAdoption ? call.messageId : call.toolCallId,
             partType: 'tool_result',
-            payload: {
-              toolCallId: call.toolCallId,
-              toolName: call.toolName,
-              output: null,
-              error: PROCESS_RESTART_TOOL_RESULT,
-              metadata: {
-                processRestartRecovery: true,
-                sideEffectsUncertain: true,
-              },
-            },
+            payload: validAdoption
+              ? {
+                  toolCallId: call.toolCallId,
+                  toolName: call.toolName,
+                  output: validAdoption.output,
+                  error: validAdoption.error ?? null,
+                  ...(validAdoption.metadata === undefined
+                    ? {}
+                    : { metadata: validAdoption.metadata }),
+                }
+              : {
+                  toolCallId: call.toolCallId,
+                  toolName: call.toolName,
+                  output: null,
+                  error: PROCESS_RESTART_TOOL_RESULT,
+                  metadata: {
+                    processRestartRecovery: true,
+                    sideEffectsUncertain: true,
+                  },
+                },
             createdAt: now,
-          })
-        );
+          });
+          if (!validAdoption?.subagentRef) return [resultEvent];
+          const ref = validAdoption.subagentRef;
+          return [
+            resultEvent,
+            this.createEvent('part_created', sessionId, {
+              partId: nanoid(),
+              messageId: call.messageId,
+              partType: 'subtask_ref',
+              payload: {
+                childSessionId: ref.subagentSessionId,
+                agentType: ref.subagentType,
+                description: ref.subagentDescription ?? '',
+                status: ref.subagentStatus,
+                summary: ref.subagentSummary ?? '',
+                resumedFrom: ref.subagentResumedFrom ?? null,
+                rootAgentId: ref.subagentRootId ?? ref.subagentSessionId,
+                resumeDepth: ref.subagentResumeDepth ?? 0,
+                verificationVerdict: ref.verificationVerdict ?? null,
+                startedAt: now,
+                finishedAt: now,
+              },
+              createdAt: now,
+            }),
+          ];
+        });
         return active
           ? [
               ...recoveryResults,

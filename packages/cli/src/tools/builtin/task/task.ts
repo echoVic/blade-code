@@ -27,6 +27,7 @@ import {
   type SubagentRegistry,
   subagentRegistry,
 } from '../../../agent/subagents/SubagentRegistry.js';
+import { buildCompletedSubagentTaskResult } from '../../../agent/subagents/SubagentResultAdoption.js';
 import {
   type SubagentIsolationMode,
   SubagentWorktreeLease,
@@ -56,7 +57,6 @@ import {
 import { getCwd } from '../../../utils/cwd.js';
 import { captureProcessIdentity } from '../../../utils/process/ProcessIdentity.js';
 import { createSessionId } from '../../../utils/sessionId.js';
-import { isVerificationAuditSubagent } from '../../../utils/shell/readOnlyAudit.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
@@ -859,48 +859,31 @@ function buildCompletedTaskResult(input: {
   rootAgentId: string;
   resumeDepth: number;
 }): ToolResult {
-  const worktreeNote = input.result.worktreePath
-    ? `\n\nWorktree preserved at ${input.result.worktreePath}${input.result.worktreeBranch ? ` on branch ${input.result.worktreeBranch}` : ''}.`
-    : '';
-  const resumeHint = `\n\nAgent ID: ${input.sessionId}\nTo continue this agent, call Task with resume_from="${input.sessionId}".`;
-  const metadata = {
-    summary: `${input.config.name} 任务${input.result.success ? '完成' : '失败'}`,
-    subagent_type: input.config.name,
-    description: input.description,
-    stats: input.result.stats,
-    subagentSessionId: input.sessionId,
+  const canonical = buildCompletedSubagentTaskResult({
+    result: input.result,
+    sessionId: input.sessionId,
     subagentType: input.config.name,
-    subagentStatus: input.result.success ? 'completed' : 'failed',
-    subagentSummary: input.result.message.slice(0, 500),
-    subagentResumedFrom: input.resumedFrom,
-    subagentRootId: input.rootAgentId,
-    subagentResumeDepth: input.resumeDepth,
-    resume_from_hint: input.sessionId,
-    resumed_from: input.resumedFrom,
-    verificationCommands: input.result.verificationCommands,
-    verificationVerdict: input.result.verificationVerdict,
-    modifiedFiles: input.result.modifiedFiles,
-    verificationAgentBuiltin:
-      isVerificationAuditSubagent(input.config.name) &&
-      input.config.source === 'builtin',
+    subagentSource: input.config.source,
+    description: input.description,
     isolation: input.isolation,
-    worktreePath: input.result.worktreePath,
-    worktreeBranch: input.result.worktreeBranch,
-  };
-  if (input.result.success) {
+    resumedFrom: input.resumedFrom,
+    rootAgentId: input.rootAgentId,
+    resumeDepth: input.resumeDepth,
+  });
+  if (canonical.success) {
     return {
       success: true,
-      llmContent: `${input.result.message}${worktreeNote}${resumeHint}`,
-      metadata,
+      llmContent: canonical.llmContent,
+      metadata: canonical.metadata,
     };
   }
   return {
     success: false,
-    llmContent: `Subagent execution failed: ${input.result.error || 'Unknown error'}.${worktreeNote}${resumeHint}`,
+    llmContent: canonical.llmContent,
     error: {
       type: ToolErrorType.EXECUTION_ERROR,
-      message: input.result.error || 'Unknown error',
+      message: canonical.errorMessage ?? 'Unknown error',
     },
-    metadata,
+    metadata: canonical.metadata,
   };
 }
