@@ -25,16 +25,25 @@ getState().config.actions.setConfig({
 });
 
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+const rootPidFile = path.join(workspace, 'foreground-root.pid');
+const forbiddenEffectFile = path.join(workspace, 'forbidden-late-effect.txt');
 const script =
   `const fs=require('fs');` +
-  `fs.writeFileSync('foreground-root.pid',String(process.pid));` +
+  `fs.writeFileSync(${JSON.stringify(rootPidFile)},String(process.pid));` +
   `process.on('SIGTERM',()=>{});` +
-  `setTimeout(()=>fs.writeFileSync('forbidden-late-effect.txt','late'),5000);` +
+  `setTimeout(()=>fs.writeFileSync(${JSON.stringify(
+    forbiddenEffectFile
+  )},'late'),5000);` +
   `setInterval(()=>{},1000);`;
 const releaseMarker = path.join(workspace, 'foreground-gate.release');
 const command =
   `${shellQuote(process.execPath)} -e ${shellQuote(script)} </dev/null & ` +
   `while [ ! -f ${shellQuote(releaseMarker)} ]; do sleep 0.01; done`;
+const invocation =
+  'Call Bash exactly once using these exact arguments: ' +
+  `${JSON.stringify({ command, run_in_background: false })}. ` +
+  'Do not call any other tool, do not alter either argument, and do not answer ' +
+  'with plain text before the Bash call starts.';
 const exitCode = await runWithCwdOverride(workspace, () =>
   runHeadless({
     headless: true,
@@ -43,11 +52,8 @@ const exitCode = await runWithCwdOverride(workspace, () =>
     model: runtimeConfig.currentModelId,
     sessionId,
     allowedTools: ['Bash'],
-    appendSystemPrompt:
-      'Call Bash exactly once using these exact arguments: ' +
-      `${JSON.stringify({ command, run_in_background: false })}. ` +
-      'Do not call any other tool and do not alter either argument.',
-    message: 'Run the requested foreground command now.',
+    appendSystemPrompt: invocation,
+    message: invocation,
   })
 );
 process.exit(exitCode);

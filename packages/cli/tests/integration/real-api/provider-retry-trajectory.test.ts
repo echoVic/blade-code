@@ -626,8 +626,11 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
             }
           }),
           childClosed.then((status) => {
+            const output = `${stdout}\n${stderr}`
+              .replaceAll(modelConfig.apiKey, '[redacted]')
+              .slice(-4_000);
             throw new Error(
-              `Real API foreground owner exited before launch (${status}): ${stderr}`
+              `Real API foreground owner exited before launch (${status}): ${output}`
             );
           }),
         ]);
