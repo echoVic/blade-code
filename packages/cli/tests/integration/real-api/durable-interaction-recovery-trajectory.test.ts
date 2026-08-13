@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
@@ -6,7 +6,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { BladeAgent } from '../../../src/acp/BladeAgent.js';
 import { PermissionMode } from '../../../src/config/types.js';
 import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
-import { getSessionFilePath } from '../../../src/context/storage/pathUtils.js';
+import {
+  getSessionFilePath,
+  getSessionInboxFilePath,
+} from '../../../src/context/storage/pathUtils.js';
 import { Bus } from '../../../src/server/bus.js';
 import { PermissionRoutes } from '../../../src/server/routes/permission.js';
 import { SessionRoutes } from '../../../src/server/routes/session.js';
@@ -14,7 +17,10 @@ import { SessionInteractionService } from '../../../src/services/SessionInteract
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
-import { createMockACPClient } from '../../support/mocks/mockACPClient.js';
+import {
+  createMockACPClient,
+  type MockACPClient,
+} from '../../support/mocks/mockACPClient.js';
 import { assertNoSecrets } from './sessionForkTrajectoryHarness.js';
 import {
   buildRealApiRuntimeConfig,
@@ -64,14 +70,61 @@ function waitForCompletion(
   };
 }
 
-async function waitForFile(filePath: string): Promise<string> {
+async function readOptionalFile(filePath: string): Promise<string | undefined> {
+  try {
+    return await readFile(filePath, 'utf8');
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+async function fileIsMissing(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return false;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return true;
+    }
+    throw error;
+  }
+}
+
+async function waitForAcpRecovery(input: {
+  client: MockACPClient;
+  target: string;
+  workspace: string;
+  sessionId: string;
+  expectedContent: string;
+  expectedText: string;
+}): Promise<string> {
   const deadline = Date.now() + 180_000;
   while (Date.now() < deadline) {
-    const content = await readFile(filePath, 'utf8').catch(() => undefined);
-    if (content !== undefined) return content;
+    const hostContent = await readOptionalFile(input.target);
+    const clientContent = [...input.client.files.values()].find(
+      (content) => content === input.expectedContent
+    );
+    const agentText = input.client.sessionUpdates
+      .flatMap((notification) =>
+        notification.update.sessionUpdate === 'agent_message_chunk' &&
+        notification.update.content.type === 'text'
+          ? [notification.update.content.text]
+          : []
+      )
+      .join('');
+    if (
+      (hostContent ?? clientContent) === input.expectedContent &&
+      agentText.includes(input.expectedText) &&
+      (await fileIsMissing(getSessionInboxFilePath(input.workspace, input.sessionId)))
+    ) {
+      return hostContent ?? clientContent ?? '';
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`Timed out waiting for recovered file: ${filePath}`);
+  throw new Error('Timed out waiting for durable ACP interaction completion');
 }
 
 describeReal('durable pending interaction recovery trajectory (real API)', () => {
@@ -113,9 +166,12 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
         'user',
         [
           'A structured Channel question will be recovered after a process restart.',
-          'After the recovered answer is available, use Write exactly once to create selected-channel.txt.',
-          'The complete file content must be the selected label followed by one newline.',
-          'Do not call AskUserQuestion again and do not call any other tool.',
+          `After the recovered answer, call Write exactly once with file_path=${JSON.stringify(
+            target
+          )}.`,
+          'Set content to the selected label followed by exactly one newline.',
+          'That Write is the only allowed tool call. Never call AskUserQuestion again.',
+          'Do not emit assistant text or end the turn before Write succeeds.',
           'After Write succeeds, reply exactly INTERACTION_RECOVERED.',
         ].join(' ')
       );
@@ -184,22 +240,37 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
       expect(response.status, await response.clone().text()).toBe(200);
       await completion.promise;
 
-      expect(await readFile(target, 'utf8')).toBe('Canary\n');
       const transcript = await readFile(
         getSessionFilePath(workspace, sessionId),
         'utf8'
       );
+      const [events, metadata] = await Promise.all([
+        store.loadEvents(sessionId),
+        SessionService.findSessionMetadata(sessionId, workspace),
+      ]);
+      assertNoSecrets({ metadata, transcript }, [gpt.apiKey]);
+      const targetContent = await readOptionalFile(target);
+      const diagnostic = JSON.stringify(
+        events?.filter(
+          (event) =>
+            event.type === 'interaction_requested' ||
+            event.type === 'interaction_responded' ||
+            event.type === 'interaction_recovered' ||
+            event.type === 'message_created' ||
+            (event.type === 'part_created' &&
+              ['text', 'tool_call', 'tool_result'].includes(event.data.partType))
+        )
+      )
+        .replaceAll(gpt.apiKey, '[redacted]')
+        .slice(-8_000);
+      expect(
+        targetContent,
+        `Recovered Web interaction did not commit the selected file: ${diagnostic}`
+      ).toBe('Canary\n');
       expect(transcript.match(/"type":"interaction_requested"/g)).toHaveLength(1);
       expect(transcript.match(/"type":"interaction_responded"/g)).toHaveLength(1);
       expect(transcript.match(/"type":"interaction_recovered"/g)).toHaveLength(1);
       expect(transcript.match(/"interactionRecovery":true/g)).toHaveLength(1);
-      assertNoSecrets(
-        {
-          metadata: await SessionService.findSessionMetadata(sessionId, workspace),
-          transcript,
-        },
-        [gpt.apiKey]
-      );
     } finally {
       if (originalConfig) getState().config.actions.setConfig(originalConfig);
       await rm(root, { recursive: true, force: true });
@@ -246,9 +317,12 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
         'user',
         [
           'A Channel question will be recovered by ACP session/load.',
-          'After the recovered answer, use Write exactly once to create acp-selected-channel.txt.',
-          'Write only the selected label and one newline.',
-          'Do not call AskUserQuestion again or call any other tool.',
+          `After the recovered answer, call Write exactly once with file_path=${JSON.stringify(
+            target
+          )}.`,
+          'Set content to the selected label followed by exactly one newline.',
+          'That Write is the only allowed tool call. Never call AskUserQuestion again.',
+          'Do not emit assistant text or end the turn before Write succeeds.',
           'After Write succeeds, reply exactly ACP_INTERACTION_RECOVERED.',
         ].join(' ')
       );
@@ -301,16 +375,29 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
       expect(
         client.permissionRequests[0]?.options.map((option) => option.name)
       ).toEqual(['Stable', 'Canary', 'Cancel']);
-      const hostContent = await waitForFile(target).catch(() => undefined);
-      const clientContent = [...client.files.values()].find(
-        (content) => content === 'Stable\n'
+      const content = await waitForAcpRecovery({
+        client,
+        target,
+        workspace,
+        sessionId,
+        expectedContent: 'Stable\n',
+        expectedText: 'ACP_INTERACTION_RECOVERED',
+      });
+      expect(content).toBe('Stable\n');
+      const transcript = await readFile(
+        getSessionFilePath(workspace, sessionId),
+        'utf8'
       );
-      expect(hostContent ?? clientContent).toBe('Stable\n');
+      expect(transcript).toContain('ACP_INTERACTION_RECOVERED');
+      expect(transcript.match(/"type":"interaction_requested"/g)).toHaveLength(1);
+      expect(transcript.match(/"type":"interaction_responded"/g)).toHaveLength(1);
+      expect(transcript.match(/"type":"interaction_recovered"/g)).toHaveLength(1);
       assertNoSecrets(
         {
           setup,
           updates: client.sessionUpdates,
           requests: client.permissionRequests,
+          transcript,
         },
         [gpt.apiKey]
       );

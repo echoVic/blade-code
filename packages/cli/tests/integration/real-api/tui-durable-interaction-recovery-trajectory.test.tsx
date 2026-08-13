@@ -98,9 +98,12 @@ describeReal('TUI durable interaction recovery trajectory (real API)', () => {
         'user',
         [
           'A Channel question will be recovered by the TUI.',
-          'After the recovered answer, use Write exactly once to create tui-selected-channel.txt.',
-          'Write only the selected label and one newline.',
-          'Do not call AskUserQuestion again or call any other tool.',
+          `After the recovered answer, call Write exactly once with file_path=${JSON.stringify(
+            target
+          )}.`,
+          'Set content to the selected label followed by exactly one newline.',
+          'That Write is the only allowed tool call. Never call AskUserQuestion again.',
+          'Do not emit assistant text or end the turn before Write succeeds.',
           'After Write succeeds, reply exactly TUI_INTERACTION_RECOVERED.',
         ].join(' ')
       );
