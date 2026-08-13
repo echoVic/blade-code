@@ -510,6 +510,67 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
     }
   });
 
+  it('preserves real exit when admission release completion outlives timeout', async () => {
+    const workspace = await mkdtemp(
+      path.join(os.tmpdir(), 'blade-foreground-release-race-')
+    );
+    tempRoots.push(workspace);
+    const marker = path.join(workspace, 'command-ran');
+    let notifyChildClosed: (() => void) | undefined;
+    const childClosed = new Promise<void>((resolve) => {
+      notifyChildClosed = resolve;
+    });
+    let allowReleaseToFinish: (() => void) | undefined;
+    const releaseMayFinish = new Promise<void>((resolve) => {
+      allowReleaseToFinish = resolve;
+    });
+    const originalRelease = CommandAdmissionGate.releaseCommandAdmissionGate;
+    const release = vi
+      .spyOn(CommandAdmissionGate, 'releaseCommandAdmissionGate')
+      .mockImplementationOnce(async (child) => {
+        const gateClosed = new Promise<void>((resolve) => {
+          child.once('close', () => resolve());
+        });
+        await originalRelease(child);
+        await gateClosed;
+        notifyChildClosed?.();
+        await releaseMayFinish;
+      });
+
+    try {
+      const resultPromise = bashTool.execute(
+        {
+          command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(
+            `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'done')`
+          )}`,
+          timeout: 2_000,
+          env: {},
+          run_in_background: false,
+        },
+        new AbortController().signal,
+        {
+          sessionId: `foreground-release-race-${Date.now()}`,
+          workspaceRoot: workspace,
+        }
+      );
+
+      await childClosed;
+      await new Promise((resolve) => setTimeout(resolve, 2_100));
+      allowReleaseToFinish?.();
+      const result = await resultPromise;
+
+      expect(result).toMatchObject({
+        success: true,
+        llmContent: { exit_code: 0 },
+      });
+      expect(result.metadata?.timeout).not.toBe(true);
+      expect(await readFile(marker, 'utf8')).toBe('done');
+    } finally {
+      allowReleaseToFinish?.();
+      release.mockRestore();
+    }
+  }, 10_000);
+
   it('retains its lease when foreground group finalization fails', async () => {
     const workspace = await mkdtemp(
       path.join(os.tmpdir(), 'blade-foreground-finalize-')

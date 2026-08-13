@@ -647,7 +647,9 @@ async function executeWithTimeout(
   return new Promise((resolve) => {
     const { child: bashProcess, processTree } = prepared;
     const capture = new ShellOutputCapture();
+    type FrozenTerminalState = { timedOut: boolean; aborted: boolean };
     let timedOut = false;
+    let terminalHandlingStarted = false;
     let settled = false;
     let admissionError: Error | undefined;
     let finalizationError: Error | undefined;
@@ -658,21 +660,37 @@ async function executeWithTimeout(
       return terminationPromise;
     };
     const timeoutHandle = setTimeout(() => {
+      if (terminalHandlingStarted) return;
       timedOut = true;
       void terminateProcessTree();
     }, timeout);
     const abortHandler = () => {
+      if (terminalHandlingStarted) return;
       void terminateProcessTree();
       clearTimeout(timeoutHandle);
     };
-    const cleanup = () => {
-      sandboxedCommand?.cleanup();
-      clearTimeout(timeoutHandle);
+    const removeAbortListener = () => {
       if (signal.removeEventListener) {
         signal.removeEventListener('abort', abortHandler);
       } else if ('onabort' in signal) {
         (signal as unknown as { onabort: null }).onabort = null;
       }
+    };
+    const beginTerminalHandling = (): FrozenTerminalState | undefined => {
+      if (terminalHandlingStarted) return undefined;
+      terminalHandlingStarted = true;
+      const terminalState: FrozenTerminalState = {
+        timedOut,
+        aborted: signal.aborted,
+      };
+      clearTimeout(timeoutHandle);
+      removeAbortListener();
+      return terminalState;
+    };
+    const cleanup = () => {
+      sandboxedCommand?.cleanup();
+      clearTimeout(timeoutHandle);
+      removeAbortListener();
     };
     const output = (): ProjectedShellOutput => {
       capture.finish();
@@ -758,8 +776,10 @@ async function executeWithTimeout(
     if (signal.aborted) abortHandler();
 
     bashProcess.on('close', async (code, sig) => {
+      const terminalState = beginTerminalHandling();
+      if (!terminalState) return;
       await releaseCompletion;
-      if (timedOut || signal.aborted || admissionError) {
+      if (terminalState.timedOut || terminalState.aborted || admissionError) {
         await terminateProcessTree();
       }
       try {
@@ -773,7 +793,7 @@ async function executeWithTimeout(
       const executionTime = Date.now() - startTime;
       const projected = output();
 
-      if (timedOut) {
+      if (terminalState.timedOut) {
         settle({
           success: false,
           llmContent: `Command execution timed out (${timeout}ms)`,
@@ -795,7 +815,7 @@ async function executeWithTimeout(
         return;
       }
 
-      if (signal.aborted) {
+      if (terminalState.aborted) {
         settle({
           success: false,
           llmContent: 'Command execution aborted by user',
@@ -928,8 +948,10 @@ async function executeWithTimeout(
     });
 
     bashProcess.on('error', async (error) => {
+      const terminalState = beginTerminalHandling();
+      if (!terminalState) return;
       await releaseCompletion;
-      if (timedOut || signal.aborted || admissionError) {
+      if (terminalState.timedOut || terminalState.aborted || admissionError) {
         await terminateProcessTree();
       }
       try {
@@ -944,9 +966,9 @@ async function executeWithTimeout(
       const executionTime = Date.now() - startTime;
       settle({
         success: false,
-        llmContent: timedOut
+        llmContent: terminalState.timedOut
           ? `Command execution timed out (${timeout}ms)`
-          : signal.aborted
+          : terminalState.aborted
             ? 'Command execution aborted by user'
             : admissionError
               ? 'Command execution blocked before durable admission'
@@ -954,26 +976,31 @@ async function executeWithTimeout(
                 ? 'Command process group could not be finalized'
                 : `Command execution failed: ${error.message}`,
         error: {
-          type: timedOut ? ToolErrorType.TIMEOUT_ERROR : ToolErrorType.EXECUTION_ERROR,
-          message: timedOut
+          type: terminalState.timedOut
+            ? ToolErrorType.TIMEOUT_ERROR
+            : ToolErrorType.EXECUTION_ERROR,
+          message: terminalState.timedOut
             ? '命令执行超时'
-            : signal.aborted
+            : terminalState.aborted
               ? '操作被中止'
               : admissionError
                 ? 'Foreground command admission failed'
                 : finalizationError
                   ? 'Foreground command finalization failed'
                   : error.message,
-          ...(timedOut || signal.aborted || admissionError || finalizationError
+          ...(terminalState.timedOut ||
+          terminalState.aborted ||
+          admissionError ||
+          finalizationError
             ? {}
             : { details: error }),
         },
         metadata: metadataFor(projected, {
           command,
           sandboxed: Boolean(sandboxedCommand),
-          ...(timedOut
+          ...(terminalState.timedOut
             ? { timeout: true }
-            : signal.aborted
+            : terminalState.aborted
               ? { aborted: true }
               : admissionError
                 ? { admission_failed: true }
