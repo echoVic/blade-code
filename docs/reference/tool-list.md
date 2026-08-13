@@ -126,6 +126,20 @@ delete/rename 时 Add/Delete/Move fail closed
 
 **类型**: Execute
 **返回**: 后台运行时返回 `bash_id` 和 `shell_id`，可用于 WriteStdin、KillShell 或 TaskOutput
+**前台输出边界**: 本地 stdout/stderr 各保留最近 1 MiB 原始字节；ACP remote terminal
+按 merged stdout 保留最近 1 MiB，且不会在 terminal 不可用时回退宿主执行。模型可见
+结果继续按命令类型截断，并返回：
+
+- `output_truncated`：capture 或模型投影任一层发生截断；
+- `stdout_total_bytes` / `stderr_total_bytes`：完整累计字节，accounting 不完整时为下界；
+- `stdout_omitted_bytes` / `stderr_omitted_bytes`：capture 丢弃的最早字节；
+- `output_accounting_complete`：累计统计是否完整；
+- `terminal_output_merged`：ACP terminal 合并 stdout/stderr 时为 `true`；
+- `truncation_info`：明确说明省略最早输出并展示 retained tail。
+
+Tool metadata 另包含每流 retained bytes、projection flags 和
+`terminal_transport=local|acp|local_fallback`。TUI、Headless、Web 与 ACP 使用同一
+有界展示；原始 command output 不作为 progress 事件发送。
 
 ### WriteStdin
 

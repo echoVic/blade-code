@@ -70,6 +70,18 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   fail closed 并阻止 session 恢复。
 - 每个后台 Bash 的 stdout 和 stderr 分别只保留自上次 `TaskOutput` 消费以来最近 1 MiB 的原始字节，持续输出不会让 runtime 内存无界增长。被丢弃的更早输出按 stream 累计字节数，保留内容从合法 UTF-8 边界开始。
 - `TaskOutput` 会在 1 MiB 运行时边界之上再次按命令类型限制模型和事件表面的文本（3,000-20,000 字符，默认 15,000），保留头尾并返回 `output_truncated`、`stdout_omitted_bytes`、`stderr_omitted_bytes` 和 `truncation_info`。TUI、headless、Web SSE 与 ACP 使用同一结果和展示摘要。
+- 本地前台 Bash 与 `LocalTerminalService` 同样对 stdout/stderr 分别保留最近 1 MiB
+  原始字节。capture 层记录完整累计 bytes/UTF-16 chars、retained/omitted bytes 和
+  accounting completeness；模型投影再执行独立的字符/行预算。timeout、abort、
+  admission、finalization、sandbox runtime failure 和普通退出都只能发布安全投影，
+  不能把 retained capture 或被省略前缀写入 error、metadata、progress 或 JSONL。
+- ACP remote terminal 是协议边界：Blade 对收到的 cumulative merged output 建立
+  1 MiB retained/projection 上限，并以 `terminal_output_merged=true`、stdout 统计和
+  zero stderr 统计报告事实；IDE 客户端在返回 `currentOutput` 前的宿主内存不由 Blade
+  控制。remote terminal 创建或读取失败时 Bash fail closed，不会回退到 Blade 宿主执行。
+- 前台 Bash progress 只包含固定状态和整数统计，不转发原始 command output。committed
+  ToolResult 是唯一 canonical 事实；TUI、Headless、Web realtime/replay/fresh load 与
+  ACP live update 通过同一 projector 生成有界详情，截断提示始终保留在最后一行。
 - `SessionRuntime.dispose()` 会等待当前 session 的所有后台 shell 进程树完成回收，不影响其他活跃 session。
 - post-edit 自动验证使用 Session 私有队列和冻结环境。只有显式通过 Workspace Trust
   且处于 `yolo` 的本地 Session 才能执行项目 `type-check` script；turn abort、
@@ -217,5 +229,10 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
 - 模型启动后台 Bash 但不主动终止，正常结束 headless 会话，然后验证 session dispose 已等待整棵进程树回收。
 - 模型在 TUI、Web 和 ACP 中启动等待输入的后台 Bash，读取动态 `shell_id`，通过 `WriteStdin` 写入并关闭 stdin，再由 `TaskOutput` 等待退出；Flash 和 Pro 都必须产生正确宿主文件且三个工具事件完整可见。
 - 模型在 TUI、Web 和 ACP 中启动产生超过 1 MiB 输出的后台 Bash，再由 `TaskOutput` 验证尾部标记、结构化省略字节数和共享展示摘要；Flash 和 Pro 都必须在截断后继续完成宿主文件写入。
+- 模型在 production Chromium Web、raw PTY TUI 和真实 ACP SDK terminal 三个入口分别
+  执行一次前台 Bash；Flash/Pro 六格都必须证明每流或 merged retained bytes 不超过
+  1 MiB、累计字节精确、两个尾部 nonce 可见、两个省略前缀 sentinel 不进入模型、
+  DOM、PTY、ACP update 或 durable transcript，并在结束后清零 process tree、lease、
+  port 和 terminal handle。
 - 首个 CLI 在工具执行期间持有 session，第二个同 session CLI 必须返回结构化占用错误且不写入输入；首个 CLI 退出后，第三个 CLI 必须恢复该 session 并完成写入与 Bash 验证。
 - 在完整 session 尾部注入未换行的截断 JSON 记录，第二个 CLI 必须恢复原有历史、完成 Write/Bash 任务，并使最终 transcript 的每一行重新成为合法 JSON。

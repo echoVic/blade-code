@@ -22,9 +22,9 @@ bun run qualify:local
 8. E2E
 9. snapshot
 10. 安全测试
-11. Web 测试
-12. Web 类型检查
-13. 当前源码构建
+11. 当前源码构建
+12. Web 测试
+13. Web 类型检查
 14. 性能回归
 
 每一步都在独立子进程中执行。第一步非零退出会立即停止，后续步骤不会被计为通过。该门禁不访问付费模型，也不依赖 `~/.blade/config.json`。
@@ -44,8 +44,15 @@ credential 可以由 secret manager 注入测试子进程环境，也可以放�
 命令记录只保留变量名、模型 ID 和是否存在，不记录变量值。环境准备完成后执行：
 
 ```bash
+bun run --filter blade-code browser:install # 首次或 Playwright 版本变化后
+bun run --filter blade-code browser:check
 bun run qualify:production
 ```
+
+`browser:check` 不联网、不隐式下载，只验证锁定 Playwright 版本的 Chromium executable
+可执行并能 launch/close。production qualification 固定执行 16 个检查：14 个本地门禁、
+无密钥 Chromium preflight、最后才是付费真实 API；preflight 失败时不得启动 Provider
+请求。浏览器页只访问 loopback Blade server，API key 不进入 page context。
 
 每条 capability 轨迹的 Provider timeout 必须短于 Vitest test timeout，并为 abort、
 runtime dispose、临时目录删除和全局配置恢复保留确定性清理窗口。验证 permission
@@ -58,7 +65,10 @@ structured output、Web/ACP/TUI code review、durable interaction recovery、per
 recovery、ACP model switch、透明 503 retry proxy、durable 413 compaction proxy、真实
 mid-stream stall proxy、assistant response fsync fail-stop/cold retry、turn-final
 receipt exactly-once recovery、foreground/background shell hard-crash recovery，以及
-DeepSeek Flash 的 Runtime/Web/ACP host-authoritative Goal completion verification。Edit+rewind、
+DeepSeek Flash 的 Runtime/Web/ACP host-authoritative Goal completion verification。
+前台有界输出固定运行 DeepSeek Flash/Pro × production Chromium Web/raw PTY TUI/真实
+ACP SDK terminal 六格；单格 Provider deadline 180 秒、测试 timeout 240 秒，完整
+realApiQualification watchdog 为 45 分钟。Edit+rewind、
 开放式多文件迁移、compaction、进程树、
 并发 owner 与 crash-tail 等高成本 provider/capability soak 由以下命令单独运行：
 
@@ -582,6 +592,14 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
 - 权限作用域：`once`、`session`、`project` 必须是不同契约。TUI/Web 显式展示会话级与项目级选择；session approval 只进入当前 runtime cache，不能写盘，并在同一 runtime 的第二个独立 turn 复用、在新 session 重新询问；project approval 写入目标 workspace 的 `.blade/settings.local.json`，不能落到 server 启动目录或泄漏到其他项目，新 Web/ACP session 必须自动加载。ACP `allow_always` / `reject_always` 映射为真实项目级持久规则；Flash 和 Pro 都通过真实 Bash 轨迹验证；
 - 交互式后台 Shell：`WriteStdin` 只能操作当前 session 拥有的后台 Bash，等待写入完成并可显式关闭 stdin；跨 session、已退出进程和缺失 session 必须 fail closed。TUI、Web、ACP 中的 Flash 和 Pro 都要完成 `Bash(background) -> WriteStdin(close) -> TaskOutput(block)`，并由宿主验证实际文件和三个工具事件；
 - 有界后台输出：后台 Bash 的 stdout/stderr 各自超过 1 MiB 后只能保留最近输出并精确报告更早省略字节数；TUI、Web、ACP 中的 Flash 和 Pro 都要完成 `Bash(background) -> TaskOutput(block) -> Write`，验证尾部标记、`output_truncated`、stream 省略字节数、共享展示摘要和宿主证明文件；
+- 有界前台输出：宿主预写脚本向 stdout/stderr 各输出 `1 MiB + 64 KiB`，每流最初
+  4 KiB 内放 omitted-prefix sentinel，末尾放独立 nonce tail。Flash/Pro 必须在
+  Chromium Web、raw PTY TUI、ACP SDK 三入口各只调用一次 foreground Bash。Web/PTY
+  验证双流 total/retained/omitted；ACP 验证 merged stdout、zero stderr 和
+  `terminal_output_merged=true`。所有入口都必须保留双 tail、隐藏双 sentinel 与 API
+  key，并清零 Chromium/page/SSE、PTY、ACP terminal、process identity、foreground
+  lease、port 和临时根。Computer Use 仅在宿主提供稳定桌面桥接时作为补充视觉证据，
+  不能替代自动 raw PTY 与协议断言；
 - 跨表面 session branch：TUI `/branch` 原子切换到持久化子会话；Web 通过 HTTP fork 路由创建并选中子会话，活动回合返回 `409`；ACP `/branch` 返回可由标准 `session/load` 加载的子会话 ID。Flash 和 Pro 都必须在删除原 marker 后，仅依赖继承的 Read 结果继续 Write/Bash，并证明父 transcript 未改变；
 - durable turn rewind：Flash 和 Pro 都必须先通过真实模型 Read/Edit/Read 产生文件
   checkpoint，再分别从 Runtime、TUI hook、Web HTTP/SSE 和 ACP `/rewind` 入口恢复。
@@ -673,11 +691,16 @@ JSONL、lineage、精确 fixture 文件内容和资源清理，不虚构 Git dif
 
 每个独立 patch 至少保留以下证据：
 
+- 已冻结的 Qualified candidate 完整 SHA、patch 版本和日期；
 - `bun run qualify:local` 的完整命令和退出码；
-- `bun run qualify:production` 的完整命令、使用的模型集合和退出码；
-- 真实 API 运行中不得记录原始密钥；
-- 失败时记录首个失败门禁和可复现命令，不得用跳过测试替代通过；
-- 代码、文档和测试改动通过 `git diff --check`。
+- `bun run qualify:production` 的完整命令、Flash/Pro × Web/PTY/ACP 六格逐项结果和退出码；
+- browser preflight、process/lease/terminal/port/temp-root cleanup、omitted sentinel 与
+  credential absence 的宿主断言；
+- 失败时记录首个失败 cell、redacted bounded tail、清理结果和复跑事实；只有 source
+  未变化的 Provider transient 才能整套重跑，不得用跳过测试替代通过；
+- `git diff --check`、build、type-check、lint 的命令与退出码；
+- evidence 只能在候选代码冻结并通过真实资格后创建。候选 SHA 到 tag HEAD 的唯一差异
+  必须是完整 evidence 文件；文件不得包含 `TBD`、`TODO`、`NOT RUN` 或预填 `PASS`。
 
 真实 API 门禁会产生费用，因此不会被 `test:all` 或普通 CI 单元门禁隐式触发；发布候选、跨 provider 改动和 Agent runtime 核心改动必须显式运行。
 

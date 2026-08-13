@@ -24,6 +24,13 @@ All notable changes to this project will be documented in this file.
 
 ### 🛡️ 稳定性
 
+- 本地前台 Bash 与 LocalTerminalService 对 stdout/stderr 分别建立 1 MiB 原始字节
+  retained 上限；成功、非零退出、timeout、abort、sandbox、admission 和 finalization
+  统一返回累计/保留/省略字节统计，不再先无界拼接再截断
+- ACP Bash 使用 merged terminal capture 和离散 failure kind，remote terminal 失败时
+  fail closed，不回退 Blade 宿主执行；原始 command output 不再进入通用 tool progress
+- CLI/TUI、Headless、Web realtime/replay/fresh load 与 ACP 使用 canonical ToolResult
+  projector；失败历史不再显示 `null`，双流 tail 和唯一截断提示在刷新后保持一致
 - Agent loop 新增 progress-aware action stationarity：连续 8 次相同工具调用且
   无可观察进展时注入一次 durable hidden correction，持续到 16 次则以
   `loop_detected` 停止，避免长任务中的工具轮询和重复副作用无限消耗 token
@@ -49,6 +56,11 @@ All notable changes to this project will be documented in this file.
 
 ### ✅ 测试相关
 
+- 新增锁定 Playwright Chromium preflight，以及 DeepSeek Flash/Pro × production
+  Chromium Web/raw PTY TUI/真实 ACP SDK terminal 的六格前台有界输出资格门禁；该矩阵
+  只记录真实结果，不在 Unreleased 条目中预填通过状态
+- 新增 UTF-8 字节尾缓冲、64 MiB retained-memory 不变量、全部本地 terminal 终态、
+  ACP cumulative polling/fail-closed、durable sanitizer/replay 和 Web 四路径卡片回归
 - 单元/集成 suite 总 watchdog 随测试规模调整为 240/300 秒，局部用例 timeout
   保持不变；Web Vitest 固定最多 4 workers，性能资格改用预热后的相对比值，
   避免高负载机器上的假失败
