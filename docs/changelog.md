@@ -16,8 +16,9 @@ All notable changes to this project will be documented in this file.
 ### ✅ 测试相关
 
 - 新增 DeepSeek Flash/Pro × Headless、真实 raw PTY TUI、production Chromium Web GUI
-  的六格 root-turn crash auto-resume 资格；每格验证原始 Write、restart receipt 和恢复
-  Read 均恰好一次，刷新/清理后 inbox、进程、端口与凭据不残留
+  与真实 ACP `session/load` 的八格 root-turn crash auto-resume 资格；每格验证原始
+  Write、restart receipt 和恢复 Read 均恰好一次，刷新/清理后 inbox、进程、端口与
+  凭据不残留
 
 ## [0.10.28] - 2026-08-13
 

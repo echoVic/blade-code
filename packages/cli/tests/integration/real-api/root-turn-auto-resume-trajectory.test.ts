@@ -10,15 +10,16 @@ import { PersistentStore } from '../../../src/context/storage/PersistentStore.js
 import { getSessionInboxFilePath } from '../../../src/context/storage/pathUtils.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
+import { runRootTurnAutoResumeAcpDriver } from '../../support/rootTurnAutoResumeAcpDriver.js';
 import { runRootTurnAutoResumePtyDriver } from '../../support/rootTurnAutoResumePtyDriver.js';
 import { runRootTurnAutoResumeWebDriver } from '../../support/rootTurnAutoResumeWebDriver.js';
+import { seedRootTurnAutoResumeFixture } from './rootTurnAutoResumeFixture.js';
 import {
   buildRealApiRuntimeConfig,
   expandDeepSeekModelMatrix,
   getEnabledModelConfigs,
   isRealApiTestEnabled,
 } from './testConfig.js';
-import { seedRootTurnAutoResumeFixture } from './rootTurnAutoResumeFixture.js';
 
 const models = isRealApiTestEnabled()
   ? expandDeepSeekModelMatrix(
@@ -30,7 +31,7 @@ let originalConfig: RuntimeConfig | null = null;
 
 async function prepareExternalSurfaceFixture(
   model: (typeof models)[number],
-  surface: 'pty' | 'web'
+  surface: 'acp' | 'pty' | 'web'
 ) {
   const root = await mkdtemp(path.join(os.tmpdir(), `blade-root-${surface}-`));
   const workspace = path.join(root, 'project');
@@ -237,6 +238,58 @@ describe
           expect(`${stdout}\n${stderr}`).not.toContain(model.apiKey);
         } finally {
           await rm(workspace, { recursive: true, force: true });
+        }
+      }, 240_000);
+
+      it(`${model.model} auto-resumes through ACP session/load`, async () => {
+        const prepared = await prepareExternalSurfaceFixture(model, 'acp');
+        try {
+          const evidence = await runRootTurnAutoResumeAcpDriver({
+            workspace: prepared.workspace,
+            sessionId: prepared.sessionId,
+            expected: prepared.marker,
+            secret: model.apiKey,
+          });
+          expect(evidence.finalText).toContain(prepared.marker);
+          expect(
+            evidence.updates.filter(
+              (notification) =>
+                notification.update.sessionUpdate === 'tool_call' &&
+                notification.update.title.includes('Read')
+            )
+          ).toHaveLength(1);
+          expect(
+            evidence.updates.filter((notification) => {
+              const update = notification.update;
+              if (update.sessionUpdate !== 'tool_call') return false;
+              return (
+                ['Write', 'Edit', 'ApplyPatch', 'Bash'].some((toolName) =>
+                  update.title.includes(toolName)
+                ) && update.status !== 'failed'
+              );
+            })
+          ).toHaveLength(0);
+          expect(
+            evidence.updates.filter(
+              (notification) =>
+                notification.update.sessionUpdate === 'user_message_chunk' &&
+                notification.update.content.type === 'text' &&
+                notification.update.content.text.includes(prepared.marker)
+            )
+          ).toHaveLength(1);
+          expect(await readFile(prepared.fixture.markerPath, 'utf8')).toBe(
+            `${prepared.marker}\n`
+          );
+          await expect(
+            access(getSessionInboxFilePath(prepared.workspace, prepared.sessionId))
+          ).rejects.toMatchObject({ code: 'ENOENT' });
+          await assertSingleRecoveredWrite(
+            prepared.workspace,
+            prepared.sessionId,
+            prepared.fixture.orphanToolCallId
+          );
+        } finally {
+          await rm(prepared.root, { recursive: true, force: true });
         }
       }, 240_000);
 

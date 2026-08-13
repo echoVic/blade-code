@@ -69,8 +69,8 @@ DeepSeek Flash 的 Runtime/Web/ACP host-authoritative Goal completion verificati
 前台有界输出固定运行 DeepSeek Flash/Pro × production Chromium Web/raw PTY TUI/真实
 ACP SDK terminal 六格；单格 Provider deadline 180 秒、测试 timeout 240 秒，完整
 realApiQualification watchdog 为 45 分钟。Root-turn crash auto-resume 另固定运行
-DeepSeek Flash/Pro × Headless/raw PTY TUI/production Chromium Web 六格，所有入口
-都不得依赖额外 wake-up prompt。Edit+rewind、
+DeepSeek Flash/Pro × Headless/raw PTY TUI/production Chromium Web/真实 ACP
+`session/load` 八格，所有入口都不得依赖额外 wake-up prompt。Edit+rewind、
 开放式多文件迁移、compaction、进程树、
 并发 owner 与 crash-tail 等高成本 provider/capability soak 由以下命令单独运行：
 
