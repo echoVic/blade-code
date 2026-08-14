@@ -202,6 +202,7 @@ async function startTransientProxy(baseUrl: string) {
 async function startContextLimitProxy(baseUrl: string) {
   let requestCount = 0;
   let injectedFailures = 0;
+  const forwardedBodies: string[] = [];
   const privateBodyMarker = 'PRIVATE_CONTEXT_LIMIT_BODY_MUST_NOT_SURFACE';
   const server = createServer((request, response) => {
     void (async () => {
@@ -221,6 +222,7 @@ async function startContextLimitProxy(baseUrl: string) {
         );
         return;
       }
+      forwardedBodies.push(body.toString('utf-8'));
 
       const headers = new Headers();
       for (const [name, value] of Object.entries(request.headers)) {
@@ -279,6 +281,7 @@ async function startContextLimitProxy(baseUrl: string) {
     privateBodyMarker,
     requestCount: () => requestCount,
     injectedFailures: () => injectedFailures,
+    forwardedBodies: () => [...forwardedBodies],
     close: async () => {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => {
@@ -1195,7 +1198,12 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
       modelConfig.baseURL ?? 'https://api.deepseek.com'
     );
     const sessionId = `real-reactive-compaction-${Date.now()}`;
-    const durableMarker = 'DURABLE_CONTEXT_MARKER_7319';
+    const durableMarker = `DURABLE_CONTEXT_MARKER_${process.pid}_${Date.now()}`;
+    const acknowledgement = 'REACTIVE_CONTEXT_ACK';
+    const resumeInstruction =
+      'Return the durable checkpoint marker whose value begins with ' +
+      'DURABLE_CONTEXT_MARKER_. Do not return the prior one-time acknowledgement ' +
+      `${acknowledgement}. Output only the complete remembered marker.`;
     let output = '';
     let resumeOutput = '';
     let errorOutput = '';
@@ -1215,8 +1223,11 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
             sessionId,
             maxTurns: 1,
             message:
-              `Remember the exact marker ${durableMarker}. ` +
-              'Reply with exactly REACTIVE_CONTEXT_OK and nothing else.',
+              `The durable checkpoint marker is ${durableMarker}. Preserve that ` +
+              'exact value across compaction. It is distinct from the one-time ' +
+              `acknowledgement ${acknowledgement}. For this first turn only, reply ` +
+              `with exactly ${acknowledgement}. If asked for the durable marker ` +
+              'later, never return the acknowledgement.',
           },
           {
             stdout: {
@@ -1263,7 +1274,7 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
         }),
       ]);
       expect(events.filter((event) => event.type === 'provider_retry')).toHaveLength(0);
-      expect(content.trim()).toBe('REACTIVE_CONTEXT_OK');
+      expect(content.trim()).toBe(acknowledgement);
 
       const recoveredContext = await SessionService.loadSessionModelContext(
         sessionId,
@@ -1287,9 +1298,7 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
             outputFormat: 'jsonl',
             resume: sessionId,
             maxTurns: 1,
-            message:
-              'Reply with exactly the marker I asked you to remember earlier ' +
-              'and nothing else.',
+            message: resumeInstruction,
           },
           {
             stdout: {
@@ -1322,6 +1331,11 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
       ).toBe(0);
       expect(resumedContent.trim()).toBe(durableMarker);
       expect(proxy.requestCount()).toBeGreaterThanOrEqual(4);
+      const resumeRequestBody = proxy
+        .forwardedBodies()
+        .find((body) => body.includes(resumeInstruction));
+      expect(resumeRequestBody).toBeDefined();
+      expect(resumeRequestBody).toContain(durableMarker);
       expect(`${output}\n${resumeOutput}\n${errorOutput}`).not.toContain(
         proxy.privateBodyMarker
       );
