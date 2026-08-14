@@ -1744,6 +1744,21 @@ describe('eventHandlers', () => {
     });
 
     dispatch({
+      type: 'subagent.completion.queued',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        childSessionId: 'agent-background-child',
+        queued: 1,
+        delivery: 'next_turn',
+      },
+    });
+    expect(set).toHaveBeenLastCalledWith({
+      pendingSteeringCount: 1,
+      pendingInputDelivery: 'next_turn',
+    });
+
+    dispatch({
       type: 'follow_up.started',
       properties: { sessionId: 'session-1', projectPath: '/workspace/a', recovered: 2 },
     });

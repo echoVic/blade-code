@@ -652,15 +652,17 @@ export class Agent {
       const pendingMessagesForEvent = () =>
         this.sessionRuntime!.getPendingSteeringMessages().map((pending) => ({
           ...pending,
-          persisted: currentContext.messages.some((message) => {
-            const metadata = message.metadata;
-            return (
-              metadata !== null &&
-              typeof metadata === 'object' &&
-              !Array.isArray(metadata) &&
-              metadata.inboxMessageId === pending.id
-            );
-          }),
+          persisted:
+            pending.persisted === true ||
+            currentContext.messages.some((message) => {
+              const metadata = message.metadata;
+              return (
+                metadata !== null &&
+                typeof metadata === 'object' &&
+                !Array.isArray(metadata) &&
+                metadata.inboxMessageId === pending.id
+              );
+            }),
         }));
       const pendingOutputSchema = () => {
         const schemas = this.sessionRuntime!.getPendingSteeringMessages().flatMap(
@@ -682,10 +684,14 @@ export class Agent {
         messages: SteeringMessage[]
       ): Promise<SteeringMessage[]> =>
         Promise.all(
-          messages.map(async (pending) => ({
-            ...pending,
-            content: await this.processAtMentionsForContent(pending.content),
-          }))
+          messages.map(async (pending) =>
+            pending.origin === 'background_subagent'
+              ? pending
+              : {
+                  ...pending,
+                  content: await this.processAtMentionsForContent(pending.content),
+                }
+          )
         );
 
       try {
@@ -836,6 +842,16 @@ export class Agent {
             if (goal) {
               yield { kind: 'goal_updated', goal };
             }
+          }
+          if (
+            result.success &&
+            !currentContext.signal?.aborted &&
+            chainedFollowUps < 20
+          ) {
+            await this.sessionRuntime.waitForBackgroundSubagentFollowUp(
+              ownedHandle,
+              currentContext.signal
+            );
           }
           const continuePending =
             result.success && !currentContext.signal?.aborted && chainedFollowUps < 20;

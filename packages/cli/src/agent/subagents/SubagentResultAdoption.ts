@@ -146,6 +146,8 @@ export function buildSubagentResultAdoption(
   }
   const params = call.input as Record<string, unknown>;
   if (
+    session.background === true ||
+    params.run_in_background === true ||
     params.subagent_session_id !== session.id ||
     params.description !== session.description ||
     (typeof params.subagent_type === 'string' &&

@@ -27,6 +27,8 @@ import type { LoopResult } from '../../agent/types.js';
 import type { PermissionMode } from '../../config/types.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
+import { Bus } from '../../server/bus.js';
+import { sameSessionRef } from '../../server/sessionRef.js';
 import { SessionInteractionService } from '../../services/SessionInteractionService.js';
 import { renderUserShellCommandForDisplay } from '../../services/UserShellCommandService.js';
 import {
@@ -763,6 +765,24 @@ export const useCommandHandler = (
       }
     }
   });
+
+  useEffect(() => {
+    const unsubscribe = Bus.subscribe((event) => {
+      if (
+        event.type !== 'subagent.completion.queued' ||
+        !sameSessionRef(event, { sessionId, projectPath: workspaceRoot })
+      ) {
+        return;
+      }
+      pendingResumeRequestedRef.current = true;
+      queueMicrotask(() => {
+        void resumePendingInput();
+      });
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [resumePendingInput, sessionId, workspaceRoot]);
 
   useEffect(() => {
     let cancelled = false;

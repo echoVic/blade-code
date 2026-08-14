@@ -355,6 +355,17 @@ export class AcpSession {
       if (event.sessionId !== this.id || event.projectPath !== this.cwd) {
         return;
       }
+      if (event.type === 'subagent.completion.queued') {
+        this.sendUpdate({
+          sessionUpdate: 'session_info_update',
+          updatedAt: new Date().toISOString(),
+          _meta: {
+            'blade/backgroundSubagentCompletion': event.properties,
+          },
+        });
+        this.schedulePendingResume();
+        return;
+      }
       if (event.type === 'task.delivery') {
         if (
           !event.properties.taskDelivery ||

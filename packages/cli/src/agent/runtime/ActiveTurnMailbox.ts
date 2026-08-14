@@ -4,6 +4,8 @@ import {
   MAX_INLINE_ATTACHMENT_BYTES,
   MAX_USER_MESSAGE_TEXT_CHARS,
 } from '../../api/attachmentLimits.js';
+import type { BackgroundSubagentCompletion } from '../subagents/BackgroundSubagentCompletion.js';
+import type { MessagePersistenceMetadata } from '../../context/types.js';
 import type { JsonObject } from '../../store/types.js';
 import type { UserMessageContent } from '../types.js';
 import {
@@ -12,8 +14,10 @@ import {
 } from './DurableSteeringInbox.js';
 
 export const MAX_PENDING_STEERS = 20;
+export const MAX_PENDING_BACKGROUND_COMPLETIONS = 100;
 export const MAX_PENDING_STEER_CHARS =
   MAX_INLINE_ATTACHMENT_BYTES + MAX_USER_MESSAGE_TEXT_CHARS;
+const MAX_PENDING_BACKGROUND_COMPLETION_CHARS = 7 * 1024 * 1024;
 
 export type SteeringMessage = DurableSteeringMessage;
 
@@ -24,6 +28,7 @@ export interface SteeringEnqueueResult {
   queued: number;
   reason?: 'no_active_turn' | 'turn_sealed' | 'queue_full';
   delivery?: 'current_turn' | 'next_turn';
+  duplicate?: boolean;
 }
 
 export interface ActiveTurnHandle {
@@ -62,6 +67,10 @@ function getOutputSchemaSize(outputSchema: JsonObject | undefined): number {
   return outputSchema ? Buffer.byteLength(JSON.stringify(outputSchema)) : 0;
 }
 
+function getMetadataSize(metadata: MessagePersistenceMetadata | undefined): number {
+  return metadata ? Buffer.byteLength(JSON.stringify(metadata)) : 0;
+}
+
 export class ActiveTurnMailbox {
   private readonly transitionMutex = new Mutex();
   private activeTurn?: ActiveTurnState;
@@ -93,6 +102,8 @@ export class ActiveTurnMailbox {
       messageId?: string;
       persisted?: boolean;
       outputSchema?: JsonObject;
+      origin?: SteeringMessage['origin'];
+      metadata?: MessagePersistenceMetadata;
     } = {}
   ): Promise<SteeringEnqueueResult> {
     return this.transitionMutex.runExclusive(async () => {
@@ -109,6 +120,23 @@ export class ActiveTurnMailbox {
           ? ('current_turn' as const)
           : ('next_turn' as const);
       return this.enqueueDurably(content, delivery, options);
+    });
+  }
+
+  async enqueueBackgroundSubagentCompletion(
+    completion: BackgroundSubagentCompletion
+  ): Promise<SteeringEnqueueResult> {
+    return this.transitionMutex.runExclusive(async () => {
+      const delivery =
+        this.activeTurn && !this.activeTurn.sealed
+          ? ('current_turn' as const)
+          : ('next_turn' as const);
+      return this.enqueueDurably(completion.content, delivery, {
+        messageId: completion.inboxMessageId,
+        persisted: true,
+        origin: 'background_subagent',
+        metadata: completion.metadata,
+      });
     });
   }
 
@@ -263,31 +291,72 @@ export class ActiveTurnMailbox {
       messageId?: string;
       persisted?: boolean;
       outputSchema?: JsonObject;
+      origin?: SteeringMessage['origin'];
+      metadata?: MessagePersistenceMetadata;
     } = {}
   ): Promise<SteeringEnqueueResult> {
+    const existing = this.inbox
+      .list()
+      .find((candidate) => candidate.id === options.messageId);
+    if (existing) {
+      return {
+        accepted: true,
+        messageId: existing.id,
+        turnId: this.activeTurn?.id,
+        queued: this.inbox.count(),
+        delivery,
+        duplicate: true,
+      };
+    }
     const message = {
       id: options.messageId ?? nanoid(12),
       content,
       queuedAt: Date.now(),
       ...(options.persisted ? { persisted: true } : {}),
       ...(options.outputSchema ? { outputSchema: options.outputSchema } : {}),
+      ...(options.origin ? { origin: options.origin } : {}),
+      ...(options.metadata ? { metadata: options.metadata } : {}),
     };
     const accepted = await this.inbox.enqueue(message, (pending) => {
-      if (pending.length >= MAX_PENDING_STEERS) return false;
-      const pendingSize = pending.reduce(
+      const origin = options.origin ?? 'user';
+      const sameOrigin = pending.filter(
+        (candidate) => (candidate.origin ?? 'user') === origin
+      );
+      const maxCount =
+        origin === 'background_subagent'
+          ? MAX_PENDING_BACKGROUND_COMPLETIONS
+          : MAX_PENDING_STEERS;
+      if (sameOrigin.length >= maxCount) return false;
+      const budgeted =
+        origin === 'background_subagent'
+          ? pending
+          : pending.filter(
+              (candidate) => (candidate.origin ?? 'user') !== 'background_subagent'
+            );
+      const pendingSize = budgeted.reduce(
         (total, candidate) => total + getSteeringContentSize(candidate.content),
         0
       );
-      const pendingSchemaSize = pending.reduce(
+      const pendingSchemaSize = budgeted.reduce(
         (total, candidate) => total + getOutputSchemaSize(candidate.outputSchema),
         0
       );
+      const pendingMetadataSize = budgeted.reduce(
+        (total, candidate) => total + getMetadataSize(candidate.metadata),
+        0
+      );
+      const maxChars =
+        origin === 'background_subagent'
+          ? MAX_PENDING_BACKGROUND_COMPLETION_CHARS
+          : MAX_PENDING_STEER_CHARS;
       return (
         pendingSize +
           pendingSchemaSize +
+          pendingMetadataSize +
           getSteeringContentSize(content) +
-          getOutputSchemaSize(options.outputSchema) <=
-        MAX_PENDING_STEER_CHARS
+          getOutputSchemaSize(options.outputSchema) +
+          getMetadataSize(options.metadata) <=
+        maxChars
       );
     });
     if (!accepted) {

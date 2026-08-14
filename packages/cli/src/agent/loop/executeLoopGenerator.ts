@@ -1386,6 +1386,11 @@ validates the object and may return a bounded corrective error.`;
       messages: SteeringMessage[]
     ): Promise<{ messageIds: string[]; count: number; recovered: number }> => {
       for (const steering of messages) {
+        const steeringMetadata = {
+          ...steering.metadata,
+          inboxMessageId: steering.id,
+        } satisfies MessagePersistenceMetadata;
+        const stateMetadata = JSON.parse(JSON.stringify(steeringMetadata)) as JsonValue;
         const alreadyPersisted =
           steering.persisted === true ||
           state.getHistory().some((message) => {
@@ -1403,7 +1408,7 @@ validates the object and may return a bounded corrective error.`;
             context,
             steering.content,
             lastMessageUuid,
-            { inboxMessageId: steering.id }
+            steeringMetadata
           );
           if (!uuid) {
             throw new Error(
@@ -1414,7 +1419,7 @@ validates the object and may return a bounded corrective error.`;
           state.appendUser({
             role: 'user',
             content: steering.content,
-            metadata: { inboxMessageId: steering.id },
+            metadata: stateMetadata,
           });
         } else if (
           !state
@@ -1427,7 +1432,7 @@ validates the object and may return a bounded corrective error.`;
           state.appendUser({
             role: 'user',
             content: steering.content,
-            metadata: { inboxMessageId: steering.id },
+            metadata: stateMetadata,
           });
         }
 
@@ -1438,7 +1443,7 @@ validates the object and may return a bounded corrective error.`;
                 .filter((part) => part.type === 'text')
                 .map((part) => part.text)
                 .join('\n');
-        if (steeringText.trim()) {
+        if (steering.origin !== 'background_subagent' && steeringText.trim()) {
           activeUserRequest = [activeUserRequest, steeringText].join('\n');
           delegationUserRequests.push(steeringText);
           verificationPolicyRequest = [

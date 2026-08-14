@@ -71,6 +71,7 @@ function createGoalRuntimeMocks() {
     pauseActiveGoal: vi.fn().mockResolvedValue(null),
     loadModelContext: vi.fn().mockResolvedValue([]),
     takeStartupAdoptedToolResults: vi.fn(() => []),
+    waitForBackgroundSubagentFollowUp: vi.fn().mockResolvedValue(false),
   };
 }
 
@@ -185,6 +186,113 @@ describe('Agent runLoop system prompt injection', () => {
     expect(runtime.acknowledgeTurn).not.toHaveBeenCalled();
     expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(1, 'running');
     expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(2, 'completed', undefined);
+  });
+
+  it('waits for a background subagent completion and chains its durable follow-up', async () => {
+    const firstTurn = { id: 'background-parent-turn' };
+    const completionTurn = { id: 'background-completion-turn' };
+    const completionMessage = {
+      id: 'background-subagent-completion:agent-background-child',
+      content:
+        '<background-subagent-completion>{"result":"BACKGROUND_CHILD_MARKER"}</background-subagent-completion>',
+      queuedAt: 2,
+      recovered: false,
+      persisted: true,
+      origin: 'background_subagent' as const,
+      metadata: {
+        clientVisible: false,
+        backgroundSubagentCompletion: {
+          childSessionId: 'agent-background-child',
+        },
+      },
+    };
+    const runtime = {
+      ...createGoalRuntimeMocks(),
+      prepareInputTurn: vi.fn(async () => ({
+        accepted: true,
+        handle: firstTurn,
+        messageId: 'background-parent-input',
+        queued: 1,
+        mode: 'direct',
+      })),
+      drainSteering: vi.fn(async (handle: { id: string }) =>
+        handle.id === completionTurn.id ? [completionMessage] : []
+      ),
+      drainSteeringOrSeal: vi.fn(async () => ({
+        messages: [],
+        sealed: true,
+      })),
+      finishTurn: vi
+        .fn()
+        .mockResolvedValueOnce(completionTurn)
+        .mockResolvedValueOnce(undefined),
+      waitForBackgroundSubagentFollowUp: vi
+        .fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false),
+      getPendingSteeringCount: vi.fn(() => 1),
+      getRecoveredSteeringCount: vi.fn(() => 0),
+      getPendingSteeringMessages: vi.fn(() => [completionMessage]),
+    };
+    const agent = new Agent(
+      createConfig(),
+      {},
+      {
+        getRegistry: () => ({ getAll: () => [] }),
+      } as any,
+      runtime as any
+    );
+    (agent as any).isInitialized = true;
+    (agent as any).processAtMentionsForContent = vi.fn(
+      async (content: unknown) => content
+    );
+    (agent as any).runLoop = vi
+      .fn()
+      .mockImplementationOnce(async function* () {
+        if (Date.now() < 0) yield undefined;
+        return {
+          success: true,
+          finalMessage: 'Parent work is complete; waiting for the child.',
+          metadata: { turnsCount: 1, toolCallsCount: 1, duration: 10 },
+        };
+      })
+      .mockImplementationOnce(async function* (_message: string) {
+        if (Date.now() < 0) yield undefined;
+        return {
+          success: true,
+          finalMessage: 'Integrated BACKGROUND_CHILD_MARKER.',
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 5 },
+        };
+      });
+
+    const events = [];
+    const stream = agent.chatStream('Launch the background child.', {
+      messages: [],
+      userId: 'user-1',
+      sessionId: 'background-parent-session',
+      workspaceRoot: process.cwd(),
+    });
+    let step = await stream.next();
+    while (!step.done) {
+      events.push(step.value);
+      step = await stream.next();
+    }
+
+    expect(step.value).toMatchObject({
+      success: true,
+      finalMessage: 'Integrated BACKGROUND_CHILD_MARKER.',
+    });
+    expect(events).toEqual([
+      expect.objectContaining({
+        kind: 'follow_up_started',
+        messages: [expect.objectContaining({ id: completionMessage.id })],
+      }),
+    ]);
+    expect(runtime.waitForBackgroundSubagentFollowUp).toHaveBeenCalledTimes(2);
+    expect(
+      runtime.waitForBackgroundSubagentFollowUp.mock.invocationCallOrder[0]
+    ).toBeLessThan(runtime.finishTurn.mock.invocationCallOrder[0]!);
+    expect((agent as any).runLoop).toHaveBeenCalledTimes(2);
   });
 
   it('persists an approved Plan mode transition before notifying or executing', async () => {

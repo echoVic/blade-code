@@ -112,6 +112,9 @@ export interface AgentSession {
     modifiedFiles?: string[];
   };
 
+  /** 是否由 Task/直接 resume 作为后台运行启动；legacy sidecar 规范化为 false */
+  background?: boolean;
+
   /** 执行统计 */
   stats?: {
     tokens?: number;
@@ -174,6 +177,7 @@ export type PublicAgentSession = Pick<
   | 'subagentType'
   | 'description'
   | 'status'
+  | 'background'
   | 'rootAgentId'
   | 'resumedFrom'
   | 'resumeDepth'
@@ -191,6 +195,7 @@ export function toPublicAgentSession(session: AgentSession): PublicAgentSession 
     subagentType: session.subagentType,
     description: session.description,
     status: session.status,
+    background: session.background === true,
     rootAgentId: session.rootAgentId,
     resumedFrom: session.resumedFrom,
     resumeDepth: session.resumeDepth,
@@ -411,6 +416,7 @@ export class AgentSessionStore {
             recoveredAt: restartRecoveryValue.recoveredAt,
           }
         : undefined;
+    const background = value.background === true;
 
     return {
       ...(value as unknown as AgentSession),
@@ -421,6 +427,7 @@ export class AgentSessionStore {
       processId,
       processIdentity,
       restartRecovery,
+      background,
       workspaceRoot,
       parentProjectPath,
     };

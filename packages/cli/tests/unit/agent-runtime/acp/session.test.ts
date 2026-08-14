@@ -394,6 +394,50 @@ describe('AcpSession', () => {
       });
     });
 
+    it('应该在 durable background completion 入队后自动恢复 parent', async () => {
+      await session.initialize();
+      mockConnection.sessionUpdates = [];
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+
+      Bus.publish(
+        { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+        'subagent.completion.queued',
+        {
+          childSessionId: 'agent-background-child',
+          inboxMessageId: 'background-subagent-completion:agent-background-child',
+          status: 'completed',
+          type: 'Explore',
+          queued: 1,
+          delivery: 'next_turn',
+        }
+      );
+
+      await vi.waitFor(() => {
+        expect(getMockAgent().calls[0]).toMatchObject({
+          message: '',
+          options: { pendingInputOnly: true },
+        });
+      });
+      expect(mockConnection.sessionUpdates).toContainEqual({
+        sessionId: 'test-session-id',
+        update: {
+          sessionUpdate: 'session_info_update',
+          updatedAt: expect.any(String),
+          _meta: {
+            'blade/backgroundSubagentCompletion': expect.objectContaining({
+              childSessionId: 'agent-background-child',
+              queued: 1,
+            }),
+          },
+        },
+      });
+      expect(
+        mockConnection.sessionUpdates.some(
+          ({ update }) => update.sessionUpdate === 'user_message_chunk'
+        )
+      ).toBe(false);
+    });
+
     it('应该实时推送 task lifecycle metadata 并在 destroy 后取消订阅', async () => {
       await session.initialize();
       mockConnection.sessionUpdates = [];

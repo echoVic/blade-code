@@ -102,6 +102,8 @@ export interface ExecutionContext {
   updateOutput?: (output: string) => void; // 别名，与 onProgress 功能相同
   confirmationHandler?: ConfirmationHandler; // 用于处理需要用户确认的工具调用
   mcpSamplingHandler?: McpSamplingHandler;
+  notifyBackgroundSubagentCompleted?: (agentId: string) => Promise<void>;
+  registerBackgroundSubagent?: (agentId: string) => void;
 
   // 权限模式（用于 Plan 模式判断）
   permissionMode?: PermissionMode;

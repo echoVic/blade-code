@@ -27,6 +27,7 @@ describe('AgentSessionStore', () => {
     prompt: 'Inspect the implementation and report findings.',
     messages: [],
     status: 'running',
+    background: false,
     createdAt: 1_000,
     lastActiveAt: 1_000,
     parentSessionId: 'parent-session',
@@ -96,6 +97,7 @@ describe('AgentSessionStore', () => {
     expect(JSON.parse(readFileSync(filePath, 'utf8'))).toMatchObject({
       schemaVersion: 2,
       id: 'agent-save',
+      background: false,
       rootAgentId: 'agent-save',
       resumeDepth: 0,
     });
@@ -159,7 +161,26 @@ describe('AgentSessionStore', () => {
       id: 'agent-legacy',
       rootAgentId: 'agent-legacy',
       resumeDepth: 0,
+      background: false,
       parentProjectPath: '/workspace/a',
+    });
+  });
+
+  it('persists background execution identity for new Task children', () => {
+    store.saveSession(
+      makeSession('agent-background', {
+        background: true,
+      })
+    );
+    store.clearCache();
+
+    expect(store.loadSession('agent-background')).toMatchObject({
+      id: 'agent-background',
+      background: true,
+    });
+    expect(toPublicAgentSession(store.loadSession('agent-background')!)).toMatchObject({
+      id: 'agent-background',
+      background: true,
     });
   });
 

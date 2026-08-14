@@ -1641,6 +1641,67 @@ describe('SessionRoutes runtime reuse', () => {
     ]);
   });
 
+  it('wakes an idle Web parent when a background completion is durably queued', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
+    const recoveredMetadata = metadataFor(
+      'background-web-session',
+      '/background-workspace',
+      { permissionMode: 'yolo' }
+    );
+    vi.mocked(SessionService.listSessions).mockResolvedValue([recoveredMetadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId: string, projectPath?: string) =>
+        sessionId === 'background-web-session' &&
+        projectPath === '/background-workspace'
+          ? recoveredMetadata
+          : undefined
+    );
+    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(false);
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+
+    const controller = new AbortController();
+    const app = SessionRoutes();
+    const response = await app.request('/background-web-session/events', {
+      signal: controller.signal,
+    });
+    expect(response.status).toBe(200);
+    await Promise.resolve();
+    expect(agentState.chatStream).not.toHaveBeenCalled();
+
+    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    Bus.publish(
+      {
+        sessionId: 'background-web-session',
+        projectPath: '/background-workspace',
+      },
+      'subagent.completion.queued',
+      {
+        childSessionId: 'agent-background-web',
+        inboxMessageId: 'background-subagent-completion:agent-background-web',
+        status: 'completed',
+        queued: 1,
+        delivery: 'next_turn',
+      }
+    );
+
+    await vi.waitFor(() => {
+      expect(agentState.chatStream).toHaveBeenCalledWith(
+        '',
+        expect.objectContaining({
+          sessionId: 'background-web-session',
+          workspaceRoot: '/background-workspace',
+          permissionMode: PermissionMode.YOLO,
+        }),
+        expect.objectContaining({ pendingInputOnly: true })
+      );
+    });
+
+    controller.abort();
+    await response.body?.cancel().catch(() => undefined);
+  });
+
   it('does not start a Goal run after Runtime startup finalizes its durable handoff', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     const { SessionService } = await import(

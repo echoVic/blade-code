@@ -995,5 +995,42 @@ describe('createLoopEventHandler', () => {
 
       expect(deps.commandActions.setRecoveredSteeringCount).toHaveBeenCalledWith(1);
     });
+
+    it('不把 recovered background completion 渲染成用户消息', () => {
+      const addUserMessage = vi.fn();
+      const deps = createMockDeps({
+        sessionActions: {
+          ...createMockDeps().sessionActions,
+          addUserMessage,
+        } as never,
+      });
+      const handler = createLoopEventHandler(deps, createMockStats());
+
+      handler({
+        kind: 'follow_up_started',
+        queued: 1,
+        recovered: 1,
+        messages: [
+          {
+            id: 'background-subagent-completion:agent-child',
+            content:
+              '<background-subagent-completion>{"result":"hidden"}</background-subagent-completion>',
+            queuedAt: 1,
+            recovered: true,
+            persisted: true,
+            origin: 'background_subagent',
+            metadata: {
+              clientVisible: false,
+              backgroundSubagentCompletion: {
+                childSessionId: 'agent-child',
+              },
+            },
+          },
+        ],
+      });
+
+      expect(addUserMessage).not.toHaveBeenCalled();
+      expect(deps.commandActions.setRecoveredSteeringCount).toHaveBeenCalledWith(1);
+    });
   });
 });

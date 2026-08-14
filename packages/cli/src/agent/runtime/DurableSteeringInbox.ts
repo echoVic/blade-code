@@ -7,7 +7,7 @@ import {
   getSessionFilePath,
   getSessionInboxFilePath,
 } from '../../context/storage/pathUtils.js';
-import type { SessionEvent } from '../../context/types.js';
+import type { MessagePersistenceMetadata, SessionEvent } from '../../context/types.js';
 import { createStructuredOutputContract } from '../../services/StructuredOutputService.js';
 import type { JsonObject } from '../../store/types.js';
 import type { UserMessageContent } from '../types.js';
@@ -22,12 +22,26 @@ export interface DurableSteeringMessage {
   recovered: boolean;
   persisted?: boolean;
   outputSchema?: JsonObject;
+  origin?: 'user' | 'background_subagent';
+  metadata?: MessagePersistenceMetadata;
 }
 
 interface InboxRecord {
   version: typeof INBOX_VERSION;
   sessionId: string;
   messages: Array<Omit<DurableSteeringMessage, 'recovered'>>;
+}
+
+function serializeInboxRecord(
+  sessionId: string,
+  messages: readonly DurableSteeringMessage[]
+): string {
+  const record: InboxRecord = {
+    version: INBOX_VERSION,
+    sessionId,
+    messages: messages.map(({ recovered: _recovered, ...message }) => message),
+  };
+  return `${JSON.stringify(record)}\n`;
 }
 
 function isNodeError(error: unknown, code: string): boolean {
@@ -93,6 +107,13 @@ function parseInboxRecord(
       !('queuedAt' in message) ||
       typeof message.queuedAt !== 'number' ||
       ('persisted' in message && typeof message.persisted !== 'boolean') ||
+      ('origin' in message &&
+        message.origin !== 'user' &&
+        message.origin !== 'background_subagent') ||
+      ('metadata' in message &&
+        (message.metadata === null ||
+          typeof message.metadata !== 'object' ||
+          Array.isArray(message.metadata))) ||
       ('outputSchema' in message &&
         message.outputSchema !== undefined &&
         (!message.outputSchema ||
@@ -111,6 +132,16 @@ function parseInboxRecord(
       queuedAt: message.queuedAt,
       ...('persisted' in message && message.persisted === true
         ? { persisted: true }
+        : {}),
+      ...('origin' in message && message.origin
+        ? { origin: message.origin as 'user' | 'background_subagent' }
+        : {}),
+      ...('metadata' in message && message.metadata
+        ? {
+            metadata: JSON.parse(
+              JSON.stringify(message.metadata)
+            ) as MessagePersistenceMetadata,
+          }
         : {}),
       ...(outputSchema ? { outputSchema } : {}),
     };
@@ -159,7 +190,11 @@ export class DurableSteeringInbox {
         return false;
       }
       const next = [...this.messages, { ...message, recovered: false }];
-      await this.persist(next);
+      const serialized = serializeInboxRecord(this.sessionId, next);
+      if (Buffer.byteLength(serialized) > MAX_INBOX_FILE_BYTES) {
+        return false;
+      }
+      await this.persist(next, serialized);
       this.messages = next;
       return true;
     });
@@ -191,6 +226,13 @@ export class DurableSteeringInbox {
             outputSchema: JSON.parse(
               JSON.stringify(message.outputSchema)
             ) as JsonObject,
+          }
+        : {}),
+      ...(message.metadata
+        ? {
+            metadata: JSON.parse(
+              JSON.stringify(message.metadata)
+            ) as MessagePersistenceMetadata,
           }
         : {}),
     }));
@@ -248,7 +290,10 @@ export class DurableSteeringInbox {
     });
   }
 
-  private async persist(messages: DurableSteeringMessage[]): Promise<void> {
+  private async persist(
+    messages: DurableSteeringMessage[],
+    serializedRecord?: string
+  ): Promise<void> {
     await fs.mkdir(path.dirname(this.filePath), {
       recursive: true,
       mode: 0o700,
@@ -261,12 +306,14 @@ export class DurableSteeringInbox {
       return;
     }
 
-    const record: InboxRecord = {
-      version: INBOX_VERSION,
-      sessionId: this.sessionId,
-      messages: messages.map(({ recovered: _recovered, ...message }) => message),
-    };
-    await writeFileAtomic(this.filePath, `${JSON.stringify(record)}\n`, {
+    const serialized =
+      serializedRecord ?? serializeInboxRecord(this.sessionId, messages);
+    if (Buffer.byteLength(serialized) > MAX_INBOX_FILE_BYTES) {
+      throw new Error(
+        `Steering inbox exceeds ${MAX_INBOX_FILE_BYTES} bytes: ${this.filePath}`
+      );
+    }
+    await writeFileAtomic(this.filePath, serialized, {
       encoding: 'utf8',
       mode: 0o600,
       fsync: true,

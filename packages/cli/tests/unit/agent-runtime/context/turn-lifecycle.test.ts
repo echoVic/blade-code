@@ -358,6 +358,219 @@ describe('durable turn lifecycle', () => {
     expect(JSON.stringify(events)).not.toContain(PROCESS_RESTART_TOOL_RESULT);
   });
 
+  it('atomically persists one hidden background completion and terminal child reference', async () => {
+    const store = new PersistentStore(workspaceRoot);
+    await store.initialize();
+    const sessionId = 'session-background-completion';
+    const childSessionId = 'agent-background-completion';
+    const assistantMessageId = await store.saveMessage(sessionId, 'assistant', '');
+    const toolCallId = await store.saveToolUse(
+      sessionId,
+      'Task',
+      {
+        description: 'Inspect background marker',
+        prompt: 'Inspect the project and return the background marker.',
+        subagent_type: 'Explore',
+        subagent_session_id: childSessionId,
+        run_in_background: true,
+      },
+      assistantMessageId
+    );
+    await store.saveToolResult(
+      sessionId,
+      toolCallId,
+      'Task',
+      {
+        agent_id: childSessionId,
+        status: 'running',
+      },
+      assistantMessageId,
+      undefined,
+      undefined,
+      {
+        subagentSessionId: childSessionId,
+        subagentType: 'Explore',
+        subagentDescription: 'Inspect background marker',
+        subagentStatus: 'running',
+        subagentRootId: childSessionId,
+        subagentResumeDepth: 0,
+      },
+      {
+        background: true,
+        subagentSessionId: childSessionId,
+      }
+    );
+    const completion = {
+      inboxMessageId: 'background-subagent-completion:agent-background-completion',
+      childSessionId,
+      content:
+        '<background-subagent-completion>{"result":"BACKGROUND_CHILD_MARKER"}</background-subagent-completion>',
+      metadata: {
+        clientVisible: false,
+        backgroundSubagentCompletion: {
+          childSessionId,
+          subagentType: 'Explore',
+          description: 'Inspect background marker',
+          status: 'completed',
+          rootAgentId: childSessionId,
+          resumeDepth: 0,
+          resultTruncated: false,
+        },
+      },
+      subagentRef: {
+        subagentSessionId: childSessionId,
+        subagentType: 'Explore',
+        subagentDescription: 'Inspect background marker',
+        subagentStatus: 'completed' as const,
+        subagentSummary: 'BACKGROUND_CHILD_MARKER',
+        subagentRootId: childSessionId,
+        subagentResumeDepth: 0,
+      },
+    };
+
+    const first = await store.persistBackgroundSubagentCompletion(
+      sessionId,
+      completion
+    );
+    const second = await store.persistBackgroundSubagentCompletion(
+      sessionId,
+      completion
+    );
+
+    expect(first).toMatchObject({
+      eligible: true,
+      acknowledged: false,
+      persisted: true,
+      messageId: expect.any(String),
+    });
+    expect(second).toEqual({
+      ...first,
+      persisted: false,
+    });
+
+    let events = await new JSONLStore(
+      getSessionFilePath(workspaceRoot, sessionId)
+    ).readAll();
+    const completionMessages = events.filter(
+      (event) =>
+        event.type === 'message_created' &&
+        event.data.inboxMessageId === completion.inboxMessageId
+    );
+    const terminalRefs = events.filter(
+      (event) =>
+        event.type === 'part_created' &&
+        event.data.partType === 'subtask_ref' &&
+        event.data.payload !== null &&
+        typeof event.data.payload === 'object' &&
+        !Array.isArray(event.data.payload) &&
+        event.data.payload.childSessionId === childSessionId &&
+        event.data.payload.status === 'completed'
+    );
+    expect(completionMessages).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({
+          role: 'user',
+          metadata: expect.objectContaining({
+            clientVisible: false,
+            backgroundSubagentCompletion: expect.objectContaining({
+              childSessionId,
+            }),
+          }),
+        }),
+      }),
+    ]);
+    expect(terminalRefs).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({
+          messageId: assistantMessageId,
+          payload: expect.objectContaining({
+            childSessionId,
+            status: 'completed',
+            summary: 'BACKGROUND_CHILD_MARKER',
+          }),
+        }),
+      }),
+    ]);
+    expect(terminalRefs[0]!.seq).toBe(completionMessages[0]!.seq! + 2);
+    expect(
+      SessionService.toUISafeMessages(SessionService.convertJSONLToMessages(events))
+    ).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          content: expect.stringContaining('BACKGROUND_CHILD_MARKER'),
+        }),
+      ])
+    );
+    expect(JSON.stringify(SessionService.convertJSONLToModelContext(events))).toContain(
+      'BACKGROUND_CHILD_MARKER'
+    );
+
+    await store.acknowledgeInboxMessages(sessionId, [completion.inboxMessageId]);
+    await expect(
+      store.persistBackgroundSubagentCompletion(sessionId, completion)
+    ).resolves.toMatchObject({
+      eligible: true,
+      acknowledged: true,
+      persisted: false,
+      messageId: first.messageId,
+    });
+    events = await new JSONLStore(
+      getSessionFilePath(workspaceRoot, sessionId)
+    ).readAll();
+    expect(
+      events.filter(
+        (event) =>
+          event.type === 'message_created' &&
+          event.data.inboxMessageId === completion.inboxMessageId
+      )
+    ).toHaveLength(1);
+  });
+
+  it('rejects a completion without a matching committed background Task call', async () => {
+    const store = new PersistentStore(workspaceRoot);
+    await store.initialize();
+    const sessionId = 'session-foreground-completion';
+    const assistantMessageId = await store.saveMessage(sessionId, 'assistant', '');
+    await store.saveToolUse(
+      sessionId,
+      'Task',
+      {
+        description: 'Inspect foreground marker',
+        prompt: 'Inspect the project and return the foreground marker.',
+        subagent_type: 'Explore',
+        subagent_session_id: 'agent-foreground-completion',
+        run_in_background: false,
+      },
+      assistantMessageId
+    );
+
+    await expect(
+      store.persistBackgroundSubagentCompletion(sessionId, {
+        inboxMessageId: 'background-subagent-completion:agent-foreground-completion',
+        childSessionId: 'agent-foreground-completion',
+        content: 'must not be persisted',
+        metadata: {
+          clientVisible: false,
+          backgroundSubagentCompletion: {
+            childSessionId: 'agent-foreground-completion',
+          },
+        },
+        subagentRef: {
+          subagentSessionId: 'agent-foreground-completion',
+          subagentType: 'Explore',
+          subagentDescription: 'Inspect foreground marker',
+          subagentStatus: 'completed',
+          subagentRootId: 'agent-foreground-completion',
+          subagentResumeDepth: 0,
+        },
+      })
+    ).resolves.toEqual({
+      eligible: false,
+      acknowledged: false,
+      persisted: false,
+    });
+  });
+
   it('completes and acknowledges a final-ready turn after runtime restart', async () => {
     const store = new PersistentStore(workspaceRoot);
     await store.initialize();

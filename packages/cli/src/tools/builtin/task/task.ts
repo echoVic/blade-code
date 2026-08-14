@@ -139,7 +139,7 @@ Usage notes:
 - Always include a short description (3-5 words) summarizing what the agent will do
 - Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
 - When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
-- You can optionally run agents in the background using the run_in_background parameter. When an agent runs in the background, you will need to use TaskOutput to retrieve its results once it's done. You can continue to work while background agents run - When you need their results to continue you can use TaskOutput in blocking mode to pause and wait for their results.
+- You can optionally run agents in the background using the run_in_background parameter. Continue independent parent work after launch. Blade durably notifies you and resumes the parent when the child reaches a terminal state, so do not poll TaskOutput repeatedly. Use TaskOutput only for an explicit status check, an intentional blocking wait, or when the bounded completion notification says the full durable result is required.
 - Agents can be resumed using the \`resume_from\` parameter by passing the agent ID from a previous invocation. The source type, model, permissions, workspace, and full context are inherited. A resume creates a new auditable child run and returns its new agent ID.
 - Set \`isolation: "worktree"\` for coding tasks that must not modify the parent workspace. Clean successful worktrees are removed automatically; changed or failed worktrees are preserved and returned.
 - When the agent is done, it returns a single message and a \`resume_from_hint\`. Use that ID for follow-up work.
@@ -204,7 +204,7 @@ export function createTaskTool(
       run_in_background: Default(
         Type.Boolean({
           description:
-            'Set true to run in the background. Use TaskOutput to read output later.',
+            'Set true to run in the background. Blade will deliver a durable terminal notification; use TaskOutput only for explicit status or full-result reads.',
         }),
         false
       ),
@@ -354,9 +354,11 @@ export function createTaskTool(
         subagentSessionId,
         type: subagentConfig.name,
         description,
+        background: run_in_background,
         resumedFrom: source?.id,
         rootAgentId,
         resumeDepth,
+        notifyBackgroundSubagentCompleted: context.notifyBackgroundSubagentCompleted,
       });
 
       if (run_in_background) {
@@ -404,6 +406,7 @@ export function createTaskTool(
             '恢复 Agent 失败'
           );
         }
+        context.registerBackgroundSubagent?.(startedId);
         eventBridge.onStarted();
         return buildRunningTaskResult({
           sessionId: startedId,
@@ -452,7 +455,7 @@ export const taskTool = createTaskTool(subagentRegistry);
 interface SubagentEventBridge {
   onStarted: () => void;
   onEvent: (event: LoopEvent) => void;
-  onCompleted: (session: AgentSession) => void;
+  onCompleted: (session: AgentSession) => Promise<void>;
 }
 
 interface ForegroundTaskInput {
@@ -501,9 +504,11 @@ function createSubagentEventBridge(input: {
   subagentSessionId: string;
   type: string;
   description: string;
+  background: boolean;
   resumedFrom?: string;
   rootAgentId: string;
   resumeDepth: number;
+  notifyBackgroundSubagentCompleted?: (agentId: string) => Promise<void>;
 }): SubagentEventBridge {
   const progressId = nanoid(8);
   let completed = false;
@@ -594,9 +599,19 @@ function createSubagentEventBridge(input: {
           break;
       }
     },
-    onCompleted: (session) => {
+    onCompleted: async (session) => {
       if (completed) return;
       completed = true;
+      if (input.background) {
+        try {
+          await input.notifyBackgroundSubagentCompleted?.(session.id);
+        } catch (error) {
+          console.warn(
+            `[Task] Failed to enqueue background completion for ${session.id}:`,
+            error
+          );
+        }
+      }
       vanillaStore
         .getState()
         .app.actions.completeSubagentProgress(
@@ -665,6 +680,7 @@ async function executeForegroundTask(input: ForegroundTaskInput): Promise<ToolRe
       prompt,
       messages: [...(source?.messages ?? [])],
       status: 'running',
+      background: false,
       createdAt: now,
       lastActiveAt: now,
       processId: process.pid,
@@ -764,7 +780,7 @@ async function executeForegroundTask(input: ForegroundTaskInput): Promise<ToolRe
         duration: Date.now() - startTime,
       }
     );
-    if (completedSession) eventBridge.onCompleted(completedSession);
+    if (completedSession) await eventBridge.onCompleted(completedSession);
     return buildCompletedTaskResult({
       result,
       sessionId: subagentSessionId,
@@ -789,7 +805,7 @@ async function executeForegroundTask(input: ForegroundTaskInput): Promise<ToolRe
         message: '',
         error: err.message,
       });
-      if (failedSession) eventBridge.onCompleted(failedSession);
+      if (failedSession) await eventBridge.onCompleted(failedSession);
     }
     return {
       ...taskError(
@@ -828,7 +844,9 @@ function buildRunningTaskResult(input: {
       status: 'running',
       resumed_from: input.resumedFrom,
       resume_from_hint: input.sessionId,
-      message: `Agent ${input.resumedFrom ? 'resumed' : 'started'} in background. Use TaskOutput(task_id: "${input.sessionId}") to retrieve results.`,
+      message: `Agent ${input.resumedFrom ? 'resumed' : 'started'} in background. Blade will notify this parent when it reaches a terminal state.`,
+      notification:
+        'Blade will deliver a durable completion notification automatically. Continue independent parent work and do not poll repeatedly.',
     },
     metadata: {
       summary: `${input.resumedFrom ? '恢复' : '启动'}后台 Agent: ${input.sessionId}`,

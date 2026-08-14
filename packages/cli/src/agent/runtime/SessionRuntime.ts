@@ -154,7 +154,9 @@ import {
 import {
   type AgentSession,
   AgentSessionStore,
+  isAgentSessionOwnedBy,
 } from '../subagents/AgentSessionStore.js';
+import { buildBackgroundSubagentCompletion } from '../subagents/BackgroundSubagentCompletion.js';
 import {
   BackgroundAgentManager,
   type ResumeAgentResult,
@@ -366,6 +368,11 @@ export class SessionRuntime {
   private autoVerifyRuntime?: AutoVerifyRuntime;
   private lspManager?: LspSessionManager;
   private readonly userShellMutex = new Mutex();
+  private readonly backgroundSubagentCompletionMutex = new Mutex();
+  private readonly backgroundSubagentCompletionWaiters = new Set<() => void>();
+  private backgroundSubagentCompletionRevision = 0;
+  private backgroundTaskChildIds = new Set<string>();
+  private readonly backgroundTaskCompletionSettledIds = new Set<string>();
 
   constructor(
     private readonly config: BladeConfig,
@@ -1130,7 +1137,16 @@ export class SessionRuntime {
 
   async rewindSession(options: RewindSessionOptions): Promise<RewoundSession> {
     this.assertRewindIdle();
-    return SessionService.rewindSession(this.sessionId, this.workspaceRoot, options);
+    const result = await SessionService.rewindSession(
+      this.sessionId,
+      this.workspaceRoot,
+      options
+    );
+    this.backgroundTaskChildIds = await this.getExecutionEngine()
+      .getContextManager()
+      .persistentStore.loadBackgroundTaskChildIds(this.sessionId);
+    this.backgroundTaskCompletionSettledIds.clear();
+    return result;
   }
 
   listSubagents(): AgentSession[] {
@@ -1271,7 +1287,10 @@ export class SessionRuntime {
       modelResources: this.modelResources,
       lspResources: this.lspResources,
       onEvent: options.onEvent,
-      onCompleted: options.onCompleted,
+      onCompleted: async (session) => {
+        await this.notifyBackgroundSubagentCompleted(session.id);
+        await options.onCompleted?.(session);
+      },
     });
     if (!resumed) {
       throw new Error(`Subagent cannot be resumed: ${source.id}`);
@@ -1321,7 +1340,9 @@ export class SessionRuntime {
     content: UserMessageContent,
     options?: { allowBeforeTurn?: boolean; outputSchema?: JsonObject }
   ): Promise<SteeringEnqueueResult> {
-    return this.getActiveTurnMailbox().enqueue(content, options);
+    const result = await this.getActiveTurnMailbox().enqueue(content, options);
+    if (result.accepted) this.signalBackgroundSubagentCompletionWaiters();
+    return result;
   }
 
   async drainSteering(handle: ActiveTurnHandle): Promise<SteeringMessage[]> {
@@ -1445,6 +1466,176 @@ export class SessionRuntime {
 
   getRecoveredSteeringCount(): number {
     return this.activeTurnMailbox?.recoveredCount() ?? 0;
+  }
+
+  async notifyBackgroundSubagentCompleted(agentId: string): Promise<void> {
+    try {
+      await this.reconcileBackgroundSubagentCompletions(agentId);
+    } finally {
+      this.signalBackgroundSubagentCompletionWaiters();
+    }
+  }
+
+  registerBackgroundSubagent(agentId: string): void {
+    this.backgroundTaskChildIds.add(agentId);
+    this.backgroundTaskCompletionSettledIds.delete(agentId);
+  }
+
+  async waitForBackgroundSubagentFollowUp(
+    handle: ActiveTurnHandle,
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    while (!signal?.aborted) {
+      await this.reconcileBackgroundSubagentCompletions();
+      if (await this.hasUnclaimedPendingInput(handle)) return true;
+
+      const revision = this.backgroundSubagentCompletionRevision;
+      const childState = this.getBackgroundTaskChildrenState();
+      if (childState === 'none') return false;
+      if (childState === 'terminal_pending') continue;
+      await this.waitForBackgroundSubagentSignal(revision, signal);
+    }
+    return false;
+  }
+
+  private async hasUnclaimedPendingInput(handle: ActiveTurnHandle): Promise<boolean> {
+    const claimed = new Set(
+      await this.getActiveTurnMailbox().claimedMessageIds(handle)
+    );
+    return this.getActiveTurnMailbox()
+      .pendingMessages()
+      .some((message) => !claimed.has(message.id));
+  }
+
+  private signalBackgroundSubagentCompletionWaiters(): void {
+    this.backgroundSubagentCompletionRevision++;
+    for (const wake of this.backgroundSubagentCompletionWaiters) wake();
+    this.backgroundSubagentCompletionWaiters.clear();
+  }
+
+  private async waitForBackgroundSubagentSignal(
+    revision: number,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (signal?.aborted || revision !== this.backgroundSubagentCompletionRevision) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        this.backgroundSubagentCompletionWaiters.delete(finish);
+        signal?.removeEventListener('abort', finish);
+        resolve();
+      };
+      this.backgroundSubagentCompletionWaiters.add(finish);
+      signal?.addEventListener('abort', finish, { once: true });
+      if (signal?.aborted || revision !== this.backgroundSubagentCompletionRevision) {
+        finish();
+      }
+    });
+  }
+
+  private getBackgroundTaskChildrenState(): 'running' | 'terminal_pending' | 'none' {
+    if (this.backgroundTaskChildIds.size === 0) return 'none';
+    const owner = {
+      sessionId: this.sessionId,
+      projectPath: this.workspaceRoot,
+    };
+    const sessions = AgentSessionStore.getInstance()
+      .listSessions()
+      .filter(
+        (session) =>
+          isAgentSessionOwnedBy(session, owner) &&
+          this.backgroundTaskChildIds.has(session.id) &&
+          session.background === true
+      );
+    if (
+      sessions.some(
+        (session) =>
+          session.status !== 'running' &&
+          !this.backgroundTaskCompletionSettledIds.has(session.id)
+      )
+    ) {
+      return 'terminal_pending';
+    }
+    return sessions.some((session) => session.status === 'running')
+      ? 'running'
+      : 'none';
+  }
+
+  private async reconcileBackgroundSubagentCompletions(
+    onlyAgentId?: string
+  ): Promise<number> {
+    return this.backgroundSubagentCompletionMutex.runExclusive(async () => {
+      if (!this.activeTurnMailbox || !this.executionEngine) return 0;
+      const persistentStore =
+        this.getExecutionEngine().getContextManager().persistentStore;
+      if (this.backgroundTaskChildIds.size === 0) return 0;
+      const sessionStore = AgentSessionStore.getInstance();
+      const owner = {
+        sessionId: this.sessionId,
+        projectPath: this.workspaceRoot,
+      };
+      const sessions = onlyAgentId
+        ? [sessionStore.loadSession(onlyAgentId)].filter(
+            (session): session is AgentSession => Boolean(session)
+          )
+        : sessionStore
+            .listSessions()
+            .filter((session) => isAgentSessionOwnedBy(session, owner));
+      let enqueued = 0;
+      for (const session of sessions) {
+        if (
+          !this.backgroundTaskChildIds.has(session.id) ||
+          this.backgroundTaskCompletionSettledIds.has(session.id) ||
+          session.status === 'running'
+        ) {
+          continue;
+        }
+        const source = session.resumedFrom
+          ? sessionStore.loadSession(session.resumedFrom)
+          : undefined;
+        const completion = buildBackgroundSubagentCompletion(session, owner, source);
+        if (!completion) {
+          this.backgroundTaskCompletionSettledIds.add(session.id);
+          continue;
+        }
+        const receipt = await persistentStore.persistBackgroundSubagentCompletion(
+          this.sessionId,
+          completion
+        );
+        if (!receipt.eligible || receipt.acknowledged) {
+          this.backgroundTaskCompletionSettledIds.add(session.id);
+          continue;
+        }
+        const queued =
+          await this.activeTurnMailbox.enqueueBackgroundSubagentCompletion(completion);
+        if (!queued.accepted) {
+          logger.warn(
+            `[SessionRuntime ${this.sessionId}] Background subagent completion queue is full for ${session.id}`
+          );
+          continue;
+        }
+        this.backgroundTaskCompletionSettledIds.add(session.id);
+        if (queued.duplicate) continue;
+        enqueued++;
+        Bus.publish(
+          { sessionId: this.sessionId, projectPath: this.workspaceRoot },
+          'subagent.completion.queued',
+          {
+            childSessionId: session.id,
+            inboxMessageId: completion.inboxMessageId,
+            status: session.status,
+            type: session.subagentType,
+            queued: queued.queued,
+            delivery: queued.delivery,
+          }
+        );
+      }
+      return enqueued;
+    });
   }
 
   async reloadPendingInbox(): Promise<void> {
@@ -1677,6 +1868,10 @@ export class SessionRuntime {
         .persistentStore.initSession(this.sessionId, this.options.subagentInfo);
       const persistentStore =
         this.getExecutionEngine().getContextManager().persistentStore;
+      this.backgroundTaskChildIds = await persistentStore.loadBackgroundTaskChildIds(
+        this.sessionId
+      );
+      this.backgroundTaskCompletionSettledIds.clear();
       const interruptedToolCalls = await persistentStore.loadInterruptedToolCalls(
         this.sessionId
       );
@@ -1738,6 +1933,7 @@ export class SessionRuntime {
       if (this.startupTurnRecovery?.outcome === 'completed') {
         await this.reloadPendingInbox();
       }
+      await this.reconcileBackgroundSubagentCompletions();
       if (recovery) {
         logger.warn(
           `[SessionRuntime ${this.sessionId}] recovered ${recovery.outcome} turn ${recovery.turnId}`
@@ -1875,6 +2071,10 @@ export class SessionRuntime {
         environment: this.sessionEnvironment,
         permissionMode,
         mcpSamplingHandler: this.handleMcpSampling,
+        notifyBackgroundSubagentCompleted: (agentId) =>
+          this.notifyBackgroundSubagentCompleted(agentId),
+        registerBackgroundSubagent: (agentId) =>
+          this.registerBackgroundSubagent(agentId),
       },
       ...(this.lspManager ? { lspManager: this.lspManager } : {}),
       ...(permissionMode === PermissionMode.YOLO && this.autoVerifyRuntime
@@ -1918,11 +2118,14 @@ export class SessionRuntime {
     const sessionLease = this.sessionLease;
     const autoVerifyRuntime = this.autoVerifyRuntime;
     const lspManager = this.lspManager;
+    this.signalBackgroundSubagentCompletionWaiters();
     this.chatService = undefined;
     this.executionEngine = undefined;
     this.activeTurnMailbox = undefined;
     this.startupTurnRecovery = undefined;
     this.startupAdoptedToolResults = [];
+    this.backgroundTaskChildIds.clear();
+    this.backgroundTaskCompletionSettledIds.clear();
     this.currentModelMaxContextTokens = undefined;
     this.baseRegistry = new ToolRegistry();
     this.sessionMcpRegistry = undefined;

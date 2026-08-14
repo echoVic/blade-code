@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { nanoid } from 'nanoid';
+import type { BackgroundSubagentCompletion } from '../../agent/subagents/BackgroundSubagentCompletion.js';
 import type { SubagentInfoForContext } from '../../agent/types.js';
 import type { ContentPart } from '../../services/ChatServiceInterface.js';
 import { materializeSessionEvents } from '../../services/sessionRewind.js';
@@ -74,6 +75,13 @@ export interface SessionAdoptedToolResult {
 
 export interface SessionTurnRecoveryOptions {
   adoptedToolResults?: ReadonlyMap<string, SessionAdoptedToolResult>;
+}
+
+export interface PersistBackgroundSubagentCompletionResult {
+  eligible: boolean;
+  acknowledged: boolean;
+  persisted: boolean;
+  messageId?: string;
 }
 
 type DurableToolCall = SessionInterruptedToolCall;
@@ -476,6 +484,192 @@ export class PersistentStore {
     );
   }
 
+  async persistBackgroundSubagentCompletion(
+    sessionId: string,
+    completion: BackgroundSubagentCompletion
+  ): Promise<PersistBackgroundSubagentCompletionResult> {
+    if (
+      completion.inboxMessageId !==
+      `background-subagent-completion:${completion.childSessionId}`
+    ) {
+      return {
+        eligible: false,
+        acknowledged: false,
+        persisted: false,
+      };
+    }
+    await this.ensureSessionCreated(sessionId);
+    let result: PersistBackgroundSubagentCompletionResult = {
+      eligible: false,
+      acknowledged: false,
+      persisted: false,
+    };
+    await this.log(sessionId).commitValidatedBatch((events) => {
+      const projected = materializeSessionEvents(events);
+      const acknowledged = projected.some(
+        (event) =>
+          event.type === 'inbox_acknowledged' &&
+          event.data.messageIds.includes(completion.inboxMessageId)
+      );
+      const existingMessage = projected.find(
+        (event): event is Extract<SessionEvent, { type: 'message_created' }> =>
+          event.type === 'message_created' &&
+          event.data.inboxMessageId === completion.inboxMessageId
+      );
+      const taskCall = projected.findLast(
+        (event): event is Extract<SessionEvent, { type: 'part_created' }> => {
+          if (
+            event.type !== 'part_created' ||
+            event.data.partType !== 'tool_call' ||
+            !event.data.payload ||
+            typeof event.data.payload !== 'object' ||
+            Array.isArray(event.data.payload)
+          ) {
+            return false;
+          }
+          const payload = event.data.payload as Record<string, unknown>;
+          if (
+            payload.toolName !== 'Task' ||
+            !payload.input ||
+            typeof payload.input !== 'object' ||
+            Array.isArray(payload.input)
+          ) {
+            return false;
+          }
+          const input = payload.input as Record<string, unknown>;
+          const resumeFrom = input.resume_from ?? input.resume;
+          return (
+            input.run_in_background === true &&
+            input.subagent_session_id === completion.childSessionId &&
+            input.description === completion.subagentRef.subagentDescription &&
+            (input.subagent_type === undefined ||
+              input.subagent_type === completion.subagentRef.subagentType) &&
+            (input.resume_from === undefined ||
+              input.resume === undefined ||
+              input.resume_from === input.resume) &&
+            (resumeFrom === undefined
+              ? completion.subagentRef.subagentResumedFrom === undefined
+              : resumeFrom === completion.subagentRef.subagentResumedFrom)
+          );
+        }
+      );
+      if (!taskCall) {
+        result = {
+          eligible: false,
+          acknowledged,
+          persisted: false,
+          ...(existingMessage ? { messageId: existingMessage.data.messageId } : {}),
+        };
+        return [];
+      }
+
+      if (acknowledged) {
+        result = {
+          eligible: true,
+          acknowledged: true,
+          persisted: false,
+          ...(existingMessage ? { messageId: existingMessage.data.messageId } : {}),
+        };
+        return [];
+      }
+
+      const terminalRef = projected.find(
+        (event): event is Extract<SessionEvent, { type: 'part_created' }> =>
+          event.type === 'part_created' &&
+          event.data.partType === 'subtask_ref' &&
+          event.data.payload !== null &&
+          typeof event.data.payload === 'object' &&
+          !Array.isArray(event.data.payload) &&
+          event.data.payload.childSessionId === completion.childSessionId &&
+          event.data.payload.status === completion.subagentRef.subagentStatus
+      );
+      if (existingMessage && terminalRef) {
+        result = {
+          eligible: true,
+          acknowledged: false,
+          persisted: false,
+          messageId: existingMessage.data.messageId,
+        };
+        return [];
+      }
+
+      const now = new Date().toISOString();
+      const messageId = existingMessage?.data.messageId ?? nanoid();
+      const entries: SessionEvent[] = [];
+      if (!existingMessage) {
+        const messageInfo: MessageInfo = {
+          messageId,
+          role: 'user',
+          inboxMessageId: completion.inboxMessageId,
+          createdAt: now,
+          metadata: JSON.parse(JSON.stringify(completion.metadata)) as JsonValue,
+        };
+        entries.push(this.createEvent('message_created', sessionId, messageInfo));
+        entries.push(
+          this.createEvent('part_created', sessionId, {
+            partId: nanoid(),
+            messageId,
+            partType: 'text',
+            payload: { text: completion.content },
+            createdAt: now,
+          })
+        );
+      }
+      if (!terminalRef) {
+        const runningRef = projected.findLast(
+          (event): event is Extract<SessionEvent, { type: 'part_created' }> =>
+            event.type === 'part_created' &&
+            event.data.partType === 'subtask_ref' &&
+            event.data.messageId === taskCall.data.messageId &&
+            event.data.payload !== null &&
+            typeof event.data.payload === 'object' &&
+            !Array.isArray(event.data.payload) &&
+            event.data.payload.childSessionId === completion.childSessionId
+        );
+        const runningPayload =
+          runningRef?.data.payload &&
+          typeof runningRef.data.payload === 'object' &&
+          !Array.isArray(runningRef.data.payload)
+            ? runningRef.data.payload
+            : undefined;
+        entries.push(
+          this.createEvent('part_created', sessionId, {
+            partId: nanoid(),
+            messageId: taskCall.data.messageId,
+            partType: 'subtask_ref',
+            payload: {
+              childSessionId: completion.subagentRef.subagentSessionId,
+              agentType: completion.subagentRef.subagentType,
+              description: completion.subagentRef.subagentDescription ?? '',
+              status: completion.subagentRef.subagentStatus,
+              summary: completion.subagentRef.subagentSummary ?? '',
+              resumedFrom: completion.subagentRef.subagentResumedFrom ?? null,
+              rootAgentId:
+                completion.subagentRef.subagentRootId ??
+                completion.subagentRef.subagentSessionId,
+              resumeDepth: completion.subagentRef.subagentResumeDepth ?? 0,
+              verificationVerdict: completion.subagentRef.verificationVerdict ?? null,
+              startedAt:
+                typeof runningPayload?.startedAt === 'string'
+                  ? runningPayload.startedAt
+                  : now,
+              finishedAt: now,
+            },
+            createdAt: now,
+          })
+        );
+      }
+      result = {
+        eligible: true,
+        acknowledged: false,
+        persisted: entries.length > 0,
+        messageId,
+      };
+      return entries;
+    });
+    return result;
+  }
+
   async saveTurnStart(sessionId: string, turn: SessionTurnStartInfo): Promise<void> {
     await this.ensureSessionCreated(sessionId);
     try {
@@ -572,6 +766,37 @@ export class PersistentStore {
           input: structuredClone(call.input),
         }))
       : [];
+  }
+
+  async loadBackgroundTaskChildIds(sessionId: string): Promise<Set<string>> {
+    const events = await this.loadEvents(sessionId);
+    if (!events) return new Set();
+    const childIds = materializeSessionEvents(events).flatMap((event) => {
+      if (
+        event.type !== 'part_created' ||
+        event.data.partType !== 'tool_call' ||
+        !event.data.payload ||
+        typeof event.data.payload !== 'object' ||
+        Array.isArray(event.data.payload)
+      ) {
+        return [];
+      }
+      const payload = event.data.payload as Record<string, unknown>;
+      if (
+        payload.toolName !== 'Task' ||
+        !payload.input ||
+        typeof payload.input !== 'object' ||
+        Array.isArray(payload.input)
+      ) {
+        return [];
+      }
+      const input = payload.input as Record<string, unknown>;
+      return input.run_in_background === true &&
+        typeof input.subagent_session_id === 'string'
+        ? [input.subagent_session_id]
+        : [];
+    });
+    return new Set(childIds);
   }
 
   async recoverInterruptedTurn(

@@ -385,6 +385,7 @@ export interface MessagePersistenceMetadata {
   ruleReferences?: JsonValue;
   triggerPaths?: string[];
   userShellCommand?: JsonValue;
+  backgroundSubagentCompletion?: JsonValue;
   codeReview?: JsonValue;
   structuredOutput?: JsonValue;
   structuredOutputSchemaDigest?: string;

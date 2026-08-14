@@ -3021,6 +3021,16 @@ export const createSessionRouteController = (): SessionRouteController => {
           if (deliveredInteractionIds.has(requestId)) return;
           deliveredInteractionIds.add(requestId);
         }
+        if (event.type === 'subagent.completion.queued') {
+          void getMessageSubmissionLock(ref)
+            .runExclusive(() => resumePendingSession(session))
+            .catch((error) => {
+              logger.error(
+                `[SessionRoutes] Failed to wake background completion for ${session.id}:`,
+                error
+              );
+            });
+        }
         stream
           .writeSSE({
             // Only committed events carry a seq; stamping the SSE id lets the

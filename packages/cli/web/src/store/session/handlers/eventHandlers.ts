@@ -1922,6 +1922,14 @@ const handleFollowUpQueued: EventHandler = (props, get, set) => {
   });
 };
 
+const handleBackgroundSubagentCompletionQueued: EventHandler = (props, get, set) => {
+  if (props.delivery === 'current_turn') {
+    handleSteeringQueued(props, get, set);
+  } else {
+    handleFollowUpQueued(props, get, set);
+  }
+};
+
 const handleSteeringApplied: EventHandler = (props, get, set) => {
   if (props.sessionId !== get().currentSessionId) return;
   const queued = typeof props.queued === 'number' ? Math.max(0, props.queued) : 0;
@@ -2115,6 +2123,7 @@ const eventHandlers: Record<string, EventHandler> = {
   'subagent.mcp.task.changed': handleSubagentMcpTaskChanged,
   'subagent.project.rules.loaded': handleSubagentProjectRulesLoaded,
   'subagent.complete': handleSubagentComplete,
+  'subagent.completion.queued': handleBackgroundSubagentCompletionQueued,
   'permission.asked': handlePermissionAsked,
   'permission.timeout': handlePermissionTimeout,
   'turn.started': handleTurnStarted,

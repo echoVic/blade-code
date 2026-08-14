@@ -275,6 +275,12 @@ describe('BackgroundAgentManager', () => {
           appendSystemPrompt: 'You are an explorer',
         })
       );
+      expect(AgentSessionStore.getInstance().saveSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'agent-session_test-uuid-1234',
+          background: true,
+        })
+      );
     });
 
     it('inherits the parent Session agent resource snapshot', async () => {

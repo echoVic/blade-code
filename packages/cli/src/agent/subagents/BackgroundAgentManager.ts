@@ -502,6 +502,7 @@ export class BackgroundAgentManager {
       prompt,
       messages: existingMessages || [],
       status: 'running',
+      background: true,
       createdAt: Date.now(),
       lastActiveAt: Date.now(),
       processId: process.pid,

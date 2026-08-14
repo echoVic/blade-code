@@ -417,6 +417,7 @@ export const SubagentSessionSchema = Runtime(
     subagentType: Type.String(),
     description: Type.String(),
     status: SubagentStatusSchema,
+    background: Type.Boolean(),
     rootAgentId: Type.String(),
     resumedFrom: Type.Optional(Type.String()),
     resumeDepth: Type.Integer({ minimum: 0 }),

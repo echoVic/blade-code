@@ -170,6 +170,11 @@ describe('completed subagent result adoption', () => {
       session: completedSession({ status: 'cancelled', result: undefined }),
     },
     {
+      name: 'background child',
+      call: taskCall({ run_in_background: true }),
+      session: completedSession({ background: true }),
+    },
+    {
       name: 'oversized result',
       call: taskCall(),
       session: completedSession({

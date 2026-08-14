@@ -5,8 +5,11 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ActiveTurnMailbox,
+  MAX_PENDING_BACKGROUND_COMPLETIONS,
   MAX_PENDING_STEER_CHARS,
 } from '../../../../src/agent/runtime/ActiveTurnMailbox.js';
+import { DurableSteeringInbox } from '../../../../src/agent/runtime/DurableSteeringInbox.js';
+import type { BackgroundSubagentCompletion } from '../../../../src/agent/subagents/BackgroundSubagentCompletion.js';
 import { PersistentStore } from '../../../../src/context/storage/PersistentStore.js';
 import { getSessionInboxFilePath } from '../../../../src/context/storage/pathUtils.js';
 
@@ -197,6 +200,100 @@ describe('ActiveTurnMailbox', () => {
     expect(results.filter((result) => result.accepted)).toHaveLength(20);
     expect(results.filter((result) => !result.accepted)).toHaveLength(5);
     expect(mailbox.pendingCount()).toBe(20);
+  });
+
+  it('keeps durable background completions idempotent and separate from user capacity', async () => {
+    const mailbox = await createMailbox('background-completion-capacity');
+    const completion = (index: number): BackgroundSubagentCompletion => ({
+      inboxMessageId: `background-subagent-completion:agent-${index}`,
+      childSessionId: `agent-${index}`,
+      content: `background-result-${index}`,
+      metadata: {
+        clientVisible: false,
+        backgroundSubagentCompletion: {
+          childSessionId: `agent-${index}`,
+        },
+      },
+      subagentRef: {
+        subagentSessionId: `agent-${index}`,
+        subagentType: 'Explore',
+        subagentStatus: 'completed',
+      },
+    });
+
+    for (let index = 0; index < MAX_PENDING_BACKGROUND_COMPLETIONS; index++) {
+      await expect(
+        mailbox.enqueueBackgroundSubagentCompletion(completion(index))
+      ).resolves.toMatchObject({
+        accepted: true,
+        delivery: 'next_turn',
+      });
+    }
+    await expect(
+      mailbox.enqueueBackgroundSubagentCompletion(completion(0))
+    ).resolves.toMatchObject({
+      accepted: true,
+      queued: MAX_PENDING_BACKGROUND_COMPLETIONS,
+      duplicate: true,
+    });
+    await expect(
+      mailbox.enqueueBackgroundSubagentCompletion(
+        completion(MAX_PENDING_BACKGROUND_COMPLETIONS)
+      )
+    ).resolves.toMatchObject({
+      accepted: false,
+      reason: 'queue_full',
+      queued: MAX_PENDING_BACKGROUND_COMPLETIONS,
+    });
+
+    const turn = mailbox.beginTurn();
+    for (let index = 0; index < 20; index++) {
+      expect((await mailbox.enqueue(`user-${index}`)).accepted).toBe(true);
+    }
+    await expect(mailbox.enqueue('user-overflow')).resolves.toMatchObject({
+      accepted: false,
+      reason: 'queue_full',
+      queued: MAX_PENDING_BACKGROUND_COMPLETIONS + 20,
+    });
+    await mailbox.finishTurn(turn);
+
+    const recovered = await createMailbox('background-completion-capacity');
+    expect(recovered.pendingMessages()[0]).toMatchObject({
+      id: 'background-subagent-completion:agent-0',
+      origin: 'background_subagent',
+      persisted: true,
+      metadata: {
+        clientVisible: false,
+        backgroundSubagentCompletion: {
+          childSessionId: 'agent-0',
+        },
+      },
+    });
+  });
+
+  it('rejects a hard-limit overflow without throwing or mutating the inbox', async () => {
+    const inbox = await DurableSteeringInbox.open(
+      workspaceRoot,
+      'hard-limit-capacity'
+    );
+    await expect(
+      inbox.enqueue({
+        id: 'large-existing-message',
+        content: 'x'.repeat(7 * 1024 * 1024),
+        queuedAt: 1,
+      })
+    ).resolves.toBe(true);
+
+    await expect(
+      inbox.enqueue({
+        id: 'overflow-message',
+        content: 'y'.repeat(2 * 1024 * 1024),
+        queuedAt: 2,
+      })
+    ).resolves.toBe(false);
+    expect(inbox.list()).toEqual([
+      expect.objectContaining({ id: 'large-existing-message' }),
+    ]);
   });
 
   it('recovers accepted but unacknowledged guidance after restart', async () => {
