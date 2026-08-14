@@ -49,7 +49,6 @@ import { ToolErrorType } from '../../tools/types/index.js';
 import { isAbortError } from '../../utils/abort.js';
 import { getAbortReason } from '../../utils/abortReason.js';
 import { getCwd } from '../../utils/cwd.js';
-import { createSessionId } from '../../utils/sessionId.js';
 import { isReadOnlyAuditSubagent } from '../../utils/shell/readOnlyAudit.js';
 import type { ProjectRuleReference } from '../resources/WorkspaceProjectRules.js';
 import type { SteeringMessage } from '../runtime/ActiveTurnMailbox.js';
@@ -90,6 +89,7 @@ import {
   saveToolUse,
   saveUserMessage,
 } from './conversationPersistence.js';
+import { ensureDurableToolIdentity } from './durableToolIdentity.js';
 import {
   createStaleLoopDetector,
   createToolFailureTracker,
@@ -509,7 +509,9 @@ async function* processStreamResponse(
                   | 'execute'
                   | undefined;
                 // 先启动工具执行，再 yield 事件通知消费者
-                if (executor.addTool(toolCall, params) === 'prelaunched') {
+                const dispatch = executor.addTool(toolCall, params);
+                entry.arguments = toolCall.function.arguments;
+                if (dispatch === 'prelaunched') {
                   yield { kind: 'tool_start', toolCall, toolKind };
                 }
               } catch {
@@ -2027,6 +2029,14 @@ validates the object and may return a bounded corrective error.`;
           throw llmError; // Re-throw if not recoverable
         }
 
+        for (const toolCall of turnResult.toolCalls ?? []) {
+          if (toolCall.type !== 'function') continue;
+          const params = parseToolArguments(toolCall.function.arguments);
+          if (params === null) continue;
+          ensureDurableToolIdentity(toolCall.function.name, params);
+          toolCall.function.arguments = JSON.stringify(params);
+        }
+
         // A successful Provider boundary starts a fresh one-shot recovery scope.
         reactiveCompaction.reset();
 
@@ -3102,13 +3112,7 @@ validates the object and may return a bounded corrective error.`;
                   toolUseUuid: null,
                 };
               }
-              if (
-                toolCall.function.name === 'Task' &&
-                (typeof params.subagent_session_id !== 'string' ||
-                  params.subagent_session_id.length === 0)
-              ) {
-                params.subagent_session_id = createSessionId('agent');
-              }
+              ensureDurableToolIdentity(toolCall.function.name, params);
               try {
                 toolUseUuid = await saveToolUse(
                   deps,

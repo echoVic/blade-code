@@ -285,7 +285,10 @@ describe('StreamingToolExecutor', () => {
 
       expect(executeWithPolicy).toHaveBeenCalledWith(
         'Task',
-        { subagent_type: 'channel-specialist' },
+        expect.objectContaining({
+          subagent_type: 'channel-specialist',
+          subagent_session_id: expect.any(String),
+        }),
         expect.objectContaining({ signal: expect.any(AbortSignal) })
       );
       expect(pipeline.execute).not.toHaveBeenCalled();
@@ -498,6 +501,56 @@ describe('StreamingToolExecutor', () => {
   // ContextManager integration (saveToolUse)
   // ----------------------------------------------------------------
   describe('contextManager integration', () => {
+    it('uses one generated Task child ID for persistence, execution, and history', async () => {
+      const mockContextMgr = {
+        saveToolUse: vi.fn().mockResolvedValue('uuid-task'),
+      };
+      executor = new StreamingToolExecutor(
+        pipeline as unknown as ToolExecutor,
+        execContext,
+        registry as unknown as ToolRegistry,
+        mockContextMgr as any,
+        'session-task',
+        'assistant-task'
+      );
+      const toolCall = makeToolCall(
+        'task-call',
+        'Task',
+        JSON.stringify({
+          subagent_type: 'Explore',
+          run_in_background: true,
+        })
+      );
+      const params = {
+        subagent_type: 'Explore',
+        run_in_background: true,
+      } as Record<string, unknown>;
+
+      executor.addTool(toolCall, params);
+      await collectAsync(executor.getRemainingResults());
+
+      expect(params.subagent_session_id).toEqual(expect.any(String));
+      expect(JSON.parse(toolCall.function.arguments)).toMatchObject({
+        subagent_session_id: params.subagent_session_id,
+      });
+      expect(mockContextMgr.saveToolUse).toHaveBeenCalledWith(
+        'session-task',
+        'Task',
+        expect.objectContaining({
+          subagent_session_id: params.subagent_session_id,
+        }),
+        'assistant-task',
+        undefined
+      );
+      expect(pipeline.execute).toHaveBeenCalledWith(
+        'Task',
+        expect.objectContaining({
+          subagent_session_id: params.subagent_session_id,
+        }),
+        expect.objectContaining({ messageId: 'uuid-task' })
+      );
+    });
+
     it('saves tool use when contextMgr and sessionId are provided', async () => {
       const mockContextMgr = {
         saveToolUse: vi.fn().mockResolvedValue('uuid-123'),

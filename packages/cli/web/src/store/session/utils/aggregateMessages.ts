@@ -76,6 +76,15 @@ function getTextContent(content: RawMessage['content']): string {
     .join('\n');
 }
 
+function applyPersistedSubtaskRefs(message: Message): Message {
+  if (!message.agentContent) return message;
+  let agentContent = message.agentContent;
+  for (const subagent of parseSubtaskRefs(message.id, message.metadata)) {
+    agentContent = upsertSubagent(agentContent, subagent);
+  }
+  return { ...message, agentContent };
+}
+
 export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
   const result: Message[] = [];
   let currentAssistant: Message | null = null;
@@ -84,7 +93,7 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
     if (raw.role === 'system') continue;
     if (raw.role === 'user') {
       if (currentAssistant) {
-        result.push(currentAssistant);
+        result.push(applyPersistedSubtaskRefs(currentAssistant));
         currentAssistant = null;
       }
       result.push({
@@ -96,7 +105,7 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
       });
     } else if (raw.role === 'assistant') {
       if (currentAssistant) {
-        result.push(currentAssistant);
+        result.push(applyPersistedSubtaskRefs(currentAssistant));
       }
       const metadata = raw.metadata as Record<string, unknown> | undefined;
       let agentContent = createEmptyAgentContent();
@@ -109,8 +118,6 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
         agentContent = appendTimelineText(agentContent, textContent);
         agentContent.textBefore = textContent;
       }
-
-      const persistedSubagents = parseSubtaskRefs(raw.id, metadata);
 
       if (raw.tool_calls && Array.isArray(raw.tool_calls)) {
         for (const tc of raw.tool_calls) {
@@ -172,10 +179,6 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
           agentContent = appendTimelineToolCall(agentContent, toolCall);
         }
       }
-      for (const subagent of persistedSubagents) {
-        agentContent = upsertSubagent(agentContent, subagent);
-      }
-
       currentAssistant = {
         id: raw.id,
         role: 'assistant',
@@ -309,7 +312,7 @@ export function aggregateMessages(rawMessages: RawMessage[]): Message[] {
   }
 
   if (currentAssistant) {
-    result.push(currentAssistant);
+    result.push(applyPersistedSubtaskRefs(currentAssistant));
   }
 
   return result;

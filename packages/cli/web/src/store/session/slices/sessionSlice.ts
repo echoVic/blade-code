@@ -58,6 +58,7 @@ const resetStreamingState = () => ({
   pendingSteeringCount: 0,
   pendingInputDelivery: null,
   recoveredSteeringCount: 0,
+  pendingSubagentCompletions: {},
   currentAssistantMessageId: null,
   hasToolCalls: false,
 });
@@ -364,6 +365,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           pendingSteeringCount: 0,
           pendingInputDelivery: null,
           recoveredSteeringCount: 0,
+          pendingSubagentCompletions: {},
           currentAssistantMessageId: null,
           hasToolCalls: false,
           error:
@@ -602,6 +604,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           pendingSteeringCount: 0,
           pendingInputDelivery: null,
           recoveredSteeringCount: 0,
+          pendingSubagentCompletions: {},
           currentAssistantMessageId: null,
           hasToolCalls: false,
           sessions: state.sessions.map((session) =>
@@ -929,6 +932,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           pendingSteeringCount: 0,
           pendingInputDelivery: null,
           recoveredSteeringCount: 0,
+          pendingSubagentCompletions: {},
           currentAssistantMessageId: null,
           hasToolCalls: false,
         });

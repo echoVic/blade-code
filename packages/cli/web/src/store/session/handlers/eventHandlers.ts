@@ -45,6 +45,8 @@ type EventHandler = (
   set: SetState
 ) => void;
 
+const MAX_PENDING_SUBAGENT_COMPLETIONS = 100;
+
 const findSubagentTarget = (
   messages: Message[],
   subagentId: string | undefined,
@@ -77,6 +79,55 @@ const findSubagentTarget = (
   }
   return undefined;
 };
+
+function cachePendingSubagentCompletion(
+  childSessionId: string,
+  properties: Record<string, unknown>,
+  set: SetState
+): void {
+  set((state) => {
+    const pending = { ...(state.pendingSubagentCompletions ?? {}) };
+    if (
+      pending[childSessionId] === undefined &&
+      Object.keys(pending).length >= MAX_PENDING_SUBAGENT_COMPLETIONS
+    ) {
+      const oldest = Object.keys(pending)[0];
+      if (oldest) delete pending[oldest];
+    }
+    pending[childSessionId] = { ...properties };
+    return { pendingSubagentCompletions: pending };
+  });
+}
+
+function applyPendingSubagentCompletion(
+  childSessionId: string | undefined,
+  get: GetState,
+  set: SetState
+): void {
+  if (!childSessionId) return;
+  const pending = get().pendingSubagentCompletions?.[childSessionId];
+  if (!pending) return;
+  const target = findSubagentTarget(
+    get().messages,
+    childSessionId,
+    get().currentAssistantMessageId
+  );
+  if (!target) return;
+  handleSubagentComplete(
+    {
+      ...pending,
+      subagentSessionId: childSessionId,
+      success: pending.status === 'completed',
+    },
+    get,
+    set
+  );
+  set((state) => {
+    const next = { ...(state.pendingSubagentCompletions ?? {}) };
+    delete next[childSessionId];
+    return { pendingSubagentCompletions: next };
+  });
+}
 
 const ensureAssistantMessage = (
   get: GetState,
@@ -339,6 +390,7 @@ const handleToolStart: EventHandler = (props, get, set) => {
       output: '',
       thinking: '',
     });
+    applyPendingSubagentCompletion(subagentSessionId, get, set);
     return;
   }
 
@@ -484,19 +536,24 @@ const handleToolResult: EventHandler = (props, get, set) => {
       : undefined;
 
   if (matchingSubagent) {
+    const incomingStatus = subagentStatus
+      ? normalizeSubagentStatus(subagentStatus)
+      : props.success
+        ? 'completed'
+        : 'failed';
+    const preserveTerminal =
+      matchingSubagent.status !== 'running' && incomingStatus === 'running';
     updateSubagent(targetMessageId, matchingSubagent.id, {
       sessionId: matchingSubagent.sessionId || subagentSessionId,
       type: subagentType || matchingSubagent.type,
-      status: subagentStatus
-        ? normalizeSubagentStatus(subagentStatus)
-        : props.success
-          ? 'completed'
-          : 'failed',
+      status: preserveTerminal ? matchingSubagent.status : incomingStatus,
       resumedFrom: subagentResumedFrom || matchingSubagent.resumedFrom,
       rootAgentId: subagentRootId || matchingSubagent.rootAgentId,
       resumeDepth: subagentResumeDepth ?? matchingSubagent.resumeDepth,
       verificationVerdict: verificationVerdict ?? matchingSubagent.verificationVerdict,
-      output: subagentSummary || matchingSubagent.output,
+      output: preserveTerminal
+        ? matchingSubagent.output
+        : subagentSummary || matchingSubagent.output,
     });
   }
 
@@ -560,6 +617,7 @@ const handleToolResult: EventHandler = (props, get, set) => {
       }),
     }));
   }
+  applyPendingSubagentCompletion(subagentSessionId, get, set);
 };
 
 const handleMcpCatalogChanged: EventHandler = (props, get, set) => {
@@ -1017,7 +1075,7 @@ const handleTaskUpdate: EventHandler = (props, get) => {
   setTasks(currentAssistantMessageId, tasks);
 };
 
-const handleSubagentStart: EventHandler = (props, get) => {
+const handleSubagentStart: EventHandler = (props, get, set) => {
   const { currentSessionId, setSubagent, currentAssistantMessageId } = get();
   if (props.sessionId !== currentSessionId) return;
   if (!currentAssistantMessageId) return;
@@ -1040,6 +1098,7 @@ const handleSubagentStart: EventHandler = (props, get) => {
     resumeDepth: typeof props.resumeDepth === 'number' ? props.resumeDepth : undefined,
   };
   setSubagent(currentAssistantMessageId, subagent);
+  applyPendingSubagentCompletion(subagent.sessionId, get, set);
 };
 
 const handleSubagentUpdate: EventHandler = (props, get) => {
@@ -1112,10 +1171,37 @@ const handleSubagentComplete: EventHandler = (props, get) => {
     currentAssistantMessageId
   );
   if (!target) return;
+  const status =
+    props.status === 'completed'
+      ? 'completed'
+      : props.status === 'failed' || props.status === 'cancelled'
+        ? 'failed'
+        : props.success
+          ? 'completed'
+          : 'failed';
   updateSubagent(target.messageId, target.subagent.id, {
     sessionId: target.subagent.sessionId || subagentSessionId,
-    status: props.success ? 'completed' : 'failed',
+    type: typeof props.type === 'string' ? props.type : target.subagent.type,
+    description:
+      typeof props.description === 'string'
+        ? props.description
+        : target.subagent.description,
+    status,
     currentTool: undefined,
+    output:
+      typeof props.summary === 'string' ? props.summary : target.subagent.output,
+    resumedFrom:
+      typeof props.resumedFrom === 'string'
+        ? props.resumedFrom
+        : target.subagent.resumedFrom,
+    rootAgentId:
+      typeof props.rootAgentId === 'string'
+        ? props.rootAgentId
+        : target.subagent.rootAgentId,
+    resumeDepth:
+      typeof props.resumeDepth === 'number'
+        ? props.resumeDepth
+        : target.subagent.resumeDepth,
     verificationVerdict:
       props.verificationVerdict === 'pass' ||
       props.verificationVerdict === 'fail' ||
@@ -1923,6 +2009,20 @@ const handleFollowUpQueued: EventHandler = (props, get, set) => {
 };
 
 const handleBackgroundSubagentCompletionQueued: EventHandler = (props, get, set) => {
+  if (typeof props.childSessionId === 'string') {
+    const completion = {
+      ...props,
+      subagentSessionId: props.childSessionId,
+      success: props.status === 'completed',
+    };
+    const target = findSubagentTarget(
+      get().messages,
+      props.childSessionId,
+      get().currentAssistantMessageId
+    );
+    if (target) handleSubagentComplete(completion, get, set);
+    else cachePendingSubagentCompletion(props.childSessionId, completion, set);
+  }
   if (props.delivery === 'current_turn') {
     handleSteeringQueued(props, get, set);
   } else {

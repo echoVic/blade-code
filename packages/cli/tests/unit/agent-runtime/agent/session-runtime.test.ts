@@ -1495,9 +1495,13 @@ describe('SessionRuntime', () => {
     await first.dispose();
 
     const busEvents: string[] = [];
+    const completionEvents: Array<Record<string, unknown>> = [];
     const unsubscribe = Bus.subscribe((event) => {
       if (event.sessionId === sessionId && event.projectPath === workspaceRoot) {
         busEvents.push(event.type);
+        if (event.type === 'subagent.completion.queued') {
+          completionEvents.push(event.properties);
+        }
       }
     });
     const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
@@ -1518,6 +1522,17 @@ describe('SessionRuntime', () => {
       }),
     ]);
     expect(busEvents).toContain('subagent.completion.queued');
+    expect(completionEvents).toEqual([
+      expect.objectContaining({
+        childSessionId,
+        status: 'completed',
+        type: 'Explore',
+        description: 'Inspect background marker',
+        summary: 'BACKGROUND_RUNTIME_CHILD_MARKER',
+        rootAgentId: childSessionId,
+        resumeDepth: 0,
+      }),
+    ]);
     const pendingTurn = await recovered.beginPendingTurn();
     if (!pendingTurn) throw new Error('Expected background completion turn');
     const [completion] = await recovered.drainSteering(pendingTurn);

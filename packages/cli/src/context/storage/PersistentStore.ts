@@ -1159,54 +1159,99 @@ export class PersistentStore {
       await this.ensureSessionCreated(sessionId, subagentInfo);
       const now = new Date().toISOString();
       const messageId = parentUuid ?? nanoid();
-      const entries: SessionEvent[] = [];
-      if (!parentUuid) {
-        const messageInfo: MessageInfo = {
+      await this.log(sessionId).commitValidatedBatch((events) => {
+        const terminalRef =
+          subagentRef?.subagentStatus === 'running'
+            ? materializeSessionEvents(events).findLast(
+                (
+                  event
+                ): event is Extract<SessionEvent, { type: 'part_created' }> =>
+                  event.type === 'part_created' &&
+                  event.data.partType === 'subtask_ref' &&
+                  event.data.payload !== null &&
+                  typeof event.data.payload === 'object' &&
+                  !Array.isArray(event.data.payload) &&
+                  event.data.payload.childSessionId ===
+                    subagentRef.subagentSessionId &&
+                  (event.data.payload.status === 'completed' ||
+                    event.data.payload.status === 'failed' ||
+                    event.data.payload.status === 'cancelled')
+              )
+            : undefined;
+        const terminalPayload = terminalRef?.data.payload as
+          | Record<string, JsonValue>
+          | undefined;
+        const metadataBase =
+          toolMetadata &&
+          typeof toolMetadata === 'object' &&
+          !Array.isArray(toolMetadata)
+            ? toolMetadata
+            : {};
+        const effectiveToolMetadata = terminalPayload
+          ? {
+              ...metadataBase,
+              subagentSessionId: terminalPayload.childSessionId,
+              subagentType: terminalPayload.agentType,
+              description: terminalPayload.description,
+              subagentStatus: terminalPayload.status,
+              subagentSummary: terminalPayload.summary,
+              subagentResumedFrom: terminalPayload.resumedFrom,
+              subagentRootId: terminalPayload.rootAgentId,
+              subagentResumeDepth: terminalPayload.resumeDepth,
+              verificationVerdict: terminalPayload.verificationVerdict,
+            }
+          : toolMetadata;
+        const entries: SessionEvent[] = [];
+        if (!parentUuid) {
+          const messageInfo: MessageInfo = {
+            messageId,
+            role: 'assistant',
+            parentMessageId: undefined,
+            createdAt: now,
+          };
+          entries.push(this.createEvent('message_created', sessionId, messageInfo));
+        }
+        const toolResultPart: PartInfo = {
+          partId: toolId,
           messageId,
-          role: 'assistant',
-          parentMessageId: undefined,
-          createdAt: now,
-        };
-        entries.push(this.createEvent('message_created', sessionId, messageInfo));
-      }
-      const toolResultPart: PartInfo = {
-        partId: toolId,
-        messageId,
-        partType: 'tool_result',
-        payload: {
-          toolCallId: toolId,
-          toolName,
-          output: toolOutput,
-          error: error ?? null,
-          ...(toolMetadata === undefined ? {} : { metadata: toolMetadata }),
-        },
-        createdAt: now,
-      };
-      entries.push(this.createEvent('part_created', sessionId, toolResultPart));
-      if (subagentRef) {
-        const finishedAt = subagentRef.subagentStatus === 'running' ? null : now;
-        const subtaskPart: PartInfo = {
-          partId: nanoid(),
-          messageId,
-          partType: 'subtask_ref',
+          partType: 'tool_result',
           payload: {
-            childSessionId: subagentRef.subagentSessionId,
-            agentType: subagentRef.subagentType,
-            description: subagentRef.subagentDescription ?? '',
-            status: subagentRef.subagentStatus,
-            summary: subagentRef.subagentSummary ?? '',
-            resumedFrom: subagentRef.subagentResumedFrom ?? null,
-            rootAgentId: subagentRef.subagentRootId ?? subagentRef.subagentSessionId,
-            resumeDepth: subagentRef.subagentResumeDepth ?? 0,
-            verificationVerdict: subagentRef.verificationVerdict ?? null,
-            startedAt: now,
-            finishedAt,
+            toolCallId: toolId,
+            toolName,
+            output: toolOutput,
+            error: error ?? null,
+            ...(effectiveToolMetadata === undefined
+              ? {}
+              : { metadata: effectiveToolMetadata }),
           },
           createdAt: now,
         };
-        entries.push(this.createEvent('part_created', sessionId, subtaskPart));
-      }
-      await this.log(sessionId).commitBatch(entries);
+        entries.push(this.createEvent('part_created', sessionId, toolResultPart));
+        if (subagentRef && !terminalRef) {
+          const finishedAt = subagentRef.subagentStatus === 'running' ? null : now;
+          const subtaskPart: PartInfo = {
+            partId: nanoid(),
+            messageId,
+            partType: 'subtask_ref',
+            payload: {
+              childSessionId: subagentRef.subagentSessionId,
+              agentType: subagentRef.subagentType,
+              description: subagentRef.subagentDescription ?? '',
+              status: subagentRef.subagentStatus,
+              summary: subagentRef.subagentSummary ?? '',
+              resumedFrom: subagentRef.subagentResumedFrom ?? null,
+              rootAgentId: subagentRef.subagentRootId ?? subagentRef.subagentSessionId,
+              resumeDepth: subagentRef.subagentResumeDepth ?? 0,
+              verificationVerdict: subagentRef.verificationVerdict ?? null,
+              startedAt: now,
+              finishedAt,
+            },
+            createdAt: now,
+          };
+          entries.push(this.createEvent('part_created', sessionId, subtaskPart));
+        }
+        return entries;
+      });
       return toolId;
     } catch (error) {
       console.error(

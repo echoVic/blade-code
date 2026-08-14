@@ -526,6 +526,134 @@ describe('durable turn lifecycle', () => {
     ).toHaveLength(1);
   });
 
+  it('does not let a late background Task running result downgrade its terminal ref', async () => {
+    const store = new PersistentStore(workspaceRoot);
+    await store.initialize();
+    const sessionId = 'session-background-terminal-before-result';
+    const childSessionId = 'agent-background-terminal-before-result';
+    const assistantMessageId = await store.saveMessage(sessionId, 'assistant', '');
+    const toolCallId = await store.saveToolUse(
+      sessionId,
+      'Task',
+      {
+        description: 'Read terminal marker',
+        prompt: 'Read and return the terminal marker.',
+        subagent_type: 'Explore',
+        subagent_session_id: childSessionId,
+        run_in_background: true,
+      },
+      assistantMessageId
+    );
+    const completion = {
+      inboxMessageId: `background-subagent-completion:${childSessionId}`,
+      childSessionId,
+      content:
+        '<background-subagent-completion>{"result":"TERMINAL_BEFORE_RUNNING_RESULT"}</background-subagent-completion>',
+      metadata: {
+        clientVisible: false,
+        backgroundSubagentCompletion: {
+          childSessionId,
+          status: 'completed',
+          result: 'TERMINAL_BEFORE_RUNNING_RESULT',
+        },
+      },
+      subagentRef: {
+        subagentSessionId: childSessionId,
+        subagentType: 'Explore',
+        subagentDescription: 'Read terminal marker',
+        subagentStatus: 'completed' as const,
+        subagentSummary: 'TERMINAL_BEFORE_RUNNING_RESULT',
+        subagentRootId: childSessionId,
+        subagentResumeDepth: 0,
+      },
+    };
+    await expect(
+      store.persistBackgroundSubagentCompletion(sessionId, completion)
+    ).resolves.toMatchObject({ eligible: true, persisted: true });
+
+    await store.saveToolResult(
+      sessionId,
+      toolCallId,
+      'Task',
+      {
+        agent_id: childSessionId,
+        status: 'running',
+      },
+      assistantMessageId,
+      undefined,
+      undefined,
+      {
+        subagentSessionId: childSessionId,
+        subagentType: 'Explore',
+        subagentDescription: 'Read terminal marker',
+        subagentStatus: 'running',
+        subagentRootId: childSessionId,
+        subagentResumeDepth: 0,
+      },
+      {
+        background: true,
+        subagentSessionId: childSessionId,
+        subagentType: 'Explore',
+        subagentStatus: 'running',
+        subagentRootId: childSessionId,
+        subagentResumeDepth: 0,
+      }
+    );
+
+    const events = await new JSONLStore(
+      getSessionFilePath(workspaceRoot, sessionId)
+    ).readAll();
+    expect(
+      events.filter(
+        (event) =>
+          event.type === 'part_created' &&
+          event.data.partType === 'subtask_ref' &&
+          event.data.payload !== null &&
+          typeof event.data.payload === 'object' &&
+          !Array.isArray(event.data.payload) &&
+          event.data.payload.childSessionId === childSessionId &&
+          event.data.payload.status === 'completed'
+      )
+    ).toHaveLength(1);
+    expect(
+      events.findLast(
+        (event) =>
+          event.type === 'part_created' &&
+          event.data.partType === 'tool_result' &&
+          event.data.partId === toolCallId
+      )
+    ).toMatchObject({
+      data: {
+        payload: {
+          metadata: {
+            background: true,
+            subagentSessionId: childSessionId,
+            subagentStatus: 'completed',
+            subagentSummary: 'TERMINAL_BEFORE_RUNNING_RESULT',
+          },
+        },
+      },
+    });
+    expect(
+      SessionService.convertJSONLToMessages(events).find(
+        (message) =>
+          message.role === 'assistant' &&
+          message.metadata !== null &&
+          typeof message.metadata === 'object' &&
+          !Array.isArray(message.metadata) &&
+          'subtaskRef' in message.metadata
+      )
+    ).toMatchObject({
+      metadata: {
+        subtaskRef: {
+          childSessionId,
+          status: 'completed',
+          summary: 'TERMINAL_BEFORE_RUNNING_RESULT',
+        },
+      },
+    });
+  });
+
   it('rejects a completion without a matching committed background Task call', async () => {
     const store = new PersistentStore(workspaceRoot);
     await store.initialize();

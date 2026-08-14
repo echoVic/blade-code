@@ -245,6 +245,30 @@ describe('aggregateMessages', () => {
     expect(message?.agentContent?.subagent?.status).toBe('running');
   });
 
+  test('projects a cancelled durable subtask ref as terminal failure', () => {
+    const [message] = aggregateMessages([
+      {
+        id: 'assistant-cancelled',
+        role: 'assistant',
+        content: '',
+        metadata: {
+          subtaskRef: {
+            childSessionId: 'agent-cancelled',
+            agentType: 'Explore',
+            status: 'cancelled',
+            summary: 'Background subagent was cancelled.',
+          },
+        },
+      },
+    ] as never);
+
+    expect(message?.agentContent?.subagent).toMatchObject({
+      sessionId: 'agent-cancelled',
+      status: 'failed',
+      output: 'Background subagent was cancelled.',
+    });
+  });
+
   test('keeps fallback subagent ids stable across repeated aggregation', () => {
     const rawMessages = [
       {
@@ -385,6 +409,67 @@ describe('aggregateMessages', () => {
       id: 'verify-call',
       sessionId: 'agent-verifier',
       verificationVerdict: 'pass',
+    });
+  });
+
+  test('lets a terminal subtask ref override a late running Task result', () => {
+    const [message] = aggregateMessages([
+      {
+        id: 'assistant-background',
+        role: 'assistant',
+        content: '',
+        metadata: {
+          subtaskRef: {
+            childSessionId: 'agent-background',
+            agentType: 'Explore',
+            description: 'Inspect background state',
+            status: 'completed',
+            summary: 'BACKGROUND_TERMINAL_MARKER',
+            rootAgentId: 'agent-background',
+            resumeDepth: 0,
+          },
+        },
+        tool_calls: [
+          {
+            id: 'task-background',
+            function: {
+              name: 'Task',
+              arguments: JSON.stringify({
+                subagent_type: 'Explore',
+                description: 'Inspect background state',
+                subagent_session_id: 'agent-background',
+                run_in_background: true,
+              }),
+            },
+          },
+        ],
+      },
+      {
+        id: 'result-background',
+        role: 'tool',
+        content: 'Background agent started',
+        tool_call_id: 'task-background',
+        name: 'Task',
+        metadata: {
+          metadata: {
+            background: true,
+            subagentSessionId: 'agent-background',
+            subagentType: 'Explore',
+            subagentStatus: 'running',
+            subagentSummary: 'Background agent started',
+          },
+        },
+      },
+    ] as never);
+
+    expect(message?.agentContent?.subagents).toHaveLength(1);
+    expect(message?.agentContent?.subagent).toMatchObject({
+      id: 'task-background',
+      sessionId: 'agent-background',
+      status: 'completed',
+      output: 'BACKGROUND_TERMINAL_MARKER',
+      rootAgentId: 'agent-background',
+      resumeDepth: 0,
     });
   });
 

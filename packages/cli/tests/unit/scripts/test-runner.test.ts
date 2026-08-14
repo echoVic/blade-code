@@ -72,6 +72,9 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
       'tests/integration/real-api/subagent-result-adoption-trajectory.test.ts'
     );
     expect(testTypes.realApiQualification.files).toContain(
+      'tests/integration/real-api/background-subagent-completion-trajectory.test.ts'
+    );
+    expect(testTypes.realApiQualification.files).toContain(
       'tests/integration/real-api/foreground-bounded-output-trajectory.test.ts'
     );
     expect(testTypes.realApiQualification.files).not.toContain(

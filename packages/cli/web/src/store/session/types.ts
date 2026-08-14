@@ -327,6 +327,7 @@ export interface StreamingSlice {
   pendingSteeringCount: number;
   pendingInputDelivery: 'current_turn' | 'next_turn' | null;
   recoveredSteeringCount: number;
+  pendingSubagentCompletions?: Record<string, Record<string, unknown>>;
   eventUnsubscribe: (() => void) | null;
   currentAssistantMessageId: string | null;
   hasToolCalls: boolean;

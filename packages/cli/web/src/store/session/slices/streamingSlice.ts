@@ -19,6 +19,7 @@ export const createStreamingSlice: SliceCreator<StreamingSlice> = (set, get) => 
     pendingSteeringCount: 0,
     pendingInputDelivery: null,
     recoveredSteeringCount: 0,
+    pendingSubagentCompletions: {},
     eventUnsubscribe: null,
     currentAssistantMessageId: null,
     hasToolCalls: false,

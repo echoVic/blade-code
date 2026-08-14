@@ -27,6 +27,7 @@ import type { ToolResult } from '../../tools/types/index.js';
 import { ToolErrorType } from '../../tools/types/index.js';
 import { combineAbortSignals } from '../../utils/abort.js';
 import { DURABLE_TOOL_USE_FAILURE_MESSAGE } from './conversationPersistence.js';
+import { ensureDurableToolIdentity } from './durableToolIdentity.js';
 import type { ToolExecResult } from './types.js';
 
 export type ToolExecutionPolicy = (
@@ -136,6 +137,8 @@ export class StreamingToolExecutor {
       return 'rejected';
     }
     this.dispatched.add(toolCall.id);
+    ensureDurableToolIdentity(toolCall.function.name, params);
+    toolCall.function.arguments = JSON.stringify(params);
 
     this.order.push(toolCall.id);
     const admissionRejection = this.admitTool?.(toolCall.function.name, params);

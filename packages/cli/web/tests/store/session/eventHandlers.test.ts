@@ -1722,7 +1722,15 @@ describe('eventHandlers', () => {
 
   test('tracks queued and applied steering depth from SSE events', () => {
     const state = createState();
-    const set = vi.fn();
+    const set = vi.fn(
+      (
+        update:
+          | Partial<SessionStoreState>
+          | ((current: SessionStoreState) => Partial<SessionStoreState>)
+      ) => {
+        Object.assign(state, typeof update === 'function' ? update(state) : update);
+      }
+    );
     const dispatch = createEventDispatcher(() => state, set);
 
     dispatch({
@@ -1749,13 +1757,62 @@ describe('eventHandlers', () => {
         sessionId: 'session-1',
         projectPath: '/workspace/a',
         childSessionId: 'agent-background-child',
+        status: 'completed',
+        type: 'Explore',
+        description: 'Inspect in background',
+        summary: 'BACKGROUND_CHILD_MARKER',
+        rootAgentId: 'agent-background-child',
+        resumeDepth: 0,
         queued: 1,
         delivery: 'next_turn',
       },
     });
+    expect(state.pendingSubagentCompletions).toHaveProperty(
+      'agent-background-child'
+    );
     expect(set).toHaveBeenLastCalledWith({
       pendingSteeringCount: 1,
       pendingInputDelivery: 'next_turn',
+    });
+    dispatch({
+      type: 'subagent.start',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        subagentSessionId: 'agent-background-child',
+        type: 'Explore',
+        description: 'Inspect in background',
+      },
+    });
+    expect(state.messages[0]?.agentContent?.subagent).toMatchObject({
+      sessionId: 'agent-background-child',
+      status: 'completed',
+      output: 'BACKGROUND_CHILD_MARKER',
+      rootAgentId: 'agent-background-child',
+      resumeDepth: 0,
+    });
+    expect(state.pendingSubagentCompletions).toEqual({});
+    dispatch({
+      type: 'tool.result',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        messageId: 'assistant-1',
+        toolCallId: 'agent-background-child',
+        toolName: 'Task',
+        success: true,
+        metadata: {
+          subagentSessionId: 'agent-background-child',
+          subagentType: 'Explore',
+          subagentStatus: 'running',
+          subagentSummary: 'background task started',
+        },
+      },
+    });
+    expect(state.messages[0]?.agentContent?.subagent).toMatchObject({
+      sessionId: 'agent-background-child',
+      status: 'completed',
+      output: 'BACKGROUND_CHILD_MARKER',
     });
 
     dispatch({
@@ -1776,7 +1833,7 @@ describe('eventHandlers', () => {
     expect(set).toHaveBeenLastCalledWith({
       pendingSteeringCount: 0,
       pendingInputDelivery: null,
-      recoveredSteeringCount: 0,
+      recoveredSteeringCount: 2,
     });
 
     dispatch({

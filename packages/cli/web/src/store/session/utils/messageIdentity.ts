@@ -41,7 +41,7 @@ export function normalizeSubagentStatus(
 ): 'running' | 'completed' | 'failed' {
   return status === 'completed'
     ? 'completed'
-    : status === 'failed'
+    : status === 'failed' || status === 'cancelled'
       ? 'failed'
       : 'running';
 }

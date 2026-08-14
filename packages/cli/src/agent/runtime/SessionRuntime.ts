@@ -1629,6 +1629,12 @@ export class SessionRuntime {
             inboxMessageId: completion.inboxMessageId,
             status: session.status,
             type: session.subagentType,
+            description: session.description,
+            summary: completion.subagentRef.subagentSummary,
+            resumedFrom: session.resumedFrom,
+            rootAgentId: session.rootAgentId,
+            resumeDepth: session.resumeDepth,
+            verificationVerdict: session.result?.verificationVerdict,
             queued: queued.queued,
             delivery: queued.delivery,
           }
