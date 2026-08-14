@@ -115,6 +115,21 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   并在下一次 Provider 请求前进入 canonical JSONL context。TUI、Web、Headless 与 ACP
   不从 sidecar 单独拼装结果；Web live card 和 fresh load 都使用 durable child Session
   identity、terminal status 与有界 summary。
+- `Task(run_in_background=true)` 使用独立 completion push 协议。child terminal sidecar
+  先 fsync；Runtime 只接受 exact parent Session + canonical workspace、`background=true`、
+  committed Task child ID、type/description/resume lineage 和结构有效的有界终态。随后
+  parent JSONL 原子提交 client-hidden user receipt、32,000 字符 result/8,000 字符 error
+  与 terminal `subtask_ref`，再写 deterministic
+  `background-subagent-completion:<child-id>` inbox item。parent ACK 是 exactly-once
+  权威，crash 可分别从 receipt 或 inbox 边界恢复。
+- active parent 在 Provider end-turn 后若仍有 background Task，会等待 completion signal
+  而不轮询；用户 steering 优先并可直接启动下一 pending turn。idle TUI、Web 与 ACP 在
+  completion fsync 后恢复同一 parent，Headless 保持在共享 Agent stream。`TaskOutput`
+  仅保留显式状态检查、主动 blocking wait 与截断后的完整结果读取用途。
+- completion 最多积压 100 条，不占用用户 steering 的 20 条计数/内容预算；整个 inbox
+  仍受 8 MiB 硬上限约束。streaming Task 在 tool-use 持久化前生成 canonical child ID，
+  child 早于 running result 完成时，迟到结果不得覆盖 terminal metadata/ref；Web live
+  early event 与 fresh reload 都以 terminal ref 为最终权威。
 - crash reconciliation 复用正常 worktree finalize：interrupted 或含改动 worktree 保留，
   completed clean worktree 删除；旧进程已删除的 worktree lease 会从 sidecar 清除。
 - 每次 resume 创建新的不可变 child ID，并记录 `rootAgentId`、`resumedFrom` 和

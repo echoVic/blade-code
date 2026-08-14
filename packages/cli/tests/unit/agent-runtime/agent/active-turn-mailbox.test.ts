@@ -272,10 +272,7 @@ describe('ActiveTurnMailbox', () => {
   });
 
   it('rejects a hard-limit overflow without throwing or mutating the inbox', async () => {
-    const inbox = await DurableSteeringInbox.open(
-      workspaceRoot,
-      'hard-limit-capacity'
-    );
+    const inbox = await DurableSteeringInbox.open(workspaceRoot, 'hard-limit-capacity');
     await expect(
       inbox.enqueue({
         id: 'large-existing-message',

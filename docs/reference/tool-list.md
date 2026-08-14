@@ -242,6 +242,11 @@ background 运行都会持久化；每次 resume 创建新的不可变 child ID�
 **Lineage**: 返回和持久化 `resumed_from`、`root_agent_id`、`resume_depth`。
 读取和恢复按 `parent sessionId + projectPath` 隔离，跨 workspace ID 按不存在处理。
 
+**后台完成通知**: `run_in_background=true` 返回 running 结果后，parent 可以继续独立
+工作。child 进入终态时 Blade 会持久化 hidden completion receipt 并自动恢复 parent；
+不需要重复轮询 `TaskOutput`。通知结果最多 32,000 字符、error 最多 8,000 字符；
+通知明确标记截断时，可用 `TaskOutput` 读取完整 durable result。
+
 ### TaskOutput
 
 获取后台任务的输出。

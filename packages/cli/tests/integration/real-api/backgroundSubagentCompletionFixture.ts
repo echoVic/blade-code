@@ -37,9 +37,7 @@ export function resetBackgroundCompletionRuntimeState(): void {
   resetWorkspaceAgentResources();
 }
 
-export async function writeBackgroundCompletionAgent(
-  workspace: string
-): Promise<void> {
+export async function writeBackgroundCompletionAgent(workspace: string): Promise<void> {
   const agentDirectory = path.join(workspace, '.blade', 'agents');
   await mkdir(agentDirectory, { recursive: true });
   await writeFile(

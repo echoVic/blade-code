@@ -284,9 +284,9 @@ async function assertBackgroundCompletion(input: PreparedFixture): Promise<void>
         event.data.messageIds.includes(completionInboxId)
     )
   ).toHaveLength(1);
-  expect(events.filter((event) => event.type === 'turn_completed').length).toBeGreaterThan(
-    0
-  );
+  expect(
+    events.filter((event) => event.type === 'turn_completed').length
+  ).toBeGreaterThan(0);
 
   const visibleMessages = SessionService.toUISafeMessages(
     SessionService.convertJSONLToMessages(events)

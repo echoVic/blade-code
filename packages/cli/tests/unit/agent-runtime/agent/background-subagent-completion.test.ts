@@ -158,32 +158,32 @@ describe('durable background subagent completion', () => {
     });
   });
 
-  it.each([false, undefined])(
-    'accepts a new background resume from a terminal source with background=%s',
-    (background) => {
-      const source = completedSession({
-        id: 'agent-terminal-source',
-        background,
-        rootAgentId: 'agent-shared-root',
-        resumeDepth: 1,
-      });
-      const child = completedSession({
-        id: 'agent-background-resume',
-        resumedFrom: source.id,
-        rootAgentId: source.rootAgentId,
-        resumeDepth: 2,
-      });
+  it.each([
+    false,
+    undefined,
+  ])('accepts a new background resume from a terminal source with background=%s', (background) => {
+    const source = completedSession({
+      id: 'agent-terminal-source',
+      background,
+      rootAgentId: 'agent-shared-root',
+      resumeDepth: 1,
+    });
+    const child = completedSession({
+      id: 'agent-background-resume',
+      resumedFrom: source.id,
+      rootAgentId: source.rootAgentId,
+      resumeDepth: 2,
+    });
 
-      expect(buildBackgroundSubagentCompletion(child, owner, source)).toMatchObject({
-        childSessionId: child.id,
-        subagentRef: {
-          subagentResumedFrom: source.id,
-          subagentRootId: source.rootAgentId,
-          subagentResumeDepth: 2,
-        },
-      });
-    }
-  );
+    expect(buildBackgroundSubagentCompletion(child, owner, source)).toMatchObject({
+      childSessionId: child.id,
+      subagentRef: {
+        subagentResumedFrom: source.id,
+        subagentRootId: source.rootAgentId,
+        subagentResumeDepth: 2,
+      },
+    });
+  });
 
   it.each([
     {

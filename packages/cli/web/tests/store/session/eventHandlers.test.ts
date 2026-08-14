@@ -1767,9 +1767,7 @@ describe('eventHandlers', () => {
         delivery: 'next_turn',
       },
     });
-    expect(state.pendingSubagentCompletions).toHaveProperty(
-      'agent-background-child'
-    );
+    expect(state.pendingSubagentCompletions).toHaveProperty('agent-background-child');
     expect(set).toHaveBeenLastCalledWith({
       pendingSteeringCount: 1,
       pendingInputDelivery: 'next_turn',

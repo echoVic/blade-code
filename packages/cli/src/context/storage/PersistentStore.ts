@@ -1163,16 +1163,13 @@ export class PersistentStore {
         const terminalRef =
           subagentRef?.subagentStatus === 'running'
             ? materializeSessionEvents(events).findLast(
-                (
-                  event
-                ): event is Extract<SessionEvent, { type: 'part_created' }> =>
+                (event): event is Extract<SessionEvent, { type: 'part_created' }> =>
                   event.type === 'part_created' &&
                   event.data.partType === 'subtask_ref' &&
                   event.data.payload !== null &&
                   typeof event.data.payload === 'object' &&
                   !Array.isArray(event.data.payload) &&
-                  event.data.payload.childSessionId ===
-                    subagentRef.subagentSessionId &&
+                  event.data.payload.childSessionId === subagentRef.subagentSessionId &&
                   (event.data.payload.status === 'completed' ||
                     event.data.payload.status === 'failed' ||
                     event.data.payload.status === 'cancelled')

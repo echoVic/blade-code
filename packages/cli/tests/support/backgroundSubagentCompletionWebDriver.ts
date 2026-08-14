@@ -246,9 +246,7 @@ export async function runBackgroundSubagentCompletionWebDriver(input: {
             ({ marker }) => ({
               url: window.location.href,
               childCards: Array.from(
-                document.querySelectorAll<HTMLElement>(
-                  '[data-subagent-session-id]'
-                )
+                document.querySelectorAll<HTMLElement>('[data-subagent-session-id]')
               ).map((element) => ({
                 sessionId: element.dataset.subagentSessionId,
                 text: element.textContent?.slice(0, 1_000),

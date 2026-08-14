@@ -156,9 +156,8 @@ export async function runBackgroundSubagentCompletionAcpDriver(input: {
           !updates.some(
             (notification) =>
               notification.update.sessionUpdate === 'session_info_update' &&
-              notification.update._meta?.[
-                'blade/backgroundSubagentCompletion'
-              ] !== undefined
+              notification.update._meta?.['blade/backgroundSubagentCompletion'] !==
+                undefined
           )
         ) {
           throw new Error('ACP did not project the background completion wake');

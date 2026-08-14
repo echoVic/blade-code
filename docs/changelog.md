@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.32] - 2026-08-14
+
+### 🛡️ 稳定性
+
+- `Task(run_in_background=true)` child 进入 completed、failed 或 cancelled 后，Runtime
+  会先在 parent JSONL 原子提交 client-hidden completion receipt 与 terminal
+  `subtask_ref`，再写入独立 durable inbox；parent 不再依赖重复 `TaskOutput` 轮询，
+  active turn 在安全边界继续，idle TUI、Web 与 ACP 会自动恢复，Headless 在 child
+  运行期间保持同一 Agent stream
+- completion 采用 deterministic child Session ID、exact compound owner、background
+  execution identity、type/description/resume lineage 与有界结果校验；parent ACK 后不再
+  重建。冷启动可修复 receipt/inbox commit gap，100 条 completion 容量与 20 条用户
+  steering 分离，总 inbox 继续受 8 MiB 硬上限保护
+- streaming 与 non-streaming Task 现在在持久化和执行前共享同一个 canonical child
+  ID；child 比 background Task running result 更早完成时，迟到结果不能把 terminal
+  ref 或 Web card 降级为 running。Web live early-completion 缓冲与 fresh-load 聚合都以
+  terminal `subtask_ref` 为最终权威
+
+### ✅ 测试相关
+
+- 新增 DeepSeek Flash/Pro × Headless、真实 raw PTY TUI、production Chromium Web GUI
+  与真实 ACP `session/load` 八格 background completion wake-up 资格矩阵；每格要求
+  parent 启动真实 background Task 后继续独立 Read，零 `TaskOutput`，child 从文件读取
+  parent input 中不存在的 marker，parent 自动消费 hidden receipt 后完成终答
+- 每格同时验证 hidden receipt、terminal ref、inbox ACK、child/lineage 唯一、sidecar
+  字节稳定、无伪用户消息、Web live/reload 一致、浏览器/PTY/ACP/进程/端口/临时根清理
+  和 Provider credential 不泄漏
+
 ## [0.10.31] - 2026-08-14
 
 ### 🛡️ 稳定性

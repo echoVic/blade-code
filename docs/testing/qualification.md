@@ -72,7 +72,9 @@ realApiQualification watchdog 为 45 分钟。Root-turn crash auto-resume 另固
 DeepSeek Flash/Pro × Headless/raw PTY TUI/production Chromium Web/真实 ACP
 `session/load` 八格，所有入口都不得依赖额外 wake-up prompt。Edit+rewind、
 Goal finalization crash handoff 使用同一 Flash/Pro × 四入口八格矩阵，恢复阶段必须
-零 Provider 请求，随后再从同一 surface 完成真实 API follow-up。
+零 Provider 请求，随后再从同一 surface 完成真实 API follow-up。Completed-subagent
+adoption 与 background-subagent completion wake-up 也分别固定运行 Flash/Pro ×
+Headless/raw PTY/production Chromium Web/真实 ACP 八格矩阵。
 开放式多文件迁移、compaction、进程树、
 并发 owner 与 crash-tail 等高成本 provider/capability soak 由以下命令单独运行：
 
@@ -644,6 +646,13 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
   adopted result/parent abort/inbox ACK/parent final 各一次、child sidecar 字节不变、
   compound owner 与 lineage 唯一、`sideEffectsUncertain=false`、Web live/reload 可见、
   进程/端口/临时根清理及凭据不泄漏；
+- durable background-Subagent completion wake-up：Flash 和 Pro 都必须由真实 parent
+  调用 `Task(run_in_background=true)`，Task 返回 running 后 parent 继续独立 Read，且
+  全程零 `TaskOutput`。child 通过 Read 取得 parent input 中不存在的 marker；terminal
+  sidecar、hidden canonical receipt 与 durable inbox 必须自动唤醒 parent。Headless、
+  raw PTY TUI、production Chromium Web GUI 与 ACP `session/load` 每格验证 terminal
+  ref/inbox ACK/parent final、child 与 lineage 唯一、sidecar 字节稳定、无伪用户消息、
+  Web live/reload 一致及资源/凭据清理；
 - 输出协议、工具调用、错误事件和 key 泄漏检查。
 
 ### Durable Subagent resume 轨迹
@@ -690,6 +699,32 @@ Runtime、TUI、Web、ACP 四条真实产品入口；worktree resume 另行验�
 required matrix 固定包含 `deepseek-v4-flash` 和 `deepseek-v4-pro`，四个 surface 共八格。
 该轨迹属于 release-blocking real API qualification，不得由 mock、HTTP 200、仅 JSONL
 检查或刷新后偶然可见替代。
+
+### Durable background-Subagent completion wake-up 轨迹
+
+该能力验证 background Task 不依赖模型轮询即可推动长任务：
+
+1. parent input 只能包含 marker 文件名，不能包含 child marker。真实 parent 必须先调用
+   一次 `Task(run_in_background=true)`，收到 running result 后再完成一次独立 Read；
+   parent transcript 中 `TaskOutput` 调用数必须为零。
+2. child 必须使用真实 Provider 和 Read 工具取得 marker 并提交 terminal sidecar。
+   Runtime 只接受 exact compound owner、`background=true`、canonical child ID、
+   type/description/resume lineage 与结构有效的 bounded terminal result。
+3. parent 必须按 `child sidecar fsync → hidden receipt + terminal subtask_ref →
+   durable inbox → model consumption → inbox ACK` 顺序收敛。deterministic inbox ID、
+   receipt、terminal ref、ACK 和 child lineage 都必须恰好一次；冷启动不得重复通知。
+4. Headless 必须在 child 运行期间保持 Agent stream；raw PTY TUI、Web 与 ACP 必须自动
+   继续 parent，不能要求人工输入。ACP 不得生成 marker `user_message_chunk`；TUI/Web
+   不能渲染伪用户消息。
+5. production Chromium Web 必须验证 live terminal card、parent final、reload 后相同
+   child ID/status/summary、terminal sidecar 字节不变和零 browser fault。streaming Task
+   必须在持久化前获得 canonical child ID；child 早完成时，迟到 running result 不能
+   降级 live 或 fresh-load card。
+
+required matrix 固定包含 `deepseek-v4-flash` 和 `deepseek-v4-pro`，四个 surface 共八格。
+测试结束必须回收 browser/page/SSE、PTY、ACP connection、server/process tree、port、
+临时 storage/workspace/trust root，并证明 API key 不进入 JSONL、sidecar、DOM、PTY、
+ACP update、diagnostics 或录制的 Provider body。
 
 ### Session discovery 与 durable fork 轨迹
 

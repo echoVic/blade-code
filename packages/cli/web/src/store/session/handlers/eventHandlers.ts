@@ -1188,8 +1188,7 @@ const handleSubagentComplete: EventHandler = (props, get) => {
         : target.subagent.description,
     status,
     currentTool: undefined,
-    output:
-      typeof props.summary === 'string' ? props.summary : target.subagent.output,
+    output: typeof props.summary === 'string' ? props.summary : target.subagent.output,
     resumedFrom:
       typeof props.resumedFrom === 'string'
         ? props.resumedFrom
