@@ -81,6 +81,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
   let navigationGeneration = 0;
   let catalogGeneration = 0;
   let archivedCatalogGeneration = 0;
+  const messageResyncs = new Map<string, Promise<void>>();
 
   const beginNavigation = (): number => {
     navigationGeneration += 1;
@@ -309,20 +310,12 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         errorContext: null,
         forkingSessionRef: null,
       });
+      let preparedUnsubscribe: (() => void) | null = null;
       try {
         const existingSession = findSessionByRef(get().sessions, ref);
-        const [rawMessages, goal, exactSession] = await Promise.all([
-          sessionService.getMessages(ref),
-          sessionService.getGoal(ref).catch(() => null),
-          existingSession
-            ? Promise.resolve(existingSession)
-            : sessionService.getSession(ref),
-        ]);
-        if (!isCurrentNavigation(generation)) return;
-        const messages = aggregateMessages(rawMessages);
         const pendingEvents: StreamEvent[] = [];
         let subscriptionCommitted = false;
-        const unsubscribe = await get().prepareEventSubscription(ref, (event) => {
+        preparedUnsubscribe = await get().prepareEventSubscription(ref, (event) => {
           if (subscriptionCommitted) {
             get().handleEvent(event);
           } else {
@@ -330,9 +323,23 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           }
         });
         if (!isCurrentNavigation(generation)) {
-          closePreparedSubscription(unsubscribe);
+          closePreparedSubscription(preparedUnsubscribe);
+          preparedUnsubscribe = null;
           return;
         }
+        const [rawMessages, goal, exactSession] = await Promise.all([
+          sessionService.getMessages(ref),
+          sessionService.getGoal(ref).catch(() => null),
+          existingSession
+            ? Promise.resolve(existingSession)
+            : sessionService.getSession(ref),
+        ]);
+        if (!isCurrentNavigation(generation)) {
+          closePreparedSubscription(preparedUnsubscribe);
+          preparedUnsubscribe = null;
+          return;
+        }
+        const messages = aggregateMessages(rawMessages);
         const displayProjectPath = projectPathOf(
           exactSession,
           get().selectedProjectPath ?? get().taskWorkspaceInfo?.cwd ?? null
@@ -384,11 +391,15 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         }));
         get().markTaskRead(ref);
         subscriptionCommitted = true;
-        get().replaceEventSubscription(unsubscribe);
+        get().replaceEventSubscription(preparedUnsubscribe);
+        preparedUnsubscribe = null;
         for (const event of pendingEvents) {
           get().handleEvent(event);
         }
       } catch (err) {
+        if (preparedUnsubscribe) {
+          closePreparedSubscription(preparedUnsubscribe);
+        }
         if (!isCurrentNavigation(generation)) return;
         set({
           error: (err as Error).message,
@@ -396,6 +407,41 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           isLoading: false,
         });
       }
+    },
+
+    resyncSessionMessages: async (ref) => {
+      const key = sessionRefKey(ref);
+      const existing = messageResyncs.get(key);
+      if (existing) return existing;
+      const generation = navigationGeneration;
+      const resync = Promise.resolve().then(async () => {
+        try {
+          const rawMessages = await sessionService.getMessages(ref);
+          if (
+            !isCurrentNavigation(generation) ||
+            !sameSessionRef(get().currentSessionRef, ref)
+          ) {
+            return;
+          }
+          const messages = aggregateMessages(rawMessages);
+          set((state) => ({
+            messages,
+            sessions: state.sessions.map((session) =>
+              sameSessionRef(sessionRefFromSession(session), ref)
+                ? { ...session, messageCount: messages.length }
+                : session
+            ),
+          }));
+        } catch (error) {
+          console.warn('Failed to resync terminal session messages', error);
+        } finally {
+          if (messageResyncs.get(key) === resync) {
+            messageResyncs.delete(key);
+          }
+        }
+      });
+      messageResyncs.set(key, resync);
+      return resync;
     },
 
     archiveSession: async (ref) => {

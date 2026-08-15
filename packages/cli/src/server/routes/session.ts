@@ -118,6 +118,7 @@ import {
   NotFoundError,
   TooManyRequestsError,
 } from '../error.js';
+import { OrderedSseEgress, type SerializedSseMessage } from '../OrderedSseEgress.js';
 import { normalizeSessionRef, type SessionRef, sessionRefKey } from '../sessionRef.js';
 
 const logger = createLogger(LogCategory.SERVICE);
@@ -342,6 +343,23 @@ function buildPendingInteractionEvent(
       details,
       ...(replayed ? { replayed: true } : {}),
     },
+  };
+}
+
+function sessionBusEventSseMessage(
+  event: import('../bus.js').BusEvent
+): SerializedSseMessage {
+  return {
+    ...(typeof event.seq === 'number' ? { id: String(event.seq) } : {}),
+    data: JSON.stringify({
+      type: event.type,
+      ...(typeof event.seq === 'number' ? { seq: event.seq } : {}),
+      properties: {
+        ...event.properties,
+        sessionId: event.sessionId,
+        projectPath: event.projectPath,
+      },
+    }),
   };
 }
 
@@ -2988,6 +3006,11 @@ export const createSessionRouteController = (): SessionRouteController => {
       let unsubscribe: (() => void) | undefined;
       let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
       let terminated = false;
+      let egress: OrderedSseEgress | undefined;
+      let resolveTermination!: () => void;
+      const termination = new Promise<void>((resolve) => {
+        resolveTermination = resolve;
+      });
       const cleanup = () => {
         if (heartbeatInterval !== undefined) {
           clearInterval(heartbeatInterval);
@@ -2996,14 +3019,29 @@ export const createSessionRouteController = (): SessionRouteController => {
         unsubscribe?.();
         unsubscribe = undefined;
       };
-      const terminate = () => {
+      const terminate = (reason?: unknown) => {
         if (terminated) return;
         terminated = true;
         cleanup();
+        egress?.close(reason);
+        resolveTermination();
       };
       const deliveredInteractionIds = new Set<string>();
 
       stream.onAbort(terminate);
+      egress = new OrderedSseEgress({
+        write: async (message) => {
+          await stream.writeSSE(message);
+        },
+        onFailure: (error) => {
+          logger.warn(
+            `[SessionRoutes] SSE egress closed for ${ref.sessionId}: ` +
+              `kind=${error.kind} pendingItems=${error.pendingItems ?? 0} ` +
+              `pendingBytes=${error.pendingBytes ?? 0}`
+          );
+          terminate(error);
+        },
+      });
       unsubscribe = Bus.subscribe((event) => {
         if (
           event.sessionId !== ref.sessionId ||
@@ -3031,23 +3069,9 @@ export const createSessionRouteController = (): SessionRouteController => {
               );
             });
         }
-        stream
-          .writeSSE({
-            // Only committed events carry a seq; stamping the SSE id lets the
-            // browser's EventSource advance Last-Event-ID. Ephemeral events
-            // (deltas, heartbeats) omit id so they never move the cursor.
-            ...(typeof event.seq === 'number' ? { id: String(event.seq) } : {}),
-            data: JSON.stringify({
-              type: event.type,
-              ...(typeof event.seq === 'number' ? { seq: event.seq } : {}),
-              properties: {
-                ...event.properties,
-                sessionId: event.sessionId,
-                projectPath: event.projectPath,
-              },
-            }),
-          })
-          .catch(terminate);
+        // Only committed events carry a seq; ephemeral events never advance
+        // EventSource's Last-Event-ID cursor.
+        egress?.observe(sessionBusEventSseMessage(event), event.seq);
       });
 
       try {
@@ -3058,31 +3082,26 @@ export const createSessionRouteController = (): SessionRouteController => {
           ? await getOrCreateRuntime(session)
           : undefined;
         const queued = runtime?.getPendingSteeringCount() ?? 0;
-        await stream
-          .writeSSE({
-            data: JSON.stringify({
-              type: 'connected',
-              properties: {
-                sessionId: ref.sessionId,
-                projectPath: ref.projectPath,
-                timestamp: Date.now(),
-                status: isActiveRun(currentRun) ? currentRun.status : 'idle',
-                runId: isActiveRun(currentRun) ? currentRun.id : undefined,
-                queued,
-                pendingInputDelivery:
-                  queued > 0
-                    ? runtime?.hasActiveTurn()
-                      ? 'current_turn'
-                      : 'next_turn'
-                    : null,
-                recovered: runtime?.getRecoveredSteeringCount() ?? 0,
-              },
-            }),
-          })
-          .catch((error: unknown) => {
-            terminate();
-            throw error;
-          });
+        await egress.writeInitial({
+          data: JSON.stringify({
+            type: 'connected',
+            properties: {
+              sessionId: ref.sessionId,
+              projectPath: ref.projectPath,
+              timestamp: Date.now(),
+              status: isActiveRun(currentRun) ? currentRun.status : 'idle',
+              runId: isActiveRun(currentRun) ? currentRun.id : undefined,
+              queued,
+              pendingInputDelivery:
+                queued > 0
+                  ? runtime?.hasActiveTurn()
+                    ? 'current_turn'
+                    : 'next_turn'
+                  : null,
+              recovered: runtime?.getRecoveredSteeringCount() ?? 0,
+            },
+          }),
+        });
         if (stream.aborted || terminated) return;
 
         // Durable resume: replay committed events after the client's cursor
@@ -3092,27 +3111,33 @@ export const createSessionRouteController = (): SessionRouteController => {
           const log = SessionEventLog.for(ref.sessionId, ref.projectPath);
           await log.replay(
             {
-              onCommitted: (event) => {
+              onCommitted: async (event) => {
                 if (stream.aborted || terminated) return;
                 const projected = projectCommittedSessionEvent(event);
-                void stream.writeSSE({
-                  ...(typeof event.seq === 'number' ? { id: String(event.seq) } : {}),
-                  data: JSON.stringify({
-                    type: projected.type,
-                    ...(projected.seq !== undefined ? { seq: projected.seq } : {}),
-                    properties: {
-                      ...projected.properties,
-                      sessionId: ref.sessionId,
-                      projectPath: ref.projectPath,
-                    },
-                  }),
-                });
+                if (projected.seq === undefined) return;
+                await egress.writeReplay(
+                  {
+                    ...(typeof event.seq === 'number' ? { id: String(event.seq) } : {}),
+                    data: JSON.stringify({
+                      type: projected.type,
+                      ...(projected.seq !== undefined ? { seq: projected.seq } : {}),
+                      properties: {
+                        ...projected.properties,
+                        sessionId: ref.sessionId,
+                        projectPath: ref.projectPath,
+                      },
+                    }),
+                  },
+                  projected.seq
+                );
               },
             },
             resumeFromSeq
           );
           if (stream.aborted || terminated) return;
         }
+        egress.finishInitialization({ replayed: resumeFromSeq !== undefined });
+        if (stream.aborted || terminated) return;
 
         if (!currentRun && !activeReviewRuns.has(sessionRefKey(ref))) {
           const hasPendingReview = (
@@ -3139,12 +3164,14 @@ export const createSessionRouteController = (): SessionRouteController => {
             });
           }
         }
+        if (stream.aborted || terminated) return;
         if (!currentRun) {
           await SessionInteractionService.recoverResponded(
             ref.projectPath,
             ref.sessionId
           );
         }
+        if (stream.aborted || terminated) return;
         const durablePending = currentRun
           ? undefined
           : await SessionInteractionService.findPending(ref.projectPath, ref.sessionId);
@@ -3160,7 +3187,7 @@ export const createSessionRouteController = (): SessionRouteController => {
         if (pendingInteraction) {
           deliveredInteractionIds.add(pendingInteraction.permissionId);
           const replay = buildPendingInteractionEvent(pendingInteraction, true);
-          await stream.writeSSE({
+          egress.observe({
             data: JSON.stringify({
               type: replay.type,
               properties: {
@@ -3171,6 +3198,7 @@ export const createSessionRouteController = (): SessionRouteController => {
             }),
           });
         }
+        if (stream.aborted || terminated) return;
 
         void resumePendingSession(session).catch((error) => {
           logger.error(
@@ -3178,23 +3206,19 @@ export const createSessionRouteController = (): SessionRouteController => {
             error
           );
         });
+        if (stream.aborted || terminated) return;
 
         heartbeatInterval = setInterval(() => {
-          if (!stream.aborted) {
-            stream
-              .writeSSE({
-                data: JSON.stringify({
-                  type: 'heartbeat',
-                  properties: { timestamp: Date.now() },
-                }),
-              })
-              .catch(terminate);
-          }
+          if (stream.aborted || terminated) return;
+          egress?.offerHeartbeat({
+            data: JSON.stringify({
+              type: 'heartbeat',
+              properties: { timestamp: Date.now() },
+            }),
+          });
         }, HEARTBEAT_INTERVAL);
 
-        while (!stream.aborted && !terminated) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
+        await termination;
       } finally {
         terminate();
       }

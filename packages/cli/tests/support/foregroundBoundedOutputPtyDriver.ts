@@ -14,6 +14,8 @@ export interface ForegroundBoundedOutputPtyEvidence {
   sawStderrTail: boolean;
   noticeBeforeResize: boolean;
   noticeAfterResize: boolean;
+  readerPaused: boolean;
+  renderedAfterReaderResume: boolean;
   output: string;
 }
 
@@ -50,6 +52,8 @@ export function parseForegroundBoundedOutputPtyEvidence(
     parsed.sawStderrTail !== true ||
     parsed.noticeBeforeResize !== true ||
     parsed.noticeAfterResize !== true ||
+    parsed.readerPaused !== true ||
+    parsed.renderedAfterReaderResume !== true ||
     typeof parsed.output !== 'string'
   ) {
     throw new Error('Bounded PTY evidence is incomplete');

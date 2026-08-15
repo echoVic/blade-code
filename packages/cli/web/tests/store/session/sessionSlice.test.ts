@@ -313,9 +313,13 @@ describe('sessionSlice multimodal sendMessage', () => {
     });
   });
 
-  it('subscribes after persisted history is loaded', async () => {
+  it('subscribes before reading persisted history to close the bootstrap gap', async () => {
+    const order: string[] = [];
     const subscribeToEvents = vi.fn();
-    const prepareEventSubscription = vi.fn().mockResolvedValue(() => undefined);
+    const prepareEventSubscription = vi.fn(async () => {
+      order.push('subscription-ready');
+      return () => undefined;
+    });
     const replaceEventSubscription = vi.fn();
     useSessionStore.setState({
       subscribeToEvents,
@@ -325,14 +329,17 @@ describe('sessionSlice multimodal sendMessage', () => {
         createSession({ sessionId: 'persisted-session', projectPath: '/tmp/a' }),
       ],
     });
-    vi.mocked(sessionService.getMessages).mockResolvedValue([
-      {
-        id: 'history-1',
-        role: 'user',
-        content: 'persisted',
-        timestamp: Date.now(),
-      },
-    ]);
+    vi.mocked(sessionService.getMessages).mockImplementation(async () => {
+      order.push('history-snapshot');
+      return [
+        {
+          id: 'history-1',
+          role: 'user',
+          content: 'persisted',
+          timestamp: Date.now(),
+        },
+      ];
+    });
 
     await useSessionStore
       .getState()
@@ -343,6 +350,7 @@ describe('sessionSlice multimodal sendMessage', () => {
       expect.any(Function)
     );
     expect(replaceEventSubscription).toHaveBeenCalled();
+    expect(order).toEqual(['subscription-ready', 'history-snapshot']);
     expect(useSessionStore.getState().messages).toEqual([
       expect.objectContaining({ role: 'user', content: 'persisted' }),
     ]);
@@ -1916,7 +1924,7 @@ describe('sessionSlice multimodal sendMessage', () => {
 
     await useSessionStore.getState().selectSession(targetRef);
 
-    expect(sessionService.getMessages).toHaveBeenCalledWith(targetRef);
+    expect(sessionService.getMessages).not.toHaveBeenCalled();
     expect(prepareEventSubscription).toHaveBeenCalledWith(
       targetRef,
       expect.any(Function)
@@ -1928,6 +1936,87 @@ describe('sessionSlice multimodal sendMessage', () => {
     ]);
     expect(useSessionStore.getState().eventUnsubscribe).toBe(originalUnsubscribe);
     expect(useSessionStore.getState().error).toBe('prepare failed');
+  });
+
+  it('closes a prepared subscription when the durable history snapshot fails', async () => {
+    const target = createSession({
+      sessionId: 'history-failure',
+      projectPath: '/tmp/history-failure',
+    });
+    const targetRef = createRef(target.sessionId, target.projectPath);
+    const preparedUnsubscribe = vi.fn();
+    const replaceEventSubscription = vi.fn();
+    useSessionStore.setState({
+      sessions: [target],
+      prepareEventSubscription: vi.fn().mockResolvedValue(preparedUnsubscribe),
+      replaceEventSubscription,
+    });
+    vi.mocked(sessionService.getMessages).mockRejectedValue(
+      new Error('history snapshot failed')
+    );
+
+    await useSessionStore.getState().selectSession(targetRef);
+
+    expect(preparedUnsubscribe).toHaveBeenCalledTimes(1);
+    expect(replaceEventSubscription).not.toHaveBeenCalled();
+    expect(useSessionStore.getState()).toMatchObject({
+      currentSessionRef: null,
+      isLoading: false,
+      error: 'history snapshot failed',
+    });
+  });
+
+  it('coalesces terminal history resync and ignores results after navigation changes', async () => {
+    const ref = createRef('terminal-resync', '/tmp/terminal-resync');
+    const session = createSession(ref);
+    const firstSnapshot = deferred<Message[]>();
+    useSessionStore.setState({
+      sessions: [session],
+      currentSessionId: ref.sessionId,
+      currentSessionRef: ref,
+      isTemporarySession: false,
+      messages: [],
+    });
+    vi.mocked(sessionService.getMessages).mockReturnValueOnce(firstSnapshot.promise);
+
+    const first = useSessionStore.getState().resyncSessionMessages(ref);
+    const duplicate = useSessionStore.getState().resyncSessionMessages(ref);
+    await flushMicrotasks();
+    expect(sessionService.getMessages).toHaveBeenCalledTimes(1);
+    firstSnapshot.resolve([
+      createMessage({
+        id: 'terminal-message',
+        role: 'assistant',
+        content: 'authoritative terminal result',
+      }),
+    ]);
+    await Promise.all([first, duplicate]);
+
+    expect(useSessionStore.getState().messages).toEqual([
+      expect.objectContaining({
+        id: 'terminal-message',
+        content: 'authoritative terminal result',
+      }),
+    ]);
+    expect(useSessionStore.getState().sessions).toContainEqual(
+      expect.objectContaining({ ...session, messageCount: 1 })
+    );
+
+    const staleSnapshot = deferred<Message[]>();
+    vi.mocked(sessionService.getMessages).mockReturnValueOnce(staleSnapshot.promise);
+    const stale = useSessionStore.getState().resyncSessionMessages(ref);
+    useSessionStore.getState().startTemporarySession('/tmp/next-session');
+    staleSnapshot.resolve([
+      createMessage({
+        id: 'stale-terminal-message',
+        role: 'assistant',
+        content: 'must not cross navigation',
+      }),
+    ]);
+    await stale;
+
+    expect(useSessionStore.getState().messages).toEqual([]);
+    expect(useSessionStore.getState().currentSessionRef).toBeNull();
   });
 
   it('keeps committed target state when replacing the old subscription cleanup throws during select', async () => {

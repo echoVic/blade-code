@@ -238,6 +238,7 @@ export interface SessionSlice {
   loadSessions: () => Promise<void>;
   loadArchivedSessions: () => Promise<void>;
   selectSession: (ref: SessionRef) => Promise<void>;
+  resyncSessionMessages: (ref: SessionRef) => Promise<void>;
   archiveSession: (ref: SessionRef) => Promise<void>;
   unarchiveSession: (ref: SessionRef) => Promise<void>;
   deleteSession: (ref: SessionRef) => Promise<void>;

@@ -1,8 +1,11 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { Bus } from '../bus.js';
+import { OrderedSseEgress } from '../OrderedSseEgress.js';
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
+const logger = createLogger(LogCategory.SERVICE);
 const GLOBAL_TASK_EVENT_TYPES = new Set([
   'task.status',
   'task.delivery',
@@ -77,6 +80,11 @@ export const EventRoutes = () => {
       let unsubscribe: (() => void) | undefined;
       let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
       let terminated = false;
+      let egress: OrderedSseEgress | undefined;
+      let resolveTermination!: () => void;
+      const termination = new Promise<void>((resolve) => {
+        resolveTermination = resolve;
+      });
       const cleanup = () => {
         if (heartbeatInterval !== undefined) {
           clearInterval(heartbeatInterval);
@@ -85,13 +93,33 @@ export const EventRoutes = () => {
         unsubscribe?.();
         unsubscribe = undefined;
       };
-      const terminate = () => {
+      const terminate = (reason?: unknown) => {
         if (terminated) return;
         terminated = true;
         cleanup();
+        egress?.close(reason);
+        resolveTermination();
       };
 
       stream.onAbort(terminate);
+      egress = new OrderedSseEgress({
+        write: async (message) => {
+          await stream.writeSSE(message);
+        },
+        onFailure: (error) => {
+          logger.warn(
+            `[EventRoutes] SSE egress closed: kind=${error.kind} ` +
+              `pendingItems=${error.pendingItems ?? 0} ` +
+              `pendingBytes=${error.pendingBytes ?? 0}`
+          );
+          terminate(error);
+        },
+      });
+      const send = (type: string, properties: Record<string, unknown>) => {
+        egress?.observe({
+          data: JSON.stringify({ type, properties }),
+        });
+      };
       unsubscribe = Bus.subscribe((event) => {
         if (!GLOBAL_TASK_EVENT_TYPES.has(event.type)) return;
 
@@ -102,57 +130,36 @@ export const EventRoutes = () => {
         ) {
           const requestId = event.properties.requestId;
           if (typeof requestId !== 'string' || !requestId) return;
-          stream
-            .writeSSE({
-              data: JSON.stringify({
-                type: 'interaction.pending',
-                properties: {
-                  sessionId: event.sessionId,
-                  projectPath: event.projectPath,
-                  interactionType:
-                    event.type === 'question.required'
-                      ? 'question'
-                      : event.type === 'elicitation.required'
-                        ? 'elicitation'
-                        : 'permission',
-                  requestId,
-                },
-              }),
-            })
-            .catch(terminate);
+          send('interaction.pending', {
+            sessionId: event.sessionId,
+            projectPath: event.projectPath,
+            interactionType:
+              event.type === 'question.required'
+                ? 'question'
+                : event.type === 'elicitation.required'
+                  ? 'elicitation'
+                  : 'permission',
+            requestId,
+          });
           return;
         }
 
         if (event.type === 'interaction.resolved') {
           const requestId = event.properties.requestId;
           if (typeof requestId !== 'string' || !requestId) return;
-          stream
-            .writeSSE({
-              data: JSON.stringify({
-                type: event.type,
-                properties: {
-                  sessionId: event.sessionId,
-                  projectPath: event.projectPath,
-                  requestId,
-                },
-              }),
-            })
-            .catch(terminate);
+          send(event.type, {
+            sessionId: event.sessionId,
+            projectPath: event.projectPath,
+            requestId,
+          });
           return;
         }
 
         if (event.type === 'session.created' || event.type === 'session.deleted') {
-          stream
-            .writeSSE({
-              data: JSON.stringify({
-                type: event.type,
-                properties: {
-                  sessionId: event.sessionId,
-                  projectPath: event.projectPath,
-                },
-              }),
-            })
-            .catch(terminate);
+          send(event.type, {
+            sessionId: event.sessionId,
+            projectPath: event.projectPath,
+          });
           return;
         }
 
@@ -161,42 +168,28 @@ export const EventRoutes = () => {
         if (event.type === 'session.updated') {
           const title = event.properties.title;
           if (typeof title !== 'string' || !title.trim()) return;
-          stream
-            .writeSSE({
-              data: JSON.stringify({
-                type: event.type,
-                properties: {
-                  sessionId: event.sessionId,
-                  projectPath: event.projectPath,
-                  title,
-                },
-              }),
-            })
-            .catch(terminate);
+          send(event.type, {
+            sessionId: event.sessionId,
+            projectPath: event.projectPath,
+            title,
+          });
           return;
         }
 
         if (event.type === 'task.delivery') {
           const taskDelivery = projectTaskDelivery(event.properties.taskDelivery);
           if (!taskDelivery) return;
-          stream
-            .writeSSE({
-              data: JSON.stringify({
-                type: event.type,
-                properties: {
-                  sessionId: event.sessionId,
-                  projectPath: event.projectPath,
-                  taskDelivery,
-                  ...(event.properties.taskWorktreeRemoved === true
-                    ? { taskWorktreeRemoved: true }
-                    : {}),
-                  ...(typeof event.properties.updatedAt === 'string'
-                    ? { updatedAt: event.properties.updatedAt }
-                    : {}),
-                },
-              }),
-            })
-            .catch(terminate);
+          send(event.type, {
+            sessionId: event.sessionId,
+            projectPath: event.projectPath,
+            taskDelivery,
+            ...(event.properties.taskWorktreeRemoved === true
+              ? { taskWorktreeRemoved: true }
+              : {}),
+            ...(typeof event.properties.updatedAt === 'string'
+              ? { updatedAt: event.properties.updatedAt }
+              : {}),
+          });
           return;
         }
 
@@ -204,25 +197,18 @@ export const EventRoutes = () => {
           const scheduleId = event.properties.scheduleId;
           const firedAt = event.properties.firedAt;
           if (typeof scheduleId !== 'string' || typeof firedAt !== 'string') return;
-          stream
-            .writeSSE({
-              data: JSON.stringify({
-                type: event.type,
-                properties: {
-                  scheduleId,
-                  firedAt,
-                  sessionId: event.sessionId,
-                  projectPath: event.projectPath,
-                  ...(typeof event.properties.runId === 'string'
-                    ? { runId: event.properties.runId }
-                    : {}),
-                  ...(typeof event.properties.status === 'string'
-                    ? { status: event.properties.status }
-                    : {}),
-                },
-              }),
-            })
-            .catch(terminate);
+          send(event.type, {
+            scheduleId,
+            firedAt,
+            sessionId: event.sessionId,
+            projectPath: event.projectPath,
+            ...(typeof event.properties.runId === 'string'
+              ? { runId: event.properties.runId }
+              : {}),
+            ...(typeof event.properties.status === 'string'
+              ? { status: event.properties.status }
+              : {}),
+          });
           return;
         }
 
@@ -236,68 +222,59 @@ export const EventRoutes = () => {
           1
         );
         const taskInFlight = projectInteger(event.properties.taskInFlight, 0);
-        stream
-          .writeSSE({
-            data: JSON.stringify({
-              type: event.type,
-              properties: {
-                sessionId: event.sessionId,
-                projectPath: event.projectPath,
-                taskStatus,
-                ...(typeof event.properties.taskStatusReason === 'string'
-                  ? {
-                      taskStatusReason: event.properties.taskStatusReason,
-                    }
-                  : {}),
-                ...(event.properties.taskFailure &&
-                typeof event.properties.taskFailure === 'object'
-                  ? { taskFailure: event.properties.taskFailure }
-                  : {}),
-                ...(typeof event.properties.taskStartedAt === 'string'
-                  ? { taskStartedAt: event.properties.taskStartedAt }
-                  : {}),
-                ...(typeof event.properties.taskCompletedAt === 'string'
-                  ? { taskCompletedAt: event.properties.taskCompletedAt }
-                  : {}),
-                ...(typeof event.properties.updatedAt === 'string'
-                  ? { updatedAt: event.properties.updatedAt }
-                  : {}),
-                ...(taskDiffStat ? { taskDiffStat } : {}),
-                ...(taskQueuePosition !== undefined ? { taskQueuePosition } : {}),
-                ...(taskQueueDepth !== undefined ? { taskQueueDepth } : {}),
-                ...(taskConcurrencyLimit !== undefined ? { taskConcurrencyLimit } : {}),
-                ...(taskInFlight !== undefined ? { taskInFlight } : {}),
-              },
-            }),
-          })
-          .catch(terminate);
+        send(event.type, {
+          sessionId: event.sessionId,
+          projectPath: event.projectPath,
+          taskStatus,
+          ...(typeof event.properties.taskStatusReason === 'string'
+            ? {
+                taskStatusReason: event.properties.taskStatusReason,
+              }
+            : {}),
+          ...(event.properties.taskFailure &&
+          typeof event.properties.taskFailure === 'object'
+            ? { taskFailure: event.properties.taskFailure }
+            : {}),
+          ...(typeof event.properties.taskStartedAt === 'string'
+            ? { taskStartedAt: event.properties.taskStartedAt }
+            : {}),
+          ...(typeof event.properties.taskCompletedAt === 'string'
+            ? { taskCompletedAt: event.properties.taskCompletedAt }
+            : {}),
+          ...(typeof event.properties.updatedAt === 'string'
+            ? { updatedAt: event.properties.updatedAt }
+            : {}),
+          ...(taskDiffStat ? { taskDiffStat } : {}),
+          ...(taskQueuePosition !== undefined ? { taskQueuePosition } : {}),
+          ...(taskQueueDepth !== undefined ? { taskQueueDepth } : {}),
+          ...(taskConcurrencyLimit !== undefined ? { taskConcurrencyLimit } : {}),
+          ...(taskInFlight !== undefined ? { taskInFlight } : {}),
+        });
       });
 
       try {
         if (stream.aborted || terminated) return;
-        await stream.writeSSE({
+        await egress.writeInitial({
           data: JSON.stringify({
             type: 'connected',
             properties: { timestamp: Date.now() },
           }),
         });
         if (stream.aborted || terminated) return;
+        egress.finishInitialization({ replayed: false });
+        if (stream.aborted || terminated) return;
 
         heartbeatInterval = setInterval(() => {
           if (stream.aborted || terminated) return;
-          stream
-            .writeSSE({
-              data: JSON.stringify({
-                type: 'heartbeat',
-                properties: { timestamp: Date.now() },
-              }),
-            })
-            .catch(terminate);
+          egress?.offerHeartbeat({
+            data: JSON.stringify({
+              type: 'heartbeat',
+              properties: { timestamp: Date.now() },
+            }),
+          });
         }, HEARTBEAT_INTERVAL_MS);
 
-        while (!stream.aborted && !terminated) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
+        await termination;
       } finally {
         terminate();
       }

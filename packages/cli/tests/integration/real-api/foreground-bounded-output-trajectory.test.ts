@@ -28,20 +28,21 @@ import {
   type TestModelConfig,
 } from './testConfig.js';
 import { runForegroundBoundedOutputAcpDriver } from '../../support/foregroundBoundedOutputAcpDriver.js';
+import { runForegroundBoundedOutputHeadlessDriver } from '../../support/foregroundBoundedOutputHeadlessDriver.js';
 import { runForegroundBoundedOutputPtyDriver } from '../../support/foregroundBoundedOutputPtyDriver.js';
 import { runForegroundBoundedOutputWebDriver } from '../../support/foregroundBoundedOutputWebDriver.js';
 
 const execFileAsync = promisify(execFile);
-const surfaces = ['web', 'pty', 'acp'] as const;
+const surfaces = ['headless', 'acp', 'pty', 'web'] as const;
 const models = isRealApiTestEnabled()
   ? resolveRequiredDeepSeekQualificationModels()
   : [];
 const matrix = models.flatMap((model) =>
   surfaces.map((surface) => ({ model, surface }))
 );
-if (isRealApiTestEnabled() && matrix.length !== 6) {
+if (isRealApiTestEnabled() && matrix.length !== 8) {
   throw new Error(
-    `Bounded foreground output matrix must contain 6 cells, got ${matrix.length}`
+    `Bounded ordered egress matrix must contain 8 cells, got ${matrix.length}`
   );
 }
 
@@ -166,6 +167,12 @@ describe
               fixture,
               secret: model.apiKey,
               timeoutMs: 210_000,
+            });
+          } else if (surface === 'headless') {
+            evidence = await runForegroundBoundedOutputHeadlessDriver({
+              workspace,
+              sessionId,
+              fixture,
             });
           } else {
             await ensureStoreInitialized();

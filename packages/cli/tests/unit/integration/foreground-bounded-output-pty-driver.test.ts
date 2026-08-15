@@ -23,6 +23,8 @@ describe('foreground bounded output PTY driver', () => {
         sawStderrTail: true,
         noticeBeforeResize: true,
         noticeAfterResize: true,
+        readerPaused: true,
+        renderedAfterReaderResume: true,
         output: 'Output truncated\nSTDOUT_TAIL\nSTDERR_TAIL',
       }),
       ['secret-not-present']
@@ -42,6 +44,8 @@ describe('foreground bounded output PTY driver', () => {
       sawStderrTail: true,
       noticeBeforeResize: true,
       noticeAfterResize: true,
+      readerPaused: true,
+      renderedAfterReaderResume: true,
       output,
     });
 
@@ -70,6 +74,8 @@ describe('foreground bounded output PTY driver', () => {
           sawStderrTail: true,
           noticeBeforeResize: true,
           noticeAfterResize: true,
+          readerPaused: true,
+          renderedAfterReaderResume: true,
           output: 'contains-test-secret',
         }),
         ['test-secret']

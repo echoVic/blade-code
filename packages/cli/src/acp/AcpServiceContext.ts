@@ -8,6 +8,7 @@
 import type {
   AgentSideConnection,
   ClientCapabilities,
+  SessionNotification,
   ToolCallContent,
   ToolCallStatus,
   ToolKind,
@@ -477,6 +478,7 @@ interface SessionServices {
   fileSystemService: FileSystemService;
   terminalService: TerminalService;
   connection: AgentSideConnection;
+  sendUpdate?: (update: SessionNotification['update']) => Promise<void>;
   clientCapabilities: ClientCapabilities | null;
   cwd: string;
 }
@@ -515,7 +517,8 @@ export class AcpServiceContext {
     connection: AgentSideConnection,
     sessionId: string,
     clientCapabilities: ClientCapabilities | undefined,
-    cwd: string
+    cwd: string,
+    sendUpdate?: (update: SessionNotification['update']) => Promise<void>
   ): void {
     // 根据 IDE 能力创建文件系统服务
     const fileSystemService: FileSystemService = clientCapabilities?.fs
@@ -538,6 +541,7 @@ export class AcpServiceContext {
       fileSystemService,
       terminalService,
       connection,
+      sendUpdate,
       clientCapabilities: clientCapabilities || null,
       cwd,
     });
@@ -705,17 +709,15 @@ export class AcpServiceContext {
     const services = AcpServiceContext.sessions.get(sessionId);
     if (!services) return;
 
+    if (!services.sendUpdate) return;
     try {
-      await services.connection.sessionUpdate({
-        sessionId,
-        update: {
-          sessionUpdate: 'tool_call',
-          toolCallId,
-          status,
-          title,
-          content: content || [],
-          kind: kind || 'other',
-        },
+      await services.sendUpdate({
+        sessionUpdate: 'tool_call',
+        toolCallId,
+        status,
+        title,
+        content: content || [],
+        kind: kind || 'other',
       });
     } catch (error) {
       logger.warn('[AcpServiceContext] Failed to send tool update:', error);

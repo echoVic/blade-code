@@ -57,7 +57,11 @@ describe('SessionEventLog', () => {
   it('fans committed events out to live subscribers', async () => {
     const log = SessionEventLog.for(sessionId, projectPath);
     const seen: number[] = [];
-    log.subscribe({ onCommitted: (e) => seen.push(e.seq ?? 0) });
+    log.subscribe({
+      onCommitted: (e) => {
+        seen.push(e.seq ?? 0);
+      },
+    });
 
     await log.commit(messageCreated(sessionId, projectPath, 'a'));
     await log.commitBatch([
@@ -75,7 +79,14 @@ describe('SessionEventLog', () => {
     await log.commit(messageCreated(sessionId, projectPath, 'c'));
 
     const replayed: number[] = [];
-    log.subscribe({ onCommitted: (e) => replayed.push(e.seq ?? 0) }, { fromSeq: 2 });
+    log.subscribe(
+      {
+        onCommitted: (e) => {
+          replayed.push(e.seq ?? 0);
+        },
+      },
+      { fromSeq: 2 }
+    );
     await new Promise((r) => setTimeout(r, 10));
 
     expect(replayed).toEqual([2, 3]);

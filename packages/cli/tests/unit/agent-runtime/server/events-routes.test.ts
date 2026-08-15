@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Bus } from '../../../../src/server/bus.js';
 import { EventRoutes } from '../../../../src/server/routes/events.js';
 
@@ -200,6 +200,89 @@ describe('EventRoutes global task feed', () => {
     } finally {
       controller.abort();
       await reader.cancel();
+    }
+  });
+
+  it('evicts an overflowing global-feed subscriber while a fast peer continues', async () => {
+    const { SSEStreamingApi } = await import('hono/streaming');
+    const originalWriteSse = SSEStreamingApi.prototype.writeSSE;
+    let slowWriter: unknown;
+    let releaseSlowWrite!: () => void;
+    const slowWrite = new Promise<void>((resolve) => {
+      releaseSlowWrite = resolve;
+    });
+    const writeSse = vi
+      .spyOn(SSEStreamingApi.prototype, 'writeSSE')
+      .mockImplementation(function (message) {
+        const connected =
+          typeof message.data === 'string' &&
+          message.data.includes('"type":"connected"');
+        if (slowWriter === undefined && connected) slowWriter = this;
+        if (this === slowWriter && !connected) return slowWrite;
+        return originalWriteSse.call(this, message);
+      });
+    const slowAbort = new AbortController();
+    const fastAbort = new AbortController();
+    const slowResponse = await EventRoutes().request('/', {
+      signal: slowAbort.signal,
+    });
+    const slowReader = slowResponse.body?.getReader();
+    if (!slowReader) throw new Error('Expected slow SSE response body');
+    const fastResponse = await EventRoutes().request('/', {
+      signal: fastAbort.signal,
+    });
+    const fastReader = fastResponse.body?.getReader();
+    if (!fastReader) throw new Error('Expected fast SSE response body');
+    const slowDecoder = new TextDecoder();
+    const fastDecoder = new TextDecoder();
+
+    try {
+      expect(await readSseEvent(slowReader, slowDecoder)).toContain(
+        '"type":"connected"'
+      );
+      expect(await readSseEvent(fastReader, fastDecoder)).toContain(
+        '"type":"connected"'
+      );
+
+      for (let index = 0; index < 257; index += 1) {
+        Bus.publish(
+          { sessionId: 'global-slow-session', projectPath: '/workspace/global' },
+          'task.status',
+          {
+            taskStatus: 'running',
+            taskQueuePosition: index + 1,
+            taskQueueDepth: 257,
+            taskConcurrencyLimit: 1,
+            taskInFlight: 1,
+          }
+        );
+        const delivered = await readSseEvent(fastReader, fastDecoder);
+        expect(delivered).toContain(`"taskQueuePosition":${index + 1}`);
+      }
+
+      await expect(slowReader.read()).resolves.toMatchObject({ done: true });
+      Bus.publish(
+        { sessionId: 'global-fast-session', projectPath: '/workspace/global' },
+        'task.status',
+        {
+          taskStatus: 'completed',
+          taskQueueDepth: 0,
+          taskConcurrencyLimit: 1,
+          taskInFlight: 0,
+        }
+      );
+      const sentinel = await readSseEvent(fastReader, fastDecoder);
+      expect(sentinel).toContain('"sessionId":"global-fast-session"');
+      expect(sentinel).toContain('"taskStatus":"completed"');
+    } finally {
+      releaseSlowWrite();
+      slowAbort.abort();
+      fastAbort.abort();
+      await Promise.all([
+        slowReader.cancel().catch(() => undefined),
+        fastReader.cancel().catch(() => undefined),
+      ]);
+      writeSse.mockRestore();
     }
   });
 });

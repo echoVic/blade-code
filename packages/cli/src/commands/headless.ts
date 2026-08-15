@@ -51,6 +51,11 @@ import {
 } from '../ui/utils/toolFormatters.js';
 import { getCwd } from '../utils/cwd.js';
 import {
+  HeadlessOutputEgress,
+  type HeadlessOutputIO,
+  type HeadlessWritableLike,
+} from './HeadlessOutputEgress.js';
+import {
   createHeadlessJsonlEvent,
   type HeadlessJsonlEventPayload,
   type HeadlessJsonlEventType,
@@ -64,17 +69,6 @@ import {
 import { resolveCliOutputSchema } from './shared/outputSchema.js';
 import { resolveNonInteractiveSession } from './shared/sessionContext.js';
 
-/** Minimal writable stream contract used by headless output sinks. */
-interface WritableLike {
-  write(chunk: string): boolean | void;
-}
-
-/** Output streams used by the headless runner. */
-interface HeadlessIO {
-  stdout: WritableLike;
-  stderr: WritableLike;
-}
-
 interface HeadlessRunControl {
   signal?: AbortSignal;
   stdin?: NodeJS.ReadStream;
@@ -82,20 +76,29 @@ interface HeadlessRunControl {
 
 function createHeadlessAbortSignal(control?: HeadlessRunControl): {
   signal: AbortSignal;
+  abort: (reason?: unknown) => void;
   dispose: () => void;
 } {
-  if (control?.signal) {
-    return { signal: control.signal, dispose: () => undefined };
-  }
-
   const controller = new AbortController();
-  const interrupt = () => controller.abort('interrupt');
-  process.once('SIGINT', interrupt);
-  process.once('SIGTERM', interrupt);
+  const abort = (reason?: unknown) => {
+    if (!controller.signal.aborted) controller.abort(reason);
+  };
+  const interrupt = () => abort('interrupt');
+  const forwardAbort = () => abort(control?.signal?.reason);
+
+  if (control?.signal) {
+    control.signal.addEventListener('abort', forwardAbort, { once: true });
+    if (control.signal.aborted) forwardAbort();
+  } else {
+    process.once('SIGINT', interrupt);
+    process.once('SIGTERM', interrupt);
+  }
 
   return {
     signal: controller.signal,
+    abort,
     dispose: () => {
+      control?.signal?.removeEventListener('abort', forwardAbort);
       process.removeListener('SIGINT', interrupt);
       process.removeListener('SIGTERM', interrupt);
     },
@@ -324,7 +327,7 @@ function headlessCommand(yargs: Argv) {
   );
 }
 
-function writeLine(writer: WritableLike, line = ''): void {
+function writeLine(writer: HeadlessWritableLike, line = ''): void {
   writer.write(`${line}\n`);
 }
 
@@ -505,7 +508,7 @@ function getPhaseForTool(
 }
 
 function createEventWriter(
-  io: HeadlessIO,
+  io: HeadlessOutputIO,
   outputFormat: HeadlessOutputFormat,
   structuredOutputExpected = false
 ) {
@@ -1101,22 +1104,51 @@ function createEventWriter(
 
 export async function runHeadless(
   options: HeadlessOptions,
-  io: HeadlessIO = { stdout: process.stdout, stderr: process.stderr },
+  io: HeadlessOutputIO = { stdout: process.stdout, stderr: process.stderr },
   control?: HeadlessRunControl
 ): Promise<number> {
   let outputFormat: HeadlessOutputFormat = 'text';
-  let eventWriter = createEventWriter(io, outputFormat);
   const streamState = new HeadlessStreamState();
   const phaseState: HeadlessPhaseState = { targetLocked: false };
   let runtime: SessionRuntime | undefined;
   let taskAdmissionUnsubscribe: (() => void) | undefined;
   const abortControl = createHeadlessAbortSignal(control);
+  let outputFailed = false;
+  const outputEgress = new HeadlessOutputEgress(io, {
+    signal: abortControl.signal,
+    onFailure: (error) => {
+      outputFailed = true;
+      abortControl.abort(error);
+    },
+  });
+  const outputIo: HeadlessOutputIO = {
+    stdout: {
+      write: (chunk) => outputEgress.write('stdout', chunk),
+    },
+    stderr: {
+      write: (chunk) => outputEgress.write('stderr', chunk),
+    },
+  };
+  let eventWriter = createEventWriter(outputIo, outputFormat);
+  const flushOutput = async (): Promise<boolean> => {
+    try {
+      await outputEgress.flush();
+      return !outputFailed;
+    } catch {
+      return false;
+    }
+  };
+  const finish = async (exitCode: number): Promise<number> => {
+    taskAdmissionUnsubscribe?.();
+    taskAdmissionUnsubscribe = undefined;
+    return (await flushOutput()) ? exitCode : 1;
+  };
 
   try {
     const validatedOptions = validateHeadlessOptions(options);
     outputFormat = resolveOutputFormat(validatedOptions.outputFormat);
     const outputSchema = await resolveCliOutputSchema(validatedOptions);
-    eventWriter = createEventWriter(io, outputFormat, Boolean(outputSchema));
+    eventWriter = createEventWriter(outputIo, outputFormat, Boolean(outputSchema));
 
     await initializeCliPlugins();
 
@@ -1143,7 +1175,7 @@ export async function runHeadless(
       if (normalized.content) {
         eventWriter.output(normalized.content, normalized.exitCode ?? 0);
       }
-      return normalized.exitCode ?? 0;
+      return await finish(normalized.exitCode ?? 0);
     }
     const userShellCommand = normalized.content.trimStart().startsWith('!')
       ? normalized.content.trimStart().slice(1).trim()
@@ -1311,12 +1343,12 @@ export async function runHeadless(
         eventWriter.content(recoveredFinalResponse.content);
       }
       eventWriter.phase('completed', 'done', 'Recovered headless run completed');
-      return 0;
+      return await finish(0);
     }
     if (userShellCommand !== undefined) {
       const result = await runtime.executeUserShellCommand(userShellCommand, {
         signal: abortControl.signal,
-        onEvent: (event) => {
+        onEvent: async (event) => {
           if (event.type === 'started') {
             eventWriter.userShellStarted(
               event.executionId,
@@ -1331,14 +1363,17 @@ export async function runHeadless(
               event.streamTruncated
             );
           }
+          await flushOutput();
         },
       });
       eventWriter.userShellCompleted(result);
-      return result.record.status === 'completed'
-        ? 0
-        : result.record.status === 'aborted'
-          ? 130
-          : (result.record.exitCode ?? 1);
+      return await finish(
+        result.record.status === 'completed'
+          ? 0
+          : result.record.status === 'aborted'
+            ? 130
+            : (result.record.exitCode ?? 1)
+      );
     }
     const effectiveMaxTurns = validatedOptions.maxTurns ?? runtime.getConfig().maxTurns;
     const toolBlacklist = createdTask?.taskWorktree
@@ -1590,6 +1625,7 @@ export async function runHeadless(
             void _exhaustive;
           }
         }
+        await flushOutput();
       }
     );
 
@@ -1602,23 +1638,26 @@ export async function runHeadless(
       eventWriter.error(
         `Error: ${loopResult.error?.message ?? 'Agent execution failed'}`
       );
-      return 1;
+      return await finish(1);
     }
 
     eventWriter.phase('completed', 'done', 'Headless run completed');
 
-    return 0;
+    return await finish(0);
   } catch (error) {
-    if (streamState.hasOpenThinking() && outputFormat === 'text') {
-      io.stderr.write('\n');
+    if (!outputFailed) {
+      if (streamState.hasOpenThinking() && outputFormat === 'text') {
+        outputIo.stderr.write('\n');
+      }
+      eventWriter.error(`Error: ${extractHeadlessErrorMessage(error)}`);
     }
-    eventWriter.error(`Error: ${extractHeadlessErrorMessage(error)}`);
-    return 1;
+    return await finish(1);
   } finally {
     taskAdmissionUnsubscribe?.();
     try {
       await runtime?.dispose();
     } finally {
+      outputEgress.close();
       abortControl.dispose();
     }
   }

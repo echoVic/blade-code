@@ -1874,10 +1874,40 @@ const handleInteractionResolved: EventHandler = (props, get, set) => {
   }));
 };
 
+const resyncTerminalSession = (props: Record<string, unknown>, get: GetState): void => {
+  const ref = get().currentSessionRef;
+  if (
+    ref &&
+    props.sessionId === ref.sessionId &&
+    props.projectPath === ref.projectPath
+  ) {
+    void get().resyncSessionMessages(ref);
+  }
+};
+
 const handleSessionCompleted: EventHandler = (props, get) => {
-  const { currentSessionId, endAgentResponse } = get();
-  if (props.sessionId !== currentSessionId) return;
+  const { currentSessionId, currentSessionRef, endAgentResponse } = get();
+  if (
+    props.sessionId !== currentSessionId ||
+    !currentSessionRef ||
+    props.projectPath !== currentSessionRef.projectPath
+  ) {
+    return;
+  }
   endAgentResponse();
+  resyncTerminalSession(props, get);
+};
+
+const handleCommittedSessionCompleted: EventHandler = (props, get) => {
+  const ref = get().currentSessionRef;
+  if (
+    !ref ||
+    props.sessionId !== ref.sessionId ||
+    props.projectPath !== ref.projectPath
+  ) {
+    return;
+  }
+  get().endAgentResponse();
 };
 
 const handleSessionError: EventHandler = (props, get, set) => {
@@ -1901,6 +1931,7 @@ const handleSessionError: EventHandler = (props, get, set) => {
     },
   });
   endAgentResponse();
+  resyncTerminalSession(props, get);
 };
 
 const handleSessionStatus: EventHandler = (props, get, set) => {
@@ -1987,6 +2018,7 @@ const handleRunCancelled: EventHandler = (props, get, set) => {
     }
   }
   endAgentResponse();
+  resyncTerminalSession(props, get);
 };
 
 const handleSteeringQueued: EventHandler = (props, get, set) => {
@@ -2227,8 +2259,8 @@ const eventHandlers: Record<string, EventHandler> = {
   'permission.timeout': handlePermissionTimeout,
   'turn.started': handleTurnStarted,
   'committed.turn_started': handleTurnStarted,
-  'committed.turn_completed': handleSessionCompleted,
-  'committed.turn_aborted': handleSessionCompleted,
+  'committed.turn_completed': handleCommittedSessionCompleted,
+  'committed.turn_aborted': handleCommittedSessionCompleted,
   'provider.retry': handleProviderRetry,
   'provider.stall': handleProviderStall,
   'action.stationarity': handleActionStationarity,

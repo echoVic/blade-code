@@ -23,6 +23,10 @@ import { SessionService } from '../../../../src/services/SessionService.js';
 const DEFAULT_PROJECT_PATH =
   '/Users/bytedance/Documents/GitHub/Blade/.worktrees/session-discovery-fork/packages/cli';
 
+type EventReplaySubscriber = {
+  onCommitted(event: SessionEvent): void | Promise<void>;
+};
+
 type CreateMetadataInitial = Pick<
   SessionMetadataUpdate,
   | 'title'
@@ -234,6 +238,7 @@ const busState = vi.hoisted(() => ({
       sessionId: string;
       projectPath: string;
       type: string;
+      seq?: number;
       properties: Record<string, unknown>;
     }) => void
   >(),
@@ -241,12 +246,14 @@ const busState = vi.hoisted(() => ({
     (
       ref: { sessionId: string; projectPath: string },
       type: string,
-      properties: Record<string, unknown>
+      properties: Record<string, unknown>,
+      seq?: number
     ) => {
       const event = {
         sessionId: ref.sessionId,
         projectPath: ref.projectPath,
         type,
+        ...(seq !== undefined ? { seq } : {}),
         properties,
       };
       for (const subscriber of busState.subscribers) {
@@ -260,6 +267,7 @@ const busState = vi.hoisted(() => ({
         sessionId: string;
         projectPath: string;
         type: string;
+        seq?: number;
         properties: Record<string, unknown>;
       }) => void
     ) => {
@@ -268,6 +276,12 @@ const busState = vi.hoisted(() => ({
         busState.subscribers.delete(callback);
       });
     }
+  ),
+}));
+
+const eventLogState = vi.hoisted(() => ({
+  replay: vi.fn<(subscriber: EventReplaySubscriber, fromSeq: number) => Promise<void>>(
+    async () => undefined
   ),
 }));
 
@@ -318,6 +332,14 @@ vi.mock('../../../../src/server/bus.js', () => ({
   Bus: {
     publish: busState.publish,
     subscribe: busState.subscribe,
+  },
+}));
+
+vi.mock('../../../../src/context/events/SessionEventLog.js', () => ({
+  SessionEventLog: {
+    for: vi.fn(() => ({
+      replay: eventLogState.replay,
+    })),
   },
 }));
 
@@ -542,6 +564,7 @@ function createSseCollector(response: Response) {
         }
         return JSON.parse(data) as {
           type: string;
+          seq?: number;
           properties: Record<string, unknown>;
         };
       }
@@ -557,6 +580,7 @@ describe('SessionRoutes runtime reuse', () => {
     vi.clearAllMocks();
     taskRunScheduler.resetForTests();
     busState.subscribers.clear();
+    eventLogState.replay.mockReset().mockResolvedValue(undefined);
     reviewState.start.mockClear();
     reviewState.recoverInterrupted.mockClear();
     reviewState.list.mockClear();
@@ -4128,6 +4152,184 @@ describe('SessionRoutes runtime reuse', () => {
 
     controller.abort();
     await collector.cancel();
+  });
+
+  it('cuts replay over to live committed events without duplicates or cursor regression', async () => {
+    const { Bus } = await import('../../../../src/server/bus.js');
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const ref = {
+      sessionId: 'replay-cutover-session',
+      projectPath: '/tmp/workspace-a',
+    };
+    mockResolvedSession(ref.sessionId, { projectPath: ref.projectPath });
+    const committed = (seq: number): SessionEvent => ({
+      id: `event-${seq}`,
+      seq,
+      sessionId: ref.sessionId,
+      projectPath: ref.projectPath,
+      timestamp: `2026-08-14T00:00:${String(seq).padStart(2, '0')}.000Z`,
+      type: 'turn_started',
+      cwd: ref.projectPath,
+      version: 'test',
+      data: {
+        turnId: `turn-${seq}`,
+        kind: 'user',
+        startedAt: '2026-08-14T00:00:00.000Z',
+      },
+    });
+    eventLogState.replay.mockImplementationOnce(
+      async (
+        subscriber: {
+          onCommitted(event: SessionEvent): void | Promise<void>;
+        },
+        fromSeq: number
+      ) => {
+        expect(fromSeq).toBe(11);
+        await subscriber.onCommitted(committed(11));
+        Bus.publish(ref, 'live.duplicate', { marker: 'duplicate-11' }, 11);
+        Bus.publish(ref, 'live.buffered', { marker: 'buffered-12' }, 12);
+        Bus.publish(ref, 'content.delta', { delta: 'replay-window-ephemeral' });
+        await subscriber.onCommitted(committed(12));
+        Bus.publish(ref, 'live.buffered', { marker: 'buffered-13' }, 13);
+      }
+    );
+
+    const controller = new AbortController();
+    const response = await SessionRoutes().request(
+      `/${ref.sessionId}/events?projectPath=${encodeURIComponent(ref.projectPath)}`,
+      {
+        headers: { 'Last-Event-ID': '10' },
+        signal: controller.signal,
+      }
+    );
+    const collector = createSseCollector(response);
+
+    expect(await collector.next()).toMatchObject({ type: 'connected' });
+    const replayedEleven = await collector.next();
+    const replayedTwelve = await collector.next();
+    const bufferedThirteen = await collector.next();
+    Bus.publish(ref, 'live.after-cutover', { marker: 'live-14' }, 14);
+    const liveFourteen = await collector.next();
+
+    expect([
+      replayedEleven.seq,
+      replayedTwelve.seq,
+      bufferedThirteen.seq,
+      liveFourteen.seq,
+    ]).toEqual([11, 12, 13, 14]);
+    expect(bufferedThirteen).toMatchObject({
+      type: 'live.buffered',
+      properties: { marker: 'buffered-13' },
+    });
+    expect(liveFourteen).toMatchObject({
+      type: 'live.after-cutover',
+      properties: { marker: 'live-14' },
+    });
+
+    controller.abort();
+    await collector.cancel();
+  });
+
+  it('evicts only a slow SSE subscriber without aborting the server-owned turn', async () => {
+    const { SSEStreamingApi } = await import('hono/streaming');
+    const originalWriteSse = SSEStreamingApi.prototype.writeSSE;
+    let slowWriter: unknown;
+    let releaseSlowWrite!: () => void;
+    const slowWrite = new Promise<void>((resolve) => {
+      releaseSlowWrite = resolve;
+    });
+    const writeSse = vi
+      .spyOn(SSEStreamingApi.prototype, 'writeSSE')
+      .mockImplementation(function (message) {
+        const connected =
+          typeof message.data === 'string' &&
+          message.data.includes('"type":"connected"');
+        if (slowWriter === undefined && connected) slowWriter = this;
+        if (this === slowWriter && !connected) return slowWrite;
+        return originalWriteSse.call(this, message);
+      });
+    const { Bus } = await import('../../../../src/server/bus.js');
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const ref = {
+      sessionId: 'slow-subscriber-session',
+      projectPath: '/tmp/workspace-a',
+    };
+    mockResolvedSession(ref.sessionId, { projectPath: ref.projectPath });
+    let turnSignal: AbortSignal | undefined;
+    let releaseRun!: () => void;
+    const runGate = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    agentState.chatStream.mockImplementationOnce(async function* (
+      _content,
+      context: { signal: AbortSignal }
+    ) {
+      turnSignal = context.signal;
+      yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
+      await waitForGateOrAbort(runGate, context.signal);
+      return {
+        success: true,
+        finalMessage: 'slow subscriber did not cancel this run',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const app = SessionRoutes();
+    const start = await app.request(
+      `/${ref.sessionId}/message?projectPath=${encodeURIComponent(ref.projectPath)}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'keep running' }),
+      }
+    );
+    expect(start.status).toBe(202);
+    await vi.waitFor(() => expect(turnSignal).toBeDefined());
+
+    const slowAbort = new AbortController();
+    const fastAbort = new AbortController();
+    const slowResponse = await app.request(
+      `/${ref.sessionId}/events?projectPath=${encodeURIComponent(ref.projectPath)}`,
+      { signal: slowAbort.signal }
+    );
+    const slowCollector = createSseCollector(slowResponse);
+    expect(await slowCollector.next()).toMatchObject({ type: 'connected' });
+    const fastResponse = await app.request(
+      `/${ref.sessionId}/events?projectPath=${encodeURIComponent(ref.projectPath)}`,
+      { signal: fastAbort.signal }
+    );
+    const fastCollector = createSseCollector(fastResponse);
+    expect(await fastCollector.next()).toMatchObject({ type: 'connected' });
+
+    try {
+      for (let index = 0; index < 257; index += 1) {
+        Bus.publish(ref, 'slow-consumer.probe', { index });
+        await expect(fastCollector.next()).resolves.toMatchObject({
+          type: 'slow-consumer.probe',
+          properties: { index },
+        });
+      }
+
+      await vi.waitFor(() => expect(busState.subscribers.size).toBe(1));
+      expect(turnSignal?.aborted).toBe(false);
+      await expect(slowCollector.next()).rejects.toThrow(
+        'SSE stream ended before the next event was received'
+      );
+
+      Bus.publish(ref, 'fast-subscriber.sentinel', { delivered: true });
+      await expect(fastCollector.next()).resolves.toMatchObject({
+        type: 'fast-subscriber.sentinel',
+        properties: { delivered: true },
+      });
+      expect(turnSignal?.aborted).toBe(false);
+    } finally {
+      releaseSlowWrite();
+      releaseRun();
+      slowAbort.abort();
+      fastAbort.abort();
+      await Promise.all([slowCollector.cancel(), fastCollector.cancel()]);
+      writeSse.mockRestore();
+    }
   });
 
   it('rejects message posts for an explicit missing workspace without creating runtime state', async () => {

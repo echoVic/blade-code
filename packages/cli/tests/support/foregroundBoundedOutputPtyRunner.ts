@@ -74,7 +74,12 @@ async function main(): Promise<void> {
       resolve();
     });
   });
+  let readerPaused = false;
+  let pauseInjected = false;
+  let receivedAfterResume = false;
   terminal.onData((chunk) => {
+    if (readerPaused) return;
+    if (pauseInjected) receivedAfterResume = true;
     output = appendBoundedPtyEvidence(output, chunk);
   });
 
@@ -91,6 +96,10 @@ async function main(): Promise<void> {
       10_000
     );
     terminal.write('\r');
+    readerPaused = true;
+    pauseInjected = true;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    readerPaused = false;
     await waitFor(
       () =>
         output.includes(expected) &&
@@ -117,6 +126,8 @@ async function main(): Promise<void> {
       sawStderrTail: output.includes(stderrTail),
       noticeBeforeResize,
       noticeAfterResize: output.includes('Output truncated'),
+      readerPaused: pauseInjected,
+      renderedAfterReaderResume: receivedAfterResume && output.includes(expected),
       output: projectForegroundBoundedPtyOutput(
         secret ? output.replaceAll(secret, '[REDACTED]') : output
       ),

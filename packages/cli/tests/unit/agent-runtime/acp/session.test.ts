@@ -304,7 +304,8 @@ describe('AcpSession', () => {
         mockConnection,
         'test-session-id',
         expect.any(Object),
-        '/tmp/test'
+        '/tmp/test',
+        expect.any(Function)
       );
     });
 
@@ -1010,6 +1011,158 @@ describe('AcpSession', () => {
 
       expect(response).toBeDefined();
       expect(response.stopReason).toBe('end_turn');
+    });
+
+    it('serializes ACP updates and backpressures the Agent loop', async () => {
+      const gates = Array.from({ length: 3 }, () => {
+        let resolve!: () => void;
+        const promise = new Promise<void>((resolvePromise) => {
+          resolve = resolvePromise;
+        });
+        return { promise, resolve };
+      });
+      let produced = 0;
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const originalSessionUpdate = mockConnection.sessionUpdate.bind(mockConnection);
+      vi.spyOn(mockConnection, 'sessionUpdate').mockImplementation(async (params) => {
+        const index = mockConnection.sessionUpdates.length;
+        await originalSessionUpdate(params);
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await gates[index]!.promise;
+        inFlight -= 1;
+      });
+      const mockAgent = getMockAgent();
+      mockAgent.chatStream = vi.fn(async function* () {
+        produced += 1;
+        yield { kind: 'content_delta', delta: 'one' } as LoopEvent;
+        produced += 1;
+        yield { kind: 'thinking_delta', delta: 'two' } as LoopEvent;
+        produced += 1;
+        yield { kind: 'content_delta', delta: 'three' } as LoopEvent;
+        return { success: true, finalMessage: 'done' };
+      }) as typeof mockAgent.chatStream;
+
+      let promptSettled = false;
+      const prompt = session
+        .prompt({
+          sessionId: 'test-session-id',
+          prompt: [{ type: 'text', text: 'stream slowly' }],
+        })
+        .then((result) => {
+          promptSettled = true;
+          return result;
+        });
+
+      await vi.waitFor(() => expect(mockConnection.sessionUpdates).toHaveLength(1));
+      expect(produced).toBe(1);
+      expect(promptSettled).toBe(false);
+
+      gates[0]!.resolve();
+      await vi.waitFor(() => expect(mockConnection.sessionUpdates).toHaveLength(2));
+      expect(produced).toBe(2);
+      expect(maxInFlight).toBe(1);
+
+      gates[1]!.resolve();
+      await vi.waitFor(() => expect(mockConnection.sessionUpdates).toHaveLength(3));
+      expect(produced).toBe(3);
+      expect(promptSettled).toBe(false);
+
+      gates[2]!.resolve();
+      await expect(prompt).resolves.toEqual({ stopReason: 'end_turn' });
+      expect(maxInFlight).toBe(1);
+      expect(
+        mockConnection.sessionUpdates.map((entry) => entry.update.sessionUpdate)
+      ).toEqual(['agent_message_chunk', 'agent_thought_chunk', 'agent_message_chunk']);
+    });
+
+    it('times out a stuck ACP writer and cancels the attached prompt', async () => {
+      vi.useFakeTimers();
+      try {
+        vi.spyOn(mockConnection, 'sessionUpdate').mockImplementation(
+          async () => new Promise<void>(() => undefined)
+        );
+        const mockAgent = getMockAgent();
+        mockAgent.chatStream = vi.fn(async function* () {
+          yield { kind: 'content_delta', delta: 'blocked' } as LoopEvent;
+          return { success: true, finalMessage: 'blocked' };
+        }) as typeof mockAgent.chatStream;
+
+        const prompt = session.prompt({
+          sessionId: 'test-session-id',
+          prompt: [{ type: 'text', text: 'write slowly' }],
+        });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(mockConnection.sessionUpdate).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(30_000);
+        await expect(prompt).resolves.toEqual({ stopReason: 'cancelled' });
+        expect(mockConnection.sessionUpdate).toHaveBeenCalledTimes(1);
+        expect(
+          mockConnection.sessionUpdates.some(
+            (entry) => entry.update.sessionUpdate === 'user_message_chunk'
+          )
+        ).toBe(false);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('fails one ACP connection on Bus update overflow and aborts its prompt once', async () => {
+      let releaseWrite!: () => void;
+      const blockedWrite = new Promise<void>((resolve) => {
+        releaseWrite = resolve;
+      });
+      vi.spyOn(mockConnection, 'sessionUpdate').mockImplementation(
+        async () => blockedWrite
+      );
+      let promptSignal: AbortSignal | undefined;
+      let abortCount = 0;
+      const mockAgent = getMockAgent();
+      mockAgent.chatStream = vi.fn(async function* (_message, context) {
+        promptSignal = context.signal;
+        await new Promise<void>((resolve) => {
+          context.signal.addEventListener(
+            'abort',
+            () => {
+              abortCount += 1;
+              resolve();
+            },
+            { once: true }
+          );
+        });
+        return { success: true, finalMessage: 'cancelled' };
+      }) as typeof mockAgent.chatStream;
+
+      const prompt = session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'keep the turn active' }],
+      });
+      await vi.waitFor(() => expect(promptSignal).toBeDefined());
+
+      for (let index = 0; index < 257; index += 1) {
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'task.status',
+          {
+            taskStatus: 'running',
+            updatedAt: `2026-08-14T00:00:${String(index).padStart(2, '0')}.000Z`,
+          }
+        );
+      }
+
+      await expect(prompt).resolves.toEqual({ stopReason: 'cancelled' });
+      expect(promptSignal?.reason).toBe('acp-egress-failed');
+      expect(abortCount).toBe(1);
+      expect(mockConnection.sessionUpdate).toHaveBeenCalledTimes(1);
+      expect(
+        mockConnection.sessionUpdates.some(
+          (entry) => entry.update.sessionUpdate === 'user_message_chunk'
+        )
+      ).toBe(false);
+      releaseWrite();
     });
 
     it('projects Provider retry lifecycle through ACP session metadata', async () => {

@@ -88,6 +88,13 @@ import {
   formatToolDisplay,
   renderToolDisplayToString,
 } from '../ui/utils/toolFormatters.js';
+import {
+  BoundedSerialEgress,
+  BoundedSerialEgressError,
+  SURFACE_EGRESS_MAX_PENDING_BYTES,
+  SURFACE_EGRESS_MAX_PENDING_ITEMS,
+  SURFACE_EGRESS_WRITE_TIMEOUT_MS,
+} from '../utils/BoundedSerialEgress.js';
 import { AcpServiceContext } from './AcpServiceContext.js';
 
 const logger = createLogger(LogCategory.AGENT);
@@ -209,6 +216,7 @@ export class AcpSession {
   private messages: Message[];
   private contextMessages: Message[];
   private mode: AcpModeId;
+  private readonly updateEgress: BoundedSerialEgress<SessionNotification>;
 
   constructor(
     private readonly id: string,
@@ -220,6 +228,17 @@ export class AcpSession {
     this.messages = [...(options.initialMessages ?? [])];
     this.contextMessages = [...this.messages];
     this.mode = this.mapPermissionModeToMode(options.permissionMode);
+    this.updateEgress = new BoundedSerialEgress({
+      maxPendingItems: SURFACE_EGRESS_MAX_PENDING_ITEMS,
+      maxPendingBytes: SURFACE_EGRESS_MAX_PENDING_BYTES,
+      writeTimeoutMs: SURFACE_EGRESS_WRITE_TIMEOUT_MS,
+      signal: connection.signal,
+      sizeOf: (params) => Buffer.byteLength(JSON.stringify(params)),
+      write: async (params) => {
+        await connection.sessionUpdate(params);
+      },
+      onFailure: (error) => this.handleUpdateEgressFailure(error),
+    });
   }
 
   private async refreshPersistedMessages(): Promise<void> {
@@ -281,7 +300,10 @@ export class AcpSession {
       this.connection,
       this.id,
       this.clientCapabilities,
-      this.cwd
+      this.cwd,
+      async (update) => {
+        await this.sendUpdateAndWait(update);
+      }
     );
     logger.debug(`[AcpSession ${this.id}] ACP service context initialized`);
     const recoveredInteraction =
@@ -818,6 +840,7 @@ export class AcpSession {
         });
       }
 
+      await this.flushUpdates();
       return { stopReason: result.success ? 'end_turn' : 'cancelled' };
     } catch (error) {
       // 注意：abortHandler 在 try 块内定义，catch 无法直接访问
@@ -1393,8 +1416,14 @@ export class AcpSession {
             default:
               break;
           }
+          if (!(await this.flushUpdates())) {
+            abortController.abort('acp-egress-failed');
+          }
         }
       );
+      if (!(await this.flushUpdates())) {
+        abortController.abort('acp-egress-failed');
+      }
       this.contextMessages = [...context.messages];
       const persistedMessages = await SessionService.loadSession(this.id, this.cwd);
       this.messages =
@@ -1540,6 +1569,10 @@ export class AcpSession {
       this.messages.push(message);
       this.contextMessages.push(message);
       if (result.delivery === 'next_turn') this.schedulePendingResume();
+      if (!(await this.flushUpdates())) {
+        controller.abort('acp-egress-failed');
+        return { stopReason: 'cancelled' };
+      }
       return {
         stopReason: result.record.status === 'aborted' ? 'cancelled' : 'end_turn',
       };
@@ -1950,6 +1983,9 @@ export class AcpSession {
   async destroy(): Promise<void> {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.updateEgress.close(
+      new BoundedSerialEgressError('closed', 'ACP Session was destroyed')
+    );
     if (this.availableCommandsTimer !== null) {
       clearTimeout(this.availableCommandsTimer);
       this.availableCommandsTimer = null;
@@ -2050,15 +2086,25 @@ export class AcpSession {
    * 发送会话更新通知
    */
   private canSendUpdates(): boolean {
-    return !this.destroyed && !this.connection.signal.aborted;
+    return (
+      !this.destroyed &&
+      !this.connection.signal.aborted &&
+      !this.updateEgress.stats().closed
+    );
   }
 
   private async sendUpdateAndWait(
     update: SessionNotification['update']
   ): Promise<boolean> {
     if (!this.canSendUpdates()) return false;
-    await this.connection.sessionUpdate({ sessionId: this.id, update });
-    return this.canSendUpdates();
+    const offered = this.updateEgress.offer({ sessionId: this.id, update });
+    if (!offered.accepted) return false;
+    try {
+      await offered.completion;
+      return this.canSendUpdates();
+    } catch {
+      return false;
+    }
   }
 
   private goalSessionUpdate(goal: GoalSnapshot): SessionNotification['update'] {
@@ -2080,15 +2126,24 @@ export class AcpSession {
 
   private sendUpdate(update: SessionNotification['update']): void {
     if (!this.canSendUpdates()) return;
-    const params: SessionNotification = {
-      sessionId: this.id,
-      update,
-    };
+    this.updateEgress.offer({ sessionId: this.id, update });
+  }
 
-    // 异步发送，不等待
-    this.connection.sessionUpdate(params).catch((error) => {
-      logger.warn(`[AcpSession ${this.id}] Failed to send update:`, error);
-    });
+  private async flushUpdates(): Promise<boolean> {
+    if (!this.canSendUpdates()) return false;
+    try {
+      await this.updateEgress.flush();
+      return this.canSendUpdates();
+    } catch {
+      return false;
+    }
+  }
+
+  private handleUpdateEgressFailure(error: BoundedSerialEgressError): void {
+    if (this.destroyed) return;
+    logger.warn(`[AcpSession ${this.id}] Update egress closed: kind=${error.kind}`);
+    this.pendingPrompt?.abort('acp-egress-failed');
+    this.pendingUserShell?.abort('acp-egress-failed');
   }
 
   /**

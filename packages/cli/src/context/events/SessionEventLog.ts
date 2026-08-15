@@ -9,7 +9,7 @@ import type { EphemeralDelta } from './EphemeralDelta.js';
  * events (carrying a monotonic `seq`) and ephemeral in-flight deltas.
  */
 export interface SessionStreamSubscriber {
-  onCommitted(event: SessionEvent): void;
+  onCommitted(event: SessionEvent): void | Promise<void>;
   onDelta?(delta: EphemeralDelta): void;
 }
 
@@ -144,7 +144,7 @@ export class SessionEventLog {
   async replay(subscriber: SessionStreamSubscriber, fromSeq: number): Promise<void> {
     const source = await this.store.readFromSeq(fromSeq);
     for (const event of source) {
-      subscriber.onCommitted(event);
+      await subscriber.onCommitted(event);
     }
   }
 
@@ -153,7 +153,8 @@ export class SessionEventLog {
       this.highestSeq = event.seq;
     }
     for (const subscriber of this.subscribers) {
-      subscriber.onCommitted(event);
+      const observed = subscriber.onCommitted(event);
+      if (observed) void Promise.resolve(observed).catch(() => undefined);
     }
     // Fan the committed event onto the global Bus so cross-cutting consumers
     // (Web SSE, ACP) observe it with its seq. The Bus is the log's fan-out

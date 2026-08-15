@@ -116,6 +116,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     loadSessions: vi.fn(),
     loadArchivedSessions: vi.fn(async () => undefined),
     selectSession: vi.fn(),
+    resyncSessionMessages: vi.fn(async () => undefined),
     archiveSession: vi.fn(async () => undefined),
     unarchiveSession: vi.fn(async () => undefined),
     deleteSession: vi.fn(),
@@ -1990,6 +1991,10 @@ describe('eventHandlers', () => {
       },
     });
     expect(state.endAgentResponse).toHaveBeenCalledOnce();
+    expect(state.resyncSessionMessages).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      projectPath: '/workspace/a',
+    });
   });
 
   test('returns the current run to running when an interaction resolves', () => {
@@ -2420,6 +2425,14 @@ describe('eventHandlers', () => {
 
     expect(state.isStreaming).toBe(false);
     expect(state.agentPhase).toBe('idle');
+    expect(state.resyncSessionMessages).not.toHaveBeenCalled();
+
+    dispatch({
+      type: 'session.completed',
+      properties,
+    });
+
+    expect(state.resyncSessionMessages).toHaveBeenCalledWith(properties);
   });
 
   test('projects user shell lifecycle as a user-owned command card', () => {

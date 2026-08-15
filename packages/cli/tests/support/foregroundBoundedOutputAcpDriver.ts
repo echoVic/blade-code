@@ -14,20 +14,50 @@ const ACP_EVIDENCE_PREFIX = '__BLADE_BOUNDED_ACP_EVIDENCE__';
 interface PairedHarness {
   client: ChildBackedRecordingAcpClient;
   connection: acp.ClientSideConnection;
+  egressMetrics: {
+    sessionUpdateCalls: number;
+    sessionUpdateInFlight: number;
+    maxSessionUpdateInFlight: number;
+  };
   close(): Promise<void>;
 }
 
-function createHarness(): PairedHarness {
+function createHarness(options: { sessionUpdateDelayMs?: number } = {}): PairedHarness {
   const client = new ChildBackedRecordingAcpClient();
   const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
   const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
   let agent: BladeAgent | undefined;
+  const egressMetrics = {
+    sessionUpdateCalls: 0,
+    sessionUpdateInFlight: 0,
+    maxSessionUpdateInFlight: 0,
+  };
   const connection = new acp.ClientSideConnection(
     () => client,
     acp.ndJsonStream(clientToAgent.writable, agentToClient.readable)
   );
   const agentConnection = new acp.AgentSideConnection(
     (productionConnection) => {
+      const sessionUpdate =
+        productionConnection.sessionUpdate.bind(productionConnection);
+      productionConnection.sessionUpdate = async (params) => {
+        egressMetrics.sessionUpdateCalls += 1;
+        egressMetrics.sessionUpdateInFlight += 1;
+        egressMetrics.maxSessionUpdateInFlight = Math.max(
+          egressMetrics.maxSessionUpdateInFlight,
+          egressMetrics.sessionUpdateInFlight
+        );
+        try {
+          if (options.sessionUpdateDelayMs) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, options.sessionUpdateDelayMs)
+            );
+          }
+          await sessionUpdate(params);
+        } finally {
+          egressMetrics.sessionUpdateInFlight -= 1;
+        }
+      };
       agent = new BladeAgent(productionConnection);
       return agent;
     },
@@ -39,6 +69,7 @@ function createHarness(): PairedHarness {
   return {
     client,
     connection,
+    egressMetrics,
     close: () => {
       closePromise ??= (async () => {
         let firstError: unknown;
@@ -90,6 +121,8 @@ export interface ForegroundBoundedOutputAcpEvidence {
   toolUpdateText: string;
   terminalReleaseCount: number;
   loadReplayedToolCount: number;
+  sessionUpdateCalls: number;
+  maxSessionUpdateInFlight: number;
   updates: acp.SessionNotification[];
   processes: Array<{ pid: number; identity: ProcessIdentity }>;
 }
@@ -166,7 +199,7 @@ export async function runForegroundBoundedOutputAcpDriverInProcess(input: {
   secret: string;
   timeoutMs?: number;
 }): Promise<ForegroundBoundedOutputAcpEvidence> {
-  const first = createHarness();
+  const first = createHarness({ sessionUpdateDelayMs: 25 });
   let sessionId = '';
   let updates: acp.SessionNotification[] = [];
   let finalText = '';
@@ -276,6 +309,15 @@ export async function runForegroundBoundedOutputAcpDriverInProcess(input: {
     ) {
       throw new Error('ACP final response marker is missing');
     }
+    if (
+      first.egressMetrics.sessionUpdateCalls === 0 ||
+      first.egressMetrics.maxSessionUpdateInFlight !== 1 ||
+      first.egressMetrics.sessionUpdateInFlight !== 0
+    ) {
+      throw new Error(
+        `ACP ordered egress metrics are invalid: ${JSON.stringify(first.egressMetrics)}`
+      );
+    }
     if (JSON.stringify(updates).includes(input.secret)) {
       throw new Error('ACP notification evidence contains secret material');
     }
@@ -323,6 +365,8 @@ export async function runForegroundBoundedOutputAcpDriverInProcess(input: {
     toolUpdateText,
     terminalReleaseCount,
     loadReplayedToolCount,
+    sessionUpdateCalls: first.egressMetrics.sessionUpdateCalls,
+    maxSessionUpdateInFlight: first.egressMetrics.maxSessionUpdateInFlight,
     updates,
     processes,
   };

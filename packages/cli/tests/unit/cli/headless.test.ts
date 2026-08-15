@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Bus } from '../../../src/server/bus.js';
@@ -1684,8 +1685,63 @@ describe('headless runner', () => {
     controller.abort('interrupt');
 
     await expect(run).resolves.toBe(1);
-    expect(observedSignal).toBe(controller.signal);
+    expect(observedSignal).not.toBe(controller.signal);
+    expect(observedSignal?.aborted).toBe(true);
+    expect(observedSignal?.reason).toBe('interrupt');
     expect(runtimeState.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('backpressures LoopEvents and waits for terminal output drain', async () => {
+    class BackpressuredWritable extends EventEmitter {
+      readonly chunks: string[] = [];
+      private blocked = true;
+
+      write(chunk: string): boolean {
+        this.chunks.push(chunk);
+        if (!this.blocked) return true;
+        this.blocked = false;
+        return false;
+      }
+    }
+
+    const stdout = new BackpressuredWritable();
+    const stderr = new BackpressuredWritable();
+    let generatedSecondEvent = false;
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      yield { kind: 'content_delta', delta: 'first' };
+      generatedSecondEvent = true;
+      yield { kind: 'content_delta', delta: 'second' };
+      return {
+        success: true,
+        finalMessage: 'firstsecond',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const run = runHeadless(
+      { headless: true, message: 'stream slowly' },
+      { stdout, stderr }
+    );
+    let settled = false;
+    void run.then(() => {
+      settled = true;
+    });
+
+    await vi.waitFor(() => expect(stdout.chunks).toEqual(['first']));
+    expect(generatedSecondEvent).toBe(false);
+    expect(settled).toBe(false);
+
+    stdout.emit('drain');
+    await vi.waitFor(() => expect(generatedSecondEvent).toBe(true));
+    await vi.waitFor(() =>
+      expect(stderr.chunks).toContain('[phase:completed] Headless run completed\n')
+    );
+    expect(settled).toBe(false);
+
+    stderr.emit('drain');
+    await expect(run).resolves.toBe(0);
+    expect(stdout.chunks.join('')).toBe('firstsecond');
   });
 
   it('emits stronger phase events so consumers can distinguish searching vs target-hit', async () => {

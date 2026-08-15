@@ -18,6 +18,7 @@ export interface ForegroundBoundedOutputWebEvidence {
   markerVisible: boolean;
   outputChars: number;
   reloadOutputChars: number;
+  reconnectedDuringRun: boolean;
   browserFaults: string[];
 }
 
@@ -283,6 +284,43 @@ async function waitForAssistantMarker(input: {
     `Timed out waiting for assistant marker (run status ${String(
       lastStatus
     )}); visibleToolCards=${JSON.stringify(cards)}`
+  );
+}
+
+async function waitForActiveWebRun(input: {
+  page: Page;
+  origin: string;
+  sessionId: string;
+  workspace: string;
+  timeoutMs: number;
+}): Promise<void> {
+  const deadline = Date.now() + input.timeoutMs;
+  let lastStatus: unknown = 'unknown';
+  while (Date.now() < deadline) {
+    const response = await fetch(
+      `${input.origin}/sessions/${encodeURIComponent(
+        input.sessionId
+      )}/status?projectPath=${encodeURIComponent(input.workspace)}`
+    );
+    if (response.ok) {
+      const status = (await response.json()) as { status?: unknown };
+      lastStatus = status.status;
+      if (lastStatus === 'running') return;
+      if (lastStatus === 'waiting_permission') {
+        throw new Error(
+          'Web bounded output qualification unexpectedly requested permission'
+        );
+      }
+      if (isTerminalForegroundWebRunStatus(lastStatus)) {
+        throw new Error(
+          `Web run reached ${String(lastStatus)} before reconnect injection`
+        );
+      }
+    }
+    await input.page.waitForTimeout(50);
+  }
+  throw new Error(
+    `Timed out waiting to inject Web reconnect (run status ${String(lastStatus)})`
   );
 }
 
@@ -565,6 +603,17 @@ export async function runForegroundBoundedOutputWebDriver(input: {
       'STDOUT_RETAINED_TAIL_',
       ''
     )}`;
+    await waitForActiveWebRun({
+      page,
+      origin,
+      sessionId,
+      workspace,
+      timeoutMs: Math.min(timeoutMs, 30_000),
+    });
+    refreshing = true;
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    refreshing = false;
+    await composer.waitFor({ state: 'visible' });
     await waitForAssistantMarker({
       page,
       origin,
@@ -582,6 +631,7 @@ export async function runForegroundBoundedOutputWebDriver(input: {
 
     refreshing = true;
     await page.reload({ waitUntil: 'domcontentloaded' });
+    refreshing = false;
     await composer.waitFor({ state: 'visible' });
     const reloadOutputChars = await expandAndReadBashCard(
       page,
@@ -601,6 +651,7 @@ export async function runForegroundBoundedOutputWebDriver(input: {
       markerVisible: true,
       outputChars,
       reloadOutputChars,
+      reconnectedDuringRun: true,
       browserFaults: [],
     };
   } catch (error) {
