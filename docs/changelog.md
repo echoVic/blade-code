@@ -2,6 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.35] - 2026-08-16
+
+### 🛡️ 稳定性
+
+- ToolExecutor 新增进程级与 Session 级四重 admission：全局最多 32 个工具执行，
+  readonly/write/execute 分别最多 24/8/3；单 Session 最多 10 个，三类分别最多
+  8/4/2。一个 Session 因此不能占满全部 Bash slot，其他 Web/ACP Session 可以使用
+  剩余全局容量
+- pending work 改为有界 Session round-robin：单 Session 最多排队 64 项、全进程
+  最多 256 项，等待上限 180 秒。queued abort、deadline、executor dispose 与 scheduler
+  close 都会同步移除 listener/timer/closure；`ToolExecutor.dispose()` 只取消自己的
+  owner，不影响同 Session 的其他 executor
+- queue overflow 与 wait timeout 形成可重试的
+  `resource_exhausted/tool_busy` 结果，并携带 scope、kind、limit 与 reason；等待容量的
+  结构化 progress 统一投影到 Headless JSONL、TUI、Web SSE/store 与 ACP
+  `tool_call_update`
+- 每个 Provider response 最多接纳 64 个 function tool calls；超额调用不进入权限、
+  持久化与执行 fan-out，但每个 Provider tool-call ID 仍获得
+  `tool_batch_full` 结果。streaming fallback/discard 会重置世代计数
+- streaming 与 non-streaming 批次按 Provider 顺序提交 durable tool-use identity，
+  然后保持外部工具并行；JSONL call/result、resume history 与四入口结果顺序不再受并发
+  fsync 完成顺序影响
+- `ToolConcurrencyGate` 的 shared/exclusive FIFO pending 上限固定为 64，支持幂等 close、
+  typed overflow 与完整 AbortSignal listener 清理；readonly/write 不再使用无限并发
+
+### ✅ 测试相关
+
+- 新增 DeepSeek Flash/Pro × Headless、真实 ACP stdio + PTY terminal、raw PTY TUI 与
+  production Chromium Web GUI 八格真实 API admission 矩阵；每格让模型在单个 response
+  发出四个真实前台 Bash，host 逐项释放并证明 Session 峰值恰为 2、每次只推进一个
+  successor、call/result 顺序一致且资源/凭据无残留
+- 新增双 Session production Chromium 公平性轨迹：Session A 占用两个 execute slot 并
+  排队第三项，Session B 必须使用剩余全局 slot 并独立完成；两页 reload 后继续验证
+  durable 结果、SSE/GUI queue progress、foreground lease 与 server/browser 回收
+- 确定性测试覆盖全部冻结上限、mixed-kind total、三 Session round-robin、Session/global
+  overflow、timeout、queued abort、owner dispose、gate close、listener/timer 清理、
+  64-call streaming/non-streaming parity、ordered durable commit 与 production bypass
+  搜索门禁
+
 ## [0.10.34] - 2026-08-16
 
 ### 🛡️ 稳定性

@@ -185,6 +185,16 @@ Headless JSONL 只暴露 reason/strategy/outcome/token metadata，不外泄 Prov
 顺序执行无法通过。确定性测试另行覆盖 exclusive FIFO、同路径文件锁、abort、fallback
 epoch、Web 多卡刷新重建、TUI keyed progress 和 ACP 独立 tool-call ID。
 
+Bounded fair tool admission 另固定运行 DeepSeek Flash/Pro × Headless、真实 ACP
+stdio + PTY terminal、raw PTY TUI 与 production Chromium Web GUI 八格矩阵。模型必须
+在单个 response 中发出四个真实 foreground Bash；host 在四条 canonical call 全部
+提交后证明单 Session 初始只启动两项、第三/第四项等待、每释放一项只推进一个
+successor、durable call/result 保持 Provider 顺序。独立的双 Session Chromium 轨迹
+要求 Session A 占用两个 execute slot 并排队第三项时，Session B 使用剩余全局 slot
+先完成；两个 Session reload 后仍保留终态。所有格同时验证 queue progress、typed
+overload metadata、进程树/lease/port/browser/PTY/ACP/临时根回收与 Provider credential
+absence。
+
 Fresh independent verification 资格要求主模型实际完成三个文件的非平凡实现，并在
 第一次尝试结束时由 runtime 强制启动新的内置 `verification` subagent。Verifier
 必须处于独立 child Session，运行项目已配置的真实测试，返回恰好一个结构化 PASS；
