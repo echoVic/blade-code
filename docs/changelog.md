@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.34] - 2026-08-16
+
+### 🛡️ 稳定性
+
+- Agent 新增关闭后拒绝新 work 的 in-flight barrier；`destroy()` 会先取消并等待 active
+  `chatStream()` 完成 durable `turn_aborted`，再释放 ToolExecutor、MCP 和
+  SessionRuntime。TUI 直接收到 `SIGTERM` 时会同步中止 active command，不再依赖下次
+  冷启动补写 terminal event
+- Web/serve shutdown 现在先关闭 message、task、shell、review 与 durable resume
+  admission，再取消并等待所有 active completion、Runtime initialization/disposal 和
+  shared MCP cleanup，最后停止 scheduler、GC 与网络监听。并发 stop 共享同一 Promise，
+  closing 后的新 mutation 返回 `503`
+- ACP Session 销毁会等待当前 prompt 和 user-shell 的 finalization，再销毁 Agent 与
+  Runtime；BladeAgent 和 AcpSession 的并发 destroy 都收敛到单一 barrier。stdio ACP
+  connection 关闭和进程级 cleanup 使用相同 owner
+- 全局 graceful shutdown 保留 5 秒 hard failsafe，但将 active-command abort 与 Runtime
+  cleanup 提前到 SessionEnd hooks 和 logger shutdown 之前；成功路径清除 hard/phase
+  timer，避免清理结束后迟到的 timeout 再次退出进程
+
+### ✅ 测试相关
+
+- 新增 DeepSeek Flash/Pro × Headless、真实 ACP stdio + PTY terminal、raw PTY TUI 与
+  production Chromium Web GUI 八格 shutdown 资格矩阵；每格启动真实前台 Bash，
+  在 host-visible PID barrier 后发送生产 `SIGTERM`，验证 exactly-one cancelled abort、
+  durable input 可恢复、进程树/lease/port/browser/PTY/ACP 全量回收和延迟副作用未发生
+- 新增 Agent operation gate、ACP prompt/user-shell settle、Web admission/drain、
+  Runtime dispose 顺序、global cleanup/logger 顺序与 timer 清理回归；release-blocking
+  real API qualification 增至 77 条、16 个文件
+
 ## [0.10.33] - 2026-08-14
 
 ### 🛡️ 稳定性

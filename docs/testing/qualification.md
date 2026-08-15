@@ -78,6 +78,9 @@ Goal finalization crash handoff 使用同一 Flash/Pro × 四入口八格矩阵�
 零 Provider 请求，随后再从同一 surface 完成真实 API follow-up。Completed-subagent
 adoption 与 background-subagent completion wake-up 也分别固定运行 Flash/Pro ×
 Headless/raw PTY/production Chromium Web/真实 ACP 八格矩阵。
+Bounded coordinated shutdown 另固定运行同一 Flash/Pro × 四入口八格矩阵；每格在真实
+foreground Bash 进入 host-visible PID barrier 后发送 production `SIGTERM`，要求
+exactly-one cancelled abort、同 Session 恢复、延迟副作用对照和全量资源回收。
 开放式多文件迁移、compaction、进程树、
 并发 owner 与 crash-tail 等高成本 provider/capability soak 由以下命令单独运行：
 
@@ -732,6 +735,29 @@ required matrix 固定包含 `deepseek-v4-flash` 和 `deepseek-v4-pro`，四个 
 临时 storage/workspace/trust root，并证明 API key 不进入 JSONL、sidecar、DOM、PTY、
 ACP update、diagnostics 或录制的 Provider body。
 
+### Bounded coordinated shutdown 轨迹
+
+该能力验证正常进程关闭不会把 active turn 留给下次冷启动修复：
+
+1. 每格必须先通过真实 Provider 调用一次真实 foreground Bash；host 只能在 child PID
+   文件存在且进程仍活跃后发送对应 production `SIGTERM`。
+2. Agent/Session owner 必须先关闭新工作入口，再中止 active Provider/tool path，等待
+   一个 `turn_aborted(cause="cancelled")` 提交后释放 Runtime、Session lease 与 transport。
+   同一 interrupted turn 不得出现 `turn_completed` 或第二个 terminal record。
+3. foreground child 必须忽略 TERM 并安排延迟 forbidden side effect；shutdown 必须
+   回收完整进程树和 durable lease，等待对照窗口后 forbidden 文件仍不存在。
+4. 原 durable input 必须保持可恢复。同 Session 的 production Headless resume 不得再次
+   调用 Bash，只能从 `<turn_aborted>` 历史完成 marker，并最终新增一个
+   `turn_completed`。
+5. Headless、真实 ACP stdio + terminal、raw PTY TUI 与 production Chromium Web GUI
+   分别从独立进程进入。Web 必须通过真实 composer 提交；关闭 viewer 不能等同于 server
+   shutdown。每格回收 browser/page、PTY、ACP connection、server、port、process tree、
+   Session lease、临时 storage/workspace/trust root，并全量扫描 credential absence。
+
+required matrix 固定包含 `deepseek-v4-flash` 和 `deepseek-v4-pro`，四个 surface 共八格。
+该轨迹属于 release-blocking real API qualification，不得以 mock signal、直接调用
+`SessionRuntime.dispose()`、仅检查进程退出码或 cold `process_restart` 修复替代。
+
 ### Session discovery 与 durable fork 轨迹
 
 Session discovery 与 durable fork 的准出必须覆盖四个相互独立的 production entrypoint：
@@ -777,7 +803,8 @@ JSONL、lineage、精确 fixture 文件内容和资源清理，不虚构 Git dif
 
 - 已冻结的 Qualified candidate 完整 SHA、patch 版本和日期；
 - `bun run qualify:local` 的完整命令和退出码；
-- `bun run qualify:production` 的完整命令、Flash/Pro × Web/PTY/ACP 六格逐项结果和退出码；
+- `bun run qualify:production` 的完整命令、该 patch 所需 Flash/Pro × production
+  surface 矩阵逐项结果和退出码；
 - browser preflight、process/lease/terminal/port/temp-root cleanup、omitted sentinel 与
   credential absence 的宿主断言；
 - 失败时记录首个失败 cell、redacted bounded tail、清理结果和复跑事实；只有 source

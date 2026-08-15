@@ -133,6 +133,7 @@ blade web
 - [Workspace Runtime 设置与环境隔离](reference/workspace-runtime-environment.md)
 - [模型传输恢复](reference/model-transport-recovery.md)
 - [Surface 输出背压与排序](reference/surface-egress.md)
+- [Runtime 协调关闭](reference/runtime-shutdown.md)
 
 ### 其他
 

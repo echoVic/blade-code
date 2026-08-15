@@ -63,6 +63,7 @@
   * [Scheduled Tasks 定时任务](reference/scheduled-tasks.md)
   * [模型传输恢复](reference/model-transport-recovery.md)
   * [Surface 输出背压与排序](reference/surface-egress.md)
+  * [Runtime 协调关闭](reference/runtime-shutdown.md)
   * [子进程生命周期](reference/process-lifecycle.md)
 
 * [常见问题](faq.md)
