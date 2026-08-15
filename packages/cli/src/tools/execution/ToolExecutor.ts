@@ -11,11 +11,12 @@ import type {
   ExecutionHistoryEntry,
   ToolResult,
 } from '../types/index.js';
-import { ToolErrorType } from '../types/index.js';
+import { ToolErrorType, ToolKind } from '../types/index.js';
 import type { AutoVerifyRuntime } from './AutoVerify.js';
 import {
   type ConcurrencyLimits,
   ConcurrencyScheduler,
+  ToolAdmissionError,
 } from './ConcurrencyScheduler.js';
 import { FileLockManager } from './FileLockManager.js';
 import { PermissionResolver, resolvePermissionDecision } from './PermissionResolver.js';
@@ -24,7 +25,11 @@ import {
   type SessionApprovalStore,
 } from './SessionApprovalStore.js';
 import { ToolApprovalController } from './ToolApprovalController.js';
-import { ToolConcurrencyGate } from './ToolConcurrencyGate.js';
+import {
+  ToolConcurrencyGate,
+  ToolConcurrencyGateClosedError,
+  ToolConcurrencyGateOverflowError,
+} from './ToolConcurrencyGate.js';
 import { enforceWorktreeIsolation, validateToolCall } from './ToolExecutionGuards.js';
 import { runPostToolUseHooks, runPreToolUseHooks } from './ToolExecutionHooks.js';
 import {
@@ -77,6 +82,7 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
   private readonly autoVerifyRuntime?: AutoVerifyRuntime;
   private readonly lspManager?: LspSessionManager;
   private readonly onDispose?: () => void;
+  private readonly ownerId = `tool-executor-${randomUUID()}`;
   private disposed = false;
 
   constructor(
@@ -119,12 +125,13 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
     params: Record<string, unknown>,
     context: ExecutionContext
   ): Promise<ToolResult> {
+    if (this.disposed) return this.createDisposedResult();
     const startTime = Date.now();
     const executionId = `exec_${randomUUID()}`;
     const executionContext: ExecutionContext = {
       ...this.contextDefaults,
       ...context,
-      sessionId: context.sessionId ?? this.contextDefaults.sessionId ?? executionId,
+      sessionId: context.sessionId ?? this.contextDefaults.sessionId ?? this.ownerId,
       environment: {
         ...this.contextDefaults.environment,
         ...context.environment,
@@ -170,6 +177,19 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
       );
       return result;
     } catch (error) {
+      const admissionResult = this.projectAdmissionFailure(toolName, error);
+      if (admissionResult) {
+        const result = formatToolResult(admissionResult, executionId, toolName);
+        this.completeExecution(
+          executionId,
+          toolName,
+          resolvedParams,
+          context,
+          result,
+          startTime
+        );
+        return result;
+      }
       return this.failExecution(
         executionId,
         toolName,
@@ -312,9 +332,27 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
                   executeInvocation
                 )
             : executeInvocation;
-        const result = await this.scheduler.schedule(tool.kind, executeWithLock);
+        const result = await this.scheduler.schedule(
+          {
+            ownerId: this.ownerId,
+            sessionId: context.sessionId ?? this.ownerId,
+            kind: tool.kind,
+            signal: context.signal,
+            onAbort: () => createCancellationResult(true),
+            onQueued: (snapshot) => {
+              context.onProgressUpdate?.({
+                message: 'Waiting for tool execution capacity',
+                admission: snapshot,
+              });
+            },
+          },
+          executeWithLock
+        );
         if (context.signal?.aborted) {
           return createCancellationResult(!invocationStarted);
+        }
+        if (result.metadata?.abortedBeforeLaunch === true) {
+          return result;
         }
 
         await runPostToolUseHooks(tool, params, result, context, hookResult.toolUseId);
@@ -488,6 +526,10 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
     return this.scheduler.getStats();
   }
 
+  getAdmissionStats() {
+    return this.scheduler.getAdmissionStats();
+  }
+
   getExecutionHistory(limit?: number): ExecutionHistoryEntry[] {
     return limit ? this.executionHistory.slice(-limit) : [...this.executionHistory];
   }
@@ -533,8 +575,80 @@ export class ToolExecutor extends EventEmitter<ToolExecutorEventMap> {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.concurrencyGate.close('tool-executor-disposed');
+    this.scheduler.cancelOwner(this.ownerId);
     this.onDispose?.();
     this.removeAllListeners();
+  }
+
+  private createDisposedResult(): ToolResult {
+    const cancelled = createCancellationResult(true);
+    return {
+      ...cancelled,
+      metadata: {
+        ...cancelled.metadata,
+        executorDisposed: true,
+      },
+    };
+  }
+
+  private projectAdmissionFailure(
+    toolName: string,
+    error: unknown
+  ): ToolResult | undefined {
+    if (error instanceof ToolAdmissionError && error.reason !== 'closed') {
+      const kind = this.registry.get(toolName)?.kind ?? error.kind;
+      return {
+        success: false,
+        llmContent: 'Tool execution capacity is busy. Retry this tool in a later turn.',
+        error: {
+          type: ToolErrorType.RESOURCE_EXHAUSTED,
+          code: 'tool_busy',
+          message: error.message,
+        },
+        metadata: {
+          summary: 'Tool execution capacity is busy',
+          tool_admission: {
+            code: 'tool_busy',
+            reason: error.reason,
+            scope: error.scope,
+            retryable: error.retryable,
+            kind,
+            limit: error.limit,
+          },
+        },
+      };
+    }
+    if (error instanceof ToolConcurrencyGateOverflowError) {
+      const kind = this.registry.get(toolName)?.kind ?? ToolKind.Execute;
+      return {
+        success: false,
+        llmContent: 'Tool execution capacity is busy. Retry this tool in a later turn.',
+        error: {
+          type: ToolErrorType.RESOURCE_EXHAUSTED,
+          code: 'tool_busy',
+          message: error.message,
+        },
+        metadata: {
+          summary: 'Tool execution queue is full',
+          tool_admission: {
+            code: 'tool_busy',
+            reason: 'queue_full',
+            scope: 'session',
+            retryable: true,
+            kind,
+            limit: error.limit,
+          },
+        },
+      };
+    }
+    if (
+      error instanceof ToolAdmissionError ||
+      error instanceof ToolConcurrencyGateClosedError
+    ) {
+      return this.createDisposedResult();
+    }
+    return undefined;
   }
 
   private addToHistory(entry: ExecutionHistoryEntry): void {

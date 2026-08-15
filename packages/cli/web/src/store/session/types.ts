@@ -123,6 +123,13 @@ export interface ToolCallInfo {
   progress?: number;
   progressTotal?: number;
   progressMessage?: string;
+  admission?: {
+    kind: 'readonly' | 'write' | 'execute';
+    scope: 'global' | 'session';
+    queuePosition: number;
+    inFlight: number;
+    limit: number;
+  };
   output?: string;
   startTime: number;
   metadata?: Record<string, unknown>;

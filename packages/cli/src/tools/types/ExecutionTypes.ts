@@ -80,6 +80,13 @@ export interface ToolProgressUpdate {
   message: string;
   progress?: number;
   total?: number;
+  admission?: {
+    kind: ToolKind;
+    scope: 'global' | 'session';
+    queuePosition: number;
+    inFlight: number;
+    limit: number;
+  };
 }
 
 /**

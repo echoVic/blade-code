@@ -119,4 +119,45 @@ describe('MCP tool Web metadata projection', () => {
     expect(projected).not.toHaveProperty('stdout');
     expect(projected).not.toHaveProperty('stderr');
   });
+
+  it('preserves only validated tool admission metadata for Bash results', () => {
+    expect(
+      sanitizeToolMetadata('Bash', {
+        summary: 'Tool execution capacity is busy',
+        tool_admission: {
+          code: 'tool_busy',
+          reason: 'queue_full',
+          scope: 'session',
+          retryable: true,
+          kind: 'execute',
+          limit: 64,
+          secret: 'RAW_ADMISSION_SECRET',
+        },
+      })
+    ).toEqual({
+      summary: 'Tool execution capacity is busy',
+      tool_admission: {
+        code: 'tool_busy',
+        reason: 'queue_full',
+        scope: 'session',
+        retryable: true,
+        kind: 'execute',
+        limit: 64,
+      },
+    });
+
+    expect(
+      sanitizeToolMetadata('Bash', {
+        summary: 'Malformed admission',
+        tool_admission: {
+          code: 'tool_busy',
+          reason: 'queue_full',
+          scope: 'session',
+          retryable: true,
+          kind: 'execute',
+          limit: Number.POSITIVE_INFINITY,
+        },
+      })
+    ).toEqual({ summary: 'Malformed admission' });
+  });
 });

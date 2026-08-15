@@ -16,7 +16,10 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import type { LoopEvent } from '../../../../../src/agent/loop/types.js';
-import type { ToolDisplayOutput } from '../../../../../src/tools/types/ToolTypes.js';
+import {
+  type ToolDisplayOutput,
+  ToolKind,
+} from '../../../../../src/tools/types/ToolTypes.js';
 import {
   createLoopEventHandler,
   type LoopEventDeps,
@@ -472,6 +475,13 @@ describe('createLoopEventHandler', () => {
           message: 'phase-two',
           progress: 2,
           total: 4,
+          admission: {
+            kind: ToolKind.Execute,
+            scope: 'session',
+            queuePosition: 1,
+            inFlight: 2,
+            limit: 2,
+          },
         },
       });
 
@@ -482,6 +492,13 @@ describe('createLoopEventHandler', () => {
           toolName: 'progressive',
           phase: 'progress',
           summary: 'progressive 50%: phase-two',
+          admission: {
+            kind: 'execute',
+            scope: 'session',
+            queuePosition: 1,
+            inFlight: 2,
+            limit: 2,
+          },
         }
       );
     });

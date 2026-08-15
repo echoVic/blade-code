@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PermissionMode } from '../../../../../src/config/types.js';
 import { Type } from '../../../../../src/schema/index.js';
 import { createTool } from '../../../../../src/tools/core/createTool.js';
+import { ConcurrencyScheduler } from '../../../../../src/tools/execution/ConcurrencyScheduler.js';
 import { ToolExecutor } from '../../../../../src/tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../../../../../src/tools/registry/ToolRegistry.js';
 import type { Tool } from '../../../../../src/tools/types/ToolTypes.js';
@@ -57,6 +58,36 @@ async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
+}
+
+function boundedScheduler(
+  options: {
+    globalMaxInFlight?: number;
+    globalMaxPending?: number;
+    sessionMaxInFlight?: number;
+    sessionMaxPending?: number;
+    waitTimeoutMs?: number;
+  } = {}
+) {
+  const globalMaxInFlight = options.globalMaxInFlight ?? 3;
+  const sessionMaxInFlight = options.sessionMaxInFlight ?? 2;
+  return new ConcurrencyScheduler({
+    globalMaxInFlight,
+    globalMaxPending: options.globalMaxPending ?? 8,
+    sessionMaxInFlight,
+    sessionMaxPending: options.sessionMaxPending ?? 4,
+    waitTimeoutMs: options.waitTimeoutMs ?? 5_000,
+    globalKindLimits: {
+      readonly: globalMaxInFlight,
+      write: globalMaxInFlight,
+      execute: globalMaxInFlight,
+    },
+    sessionKindLimits: {
+      readonly: sessionMaxInFlight,
+      write: sessionMaxInFlight,
+      execute: sessionMaxInFlight,
+    },
+  });
 }
 
 describe('ToolExecutor concurrency contract', () => {
@@ -249,5 +280,268 @@ describe('ToolExecutor concurrency contract', () => {
       'first',
       'second',
     ]);
+  });
+
+  it('uses Session identity so a saturated executor cannot block an eligible peer', async () => {
+    const gates = Array.from({ length: 4 }, () => deferred<void>());
+    const started: string[] = [];
+    const registry = new ToolRegistry();
+    for (const [index, name] of ['A1', 'A2', 'A3', 'B1'].entries()) {
+      registry.register(
+        createTool({
+          name,
+          displayName: name,
+          kind: ToolKind.Execute,
+          isConcurrencySafe: false,
+          parallelism: 'shared',
+          schema: Type.Object({}),
+          description: { short: name },
+          async execute() {
+            started.push(name);
+            await gates[index].promise;
+            return { success: true, llmContent: `${name}:ok` };
+          },
+        }) as never
+      );
+    }
+    const scheduler = boundedScheduler();
+    const executorA = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+      scheduler,
+    });
+    const executorB = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+      scheduler,
+    });
+
+    const a1 = executorA.execute('A1', {}, { sessionId: 'session-a' });
+    const a2 = executorA.execute('A2', {}, { sessionId: 'session-a' });
+    const a3 = executorA.execute('A3', {}, { sessionId: 'session-a' });
+    const b1 = executorB.execute('B1', {}, { sessionId: 'session-b' });
+    await vi.waitFor(() => {
+      expect(started).toEqual(['A1', 'A2', 'B1']);
+    });
+    expect(scheduler.getAdmissionStats()).toMatchObject({
+      inFlight: 3,
+      queued: 1,
+      sessions: {
+        'session-a': { inFlight: 2, queued: 1 },
+        'session-b': { inFlight: 1, queued: 0 },
+      },
+    });
+
+    gates[0].resolve();
+    await a1;
+    await vi.waitFor(() => {
+      expect(started).toEqual(['A1', 'A2', 'B1', 'A3']);
+    });
+    gates[1].resolve();
+    gates[2].resolve();
+    gates[3].resolve();
+    await Promise.all([a2, a3, b1]);
+  });
+
+  it('dispose removes only its queued owner and rejects future execution', async () => {
+    const activeGate = deferred<void>();
+    let disposedToolStarted = false;
+    const registry = new ToolRegistry();
+    registry.registerAll([
+      makeTool('Active', false, () => activeGate.promise),
+      makeTool('DisposedQueued', false, async () => {
+        disposedToolStarted = true;
+      }),
+    ]);
+    const scheduler = boundedScheduler({
+      globalMaxInFlight: 1,
+      sessionMaxInFlight: 1,
+    });
+    const activeExecutor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+      scheduler,
+    });
+    const disposedExecutor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+      scheduler,
+    });
+
+    const active = activeExecutor.execute('Active', {}, { sessionId: 'active' });
+    const queued = disposedExecutor.execute(
+      'DisposedQueued',
+      {},
+      { sessionId: 'disposed' }
+    );
+    await vi.waitFor(() => {
+      expect(scheduler.getAdmissionStats().queued).toBe(1);
+    });
+    disposedExecutor.dispose();
+    activeGate.resolve();
+    await active;
+
+    await expect(queued).resolves.toMatchObject({
+      success: false,
+      metadata: { abortedBeforeLaunch: true },
+    });
+    expect(disposedToolStarted).toBe(false);
+    await expect(
+      disposedExecutor.execute('DisposedQueued', {}, { sessionId: 'disposed' })
+    ).resolves.toMatchObject({
+      success: false,
+      metadata: { abortedBeforeLaunch: true, executorDisposed: true },
+    });
+  });
+
+  it('maps queue overflow to a retryable resource-exhausted tool result', async () => {
+    const activeGate = deferred<void>();
+    const registry = new ToolRegistry();
+    registry.registerAll([
+      makeTool('Active', false, () => activeGate.promise),
+      makeTool('Queued', false, async () => undefined),
+      makeTool('Overflow', false, async () => undefined),
+    ]);
+    const scheduler = boundedScheduler({
+      globalMaxInFlight: 1,
+      globalMaxPending: 1,
+      sessionMaxInFlight: 1,
+      sessionMaxPending: 1,
+    });
+    const holder = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+      scheduler,
+    });
+    const queuedExecutor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+      scheduler,
+    });
+    const overflowExecutor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+      scheduler,
+    });
+
+    const active = holder.execute('Active', {}, { sessionId: 'active' });
+    const queued = queuedExecutor.execute('Queued', {}, { sessionId: 'queued' });
+    await vi.waitFor(() => {
+      expect(scheduler.getAdmissionStats().queued).toBe(1);
+    });
+    const overflow = await overflowExecutor.execute(
+      'Overflow',
+      {},
+      { sessionId: 'overflow' }
+    );
+
+    expect(overflow).toMatchObject({
+      success: false,
+      error: { type: 'resource_exhausted' },
+      metadata: {
+        tool_admission: {
+          code: 'tool_busy',
+          reason: 'queue_full',
+          scope: 'global',
+          retryable: true,
+          kind: ToolKind.Execute,
+          limit: 1,
+        },
+      },
+    });
+
+    activeGate.resolve();
+    await Promise.all([active, queued]);
+  });
+
+  it('maps admission timeout to a retryable resource-exhausted tool result', async () => {
+    vi.useFakeTimers();
+    const activeGate = deferred<void>();
+    const registry = new ToolRegistry();
+    registry.registerAll([
+      makeTool('Active', false, () => activeGate.promise),
+      makeTool('TimedOut', false, async () => undefined),
+    ]);
+    const scheduler = boundedScheduler({
+      globalMaxInFlight: 1,
+      sessionMaxInFlight: 1,
+      waitTimeoutMs: 250,
+    });
+    const holder = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+      scheduler,
+    });
+    const waitingExecutor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+      scheduler,
+    });
+    const active = holder.execute('Active', {}, { sessionId: 'active' });
+
+    try {
+      const waiting = waitingExecutor.execute('TimedOut', {}, { sessionId: 'waiting' });
+      await flushMicrotasks();
+      expect(scheduler.getAdmissionStats().queued).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(250);
+      await expect(waiting).resolves.toMatchObject({
+        success: false,
+        error: {
+          type: 'resource_exhausted',
+          code: 'tool_busy',
+        },
+        metadata: {
+          tool_admission: {
+            code: 'tool_busy',
+            reason: 'wait_timeout',
+            scope: 'global',
+            retryable: true,
+            kind: ToolKind.Execute,
+            limit: 1,
+          },
+        },
+      });
+    } finally {
+      activeGate.resolve();
+      await active;
+      vi.useRealTimers();
+    }
+  });
+
+  it('projects one structured progress update when execution queues', async () => {
+    const activeGate = deferred<void>();
+    const registry = new ToolRegistry();
+    registry.registerAll([
+      makeTool('Active', false, () => activeGate.promise),
+      makeTool('Queued', false, async () => undefined),
+    ]);
+    const scheduler = boundedScheduler({
+      globalMaxInFlight: 1,
+      sessionMaxInFlight: 1,
+    });
+    const holder = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+      scheduler,
+    });
+    const queuedExecutor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+      scheduler,
+    });
+    const onProgressUpdate = vi.fn();
+
+    const active = holder.execute('Active', {}, { sessionId: 'active' });
+    const queued = queuedExecutor.execute(
+      'Queued',
+      {},
+      { sessionId: 'queued', onProgressUpdate }
+    );
+    await vi.waitFor(() => {
+      expect(onProgressUpdate).toHaveBeenCalledWith({
+        message: 'Waiting for tool execution capacity',
+        admission: {
+          kind: ToolKind.Execute,
+          scope: 'global',
+          queuePosition: 1,
+          inFlight: 1,
+          limit: 1,
+        },
+      });
+    });
+
+    activeGate.resolve();
+    await Promise.all([active, queued]);
+    expect(onProgressUpdate).toHaveBeenCalledOnce();
   });
 });

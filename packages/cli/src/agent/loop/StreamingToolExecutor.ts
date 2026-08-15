@@ -18,6 +18,7 @@ import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { SessionInteractionService } from '../../services/SessionInteractionService.js';
 import type { JsonValue } from '../../store/types.js';
 import type { ToolExecutor } from '../../tools/execution/ToolExecutor.js';
+import { ToolTurnAdmission } from '../../tools/execution/ToolTurnAdmission.js';
 import type { ToolRegistry } from '../../tools/registry/ToolRegistry.js';
 import type {
   ExecutionContext,
@@ -94,6 +95,8 @@ export class StreamingToolExecutor {
   private executeTool?: ToolExecutionPolicy;
   private admitTool?: ToolAdmissionPolicy;
   private rollbackAdmission?: ToolAdmissionRollback;
+  private readonly turnAdmission = new ToolTurnAdmission();
+  private toolUsePersistenceTail: Promise<void> = Promise.resolve();
 
   constructor(
     private pipeline: ToolExecutor,
@@ -137,10 +140,19 @@ export class StreamingToolExecutor {
       return 'rejected';
     }
     this.dispatched.add(toolCall.id);
+    this.order.push(toolCall.id);
+    const batchRejection = this.turnAdmission.admit();
+    if (batchRejection) {
+      this.completed.set(toolCall.id, {
+        toolCall,
+        result: batchRejection,
+        toolUseUuid: null,
+      });
+      return 'rejected';
+    }
     ensureDurableToolIdentity(toolCall.function.name, params);
     toolCall.function.arguments = JSON.stringify(params);
 
-    this.order.push(toolCall.id);
     const admissionRejection = this.admitTool?.(toolCall.function.name, params);
     if (admissionRejection) {
       this.completed.set(toolCall.id, {
@@ -247,6 +259,8 @@ export class StreamingToolExecutor {
     this.completed.clear();
     this.pending.clear();
     this.hasExclusiveBarrier = false;
+    this.turnAdmission.reset();
+    this.toolUsePersistenceTail = Promise.resolve();
     logger.debug(
       `[StreamingToolExecutor] 已丢弃所有挂起工作并重置状态 (epoch=${this.epoch})`
     );
@@ -355,13 +369,7 @@ export class StreamingToolExecutor {
 
       try {
         if (this.contextMgr && this.sessionId) {
-          toolUseUuid = await this.contextMgr.saveToolUse(
-            this.sessionId,
-            toolCall.function.name,
-            params as JsonValue,
-            this.lastMessageUuid ?? null,
-            this.subagentInfo
-          );
+          toolUseUuid = await this.persistToolUseInOrder(toolCall, params);
         } else if (this.requireDurableToolUse && this.sessionId) {
           throw new Error('Durable tool-use storage is unavailable');
         }
@@ -494,5 +502,30 @@ export class StreamingToolExecutor {
       // 清理 per-tool AbortController
       this.activeAborts.delete(toolCall.id);
     }
+  }
+
+  private persistToolUseInOrder(
+    toolCall: FunctionToolCall,
+    params: Record<string, unknown>
+  ): Promise<string | null> {
+    const contextMgr = this.contextMgr;
+    const sessionId = this.sessionId;
+    if (!contextMgr || !sessionId) {
+      return Promise.resolve(null);
+    }
+    const persistence = this.toolUsePersistenceTail.then(() =>
+      contextMgr.saveToolUse(
+        sessionId,
+        toolCall.function.name,
+        params as JsonValue,
+        this.lastMessageUuid ?? null,
+        this.subagentInfo
+      )
+    );
+    this.toolUsePersistenceTail = persistence.then(
+      () => undefined,
+      () => undefined
+    );
+    return persistence;
   }
 }

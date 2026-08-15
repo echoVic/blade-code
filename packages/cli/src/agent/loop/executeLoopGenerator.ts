@@ -45,6 +45,7 @@ import {
   STRUCTURED_OUTPUT_TOOL_NAME,
 } from '../../services/StructuredOutputService.js';
 import type { JsonObject, JsonValue } from '../../store/types.js';
+import { ToolTurnAdmission } from '../../tools/execution/ToolTurnAdmission.js';
 import { ToolErrorType } from '../../tools/types/index.js';
 import { isAbortError } from '../../utils/abort.js';
 import { getAbortReason } from '../../utils/abortReason.js';
@@ -3060,8 +3061,14 @@ validates the object and may return a bounded corrective error.`;
             string,
             import('../../tools/types/index.js').ToolResult
           >();
+          const turnToolAdmission = new ToolTurnAdmission();
           // Admission happens before tool_start and durable tool-use persistence.
           for (const toolCall of functionCalls) {
+            const batchRejection = turnToolAdmission.admit();
+            if (batchRejection) {
+              admissionRejections.set(toolCall.id, batchRejection);
+              continue;
+            }
             const parsedParams = parseToolArguments(toolCall.function.arguments);
             const admissionRejection =
               parsedParams === null
@@ -3083,6 +3090,28 @@ validates the object and may return a bounded corrective error.`;
               toolKind,
             };
           }
+
+          let toolUsePersistenceTail: Promise<void> = Promise.resolve();
+          const persistToolUseInOrder = (
+            toolName: string,
+            params: Record<string, unknown>
+          ) => {
+            const persistence = toolUsePersistenceTail.then(() =>
+              saveToolUse(
+                deps,
+                context,
+                toolName,
+                params as unknown as JsonValue,
+                lastMessageUuid,
+                { required: deps.executionEngine !== undefined }
+              )
+            );
+            toolUsePersistenceTail = persistence.then(
+              () => undefined,
+              () => undefined
+            );
+            return persistence;
+          };
 
           // 并行执行所有工具
           const executeToolCall = async (toolCall: (typeof functionCalls)[0]) => {
@@ -3114,13 +3143,9 @@ validates the object and may return a bounded corrective error.`;
               }
               ensureDurableToolIdentity(toolCall.function.name, params);
               try {
-                toolUseUuid = await saveToolUse(
-                  deps,
-                  context,
+                toolUseUuid = await persistToolUseInOrder(
                   toolCall.function.name,
-                  params as unknown as JsonValue,
-                  lastMessageUuid,
-                  { required: deps.executionEngine !== undefined }
+                  params
                 );
               } catch (error) {
                 return {

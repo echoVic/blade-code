@@ -8,6 +8,7 @@
  * 4. vanilla store 对外 - 供 Agent 使用
  */
 
+import type { ActionStationarityEvent } from '../agent/loop/actionStationarity.js';
 import type {
   CommunicationStyleSelection,
   ModelConfig,
@@ -25,7 +26,7 @@ import type { ProviderStallEvent } from '../services/pi/providerStall.js';
 import type { SessionMetadata } from '../services/SessionService.js';
 import type { SessionSelectionIntent } from '../slash-commands/types.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
-import type { ActionStationarityEvent } from '../agent/loop/actionStationarity.js';
+import type { ToolProgressUpdate } from '../tools/types/ExecutionTypes.js';
 
 // ==================== Session Types ====================
 
@@ -50,6 +51,7 @@ export interface ToolMessageMetadata {
   summary?: string;
   detail?: string;
   params?: Record<string, unknown>;
+  admission?: ToolProgressUpdate['admission'];
 }
 
 /**

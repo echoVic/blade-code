@@ -44,6 +44,7 @@ import {
 import type {
   ConfirmationDetails,
   ConfirmationResponse,
+  ToolProgressUpdate,
 } from '../tools/types/ExecutionTypes.js';
 import {
   formatToolCallSummary,
@@ -592,13 +593,28 @@ function createEventWriter(
       }
       writeLine(io.stderr, `[tool:start] ${summary}`);
     },
-    toolProgress(toolName: string, message: string, progress?: number, total?: number) {
+    toolProgress(
+      toolName: string,
+      message: string,
+      progress?: number,
+      total?: number,
+      admission?: ToolProgressUpdate['admission']
+    ) {
       if (outputFormat === 'jsonl') {
         writeJsonl('tool_progress', {
           tool_name: toolName,
           message,
           progress,
           total,
+          admission: admission
+            ? {
+                kind: admission.kind,
+                scope: admission.scope,
+                queue_position: admission.queuePosition,
+                in_flight: admission.inFlight,
+                limit: admission.limit,
+              }
+            : undefined,
         });
         return;
       }
@@ -1502,7 +1518,8 @@ export async function runHeadless(
               toolCall.function.name,
               event.update.message,
               event.update.progress,
-              event.update.total
+              event.update.total,
+              event.update.admission
             );
             break;
           }

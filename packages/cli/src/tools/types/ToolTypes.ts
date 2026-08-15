@@ -413,6 +413,7 @@ export enum ToolErrorType {
   VALIDATION_ERROR = 'validation_error',
   PERMISSION_DENIED = 'permission_denied',
   EXECUTION_ERROR = 'execution_error',
+  RESOURCE_EXHAUSTED = 'resource_exhausted',
   TIMEOUT_ERROR = 'timeout_error',
   NETWORK_ERROR = 'network_error',
 }

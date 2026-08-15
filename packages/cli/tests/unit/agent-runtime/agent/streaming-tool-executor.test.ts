@@ -10,6 +10,7 @@ import {
   StreamingToolExecutor,
 } from '../../../../src/agent/loop/StreamingToolExecutor.js';
 import type { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
+import { TOOL_TURN_MAX_CALLS } from '../../../../src/tools/execution/ToolTurnAdmission.js';
 import type { ToolRegistry } from '../../../../src/tools/registry/ToolRegistry.js';
 import type { ExecutionContext } from '../../../../src/tools/types/ExecutionTypes.js';
 import { ToolErrorType } from '../../../../src/tools/types/index.js';
@@ -32,6 +33,14 @@ function makeSuccessResult(tag: string) {
     error: undefined,
     metadata: undefined,
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 /** Collect all values from an async generator into an array. */
@@ -317,6 +326,38 @@ describe('StreamingToolExecutor', () => {
       expect(result.result.error?.type).toBe(ToolErrorType.VALIDATION_ERROR);
     });
 
+    it('rejects calls beyond the bounded turn batch before policy or execution', async () => {
+      const statuses = Array.from({ length: TOOL_TURN_MAX_CALLS + 1 }, (_, index) =>
+        executor.addTool(makeToolCall(`batch-${index}`, 'Task'), {
+          prompt: `task-${index}`,
+        })
+      );
+
+      expect(statuses.slice(0, TOOL_TURN_MAX_CALLS)).toEqual(
+        Array.from({ length: TOOL_TURN_MAX_CALLS }, () => 'queued')
+      );
+      expect(statuses.at(-1)).toBe('rejected');
+      expect(admitWithPolicy).toHaveBeenCalledTimes(TOOL_TURN_MAX_CALLS);
+
+      const results = await collectAsync(executor.getRemainingResults());
+      expect(results).toHaveLength(TOOL_TURN_MAX_CALLS + 1);
+      expect(executeWithPolicy).toHaveBeenCalledTimes(TOOL_TURN_MAX_CALLS);
+      expect(results.at(-1)?.result).toMatchObject({
+        success: false,
+        error: {
+          type: ToolErrorType.RESOURCE_EXHAUSTED,
+          code: 'tool_batch_full',
+        },
+        metadata: {
+          tool_admission: {
+            code: 'tool_batch_full',
+            reason: 'turn_limit',
+            limit: TOOL_TURN_MAX_CALLS,
+          },
+        },
+      });
+    });
+
     it('yields mixed allowlisted + queued tools in insertion order', async () => {
       // A = allowlisted (Read), B = non-allowlisted (Edit), C = allowlisted (Glob)
       pipeline.execute
@@ -386,6 +427,26 @@ describe('StreamingToolExecutor', () => {
       const collected = await collectAsync(executor.getRemainingResults());
       expect(collected).toHaveLength(1);
       expect(collected[0].toolCall.id).toBe('new');
+    });
+
+    it('resets the bounded turn admission generation on discard', async () => {
+      for (let index = 0; index < TOOL_TURN_MAX_CALLS; index++) {
+        expect(
+          executor.addTool(makeToolCall(`old-${index}`, 'Task'), {
+            prompt: `old-${index}`,
+          })
+        ).toBe('queued');
+      }
+      executor.discard();
+
+      expect(
+        executor.addTool(makeToolCall('new-generation', 'Task'), {
+          prompt: 'new-generation',
+        })
+      ).toBe('queued');
+      const results = await collectAsync(executor.getRemainingResults());
+      expect(results).toHaveLength(1);
+      expect(results[0].result.success).toBe(true);
     });
 
     it('previously used toolCall.id can be re-added after discard', () => {
@@ -501,6 +562,48 @@ describe('StreamingToolExecutor', () => {
   // ContextManager integration (saveToolUse)
   // ----------------------------------------------------------------
   describe('contextManager integration', () => {
+    it('commits queued tool uses in Provider order before side effects', async () => {
+      const firstPersistence = deferred<string>();
+      const mockContextMgr = {
+        saveToolUse: vi
+          .fn()
+          .mockImplementationOnce(() => firstPersistence.promise)
+          .mockResolvedValueOnce('uuid-second'),
+      };
+      executor = new StreamingToolExecutor(
+        pipeline as unknown as ToolExecutor,
+        execContext,
+        registry as unknown as ToolRegistry,
+        mockContextMgr as any,
+        'ordered-session',
+        'ordered-assistant',
+        undefined,
+        undefined,
+        true
+      );
+      executor.addTool(makeToolCall('provider-first', 'Task'), {
+        prompt: 'first',
+      });
+      executor.addTool(makeToolCall('provider-second', 'Task'), {
+        prompt: 'second',
+      });
+
+      const collected = collectAsync(executor.getRemainingResults());
+      await vi.waitFor(() => {
+        expect(mockContextMgr.saveToolUse).toHaveBeenCalledTimes(1);
+      });
+      expect(pipeline.execute).not.toHaveBeenCalled();
+
+      firstPersistence.resolve('uuid-first');
+      await expect(collected).resolves.toMatchObject([
+        { toolCall: { id: 'provider-first' }, toolUseUuid: 'uuid-first' },
+        { toolCall: { id: 'provider-second' }, toolUseUuid: 'uuid-second' },
+      ]);
+      expect(
+        mockContextMgr.saveToolUse.mock.calls.map((call) => call[2].prompt)
+      ).toEqual(['first', 'second']);
+    });
+
     it('uses one generated Task child ID for persistence, execution, and history', async () => {
       const mockContextMgr = {
         saveToolUse: vi.fn().mockResolvedValue('uuid-task'),

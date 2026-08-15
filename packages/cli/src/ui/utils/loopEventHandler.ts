@@ -226,6 +226,7 @@ export function createLoopEventHandler(
           toolName: toolCall.function.name,
           phase: 'progress',
           summary,
+          ...(event.update.admission ? { admission: event.update.admission } : {}),
         });
         break;
       }

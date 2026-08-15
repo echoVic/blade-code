@@ -42,6 +42,32 @@ describe('headless event contract', () => {
       total: 4,
     });
 
+    expect(
+      createHeadlessJsonlEvent('tool_progress', {
+        tool_name: 'Bash',
+        message: 'Waiting for tool execution capacity',
+        admission: {
+          kind: 'execute',
+          scope: 'session',
+          queue_position: 2,
+          in_flight: 2,
+          limit: 2,
+        },
+      })
+    ).toEqual({
+      event_version: 1,
+      type: 'tool_progress',
+      tool_name: 'Bash',
+      message: 'Waiting for tool execution capacity',
+      admission: {
+        kind: 'execute',
+        scope: 'session',
+        queue_position: 2,
+        in_flight: 2,
+        limit: 2,
+      },
+    });
+
     const providerRetry = createHeadlessJsonlEvent('provider_retry', {
       phase: 'scheduled',
       attempt: 1,

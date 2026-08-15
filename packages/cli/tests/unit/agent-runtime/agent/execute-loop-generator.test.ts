@@ -110,6 +110,8 @@ import { ContextManager } from '../../../../src/context/ContextManager.js';
 import { ReactiveCompaction } from '../../../../src/context/ReactiveCompaction.js';
 import { markProviderReplayBoundary } from '../../../../src/services/pi/providerRetry.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
+import { TOOL_TURN_MAX_CALLS } from '../../../../src/tools/execution/ToolTurnAdmission.js';
+import { ToolErrorType } from '../../../../src/tools/types/index.js';
 
 // Access the shared mock functions via a probe instance of the mocked class
 const reactiveCompactionState = new (
@@ -1915,6 +1917,136 @@ describe('executeLoopGenerator', () => {
           name: 'Read',
         })
       );
+    });
+
+    it('bounds a non-streaming tool batch and pairs every excess call with a result', async () => {
+      const deps = createMockDeps();
+      const context = createMockContext();
+      const toolCalls = Array.from({ length: TOOL_TURN_MAX_CALLS + 1 }, (_, index) => ({
+        id: `bounded-call-${index}`,
+        type: 'function' as const,
+        function: {
+          name: 'Read',
+          arguments: JSON.stringify({ path: `/tmp/file-${index}` }),
+        },
+      }));
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls,
+          usage: { promptTokens: 100, completionTokens: 200, totalTokens: 300 },
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Bounded batch complete.',
+          toolCalls: undefined,
+          usage: { promptTokens: 200, completionTokens: 20, totalTokens: 220 },
+          finishReason: 'stop',
+        });
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
+      executeMock.mockResolvedValue({
+        success: true,
+        llmContent: 'read-result',
+      });
+
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Read the bounded batch',
+          context,
+          { stream: false } as LoopOptions,
+          'Use the requested tools.'
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(executeMock).toHaveBeenCalledTimes(TOOL_TURN_MAX_CALLS);
+      expect(events.filter((event) => event.kind === 'tool_start')).toHaveLength(
+        TOOL_TURN_MAX_CALLS
+      );
+      const toolResults = events.filter(
+        (event): event is Extract<LoopEvent, { kind: 'tool_result' }> =>
+          event.kind === 'tool_result'
+      );
+      expect(toolResults).toHaveLength(TOOL_TURN_MAX_CALLS + 1);
+      expect(toolResults.at(-1)?.result).toMatchObject({
+        success: false,
+        error: {
+          type: ToolErrorType.RESOURCE_EXHAUSTED,
+          code: 'tool_batch_full',
+        },
+        metadata: {
+          tool_admission: {
+            code: 'tool_batch_full',
+            reason: 'turn_limit',
+            limit: TOOL_TURN_MAX_CALLS,
+          },
+        },
+      });
+    });
+
+    it('commits non-streaming tool uses in Provider order before execution', async () => {
+      const { deps, saveToolUse } = createTypedPersistenceHarness();
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'provider-first',
+              type: 'function',
+              function: { name: 'Read', arguments: '{"path":"first"}' },
+            },
+            {
+              id: 'provider-second',
+              type: 'function',
+              function: { name: 'Read', arguments: '{"path":"second"}' },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'Ordered persistence complete.',
+          toolCalls: undefined,
+          finishReason: 'stop',
+        });
+      let resolveFirstPersistence!: (value: string) => void;
+      const firstPersistence = new Promise<string>((resolve) => {
+        resolveFirstPersistence = resolve;
+      });
+      saveToolUse
+        .mockReset()
+        .mockImplementationOnce(() => firstPersistence)
+        .mockResolvedValueOnce('durable-second');
+      (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true,
+        llmContent: 'read-result',
+      });
+
+      const run = drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Read both files',
+          context,
+          { stream: false } as LoopOptions,
+          undefined
+        )
+      );
+      await vi.waitFor(() => {
+        expect(saveToolUse).toHaveBeenCalledTimes(1);
+      });
+      expect(deps.toolExecutor.execute).not.toHaveBeenCalled();
+
+      resolveFirstPersistence('durable-first');
+      await expect(run).resolves.toMatchObject({
+        result: { success: true },
+      });
+      expect(saveToolUse.mock.calls.map((call) => call[2])).toEqual([
+        { path: 'first' },
+        { path: 'second' },
+      ]);
     });
 
     it('yields tool progress while a non-streaming tool is running', async () => {

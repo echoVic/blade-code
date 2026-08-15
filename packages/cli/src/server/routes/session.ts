@@ -383,12 +383,49 @@ type Variables = {
   directory: string;
 };
 
+function sanitizeToolAdmissionMetadata(
+  value: unknown
+): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const admission = value as Record<string, unknown>;
+  const code = admission.code;
+  const reason = admission.reason;
+  const scope = admission.scope;
+  const kind = admission.kind;
+  const limit = admission.limit;
+  if (
+    (code !== 'tool_busy' && code !== 'tool_batch_full') ||
+    (reason !== 'queue_full' && reason !== 'wait_timeout' && reason !== 'turn_limit') ||
+    (scope !== 'global' && scope !== 'session') ||
+    typeof admission.retryable !== 'boolean' ||
+    !Number.isSafeInteger(limit) ||
+    (limit as number) <= 0 ||
+    (kind !== undefined &&
+      kind !== 'readonly' &&
+      kind !== 'write' &&
+      kind !== 'execute')
+  ) {
+    return undefined;
+  }
+  return {
+    code,
+    reason,
+    scope,
+    retryable: admission.retryable,
+    ...(kind === undefined ? {} : { kind }),
+    limit,
+  };
+}
+
 export const sanitizeToolMetadata = (
   toolName: string,
   metadata: ToolResultMetadata | undefined
 ) => {
   if (!metadata || typeof metadata !== 'object') return metadata;
   const sanitized = { ...(metadata as Record<string, unknown>) };
+  const toolAdmission = sanitizeToolAdmissionMetadata(sanitized.tool_admission);
+  if (toolAdmission) sanitized.tool_admission = toolAdmission;
+  else delete sanitized.tool_admission;
   if (toolName === 'Bash') {
     const projected: Record<string, unknown> = {};
     const stringFields = ['summary', 'status', 'signal'] as const;
@@ -449,6 +486,7 @@ export const sanitizeToolMetadata = (
     ) {
       projected.terminal_transport = sanitized.terminal_transport;
     }
+    if (toolAdmission) projected.tool_admission = toolAdmission;
     return projected as ToolResultMetadata;
   }
   const MAX_INLINE_CONTENT = 200000;

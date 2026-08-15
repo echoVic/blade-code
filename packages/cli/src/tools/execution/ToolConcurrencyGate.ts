@@ -11,6 +11,22 @@ type PendingTask<T> = {
 
 type ErasedPendingTask = PendingTask<unknown>;
 
+export const TOOL_GATE_MAX_PENDING = 64;
+
+export class ToolConcurrencyGateOverflowError extends Error {
+  constructor(readonly limit: number) {
+    super(`Tool concurrency gate queue is full (max ${limit})`);
+    this.name = 'ToolConcurrencyGateOverflowError';
+  }
+}
+
+export class ToolConcurrencyGateClosedError extends Error {
+  constructor() {
+    super('Tool concurrency gate is closed');
+    this.name = 'ToolConcurrencyGateClosedError';
+  }
+}
+
 /**
  * Fair per-executor gate for tool batches.
  *
@@ -21,6 +37,13 @@ export class ToolConcurrencyGate {
   private readonly queue: ErasedPendingTask[] = [];
   private concurrentInFlight = 0;
   private exclusiveInFlight = false;
+  private closed = false;
+
+  constructor(private readonly maxPending = TOOL_GATE_MAX_PENDING) {
+    if (!Number.isSafeInteger(maxPending) || maxPending <= 0) {
+      throw new Error('maxPending must be a finite positive integer');
+    }
+  }
 
   run<T>(
     concurrent: boolean,
@@ -28,12 +51,18 @@ export class ToolConcurrencyGate {
     signal: AbortSignal | undefined,
     onAbort: () => T
   ): Promise<T> {
+    if (this.closed) {
+      return Promise.reject(new ToolConcurrencyGateClosedError());
+    }
     if (signal?.aborted) {
       try {
         return Promise.resolve(onAbort());
       } catch (error) {
         return Promise.reject(error);
       }
+    }
+    if (this.queue.length >= this.maxPending) {
+      return Promise.reject(new ToolConcurrencyGateOverflowError(this.maxPending));
     }
 
     return new Promise<T>((resolve, reject) => {
@@ -69,8 +98,39 @@ export class ToolConcurrencyGate {
     });
   }
 
+  close(_reason?: unknown): void {
+    if (this.closed) return;
+    this.closed = true;
+    for (const task of [...this.queue]) {
+      const index = this.queue.indexOf(task);
+      if (index >= 0) this.queue.splice(index, 1);
+      if (task.signal && task.abortListener) {
+        task.signal.removeEventListener('abort', task.abortListener);
+      }
+      try {
+        task.resolve(task.onAbort());
+      } catch (error) {
+        task.reject(error);
+      }
+    }
+  }
+
+  stats(): {
+    pending: number;
+    sharedInFlight: number;
+    exclusiveInFlight: boolean;
+    closed: boolean;
+  } {
+    return {
+      pending: this.queue.length,
+      sharedInFlight: this.concurrentInFlight,
+      exclusiveInFlight: this.exclusiveInFlight,
+      closed: this.closed,
+    };
+  }
+
   private drain(): void {
-    if (this.exclusiveInFlight || this.queue.length === 0) return;
+    if (this.closed || this.exclusiveInFlight || this.queue.length === 0) return;
 
     if (this.concurrentInFlight > 0) {
       while (this.queue[0]?.concurrent) {

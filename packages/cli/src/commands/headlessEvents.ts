@@ -53,6 +53,13 @@ const StructuredOutputEventSchema = event({
 });
 
 const ToolKindSchema = StringEnum(['readonly', 'write', 'execute']);
+const ToolAdmissionProgressSchema = Type.Object({
+  kind: ToolKindSchema,
+  scope: StringEnum(['global', 'session']),
+  queue_position: Type.Integer({ minimum: 1 }),
+  in_flight: Type.Integer({ minimum: 0 }),
+  limit: Type.Integer({ minimum: 1 }),
+});
 
 const ToolStartEventSchema = event({
   type: Type.Literal('tool_start'),
@@ -68,6 +75,7 @@ const ToolProgressEventSchema = event({
   message: Type.String(),
   progress: Type.Optional(Type.Number()),
   total: Type.Optional(Type.Number()),
+  admission: Type.Optional(ToolAdmissionProgressSchema),
 });
 
 const ToolResultEventSchema = event({

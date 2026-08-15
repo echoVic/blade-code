@@ -13,6 +13,15 @@ function deferred<T = void>() {
   return { promise, resolve, reject };
 }
 
+function admission(sessionId: string, kind: ToolKind) {
+  return {
+    sessionId,
+    ownerId: `${sessionId}-owner`,
+    kind,
+    onAbort: () => undefined,
+  };
+}
+
 describe('ConcurrencyScheduler', () => {
   afterEach(() => {
     ConcurrencyScheduler.resetInstance();
@@ -33,55 +42,61 @@ describe('ConcurrencyScheduler', () => {
     });
   });
 
-  describe('readonly 桶: 无限并发', () => {
-    it('100 个 readonly 任务应全部并行启动', async () => {
+  describe('readonly 桶: Session 有界并发', () => {
+    it('同一 Session 最多并发 8 个 readonly 任务', async () => {
       const scheduler = new ConcurrencyScheduler();
-      const gates = Array.from({ length: 100 }, () => deferred<number>());
+      const gates = Array.from({ length: 12 }, () => deferred<number>());
 
-      // 派发所有任务
       const results = gates.map((g, i) =>
-        scheduler.schedule(ToolKind.ReadOnly, async () => g.promise.then(() => i))
+        scheduler.schedule(admission('readonly-session', ToolKind.ReadOnly), async () =>
+          g.promise.then(() => i)
+        )
       );
 
-      // 给 microtask 队列机会,让所有任务进入 inFlight
       await new Promise((r) => setTimeout(r, 0));
-
       expect(scheduler.getStats()[ToolKind.ReadOnly]).toEqual({
-        inFlight: 100,
+        inFlight: 8,
+        queued: 4,
+      });
+
+      gates.slice(0, 8).forEach((g) => g.resolve(0));
+      await Promise.all(results.slice(0, 8));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(scheduler.getStats()[ToolKind.ReadOnly]).toEqual({
+        inFlight: 4,
         queued: 0,
       });
 
-      // 释放所有
-      gates.forEach((g) => g.resolve(0));
+      gates.slice(8).forEach((g) => g.resolve(0));
       const values = await Promise.all(results);
-      expect(values).toHaveLength(100);
+      expect(values).toHaveLength(12);
     });
   });
 
-  describe('execute 桶: 限并发 3', () => {
-    it('超过 3 个任务时,多余的应排队', async () => {
+  describe('execute 桶: Session 限并发 2', () => {
+    it('同一 Session 超过 2 个任务时,多余的应排队', async () => {
       const scheduler = new ConcurrencyScheduler({ execute: 3 });
       const gates = Array.from({ length: 5 }, () => deferred<void>());
       const started: number[] = [];
 
       const promises = gates.map((g, i) =>
-        scheduler.schedule(ToolKind.Execute, async () => {
+        scheduler.schedule(admission('execute-session', ToolKind.Execute), async () => {
           started.push(i);
           await g.promise;
         })
       );
 
       await new Promise((r) => setTimeout(r, 0));
-      expect(started).toEqual([0, 1, 2]); // 只有前 3 个启动
+      expect(started).toEqual([0, 1]);
       expect(scheduler.getStats()[ToolKind.Execute]).toEqual({
-        inFlight: 3,
-        queued: 2,
+        inFlight: 2,
+        queued: 3,
       });
 
-      // 完成第一个 → 队列头部(3)应被唤醒
       gates[0].resolve();
+      await promises[0];
       await new Promise((r) => setTimeout(r, 0));
-      expect(started).toEqual([0, 1, 2, 3]);
+      expect(started).toEqual([0, 1, 2]);
 
       // 完成剩下的
       gates[1].resolve();
@@ -189,19 +204,17 @@ describe('ConcurrencyScheduler', () => {
 
   describe('进程级共享 (多 pipeline/多 agent 场景)', () => {
     it('多个独立的 scheduler 实例共用 getInstance() 时,execute 配额全局生效', async () => {
-      // 模拟 SessionRuntime/BackgroundAgentManager 各建 pipeline 但共享 scheduler
       const pipelineA = ConcurrencyScheduler.getInstance();
       const pipelineB = ConcurrencyScheduler.getInstance();
       const pipelineC = ConcurrencyScheduler.getInstance();
       expect(pipelineA).toBe(pipelineB);
       expect(pipelineB).toBe(pipelineC);
 
-      // 默认 execute: 3; 三个 pipeline 并发 6 次 Bash 调用应该仍只有 3 个在跑
       const gates = Array.from({ length: 6 }, () => deferred<void>());
       const started: number[] = [];
       const promises = gates.map((g, i) =>
         [pipelineA, pipelineB, pipelineC][i % 3].schedule(
-          ToolKind.Execute,
+          admission(`session-${i % 3}`, ToolKind.Execute),
           async () => {
             started.push(i);
             await g.promise;
@@ -210,7 +223,7 @@ describe('ConcurrencyScheduler', () => {
       );
 
       await new Promise((r) => setTimeout(r, 0));
-      expect(started).toHaveLength(3); // 全局只有 3 个在跑
+      expect(started).toHaveLength(3);
       expect(pipelineA.getStats()[ToolKind.Execute]).toEqual({
         inFlight: 3,
         queued: 3,

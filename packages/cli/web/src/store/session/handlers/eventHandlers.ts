@@ -411,6 +411,40 @@ const handleToolStart: EventHandler = (props, get, set) => {
   appendToolCall(targetMessageId, toolCall);
 };
 
+function projectToolAdmissionProgress(
+  value: unknown
+): ToolCallInfo['admission'] | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const admission = value as Record<string, unknown>;
+  if (
+    admission.kind !== 'readonly' &&
+    admission.kind !== 'write' &&
+    admission.kind !== 'execute'
+  ) {
+    return undefined;
+  }
+  if (admission.scope !== 'global' && admission.scope !== 'session') {
+    return undefined;
+  }
+  if (
+    !Number.isSafeInteger(admission.queuePosition) ||
+    (admission.queuePosition as number) <= 0 ||
+    !Number.isSafeInteger(admission.inFlight) ||
+    (admission.inFlight as number) < 0 ||
+    !Number.isSafeInteger(admission.limit) ||
+    (admission.limit as number) <= 0
+  ) {
+    return undefined;
+  }
+  return {
+    kind: admission.kind,
+    scope: admission.scope,
+    queuePosition: admission.queuePosition as number,
+    inFlight: admission.inFlight as number,
+    limit: admission.limit as number,
+  };
+}
+
 const handleToolProgress: EventHandler = (props, get) => {
   const { currentSessionId, updateToolCall, messages } = get();
   if (props.sessionId !== currentSessionId) return;
@@ -425,6 +459,7 @@ const handleToolProgress: EventHandler = (props, get) => {
     progress: typeof props.progress === 'number' ? props.progress : undefined,
     progressTotal: typeof props.total === 'number' ? props.total : undefined,
     progressMessage: props.message as string,
+    admission: projectToolAdmissionProgress(props.admission),
   });
 };
 
@@ -1314,6 +1349,7 @@ const handleSubagentToolProgress: EventHandler = (props, get) => {
             progress: typeof props.progress === 'number' ? props.progress : undefined,
             progressTotal: typeof props.total === 'number' ? props.total : undefined,
             progressMessage: props.message as string,
+            admission: projectToolAdmissionProgress(props.admission),
           }
         : tool
     ),

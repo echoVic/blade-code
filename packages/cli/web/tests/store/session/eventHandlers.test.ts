@@ -994,6 +994,13 @@ describe('eventHandlers', () => {
         message: 'phase-two',
         progress: 2,
         total: 4,
+        admission: {
+          kind: 'execute',
+          scope: 'global',
+          queuePosition: 1,
+          inFlight: 3,
+          limit: 3,
+        },
       },
     });
 
@@ -1004,6 +1011,13 @@ describe('eventHandlers', () => {
       progress: 2,
       progressTotal: 4,
       progressMessage: 'phase-two',
+      admission: {
+        kind: 'execute',
+        scope: 'global',
+        queuePosition: 1,
+        inFlight: 3,
+        limit: 3,
+      },
     });
   });
 
