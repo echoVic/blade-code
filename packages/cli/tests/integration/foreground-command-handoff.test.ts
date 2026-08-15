@@ -235,6 +235,45 @@ describe.skipIf(process.platform === 'win32')(
       });
     });
 
+    it('preserves exact foreground accounting when a large command beats the budget', async () => {
+      const tail = 'FAST_FOREGROUND_TAIL';
+      const result = await bashTool.execute(
+        {
+          command: nodeCommand(
+            `process.stdout.write('x'.repeat(${1024 * 1024 + 4096}) + ${JSON.stringify(
+              tail
+            )})`
+          ),
+          timeout: 10_000,
+          env: {},
+          run_in_background: false,
+        },
+        undefined,
+        {
+          sessionId: `handoff-fast-output-${Date.now()}`,
+          workspaceRoot: os.tmpdir(),
+          foregroundCommandHandoffMs: 1_000,
+        } as HandoffExecutionContext
+      );
+
+      expect(result).toMatchObject({
+        success: true,
+        llmContent: {
+          stdout: expect.stringContaining(tail),
+          output_truncated: true,
+          output_accounting_complete: true,
+        },
+        metadata: {
+          capture_truncated: true,
+          output_accounting_complete: true,
+          terminal_transport: 'local',
+        },
+      });
+      expect(result.metadata?.auto_backgrounded).not.toBe(true);
+      expect(result.metadata?.stdout_omitted_bytes).toBeGreaterThan(0);
+      expect(result.metadata?.stdout_total_bytes).toBeGreaterThan(1024 * 1024);
+    });
+
     it('continues the same foreground process when background lease commit fails', async () => {
       const workspace = await mkdtemp(
         path.join(os.tmpdir(), 'blade-handoff-lease-failure-')

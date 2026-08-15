@@ -577,6 +577,7 @@ function backgroundCapacityResult(error: BackgroundShellCapacityError): ToolResu
 function captureFromManagedShell(
   snapshot: ShellOutputSnapshot
 ): ShellOutputCaptureSnapshot {
+  if (snapshot.capture) return snapshot.capture;
   const stream = (content: string, totalBytes: number, omittedBytes: number) => ({
     content,
     totalBytes,

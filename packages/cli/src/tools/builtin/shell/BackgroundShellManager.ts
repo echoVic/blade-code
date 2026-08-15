@@ -15,6 +15,10 @@ import type { OwnedProcessTree } from '../../../utils/process/OwnedProcessTree.j
 import { BackgroundShellLeaseStore } from './BackgroundShellLeaseStore.js';
 import { BoundedOutputBuffer } from './BoundedOutputBuffer.js';
 import {
+  ShellOutputCapture,
+  type ShellOutputCaptureSnapshot,
+} from './ShellOutputCapture.js';
+import {
   isWorkspaceSandboxRuntimeFailure,
   type SandboxedCommand,
 } from './WorkspaceWriteSandbox.js';
@@ -89,6 +93,7 @@ interface ManagedBackgroundShellProcess extends BackgroundShellProcess {
   resolveCompletion(): void;
   releaseAdmission(): void;
   foreground?: PreparedForegroundProcess;
+  foregroundCapture?: ShellOutputCapture;
   terminateExternal?: (reason: 'timeout' | 'aborted' | 'killed') => Promise<void>;
   terminalSettled: boolean;
   finalizationPromise?: Promise<boolean>;
@@ -115,6 +120,7 @@ export interface ShellOutputSnapshot {
   autoBackgrounded: boolean;
   backgroundReason?: 'explicit' | 'foreground_budget';
   foregroundBudgetMs?: number;
+  capture?: ShellOutputCaptureSnapshot;
 }
 
 export interface KillResult {
@@ -417,14 +423,17 @@ export class BackgroundShellManager {
       resolveCompletion: completion.resolve,
       releaseAdmission: this.releaseOnce(releaseAdmission),
       foreground: prepared,
+      foregroundCapture: new ShellOutputCapture(),
       terminalSettled: false,
     };
 
     child.stdout?.on('data', (chunk: Buffer | string) => {
       processInfo.pendingStdout.append(chunk);
+      processInfo.foregroundCapture?.append('stdout', chunk);
     });
     child.stderr?.on('data', (chunk: Buffer | string) => {
       processInfo.pendingStderr.append(chunk);
+      processInfo.foregroundCapture?.append('stderr', chunk);
     });
 
     const finalizeProcessGroup = () => {
@@ -485,6 +494,7 @@ export class BackgroundShellManager {
         processInfo.endTime = Date.now();
         processInfo.process = undefined;
         processInfo.pendingStderr.append(`\n[error] ${error.message}`);
+        processInfo.foregroundCapture?.append('stderr', `\n[error] ${error.message}`);
         processInfo.releaseAdmission();
         processInfo.resolveCompletion();
       })();
@@ -553,6 +563,7 @@ export class BackgroundShellManager {
     processInfo.autoBackgrounded = true;
     processInfo.backgroundReason = 'foreground_budget';
     processInfo.foregroundBudgetMs = foregroundBudgetMs;
+    processInfo.foregroundCapture = undefined;
     return processInfo;
   }
 
@@ -651,7 +662,14 @@ export class BackgroundShellManager {
     sessionId: string
   ): ShellOutputSnapshot | undefined {
     const processInfo = this.getOwnedProcess(shellId, sessionId);
-    return processInfo ? this.snapshot(processInfo, true) : undefined;
+    if (!processInfo) return undefined;
+    const snapshot = this.snapshot(processInfo, true);
+    if (processInfo.foregroundCapture) {
+      processInfo.foregroundCapture.finish();
+      snapshot.capture = processInfo.foregroundCapture.snapshot();
+      processInfo.foregroundCapture = undefined;
+    }
+    return snapshot;
   }
 
   removeCandidate(shellId: string, sessionId: string): void {
