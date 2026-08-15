@@ -27,17 +27,11 @@ getState().config.actions.setConfig({
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const rootPidFile = path.join(workspace, 'foreground-root.pid');
 const forbiddenEffectFile = path.join(workspace, 'forbidden-late-effect.txt');
-const script =
-  `const fs=require('fs');` +
-  `fs.writeFileSync(${JSON.stringify(rootPidFile)},String(process.pid));` +
-  `process.on('SIGTERM',()=>{});` +
-  `setTimeout(()=>fs.writeFileSync(${JSON.stringify(
-    forbiddenEffectFile
-  )},'late'),5000);` +
-  `setInterval(()=>{},1000);`;
+const childFixture = path.join(import.meta.dirname, 'run-real-api-foreground-child.ts');
 const releaseMarker = path.join(workspace, 'foreground-gate.release');
 const command =
-  `${shellQuote(process.execPath)} -e ${shellQuote(script)} </dev/null & ` +
+  `${shellQuote(process.execPath)} ${shellQuote(childFixture)} ` +
+  `${shellQuote(rootPidFile)} ${shellQuote(forbiddenEffectFile)} </dev/null & ` +
   `while [ ! -f ${shellQuote(releaseMarker)} ]; do sleep 0.01; done`;
 const invocation =
   'Call Bash exactly once using these exact arguments: ' +
