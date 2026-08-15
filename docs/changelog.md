@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.33] - 2026-08-14
+
+### 🛡️ 稳定性
+
+- Headless、Web SSE 与 ACP 现在共用有界串行输出协议：单 transport 最多保留
+  256 条、8 MiB pending 数据，单次写入 30 秒超时；active write 计入容量，overflow、
+  timeout、abort 或 writer error 都会 fail closed，不再形成无界 Promise 或静默乱序
+- Web Session SSE 在订阅后才读取 durable snapshot，并以 committed sequence 完成
+  replay/live 原子切换；初始化期间的 live event 有界缓冲，重复或回退 cursor 被拒绝。
+  慢 subscriber 只关闭自身 transport，不会取消 server-owned Agent run，也不会阻塞
+  同 Session 的快 subscriber
+- ACP 所有 content、thinking、tool 与 metadata update 统一进入单写者队列；每个
+  Agent loop event 都等待前一批 update 落地，慢 IDE 下最多一个 `sessionUpdate()`
+  in-flight。timeout 或 overflow 会取消当前 prompt/user-shell，不制造伪用户消息
+- Headless stdout/stderr 使用独立容量并遵守 Node writable `write(false) -> drain`
+  背压；每个 LoopEvent、user-shell 边界和最终返回前都会 flush。`EPIPE`、closed
+  writer 或 drain timeout 会终止当前 turn，并完整清理 listener
+- Web 客户端采用 subscribe-before-snapshot bootstrap，并在最终 completed/error/cancelled
+  surface event 后合并一次 authoritative history resync；运行中刷新不再丢失工具卡，
+  terminal reload 与 live projection 保持一致
+
+### ✅ 测试相关
+
+- 新增 DeepSeek Flash/Pro × Headless、真实 raw PTY TUI、production Chromium Web GUI
+  与真实 ACP 八格 bounded ordered egress 资格矩阵；分别注入慢 writable、ACP update
+  延迟、PTY reader pause 和 Web 运行中 reload，并验证 FIFO、单 in-flight、最终 marker、
+  tool card、cursor 与资源清理
+- 新增 shared FIFO、UTF-8 双容量、timeout/abort/flush、Web replay/live cutover、
+  slow-subscriber 隔离、ACP overflow、Headless drain/EPIPE 及 direct-writer 搜索门禁；
+  leaderless foreground 真实 API fixture 改用参数化 child 程序，保留真实 Bash、lease、
+  hard-kill、cold reaper 与延迟副作用断言，同时消除模型改写三层引号的非确定性
+
 ## [0.10.32] - 2026-08-14
 
 ### 🛡️ 稳定性

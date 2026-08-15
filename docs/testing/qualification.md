@@ -66,9 +66,12 @@ recovery、ACP model switch、透明 503 retry proxy、durable 413 compaction pr
 mid-stream stall proxy、assistant response fsync fail-stop/cold retry、turn-final
 receipt exactly-once recovery、foreground/background shell hard-crash recovery，以及
 DeepSeek Flash 的 Runtime/Web/ACP host-authoritative Goal completion verification。
-前台有界输出固定运行 DeepSeek Flash/Pro × production Chromium Web/raw PTY TUI/真实
-ACP SDK terminal 六格；单格 Provider deadline 180 秒、测试 timeout 240 秒，完整
-realApiQualification watchdog 为 45 分钟。Root-turn crash auto-resume 另固定运行
+前台有界输出固定运行 DeepSeek Flash/Pro × Headless/production Chromium Web/raw PTY
+TUI/真实 ACP SDK terminal 八格；单格 Provider deadline 180 秒、测试 timeout 240 秒，
+完整 realApiQualification watchdog 为 45 分钟。每格还验证 surface egress：Headless
+等待 `write(false) -> drain`，ACP 最多一个 `sessionUpdate()` in-flight，raw PTY 暂停
+reader 后继续渲染，Web 在运行中 reload 后按 durable cursor 恢复同一 tool/final state。
+Root-turn crash auto-resume 另固定运行
 DeepSeek Flash/Pro × Headless/raw PTY TUI/production Chromium Web/真实 ACP
 `session/load` 八格，所有入口都不得依赖额外 wake-up prompt。Edit+rewind、
 Goal finalization crash handoff 使用同一 Flash/Pro × 四入口八格矩阵，恢复阶段必须
@@ -610,12 +613,15 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
 - 有界后台输出：后台 Bash 的 stdout/stderr 各自超过 1 MiB 后只能保留最近输出并精确报告更早省略字节数；TUI、Web、ACP 中的 Flash 和 Pro 都要完成 `Bash(background) -> TaskOutput(block) -> Write`，验证尾部标记、`output_truncated`、stream 省略字节数、共享展示摘要和宿主证明文件；
 - 有界前台输出：宿主预写脚本向 stdout/stderr 各输出 `1 MiB + 64 KiB`，每流最初
   4 KiB 内放 omitted-prefix sentinel，末尾放独立 nonce tail。Flash/Pro 必须在
-  Chromium Web、raw PTY TUI、ACP SDK 三入口各只调用一次 foreground Bash。Web/PTY
-  验证双流 total/retained/omitted；ACP 验证 merged stdout、zero stderr 和
-  `terminal_output_merged=true`。所有入口都必须保留双 tail、隐藏双 sentinel 与 API
-  key，并清零 Chromium/page/SSE、PTY、ACP terminal、process identity、foreground
-  lease、port 和临时根。Computer Use 仅在宿主提供稳定桌面桥接时作为补充视觉证据，
-  不能替代自动 raw PTY 与协议断言；
+  Headless、Chromium Web、raw PTY TUI、ACP SDK 四入口各只调用一次 foreground Bash。
+  Headless 首次 stdout/stderr write 返回 `false` 并延迟 drain，期间不得出现第二次
+  raw write；ACP 每次 update 延迟且最大 in-flight 必须为 1；PTY host 暂停 reader 后
+  必须恢复最终输出；Web 必须运行中 reload、cursor reconnect 并在 fresh terminal load
+  保留同一 tool card。Web/PTY 验证双流 total/retained/omitted；ACP 验证 merged
+  stdout、zero stderr 和 `terminal_output_merged=true`。所有入口都必须保留双 tail、
+  隐藏双 sentinel 与 API key，并清零 Chromium/page/SSE、PTY、ACP terminal、
+  process identity、foreground lease、port 和临时根。Computer Use 仅在宿主提供稳定
+  桌面桥接时作为补充视觉证据，不能替代自动 raw PTY 与协议断言；
 - 跨表面 session branch：TUI `/branch` 原子切换到持久化子会话；Web 通过 HTTP fork 路由创建并选中子会话，活动回合返回 `409`；ACP `/branch` 返回可由标准 `session/load` 加载的子会话 ID。Flash 和 Pro 都必须在删除原 marker 后，仅依赖继承的 Read 结果继续 Write/Bash，并证明父 transcript 未改变；
 - durable turn rewind：Flash 和 Pro 都必须先通过真实模型 Read/Edit/Read 产生文件
   checkpoint，再分别从 Runtime、TUI hook、Web HTTP/SSE 和 ACP `/rewind` 入口恢复。
