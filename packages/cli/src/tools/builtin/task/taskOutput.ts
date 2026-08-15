@@ -264,6 +264,10 @@ async function handleShellOutput(
     exit_code: snapshot.exitCode,
     signal: snapshot.signal,
     sandboxed: snapshot.sandboxed,
+    terminal_transport: snapshot.transport,
+    auto_backgrounded: snapshot.autoBackgrounded,
+    background_reason: snapshot.backgroundReason,
+    foreground_budget_ms: snapshot.foregroundBudgetMs,
     started_at: new Date(snapshot.startedAt).toISOString(),
     finished_at: snapshot.endedAt
       ? new Date(snapshot.endedAt).toISOString()

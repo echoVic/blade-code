@@ -2,6 +2,7 @@
  * Blade 默认配置
  */
 
+import { DEFAULT_FOREGROUND_COMMAND_HANDOFF_MS } from './foregroundCommandHandoff.js';
 import { BladeConfig, PermissionMode } from './types.js';
 
 export const DEFAULT_CONFIG: BladeConfig = {
@@ -21,6 +22,7 @@ export const DEFAULT_CONFIG: BladeConfig = {
   topP: 0.9,
   topK: 50,
   timeout: 180000, // 180秒超时（长上下文 agentic 场景需要更长时间）
+  bashForegroundHandoffMs: DEFAULT_FOREGROUND_COMMAND_HANDOFF_MS,
 
   // UI
   codeTheme: 'dracula',

@@ -156,11 +156,11 @@ import {
   AgentSessionStore,
   isAgentSessionOwnedBy,
 } from '../subagents/AgentSessionStore.js';
-import { buildBackgroundSubagentCompletion } from '../subagents/BackgroundSubagentCompletion.js';
 import {
   BackgroundAgentManager,
   type ResumeAgentResult,
 } from '../subagents/BackgroundAgentManager.js';
+import { buildBackgroundSubagentCompletion } from '../subagents/BackgroundSubagentCompletion.js';
 import type { SubagentRegistry } from '../subagents/SubagentRegistry.js';
 import { buildSubagentResultAdoption } from '../subagents/SubagentResultAdoption.js';
 import type { SubagentConfig } from '../subagents/types.js';
@@ -2076,6 +2076,7 @@ export class SessionRuntime {
         workspaceRoot: this.workspaceRoot,
         environment: this.sessionEnvironment,
         permissionMode,
+        foregroundCommandHandoffMs: this.config.bashForegroundHandoffMs,
         mcpSamplingHandler: this.handleMcpSampling,
         notifyBackgroundSubagentCompleted: (agentId) =>
           this.notifyBackgroundSubagentCompleted(agentId),

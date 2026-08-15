@@ -163,6 +163,9 @@ export class Agent {
       maxHistorySize: 1000,
       toolWhitelist: this.runtimeOptions.toolWhitelist,
       toolBlacklist: this.runtimeOptions.toolBlacklist,
+      contextDefaults: {
+        foregroundCommandHandoffMs: this.config.bashForegroundHandoffMs,
+      },
     });
   }
 

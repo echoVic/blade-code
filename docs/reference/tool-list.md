@@ -126,6 +126,11 @@ delete/rename 时 Add/Delete/Move fail closed
 
 **类型**: Execute
 **返回**: 后台运行时返回 `bash_id` 和 `shell_id`，可用于 WriteStdin、KillShell 或 TaskOutput
+**自动交接**: Session 前台命令超过 `bashForegroundHandoffMs`（默认 15000ms）且仍在
+运行时，会以同一 PID/ACP terminal 自动转为后台；返回
+`auto_backgrounded=true`、`background_reason=foreground_budget` 与 `shell_id`。
+配置为 `0` 可禁用。显式后台和自动 candidate 共用全进程 16、单 Session 4 的 active
+上限。
 **前台输出边界**: 本地 stdout/stderr 各保留最近 1 MiB 原始字节；ACP remote terminal
 按 merged stdout 保留最近 1 MiB，且不会在 terminal 不可用时回退宿主执行。模型可见
 结果继续按命令类型截断，并返回：

@@ -663,4 +663,21 @@ describe('ConfigManager 集成', () => {
       mergeRuntimeConfig(baseConfig as any, { model: 'missing-model' })
     ).toThrow('模型配置未找到: missing-model');
   });
+
+  it('persists the foreground Bash handoff budget in global config', async () => {
+    const service = ConfigService.getInstance();
+
+    await service.save(
+      { bashForegroundHandoffMs: 1_000 },
+      { scope: 'global', immediate: true }
+    );
+
+    const userConfigPath = path.join(tempHome, '.blade', 'config.json');
+    expect(JSON.parse(readFileSync(userConfigPath, 'utf8'))).toMatchObject({
+      bashForegroundHandoffMs: 1_000,
+    });
+
+    const loaded = await ConfigManager.getInstance().initialize();
+    expect(loaded.bashForegroundHandoffMs).toBe(1_000);
+  });
 });

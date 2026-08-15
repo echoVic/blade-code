@@ -104,6 +104,7 @@ export interface ExecutionContext {
   worktreeActive?: boolean;
   subagentType?: string;
   signal?: AbortSignal;
+  foregroundCommandHandoffMs?: number;
   onProgress?: (message: string) => void;
   onProgressUpdate?: (update: ToolProgressUpdate) => void;
   updateOutput?: (output: string) => void; // 别名，与 onProgress 功能相同

@@ -1,5 +1,6 @@
 import { isAbsolute, resolve } from 'node:path';
 import { getTerminalService, isAcpMode } from '../../../acp/AcpServiceContext.js';
+import { normalizeForegroundCommandHandoffMs } from '../../../config/foregroundCommandHandoff.js';
 import {
   type ForegroundProcessOwnership,
   prepareForegroundProcess,
@@ -21,8 +22,16 @@ import type {
 } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 import { ToolSchemas } from '../../validation/toolSchemas.js';
-import { BackgroundShellManager } from './BackgroundShellManager.js';
-import { ShellOutputCapture } from './ShellOutputCapture.js';
+import {
+  BackgroundShellCapacityError,
+  BackgroundShellManager,
+  type ShellOutputSnapshot,
+} from './BackgroundShellManager.js';
+import { isForegroundCommandHandoffEligible } from './ForegroundCommandHandoff.js';
+import {
+  ShellOutputCapture,
+  type ShellOutputCaptureSnapshot,
+} from './ShellOutputCapture.js';
 import {
   type ProjectedShellOutput,
   projectShellOutput,
@@ -93,10 +102,11 @@ Before executing commands:
      * python /path/with spaces/script.py (incorrect - will fail)`,
     usageNotes: [
       'The command argument is required',
-      'You can specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). If not specified, commands will timeout after 30000ms (30 seconds)',
+      'You can specify an optional timeout in milliseconds (up to 300000ms / 5 minutes). If not specified, commands will timeout after 30000ms (30 seconds)',
       'It is very helpful if you write a clear, concise description of what this command does in 5-10 words',
       'If the output exceeds 30000 characters, output will be truncated before being returned to you',
       'You can use the run_in_background parameter to run the command in the background, which allows you to continue working while the command runs. You can monitor the output using the TaskOutput tool. You do not need to use "&" at the end of the command when using this parameter',
+      'Eligible foreground commands that remain active past the configured blocking budget are automatically handed off without restarting. Continue independent work, then use the returned shell_id with TaskOutput or KillShell',
       'Background commands accept input through WriteStdin. Include a newline for line-oriented programs, and set close_stdin=true when the process must receive EOF before it can finish',
       'Avoid using Bash with the find, grep, cat, head, tail, sed, awk, or echo commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:',
       ' - File search: Use Glob (NOT find or ls)',
@@ -209,6 +219,16 @@ Before executing commands:
           projectPath: workspaceRoot,
         }
       : undefined;
+    const foregroundHandoffMs = normalizeForegroundCommandHandoffMs(
+      context.foregroundCommandHandoffMs
+    );
+    const handoffEligible = isForegroundCommandHandoffEligible({
+      command,
+      timeoutMs: timeout,
+      handoffMs: foregroundHandoffMs,
+      sessionId: context.sessionId,
+      readOnlyAudit,
+    });
 
     try {
       updateOutput?.('Executing Bash command...');
@@ -255,6 +275,18 @@ Before executing commands:
           timeout,
           signal,
           context.sessionId,
+          foregroundOwnership,
+          handoffEligible ? foregroundHandoffMs : undefined
+        );
+      } else if (handoffEligible && foregroundOwnership) {
+        return await executeWithForegroundHandoff(
+          command,
+          effectiveCwd,
+          effectiveEnv,
+          timeout,
+          foregroundHandoffMs,
+          signal,
+          sandboxedCommand,
           foregroundOwnership
         );
       } else {
@@ -270,6 +302,9 @@ Before executing commands:
       }
     } catch (error: unknown) {
       const err = error as Error;
+      if (error instanceof BackgroundShellCapacityError) {
+        return backgroundCapacityResult(error);
+      }
       if (err.name === 'AbortError') {
         return {
           success: false,
@@ -517,6 +552,311 @@ function normalShellLlmContent(
   };
 }
 
+function backgroundCapacityResult(error: BackgroundShellCapacityError): ToolResult {
+  return {
+    success: false,
+    llmContent:
+      'Background Shell capacity is busy. Retry later or keep the command foreground.',
+    error: {
+      type: ToolErrorType.RESOURCE_EXHAUSTED,
+      code: 'background_shell_busy',
+      message: error.message,
+    },
+    metadata: {
+      summary: 'Background Shell capacity is busy',
+      background_shell_admission: {
+        code: 'background_shell_busy',
+        scope: error.scope,
+        limit: error.limit,
+        retryable: true,
+      },
+    },
+  };
+}
+
+function captureFromManagedShell(
+  snapshot: ShellOutputSnapshot
+): ShellOutputCaptureSnapshot {
+  const stream = (content: string, totalBytes: number, omittedBytes: number) => ({
+    content,
+    totalBytes,
+    retainedBytes: Buffer.byteLength(content),
+    omittedBytes,
+    totalChars: omittedBytes === 0 ? content.length : 0,
+    accountingComplete: omittedBytes === 0,
+  });
+  return {
+    stdout: stream(
+      snapshot.stdout,
+      snapshot.stdoutTotalBytes,
+      snapshot.stdoutOmittedBytes
+    ),
+    stderr: stream(
+      snapshot.stderr,
+      snapshot.stderrTotalBytes,
+      snapshot.stderrOmittedBytes
+    ),
+    terminalOutputMerged: snapshot.transport === 'acp',
+  };
+}
+
+function completedManagedShellResult(
+  snapshot: ShellOutputSnapshot,
+  startedAt: number
+): ToolResult {
+  const executionTime = Math.max(0, (snapshot.endedAt ?? Date.now()) - startedAt);
+  const projected = projectShellOutput(
+    captureFromManagedShell(snapshot),
+    snapshot.command
+  );
+  const outputMetadata = shellOutputFacts(projected, snapshot.transport);
+  const metadata: BashForegroundMetadata = {
+    command: snapshot.command,
+    execution_time: executionTime,
+    exit_code: snapshot.exitCode ?? null,
+    signal: (snapshot.signal as NodeJS.Signals | null | undefined) ?? null,
+    sandboxed: snapshot.sandboxed,
+    ...outputMetadata,
+    summary:
+      snapshot.status === 'exited' && snapshot.exitCode === 0
+        ? `执行命令成功 (${executionTime}ms)`
+        : `执行命令完成 (${snapshot.status}, ${executionTime}ms)`,
+  };
+
+  if (snapshot.status === 'timed_out') {
+    return {
+      success: false,
+      llmContent: `Command execution timed out`,
+      error: {
+        type: ToolErrorType.TIMEOUT_ERROR,
+        message: '命令执行超时',
+      },
+      metadata: {
+        ...metadata,
+        timeout: true,
+        stdout: projected.stdout,
+        stderr: projected.stderr,
+      },
+    };
+  }
+  if (snapshot.status === 'aborted' || snapshot.status === 'killed') {
+    return {
+      success: false,
+      llmContent: 'Command execution aborted by user',
+      error: {
+        type: ToolErrorType.EXECUTION_ERROR,
+        message: '操作被中止',
+      },
+      metadata: {
+        ...metadata,
+        aborted: true,
+        stdout: projected.stdout,
+        stderr: projected.stderr,
+      },
+    };
+  }
+  if (snapshot.status === 'error') {
+    const message = snapshot.errorMessage ?? 'Command execution failed';
+    return {
+      success: false,
+      llmContent: `Command execution failed: ${message}`,
+      error: {
+        type: ToolErrorType.EXECUTION_ERROR,
+        message,
+      },
+      metadata: {
+        ...metadata,
+        stdout: projected.stdout,
+        stderr: projected.stderr,
+      },
+    };
+  }
+
+  const exitCode = snapshot.exitCode ?? null;
+  const success = exitCode === 0;
+  return {
+    success,
+    llmContent: normalShellLlmContent(
+      projected,
+      executionTime,
+      exitCode,
+      snapshot.signal as NodeJS.Signals | null | undefined
+    ),
+    ...(success
+      ? {}
+      : {
+          error: {
+            type: ToolErrorType.EXECUTION_ERROR,
+            message: formatCommandFailure(
+              exitCode,
+              snapshot.signal as NodeJS.Signals | null | undefined,
+              projected.stdout,
+              projected.stderr
+            ),
+          },
+        }),
+    metadata,
+  };
+}
+
+type ForegroundCandidateOutcome = 'completed' | 'timeout' | 'aborted' | 'handoff';
+
+async function waitForForegroundCandidate(
+  completion: Promise<void>,
+  signal: AbortSignal,
+  timeoutAt: number,
+  handoffAt?: number
+): Promise<ForegroundCandidateOutcome> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    let handoffTimer: ReturnType<typeof setTimeout> | undefined;
+    const settle = (outcome: ForegroundCandidateOutcome) => {
+      if (settled) return;
+      settled = true;
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      if (handoffTimer) clearTimeout(handoffTimer);
+      signal.removeEventListener('abort', onAbort);
+      resolve(outcome);
+    };
+    const onAbort = () => settle('aborted');
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) {
+      settle('aborted');
+      return;
+    }
+
+    void completion.then(() => settle('completed'));
+    timeoutTimer = setTimeout(
+      () => settle('timeout'),
+      Math.max(0, timeoutAt - Date.now())
+    );
+    timeoutTimer.unref?.();
+    if (handoffAt !== undefined) {
+      handoffTimer = setTimeout(
+        () => settle('handoff'),
+        Math.max(0, handoffAt - Date.now())
+      );
+      handoffTimer.unref?.();
+    }
+  });
+}
+
+async function executeWithForegroundHandoff(
+  command: string,
+  cwd: string,
+  env: Record<string, string> | undefined,
+  timeout: number,
+  foregroundBudgetMs: number,
+  signal: AbortSignal,
+  sandboxedCommand: SandboxedCommand | undefined,
+  ownership: ForegroundProcessOwnership
+): Promise<ToolResult> {
+  const manager = BackgroundShellManager.getInstance();
+  let candidate;
+  try {
+    candidate = await manager.startForegroundCandidate({
+      command,
+      sessionId: ownership.sessionId,
+      projectPath: ownership.projectPath,
+      cwd,
+      env,
+      sandboxedCommand,
+      ownership,
+    });
+  } catch (error) {
+    if (error instanceof BackgroundShellCapacityError) {
+      return executeWithTimeout(
+        command,
+        cwd,
+        env,
+        timeout,
+        signal,
+        sandboxedCommand,
+        ownership
+      );
+    }
+    throw error;
+  }
+
+  const startedAt = candidate.startTime;
+  const timeoutAt = startedAt + timeout;
+  let outcome = await waitForForegroundCandidate(
+    candidate.completion,
+    signal,
+    timeoutAt,
+    startedAt + foregroundBudgetMs
+  );
+
+  if (outcome === 'handoff') {
+    try {
+      const promoted = manager.promoteForegroundCandidate(
+        candidate.id,
+        ownership.sessionId,
+        ownership.projectPath,
+        foregroundBudgetMs
+      );
+      if (promoted) {
+        const metadata: BashBackgroundMetadata = {
+          command,
+          background: true,
+          pid: promoted.pid ?? 0,
+          bash_id: promoted.id,
+          shell_id: promoted.id,
+          message: 'Command moved to background after foreground budget',
+          sandboxed: promoted.sandboxed,
+          auto_backgrounded: true,
+          background_reason: 'foreground_budget',
+          foreground_budget_ms: foregroundBudgetMs,
+          terminal_transport: 'local',
+          summary: `Command is still running in background: ${promoted.id}`,
+        };
+        return {
+          success: true,
+          llmContent: {
+            command,
+            background: true,
+            auto_backgrounded: true,
+            background_reason: 'foreground_budget',
+            foreground_budget_ms: foregroundBudgetMs,
+            pid: promoted.pid,
+            bash_id: promoted.id,
+            shell_id: promoted.id,
+            terminal_transport: 'local',
+          },
+          metadata,
+        };
+      }
+    } catch {
+      // Foreground ownership remains authoritative when background lease commit fails.
+    }
+    outcome = await waitForForegroundCandidate(candidate.completion, signal, timeoutAt);
+  }
+
+  if (outcome === 'timeout' || outcome === 'aborted') {
+    await manager.terminateForegroundCandidate(
+      candidate.id,
+      ownership.sessionId,
+      outcome
+    );
+    await candidate.completion;
+  }
+
+  const snapshot = manager.consumeCandidateOutput(candidate.id, ownership.sessionId);
+  manager.removeCandidate(candidate.id, ownership.sessionId);
+  if (!snapshot) {
+    return {
+      success: false,
+      llmContent: 'Foreground command state was lost before completion',
+      error: {
+        type: ToolErrorType.EXECUTION_ERROR,
+        message: 'Foreground command state unavailable',
+      },
+    };
+  }
+  return completedManagedShellResult(snapshot, startedAt);
+}
+
 /**
  * 使用 ACP 终端服务执行命令
  * 通过 IDE 的终端执行命令，支持更好的 IDE 集成体验
@@ -528,7 +868,8 @@ async function executeWithAcpTerminal(
   timeout: number,
   signal: AbortSignal,
   sessionId?: string,
-  ownership?: ForegroundProcessOwnership
+  ownership?: ForegroundProcessOwnership,
+  foregroundHandoffMs?: number
 ): Promise<ToolResult> {
   const startTime = Date.now();
 
@@ -541,9 +882,43 @@ async function executeWithAcpTerminal(
       signal,
       allowLocalFallback: false,
       durableOwnership: ownership,
+      foregroundHandoffMs,
     });
 
     const executionTime = Date.now() - startTime;
+    if (result.background) {
+      const shellId = result.background.shellId;
+      const budgetMs = result.background.foregroundBudgetMs;
+      const metadata: BashBackgroundMetadata = {
+        command,
+        background: true,
+        bash_id: shellId,
+        shell_id: shellId,
+        message: 'ACP command moved to background after foreground budget',
+        sandboxed: false,
+        auto_backgrounded: true,
+        background_reason: 'foreground_budget',
+        foreground_budget_ms: budgetMs,
+        terminal_transport: 'acp',
+        acp_mode: true,
+        summary: `ACP command is still running in background: ${shellId}`,
+      };
+      return {
+        success: true,
+        llmContent: {
+          command,
+          background: true,
+          auto_backgrounded: true,
+          background_reason: 'foreground_budget',
+          foreground_budget_ms: budgetMs,
+          bash_id: shellId,
+          shell_id: shellId,
+          terminal_transport: 'acp',
+        },
+        metadata,
+      };
+    }
+
     const projected = result.capture
       ? projectShellOutput(result.capture, command)
       : undefined;

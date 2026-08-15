@@ -42,6 +42,22 @@ validation、workspace isolation、hooks、permission resolution 与人工审批
 permit 之前。等待用户确认不会长期占用全局工具执行容量。permit 从 invocation 启动
 持有到 Promise settle；成功、失败、throw、timeout 与 cancellation 都只释放一次。
 
+### 后台 Shell admission
+
+前台 Bash 自动交接和显式后台 Bash 在工具 permit 之外使用独立有限容量：
+
+| 范围 | active background shells |
+| --- | ---: |
+| 全进程 | 16 |
+| 单 Session | 4 |
+
+hidden foreground candidate 在 spawn 前就计入该容量，避免多个并发 handoff 穿透上限。
+自然退出、spawn/release 失败、timeout、abort、KillShell 和 Session dispose 都只释放
+一次。显式后台 overflow 在用户命令启动前返回
+`resource_exhausted/background_shell_busy`；自动 handoff overflow 保留原 foreground
+所有权，不重启命令。前台工具 permit 只在 handoff identity 提交后释放，background
+capacity 则持有到进程/ACP terminal 终态。
+
 ## 内置工具策略
 
 - Read、Glob、Grep 和其他纯读工具为 `shared`，并可在显式 allowlist 中流式预启动。

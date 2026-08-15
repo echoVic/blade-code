@@ -160,4 +160,82 @@ describe('MCP tool Web metadata projection', () => {
       })
     ).toEqual({ summary: 'Malformed admission' });
   });
+
+  it('preserves only validated foreground handoff metadata for Bash results', () => {
+    expect(
+      sanitizeToolMetadata('Bash', {
+        summary: 'Command is still running in background',
+        background: true,
+        auto_backgrounded: true,
+        background_reason: 'foreground_budget',
+        foreground_budget_ms: 15_000,
+        bash_id: 'bash_123e4567-e89b-12d3-a456-426614174000',
+        shell_id: 'bash_123e4567-e89b-12d3-a456-426614174000',
+        pid: 1234,
+        terminal_transport: 'local',
+        secret: 'RAW_HANDOFF_SECRET',
+      })
+    ).toEqual({
+      summary: 'Command is still running in background',
+      background: true,
+      auto_backgrounded: true,
+      background_reason: 'foreground_budget',
+      foreground_budget_ms: 15_000,
+      bash_id: 'bash_123e4567-e89b-12d3-a456-426614174000',
+      shell_id: 'bash_123e4567-e89b-12d3-a456-426614174000',
+      pid: 1234,
+      terminal_transport: 'local',
+    });
+
+    expect(
+      sanitizeToolMetadata('Bash', {
+        summary: 'Malformed handoff',
+        background: true,
+        auto_backgrounded: true,
+        background_reason: 'RAW_REASON',
+        foreground_budget_ms: Number.POSITIVE_INFINITY,
+        bash_id: '../RAW_ID',
+        shell_id: 'not-a-shell-id',
+      })
+    ).toEqual({
+      summary: 'Malformed handoff',
+      background: true,
+      auto_backgrounded: true,
+    });
+  });
+
+  it('preserves only validated background Shell admission metadata', () => {
+    expect(
+      sanitizeToolMetadata('Bash', {
+        summary: 'Background Shell capacity is busy',
+        background_shell_admission: {
+          code: 'background_shell_busy',
+          scope: 'session',
+          limit: 4,
+          retryable: true,
+          secret: 'RAW_BACKGROUND_ADMISSION_SECRET',
+        },
+      })
+    ).toEqual({
+      summary: 'Background Shell capacity is busy',
+      background_shell_admission: {
+        code: 'background_shell_busy',
+        scope: 'session',
+        limit: 4,
+        retryable: true,
+      },
+    });
+
+    expect(
+      sanitizeToolMetadata('Bash', {
+        summary: 'Malformed background admission',
+        background_shell_admission: {
+          code: 'background_shell_busy',
+          scope: 'session',
+          limit: 0,
+          retryable: true,
+        },
+      })
+    ).toEqual({ summary: 'Malformed background admission' });
+  });
 });

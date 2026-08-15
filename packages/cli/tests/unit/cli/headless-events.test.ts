@@ -68,6 +68,30 @@ describe('headless event contract', () => {
       },
     });
 
+    const handoff = createHeadlessJsonlEvent('tool_result', {
+      tool_name: 'Bash',
+      summary: 'Command is still running in background',
+      success: true,
+      background: {
+        auto_backgrounded: true,
+        background_reason: 'foreground_budget',
+        foreground_budget_ms: 15_000,
+        shell_id: 'bash_123e4567-e89b-12d3-a456-426614174000',
+        pid: 1234,
+        terminal_transport: 'local',
+      },
+    });
+    expect(handoff).toMatchObject({
+      event_version: 1,
+      type: 'tool_result',
+      background: {
+        auto_backgrounded: true,
+        foreground_budget_ms: 15_000,
+        shell_id: 'bash_123e4567-e89b-12d3-a456-426614174000',
+      },
+    });
+    expect(() => HeadlessJsonlEventSchema.parse(handoff)).not.toThrow();
+
     const providerRetry = createHeadlessJsonlEvent('provider_retry', {
       phase: 'scheduled',
       attempt: 1,

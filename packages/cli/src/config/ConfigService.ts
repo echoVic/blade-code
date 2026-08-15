@@ -84,6 +84,12 @@ const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     mergeStrategy: 'replace',
     persistable: true,
   },
+  bashForegroundHandoffMs: {
+    target: 'config',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
   codeTheme: {
     target: 'config',
     defaultScope: 'global',

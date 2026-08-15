@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import {
   finalizeCommandAdmissionGate,
   releaseCommandAdmissionGate,
@@ -18,6 +18,10 @@ export interface PreparedForegroundProcess {
   processTree: OwnedProcessTree;
   processId: string;
   release(): Promise<void>;
+  handoff(
+    registerNextOwner: (rootPid: number) => void,
+    rollbackNextOwner: () => void
+  ): void;
   finalize(): Promise<void>;
 }
 
@@ -50,6 +54,7 @@ export async function prepareForegroundProcess(
 
   let releasePromise: Promise<void> | undefined;
   let finalizePromise: Promise<void> | undefined;
+  let handedOff = false;
 
   return {
     child,
@@ -64,13 +69,27 @@ export async function prepareForegroundProcess(
       });
       return releasePromise;
     },
+    handoff(registerNextOwner, rollbackNextOwner) {
+      if (handedOff) return;
+      if (finalizePromise) {
+        throw new Error('Cannot hand off a finalized foreground command');
+      }
+      registerNextOwner(child.pid as number);
+      try {
+        leaseStore?.remove(processId);
+        handedOff = true;
+      } catch (error) {
+        rollbackNextOwner();
+        throw error;
+      }
+    },
     finalize() {
       finalizePromise ??= (async () => {
         const result = await finalizeCommandAdmissionGate(child, processTree);
         if (!result.success) {
           throw new Error('Failed to finalize foreground command process group');
         }
-        leaseStore?.remove(processId);
+        if (!handedOff) leaseStore?.remove(processId);
       })();
       return finalizePromise;
     },

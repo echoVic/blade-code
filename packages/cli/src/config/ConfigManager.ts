@@ -35,6 +35,11 @@ import {
 import { getCwd } from '../utils/cwd.js';
 import { ConfigService } from './ConfigService.js';
 import { DEFAULT_CONFIG } from './defaults.js';
+import {
+  isValidForegroundCommandHandoffMs,
+  MAX_FOREGROUND_COMMAND_HANDOFF_MS,
+  MIN_FOREGROUND_COMMAND_HANDOFF_MS,
+} from './foregroundCommandHandoff.js';
 import { normalizeLspServers } from './lspSettings.js';
 import { formatMaxTurnsRange, isValidMaxTurns } from './maxTurns.js';
 import { migrateGeneratedModelIds } from './modelIds.js';
@@ -1140,6 +1145,15 @@ export class ConfigManager {
     if (!isValidQueuedTaskLimit(config.maxQueuedTasks)) {
       errors.push(
         `maxQueuedTasks 必须是 ${MIN_QUEUED_TASKS}-${MAX_QUEUED_TASKS} 之间的整数`
+      );
+    }
+    if (
+      config.bashForegroundHandoffMs !== undefined &&
+      !isValidForegroundCommandHandoffMs(config.bashForegroundHandoffMs)
+    ) {
+      errors.push(
+        'bashForegroundHandoffMs 必须是 0，或 ' +
+          `${MIN_FOREGROUND_COMMAND_HANDOFF_MS}-${MAX_FOREGROUND_COMMAND_HANDOFF_MS} 之间的整数`
       );
     }
 

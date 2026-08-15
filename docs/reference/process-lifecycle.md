@@ -60,6 +60,25 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   并保留 durable lease。
 - 后台 Bash 在启动时绑定当前 session。`WriteStdin`、`TaskOutput`、`KillShell` 和 `/tasks` 只能读取或操作该 session 的 shell；对其他 session 的 ID 按不存在处理。
 - 后台 Bash 的 stdin 由 runtime 持有。`WriteStdin` 等待写入回调并处理 pipe error；`close_stdin=true` 显式发送 EOF。进程已经退出、stdin 已关闭或缺失 session 时 fail closed。
+- eligible 前台 Bash 默认等待 15 秒；若仍在运行且原 timeout 更晚，会把同一 PID 原子
+  交接给后台 shell registry，而不是重启命令。先提交 `.background-shells` lease，再
+  删除 `.foreground-processes` lease，最后才发布 `auto_backgrounded=true` 与
+  `shell_id`。background lease 提交失败时继续等待原前台进程，绝不复制副作用。
+- `bashForegroundHandoffMs` 可在 `config.json` 配置为 `1000-300000` 毫秒；`0`
+  禁用。显式 `run_in_background=true` 仍立即返回。standalone/leading `sleep`、只读
+  audit subagent、缺失 Session、timeout 不晚于 handoff budget 的调用继续保持前台。
+- 前台 candidate 与已交接命令共用独立后台 admission：全进程最多 16 个、单 Session
+  最多 4 个。显式后台调用容量不足时在 user code 启动前返回可重试
+  `resource_exhausted/background_shell_busy`；自动 handoff 容量不足时仍执行一次原
+  前台命令，不重放。
+- handoff 前的 turn abort/timeout 会终止并等待进程树；handoff 成功后解除 turn
+  AbortSignal，进程由 `TaskOutput`、`KillShell`、Session dispose、process shutdown 或
+  自然退出管理。stdout/stderr 在交接前后保持同一有界字节流。
+- ACP handoff 保留真实 IDE terminal handle，不回退到本地 spawn。Blade 在同一
+  background registry 中登记隐藏 remote candidate，预算到达后才暴露 ID；完成、
+  KillShell 或 Session dispose 后依次 kill（需要时）、读取最终 output、release
+  terminal。ACP 协议不提供 stdin 写入，因此交接后的 `WriteStdin` 返回明确 unsupported
+  错误。
 - 后台 Bash 先启动一个不执行用户命令的 detached gate wrapper，写入并 fsync durable
   shell lease 后，再等待 gate release byte 的 pipe write callback 成功，才返回 tool
   result 并放行实际 executable；lease 或 gate write 失败时用户命令零执行。lease 仅包含

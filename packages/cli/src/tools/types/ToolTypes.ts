@@ -168,11 +168,16 @@ interface GrepMetadataFields extends BaseMetadataFields {
 interface BashBackgroundMetadataFields extends BaseMetadataFields {
   command: string;
   background: true;
-  pid: number;
+  pid?: number;
   bash_id: string;
   shell_id: string;
   message?: string;
   sandboxed?: boolean;
+  auto_backgrounded?: boolean;
+  background_reason?: 'explicit' | 'foreground_budget';
+  foreground_budget_ms?: number;
+  terminal_transport?: 'local' | 'acp';
+  acp_mode?: boolean;
 }
 
 /**

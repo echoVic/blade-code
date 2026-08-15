@@ -195,6 +195,19 @@ successor、durable call/result 保持 Provider 顺序。独立的双 Session Ch
 overload metadata、进程树/lease/port/browser/PTY/ACP/临时根回收与 Provider credential
 absence。
 
+Bounded foreground command handoff 固定运行 DeepSeek Flash/Pro × Headless、真实
+ACP stdio + child-backed terminal、raw PTY TUI 与 production Chromium Web GUI 八格
+矩阵。模型必须以 `run_in_background=false` 启动同一 host-barrier Bash；1 秒测试配置
+预算到达后，durable result 和 surface 必须先发布 `auto_backgrounded=true`、typed
+reason/budget 与同一 `shell_id`。子进程仍活跃时模型完成独立 Read，host 才释放
+barrier；随后恰好一次 TaskOutput 获得交接前后两个 output marker。每格证明：
+
+- 命令只启动一次，local PID 或 ACP terminal child identity 不变；
+- foreground lease 原子替换为 background lease，ACP 不提前 release 或 local fallback；
+- Headless typed JSONL、TUI、Web SSE/DOM 与 ACP update 均看到 handoff；
+- TaskOutput 终态后 process/terminal、foreground/background lease、port、browser、
+  PTY、SSE、临时根和 Provider credential 全部清零。
+
 Fresh independent verification 资格要求主模型实际完成三个文件的非平凡实现，并在
 第一次尝试结束时由 runtime 强制启动新的内置 `verification` subagent。Verifier
 必须处于独立 child Session，运行项目已配置的真实测试，返回恰好一个结构化 PASS；

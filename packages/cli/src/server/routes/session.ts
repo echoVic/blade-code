@@ -428,11 +428,13 @@ export const sanitizeToolMetadata = (
   else delete sanitized.tool_admission;
   if (toolName === 'Bash') {
     const projected: Record<string, unknown> = {};
-    const stringFields = ['summary', 'status', 'signal'] as const;
+    const stringFields = ['message', 'signal', 'status', 'summary'] as const;
     const booleanFields = [
       'aborted',
       'acp_mode',
       'admission_failed',
+      'auto_backgrounded',
+      'background',
       'capture_truncated',
       'finalization_failed',
       'has_stderr',
@@ -448,6 +450,8 @@ export const sanitizeToolMetadata = (
     ] as const;
     const numberFields = [
       'execution_time',
+      'foreground_budget_ms',
+      'pid',
       'raw_output_bytes',
       'stderr_length',
       'stderr_omitted_bytes',
@@ -486,7 +490,45 @@ export const sanitizeToolMetadata = (
     ) {
       projected.terminal_transport = sanitized.terminal_transport;
     }
+    if (
+      sanitized.background_reason === 'explicit' ||
+      sanitized.background_reason === 'foreground_budget'
+    ) {
+      projected.background_reason = sanitized.background_reason;
+    }
+    for (const field of ['bash_id', 'shell_id'] as const) {
+      const value = sanitized[field];
+      if (
+        typeof value === 'string' &&
+        value.length <= 128 &&
+        /^bash_[A-Za-z0-9-]+$/.test(value)
+      ) {
+        projected[field] = value;
+      }
+    }
     if (toolAdmission) projected.tool_admission = toolAdmission;
+    const backgroundAdmission = sanitized.background_shell_admission;
+    if (
+      backgroundAdmission &&
+      typeof backgroundAdmission === 'object' &&
+      !Array.isArray(backgroundAdmission)
+    ) {
+      const value = backgroundAdmission as Record<string, unknown>;
+      if (
+        value.code === 'background_shell_busy' &&
+        (value.scope === 'session' || value.scope === 'global') &&
+        value.retryable === true &&
+        Number.isSafeInteger(value.limit) &&
+        (value.limit as number) > 0
+      ) {
+        projected.background_shell_admission = {
+          code: value.code,
+          scope: value.scope,
+          retryable: value.retryable,
+          limit: value.limit,
+        };
+      }
+    }
     return projected as ToolResultMetadata;
   }
   const MAX_INLINE_CONTENT = 200000;

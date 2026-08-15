@@ -3,6 +3,10 @@ import path from 'node:path';
 import { getOriginalCwd } from '../bootstrap/state.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
 import {
+  MAX_FOREGROUND_COMMAND_HANDOFF_MS,
+  MIN_FOREGROUND_COMMAND_HANDOFF_MS,
+} from '../config/foregroundCommandHandoff.js';
+import {
   MAX_CONCURRENT_TASKS,
   MAX_QUEUED_TASKS,
   MIN_CONCURRENT_TASKS,
@@ -91,6 +95,15 @@ const RuntimeSettingsSchema = Type.Object({
   topP: Type.Optional(Type.Number()),
   topK: Type.Optional(Type.Number()),
   timeout: Type.Optional(PositiveNumber),
+  bashForegroundHandoffMs: Type.Optional(
+    Type.Union([
+      Type.Literal(0),
+      Type.Integer({
+        minimum: MIN_FOREGROUND_COMMAND_HANDOFF_MS,
+        maximum: MAX_FOREGROUND_COMMAND_HANDOFF_MS,
+      }),
+    ])
+  ),
   codeTheme: Type.Optional(Type.String()),
   uiTheme: Type.Optional(StringEnum(['light', 'dark', 'system'])),
   language: Type.Optional(Type.String()),

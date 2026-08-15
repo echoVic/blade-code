@@ -78,6 +78,19 @@ const ToolProgressEventSchema = event({
   admission: Type.Optional(ToolAdmissionProgressSchema),
 });
 
+const ToolBackgroundHandoffSchema = Type.Object({
+  auto_backgrounded: Type.Literal(true),
+  background_reason: Type.Literal('foreground_budget'),
+  foreground_budget_ms: Type.Integer({ minimum: 1 }),
+  shell_id: Type.String({
+    minLength: 1,
+    maxLength: 128,
+    pattern: '^bash_[A-Za-z0-9-]+$',
+  }),
+  pid: Type.Optional(Type.Integer({ minimum: 1 })),
+  terminal_transport: StringEnum(['local', 'acp']),
+});
+
 const ToolResultEventSchema = event({
   type: Type.Literal('tool_result'),
   tool_name: Type.String(),
@@ -87,6 +100,7 @@ const ToolResultEventSchema = event({
   success: Type.Optional(Type.Boolean()),
   error_type: Type.Optional(Type.String()),
   error_message: Type.Optional(Type.String()),
+  background: Type.Optional(ToolBackgroundHandoffSchema),
 });
 
 const McpCatalogChangedEventSchema = event({

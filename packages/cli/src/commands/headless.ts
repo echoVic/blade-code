@@ -75,6 +75,46 @@ interface HeadlessRunControl {
   stdin?: NodeJS.ReadStream;
 }
 
+interface HeadlessBackgroundHandoff {
+  auto_backgrounded: true;
+  background_reason: 'foreground_budget';
+  foreground_budget_ms: number;
+  shell_id: string;
+  pid?: number;
+  terminal_transport: 'local' | 'acp';
+}
+
+function projectBackgroundHandoff(
+  metadata: unknown
+): HeadlessBackgroundHandoff | undefined {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return undefined;
+  }
+  const value = metadata as Record<string, unknown>;
+  if (
+    value.auto_backgrounded !== true ||
+    value.background_reason !== 'foreground_budget' ||
+    !Number.isSafeInteger(value.foreground_budget_ms) ||
+    (value.foreground_budget_ms as number) <= 0 ||
+    typeof value.shell_id !== 'string' ||
+    !/^bash_[A-Za-z0-9-]+$/.test(value.shell_id) ||
+    value.shell_id.length > 128 ||
+    (value.terminal_transport !== 'local' && value.terminal_transport !== 'acp') ||
+    (value.pid !== undefined &&
+      (!Number.isSafeInteger(value.pid) || (value.pid as number) <= 0))
+  ) {
+    return undefined;
+  }
+  return {
+    auto_backgrounded: true,
+    background_reason: 'foreground_budget',
+    foreground_budget_ms: value.foreground_budget_ms as number,
+    shell_id: value.shell_id,
+    ...(value.pid === undefined ? {} : { pid: value.pid as number }),
+    terminal_transport: value.terminal_transport,
+  };
+}
+
 function createHeadlessAbortSignal(control?: HeadlessRunControl): {
   signal: AbortSignal;
   abort: (reason?: unknown) => void;
@@ -629,6 +669,7 @@ function createEventWriter(
         success: boolean;
         errorType?: string;
         errorMessage?: string;
+        background?: HeadlessBackgroundHandoff;
       }
     ) {
       if (outputFormat === 'jsonl') {
@@ -640,6 +681,7 @@ function createEventWriter(
           success: result?.success,
           error_type: result?.errorType,
           error_message: result?.errorMessage,
+          background: result?.background,
         });
         return;
       }
@@ -1547,6 +1589,7 @@ export async function runHeadless(
                 success: event.result.success,
                 errorType: event.result.error?.type,
                 errorMessage: event.result.error?.message,
+                background: projectBackgroundHandoff(event.result.metadata),
               }
             );
             if (display.detail) {
