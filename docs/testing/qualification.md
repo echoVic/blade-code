@@ -159,6 +159,27 @@ browser console 无 application error。TUI 条件允许时通过 Computer Use �
 状态和 Esc 取消；ACP 必须通过 `session_info_update` metadata 投影且不污染 assistant
 正文。
 
+Bounded foreground Provider recovery 另固定运行 DeepSeek Flash/Pro × Headless、
+真实 ACP stdio + child-backed terminal、raw PTY TUI 与 production Chromium Web GUI
+八格矩阵。透明代理必须让前四个模型请求返回 replay-safe `503`，只将第五个请求原样
+转发真实 Provider；因此旧默认 2 次 retry 无法通过。每格必须在同一 root turn 内：
+
+- 按序投影 attempt `1,2,3,4` 与 recovered `4/12`；
+- 携带 `mode=bounded_foreground`、总预算和非负 elapsed/remaining；
+- 只执行一次 Edit 与一次 Bash，并由宿主再次运行 fixture 测试；
+- 保持 Provider payload、transcript 与最终 workspace 不出现重复副作用；
+- TUI 显示有界恢复与 Esc，ACP 只发 metadata，Web StatusBar 实时显示恢复并在完成后
+  清除，reload 后保留最终结果；
+- 回收 Provider proxy/socket、ACP terminal/process、PTY、browser/page、SSE、server、
+  port、临时 HOME/storage/workspace；
+- 不得把 Provider key、私有故障 body 或 raw error 写入 JSONL、SSE、ACP、DOM、终端
+  capture、transcript 或测试证据。
+
+确定性测试还必须覆盖 recovery deadline 在 backoff 与 in-flight stream 内获胜、
+caller abort、12 次追加尝试硬上限、fallback 共享时钟、timer cleanup，以及 text、
+reasoning、tool call、usage、finish 任一 chunk 后禁止重放。feature matrix 的发布证据
+必须使用 `retry=0`。
+
 Provider Stall 资格必须让透明 SSE 代理先转发真实模型内容，再在 hard idle timeout
 之前暂停后续事件。Headless JSONL 必须按同一 stall count 输出 sanitized
 `detected → recovered`，标记 `output_started=true`，随后完成真实回复；代理必须证明

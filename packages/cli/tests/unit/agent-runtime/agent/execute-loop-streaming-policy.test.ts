@@ -136,6 +136,10 @@ class FallbackStreamingChatService implements IChatService {
 
 interface CapturedRequestOptions {
   toolChoice?: { type: 'tool'; toolName: string };
+  providerRecovery?: {
+    mode: 'bounded_foreground';
+    budgetMs: number;
+  };
 }
 
 class RequiredDelegationChatService implements IChatService {
@@ -245,6 +249,7 @@ class RequiredVerificationChatService implements IChatService {
 class RequiredFallbackChatService implements IChatService {
   readonly streamChoices: Array<CapturedRequestOptions['toolChoice']> = [];
   readonly chatChoices: Array<CapturedRequestOptions['toolChoice']> = [];
+  readonly chatRecoveries: Array<CapturedRequestOptions['providerRecovery']> = [];
   private completed = false;
 
   async chat(
@@ -254,6 +259,7 @@ class RequiredFallbackChatService implements IChatService {
     options?: CapturedRequestOptions
   ): Promise<ChatResponse> {
     this.chatChoices.push(options?.toolChoice);
+    this.chatRecoveries.push(options?.providerRecovery);
     this.completed = true;
     return {
       content: '',
@@ -841,6 +847,12 @@ describe('executeLoopGenerator streaming tool policy', () => {
       undefined,
     ]);
     expect(chatService.chatChoices).toEqual([{ type: 'tool', toolName: 'Task' }]);
+    expect(chatService.chatRecoveries).toEqual([
+      {
+        mode: 'bounded_foreground',
+        budgetMs: DEFAULT_CONFIG.providerForegroundRecoveryMs,
+      },
+    ]);
   });
 
   it('fails closed when an explicitly required Task is not available', async () => {

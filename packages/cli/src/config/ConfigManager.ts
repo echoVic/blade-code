@@ -40,6 +40,11 @@ import {
   MAX_FOREGROUND_COMMAND_HANDOFF_MS,
   MIN_FOREGROUND_COMMAND_HANDOFF_MS,
 } from './foregroundCommandHandoff.js';
+import {
+  isValidForegroundProviderRecoveryMs,
+  MAX_FOREGROUND_PROVIDER_RECOVERY_MS,
+  MIN_FOREGROUND_PROVIDER_RECOVERY_MS,
+} from './foregroundProviderRecovery.js';
 import { normalizeLspServers } from './lspSettings.js';
 import { formatMaxTurnsRange, isValidMaxTurns } from './maxTurns.js';
 import { migrateGeneratedModelIds } from './modelIds.js';
@@ -1154,6 +1159,15 @@ export class ConfigManager {
       errors.push(
         'bashForegroundHandoffMs 必须是 0，或 ' +
           `${MIN_FOREGROUND_COMMAND_HANDOFF_MS}-${MAX_FOREGROUND_COMMAND_HANDOFF_MS} 之间的整数`
+      );
+    }
+    if (
+      config.providerForegroundRecoveryMs !== undefined &&
+      !isValidForegroundProviderRecoveryMs(config.providerForegroundRecoveryMs)
+    ) {
+      errors.push(
+        'providerForegroundRecoveryMs 必须是 0，或 ' +
+          `${MIN_FOREGROUND_PROVIDER_RECOVERY_MS}-${MAX_FOREGROUND_PROVIDER_RECOVERY_MS} 之间的整数`
       );
     }
 

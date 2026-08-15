@@ -1855,14 +1855,29 @@ validates the object and may return a bounded corrective error.`;
         const turnTools = turnRequiredToolName
           ? availableTurnTools.filter((tool) => tool.name === turnRequiredToolName)
           : availableTurnTools;
-        const requestOptions: ChatRequestOptions | undefined = turnRequiredToolName
-          ? {
-              toolChoice: {
-                type: 'tool',
-                toolName: turnRequiredToolName,
-              },
-            }
-          : undefined;
+        const foregroundProviderRecovery =
+          !isSubagent && (deps.config.providerForegroundRecoveryMs ?? 0) > 0
+            ? {
+                mode: 'bounded_foreground' as const,
+                budgetMs: deps.config.providerForegroundRecoveryMs as number,
+              }
+            : undefined;
+        const requestOptions: ChatRequestOptions | undefined =
+          turnRequiredToolName || foregroundProviderRecovery
+            ? {
+                ...(turnRequiredToolName
+                  ? {
+                      toolChoice: {
+                        type: 'tool' as const,
+                        toolName: turnRequiredToolName,
+                      },
+                    }
+                  : {}),
+                ...(foregroundProviderRecovery
+                  ? { providerRecovery: foregroundProviderRecovery }
+                  : {}),
+              }
+            : undefined;
         let turnResult: StreamResponseResult;
         let streamingExecutor: StreamingToolExecutor | undefined;
         const toolProgressQueue = new ToolProgressQueue();

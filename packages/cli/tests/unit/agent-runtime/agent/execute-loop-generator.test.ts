@@ -317,6 +317,76 @@ describe('executeLoopGenerator', () => {
     reactiveCompactionState.reset.mockReset();
   });
 
+  describe('foreground Provider recovery origin', () => {
+    it('attaches the frozen recovery budget to a root Provider request', async () => {
+      const deps = createMockDeps({
+        config: {
+          maxTurns: 10,
+          compactionThreshold: 0.8,
+          providerForegroundRecoveryMs: 120_000,
+        } as any,
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'continue the coding task',
+          createMockContext(),
+          { stream: false },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(deps.chatService.chat).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.any(Array),
+        undefined,
+        {
+          providerRecovery: {
+            mode: 'bounded_foreground',
+            budgetMs: 120_000,
+          },
+        }
+      );
+    });
+
+    it('keeps subagent Provider requests on the standard retry policy', async () => {
+      const deps = createMockDeps({
+        config: {
+          maxTurns: 10,
+          compactionThreshold: 0.8,
+          providerForegroundRecoveryMs: 120_000,
+        } as any,
+      });
+      const context = createMockContext({
+        subagentInfo: {
+          parentSessionId: 'parent-session',
+          subagentType: 'reviewer',
+          isSidechain: true,
+        },
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'review this change',
+          context,
+          { stream: false },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(deps.chatService.chat).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.any(Array),
+        undefined,
+        undefined
+      );
+    });
+  });
+
   describe('compaction lifecycle', () => {
     it('emits summary generation usage so compaction cost is accumulated', async () => {
       const deps = createMockDeps();

@@ -335,7 +335,7 @@ const CompactingEventSchema = event({
 
 const ProviderRetryEventSchema = event({
   type: Type.Literal('provider_retry'),
-  phase: StringEnum(['scheduled', 'attempt', 'recovered', 'exhausted']),
+  phase: StringEnum(['scheduled', 'waiting', 'attempt', 'recovered', 'exhausted']),
   attempt: Type.Integer({ minimum: 0 }),
   max_retries: Type.Integer({ minimum: 0 }),
   reason: StringEnum([
@@ -348,6 +348,11 @@ const ProviderRetryEventSchema = event({
   status_code: Type.Optional(Type.Integer({ minimum: 100, maximum: 599 })),
   delay_ms: Type.Optional(Type.Integer({ minimum: 0 })),
   next_retry_at: Type.Optional(Type.Integer({ minimum: 0 })),
+  mode: Type.Optional(StringEnum(['standard', 'bounded_foreground'])),
+  recovery_budget_ms: Type.Optional(Type.Integer({ minimum: 0 })),
+  recovery_elapsed_ms: Type.Optional(Type.Integer({ minimum: 0 })),
+  recovery_remaining_ms: Type.Optional(Type.Integer({ minimum: 0 })),
+  exhausted_by: Type.Optional(StringEnum(['attempt_limit', 'recovery_budget'])),
 });
 
 const ProviderStallEventSchema = event({

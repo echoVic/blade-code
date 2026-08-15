@@ -25,6 +25,13 @@ const formatTokens = (n: number) => {
   return n.toString();
 };
 
+const formatDurationMs = (milliseconds: number) => {
+  const seconds = Math.max(0, Math.ceil(milliseconds / 1_000));
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return minutes > 0 ? `${minutes}m ${remainingSeconds}s` : `${remainingSeconds}s`;
+};
+
 export function StatusBar() {
   const t = useT();
   const tokenUsage = useSessionStore((state) => state.tokenUsage);
@@ -47,7 +54,9 @@ export function StatusBar() {
     : providerStall
       ? `${t('status.phase.providerStall')} · ${Math.ceil(providerStall.durationMs / 1000)}s / ${Math.ceil(providerStall.timeoutMs / 1000)}s`
       : providerRetry
-        ? `Provider · ${t('chat.error.action.retryingTask')} · ${providerRetry.attempt}/${providerRetry.maxRetries}${retryDelay}`
+        ? providerRetry.mode === 'bounded_foreground'
+          ? `Provider · Bounded recovery · ${providerRetry.attempt}/${providerRetry.maxRetries} · ${formatDurationMs(providerRetry.recoveryRemainingMs ?? 0)}`
+          : `Provider · ${t('chat.error.action.retryingTask')} · ${providerRetry.attempt}/${providerRetry.maxRetries}${retryDelay}`
         : phaseKey
           ? t(phaseKey)
           : '';

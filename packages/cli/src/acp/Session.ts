@@ -1319,6 +1319,19 @@ export class AcpSession {
                     ...(event.nextRetryAt !== undefined
                       ? { nextRetryAt: event.nextRetryAt }
                       : {}),
+                    ...(event.mode !== undefined ? { mode: event.mode } : {}),
+                    ...(event.recoveryBudgetMs !== undefined
+                      ? { recoveryBudgetMs: event.recoveryBudgetMs }
+                      : {}),
+                    ...(event.recoveryElapsedMs !== undefined
+                      ? { recoveryElapsedMs: event.recoveryElapsedMs }
+                      : {}),
+                    ...(event.recoveryRemainingMs !== undefined
+                      ? { recoveryRemainingMs: event.recoveryRemainingMs }
+                      : {}),
+                    ...(event.exhaustedBy !== undefined
+                      ? { exhaustedBy: event.exhaustedBy }
+                      : {}),
                   },
                 },
               });

@@ -221,9 +221,12 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   60 秒，全部 sleep 都响应 turn `AbortSignal`。quota/billing、context overflow、
   caller abort 和显式 `x-should-retry: false` 立即失败。
 - Retry lifecycle 通过统一的 `provider_retry` LoopEvent 投影
-  `scheduled → attempt → recovered|exhausted`。事件只包含 attempt、max retries、
-  bounded delay、分类原因和可选 HTTP status，不包含 Provider response body、原始
-  headers、URL 或 credential。TUI loading、Web StatusBar、ACP
+  `scheduled → waiting* → attempt → recovered|exhausted`。root foreground turn
+  在未显式覆盖模型 retry count 时最多追加 12 次尝试，并由首个瞬时错误后默认 10 分钟
+  hard budget 同时约束 backoff 与 in-flight stream；background/internal sampling 保持
+  原短重试。事件只包含 attempt、max retries、mode、bounded delay、恢复预算/剩余时间、
+  分类原因和可选 HTTP status，不包含 Provider response body、原始 headers、URL 或
+  credential。TUI loading、Web StatusBar、ACP
   `session_info_update._meta["blade/providerRetry"]`、Headless JSONL 和 subagent SSE
   消费同一协议；元事件不计为内容 chunk，不触发 stream commit 或工具执行。
 - 每次 Provider stream read 同时受 stall warning 和 hard idle timeout 约束。warning

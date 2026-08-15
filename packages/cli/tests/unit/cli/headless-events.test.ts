@@ -114,6 +114,46 @@ describe('headless event contract', () => {
     });
     expect(() => HeadlessJsonlEventSchema.parse(providerRetry)).not.toThrow();
 
+    const providerRecoveryHeartbeat = createHeadlessJsonlEvent('provider_retry', {
+      phase: 'waiting',
+      attempt: 4,
+      max_retries: 12,
+      reason: 'server_error',
+      mode: 'bounded_foreground',
+      recovery_budget_ms: 600_000,
+      recovery_elapsed_ms: 15_000,
+      recovery_remaining_ms: 585_000,
+    });
+    expect(providerRecoveryHeartbeat).toEqual({
+      event_version: 1,
+      type: 'provider_retry',
+      phase: 'waiting',
+      attempt: 4,
+      max_retries: 12,
+      reason: 'server_error',
+      mode: 'bounded_foreground',
+      recovery_budget_ms: 600_000,
+      recovery_elapsed_ms: 15_000,
+      recovery_remaining_ms: 585_000,
+    });
+    expect(() =>
+      HeadlessJsonlEventSchema.parse(providerRecoveryHeartbeat)
+    ).not.toThrow();
+    expect(() =>
+      HeadlessJsonlEventSchema.parse({
+        event_version: 1,
+        type: 'provider_retry',
+        phase: 'waiting',
+        attempt: 4,
+        max_retries: 12,
+        reason: 'server_error',
+        mode: 'bounded_foreground',
+        recovery_budget_ms: 600_000,
+        recovery_elapsed_ms: 600_001,
+        recovery_remaining_ms: -1,
+      })
+    ).toThrow();
+
     const providerStall = createHeadlessJsonlEvent('provider_stall', {
       phase: 'detected',
       stall_count: 1,

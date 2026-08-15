@@ -158,6 +158,7 @@ export interface BladeConfig {
   topK: number;
   timeout: number; // HTTP 请求超时时间（毫秒）
   bashForegroundHandoffMs?: number; // 0 禁用；否则长前台 Bash 自动交接到后台的预算
+  providerForegroundRecoveryMs?: number; // 0 禁用；否则 root turn 的有界 Provider 恢复预算
 
   // UI
   codeTheme: string;

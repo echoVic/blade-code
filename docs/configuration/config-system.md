@@ -58,6 +58,7 @@ LSP 同样不使用进程全局单例。`lspServers` 从用户层、可信 sourc
 ```json
 {
   "currentModelId": "primary",
+  "providerForegroundRecoveryMs": 600000,
   "modelProviders": {
     "team-claude": {
       "name": "Team Claude Gateway",
@@ -256,6 +257,11 @@ TUI 使用相同的服务：
 ```
 
 覆盖 endpoint 不改变 pi-ai 为该 Provider 选择的协议。
+
+`providerForegroundRecoveryMs` 控制 root foreground turn 在首个瞬时 Provider
+故障后的有界恢复时间。默认 `600000`（10 分钟），`0` 禁用，其他值必须为
+`30000-3600000`。没有显式 `overrides.maxRetries` 时，root turn 最多追加 12 次请求；
+显式值（包括 `0`）始终优先。background subagent 和内部采样不使用扩展恢复。
 
 Anthropic SDK 会自行追加 `/v1/messages`。若 Anthropic 的 `baseUrl` 以 `/v1`
 结尾，Blade 会在运行时移除该尾段，避免产生 `/v1/v1/messages`。其他路径前缀保持

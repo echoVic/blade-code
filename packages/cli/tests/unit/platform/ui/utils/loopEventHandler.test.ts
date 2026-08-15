@@ -121,6 +121,10 @@ describe('createLoopEventHandler', () => {
       statusCode: 503,
       delayMs: 1_000,
       nextRetryAt: 2_000,
+      mode: 'bounded_foreground',
+      recoveryBudgetMs: 600_000,
+      recoveryElapsedMs: 0,
+      recoveryRemainingMs: 600_000,
     } as const;
 
     handler(retry);
@@ -133,9 +137,33 @@ describe('createLoopEventHandler', () => {
       statusCode: 503,
       delayMs: 1_000,
       nextRetryAt: 2_000,
+      mode: 'bounded_foreground',
+      recoveryBudgetMs: 600_000,
+      recoveryElapsedMs: 0,
+      recoveryRemainingMs: 600_000,
     });
     expect(deps.sessionActions.finalizeStreamingMessage).not.toHaveBeenCalled();
     expect(deps.streamingBuffer.resetStreamingBuffers).not.toHaveBeenCalled();
+
+    handler({
+      ...retry,
+      phase: 'waiting',
+      recoveryElapsedMs: 15_000,
+      recoveryRemainingMs: 585_000,
+    });
+    expect(deps.sessionActions.setProviderRetry).toHaveBeenLastCalledWith({
+      phase: 'waiting',
+      attempt: 1,
+      maxRetries: 2,
+      reason: 'server_error',
+      statusCode: 503,
+      delayMs: 1_000,
+      nextRetryAt: 2_000,
+      mode: 'bounded_foreground',
+      recoveryBudgetMs: 600_000,
+      recoveryElapsedMs: 15_000,
+      recoveryRemainingMs: 585_000,
+    });
 
     handler({ ...retry, phase: 'recovered' });
     expect(deps.sessionActions.setProviderRetry).toHaveBeenLastCalledWith(null);

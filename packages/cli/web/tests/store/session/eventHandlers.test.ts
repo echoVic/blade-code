@@ -1612,6 +1612,10 @@ describe('eventHandlers', () => {
         statusCode: 503,
         delayMs: 1_250,
         nextRetryAt: 5_000,
+        mode: 'bounded_foreground',
+        recoveryBudgetMs: 600_000,
+        recoveryElapsedMs: 0,
+        recoveryRemainingMs: 600_000,
       },
     });
     expect(state).toMatchObject({
@@ -1624,7 +1628,34 @@ describe('eventHandlers', () => {
         statusCode: 503,
         delayMs: 1_250,
         nextRetryAt: 5_000,
+        mode: 'bounded_foreground',
+        recoveryBudgetMs: 600_000,
+        recoveryElapsedMs: 0,
+        recoveryRemainingMs: 600_000,
       },
+    });
+
+    dispatch({
+      type: 'provider.retry',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        phase: 'waiting',
+        attempt: 1,
+        maxRetries: 12,
+        reason: 'server_error',
+        mode: 'bounded_foreground',
+        recoveryBudgetMs: 600_000,
+        recoveryElapsedMs: 15_000,
+        recoveryRemainingMs: 585_000,
+      },
+    });
+    expect(state.providerRetry).toMatchObject({
+      phase: 'waiting',
+      attempt: 1,
+      maxRetries: 12,
+      mode: 'bounded_foreground',
+      recoveryRemainingMs: 585_000,
     });
 
     dispatch({

@@ -1,4 +1,12 @@
-export type ProviderRetryPhase = 'scheduled' | 'attempt' | 'recovered' | 'exhausted';
+export type ProviderRetryPhase =
+  | 'scheduled'
+  | 'waiting'
+  | 'attempt'
+  | 'recovered'
+  | 'exhausted';
+
+export type ProviderRetryMode = 'standard' | 'bounded_foreground';
+export type ProviderRetryExhaustedBy = 'attempt_limit' | 'recovery_budget';
 
 export type ProviderRetryReason =
   | 'rate_limit'
@@ -15,6 +23,11 @@ export interface ProviderRetryEvent {
   statusCode?: number;
   delayMs?: number;
   nextRetryAt?: number;
+  mode?: ProviderRetryMode;
+  recoveryBudgetMs?: number;
+  recoveryElapsedMs?: number;
+  recoveryRemainingMs?: number;
+  exhaustedBy?: ProviderRetryExhaustedBy;
 }
 
 export interface ProviderResponseMetadata {
@@ -34,6 +47,18 @@ export const MAX_PROVIDER_RETRY_DELAY_MS = 60_000;
 const BASE_PROVIDER_RETRY_DELAY_MS = 500;
 const MAX_EXPONENTIAL_RETRY_DELAY_MS = 8_000;
 const replayBoundaryErrors = new WeakSet<object>();
+
+export class ProviderRecoveryBudgetExceededError extends Error {
+  readonly code = 'PROVIDER_RECOVERY_BUDGET_EXCEEDED';
+
+  constructor(
+    readonly budgetMs: number,
+    readonly elapsedMs: number
+  ) {
+    super(`Provider recovery budget exhausted after ${budgetMs}ms`);
+    this.name = 'ProviderRecoveryBudgetExceededError';
+  }
+}
 
 const NON_RETRYABLE_LIMIT_MARKERS = [
   'gousagelimiterror',
@@ -126,6 +151,7 @@ export function classifyProviderRetry(
   const code = errorCode(error);
   if (
     code === 'STREAM_IDLE_TIMEOUT' ||
+    code === 'PROVIDER_RECOVERY_BUDGET_EXCEEDED' ||
     (error instanceof Error && error.name === 'AbortError') ||
     message.includes('request aborted') ||
     message === 'aborted'
@@ -221,6 +247,7 @@ export function computeProviderRetryDelay(
     now?: number;
     random?: number;
     maxDelayMs?: number;
+    maxExponentialDelayMs?: number;
   } = {}
 ): number {
   const now = options.now ?? Date.now();
@@ -231,9 +258,11 @@ export function computeProviderRetryDelay(
   }
 
   const retryIndex = Math.max(0, attempt - 1);
+  const maxExponentialDelayMs =
+    options.maxExponentialDelayMs ?? MAX_EXPONENTIAL_RETRY_DELAY_MS;
   const exponential = Math.min(
     BASE_PROVIDER_RETRY_DELAY_MS * 2 ** retryIndex,
-    MAX_EXPONENTIAL_RETRY_DELAY_MS
+    maxExponentialDelayMs
   );
   const random = Math.max(0, Math.min(1, options.random ?? Math.random()));
   const jittered = exponential * (0.75 + random * 0.25);

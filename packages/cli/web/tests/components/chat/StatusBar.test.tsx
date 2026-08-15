@@ -20,9 +20,12 @@ const sessionState = vi.hoisted(() => ({
   isStreaming: true,
   agentPhase: 'compacting',
   providerRetry: null as {
+    phase?: 'scheduled' | 'waiting' | 'attempt' | 'exhausted';
     attempt: number;
     maxRetries: number;
     delayMs?: number;
+    mode?: 'standard' | 'bounded_foreground';
+    recoveryRemainingMs?: number;
   } | null,
   providerStall: null as {
     durationMs: number;
@@ -99,6 +102,25 @@ describe('StatusBar', () => {
     expect(container.textContent).toContain('Retrying');
     expect(container.textContent).toContain('1/2');
     expect(container.textContent).toContain('2s');
+  });
+
+  it('renders bounded foreground recovery and its remaining budget', () => {
+    sessionState.agentPhase = 'running';
+    sessionState.providerRetry = {
+      phase: 'waiting',
+      attempt: 4,
+      maxRetries: 12,
+      mode: 'bounded_foreground',
+      recoveryRemainingMs: 585_000,
+    };
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    expect(container.textContent).toContain('Provider');
+    expect(container.textContent).toContain('Bounded recovery');
+    expect(container.textContent).toContain('4/12');
+    expect(container.textContent).toContain('9m 45s');
   });
 
   it('renders Provider stall duration ahead of the normal phase', () => {

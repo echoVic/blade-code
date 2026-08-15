@@ -1162,10 +1162,12 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
       ]);
       expect(retryEvents[0]).toMatchObject({
         attempt: 1,
-        max_retries: 2,
+        max_retries: 12,
         reason: 'server_error',
         status_code: 503,
         delay_ms: 0,
+        mode: 'bounded_foreground',
+        recovery_budget_ms: 600_000,
       });
       expect(mutationStarts).toHaveLength(1);
       expect(

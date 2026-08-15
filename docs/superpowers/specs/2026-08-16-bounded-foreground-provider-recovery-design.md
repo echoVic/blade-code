@@ -141,7 +141,7 @@ Model override precedence:
 
 ```text
 overrides.maxRetries is explicit
--> use that exact retry count
+-> use that exact per-candidate retry count and preserve existing fallback order
 
 overrides.maxRetries is absent
 and request is bounded foreground
@@ -152,8 +152,9 @@ otherwise
 -> use the existing default of 2 retries
 ```
 
-An explicit `maxRetries: 0` remains a hard no-retry instruction. The recovery
-deadline still caps an explicitly larger retry count.
+An explicit `maxRetries: 0` remains a hard no-retry instruction for each model
+candidate, but does not disable a configured fallback. The recovery deadline
+still caps an explicitly larger retry count across all candidates.
 
 ## Request-Origin Contract
 
@@ -271,7 +272,12 @@ Primary and configured fallback models share:
 - the original replay boundary;
 - one recovery start timestamp;
 - one absolute deadline;
-- one logical retry attempt count.
+- one logical retry attempt count when using the default foreground policy.
+
+An explicit model `maxRetries` preserves the existing per-candidate count while
+all candidates still share the absolute deadline. This keeps user override and
+fallback behavior backward compatible without allowing a fallback to reset the
+time budget.
 
 Switching models cannot reset the recovery budget or allow more than the
 logical maximum number of physical retries.

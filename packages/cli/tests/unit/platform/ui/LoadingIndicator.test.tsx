@@ -12,10 +12,12 @@ const mockUseTerminalWidth = vi.fn(() => 120);
 const mockUseProviderRetry = vi.fn(
   () =>
     null as {
-      phase: 'scheduled' | 'attempt';
+      phase: 'scheduled' | 'waiting' | 'attempt' | 'exhausted';
       attempt: number;
       maxRetries: number;
       delayMs?: number;
+      mode?: 'standard' | 'bounded_foreground';
+      recoveryRemainingMs?: number;
     } | null
 );
 const mockUseProviderStall = vi.fn(
@@ -123,6 +125,27 @@ describe('LoadingIndicator', () => {
     expect(html).toContain('Provider 暂时不可用');
     expect(html).toContain('1/2');
     expect(html).toContain('2s');
+    expect(html).toContain('Esc 取消');
+    expect(html).not.toContain('炼化代码灵气...');
+  });
+
+  it('显示有界前台恢复的剩余预算和取消入口', async () => {
+    mockUseProviderRetry.mockReturnValue({
+      phase: 'waiting',
+      attempt: 4,
+      maxRetries: 12,
+      mode: 'bounded_foreground',
+      recoveryRemainingMs: 585_000,
+    });
+    const { LoadingIndicator } = await import(
+      '../../../../src/ui/components/LoadingIndicator.js'
+    );
+
+    const html = renderToStaticMarkup(React.createElement(LoadingIndicator));
+
+    expect(html).toContain('Provider 暂时不可用，正在有界恢复');
+    expect(html).toContain('4/12');
+    expect(html).toContain('9m 45s');
     expect(html).toContain('Esc 取消');
     expect(html).not.toContain('炼化代码灵气...');
   });

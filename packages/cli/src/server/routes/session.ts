@@ -746,6 +746,11 @@ function publishSubagentLoopEvent(
         statusCode: event.statusCode,
         delayMs: event.delayMs,
         nextRetryAt: event.nextRetryAt,
+        mode: event.mode,
+        recoveryBudgetMs: event.recoveryBudgetMs,
+        recoveryElapsedMs: event.recoveryElapsedMs,
+        recoveryRemainingMs: event.recoveryRemainingMs,
+        exhaustedBy: event.exhaustedBy,
       });
       break;
     case 'provider_stall':
@@ -4203,6 +4208,11 @@ async function executeRunAsync(
             statusCode: event.statusCode,
             delayMs: event.delayMs,
             nextRetryAt: event.nextRetryAt,
+            mode: event.mode,
+            recoveryBudgetMs: event.recoveryBudgetMs,
+            recoveryElapsedMs: event.recoveryElapsedMs,
+            recoveryRemainingMs: event.recoveryRemainingMs,
+            exhaustedBy: event.exhaustedBy,
           });
           break;
         case 'provider_stall':

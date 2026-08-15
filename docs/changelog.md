@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.37] - 2026-08-16
+
+### 🛡️ 稳定性
+
+- root foreground turn 在首个 replay-safe 瞬时 Provider 故障后进入有界长任务恢复：
+  默认最多追加 12 次请求，并由 10 分钟 monotonic budget 同时约束 backoff、建连与
+  in-flight stream；任一上限先到即停止，Esc/Web stop/ACP cancel/shutdown 可立即取消
+- `providerForegroundRecoveryMs` 支持 `0` 禁用或 `30000-3600000ms` 配置；显式模型
+  `overrides.maxRetries` 继续拥有最高优先级。background subagent、verification、
+  compaction、health probe 与内部采样保持原短重试，避免容量故障时放大后台请求
+- bounded foreground backoff 单次最多 60 秒，每 15 秒发送 `waiting` heartbeat；
+  primary/fallback 共享恢复时钟，默认策略还共享 12 次追加尝试上限；显式 retry 覆盖
+  保留既有 per-candidate fallback 语义。deadline 在 retry stream 内获胜时会中止
+  pi-ai iterator 并清理 hard timer
+- `provider_retry` 统一增加 mode、恢复预算、elapsed/remaining 与 exhaustion reason；
+  Headless JSONL、TUI、Web SSE/StatusBar 和 ACP metadata 使用同一 typed lifecycle，
+  不把 runtime 控制字段、Provider body/header 或凭据写入模型 payload 与 transcript
+- text、reasoning、tool call、usage 或 finish 任一 chunk 仍是严格 replay boundary；
+  输出后故障不会因扩展预算重放请求、重复工具调用或切换 fallback
+
+### ✅ 测试相关
+
+- 新增 DeepSeek Flash/Pro × Headless、真实 ACP stdio + child-backed terminal、raw
+  PTY TUI 与 production Chromium Web GUI 八格真实 API 矩阵；透明代理连续注入四次
+  `503`，第五次才转发真实 Provider，证明旧 2 次策略无法通过而新 runtime 在同一 turn
+  只执行一次 Edit/Bash，并完成宿主测试与 Web reload
+- 确定性测试覆盖 12 次追加尝试硬上限、backoff/in-flight deadline、fallback 共享预算、
+  caller abort、15 秒 heartbeat、timer cleanup、显式零重试、root/subagent 分流、
+  stream-to-chat fallback、四端 schema，以及所有 Provider chunk 类型的重放边界
+
 ## [0.10.36] - 2026-08-16
 
 ### 🛡️ 稳定性

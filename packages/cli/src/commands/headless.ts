@@ -1039,6 +1039,11 @@ function createEventWriter(
           status_code: event.statusCode,
           delay_ms: event.delayMs,
           next_retry_at: event.nextRetryAt,
+          mode: event.mode,
+          recovery_budget_ms: event.recoveryBudgetMs,
+          recovery_elapsed_ms: event.recoveryElapsedMs,
+          recovery_remaining_ms: event.recoveryRemainingMs,
+          exhausted_by: event.exhaustedBy,
         });
         return;
       }

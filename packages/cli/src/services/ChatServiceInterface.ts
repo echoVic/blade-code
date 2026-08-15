@@ -148,6 +148,10 @@ export interface ChatRequestOptions {
     type: 'tool';
     toolName: string;
   };
+  providerRecovery?: {
+    mode: 'bounded_foreground';
+    budgetMs: number;
+  };
   maxOutputTokens?: number;
   temperature?: number;
 }

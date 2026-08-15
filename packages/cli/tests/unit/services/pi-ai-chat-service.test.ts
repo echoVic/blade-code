@@ -92,6 +92,8 @@ describe('PiAIChatService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     createPiRuntime.mockReturnValue({ models: {}, model: piModelFixture });
+    observePiProviderResponses.mockReset();
+    streamPiModel.mockReset();
   });
 
   it('rejects a required tool that is unavailable', async () => {
@@ -271,6 +273,55 @@ describe('PiAIChatService', () => {
     expect(streamPiModel).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ['reasoning', { reasoningContent: 'thinking' }],
+    [
+      'tool call',
+      {
+        toolCalls: [
+          {
+            index: 0,
+            id: 'call-1',
+            type: 'function',
+            function: { name: 'Read', arguments: '{}' },
+          },
+        ],
+      },
+    ],
+    [
+      'usage',
+      {
+        usage: {
+          promptTokens: 1,
+          completionTokens: 1,
+          totalTokens: 2,
+        },
+      },
+    ],
+    ['finish', { finishReason: 'stop' }],
+  ] satisfies Array<
+    [string, StreamChunk]
+  >)('does not replay after a %s chunk crosses the boundary', async (_name, boundaryChunk) => {
+    const failure = new Error('status 503');
+    streamPiModel.mockReturnValue(chunks([boundaryChunk, failure]));
+    const stream = (await service({ maxRetries: undefined })).streamChat(
+      [{ role: 'user', content: 'continue' }],
+      undefined,
+      undefined,
+      {
+        providerRecovery: {
+          mode: 'bounded_foreground',
+          budgetMs: 600_000,
+        },
+      }
+    );
+
+    await expect(stream.next()).resolves.toMatchObject({ value: boundaryChunk });
+    await expect(stream.next()).rejects.toBe(failure);
+    expect(providerReplayBoundaryCrossed(failure)).toBe(true);
+    expect(streamPiModel).toHaveBeenCalledOnce();
+  });
+
   it('marks a context error after partial output as replay-unsafe', async () => {
     const failure = new Error('maximum context length exceeded; status 413');
     streamPiModel.mockReturnValue(chunks([{ content: 'partial' }, failure]));
@@ -305,6 +356,28 @@ describe('PiAIChatService', () => {
       provider: 'test',
       model: 'backup',
     });
+  });
+
+  it('preserves fallback when an explicit retry override is exhausted', async () => {
+    streamPiModel
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([{ content: 'fallback' }]));
+
+    const result = await (
+      await service({
+        maxRetries: 0,
+        fallbackModels: [{ provider: 'test', model: 'backup' }],
+      })
+    ).chat([{ role: 'user', content: 'hello' }], undefined, undefined, {
+      providerRecovery: {
+        mode: 'bounded_foreground',
+        budgetMs: 600_000,
+      },
+    });
+
+    expect(result.content).toBe('fallback');
+    expect(streamPiModel).toHaveBeenCalledTimes(2);
+    expect(createFallbackModel).toHaveBeenCalledOnce();
   });
 
   it('emits an observable retry lifecycle before the replay boundary', async () => {
@@ -358,6 +431,427 @@ describe('PiAIChatService', () => {
     }
   });
 
+  it('recovers a foreground turn after the ordinary retry count is exceeded', async () => {
+    vi.useFakeTimers();
+    streamPiModel
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([{ content: 'recovered-after-outage' }]));
+    const stream = (await service({ maxRetries: undefined })).streamChat(
+      [{ role: 'user', content: 'continue the coding task' }],
+      undefined,
+      undefined,
+      {
+        providerRecovery: {
+          mode: 'bounded_foreground',
+          budgetMs: 600_000,
+        },
+      }
+    );
+    const events: StreamChunk[] = [];
+    const consume = (async () => {
+      for await (const event of stream) events.push(event);
+    })();
+
+    try {
+      await vi.runAllTimersAsync();
+      await consume;
+      expect(streamPiModel).toHaveBeenCalledTimes(5);
+      expect(events.at(-1)).toEqual({ content: 'recovered-after-outage' });
+      const retryEvents = events.flatMap((event) =>
+        event.providerRetry ? [event.providerRetry] : []
+      );
+      expect(retryEvents.filter((event) => event.phase === 'attempt')).toHaveLength(4);
+      expect(retryEvents.at(-1)).toMatchObject({
+        phase: 'recovered',
+        attempt: 4,
+        maxRetries: 12,
+        mode: 'bounded_foreground',
+        recoveryBudgetMs: 600_000,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits bounded waiting heartbeats during a long foreground backoff', async () => {
+    vi.useFakeTimers();
+    observePiProviderResponses.mockImplementation(
+      (
+        _options: unknown,
+        _model: unknown,
+        onResponse: (response: { statusCode: number; retryAfter?: string }) => void
+      ) => onResponse({ statusCode: 503, retryAfter: '30' })
+    );
+    streamPiModel
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([{ content: 'recovered' }]));
+    const stream = (await service({ maxRetries: undefined })).streamChat(
+      [{ role: 'user', content: 'continue' }],
+      undefined,
+      undefined,
+      {
+        providerRecovery: {
+          mode: 'bounded_foreground',
+          budgetMs: 600_000,
+        },
+      }
+    );
+
+    try {
+      await expect(stream.next()).resolves.toMatchObject({
+        value: {
+          providerRetry: {
+            phase: 'scheduled',
+            delayMs: 30_000,
+            mode: 'bounded_foreground',
+          },
+        },
+      });
+      const heartbeat = stream.next();
+      await vi.advanceTimersByTimeAsync(15_000);
+      await expect(heartbeat).resolves.toMatchObject({
+        value: {
+          providerRetry: {
+            phase: 'waiting',
+            attempt: 1,
+            recoveryBudgetMs: 600_000,
+            recoveryElapsedMs: 15_000,
+            recoveryRemainingMs: 585_000,
+          },
+        },
+      });
+      const attempt = stream.next();
+      await vi.advanceTimersByTimeAsync(15_000);
+      await expect(attempt).resolves.toMatchObject({
+        value: {
+          providerRetry: {
+            phase: 'attempt',
+            attempt: 1,
+            mode: 'bounded_foreground',
+          },
+        },
+      });
+    } finally {
+      await stream.return(undefined);
+      vi.useRealTimers();
+    }
+  });
+
+  it('hard-stops foreground recovery when its monotonic budget expires', async () => {
+    vi.useFakeTimers();
+    observePiProviderResponses.mockImplementation(
+      (
+        _options: unknown,
+        _model: unknown,
+        onResponse: (response: { statusCode: number; retryAfter?: string }) => void
+      ) => onResponse({ statusCode: 503, retryAfter: '60' })
+    );
+    streamPiModel.mockImplementation(() => chunks([new Error('status 503')]));
+    const stream = (await service({ maxRetries: undefined })).streamChat(
+      [{ role: 'user', content: 'continue' }],
+      undefined,
+      undefined,
+      {
+        providerRecovery: {
+          mode: 'bounded_foreground',
+          budgetMs: 30_000,
+        },
+      }
+    );
+    const events: StreamChunk[] = [];
+    let observed: unknown;
+    const consume = (async () => {
+      try {
+        for await (const event of stream) events.push(event);
+      } catch (error) {
+        observed = error;
+      }
+    })();
+
+    try {
+      await vi.runAllTimersAsync();
+      await consume;
+      expect(streamPiModel).toHaveBeenCalledOnce();
+      expect(observed).toMatchObject({
+        name: 'ProviderRecoveryBudgetExceededError',
+        budgetMs: 30_000,
+      });
+      expect(
+        events.flatMap((event) =>
+          event.providerRetry?.phase === 'exhausted' ? [event.providerRetry] : []
+        )
+      ).toEqual([
+        expect.objectContaining({
+          mode: 'bounded_foreground',
+          exhaustedBy: 'recovery_budget',
+          recoveryRemainingMs: 0,
+        }),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('aborts an in-flight retry stream when the recovery deadline wins', async () => {
+    vi.useFakeTimers();
+    let retryIteratorClosed = false;
+    let retryAbortReason: unknown;
+    streamPiModel
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockImplementationOnce(
+        (
+          _models: unknown,
+          _model: unknown,
+          _context: unknown,
+          _options: unknown,
+          watchdog: { signal?: AbortSignal }
+        ) =>
+          (async function* () {
+            try {
+              await new Promise<void>((_resolve, reject) => {
+                const signal = watchdog.signal;
+                if (!signal) {
+                  reject(new Error('retry watchdog signal missing'));
+                  return;
+                }
+                const abort = () => {
+                  retryAbortReason = signal.reason;
+                  reject(signal.reason);
+                };
+                signal.addEventListener('abort', abort, { once: true });
+                if (signal.aborted) abort();
+              });
+              yield { content: 'forbidden' };
+            } finally {
+              retryIteratorClosed = true;
+            }
+          })()
+      );
+    const stream = (await service({ maxRetries: undefined })).streamChat(
+      [{ role: 'user', content: 'continue' }],
+      undefined,
+      undefined,
+      {
+        providerRecovery: {
+          mode: 'bounded_foreground',
+          budgetMs: 30_000,
+        },
+      }
+    );
+
+    try {
+      await expect(stream.next()).resolves.toMatchObject({
+        value: { providerRetry: { phase: 'scheduled' } },
+      });
+      const attempt = stream.next();
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(attempt).resolves.toMatchObject({
+        value: { providerRetry: { phase: 'attempt' } },
+      });
+      const exhausted = stream.next();
+      await vi.advanceTimersByTimeAsync(30_000);
+      await expect(exhausted).resolves.toMatchObject({
+        value: {
+          providerRetry: {
+            phase: 'exhausted',
+            exhaustedBy: 'recovery_budget',
+            recoveryRemainingMs: 0,
+          },
+        },
+      });
+      await expect(stream.next()).rejects.toMatchObject({
+        name: 'ProviderRecoveryBudgetExceededError',
+      });
+      expect(retryAbortReason).toMatchObject({
+        name: 'ProviderRecoveryBudgetExceededError',
+      });
+      expect(retryIteratorClosed).toBe(true);
+      expect(streamPiModel).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shares one recovery deadline across primary and fallback models', async () => {
+    vi.useFakeTimers();
+    let fallbackClosed = false;
+    streamPiModel
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockImplementationOnce(
+        (
+          _models: unknown,
+          _model: unknown,
+          _context: unknown,
+          _options: unknown,
+          watchdog: { signal?: AbortSignal }
+        ) =>
+          (async function* () {
+            try {
+              await new Promise<void>((_resolve, reject) => {
+                const signal = watchdog.signal;
+                if (!signal) {
+                  reject(new Error('fallback watchdog signal missing'));
+                  return;
+                }
+                const abort = () => reject(signal.reason);
+                signal.addEventListener('abort', abort, { once: true });
+                if (signal.aborted) abort();
+              });
+            } finally {
+              fallbackClosed = true;
+            }
+          })()
+      );
+    const stream = (
+      await service({
+        maxRetries: undefined,
+        fallbackModels: [{ provider: 'test', model: 'backup' }],
+      })
+    ).streamChat([{ role: 'user', content: 'continue' }], undefined, undefined, {
+      providerRecovery: {
+        mode: 'bounded_foreground',
+        budgetMs: 30_000,
+      },
+    });
+    const events: StreamChunk[] = [];
+    let observed: unknown;
+    const consume = (async () => {
+      try {
+        for await (const event of stream) events.push(event);
+      } catch (error) {
+        observed = error;
+      }
+    })();
+
+    try {
+      await vi.runAllTimersAsync();
+      await consume;
+      expect(observed).toMatchObject({
+        name: 'ProviderRecoveryBudgetExceededError',
+        budgetMs: 30_000,
+        elapsedMs: 30_000,
+      });
+      expect(streamPiModel).toHaveBeenCalledTimes(4);
+      expect(createFallbackModel).toHaveBeenCalledOnce();
+      expect(events).toContainEqual({ modelFallback: true });
+      expect(fallbackClosed).toBe(true);
+      expect(
+        events.flatMap((event) =>
+          event.providerRetry?.exhaustedBy === 'recovery_budget'
+            ? [event.providerRetry]
+            : []
+        )
+      ).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('caps default foreground recovery at twelve physical retries', async () => {
+    vi.useFakeTimers();
+    streamPiModel.mockImplementation(() => chunks([new Error('status 503')]));
+    const stream = (await service({ maxRetries: undefined })).streamChat(
+      [{ role: 'user', content: 'continue' }],
+      undefined,
+      undefined,
+      {
+        providerRecovery: {
+          mode: 'bounded_foreground',
+          budgetMs: 600_000,
+        },
+      }
+    );
+    const events: StreamChunk[] = [];
+    let observed: unknown;
+    const consume = (async () => {
+      try {
+        for await (const event of stream) events.push(event);
+      } catch (error) {
+        observed = error;
+      }
+    })();
+
+    try {
+      await vi.runAllTimersAsync();
+      await consume;
+      expect(streamPiModel).toHaveBeenCalledTimes(13);
+      expect(observed).toMatchObject({ message: 'status 503' });
+      expect(
+        events.flatMap((event) =>
+          event.providerRetry?.phase === 'attempt' ? [event.providerRetry.attempt] : []
+        )
+      ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+      expect(
+        events.flatMap((event) =>
+          event.providerRetry?.phase === 'exhausted' ? [event.providerRetry] : []
+        )
+      ).toEqual([
+        expect.objectContaining({
+          attempt: 12,
+          maxRetries: 12,
+          exhaustedBy: 'attempt_limit',
+        }),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears the hard-deadline timer after a retry succeeds', async () => {
+    vi.useFakeTimers();
+    streamPiModel
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([{ content: 'recovered' }]));
+    const stream = (await service({ maxRetries: undefined })).streamChat(
+      [{ role: 'user', content: 'continue' }],
+      undefined,
+      undefined,
+      {
+        providerRecovery: {
+          mode: 'bounded_foreground',
+          budgetMs: 600_000,
+        },
+      }
+    );
+    const consume = (async () => {
+      for await (const _event of stream) {
+        // Drain the complete logical request.
+      }
+    })();
+
+    try {
+      await vi.runAllTimersAsync();
+      await consume;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps explicit maxRetries=0 authoritative for a foreground request', async () => {
+    streamPiModel.mockReturnValue(chunks([new Error('status 503')]));
+
+    await expect(
+      (await service({ maxRetries: 0 })).chat(
+        [{ role: 'user', content: 'continue' }],
+        undefined,
+        undefined,
+        {
+          providerRecovery: {
+            mode: 'bounded_foreground',
+            budgetMs: 600_000,
+          },
+        }
+      )
+    ).rejects.toThrow('status 503');
+    expect(streamPiModel).toHaveBeenCalledOnce();
+  });
+
   it('cancels an in-flight retry backoff without replaying the request', async () => {
     vi.useFakeTimers();
     streamPiModel.mockReturnValue(chunks([new Error('status 503')]));
@@ -365,11 +859,24 @@ describe('PiAIChatService', () => {
     const stream = (await service({ maxRetries: 2 })).streamChat(
       [{ role: 'user', content: 'hello' }],
       undefined,
-      controller.signal
+      controller.signal,
+      {
+        providerRecovery: {
+          mode: 'bounded_foreground',
+          budgetMs: 30_000,
+        },
+      }
     );
 
     try {
-      await stream.next();
+      await expect(stream.next()).resolves.toMatchObject({
+        value: {
+          providerRetry: {
+            phase: 'scheduled',
+            mode: 'bounded_foreground',
+          },
+        },
+      });
       const pendingAttempt = stream.next();
       controller.abort(new DOMException('Stopped', 'AbortError'));
       await expect(pendingAttempt).rejects.toMatchObject({ name: 'AbortError' });

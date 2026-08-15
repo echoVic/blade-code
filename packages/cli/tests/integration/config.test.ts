@@ -680,4 +680,21 @@ describe('ConfigManager 集成', () => {
     const loaded = await ConfigManager.getInstance().initialize();
     expect(loaded.bashForegroundHandoffMs).toBe(1_000);
   });
+
+  it('persists the foreground Provider recovery budget in global config', async () => {
+    const service = ConfigService.getInstance();
+
+    await service.save(
+      { providerForegroundRecoveryMs: 120_000 },
+      { scope: 'global', immediate: true }
+    );
+
+    const userConfigPath = path.join(tempHome, '.blade', 'config.json');
+    expect(JSON.parse(readFileSync(userConfigPath, 'utf8'))).toMatchObject({
+      providerForegroundRecoveryMs: 120_000,
+    });
+
+    const loaded = await ConfigManager.getInstance().initialize();
+    expect(loaded.providerForegroundRecoveryMs).toBe(120_000);
+  });
 });

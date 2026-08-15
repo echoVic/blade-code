@@ -63,10 +63,15 @@ export type AgentPhase =
   | 'error';
 
 export interface ProviderRetryInfo {
-  phase: 'scheduled' | 'attempt' | 'exhausted';
+  phase: 'scheduled' | 'waiting' | 'attempt' | 'exhausted';
   attempt: number;
   maxRetries: number;
   delayMs?: number;
+  mode?: 'standard' | 'bounded_foreground';
+  recoveryBudgetMs?: number;
+  recoveryElapsedMs?: number;
+  recoveryRemainingMs?: number;
+  exhaustedBy?: 'attempt_limit' | 'recovery_budget';
 }
 
 export interface ProviderStallInfo {

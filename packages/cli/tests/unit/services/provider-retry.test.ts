@@ -113,4 +113,24 @@ describe('provider retry policy', () => {
     expect(computeProviderRetryDelay(2, undefined, { random: 1 })).toBe(1_000);
     expect(computeProviderRetryDelay(20, undefined, { random: 1 })).toBe(8_000);
   });
+
+  it('allows bounded foreground recovery to use a larger exponential ceiling', () => {
+    expect(
+      computeProviderRetryDelay(20, undefined, {
+        random: 1,
+        maxExponentialDelayMs: 60_000,
+      })
+    ).toBe(60_000);
+    expect(
+      computeProviderRetryDelay(
+        20,
+        { statusCode: 429, retryAfter: '3600' },
+        {
+          random: 1,
+          maxDelayMs: 60_000,
+          maxExponentialDelayMs: 60_000,
+        }
+      )
+    ).toBe(60_000);
+  });
 });

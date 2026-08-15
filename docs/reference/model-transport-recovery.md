@@ -18,6 +18,39 @@ Blade 会遍历 `lastError` 和 `cause` 错误链，并把以下错误视为瞬�
 
 上下文超限属于确定性错误。`prompt_too_long`、`maximum context length`、`context_length_exceeded` 等标记即使被网关包装成 HTTP `500`，也不会进入传输重试或模型 fallback，而是返回 Agent loop 触发反应式压缩。
 
+## 前台长任务恢复
+
+root foreground turn 在没有显式模型 `overrides.maxRetries` 时，默认最多追加 12 次
+请求，并由 `providerForegroundRecoveryMs` 同时限制首个瞬时故障后的总恢复时间：
+
+- 默认恢复预算 `600000ms`（10 分钟）；
+- `0` 禁用扩展恢复；
+- 其他值必须是 `30000-3600000ms` 的整数；
+- 显式 `overrides.maxRetries` 始终优先，`0` 仍表示不重试；
+- primary 与 fallback 共享同一个恢复起点和绝对 deadline；默认策略还共享 12 次追加
+  尝试上限，显式 `maxRetries` 保留既有的 per-candidate 语义；
+- 扩展退避单次最多 60 秒，长等待每 15 秒产生一次 `waiting` heartbeat；
+- backoff 和 in-flight retry 都响应 Esc、ACP cancel、Web stop、Headless signal 与
+  coordinated shutdown。
+
+恢复时钟从第一个可安全重放的瞬时错误开始，不包含初次正常请求耗时。开始恢复后，
+等待、建连和模型 stream 都计入同一预算。deadline 到达会中止当前 pi-ai iterator，
+清理 hard timer，并投影一次 typed `exhausted/recovery_budget`。
+
+background subagent、verification、compaction、provider health、标题生成和其他内部采样
+不继承扩展预算，继续使用原有短重试。这避免 Provider 容量故障时由后台工作放大请求。
+
+`provider_retry` lifecycle 新增：
+
+- `mode`: `standard` 或 `bounded_foreground`；
+- `phase=waiting`；
+- `recoveryBudgetMs`、`recoveryElapsedMs`、`recoveryRemainingMs`；
+- 终态 `exhaustedBy=attempt_limit|recovery_budget`。
+
+这些字段只属于 runtime surface metadata，不进入 Provider payload、assistant 正文或
+durable transcript。TUI 与 Web 在原状态栏内显示尝试数和剩余预算；Headless JSONL 与
+ACP 使用结构化字段。
+
 ## 流活性保护
 
 HTTP 请求超时不等于流活性超时。部分 SDK 在响应头到达后不再用请求 timeout

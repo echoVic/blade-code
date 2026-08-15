@@ -163,7 +163,7 @@ export function createLoopEventHandler(
       case 'provider_retry': {
         const { kind: _kind, ...retry } = event;
         deps.sessionActions.setProviderRetry(
-          event.phase === 'scheduled' || event.phase === 'attempt' ? retry : null
+          event.phase === 'recovered' ? null : retry
         );
         break;
       }
