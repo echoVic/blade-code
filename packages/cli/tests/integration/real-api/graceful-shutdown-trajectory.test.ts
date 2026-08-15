@@ -78,6 +78,11 @@ function appendTail(current: string, chunk: Buffer | string): string {
   return `${current}${chunk.toString()}`.slice(-MAX_CAPTURE_CHARS);
 }
 
+function redactDiagnostic(value: string, secret: string): string {
+  const redacted = secret ? value.replaceAll(secret, '[redacted]') : value;
+  return redacted.slice(-8_000).replaceAll('\u001B', '<ESC>');
+}
+
 function headlessContent(output: string): string {
   return output
     .split(/\r?\n/)
@@ -366,19 +371,39 @@ async function runPtySurface(input: {
         ...process.env,
         BLADE_GRACEFUL_PTY_INPUT: encodedInput,
       },
-      timeout: 90_000,
+      timeout: 180_000,
       maxBuffer: 128 * 1024,
       killSignal: 'SIGKILL',
     });
     stdout = result.stdout;
   } catch (error) {
-    const failed = error as Error & { stdout?: string };
+    const failed = error as Error & { stdout?: string; stderr?: string };
     stdout = failed.stdout ?? stdout;
+    if (!stdout.trim()) {
+      throw new Error(
+        `Raw PTY graceful shutdown runner produced no evidence: ${redactDiagnostic(
+          failed.stderr ?? failed.message,
+          input.secret
+        )}`,
+        { cause: error }
+      );
+    }
   }
-  const evidence = JSON.parse(stdout) as SurfaceEvidence & {
+  let evidence: SurfaceEvidence & {
     success?: unknown;
     error?: unknown;
   };
+  try {
+    evidence = JSON.parse(stdout) as typeof evidence;
+  } catch (error) {
+    throw new Error(
+      `Raw PTY graceful shutdown evidence was not JSON: ${redactDiagnostic(
+        stdout,
+        input.secret
+      )}`,
+      { cause: error }
+    );
+  }
   if (
     evidence.success !== true ||
     typeof evidence.output !== 'string' ||
@@ -388,7 +413,7 @@ async function runPtySurface(input: {
     throw new Error(
       `Raw PTY graceful shutdown evidence is invalid: ${String(
         evidence.error ?? evidence.output ?? 'unknown'
-      )}`
+      )}; output=${redactDiagnostic(evidence.output ?? '', input.secret)}`
     );
   }
   return evidence;
@@ -623,10 +648,7 @@ describe
         }).then(() => path.join(root, 'workspace'))
       );
       const sessionId = `shutdown-${safeSlug(model.model)}-${surface}-${Date.now()}`;
-      const fixture = createShutdownFixture(
-        workspace,
-        `${safeSlug(model.model)}_${surface}_${Date.now()}`
-      );
+      const fixture = createShutdownFixture(workspace, String(Date.now()));
       const previousHome = process.env.HOME;
       const previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
       const previousAutoMemory = process.env.BLADE_AUTO_MEMORY;

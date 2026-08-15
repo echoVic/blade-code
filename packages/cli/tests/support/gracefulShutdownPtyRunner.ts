@@ -38,6 +38,31 @@ function waitFor(
   });
 }
 
+function signalTerminalTree(
+  pid: number,
+  signal: NodeJS.Signals,
+  fallback: () => void
+): void {
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    try {
+      fallback();
+    } catch {
+      // The terminal already exited.
+    }
+  }
+}
+
+function killFixtureProcess(pid: number | undefined): void {
+  if (!pid) return;
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    // The graceful shutdown path already reclaimed the fixture.
+  }
+}
+
 async function waitForRootPid(filePath: string): Promise<number> {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
@@ -91,6 +116,8 @@ async function main(): Promise<void> {
   let output = '';
   let exited = false;
   let exitCode: number | undefined;
+  let rootPid: number | undefined;
+  let succeeded = false;
   const exitPromise = new Promise<void>((resolve) => {
     terminal.onExit((event) => {
       exited = true;
@@ -103,19 +130,29 @@ async function main(): Promise<void> {
   });
 
   try {
-    await waitFor(
-      () => output.includes('请输入您的问题'),
-      'Timed out waiting for TUI composer',
-      30_000
-    );
+    await Promise.race([
+      waitFor(
+        () => output.includes('请输入您的问题'),
+        'Timed out waiting for TUI composer',
+        60_000
+      ),
+      exitPromise.then(() => {
+        throw new Error(`TUI exited before composer readiness (code ${exitCode})`);
+      }),
+    ]);
     terminal.write(`\u001B[200~${input.prompt}\u001B[201~`);
-    await waitFor(
-      () => output.includes('PASTE:'),
-      'Bracketed paste did not reach the TUI composer',
-      10_000
-    );
+    await Promise.race([
+      waitFor(
+        () => output.includes('PASTE:'),
+        'Bracketed paste did not reach the TUI composer',
+        10_000
+      ),
+      exitPromise.then(() => {
+        throw new Error(`TUI exited before bracketed paste (code ${exitCode})`);
+      }),
+    ]);
     terminal.write('\r');
-    const rootPid = await waitForRootPid(input.rootPidFile);
+    rootPid = await waitForRootPid(input.rootPidFile);
     const commandStartedAt = Date.now();
     process.kill(terminal.pid, 'SIGTERM');
     await Promise.race([
@@ -128,6 +165,7 @@ async function main(): Promise<void> {
     if (output.includes(input.secret)) {
       throw new Error('Raw PTY shutdown capture contained provider credentials');
     }
+    succeeded = true;
     process.stdout.write(
       JSON.stringify({
         success: true,
@@ -150,7 +188,21 @@ async function main(): Promise<void> {
     );
     process.exitCode = 1;
   } finally {
-    if (!exited) terminal.kill('SIGKILL');
+    if (!exited) {
+      signalTerminalTree(terminal.pid, 'SIGTERM', () => terminal.kill('SIGTERM'));
+      await Promise.race([
+        exitPromise,
+        new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+      ]);
+    }
+    if (!exited) {
+      signalTerminalTree(terminal.pid, 'SIGKILL', () => terminal.kill('SIGKILL'));
+      await Promise.race([
+        exitPromise,
+        new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+      ]);
+    }
+    if (!succeeded) killFixtureProcess(rootPid);
   }
 }
 
