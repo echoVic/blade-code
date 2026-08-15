@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.36] - 2026-08-16
+
+### 🛡️ 稳定性
+
+- eligible 前台 Bash 超过默认 15 秒 blocking budget 后，会把同一 local PID 或真实
+  ACP terminal 原子交接给后台 registry，而不是等待 timeout、杀进程或重启命令。交接
+  结果统一携带 `auto_backgrounded`、reason、budget、transport 与 `shell_id`，模型可在
+  命令运行时继续 Read/Task，再通过 TaskOutput 收取同一进程的终态
+- 本地 handoff 先提交 background lease、再删除 foreground lease、最后才发布 task
+  identity；提交失败继续等待原 foreground process。交接前 timeout/abort 仍终止完整
+  进程树，交接后的 turn abort 不再误杀后台命令，Session/process shutdown 仍负责回收
+- 后台 Shell 新增独立双层 admission：全进程 active 上限 16、单 Session 上限 4，
+  hidden foreground candidate 也计入。显式后台 overflow 在 user code 前返回 typed
+  `background_shell_busy`；自动 handoff overflow 保留前台执行且不复制副作用
+- ACP handoff 保留真实 IDE terminal handle，继续有界读取 cumulative output；完成或
+  KillShell 后恰好一次 final read/release，不静默 local fallback。ACP terminal 不支持
+  stdin 时返回明确错误
+- 新增 `bashForegroundHandoffMs` 配置：`1000-300000` 毫秒，默认 `15000`，`0` 禁用；
+  Session runtime 固定配置快照，Headless JSONL、TUI、Web SSE/replay 与 ACP 使用同一
+  handoff 语义
+
+### ✅ 测试相关
+
+- 新增 DeepSeek Flash/Pro × Headless、真实 ACP stdio + child-backed terminal、raw
+  PTY TUI 与 production Chromium Web GUI 八格真实 API 矩阵；host 只在 durable handoff
+  与独立 Read 后释放 child，证明命令只启动一次、交接时仍活跃、TaskOutput 收到前后
+  output marker 且所有资源/凭据无残留
+- 确定性测试覆盖 atomic lease replacement、handoff commit failure、pre/post abort、
+  foreground timeout precedence、sleep/audit exclusion、Session/global background
+  saturation、capacity fallback、ACP natural completion/KillShell/unsupported stdin、
+  strict metadata sanitizer、Headless typed event 与 production bypass 搜索门禁
+
 ## [0.10.35] - 2026-08-16
 
 ### 🛡️ 稳定性
