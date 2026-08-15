@@ -65,6 +65,7 @@ import {
   type SessionAgentResources,
   snapshotWorkspaceAgentResources,
 } from './resources/WorkspaceAgentResources.js';
+import { ActiveOperationGate } from './runtime/ActiveOperationGate.js';
 import type {
   ActiveTurnHandle,
   PreparedInputTurn,
@@ -124,6 +125,8 @@ export class Agent {
   private legacyMcpRegistry?: McpRegistry;
   private agentResources?: SessionAgentResources;
   private subagentRegistry?: SubagentRegistry;
+  private readonly activeOperations = new ActiveOperationGate();
+  private destroyPromise?: Promise<void>;
 
   constructor(
     config: BladeConfig,
@@ -401,48 +404,80 @@ export class Agent {
     context?: ChatContext,
     options?: LoopOptions
   ): AsyncGenerator<import('./loop/types.js').LoopEvent, LoopResult, void> {
-    const runtime = this.sessionRuntime;
-    if (!runtime || !context?.sessionId) {
-      return yield* this.chatStreamInternal(message, context, options);
-    }
+    const operation = this.activeOperations.enter(context?.signal);
+    const activeContext = context
+      ? {
+          ...context,
+          signal: operation.signal,
+        }
+      : context;
 
-    let admissionPermit: TaskRunPermit | undefined;
-    let ownsAdmission = false;
-    let settled = false;
-    const releaseOwnedAdmission = (
-      taskStatus: 'completed' | 'failed' | 'cancelled' | 'interrupted'
-    ): void => {
-      if (!ownsAdmission || !admissionPermit) return;
-      admissionPermit.release();
-      admissionPermit = undefined;
-      try {
-        runtime.publishTaskAdmissionCapacity(taskStatus);
-      } catch (error) {
-        logger.warn('[Agent] Failed to publish task admission capacity:', error);
-      }
-    };
     try {
-      if (runtime.isTaskSession?.() === true) {
-        ownsAdmission = options?.taskAdmission === undefined;
-        const admission =
-          options?.taskAdmission ??
-          taskRunScheduler.admit({
-            key: `${runtime.workspaceRoot}\0${runtime.sessionId}`,
-            ...runtime.getTaskAdmissionLimits(),
-            signal: context.signal,
-            onUpdate: (snapshot) => {
-              void runtime.setTaskAdmission(snapshot).catch((error) => {
-                logger.warn('[Agent] Failed to persist task admission update:', error);
-              });
-            },
-          });
+      const runtime = this.sessionRuntime;
+      if (!runtime || !activeContext?.sessionId) {
+        return yield* this.chatStreamInternal(message, activeContext, options);
+      }
+
+      let admissionPermit: TaskRunPermit | undefined;
+      let ownsAdmission = false;
+      let settled = false;
+      const releaseOwnedAdmission = (
+        taskStatus: 'completed' | 'failed' | 'cancelled' | 'interrupted'
+      ): void => {
+        if (!ownsAdmission || !admissionPermit) return;
+        admissionPermit.release();
+        admissionPermit = undefined;
         try {
-          admissionPermit = await admission.ready;
+          runtime.publishTaskAdmissionCapacity(taskStatus);
         } catch (error) {
-          if (error instanceof TaskAdmissionCancelledError || context.signal?.aborted) {
+          logger.warn('[Agent] Failed to publish task admission capacity:', error);
+        }
+      };
+      try {
+        if (runtime.isTaskSession?.() === true) {
+          ownsAdmission = options?.taskAdmission === undefined;
+          const admission =
+            options?.taskAdmission ??
+            taskRunScheduler.admit({
+              key: `${runtime.workspaceRoot}\0${runtime.sessionId}`,
+              ...runtime.getTaskAdmissionLimits(),
+              signal: activeContext.signal,
+              onUpdate: (snapshot) => {
+                void runtime.setTaskAdmission(snapshot).catch((error) => {
+                  logger.warn(
+                    '[Agent] Failed to persist task admission update:',
+                    error
+                  );
+                });
+              },
+            });
+          try {
+            admissionPermit = await admission.ready;
+          } catch (error) {
+            if (
+              error instanceof TaskAdmissionCancelledError ||
+              activeContext.signal?.aborted
+            ) {
+              const reason = 'Task admission was cancelled';
+              await runtime.setTaskStatus('cancelled', reason);
+              settled = true;
+              return {
+                success: false,
+                error: { type: 'aborted', message: reason },
+                metadata: {
+                  turnsCount: 0,
+                  toolCallsCount: 0,
+                  duration: 0,
+                },
+              };
+            }
+            throw error;
+          }
+          if (activeContext.signal?.aborted) {
             const reason = 'Task admission was cancelled';
             await runtime.setTaskStatus('cancelled', reason);
             settled = true;
+            releaseOwnedAdmission('cancelled');
             return {
               success: false,
               error: { type: 'aborted', message: reason },
@@ -453,59 +488,45 @@ export class Agent {
               },
             };
           }
-          throw error;
         }
-        if (context.signal?.aborted) {
-          const reason = 'Task admission was cancelled';
-          await runtime.setTaskStatus('cancelled', reason);
-          settled = true;
-          releaseOwnedAdmission('cancelled');
-          return {
-            success: false,
-            error: { type: 'aborted', message: reason },
-            metadata: {
-              turnsCount: 0,
-              toolCallsCount: 0,
-              duration: 0,
-            },
-          };
-        }
-      }
 
-      await runtime.setTaskStatus('running');
-      const result = yield* this.chatStreamInternal(message, context, options);
-      const status = context.signal?.aborted
-        ? 'cancelled'
-        : result.success
-          ? 'completed'
-          : 'failed';
-      await runtime.setTaskStatus(
-        status,
-        status === 'failed' && result.error ? result.error : undefined
-      );
-      settled = true;
-      releaseOwnedAdmission(status);
-      return result;
-    } catch (error) {
-      const status = context.signal?.aborted ? 'cancelled' : 'failed';
-      try {
-        await runtime.setTaskStatus(status, error);
-      } catch (statusError) {
-        logger.warn('[Agent] Failed to persist terminal task status:', statusError);
+        await runtime.setTaskStatus('running');
+        const result = yield* this.chatStreamInternal(message, activeContext, options);
+        const status = activeContext.signal?.aborted
+          ? 'cancelled'
+          : result.success
+            ? 'completed'
+            : 'failed';
+        await runtime.setTaskStatus(
+          status,
+          status === 'failed' && result.error ? result.error : undefined
+        );
+        settled = true;
+        releaseOwnedAdmission(status);
+        return result;
+      } catch (error) {
+        const status = activeContext.signal?.aborted ? 'cancelled' : 'failed';
+        try {
+          await runtime.setTaskStatus(status, error);
+        } catch (statusError) {
+          logger.warn('[Agent] Failed to persist terminal task status:', statusError);
+        }
+        settled = true;
+        releaseOwnedAdmission(status);
+        throw error;
+      } finally {
+        if (!settled) {
+          await runtime
+            .setTaskStatus('interrupted', 'Task stream closed before completion')
+            .catch((error) => {
+              logger.warn('[Agent] Failed to persist interrupted task status:', error);
+            });
+          releaseOwnedAdmission('interrupted');
+        }
+        if (ownsAdmission) admissionPermit?.release();
       }
-      settled = true;
-      releaseOwnedAdmission(status);
-      throw error;
     } finally {
-      if (!settled) {
-        await runtime
-          .setTaskStatus('interrupted', 'Task stream closed before completion')
-          .catch((error) => {
-            logger.warn('[Agent] Failed to persist interrupted task status:', error);
-          });
-        releaseOwnedAdmission('interrupted');
-      }
-      if (ownsAdmission) admissionPermit?.release();
+      operation.release();
     }
   }
 
@@ -1288,19 +1309,25 @@ export class Agent {
    * 销毁Agent
    */
   public async destroy(): Promise<void> {
-    this.log('销毁Agent...');
+    if (this.destroyPromise) return this.destroyPromise;
 
-    try {
-      await this.legacyMcpRegistry?.disconnectAll();
-      this.legacyMcpRegistry = undefined;
-      this.log('Agent已销毁');
-    } catch (error) {
-      this.error('Agent销毁失败', error);
-      throw error;
-    } finally {
-      this.toolExecutor.dispose();
-      this.isInitialized = false;
-    }
+    this.destroyPromise = (async () => {
+      this.log('销毁Agent...');
+      await this.activeOperations.shutdown('agent-destroy');
+
+      try {
+        await this.legacyMcpRegistry?.disconnectAll();
+        this.legacyMcpRegistry = undefined;
+        this.log('Agent已销毁');
+      } catch (error) {
+        this.error('Agent销毁失败', error);
+        throw error;
+      } finally {
+        this.toolExecutor.dispose();
+        this.isInitialized = false;
+      }
+    })();
+    return this.destroyPromise;
   }
 
   private syncRuntimeState(): void {

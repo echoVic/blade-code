@@ -48,6 +48,12 @@ export class TooManyRequestsError extends BladeServerError {
   }
 }
 
+export class ServiceUnavailableError extends BladeServerError {
+  constructor(message = 'Server is shutting down') {
+    super('SERVICE_UNAVAILABLE', message, 503);
+  }
+}
+
 export class AmbiguousSessionError extends BladeServerError {
   constructor() {
     super(

@@ -5,13 +5,13 @@
  *
  */
 
+import path from 'node:path';
 import type * as acp from '@agentclientprotocol/sdk';
 import {
   type Agent as AcpAgentInterface,
   type AgentSideConnection,
   PROTOCOL_VERSION,
 } from '@agentclientprotocol/sdk';
-import path from 'node:path';
 import type { BladeConfig, PermissionMode } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
@@ -58,6 +58,7 @@ export class BladeAgent implements AcpAgentInterface {
   private sessionLoadQueues: Map<string, Promise<void>> = new Map();
   private clientCapabilities: acp.ClientCapabilities | undefined;
   private destroyed = false;
+  private destroyPromise?: Promise<void>;
 
   constructor(private connection: AgentSideConnection) {}
 
@@ -665,7 +666,13 @@ export class BladeAgent implements AcpAgentInterface {
   /**
    * 清理资源
    */
-  async destroy(): Promise<void> {
+  destroy(): Promise<void> {
+    if (this.destroyPromise) return this.destroyPromise;
+    this.destroyPromise = this.destroyOwnedResources();
+    return this.destroyPromise;
+  }
+
+  private async destroyOwnedResources(): Promise<void> {
     this.destroyed = true;
     await Promise.all([...this.sessionLoadQueues.values()]);
     this.sessionLoadQueues.clear();

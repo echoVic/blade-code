@@ -22,6 +22,7 @@ function createController(
       failed: 0,
       deferred: 0,
     })),
+    shutdown: vi.fn(async () => undefined),
   };
 }
 

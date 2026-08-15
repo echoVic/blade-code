@@ -21,6 +21,7 @@ import {
   ConflictError,
   InternalServerError,
   NotFoundError,
+  ServiceUnavailableError,
   TooManyRequestsError,
 } from '../error.js';
 import type { SessionRouteController } from './session.js';
@@ -36,7 +37,10 @@ export const TaskRoutes = (controller: SessionRouteController) => {
 
   app.onError((error, c) => {
     if (error instanceof BladeServerError) {
-      return c.json(error.toObject(), error.statusCode as 400 | 404 | 409 | 429 | 500);
+      return c.json(
+        error.toObject(),
+        error.statusCode as 400 | 404 | 409 | 429 | 500 | 503
+      );
     }
     logger.error('[TaskRoutes] Unhandled route error:', error);
     return c.json(new InternalServerError('Failed to dispatch task').toObject(), 500);
@@ -87,6 +91,7 @@ export const TaskRoutes = (controller: SessionRouteController) => {
       if (
         error instanceof BadRequestError ||
         error instanceof ConflictError ||
+        error instanceof ServiceUnavailableError ||
         error instanceof TooManyRequestsError
       ) {
         throw error;
@@ -108,6 +113,7 @@ export const TaskRoutes = (controller: SessionRouteController) => {
         error instanceof BadRequestError ||
         error instanceof NotFoundError ||
         error instanceof ConflictError ||
+        error instanceof ServiceUnavailableError ||
         error instanceof TooManyRequestsError
       ) {
         throw error;

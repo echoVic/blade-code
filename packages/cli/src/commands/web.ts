@@ -3,6 +3,7 @@ import open from 'open';
 import type { ArgumentsCamelCase, CommandModule } from 'yargs';
 import { networkOptions, resolveNetworkOptions } from '../cli/network.js';
 import { BladeServer, getNetworkIPs } from '../server/index.js';
+import { registerCleanup } from '../services/GracefulShutdown.js';
 import { ensureStoreInitialized } from '../store/vanilla.js';
 import { getVersion } from '../utils/packageInfo.js';
 
@@ -69,9 +70,19 @@ export const webCommand: CommandModule<object, WebArgs> = {
     console.log('');
     console.log(chalk.gray('  Press Ctrl+C to stop the server.\n'));
 
-    await new Promise(() => {
-      // Keep the server running until process is terminated
+    let resolveStopped!: () => void;
+    const stopped = new Promise<void>((resolve) => {
+      resolveStopped = resolve;
     });
-    await server.stop();
+    const unregisterCleanup = registerCleanup(async () => {
+      await server.stop();
+      resolveStopped();
+    });
+    try {
+      await stopped;
+    } finally {
+      unregisterCleanup();
+      await server.stop();
+    }
   },
 };

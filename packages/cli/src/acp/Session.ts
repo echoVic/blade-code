@@ -208,11 +208,15 @@ export class AcpSession {
   private agent: Agent | null = null;
   private runtime: SessionRuntime | null = null;
   private pendingPrompt: AbortController | null = null;
+  private pendingPromptCompletion: Promise<void> | null = null;
   private pendingUserShell: AbortController | null = null;
+  private pendingUserShellCompletion: Promise<void> | null = null;
   private pendingResumeRequested = false;
   private availableCommandsTimer: ReturnType<typeof setTimeout> | null = null;
   private taskStatusUnsubscribe?: () => void;
   private destroyed = false;
+  private destroyFinished = false;
+  private destroyPromise?: Promise<void>;
   private messages: Message[];
   private contextMessages: Message[];
   private mode: AcpModeId;
@@ -991,7 +995,12 @@ export class AcpSession {
     }
 
     const abortController = new AbortController();
+    let resolvePromptCompletion!: () => void;
+    const promptCompletion = new Promise<void>((resolve) => {
+      resolvePromptCompletion = resolve;
+    });
     this.pendingPrompt = abortController;
+    this.pendingPromptCompletion = promptCompletion;
 
     try {
       // 1. 解析 ACP prompt 为文本消息
@@ -1484,6 +1493,10 @@ export class AcpSession {
       logger.error(`[AcpSession ${this.id}] Prompt error:`, error);
       throw error;
     } finally {
+      resolvePromptCompletion();
+      if (this.pendingPromptCompletion === promptCompletion) {
+        this.pendingPromptCompletion = null;
+      }
       if (this.pendingPrompt === abortController) {
         this.pendingPrompt = null;
         if (!this.destroyed && this.pendingResumeRequested) {
@@ -1502,7 +1515,12 @@ export class AcpSession {
     if (!command) throw new Error('User shell command cannot be empty');
 
     const controller = new AbortController();
+    let resolveShellCompletion!: () => void;
+    const shellCompletion = new Promise<void>((resolve) => {
+      resolveShellCompletion = resolve;
+    });
     this.pendingUserShell = controller;
+    this.pendingUserShellCompletion = shellCompletion;
     let toolCallId: string | undefined;
     let streamedOutput = '';
     try {
@@ -1596,6 +1614,10 @@ export class AcpSession {
       if (controller.signal.aborted) return { stopReason: 'cancelled' };
       throw error;
     } finally {
+      resolveShellCompletion();
+      if (this.pendingUserShellCompletion === shellCompletion) {
+        this.pendingUserShellCompletion = null;
+      }
       if (this.pendingUserShell === controller) this.pendingUserShell = null;
     }
   }
@@ -1980,8 +2002,17 @@ export class AcpSession {
   /**
    * 销毁会话
    */
-  async destroy(): Promise<void> {
-    if (this.destroyed) return;
+  destroy(): Promise<void> {
+    if (this.destroyPromise) {
+      return this.destroyFinished ? Promise.resolve() : this.destroyPromise;
+    }
+    this.destroyPromise = this.destroyOwnedResources().finally(() => {
+      this.destroyFinished = true;
+    });
+    return this.destroyPromise;
+  }
+
+  private async destroyOwnedResources(): Promise<void> {
     this.destroyed = true;
     this.updateEgress.close(
       new BoundedSerialEgressError('closed', 'ACP Session was destroyed')
@@ -1995,6 +2026,8 @@ export class AcpSession {
 
     const agent = this.agent;
     const runtime = this.runtime;
+    const promptCompletion = this.pendingPromptCompletion;
+    const userShellCompletion = this.pendingUserShellCompletion;
     this.agent = null;
     this.runtime = null;
     let firstError: unknown;
@@ -2007,6 +2040,8 @@ export class AcpSession {
     };
 
     await attempt(() => this.cancel());
+    if (promptCompletion) await attempt(() => promptCompletion);
+    if (userShellCompletion) await attempt(() => userShellCompletion);
     if (agent) await attempt(() => agent.destroy());
     if (runtime) await attempt(() => runtime.dispose());
     await attempt(() => AcpServiceContext.destroySession(this.id));

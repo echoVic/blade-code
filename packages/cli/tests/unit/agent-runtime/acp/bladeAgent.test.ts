@@ -1351,6 +1351,31 @@ describe('BladeAgent', () => {
   });
 
   describe('destroy', () => {
+    it('shares one destroy barrier across concurrent callers', async () => {
+      await agent.newSession({ cwd: '/tmp/test', mcpServers: [] });
+      const session = createdSessions[0];
+      let releaseDestroy!: () => void;
+      const destroyBarrier = new Promise<void>((resolve) => {
+        releaseDestroy = resolve;
+      });
+      session.destroy.mockImplementation(async () => destroyBarrier);
+
+      const first = agent.destroy();
+      const second = agent.destroy();
+
+      expect(second).toBe(first);
+      await Promise.resolve();
+      expect(session.destroy).toHaveBeenCalledOnce();
+
+      releaseDestroy();
+      await expect(Promise.all([first, second])).resolves.toEqual([
+        undefined,
+        undefined,
+      ]);
+      expect(session.destroy).toHaveBeenCalledOnce();
+      expect(mcpRegistryMocks.disconnectAll).toHaveBeenCalledOnce();
+    });
+
     it('等待 deferred load 收尾并销毁其临时 owner 后才完成', async () => {
       const initializeGate = createDeferredGate();
       acpSessionMocks.initializeGates.push(initializeGate);

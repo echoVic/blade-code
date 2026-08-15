@@ -2945,11 +2945,23 @@ describe('AcpSession', () => {
         prompt: [{ type: 'text', text: 'start deferred stream' }],
       });
       await started;
-      await session.destroy();
+      let destroySettled = false;
+      const destroy = session.destroy().then(() => {
+        destroySettled = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(destroySettled).toBe(false);
+      expect(mockAgent.destroy).not.toHaveBeenCalled();
+      expect(runtimeState.runtime.dispose).not.toHaveBeenCalled();
+
       releaseLateEvents?.();
       await prompt;
+      await destroy;
 
       expect(mockConnection.sessionUpdates).toEqual([]);
+      expect(mockAgent.destroy).toHaveBeenCalledOnce();
+      expect(runtimeState.runtime.dispose).toHaveBeenCalledOnce();
     });
 
     it('connection abort 后直接丢弃 session update', async () => {

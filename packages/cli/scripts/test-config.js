@@ -37,6 +37,7 @@ export const testTypes = {
       'tests/integration/real-api/subagent-result-adoption-trajectory.test.ts',
       'tests/integration/real-api/background-subagent-completion-trajectory.test.ts',
       'tests/integration/real-api/foreground-bounded-output-trajectory.test.ts',
+      'tests/integration/real-api/graceful-shutdown-trajectory.test.ts',
     ],
     env: {
       REAL_API_TEST: '1',

@@ -9,6 +9,7 @@ import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
 import { resolveWorkspaceAgentResources } from '../../agent/resources/WorkspaceAgentResources.js';
 import { resolveWorkspaceModelResources } from '../../agent/resources/WorkspaceModelResources.js';
+import { ActiveOperationGate } from '../../agent/runtime/ActiveOperationGate.js';
 import type { PreparedInputTurn } from '../../agent/runtime/ActiveTurnMailbox.js';
 import {
   type ResumedSubagent,
@@ -116,6 +117,7 @@ import {
   ConflictError,
   InternalServerError,
   NotFoundError,
+  ServiceUnavailableError,
   TooManyRequestsError,
 } from '../error.js';
 import { OrderedSseEgress, type SerializedSseMessage } from '../OrderedSseEgress.js';
@@ -1224,6 +1226,7 @@ export interface SessionRouteController {
     projectPath?: string
   ): Promise<SessionMetadata & { isActive: boolean }>;
   recoverQueuedTasks(): Promise<TaskRecoveryResult>;
+  shutdown(reason?: string): Promise<void>;
 }
 
 export const createSessionRouteController = (): SessionRouteController => {
@@ -1231,7 +1234,10 @@ export const createSessionRouteController = (): SessionRouteController => {
   const app = new Hono<{ Variables: Variables }>();
   app.onError((err, c) => {
     if (err instanceof BladeServerError) {
-      return c.json(err.toObject(), err.statusCode as 400 | 404 | 409 | 429 | 500);
+      return c.json(
+        err.toObject(),
+        err.statusCode as 400 | 404 | 409 | 429 | 500 | 503
+      );
     }
     logger.error('[SessionRoutes] Unhandled route error:', err);
     return c.json(
@@ -1250,6 +1256,29 @@ export const createSessionRouteController = (): SessionRouteController => {
   const sessionHydrations = new Map<string, Promise<SessionInfo>>();
   const messageSubmissionLocks = new Map<string, Mutex>();
   const taskDeliveryLocks = new Map<string, Mutex>();
+  const admissionGate = new ActiveOperationGate();
+  let shutdownPromise: Promise<void> | undefined;
+
+  const withAdmission = async <T>(operation: () => Promise<T>): Promise<T> => {
+    let lease;
+    try {
+      lease = admissionGate.enter();
+    } catch {
+      throw new ServiceUnavailableError();
+    }
+    try {
+      return await operation();
+    } finally {
+      lease.release();
+    }
+  };
+
+  app.use('*', async (c, next) => {
+    if (c.req.method === 'GET' || c.req.method === 'HEAD') {
+      return next();
+    }
+    return withAdmission(next);
+  });
 
   const getMessageSubmissionLock = (ref: SessionRef): Mutex => {
     const key = sessionRefKey(ref);
@@ -1447,6 +1476,9 @@ export const createSessionRouteController = (): SessionRouteController => {
       outputSchema?: SessionTaskDispatch['outputSchema'];
     } = {}
   ): RunState => {
+    if (!admissionGate.stats().accepting) {
+      throw new ServiceUnavailableError();
+    }
     const runId = nanoid(12);
     const run: RunState = {
       id: runId,
@@ -1513,7 +1545,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     return run;
   };
 
-  const dispatchTask = async (
+  const dispatchTaskOwned = async (
     input: DispatchTaskInput
   ): Promise<DispatchTaskResult> => {
     let outputSchema: SessionTaskDispatch['outputSchema'];
@@ -1711,7 +1743,10 @@ export const createSessionRouteController = (): SessionRouteController => {
     }
   };
 
-  const retryTask = async (
+  const dispatchTask = (input: DispatchTaskInput): Promise<DispatchTaskResult> =>
+    withAdmission(() => dispatchTaskOwned(input));
+
+  const retryTaskOwned = async (
     sessionId: string,
     projectPath?: string
   ): Promise<DispatchTaskResult> => {
@@ -1752,6 +1787,12 @@ export const createSessionRouteController = (): SessionRouteController => {
     });
   };
 
+  const retryTask = (
+    sessionId: string,
+    projectPath?: string
+  ): Promise<DispatchTaskResult> =>
+    withAdmission(() => retryTaskOwned(sessionId, projectPath));
+
   const getTaskDiff = async (
     sessionId: string,
     projectPath?: string
@@ -1778,7 +1819,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     }
   };
 
-  const deliverTask = async (
+  const deliverTaskOwned = async (
     sessionId: string,
     action: 'apply' | 'discard',
     projectPath?: string
@@ -1893,7 +1934,14 @@ export const createSessionRouteController = (): SessionRouteController => {
     });
   };
 
-  const resumePendingSession = async (session: SessionInfo): Promise<void> => {
+  const deliverTask = (
+    sessionId: string,
+    action: 'apply' | 'discard',
+    projectPath?: string
+  ): Promise<SessionMetadata & { isActive: boolean }> =>
+    withAdmission(() => deliverTaskOwned(sessionId, action, projectPath));
+
+  const resumePendingSessionOwned = async (session: SessionInfo): Promise<void> => {
     const currentRun = getRun(session.currentRunId);
     if (isActiveRun(currentRun)) {
       return;
@@ -1935,6 +1983,19 @@ export const createSessionRouteController = (): SessionRouteController => {
       ...(session.taskIsolation ? { taskRuntime: runtime } : {}),
     });
   };
+  const resumePendingSession = async (session: SessionInfo): Promise<void> => {
+    let lease;
+    try {
+      lease = admissionGate.enter();
+    } catch {
+      return;
+    }
+    try {
+      await resumePendingSessionOwned(session);
+    } finally {
+      lease.release();
+    }
+  };
   resumeRecoveredInteraction = resumePendingSession;
 
   const recoverQueuedTasks = async (): Promise<TaskRecoveryResult> => {
@@ -1943,6 +2004,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       failed: 0,
       deferred: 0,
     };
+    if (!admissionGate.stats().accepting) return result;
     const queued = (await SessionService.listSessions())
       .filter(
         (metadata) =>
@@ -3702,6 +3764,75 @@ export const createSessionRouteController = (): SessionRouteController => {
     });
   });
 
+  const shutdown = (reason = 'server-shutdown'): Promise<void> => {
+    if (shutdownPromise) return shutdownPromise;
+    admissionGate.close(reason);
+
+    shutdownPromise = (async () => {
+      let firstError: unknown;
+      const settle = async (promises: readonly Promise<unknown>[]) => {
+        const results = await Promise.allSettled(promises);
+        for (const result of results) {
+          if (result.status === 'rejected') firstError ??= result.reason;
+        }
+      };
+      const observedCompletions = new Set<Promise<void>>();
+      const signalActiveWork = (): void => {
+        for (const run of activeRuns.values()) {
+          if (run.completion) observedCompletions.add(run.completion);
+          if (isActiveRun(run)) cancelRun(run, reason);
+        }
+        for (const run of activeUserShellRuns.values()) {
+          run.controller.abort(reason);
+          observedCompletions.add(run.completion);
+        }
+        for (const run of activeReviewRuns.values()) {
+          run.controller.abort(reason);
+          observedCompletions.add(run.completion);
+        }
+      };
+
+      const admissionIdle = admissionGate.waitForIdle();
+      let admissionSettled = false;
+      void admissionIdle.then(() => {
+        admissionSettled = true;
+      });
+      while (!admissionSettled) {
+        signalActiveWork();
+        await Promise.race([
+          admissionIdle,
+          new Promise<void>((resolve) => setImmediate(resolve)),
+        ]);
+      }
+      await admissionIdle;
+      signalActiveWork();
+      await settle([...observedCompletions]);
+
+      await settle([...runtimeInitializations.values()]);
+      signalActiveWork();
+      await settle([...observedCompletions]);
+
+      const ownedRuntimes = new Set(runtimes.values());
+      runtimes.clear();
+      await settle([...ownedRuntimes].map((runtime) => runtime.dispose()));
+      await settle([...runtimeDisposals.values()]);
+      await settle([McpRegistry.getInstance().disconnectAll()]);
+
+      runtimeInitializations.clear();
+      runtimeDisposals.clear();
+      sessionHydrations.clear();
+      messageSubmissionLocks.clear();
+      taskDeliveryLocks.clear();
+      sessions.clear();
+      if (resumeRecoveredInteraction === resumePendingSession) {
+        resumeRecoveredInteraction = undefined;
+      }
+
+      if (firstError !== undefined) throw firstError;
+    })();
+    return shutdownPromise;
+  };
+
   return {
     app,
     dispatchTask,
@@ -3709,6 +3840,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     getTaskDiff,
     deliverTask,
     recoverQueuedTasks,
+    shutdown,
   };
 };
 

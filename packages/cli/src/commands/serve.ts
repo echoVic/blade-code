@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import type { ArgumentsCamelCase, CommandModule } from 'yargs';
 import { networkOptions, resolveNetworkOptions } from '../cli/network.js';
 import { BladeServer, getNetworkIPs } from '../server/index.js';
+import { registerCleanup } from '../services/GracefulShutdown.js';
 import { ensureStoreInitialized } from '../store/vanilla.js';
 
 interface ServeArgs {
@@ -36,9 +37,19 @@ export const serveCommand: CommandModule<object, ServeArgs> = {
       }
     }
 
-    await new Promise(() => {
-      // Keep the server running until process is terminated
+    let resolveStopped!: () => void;
+    const stopped = new Promise<void>((resolve) => {
+      resolveStopped = resolve;
     });
-    await server.stop();
+    const unregisterCleanup = registerCleanup(async () => {
+      await server.stop();
+      resolveStopped();
+    });
+    try {
+      await stopped;
+    } finally {
+      unregisterCleanup();
+      await server.stop();
+    }
   },
 };

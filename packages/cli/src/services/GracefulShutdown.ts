@@ -207,16 +207,39 @@ class GracefulShutdownManager {
 
     this.isShuttingDown = true;
 
-    logger.info(`[GracefulShutdown] 开始优雅退出 (原因: ${reason})`);
-
-    // 先关闭日志系统的 Worker 线程，避免后续清理过程中的日志写入导致 "worker has exited" 错误
     try {
-      await shutdownLogger();
-    } catch (_error) {
-      // 忽略日志关闭错误
+      getState().command.actions.abort('process-shutdown');
+    } catch (error) {
+      logger.warn('[GracefulShutdown] Failed to abort the active command', error);
     }
 
-    // 执行 SessionEnd hooks
+    logger.info(`[GracefulShutdown] 开始优雅退出 (原因: ${reason})`);
+
+    const hardTimeoutMs = 5000;
+    const hardTimeout = setTimeout(() => {
+      restoreTerminal();
+      process.exit(exitCode);
+    }, hardTimeoutMs);
+    hardTimeout.unref?.();
+
+    const cleanupTimeoutMs = 4000;
+    let cleanupTimeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        this.runCleanupHandlers(),
+        new Promise<void>((_, reject) => {
+          cleanupTimeout = setTimeout(() => {
+            reject(new Error(`清理超时 (${cleanupTimeoutMs}ms)`));
+          }, cleanupTimeoutMs);
+          cleanupTimeout.unref?.();
+        }),
+      ]);
+    } catch (error) {
+      console.error('[GracefulShutdown] 清理过程中发生错误:', error);
+    } finally {
+      if (cleanupTimeout) clearTimeout(cleanupTimeout);
+    }
+
     try {
       const hookManager = HookManager.getInstance();
       const state = getState();
@@ -233,34 +256,20 @@ class GracefulShutdownManager {
         });
       }
     } catch (error) {
-      // SessionEnd hooks 失败不应阻止退出
       console.error('[GracefulShutdown] SessionEnd hooks 执行失败:', error);
     }
 
-    // 设置超时保护，防止清理函数卡住
-    const timeoutMs = 5000;
-    const timeoutPromise = new Promise<void>((_, reject) => {
-      setTimeout(() => {
-        reject(new Error(`清理超时 (${timeoutMs}ms)`));
-      }, timeoutMs);
-    });
-
     try {
-      // 按逆序执行清理函数（后注册的先执行）
-      const cleanupPromise = this.runCleanupHandlers();
-
-      await Promise.race([cleanupPromise, timeoutPromise]);
-    } catch (error) {
-      console.error('[GracefulShutdown] 清理过程中发生错误:', error);
-    } finally {
-      // 恢复终端状态（确保光标可见）
-      restoreTerminal();
-
-      // 给 Ink 一点时间完成终端清理
-      setTimeout(() => {
-        process.exit(exitCode);
-      }, 100);
+      await shutdownLogger();
+    } catch {
+      // Logger shutdown is best-effort during process exit.
     }
+
+    clearTimeout(hardTimeout);
+    restoreTerminal();
+    setTimeout(() => {
+      process.exit(exitCode);
+    }, 100);
   }
 
   /**

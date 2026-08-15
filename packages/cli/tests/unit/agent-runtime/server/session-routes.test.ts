@@ -3058,6 +3058,85 @@ describe('SessionRoutes runtime reuse', () => {
     );
   });
 
+  it('closes admission and drains active work before disposing runtimes', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    let observeAbort!: (reason: unknown) => void;
+    const aborted = new Promise<unknown>((resolve) => {
+      observeAbort = resolve;
+    });
+    let releaseCompletion!: () => void;
+    const completionBarrier = new Promise<void>((resolve) => {
+      releaseCompletion = resolve;
+    });
+    agentState.chatStream.mockImplementationOnce(async function* (
+      _content: unknown,
+      context: { signal?: AbortSignal }
+    ) {
+      yield { kind: 'turn_start', turn: 1, maxTurns: 10 };
+      await new Promise<void>((resolve) => {
+        const finish = () => {
+          observeAbort(context.signal?.reason);
+          resolve();
+        };
+        context.signal?.addEventListener('abort', finish, { once: true });
+        if (context.signal?.aborted) finish();
+      });
+      await completionBarrier;
+      return {
+        success: false,
+        error: { type: 'aborted' as const, message: 'server-shutdown' },
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+    const controller = createSessionRouteController();
+    const dispatched = await controller.dispatchTask({
+      prompt: 'Hold an active shutdown turn',
+      sourceProjectPath: '/tmp/task-source',
+      isolation: 'local',
+      permissionMode: PermissionMode.YOLO,
+    });
+    await vi.waitFor(() => {
+      expect(agentState.chatStream).toHaveBeenCalledOnce();
+    });
+    const runtime = await vi.mocked(SessionRuntime.create).mock.results.at(-1)!.value;
+
+    let shutdownSettled = false;
+    const shutdown = controller.shutdown('server-shutdown').then(() => {
+      shutdownSettled = true;
+    });
+
+    await expect(aborted).resolves.toBe('server-shutdown');
+    expect(shutdownSettled).toBe(false);
+    expect(runtime.dispose).not.toHaveBeenCalled();
+    await expect(
+      controller.dispatchTask({
+        prompt: 'Must not be admitted',
+        sourceProjectPath: '/tmp/task-source',
+        isolation: 'local',
+        permissionMode: PermissionMode.YOLO,
+      })
+    ).rejects.toMatchObject({
+      statusCode: 503,
+    });
+
+    releaseCompletion();
+    await expect(shutdown).resolves.toBeUndefined();
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+    expect(busState.publish).toHaveBeenCalledWith(
+      {
+        sessionId: dispatched.session.sessionId,
+        projectPath: dispatched.session.projectPath,
+      },
+      'run.cancelled',
+      expect.objectContaining({ runId: dispatched.runId })
+    );
+
+    await expect(controller.shutdown('duplicate')).resolves.toBeUndefined();
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+  });
+
   it('keeps every admitted run active beyond the recent-run retention limit', async () => {
     const { createSessionRouteController } = await import(
       '../../../../src/server/routes/session.js'

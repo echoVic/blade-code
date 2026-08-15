@@ -25,7 +25,10 @@ import { PluginRoutes } from './routes/plugins.js';
 import { ProjectRoutes } from './routes/projects.js';
 import { ProviderRoutes } from './routes/provider.js';
 import { ScheduleRoutes } from './routes/schedule.js';
-import { createSessionRouteController } from './routes/session.js';
+import {
+  createSessionRouteController,
+  type SessionRouteController,
+} from './routes/session.js';
 import { SkillsRoutes } from './routes/skills.js';
 import { SuggestionsRoutes } from './routes/suggestions.js';
 import { TaskRoutes } from './routes/task.js';
@@ -50,6 +53,7 @@ let corsWhitelist: string[] = [];
 let recoverQueuedTasksOnStart: (() => Promise<unknown>) | undefined;
 let taskScheduler: TaskScheduler | undefined;
 let staleSessionGcTimer: ReturnType<typeof setInterval> | undefined;
+let activeSessionController: SessionRouteController | undefined;
 const staticAssetContentCache = new Map<string, Buffer>();
 const staticAssetCompressionCache = new Map<string, Buffer>();
 const COMPRESSIBLE_ASSET_EXTENSIONS = new Set([
@@ -290,6 +294,7 @@ function createApp(): Hono<{ Variables: Variables }> {
   });
 
   const sessionController = createSessionRouteController();
+  activeSessionController = sessionController;
   recoverQueuedTasksOnStart = sessionController.recoverQueuedTasks;
   taskScheduler = new TaskScheduler({
     dispatch: (input) => sessionController.dispatchTask(input),
@@ -667,6 +672,44 @@ function startWithNode(
 export namespace BladeServer {
   let serverHandle: ServerHandle | undefined;
   let app: Hono<{ Variables: Variables }> | undefined;
+  let stopPromise: Promise<void> | undefined;
+
+  const stopOwnedServer = (
+    handle: ServerHandle,
+    sessionController: SessionRouteController | undefined
+  ): Promise<void> => {
+    if (serverHandle !== handle) return Promise.resolve();
+    if (stopPromise) return stopPromise;
+
+    const routeShutdown = sessionController?.shutdown('server-shutdown');
+    taskScheduler?.stop();
+    stopStaleSessionGc();
+    stopPromise = (async () => {
+      let firstError: unknown;
+      const attempt = async (cleanup: (() => Promise<void>) | undefined) => {
+        if (!cleanup) return;
+        try {
+          await cleanup();
+        } catch (error) {
+          firstError ??= error;
+        }
+      };
+
+      await attempt(() => handle.stop());
+      await attempt(routeShutdown ? () => routeShutdown : undefined);
+
+      if (serverHandle === handle) {
+        serverHandle = undefined;
+        app = undefined;
+        activeSessionController = undefined;
+        recoverQueuedTasksOnStart = undefined;
+        taskScheduler = undefined;
+      }
+      logger.info('[Server] Blade server stopped');
+      if (firstError !== undefined) throw firstError;
+    })();
+    return stopPromise;
+  };
 
   export function getApp(): Hono<{ Variables: Variables }> {
     if (!app) {
@@ -682,6 +725,7 @@ export namespace BladeServer {
 
     if (isBunRuntime()) {
       serverHandle = startWithBun(honoApp, opts);
+      stopPromise = undefined;
       logger.info(
         `[Server] Blade server listening on ${serverHandle.url} (Bun runtime)`
       );
@@ -693,6 +737,7 @@ export namespace BladeServer {
     }
 
     const handle = serverHandle;
+    const sessionController = activeSessionController;
     void recoverQueuedTasksOnStart?.().catch((error) => {
       logger.warn('[Server] Failed to recover queued tasks:', error);
     });
@@ -703,17 +748,7 @@ export namespace BladeServer {
       url: handle.url,
       port: handle.port,
       hostname: handle.hostname,
-      stop: async () => {
-        if (serverHandle) {
-          taskScheduler?.stop();
-          stopStaleSessionGc();
-          await serverHandle.stop();
-          serverHandle = undefined;
-          app = undefined;
-          recoverQueuedTasksOnStart = undefined;
-          logger.info('[Server] Blade server stopped');
-        }
-      },
+      stop: () => stopOwnedServer(handle, sessionController),
     };
   }
 
@@ -733,8 +768,10 @@ export namespace BladeServer {
         `[Server] Blade server listening on ${serverHandle.url} (Node.js runtime)`
       );
     }
+    stopPromise = undefined;
 
     const handle = serverHandle;
+    const sessionController = activeSessionController;
     try {
       await recoverQueuedTasksOnStart?.();
     } catch (error) {
@@ -747,17 +784,7 @@ export namespace BladeServer {
       url: handle.url,
       port: handle.port,
       hostname: handle.hostname,
-      stop: async () => {
-        if (serverHandle) {
-          taskScheduler?.stop();
-          stopStaleSessionGc();
-          await serverHandle.stop();
-          serverHandle = undefined;
-          app = undefined;
-          recoverQueuedTasksOnStart = undefined;
-          logger.info('[Server] Blade server stopped');
-        }
-      },
+      stop: () => stopOwnedServer(handle, sessionController),
     };
   }
 

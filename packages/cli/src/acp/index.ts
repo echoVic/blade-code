@@ -7,6 +7,7 @@
 
 import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
+import { registerCleanup } from '../services/GracefulShutdown.js';
 import { BladeAgent } from './BladeAgent.js';
 
 /**
@@ -24,11 +25,19 @@ export async function runAcpIntegration(): Promise<void> {
   const stream = acp.ndJsonStream(stdout, stdin);
 
   // 创建 ACP 连接，传入 Agent 工厂函数
-  const connection = new acp.AgentSideConnection(
-    (conn) => new BladeAgent(conn),
-    stream
-  );
+  let agent: BladeAgent | undefined;
+  const connection = new acp.AgentSideConnection((conn) => {
+    agent = new BladeAgent(conn);
+    return agent;
+  }, stream);
+  const unregisterCleanup = registerCleanup(async () => {
+    await agent?.destroy();
+  });
 
-  // 等待连接关闭
-  await connection.closed;
+  try {
+    await connection.closed;
+  } finally {
+    unregisterCleanup();
+    await agent?.destroy();
+  }
 }

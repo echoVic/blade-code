@@ -188,6 +188,117 @@ describe('Agent runLoop system prompt injection', () => {
     expect(runtime.setTaskStatus).toHaveBeenNthCalledWith(2, 'completed', undefined);
   });
 
+  it('aborts and settles an active stream before destroy disposes tools', async () => {
+    const turnHandle = { id: 'shutdown-turn' };
+    let releaseTurn!: () => void;
+    const turnBarrier = new Promise<void>((resolve) => {
+      releaseTurn = resolve;
+    });
+    let observedAbortReason: unknown;
+    const runtime = {
+      ...createGoalRuntimeMocks(),
+      prepareInputTurn: vi.fn(async () => ({
+        accepted: true,
+        handle: turnHandle,
+        messageId: 'shutdown-input',
+        queued: 1,
+        mode: 'direct',
+      })),
+      drainSteering: vi.fn(async () => []),
+      drainSteeringOrSeal: vi.fn(async () => ({
+        messages: [],
+        sealed: true,
+      })),
+      finishTurn: vi.fn(async () => {
+        await turnBarrier;
+        return undefined;
+      }),
+    };
+    const toolExecutor = {
+      getRegistry: () => ({ getAll: () => [] }),
+      dispose: vi.fn(),
+    };
+    const agent = new Agent(
+      createConfig(),
+      {},
+      toolExecutor as unknown as ToolExecutor,
+      runtime as unknown as SessionRuntime
+    );
+    (agent as any).isInitialized = true;
+    (agent as any).processAtMentionsForContent = vi.fn().mockResolvedValue('shutdown');
+    (agent as any).runLoop = vi.fn(async function* (
+      _message: string,
+      context: { signal?: AbortSignal }
+    ) {
+      yield { kind: 'content_delta' as const, delta: 'started' };
+      await new Promise<void>((resolve) => {
+        const finish = () => {
+          observedAbortReason = context.signal?.reason;
+          resolve();
+        };
+        context.signal?.addEventListener('abort', finish, { once: true });
+        if (context.signal?.aborted) finish();
+      });
+      return {
+        success: false,
+        error: { type: 'aborted' as const, message: 'shutdown' },
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+    const caller = new AbortController();
+    const stream = agent.chatStream('shutdown', {
+      messages: [],
+      userId: 'user-1',
+      sessionId: 'session-1',
+      workspaceRoot: process.cwd(),
+      signal: caller.signal,
+    });
+
+    await expect(stream.next()).resolves.toMatchObject({
+      done: false,
+      value: { kind: 'content_delta', delta: 'started' },
+    });
+    const completion = stream.next();
+    let destroySettled = false;
+    const destroy = agent.destroy().then(() => {
+      destroySettled = true;
+    });
+
+    await Promise.resolve();
+    expect(observedAbortReason).toBe('agent-destroy');
+    expect(destroySettled).toBe(false);
+    expect(toolExecutor.dispose).not.toHaveBeenCalled();
+
+    releaseTurn();
+    await expect(completion).resolves.toMatchObject({
+      done: true,
+      value: { success: false, error: { type: 'aborted' } },
+    });
+    await expect(destroy).resolves.toBeUndefined();
+    expect(runtime.finishTurn).toHaveBeenCalledWith(turnHandle, {
+      continuePending: false,
+      outcome: {
+        status: 'aborted',
+        cause: 'cancelled',
+        turnsCount: 1,
+        toolCallsCount: 0,
+        durationMs: 0,
+      },
+    });
+    expect(toolExecutor.dispose).toHaveBeenCalledOnce();
+
+    await expect(
+      agent
+        .chatStream('late', {
+          messages: [],
+          userId: 'user-1',
+          sessionId: 'session-1',
+          workspaceRoot: process.cwd(),
+        })
+        .next()
+    ).rejects.toThrow('Active operation gate is closed');
+  });
+
   it('waits for a background subagent completion and chains its durable follow-up', async () => {
     const firstTurn = { id: 'background-parent-turn' };
     const completionTurn = { id: 'background-completion-turn' };
