@@ -207,6 +207,19 @@ Task child 持有 permit，parent 下一轮排队；child 与 parent 都必须�
 Web reload/ACP load 清除瞬态状态、TUI Esc 可见以及全量 proxy/browser/PTY/process/profile
 回收。
 
+Weighted Provider admission 另固定运行 DeepSeek Flash/Pro × Headless、真实 ACP、
+raw PTY TUI 和 production Chromium Web 八格负向矩阵。测试配置在合法
+`providerRequestPendingBytes=65536` 下先让一个大上下文 parent 或 Session A request
+立即 active，再让同进程 background child 或 Session B 的大上下文进入等待；后者必须投影
+`rejected/queue_full/pending_bytes`，且透明代理观察到零额外 Provider traffic。
+Headless/TUI 使用 parent 持有 active permit、background child 被拒绝，并分别通过
+schema-valid child JSONL 或“失败 sidecar + 可见 TUI failure”证明同一事实；Web/ACP
+使用双 root Session。最终 queue-full turn 保留 failed abort 但确认本 turn 输入，
+reload、SSE reconnect 或 ACP load 不得把 Session B marker 重放到 Provider。Web 必须从
+真实 composer 提交并保持零 console/page error。全部八格使用 `retry=0`，
+同时继续运行前述正常 queued→admitted 矩阵，防止 byte policy 把正常长任务缩窄为只会
+fail closed。
+
 Provider Stall 资格必须让透明 SSE 代理先转发真实模型内容，再在 hard idle timeout
 之前暂停后续事件。Headless JSONL 必须按同一 stall count 输出 sanitized
 `detected → recovered`，标记 `output_started=true`，随后完成真实回复；代理必须证明

@@ -37,6 +37,7 @@ import {
   type Message,
 } from '../services/ChatServiceInterface.js';
 import { resolveModelConfig as resolvePiModelConfig } from '../services/pi/resolveModelConfig.js';
+import { isProviderAdmissionError } from '../services/pi/providerRequestAdmission.js';
 import { SessionService } from '../services/SessionService.js';
 import { createStructuredOutputContract } from '../services/StructuredOutputService.js';
 import {
@@ -90,6 +91,14 @@ import type {
 
 // 创建 Agent 专用 Logger
 const logger = createLogger(LogCategory.AGENT);
+
+function isTerminalProviderAdmissionRejection(result: LoopResult): boolean {
+  return (
+    !result.success &&
+    isProviderAdmissionError(result.error?.details) &&
+    result.error.details.reason === 'queue_full'
+  );
+}
 
 /**
  * Skill 执行上下文
@@ -879,8 +888,10 @@ export class Agent {
           }
           const continuePending =
             result.success && !currentContext.signal?.aborted && chainedFollowUps < 20;
+          const acknowledgeRejectedInput = isTerminalProviderAdmissionRejection(result);
           turnHandle = await this.sessionRuntime.finishTurn(ownedHandle, {
             continuePending,
+            ...(acknowledgeRejectedInput ? { acknowledgeInput: true } : {}),
             outcome:
               result.success && !currentContext.signal?.aborted
                 ? {

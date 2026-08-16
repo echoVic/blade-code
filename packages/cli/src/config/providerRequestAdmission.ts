@@ -6,6 +6,10 @@ export const DEFAULT_PROVIDER_REQUEST_ADMISSION_MS = 180_000;
 export const MIN_PROVIDER_REQUEST_ADMISSION_MS = 1_000;
 export const MAX_PROVIDER_REQUEST_ADMISSION_MS = 600_000;
 
+export const DEFAULT_PROVIDER_REQUEST_PENDING_BYTES = 128 * 1024 * 1024;
+export const MIN_PROVIDER_REQUEST_PENDING_BYTES = 64 * 1024;
+export const MAX_PROVIDER_REQUEST_PENDING_BYTES = 128 * 1024 * 1024;
+
 export function isValidProviderRequestConcurrency(value: unknown): value is number {
   return (
     typeof value === 'number' &&
@@ -37,4 +41,20 @@ export function normalizeProviderRequestAdmissionMs(
   fallback = DEFAULT_PROVIDER_REQUEST_ADMISSION_MS
 ): number {
   return isValidProviderRequestAdmissionMs(value) ? value : fallback;
+}
+
+export function isValidProviderRequestPendingBytes(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= MIN_PROVIDER_REQUEST_PENDING_BYTES &&
+    value <= MAX_PROVIDER_REQUEST_PENDING_BYTES
+  );
+}
+
+export function normalizeProviderRequestPendingBytes(
+  value: unknown,
+  fallback = DEFAULT_PROVIDER_REQUEST_PENDING_BYTES
+): number {
+  return isValidProviderRequestPendingBytes(value) ? value : fallback;
 }

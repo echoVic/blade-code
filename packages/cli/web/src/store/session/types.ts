@@ -77,6 +77,7 @@ export interface ProviderRetryInfo {
 export interface ProviderAdmissionInfo {
   phase: 'queued' | 'admitted' | 'rejected';
   requestClass: 'foreground' | 'background' | 'internal';
+  resource: 'stream' | 'pending_count' | 'pending_bytes';
   scope: 'global' | 'domain' | 'owner' | 'class';
   reason?: 'capacity' | 'queue_full' | 'wait_timeout' | 'closed';
   queuePosition: number;

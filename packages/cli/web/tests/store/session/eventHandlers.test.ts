@@ -1694,6 +1694,7 @@ describe('eventHandlers', () => {
         projectPath: '/workspace/a',
         phase: 'queued',
         requestClass: 'foreground',
+        resource: 'stream',
         scope: 'domain',
         reason: 'capacity',
         queuePosition: 1,
@@ -1708,6 +1709,7 @@ describe('eventHandlers', () => {
     expect(state.providerAdmission).toMatchObject({
       phase: 'queued',
       requestClass: 'foreground',
+      resource: 'stream',
       scope: 'domain',
       queuePosition: 1,
       queueDepth: 2,
@@ -1723,8 +1725,29 @@ describe('eventHandlers', () => {
       properties: {
         sessionId: 'session-1',
         projectPath: '/workspace/a',
+        phase: 'rejected',
+        requestClass: 'foreground',
+        resource: 'pending_bytes',
+        scope: 'global',
+        reason: 'queue_full',
+        queuePosition: 0,
+        queueDepth: 1,
+        inFlight: 1,
+        limit: 1,
+        waitMs: 0,
+        maxWaitMs: 120_000,
+      },
+    });
+    expect(state.providerAdmission).toBeNull();
+
+    dispatch({
+      type: 'provider.admission',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
         phase: 'admitted',
         requestClass: 'foreground',
+        resource: 'stream',
         scope: 'domain',
         queuePosition: 0,
         queueDepth: 1,

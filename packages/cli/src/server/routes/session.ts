@@ -741,6 +741,7 @@ function publishSubagentLoopEvent(
         subagentSessionId,
         phase: event.phase,
         requestClass: event.requestClass,
+        resource: event.resource,
         scope: event.scope,
         reason: event.reason,
         queuePosition: event.queuePosition,
@@ -4233,6 +4234,7 @@ async function executeRunAsync(
           emit('provider.admission', {
             phase: event.phase,
             requestClass: event.requestClass,
+            resource: event.resource,
             scope: event.scope,
             reason: event.reason,
             queuePosition: event.queuePosition,

@@ -804,6 +804,83 @@ describe('Agent runLoop system prompt injection', () => {
     );
   });
 
+  it('acknowledges terminal Provider queue rejection instead of replaying it', async () => {
+    const turnHandle = { id: 'provider-rejected-turn' };
+    const runtime = {
+      ...createGoalRuntimeMocks(),
+      prepareInputTurn: vi.fn(async () => ({
+        accepted: true,
+        handle: turnHandle,
+        messageId: 'provider-rejected-input',
+        queued: 1,
+        mode: 'direct',
+      })),
+      drainSteering: vi.fn(async () => []),
+      drainSteeringOrSeal: vi.fn(async () => ({
+        messages: [],
+        sealed: true,
+      })),
+      finishTurn: vi.fn().mockResolvedValue(undefined),
+    };
+    const agent = new Agent(
+      createConfig(),
+      {},
+      {
+        getRegistry: () => ({ getAll: () => [] }),
+      } as any,
+      runtime as any
+    );
+    (agent as any).isInitialized = true;
+    (agent as any).processAtMentionsForContent = vi.fn().mockResolvedValue('hello');
+    const { ProviderAdmissionError } = await import(
+      '../../../../src/services/pi/providerRequestAdmission.js'
+    );
+    const rejection = new ProviderAdmissionError(
+      'queue_full',
+      'global',
+      'foreground',
+      'pending_bytes',
+      1,
+      1,
+      0,
+      120_000
+    );
+    (agent as any).runLoop = vi.fn(async function* () {
+      if (Date.now() < 0) yield undefined;
+      return {
+        success: false,
+        error: {
+          type: 'api_error',
+          message: rejection.message,
+          details: rejection,
+        },
+        metadata: { turnsCount: 0, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const result = await agent
+      .chatStream('hello', {
+        messages: [],
+        userId: 'user-1',
+        sessionId: 'session-1',
+        workspaceRoot: process.cwd(),
+      })
+      .next();
+
+    expect(result.done).toBe(true);
+    expect(runtime.finishTurn).toHaveBeenCalledWith(turnHandle, {
+      continuePending: false,
+      acknowledgeInput: true,
+      outcome: {
+        status: 'aborted',
+        cause: 'failed',
+        turnsCount: 0,
+        toolCallsCount: 0,
+        durationMs: 0,
+      },
+    });
+  });
+
   it('persists cancellation when the active signal is aborted', async () => {
     const turnHandle = { id: 'cancelled-turn' };
     const runtime = {

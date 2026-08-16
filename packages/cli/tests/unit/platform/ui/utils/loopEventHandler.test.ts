@@ -118,6 +118,7 @@ describe('createLoopEventHandler', () => {
       kind: 'provider_admission',
       phase: 'queued',
       requestClass: 'foreground',
+      resource: 'stream',
       scope: 'domain',
       reason: 'capacity',
       queuePosition: 1,
@@ -132,6 +133,7 @@ describe('createLoopEventHandler', () => {
     expect(deps.sessionActions.setProviderAdmission).toHaveBeenCalledWith({
       phase: 'queued',
       requestClass: 'foreground',
+      resource: 'stream',
       scope: 'domain',
       reason: 'capacity',
       queuePosition: 1,

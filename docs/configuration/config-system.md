@@ -62,6 +62,7 @@ LSP 同样不使用进程全局单例。`lspServers` 从用户层、可信 sourc
   "providerCircuitBreakerOpenMs": 10000,
   "providerRequestConcurrency": 4,
   "providerRequestAdmissionMs": 180000,
+  "providerRequestPendingBytes": 134217728,
   "modelProviders": {
     "team-claude": {
       "name": "Team Claude Gateway",
@@ -278,7 +279,11 @@ Session 及全部 Task/Team 后代合计最多 3 条，background/internal 最�
 的 3 条，给 root foreground 保留一条容量。`providerRequestAdmissionMs` 默认
 `180000`，可设为 `0` 在容量不足时立即失败，其他值必须为 `1000-600000`。等待期间
 不发 Provider 请求、不增加 retry attempt，并响应 TUI Esc、Web stop、ACP cancel 和
-Headless signal。
+Headless signal。`providerRequestPendingBytes` 控制全进程可排队 Provider request 的
+逻辑 retained-footprint，默认和硬上限均为 `134217728`（128 MiB），可配置为
+`65536-134217728`。每 failure domain 最多 64 MiB、每 root owner 最多 32 MiB；
+background/internal 只能占用其中的保留份额，不能让 root foreground 失去排队容量。
+该限制只作用于等待中的 request；active capacity 空闲时，单个大上下文仍可立即运行。
 
 Anthropic SDK 会自行追加 `/v1/messages`。若 Anthropic 的 `baseUrl` 以 `/v1`
 结尾，Blade 会在运行时移除该尾段，避免产生 `/v1/v1/messages`。其他路径前缀保持

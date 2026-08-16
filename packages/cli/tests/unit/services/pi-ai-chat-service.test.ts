@@ -10,6 +10,7 @@ import {
   type ProviderCircuitScope,
 } from '../../../src/services/pi/providerCircuitBreaker.js';
 import {
+  DEFAULT_PROVIDER_REQUEST_PENDING_BYTES,
   type ProviderAdmissionPermit,
   type ProviderAdmissionRequest,
   ProviderRequestAdmissionScheduler,
@@ -43,6 +44,7 @@ const createPiRuntime = vi.fn(() => ({
 const buildPiOptions = vi.fn(() => ({}));
 const observePiProviderResponses = vi.fn();
 const streamPiModel = vi.fn();
+const estimateProviderRequestPendingBytes = vi.fn(() => 1);
 
 vi.mock('../../../src/logging/Logger.js', () => ({
   createLogger: () => ({
@@ -67,6 +69,10 @@ vi.mock('../../../src/services/pi/modelRuntime.js', () => ({
 vi.mock('../../../src/services/pi/requestOptions.js', () => ({
   buildPiOptions,
   observePiProviderResponses,
+}));
+
+vi.mock('../../../src/services/pi/providerRequestFootprint.js', () => ({
+  estimateProviderRequestPendingBytes,
 }));
 
 vi.mock('../../../src/services/pi/streamAdapter.js', () => ({
@@ -165,11 +171,13 @@ function providerAdmissionRequest(
       model: piModelFixture.id,
       apiKey: 'test-key',
       maxConcurrent: 1,
+      maxPendingBytes: DEFAULT_PROVIDER_REQUEST_PENDING_BYTES,
     },
     sessionId: `${ownerId}-session`,
     ownerId,
     requestClass: 'foreground',
     maxWaitMs: 120_000,
+    pendingBytes: 1,
     ...overrides,
   };
 }
@@ -181,6 +189,8 @@ describe('PiAIChatService', () => {
     createPiRuntime.mockReturnValue({ models: {}, model: piModelFixture });
     observePiProviderResponses.mockReset();
     streamPiModel.mockReset();
+    estimateProviderRequestPendingBytes.mockReset();
+    estimateProviderRequestPendingBytes.mockReturnValue(1);
   });
 
   it('rejects a required tool that is unavailable', async () => {
@@ -364,6 +374,7 @@ describe('PiAIChatService', () => {
         providerAdmission: {
           phase: 'queued',
           requestClass: 'foreground',
+          resource: 'stream',
           scope: 'domain',
           queuePosition: 1,
           inFlight: 1,
@@ -378,6 +389,7 @@ describe('PiAIChatService', () => {
       value: {
         providerAdmission: {
           phase: 'admitted',
+          resource: 'stream',
           queuePosition: 0,
         },
       },
@@ -394,7 +406,72 @@ describe('PiAIChatService', () => {
     expect(admissionScheduler.getStats()).toMatchObject({
       inFlight: 0,
       queued: 0,
+      pendingBytes: 0,
     });
+  });
+
+  it('rejects an overweight waiting request before creating Provider traffic', async () => {
+    const admissionScheduler = new ProviderRequestAdmissionScheduler({
+      processSecret: new Uint8Array(32).fill(16),
+      globalMaxInFlight: 1,
+      globalMaxPendingBytes: 64,
+      domainMaxPendingBytes: 64,
+      ownerMaxPendingBytes: 64,
+    });
+    const held = await admissionScheduler.admit(
+      providerAdmissionRequest('holder', {
+        scope: {
+          ...providerAdmissionRequest('holder').scope,
+          maxPendingBytes: 64,
+        },
+      })
+    ).ready;
+    estimateProviderRequestPendingBytes.mockReturnValue(65);
+    const stream = (
+      await service({
+        providerRequestConcurrency: 1,
+        providerRequestAdmissionMs: 120_000,
+        providerRequestPendingBytes: 64,
+        providerRequestAdmissionScheduler: admissionScheduler,
+      })
+    ).streamChat(
+      [{ role: 'user', content: 'overweight while waiting' }],
+      undefined,
+      undefined,
+      {
+        providerAdmission: {
+          sessionId: 'waiting-session',
+          ownerId: 'waiting-owner',
+          requestClass: 'foreground',
+        },
+      }
+    );
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: {
+        providerAdmission: {
+          phase: 'rejected',
+          requestClass: 'foreground',
+          resource: 'pending_bytes',
+          scope: 'global',
+          reason: 'queue_full',
+        },
+      },
+    });
+    await expect(stream.next()).rejects.toMatchObject({
+      code: 'PROVIDER_ADMISSION_BUSY',
+      resource: 'pending_bytes',
+    });
+    expect(estimateProviderRequestPendingBytes).toHaveBeenCalledOnce();
+    expect(streamPiModel).not.toHaveBeenCalled();
+    expect(admissionScheduler.getStats()).toMatchObject({
+      inFlight: 1,
+      queued: 0,
+      pendingBytes: 0,
+      domainCount: 1,
+      ownerCount: 1,
+    });
+    held.release();
   });
 
   it('rechecks the circuit after capacity admission and sends no raced request', async () => {
@@ -945,6 +1022,7 @@ describe('PiAIChatService', () => {
       provider: 'test',
       model: 'backup',
     });
+    expect(estimateProviderRequestPendingBytes).toHaveBeenCalledOnce();
   });
 
   it('preserves fallback when an explicit retry override is exhausted', async () => {

@@ -23,9 +23,14 @@ describe('Provider request admission source gate', () => {
     expect(combined).toContain('PROVIDER_ADMISSION_GLOBAL_MAX_PENDING = 128');
     expect(combined).toContain('PROVIDER_ADMISSION_DOMAIN_MAX_PENDING = 32');
     expect(combined).toContain('PROVIDER_ADMISSION_OWNER_MAX_PENDING = 16');
-    expect(admission).toContain('this.#queue.length >= this.#limits.globalMaxPending');
-    expect(admission).toContain('existingOwner?.queued');
-    expect(admission).toContain('existingDomain?.queued');
+    expect(combined).toContain(
+      'DEFAULT_PROVIDER_REQUEST_PENDING_BYTES = 128 * 1024 * 1024'
+    );
+    expect(admission).toContain('PROVIDER_ADMISSION_DOMAIN_MAX_PENDING_BYTES');
+    expect(admission).toContain('PROVIDER_ADMISSION_OWNER_MAX_PENDING_BYTES');
+    expect(admission).toContain('this.#pendingConstraint(request, domain, owner)');
+    expect(admission).toContain('this.#globalPendingBytes += pending.pendingBytes');
+    expect(admission).toContain('this.#globalPendingBytes - pending.pendingBytes');
     expect(admission).toContain('this.#domains.delete(domainKey)');
     expect(admission).toContain('this.#owners.delete(ownerId)');
     expect(admission).not.toContain('setInterval(');
@@ -50,7 +55,21 @@ describe('Provider request admission source gate', () => {
     expect(options).not.toContain('providerAdmission');
     expect(options).not.toContain('providerRequestConcurrency');
     expect(options).not.toContain('providerRequestAdmissionMs');
+    expect(options).not.toContain('providerRequestPendingBytes');
     expect(options).not.toContain('providerRequestAdmissionScheduler');
+  });
+
+  it('estimates retained request weight without serializing or retaining payloads', () => {
+    const footprint = source('../../src/services/pi/providerRequestFootprint.ts');
+    const admission = source('../../src/services/pi/providerRequestAdmission.ts');
+
+    expect(footprint).toContain('WeakSet<object>');
+    expect(footprint).toContain('Object.getOwnPropertyDescriptor');
+    expect(footprint).toContain('PROVIDER_REQUEST_FOOTPRINT_MAX_NODES = 100_000');
+    expect(footprint).not.toContain('JSON.stringify');
+    expect(admission).not.toContain('Message[]');
+    expect(admission).not.toContain('ChatToolDefinition');
+    expect(admission).not.toContain('Context');
   });
 
   it('keeps every surface projection on the sanitized numeric allowlist', () => {
@@ -71,6 +90,9 @@ describe('Provider request admission source gate', () => {
       .join('\n');
     const combined = `${headless}\n${acp}\n${server}`;
 
+    expect(headless).toContain('resource');
+    expect(acp).toContain('resource: event.resource');
+    expect(server.match(/resource: event\.resource/g)).toHaveLength(2);
     for (const forbidden of [
       'apiKey',
       'baseUrl',
@@ -83,6 +105,8 @@ describe('Provider request admission source gate', () => {
       'digest',
       'responseBody',
       'rawError',
+      'pendingBytes',
+      'maxPendingBytes',
     ]) {
       expect(combined).not.toContain(forbidden);
     }

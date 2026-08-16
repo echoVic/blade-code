@@ -1304,16 +1304,17 @@ export class AcpSession {
               });
               break;
             case 'provider_admission':
-              providerAdmissionVisible = event.phase === 'queued';
+              providerAdmissionVisible = event.phase !== 'admitted';
               this.sendUpdate({
                 sessionUpdate: 'session_info_update',
                 updatedAt: new Date().toISOString(),
                 _meta: {
                   'blade/providerAdmission':
-                    event.phase === 'queued'
+                    event.phase !== 'admitted'
                       ? {
                           phase: event.phase,
                           requestClass: event.requestClass,
+                          resource: event.resource,
                           scope: event.scope,
                           ...(event.reason !== undefined
                             ? { reason: event.reason }

@@ -95,6 +95,7 @@ describe('headless event contract', () => {
     const providerAdmission = createHeadlessJsonlEvent('provider_admission', {
       phase: 'queued',
       request_class: 'foreground',
+      resource: 'stream',
       scope: 'domain',
       reason: 'capacity',
       queue_position: 1,
@@ -110,6 +111,7 @@ describe('headless event contract', () => {
       type: 'provider_admission',
       phase: 'queued',
       request_class: 'foreground',
+      resource: 'stream',
       scope: 'domain',
       reason: 'capacity',
       queue_position: 1,
@@ -121,6 +123,23 @@ describe('headless event contract', () => {
       recovery_remaining_ms: 585_000,
     });
     expect(() => HeadlessJsonlEventSchema.parse(providerAdmission)).not.toThrow();
+
+    const providerAdmissionRejected = createHeadlessJsonlEvent('provider_admission', {
+      phase: 'rejected',
+      request_class: 'foreground',
+      resource: 'pending_bytes',
+      scope: 'global',
+      reason: 'queue_full',
+      queue_position: 0,
+      queue_depth: 1,
+      in_flight: 1,
+      limit: 1,
+      wait_ms: 0,
+      max_wait_ms: 120_000,
+    });
+    expect(() =>
+      HeadlessJsonlEventSchema.parse(providerAdmissionRejected)
+    ).not.toThrow();
 
     const providerRetry = createHeadlessJsonlEvent('provider_retry', {
       phase: 'scheduled',

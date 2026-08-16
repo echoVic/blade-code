@@ -475,6 +475,70 @@ describe('headless runner', () => {
     );
   });
 
+  it('projects background child Provider admission through Headless JSONL', async () => {
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    agentState.chatStream.mockImplementationOnce(async function* (
+      _message: unknown,
+      context: { sessionId: string; workspaceRoot: string }
+    ) {
+      if (Date.now() < 0) yield undefined;
+      Bus.publish(
+        {
+          sessionId: context.sessionId,
+          projectPath: context.workspaceRoot,
+        },
+        'subagent.provider.admission',
+        {
+          subagentSessionId: 'child-session',
+          phase: 'rejected',
+          requestClass: 'background',
+          resource: 'pending_bytes',
+          scope: 'class',
+          reason: 'queue_full',
+          queuePosition: 0,
+          queueDepth: 1,
+          inFlight: 1,
+          limit: 1,
+          waitMs: 0,
+          maxWaitMs: 120_000,
+        }
+      );
+      return {
+        success: true,
+        finalMessage: 'done',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        message: 'run one background child',
+        outputFormat: 'jsonl',
+      },
+      { stdout, stderr }
+    );
+
+    expect(exitCode).toBe(0);
+    const events = stdout.write.mock.calls
+      .map(([line]) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'provider_admission',
+        phase: 'rejected',
+        request_class: 'background',
+        resource: 'pending_bytes',
+        scope: 'class',
+        reason: 'queue_full',
+      })
+    );
+    expect(JSON.stringify(events)).not.toContain('child-session');
+  });
+
   it('rejects task isolation when resuming an existing session', async () => {
     const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
     const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
@@ -1246,6 +1310,7 @@ describe('headless runner', () => {
           kind: 'provider_admission',
           phase: 'queued',
           requestClass: 'foreground',
+          resource: 'stream',
           scope: 'domain',
           reason: 'capacity',
           queuePosition: 1,
@@ -1260,6 +1325,7 @@ describe('headless runner', () => {
           kind: 'provider_admission',
           phase: 'admitted',
           requestClass: 'foreground',
+          resource: 'stream',
           scope: 'domain',
           queuePosition: 0,
           queueDepth: 0,
@@ -1387,6 +1453,7 @@ describe('headless runner', () => {
       type: 'provider_admission',
       phase: 'queued',
       request_class: 'foreground',
+      resource: 'stream',
       scope: 'domain',
       reason: 'capacity',
       queue_position: 1,

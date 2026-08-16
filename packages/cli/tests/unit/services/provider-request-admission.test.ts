@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_PROVIDER_REQUEST_ADMISSION_MS,
   DEFAULT_PROVIDER_REQUEST_CONCURRENCY,
+  DEFAULT_PROVIDER_REQUEST_PENDING_BYTES,
   MAX_PROVIDER_REQUEST_CONCURRENCY,
   MIN_PROVIDER_REQUEST_CONCURRENCY,
 } from '../../../src/config/providerRequestAdmission.js';
@@ -34,6 +35,7 @@ function scope(
       'x-route-tenant': 'tenant-a',
     },
     maxConcurrent: DEFAULT_PROVIDER_REQUEST_CONCURRENCY,
+    maxPendingBytes: DEFAULT_PROVIDER_REQUEST_PENDING_BYTES,
     ...overrides,
   };
 }
@@ -50,6 +52,7 @@ function request(
     ownerId,
     requestClass,
     maxWaitMs: DEFAULT_PROVIDER_REQUEST_ADMISSION_MS,
+    pendingBytes: 1,
     ...overrides,
   };
 }
@@ -322,6 +325,316 @@ describe('ProviderRequestAdmissionScheduler', () => {
     expect(order).toEqual(['internal', 'foreground']);
   });
 
+  it('admits one oversized request immediately but never retains it in the queue', async () => {
+    const gate = scheduler({
+      globalMaxInFlight: 1,
+      globalMaxPendingBytes: 10,
+      domainMaxPendingBytes: 10,
+      ownerMaxPendingBytes: 10,
+    });
+    const immediate = await permit(
+      gate.admit(
+        request('model-a', 'owner-a', 'foreground', {
+          scope: scope('model-a', { maxPendingBytes: 10 }),
+          pendingBytes: 11,
+        })
+      )
+    );
+
+    expect(() =>
+      gate.admit(
+        request('model-b', 'owner-b', 'foreground', {
+          scope: scope('model-b', { maxPendingBytes: 10 }),
+          pendingBytes: 11,
+        })
+      )
+    ).toThrowError(
+      expect.objectContaining({
+        reason: 'queue_full',
+        resource: 'pending_bytes',
+        scope: 'global',
+      })
+    );
+    expect(gate.getStats()).toMatchObject({
+      inFlight: 1,
+      queued: 0,
+      pendingBytes: 0,
+      domainCount: 1,
+      ownerCount: 1,
+    });
+    immediate.release();
+  });
+
+  it('rejects pending-byte overflow before allocating a listener or owner state', async () => {
+    const gate = scheduler({
+      globalMaxInFlight: 1,
+      globalMaxPendingBytes: 10,
+      domainMaxPendingBytes: 10,
+      ownerMaxPendingBytes: 10,
+    });
+    const held = await permit(gate.admit(request('holder', 'holder')));
+    const controller = new AbortController();
+    const add = vi.spyOn(controller.signal, 'addEventListener');
+
+    expect(() =>
+      gate.admit(
+        request('overflow', 'overflow-owner', 'foreground', {
+          scope: scope('overflow', { maxPendingBytes: 10 }),
+          pendingBytes: 11,
+          signal: controller.signal,
+        })
+      )
+    ).toThrowError(
+      expect.objectContaining({
+        resource: 'pending_bytes',
+        scope: 'global',
+      })
+    );
+    expect(add).not.toHaveBeenCalled();
+    expect(gate.getStats()).toMatchObject({
+      queued: 0,
+      pendingBytes: 0,
+      domainCount: 1,
+      ownerCount: 1,
+    });
+    held.release();
+  });
+
+  it('accepts the exact global pending-byte budget and rejects one byte over', async () => {
+    const gate = scheduler({
+      globalMaxInFlight: 1,
+      globalMaxPendingBytes: 10,
+      domainMaxPendingBytes: 10,
+      ownerMaxPendingBytes: 10,
+    });
+    const held = await permit(gate.admit(request('holder', 'holder')));
+    const six = gate.admit(
+      request('model-a', 'owner-a', 'foreground', {
+        scope: scope('model-a', { maxPendingBytes: 10 }),
+        pendingBytes: 6,
+      })
+    );
+    const four = gate.admit(
+      request('model-b', 'owner-b', 'foreground', {
+        scope: scope('model-b', { maxPendingBytes: 10 }),
+        pendingBytes: 4,
+      })
+    );
+
+    expect(gate.getStats()).toMatchObject({ queued: 2, pendingBytes: 10 });
+    expect(() =>
+      gate.admit(
+        request('model-c', 'owner-c', 'foreground', {
+          scope: scope('model-c', { maxPendingBytes: 10 }),
+          pendingBytes: 1,
+        })
+      )
+    ).toThrowError(
+      expect.objectContaining({
+        resource: 'pending_bytes',
+        scope: 'global',
+      })
+    );
+
+    six.cancel();
+    four.cancel();
+    await expect(six.ready).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(four.ready).rejects.toMatchObject({ name: 'AbortError' });
+    expect(gate.getStats()).toMatchObject({ queued: 0, pendingBytes: 0 });
+    held.release();
+  });
+
+  it('enforces owner and domain pending-byte budgets independently', async () => {
+    const ownerGate = scheduler({
+      globalMaxInFlight: 1,
+      globalMaxPendingBytes: 20,
+      domainMaxPendingBytes: 20,
+      ownerMaxPendingBytes: 10,
+    });
+    const ownerHeld = await permit(ownerGate.admit(request('holder', 'holder')));
+    const ownerQueued = ownerGate.admit(
+      request('model-a', 'owner-a', 'foreground', {
+        scope: scope('model-a', { maxPendingBytes: 20 }),
+        pendingBytes: 6,
+      })
+    );
+    expect(() =>
+      ownerGate.admit(
+        request('model-b', 'owner-a', 'foreground', {
+          sessionId: 'owner-a-second',
+          scope: scope('model-b', { maxPendingBytes: 20 }),
+          pendingBytes: 5,
+        })
+      )
+    ).toThrowError(
+      expect.objectContaining({
+        resource: 'pending_bytes',
+        scope: 'owner',
+      })
+    );
+    ownerQueued.cancel();
+    await expect(ownerQueued.ready).rejects.toMatchObject({ name: 'AbortError' });
+    ownerHeld.release();
+
+    const domainGate = scheduler({
+      globalMaxInFlight: 1,
+      globalMaxPendingBytes: 20,
+      domainMaxPendingBytes: 10,
+      ownerMaxPendingBytes: 20,
+    });
+    const domainHeld = await permit(domainGate.admit(request('holder', 'holder')));
+    const domainQueued = domainGate.admit(
+      request('model-a', 'owner-a', 'foreground', {
+        scope: scope('model-a', { maxPendingBytes: 20 }),
+        pendingBytes: 6,
+      })
+    );
+    expect(() =>
+      domainGate.admit(
+        request('model-a', 'owner-b', 'foreground', {
+          scope: scope('model-a', { maxPendingBytes: 20 }),
+          pendingBytes: 5,
+        })
+      )
+    ).toThrowError(
+      expect.objectContaining({
+        resource: 'pending_bytes',
+        scope: 'domain',
+      })
+    );
+    domainQueued.cancel();
+    await expect(domainQueued.ready).rejects.toMatchObject({ name: 'AbortError' });
+    domainHeld.release();
+  });
+
+  it('reserves pending count and bytes for foreground work', async () => {
+    const countGate = scheduler({
+      globalMaxInFlight: 1,
+      globalMaxPending: 4,
+      domainMaxPending: 4,
+      ownerMaxPending: 4,
+    });
+    const countHeld = await permit(countGate.admit(request('holder', 'holder')));
+    const countBackground = Array.from({ length: 3 }, (_, index) =>
+      countGate.admit(
+        request(`background-${index}`, `background-${index}`, 'background')
+      )
+    );
+    expect(() =>
+      countGate.admit(request('background-over', 'background-over', 'background'))
+    ).toThrowError(
+      expect.objectContaining({
+        resource: 'pending_count',
+        scope: 'class',
+      })
+    );
+    const countForeground = countGate.admit(
+      request('foreground', 'foreground', 'foreground')
+    );
+    expect(countGate.getStats()).toMatchObject({
+      queued: 4,
+      nonForegroundQueued: 3,
+    });
+    for (const ticket of [...countBackground, countForeground]) ticket.cancel();
+    await Promise.allSettled([
+      ...countBackground.map((ticket) => ticket.ready),
+      countForeground.ready,
+    ]);
+    countHeld.release();
+
+    const byteGate = scheduler({
+      globalMaxInFlight: 1,
+      globalMaxPendingBytes: 20,
+      domainMaxPendingBytes: 20,
+      ownerMaxPendingBytes: 20,
+    });
+    const byteHeld = await permit(byteGate.admit(request('holder', 'holder')));
+    const background = byteGate.admit(
+      request('background-a', 'owner-a', 'background', {
+        scope: scope('background-a', { maxPendingBytes: 20 }),
+        pendingBytes: 10,
+      })
+    );
+    expect(() =>
+      byteGate.admit(
+        request('background-b', 'owner-b', 'background', {
+          scope: scope('background-b', { maxPendingBytes: 20 }),
+          pendingBytes: 6,
+        })
+      )
+    ).toThrowError(
+      expect.objectContaining({
+        resource: 'pending_bytes',
+        scope: 'class',
+      })
+    );
+    const foreground = byteGate.admit(
+      request('foreground', 'owner-b', 'foreground', {
+        scope: scope('foreground', { maxPendingBytes: 20 }),
+        pendingBytes: 10,
+      })
+    );
+    expect(byteGate.getStats()).toMatchObject({
+      queued: 2,
+      pendingBytes: 20,
+      nonForegroundPendingBytes: 10,
+    });
+    background.cancel();
+    foreground.cancel();
+    await Promise.allSettled([background.ready, foreground.ready]);
+    byteHeld.release();
+  });
+
+  it('keeps aged internal work charged to the internal pending lane', async () => {
+    let now = 0;
+    const gate = scheduler({
+      globalMaxInFlight: 1,
+      globalMaxPending: 8,
+      internalGlobalMaxPending: 1,
+      now: () => now,
+    });
+    const held = await permit(gate.admit(request('holder', 'holder')));
+    const internal = gate.admit(request('internal-a', 'internal-a', 'internal'));
+    now = PROVIDER_ADMISSION_AGING_MS * 2;
+
+    expect(() =>
+      gate.admit(request('internal-b', 'internal-b', 'internal'))
+    ).toThrowError(
+      expect.objectContaining({
+        resource: 'pending_count',
+        scope: 'class',
+      })
+    );
+    expect(gate.getStats()).toMatchObject({
+      internalQueued: 1,
+      internalPendingBytes: 1,
+    });
+    internal.cancel();
+    await expect(internal.ready).rejects.toMatchObject({ name: 'AbortError' });
+    held.release();
+  });
+
+  it('releases pending bytes before resolving a queued ticket', async () => {
+    const gate = scheduler({ globalMaxInFlight: 1 });
+    const held = await permit(gate.admit(request('holder', 'holder')));
+    const waiting = gate.admit(
+      request('model', 'owner-a', 'foreground', { pendingBytes: 7 })
+    );
+    const observed = waiting.ready.then((entry) => {
+      expect(gate.getStats()).toMatchObject({
+        inFlight: 1,
+        queued: 0,
+        pendingBytes: 0,
+      });
+      return entry;
+    });
+
+    expect(gate.getStats()).toMatchObject({ queued: 1, pendingBytes: 7 });
+    held.release();
+    const admitted = await observed;
+    admitted.release();
+  });
+
   it('rejects owner, domain, and global overflow before retaining more work', async () => {
     const ownerGate = scheduler({
       globalMaxInFlight: 1,
@@ -400,7 +713,11 @@ describe('ProviderRequestAdmissionScheduler', () => {
 
     controller.abort(reason);
     await expect(waiting.ready).rejects.toBe(reason);
-    expect(gate.getStats()).toMatchObject({ inFlight: 1, queued: 0 });
+    expect(gate.getStats()).toMatchObject({
+      inFlight: 1,
+      queued: 0,
+      pendingBytes: 0,
+    });
     held.release();
     expect(gate.getStats()).toMatchObject({
       inFlight: 0,
@@ -423,7 +740,11 @@ describe('ProviderRequestAdmissionScheduler', () => {
       retryable: true,
       reason: 'wait_timeout',
     });
-    expect(gate.getStats()).toMatchObject({ inFlight: 1, queued: 0 });
+    expect(gate.getStats()).toMatchObject({
+      inFlight: 1,
+      queued: 0,
+      pendingBytes: 0,
+    });
     held.release();
   });
 
@@ -435,8 +756,13 @@ describe('ProviderRequestAdmissionScheduler', () => {
     expect(gate.getStats()).toEqual({
       inFlight: 0,
       queued: 0,
+      pendingBytes: 0,
       nonForegroundInFlight: 0,
       internalInFlight: 0,
+      nonForegroundQueued: 0,
+      internalQueued: 0,
+      nonForegroundPendingBytes: 0,
+      internalPendingBytes: 0,
       domainCount: 0,
       ownerCount: 0,
       closed: false,
@@ -474,6 +800,7 @@ describe('ProviderRequestAdmissionScheduler', () => {
       scope('model', { apiVersion: 'other-version' }),
       scope('model', { customHeaders: { 'x-route-tenant': 'tenant-b' } }),
       scope('model', { maxConcurrent: 8 }),
+      scope('model', { maxPendingBytes: 64 * 1024 }),
     ]) {
       expect(createProviderRequestDomainKey(changed, TEST_SECRET)).not.toBe(
         equivalentA
@@ -494,6 +821,10 @@ describe('ProviderRequestAdmissionScheduler', () => {
     await expect(waiting.ready).rejects.toMatchObject({
       reason: 'closed',
       retryable: false,
+    });
+    expect(gate.getStats()).toMatchObject({
+      queued: 0,
+      pendingBytes: 0,
     });
     expect(() => gate.admit(request('future', 'owner-b'))).toThrow(
       ProviderAdmissionError

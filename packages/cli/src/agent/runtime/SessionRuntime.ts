@@ -1374,6 +1374,7 @@ export class SessionRuntime {
     handle: ActiveTurnHandle,
     options: {
       continuePending?: boolean;
+      acknowledgeInput?: boolean;
       outcome?: SessionTurnOutcome;
     } = {}
   ): Promise<ActiveTurnHandle | undefined> {
@@ -1410,6 +1411,12 @@ export class SessionRuntime {
         toolCallsCount: outcome.toolCallsCount,
         durationMs: outcome.durationMs,
       });
+      if (options.acknowledgeInput) {
+        const inputMessageIds =
+          await this.getActiveTurnMailbox().claimedMessageIds(handle);
+        await persistentStore.acknowledgeInboxMessages(this.sessionId, inputMessageIds);
+        await this.getActiveTurnMailbox().acknowledge(inputMessageIds);
+      }
     }
 
     const next = await this.getActiveTurnMailbox().finishTurn(handle, options);

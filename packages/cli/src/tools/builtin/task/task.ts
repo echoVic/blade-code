@@ -597,6 +597,23 @@ function createSubagentEventBridge(input: {
             subagentSessionId: input.subagentSessionId,
           });
           break;
+        case 'provider_admission':
+          Bus.publish(input.owner, 'subagent.provider.admission', {
+            subagentSessionId: input.subagentSessionId,
+            phase: event.phase,
+            requestClass: event.requestClass,
+            resource: event.resource,
+            scope: event.scope,
+            reason: event.reason,
+            queuePosition: event.queuePosition,
+            queueDepth: event.queueDepth,
+            inFlight: event.inFlight,
+            limit: event.limit,
+            waitMs: event.waitMs,
+            maxWaitMs: event.maxWaitMs,
+            recoveryRemainingMs: event.recoveryRemainingMs,
+          });
+          break;
         default:
           break;
       }

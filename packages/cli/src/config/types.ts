@@ -162,6 +162,7 @@ export interface BladeConfig {
   providerCircuitBreakerOpenMs?: number; // 0 禁用；否则共享 Provider circuit 的 open 时间
   providerRequestConcurrency?: number; // 同一敏感 Provider failure-domain 的 active stream 上限
   providerRequestAdmissionMs?: number; // 0 fail-fast；否则等待 Provider stream capacity 的上限
+  providerRequestPendingBytes?: number; // 进程级 Provider admission pending request footprint 上限
 
   // UI
   codeTheme: string;

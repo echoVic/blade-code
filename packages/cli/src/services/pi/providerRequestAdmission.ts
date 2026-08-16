@@ -3,8 +3,10 @@ import type { Api } from '@earendil-works/pi-ai';
 import {
   DEFAULT_PROVIDER_REQUEST_ADMISSION_MS,
   DEFAULT_PROVIDER_REQUEST_CONCURRENCY,
+  DEFAULT_PROVIDER_REQUEST_PENDING_BYTES,
   MAX_PROVIDER_REQUEST_ADMISSION_MS,
   MAX_PROVIDER_REQUEST_CONCURRENCY,
+  MAX_PROVIDER_REQUEST_PENDING_BYTES,
   MIN_PROVIDER_REQUEST_CONCURRENCY,
 } from '../../config/providerRequestAdmission.js';
 import {
@@ -15,10 +17,13 @@ import {
 export {
   DEFAULT_PROVIDER_REQUEST_ADMISSION_MS,
   DEFAULT_PROVIDER_REQUEST_CONCURRENCY,
+  DEFAULT_PROVIDER_REQUEST_PENDING_BYTES,
   MAX_PROVIDER_REQUEST_ADMISSION_MS,
   MAX_PROVIDER_REQUEST_CONCURRENCY,
+  MAX_PROVIDER_REQUEST_PENDING_BYTES,
   MIN_PROVIDER_REQUEST_ADMISSION_MS,
   MIN_PROVIDER_REQUEST_CONCURRENCY,
+  MIN_PROVIDER_REQUEST_PENDING_BYTES,
 } from '../../config/providerRequestAdmission.js';
 
 export const PROVIDER_ADMISSION_GLOBAL_MAX_IN_FLIGHT = 16;
@@ -26,6 +31,16 @@ export const PROVIDER_ADMISSION_GLOBAL_MAX_PENDING = 128;
 export const PROVIDER_ADMISSION_DOMAIN_MAX_PENDING = 32;
 export const PROVIDER_ADMISSION_OWNER_MAX_IN_FLIGHT = 3;
 export const PROVIDER_ADMISSION_OWNER_MAX_PENDING = 16;
+
+export const PROVIDER_ADMISSION_NON_FOREGROUND_GLOBAL_MAX_PENDING = 96;
+export const PROVIDER_ADMISSION_NON_FOREGROUND_DOMAIN_MAX_PENDING = 24;
+export const PROVIDER_ADMISSION_NON_FOREGROUND_OWNER_MAX_PENDING = 12;
+export const PROVIDER_ADMISSION_INTERNAL_GLOBAL_MAX_PENDING = 16;
+export const PROVIDER_ADMISSION_INTERNAL_DOMAIN_MAX_PENDING = 4;
+export const PROVIDER_ADMISSION_INTERNAL_OWNER_MAX_PENDING = 4;
+
+export const PROVIDER_ADMISSION_DOMAIN_MAX_PENDING_BYTES = 64 * 1024 * 1024;
+export const PROVIDER_ADMISSION_OWNER_MAX_PENDING_BYTES = 32 * 1024 * 1024;
 
 export const PROVIDER_ADMISSION_NON_FOREGROUND_GLOBAL_MAX_IN_FLIGHT = 12;
 export const PROVIDER_ADMISSION_NON_FOREGROUND_OWNER_MAX_IN_FLIGHT = 2;
@@ -38,17 +53,20 @@ export const PROVIDER_ADMISSION_AGING_MS = 30_000;
 export type ProviderRequestClass = 'foreground' | 'background' | 'internal';
 export type ProviderAdmissionPhase = 'queued' | 'admitted' | 'rejected';
 export type ProviderAdmissionScope = 'global' | 'domain' | 'owner' | 'class';
+export type ProviderAdmissionResource = 'stream' | 'pending_count' | 'pending_bytes';
 export type ProviderAdmissionFailureReason = 'queue_full' | 'wait_timeout' | 'closed';
 
 export interface ProviderRequestScope extends ProviderFailureDomainScope {
   provider: string;
   api: Api | string;
   maxConcurrent: number;
+  maxPendingBytes: number;
 }
 
 export interface ProviderAdmissionEvent {
   phase: ProviderAdmissionPhase;
   requestClass: ProviderRequestClass;
+  resource: ProviderAdmissionResource;
   scope: ProviderAdmissionScope;
   reason?: 'capacity' | ProviderAdmissionFailureReason;
   queuePosition: number;
@@ -66,6 +84,7 @@ export interface ProviderAdmissionRequest {
   ownerId: string;
   requestClass: ProviderRequestClass;
   maxWaitMs: number;
+  pendingBytes: number;
   signal?: AbortSignal;
 }
 
@@ -87,8 +106,13 @@ export interface ProviderAdmissionTicket {
 export interface ProviderAdmissionStats {
   inFlight: number;
   queued: number;
+  pendingBytes: number;
   nonForegroundInFlight: number;
   internalInFlight: number;
+  nonForegroundQueued: number;
+  internalQueued: number;
+  nonForegroundPendingBytes: number;
+  internalPendingBytes: number;
   domainCount: number;
   ownerCount: number;
   closed: boolean;
@@ -102,6 +126,15 @@ export interface ProviderRequestAdmissionSchedulerOptions {
   domainMaxPending?: number;
   ownerMaxInFlight?: number;
   ownerMaxPending?: number;
+  nonForegroundGlobalMaxPending?: number;
+  nonForegroundDomainMaxPending?: number;
+  nonForegroundOwnerMaxPending?: number;
+  internalGlobalMaxPending?: number;
+  internalDomainMaxPending?: number;
+  internalOwnerMaxPending?: number;
+  globalMaxPendingBytes?: number;
+  domainMaxPendingBytes?: number;
+  ownerMaxPendingBytes?: number;
   nonForegroundGlobalMaxInFlight?: number;
   nonForegroundOwnerMaxInFlight?: number;
   internalGlobalMaxInFlight?: number;
@@ -115,6 +148,11 @@ interface DomainState {
   nonForegroundInFlight: number;
   internalInFlight: number;
   queued: number;
+  nonForegroundQueued: number;
+  internalQueued: number;
+  pendingBytes: number;
+  nonForegroundPendingBytes: number;
+  internalPendingBytes: number;
 }
 
 interface OwnerState {
@@ -123,10 +161,16 @@ interface OwnerState {
   nonForegroundInFlight: number;
   internalInFlight: number;
   queued: number;
+  nonForegroundQueued: number;
+  internalQueued: number;
+  pendingBytes: number;
+  nonForegroundPendingBytes: number;
+  internalPendingBytes: number;
 }
 
 interface CapacityConstraint {
   scope: ProviderAdmissionScope;
+  resource: ProviderAdmissionResource;
   inFlight: number;
   limit: number;
 }
@@ -137,6 +181,7 @@ interface PendingAdmission {
   ownerId: string;
   requestClass: ProviderRequestClass;
   maxWaitMs: number;
+  pendingBytes: number;
   enqueuedAt: number;
   signal?: AbortSignal;
   abortListener?: () => void;
@@ -154,6 +199,15 @@ interface NormalizedSchedulerOptions {
   domainMaxPending: number;
   ownerMaxInFlight: number;
   ownerMaxPending: number;
+  nonForegroundGlobalMaxPending: number;
+  nonForegroundDomainMaxPending: number;
+  nonForegroundOwnerMaxPending: number;
+  internalGlobalMaxPending: number;
+  internalDomainMaxPending: number;
+  internalOwnerMaxPending: number;
+  globalMaxPendingBytes: number;
+  domainMaxPendingBytes: number;
+  ownerMaxPendingBytes: number;
   nonForegroundGlobalMaxInFlight: number;
   nonForegroundOwnerMaxInFlight: number;
   internalGlobalMaxInFlight: number;
@@ -169,6 +223,7 @@ export class ProviderAdmissionError extends Error {
     readonly reason: ProviderAdmissionFailureReason,
     readonly scope: ProviderAdmissionScope,
     readonly requestClass: ProviderRequestClass,
+    readonly resource: ProviderAdmissionResource,
     readonly inFlight: number,
     readonly limit: number,
     readonly queued: number,
@@ -176,7 +231,7 @@ export class ProviderAdmissionError extends Error {
   ) {
     super(
       reason === 'queue_full'
-        ? `Provider request admission ${scope} queue is full`
+        ? `Provider request admission ${scope} ${resource} queue is full`
         : reason === 'wait_timeout'
           ? `Provider request admission timed out waiting for ${scope} capacity`
           : 'Provider request admission scheduler is closed'
@@ -243,6 +298,93 @@ function normalizeOptions(
     ),
     globalMaxPending
   );
+  const nonForegroundGlobalMaxPending = Math.min(
+    boundedPositiveInteger(
+      options.nonForegroundGlobalMaxPending,
+      Math.min(
+        PROVIDER_ADMISSION_NON_FOREGROUND_GLOBAL_MAX_PENDING,
+        Math.max(1, Math.floor((globalMaxPending * 3) / 4))
+      ),
+      PROVIDER_ADMISSION_NON_FOREGROUND_GLOBAL_MAX_PENDING
+    ),
+    globalMaxPending
+  );
+  const nonForegroundDomainMaxPending = Math.min(
+    boundedPositiveInteger(
+      options.nonForegroundDomainMaxPending,
+      Math.min(
+        PROVIDER_ADMISSION_NON_FOREGROUND_DOMAIN_MAX_PENDING,
+        Math.max(1, Math.floor((domainMaxPending * 3) / 4))
+      ),
+      PROVIDER_ADMISSION_NON_FOREGROUND_DOMAIN_MAX_PENDING
+    ),
+    domainMaxPending
+  );
+  const nonForegroundOwnerMaxPending = Math.min(
+    boundedPositiveInteger(
+      options.nonForegroundOwnerMaxPending,
+      Math.min(
+        PROVIDER_ADMISSION_NON_FOREGROUND_OWNER_MAX_PENDING,
+        Math.max(1, Math.floor((ownerMaxPending * 3) / 4))
+      ),
+      PROVIDER_ADMISSION_NON_FOREGROUND_OWNER_MAX_PENDING
+    ),
+    ownerMaxPending
+  );
+  const internalGlobalMaxPending = Math.min(
+    boundedPositiveInteger(
+      options.internalGlobalMaxPending,
+      Math.min(
+        PROVIDER_ADMISSION_INTERNAL_GLOBAL_MAX_PENDING,
+        Math.max(1, Math.floor(globalMaxPending / 8))
+      ),
+      PROVIDER_ADMISSION_INTERNAL_GLOBAL_MAX_PENDING
+    ),
+    nonForegroundGlobalMaxPending
+  );
+  const internalDomainMaxPending = Math.min(
+    boundedPositiveInteger(
+      options.internalDomainMaxPending,
+      Math.min(
+        PROVIDER_ADMISSION_INTERNAL_DOMAIN_MAX_PENDING,
+        Math.max(1, Math.floor(domainMaxPending / 8))
+      ),
+      PROVIDER_ADMISSION_INTERNAL_DOMAIN_MAX_PENDING
+    ),
+    nonForegroundDomainMaxPending
+  );
+  const internalOwnerMaxPending = Math.min(
+    boundedPositiveInteger(
+      options.internalOwnerMaxPending,
+      Math.min(
+        PROVIDER_ADMISSION_INTERNAL_OWNER_MAX_PENDING,
+        Math.max(1, Math.floor(ownerMaxPending / 4))
+      ),
+      PROVIDER_ADMISSION_INTERNAL_OWNER_MAX_PENDING
+    ),
+    nonForegroundOwnerMaxPending
+  );
+  const globalMaxPendingBytes = boundedPositiveInteger(
+    options.globalMaxPendingBytes,
+    MAX_PROVIDER_REQUEST_PENDING_BYTES,
+    MAX_PROVIDER_REQUEST_PENDING_BYTES
+  );
+  const domainMaxPendingBytes = Math.min(
+    boundedPositiveInteger(
+      options.domainMaxPendingBytes,
+      PROVIDER_ADMISSION_DOMAIN_MAX_PENDING_BYTES,
+      PROVIDER_ADMISSION_DOMAIN_MAX_PENDING_BYTES
+    ),
+    globalMaxPendingBytes
+  );
+  const ownerMaxPendingBytes = Math.min(
+    boundedPositiveInteger(
+      options.ownerMaxPendingBytes,
+      PROVIDER_ADMISSION_OWNER_MAX_PENDING_BYTES,
+      PROVIDER_ADMISSION_OWNER_MAX_PENDING_BYTES
+    ),
+    globalMaxPendingBytes
+  );
   const nonForegroundGlobalMaxInFlight = Math.min(
     boundedPositiveInteger(
       options.nonForegroundGlobalMaxInFlight,
@@ -286,6 +428,15 @@ function normalizeOptions(
     domainMaxPending,
     ownerMaxInFlight,
     ownerMaxPending,
+    nonForegroundGlobalMaxPending,
+    nonForegroundDomainMaxPending,
+    nonForegroundOwnerMaxPending,
+    internalGlobalMaxPending,
+    internalDomainMaxPending,
+    internalOwnerMaxPending,
+    globalMaxPendingBytes,
+    domainMaxPendingBytes,
+    ownerMaxPendingBytes,
     nonForegroundGlobalMaxInFlight,
     nonForegroundOwnerMaxInFlight,
     internalGlobalMaxInFlight,
@@ -311,6 +462,24 @@ function assertRequest(request: ProviderAdmissionRequest): void {
     );
   }
   if (
+    !Number.isSafeInteger(request.scope.maxPendingBytes) ||
+    request.scope.maxPendingBytes <= 0 ||
+    request.scope.maxPendingBytes > MAX_PROVIDER_REQUEST_PENDING_BYTES
+  ) {
+    throw new Error(
+      `maxPendingBytes must be between 1 and ${MAX_PROVIDER_REQUEST_PENDING_BYTES}`
+    );
+  }
+  if (
+    !Number.isSafeInteger(request.pendingBytes) ||
+    request.pendingBytes <= 0 ||
+    request.pendingBytes > MAX_PROVIDER_REQUEST_PENDING_BYTES + 1
+  ) {
+    throw new Error(
+      `pendingBytes must be between 1 and ${MAX_PROVIDER_REQUEST_PENDING_BYTES + 1}`
+    );
+  }
+  if (
     !Number.isSafeInteger(request.maxWaitMs) ||
     request.maxWaitMs < 0 ||
     request.maxWaitMs > MAX_PROVIDER_REQUEST_ADMISSION_MS
@@ -331,6 +500,7 @@ export function createProviderRequestDomainKey(
 ): string {
   return createProviderFailureDomainKey(scope, processSecret, {
     providerRequestConcurrency: scope.maxConcurrent,
+    providerRequestPendingBytes: scope.maxPendingBytes,
   });
 }
 
@@ -344,6 +514,11 @@ export class ProviderRequestAdmissionScheduler {
   #globalInFlight = 0;
   #globalNonForegroundInFlight = 0;
   #globalInternalInFlight = 0;
+  #globalNonForegroundQueued = 0;
+  #globalInternalQueued = 0;
+  #globalPendingBytes = 0;
+  #globalNonForegroundPendingBytes = 0;
+  #globalInternalPendingBytes = 0;
   #nextOwnerOrder = 1;
   #lastAdmittedOwnerOrder = 0;
   #closed = false;
@@ -364,6 +539,7 @@ export class ProviderRequestAdmissionScheduler {
         request,
         {
           scope: 'global',
+          resource: 'stream',
           inFlight: this.#globalInFlight,
           limit: this.#limits.globalMaxInFlight,
         },
@@ -378,53 +554,18 @@ export class ProviderRequestAdmissionScheduler {
     );
     const existingDomain = this.#domains.get(domainKey);
     const existingOwner = this.#owners.get(request.ownerId);
-
-    if (this.#queue.length >= this.#limits.globalMaxPending) {
-      throw this.#errorFor(
-        'queue_full',
-        request,
-        {
-          scope: 'global',
-          inFlight: this.#globalInFlight,
-          limit: this.#limits.globalMaxPending,
-        },
-        this.#queue.length
-      );
-    }
-    if ((existingOwner?.queued ?? 0) >= this.#limits.ownerMaxPending) {
-      throw this.#errorFor(
-        'queue_full',
-        request,
-        {
-          scope: 'owner',
-          inFlight: existingOwner?.inFlight ?? 0,
-          limit: this.#limits.ownerMaxPending,
-        },
-        existingOwner?.queued ?? 0
-      );
-    }
-    if ((existingDomain?.queued ?? 0) >= this.#limits.domainMaxPending) {
-      throw this.#errorFor(
-        'queue_full',
-        request,
-        {
-          scope: 'domain',
-          inFlight: existingDomain?.inFlight ?? 0,
-          limit: this.#limits.domainMaxPending,
-        },
-        existingDomain?.queued ?? 0
-      );
-    }
-
     const domain = existingDomain ?? this.#createDomain(request.scope.maxConcurrent);
     const owner = existingOwner ?? this.#createOwner();
-    if (!existingDomain) this.#domains.set(domainKey, domain);
-    if (!existingOwner) this.#owners.set(request.ownerId, owner);
 
     if (
       this.#queue.length === 0 &&
       this.#canStart(domain, owner, request.requestClass)
     ) {
+      if (!existingDomain) this.#domains.set(domainKey, domain);
+      if (!existingOwner) {
+        this.#owners.set(request.ownerId, owner);
+        this.#nextOwnerOrder++;
+      }
       const permit = this.#acquire(domainKey, request.ownerId, request.requestClass);
       let snapshot = this.#snapshotForAdmitted(request, 0);
       return {
@@ -436,12 +577,25 @@ export class ProviderRequestAdmissionScheduler {
       };
     }
 
+    const pendingConstraint = this.#pendingConstraint(request, domain, owner);
+    if (pendingConstraint) {
+      throw this.#errorFor(
+        'queue_full',
+        request,
+        pendingConstraint,
+        this.#queue.length
+      );
+    }
     const constraint = this.#constraint(domain, owner, request.requestClass);
     if (request.maxWaitMs === 0) {
-      this.#deleteIdleState(domainKey, request.ownerId);
       throw this.#errorFor('wait_timeout', request, constraint, this.#queue.length);
     }
 
+    if (!existingDomain) this.#domains.set(domainKey, domain);
+    if (!existingOwner) {
+      this.#owners.set(request.ownerId, owner);
+      this.#nextOwnerOrder++;
+    }
     let resolveReady!: (permit: ProviderAdmissionPermit) => void;
     let rejectReady!: (error: unknown) => void;
     const ready = new Promise<ProviderAdmissionPermit>((resolve, reject) => {
@@ -455,6 +609,7 @@ export class ProviderRequestAdmissionScheduler {
       ownerId: request.ownerId,
       requestClass: request.requestClass,
       maxWaitMs: request.maxWaitMs,
+      pendingBytes: request.pendingBytes,
       enqueuedAt: this.#now(),
       signal: request.signal,
       resolve: resolveReady,
@@ -472,8 +627,7 @@ export class ProviderRequestAdmissionScheduler {
     pending.timer = setTimeout(() => this.#timeoutPending(pending), request.maxWaitMs);
     pending.timer.unref?.();
     this.#queue.push(pending);
-    domain.queued++;
-    owner.queued++;
+    this.#chargePending(domain, owner, pending);
     this.#drain();
 
     return {
@@ -495,6 +649,7 @@ export class ProviderRequestAdmissionScheduler {
           ? this.#constraint(domain, owner, pending.requestClass)
           : {
               scope: 'global' as const,
+              resource: 'stream' as const,
               inFlight: this.#globalInFlight,
               limit: this.#limits.globalMaxInFlight,
             };
@@ -504,6 +659,7 @@ export class ProviderRequestAdmissionScheduler {
           'closed',
           constraint.scope,
           pending.requestClass,
+          constraint.resource,
           constraint.inFlight,
           constraint.limit,
           this.#queue.length,
@@ -517,12 +673,178 @@ export class ProviderRequestAdmissionScheduler {
     return {
       inFlight: this.#globalInFlight,
       queued: this.#queue.length,
+      pendingBytes: this.#globalPendingBytes,
       nonForegroundInFlight: this.#globalNonForegroundInFlight,
       internalInFlight: this.#globalInternalInFlight,
+      nonForegroundQueued: this.#globalNonForegroundQueued,
+      internalQueued: this.#globalInternalQueued,
+      nonForegroundPendingBytes: this.#globalNonForegroundPendingBytes,
+      internalPendingBytes: this.#globalInternalPendingBytes,
       domainCount: this.#domains.size,
       ownerCount: this.#owners.size,
       closed: this.#closed,
     };
+  }
+
+  #pendingConstraint(
+    request: ProviderAdmissionRequest,
+    domain: DomainState,
+    owner: OwnerState
+  ): CapacityConstraint | undefined {
+    const count = (
+      scope: ProviderAdmissionScope,
+      current: number,
+      limit: number
+    ): CapacityConstraint | undefined =>
+      current >= limit
+        ? {
+            scope,
+            resource: 'pending_count',
+            inFlight: current,
+            limit,
+          }
+        : undefined;
+
+    if (request.requestClass === 'internal') {
+      const internalCount =
+        count(
+          'class',
+          this.#globalInternalQueued,
+          this.#limits.internalGlobalMaxPending
+        ) ??
+        count('class', owner.internalQueued, this.#limits.internalOwnerMaxPending) ??
+        count('class', domain.internalQueued, this.#limits.internalDomainMaxPending);
+      if (internalCount) return internalCount;
+    }
+    if (request.requestClass !== 'foreground') {
+      const nonForegroundCount =
+        count(
+          'class',
+          this.#globalNonForegroundQueued,
+          this.#limits.nonForegroundGlobalMaxPending
+        ) ??
+        count(
+          'class',
+          owner.nonForegroundQueued,
+          this.#limits.nonForegroundOwnerMaxPending
+        ) ??
+        count(
+          'class',
+          domain.nonForegroundQueued,
+          this.#limits.nonForegroundDomainMaxPending
+        );
+      if (nonForegroundCount) return nonForegroundCount;
+    }
+    const totalCount =
+      count('global', this.#queue.length, this.#limits.globalMaxPending) ??
+      count('owner', owner.queued, this.#limits.ownerMaxPending) ??
+      count('domain', domain.queued, this.#limits.domainMaxPending);
+    if (totalCount) return totalCount;
+
+    const globalByteLimit = Math.min(
+      request.scope.maxPendingBytes,
+      this.#limits.globalMaxPendingBytes
+    );
+    const domainByteLimit = Math.min(
+      globalByteLimit,
+      this.#limits.domainMaxPendingBytes
+    );
+    const ownerByteLimit = Math.min(globalByteLimit, this.#limits.ownerMaxPendingBytes);
+    const exceeds = (current: number, limit: number): boolean =>
+      request.pendingBytes > limit - current;
+    const byteConstraint = (scope: ProviderAdmissionScope): CapacityConstraint => {
+      if (scope === 'owner') {
+        return {
+          scope,
+          resource: 'pending_bytes',
+          inFlight: owner.inFlight,
+          limit: this.#limits.ownerMaxInFlight,
+        };
+      }
+      if (scope === 'domain') {
+        return {
+          scope,
+          resource: 'pending_bytes',
+          inFlight: domain.inFlight,
+          limit: domain.maxConcurrent,
+        };
+      }
+      return {
+        scope,
+        resource: 'pending_bytes',
+        inFlight: this.#globalInFlight,
+        limit: this.#limits.globalMaxInFlight,
+      };
+    };
+
+    if (request.requestClass === 'internal') {
+      const internalGlobalBytes = Math.max(1, Math.floor(globalByteLimit / 8));
+      const internalDomainBytes = Math.max(1, Math.floor(domainByteLimit / 4));
+      const internalOwnerBytes = Math.max(1, Math.floor(ownerByteLimit / 4));
+      if (
+        exceeds(this.#globalInternalPendingBytes, internalGlobalBytes) ||
+        exceeds(owner.internalPendingBytes, internalOwnerBytes) ||
+        exceeds(domain.internalPendingBytes, internalDomainBytes)
+      ) {
+        return byteConstraint('class');
+      }
+    }
+    if (request.requestClass !== 'foreground') {
+      const nonForegroundGlobalBytes = Math.max(
+        1,
+        Math.floor((globalByteLimit * 3) / 4)
+      );
+      const nonForegroundDomainBytes = Math.max(
+        1,
+        Math.floor((domainByteLimit * 3) / 4)
+      );
+      const nonForegroundOwnerBytes = Math.max(1, Math.floor(ownerByteLimit / 2));
+      if (
+        exceeds(this.#globalNonForegroundPendingBytes, nonForegroundGlobalBytes) ||
+        exceeds(owner.nonForegroundPendingBytes, nonForegroundOwnerBytes) ||
+        exceeds(domain.nonForegroundPendingBytes, nonForegroundDomainBytes)
+      ) {
+        return byteConstraint('class');
+      }
+    }
+    if (exceeds(this.#globalPendingBytes, globalByteLimit)) {
+      return byteConstraint('global');
+    }
+    if (exceeds(owner.pendingBytes, ownerByteLimit)) {
+      return byteConstraint('owner');
+    }
+    if (exceeds(domain.pendingBytes, domainByteLimit)) {
+      return byteConstraint('domain');
+    }
+    return undefined;
+  }
+
+  #chargePending(
+    domain: DomainState,
+    owner: OwnerState,
+    pending: PendingAdmission
+  ): void {
+    domain.queued++;
+    owner.queued++;
+    this.#globalPendingBytes += pending.pendingBytes;
+    domain.pendingBytes += pending.pendingBytes;
+    owner.pendingBytes += pending.pendingBytes;
+    if (pending.requestClass !== 'foreground') {
+      this.#globalNonForegroundQueued++;
+      domain.nonForegroundQueued++;
+      owner.nonForegroundQueued++;
+      this.#globalNonForegroundPendingBytes += pending.pendingBytes;
+      domain.nonForegroundPendingBytes += pending.pendingBytes;
+      owner.nonForegroundPendingBytes += pending.pendingBytes;
+    }
+    if (pending.requestClass === 'internal') {
+      this.#globalInternalQueued++;
+      domain.internalQueued++;
+      owner.internalQueued++;
+      this.#globalInternalPendingBytes += pending.pendingBytes;
+      domain.internalPendingBytes += pending.pendingBytes;
+      owner.internalPendingBytes += pending.pendingBytes;
+    }
   }
 
   #createDomain(maxConcurrent: number): DomainState {
@@ -532,16 +854,26 @@ export class ProviderRequestAdmissionScheduler {
       nonForegroundInFlight: 0,
       internalInFlight: 0,
       queued: 0,
+      nonForegroundQueued: 0,
+      internalQueued: 0,
+      pendingBytes: 0,
+      nonForegroundPendingBytes: 0,
+      internalPendingBytes: 0,
     };
   }
 
   #createOwner(): OwnerState {
     return {
-      order: this.#nextOwnerOrder++,
+      order: this.#nextOwnerOrder,
       inFlight: 0,
       nonForegroundInFlight: 0,
       internalInFlight: 0,
       queued: 0,
+      nonForegroundQueued: 0,
+      internalQueued: 0,
+      pendingBytes: 0,
+      nonForegroundPendingBytes: 0,
+      internalPendingBytes: 0,
     };
   }
 
@@ -581,6 +913,7 @@ export class ProviderRequestAdmissionScheduler {
     if (owner.inFlight >= this.#limits.ownerMaxInFlight) {
       return {
         scope: 'owner',
+        resource: 'stream',
         inFlight: owner.inFlight,
         limit: this.#limits.ownerMaxInFlight,
       };
@@ -591,6 +924,7 @@ export class ProviderRequestAdmissionScheduler {
     ) {
       return {
         scope: 'class',
+        resource: 'stream',
         inFlight: owner.nonForegroundInFlight,
         limit: this.#limits.nonForegroundOwnerMaxInFlight,
       };
@@ -598,6 +932,7 @@ export class ProviderRequestAdmissionScheduler {
     if (domain.inFlight >= domain.maxConcurrent) {
       return {
         scope: 'domain',
+        resource: 'stream',
         inFlight: domain.inFlight,
         limit: domain.maxConcurrent,
       };
@@ -607,6 +942,7 @@ export class ProviderRequestAdmissionScheduler {
       if (domain.nonForegroundInFlight >= limit) {
         return {
           scope: 'class',
+          resource: 'stream',
           inFlight: domain.nonForegroundInFlight,
           limit,
         };
@@ -618,6 +954,7 @@ export class ProviderRequestAdmissionScheduler {
     ) {
       return {
         scope: 'class',
+        resource: 'stream',
         inFlight: domain.internalInFlight,
         limit: this.#limits.internalDomainMaxInFlight,
       };
@@ -625,6 +962,7 @@ export class ProviderRequestAdmissionScheduler {
     if (this.#globalInFlight >= this.#limits.globalMaxInFlight) {
       return {
         scope: 'global',
+        resource: 'stream',
         inFlight: this.#globalInFlight,
         limit: this.#limits.globalMaxInFlight,
       };
@@ -635,6 +973,7 @@ export class ProviderRequestAdmissionScheduler {
     ) {
       return {
         scope: 'class',
+        resource: 'stream',
         inFlight: this.#globalNonForegroundInFlight,
         limit: this.#limits.nonForegroundGlobalMaxInFlight,
       };
@@ -645,12 +984,14 @@ export class ProviderRequestAdmissionScheduler {
     ) {
       return {
         scope: 'class',
+        resource: 'stream',
         inFlight: this.#globalInternalInFlight,
         limit: this.#limits.internalGlobalMaxInFlight,
       };
     }
     return {
       scope: 'domain',
+      resource: 'stream',
       inFlight: domain.inFlight,
       limit: domain.maxConcurrent,
     };
@@ -815,6 +1156,7 @@ export class ProviderRequestAdmissionScheduler {
         ? this.#constraint(domain, owner, pending.requestClass)
         : {
             scope: 'global' as const,
+            resource: 'stream' as const,
             inFlight: this.#globalInFlight,
             limit: this.#limits.globalMaxInFlight,
           };
@@ -824,6 +1166,7 @@ export class ProviderRequestAdmissionScheduler {
         'wait_timeout',
         constraint.scope,
         pending.requestClass,
+        constraint.resource,
         constraint.inFlight,
         constraint.limit,
         this.#queue.length,
@@ -850,13 +1193,64 @@ export class ProviderRequestAdmissionScheduler {
     this.#queue.splice(index, 1);
     const domain = this.#domains.get(pending.domainKey);
     const owner = this.#owners.get(pending.ownerId);
-    if (domain) domain.queued = Math.max(0, domain.queued - 1);
-    if (owner) owner.queued = Math.max(0, owner.queued - 1);
+    if (domain && owner) this.#unchargePending(domain, owner, pending);
     this.#cleanupPending(pending);
     if (deleteIdle) {
       this.#deleteIdleState(pending.domainKey, pending.ownerId);
     }
     return true;
+  }
+
+  #unchargePending(
+    domain: DomainState,
+    owner: OwnerState,
+    pending: PendingAdmission
+  ): void {
+    domain.queued = Math.max(0, domain.queued - 1);
+    owner.queued = Math.max(0, owner.queued - 1);
+    this.#globalPendingBytes = Math.max(
+      0,
+      this.#globalPendingBytes - pending.pendingBytes
+    );
+    domain.pendingBytes = Math.max(0, domain.pendingBytes - pending.pendingBytes);
+    owner.pendingBytes = Math.max(0, owner.pendingBytes - pending.pendingBytes);
+    if (pending.requestClass !== 'foreground') {
+      this.#globalNonForegroundQueued = Math.max(
+        0,
+        this.#globalNonForegroundQueued - 1
+      );
+      domain.nonForegroundQueued = Math.max(0, domain.nonForegroundQueued - 1);
+      owner.nonForegroundQueued = Math.max(0, owner.nonForegroundQueued - 1);
+      this.#globalNonForegroundPendingBytes = Math.max(
+        0,
+        this.#globalNonForegroundPendingBytes - pending.pendingBytes
+      );
+      domain.nonForegroundPendingBytes = Math.max(
+        0,
+        domain.nonForegroundPendingBytes - pending.pendingBytes
+      );
+      owner.nonForegroundPendingBytes = Math.max(
+        0,
+        owner.nonForegroundPendingBytes - pending.pendingBytes
+      );
+    }
+    if (pending.requestClass === 'internal') {
+      this.#globalInternalQueued = Math.max(0, this.#globalInternalQueued - 1);
+      domain.internalQueued = Math.max(0, domain.internalQueued - 1);
+      owner.internalQueued = Math.max(0, owner.internalQueued - 1);
+      this.#globalInternalPendingBytes = Math.max(
+        0,
+        this.#globalInternalPendingBytes - pending.pendingBytes
+      );
+      domain.internalPendingBytes = Math.max(
+        0,
+        domain.internalPendingBytes - pending.pendingBytes
+      );
+      owner.internalPendingBytes = Math.max(
+        0,
+        owner.internalPendingBytes - pending.pendingBytes
+      );
+    }
   }
 
   #cleanupPending(pending: PendingAdmission): void {
@@ -886,6 +1280,7 @@ export class ProviderRequestAdmissionScheduler {
       return {
         state: 'admitted',
         requestClass: pending.requestClass,
+        resource: 'stream',
         scope: 'domain',
         queuePosition: 0,
         queueDepth: this.#queue.length,
@@ -902,12 +1297,14 @@ export class ProviderRequestAdmissionScheduler {
         ? this.#constraint(domain, owner, pending.requestClass)
         : {
             scope: 'global' as const,
+            resource: 'stream' as const,
             inFlight: this.#globalInFlight,
             limit: this.#limits.globalMaxInFlight,
           };
     return {
       state: 'queued',
       requestClass: pending.requestClass,
+      resource: constraint.resource,
       scope: constraint.scope,
       reason: 'capacity',
       queuePosition: this.#queuePosition(pending, constraint.scope),
@@ -926,6 +1323,7 @@ export class ProviderRequestAdmissionScheduler {
     return {
       state: 'admitted',
       requestClass: request.requestClass,
+      resource: 'stream',
       scope: 'domain',
       queuePosition: 0,
       queueDepth: this.#queue.length,
@@ -962,6 +1360,7 @@ export class ProviderRequestAdmissionScheduler {
       reason,
       constraint.scope,
       request.requestClass,
+      constraint.resource,
       constraint.inFlight,
       constraint.limit,
       queued,

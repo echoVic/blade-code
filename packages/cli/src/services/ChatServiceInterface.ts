@@ -130,6 +130,7 @@ export interface ChatConfig {
   providerCircuitBreakerOpenMs?: number;
   providerRequestConcurrency?: number;
   providerRequestAdmissionMs?: number;
+  providerRequestPendingBytes?: number;
   /** Process-shared runtime coordinator. Never serialize this field. */
   providerCircuitRegistry?: ProviderCircuitRegistry;
   /** Process-shared physical Provider stream scheduler. Never serialize this field. */

@@ -17,8 +17,10 @@ import {
 import {
   MAX_PROVIDER_REQUEST_ADMISSION_MS,
   MAX_PROVIDER_REQUEST_CONCURRENCY,
+  MAX_PROVIDER_REQUEST_PENDING_BYTES,
   MIN_PROVIDER_REQUEST_ADMISSION_MS,
   MIN_PROVIDER_REQUEST_CONCURRENCY,
+  MIN_PROVIDER_REQUEST_PENDING_BYTES,
 } from '../config/providerRequestAdmission.js';
 import {
   MAX_CONCURRENT_TASKS,
@@ -150,6 +152,12 @@ const RuntimeSettingsSchema = Type.Object({
         maximum: MAX_PROVIDER_REQUEST_ADMISSION_MS,
       }),
     ])
+  ),
+  providerRequestPendingBytes: Type.Optional(
+    Type.Integer({
+      minimum: MIN_PROVIDER_REQUEST_PENDING_BYTES,
+      maximum: MAX_PROVIDER_REQUEST_PENDING_BYTES,
+    })
   ),
   codeTheme: Type.Optional(Type.String()),
   uiTheme: Type.Optional(StringEnum(['light', 'dark', 'system'])),

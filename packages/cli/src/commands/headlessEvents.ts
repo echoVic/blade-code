@@ -359,6 +359,7 @@ const ProviderAdmissionEventSchema = event({
   type: Type.Literal('provider_admission'),
   phase: StringEnum(['queued', 'admitted', 'rejected']),
   request_class: StringEnum(['foreground', 'background', 'internal']),
+  resource: StringEnum(['stream', 'pending_count', 'pending_bytes']),
   scope: StringEnum(['global', 'domain', 'owner', 'class']),
   reason: Type.Optional(
     StringEnum(['capacity', 'queue_full', 'wait_timeout', 'closed'])

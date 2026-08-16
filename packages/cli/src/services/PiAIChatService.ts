@@ -40,6 +40,7 @@ import {
 import {
   DEFAULT_PROVIDER_REQUEST_ADMISSION_MS,
   DEFAULT_PROVIDER_REQUEST_CONCURRENCY,
+  DEFAULT_PROVIDER_REQUEST_PENDING_BYTES,
   getProviderRequestAdmissionScheduler,
   isProviderAdmissionError,
   PROVIDER_ADMISSION_HEARTBEAT_MS,
@@ -48,6 +49,7 @@ import {
   type ProviderAdmissionPermit,
   type ProviderAdmissionQueueSnapshot,
 } from './pi/providerRequestAdmission.js';
+import { estimateProviderRequestPendingBytes } from './pi/providerRequestFootprint.js';
 import {
   classifyProviderRetry,
   computeProviderRetryDelay,
@@ -200,6 +202,12 @@ export class PiAIChatService implements IChatService {
       signal,
       requiredTool
     );
+    const pendingRequestBytes = estimateProviderRequestPendingBytes({
+      messages: filtered,
+      context,
+      tools,
+      requestOptions,
+    });
     const requestedRecovery = requestOptions?.providerRecovery;
     if (
       requestedRecovery &&
@@ -243,6 +251,8 @@ export class PiAIChatService implements IChatService {
       this.config.providerRequestConcurrency ?? DEFAULT_PROVIDER_REQUEST_CONCURRENCY;
     const providerRequestAdmissionMs =
       this.config.providerRequestAdmissionMs ?? DEFAULT_PROVIDER_REQUEST_ADMISSION_MS;
+    const providerRequestPendingBytes =
+      this.config.providerRequestPendingBytes ?? DEFAULT_PROVIDER_REQUEST_PENDING_BYTES;
     const providerAdmissionIdentity = requestOptions?.providerAdmission ?? {
       sessionId: this.admissionFallbackOwnerId,
       ownerId: this.admissionFallbackOwnerId,
@@ -272,6 +282,7 @@ export class PiAIChatService implements IChatService {
       apiKey: this.config.apiKey,
       customHeaders: this.config.customHeaders,
       maxConcurrent: providerRequestConcurrency,
+      maxPendingBytes: providerRequestPendingBytes,
     });
 
     const recoverySnapshot = (now = Date.now()) => {
@@ -328,6 +339,7 @@ export class PiAIChatService implements IChatService {
     ): ProviderAdmissionEvent => ({
       phase: 'rejected',
       requestClass: error.requestClass,
+      resource: error.resource,
       scope: error.scope,
       reason: error.reason,
       queuePosition: 0,
@@ -356,6 +368,7 @@ export class PiAIChatService implements IChatService {
           ownerId: providerAdmissionIdentity.ownerId,
           requestClass: providerAdmissionIdentity.requestClass,
           maxWaitMs,
+          pendingBytes: pendingRequestBytes,
           signal,
         });
       } catch (error) {

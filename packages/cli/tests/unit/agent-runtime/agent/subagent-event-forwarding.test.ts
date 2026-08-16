@@ -476,6 +476,7 @@ describe('Subagent Bus topic stability', () => {
       'subagent.delta', // content_delta → text delta
       'subagent.thinking.delta', // thinking_delta → reasoning delta
       'subagent.stream.end', // stream_end → per-turn end signal
+      'subagent.provider.admission', // Provider capacity lifecycle
     ];
 
     // Static assertion: if someone renames a topic in task.ts,
@@ -487,6 +488,7 @@ describe('Subagent Bus topic stability', () => {
       'subagent.delta',
       'subagent.thinking.delta',
       'subagent.stream.end',
+      'subagent.provider.admission',
     ]);
   });
 });
@@ -578,6 +580,20 @@ describe('Task tool subagent event publishing', () => {
     const contentDelta: LoopEvent = { kind: 'content_delta', delta: 'hello' };
     const thinkingDelta: LoopEvent = { kind: 'thinking_delta', delta: 'hmm' };
     const streamEnd: LoopEvent = { kind: 'stream_end' };
+    const providerAdmission: LoopEvent = {
+      kind: 'provider_admission',
+      phase: 'rejected',
+      requestClass: 'background',
+      resource: 'pending_bytes',
+      scope: 'class',
+      reason: 'queue_full',
+      queuePosition: 0,
+      queueDepth: 1,
+      inFlight: 1,
+      limit: 1,
+      waitMs: 0,
+      maxWaitMs: 120_000,
+    };
     subagentExecutorState.execute.mockImplementationOnce(
       async ({ onEvent }: { onEvent?: (event: LoopEvent) => void | Promise<void> }) => {
         if (!onEvent) {
@@ -589,6 +605,7 @@ describe('Task tool subagent event publishing', () => {
           contentDelta,
           thinkingDelta,
           streamEnd,
+          providerAdmission,
         ]) {
           await onEvent(event);
         }
@@ -631,7 +648,7 @@ describe('Task tool subagent event publishing', () => {
     );
 
     expect(result.success).toBe(true);
-    expect(busState.publish).toHaveBeenCalledTimes(8);
+    expect(busState.publish).toHaveBeenCalledTimes(9);
     const ref = {
       sessionId: 'parent-session',
       projectPath: path.resolve('/tmp/parent-workspace/../parent-workspace'),
@@ -683,6 +700,16 @@ describe('Task tool subagent event publishing', () => {
     );
     expect(busState.publish).toHaveBeenNthCalledWith(
       8,
+      ref,
+      'subagent.provider.admission',
+      expect.objectContaining({
+        resource: 'pending_bytes',
+        requestClass: 'background',
+        reason: 'queue_full',
+      })
+    );
+    expect(busState.publish).toHaveBeenNthCalledWith(
+      9,
       ref,
       'subagent.complete',
       expect.objectContaining({ success: true, resumeDepth: 0 })

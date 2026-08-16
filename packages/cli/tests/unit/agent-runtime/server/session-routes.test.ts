@@ -2423,6 +2423,7 @@ describe('SessionRoutes runtime reuse', () => {
         kind: 'provider_admission',
         phase: 'queued',
         requestClass: 'foreground',
+        resource: 'stream',
         scope: 'domain',
         reason: 'capacity',
         queuePosition: 1,
@@ -2560,6 +2561,7 @@ describe('SessionRoutes runtime reuse', () => {
       {
         phase: 'queued',
         requestClass: 'foreground',
+        resource: 'stream',
         scope: 'domain',
         reason: 'capacity',
         queuePosition: 1,

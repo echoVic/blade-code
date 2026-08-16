@@ -1273,6 +1273,54 @@ describe('SessionRuntime', () => {
     await recovered.dispose();
   });
 
+  it('acknowledges a terminal failed turn without marking it completed', async () => {
+    const workspaceRoot = path.join(storageRoot, 'terminal-failure-project');
+    const sessionId = 'terminal-failure-session';
+    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const prepared = await runtime.prepareInputTurn('reject this exactly once');
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
+
+    await runtime.finishTurn(prepared.handle, {
+      acknowledgeInput: true,
+      outcome: {
+        status: 'aborted',
+        cause: 'failed',
+        turnsCount: 1,
+        toolCallsCount: 0,
+        durationMs: 1,
+      },
+    });
+
+    expect(runtime.getPendingSteeringCount()).toBe(0);
+    await expect(
+      SessionRuntime.hasPendingInbox(workspaceRoot, sessionId)
+    ).resolves.toBe(false);
+    const events = await new PersistentStore(workspaceRoot).loadEvents(sessionId);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'turn_aborted',
+          data: expect.objectContaining({
+            turnId: prepared.handle.id,
+            cause: 'failed',
+          }),
+        }),
+        expect.objectContaining({
+          type: 'inbox_acknowledged',
+          data: expect.objectContaining({
+            messageIds: [prepared.messageId],
+          }),
+        }),
+      ])
+    );
+    expect(events?.filter((event) => event.type === 'turn_completed')).toHaveLength(0);
+    await runtime.dispose();
+
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    expect(recovered.getPendingSteeringCount()).toBe(0);
+    await recovered.dispose();
+  });
+
   it('adopts a completed child result for an orphan Task call exactly once', async () => {
     const workspaceRoot = path.join(storageRoot, 'subagent-adoption-project');
     const sessionId = 'subagent-adoption-parent';

@@ -72,6 +72,7 @@ export function resolveModelConfig(
     | 'providerCircuitBreakerOpenMs'
     | 'providerRequestConcurrency'
     | 'providerRequestAdmissionMs'
+    | 'providerRequestPendingBytes'
   >,
   reasoningSelection: ReasoningEffortSelection,
   catalog: PiModelCatalog = getPiModelCatalog(),
@@ -115,6 +116,7 @@ export function resolveModelConfig(
       providerCircuitBreakerOpenMs: appConfig.providerCircuitBreakerOpenMs,
       providerRequestConcurrency: appConfig.providerRequestConcurrency,
       providerRequestAdmissionMs: appConfig.providerRequestAdmissionMs,
+      providerRequestPendingBytes: appConfig.providerRequestPendingBytes,
       modelCatalog: catalog,
     },
     reasoning,

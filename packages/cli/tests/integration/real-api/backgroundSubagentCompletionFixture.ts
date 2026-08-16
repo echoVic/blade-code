@@ -68,6 +68,7 @@ export async function seedBackgroundSubagentCompletionFixture(input: {
   childMarker: string;
   independentMarker: string;
   modelId: string;
+  requestPaddingBytes?: number;
 }): Promise<BackgroundSubagentCompletionFixture> {
   const childMarkerPath = path.join(input.workspace, 'background-child-marker.txt');
   const independentMarkerPath = path.join(
@@ -106,6 +107,20 @@ export async function seedBackgroundSubagentCompletionFixture(input: {
     modelId: input.modelId,
   });
   try {
+    if ((input.requestPaddingBytes ?? 0) > 0) {
+      await runtime
+        .getExecutionEngine()
+        .getContextManager()
+        .saveMessage(
+          input.sessionId,
+          'system',
+          `<!-- retained-footprint-padding:${'x'.repeat(
+            input.requestPaddingBytes ?? 0
+          )} -->`,
+          null,
+          { clientVisible: false }
+        );
+    }
     const queued = await runtime.enqueueSteering(parentPrompt, {
       allowBeforeTurn: true,
     });

@@ -4,12 +4,16 @@ import { DEFAULT_CONFIG } from '../../../src/config/defaults.js';
 import {
   DEFAULT_PROVIDER_REQUEST_ADMISSION_MS,
   DEFAULT_PROVIDER_REQUEST_CONCURRENCY,
+  DEFAULT_PROVIDER_REQUEST_PENDING_BYTES,
   MAX_PROVIDER_REQUEST_ADMISSION_MS,
   MAX_PROVIDER_REQUEST_CONCURRENCY,
+  MAX_PROVIDER_REQUEST_PENDING_BYTES,
   MIN_PROVIDER_REQUEST_ADMISSION_MS,
   MIN_PROVIDER_REQUEST_CONCURRENCY,
+  MIN_PROVIDER_REQUEST_PENDING_BYTES,
   normalizeProviderRequestAdmissionMs,
   normalizeProviderRequestConcurrency,
+  normalizeProviderRequestPendingBytes,
 } from '../../../src/config/providerRequestAdmission.js';
 
 describe('Provider request admission settings', () => {
@@ -20,8 +24,12 @@ describe('Provider request admission settings', () => {
     expect(DEFAULT_PROVIDER_REQUEST_ADMISSION_MS).toBe(180_000);
     expect(MIN_PROVIDER_REQUEST_ADMISSION_MS).toBe(1_000);
     expect(MAX_PROVIDER_REQUEST_ADMISSION_MS).toBe(600_000);
+    expect(DEFAULT_PROVIDER_REQUEST_PENDING_BYTES).toBe(128 * 1024 * 1024);
+    expect(MIN_PROVIDER_REQUEST_PENDING_BYTES).toBe(64 * 1024);
+    expect(MAX_PROVIDER_REQUEST_PENDING_BYTES).toBe(128 * 1024 * 1024);
     expect(DEFAULT_CONFIG.providerRequestConcurrency).toBe(4);
     expect(DEFAULT_CONFIG.providerRequestAdmissionMs).toBe(180_000);
+    expect(DEFAULT_CONFIG.providerRequestPendingBytes).toBe(128 * 1024 * 1024);
   });
 
   it.each([1, 4, 16])('accepts providerRequestConcurrency=%i', async (value) => {
@@ -63,6 +71,29 @@ describe('Provider request admission settings', () => {
     ).rejects.toThrow('Invalid --settings value');
   });
 
+  it.each([
+    64 * 1024,
+    8 * 1024 * 1024,
+    128 * 1024 * 1024,
+  ])('accepts providerRequestPendingBytes=%i', async (value) => {
+    await expect(
+      loadCliSettings(JSON.stringify({ providerRequestPendingBytes: value }))
+    ).resolves.toMatchObject({ providerRequestPendingBytes: value });
+  });
+
+  it.each([
+    0,
+    -1,
+    64 * 1024 - 1,
+    128 * 1024 * 1024 + 1,
+    64 * 1024 + 0.5,
+    Number.POSITIVE_INFINITY,
+  ])('rejects providerRequestPendingBytes=%s', async (value) => {
+    await expect(
+      loadCliSettings(JSON.stringify({ providerRequestPendingBytes: value }))
+    ).rejects.toThrow('Invalid --settings value');
+  });
+
   it('normalizes legacy and invalid values to production defaults', () => {
     expect(normalizeProviderRequestConcurrency(undefined)).toBe(4);
     expect(normalizeProviderRequestConcurrency(1)).toBe(1);
@@ -72,5 +103,8 @@ describe('Provider request admission settings', () => {
     expect(normalizeProviderRequestAdmissionMs(0)).toBe(0);
     expect(normalizeProviderRequestAdmissionMs(1_000)).toBe(1_000);
     expect(normalizeProviderRequestAdmissionMs(999)).toBe(180_000);
+    expect(normalizeProviderRequestPendingBytes(undefined)).toBe(128 * 1024 * 1024);
+    expect(normalizeProviderRequestPendingBytes(64 * 1024)).toBe(64 * 1024);
+    expect(normalizeProviderRequestPendingBytes(0)).toBe(128 * 1024 * 1024);
   });
 });

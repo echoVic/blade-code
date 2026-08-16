@@ -1172,6 +1172,7 @@ describe('AcpSession', () => {
           kind: 'provider_admission',
           phase: 'queued',
           requestClass: 'foreground',
+          resource: 'stream',
           scope: 'domain',
           reason: 'capacity',
           queuePosition: 1,
@@ -1186,6 +1187,7 @@ describe('AcpSession', () => {
           kind: 'provider_admission',
           phase: 'admitted',
           requestClass: 'foreground',
+          resource: 'stream',
           scope: 'domain',
           queuePosition: 0,
           queueDepth: 1,
@@ -1212,6 +1214,7 @@ describe('AcpSession', () => {
                 'blade/providerAdmission': {
                   phase: 'queued',
                   requestClass: 'foreground',
+                  resource: 'stream',
                   scope: 'domain',
                   reason: 'capacity',
                   queuePosition: 1,
@@ -1233,6 +1236,57 @@ describe('AcpSession', () => {
           }),
         ])
       );
+      expect(
+        mockConnection.sessionUpdates.some(
+          (entry) =>
+            entry.update.sessionUpdate === 'agent_message_chunk' &&
+            JSON.stringify(entry).includes('providerAdmission')
+        )
+      ).toBe(false);
+    });
+
+    it('projects pending-byte rejection before clearing ACP metadata', async () => {
+      const mockAgent = getMockAgent();
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield {
+          kind: 'provider_admission',
+          phase: 'rejected',
+          requestClass: 'foreground',
+          resource: 'pending_bytes',
+          scope: 'global',
+          reason: 'queue_full',
+          queuePosition: 0,
+          queueDepth: 1,
+          inFlight: 1,
+          limit: 1,
+          waitMs: 0,
+          maxWaitMs: 120_000,
+        } as LoopEvent;
+        return { success: true, finalMessage: 'rejected-control' };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'saturate retained request bytes' }],
+      });
+
+      const metadata = mockConnection.sessionUpdates
+        .filter((entry) => entry.update.sessionUpdate === 'session_info_update')
+        .map((entry) => entry.update._meta?.['blade/providerAdmission']);
+      expect(metadata).toContainEqual({
+        phase: 'rejected',
+        requestClass: 'foreground',
+        resource: 'pending_bytes',
+        scope: 'global',
+        reason: 'queue_full',
+        queuePosition: 0,
+        queueDepth: 1,
+        inFlight: 1,
+        limit: 1,
+        waitMs: 0,
+        maxWaitMs: 120_000,
+      });
+      expect(metadata.at(-1)).toBeNull();
       expect(
         mockConnection.sessionUpdates.some(
           (entry) =>

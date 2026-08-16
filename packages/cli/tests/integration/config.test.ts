@@ -722,6 +722,7 @@ describe('ConfigManager 集成', () => {
       {
         providerRequestConcurrency: 6,
         providerRequestAdmissionMs: 120_000,
+        providerRequestPendingBytes: 8 * 1024 * 1024,
       },
       { scope: 'global', immediate: true }
     );
@@ -730,10 +731,12 @@ describe('ConfigManager 集成', () => {
     expect(JSON.parse(readFileSync(userConfigPath, 'utf8'))).toMatchObject({
       providerRequestConcurrency: 6,
       providerRequestAdmissionMs: 120_000,
+      providerRequestPendingBytes: 8 * 1024 * 1024,
     });
 
     const loaded = await ConfigManager.getInstance().initialize();
     expect(loaded.providerRequestConcurrency).toBe(6);
     expect(loaded.providerRequestAdmissionMs).toBe(120_000);
+    expect(loaded.providerRequestPendingBytes).toBe(8 * 1024 * 1024);
   });
 });

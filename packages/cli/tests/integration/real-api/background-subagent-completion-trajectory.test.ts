@@ -19,6 +19,7 @@ import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import { runBackgroundSubagentCompletionAcpDriver } from '../../support/backgroundSubagentCompletionAcpDriver.js';
 import { runBackgroundSubagentCompletionPtyDriver } from '../../support/backgroundSubagentCompletionPtyDriver.js';
 import { runBackgroundSubagentCompletionWebDriver } from '../../support/backgroundSubagentCompletionWebDriver.js';
+import { runWeightedProviderAdmissionPtyDriver } from '../../support/weightedProviderAdmissionPtyDriver.js';
 import {
   type RecordingProviderProxy,
   startRecordingProviderProxy,
@@ -63,7 +64,8 @@ function modelMarker(value: string): string {
 
 async function prepareFixture(
   model: (typeof models)[number],
-  surface: 'headless' | 'acp' | 'pty' | 'web'
+  surface: 'headless' | 'acp' | 'pty' | 'web',
+  options: { providerRequestPendingBytes?: number } = {}
 ): Promise<PreparedFixture> {
   if (!model.baseURL) throw new Error(`Missing Provider base URL for ${model.model}`);
   const root = await mkdtemp(path.join(os.tmpdir(), `blade-bg-completion-${surface}-`));
@@ -74,10 +76,15 @@ async function prepareFixture(
     model.baseURL,
     surface === 'acp'
       ? {}
-      : {
-          holdBodyIncludes: 'Call Read exactly once on the requested marker file.',
-          holdMs: 10_000,
-        }
+      : options.providerRequestPendingBytes !== undefined
+        ? {
+            holdRequestNumber: 2,
+            holdMs: surface === 'pty' ? 60_000 : 10_000,
+          }
+        : {
+            holdBodyIncludes: 'Call Read exactly once on the requested marker file.',
+            holdMs: 10_000,
+          }
   );
   const config = {
     ...buildRealApiRuntimeConfig({ ...model, baseURL: proxy.baseUrl }),
@@ -85,6 +92,9 @@ async function prepareFixture(
     maxTurns: 12,
     providerRequestConcurrency: 1,
     providerRequestAdmissionMs: 120_000,
+    ...(options.providerRequestPendingBytes !== undefined
+      ? { providerRequestPendingBytes: options.providerRequestPendingBytes }
+      : {}),
   };
   await Promise.all([
     mkdir(workspace, { recursive: true }),
@@ -103,6 +113,9 @@ async function prepareFixture(
         maxTurns: 12,
         providerRequestConcurrency: 1,
         providerRequestAdmissionMs: 120_000,
+        ...(options.providerRequestPendingBytes !== undefined
+          ? { providerRequestPendingBytes: options.providerRequestPendingBytes }
+          : {}),
         hooks: { enabled: false },
         disableAllHooks: true,
         mcpServers: {},
@@ -129,6 +142,9 @@ async function prepareFixture(
       childMarker: `BACKGROUND_CHILD_${suffix}`,
       independentMarker: `PARENT_INDEPENDENT_${suffix}`,
       modelId: config.currentModelId,
+      ...(options.providerRequestPendingBytes !== undefined
+        ? { requestPaddingBytes: 40 * 1024 }
+        : {}),
     })
   );
   resetBackgroundCompletionRuntimeState();
@@ -572,6 +588,94 @@ describe
             browserFaults: [],
           });
           await assertBackgroundCompletion(prepared);
+        } finally {
+          await cleanupFixture(prepared);
+        }
+      }, 300_000);
+
+      it(`${model.model} projects an overweight background rejection in Headless`, async () => {
+        const prepared = await prepareFixture(model, 'headless', {
+          providerRequestPendingBytes: 64 * 1024,
+        });
+        let stdout = '';
+        let stderr = '';
+        try {
+          const exitCode = await runWithCwdOverride(prepared.workspace, () =>
+            runHeadless(
+              {
+                headless: true,
+                outputFormat: 'jsonl',
+                resume: prepared.sessionId,
+                maxTurns: 8,
+                permissionMode: PermissionMode.YOLO,
+                allowedTools: ['Task', 'Read'],
+              },
+              {
+                stdout: {
+                  write(chunk: string) {
+                    stdout += chunk;
+                    return true;
+                  },
+                },
+                stderr: {
+                  write(chunk: string) {
+                    stderr += chunk;
+                    return true;
+                  },
+                },
+              },
+              { stdin: Readable.from([]) as NodeJS.ReadStream }
+            )
+          );
+          const events = stdout
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+          expect(exitCode).toBe(0);
+          expect(events).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                type: 'provider_admission',
+                phase: 'rejected',
+                request_class: 'background',
+                resource: 'pending_bytes',
+                reason: 'queue_full',
+              }),
+            ])
+          );
+          expect(
+            events.some(
+              (event) =>
+                event.type === 'provider_admission' && event.phase === 'admitted'
+            )
+          ).toBe(false);
+          expect(prepared.proxy.heldRequestNumbers).toHaveLength(1);
+          expect(prepared.proxy.maxInFlight).toBe(1);
+          expect(`${stdout}\n${stderr}`).not.toContain(model.apiKey);
+        } finally {
+          await cleanupFixture(prepared);
+        }
+      }, 300_000);
+
+      it(`${model.model} renders an overweight background rejection in raw PTY`, async () => {
+        const prepared = await prepareFixture(model, 'pty', {
+          providerRequestPendingBytes: 64 * 1024,
+        });
+        try {
+          const evidence = await runWeightedProviderAdmissionPtyDriver({
+            workspace: prepared.workspace,
+            storageRoot: prepared.storageRoot,
+            home: prepared.home,
+            sessionId: prepared.sessionId,
+            childMarker: prepared.fixture.childMarker,
+            secret: model.apiKey,
+          });
+          expect(evidence).toMatchObject({
+            childFailureVisible: true,
+            sidecarPendingByteFailure: true,
+          });
+          expect(prepared.proxy.heldRequestNumbers).toHaveLength(1);
+          expect(prepared.proxy.maxInFlight).toBe(1);
         } finally {
           await cleanupFixture(prepared);
         }

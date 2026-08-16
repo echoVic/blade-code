@@ -186,6 +186,10 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   `message_persistence_failed`，从 JSONL model-context projection 重建当前 Runtime
   内存并清除未提交消息。streaming delta 可以先作为临时进度显示，但不构成成功或恢复
   证据；失败 turn 不确认 inbox，冷启动会优先重新执行该 durable input。
+- terminal Provider `queue_full` 是上述重放规则的确定性例外：Runtime 仍提交
+  `turn_aborted(cause=failed)`，但同时确认该 turn 已 claim 的 inbox IDs，避免 Web
+  reload、SSE reconnect 或 ACP load 绕过资源边界自动重放。Provider outage、
+  `wait_timeout`、cancel 和 process crash 不使用该例外。
 - 最终 assistant message 同批携带有界 `turnFinalization` receipt，只记录 turn ID、
   本 turn 已 claim 的 inbox IDs 和 turns/tool-calls/duration 指标。正常成功路径把这些
   inbox IDs 的 `inbox_acknowledged` 与 `turn_completed` 作为一个 validated batch fsync，
@@ -232,9 +236,12 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
 - Provider physical stream 使用 process-wide 有界公平准入：全局 active 16/pending
   128，同一敏感 failure domain 默认 active 4/pending 32，同一 root Session 及全部
   descendant subagent active 3/pending 16。非 foreground 保留全局和 domain 容量，
-  queued ticket 每 15 秒 heartbeat 并响应统一 AbortSignal；permit 只覆盖一个真实
+  且 pending count 与 retained-footprint bytes 都不能占用 foreground reserve。排队
+  request footprint 全局最多 128 MiB、每 domain 64 MiB、每 root owner 32 MiB；
+  queued ticket 每 15 秒 heartbeat 并响应统一 AbortSignal。permit 只覆盖一个真实
   iterator，error/EOF/consumer return 后先释放，再进入 retry、circuit wait 或 fallback。
-  `provider_admission` 不持久化 domain/owner/Session identity。
+  `provider_admission` 只暴露 sanitized resource kind，不持久化 request bytes、
+  domain/owner/Session identity。
 - 同一进程内的 Session 通过 128 项有界 failure-domain registry 共享 Provider circuit。
   每个 domain 使用最多 256 个样本的 60 秒窗口；Open 到期后只有一个 generation/lease
   token 可拥有 HalfOpen probe，abort/timeout 显式 abandon，lease takeover 后的 stale

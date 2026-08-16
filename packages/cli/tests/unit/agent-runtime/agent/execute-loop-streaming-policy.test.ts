@@ -357,6 +357,7 @@ class ProviderRetryStreamingChatService implements IChatService {
       providerAdmission: {
         phase: 'queued',
         requestClass: 'foreground',
+        resource: 'stream',
         scope: 'domain',
         reason: 'capacity',
         queuePosition: 1,
@@ -371,6 +372,7 @@ class ProviderRetryStreamingChatService implements IChatService {
       providerAdmission: {
         phase: 'admitted',
         requestClass: 'foreground',
+        resource: 'stream',
         scope: 'domain',
         queuePosition: 0,
         queueDepth: 0,

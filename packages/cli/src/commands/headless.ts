@@ -1034,6 +1034,7 @@ function createEventWriter(
         writeJsonl('provider_admission', {
           phase: event.phase,
           request_class: event.requestClass,
+          resource: event.resource,
           scope: event.scope,
           reason: event.reason,
           queue_position: event.queuePosition,
@@ -1048,7 +1049,7 @@ function createEventWriter(
       }
       writeLine(
         io.stderr,
-        `[provider-admission:${event.phase}] ${event.scope} ` +
+        `[provider-admission:${event.phase}] ${event.resource}/${event.scope} ` +
           `${event.inFlight}/${event.limit} queue=${event.queuePosition}/${event.queueDepth}`
       );
     },
@@ -1219,6 +1220,7 @@ export async function runHeadless(
   const phaseState: HeadlessPhaseState = { targetLocked: false };
   let runtime: SessionRuntime | undefined;
   let taskAdmissionUnsubscribe: (() => void) | undefined;
+  let subagentProviderAdmissionUnsubscribe: (() => void) | undefined;
   const abortControl = createHeadlessAbortSignal(control);
   let outputFailed = false;
   const outputEgress = new HeadlessOutputEgress(io, {
@@ -1248,6 +1250,8 @@ export async function runHeadless(
   const finish = async (exitCode: number): Promise<number> => {
     taskAdmissionUnsubscribe?.();
     taskAdmissionUnsubscribe = undefined;
+    subagentProviderAdmissionUnsubscribe?.();
+    subagentProviderAdmissionUnsubscribe = undefined;
     return (await flushOutput()) ? exitCode : 1;
   };
 
@@ -1338,6 +1342,60 @@ export async function runHeadless(
       : undefined;
     const workspaceRoot =
       createdTask?.metadata.projectPath ?? metadata?.projectPath ?? getCwd();
+    subagentProviderAdmissionUnsubscribe = Bus.subscribe((event) => {
+      if (
+        event.type !== 'subagent.provider.admission' ||
+        event.sessionId !== sessionId ||
+        event.projectPath !== workspaceRoot
+      ) {
+        return;
+      }
+      const properties = event.properties;
+      const phases = ['queued', 'admitted', 'rejected'] as const;
+      const requestClasses = ['foreground', 'background', 'internal'] as const;
+      const resources = ['stream', 'pending_count', 'pending_bytes'] as const;
+      const scopes = ['global', 'domain', 'owner', 'class'] as const;
+      const reasons = ['capacity', 'queue_full', 'wait_timeout', 'closed'] as const;
+      if (
+        !phases.includes(properties.phase as (typeof phases)[number]) ||
+        !requestClasses.includes(
+          properties.requestClass as (typeof requestClasses)[number]
+        ) ||
+        !resources.includes(properties.resource as (typeof resources)[number]) ||
+        !scopes.includes(properties.scope as (typeof scopes)[number]) ||
+        (properties.reason !== undefined &&
+          !reasons.includes(properties.reason as (typeof reasons)[number])) ||
+        typeof properties.queuePosition !== 'number' ||
+        typeof properties.queueDepth !== 'number' ||
+        typeof properties.inFlight !== 'number' ||
+        typeof properties.limit !== 'number' ||
+        typeof properties.waitMs !== 'number' ||
+        typeof properties.maxWaitMs !== 'number' ||
+        (properties.recoveryRemainingMs !== undefined &&
+          typeof properties.recoveryRemainingMs !== 'number')
+      ) {
+        return;
+      }
+      eventWriter.providerAdmission({
+        kind: 'provider_admission',
+        phase: properties.phase as (typeof phases)[number],
+        requestClass: properties.requestClass as (typeof requestClasses)[number],
+        resource: properties.resource as (typeof resources)[number],
+        scope: properties.scope as (typeof scopes)[number],
+        ...(properties.reason !== undefined
+          ? { reason: properties.reason as (typeof reasons)[number] }
+          : {}),
+        queuePosition: properties.queuePosition,
+        queueDepth: properties.queueDepth,
+        inFlight: properties.inFlight,
+        limit: properties.limit,
+        waitMs: properties.waitMs,
+        maxWaitMs: properties.maxWaitMs,
+        ...(properties.recoveryRemainingMs !== undefined
+          ? { recoveryRemainingMs: properties.recoveryRemainingMs }
+          : {}),
+      });
+    });
     if (!createdTask) {
       await SessionService.setSessionPermissionMode(
         sessionId,
@@ -1769,6 +1827,7 @@ export async function runHeadless(
     return await finish(1);
   } finally {
     taskAdmissionUnsubscribe?.();
+    subagentProviderAdmissionUnsubscribe?.();
     try {
       await runtime?.dispose();
     } finally {

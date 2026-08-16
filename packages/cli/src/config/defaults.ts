@@ -8,6 +8,7 @@ import { DEFAULT_PROVIDER_CIRCUIT_OPEN_MS } from './providerCircuitBreaker.js';
 import {
   DEFAULT_PROVIDER_REQUEST_ADMISSION_MS,
   DEFAULT_PROVIDER_REQUEST_CONCURRENCY,
+  DEFAULT_PROVIDER_REQUEST_PENDING_BYTES,
 } from './providerRequestAdmission.js';
 import { BladeConfig, PermissionMode } from './types.js';
 
@@ -33,6 +34,7 @@ export const DEFAULT_CONFIG: BladeConfig = {
   providerCircuitBreakerOpenMs: DEFAULT_PROVIDER_CIRCUIT_OPEN_MS,
   providerRequestConcurrency: DEFAULT_PROVIDER_REQUEST_CONCURRENCY,
   providerRequestAdmissionMs: DEFAULT_PROVIDER_REQUEST_ADMISSION_MS,
+  providerRequestPendingBytes: DEFAULT_PROVIDER_REQUEST_PENDING_BYTES,
 
   // UI
   codeTheme: 'dracula',

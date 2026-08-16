@@ -57,13 +57,18 @@ ACP 使用结构化字段。
 前都必须取得 process-wide admission permit。默认同一 endpoint/model/tier/credential
 failure domain 最多 4 条、全进程最多 16 条、同一 root Session 及全部 descendant
 subagent 最多 3 条 active stream。全局 pending 固定 128、每 domain 32、每 root owner
-16，队列按 request class 与 root owner 公平调度，不随 Session 数量增长。
+16，队列按 request class 与 root owner 公平调度，不随 Session 数量增长。等待中的
+逻辑 request footprint 另受全局 128 MiB、每 domain 64 MiB、每 root owner 32 MiB
+约束；active capacity 空闲时不使用 pending byte budget。
 
 root foreground、background subagent 和 internal sampling 使用独立 class。
 background/internal 在默认 domain 最多占 3 条、全进程最多占 12 条；internal 另限制为
 全局 2 条、每 domain 1 条。等待默认最多 180 秒，每 15 秒投影 heartbeat，caller abort
 会原子移除 ticket。`providerRequestConcurrency` 可配置为 `1-16`；
 `providerRequestAdmissionMs=0` 表示 fail-fast，其他值必须为 `1000-600000`。
+`providerRequestPendingBytes` 默认 128 MiB，可配置为 64 KiB-128 MiB。
+background/internal 的 pending count 与 bytes 都有独立上限，给 foreground 保留排队
+容量；class aging 只改变调度 rank，不改变资源记账 class。
 
 顺序固定为：
 
@@ -81,9 +86,15 @@ circuit preflight
 circuit wait、tool execution 或 fallback selection。排队不增加 physical attempt；
 foreground recovery 已启动时，admission wait 与原绝对 deadline 共用剩余预算。
 
-`provider_admission` 只投影 `queued|admitted|rejected`、request class、capacity scope、
-队列/active 整数与 bounded wait；failure-domain、root owner、Session ID、endpoint、
-credential 和 HMAC 均不进入 surface 或 transcript。
+`provider_admission` 只投影 `queued|admitted|rejected`、request class、
+`stream|pending_count|pending_bytes` resource、capacity scope、队列/active 整数与
+bounded wait；request footprint、aggregate pending bytes、failure-domain、root owner、
+Session ID、endpoint、credential 和 HMAC 均不进入 surface 或 transcript。
+
+retry/fallback 最终仍以 `queue_full` 结束时，该 turn 保留
+`turn_aborted(cause=failed)`，同时只确认本 turn 已 claim 的 durable input。Web reload、
+SSE reconnect 和 ACP load 不会绕过 admission 边界重放同一请求；Provider outage、
+`wait_timeout`、caller cancel 和 process crash 继续保留原输入恢复语义。
 
 ## 共享 Provider Circuit
 

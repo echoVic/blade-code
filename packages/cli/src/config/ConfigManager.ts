@@ -63,10 +63,13 @@ import {
 import {
   isValidProviderRequestAdmissionMs,
   isValidProviderRequestConcurrency,
+  isValidProviderRequestPendingBytes,
   MAX_PROVIDER_REQUEST_ADMISSION_MS,
   MAX_PROVIDER_REQUEST_CONCURRENCY,
+  MAX_PROVIDER_REQUEST_PENDING_BYTES,
   MIN_PROVIDER_REQUEST_ADMISSION_MS,
   MIN_PROVIDER_REQUEST_CONCURRENCY,
+  MIN_PROVIDER_REQUEST_PENDING_BYTES,
 } from './providerRequestAdmission.js';
 import { normalizeRuntimeEnvironment } from './runtimeEnvironment.js';
 import {
@@ -100,6 +103,7 @@ export interface WorkspaceModelConfig {
   providerCircuitBreakerOpenMs?: number;
   providerRequestConcurrency?: number;
   providerRequestAdmissionMs?: number;
+  providerRequestPendingBytes?: number;
 }
 
 export interface WorkspaceRuntimeSettings {
@@ -561,6 +565,9 @@ export class ConfigManager {
         ...(base.providerRequestAdmissionMs !== undefined
           ? { providerRequestAdmissionMs: base.providerRequestAdmissionMs }
           : {}),
+        ...(base.providerRequestPendingBytes !== undefined
+          ? { providerRequestPendingBytes: base.providerRequestPendingBytes }
+          : {}),
       };
     }
 
@@ -588,6 +595,11 @@ export class ConfigManager {
       ...(DEFAULT_CONFIG.providerRequestAdmissionMs !== undefined
         ? {
             providerRequestAdmissionMs: DEFAULT_CONFIG.providerRequestAdmissionMs,
+          }
+        : {}),
+      ...(DEFAULT_CONFIG.providerRequestPendingBytes !== undefined
+        ? {
+            providerRequestPendingBytes: DEFAULT_CONFIG.providerRequestPendingBytes,
           }
         : {}),
     };
@@ -622,6 +634,9 @@ export class ConfigManager {
       }
       if (layer.providerRequestAdmissionMs !== undefined) {
         resolved.providerRequestAdmissionMs = layer.providerRequestAdmissionMs;
+      }
+      if (layer.providerRequestPendingBytes !== undefined) {
+        resolved.providerRequestPendingBytes = layer.providerRequestPendingBytes;
       }
     };
 
@@ -1246,6 +1261,15 @@ export class ConfigManager {
       errors.push(
         'providerRequestAdmissionMs 必须是 0，或 ' +
           `${MIN_PROVIDER_REQUEST_ADMISSION_MS}-${MAX_PROVIDER_REQUEST_ADMISSION_MS} 之间的整数`
+      );
+    }
+    if (
+      config.providerRequestPendingBytes !== undefined &&
+      !isValidProviderRequestPendingBytes(config.providerRequestPendingBytes)
+    ) {
+      errors.push(
+        'providerRequestPendingBytes 必须是 ' +
+          `${MIN_PROVIDER_REQUEST_PENDING_BYTES}-${MAX_PROVIDER_REQUEST_PENDING_BYTES} 之间的整数`
       );
     }
 

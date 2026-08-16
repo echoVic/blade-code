@@ -384,6 +384,13 @@ Byte saturation uses `queue_full` plus `resource: pending_bytes`. The error
 remains retryable unless the scheduler is closed. It is fallback-eligible and
 does not count as a physical Provider attempt.
 
+If retry and fallback selection still terminate in `queue_full`, the Agent
+records `turn_aborted(cause=failed)` and acknowledges only the input claimed
+by that turn. Web reload, SSE reconnect, and ACP load therefore cannot replay
+the rejected request around the admission boundary. Provider outage,
+`wait_timeout`, caller cancellation, and process crash retain their existing
+recoverable-input behavior.
+
 No event exposes:
 
 - request footprint;
@@ -404,25 +411,31 @@ JSONL adds:
 {
   "type": "provider_admission",
   "phase": "rejected",
+  "request_class": "background",
   "resource": "pending_bytes",
-  "scope": "global",
+  "scope": "class",
   "reason": "queue_full"
 }
 ```
 
-Text mode emits one bounded stderr status/error and no assistant content.
+Root events and background-child events use the same JSONL schema. Headless
+forwards only events for its current Session/workspace and omits child Session
+identity. Text mode emits one bounded stderr status/error and no assistant
+content.
 
 ### TUI
 
 `provider_admission` remains transient. Queue waiting retains its current
-status line. Pending-byte rejection uses the existing terminal error path;
-the store never persists byte counters or payload size.
+status line. A background-child pending-byte rejection uses the existing
+terminal child-failure path; the store never persists byte counters or payload
+size.
 
 ### Web
 
-SSE and the Session store carry `resource`. StatusBar behavior for active
-queueing remains unchanged. Rejected state clears at terminal completion and
-after reload. No request-size information enters DOM text.
+SSE carries `resource`. The Session store retains only active queued state;
+admitted or rejected events clear it, and the existing terminal error path
+renders failure. Reload restores no admission state. No request-size
+information enters DOM text.
 
 ### ACP
 
@@ -495,6 +508,7 @@ projection remain schema-identical.
 - Web SSE/store/StatusBar cleanup and reload;
 - ACP metadata and terminal null;
 - root and subagent SSE equality;
+- terminal queue-full input acknowledgement without `turn_completed`;
 - no pending-byte counters or request sizes in public payloads;
 - no raw request graph in scheduler records;
 - no direct pi-ai stream bypass.
@@ -518,14 +532,19 @@ greater than 64 KiB through bounded project instructions and user text.
 ### Headless and raw PTY
 
 1. the root request is admitted immediately despite its large footprint;
-2. the model starts one background child;
-3. the proxy holds the child Provider request;
-4. the parent wake-up attempts its next physical request;
-5. that request needs to wait and is rejected with
-   `resource=pending_bytes`;
-6. no parent follow-up reaches the proxy;
-7. Headless emits schema-valid JSONL;
-8. raw PTY renders the terminal failure without a fatal Yoga error;
+2. the model starts one background child and completes independent parent
+   work;
+3. the parent's next physical request is admitted and held by the proxy;
+4. the background child attempts its first physical request while capacity is
+   occupied;
+5. the child needs to wait and is rejected with
+   `requestClass=background`, `resource=pending_bytes`;
+6. no child request reaches the proxy, while the held parent request may
+   complete normally after release;
+7. the failed child sidecar records the exact pending-byte reason and Headless
+   forwards schema-valid child admission JSONL without child identity;
+8. raw PTY proves both the sidecar reason and a visible child failure without
+   a fatal Yoga error;
 9. caller, child, proxy, PTY, process tree, HOME, storage, and workspace are
    reclaimed.
 
@@ -538,9 +557,11 @@ greater than 64 KiB through bounded project instructions and user text.
 5. Session A is released and obtains a real Provider final result;
 6. both Session transcripts remain isolated;
 7. Web submits Session B through the production Chromium composer, observes
-   SSE/terminal state, reloads, and reports zero console/page errors;
+   SSE/terminal state, reloads, proves the rejected marker is not replayed,
+   and reports zero console/page errors;
 8. ACP uses two real stdio Sessions and emits metadata without assistant-text
-   pollution.
+   pollution, then loads Session B and proves the rejected marker is not
+   replayed.
 
 The frozen negative matrix is:
 
