@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.38] - 2026-08-16
+
+### 🛡️ 稳定性
+
+- TUI `MessageArea` 只保留一个 Ink `Static` root，并将历史消息与已完成的 streaming
+  blocks 合并为同一 append-only 投影。流结束时不再卸载第二个条件式 `Static`，避免
+  Ink 6.4.10 的 `rootNode.staticNode` 残留已释放 Yoga node，随后在
+  `getComputedWidth()` 触发 `memory access out of bounds`
+- 既有 `clearCount` 继续作为 finalization、resize 与 history reset 的唯一重挂载边界；
+  raw tail 仍由有界 stdout renderer 承担，原生 scrollback、流式去重和最终消息提交语义
+  保持不变
+
+### ✅ 测试相关
+
+- 新增 TUI Static ownership 搜索门禁，要求 `MessageArea` 恰好一个 Ink `Static` root，
+  且历史项与 streaming static items 必须进入同一投影
+- 使用真实 DeepSeek V4 Pro raw PTY 复现 background-subagent completion 路径；修复后
+  连续四次单次通过，其中覆盖 `streamingStaticItemCount: 0 -> 1 -> 2 -> 0` 的原崩溃
+  前提，并完成 finalization、progress removal 与 terminal resize
+
 ## [0.10.37] - 2026-08-16
 
 ### 🛡️ 稳定性
