@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.40] - 2026-08-16
+
+### 🛡️ 稳定性
+
+- 新增进程级、按 Provider failure-domain 隔离的有界公平请求准入：默认每个 domain
+  最多 4 条 active physical stream，全进程最多 16 条；同一 root Session 及其全部
+  Task/Team descendant 共享 owner，单 owner 最多 3 条，无法再通过 subagent fan-out
+  绕过容量上限
+- foreground、background 与 internal 请求使用显式 class；non-foreground 全局最多
+  12 条、同 owner 最多 2 条，并为每个 domain 保留一条 foreground 容量。跨 owner
+  使用稳定 round-robin，等待每满 30 秒提升一级优先级，兼顾交互请求与长任务推进
+- global/domain/owner pending 分别固定最多 128/32/16；caller abort 会原子移除 ticket，
+  admission deadline 默认 180 秒并每 15 秒发送 heartbeat。permit 覆盖完整 physical
+  iterator，在 retry sleep、circuit wait 与 fallback selection 前释放，queue wait
+  不计为 physical attempt
+- circuit 新增无副作用 `preflight()`：已知 Open/HalfOpen 请求不会占用容量，matured
+  probe 只在取得 permit 后由 `check()` 原子认领；排队期间 circuit 状态变化会在零
+  Provider traffic 下释放 permit。failure-domain credential 与 routing headers 继续
+  只进入进程随机 secret 驱动的 HMAC
+- 新增 `providerRequestConcurrency` 与 `providerRequestAdmissionMs`，并将 typed
+  `provider_admission` lifecycle 统一投影到 Headless JSONL、TUI、Web SSE/StatusBar、
+  ACP metadata 与 subagent SSE；terminal/reload 后清除瞬态状态，不写入 transcript
+
+### ✅ 测试相关
+
+- 确定性测试覆盖 active/pending 硬上限、foreground reserve、owner round-robin、class
+  aging、abort/timeout/close、iterator lifetime、retry/fallback release、circuit race、
+  15 秒 heartbeat、恢复 deadline、root/descendant owner 传播、四端 schema/清理及
+  payload/transcript/credential 泄漏搜索门禁
+- DeepSeek Flash/Pro 均通过 Headless parent-child、raw PTY TUI、production Chromium
+  Web GUI、真实 ACP stdio 以及 Web/ACP 双 root Session 对照；透明代理持有首个请求
+  10 秒，证明第二个请求在 release 前保持零 Provider traffic、同 domain 最大并发为
+  1。最终 12 个目标/控制 cell 全部使用 framework retry=0
+
 ## [0.10.39] - 2026-08-16
 
 ### 🛡️ 稳定性
