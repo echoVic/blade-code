@@ -38,21 +38,23 @@ describe('taskFailure', () => {
     expect(toTaskFailure(message)).toMatchObject({ code, retryable });
   });
 
-  it.each([
-    'pending_count',
-    'pending_bytes',
-  ] as const)('preserves sanitized %s capacity ownership', (resource) => {
-    const failure = toTaskFailure(new TaskAdmissionQueueFullError(resource, 64 * 1024));
+  it.each(['pending_count', 'pending_bytes'] as const)(
+    'preserves sanitized %s capacity ownership',
+    (resource) => {
+      const failure = toTaskFailure(
+        new TaskAdmissionQueueFullError(resource, 64 * 1024)
+      );
 
-    expect(failure).toEqual({
-      code: 'capacity',
-      message: 'Task admission capacity is full. Retry after running tasks complete.',
-      retryable: true,
-      resource,
-    });
-    expect(isSessionTaskFailure(failure)).toBe(true);
-    expect(JSON.stringify(failure)).not.toContain(String(64 * 1024));
-  });
+      expect(failure).toEqual({
+        code: 'capacity',
+        message: 'Task admission capacity is full. Retry after running tasks complete.',
+        retryable: true,
+        resource,
+      });
+      expect(isSessionTaskFailure(failure)).toBe(true);
+      expect(JSON.stringify(failure)).not.toContain(String(64 * 1024));
+    }
+  );
 
   it('preserves sanitized resident Runtime capacity ownership', () => {
     const failure = toTaskFailure(new SessionRuntimeCapacityError(32));

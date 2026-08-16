@@ -20,26 +20,23 @@ describe('foreground Provider recovery settings', () => {
     expect(DEFAULT_CONFIG.providerForegroundRecoveryMs).toBe(600_000);
   });
 
-  it.each([
-    0, 30_000, 600_000, 3_600_000,
-  ])('accepts providerForegroundRecoveryMs=%i', async (value) => {
-    await expect(
-      loadCliSettings(JSON.stringify({ providerForegroundRecoveryMs: value }))
-    ).resolves.toMatchObject({ providerForegroundRecoveryMs: value });
-  });
+  it.each([0, 30_000, 600_000, 3_600_000])(
+    'accepts providerForegroundRecoveryMs=%i',
+    async (value) => {
+      await expect(
+        loadCliSettings(JSON.stringify({ providerForegroundRecoveryMs: value }))
+      ).resolves.toMatchObject({ providerForegroundRecoveryMs: value });
+    }
+  );
 
-  it.each([
-    -1,
-    1,
-    29_999,
-    3_600_001,
-    30_000.5,
-    Number.POSITIVE_INFINITY,
-  ])('rejects providerForegroundRecoveryMs=%s', async (value) => {
-    await expect(
-      loadCliSettings(JSON.stringify({ providerForegroundRecoveryMs: value }))
-    ).rejects.toThrow('Invalid --settings value');
-  });
+  it.each([-1, 1, 29_999, 3_600_001, 30_000.5, Number.POSITIVE_INFINITY])(
+    'rejects providerForegroundRecoveryMs=%s',
+    async (value) => {
+      await expect(
+        loadCliSettings(JSON.stringify({ providerForegroundRecoveryMs: value }))
+      ).rejects.toThrow('Invalid --settings value');
+    }
+  );
 
   it('normalizes legacy and invalid values to the production default', () => {
     expect(normalizeForegroundProviderRecoveryMs(undefined)).toBe(600_000);

@@ -903,59 +903,91 @@ function toolCallNames(events: ReturnType<typeof readSessionEvents>): string[] {
 describe
   .skipIf(!isRealApiTestEnabled())
   .sequential('bounded foreground Provider recovery release matrix', () => {
-    it.each(matrix)('$model.model × $surface', async ({ model, surface }) => {
-      const root = await mkdtemp(
-        path.join(
-          os.tmpdir(),
-          `blade-provider-recovery-${safeSlug(model.model)}-${surface}-`
-        )
-      );
-      const home = path.join(root, 'home');
-      const storage = path.join(root, 'storage');
-      const workspaceInput = path.join(root, 'workspace');
-      const proxy = await startRecoveryProxy(
-        model.baseURL ?? 'https://api.deepseek.com'
-      );
-      let sessionId = `provider-recovery-${safeSlug(
-        model.model
-      )}-${surface}-${Date.now()}`;
-      const marker = `PROVIDER_RECOVERY_OK_${Date.now()}`;
-      const secondaryMarker = `PROVIDER_CIRCUIT_SHARED_OK_${Date.now()}`;
-      const prompt =
-        '[PASTE: bounded foreground provider recovery]\n' +
-        'Read src/add.js and test/add.test.js. Use Edit exactly once to replace ' +
-        '"return left - right;" with "return left + right;" in src/add.js. ' +
-        'Do not use Write or any other mutation tool. Then call Bash exactly once ' +
-        `with command "npm test". Finish by replying with exactly ${marker}.`;
-      const secondaryPrompt =
-        `Reply with exactly ${secondaryMarker}. ` +
-        'Do not call tools and do not include any other text.';
-      try {
-        await Promise.all([
-          mkdir(home, { recursive: true }),
-          mkdir(storage, { recursive: true }),
-          mkdir(workspaceInput, { recursive: true }),
-        ]);
-        const workspace = await initializeWorkspace(workspaceInput);
-        await writeRuntimeConfig(home, model, proxy.baseURL);
+    it.each(matrix)(
+      '$model.model × $surface',
+      async ({ model, surface }) => {
+        const root = await mkdtemp(
+          path.join(
+            os.tmpdir(),
+            `blade-provider-recovery-${safeSlug(model.model)}-${surface}-`
+          )
+        );
+        const home = path.join(root, 'home');
+        const storage = path.join(root, 'storage');
+        const workspaceInput = path.join(root, 'workspace');
+        const proxy = await startRecoveryProxy(
+          model.baseURL ?? 'https://api.deepseek.com'
+        );
+        let sessionId = `provider-recovery-${safeSlug(
+          model.model
+        )}-${surface}-${Date.now()}`;
+        const marker = `PROVIDER_RECOVERY_OK_${Date.now()}`;
+        const secondaryMarker = `PROVIDER_CIRCUIT_SHARED_OK_${Date.now()}`;
+        const prompt =
+          '[PASTE: bounded foreground provider recovery]\n' +
+          'Read src/add.js and test/add.test.js. Use Edit exactly once to replace ' +
+          '"return left - right;" with "return left + right;" in src/add.js. ' +
+          'Do not use Write or any other mutation tool. Then call Bash exactly once ' +
+          `with command "npm test". Finish by replying with exactly ${marker}.`;
+        const secondaryPrompt =
+          `Reply with exactly ${secondaryMarker}. ` +
+          'Do not call tools and do not include any other text.';
+        try {
+          await Promise.all([
+            mkdir(home, { recursive: true }),
+            mkdir(storage, { recursive: true }),
+            mkdir(workspaceInput, { recursive: true }),
+          ]);
+          const workspace = await initializeWorkspace(workspaceInput);
+          await writeRuntimeConfig(home, model, proxy.baseURL);
 
-        let evidence: SurfaceEvidence;
-        if (surface === 'headless') {
-          evidence = await runHeadless({
-            workspace,
-            home,
-            storageRoot: storage,
-            sessionId,
-            prompt,
-            marker,
-            secret: model.apiKey,
-          });
-        } else if (surface === 'acp') {
-          evidence = await runSubprocessRunner({
-            runner: acpRunner,
-            envName: 'BLADE_FOREGROUND_PROVIDER_RECOVERY_ACP_INPUT',
-            payload: {
-              cliEntry,
+          let evidence: SurfaceEvidence;
+          if (surface === 'headless') {
+            evidence = await runHeadless({
+              workspace,
+              home,
+              storageRoot: storage,
+              sessionId,
+              prompt,
+              marker,
+              secret: model.apiKey,
+            });
+          } else if (surface === 'acp') {
+            evidence = await runSubprocessRunner({
+              runner: acpRunner,
+              envName: 'BLADE_FOREGROUND_PROVIDER_RECOVERY_ACP_INPUT',
+              payload: {
+                cliEntry,
+                workspace,
+                home,
+                storageRoot: storage,
+                prompt,
+                marker,
+                secondaryPrompt,
+                secondaryMarker,
+                secret: model.apiKey,
+              },
+              timeoutMs: 240_000,
+            });
+            sessionId = evidence.sessionId;
+          } else if (surface === 'pty') {
+            evidence = await runSubprocessRunner({
+              runner: ptyRunner,
+              envName: 'BLADE_FOREGROUND_PROVIDER_RECOVERY_PTY_INPUT',
+              payload: {
+                cliEntry,
+                workspace,
+                home,
+                storageRoot: storage,
+                sessionId,
+                prompt,
+                marker,
+                secret: model.apiKey,
+              },
+              timeoutMs: 240_000,
+            });
+          } else {
+            evidence = await runWeb({
               workspace,
               home,
               storageRoot: storage,
@@ -964,121 +996,93 @@ describe
               secondaryPrompt,
               secondaryMarker,
               secret: model.apiKey,
-            },
-            timeoutMs: 240_000,
-          });
-          sessionId = evidence.sessionId;
-        } else if (surface === 'pty') {
-          evidence = await runSubprocessRunner({
-            runner: ptyRunner,
-            envName: 'BLADE_FOREGROUND_PROVIDER_RECOVERY_PTY_INPUT',
-            payload: {
-              cliEntry,
-              workspace,
-              home,
-              storageRoot: storage,
-              sessionId,
-              prompt,
-              marker,
-              secret: model.apiKey,
-            },
-            timeoutMs: 240_000,
-          });
-        } else {
-          evidence = await runWeb({
-            workspace,
-            home,
-            storageRoot: storage,
-            prompt,
-            marker,
-            secondaryPrompt,
-            secondaryMarker,
-            secret: model.apiKey,
-          });
-          sessionId = evidence.sessionId;
-        }
+            });
+            sessionId = evidence.sessionId;
+          }
 
-        expect(proxy.injectedFailures()).toBe(INJECTED_FAILURES);
-        expect(proxy.requestCount()).toBeGreaterThanOrEqual(INJECTED_FAILURES + 1);
-        expect(proxy.forwardedRequests()).toBeGreaterThanOrEqual(1);
-        const circuitOpenedAt = proxy.circuitOpenedAt();
-        const firstPostOpenRequestAt = proxy.requestStartedAt()[INJECTED_FAILURES];
-        expect(circuitOpenedAt).toBeTypeOf('number');
-        expect(firstPostOpenRequestAt).toBeTypeOf('number');
-        expect(
-          (firstPostOpenRequestAt ?? 0) - (circuitOpenedAt ?? 0)
-        ).toBeGreaterThanOrEqual(CIRCUIT_OPEN_MS - 50);
-        if (surface === 'acp' || surface === 'web') {
-          expect(proxy.forwardedRequests()).toBeGreaterThanOrEqual(2);
-          expect(evidence.secondarySessionId).toBeTypeOf('string');
-          expect(evidence.secondarySubmittedAt).toBeTypeOf('number');
+          expect(proxy.injectedFailures()).toBe(INJECTED_FAILURES);
+          expect(proxy.requestCount()).toBeGreaterThanOrEqual(INJECTED_FAILURES + 1);
+          expect(proxy.forwardedRequests()).toBeGreaterThanOrEqual(1);
+          const circuitOpenedAt = proxy.circuitOpenedAt();
+          const firstPostOpenRequestAt = proxy.requestStartedAt()[INJECTED_FAILURES];
+          expect(circuitOpenedAt).toBeTypeOf('number');
+          expect(firstPostOpenRequestAt).toBeTypeOf('number');
           expect(
-            proxy
-              .requestStartedAt()
-              .filter(
-                (startedAt) =>
-                  startedAt >= (evidence.secondarySubmittedAt ?? 0) &&
-                  startedAt < (circuitOpenedAt ?? 0) + CIRCUIT_OPEN_MS - 50
-              )
-          ).toHaveLength(0);
-          expect(evidence.providerProbeCount).toBe(1);
-          const secondaryTranscript = await readFile(
-            findSessionTranscript(storage, evidence.secondarySessionId as string),
-            'utf8'
-          );
-          expect(secondaryTranscript).toContain(secondaryMarker);
-          assertNoSecrets({ secondaryTranscript }, [
-            model.apiKey,
-            proxy.privateBodyMarker,
-          ]);
-        }
-        if (surface === 'pty') {
-          expect(evidence.output).toContain('Provider 故障已隔离，等待恢复探测');
-          expect(evidence.output).toContain('Provider 正在执行唯一恢复探测');
-        } else {
-          expect(evidence.output).toContain('bounded_foreground');
-          expect(evidence.output).toMatch(
-            /provider[_./]circuit|blade\/providerCircuit/
-          );
-        }
-        if (surface === 'acp') {
-          expect(evidence.terminalReleaseCount).toBeGreaterThanOrEqual(1);
-        }
+            (firstPostOpenRequestAt ?? 0) - (circuitOpenedAt ?? 0)
+          ).toBeGreaterThanOrEqual(CIRCUIT_OPEN_MS - 50);
+          if (surface === 'acp' || surface === 'web') {
+            expect(proxy.forwardedRequests()).toBeGreaterThanOrEqual(2);
+            expect(evidence.secondarySessionId).toBeTypeOf('string');
+            expect(evidence.secondarySubmittedAt).toBeTypeOf('number');
+            expect(
+              proxy
+                .requestStartedAt()
+                .filter(
+                  (startedAt) =>
+                    startedAt >= (evidence.secondarySubmittedAt ?? 0) &&
+                    startedAt < (circuitOpenedAt ?? 0) + CIRCUIT_OPEN_MS - 50
+                )
+            ).toHaveLength(0);
+            expect(evidence.providerProbeCount).toBe(1);
+            const secondaryTranscript = await readFile(
+              findSessionTranscript(storage, evidence.secondarySessionId as string),
+              'utf8'
+            );
+            expect(secondaryTranscript).toContain(secondaryMarker);
+            assertNoSecrets({ secondaryTranscript }, [
+              model.apiKey,
+              proxy.privateBodyMarker,
+            ]);
+          }
+          if (surface === 'pty') {
+            expect(evidence.output).toContain('Provider 故障已隔离，等待恢复探测');
+            expect(evidence.output).toContain('Provider 正在执行唯一恢复探测');
+          } else {
+            expect(evidence.output).toContain('bounded_foreground');
+            expect(evidence.output).toMatch(
+              /provider[_./]circuit|blade\/providerCircuit/
+            );
+          }
+          if (surface === 'acp') {
+            expect(evidence.terminalReleaseCount).toBeGreaterThanOrEqual(1);
+          }
 
-        const transcriptPath = findSessionTranscript(storage, sessionId);
-        const transcript = await readFile(transcriptPath, 'utf8');
-        const events = readSessionEvents(transcriptPath);
-        const toolNames = toolCallNames(events);
-        expect(
-          toolNames.filter((name) => ['Edit', 'Write', 'ApplyPatch'].includes(name))
-        ).toEqual(['Edit']);
-        expect(toolNames.filter((name) => name === 'Bash')).toHaveLength(1);
-        expect(transcript).toContain(marker);
-        expect(await readFile(path.join(workspace, 'src', 'add.js'), 'utf8')).toContain(
-          'return left + right;'
-        );
-        const verification = await execFileAsync(process.execPath, ['--test'], {
-          cwd: workspace,
-          timeout: 30_000,
-        });
-        expect(verification.stdout).toContain('pass 1');
-        const diff = await execFileAsync('git', ['diff', '--name-only'], {
-          cwd: workspace,
-        });
-        expect(diff.stdout.trim()).toBe('src/add.js');
-        assertNoSecrets(
-          {
-            evidence,
-            transcript,
-          },
-          [model.apiKey, proxy.privateBodyMarker]
-        );
-        for (const process of evidence.processes ?? []) {
-          expect(processIdentityMatches(process.pid, process.identity)).toBe(false);
+          const transcriptPath = findSessionTranscript(storage, sessionId);
+          const transcript = await readFile(transcriptPath, 'utf8');
+          const events = readSessionEvents(transcriptPath);
+          const toolNames = toolCallNames(events);
+          expect(
+            toolNames.filter((name) => ['Edit', 'Write', 'ApplyPatch'].includes(name))
+          ).toEqual(['Edit']);
+          expect(toolNames.filter((name) => name === 'Bash')).toHaveLength(1);
+          expect(transcript).toContain(marker);
+          expect(
+            await readFile(path.join(workspace, 'src', 'add.js'), 'utf8')
+          ).toContain('return left + right;');
+          const verification = await execFileAsync(process.execPath, ['--test'], {
+            cwd: workspace,
+            timeout: 30_000,
+          });
+          expect(verification.stdout).toContain('pass 1');
+          const diff = await execFileAsync('git', ['diff', '--name-only'], {
+            cwd: workspace,
+          });
+          expect(diff.stdout.trim()).toBe('src/add.js');
+          assertNoSecrets(
+            {
+              evidence,
+              transcript,
+            },
+            [model.apiKey, proxy.privateBodyMarker]
+          );
+          for (const process of evidence.processes ?? []) {
+            expect(processIdentityMatches(process.pid, process.identity)).toBe(false);
+          }
+        } finally {
+          await proxy.close();
+          await rm(root, { recursive: true, force: true });
         }
-      } finally {
-        await proxy.close();
-        await rm(root, { recursive: true, force: true });
-      }
-    }, 300_000);
+      },
+      300_000
+    );
   });

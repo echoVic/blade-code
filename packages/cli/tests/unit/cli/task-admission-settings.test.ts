@@ -16,16 +16,15 @@ describe('weighted task admission settings', () => {
     expect(DEFAULT_CONFIG.maxQueuedTaskBytes).toBe(64 * 1024 * 1024);
   });
 
-  it.each([
-    64 * 1024,
-    8 * 1024 * 1024,
-    128 * 1024 * 1024,
-  ])('accepts maxQueuedTaskBytes=%i', async (value) => {
-    expect(isValidQueuedTaskByteLimit(value)).toBe(true);
-    await expect(
-      loadCliSettings(JSON.stringify({ maxQueuedTaskBytes: value }))
-    ).resolves.toMatchObject({ maxQueuedTaskBytes: value });
-  });
+  it.each([64 * 1024, 8 * 1024 * 1024, 128 * 1024 * 1024])(
+    'accepts maxQueuedTaskBytes=%i',
+    async (value) => {
+      expect(isValidQueuedTaskByteLimit(value)).toBe(true);
+      await expect(
+        loadCliSettings(JSON.stringify({ maxQueuedTaskBytes: value }))
+      ).resolves.toMatchObject({ maxQueuedTaskBytes: value });
+    }
+  );
 
   it.each([
     0,

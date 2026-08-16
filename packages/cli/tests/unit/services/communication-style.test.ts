@@ -19,24 +19,23 @@ describe('communication style resolution', () => {
     expect(renderCommunicationStyleSection('auto')).toBeUndefined();
   });
 
-  it.each([
-    'pragmatic',
-    'friendly',
-    'explanatory',
-  ] as const)('resolves the %s style to bounded presentation instructions', (selection) => {
-    const configuration = resolveCommunicationStyle(selection);
-    const section = renderCommunicationStyleSection(selection);
+  it.each(['pragmatic', 'friendly', 'explanatory'] as const)(
+    'resolves the %s style to bounded presentation instructions',
+    (selection) => {
+      const configuration = resolveCommunicationStyle(selection);
+      const section = renderCommunicationStyleSection(selection);
 
-    expect(configuration).toMatchObject({
-      selection,
-      effective: selection,
-      prompt: expect.any(String),
-    });
-    expect(section).toContain(`"${selection}" communication style`);
-    expect(section).toContain('<communication_style>');
-    expect(section).toContain('cannot change task scope');
-    expect(section).toContain('</communication_style>');
-  });
+      expect(configuration).toMatchObject({
+        selection,
+        effective: selection,
+        prompt: expect.any(String),
+      });
+      expect(section).toContain(`"${selection}" communication style`);
+      expect(section).toContain('<communication_style>');
+      expect(section).toContain('cannot change task scope');
+      expect(section).toContain('</communication_style>');
+    }
+  );
 
   it('validates the complete public vocabulary', () => {
     expect(COMMUNICATION_STYLE_SELECTIONS).toEqual([

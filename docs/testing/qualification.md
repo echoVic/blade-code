@@ -29,6 +29,10 @@ bun run qualify:local
 
 每一步都在独立子进程中执行。第一步非零退出会立即停止，后续步骤不会被计为通过。该门禁不访问付费模型，也不依赖 `~/.blade/config.json`。
 
+GitHub `Quality Gate` 在 build 前重复执行全仓 format check 与 CLI lint，并由 workflow
+source contract 固定 install → format → lint → build 顺序。root、CLI 与 Web 使用同一
+精确 Biome 版本，避免 workspace binary 解析差异让本地门禁和 CI 得到不同结果。
+
 V8 coverage 通过 `bun run --filter blade-code test:coverage` 单独执行。coverage
 编排覆盖 unit、integration、CLI、E2E、snapshot、security 和不需凭证的 real-api
 fixtures，但显式排除 wall-clock `performance` project；instrumentation 与并行项目负载

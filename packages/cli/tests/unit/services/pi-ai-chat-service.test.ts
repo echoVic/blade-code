@@ -965,28 +965,29 @@ describe('PiAIChatService', () => {
       },
     ],
     ['finish', { finishReason: 'stop' }],
-  ] satisfies Array<
-    [string, StreamChunk]
-  >)('does not replay after a %s chunk crosses the boundary', async (_name, boundaryChunk) => {
-    const failure = new Error('status 503');
-    streamPiModel.mockReturnValue(chunks([boundaryChunk, failure]));
-    const stream = (await service({ maxRetries: undefined })).streamChat(
-      [{ role: 'user', content: 'continue' }],
-      undefined,
-      undefined,
-      {
-        providerRecovery: {
-          mode: 'bounded_foreground',
-          budgetMs: 600_000,
-        },
-      }
-    );
+  ] satisfies Array<[string, StreamChunk]>)(
+    'does not replay after a %s chunk crosses the boundary',
+    async (_name, boundaryChunk) => {
+      const failure = new Error('status 503');
+      streamPiModel.mockReturnValue(chunks([boundaryChunk, failure]));
+      const stream = (await service({ maxRetries: undefined })).streamChat(
+        [{ role: 'user', content: 'continue' }],
+        undefined,
+        undefined,
+        {
+          providerRecovery: {
+            mode: 'bounded_foreground',
+            budgetMs: 600_000,
+          },
+        }
+      );
 
-    await expect(stream.next()).resolves.toMatchObject({ value: boundaryChunk });
-    await expect(stream.next()).rejects.toBe(failure);
-    expect(providerReplayBoundaryCrossed(failure)).toBe(true);
-    expect(streamPiModel).toHaveBeenCalledOnce();
-  });
+      await expect(stream.next()).resolves.toMatchObject({ value: boundaryChunk });
+      await expect(stream.next()).rejects.toBe(failure);
+      expect(providerReplayBoundaryCrossed(failure)).toBe(true);
+      expect(streamPiModel).toHaveBeenCalledOnce();
+    }
+  );
 
   it('marks a context error after partial output as replay-unsafe', async () => {
     const failure = new Error('maximum context length exceeded; status 413');
@@ -1705,39 +1706,42 @@ describe('PiAIChatService', () => {
         },
       },
     ],
-  ] as const)('skips an open non-terminal primary to fallback for %s', async (_name, requestOptions) => {
-    const circuitRegistry = new ProviderCircuitRegistry({
-      processSecret: new Uint8Array(32).fill(3),
-    });
-    tripCircuit(circuitRegistry);
-    streamPiModel.mockReturnValue(chunks([{ content: 'healthy-fallback' }]));
+  ] as const)(
+    'skips an open non-terminal primary to fallback for %s',
+    async (_name, requestOptions) => {
+      const circuitRegistry = new ProviderCircuitRegistry({
+        processSecret: new Uint8Array(32).fill(3),
+      });
+      tripCircuit(circuitRegistry);
+      streamPiModel.mockReturnValue(chunks([{ content: 'healthy-fallback' }]));
 
-    const stream = (
-      await service(
-        circuitOverrides(circuitRegistry, {
-          maxRetries: 0,
-          fallbackModels: [{ provider: 'test', model: 'backup' }],
-        })
-      )
-    ).streamChat(
-      [{ role: 'user', content: 'use fallback' }],
-      undefined,
-      undefined,
-      requestOptions
-    );
-    const events: StreamChunk[] = [];
-    for await (const event of stream) events.push(event);
+      const stream = (
+        await service(
+          circuitOverrides(circuitRegistry, {
+            maxRetries: 0,
+            fallbackModels: [{ provider: 'test', model: 'backup' }],
+          })
+        )
+      ).streamChat(
+        [{ role: 'user', content: 'use fallback' }],
+        undefined,
+        undefined,
+        requestOptions
+      );
+      const events: StreamChunk[] = [];
+      for await (const event of stream) events.push(event);
 
-    expect(events).toEqual([
-      expect.objectContaining({
-        providerCircuit: expect.objectContaining({ phase: 'rejected' }),
-      }),
-      { modelFallback: true },
-      { content: 'healthy-fallback' },
-    ]);
-    expect(streamPiModel).toHaveBeenCalledOnce();
-    expect(streamPiModel.mock.calls[0]?.[1]).toMatchObject({ id: 'backup' });
-  });
+      expect(events).toEqual([
+        expect.objectContaining({
+          providerCircuit: expect.objectContaining({ phase: 'rejected' }),
+        }),
+        { modelFallback: true },
+        { content: 'healthy-fallback' },
+      ]);
+      expect(streamPiModel).toHaveBeenCalledOnce();
+      expect(streamPiModel.mock.calls[0]?.[1]).toMatchObject({ id: 'backup' });
+    }
+  );
 
   it('charges terminal circuit waiting to the foreground recovery deadline', async () => {
     vi.useFakeTimers({ now: 1_000 });

@@ -9,6 +9,7 @@ const configPath = path.resolve(__dirname, '../../../release.config.js');
 const releaseScriptPath = path.resolve(__dirname, '../../../scripts/release.js');
 const workflowsPath = path.resolve(__dirname, '../../../../../.github/workflows');
 const publishWorkflowPath = path.join(workflowsPath, 'publish.yml');
+const ciWorkflowPath = path.join(workflowsPath, 'ci.yml');
 
 interface WorkflowStep {
   name?: string;
@@ -31,6 +32,19 @@ async function loadReleaseConfig(cacheKey: string) {
 }
 
 describe('release ownership contract', () => {
+  it('blocks CI before build when formatting or CLI lint fails', () => {
+    const ciWorkflow = fs.readFileSync(ciWorkflowPath, 'utf8');
+    const installIndex = ciWorkflow.indexOf('bun install --frozen-lockfile');
+    const formatIndex = ciWorkflow.indexOf('bun run format:check');
+    const lintIndex = ciWorkflow.indexOf('bun run --filter blade-code lint');
+    const buildIndex = ciWorkflow.indexOf('bun run build');
+
+    expect(installIndex).toBeGreaterThanOrEqual(0);
+    expect(formatIndex).toBeGreaterThan(installIndex);
+    expect(lintIndex).toBeGreaterThan(formatIndex);
+    expect(buildIndex).toBeGreaterThan(lintIndex);
+  });
+
   it('publishes npm only from the tag workflow', async () => {
     const releaseConfig = await loadReleaseConfig('publish-owner');
     const workflowFiles = fs

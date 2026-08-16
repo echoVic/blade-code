@@ -16,26 +16,23 @@ describe('foreground command handoff settings', () => {
     expect(DEFAULT_CONFIG.bashForegroundHandoffMs).toBe(15_000);
   });
 
-  it.each([
-    0, 1_000, 15_000, 300_000,
-  ])('accepts bashForegroundHandoffMs=%i through production settings', async (value) => {
-    await expect(
-      loadCliSettings(JSON.stringify({ bashForegroundHandoffMs: value }))
-    ).resolves.toMatchObject({ bashForegroundHandoffMs: value });
-  });
+  it.each([0, 1_000, 15_000, 300_000])(
+    'accepts bashForegroundHandoffMs=%i through production settings',
+    async (value) => {
+      await expect(
+        loadCliSettings(JSON.stringify({ bashForegroundHandoffMs: value }))
+      ).resolves.toMatchObject({ bashForegroundHandoffMs: value });
+    }
+  );
 
-  it.each([
-    -1,
-    1,
-    999,
-    300_001,
-    1_000.5,
-    Number.POSITIVE_INFINITY,
-  ])('rejects bashForegroundHandoffMs=%s through production settings', async (value) => {
-    await expect(
-      loadCliSettings(JSON.stringify({ bashForegroundHandoffMs: value }))
-    ).rejects.toThrow('Invalid --settings value');
-  });
+  it.each([-1, 1, 999, 300_001, 1_000.5, Number.POSITIVE_INFINITY])(
+    'rejects bashForegroundHandoffMs=%s through production settings',
+    async (value) => {
+      await expect(
+        loadCliSettings(JSON.stringify({ bashForegroundHandoffMs: value }))
+      ).rejects.toThrow('Invalid --settings value');
+    }
+  );
 
   it('normalizes absent legacy config to the production default', () => {
     expect(normalizeForegroundCommandHandoffMs(undefined)).toBe(15_000);

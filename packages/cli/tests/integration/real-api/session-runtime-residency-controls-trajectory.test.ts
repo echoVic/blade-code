@@ -237,98 +237,97 @@ async function runPty(input: {
 describe
   .skipIf(!isRealApiTestEnabled())
   .sequential('Session Runtime residency single-Runtime controls', () => {
-    it.each(
-      controls
-    )('$model.model completes through $surface at resident limit one', async ({
-      model,
-      surface,
-    }) => {
-      if (!model.baseURL) {
-        throw new Error(`Missing Provider base URL for ${model.model}`);
-      }
-      const root = await mkdtemp(
-        path.join(
-          os.tmpdir(),
-          `blade-session-residency-${surface}-${safeSlug(model.model)}-`
-        )
-      );
-      const home = path.join(root, 'home');
-      const storageRoot = path.join(root, 'storage');
-      const workspace = path.join(root, 'workspace');
-      const resultPath = path.join(workspace, 'residency-control.txt');
-      const proxy = await startRecordingProviderProxy(model.baseURL);
-      const config = buildRealApiRuntimeConfig({
-        ...model,
-        baseURL: proxy.baseUrl,
-      });
-      const marker = `SESSION_RESIDENCY_${surface.toUpperCase()}_${safeSlug(
-        model.model
-      ).toUpperCase()}_${Date.now()}`;
-      const sessionId = `residency-${surface}-${safeSlug(model.model)}-${Date.now()}`;
-      const prompt =
-        `Use the Write tool to create residency-control.txt containing exactly ` +
-        `${marker} and a trailing newline. Then reply with exactly ${marker}.`;
-      try {
-        await Promise.all([
-          mkdir(path.join(home, '.blade'), { recursive: true }),
-          mkdir(storageRoot, { recursive: true }),
-          mkdir(workspace, { recursive: true }),
-        ]);
-        await writeFile(
-          path.join(home, '.blade', 'config.json'),
-          `${JSON.stringify(
-            {
-              currentModelId: config.currentModelId,
-              models: config.models,
-              modelProviders: config.modelProviders,
-              permissionMode: 'yolo',
-              maxResidentSessionRuntimes: 1,
-              sessionRuntimeIdleMs: 30_000,
-              hooks: { enabled: false },
-              disableAllHooks: true,
-              mcpServers: {},
-            },
-            null,
-            2
-          )}\n`,
-          { mode: 0o600 }
-        );
-
-        const evidence =
-          surface === 'headless'
-            ? await runHeadless({
-                workspace,
-                home,
-                storageRoot,
-                sessionId,
-                prompt,
-                marker,
-                resultPath,
-                secret: model.apiKey,
-              })
-            : await runPty({
-                workspace,
-                home,
-                storageRoot,
-                sessionId,
-                prompt,
-                marker,
-                resultPath,
-                secret: model.apiKey,
-              });
-
-        expect(proxy.requestBodies.length).toBeGreaterThan(0);
-        expect(proxy.requestBodies.join('\n')).toContain(marker);
-        expect((await readFile(resultPath, 'utf8')).trim()).toBe(marker);
-        expect(evidence.output).not.toContain('Session runtime capacity is full');
-        expect(evidence.output).not.toContain('resident_runtimes');
-        expect(JSON.stringify(evidence)).not.toContain(model.apiKey);
-        if (evidence.identity) {
-          expect(processIdentityMatches(evidence.pid, evidence.identity)).toBe(false);
+    it.each(controls)(
+      '$model.model completes through $surface at resident limit one',
+      async ({ model, surface }) => {
+        if (!model.baseURL) {
+          throw new Error(`Missing Provider base URL for ${model.model}`);
         }
-      } finally {
-        await proxy.close();
-        await rm(root, { recursive: true, force: true });
-      }
-    }, 300_000);
+        const root = await mkdtemp(
+          path.join(
+            os.tmpdir(),
+            `blade-session-residency-${surface}-${safeSlug(model.model)}-`
+          )
+        );
+        const home = path.join(root, 'home');
+        const storageRoot = path.join(root, 'storage');
+        const workspace = path.join(root, 'workspace');
+        const resultPath = path.join(workspace, 'residency-control.txt');
+        const proxy = await startRecordingProviderProxy(model.baseURL);
+        const config = buildRealApiRuntimeConfig({
+          ...model,
+          baseURL: proxy.baseUrl,
+        });
+        const marker = `SESSION_RESIDENCY_${surface.toUpperCase()}_${safeSlug(
+          model.model
+        ).toUpperCase()}_${Date.now()}`;
+        const sessionId = `residency-${surface}-${safeSlug(model.model)}-${Date.now()}`;
+        const prompt =
+          `Use the Write tool to create residency-control.txt containing exactly ` +
+          `${marker} and a trailing newline. Then reply with exactly ${marker}.`;
+        try {
+          await Promise.all([
+            mkdir(path.join(home, '.blade'), { recursive: true }),
+            mkdir(storageRoot, { recursive: true }),
+            mkdir(workspace, { recursive: true }),
+          ]);
+          await writeFile(
+            path.join(home, '.blade', 'config.json'),
+            `${JSON.stringify(
+              {
+                currentModelId: config.currentModelId,
+                models: config.models,
+                modelProviders: config.modelProviders,
+                permissionMode: 'yolo',
+                maxResidentSessionRuntimes: 1,
+                sessionRuntimeIdleMs: 30_000,
+                hooks: { enabled: false },
+                disableAllHooks: true,
+                mcpServers: {},
+              },
+              null,
+              2
+            )}\n`,
+            { mode: 0o600 }
+          );
+
+          const evidence =
+            surface === 'headless'
+              ? await runHeadless({
+                  workspace,
+                  home,
+                  storageRoot,
+                  sessionId,
+                  prompt,
+                  marker,
+                  resultPath,
+                  secret: model.apiKey,
+                })
+              : await runPty({
+                  workspace,
+                  home,
+                  storageRoot,
+                  sessionId,
+                  prompt,
+                  marker,
+                  resultPath,
+                  secret: model.apiKey,
+                });
+
+          expect(proxy.requestBodies.length).toBeGreaterThan(0);
+          expect(proxy.requestBodies.join('\n')).toContain(marker);
+          expect((await readFile(resultPath, 'utf8')).trim()).toBe(marker);
+          expect(evidence.output).not.toContain('Session runtime capacity is full');
+          expect(evidence.output).not.toContain('resident_runtimes');
+          expect(JSON.stringify(evidence)).not.toContain(model.apiKey);
+          if (evidence.identity) {
+            expect(processIdentityMatches(evidence.pid, evidence.identity)).toBe(false);
+          }
+        } finally {
+          await proxy.close();
+          await rm(root, { recursive: true, force: true });
+        }
+      },
+      300_000
+    );
   });

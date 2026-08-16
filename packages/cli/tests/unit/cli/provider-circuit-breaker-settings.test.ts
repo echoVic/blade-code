@@ -16,26 +16,23 @@ describe('Provider circuit breaker settings', () => {
     expect(DEFAULT_CONFIG.providerCircuitBreakerOpenMs).toBe(10_000);
   });
 
-  it.each([
-    0, 1_000, 10_000, 300_000,
-  ])('accepts providerCircuitBreakerOpenMs=%i', async (value) => {
-    await expect(
-      loadCliSettings(JSON.stringify({ providerCircuitBreakerOpenMs: value }))
-    ).resolves.toMatchObject({ providerCircuitBreakerOpenMs: value });
-  });
+  it.each([0, 1_000, 10_000, 300_000])(
+    'accepts providerCircuitBreakerOpenMs=%i',
+    async (value) => {
+      await expect(
+        loadCliSettings(JSON.stringify({ providerCircuitBreakerOpenMs: value }))
+      ).resolves.toMatchObject({ providerCircuitBreakerOpenMs: value });
+    }
+  );
 
-  it.each([
-    -1,
-    1,
-    999,
-    300_001,
-    1_000.5,
-    Number.POSITIVE_INFINITY,
-  ])('rejects providerCircuitBreakerOpenMs=%s', async (value) => {
-    await expect(
-      loadCliSettings(JSON.stringify({ providerCircuitBreakerOpenMs: value }))
-    ).rejects.toThrow('Invalid --settings value');
-  });
+  it.each([-1, 1, 999, 300_001, 1_000.5, Number.POSITIVE_INFINITY])(
+    'rejects providerCircuitBreakerOpenMs=%s',
+    async (value) => {
+      await expect(
+        loadCliSettings(JSON.stringify({ providerCircuitBreakerOpenMs: value }))
+      ).rejects.toThrow('Invalid --settings value');
+    }
+  );
 
   it('normalizes legacy and invalid values to the production default', () => {
     expect(normalizeProviderCircuitOpenMs(undefined)).toBe(10_000);

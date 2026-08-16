@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.46] - 2026-08-17
+
+### 测试相关
+
+- 将 monorepo root、CLI 与 Web 的 Biome 精确统一为 `2.5.7`，并机械修复全部已有格式
+  drift，使发布前 `format:check` 从已发布基线的 34 个错误恢复为可重复 green
+- GitHub `Quality Gate` 现在会在 build 之前执行全仓 format check 与 CLI lint；
+  workflow source contract 固定 install → format → lint → build 顺序，避免 CI 仅凭
+  build/type-check/Web tests 放过本地发布门禁已经失败的提交
+
 ## [0.10.45] - 2026-08-17
 
 ### 稳定性

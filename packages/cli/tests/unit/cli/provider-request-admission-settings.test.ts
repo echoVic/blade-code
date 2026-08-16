@@ -38,48 +38,41 @@ describe('Provider request admission settings', () => {
     ).resolves.toMatchObject({ providerRequestConcurrency: value });
   });
 
-  it.each([
-    0,
-    -1,
-    17,
-    1.5,
-    Number.POSITIVE_INFINITY,
-  ])('rejects providerRequestConcurrency=%s', async (value) => {
-    await expect(
-      loadCliSettings(JSON.stringify({ providerRequestConcurrency: value }))
-    ).rejects.toThrow('Invalid --settings value');
-  });
+  it.each([0, -1, 17, 1.5, Number.POSITIVE_INFINITY])(
+    'rejects providerRequestConcurrency=%s',
+    async (value) => {
+      await expect(
+        loadCliSettings(JSON.stringify({ providerRequestConcurrency: value }))
+      ).rejects.toThrow('Invalid --settings value');
+    }
+  );
 
-  it.each([
-    0, 1_000, 180_000, 600_000,
-  ])('accepts providerRequestAdmissionMs=%i', async (value) => {
-    await expect(
-      loadCliSettings(JSON.stringify({ providerRequestAdmissionMs: value }))
-    ).resolves.toMatchObject({ providerRequestAdmissionMs: value });
-  });
+  it.each([0, 1_000, 180_000, 600_000])(
+    'accepts providerRequestAdmissionMs=%i',
+    async (value) => {
+      await expect(
+        loadCliSettings(JSON.stringify({ providerRequestAdmissionMs: value }))
+      ).resolves.toMatchObject({ providerRequestAdmissionMs: value });
+    }
+  );
 
-  it.each([
-    -1,
-    1,
-    999,
-    600_001,
-    1_000.5,
-    Number.POSITIVE_INFINITY,
-  ])('rejects providerRequestAdmissionMs=%s', async (value) => {
-    await expect(
-      loadCliSettings(JSON.stringify({ providerRequestAdmissionMs: value }))
-    ).rejects.toThrow('Invalid --settings value');
-  });
+  it.each([-1, 1, 999, 600_001, 1_000.5, Number.POSITIVE_INFINITY])(
+    'rejects providerRequestAdmissionMs=%s',
+    async (value) => {
+      await expect(
+        loadCliSettings(JSON.stringify({ providerRequestAdmissionMs: value }))
+      ).rejects.toThrow('Invalid --settings value');
+    }
+  );
 
-  it.each([
-    64 * 1024,
-    8 * 1024 * 1024,
-    128 * 1024 * 1024,
-  ])('accepts providerRequestPendingBytes=%i', async (value) => {
-    await expect(
-      loadCliSettings(JSON.stringify({ providerRequestPendingBytes: value }))
-    ).resolves.toMatchObject({ providerRequestPendingBytes: value });
-  });
+  it.each([64 * 1024, 8 * 1024 * 1024, 128 * 1024 * 1024])(
+    'accepts providerRequestPendingBytes=%i',
+    async (value) => {
+      await expect(
+        loadCliSettings(JSON.stringify({ providerRequestPendingBytes: value }))
+      ).resolves.toMatchObject({ providerRequestPendingBytes: value });
+    }
+  );
 
   it.each([
     0,

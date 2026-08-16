@@ -2879,59 +2879,81 @@ describe('SessionRoutes runtime reuse', () => {
   it.each([
     { isolation: 'local' as const, executionPath: '/tmp/task-source' },
     { isolation: 'worktree' as const, executionPath: '/tmp/task-worktree' },
-  ])('dispatches a durable $isolation task after prompt fsync', async ({
-    isolation,
-    executionPath,
-  }) => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
-    if (isolation === 'worktree') {
-      worktreeState.enter.mockImplementationOnce(
-        async (input: { sessionId: string; workspaceRoot: string; name: string }) => ({
-          sessionId: input.sessionId,
-          name: input.name,
-          branch: `blade-worktree-${input.sessionId}`,
-          baseCommit: 'abc123',
-          originalBranch: 'main',
-          repositoryRoot: '/tmp/repo',
-          originalWorkspaceRoot: input.workspaceRoot,
-          worktreeRoot: '/tmp/task-worktree',
-          workspaceRoot: '/tmp/task-worktree',
-          sourceHadChanges: false,
+  ])(
+    'dispatches a durable $isolation task after prompt fsync',
+    async ({ isolation, executionPath }) => {
+      const { createSessionRouteController } = await import(
+        '../../../../src/server/routes/session.js'
+      );
+      if (isolation === 'worktree') {
+        worktreeState.enter.mockImplementationOnce(
+          async (input: {
+            sessionId: string;
+            workspaceRoot: string;
+            name: string;
+          }) => ({
+            sessionId: input.sessionId,
+            name: input.name,
+            branch: `blade-worktree-${input.sessionId}`,
+            baseCommit: 'abc123',
+            originalBranch: 'main',
+            repositoryRoot: '/tmp/repo',
+            originalWorkspaceRoot: input.workspaceRoot,
+            worktreeRoot: '/tmp/task-worktree',
+            workspaceRoot: '/tmp/task-worktree',
+            sourceHadChanges: false,
+          })
+        );
+      }
+      const controller = createSessionRouteController();
+
+      const result = await controller.dispatchTask({
+        prompt: 'Implement the durable task dispatcher',
+        sourceProjectPath: '/tmp/task-source',
+        isolation,
+        permissionMode: PermissionMode.DEFAULT,
+      });
+
+      expect(result).toMatchObject({
+        session: {
+          sessionId: expect.any(String),
+          projectPath: executionPath,
+          taskStatus: 'running',
+          taskIsolation: isolation,
+          taskSourceProjectPath: '/tmp/task-source',
+        },
+        runId: expect.any(String),
+        messageId: 'prepared-input',
+        status: 'running',
+      });
+      const sessionId = result.session.sessionId;
+      expect(SessionService.createSessionMetadata).toHaveBeenCalledWith(
+        sessionId,
+        executionPath,
+        expect.objectContaining({
+          taskPromptSummary: 'Implement the durable task dispatcher',
+          taskIsolation: isolation,
+          taskSourceProjectPath: '/tmp/task-source',
+          reasoningEffort: 'off',
+          ...(isolation === 'worktree'
+            ? {
+                taskWorktree: expect.objectContaining({
+                  sessionId,
+                  workspaceRoot: executionPath,
+                }),
+              }
+            : { taskWorktree: undefined }),
         })
       );
-    }
-    const controller = createSessionRouteController();
-
-    const result = await controller.dispatchTask({
-      prompt: 'Implement the durable task dispatcher',
-      sourceProjectPath: '/tmp/task-source',
-      isolation,
-      permissionMode: PermissionMode.DEFAULT,
-    });
-
-    expect(result).toMatchObject({
-      session: {
-        sessionId: expect.any(String),
-        projectPath: executionPath,
-        taskStatus: 'running',
+      expect(runtimeState.runtime.prepareInputTurn).toHaveBeenCalledWith(
+        'Implement the durable task dispatcher'
+      );
+      expect(SessionRuntime.create).toHaveBeenCalledWith({
+        sessionId,
+        workspaceRoot: executionPath,
+        modelId: 'model-1',
+        permissionMode: PermissionMode.DEFAULT,
         taskIsolation: isolation,
-        taskSourceProjectPath: '/tmp/task-source',
-      },
-      runId: expect.any(String),
-      messageId: 'prepared-input',
-      status: 'running',
-    });
-    const sessionId = result.session.sessionId;
-    expect(SessionService.createSessionMetadata).toHaveBeenCalledWith(
-      sessionId,
-      executionPath,
-      expect.objectContaining({
-        taskPromptSummary: 'Implement the durable task dispatcher',
-        taskIsolation: isolation,
-        taskSourceProjectPath: '/tmp/task-source',
-        reasoningEffort: 'off',
         ...(isolation === 'worktree'
           ? {
               taskWorktree: expect.objectContaining({
@@ -2939,48 +2961,32 @@ describe('SessionRoutes runtime reuse', () => {
                 workspaceRoot: executionPath,
               }),
             }
-          : { taskWorktree: undefined }),
-      })
-    );
-    expect(runtimeState.runtime.prepareInputTurn).toHaveBeenCalledWith(
-      'Implement the durable task dispatcher'
-    );
-    expect(SessionRuntime.create).toHaveBeenCalledWith({
-      sessionId,
-      workspaceRoot: executionPath,
-      modelId: 'model-1',
-      permissionMode: PermissionMode.DEFAULT,
-      taskIsolation: isolation,
-      ...(isolation === 'worktree'
-        ? {
-            taskWorktree: expect.objectContaining({
-              sessionId,
-              workspaceRoot: executionPath,
-            }),
-          }
-        : {}),
-    });
-    expect(worktreeState.enter).toHaveBeenCalledTimes(isolation === 'worktree' ? 1 : 0);
-    if (isolation === 'worktree') {
-      const { Agent } = await import('../../../../src/agent/Agent.js');
-      await vi.waitFor(() => {
-        expect(Agent.createWithRuntime).toHaveBeenCalledWith(
-          expect.anything(),
-          expect.objectContaining({
-            toolBlacklist: ['EnterWorktree', 'ExitWorktree'],
-          })
-        );
-        expect(agentState.chatStream).toHaveBeenCalledWith(
-          'Implement the durable task dispatcher',
-          expect.objectContaining({
-            workspaceRoot: executionPath,
-            worktreeActive: true,
-          }),
-          expect.any(Object)
-        );
+          : {}),
       });
+      expect(worktreeState.enter).toHaveBeenCalledTimes(
+        isolation === 'worktree' ? 1 : 0
+      );
+      if (isolation === 'worktree') {
+        const { Agent } = await import('../../../../src/agent/Agent.js');
+        await vi.waitFor(() => {
+          expect(Agent.createWithRuntime).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+              toolBlacklist: ['EnterWorktree', 'ExitWorktree'],
+            })
+          );
+          expect(agentState.chatStream).toHaveBeenCalledWith(
+            'Implement the durable task dispatcher',
+            expect.objectContaining({
+              workspaceRoot: executionPath,
+              worktreeActive: true,
+            }),
+            expect.any(Object)
+          );
+        });
+      }
     }
-  });
+  );
 
   it('disposes a terminal task runtime after completion', async () => {
     const { createSessionRouteController } = await import(

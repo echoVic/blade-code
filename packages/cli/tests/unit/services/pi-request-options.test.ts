@@ -83,19 +83,18 @@ describe('buildPiOptions', () => {
       effort: 'minimal',
       expected: { reasoning: 'minimal' },
     },
-  ] as const)('projects $effort through the $api provider options', ({
-    api,
-    effort,
-    expected,
-  }) => {
-    const config = {
-      provider: 'openai-compatible',
-      model: 'reasoning-model',
-      reasoningEnabled: true,
-      reasoningEffort: effort,
-    } satisfies ChatConfig;
-    expect(buildPiOptions(config, { api } as Model<Api>)).toMatchObject(expected);
-  });
+  ] as const)(
+    'projects $effort through the $api provider options',
+    ({ api, effort, expected }) => {
+      const config = {
+        provider: 'openai-compatible',
+        model: 'reasoning-model',
+        reasoningEnabled: true,
+        reasoningEffort: effort,
+      } satisfies ChatConfig;
+      expect(buildPiOptions(config, { api } as Model<Api>)).toMatchObject(expected);
+    }
+  );
 
   it('forces thinking off for disabled configurations and tool continuations', () => {
     const model = { api: 'anthropic-messages' } as Model<Api>;

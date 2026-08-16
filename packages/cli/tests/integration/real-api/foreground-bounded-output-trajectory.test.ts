@@ -119,105 +119,109 @@ async function writeRuntimeConfig(
 describe
   .skipIf(!isRealApiTestEnabled())
   .sequential('bounded foreground output release matrix', () => {
-    it.each(matrix)('$model.model × $surface', async ({ model, surface }) => {
-      const root = await mkdtemp(
-        path.join(os.tmpdir(), `blade-bounded-${safeSlug(model.model)}-${surface}-`)
-      );
-      const home = path.join(root, 'home');
-      const storage = path.join(root, 'storage');
-      const workspaceInput =
-        surface === 'web' ? path.join(root, 'project') : path.join(root, 'workspace');
-      let sessionId = `bounded-${safeSlug(model.model)}-${surface}-${Date.now()}`;
-      const previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
-      const previousHome = process.env.HOME;
-      const previousAutoMemory = process.env.BLADE_AUTO_MEMORY;
-      try {
-        await Promise.all([
-          mkdir(home, { recursive: true }),
-          mkdir(storage, { recursive: true }),
-          mkdir(workspaceInput, { recursive: true }),
-        ]);
-        const workspace =
-          surface === 'web'
-            ? await realpath(workspaceInput)
-            : await initializeWorkspace(workspaceInput);
-        const nonce = `${safeSlug(model.model)}_${surface}_${Date.now()}`;
-        const fixture = await createForegroundBoundedOutputFixture(workspace, nonce);
-        let evidence: unknown;
+    it.each(matrix)(
+      '$model.model × $surface',
+      async ({ model, surface }) => {
+        const root = await mkdtemp(
+          path.join(os.tmpdir(), `blade-bounded-${safeSlug(model.model)}-${surface}-`)
+        );
+        const home = path.join(root, 'home');
+        const storage = path.join(root, 'storage');
+        const workspaceInput =
+          surface === 'web' ? path.join(root, 'project') : path.join(root, 'workspace');
+        let sessionId = `bounded-${safeSlug(model.model)}-${surface}-${Date.now()}`;
+        const previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
+        const previousHome = process.env.HOME;
+        const previousAutoMemory = process.env.BLADE_AUTO_MEMORY;
+        try {
+          await Promise.all([
+            mkdir(home, { recursive: true }),
+            mkdir(storage, { recursive: true }),
+            mkdir(workspaceInput, { recursive: true }),
+          ]);
+          const workspace =
+            surface === 'web'
+              ? await realpath(workspaceInput)
+              : await initializeWorkspace(workspaceInput);
+          const nonce = `${safeSlug(model.model)}_${surface}_${Date.now()}`;
+          const fixture = await createForegroundBoundedOutputFixture(workspace, nonce);
+          let evidence: unknown;
 
-        if (surface === 'web') {
-          const web = await runForegroundBoundedOutputWebDriver({
-            root,
-            model: model.model,
-            fixture,
-            secrets: [model.apiKey],
-            timeoutMs: 180_000,
-          });
-          sessionId = web.sessionId;
-          evidence = web;
-        } else {
-          const runtimeConfig = await writeRuntimeConfig(home, model);
-          process.env.HOME = home;
-          process.env.BLADE_STORAGE_ROOT = storage;
-          process.env.BLADE_AUTO_MEMORY = '0';
-          if (surface === 'pty') {
-            evidence = await runForegroundBoundedOutputPtyDriver({
-              workspace,
-              storageRoot: storage,
-              home,
-              sessionId,
+          if (surface === 'web') {
+            const web = await runForegroundBoundedOutputWebDriver({
+              root,
+              model: model.model,
               fixture,
-              secret: model.apiKey,
-              timeoutMs: 210_000,
-            });
-          } else if (surface === 'headless') {
-            evidence = await runForegroundBoundedOutputHeadlessDriver({
-              workspace,
-              sessionId,
-              fixture,
-            });
-          } else {
-            await ensureStoreInitialized();
-            getState().config.actions.setConfig(runtimeConfig);
-            WorkspaceTrustService.resetInstance();
-            await WorkspaceTrustService.getInstance().trust(workspace);
-            const acp = await runForegroundBoundedOutputAcpDriver({
-              workspace,
-              fixture,
-              secret: model.apiKey,
+              secrets: [model.apiKey],
               timeoutMs: 180_000,
             });
-            sessionId = acp.sessionId;
-            assertOwnedProcessesGone(acp.processes);
-            evidence = acp;
+            sessionId = web.sessionId;
+            evidence = web;
+          } else {
+            const runtimeConfig = await writeRuntimeConfig(home, model);
+            process.env.HOME = home;
+            process.env.BLADE_STORAGE_ROOT = storage;
+            process.env.BLADE_AUTO_MEMORY = '0';
+            if (surface === 'pty') {
+              evidence = await runForegroundBoundedOutputPtyDriver({
+                workspace,
+                storageRoot: storage,
+                home,
+                sessionId,
+                fixture,
+                secret: model.apiKey,
+                timeoutMs: 210_000,
+              });
+            } else if (surface === 'headless') {
+              evidence = await runForegroundBoundedOutputHeadlessDriver({
+                workspace,
+                sessionId,
+                fixture,
+              });
+            } else {
+              await ensureStoreInitialized();
+              getState().config.actions.setConfig(runtimeConfig);
+              WorkspaceTrustService.resetInstance();
+              await WorkspaceTrustService.getInstance().trust(workspace);
+              const acp = await runForegroundBoundedOutputAcpDriver({
+                workspace,
+                fixture,
+                secret: model.apiKey,
+                timeoutMs: 180_000,
+              });
+              sessionId = acp.sessionId;
+              assertOwnedProcessesGone(acp.processes);
+              evidence = acp;
+            }
           }
-        }
 
-        const transcriptPath = findSessionTranscript(storage, sessionId);
-        const events = readSessionEvents(transcriptPath);
-        const trace = extractDurableToolTrace(events);
-        const transport = surface === 'acp' ? 'acp' : 'local';
-        assertForegroundBoundedOutputToolTrace(trace, fixture, transport);
-        assertForegroundBoundedOutputDurableMetadata(events, transport);
-        assertForegroundBoundedOutputEvidenceSafe(
-          { evidence, trace, events },
-          fixture,
-          [model.apiKey]
-        );
-        await assertNoForegroundLeases(workspace, sessionId);
-        expect(evidence).toBeTruthy();
-      } finally {
-        if (previousStorageRoot === undefined) {
-          delete process.env.BLADE_STORAGE_ROOT;
-        } else {
-          process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
+          const transcriptPath = findSessionTranscript(storage, sessionId);
+          const events = readSessionEvents(transcriptPath);
+          const trace = extractDurableToolTrace(events);
+          const transport = surface === 'acp' ? 'acp' : 'local';
+          assertForegroundBoundedOutputToolTrace(trace, fixture, transport);
+          assertForegroundBoundedOutputDurableMetadata(events, transport);
+          assertForegroundBoundedOutputEvidenceSafe(
+            { evidence, trace, events },
+            fixture,
+            [model.apiKey]
+          );
+          await assertNoForegroundLeases(workspace, sessionId);
+          expect(evidence).toBeTruthy();
+        } finally {
+          if (previousStorageRoot === undefined) {
+            delete process.env.BLADE_STORAGE_ROOT;
+          } else {
+            process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
+          }
+          if (previousHome === undefined) delete process.env.HOME;
+          else process.env.HOME = previousHome;
+          if (previousAutoMemory === undefined) delete process.env.BLADE_AUTO_MEMORY;
+          else process.env.BLADE_AUTO_MEMORY = previousAutoMemory;
+          WorkspaceTrustService.resetInstance();
+          await rm(root, { recursive: true, force: true });
         }
-        if (previousHome === undefined) delete process.env.HOME;
-        else process.env.HOME = previousHome;
-        if (previousAutoMemory === undefined) delete process.env.BLADE_AUTO_MEMORY;
-        else process.env.BLADE_AUTO_MEMORY = previousAutoMemory;
-        WorkspaceTrustService.resetInstance();
-        await rm(root, { recursive: true, force: true });
-      }
-    }, 240_000);
+      },
+      240_000
+    );
   });

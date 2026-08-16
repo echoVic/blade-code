@@ -474,16 +474,17 @@ describe('ProviderCircuitRegistry identity and capacity', () => {
     ['credential', { apiKey: 'another-secret' }],
     ['routing header', { customHeaders: { 'x-route-tenant': 'tenant-b' } }],
     ['open policy', { openDurationMs: 20_000 }],
-  ] satisfies Array<
-    [string, Partial<ProviderCircuitScope>]
-  >)('isolates a different %s', (_name, override) => {
-    const circuits = registry();
-    const first = circuits.get(scope());
-    const second = circuits.get(scope(override));
-    trip(first);
-    expect(first.snapshot().state).toBe('open');
-    expect(second.snapshot().state).toBe('closed');
-  });
+  ] satisfies Array<[string, Partial<ProviderCircuitScope>]>)(
+    'isolates a different %s',
+    (_name, override) => {
+      const circuits = registry();
+      const first = circuits.get(scope());
+      const second = circuits.get(scope(override));
+      trip(first);
+      expect(first.snapshot().state).toBe('open');
+      expect(second.snapshot().state).toBe('closed');
+    }
+  );
 
   it('shares state for equivalent canonical scopes', () => {
     const circuits = registry();

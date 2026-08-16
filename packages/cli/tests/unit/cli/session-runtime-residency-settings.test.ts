@@ -31,39 +31,33 @@ describe('Session Runtime residency settings', () => {
     ).resolves.toMatchObject({ maxResidentSessionRuntimes: value });
   });
 
-  it.each([
-    0,
-    -1,
-    257,
-    1.5,
-    Number.POSITIVE_INFINITY,
-  ])('rejects maxResidentSessionRuntimes=%s', async (value) => {
-    expect(isValidResidentSessionRuntimeLimit(value)).toBe(false);
-    await expect(
-      loadCliSettings(JSON.stringify({ maxResidentSessionRuntimes: value }))
-    ).rejects.toThrow('Invalid --settings value');
-  });
+  it.each([0, -1, 257, 1.5, Number.POSITIVE_INFINITY])(
+    'rejects maxResidentSessionRuntimes=%s',
+    async (value) => {
+      expect(isValidResidentSessionRuntimeLimit(value)).toBe(false);
+      await expect(
+        loadCliSettings(JSON.stringify({ maxResidentSessionRuntimes: value }))
+      ).rejects.toThrow('Invalid --settings value');
+    }
+  );
 
-  it.each([
-    30_000, 300_000, 3_600_000,
-  ])('accepts sessionRuntimeIdleMs=%i', async (value) => {
-    expect(isValidSessionRuntimeIdleMs(value)).toBe(true);
-    await expect(
-      loadCliSettings(JSON.stringify({ sessionRuntimeIdleMs: value }))
-    ).resolves.toMatchObject({ sessionRuntimeIdleMs: value });
-  });
+  it.each([30_000, 300_000, 3_600_000])(
+    'accepts sessionRuntimeIdleMs=%i',
+    async (value) => {
+      expect(isValidSessionRuntimeIdleMs(value)).toBe(true);
+      await expect(
+        loadCliSettings(JSON.stringify({ sessionRuntimeIdleMs: value }))
+      ).resolves.toMatchObject({ sessionRuntimeIdleMs: value });
+    }
+  );
 
-  it.each([
-    0,
-    -1,
-    29_999,
-    3_600_001,
-    30_000.5,
-    Number.POSITIVE_INFINITY,
-  ])('rejects sessionRuntimeIdleMs=%s', async (value) => {
-    expect(isValidSessionRuntimeIdleMs(value)).toBe(false);
-    await expect(
-      loadCliSettings(JSON.stringify({ sessionRuntimeIdleMs: value }))
-    ).rejects.toThrow('Invalid --settings value');
-  });
+  it.each([0, -1, 29_999, 3_600_001, 30_000.5, Number.POSITIVE_INFINITY])(
+    'rejects sessionRuntimeIdleMs=%s',
+    async (value) => {
+      expect(isValidSessionRuntimeIdleMs(value)).toBe(false);
+      await expect(
+        loadCliSettings(JSON.stringify({ sessionRuntimeIdleMs: value }))
+      ).rejects.toThrow('Invalid --settings value');
+    }
+  );
 });

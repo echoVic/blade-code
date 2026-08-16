@@ -194,10 +194,10 @@ describe('completed subagent result adoption', () => {
         } as unknown as AgentSession['result'],
       }),
     },
-  ])('rejects $name instead of manufacturing an adopted result', ({
-    call,
-    session,
-  }) => {
-    expect(buildSubagentResultAdoption(call, session, owner)).toBeUndefined();
-  });
+  ])(
+    'rejects $name instead of manufacturing an adopted result',
+    ({ call, session }) => {
+      expect(buildSubagentResultAdoption(call, session, owner)).toBeUndefined();
+    }
+  );
 });

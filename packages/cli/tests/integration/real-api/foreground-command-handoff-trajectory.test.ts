@@ -620,103 +620,109 @@ async function assertNoBackgroundLeases(
 describe
   .skipIf(!isRealApiTestEnabled())
   .sequential('bounded foreground command handoff release matrix', () => {
-    it.each(matrix)('$model.model × $surface', async ({ model, surface }) => {
-      const root = await mkdtemp(
-        path.join(os.tmpdir(), `blade-handoff-${safeSlug(model.model)}-${surface}-`)
-      );
-      const home = path.join(root, 'home');
-      const storage = path.join(root, 'storage');
-      const workspaceInput = path.join(root, 'workspace');
-      let fixture: ForegroundCommandHandoffFixture | undefined;
-      let sessionId = `handoff-${safeSlug(model.model)}-${surface}-${Date.now()}`;
-      try {
-        await Promise.all([
-          mkdir(home, { recursive: true }),
-          mkdir(storage, { recursive: true }),
-          mkdir(workspaceInput, { recursive: true }),
-        ]);
-        const workspace = await initializeWorkspace(workspaceInput);
-        await writeRuntimeConfig(home, model);
-        const nonce = `${safeSlug(model.model)}_${surface}_${Date.now()}`;
-        fixture = await createForegroundCommandHandoffFixture(
-          workspace,
-          nonce,
-          childFixture
+    it.each(matrix)(
+      '$model.model × $surface',
+      async ({ model, surface }) => {
+        const root = await mkdtemp(
+          path.join(os.tmpdir(), `blade-handoff-${safeSlug(model.model)}-${surface}-`)
         );
-
-        let evidence: SurfaceEvidence;
-        if (surface === 'headless') {
-          evidence = await runHeadless({
+        const home = path.join(root, 'home');
+        const storage = path.join(root, 'storage');
+        const workspaceInput = path.join(root, 'workspace');
+        let fixture: ForegroundCommandHandoffFixture | undefined;
+        let sessionId = `handoff-${safeSlug(model.model)}-${surface}-${Date.now()}`;
+        try {
+          await Promise.all([
+            mkdir(home, { recursive: true }),
+            mkdir(storage, { recursive: true }),
+            mkdir(workspaceInput, { recursive: true }),
+          ]);
+          const workspace = await initializeWorkspace(workspaceInput);
+          await writeRuntimeConfig(home, model);
+          const nonce = `${safeSlug(model.model)}_${surface}_${Date.now()}`;
+          fixture = await createForegroundCommandHandoffFixture(
             workspace,
-            home,
-            storageRoot: storage,
-            sessionId,
-            fixture,
-            secret: model.apiKey,
-          });
-        } else if (surface === 'acp') {
-          evidence = await runSubprocessRunner({
-            runner: acpRunner,
-            envName: 'BLADE_FOREGROUND_HANDOFF_ACP_INPUT',
-            payload: {
-              cliEntry,
-              workspace,
-              home,
-              storageRoot: storage,
-              fixture,
-              secret: model.apiKey,
-            },
-            timeoutMs: 180_000,
-          });
-          sessionId = evidence.sessionId;
-        } else if (surface === 'pty') {
-          evidence = await runSubprocessRunner({
-            runner: ptyRunner,
-            envName: 'BLADE_FOREGROUND_HANDOFF_PTY_INPUT',
-            payload: {
-              cliEntry,
+            nonce,
+            childFixture
+          );
+
+          let evidence: SurfaceEvidence;
+          if (surface === 'headless') {
+            evidence = await runHeadless({
               workspace,
               home,
               storageRoot: storage,
               sessionId,
               fixture,
               secret: model.apiKey,
-            },
-            timeoutMs: 210_000,
-          });
-        } else {
-          evidence = await runWeb({
-            workspace,
-            home,
-            storageRoot: storage,
-            fixture,
-            secret: model.apiKey,
-          });
-          sessionId = evidence.sessionId;
-        }
+            });
+          } else if (surface === 'acp') {
+            evidence = await runSubprocessRunner({
+              runner: acpRunner,
+              envName: 'BLADE_FOREGROUND_HANDOFF_ACP_INPUT',
+              payload: {
+                cliEntry,
+                workspace,
+                home,
+                storageRoot: storage,
+                fixture,
+                secret: model.apiKey,
+              },
+              timeoutMs: 180_000,
+            });
+            sessionId = evidence.sessionId;
+          } else if (surface === 'pty') {
+            evidence = await runSubprocessRunner({
+              runner: ptyRunner,
+              envName: 'BLADE_FOREGROUND_HANDOFF_PTY_INPUT',
+              payload: {
+                cliEntry,
+                workspace,
+                home,
+                storageRoot: storage,
+                sessionId,
+                fixture,
+                secret: model.apiKey,
+              },
+              timeoutMs: 210_000,
+            });
+          } else {
+            evidence = await runWeb({
+              workspace,
+              home,
+              storageRoot: storage,
+              fixture,
+              secret: model.apiKey,
+            });
+            sessionId = evidence.sessionId;
+          }
 
-        const transcriptPath = findSessionTranscript(storage, sessionId);
-        const events = readSessionEvents(transcriptPath);
-        assertNoSecrets(
-          {
-            evidence,
-            events,
-            transcript: await readFile(transcriptPath, 'utf8'),
-          },
-          [model.apiKey]
-        );
-        for (const process of evidence.processes ?? []) {
-          expect(processIdentityMatches(process.pid, process.identity)).toBe(false);
+          const transcriptPath = findSessionTranscript(storage, sessionId);
+          const events = readSessionEvents(transcriptPath);
+          assertNoSecrets(
+            {
+              evidence,
+              events,
+              transcript: await readFile(transcriptPath, 'utf8'),
+            },
+            [model.apiKey]
+          );
+          for (const process of evidence.processes ?? []) {
+            expect(processIdentityMatches(process.pid, process.identity)).toBe(false);
+          }
+          await Promise.all([
+            assertNoForegroundLeases(workspace, sessionId),
+            assertNoBackgroundLeases(workspace, sessionId),
+          ]);
+        } finally {
+          if (fixture) {
+            await releaseForegroundCommandHandoffFixture(fixture).catch(
+              () => undefined
+            );
+          }
+          await rm(root, { recursive: true, force: true });
         }
-        await Promise.all([
-          assertNoForegroundLeases(workspace, sessionId),
-          assertNoBackgroundLeases(workspace, sessionId),
-        ]);
-      } finally {
-        if (fixture) {
-          await releaseForegroundCommandHandoffFixture(fixture).catch(() => undefined);
-        }
-        await rm(root, { recursive: true, force: true });
-      }
-    }, 240_000);
+      },
+      240_000
+    );
   });

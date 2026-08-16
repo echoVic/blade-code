@@ -37,6 +37,12 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      - name: Format check
+        run: bun run format:check
+
+      - name: Lint (CLI)
+        run: bun run --filter blade-code lint
+
       - name: Build
         run: bun run build
 

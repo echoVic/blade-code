@@ -193,254 +193,265 @@ async function openEventProbe(
 describe
   .skipIf(!isRealApiTestEnabled())
   .sequential('bounded fair Provider admission Web control', () => {
-    it.each(models)('$model serializes two production Web Sessions', async (model) => {
-      if (!model.baseURL)
-        throw new Error(`Missing Provider base URL for ${model.model}`);
-      const root = await mkdtemp(
-        path.join(os.tmpdir(), `blade-provider-admission-web-${safeSlug(model.model)}-`)
-      );
-      const home = path.join(root, 'home');
-      const storageRoot = path.join(root, 'storage');
-      const workspace = path.join(root, 'workspace');
-      const barrierPath = path.join(root, 'provider-hold-ready');
-      const proxy = await startRecordingProviderProxy(model.baseURL, {
-        holdRequestNumber: 1,
-        holdMs: 10_000,
-        onHold: async () => {
-          await writeFile(barrierPath, 'ready\n');
-        },
-      });
-      const config = buildRealApiRuntimeConfig({
-        ...model,
-        baseURL: proxy.baseUrl,
-      });
-      const port = await reservePort();
-      let child: ChildProcess | undefined;
-      let probe: EventProbe | undefined;
-      let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
-      const output: string[] = [];
-      const browserFaults: string[] = [];
-      try {
-        await Promise.all([
-          mkdir(path.join(home, '.blade'), { recursive: true }),
-          mkdir(storageRoot, { recursive: true }),
-          mkdir(workspace, { recursive: true }),
-        ]);
-        await writeFile(
-          path.join(home, '.blade', 'config.json'),
-          `${JSON.stringify(
+    it.each(models)(
+      '$model serializes two production Web Sessions',
+      async (model) => {
+        if (!model.baseURL)
+          throw new Error(`Missing Provider base URL for ${model.model}`);
+        const root = await mkdtemp(
+          path.join(
+            os.tmpdir(),
+            `blade-provider-admission-web-${safeSlug(model.model)}-`
+          )
+        );
+        const home = path.join(root, 'home');
+        const storageRoot = path.join(root, 'storage');
+        const workspace = path.join(root, 'workspace');
+        const barrierPath = path.join(root, 'provider-hold-ready');
+        const proxy = await startRecordingProviderProxy(model.baseURL, {
+          holdRequestNumber: 1,
+          holdMs: 10_000,
+          onHold: async () => {
+            await writeFile(barrierPath, 'ready\n');
+          },
+        });
+        const config = buildRealApiRuntimeConfig({
+          ...model,
+          baseURL: proxy.baseUrl,
+        });
+        const port = await reservePort();
+        let child: ChildProcess | undefined;
+        let probe: EventProbe | undefined;
+        let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+        const output: string[] = [];
+        const browserFaults: string[] = [];
+        try {
+          await Promise.all([
+            mkdir(path.join(home, '.blade'), { recursive: true }),
+            mkdir(storageRoot, { recursive: true }),
+            mkdir(workspace, { recursive: true }),
+          ]);
+          await writeFile(
+            path.join(home, '.blade', 'config.json'),
+            `${JSON.stringify(
+              {
+                currentModelId: config.currentModelId,
+                models: config.models,
+                modelProviders: config.modelProviders,
+                permissionMode: 'yolo',
+                providerRequestConcurrency: 1,
+                providerRequestAdmissionMs: 120_000,
+                providerCircuitBreakerOpenMs: 0,
+                hooks: { enabled: false },
+                disableAllHooks: true,
+                mcpServers: {},
+              },
+              null,
+              2
+            )}\n`,
+            { mode: 0o600 }
+          );
+          child = spawn(
+            process.execPath,
+            [cliEntry, 'serve', '--hostname', '127.0.0.1', '--port', String(port)],
             {
-              currentModelId: config.currentModelId,
-              models: config.models,
-              modelProviders: config.modelProviders,
-              permissionMode: 'yolo',
-              providerRequestConcurrency: 1,
-              providerRequestAdmissionMs: 120_000,
-              providerCircuitBreakerOpenMs: 0,
-              hooks: { enabled: false },
-              disableAllHooks: true,
-              mcpServers: {},
+              cwd: workspace,
+              env: {
+                ...process.env,
+                HOME: home,
+                BLADE_STORAGE_ROOT: storageRoot,
+                BLADE_AUTO_MEMORY: '0',
+                BLADE_TELEMETRY_DISABLED: '1',
+              },
+              stdio: ['ignore', 'pipe', 'pipe'],
+            }
+          );
+          child.stdout?.on('data', (chunk) => output.push(chunk.toString()));
+          child.stderr?.on('data', (chunk) => output.push(chunk.toString()));
+          const childIdentity = child.pid
+            ? captureProcessIdentity(child.pid)
+            : undefined;
+          const origin = `http://127.0.0.1:${port}`;
+          await waitFor(
+            async () => {
+              try {
+                return (await fetch(`${origin}/health`)).ok;
+              } catch {
+                return false;
+              }
             },
-            null,
-            2
-          )}\n`,
-          { mode: 0o600 }
-        );
-        child = spawn(
-          process.execPath,
-          [cliEntry, 'serve', '--hostname', '127.0.0.1', '--port', String(port)],
-          {
-            cwd: workspace,
-            env: {
-              ...process.env,
-              HOME: home,
-              BLADE_STORAGE_ROOT: storageRoot,
-              BLADE_AUTO_MEMORY: '0',
-              BLADE_TELEMETRY_DISABLED: '1',
-            },
-            stdio: ['ignore', 'pipe', 'pipe'],
+            'Web Provider admission server did not become ready',
+            20_000
+          );
+          const primarySessionId = await createSession(origin, workspace);
+          const primaryMarker = `WEB_ADMISSION_PRIMARY_${Date.now()}`;
+          const secondaryMarker = `WEB_ADMISSION_SECONDARY_${Date.now()}`;
+          const primarySubmission = await fetch(
+            `${origin}/sessions/${primarySessionId}/message`,
+            {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                content: `Reply with exactly ${primaryMarker} and no other text.`,
+                permissionMode: 'yolo',
+              }),
+            }
+          );
+          if (!primarySubmission.ok) {
+            throw new Error(
+              `Primary Web admission submission failed: ${primarySubmission.status}`
+            );
           }
-        );
-        child.stdout?.on('data', (chunk) => output.push(chunk.toString()));
-        child.stderr?.on('data', (chunk) => output.push(chunk.toString()));
-        const childIdentity = child.pid ? captureProcessIdentity(child.pid) : undefined;
-        const origin = `http://127.0.0.1:${port}`;
-        await waitFor(
-          async () => {
+          await waitFor(async () => {
             try {
-              return (await fetch(`${origin}/health`)).ok;
+              await access(barrierPath);
+              return true;
             } catch {
               return false;
             }
-          },
-          'Web Provider admission server did not become ready',
-          20_000
-        );
-        const primarySessionId = await createSession(origin, workspace);
-        const primaryMarker = `WEB_ADMISSION_PRIMARY_${Date.now()}`;
-        const secondaryMarker = `WEB_ADMISSION_SECONDARY_${Date.now()}`;
-        const primarySubmission = await fetch(
-          `${origin}/sessions/${primarySessionId}/message`,
-          {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-              content: `Reply with exactly ${primaryMarker} and no other text.`,
-              permissionMode: 'yolo',
-            }),
-          }
-        );
-        if (!primarySubmission.ok) {
-          throw new Error(
-            `Primary Web admission submission failed: ${primarySubmission.status}`
-          );
-        }
-        await waitFor(async () => {
-          try {
-            await access(barrierPath);
-            return true;
-          } catch {
-            return false;
-          }
-        }, 'Primary Web request did not reach Provider hold barrier');
+          }, 'Primary Web request did not reach Provider hold barrier');
 
-        const secondarySessionId = await createSession(origin, workspace);
-        probe = await openEventProbe(origin, secondarySessionId, workspace);
-        browser = await chromium.launch({ headless: true });
-        const page = await browser.newPage();
-        page.on('pageerror', (error) =>
-          browserFaults.push(`pageerror:${error.message}`)
-        );
-        page.on('console', (message) => {
-          if (message.type() === 'error') {
-            browserFaults.push(`console:${message.text()}`);
-          }
-        });
-        const navigation = new URL(origin);
-        navigation.searchParams.set('session', secondarySessionId);
-        navigation.searchParams.set('project', workspace);
-        await page.goto(navigation.href, { waitUntil: 'domcontentloaded' });
-        const composer = page.locator('textarea[data-blade-composer]');
-        await composer.waitFor({ state: 'visible', timeout: 30_000 });
-        const permissionMode = page.locator('[data-blade-permission-mode]');
-        if (
-          (await permissionMode.getAttribute('data-blade-permission-mode')) !== 'yolo'
-        ) {
-          await permissionMode.click();
-          await page.locator('[data-blade-permission-option="yolo"]').click();
-          await page.locator('[data-blade-yolo-confirm]').click();
-        }
-        await composer.fill(`Reply with exactly ${secondaryMarker} and no other text.`);
-        const secondarySubmission = page.waitForResponse(
-          (response) =>
-            response.request().method() === 'POST' &&
-            response.url().includes(`/sessions/${secondarySessionId}/message`)
-        );
-        await composer.press('Enter');
-        if (!(await secondarySubmission).ok()) {
-          throw new Error('Secondary Web admission GUI submission failed');
-        }
-        await page.getByText('Capacity queue', { exact: false }).waitFor({
-          state: 'visible',
-          timeout: 30_000,
-        });
-        await waitFor(
-          () =>
-            probe?.events.some(
-              (event) =>
-                event.type === 'provider.admission' &&
-                event.properties.phase === 'queued' &&
-                event.properties.inFlight === 1 &&
-                event.properties.limit === 1
-            ) === true,
-          'Secondary Web SSE did not project Provider admission queue'
-        );
-        await page.getByText(secondaryMarker, { exact: true }).waitFor({
-          state: 'visible',
-          timeout: 120_000,
-        });
-        await waitFor(
-          () =>
-            probe?.events.some(
-              (event) =>
-                event.type === 'provider.admission' &&
-                event.properties.phase === 'admitted'
-            ) === true,
-          'Secondary Web SSE did not project Provider admission'
-        );
-        let primaryTranscript = '';
-        await waitFor(
-          async () => {
-            try {
-              primaryTranscript = await readFile(
-                findSessionTranscript(storageRoot, primarySessionId),
-                'utf8'
-              );
-              return primaryTranscript.includes(primaryMarker);
-            } catch {
-              return false;
+          const secondarySessionId = await createSession(origin, workspace);
+          probe = await openEventProbe(origin, secondarySessionId, workspace);
+          browser = await chromium.launch({ headless: true });
+          const page = await browser.newPage();
+          page.on('pageerror', (error) =>
+            browserFaults.push(`pageerror:${error.message}`)
+          );
+          page.on('console', (message) => {
+            if (message.type() === 'error') {
+              browserFaults.push(`console:${message.text()}`);
             }
-          },
-          'Primary Web Session did not finish independently',
-          120_000
-        );
-        await page.reload({ waitUntil: 'domcontentloaded' });
-        await page
-          .locator('textarea[data-blade-composer]')
-          .waitFor({ state: 'visible', timeout: 30_000 });
-        await page.getByText(secondaryMarker, { exact: true }).waitFor({
-          state: 'visible',
-          timeout: 30_000,
-        });
-        if ((await page.locator('body').textContent())?.includes('Capacity queue')) {
-          throw new Error('Web reload restored transient Provider admission');
-        }
-        const secondaryTranscript = await readFile(
-          findSessionTranscript(storageRoot, secondarySessionId),
-          'utf8'
-        );
-        expect(`${primaryTranscript}${secondaryTranscript}`).not.toContain(
-          'provider_admission'
-        );
-        expect(proxy.requestBodies).toHaveLength(2);
-        expect(proxy.maxInFlight).toBe(1);
-        expect(proxy.heldRequestNumbers).toEqual([1]);
-        expect(
-          (proxy.requestFinishedAt[0] ?? 0) - (proxy.requestStartedAt[0] ?? 0)
-        ).toBeGreaterThanOrEqual(9_500);
-        expect(proxy.requestStartedAt[1]).toBeGreaterThanOrEqual(
-          proxy.requestFinishedAt[0] ?? Number.MAX_SAFE_INTEGER
-        );
-        expect(browserFaults).toEqual([]);
-        expect(
-          `${output.join('')}${await page.content()}${JSON.stringify(probe.events)}`
-        ).not.toContain(model.apiKey);
-
-        await probe.close();
-        probe = undefined;
-        await browser.close();
-        browser = undefined;
-        child.kill('SIGTERM');
-        const exit = await waitForChildExit(child);
-        if (exit.signal || exit.code !== 0) {
-          throw new Error(
-            `Web Provider admission exited ${
-              exit.code ?? exit.signal
-            }: ${output.join('').replaceAll(model.apiKey, '[redacted]')}`
+          });
+          const navigation = new URL(origin);
+          navigation.searchParams.set('session', secondarySessionId);
+          navigation.searchParams.set('project', workspace);
+          await page.goto(navigation.href, { waitUntil: 'domcontentloaded' });
+          const composer = page.locator('textarea[data-blade-composer]');
+          await composer.waitFor({ state: 'visible', timeout: 30_000 });
+          const permissionMode = page.locator('[data-blade-permission-mode]');
+          if (
+            (await permissionMode.getAttribute('data-blade-permission-mode')) !== 'yolo'
+          ) {
+            await permissionMode.click();
+            await page.locator('[data-blade-permission-option="yolo"]').click();
+            await page.locator('[data-blade-yolo-confirm]').click();
+          }
+          await composer.fill(
+            `Reply with exactly ${secondaryMarker} and no other text.`
           );
+          const secondarySubmission = page.waitForResponse(
+            (response) =>
+              response.request().method() === 'POST' &&
+              response.url().includes(`/sessions/${secondarySessionId}/message`)
+          );
+          await composer.press('Enter');
+          if (!(await secondarySubmission).ok()) {
+            throw new Error('Secondary Web admission GUI submission failed');
+          }
+          await page.getByText('Capacity queue', { exact: false }).waitFor({
+            state: 'visible',
+            timeout: 30_000,
+          });
+          await waitFor(
+            () =>
+              probe?.events.some(
+                (event) =>
+                  event.type === 'provider.admission' &&
+                  event.properties.phase === 'queued' &&
+                  event.properties.inFlight === 1 &&
+                  event.properties.limit === 1
+              ) === true,
+            'Secondary Web SSE did not project Provider admission queue'
+          );
+          await page.getByText(secondaryMarker, { exact: true }).waitFor({
+            state: 'visible',
+            timeout: 120_000,
+          });
+          await waitFor(
+            () =>
+              probe?.events.some(
+                (event) =>
+                  event.type === 'provider.admission' &&
+                  event.properties.phase === 'admitted'
+              ) === true,
+            'Secondary Web SSE did not project Provider admission'
+          );
+          let primaryTranscript = '';
+          await waitFor(
+            async () => {
+              try {
+                primaryTranscript = await readFile(
+                  findSessionTranscript(storageRoot, primarySessionId),
+                  'utf8'
+                );
+                return primaryTranscript.includes(primaryMarker);
+              } catch {
+                return false;
+              }
+            },
+            'Primary Web Session did not finish independently',
+            120_000
+          );
+          await page.reload({ waitUntil: 'domcontentloaded' });
+          await page
+            .locator('textarea[data-blade-composer]')
+            .waitFor({ state: 'visible', timeout: 30_000 });
+          await page.getByText(secondaryMarker, { exact: true }).waitFor({
+            state: 'visible',
+            timeout: 30_000,
+          });
+          if ((await page.locator('body').textContent())?.includes('Capacity queue')) {
+            throw new Error('Web reload restored transient Provider admission');
+          }
+          const secondaryTranscript = await readFile(
+            findSessionTranscript(storageRoot, secondarySessionId),
+            'utf8'
+          );
+          expect(`${primaryTranscript}${secondaryTranscript}`).not.toContain(
+            'provider_admission'
+          );
+          expect(proxy.requestBodies).toHaveLength(2);
+          expect(proxy.maxInFlight).toBe(1);
+          expect(proxy.heldRequestNumbers).toEqual([1]);
+          expect(
+            (proxy.requestFinishedAt[0] ?? 0) - (proxy.requestStartedAt[0] ?? 0)
+          ).toBeGreaterThanOrEqual(9_500);
+          expect(proxy.requestStartedAt[1]).toBeGreaterThanOrEqual(
+            proxy.requestFinishedAt[0] ?? Number.MAX_SAFE_INTEGER
+          );
+          expect(browserFaults).toEqual([]);
+          expect(
+            `${output.join('')}${await page.content()}${JSON.stringify(probe.events)}`
+          ).not.toContain(model.apiKey);
+
+          await probe.close();
+          probe = undefined;
+          await browser.close();
+          browser = undefined;
+          child.kill('SIGTERM');
+          const exit = await waitForChildExit(child);
+          if (exit.signal || exit.code !== 0) {
+            throw new Error(
+              `Web Provider admission exited ${
+                exit.code ?? exit.signal
+              }: ${output.join('').replaceAll(model.apiKey, '[redacted]')}`
+            );
+          }
+          if (child.pid && childIdentity) {
+            expect(processIdentityMatches(child.pid, childIdentity)).toBe(false);
+          }
+        } finally {
+          await probe?.close().catch(() => undefined);
+          await browser?.close().catch(() => undefined);
+          if (child && child.exitCode === null && child.signalCode === null) {
+            child.kill('SIGKILL');
+            await waitForChildExit(child, 10_000).catch(() => undefined);
+          }
+          await proxy.close();
+          await rm(root, { recursive: true, force: true });
         }
-        if (child.pid && childIdentity) {
-          expect(processIdentityMatches(child.pid, childIdentity)).toBe(false);
-        }
-      } finally {
-        await probe?.close().catch(() => undefined);
-        await browser?.close().catch(() => undefined);
-        if (child && child.exitCode === null && child.signalCode === null) {
-          child.kill('SIGKILL');
-          await waitForChildExit(child, 10_000).catch(() => undefined);
-        }
-        await proxy.close();
-        await rm(root, { recursive: true, force: true });
-      }
-    }, 240_000);
+      },
+      240_000
+    );
   });

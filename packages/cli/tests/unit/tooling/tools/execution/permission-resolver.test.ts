@@ -95,11 +95,14 @@ describe('resolvePermissionDecision — 决策矩阵', () => {
       ['ask', 'ask', 'hook'], // 两侧 ask 时优先 hook (场景化 reason)
       ['allow', 'ask', 'rule'], // hook=allow 不能放宽 rule 的 ask
       ['deny', 'deny', 'hook'],
-    ] as const)('rule=ask + hook=%s → %s (source=%s)', (hookBehavior, expectedBehavior, expectedSource) => {
-      const r = resolve(rule('ask'), hook(hookBehavior));
-      expect(r.behavior).toBe(expectedBehavior);
-      expect(r.source).toBe(expectedSource);
-    });
+    ] as const)(
+      'rule=ask + hook=%s → %s (source=%s)',
+      (hookBehavior, expectedBehavior, expectedSource) => {
+        const r = resolve(rule('ask'), hook(hookBehavior));
+        expect(r.behavior).toBe(expectedBehavior);
+        expect(r.source).toBe(expectedSource);
+      }
+    );
 
     it('rule=ask + hook=undefined → ask', () => {
       expect(resolve(rule('ask'), undefined).behavior).toBe('ask');
@@ -111,11 +114,14 @@ describe('resolvePermissionDecision — 决策矩阵', () => {
       ['allow', 'allow', 'rule'],
       ['ask', 'ask', 'hook'],
       ['deny', 'deny', 'hook'],
-    ] as const)('rule=allow + hook=%s → %s (source=%s)', (hookBehavior, expectedBehavior, expectedSource) => {
-      const r = resolve(rule('allow'), hook(hookBehavior));
-      expect(r.behavior).toBe(expectedBehavior);
-      expect(r.source).toBe(expectedSource);
-    });
+    ] as const)(
+      'rule=allow + hook=%s → %s (source=%s)',
+      (hookBehavior, expectedBehavior, expectedSource) => {
+        const r = resolve(rule('allow'), hook(hookBehavior));
+        expect(r.behavior).toBe(expectedBehavior);
+        expect(r.source).toBe(expectedSource);
+      }
+    );
 
     it('rule=allow + hook=undefined → allow', () => {
       const r = resolve(rule('allow'), undefined);

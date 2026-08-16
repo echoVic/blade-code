@@ -636,170 +636,174 @@ async function resumeInterruptedTurn(input: {
 describe
   .skipIf(!isRealApiTestEnabled() || process.platform === 'win32')
   .sequential('bounded coordinated graceful shutdown matrix', () => {
-    it.each(matrix)('$model.model × $surface', async ({ model, surface }) => {
-      const root = await mkdtemp(
-        path.join(os.tmpdir(), `blade-shutdown-${safeSlug(model.model)}-${surface}-`)
-      );
-      const home = path.join(root, 'home');
-      const storageRoot = path.join(root, 'storage');
-      const workspace = await realpath(
-        await mkdir(path.join(root, 'workspace'), {
-          recursive: true,
-        }).then(() => path.join(root, 'workspace'))
-      );
-      const sessionId = `shutdown-${safeSlug(model.model)}-${surface}-${Date.now()}`;
-      const fixture = createShutdownFixture(workspace, String(Date.now()));
-      const previousHome = process.env.HOME;
-      const previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
-      const previousAutoMemory = process.env.BLADE_AUTO_MEMORY;
-      let rootPid: number | undefined;
-      try {
-        await Promise.all([
-          mkdir(home, { recursive: true }),
-          mkdir(storageRoot, { recursive: true }),
-          writeFile(path.join(workspace, 'README.md'), '# Graceful shutdown\n'),
-        ]);
-        const runtimeConfig = await writeRuntimeConfig(home, model);
-        process.env.HOME = home;
-        process.env.BLADE_STORAGE_ROOT = storageRoot;
-        process.env.BLADE_AUTO_MEMORY = '0';
-        WorkspaceTrustService.resetInstance();
-        await WorkspaceTrustService.getInstance().trust(workspace);
+    it.each(matrix)(
+      '$model.model × $surface',
+      async ({ model, surface }) => {
+        const root = await mkdtemp(
+          path.join(os.tmpdir(), `blade-shutdown-${safeSlug(model.model)}-${surface}-`)
+        );
+        const home = path.join(root, 'home');
+        const storageRoot = path.join(root, 'storage');
+        const workspace = await realpath(
+          await mkdir(path.join(root, 'workspace'), {
+            recursive: true,
+          }).then(() => path.join(root, 'workspace'))
+        );
+        const sessionId = `shutdown-${safeSlug(model.model)}-${surface}-${Date.now()}`;
+        const fixture = createShutdownFixture(workspace, String(Date.now()));
+        const previousHome = process.env.HOME;
+        const previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
+        const previousAutoMemory = process.env.BLADE_AUTO_MEMORY;
+        let rootPid: number | undefined;
+        try {
+          await Promise.all([
+            mkdir(home, { recursive: true }),
+            mkdir(storageRoot, { recursive: true }),
+            writeFile(path.join(workspace, 'README.md'), '# Graceful shutdown\n'),
+          ]);
+          const runtimeConfig = await writeRuntimeConfig(home, model);
+          process.env.HOME = home;
+          process.env.BLADE_STORAGE_ROOT = storageRoot;
+          process.env.BLADE_AUTO_MEMORY = '0';
+          WorkspaceTrustService.resetInstance();
+          await WorkspaceTrustService.getInstance().trust(workspace);
 
-        const evidence =
-          surface === 'headless'
-            ? await runHeadlessSurface({
-                workspace,
-                home,
-                storageRoot,
-                sessionId,
-                modelId: runtimeConfig.currentModelId,
-                fixture,
-                secret: model.apiKey,
-              })
-            : surface === 'pty'
-              ? await runPtySurface({
+          const evidence =
+            surface === 'headless'
+              ? await runHeadlessSurface({
                   workspace,
                   home,
                   storageRoot,
                   sessionId,
+                  modelId: runtimeConfig.currentModelId,
                   fixture,
                   secret: model.apiKey,
                 })
-              : surface === 'acp'
-                ? await runAcpSurface({
+              : surface === 'pty'
+                ? await runPtySurface({
                     workspace,
                     home,
                     storageRoot,
+                    sessionId,
                     fixture,
                     secret: model.apiKey,
                   })
-                : await runWebSurface({
-                    workspace,
-                    home,
-                    storageRoot,
-                    fixture,
-                    secret: model.apiKey,
-                  });
-        rootPid = evidence.rootPid;
+                : surface === 'acp'
+                  ? await runAcpSurface({
+                      workspace,
+                      home,
+                      storageRoot,
+                      fixture,
+                      secret: model.apiKey,
+                    })
+                  : await runWebSurface({
+                      workspace,
+                      home,
+                      storageRoot,
+                      fixture,
+                      secret: model.apiKey,
+                    });
+          rootPid = evidence.rootPid;
 
-        await waitForProcessGone(evidence.rootPid);
-        const remainingDelay = 5_500 - (Date.now() - evidence.commandStartedAt);
-        if (remainingDelay > 0) {
-          await new Promise((resolve) => setTimeout(resolve, remainingDelay));
-        }
-        await expect(access(fixture.forbiddenEffectFile)).rejects.toMatchObject({
-          code: 'ENOENT',
-        });
+          await waitForProcessGone(evidence.rootPid);
+          const remainingDelay = 5_500 - (Date.now() - evidence.commandStartedAt);
+          if (remainingDelay > 0) {
+            await new Promise((resolve) => setTimeout(resolve, remainingDelay));
+          }
+          await expect(access(fixture.forbiddenEffectFile)).rejects.toMatchObject({
+            code: 'ENOENT',
+          });
 
-        const transcriptPath = findSessionTranscript(storageRoot, evidence.sessionId);
-        const interrupted = readSessionEvents(transcriptPath);
-        expect(
-          interrupted.filter((event) => event.type === 'turn_started')
-        ).toHaveLength(1);
-        expect(interrupted.filter((event) => event.type === 'turn_aborted')).toEqual([
-          expect.objectContaining({
-            data: expect.objectContaining({ cause: 'cancelled' }),
-          }),
-        ]);
-        expect(
-          interrupted.filter((event) => event.type === 'turn_completed')
-        ).toHaveLength(0);
-        expect(
-          interrupted.filter(
-            (event) =>
-              event.type === 'part_created' &&
-              event.data.partType === 'tool_call' &&
-              event.data.payload !== null &&
-              typeof event.data.payload === 'object' &&
-              !Array.isArray(event.data.payload) &&
-              event.data.payload.toolName === 'Bash'
-          )
-        ).toHaveLength(1);
-        await assertNoForegroundLeases(workspace, evidence.sessionId);
+          const transcriptPath = findSessionTranscript(storageRoot, evidence.sessionId);
+          const interrupted = readSessionEvents(transcriptPath);
+          expect(
+            interrupted.filter((event) => event.type === 'turn_started')
+          ).toHaveLength(1);
+          expect(interrupted.filter((event) => event.type === 'turn_aborted')).toEqual([
+            expect.objectContaining({
+              data: expect.objectContaining({ cause: 'cancelled' }),
+            }),
+          ]);
+          expect(
+            interrupted.filter((event) => event.type === 'turn_completed')
+          ).toHaveLength(0);
+          expect(
+            interrupted.filter(
+              (event) =>
+                event.type === 'part_created' &&
+                event.data.partType === 'tool_call' &&
+                event.data.payload !== null &&
+                typeof event.data.payload === 'object' &&
+                !Array.isArray(event.data.payload) &&
+                event.data.payload.toolName === 'Bash'
+            )
+          ).toHaveLength(1);
+          await assertNoForegroundLeases(workspace, evidence.sessionId);
 
-        const resumed = await resumeInterruptedTurn({
-          workspace,
-          home,
-          storageRoot,
-          sessionId: evidence.sessionId,
-          modelId: runtimeConfig.currentModelId,
-          secret: model.apiKey,
-        });
-        expect(
-          resumed.exitCode,
-          resumed.output.replaceAll(model.apiKey, '[redacted]')
-        ).toBe(0);
-        expect(headlessContent(resumed.output)).toContain(fixture.marker);
+          const resumed = await resumeInterruptedTurn({
+            workspace,
+            home,
+            storageRoot,
+            sessionId: evidence.sessionId,
+            modelId: runtimeConfig.currentModelId,
+            secret: model.apiKey,
+          });
+          expect(
+            resumed.exitCode,
+            resumed.output.replaceAll(model.apiKey, '[redacted]')
+          ).toBe(0);
+          expect(headlessContent(resumed.output)).toContain(fixture.marker);
 
-        const completed = readSessionEvents(transcriptPath);
-        expect(completed.filter((event) => event.type === 'turn_aborted')).toHaveLength(
-          1
-        );
-        expect(
-          completed.filter((event) => event.type === 'turn_completed')
-        ).toHaveLength(1);
-        expect(
-          completed.filter(
-            (event) =>
-              event.type === 'part_created' &&
-              event.data.partType === 'tool_call' &&
-              event.data.payload !== null &&
-              typeof event.data.payload === 'object' &&
-              !Array.isArray(event.data.payload) &&
-              event.data.payload.toolName === 'Bash'
-          )
-        ).toHaveLength(1);
-        expect(
-          JSON.stringify({
-            surfaceOutput: evidence.output,
-            resumedOutput: resumed.output,
-            events: completed,
-          })
-        ).not.toContain(model.apiKey);
-      } finally {
-        if (rootPid) {
-          try {
-            process.kill(-rootPid, 'SIGKILL');
-          } catch {
+          const completed = readSessionEvents(transcriptPath);
+          expect(
+            completed.filter((event) => event.type === 'turn_aborted')
+          ).toHaveLength(1);
+          expect(
+            completed.filter((event) => event.type === 'turn_completed')
+          ).toHaveLength(1);
+          expect(
+            completed.filter(
+              (event) =>
+                event.type === 'part_created' &&
+                event.data.partType === 'tool_call' &&
+                event.data.payload !== null &&
+                typeof event.data.payload === 'object' &&
+                !Array.isArray(event.data.payload) &&
+                event.data.payload.toolName === 'Bash'
+            )
+          ).toHaveLength(1);
+          expect(
+            JSON.stringify({
+              surfaceOutput: evidence.output,
+              resumedOutput: resumed.output,
+              events: completed,
+            })
+          ).not.toContain(model.apiKey);
+        } finally {
+          if (rootPid) {
             try {
-              process.kill(rootPid, 'SIGKILL');
+              process.kill(-rootPid, 'SIGKILL');
             } catch {
-              // The graceful path already reclaimed the process.
+              try {
+                process.kill(rootPid, 'SIGKILL');
+              } catch {
+                // The graceful path already reclaimed the process.
+              }
             }
           }
+          if (previousHome === undefined) delete process.env.HOME;
+          else process.env.HOME = previousHome;
+          if (previousStorageRoot === undefined) {
+            delete process.env.BLADE_STORAGE_ROOT;
+          } else {
+            process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
+          }
+          if (previousAutoMemory === undefined) delete process.env.BLADE_AUTO_MEMORY;
+          else process.env.BLADE_AUTO_MEMORY = previousAutoMemory;
+          WorkspaceTrustService.resetInstance();
+          await rm(root, { recursive: true, force: true });
         }
-        if (previousHome === undefined) delete process.env.HOME;
-        else process.env.HOME = previousHome;
-        if (previousStorageRoot === undefined) {
-          delete process.env.BLADE_STORAGE_ROOT;
-        } else {
-          process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
-        }
-        if (previousAutoMemory === undefined) delete process.env.BLADE_AUTO_MEMORY;
-        else process.env.BLADE_AUTO_MEMORY = previousAutoMemory;
-        WorkspaceTrustService.resetInstance();
-        await rm(root, { recursive: true, force: true });
-      }
-    }, 360_000);
+      },
+      360_000
+    );
   });

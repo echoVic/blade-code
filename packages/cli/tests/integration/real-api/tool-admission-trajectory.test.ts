@@ -979,61 +979,54 @@ async function runWebSurface(input: {
 describe
   .skipIf(!isRealApiTestEnabled() || process.platform === 'win32')
   .sequential('bounded fair tool admission matrix', () => {
-    it.each(matrix)('$model.model × $surface', async ({ model, surface }) => {
-      const root = await mkdtemp(
-        path.join(
-          os.tmpdir(),
-          `blade-tool-admission-${safeSlug(model.model)}-${surface}-`
-        )
-      );
-      const home = path.join(root, 'home');
-      const storageRoot = path.join(root, 'storage');
-      const workspacePath = path.join(root, 'workspace');
-      await mkdir(workspacePath, { recursive: true });
-      const workspace = await realpath(workspacePath);
-      const sessionId = `tool-admission-${safeSlug(model.model)}-${surface}-${Date.now()}`;
-      const fixture = createAdmissionFixture(
-        workspace,
-        `${safeSlug(model.model)}_${surface}_${Date.now()}`
-      );
-      const previousHome = process.env.HOME;
-      const previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
-      const previousAutoMemory = process.env.BLADE_AUTO_MEMORY;
-      try {
-        await Promise.all([
-          mkdir(home, { recursive: true }),
-          mkdir(storageRoot, { recursive: true }),
-          writeFile(path.join(workspace, 'README.md'), '# Tool admission\n'),
-        ]);
-        const runtimeConfig = await writeRuntimeConfig(home, model);
-        process.env.HOME = home;
-        process.env.BLADE_STORAGE_ROOT = storageRoot;
-        process.env.BLADE_AUTO_MEMORY = '0';
-        WorkspaceTrustService.resetInstance();
-        await WorkspaceTrustService.getInstance().trust(workspace);
+    it.each(matrix)(
+      '$model.model × $surface',
+      async ({ model, surface }) => {
+        const root = await mkdtemp(
+          path.join(
+            os.tmpdir(),
+            `blade-tool-admission-${safeSlug(model.model)}-${surface}-`
+          )
+        );
+        const home = path.join(root, 'home');
+        const storageRoot = path.join(root, 'storage');
+        const workspacePath = path.join(root, 'workspace');
+        await mkdir(workspacePath, { recursive: true });
+        const workspace = await realpath(workspacePath);
+        const sessionId = `tool-admission-${safeSlug(model.model)}-${surface}-${Date.now()}`;
+        const fixture = createAdmissionFixture(
+          workspace,
+          `${safeSlug(model.model)}_${surface}_${Date.now()}`
+        );
+        const previousHome = process.env.HOME;
+        const previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
+        const previousAutoMemory = process.env.BLADE_AUTO_MEMORY;
+        try {
+          await Promise.all([
+            mkdir(home, { recursive: true }),
+            mkdir(storageRoot, { recursive: true }),
+            writeFile(path.join(workspace, 'README.md'), '# Tool admission\n'),
+          ]);
+          const runtimeConfig = await writeRuntimeConfig(home, model);
+          process.env.HOME = home;
+          process.env.BLADE_STORAGE_ROOT = storageRoot;
+          process.env.BLADE_AUTO_MEMORY = '0';
+          WorkspaceTrustService.resetInstance();
+          await WorkspaceTrustService.getInstance().trust(workspace);
 
-        const evidence =
-          surface === 'headless'
-            ? await runHeadlessSurface({
-                workspace,
-                home,
-                storageRoot,
-                sessionId,
-                modelId: runtimeConfig.currentModelId,
-                fixture,
-                secret: model.apiKey,
-              })
-            : surface === 'acp'
-              ? await runBunSurface('acp', {
+          const evidence =
+            surface === 'headless'
+              ? await runHeadlessSurface({
                   workspace,
                   home,
                   storageRoot,
                   sessionId,
+                  modelId: runtimeConfig.currentModelId,
                   fixture,
                   secret: model.apiKey,
                 })
-              : surface === 'pty'
-                ? await runBunSurface('pty', {
+              : surface === 'acp'
+                ? await runBunSurface('acp', {
                     workspace,
                     home,
                     storageRoot,
@@ -1041,67 +1034,80 @@ describe
                     fixture,
                     secret: model.apiKey,
                   })
-                : await runWebSurface({
-                    workspace,
-                    home,
-                    storageRoot,
-                    fixture,
-                    secret: model.apiKey,
-                  });
+                : surface === 'pty'
+                  ? await runBunSurface('pty', {
+                      workspace,
+                      home,
+                      storageRoot,
+                      sessionId,
+                      fixture,
+                      secret: model.apiKey,
+                    })
+                  : await runWebSurface({
+                      workspace,
+                      home,
+                      storageRoot,
+                      fixture,
+                      secret: model.apiKey,
+                    });
 
-        const transcript = findSessionTranscript(storageRoot, evidence.sessionId);
-        const events = readSessionEvents(transcript);
-        const bashCalls = events.filter(
-          (event) =>
-            event.type === 'part_created' &&
-            event.data.partType === 'tool_call' &&
-            event.data.payload !== null &&
-            typeof event.data.payload === 'object' &&
-            !Array.isArray(event.data.payload) &&
-            event.data.payload.toolName === 'Bash'
-        );
-        const bashResults = events.filter(
-          (event) =>
-            event.type === 'part_created' &&
-            event.data.partType === 'tool_result' &&
-            event.data.payload !== null &&
-            typeof event.data.payload === 'object' &&
-            !Array.isArray(event.data.payload) &&
-            event.data.payload.toolName === 'Bash'
-        );
-        expect(bashCalls).toHaveLength(4);
-        expect(bashResults).toHaveLength(4);
-        expect(bashResults.map(toolPartCallId)).toEqual(bashCalls.map(toolPartCallId));
-        expect(events.filter((event) => event.type === 'turn_completed')).toHaveLength(
-          1
-        );
-        expect(await readdir(path.join(fixture.stateDir, 'active'))).toEqual([]);
-        await assertNoForegroundLeases(workspace, evidence.sessionId);
-        expect(
-          JSON.stringify({
-            output: evidence.output,
-            events,
-            state: await readFile(transcript, 'utf8'),
-          })
-        ).not.toContain(model.apiKey);
-        await expect(
-          access(path.join(fixture.stateDir, 'unexpected'))
-        ).rejects.toMatchObject({ code: 'ENOENT' });
-      } finally {
-        await releaseAll(fixture.stateDir).catch(() => undefined);
-        if (previousHome === undefined) delete process.env.HOME;
-        else process.env.HOME = previousHome;
-        if (previousStorageRoot === undefined) {
-          delete process.env.BLADE_STORAGE_ROOT;
-        } else {
-          process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
+          const transcript = findSessionTranscript(storageRoot, evidence.sessionId);
+          const events = readSessionEvents(transcript);
+          const bashCalls = events.filter(
+            (event) =>
+              event.type === 'part_created' &&
+              event.data.partType === 'tool_call' &&
+              event.data.payload !== null &&
+              typeof event.data.payload === 'object' &&
+              !Array.isArray(event.data.payload) &&
+              event.data.payload.toolName === 'Bash'
+          );
+          const bashResults = events.filter(
+            (event) =>
+              event.type === 'part_created' &&
+              event.data.partType === 'tool_result' &&
+              event.data.payload !== null &&
+              typeof event.data.payload === 'object' &&
+              !Array.isArray(event.data.payload) &&
+              event.data.payload.toolName === 'Bash'
+          );
+          expect(bashCalls).toHaveLength(4);
+          expect(bashResults).toHaveLength(4);
+          expect(bashResults.map(toolPartCallId)).toEqual(
+            bashCalls.map(toolPartCallId)
+          );
+          expect(
+            events.filter((event) => event.type === 'turn_completed')
+          ).toHaveLength(1);
+          expect(await readdir(path.join(fixture.stateDir, 'active'))).toEqual([]);
+          await assertNoForegroundLeases(workspace, evidence.sessionId);
+          expect(
+            JSON.stringify({
+              output: evidence.output,
+              events,
+              state: await readFile(transcript, 'utf8'),
+            })
+          ).not.toContain(model.apiKey);
+          await expect(
+            access(path.join(fixture.stateDir, 'unexpected'))
+          ).rejects.toMatchObject({ code: 'ENOENT' });
+        } finally {
+          await releaseAll(fixture.stateDir).catch(() => undefined);
+          if (previousHome === undefined) delete process.env.HOME;
+          else process.env.HOME = previousHome;
+          if (previousStorageRoot === undefined) {
+            delete process.env.BLADE_STORAGE_ROOT;
+          } else {
+            process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
+          }
+          if (previousAutoMemory === undefined) delete process.env.BLADE_AUTO_MEMORY;
+          else process.env.BLADE_AUTO_MEMORY = previousAutoMemory;
+          WorkspaceTrustService.resetInstance();
+          await rm(root, { recursive: true, force: true });
         }
-        if (previousAutoMemory === undefined) delete process.env.BLADE_AUTO_MEMORY;
-        else process.env.BLADE_AUTO_MEMORY = previousAutoMemory;
-        WorkspaceTrustService.resetInstance();
-        await rm(root, { recursive: true, force: true });
-      }
-    }, 300_000);
+      },
+      300_000
+    );
 
     it('deepseek-v4-flash × web two-Session fairness', async () => {
       if (!fairnessModel) {
