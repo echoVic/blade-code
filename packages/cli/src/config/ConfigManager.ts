@@ -50,16 +50,24 @@ import { formatMaxTurnsRange, isValidMaxTurns } from './maxTurns.js';
 import { migrateGeneratedModelIds } from './modelIds.js';
 import { validateModelProviderConfig } from './modelProviders.js';
 import {
-  isValidProviderCircuitOpenMs,
-  MAX_PROVIDER_CIRCUIT_OPEN_MS,
-  MIN_PROVIDER_CIRCUIT_OPEN_MS,
-} from './providerCircuitBreaker.js';
-import {
   normalizePluginSettings,
   normalizePluginSourcePolicy,
   type PluginSettingsScope,
   type WorkspacePluginSettingsResolution,
 } from './pluginSettings.js';
+import {
+  isValidProviderCircuitOpenMs,
+  MAX_PROVIDER_CIRCUIT_OPEN_MS,
+  MIN_PROVIDER_CIRCUIT_OPEN_MS,
+} from './providerCircuitBreaker.js';
+import {
+  isValidProviderRequestAdmissionMs,
+  isValidProviderRequestConcurrency,
+  MAX_PROVIDER_REQUEST_ADMISSION_MS,
+  MAX_PROVIDER_REQUEST_CONCURRENCY,
+  MIN_PROVIDER_REQUEST_ADMISSION_MS,
+  MIN_PROVIDER_REQUEST_CONCURRENCY,
+} from './providerRequestAdmission.js';
 import { normalizeRuntimeEnvironment } from './runtimeEnvironment.js';
 import {
   isValidConcurrentTaskLimit,
@@ -90,6 +98,8 @@ export interface WorkspaceModelConfig {
   maxOutputTokens?: number;
   timeout: number;
   providerCircuitBreakerOpenMs?: number;
+  providerRequestConcurrency?: number;
+  providerRequestAdmissionMs?: number;
 }
 
 export interface WorkspaceRuntimeSettings {
@@ -545,6 +555,12 @@ export class ConfigManager {
               providerCircuitBreakerOpenMs: base.providerCircuitBreakerOpenMs,
             }
           : {}),
+        ...(base.providerRequestConcurrency !== undefined
+          ? { providerRequestConcurrency: base.providerRequestConcurrency }
+          : {}),
+        ...(base.providerRequestAdmissionMs !== undefined
+          ? { providerRequestAdmissionMs: base.providerRequestAdmissionMs }
+          : {}),
       };
     }
 
@@ -562,6 +578,16 @@ export class ConfigManager {
       ...(DEFAULT_CONFIG.providerCircuitBreakerOpenMs !== undefined
         ? {
             providerCircuitBreakerOpenMs: DEFAULT_CONFIG.providerCircuitBreakerOpenMs,
+          }
+        : {}),
+      ...(DEFAULT_CONFIG.providerRequestConcurrency !== undefined
+        ? {
+            providerRequestConcurrency: DEFAULT_CONFIG.providerRequestConcurrency,
+          }
+        : {}),
+      ...(DEFAULT_CONFIG.providerRequestAdmissionMs !== undefined
+        ? {
+            providerRequestAdmissionMs: DEFAULT_CONFIG.providerRequestAdmissionMs,
           }
         : {}),
     };
@@ -590,6 +616,12 @@ export class ConfigManager {
       }
       if (layer.providerCircuitBreakerOpenMs !== undefined) {
         resolved.providerCircuitBreakerOpenMs = layer.providerCircuitBreakerOpenMs;
+      }
+      if (layer.providerRequestConcurrency !== undefined) {
+        resolved.providerRequestConcurrency = layer.providerRequestConcurrency;
+      }
+      if (layer.providerRequestAdmissionMs !== undefined) {
+        resolved.providerRequestAdmissionMs = layer.providerRequestAdmissionMs;
       }
     };
 
@@ -1196,6 +1228,24 @@ export class ConfigManager {
       errors.push(
         'providerCircuitBreakerOpenMs 必须是 0，或 ' +
           `${MIN_PROVIDER_CIRCUIT_OPEN_MS}-${MAX_PROVIDER_CIRCUIT_OPEN_MS} 之间的整数`
+      );
+    }
+    if (
+      config.providerRequestConcurrency !== undefined &&
+      !isValidProviderRequestConcurrency(config.providerRequestConcurrency)
+    ) {
+      errors.push(
+        'providerRequestConcurrency 必须是 ' +
+          `${MIN_PROVIDER_REQUEST_CONCURRENCY}-${MAX_PROVIDER_REQUEST_CONCURRENCY} 之间的整数`
+      );
+    }
+    if (
+      config.providerRequestAdmissionMs !== undefined &&
+      !isValidProviderRequestAdmissionMs(config.providerRequestAdmissionMs)
+    ) {
+      errors.push(
+        'providerRequestAdmissionMs 必须是 0，或 ' +
+          `${MIN_PROVIDER_REQUEST_ADMISSION_MS}-${MAX_PROVIDER_REQUEST_ADMISSION_MS} 之间的整数`
       );
     }
 

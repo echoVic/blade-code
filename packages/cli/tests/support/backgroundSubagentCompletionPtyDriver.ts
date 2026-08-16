@@ -6,6 +6,7 @@ const execFileAsync = promisify(execFile);
 
 export interface BackgroundSubagentCompletionPtyEvidence {
   success: true;
+  sawProviderAdmission: true;
   sawChildMarker: true;
   sawParentFinal: true;
   output: string;
@@ -50,6 +51,7 @@ export async function runBackgroundSubagentCompletionPtyDriver(input: {
   const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
   if (
     parsed.success !== true ||
+    parsed.sawProviderAdmission !== true ||
     parsed.sawChildMarker !== true ||
     parsed.sawParentFinal !== true ||
     typeof parsed.output !== 'string'

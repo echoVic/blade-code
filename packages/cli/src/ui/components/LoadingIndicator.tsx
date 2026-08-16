@@ -12,6 +12,7 @@ import {
   useActionStationarity,
   useIsProcessing,
   useIsReady,
+  useProviderAdmission,
   useProviderCircuit,
   useProviderRetry,
   useProviderStall,
@@ -61,6 +62,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
     // 使用 Zustand selectors 获取状态
     const isProcessing = useIsProcessing();
     const isReady = useIsReady();
+    const providerAdmission = useProviderAdmission();
     const providerCircuit = useProviderCircuit();
     const providerRetry = useProviderRetry();
     const providerStall = useProviderStall();
@@ -129,6 +131,14 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
               : ''
           }`
       : null;
+    const admissionMessage = providerAdmission
+      ? `等待 Provider 容量（${providerAdmission.scope}，队列 ${providerAdmission.queuePosition}/${Math.max(
+          providerAdmission.queueDepth,
+          providerAdmission.queuePosition
+        )}，已等待 ${formatElapsedTime(
+          Math.max(0, Math.ceil(providerAdmission.waitMs / 1_000))
+        )}）`
+      : null;
     const stallMessage = providerStall
       ? providerStall.outputStarted
         ? `Provider 流已暂停 ${Math.ceil(providerStall.durationMs / 1000)}s，仍在等待（空闲超时上限 ${Math.ceil(providerStall.timeoutMs / 1000)}s）`
@@ -142,9 +152,10 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
           : null;
     const displayMessage =
       stationarityMessage ||
-      stallMessage ||
       circuitMessage ||
+      admissionMessage ||
       retryMessage ||
+      stallMessage ||
       message ||
       currentPhrase ||
       '正在思考中...';

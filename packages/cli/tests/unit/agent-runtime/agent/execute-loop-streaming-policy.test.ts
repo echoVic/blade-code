@@ -140,6 +140,11 @@ interface CapturedRequestOptions {
     mode: 'bounded_foreground';
     budgetMs: number;
   };
+  providerAdmission?: {
+    sessionId: string;
+    ownerId: string;
+    requestClass: 'foreground' | 'background' | 'internal';
+  };
 }
 
 class RequiredDelegationChatService implements IChatService {
@@ -250,6 +255,7 @@ class RequiredFallbackChatService implements IChatService {
   readonly streamChoices: Array<CapturedRequestOptions['toolChoice']> = [];
   readonly chatChoices: Array<CapturedRequestOptions['toolChoice']> = [];
   readonly chatRecoveries: Array<CapturedRequestOptions['providerRecovery']> = [];
+  readonly admissions: Array<CapturedRequestOptions['providerAdmission']> = [];
   private completed = false;
 
   async chat(
@@ -260,6 +266,7 @@ class RequiredFallbackChatService implements IChatService {
   ): Promise<ChatResponse> {
     this.chatChoices.push(options?.toolChoice);
     this.chatRecoveries.push(options?.providerRecovery);
+    this.admissions.push(options?.providerAdmission);
     this.completed = true;
     return {
       content: '',
@@ -281,6 +288,7 @@ class RequiredFallbackChatService implements IChatService {
     options?: CapturedRequestOptions
   ): AsyncGenerator<StreamChunk, void, unknown> {
     this.streamChoices.push(options?.toolChoice);
+    this.admissions.push(options?.providerAdmission);
     if (this.completed) {
       yield { content: 'Delegation complete.', finishReason: 'stop' };
       return;
@@ -345,6 +353,33 @@ class ProviderRetryStreamingChatService implements IChatService {
   }
 
   async *streamChat(): AsyncGenerator<StreamChunk, void, unknown> {
+    yield {
+      providerAdmission: {
+        phase: 'queued',
+        requestClass: 'foreground',
+        scope: 'domain',
+        reason: 'capacity',
+        queuePosition: 1,
+        queueDepth: 1,
+        inFlight: 4,
+        limit: 4,
+        waitMs: 0,
+        maxWaitMs: 180_000,
+      },
+    };
+    yield {
+      providerAdmission: {
+        phase: 'admitted',
+        requestClass: 'foreground',
+        scope: 'domain',
+        queuePosition: 0,
+        queueDepth: 0,
+        inFlight: 4,
+        limit: 4,
+        waitMs: 15_000,
+        maxWaitMs: 180_000,
+      },
+    };
     yield {
       providerCircuit: {
         phase: 'opened',
@@ -776,6 +811,11 @@ describe('executeLoopGenerator streaming tool policy', () => {
 
     expect(
       events
+        .filter((event) => event.kind === 'provider_admission')
+        .map((event) => event.phase)
+    ).toEqual(['queued', 'admitted']);
+    expect(
+      events
         .filter((event) => event.kind === 'provider_circuit')
         .map((event) => event.phase)
     ).toEqual(['opened', 'waiting', 'probe', 'closed']);
@@ -904,6 +944,28 @@ describe('executeLoopGenerator streaming tool policy', () => {
       {
         mode: 'bounded_foreground',
         budgetMs: DEFAULT_CONFIG.providerForegroundRecoveryMs,
+      },
+    ]);
+    expect(chatService.admissions).toEqual([
+      {
+        sessionId: 'required-fallback-session',
+        ownerId: 'required-fallback-session',
+        requestClass: 'foreground',
+      },
+      {
+        sessionId: 'required-fallback-session',
+        ownerId: 'required-fallback-session',
+        requestClass: 'foreground',
+      },
+      {
+        sessionId: 'required-fallback-session',
+        ownerId: 'required-fallback-session',
+        requestClass: 'foreground',
+      },
+      {
+        sessionId: 'required-fallback-session',
+        ownerId: 'required-fallback-session',
+        requestClass: 'foreground',
       },
     ]);
   });

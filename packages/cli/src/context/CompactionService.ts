@@ -329,7 +329,18 @@ export class CompactionService {
     const response = await chatService.chat(
       [{ role: 'user', content: prompt }],
       [], // 不传递工具参数
-      options.signal // 传递 abort signal
+      options.signal, // 传递 abort signal
+      {
+        providerAdmission: {
+          sessionId:
+            options.sessionId ??
+            `compaction:${compactionSessionKey(options.workspaceRoot)}`,
+          ownerId:
+            options.sessionId ??
+            `compaction:${compactionSessionKey(options.workspaceRoot)}`,
+          requestClass: 'foreground',
+        },
+      }
     );
 
     // 提取 <summary> 标签内容

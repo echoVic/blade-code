@@ -1243,6 +1243,33 @@ describe('headless runner', () => {
     agentState.chatStream.mockImplementationOnce(
       mockChatGenerator([
         {
+          kind: 'provider_admission',
+          phase: 'queued',
+          requestClass: 'foreground',
+          scope: 'domain',
+          reason: 'capacity',
+          queuePosition: 1,
+          queueDepth: 1,
+          inFlight: 4,
+          limit: 4,
+          waitMs: 15_000,
+          maxWaitMs: 180_000,
+          recoveryRemainingMs: 585_000,
+        },
+        {
+          kind: 'provider_admission',
+          phase: 'admitted',
+          requestClass: 'foreground',
+          scope: 'domain',
+          queuePosition: 0,
+          queueDepth: 0,
+          inFlight: 4,
+          limit: 4,
+          waitMs: 15_250,
+          maxWaitMs: 180_000,
+          recoveryRemainingMs: 584_750,
+        },
+        {
           kind: 'provider_circuit',
           phase: 'opened',
           reason: 'server_error',
@@ -1349,8 +1376,27 @@ describe('headless runner', () => {
     const circuitEvents = allEvents.filter(
       (event) => event.type === 'provider_circuit'
     );
+    const admissionEvents = allEvents.filter(
+      (event) => event.type === 'provider_admission'
+    );
 
     expect(exitCode).toBe(0);
+    expect(admissionEvents.map((event) => event.phase)).toEqual(['queued', 'admitted']);
+    expect(admissionEvents[0]).toEqual({
+      event_version: 1,
+      type: 'provider_admission',
+      phase: 'queued',
+      request_class: 'foreground',
+      scope: 'domain',
+      reason: 'capacity',
+      queue_position: 1,
+      queue_depth: 1,
+      in_flight: 4,
+      limit: 4,
+      wait_ms: 15_000,
+      max_wait_ms: 180_000,
+      recovery_remaining_ms: 585_000,
+    });
     expect(events).toEqual([
       {
         event_version: 1,

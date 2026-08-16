@@ -19,6 +19,12 @@ const sessionState = vi.hoisted(() => ({
   },
   isStreaming: true,
   agentPhase: 'compacting',
+  providerAdmission: null as {
+    queuePosition: number;
+    queueDepth: number;
+    scope: 'global' | 'domain' | 'owner' | 'class';
+    waitMs: number;
+  } | null,
   providerRetry: null as {
     phase?: 'scheduled' | 'waiting' | 'attempt' | 'exhausted';
     attempt: number;
@@ -58,6 +64,7 @@ describe('StatusBar', () => {
   beforeEach(() => {
     sessionState.isStreaming = true;
     sessionState.agentPhase = 'compacting';
+    sessionState.providerAdmission = null;
     sessionState.providerRetry = null;
     sessionState.providerCircuit = null;
     sessionState.providerStall = null;
@@ -127,6 +134,32 @@ describe('StatusBar', () => {
     expect(container.textContent).toContain('Bounded recovery');
     expect(container.textContent).toContain('4/12');
     expect(container.textContent).toContain('9m 45s');
+  });
+
+  it('renders Provider admission ahead of retry and ordinary phases', () => {
+    sessionState.agentPhase = 'running';
+    sessionState.providerAdmission = {
+      queuePosition: 1,
+      queueDepth: 2,
+      scope: 'domain',
+      waitMs: 15_000,
+    };
+    sessionState.providerRetry = {
+      phase: 'waiting',
+      attempt: 4,
+      maxRetries: 12,
+      mode: 'bounded_foreground',
+      recoveryRemainingMs: 585_000,
+    };
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    expect(container.textContent).toContain('Provider');
+    expect(container.textContent).toContain('Capacity queue 1/2');
+    expect(container.textContent).toContain('domain');
+    expect(container.textContent).toContain('15s');
+    expect(container.textContent).not.toContain('Bounded recovery');
   });
 
   it('renders shared circuit waiting and probe ahead of request retry', () => {

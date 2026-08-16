@@ -67,7 +67,11 @@ export function resolveModelConfig(
   config: ModelConfig,
   appConfig: Pick<
     BladeConfig,
-    'temperature' | 'timeout' | 'providerCircuitBreakerOpenMs'
+    | 'temperature'
+    | 'timeout'
+    | 'providerCircuitBreakerOpenMs'
+    | 'providerRequestConcurrency'
+    | 'providerRequestAdmissionMs'
   >,
   reasoningSelection: ReasoningEffortSelection,
   catalog: PiModelCatalog = getPiModelCatalog(),
@@ -109,6 +113,8 @@ export function resolveModelConfig(
       apiVersion: overrides?.apiVersion,
       maxRetries: overrides?.maxRetries,
       providerCircuitBreakerOpenMs: appConfig.providerCircuitBreakerOpenMs,
+      providerRequestConcurrency: appConfig.providerRequestConcurrency,
+      providerRequestAdmissionMs: appConfig.providerRequestAdmissionMs,
       modelCatalog: catalog,
     },
     reasoning,

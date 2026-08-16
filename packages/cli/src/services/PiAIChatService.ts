@@ -30,12 +30,24 @@ import {
   isProviderCircuitOpenError,
   MAX_PROVIDER_CIRCUIT_PROBE_LEASE_MS,
   MIN_PROVIDER_CIRCUIT_PROBE_LEASE_MS,
-  ProviderCircuitOpenError,
   type ProviderCircuitAdmission,
   type ProviderCircuitEvent,
   type ProviderCircuitFailure,
+  ProviderCircuitOpenError,
+  type ProviderCircuitPreflight,
   type ProviderCircuitTransition,
 } from './pi/providerCircuitBreaker.js';
+import {
+  DEFAULT_PROVIDER_REQUEST_ADMISSION_MS,
+  DEFAULT_PROVIDER_REQUEST_CONCURRENCY,
+  getProviderRequestAdmissionScheduler,
+  isProviderAdmissionError,
+  PROVIDER_ADMISSION_HEARTBEAT_MS,
+  type ProviderAdmissionError,
+  type ProviderAdmissionEvent,
+  type ProviderAdmissionPermit,
+  type ProviderAdmissionQueueSnapshot,
+} from './pi/providerRequestAdmission.js';
 import {
   classifyProviderRetry,
   computeProviderRetryDelay,
@@ -50,6 +62,7 @@ import { buildPiOptions, observePiProviderResponses } from './pi/requestOptions.
 import { DEFAULT_STREAM_IDLE_TIMEOUT_MS, streamPiModel } from './pi/streamAdapter.js';
 
 const logger = createLogger(LogCategory.CHAT);
+let nextServiceAdmissionOwner = 1;
 
 function hasImageContent(message: Message | undefined): boolean {
   return Boolean(
@@ -103,6 +116,8 @@ export class PiAIChatService implements IChatService {
   private config: ChatConfig;
   private models: MutableModels;
   private model: Model<Api>;
+  private readonly admissionFallbackOwnerId =
+    `pi-service-${process.pid}-${nextServiceAdmissionOwner++}`;
 
   constructor(config: ChatConfig) {
     const runtime = createPiRuntime(config);
@@ -221,6 +236,18 @@ export class PiAIChatService implements IChatService {
         MAX_PROVIDER_CIRCUIT_PROBE_LEASE_MS
       )
     );
+    const providerAdmissionScheduler =
+      this.config.providerRequestAdmissionScheduler ??
+      getProviderRequestAdmissionScheduler();
+    const providerRequestConcurrency =
+      this.config.providerRequestConcurrency ?? DEFAULT_PROVIDER_REQUEST_CONCURRENCY;
+    const providerRequestAdmissionMs =
+      this.config.providerRequestAdmissionMs ?? DEFAULT_PROVIDER_REQUEST_ADMISSION_MS;
+    const providerAdmissionIdentity = requestOptions?.providerAdmission ?? {
+      sessionId: this.admissionFallbackOwnerId,
+      ownerId: this.admissionFallbackOwnerId,
+      requestClass: 'internal' as const,
+    };
 
     const circuitFor = (model: Model<Api>) =>
       circuitRegistry.get({
@@ -235,6 +262,17 @@ export class PiAIChatService implements IChatService {
         openDurationMs: circuitOpenDurationMs,
         probeLeaseMs: circuitProbeLeaseMs,
       });
+    const admissionScopeFor = (model: Model<Api>) => ({
+      provider: model.provider,
+      api: model.api,
+      baseUrl: model.baseUrl ?? this.config.baseUrl ?? '',
+      model: model.id,
+      serviceTier: this.config.serviceTier,
+      apiVersion: this.config.apiVersion,
+      apiKey: this.config.apiKey,
+      customHeaders: this.config.customHeaders,
+      maxConcurrent: providerRequestConcurrency,
+    });
 
     const recoverySnapshot = (now = Date.now()) => {
       if (!boundedRecovery) return undefined;
@@ -272,6 +310,126 @@ export class PiAIChatService implements IChatService {
     };
     const hasLogicalAttemptCapacity = () =>
       !sharedAttemptLimit || logicalPhysicalAttempts < maxRetries + 1;
+    const admissionEventFromSnapshot = (
+      phase: 'queued' | 'admitted',
+      snapshot: ProviderAdmissionQueueSnapshot
+    ): ProviderAdmissionEvent => {
+      const { state: _state, ...event } = snapshot;
+      return {
+        phase,
+        ...event,
+        ...(recoverySnapshot()
+          ? { recoveryRemainingMs: recoverySnapshot()?.recoveryRemainingMs }
+          : {}),
+      };
+    };
+    const admissionEventFromError = (
+      error: ProviderAdmissionError
+    ): ProviderAdmissionEvent => ({
+      phase: 'rejected',
+      requestClass: error.requestClass,
+      scope: error.scope,
+      reason: error.reason,
+      queuePosition: 0,
+      queueDepth: Math.max(0, error.queued),
+      inFlight: Math.max(0, error.inFlight),
+      limit: Math.max(0, error.limit),
+      waitMs: error.reason === 'wait_timeout' ? error.maxWaitMs : 0,
+      maxWaitMs: error.maxWaitMs,
+      ...(recoverySnapshot()
+        ? { recoveryRemainingMs: recoverySnapshot()?.recoveryRemainingMs }
+        : {}),
+    });
+    const acquireProviderPermit = async function* (
+      model: Model<Api>
+    ): AsyncGenerator<StreamChunk, ProviderAdmissionPermit, unknown> {
+      const recoveryRemainingMs = recoverySnapshot()?.recoveryRemainingMs;
+      const maxWaitMs =
+        recoveryRemainingMs !== undefined && boundedRecovery?.startedAt !== undefined
+          ? Math.min(providerRequestAdmissionMs, recoveryRemainingMs)
+          : providerRequestAdmissionMs;
+      let ticket;
+      try {
+        ticket = providerAdmissionScheduler.admit({
+          scope: admissionScopeFor(model),
+          sessionId: providerAdmissionIdentity.sessionId,
+          ownerId: providerAdmissionIdentity.ownerId,
+          requestClass: providerAdmissionIdentity.requestClass,
+          maxWaitMs,
+          signal,
+        });
+      } catch (error) {
+        if (isProviderAdmissionError(error)) {
+          if (
+            error.reason === 'wait_timeout' &&
+            boundedRecovery?.startedAt !== undefined &&
+            (recoverySnapshot()?.recoveryRemainingMs ?? 0) <= 0
+          ) {
+            throw budgetError();
+          }
+          yield { providerAdmission: admissionEventFromError(error) };
+        }
+        throw error;
+      }
+      const initial = ticket.getSnapshot();
+      if (initial.state === 'admitted') return await ticket.ready;
+      yield {
+        providerAdmission: admissionEventFromSnapshot('queued', initial),
+      };
+
+      const ready = ticket.ready.then(
+        (permit) => ({ kind: 'ready' as const, permit }),
+        (error) => ({ kind: 'error' as const, error })
+      );
+      while (true) {
+        const snapshot = ticket.getSnapshot();
+        const heartbeatMs = Math.max(
+          1,
+          Math.min(
+            PROVIDER_ADMISSION_HEARTBEAT_MS,
+            Math.max(1, maxWaitMs - snapshot.waitMs)
+          )
+        );
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const heartbeat = new Promise<{ kind: 'heartbeat' }>((resolve) => {
+          timer = setTimeout(() => resolve({ kind: 'heartbeat' }), heartbeatMs);
+          timer.unref?.();
+        });
+        const outcome = await Promise.race([ready, heartbeat]);
+        if (timer) clearTimeout(timer);
+        if (outcome.kind === 'heartbeat') {
+          yield {
+            providerAdmission: admissionEventFromSnapshot(
+              'queued',
+              ticket.getSnapshot()
+            ),
+          };
+          continue;
+        }
+        if (outcome.kind === 'error') {
+          if (isProviderAdmissionError(outcome.error)) {
+            if (
+              outcome.error.reason === 'wait_timeout' &&
+              boundedRecovery?.startedAt !== undefined &&
+              (recoverySnapshot()?.recoveryRemainingMs ?? 0) <= 0
+            ) {
+              throw budgetError();
+            }
+            yield {
+              providerAdmission: admissionEventFromError(outcome.error),
+            };
+          }
+          throw outcome.error;
+        }
+        yield {
+          providerAdmission: admissionEventFromSnapshot(
+            'admitted',
+            ticket.getSnapshot()
+          ),
+        };
+        return outcome.permit;
+      }
+    };
 
     const streamFrom = (model: Model<Api>) => {
       if (!hasLogicalAttemptCapacity()) throw budgetError();
@@ -340,7 +498,9 @@ export class PiAIChatService implements IChatService {
     });
     const circuitEventFromBlocked = (
       phase: 'waiting' | 'rejected',
-      admission: Extract<ProviderCircuitAdmission, { allowed: false }>
+      admission:
+        | Extract<ProviderCircuitAdmission, { allowed: false }>
+        | Extract<ProviderCircuitPreflight, { eligible: false }>
     ): ProviderCircuitEvent => ({
       phase,
       reason: admission.reason,
@@ -406,47 +566,71 @@ export class PiAIChatService implements IChatService {
       const circuit = circuitFor(model);
       for (let attempt = 0; attempt <= candidateMaxRetries; attempt++) {
         if (!hasLogicalAttemptCapacity()) break;
-        let admission = circuit.check();
-        while (!admission.allowed) {
-          retryReason = admission.reason;
-          retryStatusCode = admission.statusCode;
-          if (!boundedRecovery || !terminalCandidate) {
-            const event = circuitEventFromBlocked('rejected', admission);
-            yield { providerCircuit: event };
-            throw new ProviderCircuitOpenError(event);
+        let admission: Extract<ProviderCircuitAdmission, { allowed: true }> | undefined;
+        let providerPermit: ProviderAdmissionPermit | undefined;
+        while (!admission) {
+          let preflight = circuit.preflight();
+          while (!preflight.eligible) {
+            retryReason = preflight.reason;
+            retryStatusCode = preflight.statusCode;
+            if (!boundedRecovery || !terminalCandidate) {
+              const event = circuitEventFromBlocked('rejected', preflight);
+              yield { providerCircuit: event };
+              throw new ProviderCircuitOpenError(event);
+            }
+
+            beginRecovery();
+            const beforeWait = recoverySnapshot();
+            const remainingBudgetMs = beforeWait?.recoveryRemainingMs ?? 0;
+            if (remainingBudgetMs <= 0) {
+              const error = budgetError();
+              yield recoveryExhausted(
+                sharedAttemptLimit ? Math.max(0, logicalPhysicalAttempts - 1) : attempt,
+                preflight.reason,
+                preflight.statusCode
+              );
+              throw error;
+            }
+            yield {
+              providerCircuit: circuitEventFromBlocked('waiting', preflight),
+            };
+            const waitMs = Math.min(
+              Math.max(1, preflight.retryAfterMs),
+              PROVIDER_RECOVERY_HEARTBEAT_MS,
+              remainingBudgetMs
+            );
+            await abortableSleep(waitMs, signal, { throwOnAbort: true });
+            if ((recoverySnapshot()?.recoveryRemainingMs ?? 0) <= 0) {
+              const error = budgetError();
+              yield recoveryExhausted(
+                sharedAttemptLimit ? Math.max(0, logicalPhysicalAttempts - 1) : attempt,
+                preflight.reason,
+                preflight.statusCode
+              );
+              throw error;
+            }
+            preflight = circuit.preflight();
           }
 
-          beginRecovery();
-          const beforeWait = recoverySnapshot();
-          const remainingBudgetMs = beforeWait?.recoveryRemainingMs ?? 0;
-          if (remainingBudgetMs <= 0) {
-            const error = budgetError();
-            yield recoveryExhausted(
-              sharedAttemptLimit ? Math.max(0, logicalPhysicalAttempts - 1) : attempt,
-              admission.reason,
-              admission.statusCode
-            );
+          try {
+            providerPermit = yield* acquireProviderPermit(model);
+          } catch (error) {
+            if (error instanceof ProviderRecoveryBudgetExceededError) {
+              yield recoveryExhausted(
+                sharedAttemptLimit ? Math.max(0, logicalPhysicalAttempts - 1) : attempt,
+                retryReason ?? 'timeout',
+                retryStatusCode
+              );
+            }
             throw error;
           }
-          yield {
-            providerCircuit: circuitEventFromBlocked('waiting', admission),
-          };
-          const waitMs = Math.min(
-            Math.max(1, admission.retryAfterMs),
-            PROVIDER_RECOVERY_HEARTBEAT_MS,
-            remainingBudgetMs
-          );
-          await abortableSleep(waitMs, signal, { throwOnAbort: true });
-          if ((recoverySnapshot()?.recoveryRemainingMs ?? 0) <= 0) {
-            const error = budgetError();
-            yield recoveryExhausted(
-              sharedAttemptLimit ? Math.max(0, logicalPhysicalAttempts - 1) : attempt,
-              admission.reason,
-              admission.statusCode
-            );
-            throw error;
+          const checked = circuit.check();
+          if (checked.allowed) {
+            admission = checked;
+          } else {
+            providerPermit.release();
+            providerPermit = undefined;
           }
-          admission = circuit.check();
         }
 
         const circuitToken = admission.token;
@@ -504,6 +688,7 @@ export class PiAIChatService implements IChatService {
           }
           return;
         } catch (error) {
+          providerPermit?.release();
           lastRetryError = error;
           service.logIdleTimeout(error, emitted, model);
           await service.handleAbort(signal);
@@ -723,6 +908,7 @@ export class PiAIChatService implements IChatService {
           }
         } finally {
           circuit.abandon(circuitToken);
+          providerPermit?.release();
         }
       }
       throw lastRetryError;
@@ -751,7 +937,8 @@ export class PiAIChatService implements IChatService {
       lastError = error;
       if (
         primaryEmitted ||
-        (!isProviderCircuitOpenError(error) &&
+        (!isProviderAdmissionError(error) &&
+          !isProviderCircuitOpenError(error) &&
           !classifyProviderRetry(error, responseMetadata).retryable)
       ) {
         throw error;
@@ -784,7 +971,8 @@ export class PiAIChatService implements IChatService {
         lastError = error;
         if (
           fallbackEmitted ||
-          (!isProviderCircuitOpenError(error) &&
+          (!isProviderAdmissionError(error) &&
+            !isProviderCircuitOpenError(error) &&
             !classifyProviderRetry(error, responseMetadata).retryable)
         ) {
           throw error;

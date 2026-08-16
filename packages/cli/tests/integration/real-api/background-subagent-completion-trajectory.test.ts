@@ -46,6 +46,7 @@ const originalProviderBaseUrl = process.env.BLADE_BASE_URL;
 let originalConfig: RuntimeConfig | null = null;
 
 interface PreparedFixture {
+  surface: 'headless' | 'acp' | 'pty' | 'web';
   root: string;
   workspace: string;
   storageRoot: string;
@@ -69,11 +70,21 @@ async function prepareFixture(
   const workspace = path.join(root, 'project');
   const storageRoot = path.join(root, 'storage');
   const home = path.join(root, 'home');
-  const proxy = await startRecordingProviderProxy(model.baseURL);
+  const proxy = await startRecordingProviderProxy(
+    model.baseURL,
+    surface === 'acp'
+      ? {}
+      : {
+          holdBodyIncludes: 'Call Read exactly once on the requested marker file.',
+          holdMs: 10_000,
+        }
+  );
   const config = {
     ...buildRealApiRuntimeConfig({ ...model, baseURL: proxy.baseUrl }),
     permissionMode: PermissionMode.YOLO,
     maxTurns: 12,
+    providerRequestConcurrency: 1,
+    providerRequestAdmissionMs: 120_000,
   };
   await Promise.all([
     mkdir(workspace, { recursive: true }),
@@ -90,6 +101,8 @@ async function prepareFixture(
         modelProviders: config.modelProviders,
         permissionMode: PermissionMode.YOLO,
         maxTurns: 12,
+        providerRequestConcurrency: 1,
+        providerRequestAdmissionMs: 120_000,
         hooks: { enabled: false },
         disableAllHooks: true,
         mcpServers: {},
@@ -120,6 +133,7 @@ async function prepareFixture(
   );
   resetBackgroundCompletionRuntimeState();
   return {
+    surface,
     root,
     workspace,
     storageRoot,
@@ -206,6 +220,16 @@ async function collectFailureDiagnostic(input: PreparedFixture): Promise<string>
 }
 
 async function assertBackgroundCompletion(input: PreparedFixture): Promise<void> {
+  expect(input.proxy.requestBodies.length).toBeGreaterThanOrEqual(3);
+  if (input.surface !== 'acp') {
+    expect(input.proxy.maxInFlight).toBe(1);
+    expect(input.proxy.heldRequestNumbers).toHaveLength(1);
+    const heldRequestIndex = (input.proxy.heldRequestNumbers[0] ?? 0) - 1;
+    expect(
+      (input.proxy.requestFinishedAt[heldRequestIndex] ?? 0) -
+        (input.proxy.requestStartedAt[heldRequestIndex] ?? 0)
+    ).toBeGreaterThanOrEqual(9_500);
+  }
   await expect(
     access(getSessionInboxFilePath(input.workspace, input.sessionId))
   ).rejects.toMatchObject({ code: 'ENOENT' });
@@ -462,6 +486,17 @@ describe
               (event) => event.type === 'tool_start' && event.tool_name === 'TaskOutput'
             )
           ).toHaveLength(0);
+          expect(
+            events.some(
+              (event) => event.type === 'provider_admission' && event.phase === 'queued'
+            )
+          ).toBe(true);
+          expect(
+            events.some(
+              (event) =>
+                event.type === 'provider_admission' && event.phase === 'admitted'
+            )
+          ).toBe(true);
           expect(`${stdout}\n${stderr}`).not.toContain(model.apiKey);
           await assertBackgroundCompletion(prepared);
         } finally {
@@ -506,6 +541,7 @@ describe
             secret: model.apiKey,
           });
           expect(evidence).toMatchObject({
+            sawProviderAdmission: true,
             sawChildMarker: true,
             sawParentFinal: true,
           });
@@ -530,6 +566,7 @@ describe
             childVisible: true,
             parentVisible: true,
             noFakeUserMessage: true,
+            providerAdmissionVisible: true,
             visibleAfterReload: true,
             sidecarStableAcrossReload: true,
             browserFaults: [],

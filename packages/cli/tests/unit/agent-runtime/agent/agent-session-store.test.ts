@@ -170,6 +170,7 @@ describe('AgentSessionStore', () => {
     store.saveSession(
       makeSession('agent-background', {
         background: true,
+        providerAdmissionOwnerId: 'root-provider-owner',
       })
     );
     store.clearCache();
@@ -177,11 +178,14 @@ describe('AgentSessionStore', () => {
     expect(store.loadSession('agent-background')).toMatchObject({
       id: 'agent-background',
       background: true,
+      providerAdmissionOwnerId: 'root-provider-owner',
     });
-    expect(toPublicAgentSession(store.loadSession('agent-background')!)).toMatchObject({
+    const projected = toPublicAgentSession(store.loadSession('agent-background')!);
+    expect(projected).toMatchObject({
       id: 'agent-background',
       background: true,
     });
+    expect(projected).not.toHaveProperty('providerAdmissionOwnerId');
   });
 
   it('requires the complete parent session and workspace owner', () => {

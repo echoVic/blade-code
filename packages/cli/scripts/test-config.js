@@ -39,6 +39,8 @@ export const testTypes = {
       'tests/integration/real-api/foreground-bounded-output-trajectory.test.ts',
       'tests/integration/real-api/foreground-command-handoff-trajectory.test.ts',
       'tests/integration/real-api/foreground-provider-recovery-trajectory.test.ts',
+      'tests/integration/real-api/provider-request-admission-acp-trajectory.test.ts',
+      'tests/integration/real-api/provider-request-admission-web-trajectory.test.ts',
       'tests/integration/real-api/graceful-shutdown-trajectory.test.ts',
       'tests/integration/real-api/tool-admission-trajectory.test.ts',
     ],

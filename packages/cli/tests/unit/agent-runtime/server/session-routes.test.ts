@@ -2420,6 +2420,20 @@ describe('SessionRoutes runtime reuse', () => {
       };
       yield { kind: 'model_fallback' };
       yield {
+        kind: 'provider_admission',
+        phase: 'queued',
+        requestClass: 'foreground',
+        scope: 'domain',
+        reason: 'capacity',
+        queuePosition: 1,
+        queueDepth: 1,
+        inFlight: 4,
+        limit: 4,
+        waitMs: 15_000,
+        maxWaitMs: 180_000,
+        recoveryRemainingMs: 585_000,
+      };
+      yield {
         kind: 'provider_retry',
         phase: 'scheduled',
         attempt: 1,
@@ -2539,6 +2553,23 @@ describe('SessionRoutes runtime reuse', () => {
       refFor('surface-events'),
       'model.fallback',
       {}
+    );
+    expect(Bus.publish).toHaveBeenCalledWith(
+      refFor('surface-events'),
+      'provider.admission',
+      {
+        phase: 'queued',
+        requestClass: 'foreground',
+        scope: 'domain',
+        reason: 'capacity',
+        queuePosition: 1,
+        queueDepth: 1,
+        inFlight: 4,
+        limit: 4,
+        waitMs: 15_000,
+        maxWaitMs: 180_000,
+        recoveryRemainingMs: 585_000,
+      }
     );
     expect(Bus.publish).toHaveBeenCalledWith(
       refFor('surface-events'),

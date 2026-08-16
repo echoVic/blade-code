@@ -37,6 +37,7 @@ export function StatusBar() {
   const tokenUsage = useSessionStore((state) => state.tokenUsage);
   const isStreaming = useSessionStore((state) => state.isStreaming);
   const agentPhase = useSessionStore((state) => state.agentPhase);
+  const providerAdmission = useSessionStore((state) => state.providerAdmission);
   const providerCircuit = useSessionStore((state) => state.providerCircuit);
   const providerRetry = useSessionStore((state) => state.providerRetry);
   const providerStall = useSessionStore((state) => state.providerStall);
@@ -52,27 +53,32 @@ export function StatusBar() {
           ? 'status.phase.actionStationarityStopped'
           : 'status.phase.actionStationarityRecovering'
       )} · ${actionStationarity.toolName} · ${actionStationarity.runLength}/${actionStationarity.haltThreshold}`
-    : providerStall
-      ? `${t('status.phase.providerStall')} · ${Math.ceil(providerStall.durationMs / 1000)}s / ${Math.ceil(providerStall.timeoutMs / 1000)}s`
-      : providerCircuit
-        ? providerCircuit.phase === 'probe'
-          ? 'Provider · Recovery probe'
-          : `Provider · Circuit open${
-              providerCircuit.retryAfterMs !== undefined
-                ? ` · probe in ${formatDurationMs(providerCircuit.retryAfterMs)}`
-                : ''
-            }${
-              providerCircuit.recoveryRemainingMs !== undefined
-                ? ` · ${formatDurationMs(providerCircuit.recoveryRemainingMs)}`
-                : ''
-            }`
+    : providerCircuit
+      ? providerCircuit.phase === 'probe'
+        ? 'Provider · Recovery probe'
+        : `Provider · Circuit open${
+            providerCircuit.retryAfterMs !== undefined
+              ? ` · probe in ${formatDurationMs(providerCircuit.retryAfterMs)}`
+              : ''
+          }${
+            providerCircuit.recoveryRemainingMs !== undefined
+              ? ` · ${formatDurationMs(providerCircuit.recoveryRemainingMs)}`
+              : ''
+          }`
+      : providerAdmission
+        ? `Provider · Capacity queue ${providerAdmission.queuePosition}/${Math.max(
+            providerAdmission.queueDepth,
+            providerAdmission.queuePosition
+          )} · ${providerAdmission.scope} · ${formatDurationMs(providerAdmission.waitMs)}`
         : providerRetry
           ? providerRetry.mode === 'bounded_foreground'
             ? `Provider · Bounded recovery · ${providerRetry.attempt}/${providerRetry.maxRetries} · ${formatDurationMs(providerRetry.recoveryRemainingMs ?? 0)}`
             : `Provider · ${t('chat.error.action.retryingTask')} · ${providerRetry.attempt}/${providerRetry.maxRetries}${retryDelay}`
-          : phaseKey
-            ? t(phaseKey)
-            : '';
+          : providerStall
+            ? `${t('status.phase.providerStall')} · ${Math.ceil(providerStall.durationMs / 1000)}s / ${Math.ceil(providerStall.timeoutMs / 1000)}s`
+            : phaseKey
+              ? t(phaseKey)
+              : '';
 
   const usagePercent =
     tokenUsage.maxContextTokens > 0

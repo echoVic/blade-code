@@ -5,10 +5,16 @@ import type {
   StreamChunk,
 } from '../../../src/services/ChatServiceInterface.js';
 import {
-  ProviderCircuitRegistry,
   type ProviderCircuitEvent,
+  ProviderCircuitRegistry,
   type ProviderCircuitScope,
 } from '../../../src/services/pi/providerCircuitBreaker.js';
+import {
+  type ProviderAdmissionPermit,
+  type ProviderAdmissionRequest,
+  ProviderRequestAdmissionScheduler,
+  resetProviderRequestAdmissionSchedulerForTests,
+} from '../../../src/services/pi/providerRequestAdmission.js';
 import { providerReplayBoundaryCrossed } from '../../../src/services/pi/providerRetry.js';
 
 // pi-ai runtime metadata fixture, not Blade's persisted ModelConfig.
@@ -76,6 +82,9 @@ function config(overrides: Partial<ChatConfig> = {}): ChatConfig {
     model: 'test-model',
     maxRetries: 0,
     providerCircuitBreakerOpenMs: 0,
+    providerRequestAdmissionScheduler: new ProviderRequestAdmissionScheduler({
+      processSecret: new Uint8Array(32).fill(15),
+    }),
     ...overrides,
   };
 }
@@ -144,8 +153,30 @@ function circuitEvents(events: readonly StreamChunk[]): ProviderCircuitEvent[] {
   );
 }
 
+function providerAdmissionRequest(
+  ownerId: string,
+  overrides: Partial<ProviderAdmissionRequest> = {}
+): ProviderAdmissionRequest {
+  return {
+    scope: {
+      provider: piModelFixture.provider,
+      api: piModelFixture.api,
+      baseUrl: piModelFixture.baseUrl,
+      model: piModelFixture.id,
+      apiKey: 'test-key',
+      maxConcurrent: 1,
+    },
+    sessionId: `${ownerId}-session`,
+    ownerId,
+    requestClass: 'foreground',
+    maxWaitMs: 120_000,
+    ...overrides,
+  };
+}
+
 describe('PiAIChatService', () => {
   beforeEach(() => {
+    resetProviderRequestAdmissionSchedulerForTests();
     vi.clearAllMocks();
     createPiRuntime.mockReturnValue({ models: {}, model: piModelFixture });
     observePiProviderResponses.mockReset();
@@ -300,6 +331,508 @@ describe('PiAIChatService', () => {
     expect(
       toolCall && 'function' in toolCall ? toolCall.function.name : undefined
     ).toBe('Read');
+  });
+
+  it('queues before creating a physical Provider stream and projects admission', async () => {
+    const admissionScheduler = new ProviderRequestAdmissionScheduler({
+      processSecret: new Uint8Array(32).fill(12),
+    });
+    const held = await admissionScheduler.admit(providerAdmissionRequest('holder'))
+      .ready;
+    streamPiModel.mockReturnValue(chunks([{ content: 'admitted-response' }]));
+    const stream = (
+      await service({
+        providerRequestConcurrency: 1,
+        providerRequestAdmissionMs: 120_000,
+        providerRequestAdmissionScheduler: admissionScheduler,
+      })
+    ).streamChat(
+      [{ role: 'user', content: 'wait for capacity' }],
+      undefined,
+      undefined,
+      {
+        providerAdmission: {
+          sessionId: 'waiting-session',
+          ownerId: 'waiting-owner',
+          requestClass: 'foreground',
+        },
+      }
+    );
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: {
+        providerAdmission: {
+          phase: 'queued',
+          requestClass: 'foreground',
+          scope: 'domain',
+          queuePosition: 1,
+          inFlight: 1,
+          limit: 1,
+        },
+      },
+    });
+    expect(streamPiModel).not.toHaveBeenCalled();
+
+    held.release();
+    await expect(stream.next()).resolves.toMatchObject({
+      value: {
+        providerAdmission: {
+          phase: 'admitted',
+          queuePosition: 0,
+        },
+      },
+    });
+    await expect(stream.next()).resolves.toEqual({
+      value: { content: 'admitted-response' },
+      done: false,
+    });
+    await expect(stream.next()).resolves.toEqual({
+      value: undefined,
+      done: true,
+    });
+    expect(streamPiModel).toHaveBeenCalledOnce();
+    expect(admissionScheduler.getStats()).toMatchObject({
+      inFlight: 0,
+      queued: 0,
+    });
+  });
+
+  it('rechecks the circuit after capacity admission and sends no raced request', async () => {
+    const admissionScheduler = new ProviderRequestAdmissionScheduler({
+      processSecret: new Uint8Array(32).fill(13),
+    });
+    const circuitRegistry = new ProviderCircuitRegistry({
+      processSecret: new Uint8Array(32).fill(14),
+    });
+    const held = await admissionScheduler.admit(providerAdmissionRequest('holder'))
+      .ready;
+    const stream = (
+      await service({
+        ...circuitOverrides(circuitRegistry, {
+          maxRetries: 0,
+          providerRequestConcurrency: 1,
+          providerRequestAdmissionMs: 120_000,
+          providerRequestAdmissionScheduler: admissionScheduler,
+        }),
+      })
+    ).streamChat(
+      [{ role: 'user', content: 'respect the raced circuit' }],
+      undefined,
+      undefined,
+      {
+        providerAdmission: {
+          sessionId: 'waiting-session',
+          ownerId: 'waiting-owner',
+          requestClass: 'foreground',
+        },
+      }
+    );
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { providerAdmission: { phase: 'queued' } },
+    });
+    tripCircuit(circuitRegistry);
+    held.release();
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { providerAdmission: { phase: 'admitted' } },
+    });
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { providerCircuit: { phase: 'rejected' } },
+    });
+    await expect(stream.next()).rejects.toMatchObject({
+      code: 'PROVIDER_CIRCUIT_OPEN',
+    });
+    expect(streamPiModel).not.toHaveBeenCalled();
+    expect(admissionScheduler.getStats()).toMatchObject({
+      inFlight: 0,
+      queued: 0,
+    });
+  });
+
+  it('holds admission through the complete Provider iterator lifetime', async () => {
+    const admissionScheduler = new ProviderRequestAdmissionScheduler({
+      processSecret: new Uint8Array(32).fill(16),
+      globalMaxInFlight: 1,
+    });
+    let releaseTail!: () => void;
+    const tail = new Promise<void>((resolve) => {
+      releaseTail = resolve;
+    });
+    streamPiModel
+      .mockReturnValueOnce(
+        (async function* () {
+          yield { content: 'first-chunk' };
+          await tail;
+          yield { finishReason: 'stop' };
+        })()
+      )
+      .mockReturnValueOnce(chunks([{ content: 'second-response' }]));
+    const first = (
+      await service({
+        providerRequestAdmissionScheduler: admissionScheduler,
+      })
+    ).streamChat([{ role: 'user', content: 'first' }], undefined, undefined, {
+      providerAdmission: {
+        sessionId: 'first-session',
+        ownerId: 'first-owner',
+        requestClass: 'foreground',
+      },
+    });
+    const second = (
+      await service({
+        providerRequestAdmissionScheduler: admissionScheduler,
+      })
+    ).streamChat([{ role: 'user', content: 'second' }], undefined, undefined, {
+      providerAdmission: {
+        sessionId: 'second-session',
+        ownerId: 'second-owner',
+        requestClass: 'foreground',
+      },
+    });
+
+    await expect(first.next()).resolves.toMatchObject({
+      value: { content: 'first-chunk' },
+    });
+    await expect(second.next()).resolves.toMatchObject({
+      value: { providerAdmission: { phase: 'queued', scope: 'global' } },
+    });
+    expect(streamPiModel).toHaveBeenCalledOnce();
+
+    releaseTail();
+    await expect(first.next()).resolves.toMatchObject({
+      value: { finishReason: 'stop' },
+    });
+    await expect(first.next()).resolves.toEqual({ value: undefined, done: true });
+    await expect(second.next()).resolves.toMatchObject({
+      value: { providerAdmission: { phase: 'admitted' } },
+    });
+    await expect(second.next()).resolves.toMatchObject({
+      value: { content: 'second-response' },
+    });
+    await expect(second.next()).resolves.toEqual({
+      value: undefined,
+      done: true,
+    });
+    expect(admissionScheduler.getStats()).toMatchObject({
+      inFlight: 0,
+      queued: 0,
+    });
+  });
+
+  it('removes a queued caller abort without emitting an admission rejection', async () => {
+    const admissionScheduler = new ProviderRequestAdmissionScheduler({
+      processSecret: new Uint8Array(32).fill(17),
+      globalMaxInFlight: 1,
+    });
+    const held = await admissionScheduler.admit(
+      providerAdmissionRequest('holder', {
+        scope: {
+          ...providerAdmissionRequest('holder').scope,
+          model: 'other-model',
+        },
+      })
+    ).ready;
+    const controller = new AbortController();
+    const reason = new Error('user cancelled capacity wait');
+    const stream = (
+      await service({
+        providerRequestAdmissionScheduler: admissionScheduler,
+      })
+    ).streamChat(
+      [{ role: 'user', content: 'cancel while queued' }],
+      undefined,
+      controller.signal,
+      {
+        providerAdmission: {
+          sessionId: 'waiting-session',
+          ownerId: 'waiting-owner',
+          requestClass: 'foreground',
+        },
+      }
+    );
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { providerAdmission: { phase: 'queued' } },
+    });
+    controller.abort(reason);
+    await expect(stream.next()).rejects.toBe(reason);
+    expect(streamPiModel).not.toHaveBeenCalled();
+    expect(admissionScheduler.getStats()).toMatchObject({
+      inFlight: 1,
+      queued: 0,
+    });
+    held.release();
+  });
+
+  it('falls back after primary admission timeout without a primary request', async () => {
+    const admissionScheduler = new ProviderRequestAdmissionScheduler({
+      processSecret: new Uint8Array(32).fill(18),
+    });
+    const held = await admissionScheduler.admit(providerAdmissionRequest('holder'))
+      .ready;
+    streamPiModel.mockReturnValue(chunks([{ content: 'fallback-admitted' }]));
+    const stream = (
+      await service({
+        maxRetries: 0,
+        fallbackModels: [{ provider: 'test', model: 'backup' }],
+        providerRequestConcurrency: 1,
+        providerRequestAdmissionMs: 10,
+        providerRequestAdmissionScheduler: admissionScheduler,
+      })
+    ).streamChat(
+      [{ role: 'user', content: 'use capacity fallback' }],
+      undefined,
+      undefined,
+      {
+        providerAdmission: {
+          sessionId: 'waiting-session',
+          ownerId: 'waiting-owner',
+          requestClass: 'foreground',
+        },
+      }
+    );
+
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { providerAdmission: { phase: 'queued' } },
+    });
+    await expect(stream.next()).resolves.toMatchObject({
+      value: {
+        providerAdmission: {
+          phase: 'rejected',
+          reason: 'wait_timeout',
+        },
+      },
+    });
+    await expect(stream.next()).resolves.toEqual({
+      value: { modelFallback: true },
+      done: false,
+    });
+    await expect(stream.next()).resolves.toMatchObject({
+      value: { content: 'fallback-admitted' },
+    });
+    await expect(stream.next()).resolves.toEqual({
+      value: undefined,
+      done: true,
+    });
+    expect(streamPiModel).toHaveBeenCalledOnce();
+    expect(streamPiModel.mock.calls[0]?.[1]).toMatchObject({ id: 'backup' });
+    held.release();
+  });
+
+  it('emits a fresh Provider admission heartbeat every fifteen seconds', async () => {
+    vi.useFakeTimers({ now: 1_000 });
+    const admissionScheduler = new ProviderRequestAdmissionScheduler({
+      processSecret: new Uint8Array(32).fill(19),
+      globalMaxInFlight: 1,
+    });
+    const held = await admissionScheduler.admit(
+      providerAdmissionRequest('holder', {
+        scope: {
+          ...providerAdmissionRequest('holder').scope,
+          model: 'other-model',
+        },
+      })
+    ).ready;
+    streamPiModel.mockReturnValue(chunks([{ content: 'after-heartbeat' }]));
+    const stream = (
+      await service({
+        providerRequestAdmissionScheduler: admissionScheduler,
+      })
+    ).streamChat([{ role: 'user', content: 'heartbeat' }], undefined, undefined, {
+      providerAdmission: {
+        sessionId: 'waiting-session',
+        ownerId: 'waiting-owner',
+        requestClass: 'foreground',
+      },
+    });
+
+    try {
+      await expect(stream.next()).resolves.toMatchObject({
+        value: {
+          providerAdmission: {
+            phase: 'queued',
+            waitMs: 0,
+          },
+        },
+      });
+      const heartbeat = stream.next();
+      await vi.advanceTimersByTimeAsync(15_000);
+      await expect(heartbeat).resolves.toMatchObject({
+        value: {
+          providerAdmission: {
+            phase: 'queued',
+            waitMs: 15_000,
+          },
+        },
+      });
+      held.release();
+      await expect(stream.next()).resolves.toMatchObject({
+        value: { providerAdmission: { phase: 'admitted' } },
+      });
+      await expect(stream.next()).resolves.toMatchObject({
+        value: { content: 'after-heartbeat' },
+      });
+      await expect(stream.next()).resolves.toEqual({
+        value: undefined,
+        done: true,
+      });
+    } finally {
+      held.release();
+      await stream.return(undefined);
+      vi.useRealTimers();
+    }
+  });
+
+  it('releases Provider admission before retry backoff', async () => {
+    vi.useFakeTimers({ now: 1_000 });
+    const admissionScheduler = new ProviderRequestAdmissionScheduler({
+      processSecret: new Uint8Array(32).fill(20),
+      globalMaxInFlight: 1,
+    });
+    streamPiModel
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([{ content: 'unrelated-response' }]))
+      .mockReturnValueOnce(chunks([{ content: 'retry-response' }]));
+    const retrying = (
+      await service({
+        maxRetries: 1,
+        providerRequestAdmissionScheduler: admissionScheduler,
+      })
+    ).streamChat([{ role: 'user', content: 'retry' }], undefined, undefined, {
+      providerAdmission: {
+        sessionId: 'retry-session',
+        ownerId: 'retry-owner',
+        requestClass: 'foreground',
+      },
+    });
+
+    try {
+      const scheduled = await retrying.next();
+      expect(scheduled.value).toMatchObject({
+        providerRetry: { phase: 'scheduled' },
+      });
+      const unrelated = (
+        await service({
+          maxRetries: 0,
+          providerRequestAdmissionScheduler: admissionScheduler,
+        })
+      ).streamChat([{ role: 'user', content: 'unrelated' }], undefined, undefined, {
+        providerAdmission: {
+          sessionId: 'unrelated-session',
+          ownerId: 'unrelated-owner',
+          requestClass: 'foreground',
+        },
+      });
+      await expect(unrelated.next()).resolves.toMatchObject({
+        value: { content: 'unrelated-response' },
+      });
+      await expect(unrelated.next()).resolves.toEqual({
+        value: undefined,
+        done: true,
+      });
+
+      const retryAttempt = retrying.next();
+      const delayMs =
+        scheduled.value?.providerRetry?.delayMs ??
+        (() => {
+          throw new Error('missing retry delay');
+        })();
+      await vi.advanceTimersByTimeAsync(delayMs);
+      await expect(retryAttempt).resolves.toMatchObject({
+        value: { providerRetry: { phase: 'attempt' } },
+      });
+      await expect(retrying.next()).resolves.toMatchObject({
+        value: { providerRetry: { phase: 'recovered' } },
+      });
+      await expect(retrying.next()).resolves.toMatchObject({
+        value: { content: 'retry-response' },
+      });
+      await expect(retrying.next()).resolves.toEqual({
+        value: undefined,
+        done: true,
+      });
+    } finally {
+      await retrying.return(undefined);
+      vi.useRealTimers();
+    }
+  });
+
+  it('lets the foreground recovery deadline win over admission timeout', async () => {
+    vi.useFakeTimers({ now: 1_000 });
+    const admissionScheduler = new ProviderRequestAdmissionScheduler({
+      processSecret: new Uint8Array(32).fill(21),
+    });
+    streamPiModel.mockReturnValueOnce(chunks([new Error('status 503')]));
+    const stream = (
+      await service({
+        maxRetries: undefined,
+        providerRequestConcurrency: 1,
+        providerRequestAdmissionMs: 180_000,
+        providerRequestAdmissionScheduler: admissionScheduler,
+      })
+    ).streamChat([{ role: 'user', content: 'budget' }], undefined, undefined, {
+      providerRecovery: {
+        mode: 'bounded_foreground',
+        budgetMs: 30_000,
+      },
+      providerAdmission: {
+        sessionId: 'budget-session',
+        ownerId: 'budget-owner',
+        requestClass: 'foreground',
+      },
+    });
+
+    let held: ProviderAdmissionPermit | undefined;
+    try {
+      const scheduled = await stream.next();
+      expect(scheduled.value).toMatchObject({
+        providerRetry: { phase: 'scheduled' },
+      });
+      held = await admissionScheduler.admit(
+        providerAdmissionRequest('holder', { maxWaitMs: 180_000 })
+      ).ready;
+      const retryAttempt = stream.next();
+      const delayMs = scheduled.value?.providerRetry?.delayMs ?? 0;
+      await vi.advanceTimersByTimeAsync(delayMs);
+      await expect(retryAttempt).resolves.toMatchObject({
+        value: { providerRetry: { phase: 'attempt' } },
+      });
+      await expect(stream.next()).resolves.toMatchObject({
+        value: { providerAdmission: { phase: 'queued' } },
+      });
+
+      const remainingEvents: StreamChunk[] = [];
+      let observed: unknown;
+      const consume = (async () => {
+        try {
+          for await (const event of stream) remainingEvents.push(event);
+        } catch (error) {
+          observed = error;
+        }
+      })();
+      await vi.runAllTimersAsync();
+      await consume;
+      expect(
+        remainingEvents.some((event) => event.providerAdmission?.phase === 'rejected')
+      ).toBe(false);
+      expect(remainingEvents).toContainEqual(
+        expect.objectContaining({
+          providerRetry: expect.objectContaining({
+            phase: 'exhausted',
+            exhaustedBy: 'recovery_budget',
+            recoveryRemainingMs: 0,
+          }),
+        })
+      );
+      expect(observed).toMatchObject({
+        code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+      });
+      expect(streamPiModel).toHaveBeenCalledOnce();
+    } finally {
+      held?.release();
+      await stream.return(undefined);
+      vi.useRealTimers();
+    }
   });
 
   it('retries a fallbackable error before emitting output', async () => {

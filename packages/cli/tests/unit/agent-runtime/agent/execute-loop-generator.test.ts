@@ -343,6 +343,11 @@ describe('executeLoopGenerator', () => {
         expect.any(Array),
         undefined,
         {
+          providerAdmission: {
+            sessionId: 'test-session',
+            ownerId: 'test-session',
+            requestClass: 'foreground',
+          },
           providerRecovery: {
             mode: 'bounded_foreground',
             budgetMs: 120_000,
@@ -382,7 +387,13 @@ describe('executeLoopGenerator', () => {
         expect.any(Array),
         expect.any(Array),
         undefined,
-        undefined
+        {
+          providerAdmission: {
+            sessionId: 'test-session',
+            ownerId: 'parent-session',
+            requestClass: 'background',
+          },
+        }
       );
     });
   });
@@ -2498,6 +2509,11 @@ describe('executeLoopGenerator', () => {
       expect(chatMock).toHaveBeenCalledTimes(4);
       expect(chatMock.mock.calls[2]?.[3]).toEqual({
         toolChoice: { type: 'tool', toolName: 'Task' },
+        providerAdmission: {
+          sessionId: 'test-session',
+          ownerId: 'test-session',
+          requestClass: 'foreground',
+        },
       });
       expect(executeMock).toHaveBeenNthCalledWith(
         2,
@@ -2783,6 +2799,11 @@ describe('executeLoopGenerator', () => {
       expect(executeMock.mock.calls[1]?.[1]).not.toHaveProperty('resume_from');
       expect(chatMock.mock.calls[2]?.[3]).toEqual({
         toolChoice: { type: 'tool', toolName: 'Task' },
+        providerAdmission: {
+          sessionId: 'test-session',
+          ownerId: 'test-session',
+          requestClass: 'foreground',
+        },
       });
     });
 
@@ -3041,6 +3062,11 @@ describe('executeLoopGenerator', () => {
       ).toHaveLength(2);
       expect(chatMock.mock.calls[5]?.[3]).toEqual({
         toolChoice: { type: 'tool', toolName: 'Task' },
+        providerAdmission: {
+          sessionId: 'test-session',
+          ownerId: 'test-session',
+          requestClass: 'foreground',
+        },
       });
     });
 
@@ -3413,9 +3439,19 @@ describe('executeLoopGenerator', () => {
       expect(result.success).toBe(true);
       expect(chatMock.mock.calls[1]?.[3]).toEqual({
         toolChoice: { type: 'tool', toolName: 'Task' },
+        providerAdmission: {
+          sessionId: 'test-session',
+          ownerId: 'test-session',
+          requestClass: 'foreground',
+        },
       });
       expect(chatMock.mock.calls[2]?.[3]).toEqual({
         toolChoice: { type: 'tool', toolName: 'Task' },
+        providerAdmission: {
+          sessionId: 'test-session',
+          ownerId: 'test-session',
+          requestClass: 'foreground',
+        },
       });
     });
 
@@ -3772,7 +3808,13 @@ describe('executeLoopGenerator', () => {
         expect.any(Array),
         expect.not.arrayContaining([expect.objectContaining({ name: 'Task' })]),
         undefined,
-        undefined
+        {
+          providerAdmission: {
+            sessionId: 'test-session',
+            ownerId: 'test-session',
+            requestClass: 'foreground',
+          },
+        }
       );
     });
 

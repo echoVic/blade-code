@@ -38,9 +38,11 @@ describe('Provider circuit breaker source gate', () => {
 
   it('uses opaque process-scoped identity and stale-token validation', () => {
     const circuit = source('../../src/services/pi/providerCircuitBreaker.ts');
+    const identity = source('../../src/services/pi/providerFailureDomain.ts');
 
-    expect(circuit).toContain("createHmac('sha256'");
+    expect(identity).toContain("createHmac('sha256'");
     expect(circuit).toContain('randomBytes(32)');
+    expect(circuit).toContain('createProviderFailureDomainKey');
     expect(circuit).toContain('new WeakMap<object, AttemptState>()');
     expect(circuit).toContain('attempt.generation !== entry.generation');
     expect(circuit).toContain('attempt.probeLeaseId !== entry.probeLeaseId');

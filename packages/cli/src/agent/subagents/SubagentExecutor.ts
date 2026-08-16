@@ -67,6 +67,8 @@ export class SubagentExecutor {
       const permissionMode = this.config.permissionMode ?? context.permissionMode;
       const subagentInfo = {
         parentSessionId: context.parentSessionId || '',
+        providerAdmissionOwnerId:
+          context.providerAdmissionOwnerId ?? context.parentSessionId,
         subagentType: this.config.name,
         isSidechain: false,
         resumedFrom: context.resumedFrom,

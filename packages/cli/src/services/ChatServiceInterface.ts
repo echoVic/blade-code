@@ -38,6 +38,11 @@ import type {
   ProviderCircuitEvent,
   ProviderCircuitRegistry,
 } from './pi/providerCircuitBreaker.js';
+import type {
+  ProviderAdmissionEvent,
+  ProviderRequestAdmissionScheduler,
+  ProviderRequestClass,
+} from './pi/providerRequestAdmission.js';
 import type { ProviderRetryEvent } from './pi/providerRetry.js';
 import type { ProviderStallEvent } from './pi/providerStall.js';
 
@@ -123,8 +128,12 @@ export interface ChatConfig {
   enablePromptCaching?: boolean;
   maxRetries?: number;
   providerCircuitBreakerOpenMs?: number;
+  providerRequestConcurrency?: number;
+  providerRequestAdmissionMs?: number;
   /** Process-shared runtime coordinator. Never serialize this field. */
   providerCircuitRegistry?: ProviderCircuitRegistry;
+  /** Process-shared physical Provider stream scheduler. Never serialize this field. */
+  providerRequestAdmissionScheduler?: ProviderRequestAdmissionScheduler;
   /** Session-owned model/provider catalog. Never serialize this field. */
   modelCatalog?: PiModelCatalog;
 }
@@ -159,6 +168,11 @@ export interface ChatRequestOptions {
     mode: 'bounded_foreground';
     budgetMs: number;
   };
+  providerAdmission?: {
+    sessionId: string;
+    ownerId: string;
+    requestClass: ProviderRequestClass;
+  };
   maxOutputTokens?: number;
   temperature?: number;
 }
@@ -187,6 +201,7 @@ export interface StreamChunk {
   finishReason?: string;
   usage?: UsageInfo;
   modelFallback?: boolean;
+  providerAdmission?: ProviderAdmissionEvent;
   providerCircuit?: ProviderCircuitEvent;
   providerRetry?: ProviderRetryEvent;
   providerStall?: ProviderStallEvent;

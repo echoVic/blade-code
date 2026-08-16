@@ -155,6 +155,7 @@ export function createLoopEventHandler(
       case 'model_fallback':
         // 标记流已终结，防止后续 late stream_end 复活内容
         streamFinalized = true;
+        deps.sessionActions.setProviderAdmission(null);
         deps.sessionActions.setProviderCircuit(null);
         deps.sessionActions.setProviderRetry(null);
         deps.sessionActions.setProviderStall(null);
@@ -162,6 +163,13 @@ export function createLoopEventHandler(
         deps.sessionActions.discardStreamingMessage();
         deps.sessionActions.setCurrentThinkingContent(null);
         break;
+      case 'provider_admission': {
+        const { kind: _kind, ...admission } = event;
+        deps.sessionActions.setProviderAdmission(
+          event.phase === 'queued' ? admission : null
+        );
+        break;
+      }
       case 'provider_circuit': {
         const { kind: _kind, ...circuit } = event;
         deps.sessionActions.setProviderCircuit(

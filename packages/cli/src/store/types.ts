@@ -22,6 +22,7 @@ import type { EphemeralDelta } from '../context/events/EphemeralDelta.js';
 import type { SessionEvent } from '../context/types.js';
 import type { Message } from '../services/ChatServiceInterface.js';
 import type { ProviderCircuitEvent } from '../services/pi/providerCircuitBreaker.js';
+import type { ProviderAdmissionEvent } from '../services/pi/providerRequestAdmission.js';
 import type { ProviderRetryEvent } from '../services/pi/providerRetry.js';
 import type { ProviderStallEvent } from '../services/pi/providerStall.js';
 import type { SessionMetadata } from '../services/SessionService.js';
@@ -118,6 +119,7 @@ export interface SessionState {
   currentStreamingLineCount: number; // NEW: 已完成行总数（包含被裁剪的历史行）
   currentStreamingVersion: number; // NEW: 流式缓冲版本号（用于触发订阅更新）
   finalizingStreamingMessageId: string | null; // 正在从流式切换到最终渲染的消息 ID
+  providerAdmission: ProviderAdmissionEvent | null; // Provider physical stream capacity 状态
   providerCircuit: ProviderCircuitEvent | null; // 进程共享 Provider failure-domain 状态
   providerRetry: ProviderRetryEvent | null; // 首字节前可安全重放的 Provider retry 状态
   providerStall: ProviderStallEvent | null; // Provider 流事件间隙的可恢复 stall 状态
@@ -168,6 +170,7 @@ export interface SessionActions {
   clearFinalizingStreamingMessageId: () => void; // 清理最终渲染标记
   discardStreamingMessage: () => void; // 丢弃流式消息（不提交，用于模型降级场景）
   setProviderCircuit: (circuit: ProviderCircuitEvent | null) => void;
+  setProviderAdmission: (admission: ProviderAdmissionEvent | null) => void;
   setProviderRetry: (retry: ProviderRetryEvent | null) => void;
   setProviderStall: (stall: ProviderStallEvent | null) => void;
   setActionStationarity: (stationarity: ActionStationarityEvent | null) => void;

@@ -22,6 +22,7 @@ import { createLogger, LogCategory } from '../../logging/Logger.js';
 import type { SessionLspResources } from '../../lsp/WorkspaceLspResources.js';
 import type { Message } from '../../services/ChatServiceInterface.js';
 import { SessionService } from '../../services/SessionService.js';
+import { BackgroundShellManager } from '../../tools/builtin/shell/BackgroundShellManager.js';
 import { getCwd } from '../../utils/cwd.js';
 import {
   captureProcessIdentity,
@@ -43,7 +44,6 @@ import { drainLoop } from '../loop/index.js';
 import type { LoopEvent } from '../loop/types.js';
 import type { SessionAgentResources } from '../resources/WorkspaceAgentResources.js';
 import type { SessionModelResources } from '../resources/WorkspaceModelResources.js';
-import { BackgroundShellManager } from '../../tools/builtin/shell/BackgroundShellManager.js';
 import { SessionInUseError, SessionLease } from '../runtime/SessionLease.js';
 import { SessionRuntime } from '../runtime/SessionRuntime.js';
 import {
@@ -177,6 +177,9 @@ export interface StartBackgroundAgentOptions {
 
   /** 父会话 ID */
   parentSessionId?: string;
+
+  /** Root Session owning Provider request admission for this child tree. */
+  providerAdmissionOwnerId?: string;
 
   /** 父会话 canonical workspace */
   parentProjectPath?: string;
@@ -462,6 +465,7 @@ export class BackgroundAgentManager {
       description,
       prompt,
       parentSessionId,
+      providerAdmissionOwnerId,
       parentProjectPath,
       permissionMode,
       reasoningEffort,
@@ -508,6 +512,7 @@ export class BackgroundAgentManager {
       processId: process.pid,
       processIdentity: captureProcessIdentity(process.pid),
       parentSessionId,
+      providerAdmissionOwnerId: providerAdmissionOwnerId ?? parentSessionId,
       parentProjectPath,
       rootAgentId: rootAgentId ?? id,
       resumedFrom,
@@ -529,6 +534,7 @@ export class BackgroundAgentManager {
       config,
       prompt,
       parentSessionId,
+      providerAdmissionOwnerId ?? parentSessionId,
       permissionMode,
       reasoningEffort,
       serviceTier,
@@ -573,6 +579,7 @@ export class BackgroundAgentManager {
     config: SubagentConfig,
     prompt: string,
     parentSessionId: string | undefined,
+    providerAdmissionOwnerId: string | undefined,
     permissionMode: PermissionMode | undefined,
     reasoningEffort: ReasoningEffortSelection | undefined,
     serviceTier: ServiceTierSelection | undefined,
@@ -652,6 +659,10 @@ export class BackgroundAgentManager {
         subagentInfo: parentSessionId
           ? {
               parentSessionId,
+              providerAdmissionOwnerId:
+                persistedSession?.providerAdmissionOwnerId ??
+                providerAdmissionOwnerId ??
+                parentSessionId,
               subagentType: config.name,
               isSidechain: false,
               resumedFrom: persistedSession?.resumedFrom,
@@ -684,6 +695,10 @@ export class BackgroundAgentManager {
         permissionMode: effectivePermissionMode,
         subagentInfo: {
           parentSessionId: parentSessionId || '',
+          providerAdmissionOwnerId:
+            persistedSession?.providerAdmissionOwnerId ??
+            providerAdmissionOwnerId ??
+            parentSessionId,
           subagentType: config.name,
           isSidechain: false,
           resumedFrom: persistedSession?.resumedFrom,
@@ -982,6 +997,7 @@ export class BackgroundAgentManager {
       description: session.description,
       prompt,
       parentSessionId: owner.sessionId,
+      providerAdmissionOwnerId: session.providerAdmissionOwnerId ?? owner.sessionId,
       parentProjectPath: owner.projectPath,
       permissionMode,
       reasoningEffort,

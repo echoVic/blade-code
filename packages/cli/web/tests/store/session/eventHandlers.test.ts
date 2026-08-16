@@ -67,6 +67,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     isStreaming: false,
     isStopping: false,
     agentPhase: 'idle',
+    providerAdmission: null,
     providerCircuit: null,
     providerRetry: null,
     providerStall: null,
@@ -1585,6 +1586,7 @@ describe('eventHandlers', () => {
     });
     expect(set).toHaveBeenLastCalledWith({
       agentPhase: 'switching_model',
+      providerAdmission: null,
       providerCircuit: null,
       providerRetry: null,
       providerStall: null,
@@ -1673,6 +1675,66 @@ describe('eventHandlers', () => {
     });
     expect(state.agentPhase).toBe('running');
     expect(state.providerRetry).toBeNull();
+  });
+
+  test('tracks and clears Provider admission lifecycle ephemerally', () => {
+    const state = createState();
+    state.agentPhase = 'running';
+    state.isStreaming = true;
+    const set = vi.fn((partial) => {
+      if (typeof partial === 'function') Object.assign(state, partial(state));
+      else Object.assign(state, partial);
+    });
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'provider.admission',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        phase: 'queued',
+        requestClass: 'foreground',
+        scope: 'domain',
+        reason: 'capacity',
+        queuePosition: 1,
+        queueDepth: 2,
+        inFlight: 4,
+        limit: 4,
+        waitMs: 15_000,
+        maxWaitMs: 180_000,
+        recoveryRemainingMs: 585_000,
+      },
+    });
+    expect(state.providerAdmission).toMatchObject({
+      phase: 'queued',
+      requestClass: 'foreground',
+      scope: 'domain',
+      queuePosition: 1,
+      queueDepth: 2,
+      inFlight: 4,
+      limit: 4,
+      waitMs: 15_000,
+      maxWaitMs: 180_000,
+      recoveryRemainingMs: 585_000,
+    });
+
+    dispatch({
+      type: 'provider.admission',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        phase: 'admitted',
+        requestClass: 'foreground',
+        scope: 'domain',
+        queuePosition: 0,
+        queueDepth: 1,
+        inFlight: 4,
+        limit: 4,
+        waitMs: 15_250,
+        maxWaitMs: 180_000,
+      },
+    });
+    expect(state.providerAdmission).toBeNull();
   });
 
   test('tracks and clears shared Provider circuit lifecycle', () => {
@@ -2004,6 +2066,7 @@ describe('eventHandlers', () => {
       pendingSteeringCount: 0,
       pendingInputDelivery: null,
       recoveredSteeringCount: 0,
+      providerAdmission: null,
       providerCircuit: null,
       providerRetry: null,
       providerStall: null,

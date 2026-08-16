@@ -355,6 +355,23 @@ const ProviderRetryEventSchema = event({
   exhausted_by: Type.Optional(StringEnum(['attempt_limit', 'recovery_budget'])),
 });
 
+const ProviderAdmissionEventSchema = event({
+  type: Type.Literal('provider_admission'),
+  phase: StringEnum(['queued', 'admitted', 'rejected']),
+  request_class: StringEnum(['foreground', 'background', 'internal']),
+  scope: StringEnum(['global', 'domain', 'owner', 'class']),
+  reason: Type.Optional(
+    StringEnum(['capacity', 'queue_full', 'wait_timeout', 'closed'])
+  ),
+  queue_position: Type.Integer({ minimum: 0 }),
+  queue_depth: Type.Integer({ minimum: 0 }),
+  in_flight: Type.Integer({ minimum: 0 }),
+  limit: Type.Integer({ minimum: 0 }),
+  wait_ms: Type.Integer({ minimum: 0 }),
+  max_wait_ms: Type.Integer({ minimum: 0 }),
+  recovery_remaining_ms: Type.Optional(Type.Integer({ minimum: 0 })),
+});
+
 const ProviderCircuitEventSchema = event({
   type: Type.Literal('provider_circuit'),
   phase: StringEnum(['opened', 'waiting', 'probe', 'closed', 'reopened', 'rejected']),
@@ -453,6 +470,7 @@ export const HeadlessJsonlEventSchema = Runtime(
     SubagentEventSchema,
     TokenUsageEventSchema,
     CompactingEventSchema,
+    ProviderAdmissionEventSchema,
     ProviderCircuitEventSchema,
     ProviderRetryEventSchema,
     ProviderStallEventSchema,

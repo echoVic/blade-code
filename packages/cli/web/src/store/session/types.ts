@@ -74,6 +74,20 @@ export interface ProviderRetryInfo {
   exhaustedBy?: 'attempt_limit' | 'recovery_budget';
 }
 
+export interface ProviderAdmissionInfo {
+  phase: 'queued' | 'admitted' | 'rejected';
+  requestClass: 'foreground' | 'background' | 'internal';
+  scope: 'global' | 'domain' | 'owner' | 'class';
+  reason?: 'capacity' | 'queue_full' | 'wait_timeout' | 'closed';
+  queuePosition: number;
+  queueDepth: number;
+  inFlight: number;
+  limit: number;
+  waitMs: number;
+  maxWaitMs: number;
+  recoveryRemainingMs?: number;
+}
+
 export interface ProviderCircuitInfo {
   phase: 'opened' | 'waiting' | 'probe' | 'closed' | 'reopened' | 'rejected';
   reason: 'rate_limit' | 'server_error' | 'transport' | 'stream_closed';
@@ -344,6 +358,7 @@ export interface StreamingSlice {
   isStreaming: boolean;
   isStopping: boolean;
   agentPhase: AgentPhase;
+  providerAdmission: ProviderAdmissionInfo | null;
   providerCircuit: ProviderCircuitInfo | null;
   providerRetry: ProviderRetryInfo | null;
   providerStall: ProviderStallInfo | null;

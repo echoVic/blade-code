@@ -1,9 +1,10 @@
-import { createHmac, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import type { Api } from '@earendil-works/pi-ai';
 import {
   DEFAULT_PROVIDER_CIRCUIT_OPEN_MS,
   MAX_PROVIDER_CIRCUIT_OPEN_MS,
 } from '../../config/providerCircuitBreaker.js';
+import { createProviderFailureDomainKey } from './providerFailureDomain.js';
 import type { ProviderRetryReason } from './providerRetry.js';
 
 export {
@@ -126,6 +127,12 @@ export type ProviderCircuitAdmission =
       failureCount: number;
     };
 
+export type ProviderCircuitPreflight =
+  | { eligible: true }
+  | ({
+      eligible: false;
+    } & Omit<Extract<ProviderCircuitAdmission, { allowed: false }>, 'allowed'>);
+
 export interface ProviderCircuitSnapshot {
   state: ProviderCircuitState;
   sampleCount: number;
@@ -136,6 +143,7 @@ export interface ProviderCircuitSnapshot {
 }
 
 export interface ProviderCircuitHandle {
+  preflight(): ProviderCircuitPreflight;
   check(): ProviderCircuitAdmission;
   recordSuccess(
     token: ProviderCircuitAttemptToken
@@ -215,48 +223,13 @@ function boundedRate(value: number | undefined, fallback: number): number {
     : fallback;
 }
 
-function canonicalBaseUrl(raw: string): string {
-  try {
-    const url = new URL(raw);
-    url.hash = '';
-    url.hostname = url.hostname.toLowerCase();
-    url.searchParams.sort();
-    if (url.pathname !== '/') {
-      url.pathname = url.pathname.replace(/\/+$/, '');
-    }
-    return url.toString();
-  } catch {
-    return raw.trim().replace(/\/+$/, '');
-  }
-}
-
-function canonicalHeaders(
-  headers: Readonly<Record<string, string>> | undefined
-): ReadonlyArray<readonly [string, string]> {
-  if (!headers) return [];
-  return Object.entries(headers)
-    .map(([name, value]) => [name.trim().toLowerCase(), value.trim()] as const)
-    .sort(([left], [right]) => left.localeCompare(right));
-}
-
 export function createProviderCircuitFailureDomainKey(
   scope: ProviderCircuitScope,
   processSecret: Uint8Array
 ): string {
-  const canonical = JSON.stringify([
-    scope.provider.trim(),
-    String(scope.api).trim(),
-    canonicalBaseUrl(scope.baseUrl),
-    scope.model.trim(),
-    scope.serviceTier?.trim() ?? '',
-    scope.apiVersion?.trim() ?? '',
-    scope.apiKey ?? '',
-    canonicalHeaders(scope.customHeaders),
-    scope.openDurationMs,
-  ]);
-  return createHmac('sha256', Buffer.from(processSecret))
-    .update(canonical)
-    .digest('hex');
+  return createProviderFailureDomainKey(scope, processSecret, {
+    providerCircuitOpenDurationMs: scope.openDurationMs,
+  });
 }
 
 function countFailures(samples: readonly CircuitSample[]): number {
@@ -364,6 +337,7 @@ export class ProviderCircuitRegistry {
       )
     );
     return {
+      preflight: () => registry.#preflight(entry),
       check: () => registry.#check(entry, probeLeaseMs),
       recordSuccess: (token) => registry.#record(token, 'success'),
       recordFailure: (token, failure) => registry.#record(token, 'failure', failure),
@@ -376,6 +350,7 @@ export class ProviderCircuitRegistry {
   #noopHandle(): ProviderCircuitHandle {
     const registry = this;
     return {
+      preflight: () => ({ eligible: true }),
       check: () => {
         const token = Object.freeze({ kind: 'noop' as const });
         registry.#attempts.set(token, {
@@ -404,6 +379,40 @@ export class ProviderCircuitRegistry {
     const state = this.#attempts.get(token);
     if (state?.kind === 'noop') state.settled = true;
     return undefined;
+  }
+
+  #preflight(entry: CircuitEntry): ProviderCircuitPreflight {
+    const now = this.#now();
+    if (entry.detached) return { eligible: true };
+    entry.lastTouchedAt = now;
+    this.#evictSamples(entry, now);
+
+    if (entry.state === 'closed') return { eligible: true };
+    if (entry.state === 'open') {
+      const nextProbeAt = entry.nextProbeAt ?? now;
+      return now < nextProbeAt
+        ? this.#preflightBlocked(entry, nextProbeAt - now)
+        : { eligible: true };
+    }
+    if (
+      entry.probeLeaseId === undefined ||
+      (entry.probeLeaseExpiresAt !== undefined && now >= entry.probeLeaseExpiresAt)
+    ) {
+      return { eligible: true };
+    }
+    const leaseRemaining = Math.max(
+      1,
+      (entry.probeLeaseExpiresAt ?? now + HALF_OPEN_RETRY_MS) - now
+    );
+    return this.#preflightBlocked(entry, Math.min(HALF_OPEN_RETRY_MS, leaseRemaining));
+  }
+
+  #preflightBlocked(
+    entry: CircuitEntry,
+    retryAfterMs: number
+  ): Extract<ProviderCircuitPreflight, { eligible: false }> {
+    const { allowed: _allowed, ...blocked } = this.#blocked(entry, retryAfterMs);
+    return { eligible: false, ...blocked };
   }
 
   #check(entry: CircuitEntry, probeLeaseMs: number): ProviderCircuitAdmission {

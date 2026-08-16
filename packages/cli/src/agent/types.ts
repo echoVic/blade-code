@@ -31,6 +31,7 @@ export type UserMessageContent = string | ContentPart[];
  */
 export interface SubagentInfoForContext {
   parentSessionId: string;
+  providerAdmissionOwnerId?: string;
   subagentType: string;
   isSidechain: boolean;
   resumedFrom?: string;

@@ -51,6 +51,40 @@ background subagent、verification、compaction、provider health、标题生成
 durable transcript。TUI 与 Web 在原状态栏内显示尝试数和剩余预算；Headless JSONL 与
 ACP 使用结构化字段。
 
+## Provider 请求准入
+
+每条 primary、retry、fallback 和 HalfOpen probe physical stream 在创建 pi-ai iterator
+前都必须取得 process-wide admission permit。默认同一 endpoint/model/tier/credential
+failure domain 最多 4 条、全进程最多 16 条、同一 root Session 及全部 descendant
+subagent 最多 3 条 active stream。全局 pending 固定 128、每 domain 32、每 root owner
+16，队列按 request class 与 root owner 公平调度，不随 Session 数量增长。
+
+root foreground、background subagent 和 internal sampling 使用独立 class。
+background/internal 在默认 domain 最多占 3 条、全进程最多占 12 条；internal 另限制为
+全局 2 条、每 domain 1 条。等待默认最多 180 秒，每 15 秒投影 heartbeat，caller abort
+会原子移除 ticket。`providerRequestConcurrency` 可配置为 `1-16`；
+`providerRequestAdmissionMs=0` 表示 fail-fast，其他值必须为 `1000-600000`。
+
+顺序固定为：
+
+```text
+circuit preflight
+  -> Provider admission
+  -> atomic circuit check/probe claim
+  -> physical stream
+  -> release permit
+  -> retry/circuit wait or fallback
+```
+
+已知 Open circuit 不进入容量队列；排队后 circuit 若被其他 Session 打开，request
+取得 permit 后会二次检查并零 Provider traffic 释放容量。permit 不跨 retry backoff、
+circuit wait、tool execution 或 fallback selection。排队不增加 physical attempt；
+foreground recovery 已启动时，admission wait 与原绝对 deadline 共用剩余预算。
+
+`provider_admission` 只投影 `queued|admitted|rejected`、request class、capacity scope、
+队列/active 整数与 bounded wait；failure-domain、root owner、Session ID、endpoint、
+credential 和 HMAC 均不进入 surface 或 transcript。
+
 ## 共享 Provider Circuit
 
 多个 Web/ACP Session 会共享同一进程内的 Provider failure-domain circuit。identity

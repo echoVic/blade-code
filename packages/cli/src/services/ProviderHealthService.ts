@@ -43,7 +43,14 @@ export async function probeModelProvider(
     const response = await service.chat(
       [{ role: 'user', content: 'Reply with OK.' }],
       undefined,
-      AbortSignal.timeout(timeoutMs)
+      AbortSignal.timeout(timeoutMs),
+      {
+        providerAdmission: {
+          sessionId: `provider-health:${modelConfig.id}`,
+          ownerId: `provider-health:${modelConfig.id}`,
+          requestClass: 'internal',
+        },
+      }
     );
     const responded = Boolean(
       response.content ||

@@ -1165,6 +1165,83 @@ describe('AcpSession', () => {
       releaseWrite();
     });
 
+    it('projects Provider admission lifecycle through ACP metadata only', async () => {
+      const mockAgent = getMockAgent();
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield {
+          kind: 'provider_admission',
+          phase: 'queued',
+          requestClass: 'foreground',
+          scope: 'domain',
+          reason: 'capacity',
+          queuePosition: 1,
+          queueDepth: 2,
+          inFlight: 4,
+          limit: 4,
+          waitMs: 15_000,
+          maxWaitMs: 180_000,
+          recoveryRemainingMs: 585_000,
+        } as LoopEvent;
+        yield {
+          kind: 'provider_admission',
+          phase: 'admitted',
+          requestClass: 'foreground',
+          scope: 'domain',
+          queuePosition: 0,
+          queueDepth: 1,
+          inFlight: 4,
+          limit: 4,
+          waitMs: 15_250,
+          maxWaitMs: 180_000,
+          recoveryRemainingMs: 584_750,
+        } as LoopEvent;
+        return { success: true, finalMessage: 'admitted' };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'wait for provider capacity' }],
+      });
+
+      expect(mockConnection.sessionUpdates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'session_info_update',
+              _meta: {
+                'blade/providerAdmission': {
+                  phase: 'queued',
+                  requestClass: 'foreground',
+                  scope: 'domain',
+                  reason: 'capacity',
+                  queuePosition: 1,
+                  queueDepth: 2,
+                  inFlight: 4,
+                  limit: 4,
+                  waitMs: 15_000,
+                  maxWaitMs: 180_000,
+                  recoveryRemainingMs: 585_000,
+                },
+              },
+            }),
+          }),
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'session_info_update',
+              _meta: { 'blade/providerAdmission': null },
+            }),
+          }),
+        ])
+      );
+      expect(
+        mockConnection.sessionUpdates.some(
+          (entry) =>
+            entry.update.sessionUpdate === 'agent_message_chunk' &&
+            JSON.stringify(entry).includes('providerAdmission')
+        )
+      ).toBe(false);
+    });
+
     it('projects Provider retry lifecycle through ACP session metadata', async () => {
       const mockAgent = getMockAgent();
       mockAgent.chatStream = vi.fn(async function* () {

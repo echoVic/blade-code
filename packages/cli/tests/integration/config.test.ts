@@ -714,4 +714,26 @@ describe('ConfigManager 集成', () => {
     const loaded = await ConfigManager.getInstance().initialize();
     expect(loaded.providerCircuitBreakerOpenMs).toBe(20_000);
   });
+
+  it('persists Provider request admission policy in global config', async () => {
+    const service = ConfigService.getInstance();
+
+    await service.save(
+      {
+        providerRequestConcurrency: 6,
+        providerRequestAdmissionMs: 120_000,
+      },
+      { scope: 'global', immediate: true }
+    );
+
+    const userConfigPath = path.join(tempHome, '.blade', 'config.json');
+    expect(JSON.parse(readFileSync(userConfigPath, 'utf8'))).toMatchObject({
+      providerRequestConcurrency: 6,
+      providerRequestAdmissionMs: 120_000,
+    });
+
+    const loaded = await ConfigManager.getInstance().initialize();
+    expect(loaded.providerRequestConcurrency).toBe(6);
+    expect(loaded.providerRequestAdmissionMs).toBe(120_000);
+  });
 });

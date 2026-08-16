@@ -192,6 +192,21 @@ probe，关闭后分别取得独立真实 Provider 结果。Headless/TUI 不承�
 其 cell 只验证单 Session 状态机与 surface 投影。全部八格与双 Session 控制使用
 `retry=0`，并回收 secondary Session、SSE、terminal、browser/page、proxy 与临时目录。
 
+Provider request admission 资格固定运行 DeepSeek Flash/Pro × Headless、真实 ACP、
+raw PTY TUI 和 production Chromium Web 八格，测试配置使用合法的
+`providerRequestConcurrency=1` 与 `providerRequestAdmissionMs=120000`。透明代理先把
+一个已 admitted 的真实 Provider request 停在 host barrier；第二个同 domain request
+必须先投影 `queued`，且代理在 release 前只能观察到一个请求。release 后第二个 request
+按序投影 `admitted` 并取得独立真实 Provider 结果，代理最大同域 in-flight 必须恰好为
+1。
+
+Web/ACP cell 使用同进程双 Session 对照。Headless/TUI cell 使用 production background
+Task child 持有 permit，parent 下一轮排队；child 与 parent 都必须访问真实 Provider，
+允许代理只为确定性 Task trigger 生成 synthetic tool call。八格还必须验证 root owner
+继承、零 framework retry、attempt 不包含 queue wait、metadata 不进入 assistant/transcript、
+Web reload/ACP load 清除瞬态状态、TUI Esc 可见以及全量 proxy/browser/PTY/process/profile
+回收。
+
 Provider Stall 资格必须让透明 SSE 代理先转发真实模型内容，再在 hard idle timeout
 之前暂停后续事件。Headless JSONL 必须按同一 stall count 输出 sanitized
 `detected → recovered`，标记 `output_started=true`，随后完成真实回复；代理必须证明

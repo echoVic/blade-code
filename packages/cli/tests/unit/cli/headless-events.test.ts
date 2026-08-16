@@ -92,6 +92,36 @@ describe('headless event contract', () => {
     });
     expect(() => HeadlessJsonlEventSchema.parse(handoff)).not.toThrow();
 
+    const providerAdmission = createHeadlessJsonlEvent('provider_admission', {
+      phase: 'queued',
+      request_class: 'foreground',
+      scope: 'domain',
+      reason: 'capacity',
+      queue_position: 1,
+      queue_depth: 2,
+      in_flight: 4,
+      limit: 4,
+      wait_ms: 15_000,
+      max_wait_ms: 180_000,
+      recovery_remaining_ms: 585_000,
+    });
+    expect(providerAdmission).toEqual({
+      event_version: 1,
+      type: 'provider_admission',
+      phase: 'queued',
+      request_class: 'foreground',
+      scope: 'domain',
+      reason: 'capacity',
+      queue_position: 1,
+      queue_depth: 2,
+      in_flight: 4,
+      limit: 4,
+      wait_ms: 15_000,
+      max_wait_ms: 180_000,
+      recovery_remaining_ms: 585_000,
+    });
+    expect(() => HeadlessJsonlEventSchema.parse(providerAdmission)).not.toThrow();
+
     const providerRetry = createHeadlessJsonlEvent('provider_retry', {
       phase: 'scheduled',
       attempt: 1,

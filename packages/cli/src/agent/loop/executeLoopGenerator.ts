@@ -447,6 +447,10 @@ async function* processStreamResponse(
     for await (const chunk of stream) {
       if (signal?.aborted) break;
 
+      if (chunk.providerAdmission) {
+        yield { kind: 'provider_admission', ...chunk.providerAdmission };
+        continue;
+      }
       if (chunk.providerCircuit) {
         yield { kind: 'provider_circuit', ...chunk.providerCircuit };
         continue;
@@ -1866,22 +1870,28 @@ validates the object and may return a bounded corrective error.`;
                 budgetMs: deps.config.providerForegroundRecoveryMs as number,
               }
             : undefined;
-        const requestOptions: ChatRequestOptions | undefined =
-          turnRequiredToolName || foregroundProviderRecovery
+        const providerAdmissionOwnerId =
+          context.subagentInfo?.providerAdmissionOwnerId ??
+          context.subagentInfo?.parentSessionId ??
+          context.sessionId;
+        const requestOptions: ChatRequestOptions = {
+          ...(turnRequiredToolName
             ? {
-                ...(turnRequiredToolName
-                  ? {
-                      toolChoice: {
-                        type: 'tool' as const,
-                        toolName: turnRequiredToolName,
-                      },
-                    }
-                  : {}),
-                ...(foregroundProviderRecovery
-                  ? { providerRecovery: foregroundProviderRecovery }
-                  : {}),
+                toolChoice: {
+                  type: 'tool' as const,
+                  toolName: turnRequiredToolName,
+                },
               }
-            : undefined;
+            : {}),
+          ...(foregroundProviderRecovery
+            ? { providerRecovery: foregroundProviderRecovery }
+            : {}),
+          providerAdmission: {
+            sessionId: context.sessionId,
+            ownerId: providerAdmissionOwnerId,
+            requestClass: isSubagent ? 'background' : 'foreground',
+          },
+        };
         let turnResult: StreamResponseResult;
         let streamingExecutor: StreamingToolExecutor | undefined;
         const toolProgressQueue = new ToolProgressQueue();
@@ -1894,6 +1904,7 @@ validates the object and may return a bounded corrective error.`;
                 sessionId: context.sessionId,
                 userId: context.userId || 'default',
                 modelId: deps.config.currentModelId,
+                providerAdmissionOwnerId,
                 workspaceRoot: context.workspaceRoot || getCwd(),
                 environment: deps.config.env,
                 worktreeIsolationRequired,
@@ -3220,6 +3231,7 @@ validates the object and may return a bounded corrective error.`;
                 sessionId: context.sessionId,
                 userId: context.userId || 'default',
                 modelId: deps.config.currentModelId,
+                providerAdmissionOwnerId,
                 workspaceRoot: context.workspaceRoot || getCwd(),
                 environment: deps.config.env,
                 worktreeIsolationRequired,

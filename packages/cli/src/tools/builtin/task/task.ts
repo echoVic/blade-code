@@ -385,6 +385,8 @@ export function createTaskTool(
               description,
               prompt,
               parentSessionId: owner.sessionId,
+              providerAdmissionOwnerId:
+                context.providerAdmissionOwnerId ?? owner.sessionId,
               parentProjectPath: owner.projectPath,
               permissionMode: context.permissionMode,
               reasoningEffort,
@@ -686,6 +688,7 @@ async function executeForegroundTask(input: ForegroundTaskInput): Promise<ToolRe
       processId: process.pid,
       processIdentity: captureProcessIdentity(process.pid),
       parentSessionId: owner.sessionId,
+      providerAdmissionOwnerId: context.providerAdmissionOwnerId ?? owner.sessionId,
       parentProjectPath: owner.projectPath,
       rootAgentId,
       resumedFrom: source?.id,
@@ -710,6 +713,7 @@ async function executeForegroundTask(input: ForegroundTaskInput): Promise<ToolRe
     const subagentContext: SubagentContext = {
       prompt,
       parentSessionId: owner.sessionId,
+      providerAdmissionOwnerId: context.providerAdmissionOwnerId ?? owner.sessionId,
       permissionMode: config.permissionMode ?? context.permissionMode,
       reasoningEffort: input.reasoningEffort,
       serviceTier: input.serviceTier,

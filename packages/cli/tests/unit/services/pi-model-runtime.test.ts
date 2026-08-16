@@ -108,7 +108,7 @@ describe('pi model runtime', () => {
     });
   });
 
-  it('freezes the Provider circuit policy into the shared chat config', () => {
+  it('freezes Provider circuit and admission policy into chat config', () => {
     const resolved = resolveModelConfig(
       {
         id: 'deepseek',
@@ -119,11 +119,15 @@ describe('pi model runtime', () => {
         temperature: 0,
         timeout: 180_000,
         providerCircuitBreakerOpenMs: 20_000,
+        providerRequestConcurrency: 6,
+        providerRequestAdmissionMs: 120_000,
       },
       'off'
     );
 
     expect(resolved.chat.providerCircuitBreakerOpenMs).toBe(20_000);
+    expect(resolved.chat.providerRequestConcurrency).toBe(6);
+    expect(resolved.chat.providerRequestAdmissionMs).toBe(120_000);
   });
 
   it('isolates injected credentials by model config ID', () => {

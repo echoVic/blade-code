@@ -143,6 +143,9 @@ export interface AgentSession {
   /** 父会话 ID（可选） */
   parentSessionId?: string;
 
+  /** Private root Session owner for process-wide Provider admission. */
+  providerAdmissionOwnerId?: string;
+
   /** 父会话 canonical workspace，用于 compound owner 鉴权 */
   parentProjectPath?: string;
 
@@ -369,6 +372,9 @@ export class AgentSessionStore {
     if (value.parentSessionId !== undefined) {
       assertValidSessionId(value.parentSessionId);
     }
+    if (value.providerAdmissionOwnerId !== undefined) {
+      assertValidSessionId(value.providerAdmissionOwnerId);
+    }
     if (value.resumedFrom !== undefined) {
       assertValidSessionId(value.resumedFrom);
     }
@@ -417,6 +423,10 @@ export class AgentSessionStore {
           }
         : undefined;
     const background = value.background === true;
+    const providerAdmissionOwnerId =
+      typeof value.providerAdmissionOwnerId === 'string'
+        ? value.providerAdmissionOwnerId
+        : undefined;
 
     return {
       ...(value as unknown as AgentSession),
@@ -428,6 +438,7 @@ export class AgentSessionStore {
       processIdentity,
       restartRecovery,
       background,
+      ...(providerAdmissionOwnerId ? { providerAdmissionOwnerId } : {}),
       workspaceRoot,
       parentProjectPath,
     };

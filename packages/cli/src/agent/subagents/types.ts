@@ -140,6 +140,9 @@ export interface SubagentContext {
   /** 父 Agent 的会话 ID（可选，用于追溯） */
   parentSessionId?: string;
 
+  /** Root Session owning Provider request admission for the full child tree. */
+  providerAdmissionOwnerId?: string;
+
   /** 父 Agent 的消息 ID（可选） */
   parentMessageId?: string;
 

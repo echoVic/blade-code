@@ -995,6 +995,7 @@ export class AcpSession {
     }
 
     const abortController = new AbortController();
+    let providerAdmissionVisible = false;
     let resolvePromptCompletion!: () => void;
     const promptCompletion = new Promise<void>((resolve) => {
       resolvePromptCompletion = resolve;
@@ -1302,6 +1303,37 @@ export class AcpSession {
                 },
               });
               break;
+            case 'provider_admission':
+              providerAdmissionVisible = event.phase === 'queued';
+              this.sendUpdate({
+                sessionUpdate: 'session_info_update',
+                updatedAt: new Date().toISOString(),
+                _meta: {
+                  'blade/providerAdmission':
+                    event.phase === 'queued'
+                      ? {
+                          phase: event.phase,
+                          requestClass: event.requestClass,
+                          scope: event.scope,
+                          ...(event.reason !== undefined
+                            ? { reason: event.reason }
+                            : {}),
+                          queuePosition: event.queuePosition,
+                          queueDepth: event.queueDepth,
+                          inFlight: event.inFlight,
+                          limit: event.limit,
+                          waitMs: event.waitMs,
+                          maxWaitMs: event.maxWaitMs,
+                          ...(event.recoveryRemainingMs !== undefined
+                            ? {
+                                recoveryRemainingMs: event.recoveryRemainingMs,
+                              }
+                            : {}),
+                        }
+                      : null,
+                },
+              });
+              break;
             case 'provider_circuit':
               this.sendUpdate({
                 sessionUpdate: 'session_info_update',
@@ -1539,6 +1571,14 @@ export class AcpSession {
       logger.error(`[AcpSession ${this.id}] Prompt error:`, error);
       throw error;
     } finally {
+      if (providerAdmissionVisible && !this.destroyed) {
+        this.sendUpdate({
+          sessionUpdate: 'session_info_update',
+          updatedAt: new Date().toISOString(),
+          _meta: { 'blade/providerAdmission': null },
+        });
+        await this.flushUpdates();
+      }
       resolvePromptCompletion();
       if (this.pendingPromptCompletion === promptCompletion) {
         this.pendingPromptCompletion = null;

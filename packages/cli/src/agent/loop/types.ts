@@ -16,6 +16,7 @@ import type {
   IChatService,
 } from '../../services/ChatServiceInterface.js';
 import type { ProviderCircuitEvent } from '../../services/pi/providerCircuitBreaker.js';
+import type { ProviderAdmissionEvent } from '../../services/pi/providerRequestAdmission.js';
 import type { ProviderRetryEvent } from '../../services/pi/providerRetry.js';
 import type { ProviderStallEvent } from '../../services/pi/providerStall.js';
 import type { JsonObject } from '../../store/types.js';
@@ -72,6 +73,7 @@ export type SystemEvent =
       postTokens?: number;
     }
   | { kind: 'token_usage'; usage: TokenUsageInfo }
+  | ({ kind: 'provider_admission' } & ProviderAdmissionEvent)
   | ({ kind: 'provider_circuit' } & ProviderCircuitEvent)
   | ({ kind: 'provider_retry' } & ProviderRetryEvent)
   | ({ kind: 'provider_stall' } & ProviderStallEvent)

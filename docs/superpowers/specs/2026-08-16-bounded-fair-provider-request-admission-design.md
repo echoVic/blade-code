@@ -380,8 +380,11 @@ limits.
 
 ### Fair selection
 
-The queue exposes only the first pending request for each root owner as a
-candidate. Eligible candidates are ranked by effective class:
+The queue exposes one eligible request per root owner: the request with the
+best effective class, breaking equal-class ties by owner-local FIFO order.
+This lets foreground work use its reserved capacity when an older background
+request from the same owner is class-capped, without reordering equally ranked
+work. Eligible owner candidates are ranked by effective class:
 
 ```text
 foreground = 0
@@ -599,10 +602,11 @@ metadata to assistant stdout.
 
 ### TUI
 
-`LoadingIndicator` priority is:
+`LoadingIndicator` and Web `StatusBar` priority is:
 
 ```text
-circuit > provider admission > provider retry > provider stall > ordinary
+action stationarity > circuit > provider admission > provider retry
+  > provider stall > ordinary
 ```
 
 Queued state shows capacity scope, queue position, elapsed wait, and Esc

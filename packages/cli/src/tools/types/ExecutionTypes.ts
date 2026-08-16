@@ -98,6 +98,7 @@ export interface ExecutionContext {
   taskListId?: string; // Optional shared task-list scope (used by agent teams)
   messageId?: string; // 对话消息 ID（用于快照管理）
   modelId?: string; // 当前父 Agent 模型，供子代理 identity 冻结
+  providerAdmissionOwnerId?: string; // 根 Session Provider capacity owner
   workspaceRoot?: string;
   environment?: Readonly<Record<string, string>>;
   worktreeIsolationRequired?: boolean;

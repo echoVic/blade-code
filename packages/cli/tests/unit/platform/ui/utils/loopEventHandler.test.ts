@@ -74,6 +74,7 @@ function createMockDeps(overrides?: Partial<LoopEventDeps>): LoopEventDeps {
       addToolMessage: vi.fn(),
       updateTokenUsage: vi.fn(),
       setCompacting: vi.fn(),
+      setProviderAdmission: vi.fn(),
       setProviderCircuit: vi.fn(),
       setProviderRetry: vi.fn(),
       setProviderStall: vi.fn(),
@@ -110,6 +111,41 @@ function createMockStats(): LoopEventStats {
 // ==================== 测试 ====================
 
 describe('createLoopEventHandler', () => {
+  it('projects and clears Provider admission without committing content', () => {
+    const deps = createMockDeps();
+    const handler = createLoopEventHandler(deps, createMockStats());
+    const queued = {
+      kind: 'provider_admission',
+      phase: 'queued',
+      requestClass: 'foreground',
+      scope: 'domain',
+      reason: 'capacity',
+      queuePosition: 1,
+      queueDepth: 2,
+      inFlight: 4,
+      limit: 4,
+      waitMs: 15_000,
+      maxWaitMs: 180_000,
+    } as const;
+
+    handler(queued);
+    expect(deps.sessionActions.setProviderAdmission).toHaveBeenCalledWith({
+      phase: 'queued',
+      requestClass: 'foreground',
+      scope: 'domain',
+      reason: 'capacity',
+      queuePosition: 1,
+      queueDepth: 2,
+      inFlight: 4,
+      limit: 4,
+      waitMs: 15_000,
+      maxWaitMs: 180_000,
+    });
+    handler({ ...queued, phase: 'admitted', queuePosition: 0 });
+    expect(deps.sessionActions.setProviderAdmission).toHaveBeenLastCalledWith(null);
+    expect(deps.sessionActions.finalizeStreamingMessage).not.toHaveBeenCalled();
+  });
+
   it('projects Provider retry state without crossing the stream finalize boundary', () => {
     const deps = createMockDeps();
     const handler = createLoopEventHandler(deps, createMockStats());

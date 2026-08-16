@@ -175,6 +175,8 @@ function createTeamCreateTool(opts: {
             description: member.description || member.name,
             prompt,
             parentSessionId: context.sessionId || opts.sessionId,
+            providerAdmissionOwnerId:
+              context.providerAdmissionOwnerId ?? context.sessionId ?? opts.sessionId,
             parentProjectPath: context.workspaceRoot || getCwd(),
             permissionMode: context.permissionMode,
             reasoningEffort: opts.getReasoningEffort?.(),

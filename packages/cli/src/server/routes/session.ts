@@ -736,6 +736,22 @@ function publishSubagentLoopEvent(
     case 'stream_end':
       Bus.publish(ref, 'subagent.stream.end', { subagentSessionId });
       break;
+    case 'provider_admission':
+      Bus.publish(ref, 'subagent.provider.admission', {
+        subagentSessionId,
+        phase: event.phase,
+        requestClass: event.requestClass,
+        scope: event.scope,
+        reason: event.reason,
+        queuePosition: event.queuePosition,
+        queueDepth: event.queueDepth,
+        inFlight: event.inFlight,
+        limit: event.limit,
+        waitMs: event.waitMs,
+        maxWaitMs: event.maxWaitMs,
+        recoveryRemainingMs: event.recoveryRemainingMs,
+      });
+      break;
     case 'provider_circuit':
       Bus.publish(ref, 'subagent.provider.circuit', {
         subagentSessionId,
@@ -4212,6 +4228,21 @@ async function executeRunAsync(
           break;
         case 'turn_start':
           emit('turn.started', { turn: event.turn, maxTurns: event.maxTurns });
+          break;
+        case 'provider_admission':
+          emit('provider.admission', {
+            phase: event.phase,
+            requestClass: event.requestClass,
+            scope: event.scope,
+            reason: event.reason,
+            queuePosition: event.queuePosition,
+            queueDepth: event.queueDepth,
+            inFlight: event.inFlight,
+            limit: event.limit,
+            waitMs: event.waitMs,
+            maxWaitMs: event.maxWaitMs,
+            recoveryRemainingMs: event.recoveryRemainingMs,
+          });
           break;
         case 'provider_circuit':
           emit('provider.circuit', {

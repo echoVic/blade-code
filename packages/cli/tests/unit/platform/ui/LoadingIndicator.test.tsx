@@ -9,6 +9,20 @@ const mockUseLoadingIndicator = vi.fn(
   })
 );
 const mockUseTerminalWidth = vi.fn(() => 120);
+const mockUseProviderAdmission = vi.fn(
+  () =>
+    null as {
+      phase: 'queued';
+      requestClass: 'foreground' | 'background' | 'internal';
+      scope: 'global' | 'domain' | 'owner' | 'class';
+      queuePosition: number;
+      queueDepth: number;
+      inFlight: number;
+      limit: number;
+      waitMs: number;
+      maxWaitMs: number;
+    } | null
+);
 const mockUseProviderRetry = vi.fn(
   () =>
     null as {
@@ -61,6 +75,7 @@ vi.mock('ink', () => ({
 vi.mock('../../../../src/store/selectors/index.js', () => ({
   useIsProcessing: () => true,
   useIsReady: () => true,
+  useProviderAdmission: () => mockUseProviderAdmission(),
   useProviderCircuit: () => mockUseProviderCircuit(),
   useProviderRetry: () => mockUseProviderRetry(),
   useProviderStall: () => mockUseProviderStall(),
@@ -97,6 +112,8 @@ describe('LoadingIndicator', () => {
     });
     mockUseTerminalWidth.mockReset();
     mockUseTerminalWidth.mockReturnValue(120);
+    mockUseProviderAdmission.mockReset();
+    mockUseProviderAdmission.mockReturnValue(null);
     mockUseProviderRetry.mockReset();
     mockUseProviderRetry.mockReturnValue(null);
     mockUseProviderCircuit.mockReset();
@@ -138,6 +155,38 @@ describe('LoadingIndicator', () => {
     expect(html).toContain('2s');
     expect(html).toContain('Esc 取消');
     expect(html).not.toContain('炼化代码灵气...');
+  });
+
+  it('在 Provider retry 前显示容量队列及等待时间', async () => {
+    mockUseProviderAdmission.mockReturnValue({
+      phase: 'queued',
+      requestClass: 'foreground',
+      scope: 'domain',
+      queuePosition: 1,
+      queueDepth: 2,
+      inFlight: 4,
+      limit: 4,
+      waitMs: 15_000,
+      maxWaitMs: 180_000,
+    });
+    mockUseProviderRetry.mockReturnValue({
+      phase: 'scheduled',
+      attempt: 1,
+      maxRetries: 2,
+      delayMs: 1_250,
+    });
+    const { LoadingIndicator } = await import(
+      '../../../../src/ui/components/LoadingIndicator.js'
+    );
+
+    const html = renderToStaticMarkup(React.createElement(LoadingIndicator));
+
+    expect(html).toContain('等待 Provider 容量');
+    expect(html).toContain('domain');
+    expect(html).toContain('队列 1/2');
+    expect(html).toContain('15s');
+    expect(html).toContain('Esc 取消');
+    expect(html).not.toContain('Provider 暂时不可用');
   });
 
   it('显示有界前台恢复的剩余预算和取消入口', async () => {

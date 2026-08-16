@@ -101,6 +101,12 @@ async function main(): Promise<void> {
 
   try {
     await waitFor(
+      () => output.includes('等待 Provider 容量'),
+      'Raw PTY did not render Provider admission queue',
+      60_000
+    );
+    const sawProviderAdmission = true;
+    await waitFor(
       () => output.includes(childMarker) && output.includes(expectedParent),
       'Timed out waiting for child marker and resumed parent in TUI',
       180_000
@@ -111,6 +117,7 @@ async function main(): Promise<void> {
     process.stdout.write(
       JSON.stringify({
         success: true,
+        sawProviderAdmission,
         sawChildMarker: output.includes(childMarker),
         sawParentFinal: output.includes(expectedParent),
         output: projectForegroundBoundedPtyOutput(

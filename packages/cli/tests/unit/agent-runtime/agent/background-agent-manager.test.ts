@@ -582,6 +582,7 @@ describe('BackgroundAgentManager', () => {
         createdAt: 1,
         lastActiveAt: 2,
         parentSessionId: 'parent-owner',
+        providerAdmissionOwnerId: 'root-provider-owner',
         parentProjectPath: '/workspace',
         rootAgentId: 'agent-root',
         resumeDepth: 2,
@@ -622,6 +623,7 @@ describe('BackgroundAgentManager', () => {
           resumedFrom: source.id,
           rootAgentId: 'agent-root',
           resumeDepth: 3,
+          providerAdmissionOwnerId: 'root-provider-owner',
           messages: source.messages,
           configSnapshot: expect.objectContaining({
             name: 'Explore',

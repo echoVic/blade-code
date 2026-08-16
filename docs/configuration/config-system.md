@@ -60,6 +60,8 @@ LSP 同样不使用进程全局单例。`lspServers` 从用户层、可信 sourc
   "currentModelId": "primary",
   "providerForegroundRecoveryMs": 600000,
   "providerCircuitBreakerOpenMs": 10000,
+  "providerRequestConcurrency": 4,
+  "providerRequestAdmissionMs": 180000,
   "modelProviders": {
     "team-claude": {
       "name": "Team Claude Gateway",
@@ -269,6 +271,14 @@ TUI 使用相同的服务：
 failure domain 在 60 秒滑窗内达到 4 个样本且错误率不低于 80% 时 Open；到期后同一
 时刻只允许一个恢复 probe。root foreground 的末候选在原恢复 deadline 内等待，
 background/internal 请求和仍有 fallback 的候选不等待。
+
+`providerRequestConcurrency` 控制同一敏感 Provider failure domain 的并发 physical
+stream，默认 `4`，必须为 `1-16` 的整数。全进程仍固定最多 16 条 stream；同一 root
+Session 及全部 Task/Team 后代合计最多 3 条，background/internal 最多占用默认 domain
+的 3 条，给 root foreground 保留一条容量。`providerRequestAdmissionMs` 默认
+`180000`，可设为 `0` 在容量不足时立即失败，其他值必须为 `1000-600000`。等待期间
+不发 Provider 请求、不增加 retry attempt，并响应 TUI Esc、Web stop、ACP cancel 和
+Headless signal。
 
 Anthropic SDK 会自行追加 `/v1/messages`。若 Anthropic 的 `baseUrl` 以 `/v1`
 结尾，Blade 会在运行时移除该尾段，避免产生 `/v1/v1/messages`。其他路径前缀保持

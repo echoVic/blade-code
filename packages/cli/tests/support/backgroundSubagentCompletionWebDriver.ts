@@ -16,6 +16,7 @@ export interface BackgroundSubagentCompletionWebEvidence {
   childVisible: true;
   parentVisible: true;
   noFakeUserMessage: true;
+  providerAdmissionVisible: true;
   visibleAfterReload: true;
   sidecarStableAcrossReload: true;
   browserFaults: [];
@@ -159,6 +160,10 @@ export async function runBackgroundSubagentCompletionWebDriver(input: {
     await page
       .locator('textarea[data-blade-composer]')
       .waitFor({ state: 'visible', timeout: 30_000 });
+    await page.getByText('Capacity queue', { exact: false }).waitFor({
+      state: 'visible',
+      timeout: 60_000,
+    });
     const childCard = page.locator('[data-subagent-session-id]').last();
     const parentMessage = page
       .locator('[data-chat-role="assistant"]')
@@ -203,6 +208,9 @@ export async function runBackgroundSubagentCompletionWebDriver(input: {
     await reloadedChildCard.waitFor({ state: 'visible', timeout: 30_000 });
     const reloadedChildText = (await reloadedChildCard.textContent()) ?? '';
     await parentMessage.waitFor({ state: 'visible', timeout: 30_000 });
+    if ((await page.locator('body').textContent())?.includes('Capacity queue')) {
+      throw new Error('Web reload restored transient Provider admission state');
+    }
     const sidecarAfterReload = await readFile(sidecarPath, 'utf8');
     if (sidecarAfterReload !== sidecarBeforeReload) {
       throw new Error('Web reload mutated the terminal child sidecar');
@@ -234,6 +242,7 @@ export async function runBackgroundSubagentCompletionWebDriver(input: {
       childVisible: true,
       parentVisible: true,
       noFakeUserMessage: true,
+      providerAdmissionVisible: true,
       visibleAfterReload: true,
       sidecarStableAcrossReload: true,
       browserFaults: [],

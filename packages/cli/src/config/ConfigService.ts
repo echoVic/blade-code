@@ -102,6 +102,18 @@ const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     mergeStrategy: 'replace',
     persistable: true,
   },
+  providerRequestConcurrency: {
+    target: 'config',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
+  providerRequestAdmissionMs: {
+    target: 'config',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
   codeTheme: {
     target: 'config',
     defaultScope: 'global',

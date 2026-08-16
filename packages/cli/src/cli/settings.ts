@@ -15,6 +15,12 @@ import {
   MIN_PROVIDER_CIRCUIT_OPEN_MS,
 } from '../config/providerCircuitBreaker.js';
 import {
+  MAX_PROVIDER_REQUEST_ADMISSION_MS,
+  MAX_PROVIDER_REQUEST_CONCURRENCY,
+  MIN_PROVIDER_REQUEST_ADMISSION_MS,
+  MIN_PROVIDER_REQUEST_CONCURRENCY,
+} from '../config/providerRequestAdmission.js';
+import {
   MAX_CONCURRENT_TASKS,
   MAX_QUEUED_TASKS,
   MIN_CONCURRENT_TASKS,
@@ -127,6 +133,21 @@ const RuntimeSettingsSchema = Type.Object({
       Type.Integer({
         minimum: MIN_PROVIDER_CIRCUIT_OPEN_MS,
         maximum: MAX_PROVIDER_CIRCUIT_OPEN_MS,
+      }),
+    ])
+  ),
+  providerRequestConcurrency: Type.Optional(
+    Type.Integer({
+      minimum: MIN_PROVIDER_REQUEST_CONCURRENCY,
+      maximum: MAX_PROVIDER_REQUEST_CONCURRENCY,
+    })
+  ),
+  providerRequestAdmissionMs: Type.Optional(
+    Type.Union([
+      Type.Literal(0),
+      Type.Integer({
+        minimum: MIN_PROVIDER_REQUEST_ADMISSION_MS,
+        maximum: MAX_PROVIDER_REQUEST_ADMISSION_MS,
       }),
     ])
   ),

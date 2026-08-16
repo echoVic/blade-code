@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createProviderCircuitFailureDomainKey,
   DEFAULT_PROVIDER_CIRCUIT_OPEN_MS,
   MAX_PROVIDER_CIRCUIT_REGISTRY_ENTRIES,
   MAX_PROVIDER_CIRCUIT_WINDOW_ENTRIES,
-  ProviderCircuitRegistry,
   PROVIDER_CIRCUIT_ERROR_RATE_THRESHOLD,
   PROVIDER_CIRCUIT_MIN_SAMPLES,
   PROVIDER_CIRCUIT_WINDOW_MS,
-  createProviderCircuitFailureDomainKey,
   type ProviderCircuitHandle,
+  ProviderCircuitRegistry,
   type ProviderCircuitScope,
 } from '../../../src/services/pi/providerCircuitBreaker.js';
 
@@ -114,6 +114,33 @@ describe('ProviderCircuitRegistry state machine', () => {
       reason: 'server_error',
       statusCode: 503,
     });
+  });
+
+  it('preflights circuit state without claiming an attempt or half-open probe', () => {
+    let now = 1_000;
+    const handle = registry({ now: () => now }).get(scope());
+
+    expect(handle.preflight()).toEqual({ eligible: true });
+    trip(handle);
+    expect(handle.preflight()).toMatchObject({
+      eligible: false,
+      state: 'open',
+      retryAfterMs: DEFAULT_PROVIDER_CIRCUIT_OPEN_MS,
+    });
+
+    now += DEFAULT_PROVIDER_CIRCUIT_OPEN_MS;
+    expect(handle.preflight()).toEqual({ eligible: true });
+    expect(handle.snapshot().state).toBe('open');
+
+    const probe = handle.check();
+    expect(probe).toMatchObject({ allowed: true, probe: true });
+    expect(handle.preflight()).toMatchObject({
+      eligible: false,
+      state: 'half_open',
+    });
+    if (!probe.allowed) throw new Error('expected probe admission');
+    expect(handle.abandon(probe.token)).toBe(true);
+    expect(handle.preflight()).toEqual({ eligible: true });
   });
 
   it('uses monotonic time for admission and wall time only for UI hints', () => {

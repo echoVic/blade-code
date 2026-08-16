@@ -1029,6 +1029,29 @@ function createEventWriter(
           : `[context] compacting ${event.outcome ?? 'completed'}`
       );
     },
+    providerAdmission(event: Extract<LoopEvent, { kind: 'provider_admission' }>) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('provider_admission', {
+          phase: event.phase,
+          request_class: event.requestClass,
+          scope: event.scope,
+          reason: event.reason,
+          queue_position: event.queuePosition,
+          queue_depth: event.queueDepth,
+          in_flight: event.inFlight,
+          limit: event.limit,
+          wait_ms: event.waitMs,
+          max_wait_ms: event.maxWaitMs,
+          recovery_remaining_ms: event.recoveryRemainingMs,
+        });
+        return;
+      }
+      writeLine(
+        io.stderr,
+        `[provider-admission:${event.phase}] ${event.scope} ` +
+          `${event.inFlight}/${event.limit} queue=${event.queuePosition}/${event.queueDepth}`
+      );
+    },
     providerRetry(event: Extract<LoopEvent, { kind: 'provider_retry' }>) {
       if (outputFormat === 'jsonl') {
         writeJsonl('provider_retry', {
@@ -1682,6 +1705,9 @@ export async function runHeadless(
           // --- 模型降级 ---
           case 'model_fallback':
             // 在 headless 模式下不需要特殊处理
+            break;
+          case 'provider_admission':
+            eventWriter.providerAdmission(event);
             break;
           case 'provider_retry':
             eventWriter.providerRetry(event);

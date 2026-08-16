@@ -160,6 +160,8 @@ export interface BladeConfig {
   bashForegroundHandoffMs?: number; // 0 禁用；否则长前台 Bash 自动交接到后台的预算
   providerForegroundRecoveryMs?: number; // 0 禁用；否则 root turn 的有界 Provider 恢复预算
   providerCircuitBreakerOpenMs?: number; // 0 禁用；否则共享 Provider circuit 的 open 时间
+  providerRequestConcurrency?: number; // 同一敏感 Provider failure-domain 的 active stream 上限
+  providerRequestAdmissionMs?: number; // 0 fail-fast；否则等待 Provider stream capacity 的上限
 
   // UI
   codeTheme: string;

@@ -901,7 +901,14 @@ export class HookExecutor {
             { role: 'user', content: userMessage },
           ],
           undefined,
-          abortController.signal
+          abortController.signal,
+          {
+            providerAdmission: {
+              sessionId: context.sessionId,
+              ownerId: context.sessionId,
+              requestClass: 'background',
+            },
+          }
         );
         llmResponse = response.content;
       } catch (err) {

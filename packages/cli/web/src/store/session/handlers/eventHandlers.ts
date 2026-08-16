@@ -4,6 +4,7 @@ import type { Message as ServiceMessage, StreamEvent } from '@/services';
 import type {
   ActionStationarityInfo,
   Message,
+  ProviderAdmissionInfo,
   ProviderCircuitInfo,
   ProviderRetryInfo,
   ProviderStallInfo,
@@ -1783,10 +1784,20 @@ const handleModelFallback: EventHandler = (props, get, set) => {
   if (props.sessionId !== get().currentSessionId) return;
   set({
     agentPhase: 'switching_model',
+    providerAdmission: null,
     providerCircuit: null,
     providerRetry: null,
     providerStall: null,
     actionStationarity: null,
+  });
+};
+
+const handleProviderAdmission: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  set({
+    agentPhase: 'running',
+    providerAdmission:
+      props.phase === 'queued' ? (props as unknown as ProviderAdmissionInfo) : null,
   });
 };
 
@@ -1990,6 +2001,7 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
       isStreaming: false,
       isStopping: false,
       agentPhase: 'idle',
+      providerAdmission: null,
       providerCircuit: null,
       providerRetry: null,
       providerStall: null,
@@ -2027,6 +2039,7 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
       isStreaming: false,
       isStopping: false,
       agentPhase: 'error',
+      providerAdmission: null,
       providerCircuit: null,
       providerRetry: null,
       providerStall: null,
@@ -2198,6 +2211,7 @@ const handleSessionRewound: EventHandler = (props, get, set) => {
     isStreaming: false,
     isStopping: false,
     agentPhase: 'idle',
+    providerAdmission: null,
     providerCircuit: null,
     providerRetry: null,
     providerStall: null,
@@ -2311,6 +2325,7 @@ const eventHandlers: Record<string, EventHandler> = {
   'committed.turn_started': handleTurnStarted,
   'committed.turn_completed': handleCommittedSessionCompleted,
   'committed.turn_aborted': handleCommittedSessionCompleted,
+  'provider.admission': handleProviderAdmission,
   'provider.circuit': handleProviderCircuit,
   'provider.retry': handleProviderRetry,
   'provider.stall': handleProviderStall,
