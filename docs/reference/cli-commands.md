@@ -97,7 +97,9 @@ Subagent 执行期间还会提高单进程峰值内存。多个独立 CLI 进程
 admission controller。CI 或批量评测应从并发 2 开始，根据实际 RSS 逐步提高，并让
 容器/Runner 保留足够余量。内存受限环境可使用 `--no-verification-agent`，由外部
 流水线执行测试与审查。需要 Blade 统一排队时使用 `blade serve` 及
-`maxConcurrentTasks` / `maxQueuedTasks`，不要并行启动大量 headless 进程。
+`maxConcurrentTasks` / `maxQueuedTasks` / `maxQueuedTaskBytes`，不要并行启动大量
+headless 进程。对应 CLI override 为 `--max-concurrent-tasks`、
+`--max-queued-tasks` 与 `--max-queued-task-bytes`。
 
 ### MCP 选项
 

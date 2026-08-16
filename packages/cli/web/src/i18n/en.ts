@@ -393,6 +393,8 @@ export const en = {
   'task.failure.modelUnavailable': 'The selected model is unavailable.',
   'task.failure.contextLimit': 'The request exceeded the model context limit.',
   'task.failure.unsupportedInput': 'The selected model does not support this input.',
+  'task.failure.capacity':
+    'Task admission capacity is full. Retry after running tasks complete.',
   'task.failure.runtime': 'Agent execution failed.',
   'chat.connection.reconnecting':
     'Reconnecting live updates. The active run continues in the background.',

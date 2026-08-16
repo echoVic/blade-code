@@ -273,6 +273,17 @@ failure domain 在 60 秒滑窗内达到 4 个样本且错误率不低于 80% �
 时刻只允许一个恢复 probe。root foreground 的末候选在原恢复 deadline 内等待，
 background/internal 请求和仍有 fallback 的候选不等待。
 
+`maxConcurrentTasks` 与 `maxQueuedTasks` 分别控制进程内顶层 task 的 active 数量和
+等待 ticket 数量，默认 `3` 与 `100`，合法范围为 `1-64` 与 `1-10000`。
+`maxQueuedTaskBytes` 另限制等待 task 的逻辑 retained-footprint，默认 `67108864`
+（64 MiB），必须为 `65536-134217728` 的安全整数。direct input、Web 已持久化 inbox
+和 crash-recovered inbox 使用同一有界 estimator；queued→running、cancel、abort 与
+shutdown 精确释放 byte charge。该设置不是单 task 大小限制：active slot 空闲时，
+单个超过 pending budget 的 task 仍可立即运行。count 或 bytes 已满时，Web 返回
+typed HTTP 429，Headless/ACP task session 持久化可重试的 `capacity` failure。
+project 配置不能覆盖这三个进程级 task admission 设置。完整契约见
+[Task Admission](../reference/task-admission.md)。
+
 `providerRequestConcurrency` 控制同一敏感 Provider failure domain 的并发 physical
 stream，默认 `4`，必须为 `1-16` 的整数。全进程仍固定最多 16 条 stream；同一 root
 Session 及全部 Task/Team 后代合计最多 3 条，background/internal 最多占用默认 domain

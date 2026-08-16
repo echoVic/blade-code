@@ -61,12 +61,14 @@ describe('Provider request admission source gate', () => {
 
   it('estimates retained request weight without serializing or retaining payloads', () => {
     const footprint = source('../../src/services/pi/providerRequestFootprint.ts');
+    const retainedValue = source('../../src/utils/retainedValueFootprint.ts');
     const admission = source('../../src/services/pi/providerRequestAdmission.ts');
 
-    expect(footprint).toContain('WeakSet<object>');
-    expect(footprint).toContain('Object.getOwnPropertyDescriptor');
-    expect(footprint).toContain('PROVIDER_REQUEST_FOOTPRINT_MAX_NODES = 100_000');
-    expect(footprint).not.toContain('JSON.stringify');
+    expect(retainedValue).toContain('WeakSet<object>');
+    expect(retainedValue).toContain('Object.getOwnPropertyDescriptor');
+    expect(retainedValue).toContain('RETAINED_VALUE_FOOTPRINT_MAX_NODES = 100_000');
+    expect(`${footprint}\n${retainedValue}`).not.toContain('JSON.stringify');
+    expect(footprint).toContain('estimateRetainedValueBytes');
     expect(admission).not.toContain('Message[]');
     expect(admission).not.toContain('ChatToolDefinition');
     expect(admission).not.toContain('Context');

@@ -20,6 +20,7 @@ import {
   TaskAdmissionQueueFullError,
   taskRunScheduler,
 } from '../../agent/runtime/TaskRunScheduler.js';
+import { estimateTaskRunPendingBytes } from '../../agent/runtime/taskRunFootprint.js';
 import {
   type AgentSession,
   toPublicAgentSession,
@@ -1610,6 +1611,11 @@ export const createSessionRouteController = (): SessionRouteController => {
       const admission = taskRunScheduler.admit({
         key: `${session.projectPath}\0${session.id}`,
         ...runtime.getTaskAdmissionLimits(),
+        pendingBytes: estimateTaskRunPendingBytes({
+          content,
+          outputSchema: options.outputSchema,
+          pendingMessages: runtime.getPendingSteeringMessages(),
+        }),
         signal: run.abortController.signal,
         onUpdate: (snapshot) => {
           run.status = snapshot.state;
@@ -1824,7 +1830,9 @@ export const createSessionRouteController = (): SessionRouteController => {
           () => undefined
         );
         sessions.delete(key);
-        throw new TooManyRequestsError('Task admission queue is full');
+        throw new TooManyRequestsError('Task admission capacity is full', {
+          resource: error.resource,
+        });
       }
       if (session) {
         const latest = await SessionService.findSessionMetadata(

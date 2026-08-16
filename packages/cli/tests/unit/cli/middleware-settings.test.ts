@@ -15,6 +15,9 @@ const configState = vi.hoisted(() => ({
       ...(cliOptions.maxQueuedTasks !== undefined
         ? { maxQueuedTasks: cliOptions.maxQueuedTasks }
         : {}),
+      ...(cliOptions.maxQueuedTaskBytes !== undefined
+        ? { maxQueuedTaskBytes: cliOptions.maxQueuedTaskBytes }
+        : {}),
       ...(cliOptions.maxTurns !== undefined ? { maxTurns: cliOptions.maxTurns } : {}),
     })
   ),
@@ -60,6 +63,7 @@ describe('--settings middleware', () => {
         maxTurns: 7,
         maxConcurrentTasks: 2,
         maxQueuedTasks: 40,
+        maxQueuedTaskBytes: 8 * 1024 * 1024,
         allowedTools: ['Read', 'Edit', 'Bash'],
       }),
     };
@@ -73,6 +77,7 @@ describe('--settings middleware', () => {
         maxTurns: 7,
         maxConcurrentTasks: 2,
         maxQueuedTasks: 40,
+        maxQueuedTaskBytes: 8 * 1024 * 1024,
         allowedTools: ['Read', 'Edit', 'Bash'],
       })
     );
@@ -81,6 +86,7 @@ describe('--settings middleware', () => {
       maxTurns: 7,
       maxConcurrentTasks: 2,
       maxQueuedTasks: 40,
+      maxQueuedTaskBytes: 8 * 1024 * 1024,
       allowedTools: ['Read', 'Edit', 'Bash'],
     });
   });
@@ -168,6 +174,9 @@ describe('--settings middleware', () => {
     await expect(
       loadConfiguration({ settings: '{"maxTurns":-2}' } as never)
     ).rejects.toThrow('Invalid --settings value: maxTurns');
+    await expect(
+      loadConfiguration({ settings: '{"maxQueuedTaskBytes":0}' } as never)
+    ).rejects.toThrow('Invalid --settings value: maxQueuedTaskBytes');
   });
 
   it('validates invocation agents before initializing configuration', async () => {

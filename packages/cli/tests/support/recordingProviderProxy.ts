@@ -8,6 +8,7 @@ export interface RecordingProviderProxy {
   requestFinishedAt: number[];
   heldRequestNumbers: number[];
   maxInFlight: number;
+  releaseHeld(): void;
   close(): Promise<void>;
 }
 
@@ -25,6 +26,7 @@ export async function startRecordingProviderProxy(
   const requestFinishedAt: number[] = [];
   const heldRequestNumbers: number[] = [];
   let matchingRequestHeld = false;
+  let releaseHeldRequest: (() => void) | undefined;
   let inFlight = 0;
   let maxInFlight = 0;
   const upstream = new URL(upstreamBaseUrl);
@@ -52,7 +54,14 @@ export async function startRecordingProviderProxy(
           matchingRequestHeld = true;
           heldRequestNumbers.push(requestNumber);
           await options.onHold?.(requestNumber);
-          await new Promise((resolve) => setTimeout(resolve, options.holdMs));
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, options.holdMs);
+            releaseHeldRequest = () => {
+              clearTimeout(timer);
+              resolve();
+            };
+          });
+          releaseHeldRequest = undefined;
         }
 
         const incoming = new URL(request.url ?? '/', 'http://blade-proxy.invalid');
@@ -133,7 +142,11 @@ export async function startRecordingProviderProxy(
     get maxInFlight() {
       return maxInFlight;
     },
+    releaseHeld: () => {
+      releaseHeldRequest?.();
+    },
     close: async () => {
+      releaseHeldRequest?.();
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));

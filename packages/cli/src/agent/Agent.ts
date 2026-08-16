@@ -78,6 +78,7 @@ import {
   type TaskRunPermit,
   taskRunScheduler,
 } from './runtime/TaskRunScheduler.js';
+import { estimateTaskRunPendingBytes } from './runtime/taskRunFootprint.js';
 import type { SubagentRegistry } from './subagents/SubagentRegistry.js';
 import type {
   AgentOptions,
@@ -453,6 +454,11 @@ export class Agent {
             taskRunScheduler.admit({
               key: `${runtime.workspaceRoot}\0${runtime.sessionId}`,
               ...runtime.getTaskAdmissionLimits(),
+              pendingBytes: estimateTaskRunPendingBytes({
+                content: message,
+                outputSchema: options?.outputSchema,
+                pendingMessages: runtime.getPendingSteeringMessages(),
+              }),
               signal: activeContext.signal,
               onUpdate: (snapshot) => {
                 void runtime.setTaskAdmission(snapshot).catch((error) => {

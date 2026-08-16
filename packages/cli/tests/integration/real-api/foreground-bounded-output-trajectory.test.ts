@@ -92,6 +92,7 @@ async function writeRuntimeConfig(
   const config = {
     ...buildRealApiRuntimeConfig(model),
     permissionMode: PermissionMode.YOLO,
+    maxQueuedTaskBytes: 64 * 1024,
   };
   await mkdir(path.join(home, '.blade'), { recursive: true });
   await writeFile(
@@ -102,6 +103,7 @@ async function writeRuntimeConfig(
         models: config.models,
         modelProviders: config.modelProviders,
         permissionMode: PermissionMode.YOLO,
+        maxQueuedTaskBytes: 64 * 1024,
         hooks: { enabled: false },
         disableAllHooks: true,
         mcpServers: {},

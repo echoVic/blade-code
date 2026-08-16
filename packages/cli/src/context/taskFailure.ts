@@ -1,4 +1,8 @@
-import type { SessionTaskFailure, SessionTaskFailureCode } from './types.js';
+import type {
+  SessionTaskCapacityResource,
+  SessionTaskFailure,
+  SessionTaskFailureCode,
+} from './types.js';
 
 const FAILURE_DEFINITIONS = {
   authentication: {
@@ -32,6 +36,10 @@ const FAILURE_DEFINITIONS = {
   unsupported_input: {
     message: 'The selected model does not support this input.',
     retryable: false,
+  },
+  capacity: {
+    message: 'Task admission capacity is full. Retry after running tasks complete.',
+    retryable: true,
   },
   runtime: {
     message: 'Agent execution failed.',
@@ -94,7 +102,31 @@ function classifyFailureCode(message: string): SessionTaskFailureCode {
   if (/\b(image|vision|multimodal|unsupported input|does not support)\b/.test(lower)) {
     return 'unsupported_input';
   }
+  if (/\btask admission\b.*\b(capacity|queue)\b/.test(lower)) {
+    return 'capacity';
+  }
   return 'runtime';
+}
+
+function taskAdmissionResource(
+  error: unknown
+): SessionTaskCapacityResource | undefined {
+  try {
+    if (
+      !error ||
+      typeof error !== 'object' ||
+      !('name' in error) ||
+      error.name !== 'TaskAdmissionQueueFullError' ||
+      !('resource' in error)
+    ) {
+      return undefined;
+    }
+    return error.resource === 'pending_count' || error.resource === 'pending_bytes'
+      ? error.resource
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function taskFailureForCode(code: SessionTaskFailureCode): SessionTaskFailure {
@@ -105,6 +137,13 @@ export function taskFailureForCode(code: SessionTaskFailureCode): SessionTaskFai
 }
 
 export function toTaskFailure(error: unknown): SessionTaskFailure {
+  const resource = taskAdmissionResource(error);
+  if (resource) {
+    return {
+      ...taskFailureForCode('capacity'),
+      resource,
+    };
+  }
   return taskFailureForCode(classifyFailureCode(rawErrorMessage(error)));
 }
 
@@ -115,8 +154,14 @@ export function isSessionTaskFailure(value: unknown): value is SessionTaskFailur
     return false;
   }
   const canonical = FAILURE_DEFINITIONS[candidate.code as SessionTaskFailureCode];
+  const resourceValid =
+    candidate.resource === undefined ||
+    candidate.resource === 'pending_count' ||
+    candidate.resource === 'pending_bytes';
   return (
     candidate.message === canonical.message &&
-    candidate.retryable === canonical.retryable
+    candidate.retryable === canonical.retryable &&
+    resourceValid &&
+    (candidate.code === 'capacity' || candidate.resource === undefined)
   );
 }

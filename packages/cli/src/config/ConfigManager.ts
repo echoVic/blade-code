@@ -74,10 +74,13 @@ import {
 import { normalizeRuntimeEnvironment } from './runtimeEnvironment.js';
 import {
   isValidConcurrentTaskLimit,
+  isValidQueuedTaskByteLimit,
   isValidQueuedTaskLimit,
   MAX_CONCURRENT_TASKS,
+  MAX_MAX_QUEUED_TASK_BYTES,
   MAX_QUEUED_TASKS,
   MIN_CONCURRENT_TASKS,
+  MIN_MAX_QUEUED_TASK_BYTES,
   MIN_QUEUED_TASKS,
 } from './taskConcurrency.js';
 import {
@@ -1218,6 +1221,11 @@ export class ConfigManager {
         `maxQueuedTasks 必须是 ${MIN_QUEUED_TASKS}-${MAX_QUEUED_TASKS} 之间的整数`
       );
     }
+    if (!isValidQueuedTaskByteLimit(config.maxQueuedTaskBytes)) {
+      errors.push(
+        `maxQueuedTaskBytes 必须是 ${MIN_MAX_QUEUED_TASK_BYTES}-${MAX_MAX_QUEUED_TASK_BYTES} 之间的整数`
+      );
+    }
     if (
       config.bashForegroundHandoffMs !== undefined &&
       !isValidForegroundCommandHandoffMs(config.bashForegroundHandoffMs)
@@ -1402,6 +1410,9 @@ export function mergeRuntimeConfig(
   }
   if (cliOptions.maxQueuedTasks !== undefined) {
     result.maxQueuedTasks = cliOptions.maxQueuedTasks;
+  }
+  if (cliOptions.maxQueuedTaskBytes !== undefined) {
+    result.maxQueuedTaskBytes = cliOptions.maxQueuedTaskBytes;
   }
 
   // 4. CLI 专属字段 - 系统提示

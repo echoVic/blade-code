@@ -54,6 +54,7 @@ describe.skipIf(!enabled)('release coding trajectory (real API)', () => {
         getState().config.actions.setConfig({
           ...buildRealApiRuntimeConfig(modelConfig),
           permissionMode: PermissionMode.YOLO,
+          maxQueuedTaskBytes: 64 * 1024,
         });
         await mkdir(path.join(workspace, 'src'), { recursive: true });
         await mkdir(path.join(workspace, 'test'), { recursive: true });
@@ -93,6 +94,7 @@ describe.skipIf(!enabled)('release coding trajectory (real API)', () => {
               headless: true,
               outputFormat: 'jsonl',
               maxTurns: 12,
+              taskIsolation: 'local',
               allowedTools: ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash'],
               appendSystemPrompt:
                 'After the source edit, call Bash with exactly "npm test". ' +

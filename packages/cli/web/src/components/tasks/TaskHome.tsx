@@ -411,6 +411,7 @@ export function TaskHome() {
 
               <button
                 type="button"
+                data-blade-task-isolation={isolation}
                 aria-pressed={isolation === 'worktree'}
                 onClick={() =>
                   setIsolation((current) =>
@@ -666,6 +667,7 @@ export function TaskHome() {
         {error && (
           <div
             role="alert"
+            data-blade-task-error
             className="flex justify-between items-center px-3 py-2 mt-4 font-mono text-xs text-red-700 rounded-md border border-red-200 bg-red-50/80 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"
           >
             <span>{error}</span>

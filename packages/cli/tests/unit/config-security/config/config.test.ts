@@ -176,6 +176,18 @@ describe('配置系统', () => {
           maxQueuedTasks: 10_001,
         })
       ).toThrow('maxQueuedTasks');
+      expect(() =>
+        configManager.validateConfig({
+          ...base,
+          maxQueuedTaskBytes: 0,
+        })
+      ).toThrow('maxQueuedTaskBytes');
+      expect(() =>
+        configManager.validateConfig({
+          ...base,
+          maxQueuedTaskBytes: 128 * 1024 * 1024 + 1,
+        })
+      ).toThrow('maxQueuedTaskBytes');
     });
 
     it('应该拒绝过短的流式 idle timeout', () => {

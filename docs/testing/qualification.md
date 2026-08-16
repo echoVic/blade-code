@@ -220,6 +220,23 @@ reload、SSE reconnect 或 ACP load 不得把 Session B marker 重放到 Provide
 同时继续运行前述正常 queued→admitted 矩阵，防止 byte policy 把正常长任务缩窄为只会
 fail closed。
 
+Weighted top-level task admission 资格使用合法最小
+`maxQueuedTaskBytes=65536`。DeepSeek Flash/Pro × production Chromium Task Home 和
+真实 ACP stdio 四格负向 target 必须先让 task A 的真实 Provider request 停在 host
+barrier，再提交包含唯一 marker 与大段非 ASCII 文本的 task B。B 必须以
+`pending_bytes` 在 Provider traffic 前拒绝：Web 返回 typed HTTP 429、显示内联错误且
+catalog/reload 无 ghost task；ACP 持久化并投影 retryable
+`capacity/pending_bytes`，assistant 正文不含 admission metadata。随后普通小 task C
+必须进入 queue position 1，并在 A 释放后取得独立真实 Provider 结果。代理请求 body
+不得包含 B marker。
+
+非干扰对照固定运行 Flash/Pro Headless `--task-isolation local` coding task 与 Flash/Pro
+raw PTY root turn；全部在同一最小 byte limit 下完成。既有 production Web task
+dispatch Flash/Pro worktree coding/FIFO trajectory继续 release-blocking。target 与
+controls 全部使用 `retry=0`，并回收 rejected inbox/Runtime/worktree、accepted task、
+browser、ACP process/terminal、proxy/socket、port、HOME/storage/workspace。Chromium
+只允许预期的 `/tasks` 429 resource error，其他 console/page/request fault 必须为零。
+
 Provider Stall 资格必须让透明 SSE 代理先转发真实模型内容，再在 hard idle timeout
 之前暂停后续事件。Headless JSONL 必须按同一 stall count 输出 sanitized
 `detected → recovered`，标记 `output_started=true`，随后完成真实回复；代理必须证明

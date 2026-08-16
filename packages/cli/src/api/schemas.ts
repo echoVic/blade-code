@@ -194,10 +194,12 @@ export const SessionTaskFailureSchema = Runtime(
       'model_unavailable',
       'context_limit',
       'unsupported_input',
+      'capacity',
       'runtime',
     ]),
     message: Type.String({ minLength: 1, maxLength: 500 }),
     retryable: Type.Boolean(),
+    resource: Type.Optional(StringEnum(['pending_count', 'pending_bytes'])),
   })
 );
 export type SessionTaskFailure = Static<typeof SessionTaskFailureSchema>;

@@ -18,9 +18,9 @@ after Workspace Trust is granted. An untrusted project cannot inject
 environment variables, change permissions, or change turn limits. It may set
 `disableAllHooks: true` so hook execution can fail closed.
 
-Project configuration does not control `maxConcurrentTasks` or
-`maxQueuedTasks`. Those values configure the process-wide FIFO task scheduler
-from the startup configuration.
+Project configuration does not control `maxConcurrentTasks`,
+`maxQueuedTasks`, or `maxQueuedTaskBytes`. Those values configure the
+process-wide weighted FIFO task scheduler from the startup configuration.
 
 ## Environment lifecycle
 

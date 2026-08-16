@@ -51,6 +51,7 @@ function createConfig(overrides: Partial<BladeConfig> = {}): BladeConfig {
     },
     maxConcurrentTasks: overrides.maxConcurrentTasks ?? 3,
     maxQueuedTasks: overrides.maxQueuedTasks ?? 100,
+    maxQueuedTaskBytes: overrides.maxQueuedTaskBytes ?? 64 * 1024 * 1024,
   };
 }
 

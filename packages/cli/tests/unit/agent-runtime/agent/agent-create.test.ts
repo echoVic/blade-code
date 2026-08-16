@@ -52,6 +52,7 @@ function createConfig(overrides: Partial<BladeConfig> = {}): BladeConfig {
     },
     maxConcurrentTasks: overrides.maxConcurrentTasks ?? 3,
     maxQueuedTasks: overrides.maxQueuedTasks ?? 100,
+    maxQueuedTaskBytes: overrides.maxQueuedTaskBytes ?? 64 * 1024 * 1024,
   };
 }
 
@@ -70,6 +71,7 @@ function createGoalRuntimeMocks() {
     getGoal: vi.fn().mockResolvedValue(null),
     pauseActiveGoal: vi.fn().mockResolvedValue(null),
     loadModelContext: vi.fn().mockResolvedValue([]),
+    getPendingSteeringMessages: vi.fn(() => []),
     takeStartupAdoptedToolResults: vi.fn(() => []),
     waitForBackgroundSubagentFollowUp: vi.fn().mockResolvedValue(false),
   };
@@ -510,6 +512,7 @@ describe('Agent runLoop system prompt injection', () => {
         getTaskAdmissionLimits: vi.fn(() => ({
           maxConcurrent: 1,
           maxQueued: 10,
+          maxQueuedBytes: 64 * 1024 * 1024,
         })),
         setTaskAdmission: vi.fn().mockResolvedValue(undefined),
         publishTaskAdmissionCapacity: vi.fn(),
@@ -579,6 +582,7 @@ describe('Agent runLoop system prompt injection', () => {
         )
       );
       expect(started).toEqual(['task-first']);
+      expect(taskRunScheduler.getStats().pendingBytes).toBeGreaterThan(0);
 
       releaseFirst();
       await expect(firstResult).resolves.toMatchObject({
@@ -599,9 +603,82 @@ describe('Agent runLoop system prompt injection', () => {
       expect(taskRunScheduler.getStats()).toMatchObject({
         inFlight: 0,
         queued: 0,
+        pendingBytes: 0,
       });
     } finally {
       releaseFirst();
+      taskRunScheduler.resetForTests();
+    }
+  });
+
+  it('weights recovered task inbox content instead of the empty resume message', async () => {
+    taskRunScheduler.resetForTests();
+    const held = taskRunScheduler.admit({
+      key: 'held-task',
+      maxConcurrent: 1,
+      maxQueued: 10,
+      maxQueuedBytes: 64 * 1024,
+      pendingBytes: 1,
+    });
+    const runtime = {
+      ...createGoalRuntimeMocks(),
+      sessionId: 'recovered-task',
+      workspaceRoot: process.cwd(),
+      isTaskSession: vi.fn(() => true),
+      getTaskAdmissionLimits: vi.fn(() => ({
+        maxConcurrent: 1,
+        maxQueued: 10,
+        maxQueuedBytes: 64 * 1024,
+      })),
+      getPendingSteeringMessages: vi.fn(() => [
+        {
+          id: 'recovered-input',
+          content: '界'.repeat(30_000),
+          queuedAt: 1,
+          recovered: true,
+        },
+      ]),
+      setTaskAdmission: vi.fn().mockResolvedValue(undefined),
+      publishTaskAdmissionCapacity: vi.fn(),
+    };
+    const agent = new Agent(
+      createConfig(),
+      {},
+      { getRegistry: () => ({ getAll: () => [] }) } as any,
+      runtime as any
+    );
+    (agent as any).isInitialized = true;
+    (agent as any).runLoop = vi.fn();
+
+    try {
+      await expect(
+        agent
+          .chatStream(
+            '',
+            {
+              messages: [],
+              userId: 'user-1',
+              sessionId: 'recovered-task',
+              workspaceRoot: process.cwd(),
+            },
+            { pendingInputOnly: true }
+          )
+          .next()
+      ).rejects.toMatchObject({
+        name: 'TaskAdmissionQueueFullError',
+        resource: 'pending_bytes',
+      });
+      expect(runtime.getPendingSteeringMessages).toHaveBeenCalled();
+      expect(runtime.setTaskStatus).toHaveBeenCalledWith(
+        'failed',
+        expect.objectContaining({
+          resource: 'pending_bytes',
+        })
+      );
+      expect((agent as any).runLoop).not.toHaveBeenCalled();
+      expect(taskRunScheduler.getStats().pendingBytes).toBe(0);
+    } finally {
+      (await held.ready).release();
       taskRunScheduler.resetForTests();
     }
   });

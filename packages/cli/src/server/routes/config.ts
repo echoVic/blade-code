@@ -33,6 +33,7 @@ export function projectPublicConfig(config: BladeConfig) {
     communicationStyle: config.communicationStyle,
     maxConcurrentTasks: config.maxConcurrentTasks,
     maxQueuedTasks: config.maxQueuedTasks,
+    maxQueuedTaskBytes: config.maxQueuedTaskBytes,
   };
 }
 

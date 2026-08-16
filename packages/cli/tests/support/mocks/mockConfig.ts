@@ -70,6 +70,7 @@ export const createDefaultMockConfig = (
     overrides?.pluginSourcePolicy ?? DEFAULT_CONFIG.pluginSourcePolicy,
   maxConcurrentTasks: overrides?.maxConcurrentTasks ?? 3,
   maxQueuedTasks: overrides?.maxQueuedTasks ?? 100,
+  maxQueuedTaskBytes: overrides?.maxQueuedTaskBytes ?? 64 * 1024 * 1024,
 });
 
 export class MockConfigManager {

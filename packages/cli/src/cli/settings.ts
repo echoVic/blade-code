@@ -24,8 +24,10 @@ import {
 } from '../config/providerRequestAdmission.js';
 import {
   MAX_CONCURRENT_TASKS,
+  MAX_MAX_QUEUED_TASK_BYTES,
   MAX_QUEUED_TASKS,
   MIN_CONCURRENT_TASKS,
+  MIN_MAX_QUEUED_TASK_BYTES,
   MIN_QUEUED_TASKS,
 } from '../config/taskConcurrency.js';
 import { PermissionMode, type RuntimeConfig } from '../config/types.js';
@@ -208,6 +210,12 @@ const RuntimeSettingsSchema = Type.Object({
       maximum: MAX_QUEUED_TASKS,
     })
   ),
+  maxQueuedTaskBytes: Type.Optional(
+    Type.Integer({
+      minimum: MIN_MAX_QUEUED_TASK_BYTES,
+      maximum: MAX_MAX_QUEUED_TASK_BYTES,
+    })
+  ),
   systemPrompt: Type.Optional(Type.String()),
   appendSystemPrompt: Type.Optional(Type.String()),
   initialMessage: Type.Optional(Type.String()),
@@ -271,6 +279,7 @@ const ARGUMENT_MAPPINGS = [
   ['maxTurns', 'maxTurns'],
   ['maxConcurrentTasks', 'maxConcurrentTasks'],
   ['maxQueuedTasks', 'maxQueuedTasks'],
+  ['maxQueuedTaskBytes', 'maxQueuedTaskBytes'],
 ] as const;
 
 function parseSettingsJson(content: string, source: string): Partial<RuntimeConfig> {

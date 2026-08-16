@@ -372,6 +372,7 @@ export const zh: Dict = {
   'task.failure.modelUnavailable': '当前选择的模型不可用。',
   'task.failure.contextLimit': '请求超出模型上下文限制。',
   'task.failure.unsupportedInput': '当前模型不支持此类输入。',
+  'task.failure.capacity': '任务准入容量已满，请在运行中的任务完成后重试。',
   'task.failure.runtime': 'Agent 运行失败。',
   'chat.connection.reconnecting': '正在恢复实时更新，当前任务仍在后台继续运行。',
   'chat.connection.offline': '实时更新已离线，当前显示的进度可能已经过期。',

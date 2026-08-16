@@ -3,6 +3,7 @@ import {
   isSessionTaskFailure,
   toTaskFailure,
 } from '../../../../src/context/taskFailure.js';
+import { TaskAdmissionQueueFullError } from '../../../../src/agent/runtime/TaskRunScheduler.js';
 
 describe('taskFailure', () => {
   it('classifies retryable provider failures without persisting paths or secrets', () => {
@@ -31,8 +32,25 @@ describe('taskFailure', () => {
     ['Model unavailable', 'model_unavailable', true],
     ['Maximum context length exceeded', 'context_limit', false],
     ['Model does not support images', 'unsupported_input', false],
+    ['Task admission queue capacity is full', 'capacity', true],
   ] as const)('classifies %s as %s', (message, code, retryable) => {
     expect(toTaskFailure(message)).toMatchObject({ code, retryable });
+  });
+
+  it.each([
+    'pending_count',
+    'pending_bytes',
+  ] as const)('preserves sanitized %s capacity ownership', (resource) => {
+    const failure = toTaskFailure(new TaskAdmissionQueueFullError(resource, 64 * 1024));
+
+    expect(failure).toEqual({
+      code: 'capacity',
+      message: 'Task admission capacity is full. Retry after running tasks complete.',
+      retryable: true,
+      resource,
+    });
+    expect(isSessionTaskFailure(failure)).toBe(true);
+    expect(JSON.stringify(failure)).not.toContain(String(64 * 1024));
   });
 
   it('uses bounded canonical messages and rejects malformed stored failures', () => {
@@ -44,6 +62,14 @@ describe('taskFailure', () => {
         code: 'runtime',
         message: '',
         retryable: true,
+      })
+    ).toBe(false);
+    expect(
+      isSessionTaskFailure({
+        code: 'runtime',
+        message: 'Agent execution failed.',
+        retryable: true,
+        resource: 'pending_bytes',
       })
     ).toBe(false);
   });

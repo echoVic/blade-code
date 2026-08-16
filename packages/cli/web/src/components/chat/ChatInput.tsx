@@ -1581,6 +1581,7 @@ export function ChatInput({
               )}
               <Button
                 size="icon"
+                data-blade-submit
                 onClick={handleSend}
                 disabled={
                   !canSend ||

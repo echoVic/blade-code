@@ -217,6 +217,7 @@ export interface BladeConfig {
   maxTurns: number; // -1 = 无限制, 0 = 完全禁用对话, N > 0 = 限制轮次
   maxConcurrentTasks: number; // 同一进程内允许同时运行的顶层任务数
   maxQueuedTasks: number; // 等待 admission 的顶层任务上限
+  maxQueuedTaskBytes: number; // 等待 admission 的顶层任务 retained-byte 上限
 }
 
 /**

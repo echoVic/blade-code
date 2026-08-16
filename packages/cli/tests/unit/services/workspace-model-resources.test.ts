@@ -31,6 +31,7 @@ async function writeProjectConfig(root: string, marker: string) {
         maxTurns: marker === 'a' ? 11 : 12,
         maxConcurrentTasks: marker === 'a' ? 1 : 2,
         maxQueuedTasks: marker === 'a' ? 10 : 20,
+        maxQueuedTaskBytes: marker === 'a' ? 64 * 1024 : 128 * 1024,
         permissionMode: marker === 'a' ? 'yolo' : 'plan',
         disableAllHooks: marker === 'b',
         modelProviders: {
@@ -119,6 +120,7 @@ describe('workspace model resources', () => {
       },
       maxConcurrentTasks: 7,
       maxQueuedTasks: 77,
+      maxQueuedTaskBytes: 16 * 1024 * 1024,
     };
     (startupConfig.hooks as unknown as Record<string, unknown>).managedFunctionFixture =
       { handler: managedHook };
@@ -185,6 +187,8 @@ describe('workspace model resources', () => {
     expect(sessionB.config.maxConcurrentTasks).toBe(7);
     expect(sessionA.config.maxQueuedTasks).toBe(77);
     expect(sessionB.config.maxQueuedTasks).toBe(77);
+    expect(sessionA.config.maxQueuedTaskBytes).toBe(16 * 1024 * 1024);
+    expect(sessionB.config.maxQueuedTaskBytes).toBe(16 * 1024 * 1024);
     expect(process.env.WORKSPACE_ENV).toBeUndefined();
     expect(createPiRuntime(chatA).model.baseUrl).toBe('https://a.example.test/v1');
     expect(createPiRuntime(chatB).model.baseUrl).toBe('https://b.example.test/v1');

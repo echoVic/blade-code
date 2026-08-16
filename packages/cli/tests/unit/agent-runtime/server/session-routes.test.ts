@@ -189,6 +189,7 @@ const runtimeState = vi.hoisted(() => ({
     getTaskAdmissionLimits: vi.fn(() => ({
       maxConcurrent: 3,
       maxQueued: 100,
+      maxQueuedBytes: 64 * 1024 * 1024,
     })),
     setTaskAdmission: vi.fn().mockResolvedValue(undefined),
     setTaskStatus: vi.fn().mockResolvedValue(undefined),
@@ -606,6 +607,7 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
       maxConcurrent: 3,
       maxQueued: 100,
+      maxQueuedBytes: 64 * 1024 * 1024,
     });
     runtimeState.runtime.enqueueSteering.mockResolvedValue(makeSteeringEnqueueResult());
     runtimeState.runtime.finishTurn.mockClear();
@@ -3023,6 +3025,7 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
       maxConcurrent: 1,
       maxQueued: 10,
+      maxQueuedBytes: 64 * 1024 * 1024,
     });
     let releaseFirst!: () => void;
     const firstGate = new Promise<void>((resolve) => {
@@ -3204,6 +3207,7 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
       maxConcurrent: 1,
       maxQueued: 101,
+      maxQueuedBytes: 64 * 1024 * 1024,
     });
     let releaseFirst!: () => void;
     const firstGate = new Promise<void>((resolve) => {
@@ -3269,6 +3273,7 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
       maxConcurrent: 1,
       maxQueued: 1,
+      maxQueuedBytes: 64 * 1024 * 1024,
     });
     let releaseFirst!: () => void;
     const firstGate = new Promise<void>((resolve) => {
@@ -3378,6 +3383,7 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
       maxConcurrent: 1,
       maxQueued: 1,
+      maxQueuedBytes: 64 * 1024 * 1024,
     });
     let releaseFirst!: () => void;
     const firstGate = new Promise<void>((resolve) => {
@@ -3429,6 +3435,80 @@ describe('SessionRoutes runtime reuse', () => {
         queued: 0,
       })
     );
+  });
+
+  it('rejects pending task byte overflow and immediately reuses capacity', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
+      maxConcurrent: 1,
+      maxQueued: 10,
+      maxQueuedBytes: 64 * 1024,
+    });
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const started: string[] = [];
+    agentState.chatStream.mockImplementation(async function* (
+      _content: unknown,
+      context: { sessionId: string }
+    ) {
+      if (Date.now() < 0) yield undefined;
+      started.push(context.sessionId);
+      if (started.length === 1) await firstGate;
+      return {
+        success: true,
+        finalMessage: 'done',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+    const controller = createSessionRouteController();
+    const first = await controller.dispatchTask({
+      prompt: 'Hold the only execution slot',
+      sourceProjectPath: '/tmp/task-source',
+      isolation: 'local',
+      permissionMode: PermissionMode.YOLO,
+    });
+    await vi.waitFor(() => expect(started).toEqual([first.session.sessionId]));
+
+    await expect(
+      controller.dispatchTask({
+        prompt: `BYTE_OVERFLOW_MARKER ${'界'.repeat(30_000)}`,
+        sourceProjectPath: '/tmp/task-source',
+        isolation: 'local',
+        permissionMode: PermissionMode.YOLO,
+      })
+    ).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      statusCode: 429,
+      details: {
+        resource: 'pending_bytes',
+      },
+    });
+    expect(started).toEqual([first.session.sessionId]);
+    expect(taskRunScheduler.getStats()).toMatchObject({
+      queued: 0,
+      pendingBytes: 0,
+    });
+
+    const replacement = await controller.dispatchTask({
+      prompt: 'Run after the rejected large task',
+      sourceProjectPath: '/tmp/task-source',
+      isolation: 'local',
+      permissionMode: PermissionMode.YOLO,
+    });
+    expect(replacement).toMatchObject({
+      status: 'queued',
+      queuePosition: 1,
+    });
+
+    releaseFirst();
+    await vi.waitFor(() => {
+      expect(started).toContain(replacement.session.sessionId);
+      expect(taskRunScheduler.getStats().pendingBytes).toBe(0);
+    });
   });
 
   it('recovers durable queued tasks and fails half-created entries without input', async () => {
@@ -3526,6 +3606,7 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
       maxConcurrent: 1,
       maxQueued: 1,
+      maxQueuedBytes: 64 * 1024 * 1024,
     });
     let releaseRunning!: () => void;
     const runningGate = new Promise<void>((resolve) => {

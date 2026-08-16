@@ -131,6 +131,13 @@ export const globalOptions = {
     group: 'AI Options:',
     default: undefined,
   },
+  'max-queued-task-bytes': {
+    alias: ['maxQueuedTaskBytes'],
+    type: 'number',
+    describe: 'Maximum retained bytes across queued top-level tasks',
+    group: 'AI Options:',
+    default: undefined,
+  },
   'permission-mode': {
     alias: ['permissionMode'],
     type: 'string',

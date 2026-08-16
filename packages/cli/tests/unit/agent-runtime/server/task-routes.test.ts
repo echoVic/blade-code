@@ -146,7 +146,9 @@ describe('TaskRoutes', () => {
 
   it('returns a retryable 429 when admission is full', async () => {
     const dispatchTask = vi.fn<SessionRouteController['dispatchTask']>(async () => {
-      throw new TooManyRequestsError('Task admission queue is full');
+      throw new TooManyRequestsError('Task admission capacity is full', {
+        resource: 'pending_bytes',
+      });
     });
     const app = TaskRoutes(createController(dispatchTask));
 
@@ -163,7 +165,10 @@ describe('TaskRoutes', () => {
     await expect(response.json()).resolves.toEqual({
       error: {
         code: 'TOO_MANY_REQUESTS',
-        message: 'Task admission queue is full',
+        message: 'Task admission capacity is full',
+        details: {
+          resource: 'pending_bytes',
+        },
       },
     });
   });

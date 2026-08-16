@@ -219,6 +219,7 @@ vi.mock('../../../../src/store/vanilla.js', () => ({
     timeout: 30000,
     maxConcurrentTasks: 3,
     maxQueuedTasks: 100,
+    maxQueuedTaskBytes: 64 * 1024 * 1024,
     env: { BASE_SESSION_ENV: 'base-value' },
     hooks: { enabled: true },
   })),

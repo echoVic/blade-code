@@ -168,12 +168,16 @@ export type SessionTaskFailureCode =
   | 'model_unavailable'
   | 'context_limit'
   | 'unsupported_input'
+  | 'capacity'
   | 'runtime';
+
+export type SessionTaskCapacityResource = 'pending_count' | 'pending_bytes';
 
 export interface SessionTaskFailure {
   code: SessionTaskFailureCode;
   message: string;
   retryable: boolean;
+  resource?: SessionTaskCapacityResource;
 }
 
 export interface SessionTaskDiffStat {

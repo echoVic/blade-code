@@ -664,7 +664,8 @@ Web additionally proves:
 - the production build runs in pinned Chromium;
 - the inline overload error is visible;
 - reload does not materialize task B;
-- no console, page, request, or SSE error remains.
+- Chromium records exactly the expected `/tasks` HTTP 429 resource error;
+- no additional console, page, request, or SSE error remains.
 
 ACP additionally proves:
 

@@ -4,7 +4,8 @@ export class BladeServerError extends Error {
   constructor(
     public readonly code: string,
     message: string,
-    public readonly statusCode: number = 500
+    public readonly statusCode: number = 500,
+    public readonly details?: Record<string, string | number | boolean>
   ) {
     super(message);
     this.name = 'BladeServerError';
@@ -15,6 +16,7 @@ export class BladeServerError extends Error {
       error: {
         code: this.code,
         message: this.message,
+        ...(this.details ? { details: this.details } : {}),
       },
     };
   }
@@ -43,8 +45,8 @@ export class ConflictError extends BladeServerError {
 }
 
 export class TooManyRequestsError extends BladeServerError {
-  constructor(message: string) {
-    super('TOO_MANY_REQUESTS', message, 429);
+  constructor(message: string, details?: Record<string, string | number | boolean>) {
+    super('TOO_MANY_REQUESTS', message, 429, details);
   }
 }
 
@@ -74,6 +76,7 @@ export const ErrorResponse = Type.Object({
   error: Type.Object({
     code: Type.String(),
     message: Type.String(),
+    details: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   }),
 });
 

@@ -476,7 +476,11 @@ export class SessionRuntime {
       if (!config) {
         throw new Error('配置未初始化，请确保应用已正确启动');
       }
-      taskRunScheduler.configure(config.maxConcurrentTasks, config.maxQueuedTasks);
+      taskRunScheduler.configure(
+        config.maxConcurrentTasks,
+        config.maxQueuedTasks,
+        config.maxQueuedTaskBytes
+      );
 
       const configManager = ConfigManager.getInstance();
       const hookConfigRoot =
@@ -657,11 +661,13 @@ export class SessionRuntime {
   getTaskAdmissionLimits(): {
     maxConcurrent: number;
     maxQueued: number;
+    maxQueuedBytes: number;
   } {
     const admission = taskRunScheduler.getStats();
     return {
       maxConcurrent: admission.maxConcurrent,
       maxQueued: admission.maxQueued,
+      maxQueuedBytes: admission.maxQueuedBytes,
     };
   }
 

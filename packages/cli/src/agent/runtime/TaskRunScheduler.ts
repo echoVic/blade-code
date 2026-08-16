@@ -1,13 +1,18 @@
 import {
+  DEFAULT_MAX_QUEUED_TASK_BYTES,
   isValidConcurrentTaskLimit,
+  isValidQueuedTaskByteLimit,
   isValidQueuedTaskLimit,
   MAX_CONCURRENT_TASKS,
+  MAX_MAX_QUEUED_TASK_BYTES,
   MAX_QUEUED_TASKS,
   MIN_CONCURRENT_TASKS,
+  MIN_MAX_QUEUED_TASK_BYTES,
   MIN_QUEUED_TASKS,
 } from '../../config/taskConcurrency.js';
 
 export type TaskAdmissionState = 'queued' | 'running';
+export type TaskAdmissionResource = 'pending_count' | 'pending_bytes';
 
 export interface TaskAdmissionSnapshot {
   state: TaskAdmissionState;
@@ -33,12 +38,16 @@ export interface TaskAdmissionOptions {
   key: string;
   maxConcurrent: number;
   maxQueued: number;
+  maxQueuedBytes: number;
+  pendingBytes: number;
   signal?: AbortSignal;
   onUpdate?: (snapshot: TaskAdmissionSnapshot) => void;
 }
 
 interface PendingAdmission {
   key: string;
+  pendingBytes: number;
+  charged: boolean;
   signal?: AbortSignal;
   onUpdate?: (snapshot: TaskAdmissionSnapshot) => void;
   resolve: (permit: TaskRunPermit) => void;
@@ -50,8 +59,15 @@ interface PendingAdmission {
 }
 
 export class TaskAdmissionQueueFullError extends Error {
-  constructor(maxQueued: number) {
-    super(`Task admission queue is full (max ${maxQueued})`);
+  constructor(
+    public readonly resource: TaskAdmissionResource,
+    public readonly limit: number
+  ) {
+    super(
+      resource === 'pending_count'
+        ? 'Task admission pending-count capacity is full'
+        : 'Task admission pending-byte capacity is full'
+    );
     this.name = 'TaskAdmissionQueueFullError';
   }
 }
@@ -73,22 +89,37 @@ export class TaskAdmissionCancelledError extends Error {
 export class TaskRunScheduler {
   private maxConcurrent = 3;
   private maxQueued = 100;
+  private maxQueuedBytes = DEFAULT_MAX_QUEUED_TASK_BYTES;
   private inFlight = 0;
+  private pendingBytes = 0;
   private readonly queue: PendingAdmission[] = [];
   private readonly activeKeys = new Set<string>();
   private explicitlyConfigured = false;
 
   admit(options: TaskAdmissionOptions): TaskAdmissionHandle {
-    this.validateLimits(options.maxConcurrent, options.maxQueued);
+    this.validateLimits(
+      options.maxConcurrent,
+      options.maxQueued,
+      options.maxQueuedBytes,
+      options.pendingBytes
+    );
     if (!this.explicitlyConfigured) {
-      this.applyConfiguration(options.maxConcurrent, options.maxQueued);
+      this.applyConfiguration(
+        options.maxConcurrent,
+        options.maxQueued,
+        options.maxQueuedBytes
+      );
     }
     if (!options.key.trim()) throw new Error('Task admission key must not be blank');
     if (this.activeKeys.has(options.key)) {
       throw new TaskAdmissionConflictError(options.key);
     }
-    if (this.inFlight >= this.maxConcurrent && this.queue.length >= this.maxQueued) {
-      throw new TaskAdmissionQueueFullError(this.maxQueued);
+    const mustQueue = this.inFlight >= this.maxConcurrent;
+    if (mustQueue && this.queue.length >= this.maxQueued) {
+      throw new TaskAdmissionQueueFullError('pending_count', this.maxQueued);
+    }
+    if (mustQueue && options.pendingBytes > this.maxQueuedBytes - this.pendingBytes) {
+      throw new TaskAdmissionQueueFullError('pending_bytes', this.maxQueuedBytes);
     }
 
     let resolveReady!: (permit: TaskRunPermit) => void;
@@ -100,6 +131,8 @@ export class TaskRunScheduler {
     void ready.catch(() => undefined);
     const pending: PendingAdmission = {
       key: options.key,
+      pendingBytes: options.pendingBytes,
+      charged: false,
       signal: options.signal,
       onUpdate: options.onUpdate,
       resolve: resolveReady,
@@ -133,24 +166,30 @@ export class TaskRunScheduler {
       });
     }
 
-    if (this.inFlight < this.maxConcurrent) {
+    if (!mustQueue) {
       this.startPending(pending);
     } else {
+      this.chargePending(pending);
       this.queue.push(pending);
       this.publishQueueSnapshots();
     }
     return handle;
   }
 
-  configure(maxConcurrent: number, maxQueued: number): void {
-    this.validateLimits(maxConcurrent, maxQueued);
+  configure(maxConcurrent: number, maxQueued: number, maxQueuedBytes: number): void {
+    this.validateLimits(maxConcurrent, maxQueued, maxQueuedBytes);
     this.explicitlyConfigured = true;
-    this.applyConfiguration(maxConcurrent, maxQueued);
+    this.applyConfiguration(maxConcurrent, maxQueued, maxQueuedBytes);
   }
 
-  private applyConfiguration(maxConcurrent: number, maxQueued: number): void {
+  private applyConfiguration(
+    maxConcurrent: number,
+    maxQueued: number,
+    maxQueuedBytes: number
+  ): void {
     this.maxConcurrent = maxConcurrent;
     this.maxQueued = maxQueued;
+    this.maxQueuedBytes = maxQueuedBytes;
     this.drain();
     this.publishQueueSnapshots();
   }
@@ -158,14 +197,18 @@ export class TaskRunScheduler {
   getStats(): {
     inFlight: number;
     queued: number;
+    pendingBytes: number;
     maxConcurrent: number;
     maxQueued: number;
+    maxQueuedBytes: number;
   } {
     return {
       inFlight: this.inFlight,
       queued: this.queue.length,
+      pendingBytes: this.pendingBytes,
       maxConcurrent: this.maxConcurrent,
       maxQueued: this.maxQueued,
+      maxQueuedBytes: this.maxQueuedBytes,
     };
   }
 
@@ -176,13 +219,16 @@ export class TaskRunScheduler {
     this.queue.length = 0;
     this.activeKeys.clear();
     this.inFlight = 0;
+    this.pendingBytes = 0;
     this.maxConcurrent = 3;
     this.maxQueued = 100;
+    this.maxQueuedBytes = DEFAULT_MAX_QUEUED_TASK_BYTES;
     this.explicitlyConfigured = false;
   }
 
   private startPending(pending: PendingAdmission): void {
     if (pending.settled) return;
+    this.unchargePending(pending);
     this.detachAbort(pending);
     this.inFlight++;
     let released = false;
@@ -210,6 +256,7 @@ export class TaskRunScheduler {
     if (pending.permit) return;
     const index = this.queue.indexOf(pending);
     if (index >= 0) this.queue.splice(index, 1);
+    this.unchargePending(pending);
     pending.settled = true;
     this.detachAbort(pending);
     this.activeKeys.delete(pending.key);
@@ -260,7 +307,32 @@ export class TaskRunScheduler {
     pending.abortListener = undefined;
   }
 
-  private validateLimits(maxConcurrent: number, maxQueued: number): void {
+  private chargePending(pending: PendingAdmission): void {
+    if (pending.charged) {
+      throw new Error(`Task admission bytes already charged: ${pending.key}`);
+    }
+    if (pending.pendingBytes > this.maxQueuedBytes - this.pendingBytes) {
+      throw new Error('Task admission byte accounting exceeded its configured limit');
+    }
+    this.pendingBytes += pending.pendingBytes;
+    pending.charged = true;
+  }
+
+  private unchargePending(pending: PendingAdmission): void {
+    if (!pending.charged) return;
+    if (pending.pendingBytes > this.pendingBytes) {
+      throw new Error('Task admission byte accounting underflow');
+    }
+    this.pendingBytes -= pending.pendingBytes;
+    pending.charged = false;
+  }
+
+  private validateLimits(
+    maxConcurrent: number,
+    maxQueued: number,
+    maxQueuedBytes: number,
+    pendingBytes?: number
+  ): void {
     if (!isValidConcurrentTaskLimit(maxConcurrent)) {
       throw new Error(
         `maxConcurrent must be an integer between ${MIN_CONCURRENT_TASKS} and ${MAX_CONCURRENT_TASKS}`
@@ -269,6 +341,21 @@ export class TaskRunScheduler {
     if (!isValidQueuedTaskLimit(maxQueued)) {
       throw new Error(
         `maxQueued must be an integer between ${MIN_QUEUED_TASKS} and ${MAX_QUEUED_TASKS}`
+      );
+    }
+    if (!isValidQueuedTaskByteLimit(maxQueuedBytes)) {
+      throw new Error(
+        `maxQueuedBytes must be an integer between ${MIN_MAX_QUEUED_TASK_BYTES} and ${MAX_MAX_QUEUED_TASK_BYTES}`
+      );
+    }
+    if (
+      pendingBytes !== undefined &&
+      (!Number.isSafeInteger(pendingBytes) ||
+        pendingBytes <= 0 ||
+        pendingBytes > MAX_MAX_QUEUED_TASK_BYTES + 1)
+    ) {
+      throw new Error(
+        `pendingBytes must be an integer between 1 and ${MAX_MAX_QUEUED_TASK_BYTES + 1}`
       );
     }
   }

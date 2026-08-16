@@ -43,6 +43,8 @@ export const testTypes = {
       'tests/integration/real-api/provider-request-admission-web-trajectory.test.ts',
       'tests/integration/real-api/weighted-provider-admission-acp-trajectory.test.ts',
       'tests/integration/real-api/weighted-provider-admission-web-trajectory.test.ts',
+      'tests/integration/real-api/weighted-task-admission-acp-trajectory.test.ts',
+      'tests/integration/real-api/weighted-task-admission-web-trajectory.test.ts',
       'tests/integration/real-api/graceful-shutdown-trajectory.test.ts',
       'tests/integration/real-api/tool-admission-trajectory.test.ts',
     ],

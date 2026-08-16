@@ -32,6 +32,7 @@ export interface GlobalOptions {
   maxTurns?: number;
   maxConcurrentTasks?: number;
   maxQueuedTasks?: number;
+  maxQueuedTaskBytes?: number;
   pluginDir?: string[];
   trustWorkspace?: boolean;
 }

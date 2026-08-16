@@ -27,6 +27,7 @@ describe('ConfigRoutes', () => {
       language: DEFAULT_CONFIG.language,
       codeTheme: DEFAULT_CONFIG.codeTheme,
       uiTheme: DEFAULT_CONFIG.uiTheme,
+      maxQueuedTaskBytes: 64 * 1024 * 1024,
     });
   });
 });

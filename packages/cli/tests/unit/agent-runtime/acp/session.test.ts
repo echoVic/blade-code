@@ -473,9 +473,10 @@ describe('AcpSession', () => {
         });
       });
       const taskFailure = {
-        code: 'timeout',
-        message: 'Provider request timed out.',
+        code: 'capacity',
+        message: 'Task admission capacity is full. Retry after running tasks complete.',
         retryable: true,
+        resource: 'pending_bytes',
       };
       Bus.publish(
         { sessionId: 'test-session-id', projectPath: '/tmp/test' },

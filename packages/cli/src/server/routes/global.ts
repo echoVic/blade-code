@@ -23,8 +23,13 @@ export const GlobalRoutes = (): Hono<{ Variables: Variables }> => {
     const cwd = getCwd();
     const config = getConfig();
     if (config) {
-      taskRunScheduler.configure(config.maxConcurrentTasks, config.maxQueuedTasks);
+      taskRunScheduler.configure(
+        config.maxConcurrentTasks,
+        config.maxQueuedTasks,
+        config.maxQueuedTaskBytes
+      );
     }
+    const taskAdmission = taskRunScheduler.getStats();
     return c.json({
       version: getVersion(),
       platform: process.platform,
@@ -32,7 +37,12 @@ export const GlobalRoutes = (): Hono<{ Variables: Variables }> => {
       nodeVersion: process.version,
       cwd,
       gitBranch: detectGitBranch(cwd),
-      taskAdmission: taskRunScheduler.getStats(),
+      taskAdmission: {
+        inFlight: taskAdmission.inFlight,
+        queued: taskAdmission.queued,
+        maxConcurrent: taskAdmission.maxConcurrent,
+        maxQueued: taskAdmission.maxQueued,
+      },
     });
   });
 

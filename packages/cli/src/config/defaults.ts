@@ -10,6 +10,7 @@ import {
   DEFAULT_PROVIDER_REQUEST_CONCURRENCY,
   DEFAULT_PROVIDER_REQUEST_PENDING_BYTES,
 } from './providerRequestAdmission.js';
+import { DEFAULT_MAX_QUEUED_TASK_BYTES } from './taskConcurrency.js';
 import { BladeConfig, PermissionMode } from './types.js';
 
 export const DEFAULT_CONFIG: BladeConfig = {
@@ -257,4 +258,5 @@ export const DEFAULT_CONFIG: BladeConfig = {
   maxTurns: -1, // 默认无限制
   maxConcurrentTasks: 3,
   maxQueuedTasks: 100,
+  maxQueuedTaskBytes: DEFAULT_MAX_QUEUED_TASK_BYTES,
 };
