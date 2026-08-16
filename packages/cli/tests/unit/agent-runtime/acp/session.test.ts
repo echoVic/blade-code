@@ -745,61 +745,61 @@ describe('AcpSession', () => {
   });
 
   describe('replayHistory', () => {
-    it.each(['destroy', 'abort'] as const)(
-      '%s 后停止 deferred history replay 且不恢复 pending input',
-      async (stopMethod) => {
-        await session.initialize();
-        getMockAgent().chatStream = async function* (_message, context) {
-          context.messages.push(
-            { role: 'user', content: 'first visible chunk' },
-            {
-              role: 'assistant',
-              content: [
-                { type: 'text', text: 'second visible chunk' },
-                { type: 'text', text: 'third visible chunk' },
-              ],
-            }
-          );
-          yield { kind: 'turn_start', turn: 1, maxTurns: 1 };
-          return { success: true, finalMessage: 'history prepared' };
-        };
-        await session.prompt({
-          sessionId: 'test-session-id',
-          prompt: [{ type: 'text', text: 'prepare replay history' }],
-        });
-        mockConnection.sessionUpdates = [];
-        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    it.each([
+      'destroy',
+      'abort',
+    ] as const)('%s 后停止 deferred history replay 且不恢复 pending input', async (stopMethod) => {
+      await session.initialize();
+      getMockAgent().chatStream = async function* (_message, context) {
+        context.messages.push(
+          { role: 'user', content: 'first visible chunk' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'second visible chunk' },
+              { type: 'text', text: 'third visible chunk' },
+            ],
+          }
+        );
+        yield { kind: 'turn_start', turn: 1, maxTurns: 1 };
+        return { success: true, finalMessage: 'history prepared' };
+      };
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'prepare replay history' }],
+      });
+      mockConnection.sessionUpdates = [];
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
 
-        let releaseFirstUpdate: (() => void) | undefined;
-        const firstUpdateGate = new Promise<void>((resolve) => {
-          releaseFirstUpdate = resolve;
-        });
-        const originalSessionUpdate = mockConnection.sessionUpdate.bind(mockConnection);
-        let updateCount = 0;
-        vi.spyOn(mockConnection, 'sessionUpdate').mockImplementation(async (params) => {
-          updateCount += 1;
-          await originalSessionUpdate(params);
-          if (updateCount === 1) await firstUpdateGate;
-        });
+      let releaseFirstUpdate: (() => void) | undefined;
+      const firstUpdateGate = new Promise<void>((resolve) => {
+        releaseFirstUpdate = resolve;
+      });
+      const originalSessionUpdate = mockConnection.sessionUpdate.bind(mockConnection);
+      let updateCount = 0;
+      vi.spyOn(mockConnection, 'sessionUpdate').mockImplementation(async (params) => {
+        updateCount += 1;
+        await originalSessionUpdate(params);
+        if (updateCount === 1) await firstUpdateGate;
+      });
 
-        const replay = session.replayHistory();
-        await vi.waitFor(() => {
-          expect(mockConnection.sessionUpdates).toHaveLength(1);
-        });
-
-        if (stopMethod === 'destroy') {
-          await session.destroy();
-        } else {
-          connectionAbortController.abort();
-        }
-        releaseFirstUpdate?.();
-        await expect(replay).resolves.toBeUndefined();
-        await Promise.resolve();
-
+      const replay = session.replayHistory();
+      await vi.waitFor(() => {
         expect(mockConnection.sessionUpdates).toHaveLength(1);
-        expect(getMockAgent().calls).toHaveLength(0);
+      });
+
+      if (stopMethod === 'destroy') {
+        await session.destroy();
+      } else {
+        connectionAbortController.abort();
       }
-    );
+      releaseFirstUpdate?.();
+      await expect(replay).resolves.toBeUndefined();
+      await Promise.resolve();
+
+      expect(mockConnection.sessionUpdates).toHaveLength(1);
+      expect(getMockAgent().calls).toHaveLength(0);
+    });
 
     it('应该按顺序回放用户和助手历史且隐藏内部消息', async () => {
       const history: Message[] = [
@@ -3290,34 +3290,35 @@ describe('AcpSession', () => {
         runtimeError: new Error('runtime dispose failed second'),
         expectedError: 'agent destroy failed first',
       },
-    ])(
-      '$name 时仍应该清理全部资源并由第一个错误获胜',
-      async ({ agentError, runtimeError, expectedError }) => {
-        await session.initialize();
-        const mockAgent = getMockAgent();
-        if (agentError) mockAgent.destroy = vi.fn().mockRejectedValueOnce(agentError);
-        if (runtimeError) {
-          runtimeState.runtime.dispose.mockRejectedValueOnce(runtimeError);
-        }
-
-        await expect(session.destroy()).rejects.toThrow(expectedError);
-
-        const { AcpServiceContext } = await import(
-          '../../../../src/acp/AcpServiceContext.js'
-        );
-        expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
-        expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
-        expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
-        await expect(session.setModel('gpt-4')).rejects.toThrow(
-          'Session not initialized'
-        );
-
-        await expect(session.destroy()).resolves.toBeUndefined();
-        expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
-        expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
-        expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+    ])('$name 时仍应该清理全部资源并由第一个错误获胜', async ({
+      agentError,
+      runtimeError,
+      expectedError,
+    }) => {
+      await session.initialize();
+      const mockAgent = getMockAgent();
+      if (agentError) mockAgent.destroy = vi.fn().mockRejectedValueOnce(agentError);
+      if (runtimeError) {
+        runtimeState.runtime.dispose.mockRejectedValueOnce(runtimeError);
       }
-    );
+
+      await expect(session.destroy()).rejects.toThrow(expectedError);
+
+      const { AcpServiceContext } = await import(
+        '../../../../src/acp/AcpServiceContext.js'
+      );
+      expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
+      expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+      await expect(session.setModel('gpt-4')).rejects.toThrow(
+        'Session not initialized'
+      );
+
+      await expect(session.destroy()).resolves.toBeUndefined();
+      expect(mockAgent.destroy).toHaveBeenCalledTimes(1);
+      expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(1);
+      expect(AcpServiceContext.destroySession).toHaveBeenCalledTimes(1);
+    });
 
     it('cancel 失败时仍应该清理 Agent、runtime 与 ACP context', async () => {
       await session.initialize();

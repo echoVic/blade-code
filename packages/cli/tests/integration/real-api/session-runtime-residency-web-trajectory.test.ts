@@ -194,249 +194,238 @@ async function submitMessage(
 describe
   .skipIf(!isRealApiTestEnabled())
   .sequential('bounded Session Runtime residency Web control', () => {
-    it.each(models)(
-      '$model rejects active overflow and cold-rehydrates an evicted Session',
-      async (model) => {
-        if (!model.baseURL) {
-          throw new Error(`Missing Provider base URL for ${model.model}`);
-        }
-        const root = await mkdtemp(
-          path.join(
-            os.tmpdir(),
-            `blade-session-residency-web-${safeSlug(model.model)}-`
-          )
-        );
-        const home = path.join(root, 'home');
-        const storageRoot = path.join(root, 'storage');
-        const workspace = path.join(root, 'workspace');
-        const barrierPath = path.join(root, 'provider-hold-ready');
-        const proxy = await startRecordingProviderProxy(model.baseURL, {
-          holdRequestNumber: 1,
-          holdMs: 120_000,
-          onHold: async () => {
-            await writeFile(barrierPath, 'ready\n');
-          },
-        });
-        const config = buildRealApiRuntimeConfig({
-          ...model,
-          baseURL: proxy.baseUrl,
-        });
-        const port = await reservePort();
-        let child: ChildProcess | undefined;
-        let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
-        const output: string[] = [];
-        const browserFaults: string[] = [];
-        let expectedOverloadConsoleErrors = 0;
-        try {
-          await Promise.all([
-            mkdir(path.join(home, '.blade'), { recursive: true }),
-            mkdir(storageRoot, { recursive: true }),
-            mkdir(workspace, { recursive: true }),
-          ]);
-          await writeFile(
-            path.join(home, '.blade', 'config.json'),
-            `${JSON.stringify(
-              {
-                currentModelId: config.currentModelId,
-                models: config.models,
-                modelProviders: config.modelProviders,
-                permissionMode: 'yolo',
-                language: 'en',
-                maxResidentSessionRuntimes: 1,
-                sessionRuntimeIdleMs: 30_000,
-                providerCircuitBreakerOpenMs: 0,
-                hooks: { enabled: false },
-                disableAllHooks: true,
-                mcpServers: {},
-              },
-              null,
-              2
-            )}\n`,
-            { mode: 0o600 }
-          );
-          child = spawn(
-            process.execPath,
-            [cliEntry, 'serve', '--hostname', '127.0.0.1', '--port', String(port)],
+    it.each(
+      models
+    )('$model rejects active overflow and cold-rehydrates an evicted Session', async (model) => {
+      if (!model.baseURL) {
+        throw new Error(`Missing Provider base URL for ${model.model}`);
+      }
+      const root = await mkdtemp(
+        path.join(os.tmpdir(), `blade-session-residency-web-${safeSlug(model.model)}-`)
+      );
+      const home = path.join(root, 'home');
+      const storageRoot = path.join(root, 'storage');
+      const workspace = path.join(root, 'workspace');
+      const barrierPath = path.join(root, 'provider-hold-ready');
+      const proxy = await startRecordingProviderProxy(model.baseURL, {
+        holdRequestNumber: 1,
+        holdMs: 120_000,
+        onHold: async () => {
+          await writeFile(barrierPath, 'ready\n');
+        },
+      });
+      const config = buildRealApiRuntimeConfig({
+        ...model,
+        baseURL: proxy.baseUrl,
+      });
+      const port = await reservePort();
+      let child: ChildProcess | undefined;
+      let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+      const output: string[] = [];
+      const browserFaults: string[] = [];
+      let expectedOverloadConsoleErrors = 0;
+      try {
+        await Promise.all([
+          mkdir(path.join(home, '.blade'), { recursive: true }),
+          mkdir(storageRoot, { recursive: true }),
+          mkdir(workspace, { recursive: true }),
+        ]);
+        await writeFile(
+          path.join(home, '.blade', 'config.json'),
+          `${JSON.stringify(
             {
-              cwd: workspace,
-              env: {
-                ...process.env,
-                HOME: home,
-                BLADE_STORAGE_ROOT: storageRoot,
-                BLADE_AUTO_MEMORY: '0',
-                BLADE_TELEMETRY_DISABLED: '1',
-              },
-              stdio: ['ignore', 'pipe', 'pipe'],
-            }
-          );
-          child.stdout?.on('data', (chunk) => output.push(chunk.toString()));
-          child.stderr?.on('data', (chunk) => output.push(chunk.toString()));
-          const childIdentity = child.pid
-            ? captureProcessIdentity(child.pid)
-            : undefined;
-          const origin = `http://127.0.0.1:${port}`;
-          await waitFor(
-            async () => {
-              try {
-                return (await fetch(`${origin}/health`)).ok;
-              } catch {
-                return false;
-              }
-            },
-            'Session residency Web server did not become ready',
-            20_000
-          );
-
-          const sessionA = await createSession(origin, workspace, 'Resident A');
-          const sessionB = await createSession(origin, workspace, 'Resident B');
-          const markerA = `SESSION_RESIDENCY_WEB_A_${Date.now()}`;
-          const markerB = `SESSION_RESIDENCY_WEB_B_${Date.now()}`;
-          const followUpA = `SESSION_RESIDENCY_WEB_A_FOLLOWUP_${Date.now()}`;
-          const primary = await fetch(`${origin}/sessions/${sessionA}/message`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-              content: `Reply with exactly ${markerA} and no other text.`,
+              currentModelId: config.currentModelId,
+              models: config.models,
+              modelProviders: config.modelProviders,
               permissionMode: 'yolo',
-            }),
-          });
-          expect(primary.status).toBe(202);
-          await waitFor(async () => {
+              language: 'en',
+              maxResidentSessionRuntimes: 1,
+              sessionRuntimeIdleMs: 30_000,
+              providerCircuitBreakerOpenMs: 0,
+              hooks: { enabled: false },
+              disableAllHooks: true,
+              mcpServers: {},
+            },
+            null,
+            2
+          )}\n`,
+          { mode: 0o600 }
+        );
+        child = spawn(
+          process.execPath,
+          [cliEntry, 'serve', '--hostname', '127.0.0.1', '--port', String(port)],
+          {
+            cwd: workspace,
+            env: {
+              ...process.env,
+              HOME: home,
+              BLADE_STORAGE_ROOT: storageRoot,
+              BLADE_AUTO_MEMORY: '0',
+              BLADE_TELEMETRY_DISABLED: '1',
+            },
+            stdio: ['ignore', 'pipe', 'pipe'],
+          }
+        );
+        child.stdout?.on('data', (chunk) => output.push(chunk.toString()));
+        child.stderr?.on('data', (chunk) => output.push(chunk.toString()));
+        const childIdentity = child.pid ? captureProcessIdentity(child.pid) : undefined;
+        const origin = `http://127.0.0.1:${port}`;
+        await waitFor(
+          async () => {
             try {
-              await access(barrierPath);
-              return true;
+              return (await fetch(`${origin}/health`)).ok;
             } catch {
               return false;
             }
-          }, 'Session residency primary request did not reach Provider hold');
+          },
+          'Session residency Web server did not become ready',
+          20_000
+        );
 
-          browser = await chromium.launch({ headless: true });
-          const page = await browser.newPage();
-          page.on('pageerror', (error) =>
-            browserFaults.push(`pageerror:${error.message}`)
-          );
-          page.on('console', (message) => {
-            if (message.type() !== 'error') return;
-            if (
-              /Failed to load resource:.*429 \(Too Many Requests\)/.test(message.text())
-            ) {
-              expectedOverloadConsoleErrors++;
-            } else {
-              browserFaults.push(`console:${message.text()}`);
+        const sessionA = await createSession(origin, workspace, 'Resident A');
+        const sessionB = await createSession(origin, workspace, 'Resident B');
+        const markerA = `SESSION_RESIDENCY_WEB_A_${Date.now()}`;
+        const markerB = `SESSION_RESIDENCY_WEB_B_${Date.now()}`;
+        const followUpA = `SESSION_RESIDENCY_WEB_A_FOLLOWUP_${Date.now()}`;
+        const primary = await fetch(`${origin}/sessions/${sessionA}/message`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            content: `Reply with exactly ${markerA} and no other text.`,
+            permissionMode: 'yolo',
+          }),
+        });
+        expect(primary.status).toBe(202);
+        await waitFor(async () => {
+          try {
+            await access(barrierPath);
+            return true;
+          } catch {
+            return false;
+          }
+        }, 'Session residency primary request did not reach Provider hold');
+
+        browser = await chromium.launch({ headless: true });
+        const page = await browser.newPage();
+        page.on('pageerror', (error) =>
+          browserFaults.push(`pageerror:${error.message}`)
+        );
+        page.on('console', (message) => {
+          if (message.type() !== 'error') return;
+          if (
+            /Failed to load resource:.*429 \(Too Many Requests\)/.test(message.text())
+          ) {
+            expectedOverloadConsoleErrors++;
+          } else {
+            browserFaults.push(`console:${message.text()}`);
+          }
+        });
+
+        let composer = await openSession(page, origin, workspace, sessionB);
+        await selectYolo(page);
+        await composer.fill(`Reply with exactly ${markerB} and no other text.`);
+        const rejected = await submitMessage(page, sessionB);
+        expect(rejected.status()).toBe(429);
+        await expect(rejected.json()).resolves.toMatchObject({
+          error: {
+            code: 'TOO_MANY_REQUESTS',
+            details: {
+              resource: 'resident_runtimes',
+              limit: 1,
+            },
+          },
+        });
+        const errorBanner = page.locator('[data-blade-session-error]');
+        await errorBanner.waitFor({ state: 'visible', timeout: 30_000 });
+        await expect(errorBanner.textContent()).resolves.toContain(
+          'Session runtime capacity is full'
+        );
+        expect(proxy.requestBodies.every((body) => !body.includes(markerB))).toBe(true);
+
+        proxy.releaseHeld();
+        let transcriptA = '';
+        await waitFor(
+          async () => {
+            try {
+              transcriptA = await readFile(
+                findSessionTranscript(storageRoot, sessionA),
+                'utf8'
+              );
+              return transcriptA.includes(markerA);
+            } catch {
+              return false;
             }
-          });
+          },
+          'Session residency primary Session did not finish',
+          120_000
+        );
+        await waitForSessionTerminal(origin, workspace, sessionA);
 
-          let composer = await openSession(page, origin, workspace, sessionB);
-          await selectYolo(page);
-          await composer.fill(`Reply with exactly ${markerB} and no other text.`);
-          const rejected = await submitMessage(page, sessionB);
-          expect(rejected.status()).toBe(429);
-          await expect(rejected.json()).resolves.toMatchObject({
-            error: {
-              code: 'TOO_MANY_REQUESTS',
-              details: {
-                resource: 'resident_runtimes',
-                limit: 1,
-              },
-            },
-          });
-          const errorBanner = page.locator('[data-blade-session-error]');
-          await errorBanner.waitFor({ state: 'visible', timeout: 30_000 });
-          await expect(errorBanner.textContent()).resolves.toContain(
-            'Session runtime capacity is full'
+        const acceptedB = await submitMessage(page, sessionB);
+        expect(acceptedB.status()).toBe(202);
+        await page.getByText(markerB, { exact: true }).waitFor({
+          state: 'visible',
+          timeout: 120_000,
+        });
+
+        composer = await openSession(page, origin, workspace, sessionA);
+        await composer.fill(`Reply with exactly ${followUpA} and no other text.`);
+        const acceptedFollowUp = await submitMessage(page, sessionA);
+        expect(acceptedFollowUp.status()).toBe(202);
+        await page.getByText(followUpA, { exact: true }).waitFor({
+          state: 'visible',
+          timeout: 120_000,
+        });
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await page.getByText(markerA, { exact: true }).waitFor({
+          state: 'visible',
+          timeout: 30_000,
+        });
+        await page.getByText(followUpA, { exact: true }).waitFor({
+          state: 'visible',
+          timeout: 30_000,
+        });
+
+        const [finalA, finalB] = await Promise.all([
+          readFile(findSessionTranscript(storageRoot, sessionA), 'utf8'),
+          readFile(findSessionTranscript(storageRoot, sessionB), 'utf8'),
+        ]);
+        expect(finalA).toContain(markerA);
+        expect(finalA).toContain(followUpA);
+        expect(finalB).toContain(markerB);
+        expect(proxy.requestBodies).toHaveLength(3);
+        expect(
+          proxy.requestBodies.filter((body) => body.includes(markerB))
+        ).toHaveLength(1);
+        expect(proxy.maxInFlight).toBe(1);
+        expect(proxy.heldRequestNumbers).toEqual([1]);
+        expect(expectedOverloadConsoleErrors).toBe(1);
+        expect(browserFaults).toEqual([]);
+        expect(`${output.join('')}${await page.content()}`).not.toContain(model.apiKey);
+
+        await browser.close();
+        browser = undefined;
+        child.kill('SIGTERM');
+        const exit = await waitForChildExit(child);
+        if (exit.signal || exit.code !== 0) {
+          throw new Error(
+            `Session residency Web server exited ${
+              exit.code ?? exit.signal
+            }: ${output.join('').replaceAll(model.apiKey, '[redacted]')}`
           );
-          expect(proxy.requestBodies.every((body) => !body.includes(markerB))).toBe(
-            true
-          );
-
-          proxy.releaseHeld();
-          let transcriptA = '';
-          await waitFor(
-            async () => {
-              try {
-                transcriptA = await readFile(
-                  findSessionTranscript(storageRoot, sessionA),
-                  'utf8'
-                );
-                return transcriptA.includes(markerA);
-              } catch {
-                return false;
-              }
-            },
-            'Session residency primary Session did not finish',
-            120_000
-          );
-          await waitForSessionTerminal(origin, workspace, sessionA);
-
-          const acceptedB = await submitMessage(page, sessionB);
-          expect(acceptedB.status()).toBe(202);
-          await page.getByText(markerB, { exact: true }).waitFor({
-            state: 'visible',
-            timeout: 120_000,
-          });
-
-          composer = await openSession(page, origin, workspace, sessionA);
-          await composer.fill(`Reply with exactly ${followUpA} and no other text.`);
-          const acceptedFollowUp = await submitMessage(page, sessionA);
-          expect(acceptedFollowUp.status()).toBe(202);
-          await page.getByText(followUpA, { exact: true }).waitFor({
-            state: 'visible',
-            timeout: 120_000,
-          });
-          await page.reload({ waitUntil: 'domcontentloaded' });
-          await page.getByText(markerA, { exact: true }).waitFor({
-            state: 'visible',
-            timeout: 30_000,
-          });
-          await page.getByText(followUpA, { exact: true }).waitFor({
-            state: 'visible',
-            timeout: 30_000,
-          });
-
-          const [finalA, finalB] = await Promise.all([
-            readFile(findSessionTranscript(storageRoot, sessionA), 'utf8'),
-            readFile(findSessionTranscript(storageRoot, sessionB), 'utf8'),
-          ]);
-          expect(finalA).toContain(markerA);
-          expect(finalA).toContain(followUpA);
-          expect(finalB).toContain(markerB);
-          expect(proxy.requestBodies).toHaveLength(3);
-          expect(
-            proxy.requestBodies.filter((body) => body.includes(markerB))
-          ).toHaveLength(1);
-          expect(proxy.maxInFlight).toBe(1);
-          expect(proxy.heldRequestNumbers).toEqual([1]);
-          expect(expectedOverloadConsoleErrors).toBe(1);
-          expect(browserFaults).toEqual([]);
-          expect(`${output.join('')}${await page.content()}`).not.toContain(
-            model.apiKey
-          );
-
-          await browser.close();
-          browser = undefined;
-          child.kill('SIGTERM');
-          const exit = await waitForChildExit(child);
-          if (exit.signal || exit.code !== 0) {
-            throw new Error(
-              `Session residency Web server exited ${
-                exit.code ?? exit.signal
-              }: ${output.join('').replaceAll(model.apiKey, '[redacted]')}`
-            );
-          }
-          if (child.pid && childIdentity) {
-            expect(processIdentityMatches(child.pid, childIdentity)).toBe(false);
-          }
-        } finally {
-          proxy.releaseHeld();
-          await browser?.close().catch(() => undefined);
-          if (child && child.exitCode === null && child.signalCode === null) {
-            child.kill('SIGKILL');
-            await waitForChildExit(child, 10_000).catch(() => undefined);
-          }
-          await proxy.close();
-          await rm(root, { recursive: true, force: true });
         }
-      },
-      300_000
-    );
+        if (child.pid && childIdentity) {
+          expect(processIdentityMatches(child.pid, childIdentity)).toBe(false);
+        }
+      } finally {
+        proxy.releaseHeld();
+        await browser?.close().catch(() => undefined);
+        if (child && child.exitCode === null && child.signalCode === null) {
+          child.kill('SIGKILL');
+          await waitForChildExit(child, 10_000).catch(() => undefined);
+        }
+        await proxy.close();
+        await rm(root, { recursive: true, force: true });
+      }
+    }, 300_000);
   });
