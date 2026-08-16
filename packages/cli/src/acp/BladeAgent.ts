@@ -11,8 +11,10 @@ import {
   type Agent as AcpAgentInterface,
   type AgentSideConnection,
   PROTOCOL_VERSION,
+  RequestError,
 } from '@agentclientprotocol/sdk';
 import {
+  SessionRuntimeCapacityError,
   SessionRuntimeResidency,
   type SessionRuntimeResidencyReservation,
 } from '../agent/runtime/SessionRuntimeResidency.js';
@@ -41,7 +43,7 @@ import {
 } from '../services/pi/serviceTier.js';
 import { type SessionMetadata, SessionService } from '../services/SessionService.js';
 import { SessionTaskService } from '../services/SessionTaskService.js';
-import { getConfig } from '../store/vanilla.js';
+import { ensureStoreInitialized, getConfig } from '../store/vanilla.js';
 import { getCwd } from '../utils/cwd.js';
 import { createSessionId } from '../utils/sessionId.js';
 import { AcpSession } from './Session.js';
@@ -65,18 +67,46 @@ type AcpModelConfiguration = Pick<
 export class BladeAgent implements AcpAgentInterface {
   private sessions: Map<string, AcpSession> = new Map();
   private sessionLoadQueues: Map<string, Promise<void>> = new Map();
-  private readonly runtimeResidency: SessionRuntimeResidency<AcpSession>;
+  private runtimeResidencyValue?: SessionRuntimeResidency<AcpSession>;
   private clientCapabilities: acp.ClientCapabilities | undefined;
   private destroyed = false;
   private destroyPromise?: Promise<void>;
 
-  constructor(private connection: AgentSideConnection) {
-    const config = getConfig();
-    this.runtimeResidency = new SessionRuntimeResidency({
-      maxResident:
-        config?.maxResidentSessionRuntimes ?? DEFAULT_MAX_RESIDENT_SESSION_RUNTIMES,
-      idleMs: config?.sessionRuntimeIdleMs ?? DEFAULT_SESSION_RUNTIME_IDLE_MS,
-    });
+  constructor(private connection: AgentSideConnection) {}
+
+  private get runtimeResidency(): SessionRuntimeResidency<AcpSession> {
+    if (!this.runtimeResidencyValue) {
+      const config = getConfig();
+      this.runtimeResidencyValue = new SessionRuntimeResidency({
+        maxResident:
+          config?.maxResidentSessionRuntimes ?? DEFAULT_MAX_RESIDENT_SESSION_RUNTIMES,
+        idleMs: config?.sessionRuntimeIdleMs ?? DEFAULT_SESSION_RUNTIME_IDLE_MS,
+      });
+    }
+    return this.runtimeResidencyValue;
+  }
+
+  private async reserveSessionRuntime(
+    sessionId: string
+  ): Promise<SessionRuntimeResidencyReservation<AcpSession>> {
+    try {
+      return await this.runtimeResidency.reserve(sessionId, {
+        surface: 'acp',
+        allowEviction: false,
+      });
+    } catch (error) {
+      if (error instanceof SessionRuntimeCapacityError) {
+        throw RequestError.internalError(
+          {
+            resource: error.resource,
+            limit: error.limit,
+            retryable: error.retryable,
+          },
+          error.message
+        );
+      }
+      throw error;
+    }
   }
 
   /**
@@ -90,6 +120,7 @@ export class BladeAgent implements AcpAgentInterface {
 
     // 保存客户端能力，用于后续判断是否使用 IDE 的文件系统
     this.clientCapabilities = params.clientCapabilities;
+    await ensureStoreInitialized();
 
     return {
       protocolVersion: PROTOCOL_VERSION,
@@ -131,10 +162,7 @@ export class BladeAgent implements AcpAgentInterface {
   async newSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
     this.assertNotDestroyed();
     const sessionId = createSessionId('acp');
-    const reservation = await this.runtimeResidency.reserve(sessionId, {
-      surface: 'acp',
-      allowEviction: false,
-    });
+    const reservation = await this.reserveSessionRuntime(sessionId);
     const sourceCwd = params.cwd || getCwd();
     const requestedIsolation = params._meta?.['blade/taskIsolation'];
     const taskIsolation =
@@ -275,10 +303,7 @@ export class BladeAgent implements AcpAgentInterface {
     }
 
     const forkSessionId = createSessionId('fork');
-    const reservation = await this.runtimeResidency.reserve(forkSessionId, {
-      surface: 'acp',
-      allowEviction: false,
-    });
+    const reservation = await this.reserveSessionRuntime(forkSessionId);
     let session: AcpSession | undefined;
     try {
       const fork = await SessionService.forkSession(params.sessionId, {
@@ -345,10 +370,7 @@ export class BladeAgent implements AcpAgentInterface {
     this.assertNotDestroyed();
     await SessionService.assertSessionWritable(params.sessionId, params.cwd);
     await this.closeResidentSession(params.sessionId);
-    const reservation = await this.runtimeResidency.reserve(params.sessionId, {
-      surface: 'acp',
-      allowEviction: false,
-    });
+    const reservation = await this.reserveSessionRuntime(params.sessionId);
     let session: AcpSession | undefined;
     try {
       const [messages, metadata] = await Promise.all([

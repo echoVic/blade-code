@@ -216,6 +216,7 @@ export function ChatView() {
       {errorIsVisible && (
         <div
           role="alert"
+          data-blade-session-error
           className="flex min-h-11 flex-wrap items-center gap-2 border-b border-red-200/60 bg-red-50/80 px-4 py-2 font-mono text-[11px] text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300 sm:px-5"
         >
           <AlertCircle className="h-3.5 w-3.5 shrink-0" />

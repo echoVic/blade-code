@@ -23,9 +23,16 @@ describe('Session Runtime residency source gate', () => {
 
   it('reserves ACP capacity before task, Runtime, or Session construction', () => {
     const bladeAgent = source('src/acp/BladeAgent.ts');
-    const newSessionStart = bladeAgent.indexOf('async newSession(');
-    const reservation = bladeAgent.indexOf(
+    const reservationHelper = bladeAgent.indexOf(
+      'private async reserveSessionRuntime('
+    );
+    const managerReservation = bladeAgent.indexOf(
       'this.runtimeResidency.reserve(sessionId',
+      reservationHelper
+    );
+    const newSessionStart = bladeAgent.indexOf('async newSession(');
+    const newSessionReservation = bladeAgent.indexOf(
+      'this.reserveSessionRuntime(sessionId)',
       newSessionStart
     );
     const durableTask = bladeAgent.indexOf(
@@ -33,10 +40,31 @@ describe('Session Runtime residency source gate', () => {
       newSessionStart
     );
     const sessionCreate = bladeAgent.indexOf('new AcpSession(', newSessionStart);
+    const forkStart = bladeAgent.indexOf('async unstable_forkSession(');
+    const forkReservation = bladeAgent.indexOf(
+      'this.reserveSessionRuntime(forkSessionId)',
+      forkStart
+    );
+    const durableFork = bladeAgent.indexOf('SessionService.forkSession', forkStart);
+    const replaceStart = bladeAgent.indexOf('private async replaceSession(');
+    const loadReservation = bladeAgent.indexOf(
+      'this.reserveSessionRuntime(params.sessionId)',
+      replaceStart
+    );
+    const durableLoad = bladeAgent.indexOf(
+      'SessionService.loadSession(params.sessionId',
+      replaceStart
+    );
 
-    expect(reservation).toBeGreaterThan(newSessionStart);
-    expect(durableTask).toBeGreaterThan(reservation);
-    expect(sessionCreate).toBeGreaterThan(reservation);
+    expect(managerReservation).toBeGreaterThan(reservationHelper);
+    expect(newSessionReservation).toBeGreaterThan(newSessionStart);
+    expect(durableTask).toBeGreaterThan(newSessionReservation);
+    expect(sessionCreate).toBeGreaterThan(newSessionReservation);
+    expect(forkReservation).toBeGreaterThan(forkStart);
+    expect(durableFork).toBeGreaterThan(forkReservation);
+    expect(loadReservation).toBeGreaterThan(replaceStart);
+    expect(durableLoad).toBeGreaterThan(loadReservation);
+    expect(bladeAgent.match(/this\.runtimeResidency\.reserve\(/g)).toHaveLength(1);
     expect(bladeAgent.match(/this\.sessions\.set\(/g)).toHaveLength(1);
   });
 

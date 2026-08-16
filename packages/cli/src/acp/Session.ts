@@ -2138,6 +2138,9 @@ export class AcpSession {
     await attempt(() => this.cancel());
     if (promptCompletion) await attempt(() => promptCompletion);
     if (userShellCompletion) await attempt(() => userShellCompletion);
+    if (promptCompletion && runtime) {
+      await attempt(() => runtime.discardPendingInput());
+    }
     if (agent) await attempt(() => agent.destroy());
     if (runtime) await attempt(() => runtime.dispose());
     await attempt(() => AcpServiceContext.destroySession(this.id));

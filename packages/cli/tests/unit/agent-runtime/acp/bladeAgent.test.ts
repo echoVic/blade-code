@@ -252,6 +252,7 @@ vi.mock('../../../../src/mcp/McpRegistry.js', () => ({
 
 // Mock getConfig
 vi.mock('../../../../src/store/vanilla.js', () => ({
+  ensureStoreInitialized: vi.fn(async () => undefined),
   getConfig: vi.fn(() => ({
     models: [
       { id: 'gpt-4', displayName: 'GPT-4', provider: 'openai', model: 'gpt-4' },
@@ -1413,9 +1414,14 @@ describe('BladeAgent', () => {
           mcpServers: [],
         })
       ).rejects.toMatchObject({
-        name: 'SessionRuntimeCapacityError',
-        resource: 'resident_runtimes',
-        limit: 1,
+        name: 'RequestError',
+        code: -32603,
+        message: 'Internal error: Session runtime capacity is full',
+        data: {
+          resource: 'resident_runtimes',
+          limit: 1,
+          retryable: true,
+        },
       });
       expect(createdSessions).toHaveLength(1);
 
@@ -1449,8 +1455,14 @@ describe('BladeAgent', () => {
           },
         })
       ).rejects.toMatchObject({
-        name: 'SessionRuntimeCapacityError',
-        resource: 'resident_runtimes',
+        name: 'RequestError',
+        code: -32603,
+        message: 'Internal error: Session runtime capacity is full',
+        data: {
+          resource: 'resident_runtimes',
+          limit: 1,
+          retryable: true,
+        },
       });
       expect(sessionTaskServiceMocks.createSessionTask).not.toHaveBeenCalled();
       expect(createdSessions).toHaveLength(1);
