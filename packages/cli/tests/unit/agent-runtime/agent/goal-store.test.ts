@@ -19,6 +19,10 @@ describe('GoalStore', () => {
   });
 
   afterEach(() => {
+    expect(GoalStore.coordinationStatsForTests()).toEqual({
+      keys: 0,
+      operations: 0,
+    });
     vi.unstubAllEnvs();
     rmSync(storageRoot, { recursive: true, force: true });
   });
@@ -408,6 +412,19 @@ describe('GoalStore', () => {
     unsubscribe();
     await expect(store.get()).resolves.toMatchObject({
       objective: 'committed goal',
+    });
+  });
+
+  it('does not retain historical Goal keys after high-cardinality reads', async () => {
+    await Promise.all(
+      Array.from({ length: 256 }, (_, index) =>
+        new GoalStore(workspaceRoot, `historical-${index}`).get()
+      )
+    );
+
+    expect(GoalStore.coordinationStatsForTests()).toEqual({
+      keys: 0,
+      operations: 0,
     });
   });
 });

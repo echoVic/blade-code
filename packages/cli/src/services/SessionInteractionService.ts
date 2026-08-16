@@ -1,4 +1,4 @@
-import { Mutex } from 'async-mutex';
+import path from 'node:path';
 import { nanoid } from 'nanoid';
 import { DurableSteeringInbox } from '../agent/runtime/DurableSteeringInbox.js';
 import {
@@ -17,18 +17,17 @@ import type {
   ConfirmationHandler,
   ConfirmationResponse,
 } from '../tools/types/ExecutionTypes.js';
+import { KeyedMutexRegistry } from '../utils/KeyedMutexRegistry.js';
 
 const MAX_INTERACTION_BYTES = 128 * 1024;
-const mutexes = new Map<string, Mutex>();
+const interactionLocks = new KeyedMutexRegistry<string>();
 
-function interactionMutex(projectPath: string, sessionId: string): Mutex {
-  const key = `${projectPath}\u0000${sessionId}`;
-  let mutex = mutexes.get(key);
-  if (!mutex) {
-    mutex = new Mutex();
-    mutexes.set(key, mutex);
-  }
-  return mutex;
+function interactionKey(projectPath: string, sessionId: string): string {
+  return `${path.resolve(projectPath)}\u0000${sessionId}`;
+}
+
+export function sessionInteractionCoordinationStatsForTests() {
+  return interactionLocks.getStats();
 }
 
 function toJsonValue(value: unknown, label: string): JsonValue {
@@ -194,7 +193,8 @@ export class SessionInteractionService {
     if (!interactionType) {
       throw new Error(`Confirmation type is not durable: ${details.type ?? 'unknown'}`);
     }
-    return interactionMutex(context.projectPath, context.sessionId).runExclusive(
+    return interactionLocks.runExclusive(
+      interactionKey(context.projectPath, context.sessionId),
       async () => {
         const existing = await SessionInteractionService.findPending(
           context.projectPath,
@@ -255,32 +255,38 @@ export class SessionInteractionService {
     requestId: string,
     response: ConfirmationResponse
   ): Promise<SessionInteractionResponseInfo> {
-    return interactionMutex(projectPath, sessionId).runExclusive(async () => {
-      const events = await new PersistentStore(projectPath).loadEvents(sessionId);
-      if (!events) throw new Error(`Session not found: ${sessionId}`);
-      const interaction = findPendingSessionInteraction(events);
-      const existing = findRecoverableSessionInteractions(events).find(
-        (candidate) => candidate.request.requestId === requestId
-      );
-      const target = existing ?? interaction;
-      if (!target || target.request.requestId !== requestId) {
-        throw new Error(`Pending interaction not found: ${requestId}`);
-      }
-      const durableResponse = durableResponseFor(target, response);
-      if (existing?.response) {
-        if (!sameJson(existing.response.response, durableResponse)) {
-          throw new Error(`Interaction already responded differently: ${requestId}`);
+    return interactionLocks.runExclusive(
+      interactionKey(projectPath, sessionId),
+      async () => {
+        const events = await new PersistentStore(projectPath).loadEvents(sessionId);
+        if (!events) throw new Error(`Session not found: ${sessionId}`);
+        const interaction = findPendingSessionInteraction(events);
+        const existing = findRecoverableSessionInteractions(events).find(
+          (candidate) => candidate.request.requestId === requestId
+        );
+        const target = existing ?? interaction;
+        if (!target || target.request.requestId !== requestId) {
+          throw new Error(`Pending interaction not found: ${requestId}`);
         }
-        return existing.response;
+        const durableResponse = durableResponseFor(target, response);
+        if (existing?.response) {
+          if (!sameJson(existing.response.response, durableResponse)) {
+            throw new Error(`Interaction already responded differently: ${requestId}`);
+          }
+          return existing.response;
+        }
+        const record: SessionInteractionResponseInfo = {
+          requestId,
+          response: durableResponse,
+          respondedAt: new Date().toISOString(),
+        };
+        await new PersistentStore(projectPath).saveInteractionResponse(
+          sessionId,
+          record
+        );
+        return record;
       }
-      const record: SessionInteractionResponseInfo = {
-        requestId,
-        response: durableResponse,
-        respondedAt: new Date().toISOString(),
-      };
-      await new PersistentStore(projectPath).saveInteractionResponse(sessionId, record);
-      return record;
-    });
+    );
   }
 
   static async findPending(
@@ -295,58 +301,61 @@ export class SessionInteractionService {
     projectPath: string,
     sessionId: string
   ): Promise<number> {
-    return interactionMutex(projectPath, sessionId).runExclusive(async () => {
-      const store = new PersistentStore(projectPath);
-      const events = await store.loadEvents(sessionId);
-      if (!events) return 0;
-      const recoverable = findRecoverableSessionInteractions(events);
-      let recovered = 0;
-      for (const interaction of recoverable) {
-        const response = storedResponse(interaction);
-        const content = recoveryContent(interaction, response);
-        if (!interaction.hasRecoveryToolResult) {
-          await store.saveToolResult(
-            sessionId,
-            interaction.request.toolCallId,
-            interaction.request.toolName,
-            content.toolOutput,
-            interaction.request.toolCallId,
-            content.error,
-            undefined,
-            undefined,
+    return interactionLocks.runExclusive(
+      interactionKey(projectPath, sessionId),
+      async () => {
+        const store = new PersistentStore(projectPath);
+        const events = await store.loadEvents(sessionId);
+        if (!events) return 0;
+        const recoverable = findRecoverableSessionInteractions(events);
+        let recovered = 0;
+        for (const interaction of recoverable) {
+          const response = storedResponse(interaction);
+          const content = recoveryContent(interaction, response);
+          if (!interaction.hasRecoveryToolResult) {
+            await store.saveToolResult(
+              sessionId,
+              interaction.request.toolCallId,
+              interaction.request.toolName,
+              content.toolOutput,
+              interaction.request.toolCallId,
+              content.error,
+              undefined,
+              undefined,
+              {
+                interactionRecovery: true,
+                requestId: interaction.request.requestId,
+              }
+            );
+          }
+
+          const inboxMessageId = `interaction-${interaction.request.requestId}`;
+          const inbox = await DurableSteeringInbox.open(projectPath, sessionId);
+          await inbox.enqueue(
             {
-              interactionRecovery: true,
-              requestId: interaction.request.requestId,
-            }
+              id: inboxMessageId,
+              content: content.inbox,
+              queuedAt: Date.now(),
+            },
+            (messages) => !messages.some((message) => message.id === inboxMessageId)
           );
-        }
 
-        const inboxMessageId = `interaction-${interaction.request.requestId}`;
-        const inbox = await DurableSteeringInbox.open(projectPath, sessionId);
-        await inbox.enqueue(
-          {
-            id: inboxMessageId,
-            content: content.inbox,
-            queuedAt: Date.now(),
-          },
-          (messages) => !messages.some((message) => message.id === inboxMessageId)
-        );
-
-        if (!interaction.recovery) {
-          await store
-            .saveInteractionRecovery(sessionId, {
-              requestId: interaction.request.requestId,
-              inboxMessageId,
-              recoveredAt: new Date().toISOString(),
-            })
-            .catch((error) => {
-              if (!String(error).includes('already recovered')) throw error;
-            });
+          if (!interaction.recovery) {
+            await store
+              .saveInteractionRecovery(sessionId, {
+                requestId: interaction.request.requestId,
+                inboxMessageId,
+                recoveredAt: new Date().toISOString(),
+              })
+              .catch((error) => {
+                if (!String(error).includes('already recovered')) throw error;
+              });
+          }
+          recovered++;
         }
-        recovered++;
+        return recovered;
       }
-      return recovered;
-    });
+    );
   }
 
   static async respondAndRecover(

@@ -14,10 +14,10 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { Mutex } from 'async-mutex';
 import { basename, isAbsolute, join, relative, resolve } from 'pathe';
 import { getBladeStorageRoot } from '../context/storage/pathUtils.js';
 import type { SessionTaskDiffStat, SessionTaskWorktree } from '../context/types.js';
+import { KeyedMutexRegistry } from '../utils/KeyedMutexRegistry.js';
 
 const MAX_WORKTREE_NAME_LENGTH = 64;
 const VALID_NAME_SEGMENT = /^[a-zA-Z0-9._-]+$/;
@@ -287,7 +287,7 @@ function requireGitSuccess(result: GitResult, operation: string): string {
 export class WorktreeManager {
   private readonly storageRoot: string;
   private readonly sessions = new Map<string, WorktreeSession>();
-  private readonly sessionLocks = new Map<string, Mutex>();
+  private readonly sessionLocks = new KeyedMutexRegistry<string>();
 
   constructor(options: WorktreeManagerOptions = {}) {
     this.storageRoot = options.storageRoot ?? getBladeStorageRoot();
@@ -304,7 +304,7 @@ export class WorktreeManager {
   }
 
   async enter(input: EnterWorktreeInput): Promise<WorktreeSession> {
-    return this.getSessionLock(input.sessionId).runExclusive(async () => {
+    return this.sessionLocks.runExclusive(input.sessionId, async () => {
       if (this.sessions.has(input.sessionId)) {
         throw new Error('This session is already inside a managed worktree');
       }
@@ -381,7 +381,7 @@ export class WorktreeManager {
   }
 
   async restoreSession(session: WorktreeSession): Promise<WorktreeSession> {
-    return this.getSessionLock(session.sessionId).runExclusive(async () => {
+    return this.sessionLocks.runExclusive(session.sessionId, async () => {
       const existing = this.sessions.get(session.sessionId);
       if (existing) {
         return existing;
@@ -446,7 +446,7 @@ export class WorktreeManager {
   }
 
   async apply(sessionId: string): Promise<WorktreeApplyResult> {
-    return this.getSessionLock(sessionId).runExclusive(async () => {
+    return this.sessionLocks.runExclusive(sessionId, async () => {
       const session = this.sessions.get(sessionId);
       if (!session) {
         throw new WorktreeDeliveryConflict(
@@ -791,7 +791,7 @@ export class WorktreeManager {
   }
 
   async exit(input: ExitWorktreeInput): Promise<WorktreeExitResult> {
-    return this.getSessionLock(input.sessionId).runExclusive(async () => {
+    return this.sessionLocks.runExclusive(input.sessionId, async () => {
       const session = this.sessions.get(input.sessionId);
       if (!session) {
         return {
@@ -870,13 +870,8 @@ export class WorktreeManager {
     this.sessions.delete(sessionId);
   }
 
-  private getSessionLock(sessionId: string): Mutex {
-    let lock = this.sessionLocks.get(sessionId);
-    if (!lock) {
-      lock = new Mutex();
-      this.sessionLocks.set(sessionId, lock);
-    }
-    return lock;
+  coordinationStatsForTests() {
+    return this.sessionLocks.getStats();
   }
 
   private async inspectDiffArtifact(

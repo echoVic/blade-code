@@ -28,6 +28,10 @@ function createController(
       pinned: 0,
       maxResident: 32,
     })),
+    getCoordinationStats: vi.fn(() => ({
+      messageSubmissions: { keys: 0, operations: 0 },
+      taskDeliveries: { keys: 0, operations: 0 },
+    })),
     shutdown: vi.fn(async () => undefined),
   };
 }

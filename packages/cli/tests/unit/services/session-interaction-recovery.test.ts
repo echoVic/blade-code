@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DurableSteeringInbox } from '../../../src/agent/runtime/DurableSteeringInbox.js';
 import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
 import { getSessionFilePath } from '../../../src/context/storage/pathUtils.js';
-import { SessionInteractionService } from '../../../src/services/SessionInteractionService.js';
+import {
+  SessionInteractionService,
+  sessionInteractionCoordinationStatsForTests,
+} from '../../../src/services/SessionInteractionService.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 
 describe('SessionInteractionService durable recovery', () => {
@@ -21,6 +24,10 @@ describe('SessionInteractionService durable recovery', () => {
   });
 
   afterEach(async () => {
+    expect(sessionInteractionCoordinationStatsForTests()).toEqual({
+      keys: 0,
+      operations: 0,
+    });
     if (previousStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
     else process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
     await Promise.all([
@@ -331,5 +338,18 @@ describe('SessionInteractionService durable recovery', () => {
       })
     ).rejects.toThrow('Interaction requires a durable tool call');
     expect(surface).not.toHaveBeenCalled();
+  });
+
+  it('does not retain historical Session keys after recovery scans', async () => {
+    await Promise.all(
+      Array.from({ length: 64 }, (_, index) =>
+        SessionInteractionService.recoverResponded(workspace, `historical-${index}`)
+      )
+    );
+
+    expect(sessionInteractionCoordinationStatsForTests()).toEqual({
+      keys: 0,
+      operations: 0,
+    });
   });
 });

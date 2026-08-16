@@ -62,6 +62,10 @@ describe('WorktreeManager integration', () => {
   });
 
   afterEach(async () => {
+    expect(manager.coordinationStatsForTests()).toEqual({
+      keys: 0,
+      operations: 0,
+    });
     await rm(tempRoot, { recursive: true, force: true });
   });
 
@@ -508,5 +512,21 @@ describe('WorktreeManager integration', () => {
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain('Git inspection failed');
     await expect(access(invalidRoot)).resolves.toBeUndefined();
+  });
+
+  it('does not retain historical Session locks after no-op exits', async () => {
+    await Promise.all(
+      Array.from({ length: 1_000 }, (_, index) =>
+        manager.exit({
+          sessionId: `historical-${index}`,
+          action: 'keep',
+        })
+      )
+    );
+
+    expect(manager.coordinationStatsForTests()).toEqual({
+      keys: 0,
+      operations: 0,
+    });
   });
 });

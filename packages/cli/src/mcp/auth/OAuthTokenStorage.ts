@@ -2,10 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { constants, promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { OAuthDiscoveryState } from '@modelcontextprotocol/sdk/client/auth.js';
-import { Mutex } from 'async-mutex';
 import writeFileAtomic from 'write-file-atomic';
 import { getBladeStorageRoot } from '../../context/storage/pathUtils.js';
 import { parseSchema, safeParseSchema, Type } from '../../schema/index.js';
+import { KeyedMutexRegistry } from '../../utils/KeyedMutexRegistry.js';
 import type { McpOAuthCredential, McpOAuthCredentialStore } from './types.js';
 
 const STORE_VERSION = 1;
@@ -121,25 +121,22 @@ export function mcpOAuthCredentialId(
 }
 
 export class OAuthTokenStorage {
-  private static readonly mutexes = new Map<string, Mutex>();
+  private static readonly locks = new KeyedMutexRegistry<string>();
 
   private readonly stateRoot: string;
   private readonly tokenFilePath: string;
-  private readonly mutex: Mutex;
 
   constructor(storageRoot = getBladeStorageRoot()) {
     this.stateRoot = path.join(storageRoot, 'mcp');
     this.tokenFilePath = path.join(this.stateRoot, 'oauth-credentials.json');
-    let mutex = OAuthTokenStorage.mutexes.get(this.tokenFilePath);
-    if (!mutex) {
-      mutex = new Mutex();
-      OAuthTokenStorage.mutexes.set(this.tokenFilePath, mutex);
-    }
-    this.mutex = mutex;
+  }
+
+  static coordinationStatsForTests() {
+    return this.locks.getStats();
   }
 
   async getCredential(identity: string): Promise<McpOAuthCredential | null> {
-    return this.mutex.runExclusive(async () => {
+    return OAuthTokenStorage.locks.runExclusive(this.tokenFilePath, async () => {
       const store = await this.readStore();
       const credential = store.credentials[identity];
       return credential ? cloneCredential(credential) : null;
@@ -169,7 +166,7 @@ export class OAuthTokenStorage {
   }
 
   async listCredentialIds(): Promise<string[]> {
-    return this.mutex.runExclusive(async () =>
+    return OAuthTokenStorage.locks.runExclusive(this.tokenFilePath, async () =>
       Object.keys((await this.readStore()).credentials).sort()
     );
   }
@@ -177,7 +174,7 @@ export class OAuthTokenStorage {
   private async runMutation<T>(
     operation: (store: McpOAuthCredentialStore) => Promise<T>
   ): Promise<T> {
-    return this.mutex.runExclusive(async () => {
+    return OAuthTokenStorage.locks.runExclusive(this.tokenFilePath, async () => {
       const release = await this.acquireStoreLock();
       try {
         const store = await this.readStore();

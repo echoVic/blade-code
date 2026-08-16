@@ -27,6 +27,10 @@ describe('OAuthTokenStorage', () => {
   });
 
   afterEach(async () => {
+    expect(OAuthTokenStorage.coordinationStatsForTests()).toEqual({
+      keys: 0,
+      operations: 0,
+    });
     await rm(root, { recursive: true, force: true });
   });
 
@@ -133,5 +137,20 @@ describe('OAuthTokenStorage', () => {
     expect(
       mcpOAuthCredentialId('https://example.test/mcp', 'client-a', ['read'])
     ).not.toBe(mcpOAuthCredentialId('https://example.test/mcp', 'client-a', ['write']));
+  });
+
+  it('does not retain historical credential-store keys after reads', async () => {
+    await Promise.all(
+      Array.from({ length: 64 }, (_, index) =>
+        new OAuthTokenStorage(
+          path.join(root, `historical-${index}`)
+        ).listCredentialIds()
+      )
+    );
+
+    expect(OAuthTokenStorage.coordinationStatsForTests()).toEqual({
+      keys: 0,
+      operations: 0,
+    });
   });
 });

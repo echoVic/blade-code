@@ -13,12 +13,12 @@
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Mutex } from 'async-mutex';
 import { merge } from 'lodash-es';
 import writeFileAtomic from 'write-file-atomic';
 import type { BladeConfig, PermissionConfig } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { getCwd } from '../utils/cwd.js';
+import { KeyedMutexRegistry } from '../utils/KeyedMutexRegistry.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -470,8 +470,8 @@ export class ConfigService {
   private pendingUpdates: Map<string, Record<string, unknown>> = new Map();
   private timers: Map<string, NodeJS.Timeout> = new Map();
 
-  // Per-file 互斥锁（使用 async-mutex）
-  private fileLocks: Map<string, Mutex> = new Map();
+  // Per-file operations retain coordination only while active or queued.
+  private readonly fileLocks = new KeyedMutexRegistry<string>();
 
   // 错误记录
   private lastSaveError: Error | null = null;
@@ -502,6 +502,10 @@ export class ConfigService {
       }
     }
     ConfigService.instance = null;
+  }
+
+  coordinationStatsForTests() {
+    return this.fileLocks.getStats();
   }
 
   // ============================================
@@ -837,15 +841,7 @@ export class ConfigService {
     filePath: string,
     updates: Record<string, unknown>
   ): Promise<void> {
-    // 获取或创建该文件的 Mutex
-    let mutex = this.fileLocks.get(filePath);
-    if (!mutex) {
-      mutex = new Mutex();
-      this.fileLocks.set(filePath, mutex);
-    }
-
-    // 使用 Mutex 确保串行执行
-    await mutex.runExclusive(async () => {
+    await this.fileLocks.runExclusive(filePath, async () => {
       await this.performWrite(filePath, updates);
     });
   }
@@ -861,15 +857,7 @@ export class ConfigService {
     filePath: string,
     modifier: (existingConfig: Record<string, unknown>) => Record<string, unknown>
   ): Promise<void> {
-    // 获取或创建该文件的 Mutex
-    let mutex = this.fileLocks.get(filePath);
-    if (!mutex) {
-      mutex = new Mutex();
-      this.fileLocks.set(filePath, mutex);
-    }
-
-    // 使用 Mutex 确保串行执行
-    await mutex.runExclusive(async () => {
+    await this.fileLocks.runExclusive(filePath, async () => {
       // 1. 确保目录存在
       await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o755 });
 

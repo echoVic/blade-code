@@ -1316,6 +1316,60 @@ describe('SessionRoutes runtime reuse', () => {
       pinned: 0,
       maxResident: 1,
     });
+    expect(controller.getCoordinationStats()).toEqual({
+      messageSubmissions: { keys: 0, operations: 0 },
+      taskDeliveries: { keys: 0, operations: 0 },
+    });
+    await controller.shutdown();
+  });
+
+  it('reclaims high-cardinality message and task-delivery coordination keys', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const projectPath = '/tmp/coordination-churn';
+    const metadata = Array.from({ length: 32 }, (_, index) =>
+      metadataFor(`coordination-${index}`, projectPath)
+    );
+    vi.mocked(SessionService.listSessions).mockResolvedValue(metadata);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId, requestedProjectPath) =>
+        requestedProjectPath === projectPath
+          ? metadata.find((candidate) => candidate.sessionId === sessionId)
+          : undefined
+    );
+    const controller = createSessionRouteController();
+
+    for (const session of metadata) {
+      const response = await controller.app.request(
+        `/${session.sessionId}/message?projectPath=${encodeURIComponent(projectPath)}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: `message ${session.sessionId}` }),
+        }
+      );
+      expect(response.status).toBe(202);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(controller.getCoordinationStats().messageSubmissions).toEqual({
+        keys: 0,
+        operations: 0,
+      });
+    }
+
+    for (const session of metadata) {
+      await expect(
+        controller.deliverTask(session.sessionId, 'apply', projectPath)
+      ).rejects.toMatchObject({
+        code: 'CONFLICT',
+        message: 'Task worktree is unavailable',
+      });
+      expect(controller.getCoordinationStats().taskDeliveries).toEqual({
+        keys: 0,
+        operations: 0,
+      });
+    }
+
     await controller.shutdown();
   });
 
@@ -5106,6 +5160,11 @@ describe('SessionRoutes runtime reuse', () => {
       message: 'Task changes have already been applied',
     });
     expect(worktreeState.apply).toHaveBeenCalledTimes(1);
+    expect(controller.getCoordinationStats()).toEqual({
+      messageSubmissions: { keys: 0, operations: 0 },
+      taskDeliveries: { keys: 0, operations: 0 },
+    });
+    await controller.shutdown();
   });
 
   it('persists a safe conflict reason without removing the task worktree', async () => {

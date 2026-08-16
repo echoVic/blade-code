@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { Mutex } from 'async-mutex';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { LRUCache } from 'lru-cache';
@@ -115,6 +114,7 @@ import {
   renderToolDisplayToString,
 } from '../../ui/utils/toolFormatters.js';
 import { getCwd } from '../../utils/cwd.js';
+import { KeyedMutexRegistry } from '../../utils/KeyedMutexRegistry.js';
 import { createSessionId } from '../../utils/sessionId.js';
 import {
   WorktreeDeliveryConflict,
@@ -1359,6 +1359,10 @@ export interface SessionRouteController {
     pinned: number;
     maxResident: number;
   };
+  getCoordinationStats(): {
+    messageSubmissions: { keys: number; operations: number };
+    taskDeliveries: { keys: number; operations: number };
+  };
   shutdown(reason?: string): Promise<void>;
 }
 
@@ -1400,8 +1404,8 @@ export const createSessionRouteController = (): SessionRouteController => {
   >();
   const runtimeDisposals = new Map<string, Promise<void>>();
   const sessionHydrations = new Map<string, Promise<SessionInfo>>();
-  const messageSubmissionLocks = new Map<string, Mutex>();
-  const taskDeliveryLocks = new Map<string, Mutex>();
+  const messageSubmissionLocks = new KeyedMutexRegistry<string>();
+  const taskDeliveryLocks = new KeyedMutexRegistry<string>();
   const startupConfig = getConfig();
   const runtimeResidency = new SessionRuntimeResidency<SessionRuntime>({
     maxResident:
@@ -1439,25 +1443,15 @@ export const createSessionRouteController = (): SessionRouteController => {
     return withAdmission(next);
   });
 
-  const getMessageSubmissionLock = (ref: SessionRef): Mutex => {
-    const key = sessionRefKey(ref);
-    let lock = messageSubmissionLocks.get(key);
-    if (!lock) {
-      lock = new Mutex();
-      messageSubmissionLocks.set(key, lock);
-    }
-    return lock;
-  };
+  const withMessageSubmissionLock = <T>(
+    ref: SessionRef,
+    operation: () => Promise<T> | T
+  ): Promise<T> => messageSubmissionLocks.runExclusive(sessionRefKey(ref), operation);
 
-  const getTaskDeliveryLock = (ref: SessionRef): Mutex => {
-    const key = sessionRefKey(ref);
-    let lock = taskDeliveryLocks.get(key);
-    if (!lock) {
-      lock = new Mutex();
-      taskDeliveryLocks.set(key, lock);
-    }
-    return lock;
-  };
+  const withTaskDeliveryLock = <T>(
+    ref: SessionRef,
+    operation: () => Promise<T> | T
+  ): Promise<T> => taskDeliveryLocks.runExclusive(sessionRefKey(ref), operation);
 
   const hasActiveRunForRef = (ref: SessionRef): boolean =>
     [...activeRuns.values()].some(
@@ -1487,14 +1481,6 @@ export const createSessionRouteController = (): SessionRouteController => {
           !activeReviewRuns.has(key)
         ) {
           sessions.delete(key);
-        }
-        const messageLock = messageSubmissionLocks.get(key);
-        if (messageLock && !messageLock.isLocked()) {
-          messageSubmissionLocks.delete(key);
-        }
-        const deliveryLock = taskDeliveryLocks.get(key);
-        if (deliveryLock && !deliveryLock.isLocked()) {
-          taskDeliveryLocks.delete(key);
         }
         await runtime.dispose();
         if (runtimes.size === 0) {
@@ -2110,7 +2096,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     projectPath?: string
   ): Promise<SessionMetadata & { isActive: boolean }> => {
     const ref = await resolveSessionRef(sessionId, projectPath);
-    return getTaskDeliveryLock(ref).runExclusive(async () => {
+    return withTaskDeliveryLock(ref, async () => {
       const session = await resolveSessionForWrite(ref.sessionId, ref.projectPath);
       if (['queued', 'running'].includes(session.taskStatus)) {
         throw new ConflictError(
@@ -2707,7 +2693,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     );
     const ref = sessionRefFromSession(session);
 
-    return getMessageSubmissionLock(ref).runExclusive(async () => {
+    return withMessageSubmissionLock(ref, async () => {
       const currentRun = getRun(session.currentRunId);
       if (isActiveRun(currentRun)) {
         throw new ConflictError('Cannot rewind while a run is active');
@@ -2765,7 +2751,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     const ref = sessionRefFromSession(session);
     const key = sessionRefKey(ref);
 
-    return getMessageSubmissionLock(ref).runExclusive(async () => {
+    return withMessageSubmissionLock(ref, async () => {
       if (isActiveRun(getRun(session.currentRunId))) {
         throw new ConflictError('Cannot start a review during an active turn');
       }
@@ -2947,7 +2933,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     );
     const ref = sessionRefFromSession(session);
 
-    return getMessageSubmissionLock(ref).runExclusive(async () => {
+    return withMessageSubmissionLock(ref, async () => {
       const currentRun = getRun(session.currentRunId);
       if (isActiveRun(currentRun)) {
         throw new ConflictError(
@@ -3037,7 +3023,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     );
     const ref = sessionRefFromSession(session);
 
-    return getMessageSubmissionLock(ref).runExclusive(async () => {
+    return withMessageSubmissionLock(ref, async () => {
       const currentRun = getRun(session.currentRunId);
       if (isActiveRun(currentRun)) {
         return c.json({ status: 'rejected', reason: 'run_active' }, 409);
@@ -3088,7 +3074,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     );
     const ref = sessionRefFromSession(session);
 
-    return getMessageSubmissionLock(ref).runExclusive(async () => {
+    return withMessageSubmissionLock(ref, async () => {
       const runtimeLease = await acquireRuntime(session);
       let transferred = false;
       try {
@@ -3188,7 +3174,6 @@ export const createSessionRouteController = (): SessionRouteController => {
         sessions.delete(key);
         sessionHydrations.delete(key);
         runtimeInitializations.delete(key);
-        messageSubmissionLocks.delete(key);
         Bus.publish(memberRef, 'session.archived', {
           archiveRootId: ref.sessionId,
           archivedAt: archived.archivedAt,
@@ -3300,7 +3285,6 @@ export const createSessionRouteController = (): SessionRouteController => {
       sessions.delete(key);
       sessionHydrations.delete(key);
       runtimeInitializations.delete(key);
-      messageSubmissionLocks.delete(key);
       const residentRuntime = runtimes.get(key);
       if (residentRuntime) {
         const removed = await runtimeResidency.remove(key, residentRuntime);
@@ -3449,14 +3433,14 @@ export const createSessionRouteController = (): SessionRouteController => {
           deliveredInteractionIds.add(requestId);
         }
         if (event.type === 'subagent.completion.queued') {
-          void getMessageSubmissionLock(ref)
-            .runExclusive(() => resumePendingSession(session))
-            .catch((error) => {
-              logger.error(
-                `[SessionRoutes] Failed to wake background completion for ${session.id}:`,
-                error
-              );
-            });
+          void withMessageSubmissionLock(ref, () =>
+            resumePendingSession(session)
+          ).catch((error) => {
+            logger.error(
+              `[SessionRoutes] Failed to wake background completion for ${session.id}:`,
+              error
+            );
+          });
         }
         // Only committed events carry a seq; ephemeral events never advance
         // EventSource's Last-Event-ID cursor.
@@ -3679,7 +3663,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       requestedPermissionMode ?? session.permissionMode ?? PermissionMode.DEFAULT;
     const sessionRef = sessionRefFromSession(session);
 
-    return getMessageSubmissionLock(sessionRef).runExclusive(async () => {
+    return withMessageSubmissionLock(sessionRef, async () => {
       const currentRun = getRun(session.currentRunId);
       if (isActiveRun(currentRun)) {
         if (outputSchema) {
@@ -4014,7 +3998,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     const ref = sessionRefFromSession(session);
     const key = sessionRefKey(ref);
 
-    return getMessageSubmissionLock(ref).runExclusive(async () => {
+    return withMessageSubmissionLock(ref, async () => {
       if (activeUserShellRuns.has(key)) {
         throw new ConflictError(
           'A user shell command is already running in this Session'
@@ -4165,8 +4149,6 @@ export const createSessionRouteController = (): SessionRouteController => {
       runtimeInitializations.clear();
       runtimeDisposals.clear();
       sessionHydrations.clear();
-      messageSubmissionLocks.clear();
-      taskDeliveryLocks.clear();
       sessions.clear();
       if (resumeRecoveredInteraction === resumePendingSession) {
         resumeRecoveredInteraction = undefined;
@@ -4185,6 +4167,10 @@ export const createSessionRouteController = (): SessionRouteController => {
     deliverTask,
     recoverQueuedTasks,
     getRuntimeResidencyStats: () => runtimeResidency.getStats(),
+    getCoordinationStats: () => ({
+      messageSubmissions: messageSubmissionLocks.getStats(),
+      taskDeliveries: taskDeliveryLocks.getStats(),
+    }),
     shutdown,
   };
 };

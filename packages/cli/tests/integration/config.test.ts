@@ -35,6 +35,10 @@ describe('ConfigManager 集成', () => {
   });
 
   afterEach(() => {
+    expect(ConfigService.getInstance().coordinationStatsForTests()).toEqual({
+      keys: 0,
+      operations: 0,
+    });
     process.chdir(originalCwd);
     setCwdState(originalCwd);
     homedirSpy.mockRestore();
@@ -738,5 +742,27 @@ describe('ConfigManager 集成', () => {
     expect(loaded.providerRequestConcurrency).toBe(6);
     expect(loaded.providerRequestAdmissionMs).toBe(120_000);
     expect(loaded.providerRequestPendingBytes).toBe(8 * 1024 * 1024);
+  });
+
+  it('does not retain historical config file locks after workspace churn', async () => {
+    const service = ConfigService.getInstance();
+
+    await Promise.all(
+      Array.from({ length: 32 }, (_, index) =>
+        service.save(
+          { language: 'en' },
+          {
+            scope: 'project',
+            immediate: true,
+            projectDir: path.join(tempProject, `historical-${index}`),
+          }
+        )
+      )
+    );
+
+    expect(service.coordinationStatsForTests()).toEqual({
+      keys: 0,
+      operations: 0,
+    });
   });
 });

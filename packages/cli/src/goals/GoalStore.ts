@@ -1,11 +1,11 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { Mutex } from 'async-mutex';
 import { nanoid } from 'nanoid';
 import writeFileAtomic from 'write-file-atomic';
 import { getSessionGoalFilePath } from '../context/storage/pathUtils.js';
 import type { SessionGoalFinalizationInfo } from '../context/types.js';
 import { parseSchema, StringEnum, safeParseSchema, Type } from '../schema/index.js';
+import { KeyedMutexRegistry } from '../utils/KeyedMutexRegistry.js';
 import {
   GOAL_COMPLETION_VERIFICATION_STATUSES,
   GOAL_STATUSES,
@@ -83,23 +83,20 @@ function normalizeVerificationSummary(summary: string | undefined): string | und
 }
 
 export class GoalStore {
-  private static readonly mutexes = new Map<string, Mutex>();
+  private static readonly locks = new KeyedMutexRegistry<string>();
   private static readonly listeners = new Set<(event: GoalChangeEvent) => void>();
 
   private readonly filePath: string;
-  private readonly mutex: Mutex;
 
   constructor(
     readonly workspaceRoot: string,
     readonly sessionId: string
   ) {
     this.filePath = getSessionGoalFilePath(workspaceRoot, sessionId);
-    let mutex = GoalStore.mutexes.get(this.filePath);
-    if (!mutex) {
-      mutex = new Mutex();
-      GoalStore.mutexes.set(this.filePath, mutex);
-    }
-    this.mutex = mutex;
+  }
+
+  static coordinationStatsForTests() {
+    return this.locks.getStats();
   }
 
   static subscribe(listener: (event: GoalChangeEvent) => void): () => void {
@@ -116,11 +113,11 @@ export class GoalStore {
   }
 
   async get(): Promise<GoalSnapshot | null> {
-    return this.mutex.runExclusive(() => this.readUnlocked());
+    return GoalStore.locks.runExclusive(this.filePath, () => this.readUnlocked());
   }
 
   async create(input: GoalCreateInput): Promise<GoalSnapshot> {
-    return this.mutex.runExclusive(async () => {
+    return GoalStore.locks.runExclusive(this.filePath, async () => {
       const existing = await this.readUnlocked();
       if (existing && existing.status !== 'complete') {
         throw new Error(
@@ -184,7 +181,7 @@ export class GoalStore {
   }
 
   async pauseIfActive(reason: string): Promise<GoalSnapshot | null> {
-    return this.mutex.runExclusive(async () => {
+    return GoalStore.locks.runExclusive(this.filePath, async () => {
       const goal = await this.readUnlocked();
       if (!goal || (goal.status !== 'active' && goal.status !== 'verifying')) {
         return goal;
@@ -328,7 +325,7 @@ export class GoalStore {
   async reconcileFinalizationReceipt(
     receipt: SessionGoalFinalizationInfo
   ): Promise<GoalFinalizationReconciliation | null> {
-    return this.mutex.runExclusive(async () => {
+    return GoalStore.locks.runExclusive(this.filePath, async () => {
       const goal = await this.readUnlocked();
       if (!goal || goal.goalId !== receipt.goalId) return null;
 
@@ -377,7 +374,7 @@ export class GoalStore {
   }
 
   async recordProgress(progress: GoalProgress): Promise<GoalSnapshot | null> {
-    return this.mutex.runExclusive(async () => {
+    return GoalStore.locks.runExclusive(this.filePath, async () => {
       const goal = await this.readUnlocked();
       if (!goal || (goal.status !== 'active' && goal.status !== 'verifying')) {
         return goal;
@@ -416,7 +413,7 @@ export class GoalStore {
   }
 
   async tryBeginContinuation(): Promise<GoalSnapshot | null> {
-    return this.mutex.runExclusive(async () => {
+    return GoalStore.locks.runExclusive(this.filePath, async () => {
       const goal = await this.readUnlocked();
       if (!goal || (goal.status !== 'active' && goal.status !== 'verifying')) {
         return null;
@@ -433,7 +430,7 @@ export class GoalStore {
   }
 
   async clear(): Promise<boolean> {
-    return this.mutex.runExclusive(async () => {
+    return GoalStore.locks.runExclusive(this.filePath, async () => {
       try {
         await fs.unlink(this.filePath);
       } catch (error) {
@@ -448,7 +445,7 @@ export class GoalStore {
   private async updateExisting(
     update: (goal: GoalSnapshot) => GoalSnapshot
   ): Promise<GoalSnapshot> {
-    return this.mutex.runExclusive(async () => {
+    return GoalStore.locks.runExclusive(this.filePath, async () => {
       const existing = await this.readUnlocked();
       if (!existing) throw new Error('Session has no goal');
       const next = parseSchema(GoalSnapshotSchema, update(existing));
