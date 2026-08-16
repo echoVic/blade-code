@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.52] - 2026-08-18
+
+### 稳定性
+
+- 新增 `KeyedMutexRegistry`，以同步 operation ownership 和 exact-entry identity
+  在最后一个 active/queued operation settle 后立即回收 keyed mutex；成功、同步异常、
+  异步 rejection、同 key 排队和回收后新 generation 均不依赖 timer、TTL、GC、
+  `WeakRef` 或 `isLocked()` 猜测
+- 将 durable interaction、Goal sidecar、MCP OAuth credential store、配置文件、
+  worktree Session、Web message submission 与 task delivery 七个生产 owner 统一迁移；
+  同 key 序列化与跨 key 并行保持不变，长驻 Web/ACP 进程不再按历史 Session、workspace
+  或文件路径永久保留 coordination state
+
+### 测试相关
+
+- 新增 10,000 个历史 key、4,096 个 queued operation/256 key 的确定性性能门禁，
+  七个 owner 的高基数归零断言，以及禁止 raw keyed `Mutex` map、GC/timer/finalizer
+  correctness 和 unlocked eviction 的源码门禁
+- 发布阻断矩阵新增 DeepSeek Flash/Pro × production Chromium Web GUI/真实 ACP
+  四格轨迹；Web 通过真实 composer 执行多 Session、follow-up、reload，ACP 在同一
+  multiplexed connection 上执行 close/load follow-up，全部在 framework retry=0
+  下证明 coordination 与 Runtime residency 精确归零
+
 ## [0.10.51] - 2026-08-18
 
 ### 测试相关
@@ -127,7 +150,6 @@ All notable changes to this project will be documented in this file.
   `maxRetries=0`
 - foreground gate-release failure 资格在释放前订阅 stdout，并等实际观察到超过 retained
   budget 的字节后再注入错误，不再用固定 100ms 假设大输出已经到达
-
 ## [0.10.46] - 2026-08-17
 
 ### 测试相关

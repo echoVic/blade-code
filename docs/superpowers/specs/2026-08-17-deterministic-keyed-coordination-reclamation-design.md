@@ -1,6 +1,6 @@
 # Deterministic Keyed Coordination Reclamation
 
-**Target:** `blade-code@0.10.47`
+**Target:** `blade-code@0.10.52`
 
 **Status:** Frozen for implementation
 

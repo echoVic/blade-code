@@ -294,6 +294,22 @@ Flash/Pro Headless 与 raw PTY 再各运行一格单 root coding control，证�
 Runtime reservation、ACP/TUI process、Provider proxy、browser/profile、
 HOME/storage/workspace 全量回收。
 
+Deterministic keyed coordination reclamation 资格要求所有 keyed mutex registry
+仅保留 active/queued operation。确定性门禁必须覆盖成功、同步异常、异步 rejection、
+same-key FIFO、cross-key parallelism、回收后新 generation、10,000 个历史 key 和
+4,096 个 queued operation/256 key；durable interaction、Goal、OAuth credential、
+Config、Worktree、Web message submission 与 task delivery 七个 owner 在高基数 churn
+后都必须精确回到零。
+
+真实 API target 固定运行 DeepSeek Flash/Pro × production Chromium Web GUI 与真实
+ACP 四格。Web 必须通过真实 composer 顺序完成多个 Session、同 Session follow-up 和
+reload，并在每次 settle 后断言 message/task coordination 为零；导航导致的旧 SSE
+`ERR_ABORTED` 必须单独分类，其他 console/page/request fault 为零。ACP 必须在同一
+multiplexed connection 上完成多个 Session、标准 `session/close`、`session/load`
+follow-up，并断言 interaction/Goal/OAuth coordination 与 Runtime residency 归零。
+统计只能通过进程内 test seam 读取，禁止进入 HTTP、ACP、CLI、transcript 或持久化
+schema。四格及既有 Headless/raw PTY 非干扰控制全部使用 framework `retry=0`。
+
 Provider Stall 资格必须让透明 SSE 代理先转发真实模型内容，再在 hard idle timeout
 之前暂停后续事件。Headless JSONL 必须按同一 stall count 输出 sanitized
 `detected → recovered`，标记 `output_started=true`，随后完成真实回复；代理必须证明
