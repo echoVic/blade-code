@@ -5,6 +5,7 @@ import {
   appendBoundedPtyEvidence,
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
+import { hasVisibleWeightedProviderRejection } from './weightedProviderAdmissionPtyDriver.js';
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -121,10 +122,7 @@ async function main(): Promise<void> {
       Math.max(1, evidenceDeadline - Date.now())
     );
     await waitFor(
-      () =>
-        /pending_bytes queue is|provider queue full|background subagent.*failed|后台子代理.*(?:失败|failed)/i.test(
-          output
-        ),
+      () => hasVisibleWeightedProviderRejection(output),
       'Raw PTY did not render the rejected background child',
       Math.max(1, evidenceDeadline - Date.now())
     );
