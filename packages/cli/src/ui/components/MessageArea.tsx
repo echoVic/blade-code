@@ -414,10 +414,18 @@ export const MessageArea: React.FC = React.memo(() => {
     streamedAssistantMessageIds,
   ]);
 
+  const allStaticItems = useMemo(
+    () =>
+      streamingStaticItems.length > 0
+        ? [...staticItems, ...streamingStaticItems]
+        : staticItems,
+    [staticItems, streamingStaticItems]
+  );
+
   return (
     <Box flexDirection="column" paddingX={2}>
       <Box flexDirection="column">
-        <Static key={clearCount} items={staticItems}>
+        <Static key={clearCount} items={allStaticItems}>
           {(item) => item}
         </Static>
 
@@ -429,12 +437,6 @@ export const MessageArea: React.FC = React.memo(() => {
               isExpanded={thinkingExpanded}
             />
           </Box>
-        )}
-
-        {streamingStaticItems.length > 0 && (
-          <Static key={`streaming-${clearCount}`} items={streamingStaticItems}>
-            {(item) => item}
-          </Static>
         )}
 
         {/* tail viewport 已由 rawStreamRenderer 直接通过 stdout.write 渲染，
