@@ -117,11 +117,7 @@ async function newTaskSession(
   return session.sessionId;
 }
 
-function prompt(
-  connection: acp.ClientSideConnection,
-  sessionId: string,
-  text: string
-) {
+function prompt(connection: acp.ClientSideConnection, sessionId: string, text: string) {
   return connection.prompt({
     sessionId,
     prompt: [{ type: 'text', text }],
@@ -284,12 +280,13 @@ async function run(input: RunnerInput) {
       throw new Error('Weighted task ACP rejection polluted assistant text');
     }
 
-    const [primaryTranscript, rejectedTranscript, queuedTranscript] =
-      await Promise.all([
+    const [primaryTranscript, rejectedTranscript, queuedTranscript] = await Promise.all(
+      [
         readFile(findSessionTranscript(input.storageRoot, primarySessionId), 'utf8'),
         readFile(findSessionTranscript(input.storageRoot, rejectedSessionId), 'utf8'),
         readFile(findSessionTranscript(input.storageRoot, queuedSessionId), 'utf8'),
-      ]);
+      ]
+    );
     const serialized = JSON.stringify(client.sessionUpdates);
     for (const value of [
       primaryText,

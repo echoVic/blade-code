@@ -21,9 +21,7 @@ describe('weighted task admission source gate', () => {
 
     expect(config).toContain('DEFAULT_MAX_QUEUED_TASK_BYTES = 64 * 1024 * 1024');
     expect(config).toContain('MIN_MAX_QUEUED_TASK_BYTES = 64 * 1024');
-    expect(config).toContain(
-      'MAX_MAX_QUEUED_TASK_BYTES = 128 * 1024 * 1024'
-    );
+    expect(config).toContain('MAX_MAX_QUEUED_TASK_BYTES = 128 * 1024 * 1024');
     expect(scheduler).toContain('this.pendingBytes += pending.pendingBytes');
     expect(scheduler).toContain('this.pendingBytes -= pending.pendingBytes');
     expect(scheduler).toContain("'pending_count'");
@@ -79,11 +77,12 @@ describe('weighted task admission source gate', () => {
     const combined = `${agent}\n${server}`;
 
     expect(combined.match(/taskRunScheduler\.admit\(\{/g)).toHaveLength(2);
-    expect(combined.match(/pendingBytes: estimateTaskRunPendingBytes\(\{/g)).toHaveLength(
-      2
-    );
-    expect(combined.match(/pendingMessages: runtime\.getPendingSteeringMessages\(\)/g))
-      .toHaveLength(2);
+    expect(
+      combined.match(/pendingBytes: estimateTaskRunPendingBytes\(\{/g)
+    ).toHaveLength(2);
+    expect(
+      combined.match(/pendingMessages: runtime\.getPendingSteeringMessages\(\)/g)
+    ).toHaveLength(2);
     expect(agent).toContain('content: message');
     expect(server).toContain('content,');
   });

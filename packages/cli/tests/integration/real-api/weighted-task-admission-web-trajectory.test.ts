@@ -274,9 +274,7 @@ describe
         page.on('console', (message) => {
           if (message.type() === 'error') {
             if (
-              /Failed to load resource:.*429 \(Too Many Requests\)/.test(
-                message.text()
-              )
+              /Failed to load resource:.*429 \(Too Many Requests\)/.test(message.text())
             ) {
               expectedOverloadConsoleErrors++;
             } else {
@@ -327,8 +325,9 @@ describe
           state: 'visible',
           timeout: 30_000,
         });
-        await expect(page.locator('[data-blade-task-error]').textContent()).resolves
-          .toContain('Task admission capacity is full');
+        await expect(
+          page.locator('[data-blade-task-error]').textContent()
+        ).resolves.toContain('Task admission capacity is full');
         expect(
           proxy.requestBodies.every((body) => !body.includes(rejectedMarker))
         ).toBe(true);
@@ -381,13 +380,14 @@ describe
             findSessionTranscript(storageRoot, primary.session.sessionId),
             'utf8'
           ),
-          readFile(findSessionTranscript(storageRoot, queued.session.sessionId), 'utf8'),
+          readFile(
+            findSessionTranscript(storageRoot, queued.session.sessionId),
+            'utf8'
+          ),
         ]);
         expect(primaryTranscript).toContain(primaryMarker);
         expect(queuedTranscript).toContain(queuedMarker);
-        expect(`${primaryTranscript}${queuedTranscript}`).not.toContain(
-          rejectedMarker
-        );
+        expect(`${primaryTranscript}${queuedTranscript}`).not.toContain(rejectedMarker);
         expect(
           proxy.requestBodies.every((body) => !body.includes(rejectedMarker))
         ).toBe(true);
@@ -396,9 +396,7 @@ describe
         expect(proxy.heldRequestNumbers).toEqual([1]);
         expect(expectedOverloadConsoleErrors).toBe(1);
         expect(browserFaults).toEqual([]);
-        expect(`${output.join('')}${await page.content()}`).not.toContain(
-          model.apiKey
-        );
+        expect(`${output.join('')}${await page.content()}`).not.toContain(model.apiKey);
 
         await browser.close();
         browser = undefined;

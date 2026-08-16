@@ -217,8 +217,9 @@ describe
               'utf8'
             ),
           ]);
-        expect(`${primaryTranscript}${rejectedTranscript}${queuedTranscript}`).not
-          .toContain(rejectedMarker);
+        expect(
+          `${primaryTranscript}${rejectedTranscript}${queuedTranscript}`
+        ).not.toContain(rejectedMarker);
         expect(JSON.stringify(evidence)).not.toContain(model.apiKey);
         for (const process of evidence.processes ?? []) {
           expect(processIdentityMatches(process.pid, process.identity)).toBe(false);
