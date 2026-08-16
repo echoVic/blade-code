@@ -19,8 +19,10 @@ environment variables, change permissions, or change turn limits. It may set
 `disableAllHooks: true` so hook execution can fail closed.
 
 Project configuration does not control `maxConcurrentTasks`,
-`maxQueuedTasks`, or `maxQueuedTaskBytes`. Those values configure the
-process-wide weighted FIFO task scheduler from the startup configuration.
+`maxQueuedTasks`, `maxQueuedTaskBytes`, `maxResidentSessionRuntimes`, or
+`sessionRuntimeIdleMs`. Those values configure process-wide task admission and
+[Session Runtime residency](session-runtime-residency.md) from the startup
+configuration.
 
 ## Environment lifecycle
 
@@ -63,6 +65,12 @@ Runtime settings and model/provider resources are resolved together before the
 Session begins. Editing project configuration afterward affects only future
 Sessions. Child Sessions inherit a copy of their parent's finalized resource
 snapshot, including values produced by `SessionStart`.
+
+Web idle eviction releases the initialized Runtime snapshot but not durable
+Session state. A later access creates a fresh Runtime owner and restores durable
+history and persisted Session choices. ACP retains its Runtime owner until the
+client sends `session/close`; a later `session/load` reconstructs another owner
+from the same durable Session.
 
 ## Qualification
 

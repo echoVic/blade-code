@@ -79,6 +79,8 @@ blade --debug "!chat,!loop"
 | `--max-turns <n>` | 对话轮次限制（-1: 无限, 0: 禁用, N: 限制） |
 | `--no-verification-agent` | Headless 模式禁用内置独立验证 Subagent；显式测试要求仍会执行 |
 | `--agents <json>` | 为本次运行注入自定义 Subagents，CLI 定义优先级最高 |
+| `--max-resident-session-runtimes <n>` | Web/ACP 进程内 initialized Session Runtime 上限（1-256） |
+| `--session-runtime-idle-ms <ms>` | Web idle Runtime 回收 TTL（30000-3600000ms） |
 
 `--settings` 支持文件路径和内联 JSON。文件路径相对于启动 Blade 时的工作目录解析；无效 JSON、未知字段和类型错误会导致启动失败。该选项适用于 CLI/TUI、print 和 headless，不会持久化配置。
 
@@ -100,6 +102,12 @@ admission controller。CI 或批量评测应从并发 2 开始，根据实际 RS
 `maxConcurrentTasks` / `maxQueuedTasks` / `maxQueuedTaskBytes`，不要并行启动大量
 headless 进程。对应 CLI override 为 `--max-concurrent-tasks`、
 `--max-queued-tasks` 与 `--max-queued-task-bytes`。
+
+`--max-resident-session-runtimes` 与 `--session-runtime-idle-ms` 只控制同一 Web/ACP
+进程内的 multiplexed Runtime registry。普通 CLI/TUI/print/Headless root turn 每个
+进程只拥有一个 Runtime，不进入该 registry。Web 会对 idle Runtime 执行 LRU/TTL
+回收并从 durable state 冷重建；ACP 客户端应调用标准 `session/close` 释放容量。
+详见 [Session Runtime Residency](session-runtime-residency.md)。
 
 ### MCP 选项
 

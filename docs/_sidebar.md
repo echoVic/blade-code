@@ -46,6 +46,7 @@
   * [Workspace Plugin 生命周期](reference/workspace-plugin-lifecycle.md)
   * [Workspace 模型与 Provider 隔离](reference/workspace-model-resources.md)
   * [Workspace Runtime 环境隔离](reference/workspace-runtime-environment.md)
+  * [Session Runtime Residency](reference/session-runtime-residency.md)
   * [Session-scoped LSP](reference/lsp-session-intelligence.md)
   * [MCP Elicitation](reference/mcp-elicitation.md)
   * [MCP Roots 与 Sampling](reference/mcp-roots-sampling.md)

@@ -237,6 +237,22 @@ controls 全部使用 `retry=0`，并回收 rejected inbox/Runtime/worktree、ac
 browser、ACP process/terminal、proxy/socket、port、HOME/storage/workspace。Chromium
 只允许预期的 `/tasks` 429 resource error，其他 console/page/request fault 必须为零。
 
+Bounded Session Runtime residency 资格固定使用
+`maxResidentSessionRuntimes=1` 与 `sessionRuntimeIdleMs=30000`。DeepSeek Flash/Pro
+× production Chromium Web GUI 两格先持有 Session A 的真实 Provider 请求，再由
+Session B 验证 typed HTTP 429 `resident_runtimes`、零 rejected marker Provider
+traffic、idle LRU slot reuse 与 Session A durable cold follow-up。浏览器只允许预期
+429 resource error，其他 console/page/request/SSE fault 必须为零。
+
+真实 ACP stdio 两格必须广告并调用标准 `session/close`：active Session A 占满唯一
+slot 时，new Session B 在 task/worktree/Runtime/Provider 副作用前收到 bounded
+JSON-RPC capacity error；close A 取消并结算 prompt、确认 cancelled inbox、释放 slot，
+随后 B 完成真实 turn，close B 后 load A 从 durable transcript 完成真实 follow-up。
+Flash/Pro Headless 与 raw PTY 再各运行一格单 root coding control，证明 resident limit
+不会干扰非 multiplexed Runtime。目标与对照共八格全部使用 `retry=0`，并检查
+Runtime reservation、ACP/TUI process、Provider proxy、browser/profile、
+HOME/storage/workspace 全量回收。
+
 Provider Stall 资格必须让透明 SSE 代理先转发真实模型内容，再在 hard idle timeout
 之前暂停后续事件。Headless JSONL 必须按同一 stall count 输出 sanitized
 `detected → recovered`，标记 `output_started=true`，随后完成真实回复；代理必须证明

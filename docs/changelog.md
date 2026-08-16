@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.43] - 2026-08-16
+
+### 🛡️ 稳定性
+
+- 新增进程级 Bounded Session Runtime Residency：Web/ACP 在初始化 Runtime、
+  Agent、MCP/LSP、task/worktree 之前预留 slot，resident 与 pending reservation
+  共用硬上限，默认 `32`、合法范围 `1-256`，并发 Session 初始化不能放大为无界资源图
+- Web 使用 pin-safe LRU 与 idle TTL 回收 initialized Runtime；TTL 默认 5 分钟、合法
+  范围 30 秒-1 小时。active turn、pending input、foreground/background shell、
+  background subagent、未认领 child completion、MCP task 与 attached executor
+  均阻止驱逐；durable transcript/inbox/Goal/task/permission/model/worktree 保留并支持
+  cold rehydrate
+- Web 无安全候选时返回 typed HTTP 429 `resident_runtimes`，拒绝路径在
+  Runtime/Provider/worktree/durable task 副作用前结束。disposal failure fail closed：
+  半销毁 Runtime 标记 poisoned、继续占用容量且不能重新 acquire
+- ACP 1.3 正式广告并实现 `session/close`；close 串行化 same-ID load，取消并结算
+  prompt/user shell，确认显式取消的 durable input，关闭 egress 并精确销毁
+  Agent/Runtime/ACP context。ACP 不静默驱逐，capacity error 保留 bounded message、
+  `resource/limit/retryable` data，close 后 slot 可立即复用
+- `maxResidentSessionRuntimes` 与 `sessionRuntimeIdleMs` 由启动配置冻结，project 与
+  Session-local 配置不能覆盖，`0` 不能禁用。CLI/TUI/print/Headless 单 root Runtime
+  不进入 multiplexed registry
+
+### ✅ 测试相关
+
+- 确定性覆盖 exact/one-over capacity、reservation accounting、duplicate key、
+  pin/MRU/LRU、Web-only eviction、ACP no-eviction、TTL 边界、poison disposal、
+  ABA identity、shutdown、512-cycle steady state，以及 active/pending/shell/
+  subagent/MCP/executor 全量 blocker
+- DeepSeek Flash/Pro × production Chromium Web GUI、真实 ACP stdio、
+  Headless、raw PTY 八格目标/对照全部使用 framework retry=0 通过；验证 Web typed
+  429 与 cold rehydrate、ACP standard close/slot reuse/load follow-up、单 root
+  coding 非干扰、durable transcript、零 rejected Provider traffic 和全量进程资源回收
+
 ## [0.10.42] - 2026-08-16
 
 ### 🛡️ 稳定性

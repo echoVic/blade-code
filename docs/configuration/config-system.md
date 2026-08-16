@@ -284,6 +284,20 @@ typed HTTP 429，Headless/ACP task session 持久化可重试的 `capacity` fail
 project 配置不能覆盖这三个进程级 task admission 设置。完整契约见
 [Task Admission](../reference/task-admission.md)。
 
+`maxResidentSessionRuntimes` 限制长运行 Web/ACP 进程中 fully initialized Session
+Runtime graph 的总数，默认 `32`，必须为 `1-256` 的安全整数。初始化前 reservation
+也计入同一硬上限，不能通过并发 Session 启动越界。Web 在容量不足时只驱逐 idle、
+unpinned 的 LRU Runtime，并使用 `sessionRuntimeIdleMs` 做 TTL 回收；该 TTL 默认
+`300000`，必须为 `30000-3600000ms`。durable Session 历史、inbox、Goal、task、
+权限和 worktree 不会被删除，后续访问会透明 cold rehydrate。
+
+ACP 不做隐式驱逐；客户端必须使用标准 `session/close` 释放 Session。容量已满时，
+new/fork/load 在 Runtime、MCP/LSP、task/worktree 和 Provider 副作用前返回
+`resident_runtimes` 错误。两项设置都由进程启动配置冻结，`0` 不能禁用，project 和
+Session-local 配置不能覆盖。CLI/TUI/print/Headless 的单 root Runtime 不进入该
+multiplexed registry。完整契约见
+[Session Runtime Residency](../reference/session-runtime-residency.md)。
+
 `providerRequestConcurrency` 控制同一敏感 Provider failure domain 的并发 physical
 stream，默认 `4`，必须为 `1-16` 的整数。全进程仍固定最多 16 条 stream；同一 root
 Session 及全部 Task/Team 后代合计最多 3 条，background/internal 最多占用默认 domain
