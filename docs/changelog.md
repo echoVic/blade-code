@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.45] - 2026-08-17
+
+### 稳定性
+
+- ACP Session 按 Client terminal capability 选择执行 backend：声明支持时继续使用 ACP
+  terminal 并在创建/执行失败时 fail closed；未声明时不再调用未协商的
+  `terminal/create`，而是使用绑定该 Session workspace cwd 的 local terminal
+- 修复 durable fork child 能完成 Write、但随后所有 Bash 都因空 terminal response
+  失败的问题；parent/child identity、权限模式、cwd 与 transcript 语义保持不变
+
+### 测试相关
+
+- 新增缺少 terminal capability 的 Session-bound local execution 回归，并将 paired ACP
+  durable fork Write+Bash trajectory 加入 release-blocking real API matrix，固定覆盖
+  DeepSeek Flash/Pro 及资格环境中已配置的 Claude、GPT、国产模型
+
 ## [0.10.44] - 2026-08-17
 
 ### 测试相关

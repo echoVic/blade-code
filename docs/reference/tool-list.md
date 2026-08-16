@@ -132,8 +132,10 @@ delete/rename 时 Add/Delete/Move fail closed
 配置为 `0` 可禁用。显式后台和自动 candidate 共用全进程 16、单 Session 4 的 active
 上限。
 **前台输出边界**: 本地 stdout/stderr 各保留最近 1 MiB 原始字节；ACP remote terminal
-按 merged stdout 保留最近 1 MiB，且不会在 terminal 不可用时回退宿主执行。模型可见
-结果继续按命令类型截断，并返回：
+按 merged stdout 保留最近 1 MiB。ACP Client 声明 terminal capability 时，terminal
+创建或执行失败会 fail closed，不会静默回退宿主执行；未声明该 capability 时，Session
+从初始化开始使用绑定自身 workspace cwd 的本地 terminal，不调用未协商的 ACP method。
+模型可见结果继续按命令类型截断，并返回：
 
 - `output_truncated`：capture 或模型投影任一层发生截断；
 - `stdout_total_bytes` / `stderr_total_bytes`：完整累计字节，accounting 不完整时为下界；

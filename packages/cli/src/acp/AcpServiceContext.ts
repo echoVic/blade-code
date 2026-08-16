@@ -99,6 +99,8 @@ export interface TerminalExecuteResult {
  * 本地终端服务（使用 child_process）
  */
 class LocalTerminalService implements TerminalService {
+  constructor(private readonly defaultCwd?: string) {}
+
   async execute(
     command: string,
     options?: TerminalExecuteOptions
@@ -111,7 +113,7 @@ class LocalTerminalService implements TerminalService {
         shell,
         shellArgs,
         {
-          cwd: options?.cwd || getCwd(),
+          cwd: options?.cwd ?? this.defaultCwd ?? getCwd(),
           env: { ...process.env, ...options?.env },
           stdio: ['pipe', 'pipe', 'pipe'],
         },
@@ -661,12 +663,15 @@ export class AcpServiceContext {
       logger.debug(`[AcpServiceContext:${sessionId}] Using ACP file system service`);
     }
 
-    // 终端服务始终可用（ACP 或本地）
-    const terminalService: TerminalService = new AcpTerminalService(
-      connection,
-      sessionId
+    // Respect capability negotiation: unsupported ACP methods must not be called.
+    const terminalService: TerminalService = clientCapabilities?.terminal
+      ? new AcpTerminalService(connection, sessionId)
+      : new LocalTerminalService(cwd);
+    logger.debug(
+      `[AcpServiceContext:${sessionId}] Using ${
+        clientCapabilities?.terminal ? 'ACP' : 'local'
+      } terminal service`
     );
-    logger.debug(`[AcpServiceContext:${sessionId}] Using ACP terminal service`);
 
     // 存储会话服务
     AcpServiceContext.sessions.set(sessionId, {

@@ -66,6 +66,9 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
       'tests/integration/real-api/action-stationarity-trajectory.test.ts'
     );
     expect(testTypes.realApiQualification.files).toContain(
+      'tests/integration/real-api/acp-session-fork-trajectory.test.ts'
+    );
+    expect(testTypes.realApiQualification.files).toContain(
       'tests/integration/real-api/goal-finalization-handoff-trajectory.test.ts'
     );
     expect(testTypes.realApiQualification.files).toContain(

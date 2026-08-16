@@ -62,10 +62,14 @@ recovery 的轨迹关闭 Provider retry；retry/backoff 只在专用故障注入
 该命令运行固定的 release-blocking real matrix：真实 DeepSeek Flash/Pro Headless
 bugfix、GPT Web structured output、Claude ACP structured output、DeepSeek headless
 structured output、Web/ACP/TUI code review、durable interaction recovery、permission
-recovery、ACP model switch、透明 503 retry proxy、durable 413 compaction proxy、真实
-mid-stream stall proxy、assistant response fsync fail-stop/cold retry、turn-final
-receipt exactly-once recovery、foreground/background shell hard-crash recovery，以及
-DeepSeek Flash 的 Runtime/Web/ACP host-authoritative Goal completion verification。
+recovery、ACP model switch、ACP durable fork Write+Bash capability routing、透明 503
+retry proxy、durable 413 compaction proxy、真实 mid-stream stall proxy、assistant
+response fsync fail-stop/cold retry、turn-final receipt exactly-once recovery、
+foreground/background shell hard-crash recovery，以及 DeepSeek Flash 的
+Runtime/Web/ACP host-authoritative Goal completion verification。ACP fork 固定要求
+DeepSeek Flash/Pro，并对当前资格环境中已配置的 Claude、GPT 与国产模型执行同一 paired
+SDK trajectory；未声明 terminal capability 的 Client 必须使用 Session-bound local
+terminal，声明后 terminal 失败仍须 fail closed。
 前台有界输出固定运行 DeepSeek Flash/Pro × Headless/production Chromium Web/raw PTY
 TUI/真实 ACP SDK terminal 八格；单格 Provider deadline 180 秒、测试 timeout 240 秒，
 完整 realApiQualification watchdog 为 45 分钟。每格还验证 surface egress：Headless

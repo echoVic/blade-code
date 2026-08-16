@@ -78,6 +78,38 @@ describe('AcpServiceContext session isolation', () => {
     ]);
   });
 
+  it('binds a local terminal to the Session cwd when capability is absent', async () => {
+    const client = new ControlledTerminalClient();
+    const harness = createPairedAcpHarness(client);
+    harnesses.push(harness);
+    const directory = await mkdtemp(join(tmpdir(), 'blade-acp-local-session-'));
+    AcpServiceContext.initializeSession(
+      harness.agentConnection,
+      'session-a',
+      { fs: { readTextFile: true, writeTextFile: true } },
+      directory
+    );
+
+    const marker = join(directory, 'marker');
+    const command = [
+      JSON.stringify(process.execPath),
+      '-e',
+      JSON.stringify("require('node:fs').writeFileSync('marker', 'ok')"),
+    ].join(' ');
+    try {
+      await expect(
+        getTerminalService('session-a').execute(command)
+      ).resolves.toMatchObject({
+        success: true,
+        transport: 'local',
+      });
+      await expect(access(marker)).resolves.toBeUndefined();
+      expect(client.createRequests).toEqual([]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('serializes cumulative ACP output reads and exposes a merged bounded capture', async () => {
     const client = new ControlledTerminalClient();
     const harness = createPairedAcpHarness(client);
