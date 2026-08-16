@@ -2,6 +2,7 @@ import { resolve } from 'path';
 import { defineConfig } from 'vitest/config';
 
 const isCI = process.env.CI === 'true';
+const isReleaseRealApiMatrix = process.env.REAL_API_RELEASE_MATRIX === '1';
 const threadPool = {
   pool: 'threads' as const,
   fileParallelism: !isCI,
@@ -143,7 +144,7 @@ export default defineConfig({
           minWorkers: 1,
           include: ['tests/integration/real-api/**/*.{test,spec}.{js,ts,jsx,tsx}'],
           setupFiles: ['./tests/support/setup.real-api.ts'],
-          retry: 1,
+          retry: isReleaseRealApiMatrix ? 0 : 1,
           testTimeout: 300000,
           hookTimeout: 300000,
         },

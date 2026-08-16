@@ -2457,24 +2457,27 @@ describe('sessionSlice multimodal sendMessage', () => {
         goal: createGoal({ objective: 'Revised objective' }),
       },
     },
-  ])('routes the $name goal action through the exact workspace ref', async (testCase) => {
-    const ref = createRef('shared-id', '/tmp/project-b');
-    vi.mocked(sessionService.updateGoal).mockResolvedValue(testCase.response);
-    useSessionStore.setState({
-      currentSessionId: ref.sessionId,
-      currentSessionRef: ref,
-      isTemporarySession: false,
-      goal: createGoal(),
-    });
+  ])(
+    'routes the $name goal action through the exact workspace ref',
+    async (testCase) => {
+      const ref = createRef('shared-id', '/tmp/project-b');
+      vi.mocked(sessionService.updateGoal).mockResolvedValue(testCase.response);
+      useSessionStore.setState({
+        currentSessionId: ref.sessionId,
+        currentSessionRef: ref,
+        isTemporarySession: false,
+        goal: createGoal(),
+      });
 
-    await testCase.invoke();
+      await testCase.invoke();
 
-    expect(sessionService.updateGoal).toHaveBeenCalledWith(
-      ref,
-      testCase.expectedUpdate
-    );
-    expect(useSessionStore.getState().goal).toEqual(testCase.response.goal);
-  });
+      expect(sessionService.updateGoal).toHaveBeenCalledWith(
+        ref,
+        testCase.expectedUpdate
+      );
+      expect(useSessionStore.getState().goal).toEqual(testCase.response.goal);
+    }
+  );
 
   it('routes goal clearing through the exact workspace ref', async () => {
     const ref = createRef('shared-id', '/tmp/project-b');
@@ -2520,34 +2523,37 @@ describe('sessionSlice multimodal sendMessage', () => {
           goal: createGoal({ objective: 'Stale objective' }),
         }),
     },
-  ])('ignores a stale $name response after switching to the same id in another workspace', async (testCase) => {
-    const refA = createRef('shared-id', '/tmp/project-a');
-    const refB = createRef('shared-id', '/tmp/project-b');
-    const goalB = createGoal({ goalId: 'goal-b', objective: 'Workspace B goal' });
-    const gate = deferred<{ status: string; goal: Goal }>();
-    vi.mocked(sessionService.updateGoal).mockReturnValue(gate.promise);
-    useSessionStore.setState({
-      currentSessionId: refA.sessionId,
-      currentSessionRef: refA,
-      isTemporarySession: false,
-      goal: createGoal({ goalId: 'goal-a' }),
-    });
+  ])(
+    'ignores a stale $name response after switching to the same id in another workspace',
+    async (testCase) => {
+      const refA = createRef('shared-id', '/tmp/project-a');
+      const refB = createRef('shared-id', '/tmp/project-b');
+      const goalB = createGoal({ goalId: 'goal-b', objective: 'Workspace B goal' });
+      const gate = deferred<{ status: string; goal: Goal }>();
+      vi.mocked(sessionService.updateGoal).mockReturnValue(gate.promise);
+      useSessionStore.setState({
+        currentSessionId: refA.sessionId,
+        currentSessionRef: refA,
+        isTemporarySession: false,
+        goal: createGoal({ goalId: 'goal-a' }),
+      });
 
-    const action = testCase.invoke();
-    useSessionStore.setState({
-      currentSessionId: refB.sessionId,
-      currentSessionRef: refB,
-      goal: goalB,
-    });
-    testCase.resolve(gate);
-    await action;
+      const action = testCase.invoke();
+      useSessionStore.setState({
+        currentSessionId: refB.sessionId,
+        currentSessionRef: refB,
+        goal: goalB,
+      });
+      testCase.resolve(gate);
+      await action;
 
-    expect(useSessionStore.getState()).toMatchObject({
-      currentSessionRef: refB,
-      goal: goalB,
-      error: null,
-    });
-  });
+      expect(useSessionStore.getState()).toMatchObject({
+        currentSessionRef: refB,
+        goal: goalB,
+        error: null,
+      });
+    }
+  );
 
   it('ignores stale goal clearing after switching to the same id in another workspace', async () => {
     const refA = createRef('shared-id', '/tmp/project-a');

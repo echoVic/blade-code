@@ -76,7 +76,8 @@ SDK trajectory；未声明 terminal capability 的 Client 必须使用 Session-b
 terminal，声明后 terminal 失败仍须 fail closed。
 前台有界输出固定运行 DeepSeek Flash/Pro × Headless/production Chromium Web/raw PTY
 TUI/真实 ACP SDK terminal 八格；单格 Provider deadline 180 秒、测试 timeout 240 秒，
-完整 realApiQualification watchdog 为 45 分钟。每格还验证 surface egress：Headless
+完整 realApiQualification watchdog 为 60 分钟，发布矩阵固定 framework `retry=0`。
+每格还验证 surface egress：Headless
 等待 `write(false) -> drain`，ACP 最多一个 `sessionUpdate()` in-flight，raw PTY 暂停
 reader 后继续渲染，Web 在运行中 reload 后按 durable cursor 恢复同一 tool/final state。
 Root-turn crash auto-resume 另固定运行

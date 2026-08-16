@@ -20,7 +20,7 @@ export const testTypes = {
   realApiQualification: {
     name: '发布阻断真实 API 集成测试',
     project: 'real-api',
-    timeout: 45 * 60 * 1_000,
+    timeout: 60 * 60 * 1_000,
     files: [
       'tests/integration/real-api/agent-trajectory.test.ts',
       'tests/integration/real-api/structured-output-trajectory.test.ts',

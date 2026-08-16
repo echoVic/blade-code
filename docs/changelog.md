@@ -11,6 +11,9 @@ All notable changes to this project will be documented in this file.
 - GitHub `Quality Gate` 现在会在 build 之前执行全仓 format check 与 CLI lint；
   workflow source contract 固定 install → format → lint → build 顺序，避免 CI 仅凭
   build/type-check/Web tests 放过本地发布门禁已经失败的提交
+- 发布阻断 real-API matrix 现在固定 framework `retry=0`，不再用 Vitest 重跑掩盖单格
+  失败；随矩阵增长将完整进程树 watchdog 从 45 分钟调整为 60 分钟，为 139 个测试及
+  确定性 `finally` 清理保留余量
 
 ## [0.10.45] - 2026-08-17
 

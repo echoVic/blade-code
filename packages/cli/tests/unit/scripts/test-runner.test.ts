@@ -52,7 +52,7 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
   });
 
   it('keeps goal completion verification in the release-blocking matrix', () => {
-    expect(testTypes.realApiQualification.timeout).toBe(45 * 60 * 1000);
+    expect(testTypes.realApiQualification.timeout).toBe(60 * 60 * 1000);
     expect(testTypes.realApiQualification.files).toContain(
       'tests/integration/real-api/goal-mode-trajectory.test.ts'
     );
@@ -93,6 +93,18 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
       REAL_API_TEST: '1',
       REAL_API_RELEASE_MATRIX: '1',
     });
+  });
+
+  it('disables framework retry for the release-blocking real API matrix', async () => {
+    const vitestConfig = await readFile(
+      path.resolve(import.meta.dirname, '../../../vitest.config.ts'),
+      'utf8'
+    );
+
+    expect(vitestConfig).toContain(
+      "const isReleaseRealApiMatrix = process.env.REAL_API_RELEASE_MATRIX === '1'"
+    );
+    expect(vitestConfig).toContain('retry: isReleaseRealApiMatrix ? 0 : 1');
   });
 
   it('keeps the process-heavy integration suite above fixture command budgets', () => {
