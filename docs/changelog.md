@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.42] - 2026-08-16
+
+### 🛡️ 稳定性
+
+- 顶层 Task Admission Scheduler 在既有 active/pending count 之外增加 queued
+  retained-footprint byte 硬边界：默认 64 MiB，可配置 64 KiB-128 MiB，且 `0` 不能
+  禁用。默认 100、最高 10,000 个 pending ticket 不再允许通过大 prompt、5 MiB
+  attachment 或 output schema 放大为无界 caller/runtime/inbox 内存
+- Provider request estimator 抽取为通用 cycle-safe、getter-safe、100,000 node 有界
+  primitive；task input 对 direct、Web prepared inbox 和 crash-recovered inbox 使用
+  同一保守双投影 weight。recovery 的空 synthetic message 不能绕过 durable payload
+  accounting，scheduler 仍只保存 numeric weight，不持有 payload graph
+- active slot 空闲时，单个超过 pending budget 的 task 仍可立即运行；只有等待时才同时
+  检查 count 与 bytes。queued→running、explicit cancel、AbortSignal、
+  release-before-execution 与 reset 精确释放 byte charge；降低配置不会驱逐已接纳的
+  durable FIFO task
+- task overload 使用 typed `pending_count|pending_bytes`：Web 返回 sanitized HTTP 429
+  details 并删除未接纳 Session/inbox/Runtime/worktree；Headless/ACP task session
+  持久化 retryable `capacity` failure，ACP 通过 namespaced metadata 投影且不污染
+  assistant 正文。公开 surface 不暴露 task weight、aggregate bytes 或配置 byte limit
+
+### ✅ 测试相关
+
+- 确定性测试覆盖 exact/one-over count 与 bytes、count precedence、immediate
+  oversized、queued rejection、promotion 前 uncharge、cancel/abort/reset、动态降低
+  limit、UTF-8/multimodal/schema/metadata、recovered inbox、429 ghost cleanup、
+  capacity failure schema、project override 隔离及 source leak gate
+- DeepSeek Flash/Pro × production Chromium Task Home/真实 ACP stdio 四格负向 target
+  全部在 `maxQueuedTaskBytes=65536` 与 framework retry=0 下通过；task B marker 零
+  Provider traffic，普通 task C 在 task A 释放后 queued→running 并完成
+- Flash/Pro Headless task-mode coding、raw PTY root turn 与 production Web
+  worktree/FIFO coding 对照继续通过，证明 queue-memory policy 不影响单个大 task、
+  非 task root turn 或正常长任务推进
+
 ## [0.10.41] - 2026-08-16
 
 ### 🛡️ 稳定性
