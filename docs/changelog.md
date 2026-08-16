@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.44] - 2026-08-17
+
+### 测试相关
+
+- 修正 ACP recording fork trajectory 的 capability 断言，使基础 paired-stream
+  lifecycle 与真实 Provider fork 路径都要求 ACP 1.3 标准 `session/close`；coverage
+  不再把 v0.10.43 已发布的 close capability 误判为回归
+
 ## [0.10.43] - 2026-08-16
 
 ### 🛡️ 稳定性

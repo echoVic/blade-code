@@ -268,6 +268,7 @@ describe('ACP recording client lifecycle', () => {
     expect(initialized.agentCapabilities?.sessionCapabilities).toEqual({
       list: {},
       fork: {},
+      close: {},
     });
     expect(harness.connection.signal.aborted).toBe(true);
   });
@@ -647,6 +648,7 @@ describeTrajectory('ACP durable fork trajectory (real API)', () => {
           expect(initialized.agentCapabilities?.sessionCapabilities).toEqual({
             list: {},
             fork: {},
+            close: {},
           });
 
           const newSessionNotificationStart = harness.client.updates.length;
