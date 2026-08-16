@@ -80,6 +80,10 @@ const acpSessionMocks = vi.hoisted(() => ({
 const mcpRegistryMocks = vi.hoisted(() => ({
   disconnectAll: vi.fn().mockResolvedValue(undefined),
 }));
+const runtimeResidencyConfig = vi.hoisted(() => ({
+  maxResident: 32,
+  idleMs: 300_000,
+}));
 
 // Mock AcpSession
 // Vitest 4: vi.fn().mockImplementation(arrowFn) is not constructable with `new`.
@@ -266,6 +270,8 @@ vi.mock('../../../../src/store/vanilla.js', () => ({
       },
     },
     currentModelId: 'gpt-4',
+    maxResidentSessionRuntimes: runtimeResidencyConfig.maxResident,
+    sessionRuntimeIdleMs: runtimeResidencyConfig.idleMs,
   })),
 }));
 
@@ -296,6 +302,8 @@ describe('BladeAgent', () => {
 
   beforeEach(() => {
     createdSessions.length = 0;
+    runtimeResidencyConfig.maxResident = 32;
+    runtimeResidencyConfig.idleMs = 300_000;
 
     // 创建 mock 连接
     mockConnection = createMockACPClient();
@@ -303,13 +311,15 @@ describe('BladeAgent', () => {
     // 创建 BladeAgent 实例
     agent = new BladeAgent(mockConnection as any);
     sessionServiceMocks.listSessionPage.mockResolvedValue({ sessions: [] });
-    sessionServiceMocks.forkSession.mockResolvedValue({
-      sessionId: 'forked-session',
-      messages: [],
-      metadata: {
-        permissionMode: 'default',
-      },
-    });
+    sessionServiceMocks.forkSession.mockImplementation(
+      async (_sourceSessionId, options: { newSessionId: string }) => ({
+        sessionId: options.newSessionId,
+        messages: [],
+        metadata: {
+          permissionMode: 'default',
+        },
+      })
+    );
     sessionServiceMocks.findSessionMetadata.mockResolvedValue({
       permissionMode: 'default',
     });
@@ -361,6 +371,7 @@ describe('BladeAgent', () => {
       expect(agentCapabilities.sessionCapabilities).toEqual({
         list: {},
         fork: {},
+        close: {},
       });
     });
 
@@ -546,20 +557,23 @@ describe('BladeAgent', () => {
         { role: 'user' as const, content: 'Remember the fork context' },
         { role: 'assistant' as const, content: 'Context remembered' },
       ];
-      sessionServiceMocks.forkSession.mockResolvedValueOnce({
-        sessionId: 'forked-session',
-        messages,
-        metadata: { permissionMode: 'yolo' },
-      });
+      sessionServiceMocks.forkSession.mockImplementationOnce(
+        async (_sourceSessionId, options: { newSessionId: string }) => ({
+          sessionId: options.newSessionId,
+          messages,
+          metadata: { permissionMode: 'yolo' },
+        })
+      );
 
       const response = await agent.unstable_forkSession(request);
 
       expect(sessionServiceMocks.forkSession).toHaveBeenCalledWith('parent-session', {
         sourceProjectPath: '/tmp/project',
         targetProjectPath: '/tmp/project',
+        newSessionId: response.sessionId,
       });
       expect(AcpSession).toHaveBeenCalledWith(
-        'forked-session',
+        response.sessionId,
         '/tmp/project',
         mockConnection,
         undefined,
@@ -570,7 +584,6 @@ describe('BladeAgent', () => {
       expect(child.replayHistory).not.toHaveBeenCalled();
       expect(child.sendAvailableCommandsDelayed).toHaveBeenCalledTimes(1);
       expect(response).toMatchObject({
-        sessionId: 'forked-session',
         modes: { currentModeId: 'yolo' },
       });
       const forkModelCfg = response.configOptions?.find((o: any) => o.id === 'model');
@@ -581,7 +594,7 @@ describe('BladeAgent', () => {
       ).toBe('gpt-4');
 
       await agent.prompt({
-        sessionId: 'forked-session',
+        sessionId: response.sessionId,
         prompt: [{ type: 'text', text: 'Continue in the child' }],
       });
       expect(child.prompt).toHaveBeenCalledTimes(1);
@@ -608,12 +621,14 @@ describe('BladeAgent', () => {
       const child = createdSessions[0];
       expect(child.destroy).toHaveBeenCalledTimes(1);
       expect(sessionServiceMocks.deleteSession).not.toHaveBeenCalled();
+      const forkSessionId = sessionServiceMocks.forkSession.mock.calls[0]?.[1]
+        .newSessionId as string;
       await expect(
         agent.prompt({
-          sessionId: 'forked-session',
+          sessionId: forkSessionId,
           prompt: [{ type: 'text', text: 'must not be registered' }],
         })
-      ).rejects.toThrow('Session not found: forked-session');
+      ).rejects.toThrow(`Session not found: ${forkSessionId}`);
     });
 
     it('cleanup 失败时仍应该抛出原始 initialize error', async () => {
@@ -666,10 +681,13 @@ describe('BladeAgent', () => {
         },
       ];
 
-      await agent.unstable_forkSession({ ...request, mcpServers });
+      const response = await agent.unstable_forkSession({
+        ...request,
+        mcpServers,
+      });
 
       expect(AcpSession).toHaveBeenCalledWith(
-        'forked-session',
+        response.sessionId,
         '/tmp/project',
         mockConnection,
         undefined,
@@ -1347,6 +1365,95 @@ describe('BladeAgent', () => {
           value: 'gpt-3.5',
         })
       ).rejects.toThrow('Session not found: nonexistent-session');
+    });
+  });
+
+  describe('Session Runtime residency', () => {
+    it('closes an exact Session through the standard ACP lifecycle', async () => {
+      const created = await agent.newSession({
+        cwd: '/tmp/project',
+        mcpServers: [],
+      });
+      const session = createdSessions[0];
+
+      expect(agent.getRuntimeResidencyStats()).toMatchObject({
+        resident: 1,
+        reserved: 0,
+      });
+      await agent.closeSession({ sessionId: created.sessionId });
+
+      expect(session.destroy).toHaveBeenCalledTimes(1);
+      expect(agent.getRuntimeResidencyStats()).toMatchObject({
+        resident: 0,
+        reserved: 0,
+      });
+      await expect(
+        agent.prompt({
+          sessionId: created.sessionId,
+          prompt: [{ type: 'text', text: 'must be closed' }],
+        })
+      ).rejects.toThrow(`Session not found: ${created.sessionId}`);
+      await expect(
+        agent.closeSession({ sessionId: created.sessionId })
+      ).resolves.toBeUndefined();
+    });
+
+    it('rejects capacity before constructing a second ACP Session', async () => {
+      await agent.destroy();
+      runtimeResidencyConfig.maxResident = 1;
+      agent = new BladeAgent(mockConnection as any);
+      const first = await agent.newSession({
+        cwd: '/tmp/project',
+        mcpServers: [],
+      });
+
+      await expect(
+        agent.newSession({
+          cwd: '/tmp/project',
+          mcpServers: [],
+        })
+      ).rejects.toMatchObject({
+        name: 'SessionRuntimeCapacityError',
+        resource: 'resident_runtimes',
+        limit: 1,
+      });
+      expect(createdSessions).toHaveLength(1);
+
+      await agent.closeSession({ sessionId: first.sessionId });
+      await expect(
+        agent.newSession({
+          cwd: '/tmp/project',
+          mcpServers: [],
+        })
+      ).resolves.toBeDefined();
+      expect(agent.getRuntimeResidencyStats().resident).toBe(1);
+    });
+
+    it('rejects a task Session before durable creation at capacity', async () => {
+      await agent.destroy();
+      runtimeResidencyConfig.maxResident = 1;
+      agent = new BladeAgent(mockConnection as any);
+      await agent.newSession({
+        cwd: '/tmp/project',
+        mcpServers: [],
+      });
+      sessionTaskServiceMocks.createSessionTask.mockClear();
+
+      await expect(
+        agent.newSession({
+          cwd: '/tmp/project',
+          mcpServers: [],
+          _meta: {
+            'blade/taskIsolation': 'local',
+            'blade/taskPrompt': 'must not persist',
+          },
+        })
+      ).rejects.toMatchObject({
+        name: 'SessionRuntimeCapacityError',
+        resource: 'resident_runtimes',
+      });
+      expect(sessionTaskServiceMocks.createSessionTask).not.toHaveBeenCalled();
+      expect(createdSessions).toHaveLength(1);
     });
   });
 

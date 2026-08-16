@@ -2086,6 +2086,15 @@ export class AcpSession {
     return this.mode;
   }
 
+  isIdleForResidency(): boolean {
+    return (
+      !this.destroyed &&
+      this.pendingPrompt === null &&
+      this.pendingUserShell === null &&
+      (this.runtime?.isIdleForResidency() ?? false)
+    );
+  }
+
   /**
    * 销毁会话
    */

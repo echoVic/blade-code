@@ -22,6 +22,12 @@ function createController(
       failed: 0,
       deferred: 0,
     })),
+    getRuntimeResidencyStats: vi.fn(() => ({
+      resident: 0,
+      reserved: 0,
+      pinned: 0,
+      maxResident: 32,
+    })),
     shutdown: vi.fn(async () => undefined),
   };
 }

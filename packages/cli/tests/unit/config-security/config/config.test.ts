@@ -188,6 +188,18 @@ describe('配置系统', () => {
           maxQueuedTaskBytes: 128 * 1024 * 1024 + 1,
         })
       ).toThrow('maxQueuedTaskBytes');
+      expect(() =>
+        configManager.validateConfig({
+          ...base,
+          maxResidentSessionRuntimes: 0,
+        })
+      ).toThrow('maxResidentSessionRuntimes');
+      expect(() =>
+        configManager.validateConfig({
+          ...base,
+          sessionRuntimeIdleMs: 29_999,
+        })
+      ).toThrow('sessionRuntimeIdleMs');
     });
 
     it('应该拒绝过短的流式 idle timeout', () => {

@@ -10,6 +10,10 @@ import {
   DEFAULT_PROVIDER_REQUEST_CONCURRENCY,
   DEFAULT_PROVIDER_REQUEST_PENDING_BYTES,
 } from './providerRequestAdmission.js';
+import {
+  DEFAULT_MAX_RESIDENT_SESSION_RUNTIMES,
+  DEFAULT_SESSION_RUNTIME_IDLE_MS,
+} from './sessionRuntimeResidency.js';
 import { DEFAULT_MAX_QUEUED_TASK_BYTES } from './taskConcurrency.js';
 import { BladeConfig, PermissionMode } from './types.js';
 
@@ -259,4 +263,6 @@ export const DEFAULT_CONFIG: BladeConfig = {
   maxConcurrentTasks: 3,
   maxQueuedTasks: 100,
   maxQueuedTaskBytes: DEFAULT_MAX_QUEUED_TASK_BYTES,
+  maxResidentSessionRuntimes: DEFAULT_MAX_RESIDENT_SESSION_RUNTIMES,
+  sessionRuntimeIdleMs: DEFAULT_SESSION_RUNTIME_IDLE_MS,
 };

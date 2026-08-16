@@ -71,6 +71,8 @@ export const createDefaultMockConfig = (
   maxConcurrentTasks: overrides?.maxConcurrentTasks ?? 3,
   maxQueuedTasks: overrides?.maxQueuedTasks ?? 100,
   maxQueuedTaskBytes: overrides?.maxQueuedTaskBytes ?? 64 * 1024 * 1024,
+  maxResidentSessionRuntimes: overrides?.maxResidentSessionRuntimes ?? 32,
+  sessionRuntimeIdleMs: overrides?.sessionRuntimeIdleMs ?? 5 * 60 * 1000,
 });
 
 export class MockConfigManager {

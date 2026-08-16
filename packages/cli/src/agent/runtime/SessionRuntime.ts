@@ -341,6 +341,7 @@ export class SessionRuntime {
   private currentModelId?: string;
   private currentModelMaxContextTokens?: number;
   private initialized = false;
+  private disposing = false;
   private startupTurnRecovery?: SessionTurnRecovery;
   private startupAdoptedToolResults: StartupAdoptedToolResult[] = [];
   private sessionLease?: SessionLease;
@@ -1477,6 +1478,39 @@ export class SessionRuntime {
     return this.activeTurnMailbox?.pendingMessages() ?? [];
   }
 
+  isIdleForResidency(): boolean {
+    if (
+      !this.initialized ||
+      this.disposing ||
+      this.hasActiveTurn() ||
+      this.hasTurnOwner() ||
+      this.getPendingSteeringCount() > 0 ||
+      this.executorCatalogs.size > 0
+    ) {
+      return false;
+    }
+    if (
+      BackgroundShellManager.getInstance()
+        .listForSession(this.sessionId)
+        .some((process) => process.status === 'running')
+    ) {
+      return false;
+    }
+    const owner = {
+      sessionId: this.sessionId,
+      projectPath: this.workspaceRoot,
+    };
+    if (
+      BackgroundAgentManager.getInstance()
+        .listForSession(owner)
+        .some((session) => session.status === 'running') ||
+      this.getBackgroundTaskChildrenState() !== 'none'
+    ) {
+      return false;
+    }
+    return !McpTaskManager.getInstance().hasActive(owner);
+  }
+
   getRecoveredSteeringCount(): number {
     return this.activeTurnMailbox?.recoveredCount() ?? 0;
   }
@@ -2112,6 +2146,7 @@ export class SessionRuntime {
   }
 
   async dispose(): Promise<void> {
+    this.disposing = true;
     let firstError: unknown;
     const attempt = async (label: string, cleanup: () => Promise<void> | void) => {
       try {

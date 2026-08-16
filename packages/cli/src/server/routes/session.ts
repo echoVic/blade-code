@@ -16,6 +16,11 @@ import {
   SessionRuntime,
 } from '../../agent/runtime/SessionRuntime.js';
 import {
+  SessionRuntimeCapacityError,
+  SessionRuntimeResidency,
+  type SessionRuntimeResidencyLease,
+} from '../../agent/runtime/SessionRuntimeResidency.js';
+import {
   type TaskAdmissionHandle,
   TaskAdmissionQueueFullError,
   taskRunScheduler,
@@ -35,6 +40,11 @@ import {
   type SessionTaskDiffArtifact,
   UserShellCommandRequestSchema,
 } from '../../api/schemas.js';
+import {
+  DEFAULT_MAX_RESIDENT_SESSION_RUNTIMES,
+  DEFAULT_SESSION_RUNTIME_IDLE_MS,
+  SESSION_RUNTIME_SWEEP_MS,
+} from '../../config/sessionRuntimeResidency.js';
 import {
   type CommunicationStyleSelection,
   PermissionMode,
@@ -1343,6 +1353,12 @@ export interface SessionRouteController {
     projectPath?: string
   ): Promise<SessionMetadata & { isActive: boolean }>;
   recoverQueuedTasks(): Promise<TaskRecoveryResult>;
+  getRuntimeResidencyStats(): {
+    resident: number;
+    reserved: number;
+    pinned: number;
+    maxResident: number;
+  };
   shutdown(reason?: string): Promise<void>;
 }
 
@@ -1350,6 +1366,13 @@ export const createSessionRouteController = (): SessionRouteController => {
   resetSharedSessionRouteState();
   const app = new Hono<{ Variables: Variables }>();
   app.onError((err, c) => {
+    if (err instanceof SessionRuntimeCapacityError) {
+      const overload = new TooManyRequestsError('Session runtime capacity is full', {
+        resource: err.resource,
+        limit: err.limit,
+      });
+      return c.json(overload.toObject(), 429);
+    }
     if (err instanceof BladeServerError) {
       return c.json(
         err.toObject(),
@@ -1368,12 +1391,31 @@ export const createSessionRouteController = (): SessionRouteController => {
     );
   });
   const runtimes = new Map<string, SessionRuntime>();
-  const runtimeInitializations = new Map<string, Promise<SessionRuntime>>();
+  const runtimeInitializations = new Map<
+    string,
+    Promise<{
+      runtime: SessionRuntime;
+      claimLease(): SessionRuntimeResidencyLease<SessionRuntime>;
+    }>
+  >();
   const runtimeDisposals = new Map<string, Promise<void>>();
   const sessionHydrations = new Map<string, Promise<SessionInfo>>();
   const messageSubmissionLocks = new Map<string, Mutex>();
   const taskDeliveryLocks = new Map<string, Mutex>();
+  const startupConfig = getConfig();
+  const runtimeResidency = new SessionRuntimeResidency<SessionRuntime>({
+    maxResident:
+      startupConfig?.maxResidentSessionRuntimes ??
+      DEFAULT_MAX_RESIDENT_SESSION_RUNTIMES,
+    idleMs: startupConfig?.sessionRuntimeIdleMs ?? DEFAULT_SESSION_RUNTIME_IDLE_MS,
+  });
   const admissionGate = new ActiveOperationGate();
+  const runtimeSweepTimer = setInterval(() => {
+    void runtimeResidency.sweepIdle().catch((error) => {
+      logger.warn('[SessionRoutes] Session Runtime idle sweep failed:', error);
+    });
+  }, SESSION_RUNTIME_SWEEP_MS);
+  runtimeSweepTimer.unref?.();
   let shutdownPromise: Promise<void> | undefined;
 
   const withAdmission = async <T>(operation: () => Promise<T>): Promise<T> => {
@@ -1417,92 +1459,47 @@ export const createSessionRouteController = (): SessionRouteController => {
     return lock;
   };
 
-  const getOrCreateRuntime = async (
-    session: SessionInfo,
-    overrides: {
-      communicationStyle?: CommunicationStyleSelection;
-      permissionMode?: PermissionMode;
-    } = {}
-  ): Promise<SessionRuntime> => {
-    const key = sessionRefKey(sessionRefFromSession(session));
-    await runtimeDisposals.get(key);
-    const existing = runtimes.get(key);
-    if (existing) return existing;
+  const hasActiveRunForRef = (ref: SessionRef): boolean =>
+    [...activeRuns.values()].some(
+      (run) =>
+        run.sessionId === ref.sessionId &&
+        run.projectPath === ref.projectPath &&
+        isActiveRun(run)
+    );
 
-    let initialization = runtimeInitializations.get(key);
-    if (!initialization) {
-      const runtimeCommunicationStyle =
-        overrides.communicationStyle ?? session.communicationStyle;
-      initialization = SessionRuntime.create({
-        sessionId: session.id,
-        workspaceRoot: session.projectPath,
-        ...((session.selectedModelId ?? session.taskModelId)
-          ? { modelId: session.selectedModelId ?? session.taskModelId }
-          : {}),
-        permissionMode:
-          overrides.permissionMode ?? session.permissionMode ?? PermissionMode.DEFAULT,
-        ...(session.reasoningEffort
-          ? { reasoningEffort: session.reasoningEffort }
-          : {}),
-        ...(session.serviceTier ? { serviceTier: session.serviceTier } : {}),
-        ...(session.responseVerbosity
-          ? { responseVerbosity: session.responseVerbosity }
-          : {}),
-        ...(runtimeCommunicationStyle
-          ? { communicationStyle: runtimeCommunicationStyle }
-          : {}),
-        ...(runtimeCommunicationStyle === session.communicationStyle &&
-        session.communicationStyleDigest
-          ? { communicationStyleDigest: session.communicationStyleDigest }
-          : {}),
-        ...(session.projectInstructionsDigest
-          ? { projectInstructionsDigest: session.projectInstructionsDigest }
-          : {}),
-        ...(session.taskWorktree ? { taskWorktree: session.taskWorktree } : {}),
-        ...(session.taskIsolation ? { taskIsolation: session.taskIsolation } : {}),
-        ...(session.messages.length > 0
-          ? {
-              sessionStart: {
-                isResume: true,
-                resumeSessionId: session.id,
-              },
-            }
-          : {}),
-      });
-      runtimeInitializations.set(key, initialization);
-    }
-    try {
-      const runtime = await initialization;
-      runtimes.set(key, runtime);
-      return runtime;
-    } finally {
-      if (runtimeInitializations.get(key) === initialization) {
-        runtimeInitializations.delete(key);
-      }
-    }
-  };
-
-  const disposeRuntime = async (
+  const disposeRuntimeResources = async (
     session: SessionInfo,
-    ownedRuntime?: SessionRuntime
+    key: string,
+    runtime: SessionRuntime
   ): Promise<void> => {
-    const key = sessionRefKey(sessionRefFromSession(session));
     let disposal = runtimeDisposals.get(key);
     if (!disposal) {
       disposal = (async () => {
-        const initialization = runtimeInitializations.get(key);
-        if (initialization) {
-          await initialization.catch(() => undefined);
+        if (runtimes.get(key) === runtime) runtimes.delete(key);
+        for (const [runtimeKey, candidate] of runtimes) {
+          if (candidate === runtime) runtimes.delete(runtimeKey);
         }
-        runtimeInitializations.delete(key);
-        const runtime = ownedRuntime ?? runtimes.get(key);
-        runtimes.delete(key);
-        if (runtime) {
-          for (const [runtimeKey, candidate] of runtimes) {
-            if (candidate === runtime) runtimes.delete(runtimeKey);
-          }
+        const ref = sessionRefFromSession(session);
+        if (
+          sessions.get(key) === session &&
+          !hasActiveRunForRef(ref) &&
+          !activeUserShellRuns.has(key) &&
+          !activeReviewRuns.has(key)
+        ) {
+          sessions.delete(key);
         }
-        await runtime?.dispose();
+        const messageLock = messageSubmissionLocks.get(key);
+        if (messageLock && !messageLock.isLocked()) {
+          messageSubmissionLocks.delete(key);
+        }
+        const deliveryLock = taskDeliveryLocks.get(key);
+        if (deliveryLock && !deliveryLock.isLocked()) {
+          taskDeliveryLocks.delete(key);
+        }
+        await runtime.dispose();
+        if (runtimes.size === 0) {
+          await McpRegistry.getInstance().disconnectAll();
+        }
       })().finally(() => {
         if (runtimeDisposals.get(key) === disposal) {
           runtimeDisposals.delete(key);
@@ -1511,6 +1508,157 @@ export const createSessionRouteController = (): SessionRouteController => {
       runtimeDisposals.set(key, disposal);
     }
     await disposal;
+  };
+
+  const acquireRuntime = async (
+    session: SessionInfo,
+    overrides: {
+      communicationStyle?: CommunicationStyleSelection;
+      permissionMode?: PermissionMode;
+    } = {}
+  ): Promise<SessionRuntimeResidencyLease<SessionRuntime>> => {
+    const ref = sessionRefFromSession(session);
+    const key = sessionRefKey(ref);
+    await runtimeDisposals.get(key);
+    const residentLease = runtimeResidency.acquire(key);
+    if (residentLease) {
+      if (runtimes.get(key) !== residentLease.value) {
+        residentLease.release();
+        throw new Error('Session Runtime residency identity is inconsistent');
+      }
+      return residentLease;
+    }
+    if (runtimeResidency.owns(key)) {
+      throw new SessionRuntimeCapacityError(runtimeResidency.getStats().maxResident);
+    }
+
+    let initialization = runtimeInitializations.get(key);
+    if (!initialization) {
+      const runtimeCommunicationStyle =
+        overrides.communicationStyle ?? session.communicationStyle;
+      initialization = (async () => {
+        const reservation = await runtimeResidency.reserve(key, {
+          surface: 'web',
+          allowEviction: true,
+        });
+        try {
+          const runtime = await SessionRuntime.create({
+            sessionId: session.id,
+            workspaceRoot: session.projectPath,
+            ...((session.selectedModelId ?? session.taskModelId)
+              ? { modelId: session.selectedModelId ?? session.taskModelId }
+              : {}),
+            permissionMode:
+              overrides.permissionMode ??
+              session.permissionMode ??
+              PermissionMode.DEFAULT,
+            ...(session.reasoningEffort
+              ? { reasoningEffort: session.reasoningEffort }
+              : {}),
+            ...(session.serviceTier ? { serviceTier: session.serviceTier } : {}),
+            ...(session.responseVerbosity
+              ? { responseVerbosity: session.responseVerbosity }
+              : {}),
+            ...(runtimeCommunicationStyle
+              ? { communicationStyle: runtimeCommunicationStyle }
+              : {}),
+            ...(runtimeCommunicationStyle === session.communicationStyle &&
+            session.communicationStyleDigest
+              ? { communicationStyleDigest: session.communicationStyleDigest }
+              : {}),
+            ...(session.projectInstructionsDigest
+              ? { projectInstructionsDigest: session.projectInstructionsDigest }
+              : {}),
+            ...(session.taskWorktree ? { taskWorktree: session.taskWorktree } : {}),
+            ...(session.taskIsolation ? { taskIsolation: session.taskIsolation } : {}),
+            ...(session.messages.length > 0
+              ? {
+                  sessionStart: {
+                    isResume: true,
+                    resumeSessionId: session.id,
+                  },
+                }
+              : {}),
+          });
+          let initialLease: SessionRuntimeResidencyLease<SessionRuntime> | undefined =
+            reservation.commit({
+              key,
+              surface: 'web',
+              value: runtime,
+              canEvict: () =>
+                !hasActiveRunForRef(ref) &&
+                !activeUserShellRuns.has(key) &&
+                !activeReviewRuns.has(key) &&
+                !runtimeInitializations.has(key) &&
+                !runtimeDisposals.has(key) &&
+                runtime.isIdleForResidency(),
+              dispose: () => disposeRuntimeResources(session, key, runtime),
+            });
+          runtimes.set(key, runtime);
+          return {
+            runtime,
+            claimLease: () => {
+              if (initialLease) {
+                const lease = initialLease;
+                initialLease = undefined;
+                return lease;
+              }
+              const lease = runtimeResidency.acquire(key);
+              if (!lease || lease.value !== runtime) {
+                throw new Error('Initialized Session Runtime lost residency');
+              }
+              return lease;
+            },
+          };
+        } catch (error) {
+          reservation.cancel();
+          throw error;
+        }
+      })();
+      runtimeInitializations.set(key, initialization);
+    }
+    try {
+      const initialized = await initialization;
+      return initialized.claimLease();
+    } finally {
+      if (runtimeInitializations.get(key) === initialization) {
+        runtimeInitializations.delete(key);
+      }
+    }
+  };
+
+  const withRuntime = async <T>(
+    session: SessionInfo,
+    operation: (runtime: SessionRuntime) => Promise<T> | T,
+    overrides: {
+      communicationStyle?: CommunicationStyleSelection;
+      permissionMode?: PermissionMode;
+    } = {}
+  ): Promise<T> => {
+    const lease = await acquireRuntime(session, overrides);
+    try {
+      return await operation(lease.value);
+    } finally {
+      lease.release();
+    }
+  };
+
+  const disposeRuntime = async (
+    session: SessionInfo,
+    ownedRuntime?: SessionRuntime
+  ): Promise<void> => {
+    const key = sessionRefKey(sessionRefFromSession(session));
+    const initialization = runtimeInitializations.get(key);
+    if (initialization) {
+      await initialization.catch(() => undefined);
+    }
+    runtimeInitializations.delete(key);
+    const runtime = ownedRuntime ?? runtimes.get(key);
+    if (!runtime) return;
+    const removed = await runtimeResidency.remove(key, runtime);
+    if (!removed) {
+      throw new Error(`Session Runtime is pinned and cannot be disposed: ${key}`);
+    }
   };
 
   const getOrHydrateSession = async (ref: SessionRef): Promise<SessionInfo> => {
@@ -1589,7 +1737,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       pendingInputOnly?: boolean;
       preparedInputTurn?: PreparedInputTurn;
       goalContinuationOnly?: boolean;
-      taskRuntime?: SessionRuntime;
+      runtimeLease?: SessionRuntimeResidencyLease<SessionRuntime>;
       outputSchema?: SessionTaskDispatch['outputSchema'];
     } = {}
   ): RunState => {
@@ -1603,11 +1751,12 @@ export const createSessionRouteController = (): SessionRouteController => {
       projectPath: session.projectPath,
       status: 'running',
       abortController: new AbortController(),
-      disposeRuntimeOnSettle: options.taskRuntime !== undefined,
+      disposeRuntimeOnSettle:
+        session.taskIsolation !== undefined && options.runtimeLease !== undefined,
       createdAt: new Date(),
     };
-    if (options.taskRuntime) {
-      const runtime = options.taskRuntime;
+    if (session.taskIsolation && options.runtimeLease) {
+      const runtime = options.runtimeLease.value;
       const admission = taskRunScheduler.admit({
         key: `${session.projectPath}\0${session.id}`,
         ...runtime.getTaskAdmissionLimits(),
@@ -1652,13 +1801,14 @@ export const createSessionRouteController = (): SessionRouteController => {
       session,
       content,
       permissionMode,
-      getOrCreateRuntime,
+      acquireRuntime,
       {
         pendingInputOnly: options.pendingInputOnly,
         preparedInputTurn: options.preparedInputTurn,
         goalContinuationOnly: options.goalContinuationOnly,
         outputSchema: options.outputSchema,
         taskAdmission: run.taskAdmission,
+        runtimeLease: options.runtimeLease,
         disposeRuntime,
       }
     ).catch((error) => {
@@ -1764,6 +1914,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     };
     let taskWorktree: SessionTaskWorktree | undefined;
     let session: SessionInfo | undefined;
+    let runtimeLease: SessionRuntimeResidencyLease<SessionRuntime> | undefined;
 
     try {
       const created = await SessionTaskService.createSessionTask({
@@ -1786,7 +1937,8 @@ export const createSessionRouteController = (): SessionRouteController => {
       });
 
       const userContent = buildUserMessageContent(input.prompt, input.attachments);
-      const runtime = await getOrCreateRuntime(session);
+      runtimeLease = await acquireRuntime(session);
+      const runtime = runtimeLease.value;
       const preparation = outputSchema
         ? await runtime.prepareInputTurn(userContent, { outputSchema })
         : await runtime.prepareInputTurn(userContent);
@@ -1795,9 +1947,10 @@ export const createSessionRouteController = (): SessionRouteController => {
       }
       const run = startRun(session, userContent, input.permissionMode, {
         preparedInputTurn: preparation,
-        taskRuntime: runtime,
+        runtimeLease,
         outputSchema,
       });
+      runtimeLease = undefined;
       await run.taskAdmissionUpdate;
       return {
         session: projectActiveSession(session),
@@ -1809,7 +1962,13 @@ export const createSessionRouteController = (): SessionRouteController => {
         maxConcurrentTasks: run.taskConcurrencyLimit,
       };
     } catch (error) {
-      if (error instanceof TaskAdmissionQueueFullError && session) {
+      runtimeLease?.release();
+      runtimeLease = undefined;
+      if (
+        (error instanceof TaskAdmissionQueueFullError ||
+          error instanceof SessionRuntimeCapacityError) &&
+        session
+      ) {
         const ref = sessionRefFromSession(session);
         const key = sessionRefKey(ref);
         if (taskWorktree) {
@@ -1821,18 +1980,20 @@ export const createSessionRouteController = (): SessionRouteController => {
             })
             .catch(() => undefined);
         }
-        await runtimes
-          .get(key)
-          ?.dispose()
-          .catch(() => undefined);
-        runtimes.delete(key);
+        await disposeRuntime(session).catch(() => undefined);
         await SessionService.deleteSession(session.id, session.projectPath).catch(
           () => undefined
         );
         sessions.delete(key);
-        throw new TooManyRequestsError('Task admission capacity is full', {
-          resource: error.resource,
-        });
+        throw new TooManyRequestsError(
+          error instanceof SessionRuntimeCapacityError
+            ? 'Session runtime capacity is full'
+            : 'Task admission capacity is full',
+          {
+            resource: error.resource,
+            limit: error.limit,
+          }
+        );
       }
       if (session) {
         const latest = await SessionService.findSessionMetadata(
@@ -2087,25 +2248,32 @@ export const createSessionRouteController = (): SessionRouteController => {
     if (!hasPendingOnDisk && !hasActiveGoalOnDisk) {
       return;
     }
-    const runtime = await getOrCreateRuntime(session);
-    const initializedRun = getRun(session.currentRunId);
-    if (isActiveRun(initializedRun)) {
-      return;
+    const runtimeLease = await acquireRuntime(session);
+    let transferred = false;
+    try {
+      const runtime = runtimeLease.value;
+      const initializedRun = getRun(session.currentRunId);
+      if (isActiveRun(initializedRun)) {
+        return;
+      }
+      if (hasPendingOnDisk && runtime.getPendingSteeringCount() === 0) {
+        await runtime.reloadPendingInbox();
+      }
+      const hasPending = runtime.getPendingSteeringCount() > 0;
+      const goal = hasPending ? null : await runtime.getGoal();
+      const hasActiveGoal = goal?.status === 'active' || goal?.status === 'verifying';
+      if ((!hasPending && !hasActiveGoal) || runtime.hasTurnOwner()) {
+        return;
+      }
+      startRun(session, '', session.permissionMode ?? PermissionMode.DEFAULT, {
+        pendingInputOnly: hasPending,
+        goalContinuationOnly: hasActiveGoal,
+        runtimeLease,
+      });
+      transferred = true;
+    } finally {
+      if (!transferred) runtimeLease.release();
     }
-    if (hasPendingOnDisk && runtime.getPendingSteeringCount() === 0) {
-      await runtime.reloadPendingInbox();
-    }
-    const hasPending = runtime.getPendingSteeringCount() > 0;
-    const goal = hasPending ? null : await runtime.getGoal();
-    const hasActiveGoal = goal?.status === 'active' || goal?.status === 'verifying';
-    if ((!hasPending && !hasActiveGoal) || runtime.hasTurnOwner()) {
-      return;
-    }
-    startRun(session, '', session.permissionMode ?? PermissionMode.DEFAULT, {
-      pendingInputOnly: hasPending,
-      goalContinuationOnly: hasActiveGoal,
-      ...(session.taskIsolation ? { taskRuntime: runtime } : {}),
-    });
   };
   const resumePendingSession = async (session: SessionInfo): Promise<void> => {
     let lease;
@@ -2175,7 +2343,10 @@ export const createSessionRouteController = (): SessionRouteController => {
         await resumePendingSession(session);
         if (session.currentRunId) result.scheduled++;
       } catch (error) {
-        if (error instanceof TaskAdmissionQueueFullError) {
+        if (
+          error instanceof TaskAdmissionQueueFullError ||
+          error instanceof SessionRuntimeCapacityError
+        ) {
           result.deferred += queued.length - index;
           break;
         }
@@ -2520,10 +2691,11 @@ export const createSessionRouteController = (): SessionRouteController => {
       c.req.param('sessionId'),
       c.req.query('projectPath')
     );
-    const runtime = await getOrCreateRuntime(session);
-    return c.json({
-      checkpoints: await runtime.listRewindCheckpoints(),
-    });
+    return withRuntime(session, async (runtime) =>
+      c.json({
+        checkpoints: await runtime.listRewindCheckpoints(),
+      })
+    );
   });
 
   app.post('/:sessionId/rewind', async (c) => {
@@ -2541,27 +2713,31 @@ export const createSessionRouteController = (): SessionRouteController => {
         throw new ConflictError('Cannot rewind while a run is active');
       }
 
-      const runtime = await getOrCreateRuntime(session);
-      let result: RewoundSession;
-      try {
-        result = await runtime.rewindSession(parsed.data);
-      } catch (error) {
-        if (error instanceof Error && error.message.startsWith('Cannot rewind while')) {
-          throw new ConflictError(error.message);
+      return withRuntime(session, async (runtime) => {
+        let result: RewoundSession;
+        try {
+          result = await runtime.rewindSession(parsed.data);
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            error.message.startsWith('Cannot rewind while')
+          ) {
+            throw new ConflictError(error.message);
+          }
+          throw error;
         }
-        throw error;
-      }
-      session.messages = [...result.messages];
-      session.updatedAt = new Date();
-      const clientMessages = projectClientMessages(result.messages);
-      Bus.publish(ref, 'session.rewound', {
-        targetMessageId: result.checkpoint.messageId,
-        mode: result.mode,
-        removedTurns: result.removedTurns,
-        restoredFiles: result.restoredFiles,
-        messages: clientMessages,
+        session.messages = [...result.messages];
+        session.updatedAt = new Date();
+        const clientMessages = projectClientMessages(result.messages);
+        Bus.publish(ref, 'session.rewound', {
+          targetMessageId: result.checkpoint.messageId,
+          mode: result.mode,
+          removedTurns: result.removedTurns,
+          restoredFiles: result.restoredFiles,
+          messages: clientMessages,
+        });
+        return c.json({ ...result, messages: clientMessages });
       });
-      return c.json({ ...result, messages: clientMessages });
     });
   });
 
@@ -2596,148 +2772,154 @@ export const createSessionRouteController = (): SessionRouteController => {
       if (activeReviewRuns.has(key)) {
         throw new ConflictError('Session already has an active review');
       }
-      const runtime = await getOrCreateRuntime(session);
-      await CodeReviewService.recoverInterrupted(
-        ref.projectPath,
-        ref.sessionId,
-        runtime
-      );
-      if (parsed.data.modelId && !runtime.getModelById(parsed.data.modelId)) {
-        throw new BadRequestError(`Model not found: ${parsed.data.modelId}`);
-      }
-      if (parsed.data.modelId && runtime.getCurrentModelId() !== parsed.data.modelId) {
-        await runtime.refresh({ modelId: parsed.data.modelId });
-      }
-      if (parsed.data.modelId && session.selectedModelId !== parsed.data.modelId) {
-        const metadata = await SessionService.updateSessionMetadata(
-          session.id,
-          session.projectPath,
-          { selectedModelId: parsed.data.modelId }
+      return withRuntime(session, async (runtime) => {
+        await CodeReviewService.recoverInterrupted(
+          ref.projectPath,
+          ref.sessionId,
+          runtime
         );
-        syncSessionTaskMetadata(session, metadata);
-      }
-      const controller = new AbortController();
-      let run: CodeReviewRun | undefined;
-      try {
-        run = await CodeReviewService.start({
-          sessionId: ref.sessionId,
-          projectPath: ref.projectPath,
-          runtime,
-          request: {
-            kind: parsed.data.kind,
-            ...(parsed.data.ref ? { ref: parsed.data.ref } : {}),
-            ...(parsed.data.instructions
-              ? { instructions: parsed.data.instructions }
-              : {}),
-          },
-          signal: controller.signal,
-          onEvent: (event) => {
-            if (event.kind === 'tool_start') {
-              Bus.publish(ref, 'review.tool.started', {
-                reviewId: run?.reviewId,
-                toolCallId: event.toolCall.id,
-                toolName: event.toolCall.function.name,
-              });
-            } else if (event.kind === 'tool_progress') {
-              Bus.publish(ref, 'review.tool.progress', {
-                reviewId: run?.reviewId,
-                toolCallId: event.toolCall.id,
-                message: event.update.message.slice(0, 1_000),
-              });
-            } else if (event.kind === 'tool_result') {
-              Bus.publish(ref, 'review.tool.completed', {
-                reviewId: run?.reviewId,
-                toolCallId: event.toolCall.id,
-                success: event.result.success,
-              });
-            }
-          },
-        });
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          (error.message.includes('active review') ||
-            error.message.includes('interrupted review') ||
-            error.message.includes('active turn'))
-        ) {
-          throw new ConflictError(error.message);
+        if (parsed.data.modelId && !runtime.getModelById(parsed.data.modelId)) {
+          throw new BadRequestError(`Model not found: ${parsed.data.modelId}`);
         }
         if (
-          error instanceof Error &&
-          (error.message.includes('review') ||
-            error.message.includes('Git') ||
-            error.message.includes('changes') ||
-            error.message.includes('ref'))
+          parsed.data.modelId &&
+          runtime.getCurrentModelId() !== parsed.data.modelId
         ) {
-          throw new BadRequestError(error.message);
+          await runtime.refresh({ modelId: parsed.data.modelId });
         }
-        throw error;
-      }
-      if (!run) throw new InternalServerError('Code review failed to start');
-      await refreshSessionTaskMetadata(session);
-      Bus.publish(ref, 'review.started', {
-        reviewId: run.reviewId,
-        kind: parsed.data.kind,
-      });
-      Bus.publish(ref, 'task.status', {
-        taskStatus: session.taskStatus,
-        ...(session.taskStatusReason
-          ? { taskStatusReason: session.taskStatusReason }
-          : {}),
-        ...(session.taskStartedAt ? { taskStartedAt: session.taskStartedAt } : {}),
-        ...(session.taskPromptSummary
-          ? { taskPromptSummary: session.taskPromptSummary }
-          : {}),
-        updatedAt: new Date().toISOString(),
-      });
-      const completion = run.completion
-        .then(async (result) => {
-          session.messages = await SessionService.loadSession(
-            ref.sessionId,
-            ref.projectPath
+        if (parsed.data.modelId && session.selectedModelId !== parsed.data.modelId) {
+          const metadata = await SessionService.updateSessionMetadata(
+            session.id,
+            session.projectPath,
+            { selectedModelId: parsed.data.modelId }
           );
-          await refreshSessionTaskMetadata(session);
-          Bus.publish(ref, 'task.status', {
-            taskStatus: session.taskStatus,
-            ...(session.taskStatusReason
-              ? { taskStatusReason: session.taskStatusReason }
-              : {}),
-            ...(session.taskFailure ? { taskFailure: session.taskFailure } : {}),
-            ...(session.taskStartedAt ? { taskStartedAt: session.taskStartedAt } : {}),
-            ...(session.taskCompletedAt
-              ? { taskCompletedAt: session.taskCompletedAt }
-              : {}),
-            ...(session.taskPromptSummary
-              ? { taskPromptSummary: session.taskPromptSummary }
-              : {}),
-            updatedAt: new Date().toISOString(),
+          syncSessionTaskMetadata(session, metadata);
+        }
+        const controller = new AbortController();
+        let run: CodeReviewRun | undefined;
+        try {
+          run = await CodeReviewService.start({
+            sessionId: ref.sessionId,
+            projectPath: ref.projectPath,
+            runtime,
+            request: {
+              kind: parsed.data.kind,
+              ...(parsed.data.ref ? { ref: parsed.data.ref } : {}),
+              ...(parsed.data.instructions
+                ? { instructions: parsed.data.instructions }
+                : {}),
+            },
+            signal: controller.signal,
+            onEvent: (event) => {
+              if (event.kind === 'tool_start') {
+                Bus.publish(ref, 'review.tool.started', {
+                  reviewId: run?.reviewId,
+                  toolCallId: event.toolCall.id,
+                  toolName: event.toolCall.function.name,
+                });
+              } else if (event.kind === 'tool_progress') {
+                Bus.publish(ref, 'review.tool.progress', {
+                  reviewId: run?.reviewId,
+                  toolCallId: event.toolCall.id,
+                  message: event.update.message.slice(0, 1_000),
+                });
+              } else if (event.kind === 'tool_result') {
+                Bus.publish(ref, 'review.tool.completed', {
+                  reviewId: run?.reviewId,
+                  toolCallId: event.toolCall.id,
+                  success: event.result.success,
+                });
+              }
+            },
           });
-          Bus.publish(ref, 'review.completed', {
-            reviewId: run.reviewId,
-            status: result.status,
-            findings: result.findings.length,
-          });
-        })
-        .catch((error) => {
-          logger.error(`[SessionRoutes] Code review ${run.reviewId} failed:`, error);
-        })
-        .finally(() => {
-          if (activeReviewRuns.get(key)?.reviewId === run.reviewId) {
-            activeReviewRuns.delete(key);
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            (error.message.includes('active review') ||
+              error.message.includes('interrupted review') ||
+              error.message.includes('active turn'))
+          ) {
+            throw new ConflictError(error.message);
           }
-        });
-      activeReviewRuns.set(key, {
-        reviewId: run.reviewId,
-        controller,
-        completion,
-      });
-      return c.json(
-        {
+          if (
+            error instanceof Error &&
+            (error.message.includes('review') ||
+              error.message.includes('Git') ||
+              error.message.includes('changes') ||
+              error.message.includes('ref'))
+          ) {
+            throw new BadRequestError(error.message);
+          }
+          throw error;
+        }
+        if (!run) throw new InternalServerError('Code review failed to start');
+        await refreshSessionTaskMetadata(session);
+        Bus.publish(ref, 'review.started', {
           reviewId: run.reviewId,
-          status: 'running',
-        },
-        202
-      );
+          kind: parsed.data.kind,
+        });
+        Bus.publish(ref, 'task.status', {
+          taskStatus: session.taskStatus,
+          ...(session.taskStatusReason
+            ? { taskStatusReason: session.taskStatusReason }
+            : {}),
+          ...(session.taskStartedAt ? { taskStartedAt: session.taskStartedAt } : {}),
+          ...(session.taskPromptSummary
+            ? { taskPromptSummary: session.taskPromptSummary }
+            : {}),
+          updatedAt: new Date().toISOString(),
+        });
+        const completion = run.completion
+          .then(async (result) => {
+            session.messages = await SessionService.loadSession(
+              ref.sessionId,
+              ref.projectPath
+            );
+            await refreshSessionTaskMetadata(session);
+            Bus.publish(ref, 'task.status', {
+              taskStatus: session.taskStatus,
+              ...(session.taskStatusReason
+                ? { taskStatusReason: session.taskStatusReason }
+                : {}),
+              ...(session.taskFailure ? { taskFailure: session.taskFailure } : {}),
+              ...(session.taskStartedAt
+                ? { taskStartedAt: session.taskStartedAt }
+                : {}),
+              ...(session.taskCompletedAt
+                ? { taskCompletedAt: session.taskCompletedAt }
+                : {}),
+              ...(session.taskPromptSummary
+                ? { taskPromptSummary: session.taskPromptSummary }
+                : {}),
+              updatedAt: new Date().toISOString(),
+            });
+            Bus.publish(ref, 'review.completed', {
+              reviewId: run.reviewId,
+              status: result.status,
+              findings: result.findings.length,
+            });
+          })
+          .catch((error) => {
+            logger.error(`[SessionRoutes] Code review ${run.reviewId} failed:`, error);
+          })
+          .finally(() => {
+            if (activeReviewRuns.get(key)?.reviewId === run.reviewId) {
+              activeReviewRuns.delete(key);
+            }
+          });
+        activeReviewRuns.set(key, {
+          reviewId: run.reviewId,
+          controller,
+          completion,
+        });
+        return c.json(
+          {
+            reviewId: run.reviewId,
+            status: 'running',
+          },
+          202
+        );
+      });
     });
   });
 
@@ -2746,10 +2928,11 @@ export const createSessionRouteController = (): SessionRouteController => {
       c.req.param('sessionId'),
       c.req.query('projectPath')
     );
-    const runtime = await getOrCreateRuntime(session);
-    return c.json({
-      subagents: runtime.listSubagents().map(toPublicAgentSession),
-    });
+    return withRuntime(session, (runtime) =>
+      c.json({
+        subagents: runtime.listSubagents().map(toPublicAgentSession),
+      })
+    );
   });
 
   app.post('/:sessionId/subagents/:agentId/resume', async (c) => {
@@ -2772,61 +2955,65 @@ export const createSessionRouteController = (): SessionRouteController => {
         );
       }
 
-      const runtime = await getOrCreateRuntime(session);
-      let announced = false;
-      let pendingCompletion: AgentSession | undefined;
-      const publishCompletion = (child: AgentSession) => {
-        Bus.publish(ref, 'subagent.complete', {
-          subagentSessionId: child.id,
-          success: child.status === 'completed',
-          status: child.status,
-          summary: child.result?.message?.slice(0, 500),
-          type: child.subagentType,
-          verificationVerdict: child.result?.verificationVerdict,
-          resumedFrom: child.resumedFrom,
-          rootAgentId: child.rootAgentId,
-          resumeDepth: child.resumeDepth,
-        });
-      };
-      let result: ResumedSubagent;
-      try {
-        result = runtime.resumeSubagent({
-          agentId: c.req.param('agentId'),
-          prompt: parsed.data.prompt,
-          onEvent: (event, childId) => {
-            publishSubagentLoopEvent(ref, childId, event);
-          },
-          onCompleted: (child) => {
-            if (announced) publishCompletion(child);
-            else pendingCompletion = child;
-          },
-        });
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          (error.message.startsWith('Cannot resume') ||
-            error.message.startsWith('Subagent cannot'))
-        ) {
-          throw new ConflictError(error.message);
+      return withRuntime(session, async (runtime) => {
+        let announced = false;
+        let pendingCompletion: AgentSession | undefined;
+        const publishCompletion = (child: AgentSession) => {
+          Bus.publish(ref, 'subagent.complete', {
+            subagentSessionId: child.id,
+            success: child.status === 'completed',
+            status: child.status,
+            summary: child.result?.message?.slice(0, 500),
+            type: child.subagentType,
+            verificationVerdict: child.result?.verificationVerdict,
+            resumedFrom: child.resumedFrom,
+            rootAgentId: child.rootAgentId,
+            resumeDepth: child.resumeDepth,
+          });
+        };
+        let result: ResumedSubagent;
+        try {
+          result = runtime.resumeSubagent({
+            agentId: c.req.param('agentId'),
+            prompt: parsed.data.prompt,
+            onEvent: (event, childId) => {
+              publishSubagentLoopEvent(ref, childId, event);
+            },
+            onCompleted: (child) => {
+              if (announced) publishCompletion(child);
+              else pendingCompletion = child;
+            },
+          });
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            (error.message.startsWith('Cannot resume') ||
+              error.message.startsWith('Subagent cannot'))
+          ) {
+            throw new ConflictError(error.message);
+          }
+          if (
+            error instanceof Error &&
+            error.message.startsWith('Subagent not found')
+          ) {
+            throw new NotFoundError(error.message);
+          }
+          throw error;
         }
-        if (error instanceof Error && error.message.startsWith('Subagent not found')) {
-          throw new NotFoundError(error.message);
-        }
-        throw error;
-      }
-      Bus.publish(ref, 'subagent.start', {
-        subagentSessionId: result.session.id,
-        type: result.session.subagentType,
-        description: result.session.description,
-        resumedFrom: result.source.id,
-        rootAgentId: result.session.rootAgentId,
-        resumeDepth: result.session.resumeDepth,
-      });
-      announced = true;
-      if (pendingCompletion) publishCompletion(pendingCompletion);
-      return c.json({
-        source: toPublicAgentSession(result.source),
-        session: toPublicAgentSession(result.session),
+        Bus.publish(ref, 'subagent.start', {
+          subagentSessionId: result.session.id,
+          type: result.session.subagentType,
+          description: result.session.description,
+          resumedFrom: result.source.id,
+          rootAgentId: result.session.rootAgentId,
+          resumeDepth: result.session.resumeDepth,
+        });
+        announced = true;
+        if (pendingCompletion) publishCompletion(pendingCompletion);
+        return c.json({
+          source: toPublicAgentSession(result.source),
+          session: toPublicAgentSession(result.session),
+        });
       });
     });
   });
@@ -2864,25 +3051,31 @@ export const createSessionRouteController = (): SessionRouteController => {
       if (session.permissionMode !== permissionMode) {
         await persistSessionPermissionMode(session, permissionMode);
       }
-      const runtime = await getOrCreateRuntime(session);
-      const goal = await runtime.createGoal(parsed.data);
-      Bus.publish(ref, 'goal.updated', { goal });
-      const run = startRun(session, '', permissionMode, {
-        goalContinuationOnly: true,
-        ...(session.taskIsolation ? { taskRuntime: runtime } : {}),
-      });
-      await run.taskAdmissionUpdate;
-      return c.json(
-        {
-          status: run.status === 'queued' ? 'queued' : 'running',
-          runId: run.id,
-          goal,
-          queuePosition: run.taskQueuePosition,
-          queueDepth: run.taskQueueDepth,
-          maxConcurrentTasks: run.taskConcurrencyLimit,
-        },
-        202
-      );
+      const runtimeLease = await acquireRuntime(session);
+      let transferred = false;
+      try {
+        const goal = await runtimeLease.value.createGoal(parsed.data);
+        Bus.publish(ref, 'goal.updated', { goal });
+        const run = startRun(session, '', permissionMode, {
+          goalContinuationOnly: true,
+          runtimeLease,
+        });
+        transferred = true;
+        await run.taskAdmissionUpdate;
+        return c.json(
+          {
+            status: run.status === 'queued' ? 'queued' : 'running',
+            runId: run.id,
+            goal,
+            queuePosition: run.taskQueuePosition,
+            queueDepth: run.taskQueueDepth,
+            maxConcurrentTasks: run.taskConcurrencyLimit,
+          },
+          202
+        );
+      } finally {
+        if (!transferred) runtimeLease.release();
+      }
     });
   });
 
@@ -2896,36 +3089,43 @@ export const createSessionRouteController = (): SessionRouteController => {
     const ref = sessionRefFromSession(session);
 
     return getMessageSubmissionLock(ref).runExclusive(async () => {
-      const runtime = await getOrCreateRuntime(session);
-      let goal: GoalSnapshot;
-      if (parsed.data.action === 'pause') {
-        goal = await runtime.pauseGoal();
-      } else if (parsed.data.action === 'edit') {
-        goal = await runtime.editGoal(parsed.data.objective);
-      } else {
-        goal = await runtime.resumeGoal();
-      }
-      Bus.publish(ref, 'goal.updated', { goal });
+      const runtimeLease = await acquireRuntime(session);
+      let transferred = false;
+      try {
+        const runtime = runtimeLease.value;
+        let goal: GoalSnapshot;
+        if (parsed.data.action === 'pause') {
+          goal = await runtime.pauseGoal();
+        } else if (parsed.data.action === 'edit') {
+          goal = await runtime.editGoal(parsed.data.objective);
+        } else {
+          goal = await runtime.resumeGoal();
+        }
+        Bus.publish(ref, 'goal.updated', { goal });
 
-      if (goal.status === 'active' && !isActiveRun(getRun(session.currentRunId))) {
-        const run = startRun(session, '', PermissionMode.DEFAULT, {
-          goalContinuationOnly: true,
-          ...(session.taskIsolation ? { taskRuntime: runtime } : {}),
-        });
-        await run.taskAdmissionUpdate;
-        return c.json(
-          {
-            status: run.status === 'queued' ? 'queued' : 'running',
-            runId: run.id,
-            goal,
-            queuePosition: run.taskQueuePosition,
-            queueDepth: run.taskQueueDepth,
-            maxConcurrentTasks: run.taskConcurrencyLimit,
-          },
-          202
-        );
+        if (goal.status === 'active' && !isActiveRun(getRun(session.currentRunId))) {
+          const run = startRun(session, '', PermissionMode.DEFAULT, {
+            goalContinuationOnly: true,
+            runtimeLease,
+          });
+          transferred = true;
+          await run.taskAdmissionUpdate;
+          return c.json(
+            {
+              status: run.status === 'queued' ? 'queued' : 'running',
+              runId: run.id,
+              goal,
+              queuePosition: run.taskQueuePosition,
+              queueDepth: run.taskQueueDepth,
+              maxConcurrentTasks: run.taskConcurrencyLimit,
+            },
+            202
+          );
+        }
+        return c.json({ status: goal.status, goal });
+      } finally {
+        if (!transferred) runtimeLease.release();
       }
-      return c.json({ status: goal.status, goal });
     });
   });
 
@@ -2935,10 +3135,11 @@ export const createSessionRouteController = (): SessionRouteController => {
       c.req.query('projectPath')
     );
     const ref = sessionRefFromSession(session);
-    const runtime = await getOrCreateRuntime(session);
-    const cleared = await runtime.clearGoal();
-    if (cleared) Bus.publish(ref, 'goal.cleared', {});
-    return c.json({ cleared });
+    return withRuntime(session, async (runtime) => {
+      const cleared = await runtime.clearGoal();
+      if (cleared) Bus.publish(ref, 'goal.cleared', {});
+      return c.json({ cleared });
+    });
   });
 
   app.post('/:sessionId/archive', async (c) => {
@@ -3100,11 +3301,13 @@ export const createSessionRouteController = (): SessionRouteController => {
       sessionHydrations.delete(key);
       runtimeInitializations.delete(key);
       messageSubmissionLocks.delete(key);
-      if (runtime) {
-        await runtime.dispose();
-        runtimes.delete(key);
-        if (runtimes.size === 0) {
-          await McpRegistry.getInstance().disconnectAll();
+      const residentRuntime = runtimes.get(key);
+      if (residentRuntime) {
+        const removed = await runtimeResidency.remove(key, residentRuntime);
+        if (!removed) {
+          throw new ConflictError(
+            'Session Runtime is still active and cannot be deleted'
+          );
         }
       }
       if (taskWorktree) {
@@ -3264,30 +3467,35 @@ export const createSessionRouteController = (): SessionRouteController => {
         if (stream.aborted || terminated) return;
 
         const currentRun = getRun(session.currentRunId);
-        const runtime = isActiveRun(currentRun)
-          ? await getOrCreateRuntime(session)
+        const runtimeLease = isActiveRun(currentRun)
+          ? await acquireRuntime(session)
           : undefined;
-        const queued = runtime?.getPendingSteeringCount() ?? 0;
-        await egress.writeInitial({
-          data: JSON.stringify({
-            type: 'connected',
-            properties: {
-              sessionId: ref.sessionId,
-              projectPath: ref.projectPath,
-              timestamp: Date.now(),
-              status: isActiveRun(currentRun) ? currentRun.status : 'idle',
-              runId: isActiveRun(currentRun) ? currentRun.id : undefined,
-              queued,
-              pendingInputDelivery:
-                queued > 0
-                  ? runtime?.hasActiveTurn()
-                    ? 'current_turn'
-                    : 'next_turn'
-                  : null,
-              recovered: runtime?.getRecoveredSteeringCount() ?? 0,
-            },
-          }),
-        });
+        try {
+          const runtime = runtimeLease?.value;
+          const queued = runtime?.getPendingSteeringCount() ?? 0;
+          await egress.writeInitial({
+            data: JSON.stringify({
+              type: 'connected',
+              properties: {
+                sessionId: ref.sessionId,
+                projectPath: ref.projectPath,
+                timestamp: Date.now(),
+                status: isActiveRun(currentRun) ? currentRun.status : 'idle',
+                runId: isActiveRun(currentRun) ? currentRun.id : undefined,
+                queued,
+                pendingInputDelivery:
+                  queued > 0
+                    ? runtime?.hasActiveTurn()
+                      ? 'current_turn'
+                      : 'next_turn'
+                    : null,
+                recovered: runtime?.getRecoveredSteeringCount() ?? 0,
+              },
+            }),
+          });
+        } finally {
+          runtimeLease?.release();
+        }
         if (stream.aborted || terminated) return;
 
         // Durable resume: replay committed events after the client's cursor
@@ -3330,10 +3538,12 @@ export const createSessionRouteController = (): SessionRouteController => {
             await CodeReviewService.list(ref.projectPath, ref.sessionId)
           ).some((review) => review.completion === undefined);
           const recoveredReview = hasPendingReview
-            ? await CodeReviewService.recoverInterrupted(
-                ref.projectPath,
-                ref.sessionId,
-                await getOrCreateRuntime(session)
+            ? await withRuntime(session, (runtime) =>
+                CodeReviewService.recoverInterrupted(
+                  ref.projectPath,
+                  ref.sessionId,
+                  runtime
+                )
               )
             : undefined;
           if (recoveredReview) {
@@ -3477,309 +3687,317 @@ export const createSessionRouteController = (): SessionRouteController => {
             'Wait for the active turn to finish before setting an output schema'
           );
         }
-        const runtime = await getOrCreateRuntime(session);
-        if (requestedModelId && !runtime.getModelById(requestedModelId)) {
-          throw new BadRequestError(`Model not found: ${requestedModelId}`);
-        }
-        if (requestedModelId && runtime.getCurrentModelId() !== requestedModelId) {
-          throw new ConflictError(
-            'Wait for the active turn to finish before switching models'
-          );
-        }
-        if (
-          requestedReasoningEffort &&
-          runtime.getReasoningConfiguration().selection !== requestedReasoningEffort
-        ) {
-          throw new ConflictError(
-            'Wait for the active turn to finish before switching reasoning effort'
-          );
-        }
-        if (
-          requestedServiceTier &&
-          runtime.getServiceTierConfiguration().selection !== requestedServiceTier
-        ) {
-          throw new ConflictError(
-            'Wait for the active turn to finish before switching service tier'
-          );
-        }
-        if (
-          requestedResponseVerbosity &&
-          runtime.getResponseVerbosityConfiguration().selection !==
-            requestedResponseVerbosity
-        ) {
-          throw new ConflictError(
-            'Wait for the active turn to finish before switching response verbosity'
-          );
-        }
-        if (
-          requestedCommunicationStyle &&
-          runtime.getCommunicationStyleConfiguration().selection !==
-            requestedCommunicationStyle
-        ) {
-          throw new ConflictError(
-            'Wait for the active turn to finish before switching communication style'
-          );
-        }
-        if (
-          requestedPermissionMode &&
-          session.permissionMode !== requestedPermissionMode
-        ) {
-          throw new ConflictError(
-            'Wait for the active turn to finish before switching permission mode'
-          );
-        }
-        const steering = await runtime.enqueueSteering(userContent, {
-          allowBeforeTurn: true,
-        });
-        if (!steering.accepted) {
-          return c.json(
-            { status: 'rejected', reason: steering.reason ?? 'turn_unavailable' },
-            409
-          );
-        }
-
-        const messageId = steering.messageId ?? nanoid(12);
-        const queued = steering.queued;
-        Bus.publish(sessionRef, 'message.created', {
-          messageId,
-          role: 'user',
-          content: getDisplayContent(userContent),
-        });
-        const queuedEvent =
-          steering.delivery === 'next_turn' ? 'follow_up.queued' : 'steering.queued';
-        Bus.publish(sessionRef, queuedEvent, {
-          runId: currentRun.id,
-          messageId,
-          queued,
-        });
-        if (
-          steering.delivery === 'next_turn' &&
-          currentRun.status !== 'running' &&
-          currentRun.status !== 'waiting_permission'
-        ) {
-          void resumePendingSession(session).catch((error) => {
-            logger.error(
-              `[SessionRoutes] Failed to wake queued follow-up for ${sessionId}:`,
-              error
+        return withRuntime(session, async (runtime) => {
+          if (requestedModelId && !runtime.getModelById(requestedModelId)) {
+            throw new BadRequestError(`Model not found: ${requestedModelId}`);
+          }
+          if (requestedModelId && runtime.getCurrentModelId() !== requestedModelId) {
+            throw new ConflictError(
+              'Wait for the active turn to finish before switching models'
             );
+          }
+          if (
+            requestedReasoningEffort &&
+            runtime.getReasoningConfiguration().selection !== requestedReasoningEffort
+          ) {
+            throw new ConflictError(
+              'Wait for the active turn to finish before switching reasoning effort'
+            );
+          }
+          if (
+            requestedServiceTier &&
+            runtime.getServiceTierConfiguration().selection !== requestedServiceTier
+          ) {
+            throw new ConflictError(
+              'Wait for the active turn to finish before switching service tier'
+            );
+          }
+          if (
+            requestedResponseVerbosity &&
+            runtime.getResponseVerbosityConfiguration().selection !==
+              requestedResponseVerbosity
+          ) {
+            throw new ConflictError(
+              'Wait for the active turn to finish before switching response verbosity'
+            );
+          }
+          if (
+            requestedCommunicationStyle &&
+            runtime.getCommunicationStyleConfiguration().selection !==
+              requestedCommunicationStyle
+          ) {
+            throw new ConflictError(
+              'Wait for the active turn to finish before switching communication style'
+            );
+          }
+          if (
+            requestedPermissionMode &&
+            session.permissionMode !== requestedPermissionMode
+          ) {
+            throw new ConflictError(
+              'Wait for the active turn to finish before switching permission mode'
+            );
+          }
+          const steering = await runtime.enqueueSteering(userContent, {
+            allowBeforeTurn: true,
           });
-        }
-        if (steering.delivery === 'next_turn') {
-          currentRun.pendingFollowUpRequested = true;
-        }
-        return c.json(
-          {
+          if (!steering.accepted) {
+            return c.json(
+              { status: 'rejected', reason: steering.reason ?? 'turn_unavailable' },
+              409
+            );
+          }
+
+          const messageId = steering.messageId ?? nanoid(12);
+          const queued = steering.queued;
+          Bus.publish(sessionRef, 'message.created', {
+            messageId,
+            role: 'user',
+            content: getDisplayContent(userContent),
+          });
+          const queuedEvent =
+            steering.delivery === 'next_turn' ? 'follow_up.queued' : 'steering.queued';
+          Bus.publish(sessionRef, queuedEvent, {
             runId: currentRun.id,
             messageId,
-            status:
-              steering.delivery === 'next_turn'
-                ? 'follow_up_queued'
-                : 'steering_queued',
             queued,
-          },
-          202
-        );
+          });
+          if (
+            steering.delivery === 'next_turn' &&
+            currentRun.status !== 'running' &&
+            currentRun.status !== 'waiting_permission'
+          ) {
+            void resumePendingSession(session).catch((error) => {
+              logger.error(
+                `[SessionRoutes] Failed to wake queued follow-up for ${sessionId}:`,
+                error
+              );
+            });
+          }
+          if (steering.delivery === 'next_turn') {
+            currentRun.pendingFollowUpRequested = true;
+          }
+          return c.json(
+            {
+              runId: currentRun.id,
+              messageId,
+              status:
+                steering.delivery === 'next_turn'
+                  ? 'follow_up_queued'
+                  : 'steering_queued',
+              queued,
+            },
+            202
+          );
+        });
       }
 
       if (session.permissionMode !== permissionMode) {
         await persistSessionPermissionMode(session, permissionMode);
       }
-      const runtime = await getOrCreateRuntime(session, {
+      const runtimeLease = await acquireRuntime(session, {
         permissionMode,
         ...(requestedCommunicationStyle && !requestedCommunicationStyle.includes(':')
           ? { communicationStyle: requestedCommunicationStyle }
           : {}),
       });
-      if (requestedModelId && !runtime.getModelById(requestedModelId)) {
-        throw new BadRequestError(`Model not found: ${requestedModelId}`);
-      }
-      if (requestedReasoningEffort) {
-        try {
-          runtime.resolveReasoningConfiguration(
-            requestedReasoningEffort,
-            requestedModelId
-          );
-        } catch (error) {
-          throw new BadRequestError(
-            error instanceof Error ? error.message : 'Invalid reasoning effort'
-          );
+      let transferred = false;
+      try {
+        const runtime = runtimeLease.value;
+        if (requestedModelId && !runtime.getModelById(requestedModelId)) {
+          throw new BadRequestError(`Model not found: ${requestedModelId}`);
         }
-      }
-      if (requestedServiceTier) {
-        try {
-          runtime.resolveServiceTierConfiguration(
-            requestedServiceTier,
-            requestedModelId
-          );
-        } catch (error) {
-          throw new BadRequestError(
-            error instanceof Error ? error.message : 'Invalid service tier'
-          );
+        if (requestedReasoningEffort) {
+          try {
+            runtime.resolveReasoningConfiguration(
+              requestedReasoningEffort,
+              requestedModelId
+            );
+          } catch (error) {
+            throw new BadRequestError(
+              error instanceof Error ? error.message : 'Invalid reasoning effort'
+            );
+          }
         }
-      }
-      if (requestedResponseVerbosity) {
-        try {
-          runtime.resolveResponseVerbosityConfiguration(
-            requestedResponseVerbosity,
-            requestedModelId
-          );
-        } catch (error) {
-          throw new BadRequestError(
-            error instanceof Error ? error.message : 'Invalid response verbosity'
-          );
+        if (requestedServiceTier) {
+          try {
+            runtime.resolveServiceTierConfiguration(
+              requestedServiceTier,
+              requestedModelId
+            );
+          } catch (error) {
+            throw new BadRequestError(
+              error instanceof Error ? error.message : 'Invalid service tier'
+            );
+          }
         }
-      }
-      const requestedCommunicationStyleConfiguration:
-        | CommunicationStyleConfiguration
-        | undefined = requestedCommunicationStyle
-        ? runtime.resolveCommunicationStyleConfiguration(requestedCommunicationStyle)
-        : undefined;
-      if (
-        requestedCommunicationStyleConfiguration?.source !== undefined &&
-        requestedCommunicationStyleConfiguration.source !== 'built-in' &&
-        !requestedCommunicationStyleConfiguration.contentSha256
-      ) {
-        throw new BadRequestError('Custom communication style has no provenance');
-      }
-      const previousModelId = runtime.getCurrentModelId();
-      const previousReasoning = runtime.getReasoningConfiguration();
-      const previousServiceTier = runtime.getServiceTierConfiguration();
-      const previousResponseVerbosity = runtime.getResponseVerbosityConfiguration();
-      const previousCommunicationStyle = runtime.getCommunicationStyleConfiguration();
-      const switchedModel =
-        Boolean(requestedModelId) && previousModelId !== requestedModelId;
-      const switchedReasoning =
-        Boolean(requestedReasoningEffort) &&
-        previousReasoning.selection !== requestedReasoningEffort;
-      const switchedServiceTier =
-        Boolean(requestedServiceTier) &&
-        previousServiceTier.selection !== requestedServiceTier;
-      const switchedResponseVerbosity =
-        Boolean(requestedResponseVerbosity) &&
-        previousResponseVerbosity.selection !== requestedResponseVerbosity;
-      const switchedCommunicationStyle =
-        Boolean(requestedCommunicationStyle) &&
-        previousCommunicationStyle.selection !== requestedCommunicationStyle;
-      if (
-        switchedModel ||
-        switchedReasoning ||
-        switchedServiceTier ||
-        switchedResponseVerbosity ||
-        switchedCommunicationStyle
-      ) {
-        await runtime.refresh({
-          ...(requestedModelId ? { modelId: requestedModelId } : {}),
-          ...(requestedReasoningEffort
+        if (requestedResponseVerbosity) {
+          try {
+            runtime.resolveResponseVerbosityConfiguration(
+              requestedResponseVerbosity,
+              requestedModelId
+            );
+          } catch (error) {
+            throw new BadRequestError(
+              error instanceof Error ? error.message : 'Invalid response verbosity'
+            );
+          }
+        }
+        const requestedCommunicationStyleConfiguration:
+          | CommunicationStyleConfiguration
+          | undefined = requestedCommunicationStyle
+          ? runtime.resolveCommunicationStyleConfiguration(requestedCommunicationStyle)
+          : undefined;
+        if (
+          requestedCommunicationStyleConfiguration?.source !== undefined &&
+          requestedCommunicationStyleConfiguration.source !== 'built-in' &&
+          !requestedCommunicationStyleConfiguration.contentSha256
+        ) {
+          throw new BadRequestError('Custom communication style has no provenance');
+        }
+        const previousModelId = runtime.getCurrentModelId();
+        const previousReasoning = runtime.getReasoningConfiguration();
+        const previousServiceTier = runtime.getServiceTierConfiguration();
+        const previousResponseVerbosity = runtime.getResponseVerbosityConfiguration();
+        const previousCommunicationStyle = runtime.getCommunicationStyleConfiguration();
+        const switchedModel =
+          Boolean(requestedModelId) && previousModelId !== requestedModelId;
+        const switchedReasoning =
+          Boolean(requestedReasoningEffort) &&
+          previousReasoning.selection !== requestedReasoningEffort;
+        const switchedServiceTier =
+          Boolean(requestedServiceTier) &&
+          previousServiceTier.selection !== requestedServiceTier;
+        const switchedResponseVerbosity =
+          Boolean(requestedResponseVerbosity) &&
+          previousResponseVerbosity.selection !== requestedResponseVerbosity;
+        const switchedCommunicationStyle =
+          Boolean(requestedCommunicationStyle) &&
+          previousCommunicationStyle.selection !== requestedCommunicationStyle;
+        if (
+          switchedModel ||
+          switchedReasoning ||
+          switchedServiceTier ||
+          switchedResponseVerbosity ||
+          switchedCommunicationStyle
+        ) {
+          await runtime.refresh({
+            ...(requestedModelId ? { modelId: requestedModelId } : {}),
+            ...(requestedReasoningEffort
+              ? { reasoningEffort: requestedReasoningEffort }
+              : {}),
+            ...(requestedServiceTier ? { serviceTier: requestedServiceTier } : {}),
+            ...(requestedResponseVerbosity
+              ? { responseVerbosity: requestedResponseVerbosity }
+              : {}),
+            ...(requestedCommunicationStyle
+              ? { communicationStyle: requestedCommunicationStyle }
+              : {}),
+          });
+        }
+        const metadataUpdate = {
+          ...(requestedModelId && session.selectedModelId !== requestedModelId
+            ? { selectedModelId: requestedModelId }
+            : {}),
+          ...(requestedReasoningEffort &&
+          session.reasoningEffort !== requestedReasoningEffort
             ? { reasoningEffort: requestedReasoningEffort }
             : {}),
-          ...(requestedServiceTier ? { serviceTier: requestedServiceTier } : {}),
-          ...(requestedResponseVerbosity
+          ...(requestedServiceTier && session.serviceTier !== requestedServiceTier
+            ? { serviceTier: requestedServiceTier }
+            : {}),
+          ...(requestedResponseVerbosity &&
+          session.responseVerbosity !== requestedResponseVerbosity
             ? { responseVerbosity: requestedResponseVerbosity }
             : {}),
-          ...(requestedCommunicationStyle
-            ? { communicationStyle: requestedCommunicationStyle }
+          ...(requestedCommunicationStyleConfiguration &&
+          (session.communicationStyle !== requestedCommunicationStyle ||
+            session.communicationStyleDigest !==
+              requestedCommunicationStyleConfiguration.contentSha256)
+            ? {
+                communicationStyle: requestedCommunicationStyle,
+                communicationStyleDigest:
+                  requestedCommunicationStyleConfiguration.source === 'built-in'
+                    ? null
+                    : requestedCommunicationStyleConfiguration.contentSha256,
+              }
             : {}),
-        });
-      }
-      const metadataUpdate = {
-        ...(requestedModelId && session.selectedModelId !== requestedModelId
-          ? { selectedModelId: requestedModelId }
-          : {}),
-        ...(requestedReasoningEffort &&
-        session.reasoningEffort !== requestedReasoningEffort
-          ? { reasoningEffort: requestedReasoningEffort }
-          : {}),
-        ...(requestedServiceTier && session.serviceTier !== requestedServiceTier
-          ? { serviceTier: requestedServiceTier }
-          : {}),
-        ...(requestedResponseVerbosity &&
-        session.responseVerbosity !== requestedResponseVerbosity
-          ? { responseVerbosity: requestedResponseVerbosity }
-          : {}),
-        ...(requestedCommunicationStyleConfiguration &&
-        (session.communicationStyle !== requestedCommunicationStyle ||
-          session.communicationStyleDigest !==
-            requestedCommunicationStyleConfiguration.contentSha256)
-          ? {
-              communicationStyle: requestedCommunicationStyle,
-              communicationStyleDigest:
-                requestedCommunicationStyleConfiguration.source === 'built-in'
-                  ? null
-                  : requestedCommunicationStyleConfiguration.contentSha256,
+        };
+        if (Object.keys(metadataUpdate).length > 0) {
+          try {
+            const metadata = await SessionService.updateSessionMetadata(
+              session.id,
+              session.projectPath,
+              metadataUpdate
+            );
+            session.permissionMode = metadata.permissionMode as
+              | PermissionMode
+              | undefined;
+            session.selectedModelId = metadata.selectedModelId;
+            session.reasoningEffort = metadata.reasoningEffort;
+            session.serviceTier = metadata.serviceTier;
+            session.responseVerbosity = metadata.responseVerbosity;
+            session.communicationStyle = metadata.communicationStyle;
+            session.communicationStyleDigest = metadata.communicationStyleDigest;
+            session.updatedAt = new Date(metadata.lastMessageTime);
+            Bus.publish(sessionRef, 'session.updated', metadataUpdate);
+          } catch (error) {
+            if (
+              switchedModel ||
+              switchedReasoning ||
+              switchedServiceTier ||
+              switchedResponseVerbosity ||
+              switchedCommunicationStyle
+            ) {
+              await runtime
+                .refresh({
+                  ...(previousModelId ? { modelId: previousModelId } : {}),
+                  reasoningEffort: previousReasoning.selection,
+                  serviceTier: previousServiceTier.selection,
+                  responseVerbosity: previousResponseVerbosity.selection,
+                  communicationStyle: previousCommunicationStyle.selection,
+                })
+                .catch((rollbackError) =>
+                  logger.error(
+                    '[SessionRoutes] Failed to roll back non-durable model settings:',
+                    rollbackError
+                  )
+                );
             }
-          : {}),
-      };
-      if (Object.keys(metadataUpdate).length > 0) {
-        try {
-          const metadata = await SessionService.updateSessionMetadata(
-            session.id,
-            session.projectPath,
-            metadataUpdate
-          );
-          session.permissionMode = metadata.permissionMode as
-            | PermissionMode
-            | undefined;
-          session.selectedModelId = metadata.selectedModelId;
-          session.reasoningEffort = metadata.reasoningEffort;
-          session.serviceTier = metadata.serviceTier;
-          session.responseVerbosity = metadata.responseVerbosity;
-          session.communicationStyle = metadata.communicationStyle;
-          session.communicationStyleDigest = metadata.communicationStyleDigest;
-          session.updatedAt = new Date(metadata.lastMessageTime);
-          Bus.publish(sessionRef, 'session.updated', metadataUpdate);
-        } catch (error) {
-          if (
-            switchedModel ||
-            switchedReasoning ||
-            switchedServiceTier ||
-            switchedResponseVerbosity ||
-            switchedCommunicationStyle
-          ) {
-            await runtime
-              .refresh({
-                ...(previousModelId ? { modelId: previousModelId } : {}),
-                reasoningEffort: previousReasoning.selection,
-                serviceTier: previousServiceTier.selection,
-                responseVerbosity: previousResponseVerbosity.selection,
-                communicationStyle: previousCommunicationStyle.selection,
-              })
-              .catch((rollbackError) =>
-                logger.error(
-                  '[SessionRoutes] Failed to roll back non-durable model settings:',
-                  rollbackError
-                )
-              );
+            throw error;
           }
-          throw error;
         }
-      }
-      const preparation = outputSchema
-        ? await runtime.prepareInputTurn(userContent, { outputSchema })
-        : await runtime.prepareInputTurn(userContent);
-      if (!preparation.accepted) {
-        return c.json(
-          { status: 'rejected', reason: preparation.reason },
-          preparation.reason === 'queue_full' ? 429 : 409
-        );
-      }
+        const preparation = outputSchema
+          ? await runtime.prepareInputTurn(userContent, { outputSchema })
+          : await runtime.prepareInputTurn(userContent);
+        if (!preparation.accepted) {
+          return c.json(
+            { status: 'rejected', reason: preparation.reason },
+            preparation.reason === 'queue_full' ? 429 : 409
+          );
+        }
 
-      const run = startRun(session, userContent, permissionMode, {
-        preparedInputTurn: preparation,
-        outputSchema,
-        ...(session.taskIsolation ? { taskRuntime: runtime } : {}),
-      });
-      await run.taskAdmissionUpdate;
-      return c.json(
-        {
-          runId: run.id,
-          messageId: preparation.messageId,
-          status: run.status === 'queued' ? 'queued' : 'running',
-          queuePosition: run.taskQueuePosition,
-          queueDepth: run.taskQueueDepth,
-          maxConcurrentTasks: run.taskConcurrencyLimit,
-        },
-        202
-      );
+        const run = startRun(session, userContent, permissionMode, {
+          preparedInputTurn: preparation,
+          outputSchema,
+          runtimeLease,
+        });
+        transferred = true;
+        await run.taskAdmissionUpdate;
+        return c.json(
+          {
+            runId: run.id,
+            messageId: preparation.messageId,
+            status: run.status === 'queued' ? 'queued' : 'running',
+            queuePosition: run.taskQueuePosition,
+            queueDepth: run.taskQueueDepth,
+            maxConcurrentTasks: run.taskConcurrencyLimit,
+          },
+          202
+        );
+      } finally {
+        if (!transferred) runtimeLease.release();
+      }
     });
   });
 
@@ -3802,7 +4020,8 @@ export const createSessionRouteController = (): SessionRouteController => {
           'A user shell command is already running in this Session'
         );
       }
-      const runtime = await getOrCreateRuntime(session);
+      const runtimeLease = await acquireRuntime(session);
+      const runtime = runtimeLease.value;
       const controller = new AbortController();
       let resolveCompletion!: () => void;
       const completion = new Promise<void>((resolve) => {
@@ -3833,6 +4052,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       } finally {
         activeUserShellRuns.delete(key);
         resolveCompletion();
+        runtimeLease.release();
       }
     });
   });
@@ -3891,6 +4111,7 @@ export const createSessionRouteController = (): SessionRouteController => {
   const shutdown = (reason = 'server-shutdown'): Promise<void> => {
     if (shutdownPromise) return shutdownPromise;
     admissionGate.close(reason);
+    clearInterval(runtimeSweepTimer);
 
     shutdownPromise = (async () => {
       let firstError: unknown;
@@ -3936,9 +4157,8 @@ export const createSessionRouteController = (): SessionRouteController => {
       signalActiveWork();
       await settle([...observedCompletions]);
 
-      const ownedRuntimes = new Set(runtimes.values());
+      await settle([runtimeResidency.disposeAll()]);
       runtimes.clear();
-      await settle([...ownedRuntimes].map((runtime) => runtime.dispose()));
       await settle([...runtimeDisposals.values()]);
       await settle([McpRegistry.getInstance().disconnectAll()]);
 
@@ -3964,6 +4184,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     getTaskDiff,
     deliverTask,
     recoverQueuedTasks,
+    getRuntimeResidencyStats: () => runtimeResidency.getStats(),
     shutdown,
   };
 };
@@ -3975,13 +4196,16 @@ async function executeRunAsync(
   session: SessionInfo,
   content: UserMessageContent,
   permissionMode: PermissionMode,
-  getOrCreateRuntime: (session: SessionInfo) => Promise<SessionRuntime>,
+  acquireRuntime: (
+    session: SessionInfo
+  ) => Promise<SessionRuntimeResidencyLease<SessionRuntime>>,
   options: {
     pendingInputOnly?: boolean;
     preparedInputTurn?: PreparedInputTurn;
     goalContinuationOnly?: boolean;
     outputSchema?: SessionTaskDispatch['outputSchema'];
     taskAdmission?: TaskAdmissionHandle;
+    runtimeLease?: SessionRuntimeResidencyLease<SessionRuntime>;
     disposeRuntime?: (session: SessionInfo, runtime?: SessionRuntime) => Promise<void>;
   } = {}
 ): Promise<void> {
@@ -3994,6 +4218,7 @@ async function executeRunAsync(
   let assistantMessageId: string | undefined = startsFromPending
     ? undefined
     : nanoid(12);
+  let runtimeLease = options.runtimeLease;
   let runtime: SessionRuntime | undefined;
   let agent: Agent | undefined;
   const sessionRef = sessionRefFromSession(session);
@@ -4005,8 +4230,10 @@ async function executeRunAsync(
   const finalizeCancellation = async (): Promise<void> => {
     const reason = String(abortController.signal.reason || 'Task run cancelled');
     if (session.taskIsolation) {
-      const taskRuntime =
-        runtime ?? (await getOrCreateRuntime(session).catch(() => undefined));
+      if (!runtimeLease) {
+        runtimeLease = await acquireRuntime(session).catch(() => undefined);
+      }
+      const taskRuntime = runtime ?? runtimeLease?.value;
       if (reason === 'user-cancel') {
         await taskRuntime?.discardPendingInput().catch((error) => {
           logger.warn(
@@ -4058,7 +4285,8 @@ async function executeRunAsync(
       });
     }
 
-    runtime = await getOrCreateRuntime(session);
+    runtimeLease ??= await acquireRuntime(session);
+    runtime = runtimeLease.value;
     const runtimeOwner = runtime;
     const structuredOutputExpected = Boolean(
       options.outputSchema ??
@@ -4594,6 +4822,7 @@ async function executeRunAsync(
       });
     }
     await agent?.destroy().catch(() => undefined);
+    runtimeLease?.release();
     if (run.disposeRuntimeOnSettle && options.disposeRuntime) {
       await options.disposeRuntime(session, runtime).catch((error) => {
         logger.warn(

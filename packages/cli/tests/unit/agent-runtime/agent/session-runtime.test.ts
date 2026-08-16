@@ -20,6 +20,7 @@ import { GoalStore } from '../../../../src/goals/GoalStore.js';
 import { HookManager } from '../../../../src/hooks/HookManager.js';
 import { HookEvent } from '../../../../src/hooks/types/HookTypes.js';
 import { McpRegistry } from '../../../../src/mcp/McpRegistry.js';
+import { McpTaskManager } from '../../../../src/mcp/McpTaskManager.js';
 import { Bus } from '../../../../src/server/bus.js';
 import {
   createChatServiceAsync,
@@ -319,6 +320,57 @@ describe('SessionRuntime', () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     rmSync(storageRoot, { recursive: true, force: true });
+  });
+
+  it('allows residency eviction only without active or background ownership', async () => {
+    const runtime = await SessionRuntime.create({
+      sessionId: 'residency-idle-session',
+      workspaceRoot: storageRoot,
+    });
+    expect(runtime.isIdleForResidency()).toBe(true);
+
+    const turn = await runtime.beginTurn();
+    expect(runtime.isIdleForResidency()).toBe(false);
+    await runtime.finishTurn(turn);
+    expect(runtime.isIdleForResidency()).toBe(true);
+
+    await runtime.enqueueSteering('pending residency input', {
+      allowBeforeTurn: true,
+    });
+    expect(runtime.isIdleForResidency()).toBe(false);
+    await runtime.discardPendingInput();
+    expect(runtime.isIdleForResidency()).toBe(true);
+
+    vi.spyOn(
+      BackgroundShellManager.getInstance(),
+      'listForSession'
+    ).mockReturnValueOnce([
+      {
+        status: 'running',
+      },
+    ] as never);
+    expect(runtime.isIdleForResidency()).toBe(false);
+
+    vi.spyOn(
+      BackgroundAgentManager.getInstance(),
+      'listForSession'
+    ).mockReturnValueOnce([
+      {
+        status: 'running',
+      },
+    ] as AgentSession[]);
+    expect(runtime.isIdleForResidency()).toBe(false);
+
+    vi.spyOn(McpTaskManager.getInstance(), 'hasActive').mockReturnValueOnce(true);
+    expect(runtime.isIdleForResidency()).toBe(false);
+
+    const executor = runtime.createToolExecutor();
+    expect(runtime.isIdleForResidency()).toBe(false);
+    executor.dispose();
+    expect(runtime.isIdleForResidency()).toBe(true);
+
+    await runtime.dispose();
+    expect(runtime.isIdleForResidency()).toBe(false);
   });
 
   it('isolates session-provided MCP servers and releases them on dispose', async () => {

@@ -199,7 +199,9 @@ export const SessionTaskFailureSchema = Runtime(
     ]),
     message: Type.String({ minLength: 1, maxLength: 500 }),
     retryable: Type.Boolean(),
-    resource: Type.Optional(StringEnum(['pending_count', 'pending_bytes'])),
+    resource: Type.Optional(
+      StringEnum(['pending_count', 'pending_bytes', 'resident_runtimes'])
+    ),
   })
 );
 export type SessionTaskFailure = Static<typeof SessionTaskFailureSchema>;

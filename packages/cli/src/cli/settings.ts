@@ -23,6 +23,12 @@ import {
   MIN_PROVIDER_REQUEST_PENDING_BYTES,
 } from '../config/providerRequestAdmission.js';
 import {
+  MAX_RESIDENT_SESSION_RUNTIMES,
+  MAX_SESSION_RUNTIME_IDLE_MS,
+  MIN_RESIDENT_SESSION_RUNTIMES,
+  MIN_SESSION_RUNTIME_IDLE_MS,
+} from '../config/sessionRuntimeResidency.js';
+import {
   MAX_CONCURRENT_TASKS,
   MAX_MAX_QUEUED_TASK_BYTES,
   MAX_QUEUED_TASKS,
@@ -216,6 +222,18 @@ const RuntimeSettingsSchema = Type.Object({
       maximum: MAX_MAX_QUEUED_TASK_BYTES,
     })
   ),
+  maxResidentSessionRuntimes: Type.Optional(
+    Type.Integer({
+      minimum: MIN_RESIDENT_SESSION_RUNTIMES,
+      maximum: MAX_RESIDENT_SESSION_RUNTIMES,
+    })
+  ),
+  sessionRuntimeIdleMs: Type.Optional(
+    Type.Integer({
+      minimum: MIN_SESSION_RUNTIME_IDLE_MS,
+      maximum: MAX_SESSION_RUNTIME_IDLE_MS,
+    })
+  ),
   systemPrompt: Type.Optional(Type.String()),
   appendSystemPrompt: Type.Optional(Type.String()),
   initialMessage: Type.Optional(Type.String()),
@@ -280,6 +298,8 @@ const ARGUMENT_MAPPINGS = [
   ['maxConcurrentTasks', 'maxConcurrentTasks'],
   ['maxQueuedTasks', 'maxQueuedTasks'],
   ['maxQueuedTaskBytes', 'maxQueuedTaskBytes'],
+  ['maxResidentSessionRuntimes', 'maxResidentSessionRuntimes'],
+  ['sessionRuntimeIdleMs', 'sessionRuntimeIdleMs'],
 ] as const;
 
 function parseSettingsJson(content: string, source: string): Partial<RuntimeConfig> {

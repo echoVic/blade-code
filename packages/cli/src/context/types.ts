@@ -171,7 +171,10 @@ export type SessionTaskFailureCode =
   | 'capacity'
   | 'runtime';
 
-export type SessionTaskCapacityResource = 'pending_count' | 'pending_bytes';
+export type SessionTaskCapacityResource =
+  | 'pending_count'
+  | 'pending_bytes'
+  | 'resident_runtimes';
 
 export interface SessionTaskFailure {
   code: SessionTaskFailureCode;

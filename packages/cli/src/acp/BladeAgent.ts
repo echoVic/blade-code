@@ -12,6 +12,14 @@ import {
   type AgentSideConnection,
   PROTOCOL_VERSION,
 } from '@agentclientprotocol/sdk';
+import {
+  SessionRuntimeResidency,
+  type SessionRuntimeResidencyReservation,
+} from '../agent/runtime/SessionRuntimeResidency.js';
+import {
+  DEFAULT_MAX_RESIDENT_SESSION_RUNTIMES,
+  DEFAULT_SESSION_RUNTIME_IDLE_MS,
+} from '../config/sessionRuntimeResidency.js';
 import type { BladeConfig, PermissionMode } from '../config/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { McpRegistry } from '../mcp/McpRegistry.js';
@@ -33,6 +41,7 @@ import {
 } from '../services/pi/serviceTier.js';
 import { type SessionMetadata, SessionService } from '../services/SessionService.js';
 import { SessionTaskService } from '../services/SessionTaskService.js';
+import { getConfig } from '../store/vanilla.js';
 import { getCwd } from '../utils/cwd.js';
 import { createSessionId } from '../utils/sessionId.js';
 import { AcpSession } from './Session.js';
@@ -56,11 +65,19 @@ type AcpModelConfiguration = Pick<
 export class BladeAgent implements AcpAgentInterface {
   private sessions: Map<string, AcpSession> = new Map();
   private sessionLoadQueues: Map<string, Promise<void>> = new Map();
+  private readonly runtimeResidency: SessionRuntimeResidency<AcpSession>;
   private clientCapabilities: acp.ClientCapabilities | undefined;
   private destroyed = false;
   private destroyPromise?: Promise<void>;
 
-  constructor(private connection: AgentSideConnection) {}
+  constructor(private connection: AgentSideConnection) {
+    const config = getConfig();
+    this.runtimeResidency = new SessionRuntimeResidency({
+      maxResident:
+        config?.maxResidentSessionRuntimes ?? DEFAULT_MAX_RESIDENT_SESSION_RUNTIMES,
+      idleMs: config?.sessionRuntimeIdleMs ?? DEFAULT_SESSION_RUNTIME_IDLE_MS,
+    });
+  }
 
   /**
    * 初始化连接，协商协议版本和能力
@@ -81,6 +98,7 @@ export class BladeAgent implements AcpAgentInterface {
         sessionCapabilities: {
           list: {},
           fork: {},
+          close: {},
         },
         // 支持的提示能力
         promptCapabilities: {
@@ -113,6 +131,10 @@ export class BladeAgent implements AcpAgentInterface {
   async newSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
     this.assertNotDestroyed();
     const sessionId = createSessionId('acp');
+    const reservation = await this.runtimeResidency.reserve(sessionId, {
+      surface: 'acp',
+      allowEviction: false,
+    });
     const sourceCwd = params.cwd || getCwd();
     const requestedIsolation = params._meta?.['blade/taskIsolation'];
     const taskIsolation =
@@ -120,61 +142,56 @@ export class BladeAgent implements AcpAgentInterface {
         ? requestedIsolation
         : undefined;
     const requestedPrompt = params._meta?.['blade/taskPrompt'];
-    const createdTask = taskIsolation
-      ? await SessionTaskService.createSessionTask({
-          sessionId,
-          prompt:
-            typeof requestedPrompt === 'string' && requestedPrompt.trim()
-              ? requestedPrompt
-              : 'ACP task session',
-          sourceProjectPath: sourceCwd,
-          isolation: taskIsolation,
-        })
-      : undefined;
-    const sessionCwd = createdTask?.metadata.projectPath ?? sourceCwd;
-    logger.info(`[BladeAgent] Creating new session: ${sessionId}`);
-    logger.debug(`[BladeAgent] Session cwd: ${sessionCwd}`);
-
-    // 创建会话实例
-    const session = new AcpSession(
-      sessionId,
-      sessionCwd,
-      this.connection,
-      this.clientCapabilities,
-      {
-        mcpServers: params.mcpServers,
-        ...(createdTask?.taskWorktree
-          ? { taskWorktree: createdTask.taskWorktree }
-          : {}),
-        ...(createdTask?.metadata.taskIsolation
-          ? { taskIsolation: createdTask.metadata.taskIsolation }
-          : {}),
-      }
-    );
-
+    let session: AcpSession | undefined;
     try {
+      const createdTask = taskIsolation
+        ? await SessionTaskService.createSessionTask({
+            sessionId,
+            prompt:
+              typeof requestedPrompt === 'string' && requestedPrompt.trim()
+                ? requestedPrompt
+                : 'ACP task session',
+            sourceProjectPath: sourceCwd,
+            isolation: taskIsolation,
+          })
+        : undefined;
+      const sessionCwd = createdTask?.metadata.projectPath ?? sourceCwd;
+      logger.info(`[BladeAgent] Creating new session: ${sessionId}`);
+      logger.debug(`[BladeAgent] Session cwd: ${sessionCwd}`);
+      session = new AcpSession(
+        sessionId,
+        sessionCwd,
+        this.connection,
+        this.clientCapabilities,
+        {
+          mcpServers: params.mcpServers,
+          ...(createdTask?.taskWorktree
+            ? { taskWorktree: createdTask.taskWorktree }
+            : {}),
+          ...(createdTask?.metadata.taskIsolation
+            ? { taskIsolation: createdTask.metadata.taskIsolation }
+            : {}),
+        }
+      );
       // 初始化会话（创建 Agent 等）
       await session.initialize();
       this.assertNotDestroyed();
+      this.commitSession(sessionId, session, reservation);
+
+      logger.info(
+        `[BladeAgent] Session ${sessionId} created, scheduling available commands update`
+      );
+      session.sendAvailableCommandsDelayed();
+      return this.buildChildSessionResponse(
+        sessionId,
+        createdTask?.metadata,
+        session.getModelConfiguration()
+      );
     } catch (error) {
-      await session.destroy().catch(() => undefined);
+      reservation.cancel();
+      await session?.destroy().catch(() => undefined);
       throw error;
     }
-
-    this.sessions.set(sessionId, session);
-
-    logger.info(
-      `[BladeAgent] Session ${sessionId} created, scheduling available commands update`
-    );
-
-    // 延迟发送 available_commands_update，确保在响应后
-    session.sendAvailableCommandsDelayed();
-
-    return this.buildChildSessionResponse(
-      sessionId,
-      createdTask?.metadata,
-      session.getModelConfiguration()
-    );
   }
 
   async listSessions(
@@ -257,38 +274,44 @@ export class BladeAgent implements AcpAgentInterface {
       throw new Error('ACP session fork cwd must be absolute');
     }
 
-    const fork = await SessionService.forkSession(params.sessionId, {
-      sourceProjectPath: params.cwd,
-      targetProjectPath: params.cwd,
+    const forkSessionId = createSessionId('fork');
+    const reservation = await this.runtimeResidency.reserve(forkSessionId, {
+      surface: 'acp',
+      allowEviction: false,
     });
-    this.assertNotDestroyed();
-    const session = new AcpSession(
-      fork.sessionId,
-      params.cwd,
-      this.connection,
-      this.clientCapabilities,
-      {
-        initialMessages: fork.messages,
-        permissionMode: fork.metadata.permissionMode as PermissionMode | undefined,
-        mcpServers: params.mcpServers,
-      }
-    );
-
+    let session: AcpSession | undefined;
     try {
+      const fork = await SessionService.forkSession(params.sessionId, {
+        sourceProjectPath: params.cwd,
+        targetProjectPath: params.cwd,
+        newSessionId: forkSessionId,
+      });
+      this.assertNotDestroyed();
+      session = new AcpSession(
+        fork.sessionId,
+        params.cwd,
+        this.connection,
+        this.clientCapabilities,
+        {
+          initialMessages: fork.messages,
+          permissionMode: fork.metadata.permissionMode as PermissionMode | undefined,
+          mcpServers: params.mcpServers,
+        }
+      );
       await session.initialize();
       this.assertNotDestroyed();
+      this.commitSession(fork.sessionId, session, reservation);
+      session.sendAvailableCommandsDelayed();
+      return this.buildChildSessionResponse(
+        fork.sessionId,
+        fork.metadata,
+        session.getModelConfiguration()
+      );
     } catch (error) {
-      await session.destroy().catch(() => undefined);
+      reservation.cancel();
+      await session?.destroy().catch(() => undefined);
       throw error;
     }
-
-    this.sessions.set(fork.sessionId, session);
-    session.sendAvailableCommandsDelayed();
-    return this.buildChildSessionResponse(
-      fork.sessionId,
-      fork.metadata,
-      session.getModelConfiguration()
-    );
   }
 
   /**
@@ -321,49 +344,83 @@ export class BladeAgent implements AcpAgentInterface {
   ): Promise<acp.LoadSessionResponse> {
     this.assertNotDestroyed();
     await SessionService.assertSessionWritable(params.sessionId, params.cwd);
-    const existingSession = this.sessions.get(params.sessionId);
-    if (existingSession) {
-      try {
-        await existingSession.destroy();
-      } finally {
-        if (this.sessions.get(params.sessionId) === existingSession) {
-          this.sessions.delete(params.sessionId);
-        }
-      }
-    }
-    const [messages, metadata] = await Promise.all([
-      SessionService.loadSession(params.sessionId, params.cwd),
-      SessionService.findSessionMetadata(params.sessionId, params.cwd),
-    ]);
-    if (!metadata) {
-      throw new Error(`Session not found: ${params.sessionId}`);
-    }
-
-    const session = new AcpSession(
-      params.sessionId,
-      params.cwd,
-      this.connection,
-      this.clientCapabilities,
-      {
-        initialMessages: messages,
-        permissionMode: metadata.permissionMode as PermissionMode | undefined,
-        mcpServers: params.mcpServers,
-      }
-    );
-
+    await this.closeResidentSession(params.sessionId);
+    const reservation = await this.runtimeResidency.reserve(params.sessionId, {
+      surface: 'acp',
+      allowEviction: false,
+    });
+    let session: AcpSession | undefined;
     try {
+      const [messages, metadata] = await Promise.all([
+        SessionService.loadSession(params.sessionId, params.cwd),
+        SessionService.findSessionMetadata(params.sessionId, params.cwd),
+      ]);
+      if (!metadata) {
+        throw new Error(`Session not found: ${params.sessionId}`);
+      }
+      session = new AcpSession(
+        params.sessionId,
+        params.cwd,
+        this.connection,
+        this.clientCapabilities,
+        {
+          initialMessages: messages,
+          permissionMode: metadata.permissionMode as PermissionMode | undefined,
+          mcpServers: params.mcpServers,
+        }
+      );
       await session.initialize();
       await session.replayHistory();
       this.assertNotDestroyed();
+      this.commitSession(params.sessionId, session, reservation);
+      session.sendAvailableCommandsDelayed();
+      return this.buildSessionSetup(session.getModelConfiguration(), session.getMode());
     } catch (error) {
-      await session.destroy().catch(() => undefined);
+      reservation.cancel();
+      await session?.destroy().catch(() => undefined);
       throw error;
     }
+  }
 
-    this.sessions.set(params.sessionId, session);
-    session.sendAvailableCommandsDelayed();
+  private commitSession(
+    sessionId: string,
+    session: AcpSession,
+    reservation: SessionRuntimeResidencyReservation<AcpSession>
+  ): void {
+    const lease = reservation.commit({
+      key: sessionId,
+      surface: 'acp',
+      value: session,
+      canEvict: () => session.isIdleForResidency(),
+      dispose: async () => {
+        if (this.sessions.get(sessionId) === session) {
+          this.sessions.delete(sessionId);
+        }
+        await session.destroy();
+      },
+    });
+    this.sessions.set(sessionId, session);
+    lease.release();
+  }
 
-    return this.buildSessionSetup(session.getModelConfiguration(), session.getMode());
+  private async closeResidentSession(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    const wasResident = this.runtimeResidency.owns(sessionId, session);
+    let firstError: unknown;
+    try {
+      await session.destroy();
+    } catch (error) {
+      firstError = error;
+    }
+    const forgotten = await this.runtimeResidency.forget(sessionId, session);
+    if (this.sessions.get(sessionId) === session) {
+      this.sessions.delete(sessionId);
+    }
+    if (wasResident && !forgotten && firstError === undefined) {
+      throw new Error(`ACP Session is still active: ${sessionId}`);
+    }
+    if (firstError !== undefined) throw firstError;
   }
 
   private buildChildSessionResponse(
@@ -413,6 +470,10 @@ export class BladeAgent implements AcpAgentInterface {
 
   private assertNotDestroyed(): void {
     if (this.destroyed) throw new Error('BladeAgent is destroyed');
+  }
+
+  getRuntimeResidencyStats() {
+    return this.runtimeResidency.getStats();
   }
 
   private buildSessionSetup(
@@ -566,16 +627,39 @@ export class BladeAgent implements AcpAgentInterface {
     };
   }
 
+  async closeSession(params: acp.CloseSessionRequest): Promise<void> {
+    this.assertNotDestroyed();
+    const previous = this.sessionLoadQueues.get(params.sessionId);
+    const close = (previous ?? Promise.resolve()).then(() =>
+      this.closeResidentSession(params.sessionId)
+    );
+    const queueTail = close.then(
+      () => undefined,
+      () => undefined
+    );
+    this.sessionLoadQueues.set(params.sessionId, queueTail);
+    try {
+      await close;
+    } finally {
+      if (this.sessionLoadQueues.get(params.sessionId) === queueTail) {
+        this.sessionLoadQueues.delete(params.sessionId);
+      }
+    }
+  }
+
   /**
    * 处理提示请求
    */
   async prompt(params: acp.PromptRequest): Promise<acp.PromptResponse> {
-    const session = this.sessions.get(params.sessionId);
-    if (!session) {
+    const lease = this.runtimeResidency.acquire(params.sessionId);
+    if (!lease) {
       throw new Error(`Session not found: ${params.sessionId}`);
     }
-
-    return session.prompt(params);
+    try {
+      return await lease.value.prompt(params);
+    } finally {
+      lease.release();
+    }
   }
 
   /**
@@ -585,10 +669,14 @@ export class BladeAgent implements AcpAgentInterface {
     logger.info(
       `[BladeAgent] Cancel notification received for session: ${params.sessionId}`
     );
-    const session = this.sessions.get(params.sessionId);
-    if (session) {
+    const lease = this.runtimeResidency.acquire(params.sessionId);
+    if (lease) {
       logger.info(`[BladeAgent] Found session, calling session.cancel()`);
-      session.cancel();
+      try {
+        lease.value.cancel();
+      } finally {
+        lease.release();
+      }
     } else {
       logger.warn(`[BladeAgent] Session not found for cancel: ${params.sessionId}`);
     }
@@ -601,9 +689,13 @@ export class BladeAgent implements AcpAgentInterface {
     params: acp.SetSessionModeRequest
   ): Promise<acp.SetSessionModeResponse> {
     logger.info(`[BladeAgent] Setting session mode: ${params.modeId}`);
-    const session = this.sessions.get(params.sessionId);
-    if (session) {
-      await session.setMode(params.modeId);
+    const lease = this.runtimeResidency.acquire(params.sessionId);
+    if (lease) {
+      try {
+        await lease.value.setMode(params.modeId);
+      } finally {
+        lease.release();
+      }
     }
     return {};
   }
@@ -614,53 +706,58 @@ export class BladeAgent implements AcpAgentInterface {
   async setSessionConfigOption?(
     params: acp.SetSessionConfigOptionRequest
   ): Promise<acp.SetSessionConfigOptionResponse> {
-    const session = this.sessions.get(params.sessionId);
-    if (!session) {
+    const lease = this.runtimeResidency.acquire(params.sessionId);
+    if (!lease) {
       throw new Error(`Session not found: ${params.sessionId}`);
     }
-    if (
-      params.configId === 'model' &&
-      'value' in params &&
-      typeof params.value === 'string'
-    ) {
-      logger.info(`[BladeAgent] Setting session model: ${params.value}`);
-      await session.setModel(params.value);
-    } else if (
-      params.configId === 'reasoning_effort' &&
-      'value' in params &&
-      isReasoningEffortSelection(params.value)
-    ) {
-      logger.info(`[BladeAgent] Setting reasoning effort: ${params.value}`);
-      await session.setReasoningEffort(params.value);
-    } else if (
-      params.configId === 'service_tier' &&
-      'value' in params &&
-      isServiceTierSelection(params.value)
-    ) {
-      logger.info(`[BladeAgent] Setting service tier: ${params.value}`);
-      await session.setServiceTier(params.value);
-    } else if (
-      params.configId === 'response_verbosity' &&
-      'value' in params &&
-      isResponseVerbositySelection(params.value)
-    ) {
-      logger.info(`[BladeAgent] Setting response verbosity: ${params.value}`);
-      await session.setResponseVerbosity(params.value);
-    } else if (
-      params.configId === 'communication_style' &&
-      'value' in params &&
-      isCommunicationStyleSelection(params.value)
-    ) {
-      logger.info(`[BladeAgent] Setting communication style: ${params.value}`);
-      await session.setCommunicationStyle(params.value);
-    } else {
-      throw new Error(`Invalid session config option: ${params.configId}`);
+    try {
+      const session = lease.value;
+      if (
+        params.configId === 'model' &&
+        'value' in params &&
+        typeof params.value === 'string'
+      ) {
+        logger.info(`[BladeAgent] Setting session model: ${params.value}`);
+        await session.setModel(params.value);
+      } else if (
+        params.configId === 'reasoning_effort' &&
+        'value' in params &&
+        isReasoningEffortSelection(params.value)
+      ) {
+        logger.info(`[BladeAgent] Setting reasoning effort: ${params.value}`);
+        await session.setReasoningEffort(params.value);
+      } else if (
+        params.configId === 'service_tier' &&
+        'value' in params &&
+        isServiceTierSelection(params.value)
+      ) {
+        logger.info(`[BladeAgent] Setting service tier: ${params.value}`);
+        await session.setServiceTier(params.value);
+      } else if (
+        params.configId === 'response_verbosity' &&
+        'value' in params &&
+        isResponseVerbositySelection(params.value)
+      ) {
+        logger.info(`[BladeAgent] Setting response verbosity: ${params.value}`);
+        await session.setResponseVerbosity(params.value);
+      } else if (
+        params.configId === 'communication_style' &&
+        'value' in params &&
+        isCommunicationStyleSelection(params.value)
+      ) {
+        logger.info(`[BladeAgent] Setting communication style: ${params.value}`);
+        await session.setCommunicationStyle(params.value);
+      } else {
+        throw new Error(`Invalid session config option: ${params.configId}`);
+      }
+      return {
+        configOptions:
+          this.buildSessionSetup(session.getModelConfiguration(), session.getMode())
+            .configOptions ?? [],
+      };
+    } finally {
+      lease.release();
     }
-    return {
-      configOptions:
-        this.buildSessionSetup(session.getModelConfiguration(), session.getMode())
-          .configOptions ?? [],
-    };
   }
 
   /**
@@ -678,12 +775,17 @@ export class BladeAgent implements AcpAgentInterface {
     this.sessionLoadQueues.clear();
 
     let firstError: unknown;
-    for (const session of this.sessions.values()) {
+    for (const sessionId of [...this.sessions.keys()]) {
       try {
-        await session.destroy();
+        await this.closeResidentSession(sessionId);
       } catch (error) {
         firstError ??= error;
       }
+    }
+    try {
+      await this.runtimeResidency.disposeAll();
+    } catch (error) {
+      firstError ??= error;
     }
     this.sessions.clear();
     try {

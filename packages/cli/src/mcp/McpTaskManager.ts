@@ -144,6 +144,10 @@ export class McpTaskManager extends EventEmitter {
       .map((record) => this.snapshot(record));
   }
 
+  hasActive(owner: McpTaskOwner): boolean {
+    return this.ownedRecords(owner).some((record) => !isMcpTaskTerminal(record.status));
+  }
+
   async wait(
     taskId: string,
     owner: McpTaskOwner,

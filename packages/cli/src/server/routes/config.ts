@@ -34,6 +34,8 @@ export function projectPublicConfig(config: BladeConfig) {
     maxConcurrentTasks: config.maxConcurrentTasks,
     maxQueuedTasks: config.maxQueuedTasks,
     maxQueuedTaskBytes: config.maxQueuedTaskBytes,
+    maxResidentSessionRuntimes: config.maxResidentSessionRuntimes,
+    sessionRuntimeIdleMs: config.sessionRuntimeIdleMs,
   };
 }
 

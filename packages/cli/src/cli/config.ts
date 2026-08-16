@@ -138,6 +138,20 @@ export const globalOptions = {
     group: 'AI Options:',
     default: undefined,
   },
+  'max-resident-session-runtimes': {
+    alias: ['maxResidentSessionRuntimes'],
+    type: 'number',
+    describe: 'Maximum initialized Session runtimes resident in this process',
+    group: 'AI Options:',
+    default: undefined,
+  },
+  'session-runtime-idle-ms': {
+    alias: ['sessionRuntimeIdleMs'],
+    type: 'number',
+    describe: 'Idle time before an evictable Web Session runtime is disposed',
+    group: 'AI Options:',
+    default: undefined,
+  },
   'permission-mode': {
     alias: ['permissionMode'],
     type: 'string',

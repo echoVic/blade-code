@@ -73,6 +73,14 @@ import {
 } from './providerRequestAdmission.js';
 import { normalizeRuntimeEnvironment } from './runtimeEnvironment.js';
 import {
+  isValidResidentSessionRuntimeLimit,
+  isValidSessionRuntimeIdleMs,
+  MAX_RESIDENT_SESSION_RUNTIMES,
+  MAX_SESSION_RUNTIME_IDLE_MS,
+  MIN_RESIDENT_SESSION_RUNTIMES,
+  MIN_SESSION_RUNTIME_IDLE_MS,
+} from './sessionRuntimeResidency.js';
+import {
   isValidConcurrentTaskLimit,
   isValidQueuedTaskByteLimit,
   isValidQueuedTaskLimit,
@@ -1226,6 +1234,16 @@ export class ConfigManager {
         `maxQueuedTaskBytes 必须是 ${MIN_MAX_QUEUED_TASK_BYTES}-${MAX_MAX_QUEUED_TASK_BYTES} 之间的整数`
       );
     }
+    if (!isValidResidentSessionRuntimeLimit(config.maxResidentSessionRuntimes)) {
+      errors.push(
+        `maxResidentSessionRuntimes 必须是 ${MIN_RESIDENT_SESSION_RUNTIMES}-${MAX_RESIDENT_SESSION_RUNTIMES} 之间的整数`
+      );
+    }
+    if (!isValidSessionRuntimeIdleMs(config.sessionRuntimeIdleMs)) {
+      errors.push(
+        `sessionRuntimeIdleMs 必须是 ${MIN_SESSION_RUNTIME_IDLE_MS}-${MAX_SESSION_RUNTIME_IDLE_MS} 之间的整数`
+      );
+    }
     if (
       config.bashForegroundHandoffMs !== undefined &&
       !isValidForegroundCommandHandoffMs(config.bashForegroundHandoffMs)
@@ -1413,6 +1431,12 @@ export function mergeRuntimeConfig(
   }
   if (cliOptions.maxQueuedTaskBytes !== undefined) {
     result.maxQueuedTaskBytes = cliOptions.maxQueuedTaskBytes;
+  }
+  if (cliOptions.maxResidentSessionRuntimes !== undefined) {
+    result.maxResidentSessionRuntimes = cliOptions.maxResidentSessionRuntimes;
+  }
+  if (cliOptions.sessionRuntimeIdleMs !== undefined) {
+    result.sessionRuntimeIdleMs = cliOptions.sessionRuntimeIdleMs;
   }
 
   // 4. CLI 专属字段 - 系统提示

@@ -116,12 +116,15 @@ function taskAdmissionResource(
       !error ||
       typeof error !== 'object' ||
       !('name' in error) ||
-      error.name !== 'TaskAdmissionQueueFullError' ||
+      (error.name !== 'TaskAdmissionQueueFullError' &&
+        error.name !== 'SessionRuntimeCapacityError') ||
       !('resource' in error)
     ) {
       return undefined;
     }
-    return error.resource === 'pending_count' || error.resource === 'pending_bytes'
+    return error.resource === 'pending_count' ||
+      error.resource === 'pending_bytes' ||
+      error.resource === 'resident_runtimes'
       ? error.resource
       : undefined;
   } catch {
@@ -157,7 +160,8 @@ export function isSessionTaskFailure(value: unknown): value is SessionTaskFailur
   const resourceValid =
     candidate.resource === undefined ||
     candidate.resource === 'pending_count' ||
-    candidate.resource === 'pending_bytes';
+    candidate.resource === 'pending_bytes' ||
+    candidate.resource === 'resident_runtimes';
   return (
     candidate.message === canonical.message &&
     candidate.retryable === canonical.retryable &&

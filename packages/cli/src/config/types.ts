@@ -218,6 +218,8 @@ export interface BladeConfig {
   maxConcurrentTasks: number; // 同一进程内允许同时运行的顶层任务数
   maxQueuedTasks: number; // 等待 admission 的顶层任务上限
   maxQueuedTaskBytes: number; // 等待 admission 的顶层任务 retained-byte 上限
+  maxResidentSessionRuntimes: number; // 长运行进程内 fully initialized Session Runtime 上限
+  sessionRuntimeIdleMs: number; // Web Session Runtime idle eviction TTL
 }
 
 /**

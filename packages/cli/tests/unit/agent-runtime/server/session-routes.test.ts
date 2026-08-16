@@ -206,6 +206,7 @@ const runtimeState = vi.hoisted(() => ({
     getRecoveredSteeringCount: vi.fn(() => 0),
     hasActiveTurn: vi.fn(() => false),
     hasTurnOwner: vi.fn(() => false),
+    isIdleForResidency: vi.fn(() => true),
     getGoal: vi.fn().mockResolvedValue(null),
     createGoal: vi.fn(),
     editGoal: vi.fn(),
@@ -231,6 +232,10 @@ const modelState = vi.hoisted(() => ({
     provider: 'openai',
     model: 'gpt-4',
   } as { id: string; provider: string; model: string } | undefined,
+}));
+const runtimeResidencyConfig = vi.hoisted(() => ({
+  maxResident: 256,
+  idleMs: 300_000,
 }));
 
 const busState = vi.hoisted(() => ({
@@ -354,6 +359,8 @@ vi.mock('../../../../src/store/vanilla.js', () => ({
     currentModelId: modelState.current?.id ?? '',
     models: modelState.current ? [modelState.current] : [],
     modelProviders: {},
+    maxResidentSessionRuntimes: runtimeResidencyConfig.maxResident,
+    sessionRuntimeIdleMs: runtimeResidencyConfig.idleMs,
   }),
   getCurrentModel: () => modelState.current,
   getModelById: (modelId: string) =>
@@ -590,6 +597,8 @@ describe('SessionRoutes runtime reuse', () => {
       provider: 'openai',
       model: 'gpt-4',
     };
+    runtimeResidencyConfig.maxResident = 256;
+    runtimeResidencyConfig.idleMs = 300_000;
     runtimeState.runtime.dispose.mockClear();
     runtimeState.runtime.refresh.mockClear();
     runtimeState.runtime.getResponseVerbosityConfiguration.mockClear();
@@ -616,6 +625,8 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.getRecoveredSteeringCount.mockReturnValue(0);
     runtimeState.runtime.hasActiveTurn.mockReturnValue(false);
     runtimeState.runtime.hasTurnOwner.mockReturnValue(false);
+    runtimeState.runtime.isIdleForResidency.mockReset();
+    runtimeState.runtime.isIdleForResidency.mockReturnValue(true);
     runtimeState.runtime.listRewindCheckpoints.mockReset();
     runtimeState.runtime.listRewindCheckpoints.mockResolvedValue([]);
     runtimeState.runtime.rewindSession.mockReset();
@@ -1182,6 +1193,130 @@ describe('SessionRoutes runtime reuse', () => {
     expect(vi.mocked(Agent.createWithRuntime).mock.calls[1]?.[1]).toEqual({
       sessionId: 'session-1',
     });
+  });
+
+  it('rejects a second Session while the only resident Runtime is active', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    runtimeResidencyConfig.maxResident = 1;
+    const metadata = [
+      metadataFor('resident-active-a', '/tmp/residency'),
+      metadataFor('resident-active-b', '/tmp/residency'),
+    ];
+    vi.mocked(SessionService.listSessions).mockResolvedValue(metadata);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId, projectPath) =>
+        metadata.find(
+          (candidate) =>
+            candidate.sessionId === sessionId && candidate.projectPath === projectPath
+        )
+    );
+    let releaseRun!: () => void;
+    const runGate = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      if (Date.now() < 0) yield undefined;
+      await runGate;
+      return {
+        success: true,
+        finalMessage: 'resident A complete',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+    const controller = createSessionRouteController();
+
+    const first = await controller.app.request(
+      '/resident-active-a/message?projectPath=%2Ftmp%2Fresidency',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'hold resident A' }),
+      }
+    );
+    expect(first.status).toBe(202);
+    const second = await controller.app.request(
+      '/resident-active-b/message?projectPath=%2Ftmp%2Fresidency',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'must not initialize B' }),
+      }
+    );
+
+    expect(second.status).toBe(429);
+    await expect(second.json()).resolves.toEqual({
+      error: {
+        code: 'TOO_MANY_REQUESTS',
+        message: 'Session runtime capacity is full',
+        details: {
+          resource: 'resident_runtimes',
+          limit: 1,
+        },
+      },
+    });
+    expect(SessionRuntime.create).toHaveBeenCalledTimes(1);
+    expect(controller.getRuntimeResidencyStats()).toEqual({
+      resident: 1,
+      reserved: 0,
+      pinned: 1,
+      maxResident: 1,
+    });
+
+    releaseRun();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await controller.shutdown();
+  });
+
+  it('evicts the idle LRU Runtime and cold-rehydrates durable history', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    runtimeResidencyConfig.maxResident = 1;
+    const metadata = [
+      metadataFor('resident-idle-a', '/tmp/residency'),
+      metadataFor('resident-idle-b', '/tmp/residency'),
+    ];
+    vi.mocked(SessionService.listSessions).mockResolvedValue(metadata);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId, projectPath) =>
+        metadata.find(
+          (candidate) =>
+            candidate.sessionId === sessionId && candidate.projectPath === projectPath
+        )
+    );
+    const controller = createSessionRouteController();
+    const send = async (sessionId: string, content: string) => {
+      const response = await controller.app.request(
+        `/${sessionId}/message?projectPath=%2Ftmp%2Fresidency`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content }),
+        }
+      );
+      expect(response.status).toBe(202);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    await send('resident-idle-a', 'first A turn');
+    await send('resident-idle-b', 'first B turn');
+    await send('resident-idle-a', 'cold A follow-up');
+
+    expect(SessionRuntime.create).toHaveBeenCalledTimes(3);
+    expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(2);
+    expect(SessionService.loadSession).toHaveBeenCalledWith(
+      'resident-idle-a',
+      '/tmp/residency'
+    );
+    expect(controller.getRuntimeResidencyStats()).toEqual({
+      resident: 1,
+      reserved: 0,
+      pinned: 0,
+      maxResident: 1,
+    });
+    await controller.shutdown();
   });
 
   it('routes a second message into the active turn instead of starting a concurrent run', async () => {
@@ -2744,59 +2879,81 @@ describe('SessionRoutes runtime reuse', () => {
   it.each([
     { isolation: 'local' as const, executionPath: '/tmp/task-source' },
     { isolation: 'worktree' as const, executionPath: '/tmp/task-worktree' },
-  ])('dispatches a durable $isolation task after prompt fsync', async ({
-    isolation,
-    executionPath,
-  }) => {
-    const { createSessionRouteController } = await import(
-      '../../../../src/server/routes/session.js'
-    );
-    if (isolation === 'worktree') {
-      worktreeState.enter.mockImplementationOnce(
-        async (input: { sessionId: string; workspaceRoot: string; name: string }) => ({
-          sessionId: input.sessionId,
-          name: input.name,
-          branch: `blade-worktree-${input.sessionId}`,
-          baseCommit: 'abc123',
-          originalBranch: 'main',
-          repositoryRoot: '/tmp/repo',
-          originalWorkspaceRoot: input.workspaceRoot,
-          worktreeRoot: '/tmp/task-worktree',
-          workspaceRoot: '/tmp/task-worktree',
-          sourceHadChanges: false,
+  ])(
+    'dispatches a durable $isolation task after prompt fsync',
+    async ({ isolation, executionPath }) => {
+      const { createSessionRouteController } = await import(
+        '../../../../src/server/routes/session.js'
+      );
+      if (isolation === 'worktree') {
+        worktreeState.enter.mockImplementationOnce(
+          async (input: {
+            sessionId: string;
+            workspaceRoot: string;
+            name: string;
+          }) => ({
+            sessionId: input.sessionId,
+            name: input.name,
+            branch: `blade-worktree-${input.sessionId}`,
+            baseCommit: 'abc123',
+            originalBranch: 'main',
+            repositoryRoot: '/tmp/repo',
+            originalWorkspaceRoot: input.workspaceRoot,
+            worktreeRoot: '/tmp/task-worktree',
+            workspaceRoot: '/tmp/task-worktree',
+            sourceHadChanges: false,
+          })
+        );
+      }
+      const controller = createSessionRouteController();
+
+      const result = await controller.dispatchTask({
+        prompt: 'Implement the durable task dispatcher',
+        sourceProjectPath: '/tmp/task-source',
+        isolation,
+        permissionMode: PermissionMode.DEFAULT,
+      });
+
+      expect(result).toMatchObject({
+        session: {
+          sessionId: expect.any(String),
+          projectPath: executionPath,
+          taskStatus: 'running',
+          taskIsolation: isolation,
+          taskSourceProjectPath: '/tmp/task-source',
+        },
+        runId: expect.any(String),
+        messageId: 'prepared-input',
+        status: 'running',
+      });
+      const sessionId = result.session.sessionId;
+      expect(SessionService.createSessionMetadata).toHaveBeenCalledWith(
+        sessionId,
+        executionPath,
+        expect.objectContaining({
+          taskPromptSummary: 'Implement the durable task dispatcher',
+          taskIsolation: isolation,
+          taskSourceProjectPath: '/tmp/task-source',
+          reasoningEffort: 'off',
+          ...(isolation === 'worktree'
+            ? {
+                taskWorktree: expect.objectContaining({
+                  sessionId,
+                  workspaceRoot: executionPath,
+                }),
+              }
+            : { taskWorktree: undefined }),
         })
       );
-    }
-    const controller = createSessionRouteController();
-
-    const result = await controller.dispatchTask({
-      prompt: 'Implement the durable task dispatcher',
-      sourceProjectPath: '/tmp/task-source',
-      isolation,
-      permissionMode: PermissionMode.DEFAULT,
-    });
-
-    expect(result).toMatchObject({
-      session: {
-        sessionId: expect.any(String),
-        projectPath: executionPath,
-        taskStatus: 'running',
+      expect(runtimeState.runtime.prepareInputTurn).toHaveBeenCalledWith(
+        'Implement the durable task dispatcher'
+      );
+      expect(SessionRuntime.create).toHaveBeenCalledWith({
+        sessionId,
+        workspaceRoot: executionPath,
+        modelId: 'model-1',
+        permissionMode: PermissionMode.DEFAULT,
         taskIsolation: isolation,
-        taskSourceProjectPath: '/tmp/task-source',
-      },
-      runId: expect.any(String),
-      messageId: 'prepared-input',
-      status: 'running',
-    });
-    const sessionId = result.session.sessionId;
-    expect(SessionService.createSessionMetadata).toHaveBeenCalledWith(
-      sessionId,
-      executionPath,
-      expect.objectContaining({
-        taskPromptSummary: 'Implement the durable task dispatcher',
-        taskIsolation: isolation,
-        taskSourceProjectPath: '/tmp/task-source',
-        reasoningEffort: 'off',
         ...(isolation === 'worktree'
           ? {
               taskWorktree: expect.objectContaining({
@@ -2804,48 +2961,32 @@ describe('SessionRoutes runtime reuse', () => {
                 workspaceRoot: executionPath,
               }),
             }
-          : { taskWorktree: undefined }),
-      })
-    );
-    expect(runtimeState.runtime.prepareInputTurn).toHaveBeenCalledWith(
-      'Implement the durable task dispatcher'
-    );
-    expect(SessionRuntime.create).toHaveBeenCalledWith({
-      sessionId,
-      workspaceRoot: executionPath,
-      modelId: 'model-1',
-      permissionMode: PermissionMode.DEFAULT,
-      taskIsolation: isolation,
-      ...(isolation === 'worktree'
-        ? {
-            taskWorktree: expect.objectContaining({
-              sessionId,
-              workspaceRoot: executionPath,
-            }),
-          }
-        : {}),
-    });
-    expect(worktreeState.enter).toHaveBeenCalledTimes(isolation === 'worktree' ? 1 : 0);
-    if (isolation === 'worktree') {
-      const { Agent } = await import('../../../../src/agent/Agent.js');
-      await vi.waitFor(() => {
-        expect(Agent.createWithRuntime).toHaveBeenCalledWith(
-          expect.anything(),
-          expect.objectContaining({
-            toolBlacklist: ['EnterWorktree', 'ExitWorktree'],
-          })
-        );
-        expect(agentState.chatStream).toHaveBeenCalledWith(
-          'Implement the durable task dispatcher',
-          expect.objectContaining({
-            workspaceRoot: executionPath,
-            worktreeActive: true,
-          }),
-          expect.any(Object)
-        );
+          : {}),
       });
+      expect(worktreeState.enter).toHaveBeenCalledTimes(
+        isolation === 'worktree' ? 1 : 0
+      );
+      if (isolation === 'worktree') {
+        const { Agent } = await import('../../../../src/agent/Agent.js');
+        await vi.waitFor(() => {
+          expect(Agent.createWithRuntime).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+              toolBlacklist: ['EnterWorktree', 'ExitWorktree'],
+            })
+          );
+          expect(agentState.chatStream).toHaveBeenCalledWith(
+            'Implement the durable task dispatcher',
+            expect.objectContaining({
+              workspaceRoot: executionPath,
+              worktreeActive: true,
+            }),
+            expect.any(Object)
+          );
+        });
+      }
     }
-  });
+  );
 
   it('disposes a terminal task runtime after completion', async () => {
     const { createSessionRouteController } = await import(
@@ -4246,7 +4387,7 @@ describe('SessionRoutes runtime reuse', () => {
     expect(observed).toEqual({
       subscribers: 0,
       unsubscribeCalls: 1,
-      timers: 0,
+      timers: 1,
       ended: true,
     });
   });
@@ -4312,7 +4453,7 @@ describe('SessionRoutes runtime reuse', () => {
     expect(observed).toEqual({
       subscribers: 0,
       unsubscribeCalls: 1,
-      timers: 0,
+      timers: 1,
       ended: true,
     });
   });
