@@ -47,6 +47,7 @@ export const testTypes = {
       'tests/integration/real-api/weighted-provider-admission-web-trajectory.test.ts',
       'tests/integration/real-api/weighted-task-admission-acp-trajectory.test.ts',
       'tests/integration/real-api/weighted-task-admission-web-trajectory.test.ts',
+      'tests/integration/real-api/keyed-coordination-reclamation-trajectory.test.ts',
       'tests/integration/real-api/session-runtime-residency-acp-trajectory.test.ts',
       'tests/integration/real-api/session-runtime-residency-controls-trajectory.test.ts',
       'tests/integration/real-api/session-runtime-residency-web-trajectory.test.ts',

@@ -791,4 +791,8 @@ export namespace BladeServer {
   export function isRunning(): boolean {
     return serverHandle !== undefined;
   }
+
+  export function getSessionCoordinationStatsForTests() {
+    return activeSessionController?.getCoordinationStats();
+  }
 }
