@@ -425,13 +425,16 @@ export class BladeAgent implements AcpAgentInterface {
     lease.release();
   }
 
-  private async closeResidentSession(sessionId: string): Promise<void> {
+  private async closeResidentSession(
+    sessionId: string,
+    options: { discardPendingInput?: boolean } = {}
+  ): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     const wasResident = this.runtimeResidency.owns(sessionId, session);
     let firstError: unknown;
     try {
-      await session.destroy();
+      await session.destroy(options);
     } catch (error) {
       firstError = error;
     }
@@ -653,7 +656,9 @@ export class BladeAgent implements AcpAgentInterface {
     this.assertNotDestroyed();
     const previous = this.sessionLoadQueues.get(params.sessionId);
     const close = (previous ?? Promise.resolve()).then(() =>
-      this.closeResidentSession(params.sessionId)
+      this.closeResidentSession(params.sessionId, {
+        discardPendingInput: true,
+      })
     );
     const queueTail = close.then(
       () => undefined,

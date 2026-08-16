@@ -2098,17 +2098,19 @@ export class AcpSession {
   /**
    * 销毁会话
    */
-  destroy(): Promise<void> {
+  destroy(options: { discardPendingInput?: boolean } = {}): Promise<void> {
     if (this.destroyPromise) {
       return this.destroyFinished ? Promise.resolve() : this.destroyPromise;
     }
-    this.destroyPromise = this.destroyOwnedResources().finally(() => {
+    this.destroyPromise = this.destroyOwnedResources(
+      options.discardPendingInput === true
+    ).finally(() => {
       this.destroyFinished = true;
     });
     return this.destroyPromise;
   }
 
-  private async destroyOwnedResources(): Promise<void> {
+  private async destroyOwnedResources(discardPendingInput: boolean): Promise<void> {
     this.destroyed = true;
     this.updateEgress.close(
       new BoundedSerialEgressError('closed', 'ACP Session was destroyed')
@@ -2138,7 +2140,7 @@ export class AcpSession {
     await attempt(() => this.cancel());
     if (promptCompletion) await attempt(() => promptCompletion);
     if (userShellCompletion) await attempt(() => userShellCompletion);
-    if (promptCompletion && runtime) {
+    if (discardPendingInput && promptCompletion && runtime) {
       await attempt(() => runtime.discardPendingInput());
     }
     if (agent) await attempt(() => agent.destroy());

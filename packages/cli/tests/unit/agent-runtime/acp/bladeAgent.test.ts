@@ -1384,6 +1384,9 @@ describe('BladeAgent', () => {
       await agent.closeSession({ sessionId: created.sessionId });
 
       expect(session.destroy).toHaveBeenCalledTimes(1);
+      expect(session.destroy).toHaveBeenCalledWith({
+        discardPendingInput: true,
+      });
       expect(agent.getRuntimeResidencyStats()).toMatchObject({
         resident: 0,
         reserved: 0,

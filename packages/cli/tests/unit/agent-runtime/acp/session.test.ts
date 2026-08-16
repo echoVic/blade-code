@@ -3169,7 +3169,21 @@ describe('AcpSession', () => {
   });
 
   describe('destroy', () => {
-    it('destroy 后丢弃仍在 drain 的旧 generator 产生的更新', async () => {
+    it.each([
+      {
+        name: 'connection shutdown',
+        destroyOptions: {},
+        shouldDiscardPendingInput: false,
+      },
+      {
+        name: 'standard session close',
+        destroyOptions: { discardPendingInput: true },
+        shouldDiscardPendingInput: true,
+      },
+    ])('$name 等待 active prompt 且丢弃旧 generator 更新', async ({
+      destroyOptions,
+      shouldDiscardPendingInput,
+    }) => {
       await session.initialize();
       const mockAgent = getMockAgent();
       let releaseLateEvents: (() => void) | undefined;
@@ -3221,7 +3235,7 @@ describe('AcpSession', () => {
       });
       await started;
       let destroySettled = false;
-      const destroy = session.destroy().then(() => {
+      const destroy = session.destroy(destroyOptions).then(() => {
         destroySettled = true;
       });
       await new Promise<void>((resolve) => setImmediate(resolve));
@@ -3235,10 +3249,14 @@ describe('AcpSession', () => {
       await destroy;
 
       expect(mockConnection.sessionUpdates).toEqual([]);
-      expect(runtimeState.runtime.discardPendingInput).toHaveBeenCalledOnce();
-      expect(
-        runtimeState.runtime.discardPendingInput.mock.invocationCallOrder[0]
-      ).toBeLessThan(vi.mocked(mockAgent.destroy).mock.invocationCallOrder[0]!);
+      if (shouldDiscardPendingInput) {
+        expect(runtimeState.runtime.discardPendingInput).toHaveBeenCalledOnce();
+        expect(
+          runtimeState.runtime.discardPendingInput.mock.invocationCallOrder[0]
+        ).toBeLessThan(vi.mocked(mockAgent.destroy).mock.invocationCallOrder[0]!);
+      } else {
+        expect(runtimeState.runtime.discardPendingInput).not.toHaveBeenCalled();
+      }
       expect(mockAgent.destroy).toHaveBeenCalledOnce();
       expect(runtimeState.runtime.dispose).toHaveBeenCalledOnce();
     });

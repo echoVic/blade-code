@@ -74,6 +74,7 @@ describe('Session Runtime residency source gate', () => {
     expect(bladeAgent).toContain('close: {}');
     expect(bladeAgent).toContain('async closeSession(');
     expect(bladeAgent).toContain('this.closeResidentSession(params.sessionId)');
+    expect(bladeAgent).toContain('discardPendingInput: true');
     expect(bladeAgent).toContain('await this.runtimeResidency.disposeAll()');
   });
 
