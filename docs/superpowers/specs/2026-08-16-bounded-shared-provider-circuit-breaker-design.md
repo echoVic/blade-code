@@ -1,7 +1,7 @@
 # Bounded Shared Provider Circuit Breaker Design
 
 **Date:** 2026-08-16
-**Target:** `blade-code@0.10.38`
+**Target:** `blade-code@0.10.39`
 **Status:** Frozen for implementation
 
 ## Problem
@@ -430,7 +430,7 @@ They:
 This keeps compaction, verification, health probes, title generation,
 background subagents, and internal sampling from amplifying a known outage.
 
-`providerCircuitBreakerOpenMs=0` preserves the pre-0.10.38 request behavior.
+`providerCircuitBreakerOpenMs=0` preserves the pre-0.10.39 request behavior.
 
 ## Fallback Behavior
 
@@ -777,7 +777,7 @@ Before tagging:
 5. `bun run qualify:production` passes all checks;
 6. evidence is written to
    `docs/testing/bounded-shared-provider-circuit-breaker-evidence.md`;
-7. package, lockfile, and built CLI are `0.10.38`;
-8. npm fresh install reports `0.10.38`;
+7. package, lockfile, and built CLI are `0.10.39`;
+8. npm fresh install reports `0.10.39`;
 9. feature worktree, branch, proxies, browser, PTY, profiles, processes, and
    temporary roots are removed.
