@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.41] - 2026-08-16
+
+### 🛡️ 稳定性
+
+- Provider request admission 在既有 pending count 之外增加 retained-footprint byte
+  硬边界：全局默认/上限 128 MiB、每 failure domain 64 MiB、每 root owner 32 MiB。
+  background/internal 同时受更严格的 count 与 byte 份额约束，始终为 foreground 保留
+  排队容量；class aging 只改变调度顺序，不改变资源记账 class
+- 新增 cycle-safe、getter-safe、100,000 node 有界的 request footprint estimator，
+  覆盖原始消息、规范化 pi-ai Context、工具 schema 与 request options；同一 logical
+  request 的 primary/retry/fallback/probe 复用一个数值 weight，scheduler 不持有消息、
+  image/base64、schema 或其他 request graph
+- queued→active、caller abort、ticket cancel、deadline、scheduler close 与 shutdown
+  rejection 统一精确释放 global/domain/owner 的 count 和 bytes。active capacity 空闲时，
+  单个超出 pending budget 的大请求仍可立即运行；只有需要等待时才在 timer/listener/state
+  分配前以 `queue_full/pending_bytes` 拒绝并保持零 Provider traffic
+- `provider_admission` 新增 `stream|pending_count|pending_bytes` resource，并统一投影到
+  Headless JSONL、TUI、Web SSE、ACP metadata 与 subagent bridge。Headless 可观察当前
+  root 的 background child rejection，但不暴露 child Session、owner、failure-domain、
+  request bytes、endpoint、credential 或 HMAC
+- 最终 `queue_full` 仍记录 `turn_aborted(cause=failed)`，同时精确确认该 turn 已 claim
+  的 durable input，避免 Web reload、SSE reconnect 或 ACP load 绕过资源边界自动重放；
+  Provider outage、wait timeout、cancel 与 crash recovery 保持原语义
+
+### ✅ 测试相关
+
+- 确定性测试覆盖 UTF-8/typed-array/循环/getter/node saturation、count/byte exact 与
+  one-over 边界、foreground/internal reserve、aged class accounting、立即大请求、
+  queued→active、abort/timeout/close、retry/fallback 单次估算、配置快照、四入口 schema、
+  terminal input acknowledgement 及 payload/bytes/credential 泄漏搜索门禁
+- DeepSeek Flash/Pro 通过 Headless background child、raw PTY TUI、production Chromium
+  Web 双 Session 与真实 ACP 双 Session 八格负向矩阵；每格使用 framework retry=0，
+  证明 overweight caller 零 Provider traffic，且 Web reload/ACP load 不重放唯一 marker
+- 正向对照继续通过 Flash/Pro × Headless/TUI/Web/ACP background completion 八格与
+  Web/ACP 双 Session serialization 四格，证明 weighted byte policy 不会缩窄正常
+  queued→admitted 长任务推进
+
 ## [0.10.40] - 2026-08-16
 
 ### 🛡️ 稳定性
