@@ -20,6 +20,14 @@ const mockUseProviderRetry = vi.fn(
       recoveryRemainingMs?: number;
     } | null
 );
+const mockUseProviderCircuit = vi.fn(
+  () =>
+    null as {
+      phase: 'opened' | 'waiting' | 'probe' | 'closed' | 'reopened' | 'rejected';
+      retryAfterMs?: number;
+      recoveryRemainingMs?: number;
+    } | null
+);
 const mockUseProviderStall = vi.fn(
   () =>
     null as {
@@ -53,6 +61,7 @@ vi.mock('ink', () => ({
 vi.mock('../../../../src/store/selectors/index.js', () => ({
   useIsProcessing: () => true,
   useIsReady: () => true,
+  useProviderCircuit: () => mockUseProviderCircuit(),
   useProviderRetry: () => mockUseProviderRetry(),
   useProviderStall: () => mockUseProviderStall(),
   useActionStationarity: () => mockUseActionStationarity(),
@@ -90,6 +99,8 @@ describe('LoadingIndicator', () => {
     mockUseTerminalWidth.mockReturnValue(120);
     mockUseProviderRetry.mockReset();
     mockUseProviderRetry.mockReturnValue(null);
+    mockUseProviderCircuit.mockReset();
+    mockUseProviderCircuit.mockReturnValue(null);
     mockUseProviderStall.mockReset();
     mockUseProviderStall.mockReturnValue(null);
     mockUseActionStationarity.mockReset();
@@ -148,6 +159,36 @@ describe('LoadingIndicator', () => {
     expect(html).toContain('9m 45s');
     expect(html).toContain('Esc 取消');
     expect(html).not.toContain('炼化代码灵气...');
+  });
+
+  it('优先显示共享 Provider circuit 等待和唯一 probe', async () => {
+    mockUseProviderRetry.mockReturnValue({
+      phase: 'scheduled',
+      attempt: 4,
+      maxRetries: 12,
+      mode: 'bounded_foreground',
+      recoveryRemainingMs: 598_000,
+    });
+    mockUseProviderCircuit.mockReturnValue({
+      phase: 'waiting',
+      retryAfterMs: 2_000,
+      recoveryRemainingMs: 598_000,
+    });
+    const { LoadingIndicator } = await import(
+      '../../../../src/ui/components/LoadingIndicator.js'
+    );
+
+    let html = renderToStaticMarkup(React.createElement(LoadingIndicator));
+    expect(html).toContain('Provider 故障已隔离，等待恢复探测');
+    expect(html).toContain('2s');
+    expect(html).toContain('9m 58s');
+    expect(html).toContain('Esc 取消');
+    expect(html).not.toContain('正在有界恢复');
+
+    mockUseProviderCircuit.mockReturnValue({ phase: 'probe' });
+    html = renderToStaticMarkup(React.createElement(LoadingIndicator));
+    expect(html).toContain('Provider 正在执行唯一恢复探测');
+    expect(html).toContain('Esc 取消');
   });
 
   it('在 Provider stall 时显示空闲上限并保留取消入口', async () => {

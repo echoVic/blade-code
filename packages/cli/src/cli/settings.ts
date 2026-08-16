@@ -11,6 +11,10 @@ import {
   MIN_FOREGROUND_PROVIDER_RECOVERY_MS,
 } from '../config/foregroundProviderRecovery.js';
 import {
+  MAX_PROVIDER_CIRCUIT_OPEN_MS,
+  MIN_PROVIDER_CIRCUIT_OPEN_MS,
+} from '../config/providerCircuitBreaker.js';
+import {
   MAX_CONCURRENT_TASKS,
   MAX_QUEUED_TASKS,
   MIN_CONCURRENT_TASKS,
@@ -114,6 +118,15 @@ const RuntimeSettingsSchema = Type.Object({
       Type.Integer({
         minimum: MIN_FOREGROUND_PROVIDER_RECOVERY_MS,
         maximum: MAX_FOREGROUND_PROVIDER_RECOVERY_MS,
+      }),
+    ])
+  ),
+  providerCircuitBreakerOpenMs: Type.Optional(
+    Type.Union([
+      Type.Literal(0),
+      Type.Integer({
+        minimum: MIN_PROVIDER_CIRCUIT_OPEN_MS,
+        maximum: MAX_PROVIDER_CIRCUIT_OPEN_MS,
       }),
     ])
   ),

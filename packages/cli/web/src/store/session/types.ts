@@ -74,6 +74,18 @@ export interface ProviderRetryInfo {
   exhaustedBy?: 'attempt_limit' | 'recovery_budget';
 }
 
+export interface ProviderCircuitInfo {
+  phase: 'opened' | 'waiting' | 'probe' | 'closed' | 'reopened' | 'rejected';
+  reason: 'rate_limit' | 'server_error' | 'transport' | 'stream_closed';
+  statusCode?: number;
+  retryAfterMs?: number;
+  nextProbeAt?: number;
+  openDurationMs: number;
+  sampleCount?: number;
+  failureCount?: number;
+  recoveryRemainingMs?: number;
+}
+
 export interface ProviderStallInfo {
   phase: 'detected';
   stallCount: number;
@@ -332,6 +344,7 @@ export interface StreamingSlice {
   isStreaming: boolean;
   isStopping: boolean;
   agentPhase: AgentPhase;
+  providerCircuit: ProviderCircuitInfo | null;
   providerRetry: ProviderRetryInfo | null;
   providerStall: ProviderStallInfo | null;
   actionStationarity: ActionStationarityInfo | null;

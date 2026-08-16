@@ -67,6 +67,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     isStreaming: false,
     isStopping: false,
     agentPhase: 'idle',
+    providerCircuit: null,
     providerRetry: null,
     providerStall: null,
     sessionEventConnectionState: 'idle',
@@ -1584,6 +1585,7 @@ describe('eventHandlers', () => {
     });
     expect(set).toHaveBeenLastCalledWith({
       agentPhase: 'switching_model',
+      providerCircuit: null,
       providerRetry: null,
       providerStall: null,
       actionStationarity: null,
@@ -1671,6 +1673,69 @@ describe('eventHandlers', () => {
     });
     expect(state.agentPhase).toBe('running');
     expect(state.providerRetry).toBeNull();
+  });
+
+  test('tracks and clears shared Provider circuit lifecycle', () => {
+    const state = createState();
+    state.agentPhase = 'running';
+    state.isStreaming = true;
+    const set = vi.fn((partial) => {
+      if (typeof partial === 'function') Object.assign(state, partial(state));
+      else Object.assign(state, partial);
+    });
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'provider.circuit',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        phase: 'waiting',
+        reason: 'server_error',
+        statusCode: 503,
+        retryAfterMs: 2_000,
+        nextProbeAt: 3_000,
+        openDurationMs: 2_000,
+        sampleCount: 4,
+        failureCount: 4,
+        recoveryRemainingMs: 598_000,
+      },
+    });
+    expect(state.providerCircuit).toMatchObject({
+      phase: 'waiting',
+      reason: 'server_error',
+      statusCode: 503,
+      retryAfterMs: 2_000,
+      nextProbeAt: 3_000,
+      openDurationMs: 2_000,
+      sampleCount: 4,
+      failureCount: 4,
+      recoveryRemainingMs: 598_000,
+    });
+
+    dispatch({
+      type: 'provider.circuit',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        phase: 'probe',
+        reason: 'server_error',
+        openDurationMs: 2_000,
+      },
+    });
+    expect(state.providerCircuit).toMatchObject({ phase: 'probe' });
+
+    dispatch({
+      type: 'provider.circuit',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        phase: 'closed',
+        reason: 'server_error',
+        openDurationMs: 2_000,
+      },
+    });
+    expect(state.providerCircuit).toBeNull();
   });
 
   test('tracks Provider stall detection and recovery', () => {
@@ -1939,6 +2004,7 @@ describe('eventHandlers', () => {
       pendingSteeringCount: 0,
       pendingInputDelivery: null,
       recoveredSteeringCount: 0,
+      providerCircuit: null,
       providerRetry: null,
       providerStall: null,
       actionStationarity: null,

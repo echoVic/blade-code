@@ -1243,6 +1243,50 @@ describe('headless runner', () => {
     agentState.chatStream.mockImplementationOnce(
       mockChatGenerator([
         {
+          kind: 'provider_circuit',
+          phase: 'opened',
+          reason: 'server_error',
+          statusCode: 503,
+          retryAfterMs: 2_000,
+          nextProbeAt: 3_000,
+          openDurationMs: 2_000,
+          sampleCount: 4,
+          failureCount: 4,
+          recoveryRemainingMs: 600_000,
+        },
+        {
+          kind: 'provider_circuit',
+          phase: 'waiting',
+          reason: 'server_error',
+          statusCode: 503,
+          retryAfterMs: 2_000,
+          nextProbeAt: 3_000,
+          openDurationMs: 2_000,
+          sampleCount: 4,
+          failureCount: 4,
+          recoveryRemainingMs: 600_000,
+        },
+        {
+          kind: 'provider_circuit',
+          phase: 'probe',
+          reason: 'server_error',
+          statusCode: 503,
+          openDurationMs: 2_000,
+          sampleCount: 4,
+          failureCount: 4,
+          recoveryRemainingMs: 598_000,
+        },
+        {
+          kind: 'provider_circuit',
+          phase: 'closed',
+          reason: 'server_error',
+          statusCode: 503,
+          openDurationMs: 2_000,
+          sampleCount: 0,
+          failureCount: 0,
+          recoveryRemainingMs: 598_000,
+        },
+        {
           kind: 'provider_retry',
           phase: 'scheduled',
           attempt: 1,
@@ -1294,14 +1338,17 @@ describe('headless runner', () => {
       },
       { stdout, stderr }
     );
-    const events = stdout.write.mock.calls
+    const allEvents = stdout.write.mock.calls
       .map((call) => String(call[0] ?? ''))
       .join('')
       .trim()
       .split('\n')
       .filter(Boolean)
-      .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)))
-      .filter((event) => event.type === 'provider_retry');
+      .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+    const events = allEvents.filter((event) => event.type === 'provider_retry');
+    const circuitEvents = allEvents.filter(
+      (event) => event.type === 'provider_circuit'
+    );
 
     expect(exitCode).toBe(0);
     expect(events).toEqual([
@@ -1346,6 +1393,25 @@ describe('headless runner', () => {
         recovery_remaining_ms: 584_750,
       },
     ]);
+    expect(circuitEvents.map((event) => event.phase)).toEqual([
+      'opened',
+      'waiting',
+      'probe',
+      'closed',
+    ]);
+    expect(circuitEvents[1]).toEqual({
+      event_version: 1,
+      type: 'provider_circuit',
+      phase: 'waiting',
+      reason: 'server_error',
+      status_code: 503,
+      retry_after_ms: 2_000,
+      next_probe_at: 3_000,
+      open_duration_ms: 2_000,
+      sample_count: 4,
+      failure_count: 4,
+      recovery_remaining_ms: 600_000,
+    });
     expect(stderr.write).not.toHaveBeenCalled();
   });
 

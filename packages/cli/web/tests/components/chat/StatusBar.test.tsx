@@ -27,6 +27,11 @@ const sessionState = vi.hoisted(() => ({
     mode?: 'standard' | 'bounded_foreground';
     recoveryRemainingMs?: number;
   } | null,
+  providerCircuit: null as {
+    phase: 'opened' | 'waiting' | 'probe' | 'closed' | 'reopened' | 'rejected';
+    retryAfterMs?: number;
+    recoveryRemainingMs?: number;
+  } | null,
   providerStall: null as {
     durationMs: number;
     timeoutMs: number;
@@ -54,6 +59,7 @@ describe('StatusBar', () => {
     sessionState.isStreaming = true;
     sessionState.agentPhase = 'compacting';
     sessionState.providerRetry = null;
+    sessionState.providerCircuit = null;
     sessionState.providerStall = null;
     sessionState.actionStationarity = null;
     container = document.createElement('div');
@@ -121,6 +127,37 @@ describe('StatusBar', () => {
     expect(container.textContent).toContain('Bounded recovery');
     expect(container.textContent).toContain('4/12');
     expect(container.textContent).toContain('9m 45s');
+  });
+
+  it('renders shared circuit waiting and probe ahead of request retry', () => {
+    sessionState.agentPhase = 'running';
+    sessionState.providerRetry = {
+      phase: 'waiting',
+      attempt: 4,
+      maxRetries: 12,
+      mode: 'bounded_foreground',
+      recoveryRemainingMs: 598_000,
+    };
+    sessionState.providerCircuit = {
+      phase: 'waiting',
+      retryAfterMs: 2_000,
+      recoveryRemainingMs: 598_000,
+    };
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    expect(container.textContent).toContain('Provider');
+    expect(container.textContent).toContain('Circuit open');
+    expect(container.textContent).toContain('probe in 2s');
+    expect(container.textContent).toContain('9m 58s');
+    expect(container.textContent).not.toContain('Bounded recovery');
+
+    sessionState.providerCircuit = { phase: 'probe' };
+    act(() => {
+      root.render(<StatusBar />);
+    });
+    expect(container.textContent).toContain('Recovery probe');
   });
 
   it('renders Provider stall duration ahead of the normal phase', () => {

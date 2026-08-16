@@ -50,6 +50,11 @@ import { formatMaxTurnsRange, isValidMaxTurns } from './maxTurns.js';
 import { migrateGeneratedModelIds } from './modelIds.js';
 import { validateModelProviderConfig } from './modelProviders.js';
 import {
+  isValidProviderCircuitOpenMs,
+  MAX_PROVIDER_CIRCUIT_OPEN_MS,
+  MIN_PROVIDER_CIRCUIT_OPEN_MS,
+} from './providerCircuitBreaker.js';
+import {
   normalizePluginSettings,
   normalizePluginSourcePolicy,
   type PluginSettingsScope,
@@ -84,6 +89,7 @@ export interface WorkspaceModelConfig {
   temperature: number;
   maxOutputTokens?: number;
   timeout: number;
+  providerCircuitBreakerOpenMs?: number;
 }
 
 export interface WorkspaceRuntimeSettings {
@@ -534,6 +540,11 @@ export class ConfigManager {
           ? { maxOutputTokens: base.maxOutputTokens }
           : {}),
         timeout: base.timeout,
+        ...(base.providerCircuitBreakerOpenMs !== undefined
+          ? {
+              providerCircuitBreakerOpenMs: base.providerCircuitBreakerOpenMs,
+            }
+          : {}),
       };
     }
 
@@ -548,6 +559,11 @@ export class ConfigManager {
         ? { maxOutputTokens: DEFAULT_CONFIG.maxOutputTokens }
         : {}),
       timeout: DEFAULT_CONFIG.timeout,
+      ...(DEFAULT_CONFIG.providerCircuitBreakerOpenMs !== undefined
+        ? {
+            providerCircuitBreakerOpenMs: DEFAULT_CONFIG.providerCircuitBreakerOpenMs,
+          }
+        : {}),
     };
     const applyLayer = (layer: Partial<BladeConfig> | null | undefined) => {
       if (!layer) return;
@@ -571,6 +587,9 @@ export class ConfigManager {
       }
       if (layer.timeout !== undefined) {
         resolved.timeout = layer.timeout;
+      }
+      if (layer.providerCircuitBreakerOpenMs !== undefined) {
+        resolved.providerCircuitBreakerOpenMs = layer.providerCircuitBreakerOpenMs;
       }
     };
 
@@ -1168,6 +1187,15 @@ export class ConfigManager {
       errors.push(
         'providerForegroundRecoveryMs 必须是 0，或 ' +
           `${MIN_FOREGROUND_PROVIDER_RECOVERY_MS}-${MAX_FOREGROUND_PROVIDER_RECOVERY_MS} 之间的整数`
+      );
+    }
+    if (
+      config.providerCircuitBreakerOpenMs !== undefined &&
+      !isValidProviderCircuitOpenMs(config.providerCircuitBreakerOpenMs)
+    ) {
+      errors.push(
+        'providerCircuitBreakerOpenMs 必须是 0，或 ' +
+          `${MIN_PROVIDER_CIRCUIT_OPEN_MS}-${MAX_PROVIDER_CIRCUIT_OPEN_MS} 之间的整数`
       );
     }
 

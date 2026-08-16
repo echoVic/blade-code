@@ -12,6 +12,8 @@ interface RunnerInput {
   storageRoot: string;
   prompt: string;
   marker: string;
+  secondaryPrompt?: string;
+  secondaryMarker?: string;
   secret: string;
 }
 
@@ -51,6 +53,19 @@ function waitForChildExit(
     child.once('error', onError);
     child.once('exit', onExit);
   });
+}
+
+async function waitFor(
+  predicate: () => boolean,
+  message: string,
+  timeoutMs = 60_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(message);
 }
 
 async function run(input: RunnerInput) {
@@ -94,13 +109,51 @@ async function run(input: RunnerInput) {
     });
     sessionId = created.sessionId;
     await connection.setSessionMode({ sessionId, modeId: 'yolo' });
-    const result = await connection.prompt({
+    const primaryPrompt = connection.prompt({
       sessionId,
       prompt: [{ type: 'text', text: input.prompt }],
     });
+    let secondarySessionId: string | undefined;
+    let secondarySubmittedAt: number | undefined;
+    let secondaryPrompt: ReturnType<typeof connection.prompt> | undefined;
+    if (input.secondaryPrompt && input.secondaryMarker) {
+      await waitFor(
+        () =>
+          client.sessionUpdates.some(
+            (notification) =>
+              notification.sessionId === sessionId &&
+              JSON.stringify(notification).includes('blade/providerCircuit') &&
+              JSON.stringify(notification).includes('"phase":"waiting"')
+          ),
+        'Primary ACP Session did not open the shared Provider circuit'
+      );
+      const secondary = await connection.newSession({
+        cwd: input.workspace,
+        mcpServers: [],
+      });
+      secondarySessionId = secondary.sessionId;
+      await connection.setSessionMode({
+        sessionId: secondarySessionId,
+        modeId: 'yolo',
+      });
+      secondarySubmittedAt = Date.now();
+      secondaryPrompt = connection.prompt({
+        sessionId: secondarySessionId,
+        prompt: [{ type: 'text', text: input.secondaryPrompt }],
+      });
+    }
+    const [result, secondaryResult] = await Promise.all([
+      primaryPrompt,
+      secondaryPrompt,
+    ]);
     if (result.stopReason !== 'end_turn') {
       throw new Error(
         `Unexpected ACP Provider recovery stop reason: ${result.stopReason}`
+      );
+    }
+    if (secondaryResult && secondaryResult.stopReason !== 'end_turn') {
+      throw new Error(
+        `Unexpected secondary ACP Provider recovery stop reason: ${secondaryResult.stopReason}`
       );
     }
 
@@ -111,6 +164,18 @@ async function run(input: RunnerInput) {
     if (!transcript.includes(input.marker)) {
       throw new Error('ACP transcript did not contain the recovery marker');
     }
+    let secondaryTranscript = '';
+    if (secondarySessionId && input.secondaryMarker) {
+      secondaryTranscript = await readFile(
+        findSessionTranscript(input.storageRoot, secondarySessionId),
+        'utf8'
+      );
+      if (!secondaryTranscript.includes(input.secondaryMarker)) {
+        throw new Error(
+          'Secondary ACP transcript did not contain the shared circuit marker'
+        );
+      }
+    }
     const output = JSON.stringify(client.sessionUpdates);
     if (
       !output.includes('blade/providerRetry') ||
@@ -119,7 +184,32 @@ async function run(input: RunnerInput) {
     ) {
       throw new Error('ACP did not project bounded Provider recovery metadata');
     }
-    if (output.includes(input.secret) || transcript.includes(input.secret)) {
+    if (
+      !output.includes('blade/providerCircuit') ||
+      !output.includes('"phase":"waiting"') ||
+      !output.includes('"phase":"probe"') ||
+      !output.includes('"phase":"closed"')
+    ) {
+      throw new Error('ACP did not project shared Provider circuit metadata');
+    }
+    if (
+      secondarySessionId &&
+      !client.sessionUpdates.some(
+        (notification) =>
+          notification.sessionId === secondarySessionId &&
+          JSON.stringify(notification).includes('blade/providerCircuit') &&
+          JSON.stringify(notification).includes('"phase":"waiting"')
+      )
+    ) {
+      throw new Error(
+        'Secondary ACP Session did not wait on the shared Provider circuit'
+      );
+    }
+    if (
+      output.includes(input.secret) ||
+      transcript.includes(input.secret) ||
+      secondaryTranscript.includes(input.secret)
+    ) {
       throw new Error('ACP Provider recovery evidence contained credentials');
     }
     if (client.activeTerminalCount() !== 0) {
@@ -139,6 +229,13 @@ async function run(input: RunnerInput) {
     return {
       success: true,
       sessionId,
+      secondarySessionId,
+      secondarySubmittedAt,
+      providerProbeCount: client.sessionUpdates.filter(
+        (notification) =>
+          JSON.stringify(notification).includes('blade/providerCircuit') &&
+          JSON.stringify(notification).includes('"phase":"probe"')
+      ).length,
       output: output.slice(-256_000),
       terminalReleaseCount: [...client.releaseCounts.values()].reduce(
         (sum, count) => sum + count,

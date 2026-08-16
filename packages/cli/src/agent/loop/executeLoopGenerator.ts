@@ -447,6 +447,10 @@ async function* processStreamResponse(
     for await (const chunk of stream) {
       if (signal?.aborted) break;
 
+      if (chunk.providerCircuit) {
+        yield { kind: 'provider_circuit', ...chunk.providerCircuit };
+        continue;
+      }
       if (chunk.providerRetry) {
         yield { kind: 'provider_retry', ...chunk.providerRetry };
         continue;

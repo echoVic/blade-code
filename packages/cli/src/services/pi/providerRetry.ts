@@ -224,7 +224,7 @@ export function classifyProviderRetry(
   return { retryable: false, statusCode };
 }
 
-function parseServerRetryDelay(
+export function getProviderRetryAfterMs(
   response: ProviderResponseMetadata | undefined,
   now: number
 ): number | undefined {
@@ -252,7 +252,7 @@ export function computeProviderRetryDelay(
 ): number {
   const now = options.now ?? Date.now();
   const maxDelayMs = options.maxDelayMs ?? MAX_PROVIDER_RETRY_DELAY_MS;
-  const serverDelay = parseServerRetryDelay(response, now);
+  const serverDelay = getProviderRetryAfterMs(response, now);
   if (serverDelay !== undefined) {
     return Math.min(Math.ceil(serverDelay), maxDelayMs);
   }

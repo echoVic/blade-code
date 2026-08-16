@@ -180,6 +180,18 @@ caller abort、12 次追加尝试硬上限、fallback 共享时钟、timer clean
 reasoning、tool call、usage、finish 任一 chunk 后禁止重放。feature matrix 的发布证据
 必须使用 `retry=0`。
 
+Shared Provider circuit 复用同一八格矩阵，并将 Open 时间配置为合法的 `2000ms`
+（production 默认 `10000ms`）。透明代理在第 4 个 `503` 完成后记录 monotonic boundary，
+后续请求不得在 Open 窗口内到达；到期后只允许一个 HalfOpen probe。各入口必须按同一
+typed schema 投影 `opened -> waiting -> probe -> closed`，TUI circuit 状态优先于普通
+retry 文案，Web/ACP 不得把 metadata 写入 assistant 正文或 durable transcript。
+
+Web 与 ACP 的 Flash/Pro cell 还必须在同一进程中启动第二个 Session。Session B 在
+Session A 已 Open 后提交，Open 窗口内零 Provider 请求；两 Session 合计恰好一个首个
+probe，关闭后分别取得独立真实 Provider 结果。Headless/TUI 不承载同进程多 Session，
+其 cell 只验证单 Session 状态机与 surface 投影。全部八格与双 Session 控制使用
+`retry=0`，并回收 secondary Session、SSE、terminal、browser/page、proxy 与临时目录。
+
 Provider Stall 资格必须让透明 SSE 代理先转发真实模型内容，再在 hard idle timeout
 之前暂停后续事件。Headless JSONL 必须按同一 stall count 输出 sanitized
 `detected → recovered`，标记 `output_started=true`，随后完成真实回复；代理必须证明

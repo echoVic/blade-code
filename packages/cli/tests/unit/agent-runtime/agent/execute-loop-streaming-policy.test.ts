@@ -346,6 +346,54 @@ class ProviderRetryStreamingChatService implements IChatService {
 
   async *streamChat(): AsyncGenerator<StreamChunk, void, unknown> {
     yield {
+      providerCircuit: {
+        phase: 'opened',
+        reason: 'server_error',
+        statusCode: 503,
+        retryAfterMs: 2_000,
+        nextProbeAt: 3_000,
+        openDurationMs: 2_000,
+        sampleCount: 4,
+        failureCount: 4,
+        recoveryRemainingMs: 600_000,
+      },
+    };
+    yield {
+      providerCircuit: {
+        phase: 'waiting',
+        reason: 'server_error',
+        statusCode: 503,
+        retryAfterMs: 2_000,
+        nextProbeAt: 3_000,
+        openDurationMs: 2_000,
+        sampleCount: 4,
+        failureCount: 4,
+        recoveryRemainingMs: 600_000,
+      },
+    };
+    yield {
+      providerCircuit: {
+        phase: 'probe',
+        reason: 'server_error',
+        statusCode: 503,
+        openDurationMs: 2_000,
+        sampleCount: 4,
+        failureCount: 4,
+        recoveryRemainingMs: 598_000,
+      },
+    };
+    yield {
+      providerCircuit: {
+        phase: 'closed',
+        reason: 'server_error',
+        statusCode: 503,
+        openDurationMs: 2_000,
+        sampleCount: 0,
+        failureCount: 0,
+        recoveryRemainingMs: 598_000,
+      },
+    };
+    yield {
       providerStall: {
         phase: 'detected',
         stallCount: 1,
@@ -726,6 +774,11 @@ describe('executeLoopGenerator streaming tool policy', () => {
       )
     );
 
+    expect(
+      events
+        .filter((event) => event.kind === 'provider_circuit')
+        .map((event) => event.phase)
+    ).toEqual(['opened', 'waiting', 'probe', 'closed']);
     expect(
       events
         .filter((event) => event.kind === 'provider_retry')

@@ -2430,6 +2430,18 @@ describe('SessionRoutes runtime reuse', () => {
         nextRetryAt: 1_750,
       };
       yield {
+        kind: 'provider_circuit',
+        phase: 'waiting',
+        reason: 'server_error',
+        statusCode: 503,
+        retryAfterMs: 2_000,
+        nextProbeAt: 3_000,
+        openDurationMs: 2_000,
+        sampleCount: 4,
+        failureCount: 4,
+        recoveryRemainingMs: 598_000,
+      };
+      yield {
         kind: 'provider_stall',
         phase: 'detected',
         stallCount: 1,
@@ -2551,6 +2563,21 @@ describe('SessionRoutes runtime reuse', () => {
         warningAfterMs: 30_000,
         timeoutMs: 300_000,
         outputStarted: false,
+      }
+    );
+    expect(Bus.publish).toHaveBeenCalledWith(
+      refFor('surface-events'),
+      'provider.circuit',
+      {
+        phase: 'waiting',
+        reason: 'server_error',
+        statusCode: 503,
+        retryAfterMs: 2_000,
+        nextProbeAt: 3_000,
+        openDurationMs: 2_000,
+        sampleCount: 4,
+        failureCount: 4,
+        recoveryRemainingMs: 598_000,
       }
     );
     expect(Bus.publish).toHaveBeenCalledWith(

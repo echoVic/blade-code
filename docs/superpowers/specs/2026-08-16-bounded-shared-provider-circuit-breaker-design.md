@@ -355,14 +355,21 @@ Counted circuit failures:
 
 Neutral outcomes:
 
-- caller abort;
-- foreground recovery budget expiry;
-- stream idle watchdog expiry;
 - context/request-size failure;
 - authentication, billing, quota, and deterministic 4xx failure;
 - malformed local configuration;
 - fallback/model lookup failure;
-- any local exception that is not classified as a Provider circuit failure.
+- any Provider response that is not classified as a circuit failure.
+
+Abandoned outcomes:
+
+- caller abort;
+- foreground recovery budget expiry;
+- stream idle watchdog expiry;
+- a local exception before any Provider response.
+
+Abandonment contributes no sample. A half-open abandonment releases the probe
+without closing or reopening the circuit.
 
 Success:
 
@@ -374,10 +381,10 @@ After the first real chunk, the attempt has already recorded success. A later
 stream failure does not become a zero-output circuit failure and does not
 change replay behavior.
 
-A neutral outcome from the current half-open probe closes the breaker. It
-proves that the endpoint is reachable and no longer returning the outage class
-that opened the circuit, even though the logical request may still fail for a
-request-specific reason.
+A neutral Provider response from the current half-open probe closes the
+breaker. It proves that the endpoint is reachable and no longer returning the
+outage class that opened the circuit, even though the logical request may
+still fail for a request-specific reason.
 
 ## Request-Origin Behavior
 

@@ -1302,6 +1302,39 @@ export class AcpSession {
                 },
               });
               break;
+            case 'provider_circuit':
+              this.sendUpdate({
+                sessionUpdate: 'session_info_update',
+                updatedAt: new Date().toISOString(),
+                _meta: {
+                  'blade/providerCircuit': {
+                    phase: event.phase,
+                    reason: event.reason,
+                    ...(event.statusCode !== undefined
+                      ? { statusCode: event.statusCode }
+                      : {}),
+                    ...(event.retryAfterMs !== undefined
+                      ? { retryAfterMs: event.retryAfterMs }
+                      : {}),
+                    ...(event.nextProbeAt !== undefined
+                      ? { nextProbeAt: event.nextProbeAt }
+                      : {}),
+                    openDurationMs: event.openDurationMs,
+                    ...(event.sampleCount !== undefined
+                      ? { sampleCount: event.sampleCount }
+                      : {}),
+                    ...(event.failureCount !== undefined
+                      ? { failureCount: event.failureCount }
+                      : {}),
+                    ...(event.recoveryRemainingMs !== undefined
+                      ? {
+                          recoveryRemainingMs: event.recoveryRemainingMs,
+                        }
+                      : {}),
+                  },
+                },
+              });
+              break;
             case 'provider_retry':
               this.sendUpdate({
                 sessionUpdate: 'session_info_update',

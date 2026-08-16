@@ -229,6 +229,12 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   credential。TUI loading、Web StatusBar、ACP
   `session_info_update._meta["blade/providerRetry"]`、Headless JSONL 和 subagent SSE
   消费同一协议；元事件不计为内容 chunk，不触发 stream commit 或工具执行。
+- 同一进程内的 Session 通过 128 项有界 failure-domain registry 共享 Provider circuit。
+  每个 domain 使用最多 256 个样本的 60 秒窗口；Open 到期后只有一个 generation/lease
+  token 可拥有 HalfOpen probe，abort/timeout 显式 abandon，lease takeover 后的 stale
+  result 被忽略。root foreground 末候选在原恢复 deadline 内等待，background/internal
+  及非末 fallback candidate fail-fast。`provider_circuit` 仅投影 sanitized lifecycle，
+  不持久化 endpoint、credential/HMAC、response body 或 circuit state。
 - 每次 Provider stream read 同时受 stall warning 和 hard idle timeout 约束。warning
   默认为 30 秒，并在较短 hard timeout 下收窄到其一半；runtime 始终保留同一个 pending
   `iterator.next()`，不能因为 warning 启动重叠读取或第二个请求。超过 warning 产生

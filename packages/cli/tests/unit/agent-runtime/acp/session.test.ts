@@ -1279,6 +1279,101 @@ describe('AcpSession', () => {
       );
     });
 
+    it('projects Provider circuit lifecycle through ACP metadata only', async () => {
+      const mockAgent = getMockAgent();
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield {
+          kind: 'provider_circuit',
+          phase: 'waiting',
+          reason: 'server_error',
+          statusCode: 503,
+          retryAfterMs: 2_000,
+          nextProbeAt: 3_000,
+          openDurationMs: 2_000,
+          sampleCount: 4,
+          failureCount: 4,
+          recoveryRemainingMs: 598_000,
+        } as LoopEvent;
+        yield {
+          kind: 'provider_circuit',
+          phase: 'probe',
+          reason: 'server_error',
+          statusCode: 503,
+          openDurationMs: 2_000,
+          sampleCount: 4,
+          failureCount: 4,
+          recoveryRemainingMs: 598_000,
+        } as LoopEvent;
+        yield {
+          kind: 'provider_circuit',
+          phase: 'closed',
+          reason: 'server_error',
+          statusCode: 503,
+          openDurationMs: 2_000,
+          sampleCount: 0,
+          failureCount: 0,
+          recoveryRemainingMs: 598_000,
+        } as LoopEvent;
+        return { success: true, finalMessage: 'circuit recovered' };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'wait for shared recovery' }],
+      });
+
+      expect(mockConnection.sessionUpdates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'session_info_update',
+              _meta: {
+                'blade/providerCircuit': {
+                  phase: 'waiting',
+                  reason: 'server_error',
+                  statusCode: 503,
+                  retryAfterMs: 2_000,
+                  nextProbeAt: 3_000,
+                  openDurationMs: 2_000,
+                  sampleCount: 4,
+                  failureCount: 4,
+                  recoveryRemainingMs: 598_000,
+                },
+              },
+            }),
+          }),
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'session_info_update',
+              _meta: {
+                'blade/providerCircuit': expect.objectContaining({
+                  phase: 'probe',
+                }),
+              },
+            }),
+          }),
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'session_info_update',
+              _meta: {
+                'blade/providerCircuit': expect.objectContaining({
+                  phase: 'closed',
+                }),
+              },
+            }),
+          }),
+        ])
+      );
+      expect(
+        mockConnection.sessionUpdates.filter(
+          (entry) =>
+            entry.update.sessionUpdate === 'agent_message_chunk' &&
+            entry.update.content?.type === 'text' &&
+            entry.update.content.text.includes('circuit')
+        )
+      ).toHaveLength(0);
+    });
+
     it('projects Provider stall lifecycle through ACP session metadata', async () => {
       const mockAgent = getMockAgent();
       mockAgent.chatStream = vi.fn(async function* () {

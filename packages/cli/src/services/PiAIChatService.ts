@@ -25,8 +25,21 @@ import {
 } from './pi/messageHistory.js';
 import { createFallbackModel, createPiRuntime } from './pi/modelRuntime.js';
 import {
+  DEFAULT_PROVIDER_CIRCUIT_OPEN_MS,
+  getProviderCircuitRegistry,
+  isProviderCircuitOpenError,
+  MAX_PROVIDER_CIRCUIT_PROBE_LEASE_MS,
+  MIN_PROVIDER_CIRCUIT_PROBE_LEASE_MS,
+  ProviderCircuitOpenError,
+  type ProviderCircuitAdmission,
+  type ProviderCircuitEvent,
+  type ProviderCircuitFailure,
+  type ProviderCircuitTransition,
+} from './pi/providerCircuitBreaker.js';
+import {
   classifyProviderRetry,
   computeProviderRetryDelay,
+  getProviderRetryAfterMs,
   markProviderReplayBoundary,
   ProviderRecoveryBudgetExceededError,
   type ProviderResponseMetadata,
@@ -44,6 +57,45 @@ function hasImageContent(message: Message | undefined): boolean {
       message.role === 'user' &&
       Array.isArray(message.content) &&
       message.content.some((part) => part.type === 'image_url')
+  );
+}
+
+function classifyProviderCircuitFailure(
+  error: unknown,
+  response?: ProviderResponseMetadata
+): ProviderCircuitFailure | undefined {
+  const classification = classifyProviderRetry(error, response);
+  if (!classification.retryable || !classification.reason) return undefined;
+  const statusCode = classification.statusCode;
+  switch (classification.reason) {
+    case 'rate_limit':
+      if (statusCode !== 429) return undefined;
+      break;
+    case 'server_error':
+      if (statusCode === undefined || statusCode < 500 || statusCode > 599) {
+        return undefined;
+      }
+      break;
+    case 'transport':
+    case 'stream_closed':
+      break;
+    case 'timeout':
+      return undefined;
+  }
+  const retryAfterMs = getProviderRetryAfterMs(response, Date.now());
+  return {
+    reason: classification.reason,
+    ...(statusCode !== undefined ? { statusCode } : {}),
+    ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+  };
+}
+
+function isProviderStreamIdleTimeout(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === 'object' &&
+    'code' in error &&
+    error.code === 'STREAM_IDLE_TIMEOUT'
   );
 }
 
@@ -158,6 +210,31 @@ export class PiAIChatService implements IChatService {
       boundedRecovery !== undefined && this.config.maxRetries === undefined;
     let logicalPhysicalAttempts = 0;
     let responseMetadata: ProviderResponseMetadata | undefined;
+    const circuitRegistry =
+      this.config.providerCircuitRegistry ?? getProviderCircuitRegistry();
+    const circuitOpenDurationMs =
+      this.config.providerCircuitBreakerOpenMs ?? DEFAULT_PROVIDER_CIRCUIT_OPEN_MS;
+    const circuitProbeLeaseMs = Math.max(
+      MIN_PROVIDER_CIRCUIT_PROBE_LEASE_MS,
+      Math.min(
+        this.config.streamIdleTimeout ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+        MAX_PROVIDER_CIRCUIT_PROBE_LEASE_MS
+      )
+    );
+
+    const circuitFor = (model: Model<Api>) =>
+      circuitRegistry.get({
+        provider: model.provider,
+        api: model.api,
+        baseUrl: model.baseUrl ?? this.config.baseUrl ?? '',
+        model: model.id,
+        serviceTier: this.config.serviceTier,
+        apiVersion: this.config.apiVersion,
+        apiKey: this.config.apiKey,
+        customHeaders: this.config.customHeaders,
+        openDurationMs: circuitOpenDurationMs,
+        probeLeaseMs: circuitProbeLeaseMs,
+      });
 
     const recoverySnapshot = (now = Date.now()) => {
       if (!boundedRecovery) return undefined;
@@ -240,6 +317,82 @@ export class PiAIChatService implements IChatService {
     };
 
     const service = this;
+    const circuitEventFromTransition = (
+      transition: ProviderCircuitTransition
+    ): ProviderCircuitEvent => ({
+      phase: transition.phase,
+      reason: transition.reason,
+      ...(transition.statusCode !== undefined
+        ? { statusCode: transition.statusCode }
+        : {}),
+      ...(transition.retryAfterMs !== undefined
+        ? { retryAfterMs: transition.retryAfterMs }
+        : {}),
+      ...(transition.nextProbeAt !== undefined
+        ? { nextProbeAt: transition.nextProbeAt }
+        : {}),
+      openDurationMs: transition.openDurationMs,
+      sampleCount: transition.sampleCount,
+      failureCount: transition.failureCount,
+      ...(recoverySnapshot()
+        ? { recoveryRemainingMs: recoverySnapshot()?.recoveryRemainingMs }
+        : {}),
+    });
+    const circuitEventFromBlocked = (
+      phase: 'waiting' | 'rejected',
+      admission: Extract<ProviderCircuitAdmission, { allowed: false }>
+    ): ProviderCircuitEvent => ({
+      phase,
+      reason: admission.reason,
+      ...(admission.statusCode !== undefined
+        ? { statusCode: admission.statusCode }
+        : {}),
+      retryAfterMs: admission.retryAfterMs,
+      ...(admission.nextProbeAt !== undefined
+        ? { nextProbeAt: admission.nextProbeAt }
+        : {}),
+      openDurationMs: admission.openDurationMs,
+      sampleCount: admission.sampleCount,
+      failureCount: admission.failureCount,
+      ...(recoverySnapshot()
+        ? { recoveryRemainingMs: recoverySnapshot()?.recoveryRemainingMs }
+        : {}),
+    });
+    const circuitEventFromProbe = (
+      admission: Extract<ProviderCircuitAdmission, { allowed: true }>
+    ): ProviderCircuitEvent => ({
+      phase: 'probe',
+      reason: admission.reason ?? 'server_error',
+      ...(admission.statusCode !== undefined
+        ? { statusCode: admission.statusCode }
+        : {}),
+      openDurationMs: admission.openDurationMs ?? circuitOpenDurationMs,
+      ...(admission.sampleCount !== undefined
+        ? { sampleCount: admission.sampleCount }
+        : {}),
+      ...(admission.failureCount !== undefined
+        ? { failureCount: admission.failureCount }
+        : {}),
+      ...(recoverySnapshot()
+        ? { recoveryRemainingMs: recoverySnapshot()?.recoveryRemainingMs }
+        : {}),
+    });
+    const recoveryExhausted = (
+      attempt: number,
+      reason: ProviderRetryEvent['reason'],
+      statusCode?: number
+    ): StreamChunk => ({
+      providerRetry: {
+        phase: 'exhausted',
+        attempt,
+        maxRetries,
+        reason,
+        ...(statusCode !== undefined ? { statusCode } : {}),
+        ...recoveryFields(),
+        exhaustedBy: 'recovery_budget',
+      },
+    });
+
     const streamWithRetries = async function* (
       model: Model<Api>,
       onRealChunk: () => void,
@@ -250,10 +403,61 @@ export class PiAIChatService implements IChatService {
       let emitted = false;
       let retryReason: ReturnType<typeof classifyProviderRetry>['reason'];
       let retryStatusCode: number | undefined;
+      const circuit = circuitFor(model);
       for (let attempt = 0; attempt <= candidateMaxRetries; attempt++) {
         if (!hasLogicalAttemptCapacity()) break;
+        let admission = circuit.check();
+        while (!admission.allowed) {
+          retryReason = admission.reason;
+          retryStatusCode = admission.statusCode;
+          if (!boundedRecovery || !terminalCandidate) {
+            const event = circuitEventFromBlocked('rejected', admission);
+            yield { providerCircuit: event };
+            throw new ProviderCircuitOpenError(event);
+          }
+
+          beginRecovery();
+          const beforeWait = recoverySnapshot();
+          const remainingBudgetMs = beforeWait?.recoveryRemainingMs ?? 0;
+          if (remainingBudgetMs <= 0) {
+            const error = budgetError();
+            yield recoveryExhausted(
+              sharedAttemptLimit ? Math.max(0, logicalPhysicalAttempts - 1) : attempt,
+              admission.reason,
+              admission.statusCode
+            );
+            throw error;
+          }
+          yield {
+            providerCircuit: circuitEventFromBlocked('waiting', admission),
+          };
+          const waitMs = Math.min(
+            Math.max(1, admission.retryAfterMs),
+            PROVIDER_RECOVERY_HEARTBEAT_MS,
+            remainingBudgetMs
+          );
+          await abortableSleep(waitMs, signal, { throwOnAbort: true });
+          if ((recoverySnapshot()?.recoveryRemainingMs ?? 0) <= 0) {
+            const error = budgetError();
+            yield recoveryExhausted(
+              sharedAttemptLimit ? Math.max(0, logicalPhysicalAttempts - 1) : attempt,
+              admission.reason,
+              admission.statusCode
+            );
+            throw error;
+          }
+          admission = circuit.check();
+        }
+
+        const circuitToken = admission.token;
+        if (admission.probe) {
+          yield {
+            providerCircuit: circuitEventFromProbe(admission),
+          };
+        }
         try {
           let recoveredEmitted = false;
+          let circuitSuccessRecorded = false;
           for await (const chunk of streamFrom(model)) {
             if (chunk.providerStall) {
               yield chunk;
@@ -277,9 +481,26 @@ export class PiAIChatService implements IChatService {
                 },
               };
             }
+            if (!circuitSuccessRecorded) {
+              circuitSuccessRecorded = true;
+              const transition = circuit.recordSuccess(circuitToken);
+              if (transition) {
+                yield {
+                  providerCircuit: circuitEventFromTransition(transition),
+                };
+              }
+            }
             emitted = true;
             onRealChunk();
             yield chunk;
+          }
+          if (!circuitSuccessRecorded) {
+            const transition = circuit.recordSuccess(circuitToken);
+            if (transition) {
+              yield {
+                providerCircuit: circuitEventFromTransition(transition),
+              };
+            }
           }
           return;
         } catch (error) {
@@ -313,6 +534,20 @@ export class PiAIChatService implements IChatService {
             markProviderReplayBoundary(error);
             throw error;
           }
+          const circuitFailure = classifyProviderCircuitFailure(
+            error,
+            responseMetadata
+          );
+          const circuitTransition = circuitFailure
+            ? circuit.recordFailure(circuitToken, circuitFailure)
+            : responseMetadata && !isProviderStreamIdleTimeout(error)
+              ? circuit.recordNeutral(circuitToken)
+              : undefined;
+          if (circuitTransition) {
+            yield {
+              providerCircuit: circuitEventFromTransition(circuitTransition),
+            };
+          }
           if (!classification.retryable || !classification.reason) {
             if (attempt > 0 && retryReason) {
               yield {
@@ -335,6 +570,19 @@ export class PiAIChatService implements IChatService {
           retryReason = classification.reason;
           retryStatusCode = classification.statusCode;
           const canRetry = attempt < candidateMaxRetries && hasLogicalAttemptCapacity();
+          if (
+            circuitTransition &&
+            circuitTransition.phase !== 'closed' &&
+            canRetry &&
+            (!boundedRecovery || !terminalCandidate)
+          ) {
+            const event: ProviderCircuitEvent = {
+              ...circuitEventFromTransition(circuitTransition),
+              phase: 'rejected',
+            };
+            yield { providerCircuit: event };
+            throw new ProviderCircuitOpenError(event);
+          }
           if (canRetry) {
             beginRecovery();
             const retryAttempt = sharedAttemptLimit
@@ -350,13 +598,29 @@ export class PiAIChatService implements IChatService {
                   }
                 : undefined
             );
+            const circuitDelayMs =
+              circuitTransition && circuitTransition.phase !== 'closed'
+                ? (circuitTransition.retryAfterMs ?? 0)
+                : 0;
+            if (boundedRecovery && circuitDelayMs > 0 && circuitTransition) {
+              yield {
+                providerCircuit: {
+                  ...circuitEventFromTransition(circuitTransition),
+                  phase: 'waiting',
+                },
+              };
+            }
             const beforeWait = recoverySnapshot();
+            const requestedEffectiveDelayMs = Math.max(
+              requestedDelayMs,
+              circuitDelayMs
+            );
             const delayMs = boundedRecovery
               ? Math.min(
-                  requestedDelayMs,
-                  beforeWait?.recoveryRemainingMs ?? requestedDelayMs
+                  requestedEffectiveDelayMs,
+                  beforeWait?.recoveryRemainingMs ?? requestedEffectiveDelayMs
                 )
-              : requestedDelayMs;
+              : requestedEffectiveDelayMs;
             const retryEvent = {
               attempt: retryAttempt,
               maxRetries,
@@ -397,6 +661,25 @@ export class PiAIChatService implements IChatService {
                   throw error;
                 }
                 if (remainingDelayMs > 0) {
+                  if (
+                    circuitTransition &&
+                    circuitTransition.phase !== 'closed' &&
+                    circuitTransition.nextProbeAt !== undefined
+                  ) {
+                    const circuitRemainingMs = Math.max(
+                      0,
+                      circuitTransition.nextProbeAt - Date.now()
+                    );
+                    if (circuitRemainingMs > 0) {
+                      yield {
+                        providerCircuit: {
+                          ...circuitEventFromTransition(circuitTransition),
+                          phase: 'waiting',
+                          retryAfterMs: circuitRemainingMs,
+                        },
+                      };
+                    }
+                  }
                   yield {
                     providerRetry: {
                       phase: 'waiting',
@@ -438,6 +721,8 @@ export class PiAIChatService implements IChatService {
               },
             };
           }
+        } finally {
+          circuit.abandon(circuitToken);
         }
       }
       throw lastRetryError;
@@ -464,7 +749,11 @@ export class PiAIChatService implements IChatService {
       return;
     } catch (error) {
       lastError = error;
-      if (primaryEmitted || !classifyProviderRetry(error, responseMetadata).retryable) {
+      if (
+        primaryEmitted ||
+        (!isProviderCircuitOpenError(error) &&
+          !classifyProviderRetry(error, responseMetadata).retryable)
+      ) {
         throw error;
       }
     }
@@ -495,7 +784,8 @@ export class PiAIChatService implements IChatService {
         lastError = error;
         if (
           fallbackEmitted ||
-          !classifyProviderRetry(error, responseMetadata).retryable
+          (!isProviderCircuitOpenError(error) &&
+            !classifyProviderRetry(error, responseMetadata).retryable)
         ) {
           throw error;
         }

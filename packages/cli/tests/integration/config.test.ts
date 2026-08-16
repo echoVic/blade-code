@@ -697,4 +697,21 @@ describe('ConfigManager 集成', () => {
     const loaded = await ConfigManager.getInstance().initialize();
     expect(loaded.providerForegroundRecoveryMs).toBe(120_000);
   });
+
+  it('persists the Provider circuit open duration in global config', async () => {
+    const service = ConfigService.getInstance();
+
+    await service.save(
+      { providerCircuitBreakerOpenMs: 20_000 },
+      { scope: 'global', immediate: true }
+    );
+
+    const userConfigPath = path.join(tempHome, '.blade', 'config.json');
+    expect(JSON.parse(readFileSync(userConfigPath, 'utf8'))).toMatchObject({
+      providerCircuitBreakerOpenMs: 20_000,
+    });
+
+    const loaded = await ConfigManager.getInstance().initialize();
+    expect(loaded.providerCircuitBreakerOpenMs).toBe(20_000);
+  });
 });

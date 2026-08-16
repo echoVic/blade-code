@@ -34,6 +34,10 @@ import type { JsonValue, MessageRole } from '../store/types.js';
 import { getProviderHeaders } from '../ui/components/model-config/types.js';
 import { PiAIChatService } from './PiAIChatService.js';
 import type { PiModelCatalog } from './pi/PiModelCatalog.js';
+import type {
+  ProviderCircuitEvent,
+  ProviderCircuitRegistry,
+} from './pi/providerCircuitBreaker.js';
 import type { ProviderRetryEvent } from './pi/providerRetry.js';
 import type { ProviderStallEvent } from './pi/providerStall.js';
 
@@ -118,6 +122,9 @@ export interface ChatConfig {
   fallbackModels?: ModelRef[];
   enablePromptCaching?: boolean;
   maxRetries?: number;
+  providerCircuitBreakerOpenMs?: number;
+  /** Process-shared runtime coordinator. Never serialize this field. */
+  providerCircuitRegistry?: ProviderCircuitRegistry;
   /** Session-owned model/provider catalog. Never serialize this field. */
   modelCatalog?: PiModelCatalog;
 }
@@ -180,6 +187,7 @@ export interface StreamChunk {
   finishReason?: string;
   usage?: UsageInfo;
   modelFallback?: boolean;
+  providerCircuit?: ProviderCircuitEvent;
   providerRetry?: ProviderRetryEvent;
   providerStall?: ProviderStallEvent;
 }

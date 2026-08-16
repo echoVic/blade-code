@@ -355,6 +355,19 @@ const ProviderRetryEventSchema = event({
   exhausted_by: Type.Optional(StringEnum(['attempt_limit', 'recovery_budget'])),
 });
 
+const ProviderCircuitEventSchema = event({
+  type: Type.Literal('provider_circuit'),
+  phase: StringEnum(['opened', 'waiting', 'probe', 'closed', 'reopened', 'rejected']),
+  reason: StringEnum(['rate_limit', 'server_error', 'transport', 'stream_closed']),
+  status_code: Type.Optional(Type.Integer({ minimum: 100, maximum: 599 })),
+  retry_after_ms: Type.Optional(Type.Integer({ minimum: 0 })),
+  next_probe_at: Type.Optional(Type.Integer({ minimum: 0 })),
+  open_duration_ms: Type.Integer({ minimum: 0 }),
+  sample_count: Type.Optional(Type.Integer({ minimum: 0 })),
+  failure_count: Type.Optional(Type.Integer({ minimum: 0 })),
+  recovery_remaining_ms: Type.Optional(Type.Integer({ minimum: 0 })),
+});
+
 const ProviderStallEventSchema = event({
   type: Type.Literal('provider_stall'),
   phase: StringEnum(['detected', 'recovered']),
@@ -440,6 +453,7 @@ export const HeadlessJsonlEventSchema = Runtime(
     SubagentEventSchema,
     TokenUsageEventSchema,
     CompactingEventSchema,
+    ProviderCircuitEventSchema,
     ProviderRetryEventSchema,
     ProviderStallEventSchema,
     ActionStationarityEventSchema,

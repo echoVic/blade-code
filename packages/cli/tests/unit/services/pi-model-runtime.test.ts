@@ -108,6 +108,24 @@ describe('pi model runtime', () => {
     });
   });
 
+  it('freezes the Provider circuit policy into the shared chat config', () => {
+    const resolved = resolveModelConfig(
+      {
+        id: 'deepseek',
+        provider: 'deepseek',
+        model: 'deepseek-v4-flash',
+      },
+      {
+        temperature: 0,
+        timeout: 180_000,
+        providerCircuitBreakerOpenMs: 20_000,
+      },
+      'off'
+    );
+
+    expect(resolved.chat.providerCircuitBreakerOpenMs).toBe(20_000);
+  });
+
   it('isolates injected credentials by model config ID', () => {
     const firstName = getModelApiKeyEnvironmentVariable('first-model');
     const secondName = getModelApiKeyEnvironmentVariable('second-model');

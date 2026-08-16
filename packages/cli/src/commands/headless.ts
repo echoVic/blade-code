@@ -1056,6 +1056,27 @@ function createEventWriter(
         `[provider-retry:${event.phase}] ${event.attempt}/${event.maxRetries} ${event.reason}${delay}`
       );
     },
+    providerCircuit(event: Extract<LoopEvent, { kind: 'provider_circuit' }>) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('provider_circuit', {
+          phase: event.phase,
+          reason: event.reason,
+          status_code: event.statusCode,
+          retry_after_ms: event.retryAfterMs,
+          next_probe_at: event.nextProbeAt,
+          open_duration_ms: event.openDurationMs,
+          sample_count: event.sampleCount,
+          failure_count: event.failureCount,
+          recovery_remaining_ms: event.recoveryRemainingMs,
+        });
+        return;
+      }
+      const wait =
+        event.retryAfterMs !== undefined
+          ? ` retry in ${Math.max(0, Math.ceil(event.retryAfterMs / 1000))}s`
+          : '';
+      writeLine(io.stderr, `[provider-circuit:${event.phase}] ${event.reason}${wait}`);
+    },
     providerStall(event: Extract<LoopEvent, { kind: 'provider_stall' }>) {
       if (outputFormat === 'jsonl') {
         writeJsonl('provider_stall', {
@@ -1664,6 +1685,9 @@ export async function runHeadless(
             break;
           case 'provider_retry':
             eventWriter.providerRetry(event);
+            break;
+          case 'provider_circuit':
+            eventWriter.providerCircuit(event);
             break;
           case 'provider_stall':
             eventWriter.providerStall(event);

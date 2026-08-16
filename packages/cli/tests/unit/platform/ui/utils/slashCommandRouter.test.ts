@@ -150,6 +150,7 @@ function createMockSessionActions(): SessionActions {
     finalizeStreamingMessage: vi.fn(),
     clearFinalizingStreamingMessageId: vi.fn(),
     discardStreamingMessage: vi.fn(),
+    setProviderCircuit: vi.fn(),
     setProviderRetry: vi.fn(),
     setProviderStall: vi.fn(),
     setActionStationarity: vi.fn(),

@@ -4,6 +4,7 @@ import type { Message as ServiceMessage, StreamEvent } from '@/services';
 import type {
   ActionStationarityInfo,
   Message,
+  ProviderCircuitInfo,
   ProviderRetryInfo,
   ProviderStallInfo,
   SessionStoreState,
@@ -1782,9 +1783,19 @@ const handleModelFallback: EventHandler = (props, get, set) => {
   if (props.sessionId !== get().currentSessionId) return;
   set({
     agentPhase: 'switching_model',
+    providerCircuit: null,
     providerRetry: null,
     providerStall: null,
     actionStationarity: null,
+  });
+};
+
+const handleProviderCircuit: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  set({
+    agentPhase: 'running',
+    providerCircuit:
+      props.phase === 'closed' ? null : (props as unknown as ProviderCircuitInfo),
   });
 };
 
@@ -1979,6 +1990,7 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
       isStreaming: false,
       isStopping: false,
       agentPhase: 'idle',
+      providerCircuit: null,
       providerRetry: null,
       providerStall: null,
       actionStationarity: null,
@@ -2015,6 +2027,7 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
       isStreaming: false,
       isStopping: false,
       agentPhase: 'error',
+      providerCircuit: null,
       providerRetry: null,
       providerStall: null,
       actionStationarity: null,
@@ -2185,6 +2198,7 @@ const handleSessionRewound: EventHandler = (props, get, set) => {
     isStreaming: false,
     isStopping: false,
     agentPhase: 'idle',
+    providerCircuit: null,
     providerRetry: null,
     providerStall: null,
     actionStationarity: null,
@@ -2297,6 +2311,7 @@ const eventHandlers: Record<string, EventHandler> = {
   'committed.turn_started': handleTurnStarted,
   'committed.turn_completed': handleCommittedSessionCompleted,
   'committed.turn_aborted': handleCommittedSessionCompleted,
+  'provider.circuit': handleProviderCircuit,
   'provider.retry': handleProviderRetry,
   'provider.stall': handleProviderStall,
   'action.stationarity': handleActionStationarity,

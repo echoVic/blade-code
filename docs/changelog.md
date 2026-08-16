@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.39] - 2026-08-16
+
+### 🛡️ 稳定性
+
+- 新增进程级、按 Provider failure-domain 隔离的共享 circuit breaker：60 秒滑窗内至少
+  4 个样本且错误率达到 80% 时进入 Open，默认 10 秒后只允许一个 HalfOpen probe；
+  成功或 request-specific neutral response 关闭 circuit，瞬时故障重新 Open
+- 每个 physical attempt 使用 generation/lease 绑定的 opaque token；caller abort、
+  recovery deadline 与 stream idle timeout 会显式 abandon probe，旧 owner 在 lease
+  takeover 后返回的 stale success/failure 无法改写新状态。registry 固定最多 128 个
+  failure domain，每个窗口最多 256 个样本，无 sweep timer 或无限 Map
+- failure-domain identity 覆盖 channel、wire API、endpoint、model、service tier、
+  API version、credential 与 routing headers；敏感值只进入进程随机 secret 驱动的
+  HMAC-SHA-256，不写日志、surface、transcript 或持久化配置
+- terminal root foreground 在原 `providerForegroundRecoveryMs` deadline 内等待 open
+  circuit，并每 15 秒发送 heartbeat；非末 primary/fallback 直接跳到下一候选。
+  background/internal/standard 请求对已知故障 fail-fast，不再重复访问同一 candidate
+- 新增 `providerCircuitBreakerOpenMs`：默认 `10000`，`0` 禁用，其他值必须为
+  `1000-300000ms`。`provider_circuit` lifecycle 统一投影到 Headless JSONL、TUI、
+  Web SSE/StatusBar、ACP metadata 与 subagent SSE，completion/reload 后清除瞬态状态
+
+### ✅ 测试相关
+
+- DeepSeek Flash/Pro × Headless、真实 ACP stdio、raw PTY 与 production Chromium Web
+  八格真实 API 矩阵升级为四次 `503 -> Open -> one probe -> Closed`；每格继续完成一次
+  Edit/Bash coding task，并证明 open interval 内零 Provider 请求
+- Web 与 ACP 两模型 cell 均增加同进程双 Session 对照：Session B 在 Session A trip
+  后提交，两个 Session 共享等待状态、恰好一个拥有首个 probe，关闭后分别取得真实
+  Provider 结果；完整 8 格在 framework retry=0 下通过
+- 确定性测试覆盖滑窗/内存硬上限、HMAC key 隔离、同 tick probe 竞争、abandon 与 lease
+  takeover、stale result、fallback、deadline、15 秒 circuit heartbeat、首 chunk
+  replay boundary、四端 schema/清理及 payload/transcript 泄漏搜索门禁
+
 ## [0.10.38] - 2026-08-16
 
 ### 🛡️ 稳定性

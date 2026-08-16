@@ -74,6 +74,7 @@ function createMockDeps(overrides?: Partial<LoopEventDeps>): LoopEventDeps {
       addToolMessage: vi.fn(),
       updateTokenUsage: vi.fn(),
       setCompacting: vi.fn(),
+      setProviderCircuit: vi.fn(),
       setProviderRetry: vi.fn(),
       setProviderStall: vi.fn(),
       setActionStationarity: vi.fn(),
@@ -167,6 +168,45 @@ describe('createLoopEventHandler', () => {
 
     handler({ ...retry, phase: 'recovered' });
     expect(deps.sessionActions.setProviderRetry).toHaveBeenLastCalledWith(null);
+  });
+
+  it('projects and clears shared Provider circuit state ephemerally', () => {
+    const deps = createMockDeps();
+    const handler = createLoopEventHandler(deps, createMockStats());
+    const waiting = {
+      kind: 'provider_circuit',
+      phase: 'waiting',
+      reason: 'server_error',
+      statusCode: 503,
+      retryAfterMs: 2_000,
+      nextProbeAt: 3_000,
+      openDurationMs: 2_000,
+      sampleCount: 4,
+      failureCount: 4,
+      recoveryRemainingMs: 598_000,
+    } as const;
+
+    handler(waiting);
+    expect(deps.sessionActions.setProviderCircuit).toHaveBeenCalledWith({
+      phase: 'waiting',
+      reason: 'server_error',
+      statusCode: 503,
+      retryAfterMs: 2_000,
+      nextProbeAt: 3_000,
+      openDurationMs: 2_000,
+      sampleCount: 4,
+      failureCount: 4,
+      recoveryRemainingMs: 598_000,
+    });
+    expect(deps.sessionActions.finalizeStreamingMessage).not.toHaveBeenCalled();
+
+    handler({ ...waiting, phase: 'probe' });
+    expect(deps.sessionActions.setProviderCircuit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ phase: 'probe' })
+    );
+
+    handler({ ...waiting, phase: 'closed' });
+    expect(deps.sessionActions.setProviderCircuit).toHaveBeenLastCalledWith(null);
   });
 
   it('projects a recoverable Provider stall without committing stream content', () => {

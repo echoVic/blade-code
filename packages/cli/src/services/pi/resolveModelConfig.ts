@@ -65,7 +65,10 @@ export function getModelApiKeyEnvironmentVariable(modelConfigId: string): string
 
 export function resolveModelConfig(
   config: ModelConfig,
-  appConfig: Pick<BladeConfig, 'temperature' | 'timeout'>,
+  appConfig: Pick<
+    BladeConfig,
+    'temperature' | 'timeout' | 'providerCircuitBreakerOpenMs'
+  >,
   reasoningSelection: ReasoningEffortSelection,
   catalog: PiModelCatalog = getPiModelCatalog(),
   serviceTierSelection: ServiceTierSelection = 'auto',
@@ -105,6 +108,7 @@ export function resolveModelConfig(
       customHeaders: resolveCustomHeaders(overrides?.customHeaders, model, serviceTier),
       apiVersion: overrides?.apiVersion,
       maxRetries: overrides?.maxRetries,
+      providerCircuitBreakerOpenMs: appConfig.providerCircuitBreakerOpenMs,
       modelCatalog: catalog,
     },
     reasoning,

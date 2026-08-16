@@ -120,8 +120,10 @@ async function main(): Promise<void> {
     terminal.write('\r');
 
     await waitFor(
-      () => output.includes('正在有界恢复') && output.includes('4/12'),
-      'Raw PTY did not render bounded foreground Provider recovery',
+      () =>
+        output.includes('Provider 故障已隔离，等待恢复探测') &&
+        output.includes('Provider 正在执行唯一恢复探测'),
+      'Raw PTY did not render shared Provider circuit recovery',
       60_000
     );
     const recoveryBoundary = output.length;

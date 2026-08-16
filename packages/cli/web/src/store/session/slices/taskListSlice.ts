@@ -896,6 +896,7 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
                 isStreaming: false,
                 isStopping: false,
                 agentPhase: 'idle' as const,
+                providerCircuit: null,
                 providerRetry: null,
                 providerStall: null,
                 actionStationarity: null,

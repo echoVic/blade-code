@@ -109,6 +109,7 @@ export function createLoopEventHandler(
 
       // --- stream_end：原子提交（flush 缓冲区 + finalize 消息）---
       case 'stream_end': {
+        deps.sessionActions.setProviderCircuit(null);
         deps.sessionActions.setProviderRetry(null);
         deps.sessionActions.setProviderStall(null);
         logger.debug('[loopEventHandler] stream_end', {
@@ -154,12 +155,20 @@ export function createLoopEventHandler(
       case 'model_fallback':
         // 标记流已终结，防止后续 late stream_end 复活内容
         streamFinalized = true;
+        deps.sessionActions.setProviderCircuit(null);
         deps.sessionActions.setProviderRetry(null);
         deps.sessionActions.setProviderStall(null);
         deps.streamingBuffer.resetStreamingBuffers();
         deps.sessionActions.discardStreamingMessage();
         deps.sessionActions.setCurrentThinkingContent(null);
         break;
+      case 'provider_circuit': {
+        const { kind: _kind, ...circuit } = event;
+        deps.sessionActions.setProviderCircuit(
+          event.phase === 'closed' ? null : circuit
+        );
+        break;
+      }
       case 'provider_retry': {
         const { kind: _kind, ...retry } = event;
         deps.sessionActions.setProviderRetry(
@@ -280,6 +289,7 @@ export function createLoopEventHandler(
           maxTurns: event.maxTurns,
         });
         deps.sessionActions.updateTokenUsage({ turnCount: event.turn });
+        deps.sessionActions.setProviderCircuit(null);
         deps.sessionActions.setProviderRetry(null);
         deps.sessionActions.setProviderStall(null);
         streamFinalized = false;

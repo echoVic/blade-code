@@ -47,6 +47,7 @@ export const createCommandSlice: StateCreator<BladeStore, [], [], CommandSlice> 
           ? {
               session: {
                 ...state.session,
+                providerCircuit: null,
                 providerRetry: null,
                 providerStall: null,
                 actionStationarity: null,
@@ -129,6 +130,7 @@ export const createCommandSlice: StateCreator<BladeStore, [], [], CommandSlice> 
         },
         session: {
           ...state.session,
+          providerCircuit: null,
           providerRetry: null,
           providerStall: null,
           actionStationarity: null,

@@ -12,6 +12,7 @@ import {
   useActionStationarity,
   useIsProcessing,
   useIsReady,
+  useProviderCircuit,
   useProviderRetry,
   useProviderStall,
   useTheme,
@@ -60,6 +61,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
     // 使用 Zustand selectors 获取状态
     const isProcessing = useIsProcessing();
     const isReady = useIsReady();
+    const providerCircuit = useProviderCircuit();
     const providerRetry = useProviderRetry();
     const providerStall = useProviderStall();
     const actionStationarity = useActionStationarity();
@@ -110,6 +112,23 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
           : providerRetry?.phase === 'attempt'
             ? `正在重试 Provider (${providerRetry.attempt}/${providerRetry.maxRetries})`
             : null;
+    const circuitMessage = providerCircuit
+      ? providerCircuit.phase === 'probe'
+        ? 'Provider 正在执行唯一恢复探测'
+        : `Provider 故障已隔离，等待恢复探测${
+            providerCircuit.retryAfterMs !== undefined
+              ? ` (${formatElapsedTime(
+                  Math.max(0, Math.ceil(providerCircuit.retryAfterMs / 1_000))
+                )})`
+              : ''
+          }${
+            providerCircuit.recoveryRemainingMs !== undefined
+              ? `，剩余预算 ${formatElapsedTime(
+                  Math.max(0, Math.ceil(providerCircuit.recoveryRemainingMs / 1_000))
+                )}`
+              : ''
+          }`
+      : null;
     const stallMessage = providerStall
       ? providerStall.outputStarted
         ? `Provider 流已暂停 ${Math.ceil(providerStall.durationMs / 1000)}s，仍在等待（空闲超时上限 ${Math.ceil(providerStall.timeoutMs / 1000)}s）`
@@ -124,6 +143,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = React.memo(
     const displayMessage =
       stationarityMessage ||
       stallMessage ||
+      circuitMessage ||
       retryMessage ||
       message ||
       currentPhrase ||

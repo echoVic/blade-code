@@ -736,6 +736,20 @@ function publishSubagentLoopEvent(
     case 'stream_end':
       Bus.publish(ref, 'subagent.stream.end', { subagentSessionId });
       break;
+    case 'provider_circuit':
+      Bus.publish(ref, 'subagent.provider.circuit', {
+        subagentSessionId,
+        phase: event.phase,
+        reason: event.reason,
+        statusCode: event.statusCode,
+        retryAfterMs: event.retryAfterMs,
+        nextProbeAt: event.nextProbeAt,
+        openDurationMs: event.openDurationMs,
+        sampleCount: event.sampleCount,
+        failureCount: event.failureCount,
+        recoveryRemainingMs: event.recoveryRemainingMs,
+      });
+      break;
     case 'provider_retry':
       Bus.publish(ref, 'subagent.provider.retry', {
         subagentSessionId,
@@ -4198,6 +4212,19 @@ async function executeRunAsync(
           break;
         case 'turn_start':
           emit('turn.started', { turn: event.turn, maxTurns: event.maxTurns });
+          break;
+        case 'provider_circuit':
+          emit('provider.circuit', {
+            phase: event.phase,
+            reason: event.reason,
+            statusCode: event.statusCode,
+            retryAfterMs: event.retryAfterMs,
+            nextProbeAt: event.nextProbeAt,
+            openDurationMs: event.openDurationMs,
+            sampleCount: event.sampleCount,
+            failureCount: event.failureCount,
+            recoveryRemainingMs: event.recoveryRemainingMs,
+          });
           break;
         case 'provider_retry':
           emit('provider.retry', {

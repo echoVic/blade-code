@@ -37,6 +37,7 @@ export function StatusBar() {
   const tokenUsage = useSessionStore((state) => state.tokenUsage);
   const isStreaming = useSessionStore((state) => state.isStreaming);
   const agentPhase = useSessionStore((state) => state.agentPhase);
+  const providerCircuit = useSessionStore((state) => state.providerCircuit);
   const providerRetry = useSessionStore((state) => state.providerRetry);
   const providerStall = useSessionStore((state) => state.providerStall);
   const actionStationarity = useSessionStore((state) => state.actionStationarity);
@@ -53,13 +54,25 @@ export function StatusBar() {
       )} · ${actionStationarity.toolName} · ${actionStationarity.runLength}/${actionStationarity.haltThreshold}`
     : providerStall
       ? `${t('status.phase.providerStall')} · ${Math.ceil(providerStall.durationMs / 1000)}s / ${Math.ceil(providerStall.timeoutMs / 1000)}s`
-      : providerRetry
-        ? providerRetry.mode === 'bounded_foreground'
-          ? `Provider · Bounded recovery · ${providerRetry.attempt}/${providerRetry.maxRetries} · ${formatDurationMs(providerRetry.recoveryRemainingMs ?? 0)}`
-          : `Provider · ${t('chat.error.action.retryingTask')} · ${providerRetry.attempt}/${providerRetry.maxRetries}${retryDelay}`
-        : phaseKey
-          ? t(phaseKey)
-          : '';
+      : providerCircuit
+        ? providerCircuit.phase === 'probe'
+          ? 'Provider · Recovery probe'
+          : `Provider · Circuit open${
+              providerCircuit.retryAfterMs !== undefined
+                ? ` · probe in ${formatDurationMs(providerCircuit.retryAfterMs)}`
+                : ''
+            }${
+              providerCircuit.recoveryRemainingMs !== undefined
+                ? ` · ${formatDurationMs(providerCircuit.recoveryRemainingMs)}`
+                : ''
+            }`
+        : providerRetry
+          ? providerRetry.mode === 'bounded_foreground'
+            ? `Provider · Bounded recovery · ${providerRetry.attempt}/${providerRetry.maxRetries} · ${formatDurationMs(providerRetry.recoveryRemainingMs ?? 0)}`
+            : `Provider · ${t('chat.error.action.retryingTask')} · ${providerRetry.attempt}/${providerRetry.maxRetries}${retryDelay}`
+          : phaseKey
+            ? t(phaseKey)
+            : '';
 
   const usagePercent =
     tokenUsage.maxContextTokens > 0

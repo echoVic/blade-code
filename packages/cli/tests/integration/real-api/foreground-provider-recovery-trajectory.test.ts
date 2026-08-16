@@ -49,12 +49,16 @@ const ptyRunner = path.resolve(
 );
 const MAX_CAPTURE_CHARS = 256_000;
 const INJECTED_FAILURES = 4;
+const CIRCUIT_OPEN_MS = 2_000;
 
 interface SurfaceEvidence {
   sessionId: string;
   output: string;
   processes?: Array<{ pid: number; identity: ProcessIdentity }>;
   terminalReleaseCount?: number;
+  secondarySessionId?: string;
+  secondarySubmittedAt?: number;
+  providerProbeCount?: number;
 }
 
 interface SessionEventProbe {
@@ -146,11 +150,14 @@ async function startRecoveryProxy(baseUrl: string) {
   let requestCount = 0;
   let injectedFailures = 0;
   let forwardedRequests = 0;
+  let circuitOpenedAt: number | undefined;
+  const requestStartedAt: number[] = [];
   const privateBodyMarker = 'PRIVATE_FOREGROUND_RECOVERY_BODY_MUST_NOT_SURFACE';
   const server = createServer((request, response) => {
     void (async () => {
       const body = await readRequestBody(request);
       requestCount++;
+      requestStartedAt.push(Date.now());
       if (injectedFailures < INJECTED_FAILURES) {
         injectedFailures++;
         response.writeHead(503, {
@@ -165,6 +172,9 @@ async function startRecoveryProxy(baseUrl: string) {
             },
           })
         );
+        if (injectedFailures === INJECTED_FAILURES) {
+          circuitOpenedAt = Date.now();
+        }
         return;
       }
 
@@ -229,6 +239,8 @@ async function startRecoveryProxy(baseUrl: string) {
     requestCount: () => requestCount,
     injectedFailures: () => injectedFailures,
     forwardedRequests: () => forwardedRequests,
+    circuitOpenedAt: () => circuitOpenedAt,
+    requestStartedAt: () => [...requestStartedAt],
     close: async () => {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => {
@@ -312,6 +324,7 @@ async function writeRuntimeConfig(
           modelProviders: config.modelProviders,
           permissionMode: 'yolo',
           providerForegroundRecoveryMs: 120_000,
+          providerCircuitBreakerOpenMs: CIRCUIT_OPEN_MS,
           hooks: { enabled: false },
           disableAllHooks: true,
           mcpServers: {},
@@ -365,17 +378,19 @@ function parseHeadlessContent(stdout: string): string {
 }
 
 function assertHeadlessRetry(stdout: string): void {
-  const retryEvents = stdout
+  const events = stdout
     .split(/\r?\n/)
     .filter(Boolean)
     .flatMap((line) => {
       try {
         const event = JSON.parse(line) as Record<string, unknown>;
-        return event.type === 'provider_retry' ? [event] : [];
+        return [event];
       } catch {
         return [];
       }
     });
+  const retryEvents = events.filter((event) => event.type === 'provider_retry');
+  const circuitEvents = events.filter((event) => event.type === 'provider_circuit');
   expect(
     retryEvents
       .filter((event) => event.phase === 'attempt')
@@ -391,6 +406,19 @@ function assertHeadlessRetry(stdout: string): void {
       recovery_budget_ms: 120_000,
     })
   );
+  expect(circuitEvents.map((event) => event.phase)).toEqual([
+    'opened',
+    'waiting',
+    'probe',
+    'closed',
+  ]);
+  expect(circuitEvents[1]).toMatchObject({
+    phase: 'waiting',
+    reason: 'server_error',
+    status_code: 503,
+    retry_after_ms: CIRCUIT_OPEN_MS,
+    open_duration_ms: CIRCUIT_OPEN_MS,
+  });
 }
 
 async function runHeadless(input: {
@@ -649,6 +677,8 @@ async function runWeb(input: {
   storageRoot: string;
   prompt: string;
   marker: string;
+  secondaryPrompt: string;
+  secondaryMarker: string;
   secret: string;
 }): Promise<SurfaceEvidence> {
   const port = await reservePort();
@@ -670,6 +700,7 @@ async function runWeb(input: {
   });
   let browser: Browser | undefined;
   let probe: SessionEventProbe | undefined;
+  let secondaryProbe: SessionEventProbe | undefined;
   try {
     const origin = `http://127.0.0.1:${port}`;
     await waitForHttp(`${origin}/health`);
@@ -706,10 +737,53 @@ async function runWeb(input: {
       'Web SSE did not project the fourth bounded Provider retry',
       60_000
     );
-    await page.getByText('Bounded recovery', { exact: false }).waitFor({
+    await waitFor(
+      () =>
+        probe?.events.some(
+          (event) =>
+            event.type === 'provider.circuit' &&
+            event.properties.phase === 'waiting' &&
+            event.properties.retryAfterMs === CIRCUIT_OPEN_MS
+        ) === true,
+      'Web SSE did not project shared Provider circuit waiting',
+      30_000
+    );
+    await page.getByText('Circuit open', { exact: false }).waitFor({
       state: 'visible',
       timeout: 10_000,
     });
+    const secondarySessionId = await createWebSession(origin, input.workspace);
+    secondaryProbe = await openSessionEventProbe(
+      origin,
+      secondarySessionId,
+      input.workspace
+    );
+    const secondarySubmittedAt = Date.now();
+    const secondarySubmission = await fetch(
+      `${origin}/sessions/${secondarySessionId}/message`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          content: input.secondaryPrompt,
+          permissionMode: 'yolo',
+        }),
+      }
+    );
+    if (!secondarySubmission.ok) {
+      throw new Error(
+        `Secondary Web Provider circuit prompt failed: ${secondarySubmission.status}`
+      );
+    }
+    await waitFor(
+      () =>
+        secondaryProbe?.events.some(
+          (event) =>
+            event.type === 'provider.circuit' && event.properties.phase === 'waiting'
+        ) === true,
+      'Secondary Web Session did not wait on the shared Provider circuit',
+      30_000
+    );
     await waitFor(
       () =>
         probe?.events.some(
@@ -721,10 +795,36 @@ async function runWeb(input: {
       'Web SSE did not project Provider recovery',
       120_000
     );
+    await waitFor(
+      () => {
+        const phases = [...(probe?.events ?? []), ...(secondaryProbe?.events ?? [])]
+          .filter((event) => event.type === 'provider.circuit')
+          .map((event) => event.properties.phase);
+        return phases.includes('probe') && phases.includes('closed');
+      },
+      'Web SSE did not project Provider circuit probe and close',
+      120_000
+    );
     await page.getByText(input.marker, { exact: true }).waitFor({
       state: 'visible',
       timeout: 180_000,
     });
+    let secondaryTranscript = '';
+    await waitFor(
+      async () => {
+        try {
+          secondaryTranscript = await readFile(
+            findSessionTranscript(input.storageRoot, secondarySessionId),
+            'utf8'
+          );
+          return secondaryTranscript.includes(input.secondaryMarker);
+        } catch {
+          return false;
+        }
+      },
+      'Secondary Web Session did not complete after circuit close',
+      180_000
+    );
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.locator('textarea[data-blade-composer]').waitFor({ state: 'visible' });
     await page.getByText(input.marker, { exact: true }).waitFor({
@@ -733,11 +833,28 @@ async function runWeb(input: {
     });
     expect(consoleErrors).toEqual([]);
     const html = await page.content();
-    const eventOutput = JSON.stringify(probe.events);
-    assertNoSecrets({ output, html, events: probe.events }, [input.secret]);
+    const eventOutput = JSON.stringify({
+      primary: probe.events,
+      secondary: secondaryProbe.events,
+    });
+    const providerProbeCount = [...probe.events, ...secondaryProbe.events].filter(
+      (event) => event.type === 'provider.circuit' && event.properties.phase === 'probe'
+    ).length;
+    assertNoSecrets(
+      {
+        output,
+        html,
+        primaryEvents: probe.events,
+        secondaryEvents: secondaryProbe.events,
+        secondaryTranscript,
+      },
+      [input.secret]
+    );
 
     await probe.close();
     probe = undefined;
+    await secondaryProbe.close();
+    secondaryProbe = undefined;
     await browser.close();
     browser = undefined;
     child.kill('SIGTERM');
@@ -752,10 +869,14 @@ async function runWeb(input: {
     }
     return {
       sessionId,
+      secondarySessionId,
+      secondarySubmittedAt,
+      providerProbeCount,
       output: `${output}\n${eventOutput}\n${html}`.slice(-MAX_CAPTURE_CHARS),
     };
   } finally {
     await probe?.close().catch(() => undefined);
+    await secondaryProbe?.close().catch(() => undefined);
     await browser?.close().catch(() => undefined);
     if (child.exitCode === null && child.signalCode === null) {
       child.kill('SIGKILL');
@@ -799,12 +920,16 @@ describe
         model.model
       )}-${surface}-${Date.now()}`;
       const marker = `PROVIDER_RECOVERY_OK_${Date.now()}`;
+      const secondaryMarker = `PROVIDER_CIRCUIT_SHARED_OK_${Date.now()}`;
       const prompt =
         '[PASTE: bounded foreground provider recovery]\n' +
         'Read src/add.js and test/add.test.js. Use Edit exactly once to replace ' +
         '"return left - right;" with "return left + right;" in src/add.js. ' +
         'Do not use Write or any other mutation tool. Then call Bash exactly once ' +
         `with command "npm test". Finish by replying with exactly ${marker}.`;
+      const secondaryPrompt =
+        `Reply with exactly ${secondaryMarker}. ` +
+        'Do not call tools and do not include any other text.';
       try {
         await Promise.all([
           mkdir(home, { recursive: true }),
@@ -836,6 +961,8 @@ describe
               storageRoot: storage,
               prompt,
               marker,
+              secondaryPrompt,
+              secondaryMarker,
               secret: model.apiKey,
             },
             timeoutMs: 240_000,
@@ -864,6 +991,8 @@ describe
             storageRoot: storage,
             prompt,
             marker,
+            secondaryPrompt,
+            secondaryMarker,
             secret: model.apiKey,
           });
           sessionId = evidence.sessionId;
@@ -872,10 +1001,45 @@ describe
         expect(proxy.injectedFailures()).toBe(INJECTED_FAILURES);
         expect(proxy.requestCount()).toBeGreaterThanOrEqual(INJECTED_FAILURES + 1);
         expect(proxy.forwardedRequests()).toBeGreaterThanOrEqual(1);
+        const circuitOpenedAt = proxy.circuitOpenedAt();
+        const firstPostOpenRequestAt = proxy.requestStartedAt()[INJECTED_FAILURES];
+        expect(circuitOpenedAt).toBeTypeOf('number');
+        expect(firstPostOpenRequestAt).toBeTypeOf('number');
+        expect(
+          (firstPostOpenRequestAt ?? 0) - (circuitOpenedAt ?? 0)
+        ).toBeGreaterThanOrEqual(CIRCUIT_OPEN_MS - 50);
+        if (surface === 'acp' || surface === 'web') {
+          expect(proxy.forwardedRequests()).toBeGreaterThanOrEqual(2);
+          expect(evidence.secondarySessionId).toBeTypeOf('string');
+          expect(evidence.secondarySubmittedAt).toBeTypeOf('number');
+          expect(
+            proxy
+              .requestStartedAt()
+              .filter(
+                (startedAt) =>
+                  startedAt >= (evidence.secondarySubmittedAt ?? 0) &&
+                  startedAt < (circuitOpenedAt ?? 0) + CIRCUIT_OPEN_MS - 50
+              )
+          ).toHaveLength(0);
+          expect(evidence.providerProbeCount).toBe(1);
+          const secondaryTranscript = await readFile(
+            findSessionTranscript(storage, evidence.secondarySessionId as string),
+            'utf8'
+          );
+          expect(secondaryTranscript).toContain(secondaryMarker);
+          assertNoSecrets({ secondaryTranscript }, [
+            model.apiKey,
+            proxy.privateBodyMarker,
+          ]);
+        }
         if (surface === 'pty') {
-          expect(evidence.output).toContain('正在有界恢复');
+          expect(evidence.output).toContain('Provider 故障已隔离，等待恢复探测');
+          expect(evidence.output).toContain('Provider 正在执行唯一恢复探测');
         } else {
           expect(evidence.output).toContain('bounded_foreground');
+          expect(evidence.output).toMatch(
+            /provider[_./]circuit|blade\/providerCircuit/
+          );
         }
         if (surface === 'acp') {
           expect(evidence.terminalReleaseCount).toBeGreaterThanOrEqual(1);

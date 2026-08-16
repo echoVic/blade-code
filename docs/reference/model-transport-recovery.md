@@ -51,6 +51,50 @@ background subagent、verification、compaction、provider health、标题生成
 durable transcript。TUI 与 Web 在原状态栏内显示尝试数和剩余预算；Headless JSONL 与
 ACP 使用结构化字段。
 
+## 共享 Provider Circuit
+
+多个 Web/ACP Session 会共享同一进程内的 Provider failure-domain circuit。identity
+覆盖 channel、wire API、规范化 endpoint、model、service tier、API version、credential
+与 routing headers；敏感值只参与进程随机 secret 驱动的 HMAC-SHA-256，不投影或落盘。
+
+状态机：
+
+```text
+Closed
+  -> 60 秒窗口至少 4 个样本且错误率 >= 80%
+  -> Open
+  -> open duration 到达后仅一个 lease owner
+  -> HalfOpen probe
+  -> success/neutral Provider response -> Closed
+  -> transient failure -> Open
+```
+
+默认 Open `10000ms`；`providerCircuitBreakerOpenMs=0` 禁用，其他值必须为
+`1000-300000ms`。有效 `Retry-After` 可延长当次 Open，但不能延长 foreground recovery
+deadline。registry 固定 128 个 failure domain，每个滑窗固定 256 个样本；仅驱逐 idle
+Closed 项，不使用后台 sweep timer。若全部 128 项均为 Open/HalfOpen，新 domain
+fail-open 为 no-op circuit，避免无关 Provider 被全局拒绝。
+
+每次 admission 都返回 generation/lease 绑定的 opaque token。正常 abort、deadline 与
+idle timeout 会显式 abandon；owner 消失时 lease 最迟在 5-10 分钟内允许唯一 takeover。
+旧 owner 在 takeover 后完成的结果因 token 不匹配而忽略，不能关闭或重新打开新状态。
+
+请求语义：
+
+- root foreground 的非末候选遇到 Open 时直接进入下一 fallback；
+- root foreground 的末候选在原 `providerForegroundRecoveryMs` deadline 内等待，每
+  15 秒发送 circuit heartbeat；
+- background、internal 与 standard 请求不等待 Open candidate，同候选不重试，但仍可
+  进入下一 fallback；
+- circuit delay 与普通 retry backoff 取最大值，不相加；
+- 首个真实 Provider chunk 记录 success 并保持原 replay boundary，后续 stream 故障
+  不会回写为零输出 circuit failure。
+
+`provider_circuit` 统一投影 `opened|waiting|probe|closed|reopened|rejected`，字段只含
+sanitized reason/status、bounded retry-after、open duration、样本计数和可选 foreground
+剩余预算。Headless JSONL、TUI、Web SSE/StatusBar、ACP metadata 与 subagent SSE 使用
+同一协议，completion/reload 后清除瞬态状态。
+
 ## 流活性保护
 
 HTTP 请求超时不等于流活性超时。部分 SDK 在响应头到达后不再用请求 timeout

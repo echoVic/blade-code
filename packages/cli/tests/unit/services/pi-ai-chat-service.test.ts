@@ -4,6 +4,11 @@ import type {
   ChatConfig,
   StreamChunk,
 } from '../../../src/services/ChatServiceInterface.js';
+import {
+  ProviderCircuitRegistry,
+  type ProviderCircuitEvent,
+  type ProviderCircuitScope,
+} from '../../../src/services/pi/providerCircuitBreaker.js';
 import { providerReplayBoundaryCrossed } from '../../../src/services/pi/providerRetry.js';
 
 // pi-ai runtime metadata fixture, not Blade's persisted ModelConfig.
@@ -70,6 +75,7 @@ function config(overrides: Partial<ChatConfig> = {}): ChatConfig {
     baseUrl: 'https://example.test/v1',
     model: 'test-model',
     maxRetries: 0,
+    providerCircuitBreakerOpenMs: 0,
     ...overrides,
   };
 }
@@ -86,6 +92,56 @@ async function* chunks(
 async function service(overrides: Partial<ChatConfig> = {}) {
   const { PiAIChatService } = await import('../../../src/services/PiAIChatService.js');
   return new PiAIChatService(config(overrides));
+}
+
+function circuitOverrides(
+  circuitRegistry: ProviderCircuitRegistry,
+  overrides: Partial<ChatConfig> = {}
+): Partial<ChatConfig> {
+  return {
+    providerCircuitBreakerOpenMs: 2_000,
+    providerCircuitRegistry: circuitRegistry,
+    ...overrides,
+  } as Partial<ChatConfig>;
+}
+
+function circuitScope(
+  overrides: Partial<ProviderCircuitScope> = {}
+): ProviderCircuitScope {
+  return {
+    provider: piModelFixture.provider,
+    api: piModelFixture.api,
+    baseUrl: piModelFixture.baseUrl,
+    model: piModelFixture.id,
+    apiKey: 'test-key',
+    openDurationMs: 2_000,
+    probeLeaseMs: 300_000,
+    ...overrides,
+  };
+}
+
+function tripCircuit(
+  circuitRegistry: ProviderCircuitRegistry,
+  overrides: Partial<ProviderCircuitScope> = {}
+) {
+  const handle = circuitRegistry.get(circuitScope(overrides));
+  for (let index = 0; index < 4; index++) {
+    const admission = handle.check();
+    expect(admission.allowed).toBe(true);
+    if (!admission.allowed) throw new Error('expected circuit admission');
+    handle.recordFailure(admission.token, {
+      reason: 'server_error',
+      statusCode: 503,
+    });
+  }
+  expect(handle.snapshot().state).toBe('open');
+  return handle;
+}
+
+function circuitEvents(events: readonly StreamChunk[]): ProviderCircuitEvent[] {
+  return events.flatMap((event) =>
+    event.providerCircuit ? [event.providerCircuit] : []
+  );
 }
 
 describe('PiAIChatService', () => {
@@ -931,5 +987,425 @@ describe('PiAIChatService', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('opens, waits for, probes, and closes the shared Provider circuit', async () => {
+    vi.useFakeTimers({ now: 1_000 });
+    const circuitRegistry = new ProviderCircuitRegistry({
+      processSecret: new Uint8Array(32).fill(1),
+    });
+    streamPiModel
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([{ content: 'recovered-through-probe' }]));
+    const stream = (
+      await service(
+        circuitOverrides(circuitRegistry, {
+          maxRetries: undefined,
+        })
+      )
+    ).streamChat([{ role: 'user', content: 'continue' }], undefined, undefined, {
+      providerRecovery: {
+        mode: 'bounded_foreground',
+        budgetMs: 600_000,
+      },
+    });
+    const events: StreamChunk[] = [];
+    const consume = (async () => {
+      for await (const event of stream) events.push(event);
+    })();
+
+    try {
+      await vi.runAllTimersAsync();
+      await consume;
+      expect(streamPiModel).toHaveBeenCalledTimes(5);
+      expect(circuitEvents(events).map((event) => event.phase)).toEqual([
+        'opened',
+        'waiting',
+        'probe',
+        'closed',
+      ]);
+      expect(events.at(-1)).toEqual({ content: 'recovered-through-probe' });
+      expect(circuitRegistry.get(circuitScope()).snapshot()).toMatchObject({
+        state: 'closed',
+        sampleCount: 0,
+        failureCount: 0,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shares an open circuit across service instances without another request', async () => {
+    vi.useFakeTimers({ now: 1_000 });
+    const circuitRegistry = new ProviderCircuitRegistry({
+      processSecret: new Uint8Array(32).fill(2),
+    });
+    streamPiModel.mockImplementation(() => chunks([new Error('status 503')]));
+
+    try {
+      const first = (
+        await service(
+          circuitOverrides(circuitRegistry, {
+            maxRetries: 3,
+          })
+        )
+      ).chat([{ role: 'user', content: 'trip the circuit' }]);
+      const firstRejection = expect(first).rejects.toThrow();
+      await vi.runAllTimersAsync();
+      await firstRejection;
+      expect(streamPiModel).toHaveBeenCalledTimes(4);
+
+      const second = (
+        await service(
+          circuitOverrides(circuitRegistry, {
+            maxRetries: 0,
+          })
+        )
+      ).streamChat([{ role: 'user', content: 'do not hit the provider' }]);
+      await expect(second.next()).resolves.toMatchObject({
+        value: {
+          providerCircuit: {
+            phase: 'rejected',
+            reason: 'server_error',
+            statusCode: 503,
+          },
+        },
+      });
+      await expect(second.next()).rejects.toMatchObject({
+        code: 'PROVIDER_CIRCUIT_OPEN',
+      });
+      expect(streamPiModel).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['standard', undefined],
+    [
+      'bounded foreground',
+      {
+        providerRecovery: {
+          mode: 'bounded_foreground' as const,
+          budgetMs: 600_000,
+        },
+      },
+    ],
+  ] as const)('skips an open non-terminal primary to fallback for %s', async (_name, requestOptions) => {
+    const circuitRegistry = new ProviderCircuitRegistry({
+      processSecret: new Uint8Array(32).fill(3),
+    });
+    tripCircuit(circuitRegistry);
+    streamPiModel.mockReturnValue(chunks([{ content: 'healthy-fallback' }]));
+
+    const stream = (
+      await service(
+        circuitOverrides(circuitRegistry, {
+          maxRetries: 0,
+          fallbackModels: [{ provider: 'test', model: 'backup' }],
+        })
+      )
+    ).streamChat(
+      [{ role: 'user', content: 'use fallback' }],
+      undefined,
+      undefined,
+      requestOptions
+    );
+    const events: StreamChunk[] = [];
+    for await (const event of stream) events.push(event);
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        providerCircuit: expect.objectContaining({ phase: 'rejected' }),
+      }),
+      { modelFallback: true },
+      { content: 'healthy-fallback' },
+    ]);
+    expect(streamPiModel).toHaveBeenCalledOnce();
+    expect(streamPiModel.mock.calls[0]?.[1]).toMatchObject({ id: 'backup' });
+  });
+
+  it('charges terminal circuit waiting to the foreground recovery deadline', async () => {
+    vi.useFakeTimers({ now: 1_000 });
+    const circuitRegistry = new ProviderCircuitRegistry({
+      processSecret: new Uint8Array(32).fill(4),
+    });
+    tripCircuit(circuitRegistry, { openDurationMs: 300_000 });
+    const stream = (
+      await service(
+        circuitOverrides(circuitRegistry, {
+          maxRetries: undefined,
+          providerCircuitBreakerOpenMs: 300_000,
+        })
+      )
+    ).streamChat(
+      [{ role: 'user', content: 'wait within budget' }],
+      undefined,
+      undefined,
+      {
+        providerRecovery: {
+          mode: 'bounded_foreground',
+          budgetMs: 30_000,
+        },
+      }
+    );
+
+    try {
+      await expect(stream.next()).resolves.toMatchObject({
+        value: {
+          providerCircuit: {
+            phase: 'waiting',
+            retryAfterMs: 300_000,
+            recoveryRemainingMs: 30_000,
+          },
+        },
+      });
+      const heartbeat = stream.next();
+      await vi.advanceTimersByTimeAsync(15_000);
+      await expect(heartbeat).resolves.toMatchObject({
+        value: {
+          providerCircuit: {
+            phase: 'waiting',
+            recoveryRemainingMs: 15_000,
+          },
+        },
+      });
+      const exhausted = stream.next();
+      await vi.advanceTimersByTimeAsync(15_000);
+      await expect(exhausted).resolves.toMatchObject({
+        value: {
+          providerRetry: {
+            phase: 'exhausted',
+            exhaustedBy: 'recovery_budget',
+            recoveryRemainingMs: 0,
+          },
+        },
+      });
+      await expect(stream.next()).rejects.toMatchObject({
+        code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+      });
+      expect(streamPiModel).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits typed circuit heartbeats throughout a long open interval', async () => {
+    vi.useFakeTimers({ now: 1_000 });
+    const circuitRegistry = new ProviderCircuitRegistry({
+      processSecret: new Uint8Array(32).fill(7),
+    });
+    streamPiModel
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([new Error('status 503')]))
+      .mockReturnValueOnce(chunks([{ content: 'recovered' }]));
+    const stream = (
+      await service(
+        circuitOverrides(circuitRegistry, {
+          maxRetries: undefined,
+          providerCircuitBreakerOpenMs: 30_000,
+        })
+      )
+    ).streamChat(
+      [{ role: 'user', content: 'wait for recovery' }],
+      undefined,
+      undefined,
+      {
+        providerRecovery: {
+          mode: 'bounded_foreground',
+          budgetMs: 600_000,
+        },
+      }
+    );
+    const events: StreamChunk[] = [];
+    const consume = (async () => {
+      for await (const event of stream) events.push(event);
+    })();
+
+    try {
+      await vi.runAllTimersAsync();
+      await consume;
+      const waiting = circuitEvents(events).filter(
+        (event) => event.phase === 'waiting'
+      );
+      expect(waiting).toHaveLength(2);
+      expect(waiting[0]).toMatchObject({
+        retryAfterMs: 30_000,
+      });
+      expect(waiting[1]).toMatchObject({
+        retryAfterMs: 15_000,
+      });
+      expect(
+        (waiting[0]?.recoveryRemainingMs ?? 0) - (waiting[1]?.recoveryRemainingMs ?? 0)
+      ).toBe(15_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits probe close before yielding the first real Provider chunk', async () => {
+    vi.useFakeTimers({ now: 1_000 });
+    const circuitRegistry = new ProviderCircuitRegistry({
+      processSecret: new Uint8Array(32).fill(5),
+    });
+    const handle = tripCircuit(circuitRegistry);
+    await vi.advanceTimersByTimeAsync(2_000);
+    streamPiModel.mockReturnValue(chunks([{ content: 'probe-content' }]));
+    const stream = (
+      await service(circuitOverrides(circuitRegistry, { maxRetries: 0 }))
+    ).streamChat([{ role: 'user', content: 'probe' }], undefined, undefined, {
+      providerRecovery: {
+        mode: 'bounded_foreground',
+        budgetMs: 600_000,
+      },
+    });
+
+    try {
+      await expect(stream.next()).resolves.toMatchObject({
+        value: { providerCircuit: { phase: 'probe' } },
+      });
+      await expect(stream.next()).resolves.toMatchObject({
+        value: { providerCircuit: { phase: 'closed' } },
+      });
+      await expect(stream.next()).resolves.toEqual({
+        value: { content: 'probe-content' },
+        done: false,
+      });
+      expect(handle.snapshot().state).toBe('closed');
+    } finally {
+      await stream.return(undefined);
+      vi.useRealTimers();
+    }
+  });
+
+  it('abandons a cancelled probe so another waiter can recover immediately', async () => {
+    vi.useFakeTimers({ now: 1_000 });
+    const circuitRegistry = new ProviderCircuitRegistry({
+      processSecret: new Uint8Array(32).fill(8),
+    });
+    const handle = tripCircuit(circuitRegistry);
+    await vi.advanceTimersByTimeAsync(2_000);
+    const controller = new AbortController();
+    streamPiModel.mockImplementationOnce(
+      (
+        _models: unknown,
+        _model: unknown,
+        _context: unknown,
+        _options: unknown,
+        watchdog: { signal?: AbortSignal }
+      ) =>
+        (async function* () {
+          await new Promise<void>((_resolve, reject) => {
+            const requestSignal = watchdog.signal;
+            if (!requestSignal) {
+              reject(new Error('probe signal missing'));
+              return;
+            }
+            const abort = () => reject(requestSignal.reason);
+            requestSignal.addEventListener('abort', abort, { once: true });
+            if (requestSignal.aborted) abort();
+          });
+          yield { content: 'forbidden' };
+        })()
+    );
+    const stream = (
+      await service(circuitOverrides(circuitRegistry, { maxRetries: 0 }))
+    ).streamChat(
+      [{ role: 'user', content: 'cancel probe' }],
+      undefined,
+      controller.signal,
+      {
+        providerRecovery: {
+          mode: 'bounded_foreground',
+          budgetMs: 600_000,
+        },
+      }
+    );
+
+    try {
+      await expect(stream.next()).resolves.toMatchObject({
+        value: { providerCircuit: { phase: 'probe' } },
+      });
+      const pending = stream.next();
+      controller.abort(new DOMException('Stopped', 'AbortError'));
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+      expect(handle.snapshot().state).toBe('half_open');
+      expect(handle.check()).toMatchObject({ allowed: true, probe: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not close a probe on a pre-output stream idle timeout', async () => {
+    vi.useFakeTimers({ now: 1_000 });
+    const circuitRegistry = new ProviderCircuitRegistry({
+      processSecret: new Uint8Array(32).fill(9),
+    });
+    const handle = tripCircuit(circuitRegistry);
+    await vi.advanceTimersByTimeAsync(2_000);
+    observePiProviderResponses.mockImplementation(
+      (
+        _options: unknown,
+        _model: unknown,
+        onResponse: (response: { statusCode: number }) => void
+      ) => onResponse({ statusCode: 200 })
+    );
+    const idleTimeout = Object.assign(new Error('Provider stream idle timeout'), {
+      code: 'STREAM_IDLE_TIMEOUT',
+      timeoutMs: 300_000,
+    });
+    streamPiModel.mockReturnValueOnce(chunks([idleTimeout]));
+    const stream = (
+      await service(circuitOverrides(circuitRegistry, { maxRetries: 0 }))
+    ).streamChat([{ role: 'user', content: 'idle probe' }], undefined, undefined, {
+      providerRecovery: {
+        mode: 'bounded_foreground',
+        budgetMs: 600_000,
+      },
+    });
+
+    try {
+      await expect(stream.next()).resolves.toMatchObject({
+        value: { providerCircuit: { phase: 'probe' } },
+      });
+      await expect(stream.next()).rejects.toBe(idleTimeout);
+      expect(handle.snapshot().state).toBe('half_open');
+      expect(handle.check()).toMatchObject({ allowed: true, probe: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('records output-started attempts as success instead of circuit failures', async () => {
+    const circuitRegistry = new ProviderCircuitRegistry({
+      processSecret: new Uint8Array(32).fill(6),
+    });
+    streamPiModel.mockImplementation(() =>
+      chunks([{ content: 'partial' }, new Error('status 503')])
+    );
+
+    for (let index = 0; index < 4; index++) {
+      await expect(
+        (
+          await service(
+            circuitOverrides(circuitRegistry, {
+              maxRetries: 0,
+            })
+          )
+        ).chat([{ role: 'user', content: `partial ${index}` }])
+      ).rejects.toThrow('status 503');
+    }
+
+    expect(circuitRegistry.get(circuitScope()).snapshot()).toMatchObject({
+      state: 'closed',
+      sampleCount: 4,
+      failureCount: 0,
+    });
+    expect(streamPiModel).toHaveBeenCalledTimes(4);
   });
 });

@@ -154,6 +154,42 @@ describe('headless event contract', () => {
       })
     ).toThrow();
 
+    const providerCircuit = createHeadlessJsonlEvent('provider_circuit', {
+      phase: 'waiting',
+      reason: 'server_error',
+      status_code: 503,
+      retry_after_ms: 2_000,
+      next_probe_at: 3_000,
+      open_duration_ms: 2_000,
+      sample_count: 4,
+      failure_count: 4,
+      recovery_remaining_ms: 598_000,
+    });
+    expect(providerCircuit).toEqual({
+      event_version: 1,
+      type: 'provider_circuit',
+      phase: 'waiting',
+      reason: 'server_error',
+      status_code: 503,
+      retry_after_ms: 2_000,
+      next_probe_at: 3_000,
+      open_duration_ms: 2_000,
+      sample_count: 4,
+      failure_count: 4,
+      recovery_remaining_ms: 598_000,
+    });
+    expect(() => HeadlessJsonlEventSchema.parse(providerCircuit)).not.toThrow();
+    expect(() =>
+      HeadlessJsonlEventSchema.parse({
+        event_version: 1,
+        type: 'provider_circuit',
+        phase: 'waiting',
+        reason: 'server_error',
+        retry_after_ms: -1,
+        open_duration_ms: 2_000,
+      })
+    ).toThrow();
+
     const providerStall = createHeadlessJsonlEvent('provider_stall', {
       phase: 'detected',
       stall_count: 1,
