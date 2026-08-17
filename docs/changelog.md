@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.50] - 2026-08-18
+
+### 稳定性
+
+- 修复同一 Goal completion attempt 已获得 host-owned fresh verifier PASS 后，模型重复
+  调用幂等 `UpdateGoal complete` 会清空当前运行内 verification receipt 的问题；
+  completion candidate 现在由 Goal ID、attempt 与 requested-at timestamp 共同标识，
+  只有候选真正变化时才重置 verifier revision、verdict、Session identity、evidence
+  digest 与 finalization snapshot；重复候选不再触发多余 verifier 并最终错误达到
+  retry limit
+
+### 测试相关
+
+- Goal execute-loop 回归现在固定覆盖
+  `UpdateGoal → verifier PASS → duplicate UpdateGoal → finalization`，要求只记录一次
+  verifier PASS、只执行一个 verification Task，并以同一 attempt 的 Session ID 与
+  SHA-256 evidence receipt 完成最终提交
+
 ## [0.10.49] - 2026-08-18
 
 ### 稳定性
@@ -56,7 +74,6 @@ All notable changes to this project will be documented in this file.
   宿主 180 秒 deadline 发送标准 `session/cancel` 并等待收敛，420 秒外层预算只为两段
   deadline 和 60 秒确定性清理留出空间，避免 Vitest timeout 抢先打断 `finally` 并
   泄漏 fixture
-
 ## [0.10.47] - 2026-08-17
 
 ### 稳定性

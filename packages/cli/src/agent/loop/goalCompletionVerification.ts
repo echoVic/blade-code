@@ -11,6 +11,24 @@ export function isNewGoalCompletionAttempt(
   return requestedAttempt !== undefined && requestedAttempt !== currentAttempt;
 }
 
+interface GoalCompletionCandidateIdentity {
+  goalId?: string;
+  attempt?: number;
+  requestedAt?: string;
+}
+
+export function isNewGoalCompletionCandidate(
+  current: GoalCompletionCandidateIdentity,
+  requested: GoalCompletionCandidateIdentity
+): boolean {
+  return (
+    isNewGoalCompletionAttempt(current.attempt, requested.attempt) ||
+    (requested.goalId !== undefined && requested.goalId !== current.goalId) ||
+    (requested.requestedAt !== undefined &&
+      requested.requestedAt !== current.requestedAt)
+  );
+}
+
 export interface GoalCompletionVerificationGateInput {
   requested: boolean;
   taskAvailable: boolean;

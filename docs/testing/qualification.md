@@ -77,6 +77,12 @@ Runtime/Web/ACP host-authoritative Goal completion verification。ACP fork 固�
 DeepSeek Flash/Pro，并对当前资格环境中已配置的 Claude、GPT 与国产模型执行同一 paired
 SDK trajectory；未声明 terminal capability 的 Client 必须使用 Session-bound local
 terminal，声明后 terminal 失败仍须 fail closed。
+Goal completion 的 fresh PASS authority 同时绑定当前 host run、mutation revision 与
+由 Goal ID、attempt、requested-at timestamp 组成的 completion candidate identity。
+模型重复提交相同的幂等 `UpdateGoal complete` 时，必须保留已经由该 host run 记录的
+verifier Session ID、verdict、evidence digest 与 finalization snapshot；候选变化、
+workspace mutation 或进程重启才能使 receipt 失效，不能因重复候选额外消耗
+verification retry budget。
 前台有界输出固定运行 DeepSeek Flash/Pro × Headless/production Chromium Web/raw PTY
 TUI/真实 ACP SDK terminal 八格；单格 Provider deadline 180 秒、测试 timeout 240 秒，
 完整 realApiQualification watchdog 为 60 分钟，发布矩阵固定 framework `retry=0`。

@@ -3,6 +3,7 @@ import {
   buildGoalCompletionVerificationPrompt,
   checkGoalCompletionVerificationGate,
   isNewGoalCompletionAttempt,
+  isNewGoalCompletionCandidate,
 } from '../../../../src/agent/loop/goalCompletionVerification.js';
 
 function gate(
@@ -23,6 +24,28 @@ describe('goal completion verification gate', () => {
     expect(isNewGoalCompletionAttempt(1, 1)).toBe(false);
     expect(isNewGoalCompletionAttempt(1, undefined)).toBe(false);
     expect(isNewGoalCompletionAttempt(1, 2)).toBe(true);
+  });
+
+  it('distinguishes duplicate candidates from edited or replaced goals', () => {
+    const candidate = {
+      goalId: 'goal-1',
+      attempt: 1,
+      requestedAt: '2026-08-17T00:00:00.000Z',
+    };
+
+    expect(isNewGoalCompletionCandidate(candidate, candidate)).toBe(false);
+    expect(
+      isNewGoalCompletionCandidate(candidate, {
+        ...candidate,
+        requestedAt: '2026-08-17T00:00:01.000Z',
+      })
+    ).toBe(true);
+    expect(
+      isNewGoalCompletionCandidate(candidate, {
+        ...candidate,
+        goalId: 'goal-2',
+      })
+    ).toBe(true);
   });
 
   it('does nothing until the model submits a completion candidate', () => {

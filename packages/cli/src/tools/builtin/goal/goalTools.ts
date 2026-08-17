@@ -155,6 +155,7 @@ export function createGoalTools(options: GoalToolOptions) {
                   goalId: goal.goalId,
                   goalObjective: goal.objective,
                   goalCompletionAttempt: goal.completionVerification.attempt,
+                  goalCompletionRequestedAt: goal.completionVerification.requestedAt,
                 }
               : {}),
           },

@@ -2592,7 +2592,7 @@ describe('executeLoopGenerator', () => {
       );
     });
 
-    it('finalizes a goal only after an authoritative fresh verifier PASS', async () => {
+    it('preserves a fresh verifier PASS across duplicate completion candidates', async () => {
       const { deps, saveMessage } = createTypedPersistenceHarness();
       const registry = deps.toolExecutor.getRegistry();
       vi.mocked(registry.getFunctionDeclarationsByMode).mockReturnValue([
@@ -2630,6 +2630,20 @@ describe('executeLoopGenerator', () => {
                 name: 'Task',
                 arguments:
                   '{"subagent_type":"verification","description":"Verify goal","prompt":"trust parent","run_in_background":true,"isolation":"worktree","resume_from":"stale"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'repeat-goal-completion',
+              type: 'function',
+              function: {
+                name: 'UpdateGoal',
+                arguments: '{"status":"complete"}',
               },
             },
           ],
@@ -2726,6 +2740,7 @@ describe('executeLoopGenerator', () => {
             goalId: activeGoal.goalId,
             goalObjective: activeGoal.objective,
             goalCompletionAttempt: 1,
+            goalCompletionRequestedAt: verifyingGoal.completionVerification.requestedAt,
           },
         })
         .mockResolvedValueOnce({
@@ -2738,6 +2753,17 @@ describe('executeLoopGenerator', () => {
             subagentSummary: '## Verification Result: PASS',
             verificationAgentBuiltin: true,
             verificationVerdict: 'pass',
+          },
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          llmContent: { goal: passedGoal },
+          metadata: {
+            goalCompletionRequested: true,
+            goalId: activeGoal.goalId,
+            goalObjective: activeGoal.objective,
+            goalCompletionAttempt: 1,
+            goalCompletionRequestedAt: verifyingGoal.completionVerification.requestedAt,
           },
         });
 
@@ -2780,6 +2806,7 @@ describe('executeLoopGenerator', () => {
         summary: 'Independent verifier returned PASS.',
         evidenceSha256: expectedEvidenceSha256,
       });
+      expect(recordVerification).toHaveBeenCalledOnce();
       expect(finalizeCompletion).toHaveBeenCalledOnce();
       expect(events).toContainEqual({ kind: 'goal_updated', goal: completeGoal });
       expect(executeMock).toHaveBeenNthCalledWith(
@@ -2797,6 +2824,12 @@ describe('executeLoopGenerator', () => {
         expect.objectContaining({ sessionId: 'test-session' })
       );
       expect(executeMock.mock.calls[1]?.[1]).not.toHaveProperty('resume_from');
+      expect(executeMock).toHaveBeenNthCalledWith(
+        3,
+        'UpdateGoal',
+        { status: 'complete' },
+        expect.objectContaining({ sessionId: 'test-session' })
+      );
       expect(chatMock.mock.calls[2]?.[3]).toEqual({
         toolChoice: { type: 'tool', toolName: 'Task' },
         providerAdmission: {

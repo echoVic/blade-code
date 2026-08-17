@@ -77,6 +77,7 @@ describe('goal tools', () => {
         goalCompletionRequested: true,
         goalObjective: 'finish the migration',
         goalCompletionAttempt: 1,
+        goalCompletionRequestedAt: expect.any(String),
       },
     });
   });

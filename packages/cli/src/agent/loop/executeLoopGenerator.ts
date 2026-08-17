@@ -106,7 +106,7 @@ import {
   buildGoalCompletionVerificationPrompt,
   checkGoalCompletionVerificationGate,
   GOAL_VERIFICATION_SUBAGENT_TYPE,
-  isNewGoalCompletionAttempt,
+  isNewGoalCompletionCandidate,
 } from './goalCompletionVerification.js';
 import {
   checkIndependentVerificationGate,
@@ -1018,6 +1018,8 @@ validates the object and may return a bounded corrective error.`;
       options?.goalLifecycle?.snapshot?.status === 'verifying';
     let goalCompletionAttempt =
       options?.goalLifecycle?.snapshot?.completionVerification?.attempt;
+    let goalCompletionRequestedAt =
+      options?.goalLifecycle?.snapshot?.completionVerification?.requestedAt;
     let goalId = options?.goalLifecycle?.snapshot?.goalId;
     let goalObjective = options?.goalLifecycle?.snapshot?.objective ?? '';
     let goalVerifierSessionId: string | undefined;
@@ -3527,24 +3529,42 @@ validates the object and may return a bounded corrective error.`;
                 typeof resultMetadata.goalCompletionAttempt === 'number'
                   ? resultMetadata.goalCompletionAttempt
                   : undefined;
-              if (isNewGoalCompletionAttempt(goalCompletionAttempt, requestedAttempt)) {
-                goalVerificationRetryCount = 0;
-              }
-              goalCompletionAttempt = requestedAttempt ?? goalCompletionAttempt;
-              goalId =
+              const requestedAt =
+                typeof resultMetadata.goalCompletionRequestedAt === 'string'
+                  ? resultMetadata.goalCompletionRequestedAt
+                  : undefined;
+              const requestedGoalId =
                 typeof resultMetadata.goalId === 'string'
                   ? resultMetadata.goalId
-                  : goalId;
+                  : undefined;
+              const isNewCandidate = isNewGoalCompletionCandidate(
+                {
+                  goalId,
+                  attempt: goalCompletionAttempt,
+                  requestedAt: goalCompletionRequestedAt,
+                },
+                {
+                  goalId: requestedGoalId,
+                  attempt: requestedAttempt,
+                  requestedAt,
+                }
+              );
+              if (isNewCandidate) {
+                goalVerificationRetryCount = 0;
+                goalVerificationRevision = -1;
+                goalVerificationVerdict = undefined;
+                goalVerifierSessionId = undefined;
+                goalVerifierSummary = undefined;
+                goalVerificationEvidenceSha256 = undefined;
+                goalFinalizationSnapshot = undefined;
+              }
+              goalCompletionAttempt = requestedAttempt ?? goalCompletionAttempt;
+              goalCompletionRequestedAt = requestedAt ?? goalCompletionRequestedAt;
+              goalId = requestedGoalId ?? goalId;
               goalObjective =
                 typeof resultMetadata.goalObjective === 'string'
                   ? resultMetadata.goalObjective
                   : goalObjective;
-              goalVerificationRevision = -1;
-              goalVerificationVerdict = undefined;
-              goalVerifierSessionId = undefined;
-              goalVerifierSummary = undefined;
-              goalVerificationEvidenceSha256 = undefined;
-              goalFinalizationSnapshot = undefined;
               const goal = await options?.goalLifecycle?.getSnapshot();
               if (goal) yield { kind: 'goal_updated', goal };
             } else if (
