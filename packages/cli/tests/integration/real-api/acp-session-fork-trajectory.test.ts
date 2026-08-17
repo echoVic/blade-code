@@ -793,8 +793,11 @@ describeTrajectory('ACP durable fork trajectory (real API)', () => {
                 type: 'text',
                 text: [
                   'Recover the complete marker from the inherited Read result.',
-                  `Use Write on the exact absolute path ${resultPath} with those exact bytes and exactly one trailing newline.`,
-                  'Then use Bash with exactly `wc -c result.txt`.',
+                  'Call Write exactly once total.',
+                  `That call must set file_path to the exact absolute path ${resultPath}.`,
+                  'Never call Write with a relative path, any other path, or retry Write.',
+                  'Write the inherited bytes exactly with one trailing newline.',
+                  'After the successful Write, call Bash exactly once with `wc -c result.txt`.',
                   'Use no other tools or commands, never repeat the marker in final prose, and briefly confirm completion.',
                 ].join(' '),
               },
