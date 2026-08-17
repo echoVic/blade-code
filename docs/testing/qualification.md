@@ -58,8 +58,9 @@ bun run qualify:production
 无密钥 Chromium preflight、最后才是付费真实 API；preflight 失败时不得启动 Provider
 请求。浏览器页只访问 loopback Blade server，API key 不进入 page context。
 
-每条 capability 轨迹的 Provider timeout 必须短于 Vitest test timeout，并为 abort、
-runtime dispose、临时目录删除和全局配置恢复保留确定性清理窗口。验证 permission
+每条 capability 轨迹的 Provider request timeout 与 silent-stream idle timeout 必须
+同时短于 Vitest test timeout，并为 abort、runtime dispose、临时目录删除和全局配置
+恢复保留确定性清理窗口。验证 permission
 recovery 的轨迹关闭 Provider retry；retry/backoff 只在专用故障注入轨迹中测试，避免
 测试框架 timeout 后旧 `finally` 与 Vitest retry 并发运行。permission recovery 的
 Write 资格使用唯一绝对 `file_path` 与 Write-only 工具白名单，text-only 回答不能替代
@@ -96,7 +97,10 @@ DeepSeek Flash/Pro × Headless/raw PTY TUI/production Chromium Web/真实 ACP
 必须按精确 inbox message ID 观察 acknowledgement，以及同一 turn 随后的
 `turn_completed`，不能以终端历史命中或固定等待窗口代替 durable terminal。ACP
 多 Provider 对照的终答窗口必须晚于 180 秒 runtime hard timeout，并为销毁连接与临时
-目录清理保留剩余测试窗口；不得通过 Provider 或 framework retry 延长。Edit+rewind、
+目录清理保留剩余测试窗口；ACP fork 的 parent Read 与 child Write/Bash 是两个顺序
+prompt stage，每段由宿主 180 秒 deadline 发送标准 `session/cancel` 并等待 prompt
+收敛；外层预算固定为 420 秒，只覆盖两个 stage deadline 和 60 秒清理余量。不得通过
+Provider 或 framework retry 延长。Edit+rewind、
 Goal finalization crash handoff 使用同一 Flash/Pro × 四入口八格矩阵，恢复阶段必须
 零 Provider 请求，随后再从同一 surface 完成真实 API follow-up。PTY follow-up 用户输入
 不得包含完整预期响应 marker；Provider request body 必须先解析 JSON `messages` 再验证

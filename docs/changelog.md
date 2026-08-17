@@ -30,6 +30,11 @@ All notable changes to this project will be documented in this file.
   完整 marker 不匹配时立即报告有界、脱敏的 assistant 文本，不再等待 180 秒 locator
   超时；permission recovery 资格使用唯一绝对 `file_path` 与 Write-only 工具白名单，
   明确拒绝无文件副作用的 text-only 完成
+- 真实 API runtime config 现在将 request timeout 与 silent-stream idle timeout 统一为
+  180 秒；ACP fork 的 parent Read 与 child Write/Bash 两个顺序 prompt stage 各自由
+  宿主 180 秒 deadline 发送标准 `session/cancel` 并等待收敛，420 秒外层预算只为两段
+  deadline 和 60 秒确定性清理留出空间，避免 Vitest timeout 抢先打断 `finally` 并
+  泄漏 fixture
 
 ## [0.10.47] - 2026-08-17
 

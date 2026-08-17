@@ -480,6 +480,7 @@ describe('real API coding-task harness', () => {
         overrides: {
           maxOutputTokens: 4_096,
           timeout: 180_000,
+          streamIdleTimeout: 180_000,
         },
       }),
     ]);

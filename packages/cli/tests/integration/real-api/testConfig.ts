@@ -522,6 +522,7 @@ export function buildRealApiRuntimeConfig(modelConfig: TestModelConfig): BladeCo
         overrides: {
           maxOutputTokens: 4_096,
           timeout: 180_000,
+          streamIdleTimeout: 180_000,
           ...(!customProvider && modelConfig.baseURL
             ? { baseUrl: modelConfig.baseURL }
             : {}),

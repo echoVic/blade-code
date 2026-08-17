@@ -113,6 +113,62 @@ interface PairedAcpHarness {
   close(): Promise<void>;
 }
 
+const ACP_FORK_STAGE_TIMEOUT_MS = 180_000;
+const ACP_FORK_CANCEL_GRACE_MS = 15_000;
+
+class AcpForkStageTimeoutError extends Error {
+  constructor(
+    readonly stage: 'parent' | 'child',
+    readonly timeoutMs: number
+  ) {
+    super(`ACP fork ${stage} prompt exceeded ${timeoutMs}ms`);
+    this.name = 'AcpForkStageTimeoutError';
+  }
+}
+
+async function runPromptStage(
+  harness: PairedAcpHarness,
+  params: acp.PromptRequest,
+  stage: 'parent' | 'child',
+  options: { timeoutMs?: number; cancelGraceMs?: number } = {}
+): Promise<acp.PromptResponse> {
+  const timeoutMs = options.timeoutMs ?? ACP_FORK_STAGE_TIMEOUT_MS;
+  const cancelGraceMs = options.cancelGraceMs ?? ACP_FORK_CANCEL_GRACE_MS;
+  const prompt = harness.connection.prompt(params);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new AcpForkStageTimeoutError(stage, timeoutMs)),
+      timeoutMs
+    );
+  });
+
+  try {
+    return await Promise.race([prompt, timeout]);
+  } catch (error) {
+    if (!(error instanceof AcpForkStageTimeoutError)) throw error;
+    await harness.connection.cancel({ sessionId: params.sessionId });
+    const settled = await Promise.race([
+      prompt.then(
+        () => true,
+        () => true
+      ),
+      new Promise<false>((resolve) => {
+        const graceTimer = setTimeout(() => resolve(false), cancelGraceMs);
+        graceTimer.unref?.();
+      }),
+    ]);
+    if (!settled) {
+      throw new Error(`ACP fork ${stage} prompt did not settle after cancellation`, {
+        cause: error,
+      });
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function createPairedHarness(client = new RecordingClient()): PairedAcpHarness {
   const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
   const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
@@ -271,6 +327,31 @@ describe('ACP recording client lifecycle', () => {
       close: {},
     });
     expect(harness.connection.signal.aborted).toBe(true);
+  });
+
+  it('cancels and settles a prompt before reporting a stage deadline', async () => {
+    let resolvePrompt: ((value: acp.PromptResponse) => void) | undefined;
+    const prompt = new Promise<acp.PromptResponse>((resolve) => {
+      resolvePrompt = resolve;
+    });
+    const cancelledSessions: string[] = [];
+    const harness = {
+      connection: {
+        prompt: () => prompt,
+        cancel: async ({ sessionId }: { sessionId: string }) => {
+          cancelledSessions.push(sessionId);
+          resolvePrompt?.({ stopReason: 'cancelled' });
+        },
+      },
+    } as unknown as PairedAcpHarness;
+
+    await expect(
+      runPromptStage(harness, { sessionId: 'stage-timeout', prompt: [] }, 'parent', {
+        timeoutMs: 5,
+        cancelGraceMs: 50,
+      })
+    ).rejects.toThrow('ACP fork parent prompt exceeded 5ms');
+    expect(cancelledSessions).toEqual(['stage-timeout']);
   });
 
   it('resolves notification waiters from the matching incoming event', async () => {
@@ -690,20 +771,24 @@ describeTrajectory('ACP durable fork trajectory (real API)', () => {
             sessionId: parentId,
             modeId: 'yolo',
           });
-          const parentPrompt = await harness.connection.prompt({
-            sessionId: parentId,
-            prompt: [
-              {
-                type: 'text',
-                text: [
-                  `Use Read on the workspace file at the exact absolute path ${memoryPath}.`,
-                  'Remember its complete contents for a later fork.',
-                  'Do not repeat, quote, encode, or summarize the file contents in final prose.',
-                  'After the successful Read, give a brief completion confirmation.',
-                ].join(' '),
-              },
-            ],
-          });
+          const parentPrompt = await runPromptStage(
+            harness,
+            {
+              sessionId: parentId,
+              prompt: [
+                {
+                  type: 'text',
+                  text: [
+                    `Use Read on the workspace file at the exact absolute path ${memoryPath}.`,
+                    'Remember its complete contents for a later fork.',
+                    'Do not repeat, quote, encode, or summarize the file contents in final prose.',
+                    'After the successful Read, give a brief completion confirmation.',
+                  ].join(' '),
+                },
+              ],
+            },
+            'parent'
+          );
           expect(parentPrompt.stopReason).toBe('end_turn');
           const parentNotifications = harness.client.updates.slice(
             parentNotificationStart
@@ -786,23 +871,27 @@ describeTrajectory('ACP durable fork trajectory (real API)', () => {
           expect(existsSync(memoryPath)).toBe(false);
 
           const childNotificationStart = harness.client.updates.length;
-          const childPrompt = await harness.connection.prompt({
-            sessionId: childId,
-            prompt: [
-              {
-                type: 'text',
-                text: [
-                  'Recover the complete marker from the inherited Read result.',
-                  'Call Write exactly once total.',
-                  `That call must set file_path to the exact absolute path ${resultPath}.`,
-                  'Never call Write with a relative path, any other path, or retry Write.',
-                  'Write the inherited bytes exactly with one trailing newline.',
-                  'After the successful Write, call Bash exactly once with `wc -c result.txt`.',
-                  'Use no other tools or commands, never repeat the marker in final prose, and briefly confirm completion.',
-                ].join(' '),
-              },
-            ],
-          });
+          const childPrompt = await runPromptStage(
+            harness,
+            {
+              sessionId: childId,
+              prompt: [
+                {
+                  type: 'text',
+                  text: [
+                    'Recover the complete marker from the inherited Read result.',
+                    'Call Write exactly once total.',
+                    `That call must set file_path to the exact absolute path ${resultPath}.`,
+                    'Never call Write with a relative path, any other path, or retry Write.',
+                    'Write the inherited bytes exactly with one trailing newline.',
+                    'After the successful Write, call Bash exactly once with `wc -c result.txt`.',
+                    'Use no other tools or commands, never repeat the marker in final prose, and briefly confirm completion.',
+                  ].join(' '),
+                },
+              ],
+            },
+            'child'
+          );
           expect(childPrompt.stopReason).toBe('end_turn');
           const childNotifications =
             harness.client.updates.slice(childNotificationStart);
@@ -880,6 +969,6 @@ describeTrajectory('ACP durable fork trajectory (real API)', () => {
         else process.env.BLADE_AUTO_MEMORY = originalAutoMemory;
         cleanupForkFixture(fixture);
       }
-    }, 360_000);
+    }, 420_000);
   }
 });
