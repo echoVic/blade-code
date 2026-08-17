@@ -400,88 +400,104 @@ async function expandAndReadBashCard(
   freshHistorySummary: () => Promise<string>
 ): Promise<number> {
   const cardSelector = '[data-tool-name="Bash"][data-tool-status="success"]';
-  if ((await page.locator(cardSelector).count()) === 0) {
-    const groupButtons = page.locator('[data-agent-tool-group] > button');
-    try {
-      await groupButtons.first().waitFor({
-        state: 'visible',
-        timeout: Math.min(timeoutMs, 5_000),
-      });
-    } catch (error) {
-      throw new Error(
-        `${
-          error instanceof Error ? error.message : String(error)
-        }; freshHistory=${await freshHistorySummary()}`
-      );
+  const deadline = Date.now() + timeoutMs;
+  let toolCallId: string | undefined;
+
+  while (Date.now() < deadline) {
+    const state = await page.evaluate(
+      ({ selector, expectedToolCallId }) => {
+        for (const groupToggle of Array.from(
+          document.querySelectorAll<HTMLButtonElement>(
+            '[data-agent-tool-group] > button'
+          )
+        ).reverse()) {
+          if (groupToggle.getAttribute('aria-expanded') !== 'true') {
+            groupToggle.click();
+          }
+        }
+        const cards = Array.from(document.querySelectorAll<HTMLElement>(selector));
+        const card = expectedToolCallId
+          ? cards.find((candidate) =>
+              Array.from(
+                candidate.querySelectorAll<HTMLElement>('[data-tool-call-id]')
+              ).some(
+                (toggle) =>
+                  toggle.getAttribute('data-tool-call-id') === expectedToolCallId
+              )
+            )
+          : cards.at(-1);
+        if (!card) return undefined;
+        const toggle = card.querySelector<HTMLButtonElement>(
+          'button[data-tool-call-id]'
+        );
+        const observedToolCallId = toggle?.getAttribute('data-tool-call-id');
+        if (!toggle || !observedToolCallId) return undefined;
+        const truncated = card.getAttribute('data-tool-truncated') === 'true';
+        if (toggle.getAttribute('aria-expanded') !== 'true') {
+          toggle.click();
+          return {
+            toolCallId: observedToolCallId,
+            truncated,
+            expanded: false,
+          };
+        }
+        const output = card.querySelector<HTMLElement>('[data-tool-output]');
+        if (!output) {
+          return {
+            toolCallId: observedToolCallId,
+            truncated,
+            expanded: true,
+          };
+        }
+        return {
+          toolCallId: observedToolCallId,
+          truncated,
+          expanded: true,
+          text: output.textContent ?? '',
+          truncationNotices: card.querySelectorAll('[data-tool-truncation-notice]')
+            .length,
+        };
+      },
+      { selector: cardSelector, expectedToolCallId: toolCallId }
+    );
+    toolCallId ??= state?.toolCallId;
+    if (state && !state.truncated) {
+      throw new Error('Bash browser card did not expose truncation state');
     }
-    const groupCount = await groupButtons.count();
-    for (let index = groupCount - 1; index >= 0; index -= 1) {
-      const button = groupButtons.nth(index);
-      if ((await button.getAttribute('aria-expanded')) !== 'true') {
-        await button.click();
+    if (state?.text !== undefined) {
+      const text = state.text;
+      if (
+        !text.includes(fixture.stdoutTail) ||
+        !text.includes(fixture.stderrTail) ||
+        text.includes(fixture.stdoutPrefixSentinel) ||
+        text.includes(fixture.stderrPrefixSentinel)
+      ) {
+        throw new Error('Bash browser card violated retained output markers');
       }
-      if ((await page.locator(cardSelector).count()) > 0) break;
+      if (state.truncationNotices !== 1) {
+        throw new Error('Bash browser card truncation notice count is invalid');
+      }
+      if (text.length > 500) {
+        throw new Error(`Bash browser card output exceeded 500 chars: ${text.length}`);
+      }
+      return text.length;
     }
+    await page.waitForTimeout(50);
   }
-  const card = page.locator(cardSelector).last();
-  try {
-    await card.waitFor({ state: 'visible', timeout: timeoutMs });
-  } catch (error) {
-    const cards = await page.locator('[data-tool-name]').evaluateAll((elements) =>
-      elements.map((element) => ({
-        name: element.getAttribute('data-tool-name'),
-        status: element.getAttribute('data-tool-status'),
-      }))
-    );
-    throw new Error(
-      `${
-        error instanceof Error ? error.message : String(error)
-      }; visibleToolCards=${JSON.stringify(cards)}`
-    );
-  }
-  if ((await card.getAttribute('data-tool-truncated')) !== 'true') {
-    throw new Error('Bash browser card did not expose truncation state');
-  }
-  const toggle = card.locator('[data-tool-call-id]');
-  const toolCallId = await toggle.getAttribute('data-tool-call-id');
-  if (!toolCallId) {
-    throw new Error('Bash browser card did not expose a tool call ID');
-  }
-  const toggleSelector = `[data-tool-call-id=${JSON.stringify(toolCallId)}]`;
-  if ((await toggle.getAttribute('aria-expanded')) !== 'true') {
-    // The virtualized timeline may replace a completed card while Playwright is
-    // performing actionability checks. Dispatch to the durable call identity,
-    // then assert the same UI state transition.
-    await page.locator(toggleSelector).dispatchEvent('click');
-    await page.waitForFunction(
-      (selector) =>
-        document.querySelector(selector)?.getAttribute('aria-expanded') === 'true',
-      toggleSelector,
-      { timeout: Math.min(timeoutMs, 30_000) }
-    );
-  }
-  const expandedCard = page
-    .locator(cardSelector)
-    .filter({ has: page.locator(toggleSelector) })
-    .last();
-  const output = expandedCard.locator('[data-tool-output]');
-  await output.waitFor({ state: 'visible' });
-  const text = (await output.textContent()) ?? '';
-  if (
-    !text.includes(fixture.stdoutTail) ||
-    !text.includes(fixture.stderrTail) ||
-    text.includes(fixture.stdoutPrefixSentinel) ||
-    text.includes(fixture.stderrPrefixSentinel)
-  ) {
-    throw new Error('Bash browser card violated retained output markers');
-  }
-  if ((await expandedCard.locator('[data-tool-truncation-notice]').count()) !== 1) {
-    throw new Error('Bash browser card truncation notice count is invalid');
-  }
-  if (text.length > 500) {
-    throw new Error(`Bash browser card output exceeded 500 chars: ${text.length}`);
-  }
-  return text.length;
+
+  const cards = await page.locator('[data-tool-name]').evaluateAll((elements) =>
+    elements.map((element) => ({
+      name: element.getAttribute('data-tool-name'),
+      status: element.getAttribute('data-tool-status'),
+    }))
+  );
+  throw new Error(
+    `Timed out reading the durable Bash card; toolCallId=${
+      toolCallId ?? 'unresolved'
+    }; visibleToolCards=${JSON.stringify(
+      cards
+    )}; freshHistory=${await freshHistorySummary()}`
+  );
 }
 
 export async function runForegroundBoundedOutputWebDriver(input: {

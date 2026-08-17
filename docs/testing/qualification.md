@@ -782,8 +782,9 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
   stdout、zero stderr 和 `terminal_output_merged=true`。所有入口都必须保留双 tail、
   隐藏双 sentinel 与 API key，并清零 Chromium/page/SSE、PTY、ACP terminal、
   process identity、foreground lease、port 和临时根。虚拟列表重挂载 completed card 时，
-  Web 必须按 durable `toolCallId` 重新定位并触发真实 click handler，再断言
-  `aria-expanded=true` 和有界输出，不得把布局 actionability 抖动当成 runtime failure。
+  Web 必须原子取得 durable `toolCallId`，在 tool group 回到折叠态时重新展开并触发真实
+  click handler，再断言 `aria-expanded=true` 和有界输出，不得把 card/toggle 两次
+  locator await 之间的重挂载或布局 actionability 抖动当成 runtime failure。
   foreground gate-release failure 对照必须在释放前订阅 stdout，并在观察到超过 retained
   budget 的实际字节后注入错误，不得用固定 sleep 假设输出已经到达。raw PTY 的正向
   marker evidence 必须单调锁存；resize 或后续 redraw 只能增加证据，不能从 bounded tail

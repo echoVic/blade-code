@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.unmock('node:child_process');
@@ -15,6 +17,21 @@ import {
 } from '../../support/foregroundBoundedOutputWebDriver.js';
 
 describe('foreground bounded output Web driver', () => {
+  it('atomically reopens remounted tool groups by durable call identity', () => {
+    const source = readFileSync(
+      path.resolve(
+        import.meta.dirname,
+        '../../support/foregroundBoundedOutputWebDriver.ts'
+      ),
+      'utf8'
+    );
+
+    expect(source).toContain('expectedToolCallId');
+    expect(source).toContain('groupToggle.click()');
+    expect(source).toContain('toggle.click()');
+    expect(source).not.toContain("const toggle = card.locator('[data-tool-call-id]');");
+  });
+
   it('classifies only terminal Web run states as terminal', () => {
     for (const status of ['completed', 'failed', 'cancelled', 'interrupted']) {
       expect(isTerminalForegroundWebRunStatus(status)).toBe(true);
