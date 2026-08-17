@@ -56,13 +56,15 @@ export async function createForegroundBoundedOutputFixture(
     'Run the bounded foreground output fixture exactly once.',
     `Call Bash exactly once with command ${JSON.stringify(command)}, run_in_background=false, and timeout=30000.`,
     `After the result, verify output_truncated=true, both stdout_omitted_bytes and stderr_omitted_bytes are positive, and the visible tails contain ${stdoutTail} and ${stderrTail}.`,
-    `Reply with BOUNDED_FOREGROUND_OK_${nonce}. Do not call any other tool.`,
+    `Your entire final response must be exactly BOUNDED_FOREGROUND_OK_${nonce}.`,
+    'Do not add prose, punctuation, code fences, or line breaks. Do not call any other tool.',
   ].join('\n');
   const acpPrompt = [
     'Run the bounded ACP foreground output fixture exactly once.',
     `Call Bash exactly once with command ${JSON.stringify(command)}, run_in_background=false, and timeout=30000.`,
     `After the result, verify terminal_output_merged=true, stdout_omitted_bytes is positive, stderr_total_bytes=0, and the merged visible output contains ${stdoutTail} and ${stderrTail}.`,
-    `Reply with BOUNDED_FOREGROUND_ACP_OK_${nonce}. Do not call any other tool.`,
+    `Your entire final response must be exactly BOUNDED_FOREGROUND_ACP_OK_${nonce}.`,
+    'Do not add prose, punctuation, code fences, or line breaks. Do not call any other tool.',
   ].join('\n');
 
   return {

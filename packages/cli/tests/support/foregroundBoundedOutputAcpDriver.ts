@@ -307,7 +307,14 @@ export async function runForegroundBoundedOutputAcpDriverInProcess(input: {
         )}`
       )
     ) {
-      throw new Error('ACP final response marker is missing');
+      throw new Error(
+        `ACP final response marker is missing: ${JSON.stringify({
+          finalTextLength: finalText.length,
+          finalTextPreview: finalText
+            .replaceAll(input.secret, '[REDACTED]')
+            .slice(-1_000),
+        })}`
+      );
     }
     if (
       first.egressMetrics.sessionUpdateCalls === 0 ||

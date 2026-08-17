@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'bun-pty';
+import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
 import {
   appendBoundedPtyEvidence,
   projectForegroundBoundedPtyOutput,
@@ -67,6 +68,44 @@ async function waitForPendingByteSidecar(
   throw new Error('Raw PTY child sidecar did not record pending-byte rejection');
 }
 
+async function waitForParentCompletion(
+  workspace: string,
+  sessionId: string,
+  timeoutMs: number
+): Promise<void> {
+  const store = new PersistentStore(workspace);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const events = (await store.loadEvents(sessionId)) ?? [];
+    const completionMessage = events.find(
+      (event) =>
+        event.type === 'message_created' &&
+        event.data.inboxMessageId?.startsWith('background-subagent-completion:')
+    );
+    const completionInboxId =
+      completionMessage?.type === 'message_created'
+        ? completionMessage.data.inboxMessageId
+        : undefined;
+    const completionSeq = completionMessage?.seq;
+    if (completionInboxId && typeof completionSeq === 'number') {
+      const acknowledged = events.some(
+        (event) =>
+          event.type === 'inbox_acknowledged' &&
+          event.data.messageIds.includes(completionInboxId)
+      );
+      const completed = events.some(
+        (event) =>
+          event.type === 'turn_completed' &&
+          typeof event.seq === 'number' &&
+          event.seq > completionSeq
+      );
+      if (acknowledged && completed) return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('Raw PTY parent did not durably consume the rejected child');
+}
+
 async function main(): Promise<void> {
   const cliEntry = required('BLADE_WEIGHTED_ADMISSION_PTY_CLI_ENTRY');
   const workspace = required('BLADE_WEIGHTED_ADMISSION_PTY_WORKSPACE');
@@ -124,6 +163,11 @@ async function main(): Promise<void> {
     await waitFor(
       () => hasVisibleWeightedProviderRejection(output),
       'Raw PTY did not render the rejected background child',
+      Math.max(1, evidenceDeadline - Date.now())
+    );
+    await waitForParentCompletion(
+      workspace,
+      sessionId,
       Math.max(1, evidenceDeadline - Date.now())
     );
     const projected = projectForegroundBoundedPtyOutput(

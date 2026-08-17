@@ -102,13 +102,21 @@ async function prepareFixture(
     })
   );
   const expectedFollowup = `FOLLOWUP_${marker}`;
+  const followupPrompt = [
+    'Do not use tools.',
+    'Reply with exactly one token formed by concatenating these quoted segments',
+    `without separators: ${JSON.stringify('FOLLOWUP_')} ${JSON.stringify(marker)}.`,
+  ].join(' ');
+  if (followupPrompt.includes(expectedFollowup)) {
+    throw new Error('Goal follow-up prompt contains its complete response marker');
+  }
   return {
     root,
     workspace,
     storageRoot,
     home,
     sessionId,
-    followupPrompt: `Do not use tools. Reply exactly ${expectedFollowup}.`,
+    followupPrompt,
     expectedFollowup,
     fixture,
     proxy,
@@ -181,7 +189,17 @@ async function assertDurableCompletion(input: PreparedFixture): Promise<void> {
   ).toHaveLength(1);
   expect(input.proxy.requestBodies.length).toBeGreaterThanOrEqual(1);
   for (const body of input.proxy.requestBodies) {
-    expect(body).toContain(input.expectedFollowup);
+    const payload = JSON.parse(body) as {
+      messages?: Array<{ content?: unknown }>;
+    };
+    const messageText = (payload.messages ?? [])
+      .map((message) =>
+        typeof message.content === 'string'
+          ? message.content
+          : JSON.stringify(message.content)
+      )
+      .join('\n');
+    expect(messageText).toContain(input.followupPrompt);
   }
 }
 
