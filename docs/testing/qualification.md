@@ -80,11 +80,15 @@ TUI/真实 ACP SDK terminal 八格；单格 Provider deadline 180 秒、测试 t
 每格还验证 surface egress：Headless
 等待 `write(false) -> drain`，ACP 最多一个 `sessionUpdate()` in-flight，raw PTY 暂停
 reader 后继续渲染，Web 在运行中 reload 后按 durable cursor 恢复同一 tool/final state。
+模型的整个最终响应必须严格等于单格 marker；ACP 失败诊断只能保留有界、脱敏的最终文本
+预览，不能用放宽 marker 或 framework retry 掩盖模型偏离。
 Root-turn crash auto-resume 另固定运行
 DeepSeek Flash/Pro × Headless/raw PTY TUI/production Chromium Web/真实 ACP
 `session/load` 八格，所有入口都不得依赖额外 wake-up prompt。Edit+rewind、
 Goal finalization crash handoff 使用同一 Flash/Pro × 四入口八格矩阵，恢复阶段必须
-零 Provider 请求，随后再从同一 surface 完成真实 API follow-up。Completed-subagent
+零 Provider 请求，随后再从同一 surface 完成真实 API follow-up。PTY follow-up 用户输入
+不得包含完整预期响应 marker；Provider request body 必须先解析 JSON `messages` 再验证
+prompt，避免输入回显伪装 assistant completion。Completed-subagent
 adoption 与 background-subagent completion wake-up 也分别固定运行 Flash/Pro ×
 Headless/raw PTY/production Chromium Web/真实 ACP 八格矩阵。
 Bounded coordinated shutdown 另固定运行同一 Flash/Pro × 四入口八格矩阵；每格在真实
@@ -225,7 +229,10 @@ Headless/TUI 使用 parent 持有 active permit、background child 被拒绝，�
 schema-valid child JSONL 或“失败 sidecar + 可见 TUI failure”证明同一事实；Web/ACP
 使用双 root Session。最终 queue-full turn 保留 failed abort 但确认本 turn 输入，
 reload、SSE reconnect 或 ACP load 不得把 Session B marker 重放到 Provider。Web 必须从
-真实 composer 提交并保持零 console/page error。全部八格使用 `retry=0`，
+真实 composer 提交并保持零 console/page error。TUI failure 必须由宿主的有界 terminal
+summary 直接投影，不能依赖模型复述；raw PTY 在结束前还必须观察 hidden completion 已
+ack，且其提交 seq 之后存在 `turn_completed`，避免 teardown 与 held proxy request 重叠。
+全部八格使用 `retry=0`，
 同时继续运行前述正常 queued→admitted 矩阵，防止 byte policy 把正常长任务缩窄为只会
 fail closed。
 

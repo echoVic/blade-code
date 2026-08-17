@@ -10,6 +10,9 @@ All notable changes to this project will be documented in this file.
   terminal 的问题；cancelled turn 现在先持久化模型可见的 `<turn_aborted>` system
   marker，再提交 `turn_aborted(cause="cancelled")`，冷恢复不再只看到 aborted tool
   result
+- TUI 子 Agent progress 现在保留并显示有界 terminal failure summary；background
+  Provider admission 因 `pending_bytes` 被拒绝时，用户无需依赖模型复述即可看到确定性
+  失败原因
 
 ### 测试相关
 
@@ -20,7 +23,11 @@ All notable changes to this project will be documented in this file.
 - 为 production Task Home 暴露只读 dispatch readiness 数据契约；weighted task Web
   轨迹先等待 workspace/model readiness，再提交真实任务，超时时输出结构化 GUI 状态，
   避免把 composer 可输入错误等同于 task dispatch 已可用
-- 两项修复均保持 release matrix framework `retry=0`，不增加 Provider 或测试重试
+- weighted Provider raw PTY 轨迹在可见 failure 后继续等待 hidden completion ack 与其后
+  `turn_completed`，再验证 proxy 并发；Goal PTY follow-up prompt 不再携带完整预期响应，
+  Provider request 通过解析 JSON `messages` 验证，避免把输入回显当成 assistant 完成
+- bounded foreground output prompt 要求整个最终响应严格等于 marker，ACP 偏离时输出有界
+  脱敏诊断；所有修复均保持 release matrix framework `retry=0`，不增加 Provider 或测试重试
 
 ## [0.10.46] - 2026-08-17
 
