@@ -10,9 +10,12 @@ import {
   getSessionFilePath,
   getSessionInboxFilePath,
 } from '../../../src/context/storage/pathUtils.js';
-import { Bus } from '../../../src/server/bus.js';
+import { Bus, type BusEvent } from '../../../src/server/bus.js';
 import { PermissionRoutes } from '../../../src/server/routes/permission.js';
-import { SessionRoutes } from '../../../src/server/routes/session.js';
+import {
+  createSessionRouteController,
+  type SessionRouteController,
+} from '../../../src/server/routes/session.js';
 import { SessionInteractionService } from '../../../src/services/SessionInteractionService.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
@@ -33,19 +36,105 @@ const gpt = isRealApiTestEnabled()
   : undefined;
 const describeReal = gpt ? describe.sequential : describe.skip;
 
-function waitForCompletion(
-  sessionId: string,
-  projectPath: string
-): { promise: Promise<void>; cancel(): void } {
+interface WebRecoveryWaitInput {
+  controller: SessionRouteController;
+  sessionId: string;
+  projectPath: string;
+  target: string;
+  secret: string;
+}
+
+async function buildWebRecoveryDiagnostic(
+  input: WebRecoveryWaitInput,
+  observedEvents: readonly BusEvent[],
+  timeoutMs: number
+): Promise<string> {
+  const store = new PersistentStore(input.projectPath);
+  const [targetContent, transcript, inboxMissing, metadata, events] = await Promise.all(
+    [
+      readOptionalFile(input.target),
+      readOptionalFile(getSessionFilePath(input.projectPath, input.sessionId)),
+      fileIsMissing(getSessionInboxFilePath(input.projectPath, input.sessionId)),
+      SessionService.findSessionMetadata(input.sessionId, input.projectPath),
+      store.loadEvents(input.sessionId),
+    ]
+  );
+  const durableEvents = events
+    ?.filter(
+      (event) =>
+        event.type === 'interaction_requested' ||
+        event.type === 'interaction_responded' ||
+        event.type === 'interaction_recovered' ||
+        event.type === 'inbox_acknowledged' ||
+        event.type === 'turn_completed' ||
+        event.type === 'turn_aborted' ||
+        event.type === 'message_created' ||
+        (event.type === 'part_created' &&
+          ['text', 'tool_call', 'tool_result'].includes(event.data.partType))
+    )
+    .slice(-100);
+  return JSON.stringify({
+    timeoutMs,
+    targetContent,
+    inboxMissing,
+    metadata: metadata
+      ? {
+          taskStatus: metadata.taskStatus,
+          taskStatusReason: metadata.taskStatusReason,
+          taskFailure: metadata.taskFailure,
+          pendingInteraction: metadata.pendingInteraction,
+        }
+      : undefined,
+    runtimeResidency: input.controller.getRuntimeResidencyStats(),
+    busEvents: observedEvents.slice(-100),
+    durableEvents,
+    transcriptTail: transcript?.slice(-12_000),
+  })
+    .replaceAll(input.secret, '[redacted]')
+    .slice(-24_000);
+}
+
+function waitForWebRecovery(input: WebRecoveryWaitInput): {
+  promise: Promise<void>;
+  cancel(): void;
+} {
+  const configuredTimeout = Number(process.env.BLADE_DURABLE_WEB_RECOVERY_TIMEOUT_MS);
+  const timeoutMs =
+    Number.isSafeInteger(configuredTimeout) && configuredTimeout > 0
+      ? configuredTimeout
+      : 240_000;
+  const observedEvents: BusEvent[] = [];
   let unsubscribe: () => void = () => undefined;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const promise = new Promise<void>((resolve, reject) => {
     timeout = setTimeout(() => {
       unsubscribe();
-      reject(new Error('Timed out waiting for durable interaction recovery'));
-    }, 180_000);
+      void buildWebRecoveryDiagnostic(input, observedEvents, timeoutMs).then(
+        (diagnostic) => {
+          reject(
+            new Error(
+              `Timed out waiting for durable Web interaction recovery: ${diagnostic}`
+            )
+          );
+        },
+        (error) => {
+          reject(
+            new Error(
+              `Timed out waiting for durable Web interaction recovery; ` +
+                `diagnostic failed: ${String(error)}`
+            )
+          );
+        }
+      );
+    }, timeoutMs);
     unsubscribe = Bus.subscribe((event) => {
-      if (event.sessionId !== sessionId || event.projectPath !== projectPath) return;
+      if (
+        event.sessionId !== input.sessionId ||
+        event.projectPath !== input.projectPath
+      ) {
+        return;
+      }
+      observedEvents.push(event);
       if (event.type === 'permission.asked' || event.type === 'question.required') {
         clearTimeout(timeout);
         unsubscribe();
@@ -181,8 +270,16 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
       ...buildRealApiRuntimeConfig(gpt),
       permissionMode: PermissionMode.DEFAULT,
     };
+    config.models = config.models.map((model) => ({
+      ...model,
+      overrides: {
+        ...model.overrides,
+        streamIdleTimeout: 180_000,
+      },
+    }));
+    const controller = createSessionRouteController();
     const app = new Hono();
-    app.route('/sessions', SessionRoutes());
+    app.route('/sessions', controller.app);
     app.route('/permissions', PermissionRoutes());
 
     try {
@@ -254,7 +351,13 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
         },
       });
 
-      const completion = waitForCompletion(sessionId, workspace);
+      const completion = waitForWebRecovery({
+        controller,
+        sessionId,
+        projectPath: workspace,
+        target,
+        secret: gpt.apiKey,
+      });
       const response = await runWithCwdOverride(workspace, () =>
         app.request(
           `/permissions/${request.requestId}?sessionId=${sessionId}&projectPath=${encodeURIComponent(
@@ -306,10 +409,11 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
       expect(transcript.match(/"type":"interaction_recovered"/g)).toHaveLength(1);
       expect(transcript.match(/"interactionRecovery":true/g)).toHaveLength(1);
     } finally {
+      await controller.shutdown('durable Web interaction qualification cleanup');
       if (originalConfig) getState().config.actions.setConfig(originalConfig);
       await rm(root, { recursive: true, force: true });
     }
-  }, 300_000);
+  }, 360_000);
 
   it('replays a durable ACP question on session/load and resumes automatically', async () => {
     if (!gpt) throw new Error('GPT qualification channel is unavailable');

@@ -514,6 +514,13 @@ Runtime hook 回答结构化问题并实际调用 `Write`。Production DeepSeek 
 load 显示问题与 pending badge，回答后自动继续、产生精确 changed file，fresh tab 不得
 再次显示问题，browser console 不得有 application error。
 
+Web response 轨迹的完成窗口必须晚于该模型的 Provider hard/idle watchdog，不能由测试
+timer 抢先把仍在运行的请求归类为 recovery failure。超时诊断必须脱敏并同时包含 Bus
+terminal/stall 事件、Session task metadata、durable interaction/inbox/turn 事件、
+transcript tail、目标文件和 Runtime residency；无论成功或失败都必须 shutdown route
+controller，证明 active run、Provider lease 与 resident Runtime 已回收。该窗口只负责
+让 runtime 先给出 authoritative terminal，不得增加 Provider 或测试重试。
+
 Session Permission Mode 资格必须证明权限策略属于 durable Session，而非进程全局或
 单一 UI Store。确定性测试覆盖 `default/autoEdit/yolo/plan`、latest update wins、
 legacy fallback、fork/task 继承、非法值 fail closed、SessionStart Hook snapshot、

@@ -28,6 +28,10 @@ All notable changes to this project will be documented in this file.
   Provider request 通过解析 JSON `messages` 验证，避免把输入回显当成 assistant 完成
 - bounded foreground output prompt 要求整个最终响应严格等于 marker，ACP 偏离时输出有界
   脱敏诊断；所有修复均保持 release matrix framework `retry=0`，不增加 Provider 或测试重试
+- durable Web interaction recovery 资格现在使用可关闭的 route controller，完成窗口晚于
+  Provider hard/idle watchdog；超时会输出脱敏的 Bus、metadata、inbox、turn、transcript、
+  目标文件与 Runtime residency 证据，并在失败路径强制 shutdown，避免测试 timer 抢先及
+  active run 泄漏
 
 ## [0.10.46] - 2026-08-17
 
