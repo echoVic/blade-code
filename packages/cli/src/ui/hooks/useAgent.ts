@@ -414,11 +414,16 @@ export function useAgent(options: AgentOptions) {
       let pendingCompletion: AgentSession | undefined;
       let progressId = agentId;
       const complete = (session: AgentSession) => {
+        const terminalSummary =
+          session.status === 'completed'
+            ? session.result?.message
+            : session.result?.error || session.result?.message;
         vanillaStore
           .getState()
           .app.actions.completeSubagentProgress(
             progressId,
-            session.status === 'completed'
+            session.status === 'completed',
+            terminalSummary
           );
       };
       const result = runtime.resumeSubagent({

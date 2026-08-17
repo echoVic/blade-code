@@ -91,6 +91,12 @@ export const SubagentProgress: React.FC = React.memo(() => {
                 <Text color={theme.colors.info}>{formatElapsedTime(elapsedTime)}</Text>
               </>
             )}
+            {progress.status === 'failed' && progress.terminalSummary && (
+              <>
+                <Text color={theme.colors.muted}>|</Text>
+                <Text color={theme.colors.error}>{progress.terminalSummary}</Text>
+              </>
+            )}
           </Box>
         );
       })}

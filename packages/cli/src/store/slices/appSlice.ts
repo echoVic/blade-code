@@ -22,6 +22,8 @@ import type {
   InitializationStatus,
 } from '../types.js';
 
+const MAX_SUBAGENT_TERMINAL_SUMMARY_CHARS = 200;
+
 /**
  * 初始应用状态
  */
@@ -268,14 +270,24 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
     /**
      * 完成 subagent 执行
      */
-    completeSubagentProgress: (id: string, success: boolean) => {
+    completeSubagentProgress: (
+      id: string,
+      success: boolean,
+      terminalSummary?: string
+    ) => {
       set((state) => {
         const progress = state.app.subagentProgresses[id];
         if (!progress) return state;
+        const summary = terminalSummary?.trim();
         const updated = {
           ...progress,
           status: success ? ('completed' as const) : ('failed' as const),
           currentTool: undefined,
+          ...(!success && summary
+            ? {
+                terminalSummary: summary.slice(0, MAX_SUBAGENT_TERMINAL_SUMMARY_CHARS),
+              }
+            : {}),
         };
         return {
           app: {

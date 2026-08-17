@@ -251,6 +251,7 @@ export interface SubagentProgress {
   description: string;
   status: 'running' | 'completed' | 'failed';
   currentTool?: string;
+  terminalSummary?: string;
   startTime: number;
 }
 
@@ -305,7 +306,11 @@ export interface AppActions {
   // Subagent 进度相关
   startSubagentProgress: (id: string, type: string, description: string) => void;
   updateSubagentTool: (id: string, toolName: string) => void;
-  completeSubagentProgress: (id: string, success: boolean) => void;
+  completeSubagentProgress: (
+    id: string,
+    success: boolean,
+    terminalSummary?: string
+  ) => void;
 }
 
 /**

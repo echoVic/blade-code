@@ -621,6 +621,10 @@ function createSubagentEventBridge(input: {
     onCompleted: async (session) => {
       if (completed) return;
       completed = true;
+      const terminalSummary =
+        session.status === 'completed'
+          ? session.result?.message
+          : session.result?.error || session.result?.message;
       if (input.background) {
         try {
           await input.notifyBackgroundSubagentCompleted?.(session.id);
@@ -635,13 +639,14 @@ function createSubagentEventBridge(input: {
         .getState()
         .app.actions.completeSubagentProgress(
           progressId,
-          session.status === 'completed'
+          session.status === 'completed',
+          terminalSummary
         );
       Bus.publish(input.owner, 'subagent.complete', {
         subagentSessionId: input.subagentSessionId,
         success: session.status === 'completed',
         status: session.status,
-        summary: session.result?.message?.slice(0, 500),
+        summary: terminalSummary?.slice(0, 500),
         type: session.subagentType,
         verificationVerdict: session.result?.verificationVerdict,
         ...lineage,

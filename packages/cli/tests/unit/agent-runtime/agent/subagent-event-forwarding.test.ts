@@ -610,8 +610,9 @@ describe('Task tool subagent event publishing', () => {
           await onEvent(event);
         }
         return {
-          success: true,
-          message: 'done',
+          success: false,
+          message: '',
+          error: 'Provider request admission class pending_bytes queue is full',
           stats: { toolCalls: 1, duration: 1, tokens: 1 },
         };
       }
@@ -647,7 +648,12 @@ describe('Task tool subagent event publishing', () => {
       context
     );
 
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect(storeState.completeSubagentProgress).toHaveBeenCalledWith(
+      expect.any(String),
+      false,
+      'Provider request admission class pending_bytes queue is full'
+    );
     expect(busState.publish).toHaveBeenCalledTimes(9);
     const ref = {
       sessionId: 'parent-session',
@@ -712,7 +718,11 @@ describe('Task tool subagent event publishing', () => {
       9,
       ref,
       'subagent.complete',
-      expect.objectContaining({ success: true, resumeDepth: 0 })
+      expect.objectContaining({
+        success: false,
+        summary: 'Provider request admission class pending_bytes queue is full',
+        resumeDepth: 0,
+      })
     );
     vi.doUnmock('../../../../src/server/bus.js');
     vi.doUnmock('../../../../src/agent/subagents/SubagentWorktreeLifecycle.js');
