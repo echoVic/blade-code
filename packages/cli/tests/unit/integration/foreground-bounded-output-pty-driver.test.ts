@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   appendBoundedPtyEvidence,
   latchForegroundBoundedPtyMarkers,
+  latchPtyEvidence,
   latchPtyMarker,
   parseForegroundBoundedOutputPtyEvidence,
   projectForegroundBoundedPtyOutput,
@@ -51,6 +52,12 @@ describe('foreground bounded output PTY driver', () => {
     const observed = latchPtyMarker(false, 'visible marker', 'visible marker');
 
     expect(latchPtyMarker(observed, 'later redraw', 'visible marker')).toBe(true);
+  });
+
+  it('keeps predicate evidence true after a later redraw no longer matches', () => {
+    const observed = latchPtyEvidence(false, true);
+
+    expect(latchPtyEvidence(observed, false)).toBe(true);
   });
 
   it('accepts complete resize and marker evidence', () => {

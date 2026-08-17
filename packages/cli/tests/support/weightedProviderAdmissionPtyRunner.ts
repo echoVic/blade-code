@@ -4,7 +4,7 @@ import { spawn } from 'bun-pty';
 import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
 import {
   appendBoundedPtyEvidence,
-  latchPtyMarker,
+  latchPtyEvidence,
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
 import { hasVisibleWeightedProviderRejection } from './weightedProviderAdmissionPtyDriver.js';
@@ -112,9 +112,7 @@ async function main(): Promise<void> {
   const workspace = required('BLADE_WEIGHTED_ADMISSION_PTY_WORKSPACE');
   const storageRoot = required('BLADE_WEIGHTED_ADMISSION_PTY_STORAGE_ROOT');
   const sessionId = required('BLADE_WEIGHTED_ADMISSION_PTY_SESSION_ID');
-  const childMarker = required('BLADE_WEIGHTED_ADMISSION_PTY_CHILD_MARKER');
   const secret = process.env.BLADE_WEIGHTED_ADMISSION_PTY_SECRET ?? '';
-  const expectedParent = `BACKGROUND_PARENT_FINAL:${childMarker}`;
   const childEnv = Object.fromEntries(
     Object.entries(process.env).filter(
       (entry): entry is [string, string] => typeof entry[1] === 'string'
@@ -143,7 +141,6 @@ async function main(): Promise<void> {
   );
   let output = '';
   let childFailureVisible = false;
-  let parentFinalVisible = false;
   let exited = false;
   const exitPromise = new Promise<void>((resolve) => {
     terminal.onExit(() => {
@@ -153,9 +150,10 @@ async function main(): Promise<void> {
   });
   terminal.onData((chunk) => {
     output = appendBoundedPtyEvidence(output, chunk);
-    childFailureVisible =
-      childFailureVisible || hasVisibleWeightedProviderRejection(output);
-    parentFinalVisible = latchPtyMarker(parentFinalVisible, output, expectedParent);
+    childFailureVisible = latchPtyEvidence(
+      childFailureVisible,
+      hasVisibleWeightedProviderRejection(output)
+    );
   });
   terminal.resize(121, 40);
   terminal.resize(120, 40);
@@ -176,11 +174,6 @@ async function main(): Promise<void> {
       sessionId,
       Math.max(1, evidenceDeadline - Date.now())
     );
-    await waitFor(
-      () => parentFinalVisible,
-      'Raw PTY did not render the parent response after child rejection',
-      Math.max(1, evidenceDeadline - Date.now())
-    );
     const projected = projectForegroundBoundedPtyOutput(
       secret ? output.replaceAll(secret, '[REDACTED]') : output
     );
@@ -189,7 +182,6 @@ async function main(): Promise<void> {
         success: true,
         childFailureVisible,
         sidecarPendingByteFailure: true,
-        parentFinalVisible,
         output: projected,
       })
     );

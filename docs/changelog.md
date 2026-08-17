@@ -13,9 +13,10 @@ All notable changes to this project will be documented in this file.
 - resize 资格必须从 resize 后的新 PTY 数据再次观察到 truncation notice，不再用 resize
   前的 marker 立即放行；不完整证据现在报告缺失字段和有界脱敏 runner error，同时继续
   保持 release matrix framework `retry=0`
-- weighted admission raw PTY 现在同时要求 rejected child 与其后 parent final 都真实可见；
-  12 个 production PTY runner 由精确 source-contract inventory 管理，新增 runner 必须
-  显式接受 marker-latching 审计，避免同类假阴性迁移到其他长任务轨迹
+- weighted admission raw PTY 现在单调锁存 rejected child 可见性，并继续从 durable
+  inbox 证明 parent 已消费同一 completion；12 个 production PTY runner 由精确
+  source-contract inventory 管理，新增 runner 必须显式接受 marker-latching 审计，
+  避免同类假阴性迁移到其他长任务轨迹
 
 ## [0.10.47] - 2026-08-17
 

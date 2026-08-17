@@ -1,7 +1,6 @@
 import { execFile } from 'node:child_process';
 import path from 'node:path';
-import { stripVTControlCharacters } from 'node:util';
-import { promisify } from 'node:util';
+import { promisify, stripVTControlCharacters } from 'node:util';
 import type { ForegroundBoundedOutputFixture } from '../integration/real-api/foregroundBoundedOutputFixture.js';
 
 const execFileAsync = promisify(execFile);
@@ -44,12 +43,16 @@ export function projectForegroundBoundedPtyOutput(output: string): string {
   return appendBoundedPtyEvidence('', plain, SERIALIZED_PTY_OUTPUT_MAX_CHARS);
 }
 
+export function latchPtyEvidence(current: boolean, observed: boolean): boolean {
+  return current || observed;
+}
+
 export function latchPtyMarker(
   current: boolean,
   output: string,
   marker: string
 ): boolean {
-  return current || output.includes(marker);
+  return latchPtyEvidence(current, output.includes(marker));
 }
 
 export function latchForegroundBoundedPtyMarkers(

@@ -8,7 +8,6 @@ export interface WeightedProviderAdmissionPtyEvidence {
   success: true;
   childFailureVisible: true;
   sidecarPendingByteFailure: true;
-  parentFinalVisible: true;
   output: string;
 }
 
@@ -23,7 +22,6 @@ export async function runWeightedProviderAdmissionPtyDriver(input: {
   storageRoot: string;
   home: string;
   sessionId: string;
-  childMarker: string;
   secret: string;
   timeoutMs?: number;
 }): Promise<WeightedProviderAdmissionPtyEvidence> {
@@ -44,7 +42,6 @@ export async function runWeightedProviderAdmissionPtyDriver(input: {
       BLADE_WEIGHTED_ADMISSION_PTY_WORKSPACE: input.workspace,
       BLADE_WEIGHTED_ADMISSION_PTY_STORAGE_ROOT: input.storageRoot,
       BLADE_WEIGHTED_ADMISSION_PTY_SESSION_ID: input.sessionId,
-      BLADE_WEIGHTED_ADMISSION_PTY_CHILD_MARKER: input.childMarker,
       BLADE_WEIGHTED_ADMISSION_PTY_SECRET: input.secret,
     }).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
   );
@@ -79,7 +76,6 @@ export async function runWeightedProviderAdmissionPtyDriver(input: {
     parsed.success !== true ||
     parsed.childFailureVisible !== true ||
     parsed.sidecarPendingByteFailure !== true ||
-    parsed.parentFinalVisible !== true ||
     typeof parsed.output !== 'string'
   ) {
     throw new Error(

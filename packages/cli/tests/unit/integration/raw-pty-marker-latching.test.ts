@@ -38,7 +38,7 @@ describe('raw PTY marker latching source contract', () => {
     ['rootTurnAutoResumePtyRunner.ts', 'latchPtyMarker'],
     ['subagentResultAdoptionPtyRunner.ts', 'latchPtyMarker'],
     ['tuiPtyRunner.ts', 'latchPtyMarker'],
-    ['weightedProviderAdmissionPtyRunner.ts', 'latchPtyMarker'],
+    ['weightedProviderAdmissionPtyRunner.ts', 'latchPtyEvidence'],
   ] as const)('%s latches positive marker evidence', (fileName, latchName) => {
     expect(readRunner(fileName)).toContain(latchName);
   });

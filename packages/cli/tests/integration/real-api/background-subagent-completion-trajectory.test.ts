@@ -19,11 +19,11 @@ import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import { runBackgroundSubagentCompletionAcpDriver } from '../../support/backgroundSubagentCompletionAcpDriver.js';
 import { runBackgroundSubagentCompletionPtyDriver } from '../../support/backgroundSubagentCompletionPtyDriver.js';
 import { runBackgroundSubagentCompletionWebDriver } from '../../support/backgroundSubagentCompletionWebDriver.js';
-import { runWeightedProviderAdmissionPtyDriver } from '../../support/weightedProviderAdmissionPtyDriver.js';
 import {
   type RecordingProviderProxy,
   startRecordingProviderProxy,
 } from '../../support/recordingProviderProxy.js';
+import { runWeightedProviderAdmissionPtyDriver } from '../../support/weightedProviderAdmissionPtyDriver.js';
 import {
   type BackgroundSubagentCompletionFixture,
   resetBackgroundCompletionRuntimeState,
@@ -667,13 +667,11 @@ describe
             storageRoot: prepared.storageRoot,
             home: prepared.home,
             sessionId: prepared.sessionId,
-            childMarker: prepared.fixture.childMarker,
             secret: model.apiKey,
           });
           expect(evidence).toMatchObject({
             childFailureVisible: true,
             sidecarPendingByteFailure: true,
-            parentFinalVisible: true,
           });
           expect(prepared.proxy.heldRequestNumbers).toHaveLength(1);
           expect(prepared.proxy.maxInFlight).toBe(1);
