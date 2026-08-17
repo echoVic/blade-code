@@ -462,8 +462,48 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
     const release = vi
       .spyOn(CommandAdmissionGate, 'releaseCommandAdmissionGate')
       .mockImplementationOnce(async (child) => {
-        await originalRelease(child);
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        const stdout = child.stdout;
+        if (!stdout) throw new Error('foreground gate child stdout is unavailable');
+        let observedBytes = 0;
+        let cleanup = () => undefined;
+        const outputObserved = new Promise<void>((resolve, reject) => {
+          const onData = (chunk: Buffer | string) => {
+            observedBytes += Buffer.isBuffer(chunk)
+              ? chunk.length
+              : Buffer.byteLength(chunk);
+            if (observedBytes > outputBudget) {
+              cleanup();
+              resolve();
+            }
+          };
+          const onClose = () => {
+            cleanup();
+            reject(
+              new Error(
+                `foreground gate child closed after ${observedBytes} output bytes`
+              )
+            );
+          };
+          const timer = setTimeout(() => {
+            cleanup();
+            reject(
+              new Error(`foreground gate output remained at ${observedBytes} bytes`)
+            );
+          }, 5_000);
+          cleanup = () => {
+            clearTimeout(timer);
+            stdout.off('data', onData);
+            child.off('close', onClose);
+          };
+          stdout.on('data', onData);
+          child.once('close', onClose);
+        });
+        try {
+          await originalRelease(child);
+          await outputObserved;
+        } finally {
+          cleanup();
+        }
         throw new Error('injected foreground gate write failure');
       });
 

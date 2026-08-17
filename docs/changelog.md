@@ -38,6 +38,8 @@ All notable changes to this project will be documented in this file.
 - permission-mode GPT 资格不再将统一 180 秒 Provider hard timeout 局部缩短为 120 秒；
   Web terminal window 延后并在失败路径 shutdown route controller，仍保持
   `maxRetries=0`
+- foreground gate-release failure 资格在释放前订阅 stdout，并等实际观察到超过 retained
+  budget 的字节后再注入错误，不再用固定 100ms 假设大输出已经到达
 
 ## [0.10.46] - 2026-08-17
 
