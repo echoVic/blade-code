@@ -19,6 +19,13 @@ export interface ForegroundBoundedOutputPtyEvidence {
   output: string;
 }
 
+export interface ForegroundBoundedPtyMarkers {
+  sawExpected: boolean;
+  sawStdoutTail: boolean;
+  sawStderrTail: boolean;
+  sawTruncation: boolean;
+}
+
 export function appendBoundedPtyEvidence(
   current: string,
   chunk: string,
@@ -37,6 +44,23 @@ export function projectForegroundBoundedPtyOutput(output: string): string {
   return appendBoundedPtyEvidence('', plain, SERIALIZED_PTY_OUTPUT_MAX_CHARS);
 }
 
+export function latchForegroundBoundedPtyMarkers(
+  current: ForegroundBoundedPtyMarkers,
+  output: string,
+  expected: {
+    expected: string;
+    stdoutTail: string;
+    stderrTail: string;
+  }
+): ForegroundBoundedPtyMarkers {
+  return {
+    sawExpected: current.sawExpected || output.includes(expected.expected),
+    sawStdoutTail: current.sawStdoutTail || output.includes(expected.stdoutTail),
+    sawStderrTail: current.sawStderrTail || output.includes(expected.stderrTail),
+    sawTruncation: current.sawTruncation || output.includes('Output truncated'),
+  };
+}
+
 export function parseForegroundBoundedOutputPtyEvidence(
   stdout: string,
   secrets: readonly string[] = []
@@ -45,25 +69,44 @@ export function parseForegroundBoundedOutputPtyEvidence(
     throw new Error('Bounded PTY evidence exceeded its serialized budget');
   }
   const parsed = JSON.parse(stdout) as Record<string, unknown>;
-  if (
-    parsed.success !== true ||
-    parsed.sawExpected !== true ||
-    parsed.sawStdoutTail !== true ||
-    parsed.sawStderrTail !== true ||
-    parsed.noticeBeforeResize !== true ||
-    parsed.noticeAfterResize !== true ||
-    parsed.readerPaused !== true ||
-    parsed.renderedAfterReaderResume !== true ||
-    typeof parsed.output !== 'string'
-  ) {
-    throw new Error('Bounded PTY evidence is incomplete');
+  const requiredFlags = [
+    'success',
+    'sawExpected',
+    'sawStdoutTail',
+    'sawStderrTail',
+    'noticeBeforeResize',
+    'noticeAfterResize',
+    'readerPaused',
+    'renderedAfterReaderResume',
+  ] as const;
+  const incomplete: string[] = requiredFlags.filter((field) => parsed[field] !== true);
+  const projectedOutput = parsed.output;
+  if (typeof projectedOutput !== 'string') incomplete.push('output');
+  const safeOutput = typeof projectedOutput === 'string' ? projectedOutput : '';
+  if (incomplete.length > 0) {
+    let runnerError =
+      typeof parsed.error === 'string' ? parsed.error.slice(0, 300) : undefined;
+    for (const secret of secrets) {
+      if (secret && runnerError) {
+        runnerError = runnerError.replaceAll(secret, '[REDACTED]');
+      }
+    }
+    throw new Error(
+      `Bounded PTY evidence is incomplete: ${JSON.stringify({
+        incomplete,
+        ...(runnerError ? { runnerError } : {}),
+      })}`
+    );
   }
   for (const secret of secrets) {
-    if (secret && parsed.output.includes(secret)) {
+    if (secret && safeOutput.includes(secret)) {
       throw new Error('Bounded PTY evidence contains secret material');
     }
   }
-  return parsed as unknown as ForegroundBoundedOutputPtyEvidence;
+  return {
+    ...parsed,
+    output: safeOutput,
+  } as unknown as ForegroundBoundedOutputPtyEvidence;
 }
 
 export async function runForegroundBoundedOutputPtyDriver(input: {

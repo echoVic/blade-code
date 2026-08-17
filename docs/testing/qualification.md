@@ -80,6 +80,9 @@ TUI/真实 ACP SDK terminal 八格；单格 Provider deadline 180 秒、测试 t
 每格还验证 surface egress：Headless
 等待 `write(false) -> drain`，ACP 最多一个 `sessionUpdate()` in-flight，raw PTY 暂停
 reader 后继续渲染，Web 在运行中 reload 后按 durable cursor 恢复同一 tool/final state。
+raw PTY 必须锁存已经观察到的 final marker、stdout/stderr retained tail 和 truncation
+notice，不能让 resize redraw 轮换有界终端窗口后反向抹除已成立证据；同时必须从 resize
+后的新 PTY 数据再次观察 truncation notice，不能用 resize 前的历史命中放行。
 模型的整个最终响应必须严格等于单格 marker；ACP 失败诊断只能保留有界、脱敏的最终文本
 预览，不能用放宽 marker 或 framework retry 掩盖模型偏离。
 Root-turn crash auto-resume 另固定运行

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.48] - 2026-08-17
+
+### 测试相关
+
+- bounded foreground raw PTY 资格现在锁存已观察到的 assistant marker、stdout/stderr
+  retained tail 与 truncation notice；resize 之后的大量 TUI redraw 即使轮换有界终端窗口，
+  也不会抹掉 resize 之前已经成立的证据
+- resize 资格必须从 resize 后的新 PTY 数据再次观察到 truncation notice，不再用 resize
+  前的 marker 立即放行；不完整证据现在报告缺失字段和有界脱敏 runner error，同时继续
+  保持 release matrix framework `retry=0`
+
 ## [0.10.47] - 2026-08-17
 
 ### 稳定性

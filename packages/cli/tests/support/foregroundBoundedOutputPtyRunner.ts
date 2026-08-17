@@ -1,6 +1,7 @@
 import { spawn } from 'bun-pty';
 import {
   appendBoundedPtyEvidence,
+  latchForegroundBoundedPtyMarkers,
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
 
@@ -77,10 +78,26 @@ async function main(): Promise<void> {
   let readerPaused = false;
   let pauseInjected = false;
   let receivedAfterResume = false;
+  let resizeOutput = '';
+  let captureResizeOutput = false;
+  let markers = {
+    sawExpected: false,
+    sawStdoutTail: false,
+    sawStderrTail: false,
+    sawTruncation: false,
+  };
   terminal.onData((chunk) => {
     if (readerPaused) return;
     if (pauseInjected) receivedAfterResume = true;
     output = appendBoundedPtyEvidence(output, chunk);
+    markers = latchForegroundBoundedPtyMarkers(markers, output, {
+      expected,
+      stdoutTail,
+      stderrTail,
+    });
+    if (captureResizeOutput) {
+      resizeOutput = appendBoundedPtyEvidence(resizeOutput, chunk);
+    }
   });
 
   try {
@@ -102,32 +119,30 @@ async function main(): Promise<void> {
     readerPaused = false;
     await waitFor(
       () =>
-        output.includes(expected) &&
-        output.includes('Output truncated') &&
-        output.includes(stdoutTail) &&
-        output.includes(stderrTail),
+        markers.sawExpected &&
+        markers.sawTruncation &&
+        markers.sawStdoutTail &&
+        markers.sawStderrTail,
       'Timed out waiting for bounded foreground TUI evidence',
       180_000
     );
-    const noticeBeforeResize = output.includes('Output truncated');
+    const noticeBeforeResize = markers.sawTruncation;
+    captureResizeOutput = true;
     terminal.resize(100, 36);
-    const resizeBoundary = output.length;
     await waitFor(
-      () =>
-        output.slice(Math.max(0, resizeBoundary - 1)).includes('Output truncated') ||
-        output.includes(expected),
+      () => resizeOutput.includes('Output truncated'),
       'TUI resize did not preserve completed output',
       10_000
     );
     const evidence = {
       success: true,
-      sawExpected: output.includes(expected),
-      sawStdoutTail: output.includes(stdoutTail),
-      sawStderrTail: output.includes(stderrTail),
+      sawExpected: markers.sawExpected,
+      sawStdoutTail: markers.sawStdoutTail,
+      sawStderrTail: markers.sawStderrTail,
       noticeBeforeResize,
-      noticeAfterResize: output.includes('Output truncated'),
+      noticeAfterResize: resizeOutput.includes('Output truncated'),
       readerPaused: pauseInjected,
-      renderedAfterReaderResume: receivedAfterResume && output.includes(expected),
+      renderedAfterReaderResume: receivedAfterResume && markers.sawExpected,
       output: projectForegroundBoundedPtyOutput(
         secret ? output.replaceAll(secret, '[REDACTED]') : output
       ),
