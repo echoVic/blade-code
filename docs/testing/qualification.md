@@ -740,7 +740,9 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
   parent/child Session lease 后必须先回收对应 foreground tree，再闭合 orphan Bash tool
   receipt。延迟文件不得出现，lease commit/gate release 失败必须零执行，PID identity
   mismatch 不得误杀，损坏 sidecar 必须阻断恢复，sidecar 与 CLI 输出不得包含命令、
-  环境、输出或 API key；
+  环境、输出或 API key。Subagent 对照不得依赖固定 sleep：TERM-ignoring descendant
+  必须等待 host gate，host 只在 root PID 退出且 durable lease 删除后开放 gate；若进程树
+  有任何残留，forbidden side effect 必须确定性出现并使资格失败；
 - leaderless process group：parent 真实 API 轨迹必须先证明 shell/gate root PID 已退出、
   TERM-ignoring 后代仍存活，再硬杀 Blade owner。Linux/macOS reaper 必须独立探测负
   PGID 并在延迟副作用前完成 TERM/KILL；root PID 在 grace 中复用时禁止 KILL 并保留
@@ -766,7 +768,10 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
   保留同一 tool card。Web/PTY 验证双流 total/retained/omitted；ACP 验证 merged
   stdout、zero stderr 和 `terminal_output_merged=true`。所有入口都必须保留双 tail、
   隐藏双 sentinel 与 API key，并清零 Chromium/page/SSE、PTY、ACP terminal、
-  process identity、foreground lease、port 和临时根。Computer Use 仅在宿主提供稳定
+  process identity、foreground lease、port 和临时根。虚拟列表重挂载 completed card 时，
+  Web 必须按 durable `toolCallId` 重新定位并触发真实 click handler，再断言
+  `aria-expanded=true` 和有界输出，不得把布局 actionability 抖动当成 runtime failure。
+  Computer Use 仅在宿主提供稳定
   桌面桥接时作为补充视觉证据，不能替代自动 raw PTY 与协议断言；
 - 跨表面 session branch：TUI `/branch` 原子切换到持久化子会话；Web 通过 HTTP fork 路由创建并选中子会话，活动回合返回 `409`；ACP `/branch` 返回可由标准 `session/load` 加载的子会话 ID。Flash 和 Pro 都必须在删除原 marker 后，仅依赖继承的 Read 结果继续 Write/Bash，并证明父 transcript 未改变；
 - durable turn rewind：Flash 和 Pro 都必须先通过真实模型 Read/Edit/Read 产生文件

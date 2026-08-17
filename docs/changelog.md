@@ -32,6 +32,9 @@ All notable changes to this project will be documented in this file.
   Provider hard/idle watchdog；超时会输出脱敏的 Bus、metadata、inbox、turn、transcript、
   目标文件与 Runtime residency 证据，并在失败路径强制 shutdown，避免测试 timer 抢先及
   active run 泄漏
+- bounded foreground Web 资格按 durable tool call identity 展开会被虚拟列表重挂载的
+  completed Bash card；subagent hard-crash 资格改用 lease-removal 后开放的 descendant
+  gate 检测残留进程树，移除 GUI actionability 与固定五秒副作用窗口的时序竞争
 
 ## [0.10.46] - 2026-08-17
 

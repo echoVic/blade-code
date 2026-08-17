@@ -1,12 +1,12 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { chromium, type Page } from 'playwright';
 import {
   captureProcessIdentity,
-  processIdentityMatches,
   type ProcessIdentity,
+  processIdentityMatches,
 } from '../../src/utils/process/ProcessIdentity.js';
 import type { ForegroundBoundedOutputFixture } from '../integration/real-api/foregroundBoundedOutputFixture.js';
 
@@ -443,8 +443,28 @@ async function expandAndReadBashCard(
     throw new Error('Bash browser card did not expose truncation state');
   }
   const toggle = card.locator('[data-tool-call-id]');
-  if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
-  const output = card.locator('[data-tool-output]');
+  const toolCallId = await toggle.getAttribute('data-tool-call-id');
+  if (!toolCallId) {
+    throw new Error('Bash browser card did not expose a tool call ID');
+  }
+  const toggleSelector = `[data-tool-call-id=${JSON.stringify(toolCallId)}]`;
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') {
+    // The virtualized timeline may replace a completed card while Playwright is
+    // performing actionability checks. Dispatch to the durable call identity,
+    // then assert the same UI state transition.
+    await page.locator(toggleSelector).dispatchEvent('click');
+    await page.waitForFunction(
+      (selector) =>
+        document.querySelector(selector)?.getAttribute('aria-expanded') === 'true',
+      toggleSelector,
+      { timeout: Math.min(timeoutMs, 30_000) }
+    );
+  }
+  const expandedCard = page
+    .locator(cardSelector)
+    .filter({ has: page.locator(toggleSelector) })
+    .last();
+  const output = expandedCard.locator('[data-tool-output]');
   await output.waitFor({ state: 'visible' });
   const text = (await output.textContent()) ?? '';
   if (
@@ -455,7 +475,7 @@ async function expandAndReadBashCard(
   ) {
     throw new Error('Bash browser card violated retained output markers');
   }
-  if ((await card.locator('[data-tool-truncation-notice]').count()) !== 1) {
+  if ((await expandedCard.locator('[data-tool-truncation-notice]').count()) !== 1) {
     throw new Error('Bash browser card truncation notice count is invalid');
   }
   if (text.length > 500) {

@@ -32,8 +32,9 @@ getState().config.actions.setConfig({
 await runWithCwdOverride(workspace, async () => {
   const command =
     `printf '%s' "$$" > child-foreground.pid; ` +
-    `trap '' TERM; sleep 5; printf late > forbidden-child-late-effect.txt; ` +
-    `sleep 300`;
+    `trap '' TERM; ` +
+    `(trap '' TERM; while [ ! -f child-foreground-release ]; do sleep 0.05; done; ` +
+    `printf late > forbidden-child-late-effect.txt) & wait`;
   const manager = BackgroundAgentManager.getInstance();
   const startedId = manager.startBackgroundAgent({
     config: {

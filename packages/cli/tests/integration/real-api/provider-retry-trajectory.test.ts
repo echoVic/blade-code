@@ -839,7 +839,6 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
             );
           }),
         ]);
-        const commandStartedAt = Date.now();
         commandPid = launched.commandPid;
         const leasePath = path.join(
           getProjectStoragePath(workspace),
@@ -871,10 +870,19 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
             return true;
           }
         }, 10_000);
-        const remainingDelay = 5_500 - (Date.now() - commandStartedAt);
-        if (remainingDelay > 0) {
-          await new Promise((resolve) => setTimeout(resolve, remainingDelay));
-        }
+        await waitForValue(async () => {
+          try {
+            await access(leasePath);
+            return undefined;
+          } catch (error) {
+            if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+              return true;
+            }
+            throw error;
+          }
+        }, 10_000);
+        await writeFile(path.join(workspace, 'child-foreground-release'), 'release\n');
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
         await expect(
           access(path.join(workspace, 'forbidden-child-late-effect.txt'))
         ).rejects.toMatchObject({ code: 'ENOENT' });
