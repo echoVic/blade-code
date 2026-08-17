@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.47] - 2026-08-17
+
+### 稳定性
+
+- 修复 active tool 在 shutdown 取消后以 `shouldExitLoop` 返回时抢先绕过统一 abort
+  terminal 的问题；cancelled turn 现在先持久化模型可见的 `<turn_aborted>` system
+  marker，再提交 `turn_aborted(cause="cancelled")`，冷恢复不再只看到 aborted tool
+  result
+
+### 测试相关
+
+- graceful shutdown release trajectory 现在同时检查 authoritative JSONL 和透明代理：
+  恢复阶段要求 exactly-one Provider request，并直接证明完整 `<turn_aborted>` system
+  marker 已进入请求；同时继续要求零重复 Bash、持久化 `turn_completed`、进程树/lease
+  回收与延迟副作用缺失
+- 为 production Task Home 暴露只读 dispatch readiness 数据契约；weighted task Web
+  轨迹先等待 workspace/model readiness，再提交真实任务，超时时输出结构化 GUI 状态，
+  避免把 composer 可输入错误等同于 task dispatch 已可用
+- 两项修复均保持 release matrix framework `retry=0`，不增加 Provider 或测试重试
+
 ## [0.10.46] - 2026-08-17
 
 ### 测试相关

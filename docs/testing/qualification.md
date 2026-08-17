@@ -237,7 +237,10 @@ barrier，再提交包含唯一 marker 与大段非 ASCII 文本的 task B。B �
 catalog/reload 无 ghost task；ACP 持久化并投影 retryable
 `capacity/pending_bytes`，assistant 正文不含 admission metadata。随后普通小 task C
 必须进入 queue position 1，并在 A 释放后取得独立真实 Provider 结果。代理请求 body
-不得包含 B marker。
+不得包含 B marker。Task Home 的 composer 可输入不代表 dispatch 已可用；Chromium
+必须先观察显式 `data-blade-task-dispatch-ready=true`，该状态同时受 workspace 与 model
+readiness 约束。readiness 超时必须输出结构化状态诊断，不得盲等 submit disabled 或通过
+重载/重试绕过。
 
 非干扰对照固定运行 Flash/Pro Headless `--task-isolation local` coding task 与 Flash/Pro
 raw PTY root turn；全部在同一最小 byte limit 下完成。既有 production Web task
@@ -869,12 +872,15 @@ ACP update、diagnostics 或录制的 Provider body。
    文件存在且进程仍活跃后发送对应 production `SIGTERM`。
 2. Agent/Session owner 必须先关闭新工作入口，再中止 active Provider/tool path，等待
    一个 `turn_aborted(cause="cancelled")` 提交后释放 Runtime、Session lease 与 transport。
-   同一 interrupted turn 不得出现 `turn_completed` 或第二个 terminal record。
+   active tool 的 `shouldExitLoop` 不得抢先绕过 abort terminal；同一 interrupted turn
+   不得出现 `turn_completed` 或第二个 terminal record。
 3. foreground child 必须忽略 TERM 并安排延迟 forbidden side effect；shutdown 必须
    回收完整进程树和 durable lease，等待对照窗口后 forbidden 文件仍不存在。
 4. 原 durable input 必须保持可恢复。同 Session 的 production Headless resume 不得再次
-   调用 Bash，只能从 `<turn_aborted>` 历史完成 marker，并最终新增一个
-   `turn_completed`。
+   调用 Bash；透明代理必须观察 exactly-one resume request，且该请求直接包含完整
+   `<turn_aborted>` system marker 与原请求 marker，随后产生非空 final 并新增一个
+   `turn_completed`。不得把模型是否逐字复述 marker 当成 runtime 是否恢复该 marker
+   的唯一证据。
 5. Headless、真实 ACP stdio + terminal、raw PTY TUI 与 production Chromium Web GUI
    分别从独立进程进入。Web 必须通过真实 composer 提交；关闭 viewer 不能等同于 server
    shutdown。每格回收 browser/page、PTY、ACP connection、server、port、process tree、
