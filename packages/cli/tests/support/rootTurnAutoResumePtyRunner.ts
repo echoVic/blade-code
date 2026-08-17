@@ -1,6 +1,5 @@
-import { access } from 'node:fs/promises';
 import { spawn } from 'bun-pty';
-import { getSessionInboxFilePath } from '../../src/context/storage/pathUtils.js';
+import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
 import {
   appendBoundedPtyEvidence,
   projectForegroundBoundedPtyOutput,
@@ -33,29 +32,52 @@ function waitFor(
   });
 }
 
-async function waitForInboxRemoval(
+async function waitForDurableCompletion(
   workspace: string,
   sessionId: string,
+  inputMessageId: string,
   timeoutMs: number
 ): Promise<void> {
-  const inboxPath = getSessionInboxFilePath(workspace, sessionId);
+  const store = new PersistentStore(workspace);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    try {
-      await access(inboxPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-      throw error;
+    const events = (await store.loadEvents(sessionId)) ?? [];
+    const turn = events.findLast(
+      (event) =>
+        event.type === 'turn_started' &&
+        event.data.inputMessageIds?.includes(inputMessageId)
+    );
+    const turnId = turn?.type === 'turn_started' ? turn.data.turnId : undefined;
+    const acknowledgement = events.findLast(
+      (event) =>
+        event.type === 'inbox_acknowledged' &&
+        event.data.messageIds.includes(inputMessageId)
+    );
+    const acknowledgementSeq = acknowledgement?.seq;
+    if (
+      typeof acknowledgementSeq === 'number' &&
+      events.some(
+        (event) =>
+          event.type === 'turn_completed' &&
+          event.data.turnId === turnId &&
+          typeof event.seq === 'number' &&
+          event.seq > acknowledgementSeq
+      )
+    ) {
+      return;
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error('TUI result was visible before durable inbox acknowledgement');
+  throw new Error(
+    'TUI root-turn response did not reach durable acknowledgement and completion'
+  );
 }
 
 async function main(): Promise<void> {
   const cliEntry = required('BLADE_ROOT_RESUME_PTY_CLI_ENTRY');
   const workspace = required('BLADE_ROOT_RESUME_PTY_WORKSPACE');
   const sessionId = required('BLADE_ROOT_RESUME_PTY_SESSION_ID');
+  const inputMessageId = required('BLADE_ROOT_RESUME_PTY_INPUT_MESSAGE_ID');
   const expected = required('BLADE_ROOT_RESUME_PTY_EXPECTED');
   const secret = process.env.BLADE_ROOT_RESUME_PTY_SECRET ?? '';
   const childEnv = Object.fromEntries(
@@ -85,6 +107,7 @@ async function main(): Promise<void> {
     }
   );
   let output = '';
+  let sawExpected = false;
   let exited = false;
   const exitPromise = new Promise<void>((resolve) => {
     terminal.onExit(() => {
@@ -94,21 +117,28 @@ async function main(): Promise<void> {
   });
   terminal.onData((chunk) => {
     output = appendBoundedPtyEvidence(output, chunk);
+    if (output.includes(expected)) sawExpected = true;
   });
 
   try {
+    const evidenceDeadline = Date.now() + 180_000;
     await waitFor(
-      () => output.includes(expected),
+      () => sawExpected,
       'Timed out waiting for root-turn TUI auto-resume',
-      180_000
+      Math.max(1, evidenceDeadline - Date.now())
     );
-    await waitForInboxRemoval(workspace, sessionId, 10_000);
+    await waitForDurableCompletion(
+      workspace,
+      sessionId,
+      inputMessageId,
+      Math.max(1, evidenceDeadline - Date.now())
+    );
     terminal.resize(100, 36);
     await new Promise((resolve) => setTimeout(resolve, 250));
     process.stdout.write(
       JSON.stringify({
         success: true,
-        sawExpected: output.includes(expected),
+        sawExpected,
         output: projectForegroundBoundedPtyOutput(
           secret ? output.replaceAll(secret, '[REDACTED]') : output
         ),

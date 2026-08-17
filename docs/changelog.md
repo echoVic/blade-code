@@ -26,6 +26,10 @@ All notable changes to this project will be documented in this file.
 - weighted Provider raw PTY 轨迹在可见 failure 后继续等待 hidden completion ack 与其后
   `turn_completed`，再验证 proxy 并发；Goal PTY follow-up prompt 不再携带完整预期响应，
   Provider request 通过解析 JSON `messages` 验证，避免把输入回显当成 assistant 完成
+- root-turn auto-resume 使用与恢复 prompt、marker 文件和 Read output 都不同的最终 token；
+  raw PTY 按精确 inbox message ID 等待持久化 acknowledgement 与同一 turn 的
+  `turn_completed`，不再让历史回显或固定十秒窗口伪造 terminal 结果；ACP 多 Provider
+  对照的终答窗口晚于 180 秒 runtime hard timeout，仍保持 framework `retry=0`
 - bounded foreground output prompt 要求整个最终响应严格等于 marker，ACP 偏离时输出有界
   脱敏诊断；所有修复均保持 release matrix framework `retry=0`，不增加 Provider 或测试重试
 - durable Web interaction recovery 资格现在使用可关闭的 route controller，完成窗口晚于

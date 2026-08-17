@@ -30,6 +30,7 @@ import {
   createBoundedOutputFixture,
   INTERACTIVE_SHELL_INPUT,
 } from './interactiveShellFixture.js';
+import { seedRootTurnAutoResumeFixture } from './rootTurnAutoResumeFixture.js';
 import {
   buildRealApiRuntimeConfig,
   expandDeepSeekModelMatrix,
@@ -37,7 +38,6 @@ import {
   isRealApiTestEnabled,
   type TestModelConfig,
 } from './testConfig.js';
-import { seedRootTurnAutoResumeFixture } from './rootTurnAutoResumeFixture.js';
 
 const modelConfigs = isRealApiTestEnabled() ? getEnabledModelConfigs() : [];
 const questionModelConfigs = expandDeepSeekModelMatrix(modelConfigs);
@@ -981,9 +981,9 @@ describe.skipIf(!enabled)('ACP session/load trajectory (real API)', () => {
                     : []
                 )
                 .join('');
-              expect(agentOutput).toContain(marker);
+              expect(agentOutput).toContain(seeded.expectedResponse);
             },
-            { timeout: 120_000, interval: 100 }
+            { timeout: 210_000, interval: 100 }
           );
           expect(await readFile(seeded.markerPath, 'utf8')).toBe(`${marker}\n`);
           expect(

@@ -203,7 +203,7 @@ describe
             .join('');
 
           expect(exitCode, stderr.replaceAll(model.apiKey, '[redacted]')).toBe(0);
-          expect(response).toContain(marker);
+          expect(response).toContain(fixture.expectedResponse);
           expect(
             events.filter(
               (event) => event.type === 'tool_start' && event.tool_name === 'Read'
@@ -247,10 +247,10 @@ describe
           const evidence = await runRootTurnAutoResumeAcpDriver({
             workspace: prepared.workspace,
             sessionId: prepared.sessionId,
-            expected: prepared.marker,
+            expected: prepared.fixture.expectedResponse,
             secret: model.apiKey,
           });
-          expect(evidence.finalText).toContain(prepared.marker);
+          expect(evidence.finalText).toContain(prepared.fixture.expectedResponse);
           expect(
             evidence.updates.filter(
               (notification) =>
@@ -301,7 +301,8 @@ describe
             storageRoot: prepared.storageRoot,
             home: prepared.home,
             sessionId: prepared.sessionId,
-            expected: prepared.marker,
+            inputMessageId: prepared.fixture.inputMessageId,
+            expected: prepared.fixture.expectedResponse,
             secret: model.apiKey,
           });
           expect(evidence.sawExpected).toBe(true);
@@ -329,7 +330,7 @@ describe
             storageRoot: prepared.storageRoot,
             home: prepared.home,
             sessionId: prepared.sessionId,
-            expected: prepared.marker,
+            expected: prepared.fixture.expectedResponse,
             secret: model.apiKey,
           });
           expect(evidence).toMatchObject({

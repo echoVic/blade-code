@@ -26,6 +26,7 @@ import { BladeServer } from '../../../src/server/server.js';
 import { SkillRegistry } from '../../../src/skills/SkillRegistry.js';
 import { ensureStoreInitialized, getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
+import { seedRootTurnAutoResumeFixture } from './rootTurnAutoResumeFixture.js';
 import {
   assertForkChildToolTrace,
   assertForkLineage,
@@ -48,7 +49,6 @@ import {
   resolveForkQualificationModels,
   type TestModelConfig,
 } from './testConfig.js';
-import { seedRootTurnAutoResumeFixture } from './rootTurnAutoResumeFixture.js';
 
 const enabled = isRealApiTestEnabled();
 const modelConfigs = enabled
@@ -1074,7 +1074,7 @@ describeWebRegression('Web session trajectory regressions (real API)', () => {
             .filter((event) => event.type === 'message.delta')
             .map((event) => String(event.properties.delta ?? ''))
             .join('');
-          expect(output).toContain(marker);
+          expect(output).toContain(seeded.expectedResponse);
           expect(readFileSync(seeded.markerPath, 'utf8')).toBe(`${marker}\n`);
           expect(
             collector.events.some(

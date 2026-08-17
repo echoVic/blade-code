@@ -15,6 +15,7 @@ export async function runRootTurnAutoResumePtyDriver(input: {
   storageRoot: string;
   home: string;
   sessionId: string;
+  inputMessageId: string;
   expected: string;
   secret: string;
   timeoutMs?: number;
@@ -32,6 +33,7 @@ export async function runRootTurnAutoResumePtyDriver(input: {
       BLADE_ROOT_RESUME_PTY_CLI_ENTRY: cliEntry,
       BLADE_ROOT_RESUME_PTY_WORKSPACE: input.workspace,
       BLADE_ROOT_RESUME_PTY_SESSION_ID: input.sessionId,
+      BLADE_ROOT_RESUME_PTY_INPUT_MESSAGE_ID: input.inputMessageId,
       BLADE_ROOT_RESUME_PTY_EXPECTED: input.expected,
       BLADE_ROOT_RESUME_PTY_SECRET: input.secret,
     }).filter((entry): entry is [string, string] => typeof entry[1] === 'string')

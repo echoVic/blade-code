@@ -84,7 +84,12 @@ reader 后继续渲染，Web 在运行中 reload 后按 durable cursor 恢复同
 预览，不能用放宽 marker 或 framework retry 掩盖模型偏离。
 Root-turn crash auto-resume 另固定运行
 DeepSeek Flash/Pro × Headless/raw PTY TUI/production Chromium Web/真实 ACP
-`session/load` 八格，所有入口都不得依赖额外 wake-up prompt。Edit+rewind、
+`session/load` 八格，所有入口都不得依赖额外 wake-up prompt。最终响应 token 必须与
+恢复 prompt、marker 文件和 Read output 区分，且不能在 prompt 中完整出现；raw PTY
+必须按精确 inbox message ID 观察 acknowledgement，以及同一 turn 随后的
+`turn_completed`，不能以终端历史命中或固定等待窗口代替 durable terminal。ACP
+多 Provider 对照的终答窗口必须晚于 180 秒 runtime hard timeout，并为销毁连接与临时
+目录清理保留剩余测试窗口；不得通过 Provider 或 framework retry 延长。Edit+rewind、
 Goal finalization crash handoff 使用同一 Flash/Pro × 四入口八格矩阵，恢复阶段必须
 零 Provider 请求，随后再从同一 surface 完成真实 API follow-up。PTY follow-up 用户输入
 不得包含完整预期响应 marker；Provider request body 必须先解析 JSON `messages` 再验证
@@ -715,7 +720,9 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
   Session owner；新 Runtime 必须先提交 restart receipt，再从 canonical JSONL model
   projection 恢复原输入。Headless bare `--resume`、TUI `--resume` 和 Web GUI SSE
   reconnect 均只能执行一次 Read，Write/receipt/Read 各恰好一次，GUI reload 后结果仍
-  可见且浏览器无 application/network error；
+  可见且浏览器无 application/network error。最终 token 不得完整出现在恢复 prompt 或
+  Read 结果中；PTY 终态必须由精确 inbox acknowledgement 与对应 `turn_completed`
+  共同证明；
 - 响应提交恢复：真实 DeepSeek 产生最终文本后注入 assistant message fsync 失败；临时
   content delta 可以被观察，但当前 turn 必须 aborted、不得提交 assistant 或
   `turn_completed`。冷启动由 wake-up 输入触发后必须优先重新执行原 durable inbox，
