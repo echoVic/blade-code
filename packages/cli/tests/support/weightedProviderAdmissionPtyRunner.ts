@@ -4,6 +4,7 @@ import { spawn } from 'bun-pty';
 import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
 import {
   appendBoundedPtyEvidence,
+  latchPtyMarker,
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
 import { hasVisibleWeightedProviderRejection } from './weightedProviderAdmissionPtyDriver.js';
@@ -141,6 +142,8 @@ async function main(): Promise<void> {
     }
   );
   let output = '';
+  let childFailureVisible = false;
+  let parentFinalVisible = false;
   let exited = false;
   const exitPromise = new Promise<void>((resolve) => {
     terminal.onExit(() => {
@@ -150,6 +153,9 @@ async function main(): Promise<void> {
   });
   terminal.onData((chunk) => {
     output = appendBoundedPtyEvidence(output, chunk);
+    childFailureVisible =
+      childFailureVisible || hasVisibleWeightedProviderRejection(output);
+    parentFinalVisible = latchPtyMarker(parentFinalVisible, output, expectedParent);
   });
   terminal.resize(121, 40);
   terminal.resize(120, 40);
@@ -161,7 +167,7 @@ async function main(): Promise<void> {
       Math.max(1, evidenceDeadline - Date.now())
     );
     await waitFor(
-      () => hasVisibleWeightedProviderRejection(output),
+      () => childFailureVisible,
       'Raw PTY did not render the rejected background child',
       Math.max(1, evidenceDeadline - Date.now())
     );
@@ -170,15 +176,20 @@ async function main(): Promise<void> {
       sessionId,
       Math.max(1, evidenceDeadline - Date.now())
     );
+    await waitFor(
+      () => parentFinalVisible,
+      'Raw PTY did not render the parent response after child rejection',
+      Math.max(1, evidenceDeadline - Date.now())
+    );
     const projected = projectForegroundBoundedPtyOutput(
       secret ? output.replaceAll(secret, '[REDACTED]') : output
     );
     process.stdout.write(
       JSON.stringify({
         success: true,
-        childFailureVisible: true,
+        childFailureVisible,
         sidecarPendingByteFailure: true,
-        parentFinalVisible: output.includes(expectedParent),
+        parentFinalVisible,
         output: projected,
       })
     );

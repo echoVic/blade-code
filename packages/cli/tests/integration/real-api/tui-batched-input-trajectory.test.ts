@@ -170,7 +170,6 @@ describeReal('production TUI batched input trajectory (real API)', () => {
       expect(proxy.requestBodies.length).toBeGreaterThan(0);
       expect(proxy.requestBodies.join('\n')).toContain(prompt);
       expect(evidence).toMatchObject({ success: true, sawExpected: true });
-      expect(evidence.output).toContain(expected);
       expect(evidence.output).not.toContain(qualification.apiKey);
     } finally {
       await proxy.close().catch(() => undefined);

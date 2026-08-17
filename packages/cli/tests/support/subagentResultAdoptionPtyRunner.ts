@@ -3,6 +3,7 @@ import { spawn } from 'bun-pty';
 import { getSessionInboxFilePath } from '../../src/context/storage/pathUtils.js';
 import {
   appendBoundedPtyEvidence,
+  latchPtyMarker,
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
 
@@ -88,6 +89,8 @@ async function main(): Promise<void> {
     }
   );
   let output = '';
+  let sawChild = false;
+  let sawParent = false;
   let exited = false;
   const exitPromise = new Promise<void>((resolve) => {
     terminal.onExit(() => {
@@ -97,11 +100,13 @@ async function main(): Promise<void> {
   });
   terminal.onData((chunk) => {
     output = appendBoundedPtyEvidence(output, chunk);
+    sawChild = latchPtyMarker(sawChild, output, childMarker);
+    sawParent = latchPtyMarker(sawParent, output, parentResponse);
   });
 
   try {
     await waitFor(
-      () => output.includes(childMarker) && output.includes(parentResponse),
+      () => sawChild && sawParent,
       'Timed out waiting for adopted child and resumed parent in TUI',
       180_000
     );
@@ -111,8 +116,8 @@ async function main(): Promise<void> {
     process.stdout.write(
       JSON.stringify({
         success: true,
-        sawChild: output.includes(childMarker),
-        sawParent: output.includes(parentResponse),
+        sawChild,
+        sawParent,
         output: projectForegroundBoundedPtyOutput(
           secret ? output.replaceAll(secret, '[REDACTED]') : output
         ),

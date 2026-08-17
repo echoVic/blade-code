@@ -1,4 +1,8 @@
 import { spawn } from 'bun-pty';
+import {
+  appendBoundedPtyEvidence,
+  latchPtyMarker,
+} from './foregroundBoundedOutputPtyDriver.js';
 
 const required = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -11,24 +15,23 @@ const workspace = required('BLADE_TUI_TEST_WORKSPACE');
 const prompt = required('BLADE_TUI_TEST_PROMPT');
 const expected = required('BLADE_TUI_TEST_EXPECTED');
 const sessionId = required('BLADE_TUI_TEST_SESSION_ID');
-const MAX_EVIDENCE_CHARS = 24_000;
 
-function waitForOutput(
-  readOutput: () => string,
-  marker: string,
+function waitFor(
+  predicate: () => boolean,
+  description: string,
   timeoutMs: number
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
     const timer = setInterval(() => {
-      if (readOutput().includes(marker)) {
+      if (predicate()) {
         clearInterval(timer);
         resolve();
         return;
       }
       if (Date.now() - startedAt >= timeoutMs) {
         clearInterval(timer);
-        reject(new Error(`Timed out waiting for TUI marker: ${marker}`));
+        reject(new Error(`Timed out waiting for TUI marker: ${description}`));
       }
     }, 50);
   });
@@ -61,20 +64,22 @@ const terminal = spawn(
   }
 );
 let output = '';
+let sawExpected = false;
 terminal.onData((chunk) => {
-  output = `${output}${chunk}`.slice(-MAX_EVIDENCE_CHARS);
+  output = appendBoundedPtyEvidence(output, chunk);
+  sawExpected = latchPtyMarker(sawExpected, output, expected);
 });
 
 try {
-  await waitForOutput(() => output, '请输入您的问题', 30_000);
+  await waitFor(() => output.includes('请输入您的问题'), 'composer', 30_000);
   terminal.write(`\u001B[200~${prompt}\u001B[201~`);
-  await waitForOutput(() => output, 'BRACKETED_', 10_000);
+  await waitFor(() => output.includes('BRACKETED_'), 'bracketed paste', 10_000);
   terminal.write('\r');
-  await waitForOutput(() => output, expected, 180_000);
+  await waitFor(() => sawExpected, expected, 180_000);
   process.stdout.write(
     JSON.stringify({
       success: true,
-      sawExpected: output.includes(expected),
+      sawExpected,
       output,
     })
   );

@@ -6,12 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ### 测试相关
 
-- bounded foreground raw PTY 资格现在锁存已观察到的 assistant marker、stdout/stderr
-  retained tail 与 truncation notice；resize 之后的大量 TUI redraw 即使轮换有界终端窗口，
-  也不会抹掉 resize 之前已经成立的证据
+- production raw PTY 资格现在统一单调锁存已观察到的正向 marker；bounded foreground、
+  background completion、Goal finalization、root-turn auto-resume、completed-subagent
+  adoption、基础 bracketed-paste 与 weighted admission 不再于 resize 或后续 redraw 后
+  从有界终端 tail 重算已经成立的证据
 - resize 资格必须从 resize 后的新 PTY 数据再次观察到 truncation notice，不再用 resize
   前的 marker 立即放行；不完整证据现在报告缺失字段和有界脱敏 runner error，同时继续
   保持 release matrix framework `retry=0`
+- weighted admission raw PTY 现在同时要求 rejected child 与其后 parent final 都真实可见；
+  12 个 production PTY runner 由精确 source-contract inventory 管理，新增 runner 必须
+  显式接受 marker-latching 审计，避免同类假阴性迁移到其他长任务轨迹
 
 ## [0.10.47] - 2026-08-17
 

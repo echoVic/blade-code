@@ -8,6 +8,7 @@ export interface WeightedProviderAdmissionPtyEvidence {
   success: true;
   childFailureVisible: true;
   sidecarPendingByteFailure: true;
+  parentFinalVisible: true;
   output: string;
 }
 
@@ -78,6 +79,7 @@ export async function runWeightedProviderAdmissionPtyDriver(input: {
     parsed.success !== true ||
     parsed.childFailureVisible !== true ||
     parsed.sidecarPendingByteFailure !== true ||
+    parsed.parentFinalVisible !== true ||
     typeof parsed.output !== 'string'
   ) {
     throw new Error(

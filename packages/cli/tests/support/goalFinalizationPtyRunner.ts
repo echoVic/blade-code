@@ -3,6 +3,7 @@ import { spawn } from 'bun-pty';
 import { getSessionInboxFilePath } from '../../src/context/storage/pathUtils.js';
 import {
   appendBoundedPtyEvidence,
+  latchPtyMarker,
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
 
@@ -90,6 +91,9 @@ async function main(): Promise<void> {
     }
   );
   let output = '';
+  let sawInitial = false;
+  let sawCompleteGoal = false;
+  let sawFollowup = false;
   let exited = false;
   const exitPromise = new Promise<void>((resolve) => {
     terminal.onExit(() => {
@@ -99,14 +103,14 @@ async function main(): Promise<void> {
   });
   terminal.onData((chunk) => {
     output = appendBoundedPtyEvidence(output, chunk);
+    sawInitial = latchPtyMarker(sawInitial, output, expectedInitial);
+    sawCompleteGoal = latchPtyMarker(sawCompleteGoal, output, 'goal:complete');
+    sawFollowup = latchPtyMarker(sawFollowup, output, expectedFollowup);
   });
 
   try {
     await waitFor(
-      () =>
-        output.includes(expectedInitial) &&
-        output.includes('goal:complete') &&
-        output.includes('输入命令'),
+      () => sawInitial && sawCompleteGoal && output.includes('输入命令'),
       'Timed out waiting for recovered Goal finalization in TUI',
       60_000
     );
@@ -119,7 +123,7 @@ async function main(): Promise<void> {
     );
     terminal.write('\r');
     await waitFor(
-      () => output.includes(expectedFollowup),
+      () => sawFollowup,
       'Timed out waiting for the real Provider Goal follow-up',
       180_000
     );
@@ -129,9 +133,9 @@ async function main(): Promise<void> {
     process.stdout.write(
       JSON.stringify({
         success: true,
-        sawInitial: output.includes(expectedInitial),
-        sawCompleteGoal: output.includes('goal:complete'),
-        sawFollowup: output.includes(expectedFollowup),
+        sawInitial,
+        sawCompleteGoal,
+        sawFollowup,
         output: projectForegroundBoundedPtyOutput(
           secret ? output.replaceAll(secret, '[REDACTED]') : output
         ),

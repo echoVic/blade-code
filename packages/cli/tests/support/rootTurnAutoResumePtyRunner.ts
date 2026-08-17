@@ -2,6 +2,7 @@ import { spawn } from 'bun-pty';
 import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
 import {
   appendBoundedPtyEvidence,
+  latchPtyMarker,
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
 
@@ -117,7 +118,7 @@ async function main(): Promise<void> {
   });
   terminal.onData((chunk) => {
     output = appendBoundedPtyEvidence(output, chunk);
-    if (output.includes(expected)) sawExpected = true;
+    sawExpected = latchPtyMarker(sawExpected, output, expected);
   });
 
   try {

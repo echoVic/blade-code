@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   appendBoundedPtyEvidence,
   latchForegroundBoundedPtyMarkers,
+  latchPtyMarker,
   parseForegroundBoundedOutputPtyEvidence,
   projectForegroundBoundedPtyOutput,
 } from '../../support/foregroundBoundedOutputPtyDriver.js';
@@ -44,6 +45,12 @@ describe('foreground bounded output PTY driver', () => {
       sawStderrTail: true,
       sawTruncation: true,
     });
+  });
+
+  it('keeps a generic marker true after bounded output rotates', () => {
+    const observed = latchPtyMarker(false, 'visible marker', 'visible marker');
+
+    expect(latchPtyMarker(observed, 'later redraw', 'visible marker')).toBe(true);
   });
 
   it('accepts complete resize and marker evidence', () => {

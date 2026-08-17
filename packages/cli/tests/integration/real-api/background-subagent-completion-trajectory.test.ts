@@ -673,6 +673,7 @@ describe
           expect(evidence).toMatchObject({
             childFailureVisible: true,
             sidecarPendingByteFailure: true,
+            parentFinalVisible: true,
           });
           expect(prepared.proxy.heldRequestNumbers).toHaveLength(1);
           expect(prepared.proxy.maxInFlight).toBe(1);

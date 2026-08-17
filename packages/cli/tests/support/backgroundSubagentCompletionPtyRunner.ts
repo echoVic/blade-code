@@ -3,6 +3,7 @@ import { spawn } from 'bun-pty';
 import { getSessionInboxFilePath } from '../../src/context/storage/pathUtils.js';
 import {
   appendBoundedPtyEvidence,
+  latchPtyMarker,
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
 
@@ -88,6 +89,9 @@ async function main(): Promise<void> {
     }
   );
   let output = '';
+  let sawProviderAdmission = false;
+  let sawChildMarker = false;
+  let sawParentFinal = false;
   let exited = false;
   const exitPromise = new Promise<void>((resolve) => {
     terminal.onExit(() => {
@@ -97,17 +101,23 @@ async function main(): Promise<void> {
   });
   terminal.onData((chunk) => {
     output = appendBoundedPtyEvidence(output, chunk);
+    sawProviderAdmission = latchPtyMarker(
+      sawProviderAdmission,
+      output,
+      '等待 Provider 容量'
+    );
+    sawChildMarker = latchPtyMarker(sawChildMarker, output, childMarker);
+    sawParentFinal = latchPtyMarker(sawParentFinal, output, expectedParent);
   });
 
   try {
     await waitFor(
-      () => output.includes('等待 Provider 容量'),
+      () => sawProviderAdmission,
       'Raw PTY did not render Provider admission queue',
       60_000
     );
-    const sawProviderAdmission = true;
     await waitFor(
-      () => output.includes(childMarker) && output.includes(expectedParent),
+      () => sawChildMarker && sawParentFinal,
       'Timed out waiting for child marker and resumed parent in TUI',
       180_000
     );
@@ -118,8 +128,8 @@ async function main(): Promise<void> {
       JSON.stringify({
         success: true,
         sawProviderAdmission,
-        sawChildMarker: output.includes(childMarker),
-        sawParentFinal: output.includes(expectedParent),
+        sawChildMarker,
+        sawParentFinal,
         output: projectForegroundBoundedPtyOutput(
           secret ? output.replaceAll(secret, '[REDACTED]') : output
         ),

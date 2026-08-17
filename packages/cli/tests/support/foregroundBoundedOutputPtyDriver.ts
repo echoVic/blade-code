@@ -44,6 +44,14 @@ export function projectForegroundBoundedPtyOutput(output: string): string {
   return appendBoundedPtyEvidence('', plain, SERIALIZED_PTY_OUTPUT_MAX_CHARS);
 }
 
+export function latchPtyMarker(
+  current: boolean,
+  output: string,
+  marker: string
+): boolean {
+  return current || output.includes(marker);
+}
+
 export function latchForegroundBoundedPtyMarkers(
   current: ForegroundBoundedPtyMarkers,
   output: string,
@@ -54,10 +62,10 @@ export function latchForegroundBoundedPtyMarkers(
   }
 ): ForegroundBoundedPtyMarkers {
   return {
-    sawExpected: current.sawExpected || output.includes(expected.expected),
-    sawStdoutTail: current.sawStdoutTail || output.includes(expected.stdoutTail),
-    sawStderrTail: current.sawStderrTail || output.includes(expected.stderrTail),
-    sawTruncation: current.sawTruncation || output.includes('Output truncated'),
+    sawExpected: latchPtyMarker(current.sawExpected, output, expected.expected),
+    sawStdoutTail: latchPtyMarker(current.sawStdoutTail, output, expected.stdoutTail),
+    sawStderrTail: latchPtyMarker(current.sawStderrTail, output, expected.stderrTail),
+    sawTruncation: latchPtyMarker(current.sawTruncation, output, 'Output truncated'),
   };
 }
 
