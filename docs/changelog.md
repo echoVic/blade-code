@@ -35,6 +35,9 @@ All notable changes to this project will be documented in this file.
 - bounded foreground Web 资格按 durable tool call identity 展开会被虚拟列表重挂载的
   completed Bash card；subagent hard-crash 资格改用 lease-removal 后开放的 descendant
   gate 检测残留进程树，移除 GUI actionability 与固定五秒副作用窗口的时序竞争
+- permission-mode GPT 资格不再将统一 180 秒 Provider hard timeout 局部缩短为 120 秒；
+  Web terminal window 延后并在失败路径 shutdown route controller，仍保持
+  `maxRetries=0`
 
 ## [0.10.46] - 2026-08-17
 

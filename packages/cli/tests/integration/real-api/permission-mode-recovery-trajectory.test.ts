@@ -7,7 +7,7 @@ import { runHeadless } from '../../../src/commands/headless.js';
 import { PermissionMode } from '../../../src/config/types.js';
 import { Logger } from '../../../src/logging/Logger.js';
 import { Bus } from '../../../src/server/bus.js';
-import { SessionRoutes } from '../../../src/server/routes/session.js';
+import { createSessionRouteController } from '../../../src/server/routes/session.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
@@ -43,7 +43,7 @@ async function waitForWebCompletion(
     timeout = setTimeout(() => {
       unsubscribe();
       reject(new Error('Timed out waiting for permission recovery Web run'));
-    }, 150_000);
+    }, 210_000);
     unsubscribe = Bus.subscribe((event) => {
       if (event.sessionId !== sessionId || event.projectPath !== projectPath) return;
       if (event.type === 'permission.asked') {
@@ -91,7 +91,7 @@ describeReal('Session permission mode recovery trajectory (real API)', () => {
         ...model,
         overrides: {
           ...model.overrides,
-          timeout: 120_000,
+          timeout: 180_000,
           maxRetries: 0,
         },
       })),
@@ -111,7 +111,8 @@ describeReal('Session permission mode recovery trajectory (real API)', () => {
   it('restores durable YOLO for a Web cold start', async () => {
     if (!gpt) throw new Error('GPT qualification channel is unavailable');
     const fixture = await createFixture('web');
-    const app = SessionRoutes();
+    const controller = createSessionRouteController();
+    const app = controller.app;
     const loggerError = vi.spyOn(Logger.prototype, 'error');
     let webCompletion: Awaited<ReturnType<typeof waitForWebCompletion>> | undefined;
 
@@ -156,28 +157,37 @@ describeReal('Session permission mode recovery trajectory (real API)', () => {
       expect(metadata).toMatchObject({ permissionMode: 'yolo' });
       assertNoSecrets(metadata, [gpt.apiKey]);
     } finally {
-      webCompletion?.cancel();
-      await Promise.resolve(
-        app.request(
-          `/${fixture.sessionId}/abort?projectPath=${encodeURIComponent(
-            fixture.workspace
-          )}`,
-          { method: 'POST' }
-        )
-      ).catch(() => undefined);
-      await Promise.resolve(
-        app.request(
-          `/${fixture.sessionId}?projectPath=${encodeURIComponent(fixture.workspace)}`,
-          { method: 'DELETE' }
-        )
-      ).catch(() => undefined);
-      loggerError.mockRestore();
-      if (fixture.originalConfig) {
-        getState().config.actions.setConfig(fixture.originalConfig);
+      try {
+        webCompletion?.cancel();
+        await Promise.resolve(
+          app.request(
+            `/${fixture.sessionId}/abort?projectPath=${encodeURIComponent(
+              fixture.workspace
+            )}`,
+            { method: 'POST' }
+          )
+        ).catch(() => undefined);
+        await Promise.resolve(
+          app.request(
+            `/${fixture.sessionId}?projectPath=${encodeURIComponent(
+              fixture.workspace
+            )}`,
+            { method: 'DELETE' }
+          )
+        ).catch(() => undefined);
+      } finally {
+        try {
+          await controller.shutdown('permission mode Web qualification cleanup');
+        } finally {
+          loggerError.mockRestore();
+          if (fixture.originalConfig) {
+            getState().config.actions.setConfig(fixture.originalConfig);
+          }
+          await rm(fixture.root, { recursive: true, force: true });
+        }
       }
-      await rm(fixture.root, { recursive: true, force: true });
     }
-  }, 180_000);
+  }, 240_000);
 
   it('restores durable YOLO for an ACP cold start', async () => {
     if (!gpt) throw new Error('GPT qualification channel is unavailable');
@@ -236,7 +246,7 @@ describeReal('Session permission mode recovery trajectory (real API)', () => {
       }
       await rm(fixture.root, { recursive: true, force: true });
     }
-  }, 180_000);
+  }, 240_000);
 
   it('restores durable YOLO for a headless cold start', async () => {
     if (!gpt) throw new Error('GPT qualification channel is unavailable');
@@ -287,5 +297,5 @@ describeReal('Session permission mode recovery trajectory (real API)', () => {
       }
       await rm(fixture.root, { recursive: true, force: true });
     }
-  }, 180_000);
+  }, 240_000);
 });

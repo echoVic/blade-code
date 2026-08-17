@@ -533,7 +533,10 @@ Plan 批准后的写前持久化、metadata 失败零执行，以及显式调用
 TUI activation 完成实际 Write。四条轨迹都必须产生精确文件字节；Web/ACP 不得出现
 permission request，headless 不得以“需要交互确认”失败。Production Web GUI 必须
 创建完全访问 Session，fresh reload 后仍显示完全访问；点击新任务后必须显示自动审批，
-再返回原 Session 时恢复完全访问。浏览器 console 必须无 application error。
+再返回原 Session 时恢复完全访问。浏览器 console 必须无 application error。真实 API
+轨迹必须使用统一 180 秒 Provider hard timeout、零 retry，并让 surface/test terminal
+窗口晚于 Provider timeout；Web failure path 必须 shutdown route controller，不能用
+局部 120 秒预算抢先误判长尾响应或遗留 active run。
 
 Session Reasoning Effort 资格必须区分 durable selection 与 Provider effective
 level。确定性测试覆盖 `auto/off/minimal/low/medium/high/xhigh/max`、model
