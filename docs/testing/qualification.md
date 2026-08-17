@@ -762,6 +762,10 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
   evidence digest 与 revision 幂等补 `complete`；Headless 回放、raw PTY、production
   Web GUI 和 ACP `session/load` 均不得为旧 Goal 发起 Provider 请求。随后同一入口发送
   新 prompt 并通过透明代理完成真实 Flash/Pro 响应，证明恢复后仍可继续工作；
+- Goal verification attempt 是单调递增的恢复序号，不是固定值。FAIL/PARTIAL、格式纠正
+  或 evidence 失效后可进入 attempt 2 及后续 attempt；release trajectory 必须要求最终
+  Goal 为 `complete`，且当前 attempt 具有 fresh `PASS`、verifier Session ID 和
+  SHA-256 evidence，但不得把合法的正整数 attempt 锁死为 `1`；
 - 计划模式恢复：跨两个 CLI 进程恢复会话并完成修改；
 - 模式边界恢复：在 Yolo 中故意调用一次 ExitPlanMode，运行时必须返回 `validation_error`，模型随后继续 Write/Bash，证明过期规划状态不能终止已经批准的工作；
 - 失败恢复：先重现测试失败，再修改，最后验证通过；

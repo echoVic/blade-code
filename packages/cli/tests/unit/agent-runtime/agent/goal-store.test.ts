@@ -153,6 +153,42 @@ describe('GoalStore', () => {
     );
   });
 
+  it('accepts a fresh verifier PASS after incrementing a failed attempt', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    await store.create({ objective: 'recover completion verification' });
+    await store.requestCompletion();
+    await store.recordCompletionVerification({
+      verdict: 'fail',
+      verifierSessionId: 'verifier-attempt-1',
+      summary: 'The first verification found a gap.',
+      evidenceSha256: '1'.repeat(64),
+    });
+
+    await expect(store.requestCompletion()).resolves.toMatchObject({
+      status: 'verifying',
+      completionVerification: {
+        attempt: 2,
+        status: 'pending',
+      },
+    });
+    await store.recordCompletionVerification({
+      verdict: 'pass',
+      verifierSessionId: 'verifier-attempt-2',
+      summary: 'The recovered verification passed.',
+      evidenceSha256: '2'.repeat(64),
+    });
+
+    await expect(store.finalizeVerifiedCompletion()).resolves.toMatchObject({
+      status: 'complete',
+      completionVerification: {
+        attempt: 2,
+        status: 'pass',
+        verifierSessionId: 'verifier-attempt-2',
+        evidenceSha256: '2'.repeat(64),
+      },
+    });
+  });
+
   it('reconciles an exact durable finalization receipt idempotently', async () => {
     const store = new GoalStore(workspaceRoot, sessionId);
     const created = await store.create({ objective: 'finish across a crash' });

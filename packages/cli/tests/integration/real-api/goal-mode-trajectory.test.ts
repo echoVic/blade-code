@@ -205,13 +205,16 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
           status: 'complete',
           objective: created.objective,
           completionVerification: {
-            attempt: 1,
             status: 'pass',
             verifierSessionId: expect.any(String),
             summary: 'Independent verifier returned PASS.',
             evidenceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
           },
         });
+        const verificationAttempt =
+          completedGoal?.completionVerification?.attempt ?? Number.NaN;
+        expect(Number.isSafeInteger(verificationAttempt)).toBe(true);
+        expect(verificationAttempt).toBeGreaterThanOrEqual(1);
 
         const toolNames = events.flatMap((event) =>
           event.kind === 'tool_start' && 'function' in event.toolCall

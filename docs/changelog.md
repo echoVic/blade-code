@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.51] - 2026-08-18
+
+### 测试相关
+
+- 修正 release-blocking Goal host-verifier 轨迹对 verification attempt 的错误硬编码：
+  Goal 在 FAIL/PARTIAL、格式纠正或其他合法恢复后可递增 attempt，准入现在要求最终状态
+  为 `complete`、持久化 fresh `PASS`、verifier Session ID 与 SHA-256 evidence，并要求
+  attempt 为正整数，不再把合法的 attempt 2 误判为运行时回归
+- 保持 release matrix framework retry=0；该修复不放宽 Goal 完成边界，也不允许没有
+  host-owned PASS evidence 的 Goal 完成
+
 ## [0.10.50] - 2026-08-18
 
 ### 稳定性
