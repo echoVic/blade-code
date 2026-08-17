@@ -785,6 +785,9 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
   Web 必须原子取得 durable `toolCallId`，在 tool group 回到折叠态时重新展开并触发真实
   click handler，再断言 `aria-expanded=true` 和有界输出，不得把 card/toggle 两次
   locator await 之间的重挂载或布局 actionability 抖动当成 runtime failure。
+  Goal finalization fresh-load 必须在完整有界 qualification budget 内同时验证 persisted
+  Goal `complete` 与 DOM `complete`，失败时报告两侧状态及 browser faults，不能用更短的
+  hydration 子截止点替代端到端预算。
   foreground gate-release failure 对照必须在释放前订阅 stdout，并在观察到超过 retained
   budget 的实际字节后注入错误，不得用固定 sleep 假设输出已经到达。raw PTY 的正向
   marker evidence 必须单调锁存；resize 或后续 redraw 只能增加证据，不能从 bounded tail

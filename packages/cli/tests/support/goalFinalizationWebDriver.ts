@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import path from 'node:path';
-import { chromium } from 'playwright';
+import { chromium, type Page } from 'playwright';
 import { getSessionInboxFilePath } from '../../src/context/storage/pathUtils.js';
 import type { ProcessIdentity } from '../../src/utils/process/ProcessIdentity.js';
 import {
@@ -69,6 +69,55 @@ async function waitForInboxRemoval(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error('Web Goal finalization did not acknowledge its durable inbox');
+}
+
+async function waitForCompleteGoal(input: {
+  page: Page;
+  origin: string;
+  workspace: string;
+  sessionId: string;
+  timeoutMs: number;
+  faults: readonly string[];
+}): Promise<void> {
+  const selector = '[data-blade-goal-status="complete"]';
+  const deadline = Date.now() + input.timeoutMs;
+  let persistedStatus: unknown = 'unknown';
+
+  while (Date.now() < deadline) {
+    const completeGoal = input.page.locator(selector);
+    if ((await completeGoal.count()) > 0 && (await completeGoal.isVisible())) return;
+    try {
+      const response = await fetch(
+        `${input.origin}/sessions/${encodeURIComponent(
+          input.sessionId
+        )}/goal?projectPath=${encodeURIComponent(input.workspace)}`
+      );
+      if (response.ok) {
+        const body = (await response.json()) as {
+          goal?: { status?: unknown } | null;
+        };
+        persistedStatus = body.goal?.status ?? null;
+      } else {
+        persistedStatus = `http-${response.status}`;
+      }
+    } catch (error) {
+      persistedStatus = error instanceof Error ? error.message : String(error);
+    }
+    await input.page.waitForTimeout(100);
+  }
+
+  const domStatuses = await input.page
+    .locator('[data-blade-goal-status]')
+    .evaluateAll((elements) =>
+      elements.map((element) => element.getAttribute('data-blade-goal-status'))
+    );
+  throw new Error(
+    `Timed out waiting for complete Goal; persistedStatus=${String(
+      persistedStatus
+    )}; domStatuses=${JSON.stringify(domStatuses)}; browserFaults=${JSON.stringify(
+      input.faults
+    )}`
+  );
 }
 
 function appendTail(current: string, chunk: Buffer | string): string {
@@ -162,9 +211,14 @@ export async function runGoalFinalizationWebDriver(input: {
       .filter({ hasText: input.expectedInitial })
       .last();
     await initial.waitFor({ state: 'visible', timeout: timeoutMs });
-    await page
-      .locator('[data-blade-goal-status="complete"]')
-      .waitFor({ state: 'visible', timeout: 30_000 });
+    await waitForCompleteGoal({
+      page,
+      origin,
+      workspace: input.workspace,
+      sessionId: input.sessionId,
+      timeoutMs,
+      faults,
+    });
     await waitForInboxRemoval(input.workspace, input.sessionId, 10_000);
     if ((await page.locator('body').textContent())?.includes(input.secret)) {
       throw new Error('Provider credential reached the Goal finalization DOM');
@@ -184,9 +238,14 @@ export async function runGoalFinalizationWebDriver(input: {
     await composer.waitFor({ state: 'visible', timeout: 30_000 });
     await initial.waitFor({ state: 'visible', timeout: 30_000 });
     await followup.waitFor({ state: 'visible', timeout: 30_000 });
-    await page
-      .locator('[data-blade-goal-status="complete"]')
-      .waitFor({ state: 'visible', timeout: 30_000 });
+    await waitForCompleteGoal({
+      page,
+      origin,
+      workspace: input.workspace,
+      sessionId: input.sessionId,
+      timeoutMs,
+      faults,
+    });
     await page.waitForTimeout(500);
     if (faults.length > 0) {
       throw new Error(`Browser faults: ${JSON.stringify(faults)}`);

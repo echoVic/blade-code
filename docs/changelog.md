@@ -16,6 +16,9 @@ All notable changes to this project will be documented in this file.
 - production Web bounded-output driver 现在原子读取 durable tool call identity，并在
   虚拟时间线重挂载后重新展开 tool group 与真实 card click handler，避免 card 与 toggle
   两次 locator await 之间的折叠竞争
+- Goal finalization Web fresh-load 证据现在使用完整有界 qualification budget，并在等待
+  complete DOM 投影时同步核对只读 persisted Goal status；失败诊断同时包含持久状态、
+  DOM status 与 browser faults，不再由固定 30 秒 hydration 子截止点误判
 - background completion raw PTY 的 Provider queue、child marker 与 parent final 改为
   消费同一个 180 秒 evidence deadline，避免慢首响应被独立 60 秒阶段超时误判；driver
   现在保留结构化缺失字段、runner error 与有界脱敏终端尾部
