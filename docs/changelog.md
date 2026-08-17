@@ -26,6 +26,10 @@ All notable changes to this project will be documented in this file.
   inbox 证明 parent 已消费同一 completion；12 个 production PTY runner 由精确
   source-contract inventory 管理，新增 runner 必须显式接受 marker-latching 审计，
   避免同类假阴性迁移到其他长任务轨迹
+- root-turn auto-resume 的派生响应不再拼接重复 `ROOT` 词段，Web 在已观察到恢复前缀但
+  完整 marker 不匹配时立即报告有界、脱敏的 assistant 文本，不再等待 180 秒 locator
+  超时；permission recovery 资格使用唯一绝对 `file_path` 与 Write-only 工具白名单，
+  明确拒绝无文件副作用的 text-only 完成
 
 ## [0.10.47] - 2026-08-17
 

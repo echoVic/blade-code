@@ -66,7 +66,7 @@ async function prepareExternalSurfaceFixture(
   process.env.BLADE_STORAGE_ROOT = storageRoot;
   getState().config.actions.setConfig(config);
   const sessionId = `root-${surface}-${model.model}-${Date.now()}`;
-  const marker = `ROOT_${surface.toUpperCase()}_${model.model
+  const marker = `${surface.toUpperCase()}_${model.model
     .toUpperCase()
     .replaceAll(/[^A-Z0-9]+/g, '_')}`;
   const fixture = await runWithCwdOverride(workspace, () =>
@@ -146,7 +146,7 @@ describe
         const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-root-resume-'));
         const storageRoot = path.join(workspace, '.blade-storage');
         const sessionId = `root-auto-resume-${model.model}-${Date.now()}`;
-        const marker = `ROOT_AUTO_RESUME_${model.model
+        const marker = `AUTO_RESUME_${model.model
           .toUpperCase()
           .replaceAll(/[^A-Z0-9]+/g, '_')}`;
         let stdout = '';

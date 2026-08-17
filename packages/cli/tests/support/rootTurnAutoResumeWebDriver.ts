@@ -1,8 +1,8 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import path from 'node:path';
-import { chromium } from 'playwright';
+import { chromium, type Page } from 'playwright';
 import { getSessionInboxFilePath } from '../../src/context/storage/pathUtils.js';
 import type { ProcessIdentity } from '../../src/utils/process/ProcessIdentity.js';
 import {
@@ -17,6 +17,8 @@ export interface RootTurnAutoResumeWebEvidence {
   composerVisible: true;
   browserFaults: [];
 }
+
+const ROOT_TURN_RESPONSE_PREFIX = 'ROOT_TURN_RECOVERED_';
 
 async function reservePort(): Promise<number> {
   const server = createServer();
@@ -66,6 +68,39 @@ async function waitForInboxRemoval(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error('Web result was visible before durable inbox acknowledgement');
+}
+
+async function waitForExpectedAssistantText(
+  page: Page,
+  expected: string,
+  timeoutMs: number
+): Promise<void> {
+  const assistant = page.locator('[data-chat-role="assistant"]');
+  const deadline = Date.now() + timeoutMs;
+  let prefixObservedAt: number | undefined;
+  let observedTexts: string[] = [];
+
+  while (Date.now() < deadline) {
+    observedTexts = await assistant.allTextContents();
+    if (observedTexts.some((text) => text.includes(expected))) return;
+    if (observedTexts.some((text) => text.includes(ROOT_TURN_RESPONSE_PREFIX))) {
+      prefixObservedAt ??= Date.now();
+      if (Date.now() - prefixObservedAt >= 2_000) {
+        throw new Error(
+          `Root-turn Web response completed without the exact marker; assistant=${JSON.stringify(
+            observedTexts.slice(-3).map((text) => text.slice(-1_024))
+          )}`
+        );
+      }
+    }
+    await page.waitForTimeout(100);
+  }
+
+  throw new Error(
+    `Timed out waiting for the root-turn Web response; assistant=${JSON.stringify(
+      observedTexts.slice(-3).map((text) => text.slice(-1_024))
+    )}`
+  );
 }
 
 function appendTail(current: string, chunk: Buffer | string): string {
@@ -161,11 +196,7 @@ export async function runRootTurnAutoResumeWebDriver(input: {
       state: 'visible',
       timeout: 30_000,
     });
-    const marker = page
-      .locator('[data-chat-role="assistant"]')
-      .filter({ hasText: input.expected })
-      .last();
-    await marker.waitFor({ state: 'visible', timeout: timeoutMs });
+    await waitForExpectedAssistantText(page, input.expected, timeoutMs);
     await waitForInboxRemoval(input.workspace, input.sessionId, 10_000);
     if ((await page.locator('body').textContent())?.includes(input.secret)) {
       throw new Error('Provider credential reached the browser DOM');
@@ -178,7 +209,7 @@ export async function runRootTurnAutoResumeWebDriver(input: {
       state: 'visible',
       timeout: 30_000,
     });
-    await marker.waitFor({ state: 'visible', timeout: 30_000 });
+    await waitForExpectedAssistantText(page, input.expected, 30_000);
     await page.waitForTimeout(500);
     if (faults.length > 0) {
       throw new Error(`Browser faults: ${JSON.stringify(faults)}`);

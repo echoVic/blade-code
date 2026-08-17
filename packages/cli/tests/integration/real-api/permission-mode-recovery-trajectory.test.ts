@@ -24,12 +24,14 @@ const gpt = isRealApiTestEnabled()
   : undefined;
 const describeReal = gpt ? describe.sequential : describe.skip;
 
-function writePrompt(fileName: string, marker: string): string {
+function writePrompt(filePath: string, marker: string): string {
   return [
-    `Use Write exactly once to create ${fileName}.`,
-    `The complete file content must be exactly ${marker} followed by one newline.`,
+    'Call the Write tool exactly once before any final response.',
+    `That call must set file_path to the exact absolute path ${filePath}.`,
+    `Set content to exactly ${marker} followed by one newline.`,
     'Do not call any other tool.',
-    `After Write succeeds, reply exactly ${marker}.`,
+    'A text-only response without the successful Write is incorrect.',
+    `Only after Write succeeds, reply exactly ${marker}.`,
   ].join(' ');
 }
 
@@ -87,6 +89,7 @@ describeReal('Session permission mode recovery trajectory (real API)', () => {
     const config = {
       ...baseConfig,
       permissionMode: PermissionMode.DEFAULT,
+      allowedTools: ['Write'],
       models: baseConfig.models.map((model) => ({
         ...model,
         overrides: {
@@ -123,7 +126,10 @@ describeReal('Session permission mode recovery trajectory (real API)', () => {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            content: writePrompt('web-mode.txt', 'WEB_MODE_RECOVERED'),
+            content: writePrompt(
+              path.join(fixture.workspace, 'web-mode.txt'),
+              'WEB_MODE_RECOVERED'
+            ),
             projectPath: fixture.workspace,
           }),
         })
@@ -210,7 +216,10 @@ describeReal('Session permission mode recovery trajectory (real API)', () => {
           prompt: [
             {
               type: 'text',
-              text: writePrompt('acp-mode.txt', 'ACP_MODE_RECOVERED'),
+              text: writePrompt(
+                path.join(fixture.workspace, 'acp-mode.txt'),
+                'ACP_MODE_RECOVERED'
+              ),
             },
           ],
         })
@@ -265,7 +274,10 @@ describeReal('Session permission mode recovery trajectory (real API)', () => {
         runHeadless(
           {
             headless: true,
-            message: writePrompt('headless-mode.txt', 'HEADLESS_MODE_RECOVERED'),
+            message: writePrompt(
+              path.join(fixture.workspace, 'headless-mode.txt'),
+              'HEADLESS_MODE_RECOVERED'
+            ),
             resume: fixture.sessionId,
           },
           { stdout, stderr }

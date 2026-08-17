@@ -61,7 +61,9 @@ bun run qualify:production
 每条 capability 轨迹的 Provider timeout 必须短于 Vitest test timeout，并为 abort、
 runtime dispose、临时目录删除和全局配置恢复保留确定性清理窗口。验证 permission
 recovery 的轨迹关闭 Provider retry；retry/backoff 只在专用故障注入轨迹中测试，避免
-测试框架 timeout 后旧 `finally` 与 Vitest retry 并发运行。
+测试框架 timeout 后旧 `finally` 与 Vitest retry 并发运行。permission recovery 的
+Write 资格使用唯一绝对 `file_path` 与 Write-only 工具白名单，text-only 回答不能替代
+真实文件副作用。
 
 该命令运行固定的 release-blocking real matrix：真实 DeepSeek Flash/Pro Headless
 bugfix、GPT Web structured output、Claude ACP structured output、DeepSeek headless
@@ -88,7 +90,9 @@ notice，不能让 resize redraw 轮换有界终端窗口后反向抹除已成�
 Root-turn crash auto-resume 另固定运行
 DeepSeek Flash/Pro × Headless/raw PTY TUI/production Chromium Web/真实 ACP
 `session/load` 八格，所有入口都不得依赖额外 wake-up prompt。最终响应 token 必须与
-恢复 prompt、marker 文件和 Read output 区分，且不能在 prompt 中完整出现；raw PTY
+恢复 prompt、marker 文件和 Read output 区分，且不能在 prompt 中完整出现，也不得用
+重复词段制造无关的 Provider 拼写歧义；Web 已观察到恢复前缀但完整 token 不匹配时必须
+立即输出有界、脱敏的 assistant 文本，不能退化为固定 180 秒 locator 超时。raw PTY
 必须按精确 inbox message ID 观察 acknowledgement，以及同一 turn 随后的
 `turn_completed`，不能以终端历史命中或固定等待窗口代替 durable terminal。ACP
 多 Provider 对照的终答窗口必须晚于 180 秒 runtime hard timeout，并为销毁连接与临时
