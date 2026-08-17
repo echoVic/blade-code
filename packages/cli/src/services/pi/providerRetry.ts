@@ -60,6 +60,15 @@ export class ProviderRecoveryBudgetExceededError extends Error {
   }
 }
 
+export class ProviderRequestDeadlineExceededError extends Error {
+  readonly code = 'PROVIDER_REQUEST_DEADLINE_EXCEEDED';
+
+  constructor(readonly timeoutMs: number) {
+    super(`Provider request deadline exceeded after ${timeoutMs}ms`);
+    this.name = 'ProviderRequestDeadlineExceededError';
+  }
+}
+
 const NON_RETRYABLE_LIMIT_MARKERS = [
   'gousagelimiterror',
   'freeusagelimiterror',
@@ -166,6 +175,9 @@ export function classifyProviderRetry(
   }
   if (response?.shouldRetry === 'false') {
     return { retryable: false, statusCode: response.statusCode };
+  }
+  if (code === 'PROVIDER_REQUEST_DEADLINE_EXCEEDED') {
+    return { retryable: true, reason: 'timeout' };
   }
 
   const statusCode =

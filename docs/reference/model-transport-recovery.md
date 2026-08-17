@@ -140,22 +140,33 @@ sanitized reason/status、bounded retry-after、open duration、样本计数和�
 剩余预算。Headless JSONL、TUI、Web SSE/StatusBar、ACP metadata 与 subagent SSE 使用
 同一协议，completion/reload 后清除瞬态状态。
 
-## 流活性保护
+## 请求总时限与流活性保护
 
-HTTP 请求超时不等于流活性超时。部分 SDK 在响应头到达后不再用请求 timeout
-约束响应体，因此连接静默断开时，消费端可能永久阻塞在下一条 SSE 事件。
+HTTP SDK 的 request timeout 和流活性 timeout 都不能单独构成完整边界。部分 SDK
+在响应头到达后不再用 request timeout 约束响应体；另一方面，只要 Provider 持续发送
+reasoning 或 text 增量，idle watchdog 也会不断刷新，单次 physical attempt 仍可能
+无限占用 admission permit。
 
-Blade 在 pi-ai adapter 边界为每次模型尝试设置逐事件 watchdog：
+Blade 在 pi-ai adapter 边界同时执行两个独立时限：
 
-- 默认 `300000ms`，可通过模型的 `overrides.streamIdleTimeout` 调整；
-- 首条 provider 事件和任意两条事件之间都不能超过该时限；
-- timeout 会主动中止当前 provider 请求，并产生可分类的 timeout 错误；
-- provider 未发送 `done` 就关闭流时，按不完整传输处理，而不是误报成功；
-- 最小配置值为 `1000ms`，防止误配置造成即时重试风暴。
+- `timeout` 是每个 physical attempt 的 hard total deadline，默认 `180000ms`；
+- total deadline 只在 Provider admission 成功后开始，queue wait 不消耗该预算；
+- text、reasoning、tool、usage、finish 或 stall recovery 都不能刷新 total deadline；
+- `overrides.streamIdleTimeout` 是逐语义事件 idle watchdog，默认 `300000ms`；
+- 首条 Provider 事件和任意两条事件之间都不能超过 idle 时限；
+- 两者都会主动中止当前 Provider 请求，正常完成、错误和取消都会清理 timer；
+- Provider 未发送 `done` 就关闭流时，按不完整传输处理，而不是误报成功；
+- `streamIdleTimeout` 的最小配置值为 `1000ms`，防止误配置造成即时重试风暴。
+
+retry 与 fallback 每次取得新的 admission permit 后都会建立新的 attempt deadline。
+若 foreground recovery 的共享单调 budget 更早或与 attempt deadline 相等，共享 budget
+保持 authoritative abort cause；只有 attempt deadline 严格更早时才由它终止本次请求。
 
 watchdog 观察 pi-ai 的语义事件，而不是原始 socket 字节。空 keepalive 或无内容的
 传输帧不会无限延长一个没有模型进展的请求。
 
+total deadline 在零真实输出边界内按标准 timeout policy 进入有界 retry；已经交付
+text、reasoning、tool、usage 或 finish 后则标记 replay boundary 并 fail closed。
 主动 idle timeout 不会在同一 turn 自动重试。部分 Provider SDK 在响应头到达后
 不能保证 abort 立即释放响应体；立即重试可能让多个失联请求重叠。Blade 将其投影为
 可手动重试的标准 timeout task failure。相反，Provider 已明确关闭且没有交付任何

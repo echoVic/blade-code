@@ -28,6 +28,7 @@ import {
 import { getProjectStoragePath } from '../../../src/context/storage/pathUtils.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
+import { abortableSleep } from '../../../src/utils/abort.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import {
   buildRealApiRuntimeConfig,
@@ -322,6 +323,10 @@ async function startMidStreamStallProxy(baseUrl: string, delayMs: number) {
     void (async () => {
       const body = await readRequestBody(request);
       requestCount++;
+      const downstreamController = new AbortController();
+      response.once('close', () => {
+        if (!response.writableEnded) downstreamController.abort();
+      });
       const headers = new Headers();
       for (const [name, value] of Object.entries(request.headers)) {
         if (!value || name === 'host' || name === 'content-length') continue;
@@ -332,6 +337,7 @@ async function startMidStreamStallProxy(baseUrl: string, delayMs: number) {
         headers,
         body: request.method === 'GET' || request.method === 'HEAD' ? undefined : body,
         redirect: 'manual',
+        signal: downstreamController.signal,
       });
       const responseHeaders: Record<string, string> = {};
       upstream.headers.forEach((value, name) => {
@@ -365,7 +371,7 @@ async function startMidStreamStallProxy(baseUrl: string, delayMs: number) {
           response.write(`${frame}\n\n`);
           if (injectedStalls === 0 && isContentFrame(frame)) {
             injectedStalls++;
-            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            await abortableSleep(delayMs, downstreamController.signal);
           }
           boundary = buffered.indexOf('\n\n');
         }
@@ -1929,4 +1935,88 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
       await rm(workspace, { recursive: true, force: true });
     }
   }, 180_000);
+
+  it('hard-stops a real active stream at the total attempt deadline', async () => {
+    if (!modelConfig) throw new Error('DeepSeek Flash configuration is required');
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-provider-deadline-'));
+    const attemptTimeoutMs = 45_000;
+    const proxy = await startMidStreamStallProxy(
+      modelConfig.baseURL ?? 'https://api.deepseek.com',
+      60_000
+    );
+    let output = '';
+    let errorOutput = '';
+
+    try {
+      process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+      const runtimeConfig = buildRealApiRuntimeConfig({
+        ...modelConfig,
+        baseURL: proxy.baseURL,
+      });
+      getState().config.actions.setConfig({
+        ...runtimeConfig,
+        permissionMode: PermissionMode.YOLO,
+        models: runtimeConfig.models.map((model) => ({
+          ...model,
+          overrides: {
+            ...model.overrides,
+            timeout: attemptTimeoutMs,
+            streamIdleTimeout: 90_000,
+            maxRetries: 0,
+          },
+        })),
+      });
+
+      const exitCode = await runWithCwdOverride(workspace, () =>
+        runHeadless(
+          {
+            headless: true,
+            outputFormat: 'jsonl',
+            maxTurns: 1,
+            message: 'Reply with exactly TOTAL_DEADLINE_REAL_API_OK and nothing else.',
+          },
+          {
+            stdout: {
+              write(chunk: string) {
+                output += chunk;
+                return true;
+              },
+            },
+            stderr: {
+              write(chunk: string) {
+                errorOutput += chunk;
+                return true;
+              },
+            },
+          }
+        )
+      );
+      const events = output
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+      const content = events
+        .filter((event) => event.type === 'content_delta')
+        .map((event) => event.delta)
+        .join('');
+      const errors = events
+        .filter((event) => event.type === 'error')
+        .map((event) => event.message);
+
+      expect(exitCode, errorOutput.replaceAll(modelConfig.apiKey, '[redacted]')).toBe(
+        1
+      );
+      expect(proxy.injectedStalls()).toBe(1);
+      expect(proxy.requestCount()).toBe(1);
+      expect(content.length).toBeGreaterThan(0);
+      expect(errors).toContain(
+        `Error: Provider request deadline exceeded after ${attemptTimeoutMs}ms`
+      );
+      expect(events.filter((event) => event.type === 'provider_retry')).toHaveLength(0);
+      expect(`${output}\n${errorOutput}`).not.toContain(modelConfig.apiKey);
+    } finally {
+      await proxy.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  }, 150_000);
 });

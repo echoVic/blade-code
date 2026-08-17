@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.49] - 2026-08-18
+
+### 稳定性
+
+- 每个真实 Provider physical attempt 现在由宿主 `timeout` 强制执行 hard total
+  deadline；持续到达的 text/reasoning/tool/usage/finish 语义事件只能刷新独立的
+  `streamIdleTimeout`，不能无限延长单次请求
+- total deadline 只在 Provider admission 成功后开始，queue wait 不消耗请求预算；
+  retry 与 fallback 为各自的新 physical attempt 重建 deadline，正常完成、错误和取消
+  都清理 timer
+- deadline 在零真实输出边界内按标准 timeout policy 进入有界 retry；一旦已有
+  text/reasoning/tool/usage/finish 输出则标记 replay boundary 并 fail closed，避免重复
+  内容、工具副作用或计费请求
+- foreground recovery 的共享单调 budget 若早于或等于单次 attempt deadline，继续作为
+  authoritative abort cause；attempt deadline 只在严格更早时生效，不覆盖跨
+  primary/retry/fallback 的总预算
+- 发布资格新增真实 DeepSeek Flash Headless 与 production Chromium Web 对照：proxy
+  在首个真实 content 后把 completion 延迟到 total deadline 之外、idle deadline
+  之内，要求单一请求、零 retry、可见 partial content、typed error、只有 terminal
+  resync 的精确 EventSource abort、零其他浏览器 fault 和完整进程/临时资源回收
+
 ## [0.10.48] - 2026-08-17
 
 ### 测试相关

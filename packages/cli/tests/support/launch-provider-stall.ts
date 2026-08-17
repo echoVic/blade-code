@@ -1,29 +1,32 @@
 import { execFile, spawn } from 'node:child_process';
+import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { materializeRealApiEnvironment } from '../../scripts/real-api-credentials.js';
 import { PermissionMode } from '../../src/config/types.js';
+import { abortableSleep } from '../../src/utils/abort.js';
 import {
   buildRealApiRuntimeConfig,
   resolveForkQualificationModels,
 } from '../integration/real-api/testConfig.js';
 
-const [root, mode = 'web', rawPort = '4345'] = process.argv.slice(2);
+const [root, mode = 'web', rawPort = '4345', profile = 'stall'] = process.argv.slice(2);
 if (
   !root ||
   !path.isAbsolute(root) ||
   !['web', 'tui'].includes(mode) ||
+  !['stall', 'deadline'].includes(profile) ||
   !/^\d+$/.test(rawPort)
 ) {
   throw new Error(
-    'Usage: bun launch-provider-stall.ts <absolute-root> <web|tui> [port]'
+    'Usage: bun launch-provider-stall.ts <absolute-root> <web|tui> [port] [stall|deadline]'
   );
 }
 
 const port = Number(rawPort);
+const attemptTimeoutMs = 45_000;
 const execFileAsync = promisify(execFile);
 const home = path.join(root, 'home');
 const workspace = path.join(root, 'project');
@@ -85,13 +88,17 @@ function isContentFrame(frame: string): boolean {
   return false;
 }
 
-async function startProxy(baseUrl: string) {
+async function startProxy(baseUrl: string, delayMs: number) {
   let requestCount = 0;
   let stallCount = 0;
   const server = createServer((request, response) => {
     void (async () => {
       const body = await readRequestBody(request);
       const requestNumber = ++requestCount;
+      const downstreamController = new AbortController();
+      response.once('close', () => {
+        if (!response.writableEnded) downstreamController.abort();
+      });
       const headers = new Headers();
       for (const [name, value] of Object.entries(request.headers)) {
         if (!value || name === 'host' || name === 'content-length') continue;
@@ -102,6 +109,7 @@ async function startProxy(baseUrl: string) {
         headers,
         body: request.method === 'GET' || request.method === 'HEAD' ? undefined : body,
         redirect: 'manual',
+        signal: downstreamController.signal,
       });
       const responseHeaders: Record<string, string> = {};
       upstream.headers.forEach((value, name) => {
@@ -140,7 +148,7 @@ async function startProxy(baseUrl: string) {
             process.stdout.write(
               `[provider-stall-proxy] request ${requestNumber} paused\n`
             );
-            await new Promise((resolve) => setTimeout(resolve, 9_000));
+            await abortableSleep(delayMs, downstreamController.signal);
           }
           boundary = buffered.indexOf('\n\n');
         }
@@ -169,23 +177,46 @@ async function startProxy(baseUrl: string) {
     baseURL: `http://127.0.0.1:${address.port}`,
     counts: () => ({ requestCount, stallCount }),
     close: async () => {
+      if (!server.listening) return;
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
+        server.close((error) => {
+          if (
+            error &&
+            (!('code' in error) || error.code !== 'ERR_SERVER_NOT_RUNNING')
+          ) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
       });
     },
   };
 }
 
-const proxy = await startProxy(model.baseURL ?? 'https://api.deepseek.com');
+const proxy = await startProxy(
+  model.baseURL ?? 'https://api.deepseek.com',
+  profile === 'deadline' ? 60_000 : 9_000
+);
 const config = buildRealApiRuntimeConfig({ ...model, baseURL: proxy.baseURL });
 const models = config.models.map((entry) => ({
   ...entry,
   overrides: {
     ...entry.overrides,
-    streamIdleTimeout: 12_000,
+    ...(profile === 'deadline'
+      ? {
+          timeout: attemptTimeoutMs,
+          streamIdleTimeout: 90_000,
+          maxRetries: 0,
+        }
+      : { streamIdleTimeout: 12_000 }),
   },
 }));
+const prompt =
+  profile === 'deadline'
+    ? 'Reply with exactly TOTAL_DEADLINE_WEB_OK and nothing else.'
+    : 'Reply with exactly STALL_SURFACE_OK and nothing else.';
 
 await Promise.all([
   mkdir(path.join(home, '.blade'), { recursive: true }),
@@ -220,7 +251,9 @@ await execFileAsync('git', ['commit', '-qm', 'fixture'], { cwd: workspace });
 const canonicalWorkspace = await realpath(workspace);
 const bladeEntry = path.resolve(import.meta.dirname, '../../dist/blade.js');
 const args =
-  mode === 'web' ? [bladeEntry, 'serve', '--port', String(port)] : [bladeEntry];
+  mode === 'web'
+    ? [bladeEntry, '--trust-workspace', 'serve', '--port', String(port)]
+    : [bladeEntry];
 const child = spawn(process.execPath, args, {
   cwd: canonicalWorkspace,
   env: process.env,
@@ -239,7 +272,9 @@ process.stdout.write(
     port,
     proxy: proxy.baseURL,
     model: model.model,
-    prompt: 'Reply with exactly STALL_SURFACE_OK and nothing else.',
+    profile,
+    attemptTimeoutMs: profile === 'deadline' ? attemptTimeoutMs : undefined,
+    prompt,
   })}\n`
 );
 
@@ -263,7 +298,7 @@ try {
   });
 } finally {
   process.stdout.write(
-    `${JSON.stringify({ mode, ...proxy.counts(), stopped: true })}\n`
+    `${JSON.stringify({ mode, profile, ...proxy.counts(), stopped: true })}\n`
   );
   await proxy.close();
 }

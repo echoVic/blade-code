@@ -248,14 +248,15 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   result 被忽略。root foreground 末候选在原恢复 deadline 内等待，background/internal
   及非末 fallback candidate fail-fast。`provider_circuit` 仅投影 sanitized lifecycle，
   不持久化 endpoint、credential/HMAC、response body 或 circuit state。
-- 每次 Provider stream read 同时受 stall warning 和 hard idle timeout 约束。warning
-  默认为 30 秒，并在较短 hard timeout 下收窄到其一半；runtime 始终保留同一个 pending
+- 每个 Provider physical attempt 同时受 hard total deadline、stall warning 和 hard
+  idle timeout 约束。total deadline 在 admission 后开始且不被语义事件刷新；warning
+  默认为 30 秒，并在较短 idle timeout 下收窄到其一半；runtime 始终保留同一个 pending
   `iterator.next()`，不能因为 warning 启动重叠读取或第二个请求。超过 warning 产生
   `provider_stall: detected`，下一 Provider event 到达后产生 `recovered`；事件包含
   bounded duration、warning/hard deadline、stall count 和 `outputStarted`，不包含
   Provider payload。stall 元事件与 retry 元事件一样不计入 replay boundary、内容
   chunk、stream commit 或工具执行，并统一投影到 TUI、Web、ACP、Headless 与
-  subagent SSE。hard timeout、caller abort 和部分输出后的故障仍 fail closed。
+  subagent SSE。total/idle timeout、caller abort 和部分输出后的故障仍 fail closed。
 - 自动压缩分为预测式 threshold compaction 与反应式 context-limit recovery。Provider
   返回 `413`、`context_length_exceeded`、`prompt_too_long` 等上下文错误时，runtime
   只允许在零真实输出边界内执行一次 reactive compaction；任意 content、thinking、

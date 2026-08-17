@@ -33,7 +33,7 @@ export const DEFAULT_CONFIG: BladeConfig = {
   stream: true,
   topP: 0.9,
   topK: 50,
-  timeout: 180000, // 180秒超时（长上下文 agentic 场景需要更长时间）
+  timeout: 180000, // 单次 Provider attempt 的 180 秒 hard total timeout
   bashForegroundHandoffMs: DEFAULT_FOREGROUND_COMMAND_HANDOFF_MS,
   providerForegroundRecoveryMs: DEFAULT_FOREGROUND_PROVIDER_RECOVERY_MS,
   providerCircuitBreakerOpenMs: DEFAULT_PROVIDER_CIRCUIT_OPEN_MS,

@@ -298,6 +298,15 @@ Production Web GUI 必须在 StatusBar 显示 stall duration/hard deadline，恢
 完成且 console 无 application error；TUI 必须显示 stall 状态、hard deadline 与 Esc
 取消入口；ACP 和 Headless 只投影 metadata，不污染 assistant 正文或 durable transcript。
 
+Provider total-attempt deadline 资格必须先通过透明 SSE proxy 转发真实 DeepSeek Flash
+content，再把 completion 延迟到 `timeout` 之后且 `streamIdleTimeout` 之前。Headless
+必须在 45 秒 total deadline 产生 typed error、保留已交付 content、零 retry、单一
+Provider request，并同步 abort proxy 的上游 fetch。Production Chromium Web 必须显示
+同一 `[data-blade-session-error]`，证明 assistant partial content 可见、凭据不进入 DOM、
+console/page fault 为零；terminal durable resync 只允许旧
+`/sessions/:id/events` EventSource 产生恰好一次 `net::ERR_ABORTED`，其他 request fault
+必须为零。browser、server、proxy、HOME/storage/workspace 必须全部回收。
+
 Reactive Compaction 资格必须让透明代理在首个真实 turn 返回一次
 `413 context_length_exceeded`，后续压缩摘要和恢复请求原样转发到真实 Provider。
 runtime 必须在零输出 replay boundary 内发出 paired compaction lifecycle，先提交含

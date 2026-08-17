@@ -56,6 +56,7 @@ import {
   getProviderRetryAfterMs,
   markProviderReplayBoundary,
   ProviderRecoveryBudgetExceededError,
+  ProviderRequestDeadlineExceededError,
   type ProviderResponseMetadata,
   type ProviderRetryEvent,
   type ProviderRetryMode,
@@ -452,16 +453,25 @@ export class PiAIChatService implements IChatService {
       const requestSignal = signal
         ? combineAbortSignals(signal, watchdogController.signal)
         : watchdogController.signal;
-      let budgetTimer: NodeJS.Timeout | undefined;
+      const requestTimeoutMs =
+        typeof this.config.timeout === 'number' &&
+        Number.isFinite(this.config.timeout) &&
+        this.config.timeout > 0
+          ? Math.max(1, Math.floor(this.config.timeout))
+          : undefined;
+      let recoveryDeadline:
+        | { remainingMs: number; error: ProviderRecoveryBudgetExceededError }
+        | undefined;
       if (boundedRecovery?.startedAt !== undefined) {
         const remainingMs = recoverySnapshot()?.recoveryRemainingMs ?? 0;
         if (remainingMs <= 0) throw budgetError();
-        const error = new ProviderRecoveryBudgetExceededError(
-          boundedRecovery.budgetMs,
-          boundedRecovery.budgetMs
-        );
-        budgetTimer = setTimeout(() => watchdogController.abort(error), remainingMs);
-        budgetTimer.unref?.();
+        recoveryDeadline = {
+          remainingMs,
+          error: new ProviderRecoveryBudgetExceededError(
+            boundedRecovery.budgetMs,
+            boundedRecovery.budgetMs
+          ),
+        };
       }
       const piOptions = buildPiOptions(
         this.config,
@@ -479,9 +489,32 @@ export class PiAIChatService implements IChatService {
         abort: (reason) => watchdogController.abort(reason),
       });
       return (async function* () {
+        let requestTimer: NodeJS.Timeout | undefined;
+        let budgetTimer: NodeJS.Timeout | undefined;
         try {
+          if (
+            requestTimeoutMs !== undefined &&
+            (recoveryDeadline === undefined ||
+              requestTimeoutMs < recoveryDeadline.remainingMs)
+          ) {
+            const error = new ProviderRequestDeadlineExceededError(requestTimeoutMs);
+            requestTimer = setTimeout(
+              () => watchdogController.abort(error),
+              requestTimeoutMs
+            );
+            requestTimer.unref?.();
+          }
+          if (recoveryDeadline) {
+            const deadline = recoveryDeadline;
+            budgetTimer = setTimeout(
+              () => watchdogController.abort(deadline.error),
+              deadline.remainingMs
+            );
+            budgetTimer.unref?.();
+          }
           yield* stream;
         } finally {
+          if (requestTimer) clearTimeout(requestTimer);
           if (budgetTimer) clearTimeout(budgetTimer);
         }
       })();

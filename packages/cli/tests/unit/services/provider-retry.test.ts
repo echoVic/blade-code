@@ -5,6 +5,7 @@ import {
   isProviderContextLimitError,
   MAX_PROVIDER_RETRY_DELAY_MS,
   markProviderReplayBoundary,
+  ProviderRequestDeadlineExceededError,
   providerReplayBoundaryCrossed,
 } from '../../../src/services/pi/providerRetry.js';
 
@@ -24,6 +25,18 @@ describe('provider retry policy', () => {
   });
 
   it('obeys explicit retry headers while keeping quota and abort failures terminal', () => {
+    expect(
+      classifyProviderRetry(new ProviderRequestDeadlineExceededError(500))
+    ).toEqual({
+      retryable: true,
+      reason: 'timeout',
+    });
+    expect(
+      classifyProviderRetry(new ProviderRequestDeadlineExceededError(500), {
+        shouldRetry: 'false',
+        statusCode: 408,
+      })
+    ).toEqual({ retryable: false, statusCode: 408 });
     expect(
       classifyProviderRetry(new Error('status 503'), {
         statusCode: 503,
