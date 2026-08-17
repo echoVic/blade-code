@@ -3842,6 +3842,14 @@ validates the object and may return a bounded corrective error.`;
             };
           }
 
+          if (options?.signal?.aborted) {
+            return makeInterruptedResult(
+              turnsCount,
+              allToolResults.length,
+              options.signal
+            );
+          }
+
           // shouldExitLoop 检查
           if (result.metadata?.shouldExitLoop) {
             const finalMessage =

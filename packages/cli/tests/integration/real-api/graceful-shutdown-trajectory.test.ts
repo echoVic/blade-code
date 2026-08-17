@@ -14,8 +14,10 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { type Browser, chromium } from 'playwright';
 import { describe, expect, it } from 'vitest';
+import { INTERRUPTED_TURN_MARKER } from '../../../src/agent/loop/conversationPersistence.js';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
 import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustService.js';
+import { startRecordingProviderProxy } from '../../support/recordingProviderProxy.js';
 import { assertNoForegroundLeases } from './foregroundBoundedOutputHarness.js';
 import {
   findSessionTranscript,
@@ -98,6 +100,12 @@ function headlessContent(output: string): string {
       }
     })
     .join('');
+}
+
+function expectInterruptedMarker(value: string, diagnostic?: string): void {
+  for (const markerLine of INTERRUPTED_TURN_MARKER.split('\n')) {
+    expect(value, diagnostic).toContain(markerLine);
+  }
 }
 
 function createShutdownFixture(workspace: string, nonce: string): ShutdownFixture {
@@ -639,6 +647,9 @@ describe
     it.each(matrix)(
       '$model.model × $surface',
       async ({ model, surface }) => {
+        if (!model.baseURL) {
+          throw new Error(`Missing Provider base URL for ${model.model}`);
+        }
         const root = await mkdtemp(
           path.join(os.tmpdir(), `blade-shutdown-${safeSlug(model.model)}-${surface}-`)
         );
@@ -655,13 +666,17 @@ describe
         const previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
         const previousAutoMemory = process.env.BLADE_AUTO_MEMORY;
         let rootPid: number | undefined;
+        const proxy = await startRecordingProviderProxy(model.baseURL);
         try {
           await Promise.all([
             mkdir(home, { recursive: true }),
             mkdir(storageRoot, { recursive: true }),
             writeFile(path.join(workspace, 'README.md'), '# Graceful shutdown\n'),
           ]);
-          const runtimeConfig = await writeRuntimeConfig(home, model);
+          const runtimeConfig = await writeRuntimeConfig(home, {
+            ...model,
+            baseURL: proxy.baseUrl,
+          });
           process.env.HOME = home;
           process.env.BLADE_STORAGE_ROOT = storageRoot;
           process.env.BLADE_AUTO_MEMORY = '0';
@@ -715,6 +730,12 @@ describe
           });
 
           const transcriptPath = findSessionTranscript(storageRoot, evidence.sessionId);
+          const transcriptContent = await readFile(transcriptPath, 'utf8');
+          expectInterruptedMarker(
+            transcriptContent,
+            `Interrupted marker was not committed for ${model.model} × ${surface}; ` +
+              `surface=${redactDiagnostic(evidence.output, model.apiKey)}`
+          );
           const interrupted = readSessionEvents(transcriptPath);
           expect(
             interrupted.filter((event) => event.type === 'turn_started')
@@ -739,6 +760,8 @@ describe
             )
           ).toHaveLength(1);
           await assertNoForegroundLeases(workspace, evidence.sessionId);
+          const providerRequestsBeforeResume = proxy.requestBodies.length;
+          expect(providerRequestsBeforeResume).toBe(1);
 
           const resumed = await resumeInterruptedTurn({
             workspace,
@@ -752,7 +775,11 @@ describe
             resumed.exitCode,
             resumed.output.replaceAll(model.apiKey, '[redacted]')
           ).toBe(0);
-          expect(headlessContent(resumed.output)).toContain(fixture.marker);
+          expect(proxy.requestBodies).toHaveLength(providerRequestsBeforeResume + 1);
+          const resumedRequest = proxy.requestBodies.at(-1) ?? '';
+          expectInterruptedMarker(resumedRequest);
+          expect(resumedRequest).toContain(fixture.marker);
+          expect(headlessContent(resumed.output).trim()).not.toBe('');
 
           const completed = readSessionEvents(transcriptPath);
           expect(
@@ -801,6 +828,7 @@ describe
           if (previousAutoMemory === undefined) delete process.env.BLADE_AUTO_MEMORY;
           else process.env.BLADE_AUTO_MEMORY = previousAutoMemory;
           WorkspaceTrustService.resetInstance();
+          await proxy.close();
           await rm(root, { recursive: true, force: true });
         }
       },

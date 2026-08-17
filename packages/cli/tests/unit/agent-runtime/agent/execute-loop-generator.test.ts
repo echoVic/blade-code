@@ -4384,6 +4384,77 @@ describe('executeLoopGenerator', () => {
       });
     });
 
+    it('persists the interrupted boundary when an active tool exits after cancellation', async () => {
+      const contextManager = createMockContextManager();
+      contextManager.saveToolUse.mockResolvedValue('durable-active-tool-id');
+      contextManager.saveToolResult.mockResolvedValue('durable-active-result-id');
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: vi.fn().mockReturnValue(contextManager),
+        } as any,
+      });
+      const context = createMockContext();
+      const controller = new AbortController();
+
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock.mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            id: 'tc1',
+            type: 'function',
+            function: { name: 'Bash', arguments: '{"command":"sleep 30"}' },
+          },
+        ],
+        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+        finishReason: 'tool_calls',
+      });
+
+      const executeMock = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
+      executeMock.mockImplementationOnce(async () => {
+        controller.abort('process-shutdown');
+        return {
+          success: false,
+          llmContent: '任务已被用户中止',
+          error: {
+            type: 'execution_error',
+            message: '任务已被用户中止',
+          },
+          metadata: {
+            summary: '任务已被用户中止',
+            shouldExitLoop: true,
+          },
+        };
+      });
+
+      const { result, events } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Run the foreground command',
+          context,
+          { signal: controller.signal, stream: false } as LoopOptions,
+          'You are a helpful assistant.'
+        )
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error?.type).toBe('aborted');
+      expect(events.some((event) => event.kind === 'tool_result')).toBe(true);
+      expect(contextManager.saveToolResult).toHaveBeenCalledOnce();
+      expect(contextManager.saveMessage).toHaveBeenLastCalledWith(
+        'test-session',
+        'system',
+        expect.stringContaining('<turn_aborted>'),
+        'durable-active-result-id',
+        undefined,
+        undefined
+      );
+      expect(context.messages).toContainEqual({
+        role: 'system',
+        content: expect.stringContaining('<turn_aborted>'),
+      });
+    });
+
     it('should close a durable tool call when the tool aborts before launch', async () => {
       const contextManager = createMockContextManager();
       contextManager.saveToolUse.mockResolvedValue('durable-aborted-tool-id');
