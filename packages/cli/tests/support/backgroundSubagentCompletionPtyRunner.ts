@@ -111,15 +111,16 @@ async function main(): Promise<void> {
   });
 
   try {
+    const evidenceDeadline = Date.now() + 180_000;
     await waitFor(
       () => sawProviderAdmission,
       'Raw PTY did not render Provider admission queue',
-      60_000
+      Math.max(1, evidenceDeadline - Date.now())
     );
     await waitFor(
       () => sawChildMarker && sawParentFinal,
       'Timed out waiting for child marker and resumed parent in TUI',
-      180_000
+      Math.max(1, evidenceDeadline - Date.now())
     );
     await waitForInboxRemoval(workspace, sessionId, 10_000);
     terminal.resize(100, 36);

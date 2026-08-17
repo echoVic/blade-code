@@ -13,6 +13,9 @@ All notable changes to this project will be documented in this file.
 - resize 资格必须从 resize 后的新 PTY 数据再次观察到 truncation notice，不再用 resize
   前的 marker 立即放行；不完整证据现在报告缺失字段和有界脱敏 runner error，同时继续
   保持 release matrix framework `retry=0`
+- background completion raw PTY 的 Provider queue、child marker 与 parent final 改为
+  消费同一个 180 秒 evidence deadline，避免慢首响应被独立 60 秒阶段超时误判；driver
+  现在保留结构化缺失字段、runner error 与有界脱敏终端尾部
 - weighted admission raw PTY 现在单调锁存 rejected child 可见性，并继续从 durable
   inbox 证明 parent 已消费同一 completion；12 个 production PTY runner 由精确
   source-contract inventory 管理，新增 runner 必须显式接受 marker-latching 审计，
