@@ -351,7 +351,14 @@ export function TaskHome() {
         </div>
 
         {/* Composer console */}
-        <div className="rounded-xl border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] shadow-[0_28px_80px_-32px_hsl(var(--deck-accent)/0.28),0_2px_0_hsl(var(--deck-hairline))]">
+        <div
+          data-blade-task-dispatch-ready={canDispatch ? 'true' : 'false'}
+          data-blade-task-workspace-ready={workspaceReady ? 'true' : 'false'}
+          data-blade-task-model-ready={modelReady ? 'true' : 'false'}
+          data-blade-task-model-loaded={modelsLoaded ? 'true' : 'false'}
+          data-blade-task-model-loading={modelsLoading ? 'true' : 'false'}
+          className="rounded-xl border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] shadow-[0_28px_80px_-32px_hsl(var(--deck-accent)/0.28),0_2px_0_hsl(var(--deck-hairline))]"
+        >
           {/* Context ribbon — unified pill bar */}
           <div className="flex items-center gap-0 border-b border-[hsl(var(--deck-hairline))] bg-[hsl(var(--deck-surface-2))]/50">
             {/* Left: project + isolation */}

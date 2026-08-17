@@ -50,6 +50,44 @@ async function waitFor(
   throw new Error(message, { cause: lastError });
 }
 
+async function taskReadinessDiagnostic(page: Page): Promise<string> {
+  const readiness = page.locator('[data-blade-task-dispatch-ready]');
+  const composer = page.locator('textarea[data-blade-composer]');
+  const submit = page.locator('[data-blade-submit]');
+  const body = ((await page.locator('body').textContent()) ?? '').slice(-2_000);
+  return JSON.stringify({
+    url: page.url(),
+    dispatchReady: await readiness.getAttribute('data-blade-task-dispatch-ready'),
+    workspaceReady: await readiness.getAttribute('data-blade-task-workspace-ready'),
+    modelReady: await readiness.getAttribute('data-blade-task-model-ready'),
+    modelLoaded: await readiness.getAttribute('data-blade-task-model-loaded'),
+    modelLoading: await readiness.getAttribute('data-blade-task-model-loading'),
+    composerDisabled: await composer.isDisabled().catch(() => undefined),
+    submitDisabled: await submit.isDisabled().catch(() => undefined),
+    body,
+  });
+}
+
+async function waitForTaskDispatchReady(page: Page): Promise<void> {
+  const readiness = page.locator('[data-blade-task-dispatch-ready]');
+  await readiness.waitFor({ state: 'visible', timeout: 30_000 });
+  try {
+    await waitFor(
+      async () =>
+        (await readiness.getAttribute('data-blade-task-dispatch-ready')) === 'true',
+      'Weighted task dispatch readiness did not become ready',
+      60_000
+    );
+  } catch (error) {
+    throw new Error(
+      `Weighted task dispatch readiness did not become ready: ${await taskReadinessDiagnostic(
+        page
+      )}`,
+      { cause: error }
+    );
+  }
+}
+
 function waitForChildExit(
   child: ChildProcess,
   timeoutMs = 30_000
@@ -131,6 +169,7 @@ async function openTaskHome(
   const navigation = new URL(origin);
   navigation.searchParams.set('project', workspace);
   await page.goto(navigation.href, { waitUntil: 'domcontentloaded' });
+  await waitForTaskDispatchReady(page);
   const composer = page.locator('textarea[data-blade-composer]');
   await composer.waitFor({ state: 'visible', timeout: 30_000 });
   await waitFor(
@@ -160,11 +199,20 @@ async function submitTask(
 ) {
   await composer.fill(prompt);
   const submit = page.locator('[data-blade-submit]');
-  await waitFor(
-    async () => !(await submit.isDisabled()),
-    'Weighted task submit control did not become ready',
-    30_000
-  );
+  try {
+    await waitFor(
+      async () => !(await submit.isDisabled()),
+      'Weighted task submit control did not become ready',
+      30_000
+    );
+  } catch (error) {
+    throw new Error(
+      `Weighted task submit control did not become ready: ${await taskReadinessDiagnostic(
+        page
+      )}`,
+      { cause: error }
+    );
+  }
   const response = page.waitForResponse(
     (candidate) =>
       candidate.request().method() === 'POST' &&

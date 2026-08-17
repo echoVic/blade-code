@@ -125,6 +125,11 @@ describe('TaskHome', () => {
     expect(container.textContent).toContain('main');
     expect(container.textContent).toContain('1/3 running');
     expect(container.textContent).toContain('2 queued');
+    expect(
+      container
+        .querySelector('[data-blade-task-dispatch-ready]')
+        ?.getAttribute('data-blade-task-dispatch-ready')
+    ).toBe('true');
     const build = Array.from(container.querySelectorAll('button')).find((button) =>
       button.textContent?.includes('Build')
     );
@@ -185,6 +190,11 @@ describe('TaskHome', () => {
     expect(textarea?.disabled).toBe(false);
     expect(textarea?.value).toBe('Build a production-ready ');
     expect(send?.disabled).toBe(true);
+    expect(
+      container
+        .querySelector('[data-blade-task-dispatch-ready]')
+        ?.getAttribute('data-blade-task-dispatch-ready')
+    ).toBe('false');
 
     const configure = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === 'Configure'
