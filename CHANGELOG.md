@@ -13,6 +13,8 @@
   attribution and bounded-Session tests
 - Strengthened the real GPT cache trajectory to warm beyond Provider-shared
   prefix blocks before asserting cache-break attribution with framework retry 0
+- Stabilized cross-process tool-admission evidence across non-atomic fixture
+  marker transitions while preserving exact concurrency assertions
 
 ## [0.10.56] - 2026-08-18
 

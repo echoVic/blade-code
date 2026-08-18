@@ -52,25 +52,38 @@ async function assertState(
   expectedActive: readonly string[],
   expectedCompleted: readonly string[]
 ): Promise<void> {
-  const [started, active, completed] = await Promise.all([
-    directoryEntries(path.join(stateDir, 'started')),
-    directoryEntries(path.join(stateDir, 'active')),
-    directoryEntries(path.join(stateDir, 'completed')),
-  ]);
-  if (
-    !equalEntries(started, expectedStarted) ||
-    !equalEntries(active, expectedActive) ||
-    !equalEntries(completed, expectedCompleted)
-  ) {
+  let lastState: {
+    started: string[];
+    active: string[];
+    completed: string[];
+  } = { started: [], active: [], completed: [] };
+  try {
+    await waitFor(
+      async () => {
+        const [started, active, completed] = await Promise.all([
+          directoryEntries(path.join(stateDir, 'started')),
+          directoryEntries(path.join(stateDir, 'active')),
+          directoryEntries(path.join(stateDir, 'completed')),
+        ]);
+        lastState = { started, active, completed };
+        return (
+          equalEntries(started, expectedStarted) &&
+          equalEntries(active, expectedActive) &&
+          equalEntries(completed, expectedCompleted)
+        );
+      },
+      'Tool admission fixture did not reach the expected stable state',
+      5_000
+    );
+  } catch (error) {
     throw new Error(
       `Unexpected tool admission state: ${JSON.stringify({
-        started,
-        active,
-        completed,
+        ...lastState,
         expectedStarted,
         expectedActive,
         expectedCompleted,
-      })}`
+      })}`,
+      { cause: error }
     );
   }
 }
