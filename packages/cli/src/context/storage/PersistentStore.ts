@@ -1075,9 +1075,16 @@ export class PersistentStore {
     toolName: string,
     toolInput: JsonValue,
     parentUuid: string | null = null,
-    subagentInfo?: SubagentInfoForContext
+    subagentInfo?: SubagentInfoForContext,
+    providerToolCallId?: string
   ): Promise<string> {
     try {
+      if (
+        providerToolCallId !== undefined &&
+        (providerToolCallId.length === 0 || providerToolCallId.length > 512)
+      ) {
+        throw new Error('Provider tool call identity must contain 1-512 characters');
+      }
       await this.ensureSessionCreated(sessionId, subagentInfo);
       const now = new Date().toISOString();
       const messageId = parentUuid ?? nanoid();
@@ -1091,7 +1098,7 @@ export class PersistentStore {
         };
         entries.push(this.createEvent('message_created', sessionId, messageInfo));
       }
-      const toolCallId = nanoid();
+      const toolCallId = providerToolCallId ?? nanoid();
       const partInfo: PartInfo = {
         partId: toolCallId,
         messageId,

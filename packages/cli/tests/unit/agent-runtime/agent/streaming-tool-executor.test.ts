@@ -602,6 +602,10 @@ describe('StreamingToolExecutor', () => {
       expect(
         mockContextMgr.saveToolUse.mock.calls.map((call) => call[2].prompt)
       ).toEqual(['first', 'second']);
+      expect(mockContextMgr.saveToolUse.mock.calls.map((call) => call[5])).toEqual([
+        'provider-first',
+        'provider-second',
+      ]);
     });
 
     it('uses one generated Task child ID for persistence, execution, and history', async () => {
@@ -643,7 +647,8 @@ describe('StreamingToolExecutor', () => {
           subagent_session_id: params.subagent_session_id,
         }),
         'assistant-task',
-        undefined
+        undefined,
+        'task-call'
       );
       expect(pipeline.execute).toHaveBeenCalledWith(
         'Task',
@@ -679,7 +684,8 @@ describe('StreamingToolExecutor', () => {
         'Read',
         { file_path: '/a' },
         'msg-uuid',
-        undefined
+        undefined,
+        'ctx1'
       );
       expect(pipeline.execute).toHaveBeenCalledWith(
         'Read',

@@ -271,7 +271,7 @@ export async function saveToolUse(
   toolName: string,
   params: JsonValue,
   parentUuid: string | null,
-  options: { required?: boolean } = {}
+  options: { required?: boolean; providerToolCallId?: string } = {}
 ): Promise<string | null> {
   try {
     const contextMgr = getContextMgr(deps);
@@ -281,7 +281,8 @@ export async function saveToolUse(
         toolName,
         params,
         parentUuid,
-        context.subagentInfo
+        context.subagentInfo,
+        options.providerToolCallId
       );
       if (options.required && !toolCallId) {
         throw new Error('Durable tool-use commit returned no identity');

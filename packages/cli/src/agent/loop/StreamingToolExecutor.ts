@@ -519,7 +519,8 @@ export class StreamingToolExecutor {
         toolCall.function.name,
         params as JsonValue,
         this.lastMessageUuid ?? null,
-        this.subagentInfo
+        this.subagentInfo,
+        toolCall.id
       )
     );
     this.toolUsePersistenceTail = persistence.then(

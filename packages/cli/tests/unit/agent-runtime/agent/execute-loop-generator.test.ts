@@ -2192,6 +2192,10 @@ describe('executeLoopGenerator', () => {
         { path: 'first' },
         { path: 'second' },
       ]);
+      expect(saveToolUse.mock.calls.map((call) => call[5])).toEqual([
+        'provider-first',
+        'provider-second',
+      ]);
     });
 
     it('yields tool progress while a non-streaming tool is running', async () => {

@@ -3129,7 +3129,8 @@ validates the object and may return a bounded corrective error.`;
           let toolUsePersistenceTail: Promise<void> = Promise.resolve();
           const persistToolUseInOrder = (
             toolName: string,
-            params: Record<string, unknown>
+            params: Record<string, unknown>,
+            providerToolCallId: string
           ) => {
             const persistence = toolUsePersistenceTail.then(() =>
               saveToolUse(
@@ -3138,7 +3139,10 @@ validates the object and may return a bounded corrective error.`;
                 toolName,
                 params as unknown as JsonValue,
                 lastMessageUuid,
-                { required: deps.executionEngine !== undefined }
+                {
+                  required: deps.executionEngine !== undefined,
+                  providerToolCallId,
+                }
               )
             );
             toolUsePersistenceTail = persistence.then(
@@ -3180,7 +3184,8 @@ validates the object and may return a bounded corrective error.`;
               try {
                 toolUseUuid = await persistToolUseInOrder(
                   toolCall.function.name,
-                  params
+                  params,
+                  toolCall.id
                 );
               } catch (error) {
                 return {

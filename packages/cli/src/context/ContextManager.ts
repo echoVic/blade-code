@@ -281,14 +281,16 @@ export class ContextManager {
     toolName: string,
     toolInput: JsonValue,
     parentUuid: string | null = null,
-    subagentInfo?: SubagentInfoForContext
+    subagentInfo?: SubagentInfoForContext,
+    providerToolCallId?: string
   ): Promise<string> {
     return this.persistent.saveToolUse(
       sessionId,
       toolName,
       toolInput,
       parentUuid,
-      subagentInfo
+      subagentInfo,
+      providerToolCallId
     );
   }
 

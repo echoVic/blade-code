@@ -14,11 +14,18 @@
 - Detection uses adaptive token thresholds and resets its baseline across
   explicit compaction epochs to avoid false positives
 
+### Fixed
+- Provider tool-call identities now remain stable across live events, durable
+  JSONL history, and Web reconnects instead of changing while a tool card is
+  being rendered
+
 ### Tests
 - Added deterministic attribution, TTL, compaction, privacy, and bounded-state
   coverage
 - Added a real GPT trajectory that warms Provider cache, replaces every stable
   prompt block, and verifies system-prompt attribution with framework retry 0
+- Re-qualified bounded foreground output across DeepSeek Flash/Pro and
+  Headless/ACP/production Web reloads with framework retry 0
 
 ## [0.10.55] - 2026-08-18
 

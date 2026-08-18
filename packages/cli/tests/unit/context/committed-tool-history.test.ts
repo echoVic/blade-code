@@ -39,8 +39,11 @@ describe('committed result events (tool history)', () => {
       sessionId,
       'Read',
       { path: '/tmp/x' },
-      messageId
+      messageId,
+      undefined,
+      'provider-read-id'
     );
+    expect(toolCallId).toBe('provider-read-id');
     await store.saveToolResult(
       sessionId,
       toolCallId,
@@ -79,8 +82,15 @@ describe('committed result events (tool history)', () => {
         e.type === 'part_created' && e.data.partType === 'reasoning'
     );
     expect(reasoning?.data.payload).toEqual({ text: 'inspect before running' });
-    expect(toolCall?.data.payload).toMatchObject({ toolName: 'Read' });
+    expect(toolCall?.data).toMatchObject({
+      partId: 'provider-read-id',
+      payload: {
+        toolCallId: 'provider-read-id',
+        toolName: 'Read',
+      },
+    });
     expect(toolResult?.data.payload).toMatchObject({
+      toolCallId: 'provider-read-id',
       toolName: 'Read',
       metadata: {
         file_path: '/tmp/x',
