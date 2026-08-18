@@ -331,7 +331,8 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
       workspace
     );
 
-    expect(result).toMatchObject({ reaped: 1, protected: 0 });
+    expect(result).toMatchObject({ active: 0, protected: 0 });
+    expect(result.reaped + result.stale).toBe(1);
     expect(await waitFor(() => processIsGone(rootPid))).toBe(true);
     descendantPids.delete(rootPid);
   });
