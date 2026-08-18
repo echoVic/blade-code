@@ -15,6 +15,7 @@ import type {
   ChatCompletionMessageToolCall,
   IChatService,
 } from '../../services/ChatServiceInterface.js';
+import type { PromptCacheBreakInfo } from '../../services/ChatServiceInterface.js';
 import type { ProviderCircuitEvent } from '../../services/pi/providerCircuitBreaker.js';
 import type { ProviderAdmissionEvent } from '../../services/pi/providerRequestAdmission.js';
 import type { ProviderRetryEvent } from '../../services/pi/providerRetry.js';
@@ -246,6 +247,7 @@ export interface TokenUsageInfo {
   maxContextTokens: number;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
+  cacheBreak?: PromptCacheBreakInfo;
   costUsd?: number;
 }
 

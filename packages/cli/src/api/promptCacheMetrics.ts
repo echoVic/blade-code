@@ -12,6 +12,18 @@ export interface PromptCacheMetrics {
   hitRate?: number;
 }
 
+export interface PromptCacheBreakSummary {
+  reason:
+    | 'model_changed'
+    | 'system_prompt_changed'
+    | 'tools_changed'
+    | 'request_policy_changed'
+    | 'ttl_expired'
+    | 'server_side';
+  previousCacheReadTokens: number;
+  cacheReadTokens: number;
+}
+
 function nonNegativeFinite(value: number): number {
   return Number.isFinite(value) ? Math.max(0, value) : 0;
 }
@@ -47,4 +59,16 @@ export function formatPromptCacheHitRate(hitRate: number | undefined): string {
     return '—';
   }
   return `${Math.round(Math.max(0, Math.min(1, hitRate)) * 100)}%`;
+}
+
+export function formatPromptCacheBreak(cacheBreak: PromptCacheBreakSummary): string {
+  const reasons: Record<PromptCacheBreakSummary['reason'], string> = {
+    model_changed: 'model changed',
+    system_prompt_changed: 'system prompt changed',
+    tools_changed: 'tool definitions changed',
+    request_policy_changed: 'request policy changed',
+    ttl_expired: 'cache TTL expired',
+    server_side: 'likely Provider routing or eviction',
+  };
+  return `${reasons[cacheBreak.reason]} (${cacheBreak.previousCacheReadTokens.toLocaleString()} → ${cacheBreak.cacheReadTokens.toLocaleString()} cache-read tokens)`;
 }

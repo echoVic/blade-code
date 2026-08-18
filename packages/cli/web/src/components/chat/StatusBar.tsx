@@ -23,6 +23,15 @@ const PHASE_LABEL_KEYS: Record<string, TranslationKey | ''> = {
   idle: '',
 } as const;
 
+const CACHE_BREAK_REASON_KEYS: Record<string, TranslationKey> = {
+  model_changed: 'status.cacheBreak.model',
+  system_prompt_changed: 'status.cacheBreak.system',
+  tools_changed: 'status.cacheBreak.tools',
+  request_policy_changed: 'status.cacheBreak.policy',
+  ttl_expired: 'status.cacheBreak.ttl',
+  server_side: 'status.cacheBreak.server',
+};
+
 const formatTokens = (n: number) => {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
@@ -203,6 +212,20 @@ export function StatusBar() {
                     uncached: formatTokens(promptCache.uncachedInputTokens),
                   })}
                 </p>
+                {tokenUsage.cacheBreak && (
+                  <p className="text-[hsl(var(--deck-accent))]">
+                    {t('status.cacheBreak', {
+                      reason: t(
+                        CACHE_BREAK_REASON_KEYS[tokenUsage.cacheBreak.reason] ??
+                          'status.cacheBreak.server'
+                      ),
+                      previous: formatTokens(
+                        tokenUsage.cacheBreak.previousCacheReadTokens
+                      ),
+                      current: formatTokens(tokenUsage.cacheBreak.cacheReadTokens),
+                    })}
+                  </p>
+                )}
               </div>
             )}
           </TooltipContent>

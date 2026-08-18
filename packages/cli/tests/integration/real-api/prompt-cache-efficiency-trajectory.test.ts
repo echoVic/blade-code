@@ -41,7 +41,7 @@ describe.skipIf(!enabled)('Prompt cache efficiency (Real API)', () => {
     const stablePrefix = [
       `Qualification nonce: ${sessionId}`,
       ...Array.from(
-        { length: 120 },
+        { length: 300 },
         () =>
           'Blade prompt cache qualification stable prefix. Keep every byte unchanged across requests.'
       ),
@@ -85,7 +85,7 @@ describe.skipIf(!enabled)('Prompt cache efficiency (Real API)', () => {
     }
 
     const warmRead = observations.find(
-      (observation, index) => index > 0 && observation.cacheReadTokens > 0
+      (observation) => observation.cacheReadTokens > 0
     );
     expect(
       warmRead?.cacheReadTokens ?? 0,
@@ -93,5 +93,36 @@ describe.skipIf(!enabled)('Prompt cache efficiency (Real API)', () => {
     ).toBeGreaterThan(0);
     expect(warmRead?.hitRate).toBeGreaterThan(0);
     expect(warmRead?.hitRate).toBeLessThanOrEqual(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+    const changedNonce = randomUUID();
+    const changed = await service.chat(
+      [
+        {
+          role: 'system',
+          content: Array.from(
+            { length: 300 },
+            (_, index) =>
+              `Changed prompt ${changedNonce} block ${index}. This content intentionally shares no cacheable text with the stable prefix.`
+          ).join('\n'),
+        },
+        { role: 'user', content: 'Reply with exactly FIRST.' },
+      ],
+      undefined,
+      undefined,
+      requestOptions
+    );
+    expect(changed.content.toUpperCase()).toContain('FIRST');
+    expect(
+      changed.usage?.promptCacheBreak,
+      `Provider did not expose an attributable cache break: ${JSON.stringify({
+        warmRead,
+        changedUsage: changed.usage,
+      })}`
+    ).toMatchObject({
+      reason: 'system_prompt_changed',
+      systemPromptChanged: true,
+      modelChanged: false,
+    });
   }, 300_000);
 });

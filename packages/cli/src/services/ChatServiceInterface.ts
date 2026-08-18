@@ -149,7 +149,32 @@ export interface UsageInfo {
   reasoningTokens?: number; // Thinking 模型消耗的推理 tokens
   cacheCreationInputTokens?: number; // Provider 报告的缓存写入 tokens
   cacheReadInputTokens?: number; // Provider 报告的缓存读取 tokens
+  promptCacheBreak?: PromptCacheBreakInfo;
   costUsd?: number; // pi-ai 根据模型价格、缓存类型和阶梯价格计算的本次调用费用
+}
+
+export interface PromptCacheBreakInfo {
+  reason:
+    | 'model_changed'
+    | 'system_prompt_changed'
+    | 'tools_changed'
+    | 'request_policy_changed'
+    | 'ttl_expired'
+    | 'server_side';
+  previousCacheReadTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  tokenDrop: number;
+  elapsedMs: number;
+  callNumber: number;
+  systemPromptChanged: boolean;
+  systemCharDelta: number;
+  toolsChanged: boolean;
+  addedToolCount: number;
+  removedToolCount: number;
+  changedToolCount: number;
+  modelChanged: boolean;
+  requestPolicyChanged: boolean;
 }
 
 export interface ChatResponse {

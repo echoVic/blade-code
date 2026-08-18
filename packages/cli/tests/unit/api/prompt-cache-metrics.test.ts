@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   derivePromptCacheMetrics,
+  formatPromptCacheBreak,
   formatPromptCacheHitRate,
 } from '../../../src/api/promptCacheMetrics.js';
 
@@ -62,5 +63,15 @@ describe('prompt cache metrics', () => {
     expect(formatPromptCacheHitRate(0.726)).toBe('73%');
     expect(formatPromptCacheHitRate(2)).toBe('100%');
     expect(formatPromptCacheHitRate(Number.NaN)).toBe('—');
+  });
+
+  it('formats a bounded cache-break attribution', () => {
+    expect(
+      formatPromptCacheBreak({
+        reason: 'tools_changed',
+        previousCacheReadTokens: 12_000,
+        cacheReadTokens: 500,
+      })
+    ).toBe('tool definitions changed (12,000 → 500 cache-read tokens)');
   });
 });

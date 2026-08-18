@@ -174,6 +174,24 @@ function toolCallEvents(events: readonly SessionEvent[], name: string) {
   );
 }
 
+type ToolResultPartEvent = Extract<SessionEvent, { type: 'part_created' }> & {
+  data: Extract<SessionEvent, { type: 'part_created' }>['data'] & {
+    payload: Record<string, unknown>;
+  };
+};
+
+function toolResultEvents(events: readonly SessionEvent[], name: string) {
+  return events.filter(
+    (event): event is ToolResultPartEvent =>
+      event.type === 'part_created' &&
+      event.data.partType === 'tool_result' &&
+      event.data.payload !== null &&
+      typeof event.data.payload === 'object' &&
+      !Array.isArray(event.data.payload) &&
+      event.data.payload.toolName === name
+  );
+}
+
 async function collectFailureDiagnostic(input: PreparedFixture): Promise<string> {
   await new Promise((resolve) => setTimeout(resolve, 500));
   const events =
@@ -263,39 +281,52 @@ async function assertBackgroundCompletion(input: PreparedFixture): Promise<void>
   const taskCalls = toolCallEvents(events, 'Task');
   const taskOutputCalls = toolCallEvents(events, 'TaskOutput');
   const parentReads = toolCallEvents(events, 'Read');
+  const runningResults = toolResultEvents(events, 'Task').filter((event) => {
+    const value = event.data.payload.metadata;
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      return false;
+    }
+    const metadata = value as Record<string, unknown>;
+    return (
+      metadata.background === true && typeof metadata.subagentSessionId === 'string'
+    );
+  });
+  expect(runningResults, 'expected one admitted background Task launch').toHaveLength(
+    1
+  );
+  expect(taskOutputCalls).toHaveLength(0);
+  expect(
+    parentReads.length,
+    'expected the parent to perform independent work while the child runs'
+  ).toBeGreaterThanOrEqual(1);
+  for (const parentRead of parentReads) {
+    const payload = parentRead.data.payload as {
+      input?: { file_path?: unknown };
+    };
+    expect(typeof payload.input?.file_path).toBe('string');
+    expect(path.resolve(input.workspace, String(payload.input?.file_path))).toBe(
+      input.fixture.independentMarkerPath
+    );
+  }
+  const runningMetadata = (
+    runningResults[0]!.data.payload as {
+      metadata: { subagentSessionId: string };
+    }
+  ).metadata;
+  const childSessionId = runningMetadata.subagentSessionId;
   const launchedTaskCalls = taskCalls.filter((event) => {
     const payload = event.data.payload as { input?: Record<string, unknown> };
-    return typeof payload.input?.subagent_session_id === 'string';
+    return payload.input?.subagent_session_id === childSessionId;
   });
   expect(launchedTaskCalls).toHaveLength(1);
-  expect(taskOutputCalls).toHaveLength(0);
-  expect(parentReads).toHaveLength(1);
   const taskInput = launchedTaskCalls[0]!.data.payload as {
     input?: Record<string, unknown>;
   };
   expect(taskInput.input).toMatchObject({
     run_in_background: true,
   });
-  const childSessionId = taskInput.input?.subagent_session_id;
-  expect(typeof childSessionId).toBe('string');
-  if (typeof childSessionId !== 'string') {
-    throw new Error('Background Task did not persist a child Session ID');
-  }
-  const runningResult = events.find(
-    (event) =>
-      event.type === 'part_created' &&
-      event.data.partType === 'tool_result' &&
-      event.data.payload !== null &&
-      typeof event.data.payload === 'object' &&
-      !Array.isArray(event.data.payload) &&
-      event.data.payload.toolName === 'Task' &&
-      event.data.payload.metadata !== null &&
-      typeof event.data.payload.metadata === 'object' &&
-      !Array.isArray(event.data.payload.metadata) &&
-      event.data.payload.metadata.background === true
-  );
-  expect(runningResult?.seq).toBeTypeOf('number');
-  expect(parentReads[0]!.seq).toBeGreaterThan(runningResult?.seq ?? 0);
+  expect(runningResults[0]!.seq).toBeTypeOf('number');
+  expect(parentReads[0]!.seq).toBeGreaterThan(runningResults[0]!.seq ?? 0);
 
   const completionInboxId = `background-subagent-completion:${childSessionId}`;
   const completionMessages = events.filter(
@@ -308,7 +339,7 @@ async function assertBackgroundCompletion(input: PreparedFixture): Promise<void>
       !Array.isArray(event.data.metadata) &&
       event.data.metadata.clientVisible === false
   );
-  expect(completionMessages).toHaveLength(1);
+  expect(completionMessages, 'expected one hidden completion receipt').toHaveLength(1);
   expect(JSON.stringify(completionMessages)).toContain(input.fixture.childMarker);
   expect(
     events.filter(
@@ -320,14 +351,16 @@ async function assertBackgroundCompletion(input: PreparedFixture): Promise<void>
         !Array.isArray(event.data.payload) &&
         event.data.payload.childSessionId === childSessionId &&
         event.data.payload.status === 'completed'
-    )
+    ),
+    'expected one completed subtask projection'
   ).toHaveLength(1);
   expect(
     events.filter(
       (event) =>
         event.type === 'inbox_acknowledged' &&
         event.data.messageIds.includes(completionInboxId)
-    )
+    ),
+    'expected one completion inbox acknowledgement'
   ).toHaveLength(1);
   expect(
     events.filter((event) => event.type === 'turn_completed').length
@@ -350,7 +383,8 @@ async function assertBackgroundCompletion(input: PreparedFixture): Promise<void>
         JSON.stringify(message.content).includes(
           `BACKGROUND_PARENT_FINAL:${input.fixture.childMarker}`
         )
-    )
+    ),
+    'expected one visible parent final'
   ).toHaveLength(1);
 
   resetBackgroundCompletionRuntimeState();

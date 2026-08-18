@@ -15,6 +15,13 @@ const sessionState = vi.hoisted(() => ({
     totalOutputTokens: 5,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
+    cacheBreak: undefined as
+      | {
+          reason: 'system_prompt_changed';
+          previousCacheReadTokens: number;
+          cacheReadTokens: number;
+        }
+      | undefined,
     estimatedCostUsd: 0,
   },
   isStreaming: true,
@@ -81,6 +88,7 @@ describe('StatusBar', () => {
       cacheWriteTokens: 0,
       estimatedCostUsd: 0,
     });
+    sessionState.tokenUsage.cacheBreak = undefined;
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);

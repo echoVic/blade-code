@@ -66,4 +66,38 @@ describe('session token usage', () => {
       6
     );
   });
+
+  it('retains the latest cache-break attribution', () => {
+    sessionActions().updateTokenUsage({
+      inputTokens: 5_000,
+      cacheReadTokens: 100,
+      cacheBreak: {
+        reason: 'system_prompt_changed',
+        previousCacheReadTokens: 5_000,
+        cacheReadTokens: 100,
+        cacheWriteTokens: 0,
+        tokenDrop: 4_900,
+        elapsedMs: 1_000,
+        callNumber: 2,
+        systemPromptChanged: true,
+        systemCharDelta: 20,
+        toolsChanged: false,
+        addedToolCount: 0,
+        removedToolCount: 0,
+        changedToolCount: 0,
+        modelChanged: false,
+        requestPolicyChanged: false,
+      },
+    });
+    sessionActions().updateTokenUsage({
+      inputTokens: 500,
+      cacheReadTokens: 400,
+    });
+
+    expect(getState().session.tokenUsage.cacheBreak).toMatchObject({
+      reason: 'system_prompt_changed',
+      previousCacheReadTokens: 5_000,
+      cacheReadTokens: 100,
+    });
+  });
 });

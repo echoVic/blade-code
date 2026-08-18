@@ -556,6 +556,13 @@ export const en = {
   'status.cacheDetails': 'Read {read} · Written {write} · Uncached {uncached}',
   'status.cacheUnavailable':
     'The Provider has not reported prompt-cache usage for this session.',
+  'status.cacheBreak': 'Last cache break: {reason} · cache read {previous} → {current}',
+  'status.cacheBreak.model': 'model changed',
+  'status.cacheBreak.system': 'system prompt changed',
+  'status.cacheBreak.tools': 'tool definitions changed',
+  'status.cacheBreak.policy': 'request policy changed',
+  'status.cacheBreak.ttl': 'cache TTL expired',
+  'status.cacheBreak.server': 'likely Provider routing or eviction',
   'status.phase.running': 'Generating...',
   'status.phase.providerStall': 'Provider stream paused',
   'status.phase.actionStationarityRecovering': 'Recovering',

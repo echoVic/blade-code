@@ -88,6 +88,10 @@ Goal completion 的 fresh PASS authority 同时绑定当前 host run、mutation 
 verifier Session ID、verdict、evidence digest 与 finalization snapshot；候选变化、
 workspace mutation 或进程重启才能使 receipt 失效，不能因重复候选额外消耗
 verification retry budget。
+完整 `test:real-api` 另含 GPT Prompt Cache efficiency 轨迹：先等待真实 cache read，
+再替换全部稳定 prompt block，并要求 runtime 输出 `system_prompt_changed` attribution。
+该轨迹同时验证自适应 token 阈值；不得用 mock usage、固定 cache counter 或仅比较
+累计命中率替代。由于 GPT 通道延迟与可用性不稳定，它不属于 release-blocking matrix。
 前台有界输出固定运行 DeepSeek Flash/Pro × Headless/production Chromium Web/raw PTY
 TUI/真实 ACP SDK terminal 八格；单格 Provider deadline 180 秒、测试 timeout 240 秒，
 完整 realApiQualification watchdog 为 60 分钟，发布矩阵固定 framework `retry=0`。

@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
   derivePromptCacheMetrics,
+  formatPromptCacheBreak,
   formatPromptCacheHitRate,
 } from '../api/promptCacheMetrics.js';
 import { TokenCounter } from '../context/TokenCounter.js';
@@ -379,7 +380,7 @@ const costCommand: SlashCommand = {
     const promptCache = derivePromptCacheMetrics(usage);
     const cacheInfo =
       promptCache.hitRate !== undefined
-        ? `\n- Cache hit rate: ${formatPromptCacheHitRate(promptCache.hitRate)}\n- Cache read: ${promptCache.cacheReadTokens.toLocaleString()} tokens\n- Cache write: ${promptCache.cacheWriteTokens.toLocaleString()} tokens`
+        ? `\n- Cache hit rate: ${formatPromptCacheHitRate(promptCache.hitRate)}\n- Cache read: ${promptCache.cacheReadTokens.toLocaleString()} tokens\n- Cache write: ${promptCache.cacheWriteTokens.toLocaleString()} tokens${usage.cacheBreak ? `\n- Last cache break: ${formatPromptCacheBreak(usage.cacheBreak)}` : ''}`
         : '';
 
     const info = `**Session Cost Summary**

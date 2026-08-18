@@ -46,11 +46,28 @@ export interface TokenUsage {
   totalOutputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  cacheBreak?: PromptCacheBreakInfo;
   estimatedCostUsd: number;
 }
 
 export interface TokenUsageUpdate extends Partial<TokenUsage> {
   costUsd?: number;
+}
+
+export interface PromptCacheBreakInfo {
+  reason:
+    | 'model_changed'
+    | 'system_prompt_changed'
+    | 'tools_changed'
+    | 'request_policy_changed'
+    | 'ttl_expired'
+    | 'server_side';
+  previousCacheReadTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  tokenDrop: number;
+  elapsedMs: number;
+  callNumber: number;
 }
 
 export type AgentPhase =

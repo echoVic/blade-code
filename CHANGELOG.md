@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.10.56] - 2026-08-18
+
+### Added
+- Prompt-cache breaks are now attributed to model, system prompt, tool schema,
+  request policy, TTL, or likely Provider-side routing and eviction changes
+- Web cache details, CLI `/cost`, and Headless JSONL expose the latest bounded
+  cache-break attribution
+
+### Changed
+- Cache-break detection uses per-Session SHA-256 fingerprints without retaining
+  prompt content or user-controlled tool names
+- Detection uses adaptive token thresholds and resets its baseline across
+  explicit compaction epochs to avoid false positives
+
+### Tests
+- Added deterministic attribution, TTL, compaction, privacy, and bounded-state
+  coverage
+- Added a real GPT trajectory that warms Provider cache, replaces every stable
+  prompt block, and verifies system-prompt attribution with framework retry 0
+
 ## [0.10.55] - 2026-08-18
 
 ### Fixed

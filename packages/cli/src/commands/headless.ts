@@ -990,6 +990,7 @@ function createEventWriter(
       maxContextTokens: number;
       cacheReadTokens?: number;
       cacheWriteTokens?: number;
+      cacheBreak?: import('../services/ChatServiceInterface.js').PromptCacheBreakInfo;
       costUsd?: number;
     }) {
       if (outputFormat === 'jsonl') {
@@ -1000,6 +1001,25 @@ function createEventWriter(
           max_context_tokens: usage.maxContextTokens,
           cache_read_tokens: usage.cacheReadTokens,
           cache_write_tokens: usage.cacheWriteTokens,
+          prompt_cache_break: usage.cacheBreak
+            ? {
+                reason: usage.cacheBreak.reason,
+                previous_cache_read_tokens: usage.cacheBreak.previousCacheReadTokens,
+                cache_read_tokens: usage.cacheBreak.cacheReadTokens,
+                cache_write_tokens: usage.cacheBreak.cacheWriteTokens,
+                token_drop: usage.cacheBreak.tokenDrop,
+                elapsed_ms: usage.cacheBreak.elapsedMs,
+                call_number: usage.cacheBreak.callNumber,
+                system_prompt_changed: usage.cacheBreak.systemPromptChanged,
+                system_char_delta: usage.cacheBreak.systemCharDelta,
+                tools_changed: usage.cacheBreak.toolsChanged,
+                added_tool_count: usage.cacheBreak.addedToolCount,
+                removed_tool_count: usage.cacheBreak.removedToolCount,
+                changed_tool_count: usage.cacheBreak.changedToolCount,
+                model_changed: usage.cacheBreak.modelChanged,
+                request_policy_changed: usage.cacheBreak.requestPolicyChanged,
+              }
+            : undefined,
           cost_usd: usage.costUsd,
         });
         return;

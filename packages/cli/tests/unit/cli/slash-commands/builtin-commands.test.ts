@@ -49,6 +49,11 @@ vi.mock('../../../../src/store/vanilla.js', () => ({
         outputTokens: 50,
         cacheReadTokens: 600,
         cacheWriteTokens: 200,
+        cacheBreak: {
+          reason: 'system_prompt_changed',
+          previousCacheReadTokens: 5_000,
+          cacheReadTokens: 600,
+        },
       },
     },
   }),
@@ -135,6 +140,9 @@ describe('Builtin Slash Commands', () => {
       expect(message).toContain('Cache hit rate: 60%');
       expect(message).toContain('Cache read: 600 tokens');
       expect(message).toContain('Cache write: 200 tokens');
+      expect(message).toContain(
+        'Last cache break: system prompt changed (5,000 → 600 cache-read tokens)'
+      );
     });
   });
 

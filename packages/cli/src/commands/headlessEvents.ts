@@ -318,6 +318,32 @@ const TokenUsageEventSchema = event({
   max_context_tokens: Type.Number(),
   cache_read_tokens: Type.Optional(Type.Number()),
   cache_write_tokens: Type.Optional(Type.Number()),
+  prompt_cache_break: Type.Optional(
+    Type.Object({
+      reason: StringEnum([
+        'model_changed',
+        'system_prompt_changed',
+        'tools_changed',
+        'request_policy_changed',
+        'ttl_expired',
+        'server_side',
+      ]),
+      previous_cache_read_tokens: Type.Number(),
+      cache_read_tokens: Type.Number(),
+      cache_write_tokens: Type.Number(),
+      token_drop: Type.Number(),
+      elapsed_ms: Type.Number(),
+      call_number: Type.Number(),
+      system_prompt_changed: Type.Boolean(),
+      system_char_delta: Type.Number(),
+      tools_changed: Type.Boolean(),
+      added_tool_count: Type.Number(),
+      removed_tool_count: Type.Number(),
+      changed_tool_count: Type.Number(),
+      model_changed: Type.Boolean(),
+      request_policy_changed: Type.Boolean(),
+    })
+  ),
   cost_usd: Type.Optional(Type.Number()),
 });
 

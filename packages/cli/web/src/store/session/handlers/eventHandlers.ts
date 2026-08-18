@@ -4,6 +4,7 @@ import type { Message as ServiceMessage, StreamEvent } from '@/services';
 import type {
   ActionStationarityInfo,
   Message,
+  PromptCacheBreakInfo,
   ProviderAdmissionInfo,
   ProviderCircuitInfo,
   ProviderRetryInfo,
@@ -1095,6 +1096,9 @@ const handleTokenUsage: EventHandler = (props, get) => {
     totalTokens: props.totalTokens as number,
     cacheReadTokens: (props.cacheReadTokens as number | undefined) ?? 0,
     cacheWriteTokens: (props.cacheWriteTokens as number | undefined) ?? 0,
+    ...(props.cacheBreak
+      ? { cacheBreak: props.cacheBreak as PromptCacheBreakInfo }
+      : {}),
     costUsd: props.costUsd as number | undefined,
   });
 

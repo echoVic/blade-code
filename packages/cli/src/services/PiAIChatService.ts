@@ -24,6 +24,7 @@ import {
   hasNonThinkingToolHistory,
 } from './pi/messageHistory.js';
 import { createFallbackModel, createPiRuntime } from './pi/modelRuntime.js';
+import { PromptCacheBreakMonitor } from './pi/promptCacheBreakMonitor.js';
 import {
   DEFAULT_PROVIDER_CIRCUIT_OPEN_MS,
   getProviderCircuitRegistry,
@@ -61,7 +62,11 @@ import {
   type ProviderRetryEvent,
   type ProviderRetryMode,
 } from './pi/providerRetry.js';
-import { buildPiOptions, observePiProviderResponses } from './pi/requestOptions.js';
+import {
+  buildPiOptions,
+  observePiProviderResponses,
+  resolvePromptCacheRetention,
+} from './pi/requestOptions.js';
 import { DEFAULT_STREAM_IDLE_TIMEOUT_MS, streamPiModel } from './pi/streamAdapter.js';
 
 const logger = createLogger(LogCategory.CHAT);
@@ -74,6 +79,25 @@ function hasImageContent(message: Message | undefined): boolean {
       Array.isArray(message.content) &&
       message.content.some((part) => part.type === 'image_url')
   );
+}
+
+function promptCacheContextEpoch(messages: Message[]): string {
+  const summary = messages.findLast((message) => {
+    const metadata = message.metadata;
+    return (
+      metadata !== null &&
+      typeof metadata === 'object' &&
+      !Array.isArray(metadata) &&
+      metadata.isCompactSummary === true
+    );
+  });
+  const metadata = summary?.metadata;
+  return metadata !== null &&
+    typeof metadata === 'object' &&
+    !Array.isArray(metadata) &&
+    typeof metadata.parentId === 'string'
+    ? metadata.parentId
+    : '';
 }
 
 function classifyProviderCircuitFailure(
@@ -119,6 +143,7 @@ export class PiAIChatService implements IChatService {
   private config: ChatConfig;
   private models: MutableModels;
   private model: Model<Api>;
+  private readonly promptCacheBreakMonitor = new PromptCacheBreakMonitor();
   private readonly admissionFallbackOwnerId =
     `pi-service-${process.pid}-${nextServiceAdmissionOwner++}`;
 
@@ -203,6 +228,57 @@ export class PiAIChatService implements IChatService {
       signal,
       requiredTool
     );
+    const observePromptCacheUsage = (
+      chunk: StreamChunk,
+      model: Model<Api>
+    ): StreamChunk => {
+      const sessionId = requestOptions?.providerSessionId;
+      if (!sessionId || !chunk.usage) {
+        return chunk;
+      }
+      if (!this.config.enablePromptCaching) {
+        this.promptCacheBreakMonitor.clear(sessionId);
+        return chunk;
+      }
+      const retention = resolvePromptCacheRetention(this.config, model, sessionId);
+      const promptCacheBreak = this.promptCacheBreakMonitor.observe({
+        sessionId,
+        modelIdentity: `${model.provider}\u0000${model.api}\u0000${model.id}`,
+        context,
+        retention,
+        contextEpoch: promptCacheContextEpoch(filtered),
+        policy: {
+          baseUrl: model.baseUrl ?? this.config.baseUrl ?? '',
+          retention,
+          requiredTool: requiredTool ?? '',
+          reasoningEnabled: this.config.reasoningEnabled ?? false,
+          reasoningEffort:
+            this.config.reasoningEffort ?? this.config.reasoningLevel ?? '',
+          serviceTier: this.config.serviceTier ?? '',
+          responseVerbosity: this.config.responseVerbosity ?? '',
+          temperature: requestOptions?.temperature ?? this.config.temperature ?? 0,
+          maxOutputTokens:
+            requestOptions?.maxOutputTokens ?? this.config.maxOutputTokens ?? 0,
+          customHeaders: this.config.customHeaders ?? {},
+        },
+        usage: chunk.usage,
+      });
+      if (!promptCacheBreak) return chunk;
+      logger.warn('[PiAIChatService] Prompt cache break detected', {
+        reason: promptCacheBreak.reason,
+        previousCacheReadTokens: promptCacheBreak.previousCacheReadTokens,
+        cacheReadTokens: promptCacheBreak.cacheReadTokens,
+        tokenDrop: promptCacheBreak.tokenDrop,
+        callNumber: promptCacheBreak.callNumber,
+      });
+      return {
+        ...chunk,
+        usage: {
+          ...chunk.usage,
+          promptCacheBreak,
+        },
+      };
+    };
     const pendingRequestBytes = estimateProviderRequestPendingBytes({
       messages: filtered,
       context,
@@ -722,7 +798,7 @@ export class PiAIChatService implements IChatService {
             }
             emitted = true;
             onRealChunk();
-            yield chunk;
+            yield observePromptCacheUsage(chunk, model);
           }
           if (!circuitSuccessRecorded) {
             const transition = circuit.recordSuccess(circuitToken);

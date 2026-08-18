@@ -36,7 +36,7 @@ function reasoningLevel(config: ChatConfig): ThinkingLevel | undefined {
   return config.reasoningEffort ?? config.reasoningLevel ?? 'high';
 }
 
-function promptCacheRetention(
+export function resolvePromptCacheRetention(
   config: ChatConfig,
   model: Model<Api>,
   providerSessionId?: string
@@ -216,7 +216,7 @@ export function buildPiOptions(
     maxTokens: requestOptions?.maxOutputTokens ?? config.maxOutputTokens,
     timeoutMs: config.timeout,
     maxRetries: 0,
-    cacheRetention: promptCacheRetention(
+    cacheRetention: resolvePromptCacheRetention(
       config,
       model,
       requestOptions?.providerSessionId

@@ -344,6 +344,15 @@ describe('eventHandlers', () => {
         maxContextTokens: 128000,
         cacheReadTokens: 50,
         cacheWriteTokens: 30,
+        cacheBreak: {
+          reason: 'tools_changed',
+          previousCacheReadTokens: 4_000,
+          cacheReadTokens: 50,
+          cacheWriteTokens: 30,
+          tokenDrop: 3_950,
+          elapsedMs: 2_000,
+          callNumber: 3,
+        },
         costUsd: 0.0033,
       },
     });
@@ -354,6 +363,15 @@ describe('eventHandlers', () => {
       totalTokens: 200,
       cacheReadTokens: 50,
       cacheWriteTokens: 30,
+      cacheBreak: {
+        reason: 'tools_changed',
+        previousCacheReadTokens: 4_000,
+        cacheReadTokens: 50,
+        cacheWriteTokens: 30,
+        tokenDrop: 3_950,
+        elapsedMs: 2_000,
+        callNumber: 3,
+      },
       costUsd: 0.0033,
     });
     expect(state.setMaxContextTokens).toHaveBeenCalledWith(128000, false);

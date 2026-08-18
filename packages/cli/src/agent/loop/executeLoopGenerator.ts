@@ -145,6 +145,7 @@ function toTokenUsageInfo(usage: UsageInfo, maxContextTokens: number): TokenUsag
     maxContextTokens,
     cacheReadTokens: usage.cacheReadInputTokens ?? 0,
     cacheWriteTokens: usage.cacheCreationInputTokens ?? 0,
+    ...(usage.promptCacheBreak ? { cacheBreak: usage.promptCacheBreak } : {}),
     costUsd: usage.costUsd,
   };
 }

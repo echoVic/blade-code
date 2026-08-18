@@ -58,4 +58,30 @@ describe('Web session token usage', () => {
       estimatedCostUsd: 0.125,
     });
   });
+
+  it('retains the latest cache-break attribution across later usage events', () => {
+    useSessionStore.getState().updateTokenUsage({
+      inputTokens: 4_000,
+      cacheReadTokens: 100,
+      cacheBreak: {
+        reason: 'tools_changed',
+        previousCacheReadTokens: 5_000,
+        cacheReadTokens: 100,
+        cacheWriteTokens: 0,
+        tokenDrop: 4_900,
+        elapsedMs: 1_000,
+        callNumber: 2,
+      },
+    });
+    useSessionStore.getState().updateTokenUsage({
+      inputTokens: 500,
+      cacheReadTokens: 400,
+    });
+
+    expect(useSessionStore.getState().tokenUsage.cacheBreak).toMatchObject({
+      reason: 'tools_changed',
+      previousCacheReadTokens: 5_000,
+      cacheReadTokens: 100,
+    });
+  });
 });

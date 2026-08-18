@@ -20,7 +20,10 @@ import type {
 import { PermissionMode } from '../config/types.js';
 import type { EphemeralDelta } from '../context/events/EphemeralDelta.js';
 import type { SessionEvent } from '../context/types.js';
-import type { Message } from '../services/ChatServiceInterface.js';
+import type {
+  Message,
+  PromptCacheBreakInfo,
+} from '../services/ChatServiceInterface.js';
 import type { ProviderCircuitEvent } from '../services/pi/providerCircuitBreaker.js';
 import type { ProviderAdmissionEvent } from '../services/pi/providerRequestAdmission.js';
 import type { ProviderRetryEvent } from '../services/pi/providerRetry.js';
@@ -80,6 +83,7 @@ export interface TokenUsage {
   totalOutputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  cacheBreak?: PromptCacheBreakInfo;
   turnCount: number;
   estimatedCostUsd: number;
 }

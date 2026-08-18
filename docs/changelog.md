@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.56] - 2026-08-18
+
+### 性能
+
+- pi runtime 现在按 Session 追踪每次请求的 cache read，并在读取量显著下降时，
+  将缓存中断归因到模型变化、系统提示词变化、工具定义变化、请求策略变化、TTL
+  过期或可能的 Provider 路由/缓存淘汰
+- 检测只保留 SHA-256 指纹、固定枚举原因和计数，不持久化 prompt 内容，也不向事件、
+  日志或 UI 暴露用户控制的 MCP/tool 名称
+- 阈值按前次 cache read 自适应：同时满足 5% 相对下降和 512-2000 tokens 的动态
+  绝对下降才报告；中型 prompt 不再被固定 2000 token 门槛漏检，小幅计量波动不会误报
+- compaction summary 的 parent identity 作为 context epoch；每次显式压缩只重置一次
+  baseline，后续请求恢复检测，不会把主动上下文压缩误报为 server-side break
+
+### 交互体验
+
+- Web Cache tooltip 显示最近一次中断原因和 cache-read 前后值
+- CLI `/cost` 显示相同归因；Headless JSONL 的 `token_usage` 新增
+  `prompt_cache_break` 结构化字段
+
+### 测试相关
+
+- 新增 system/tool/policy/TTL/server-side、compaction reset、隐私和 32 Session
+  有界状态对照
+- 使用真实 GPT 通道加热 300 行稳定 prompt，再完全替换所有缓存块，验证 runtime
+  输出 `system_prompt_changed`；framework retry 为 0
+
 ## [0.10.55] - 2026-08-18
 
 ### 稳定性
