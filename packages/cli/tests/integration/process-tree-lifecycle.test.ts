@@ -742,6 +742,37 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
     expect(names.some((name) => name.endsWith('.json'))).toBe(false);
   }, 10_000);
 
+  it('self-reaps an admitted foreground tree when its owner hard-exits', async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-owner-watchdog-'));
+    tempRoots.push(workspace);
+    const sessionId = `owner-watchdog-${Date.now()}`;
+    const owner = await startForegroundShellOwner(workspace, sessionId);
+    descendantPids.add(owner.commandPid);
+    const lease = await readForegroundLease(workspace);
+
+    try {
+      expect(owner.launcher.kill('SIGKILL')).toBe(true);
+      await owner.closed;
+
+      expect(await waitFor(() => processIsGone(lease.value.rootPid))).toBe(true);
+      expect(await waitFor(() => processIsGone(owner.commandPid))).toBe(true);
+      descendantPids.delete(owner.commandPid);
+
+      await expect(
+        new ForegroundProcessLeaseStore(workspace, sessionId).reapOrphans()
+      ).resolves.toMatchObject({ reaped: 0, stale: 1, active: 0, protected: 0 });
+    } finally {
+      owner.launcher.kill('SIGKILL');
+      try {
+        process.kill(-lease.value.rootPid, 'SIGKILL');
+      } catch {
+        // The gate watchdog already terminated the process group.
+      }
+      await waitFor(() => processIsGone(owner.commandPid));
+      descendantPids.delete(owner.commandPid);
+    }
+  });
+
   it('reaps a durable foreground command after its owner hard-exits', async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-orphan-foreground-'));
     tempRoots.push(workspace);

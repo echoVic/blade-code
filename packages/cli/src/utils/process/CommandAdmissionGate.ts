@@ -2,8 +2,8 @@ import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import {
   type OwnedProcessTreeOptions,
   type ProcessTreeTerminationResult,
-  type SpawnedOwnedProcess,
   processGroupIsRunning,
+  type SpawnedOwnedProcess,
   spawnOwnedProcess,
   terminateProcessGroupByPid,
 } from './OwnedProcessTree.js';
@@ -12,12 +12,14 @@ const COMMAND_ADMISSION_GATE = String.raw`
 const { spawn } = require('node:child_process');
 const [ownerPidValue, command, ...args] = process.argv.slice(1);
 const ownerPid = Number(ownerPidValue);
+const ownerWatchdogIntervalMs = 500;
 let child;
 let terminating = false;
 let finished = false;
 
 const ownerIsRunning = () => {
   if (!Number.isSafeInteger(ownerPid) || ownerPid <= 1) return false;
+  if (process.platform !== 'win32' && process.ppid !== ownerPid) return false;
   try {
     process.kill(ownerPid, 0);
     return true;
@@ -74,6 +76,10 @@ const terminateTree = () => {
     }
   }, 500);
 };
+
+setInterval(() => {
+  if (!ownerIsRunning()) terminateTree();
+}, ownerWatchdogIntervalMs);
 
 process.on('SIGTERM', terminateTree);
 process.on('SIGINT', terminateTree);

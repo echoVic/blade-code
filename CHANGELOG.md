@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.59] - 2026-08-19
+
+### Fixed
+- Command admission gates now monitor their owning Blade process and terminate
+  the full command group when that owner hard-exits, even if the control pipe
+  remains open
+- POSIX gates verify the direct parent relationship so PID reuse cannot keep an
+  orphan command alive
+
+### Tests
+- Added a real-process regression that hard-kills a foreground command owner
+  and proves the gate and its TERM-ignoring command self-reap without invoking
+  the durable orphan reaper
+
 ## [0.10.58] - 2026-08-18
 
 ### Changed
