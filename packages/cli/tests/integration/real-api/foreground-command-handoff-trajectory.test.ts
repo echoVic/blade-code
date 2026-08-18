@@ -26,6 +26,7 @@ import {
 import {
   buildRealApiRuntimeConfig,
   isRealApiTestEnabled,
+  isReleaseMatrix,
   releaseBlockingSurfaces,
   resolveRequiredDeepSeekQualificationModels,
   type TestModelConfig,
@@ -39,9 +40,9 @@ const models = isRealApiTestEnabled()
 const matrix = models.flatMap((model) =>
   surfaces.map((surface) => ({ model, surface }))
 );
-if (isRealApiTestEnabled() && matrix.length !== 8) {
+if (isRealApiTestEnabled() && matrix.length !== (isReleaseMatrix() ? 6 : 8)) {
   throw new Error(
-    `Foreground command handoff matrix must contain 8 cells, got ${matrix.length}`
+    `Foreground command handoff matrix must contain ${isReleaseMatrix() ? 6 : 8} cells, got ${matrix.length}`
   );
 }
 

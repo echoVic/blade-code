@@ -32,6 +32,26 @@ function safeSlug(value: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
+async function forceRm(target: string): Promise<void> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      await rm(target, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        (error as NodeJS.ErrnoException).code === 'ENOTEMPTY' &&
+        attempt < 4
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
   message: string,
@@ -434,7 +454,7 @@ describe
             await waitForChildExit(child, 10_000).catch(() => undefined);
           }
           await proxy.close();
-          await rm(root, { recursive: true, force: true });
+          await forceRm(root);
         }
       },
       300_000

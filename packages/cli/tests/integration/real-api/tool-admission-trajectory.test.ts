@@ -31,6 +31,7 @@ import {
 import {
   buildRealApiRuntimeConfig,
   isRealApiTestEnabled,
+  isReleaseMatrix,
   releaseBlockingSurfaces,
   resolveRequiredDeepSeekQualificationModels,
   type TestModelConfig,
@@ -44,8 +45,10 @@ const matrix = models.flatMap((model) =>
   surfaces.map((surface) => ({ model, surface }))
 );
 const fairnessModel = models.find((model) => model.model === 'deepseek-v4-flash');
-if (isRealApiTestEnabled() && matrix.length !== 8) {
-  throw new Error(`Tool admission matrix must contain 8 cells, got ${matrix.length}`);
+if (isRealApiTestEnabled() && matrix.length !== (isReleaseMatrix() ? 6 : 8)) {
+  throw new Error(
+    `Tool admission matrix must contain ${isReleaseMatrix() ? 6 : 8} cells, got ${matrix.length}`
+  );
 }
 if (isRealApiTestEnabled() && !fairnessModel) {
   throw new Error('Tool admission fairness qualification requires DeepSeek Flash');
