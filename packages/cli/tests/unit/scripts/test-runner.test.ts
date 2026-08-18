@@ -121,7 +121,7 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
   });
 
   it('allows the complete unit suite to scale beyond the legacy 45 second budget', () => {
-    expect(testTypes.unit.timeout).toBe(240_000);
+    expect(testTypes.unit.timeout).toBe(480_000);
   });
 
   it('keeps wall-clock performance tests out of the coverage matrix', () => {
