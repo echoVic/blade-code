@@ -38,6 +38,7 @@ vi.mock('../../../../../src/agent/subagents/BackgroundAgentManager', () => ({
 }));
 
 import { subagentRegistry } from '../../../../../src/agent/subagents/SubagentRegistry';
+import { TeamStore } from '../../../../../src/agent/teams/TeamStore';
 import { getBuiltinTools } from '../../../../../src/tools/builtin/index';
 import { createTeamTools } from '../../../../../src/tools/builtin/team/index';
 
@@ -70,6 +71,26 @@ describe('agent team tools', () => {
       systemPrompt: 'Plan work',
       tools: ['Read', 'Grep', 'Glob', 'TaskCreate', 'TaskUpdate'],
     });
+  });
+
+  it('does not retain stateless stores by config directory', async () => {
+    const configDir = await createTempConfigDir();
+
+    try {
+      const first = TeamStore.getInstance(configDir);
+      const second = TeamStore.getInstance(configDir);
+      expect(second).not.toBe(first);
+
+      const created = await first.createTeam({
+        name: 'Stateless Team',
+        members: [],
+      });
+      await expect(second.loadTeam(created.name)).resolves.toMatchObject({
+        name: 'stateless-team',
+      });
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
   });
 
   it('creates a persistent team and launches initial teammate agents', async () => {

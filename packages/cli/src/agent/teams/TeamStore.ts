@@ -38,7 +38,6 @@ interface TeamFile {
 }
 
 export class TeamStore {
-  private static instances = new Map<string, TeamStore>();
   private readonly teamsDir: string;
 
   private constructor(configDir: string) {
@@ -46,10 +45,7 @@ export class TeamStore {
   }
 
   static getInstance(configDir: string): TeamStore {
-    if (!TeamStore.instances.has(configDir)) {
-      TeamStore.instances.set(configDir, new TeamStore(configDir));
-    }
-    return TeamStore.instances.get(configDir)!;
+    return new TeamStore(configDir);
   }
 
   static sanitizeName(name: string): string {

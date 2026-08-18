@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.58] - 2026-08-18
+
+### Changed
+- Removed the permanent per-config-directory instance table from the stateless
+  Agent Team store, so workspace churn cannot retain arbitrary config paths
+
+### Tests
+- Added a cross-instance persistence contract proving fresh TeamStore facades
+  share only durable team files and no process-local object identity
+
 ## [0.10.57] - 2026-08-18
 
 ### Changed
