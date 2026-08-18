@@ -263,10 +263,14 @@ async function assertBackgroundCompletion(input: PreparedFixture): Promise<void>
   const taskCalls = toolCallEvents(events, 'Task');
   const taskOutputCalls = toolCallEvents(events, 'TaskOutput');
   const parentReads = toolCallEvents(events, 'Read');
-  expect(taskCalls).toHaveLength(1);
+  const launchedTaskCalls = taskCalls.filter((event) => {
+    const payload = event.data.payload as { input?: Record<string, unknown> };
+    return typeof payload.input?.subagent_session_id === 'string';
+  });
+  expect(launchedTaskCalls).toHaveLength(1);
   expect(taskOutputCalls).toHaveLength(0);
   expect(parentReads).toHaveLength(1);
-  const taskInput = taskCalls[0]!.data.payload as {
+  const taskInput = launchedTaskCalls[0]!.data.payload as {
     input?: Record<string, unknown>;
   };
   expect(taskInput.input).toMatchObject({

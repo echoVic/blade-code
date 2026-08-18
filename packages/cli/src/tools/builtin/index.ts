@@ -2,8 +2,6 @@
  * 内置工具模块
  */
 
-import * as os from 'os';
-import * as path from 'path';
 import type { SessionAgentResources } from '../../agent/resources/WorkspaceAgentResources.js';
 import type { SessionModelResources } from '../../agent/resources/WorkspaceModelResources.js';
 import {
@@ -16,6 +14,7 @@ import type {
   ResponseVerbositySelection,
   ServiceTierSelection,
 } from '../../config/types.js';
+import { getBladeStorageRoot } from '../../context/storage/pathUtils.js';
 import type { LspSessionManager } from '../../lsp/LspSessionManager.js';
 import type { SessionLspResources } from '../../lsp/WorkspaceLspResources.js';
 import { getSkillRegistry, type SkillRegistry } from '../../skills/index.js';
@@ -75,7 +74,7 @@ export async function getBuiltinTools(opts?: {
   getCommunicationStyle?: () => CommunicationStyleSelection;
 }): Promise<Tool[]> {
   const sessionId = opts?.sessionId || `session_${Date.now()}`;
-  const configDir = opts?.configDir || path.join(os.homedir(), '.blade');
+  const configDir = opts?.configDir || getBladeStorageRoot();
   const workspaceRoot = opts?.workspaceRoot || process.cwd();
   const resourceRoot = opts?.resourceRoot || workspaceRoot;
   const subagentRegistry =

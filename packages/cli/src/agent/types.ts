@@ -52,6 +52,8 @@ export interface ChatContext {
   messages: Message[];
   userId: string;
   sessionId: string;
+  /** Shared task-list scope inherited by coordinated Agent Team members. */
+  taskListId?: string;
   workspaceRoot: string;
   signal?: AbortSignal;
   confirmationHandler?: ConfirmationHandler; // 会话级别的确认处理器

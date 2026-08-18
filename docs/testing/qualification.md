@@ -77,6 +77,11 @@ Runtime/Web/ACP host-authoritative Goal completion verification。ACP fork 固�
 DeepSeek Flash/Pro，并对当前资格环境中已配置的 Claude、GPT 与国产模型执行同一 paired
 SDK trajectory；未声明 terminal capability 的 Client 必须使用 Session-bound local
 terminal，声明后 terminal 失败仍须 fail closed。
+Agent Team task-list coordination 固定运行 DeepSeek Flash/Pro；每个模型启动四个共享
+`taskListId` 的真实后台 teammate，要求每个 teammate 实际调用一次 `TaskCreate`，并
+验证最终任务 ID 连续且唯一、subject 全量保留、JSON 快照可解析、跨进程 lock 已释放、
+同进程 keyed coordination 已归零。纯文本声称创建任务、仅检查 HTTP 200、mock
+ToolExecutor 或只验证单进程 manager 均不能替代该轨迹。
 Goal completion 的 fresh PASS authority 同时绑定当前 host run、mutation revision 与
 由 Goal ID、attempt、requested-at timestamp 组成的 completion candidate identity。
 模型重复提交相同的幂等 `UpdateGoal complete` 时，必须保留已经由该 host run 记录的

@@ -317,6 +317,60 @@ describe('executeLoopGenerator', () => {
     reactiveCompactionState.reset.mockReset();
   });
 
+  it('propagates an Agent Team task-list scope to tool execution', async () => {
+    const deps = createMockDeps();
+    const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+    chatMock
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            id: 'tc-shared-task-list',
+            type: 'function',
+            function: {
+              name: 'TaskCreate',
+              arguments: '{"subject":"Shared","description":"Team task"}',
+            },
+          },
+        ],
+        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+        finishReason: 'tool_calls',
+      })
+      .mockResolvedValueOnce({
+        content: 'Created the shared task.',
+        toolCalls: undefined,
+        usage: { promptTokens: 120, completionTokens: 20, totalTokens: 140 },
+        finishReason: 'stop',
+      });
+    (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      success: true,
+      llmContent: { task: { id: '1' } },
+    });
+
+    const { result } = await drainGenerator(
+      executeLoopGenerator(
+        deps,
+        'Create a shared task.',
+        createMockContext({ taskListId: 'agent-team-shared' }),
+        { stream: false },
+        undefined
+      )
+    );
+
+    expect(result.success).toBe(true);
+    expect(deps.toolExecutor.execute).toHaveBeenCalledWith(
+      'TaskCreate',
+      {
+        subject: 'Shared',
+        description: 'Team task',
+      },
+      expect.objectContaining({
+        sessionId: 'test-session',
+        taskListId: 'agent-team-shared',
+      })
+    );
+  });
+
   describe('foreground Provider recovery origin', () => {
     it('attaches the frozen recovery budget to a root Provider request', async () => {
       const deps = createMockDeps({

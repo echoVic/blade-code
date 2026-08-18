@@ -28,6 +28,7 @@ export const testTypes = {
       'tests/integration/real-api/durable-interaction-recovery-trajectory.test.ts',
       'tests/integration/real-api/acp-session-fork-trajectory.test.ts',
       'tests/integration/real-api/release-coding-trajectory.test.ts',
+      'tests/integration/real-api/task-list-team-trajectory.test.ts',
       'tests/integration/real-api/provider-retry-trajectory.test.ts',
       'tests/integration/real-api/provider-attempt-deadline-web-trajectory.test.ts',
       'tests/integration/real-api/prompt-cache-surface-trajectory.test.ts',

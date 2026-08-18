@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.10.55] - 2026-08-18
+
+### Fixed
+- Agent Team members now preserve their shared `taskListId` through streaming
+  and non-streaming tool execution instead of writing isolated Session lists
+- Task and Team tools now use the same `BLADE_STORAGE_ROOT` as Session runtime
+  state
+- Task-list mutations reload the authoritative disk state while holding a
+  cross-process lock, preventing stale overwrites and duplicate IDs
+- Corrupt task-list state now fails closed instead of being replaced by an
+  empty list
+
+### Changed
+- Task-list snapshots are written atomically with strict file permissions
+- Task-list coordination no longer retains a process-wide manager per Session
+
+### Tests
+- Added deterministic same-process and real multi-process concurrency,
+  crash-lock recovery, corruption, path-containment, and reclamation coverage
+- Added release-blocking DeepSeek Flash/Pro Agent Team trajectories with four
+  concurrent real-API teammate writers per model
+
 ## [0.10.54] - 2026-08-18
 
 ### Fixed

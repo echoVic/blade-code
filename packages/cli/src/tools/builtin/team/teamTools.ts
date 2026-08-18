@@ -1,5 +1,3 @@
-import * as os from 'os';
-import * as path from 'path';
 import type { SessionAgentResources } from '../../../agent/resources/WorkspaceAgentResources.js';
 import type { SessionModelResources } from '../../../agent/resources/WorkspaceModelResources.js';
 import type { AgentSession } from '../../../agent/subagents/AgentSessionStore.js';
@@ -19,6 +17,7 @@ import type {
   ResponseVerbositySelection,
   ServiceTierSelection,
 } from '../../../config/types.js';
+import { getBladeStorageRoot } from '../../../context/storage/pathUtils.js';
 import type { SessionLspResources } from '../../../lsp/WorkspaceLspResources.js';
 import { Default, Type } from '../../../schema/index.js';
 import { getCwd } from '../../../utils/cwd.js';
@@ -55,7 +54,7 @@ export function createTeamTools(opts?: {
   getCommunicationStyle?: () => CommunicationStyleSelection;
 }) {
   const sessionId = opts?.sessionId || `session_${Date.now()}`;
-  const configDir = opts?.configDir || path.join(os.homedir(), '.blade');
+  const configDir = opts?.configDir || getBladeStorageRoot();
   const subagentRegistry = opts?.subagentRegistry ?? getSubagentRegistry();
 
   return [

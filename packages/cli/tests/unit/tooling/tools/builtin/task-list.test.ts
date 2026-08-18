@@ -3,6 +3,7 @@ import { tmpdir } from 'os';
 import * as path from 'path';
 import { describe, expect, it } from 'vitest';
 import { getBuiltinTools } from '../../../../../src/tools/builtin/index';
+import { TaskListManager } from '../../../../../src/tools/builtin/task/TaskListManager';
 import { createTaskListTools } from '../../../../../src/tools/builtin/task/index';
 
 async function createTempConfigDir() {
@@ -49,6 +50,10 @@ describe('task list tools persistence', () => {
         status: 'pending',
         priority: 'high',
       });
+      const mode = (
+        await fs.stat(path.join(configDir, 'tasks', 'session-a-agent-session-a.json'))
+      ).mode;
+      expect(mode & 0o777).toBe(0o600);
     } finally {
       await fs.rm(configDir, { recursive: true, force: true });
     }
@@ -291,9 +296,124 @@ describe('task list tools persistence', () => {
       await fs.rm(configDir, { recursive: true, force: true });
     }
   });
+
+  it('serializes concurrent managers without retaining coordination keys', async () => {
+    const configDir = await createTempConfigDir();
+
+    try {
+      const taskListId = 'same-process-team';
+      const tasks = await Promise.all(
+        Array.from({ length: 64 }, (_, index) =>
+          TaskListManager.getInstance(taskListId, configDir).createTask({
+            subject: `Concurrent task ${index}`,
+            description: 'Created by an independent manager instance',
+          })
+        )
+      );
+
+      expect(tasks.map((task) => Number(task.id)).sort((a, b) => a - b)).toEqual(
+        Array.from({ length: 64 }, (_, index) => index + 1)
+      );
+      await expect(
+        TaskListManager.getInstance(taskListId, configDir).listTasks()
+      ).resolves.toHaveLength(64);
+      expect(TaskListManager.coordinationStatsForTests()).toEqual({
+        keys: 0,
+        operations: 0,
+      });
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed without overwriting corrupt task-list state', async () => {
+    const configDir = await createTempConfigDir();
+    const tasksDir = path.join(configDir, 'tasks');
+    const filePath = path.join(tasksDir, 'corrupt-list-agent-corrupt-list.json');
+    const corruptState = '{"nextId":2,"tasks":[{"id":"1"}]}';
+
+    try {
+      await fs.mkdir(tasksDir, { recursive: true });
+      await fs.writeFile(filePath, corruptState, 'utf-8');
+      const manager = TaskListManager.getInstance('corrupt-list', configDir);
+
+      await expect(manager.listTasks()).rejects.toThrow(
+        'Task list state is corrupt or unreadable'
+      );
+      await expect(
+        manager.createTask({
+          subject: 'Must not overwrite',
+          description: 'The corrupt state must remain authoritative',
+        })
+      ).rejects.toThrow('Task list state is corrupt or unreadable');
+      await expect(fs.readFile(filePath, 'utf-8')).resolves.toBe(corruptState);
+      expect(TaskListManager.coordinationStatsForTests()).toEqual({
+        keys: 0,
+        operations: 0,
+      });
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  it('encodes task-list IDs before deriving a persistence path', async () => {
+    const configDir = await createTempConfigDir();
+
+    try {
+      await TaskListManager.getInstance('../outside', configDir).createTask({
+        subject: 'Contained task',
+        description: 'Must stay below the tasks directory',
+      });
+
+      const entries = await fs.readdir(path.join(configDir, 'tasks'));
+      expect(entries).toEqual(['..%2Foutside-agent-..%2Foutside.json']);
+      await expect(
+        fs.readFile(path.join(configDir, 'outside-agent-..', 'outside.json'))
+      ).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('builtin task list tool registration', () => {
+  it('uses the unified Blade storage root by default', async () => {
+    const storageRoot = await createTempConfigDir();
+    const previousStorageRoot = process.env.BLADE_STORAGE_ROOT;
+
+    try {
+      process.env.BLADE_STORAGE_ROOT = storageRoot;
+      const tools = await getBuiltinTools({ sessionId: 'storage-root-session' });
+      const taskCreate = tools.find((tool) => tool.name === 'TaskCreate');
+      if (!taskCreate) throw new Error('TaskCreate tool not found');
+
+      const result = await taskCreate
+        .build({
+          subject: 'Unified storage',
+          description: 'Persist with the Session runtime state',
+        })
+        .execute(createAbortSignal());
+      expect(result.success).toBe(true);
+      await expect(
+        fs.readFile(
+          path.join(
+            storageRoot,
+            'tasks',
+            'storage-root-session-agent-storage-root-session.json'
+          ),
+          'utf-8'
+        )
+      ).resolves.toContain('Unified storage');
+    } finally {
+      if (previousStorageRoot === undefined) {
+        delete process.env.BLADE_STORAGE_ROOT;
+      } else {
+        process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
+      }
+      await fs.rm(storageRoot, { recursive: true, force: true });
+    }
+  });
+
   it('exposes Task list tools without TodoWrite compatibility', async () => {
     const configDir = await createTempConfigDir();
 

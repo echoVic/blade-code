@@ -11,8 +11,6 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import * as os from 'os';
-import * as path from 'path';
 import {
   type BladeConfig,
   ConfigManager,
@@ -21,6 +19,7 @@ import {
 } from '../config/index.js';
 import type { ModelConfig } from '../config/types.js';
 import { ContextManager } from '../context/ContextManager.js';
+import { getBladeStorageRoot } from '../context/storage/pathUtils.js';
 import { buildGoalContinuationPrompt } from '../goals/prompts.js';
 import type { GoalSnapshot } from '../goals/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
@@ -1437,7 +1436,7 @@ export class Agent {
       // 使用默认 sessionId（因为注册时还没有会话上下文）
       const builtinTools = await getBuiltinTools({
         sessionId: 'default',
-        configDir: path.join(os.homedir(), '.blade'),
+        configDir: getBladeStorageRoot(),
         workspaceRoot: getCwd(),
         resourceRoot: getCwd(),
         agentResources: this.agentResources,

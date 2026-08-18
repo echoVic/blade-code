@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.55] - 2026-08-18
+
+### 稳定性
+
+- Agent Team 的共享 `taskListId` 现在会贯穿 streaming 与 non-streaming
+  工具执行上下文；teammate 不再把成功的 `TaskCreate` 写入各自独立 Session 列表
+- TaskList mutation 现在在跨进程锁内重读权威磁盘状态并执行 read-modify-write，
+  多 Agent 或多个 Blade 进程并发创建任务时不再发生 stale overwrite 和重复 ID
+- 任务列表使用原子替换与 `0600` 文件权限；损坏 JSON、非法 task schema 和重复 ID
+  会 fail closed，不再静默清空后覆盖原文件
+- Task 与 Team 工具统一使用 Session runtime 的 `BLADE_STORAGE_ROOT`，测试 profile、
+  headless server 和隔离运行时不再把同一 Session 的状态拆到两个存储根
+- TaskListManager 不再为每个 Session 永久保留静态实例；同进程 keyed coordination
+  在最后一个等待者完成后确定性回收
+
+### 测试相关
+
+- 新增 64 路同进程创建、6 个真实子进程并发写入 48 个任务、持锁进程
+  `SIGKILL` 后 stale-lock 接管、损坏状态保护和路径 containment 对照
+- 新增 release-blocking DeepSeek Flash/Pro 真实 API 轨迹：每个模型启动 4 个后台
+  Agent Team 成员并发调用 `TaskCreate`，验证连续 ID、唯一 subject、原子 JSON、
+  file lock 清理与 keyed coordination 归零；framework retry 保持 0
+
 ## [0.10.54] - 2026-08-18
 
 ### 稳定性

@@ -1,7 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { Mutex } from 'async-mutex';
 import { nanoid } from 'nanoid';
-import * as os from 'os';
 import * as path from 'path';
 import { isAcpMode } from '../../acp/AcpServiceContext.js';
 import {
@@ -25,7 +24,10 @@ import type {
   SessionInterruptedToolCall,
   SessionTurnRecovery,
 } from '../../context/storage/PersistentStore.js';
-import { getSessionInboxFilePath } from '../../context/storage/pathUtils.js';
+import {
+  getBladeStorageRoot,
+  getSessionInboxFilePath,
+} from '../../context/storage/pathUtils.js';
 import { toTaskFailure } from '../../context/taskFailure.js';
 import type {
   SessionTaskDiffStat,
@@ -2470,7 +2472,7 @@ export class SessionRuntime {
   private async registerBuiltinTools(): Promise<void> {
     const builtinTools = await getBuiltinTools({
       sessionId: this.sessionId,
-      configDir: path.join(os.homedir(), '.blade'),
+      configDir: getBladeStorageRoot(),
       workspaceRoot: this.workspaceRoot,
       resourceRoot: this.projectRoot,
       agentResources: this.agentResources,
