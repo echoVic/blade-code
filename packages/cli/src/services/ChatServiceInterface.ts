@@ -161,6 +161,8 @@ export interface ChatResponse {
 }
 
 export interface ChatRequestOptions {
+  /** Stable identity used for Provider prompt-cache routing and affinity. */
+  providerSessionId?: string;
   toolChoice?: {
     type: 'tool';
     toolName: string;

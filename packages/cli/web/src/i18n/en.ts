@@ -551,6 +551,11 @@ export const en = {
   'status.context': 'Context',
   'status.tokenLimitTooltip':
     'Token limit is estimated. It updates when the model reports its context size.',
+  'status.cache': 'Cache',
+  'status.cacheTooltip': 'Cached input divided by total model input for this session.',
+  'status.cacheDetails': 'Read {read} · Written {write} · Uncached {uncached}',
+  'status.cacheUnavailable':
+    'The Provider has not reported prompt-cache usage for this session.',
   'status.phase.running': 'Generating...',
   'status.phase.providerStall': 'Provider stream paused',
   'status.phase.actionStationarityRecovering': 'Recovering',

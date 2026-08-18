@@ -1,5 +1,6 @@
 import { Box, Text } from 'ink';
 import React, { useEffect, useState } from 'react';
+import { formatPromptCacheHitRate } from '../../api/promptCacheMetrics.js';
 import { PermissionMode } from '../../config/types.js';
 import { GoalStore } from '../../goals/GoalStore.js';
 import type { GoalSnapshot } from '../../goals/types.js';
@@ -13,6 +14,7 @@ import {
   useIsReady,
   usePendingCommands,
   usePermissionMode,
+  usePromptCacheHitRate,
   useReasoningEffort,
   useRecoveredSteeringCount,
   useResponseVerbosity,
@@ -50,6 +52,7 @@ export const ChatStatusBar: React.FC = React.memo(() => {
   const responseVerbosity = useResponseVerbosity();
   const communicationStyle = useCommunicationStyle();
   const sessionCost = useSessionCost();
+  const promptCacheHitRate = usePromptCacheHitRate();
   const pendingCommands = usePendingCommands();
   const recoveredSteeringCount = useRecoveredSteeringCount();
   const sessionId = useSessionId();
@@ -233,6 +236,10 @@ export const ChatStatusBar: React.FC = React.memo(() => {
                 {contextRemaining}%
               </Text>
             )}
+            <Text color="gray">·</Text>
+            <Text color={promptCacheHitRate === undefined ? 'gray' : 'cyan'}>
+              Cache {formatPromptCacheHitRate(promptCacheHitRate)}
+            </Text>
             {sessionCost > 0.001 && (
               <>
                 <Text color="gray">·</Text>

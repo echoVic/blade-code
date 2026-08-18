@@ -4,6 +4,10 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import {
+  derivePromptCacheMetrics,
+  formatPromptCacheHitRate,
+} from '../api/promptCacheMetrics.js';
 import { TokenCounter } from '../context/TokenCounter.js';
 import { probeModelProvider } from '../services/ProviderHealthService.js';
 import {
@@ -372,9 +376,10 @@ const costCommand: SlashCommand = {
         ? `$${usage.estimatedCostUsd < 0.01 ? usage.estimatedCostUsd.toFixed(6) : usage.estimatedCostUsd.toFixed(4)}`
         : 'N/A (unknown model pricing)';
 
+    const promptCache = derivePromptCacheMetrics(usage);
     const cacheInfo =
-      usage.cacheReadTokens > 0 || usage.cacheWriteTokens > 0
-        ? `\n- Cache read: ${usage.cacheReadTokens.toLocaleString()} tokens\n- Cache write: ${usage.cacheWriteTokens.toLocaleString()} tokens`
+      promptCache.hitRate !== undefined
+        ? `\n- Cache hit rate: ${formatPromptCacheHitRate(promptCache.hitRate)}\n- Cache read: ${promptCache.cacheReadTokens.toLocaleString()} tokens\n- Cache write: ${promptCache.cacheWriteTokens.toLocaleString()} tokens`
         : '';
 
     const info = `**Session Cost Summary**

@@ -1877,6 +1877,7 @@ validates the object and may return a bounded corrective error.`;
           context.subagentInfo?.parentSessionId ??
           context.sessionId;
         const requestOptions: ChatRequestOptions = {
+          providerSessionId: context.sessionId,
           ...(turnRequiredToolName
             ? {
                 toolChoice: {

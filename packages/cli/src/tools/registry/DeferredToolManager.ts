@@ -109,7 +109,9 @@ export class DeferredToolManager {
    * 生成 deferred 工具的名称列表
    */
   getDeferredToolNames(): string[] {
-    return Array.from(this.deferredTools);
+    return Array.from(this.deferredTools).sort((left, right) =>
+      left < right ? -1 : left > right ? 1 : 0
+    );
   }
 
   /**

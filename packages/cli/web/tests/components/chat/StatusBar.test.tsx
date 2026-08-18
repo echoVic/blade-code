@@ -69,6 +69,18 @@ describe('StatusBar', () => {
     sessionState.providerCircuit = null;
     sessionState.providerStall = null;
     sessionState.actionStationarity = null;
+    Object.assign(sessionState.tokenUsage, {
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      maxContextTokens: 100,
+      isDefaultMaxTokens: false,
+      totalInputTokens: 10,
+      totalOutputTokens: 5,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      estimatedCostUsd: 0,
+    });
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -88,6 +100,32 @@ describe('StatusBar', () => {
 
     expect(container.textContent).toContain('Compacting context...');
     expect(container.textContent).not.toContain('Generating...');
+  });
+
+  it('renders the cumulative prompt-cache hit rate', () => {
+    Object.assign(sessionState.tokenUsage, {
+      totalInputTokens: 1_000,
+      cacheReadTokens: 600,
+      cacheWriteTokens: 200,
+    });
+
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    const cache = container.querySelector('[data-testid="prompt-cache-hit-rate"]');
+    expect(cache?.textContent).toContain('Cache60%');
+    expect(cache?.getAttribute('aria-label')).toBe('Cache 60%');
+  });
+
+  it('renders an unavailable cache rate before Provider cache usage arrives', () => {
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    const cache = container.querySelector('[data-testid="prompt-cache-hit-rate"]');
+    expect(cache?.textContent).toContain('Cache—');
+    expect(cache?.getAttribute('aria-label')).toBe('Cache —');
   });
 
   it('renders context-limit recovery as a distinct lifecycle phase', () => {

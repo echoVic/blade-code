@@ -65,6 +65,16 @@ describe('createPiContext image capabilities', () => {
 });
 
 describe('createPiContext constrained tools', () => {
+  it('sorts tool declarations into a cache-stable order', async () => {
+    const context = await createPiContext([], model(['text']), [
+      { name: 'Write', description: 'Write a file', parameters: {} },
+      { name: 'Bash', description: 'Run a command', parameters: {} },
+      { name: 'Read', description: 'Read a file', parameters: {} },
+    ]);
+
+    expect(context.tools?.map((tool) => tool.name)).toEqual(['Bash', 'Read', 'Write']);
+  });
+
   it('preserves provider constrained-sampling preferences', async () => {
     const context = await createPiContext([], model(['text']), [
       {

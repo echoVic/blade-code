@@ -36,6 +36,22 @@ function reasoningLevel(config: ChatConfig): ThinkingLevel | undefined {
   return config.reasoningEffort ?? config.reasoningLevel ?? 'high';
 }
 
+function promptCacheRetention(
+  config: ChatConfig,
+  model: Model<Api>,
+  providerSessionId?: string
+): 'none' | 'short' | 'long' {
+  if (!config.enablePromptCaching) return 'none';
+  if (
+    providerSessionId &&
+    model.api === 'openai-completions' &&
+    !model.baseUrl.includes('api.openai.com')
+  ) {
+    return 'long';
+  }
+  return 'short';
+}
+
 function googleThinkingLevel(
   reasoning: ThinkingLevel
 ): 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' {
@@ -200,7 +216,12 @@ export function buildPiOptions(
     maxTokens: requestOptions?.maxOutputTokens ?? config.maxOutputTokens,
     timeoutMs: config.timeout,
     maxRetries: 0,
-    cacheRetention: config.enablePromptCaching ? 'short' : 'none',
+    cacheRetention: promptCacheRetention(
+      config,
+      model,
+      requestOptions?.providerSessionId
+    ),
+    sessionId: requestOptions?.providerSessionId,
   };
   addThinkingOptions(options, model, config, disableThinking);
   addToolChoice(options, model.api, requestOptions?.toolChoice?.toolName);

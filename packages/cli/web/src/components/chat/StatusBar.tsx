@@ -1,3 +1,7 @@
+import {
+  derivePromptCacheMetrics,
+  formatPromptCacheHitRate,
+} from '@api/promptCacheMetrics';
 import { HelpCircle } from 'lucide-react';
 import {
   Tooltip,
@@ -84,6 +88,8 @@ export function StatusBar() {
     tokenUsage.maxContextTokens > 0
       ? Math.round((tokenUsage.totalTokens / tokenUsage.maxContextTokens) * 100)
       : 0;
+  const promptCache = derivePromptCacheMetrics(tokenUsage);
+  const promptCacheHitRate = formatPromptCacheHitRate(promptCache.hitRate);
 
   const clamped = Math.min(usagePercent, 100);
   // Segmented ticks — 20 cells, each cell = 5%. Feels more like an instrument
@@ -91,8 +97,8 @@ export function StatusBar() {
   const state = usagePercent > 95 ? 'danger' : usagePercent > 80 ? 'warn' : 'safe';
 
   return (
-    <div className="flex items-center gap-4 border-t border-[hsl(var(--deck-hairline))] bg-[hsl(var(--deck-canvas-veil))]/70 px-5 py-2 font-mono text-[11px] text-[hsl(var(--deck-ink-muted))] backdrop-blur-sm">
-      <div className="flex gap-3 items-center">
+    <div className="flex items-center gap-2 border-t border-[hsl(var(--deck-hairline))] bg-[hsl(var(--deck-canvas-veil))]/70 px-3 py-2 font-mono text-[11px] text-[hsl(var(--deck-ink-muted))] backdrop-blur-sm sm:gap-4 sm:px-5">
+      <div className="flex items-center gap-2 sm:gap-3">
         <span className="deck-eyebrow text-[hsl(var(--deck-ink-faint))]">
           {t('status.context')}
         </span>
@@ -126,7 +132,7 @@ export function StatusBar() {
 
         {/* Segmented context meter */}
         <div
-          className="relative h-2 w-32 overflow-hidden rounded-sm border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))]"
+          className="relative hidden h-2 w-32 overflow-hidden rounded-sm border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] sm:block"
           aria-hidden="true"
         >
           <div
@@ -160,6 +166,48 @@ export function StatusBar() {
           {usagePercent}%
         </span>
       </div>
+
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div
+              className="flex shrink-0 cursor-help items-baseline gap-2 border-l border-[hsl(var(--deck-hairline))] pl-2 sm:pl-4"
+              data-testid="prompt-cache-hit-rate"
+              aria-label={`${t('status.cache')} ${promptCacheHitRate}`}
+            >
+              <span className="deck-eyebrow text-[hsl(var(--deck-ink-faint))]">
+                {t('status.cache')}
+              </span>
+              <span
+                className={cn(
+                  'tabular-nums',
+                  promptCache.hitRate === undefined
+                    ? 'text-[hsl(var(--deck-ink-faint))]'
+                    : 'font-medium text-[hsl(var(--deck-accent))]'
+                )}
+              >
+                {promptCacheHitRate}
+              </span>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-[280px]">
+            {promptCache.hitRate === undefined ? (
+              <p className="text-xs">{t('status.cacheUnavailable')}</p>
+            ) : (
+              <div className="space-y-1 text-xs">
+                <p>{t('status.cacheTooltip')}</p>
+                <p className="font-mono tabular-nums">
+                  {t('status.cacheDetails', {
+                    read: formatTokens(promptCache.cacheReadTokens),
+                    write: formatTokens(promptCache.cacheWriteTokens),
+                    uncached: formatTokens(promptCache.uncachedInputTokens),
+                  })}
+                </p>
+              </div>
+            )}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
 
       <div className="flex-1" />
 

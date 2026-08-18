@@ -165,7 +165,10 @@ export async function createPiContext(
       description: tool.description,
       parameters: tool.parameters as TSchema,
       constrainedSampling: tool.constrainedSampling,
-    }));
+    }))
+    .sort((left, right) =>
+      left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+    );
   return {
     ...(systemPrompt ? { systemPrompt } : {}),
     messages: contextMessages,

@@ -3,6 +3,7 @@ import { Agent } from '../../../../src/agent/Agent.js';
 import type { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
 import { taskRunScheduler } from '../../../../src/agent/runtime/TaskRunScheduler.js';
 import { type BladeConfig, PermissionMode } from '../../../../src/config/types.js';
+import * as promptBuilder from '../../../../src/prompts/index.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
 import type { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 
@@ -126,6 +127,47 @@ describe('Agent runLoop system prompt injection', () => {
     expect(result.done).toBe(true);
     expect((agent as any).buildSystemPromptOnDemand).toHaveBeenCalledOnce();
     expect(receivedSystemPrompt).toBe('BASE_PROMPT');
+  });
+
+  it('keeps dynamic git and directory snapshots out of root prompt variants', async () => {
+    const buildSystemPrompt = vi
+      .spyOn(promptBuilder, 'buildSystemPrompt')
+      .mockResolvedValue({ prompt: 'CACHE_STABLE_PROMPT', sources: [] });
+    const agent = new Agent(createConfig(), {}, {
+      getRegistry: () => ({ getAll: () => [] }),
+    } as any);
+    const context = {
+      messages: [],
+      userId: 'user-1',
+      sessionId: 'session-1',
+      workspaceRoot: '/workspace',
+      permissionMode: PermissionMode.PLAN,
+    };
+    (agent as any).executeLoop = vi.fn(async function* () {
+      if (Date.now() < 0) yield undefined;
+      return {
+        success: true,
+        finalMessage: '',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    try {
+      await (agent as any).buildSystemPromptOnDemand('/workspace');
+      await (agent as any).runPlanLoop('plan this', context).next();
+      expect(buildSystemPrompt).toHaveBeenCalledTimes(2);
+      for (const [options] of buildSystemPrompt.mock.calls) {
+        expect(options).toMatchObject({
+          includeEnvironment: true,
+          environmentOptions: {
+            includeGitSnapshot: false,
+            includeDirectoryListing: false,
+          },
+        });
+      }
+    } finally {
+      buildSystemPrompt.mockRestore();
+    }
   });
 
   it('owns the SessionRuntime turn mailbox for the full streamed run', async () => {

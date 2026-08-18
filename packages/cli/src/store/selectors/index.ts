@@ -9,6 +9,7 @@
  */
 
 import { useShallow } from 'zustand/react/shallow';
+import { derivePromptCacheMetrics } from '../../api/promptCacheMetrics.js';
 import type { ModelConfig } from '../../config/types.js';
 import { themeManager } from '../../ui/themes/ThemeManager.js';
 import { useBladeStore } from '../index.js';
@@ -46,6 +47,17 @@ export const useIsCompacting = () =>
 
 export const useSessionCost = () =>
   useBladeStore((state) => state.session.tokenUsage.estimatedCostUsd);
+
+export const usePromptCacheHitRate = () =>
+  useBladeStore((state) => {
+    const { totalInputTokens, cacheReadTokens, cacheWriteTokens } =
+      state.session.tokenUsage;
+    return derivePromptCacheMetrics({
+      totalInputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+    }).hitRate;
+  });
 
 export const useProviderCircuit = () =>
   useBladeStore((state) => state.session.providerCircuit);

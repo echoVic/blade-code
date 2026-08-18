@@ -66,6 +66,12 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
       'tests/integration/real-api/provider-attempt-deadline-web-trajectory.test.ts'
     );
     expect(testTypes.realApiQualification.files).toContain(
+      'tests/integration/real-api/prompt-cache-efficiency-trajectory.test.ts'
+    );
+    expect(testTypes.realApiQualification.files).toContain(
+      'tests/integration/real-api/prompt-cache-surface-trajectory.test.ts'
+    );
+    expect(testTypes.realApiQualification.files).toContain(
       'tests/integration/real-api/action-stationarity-trajectory.test.ts'
     );
     expect(testTypes.realApiQualification.files).toContain(

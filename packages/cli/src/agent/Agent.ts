@@ -92,6 +92,10 @@ import type {
 
 // 创建 Agent 专用 Logger
 const logger = createLogger(LogCategory.AGENT);
+const CACHE_STABLE_ENVIRONMENT_OPTIONS = {
+  includeGitSnapshot: false,
+  includeDirectoryListing: false,
+} as const;
 
 function isTerminalProviderAdmissionRejection(result: LoopResult): boolean {
   return (
@@ -1019,6 +1023,7 @@ export class Agent {
       projectPath: context.workspaceRoot || getCwd(),
       mode: PermissionMode.PLAN,
       includeEnvironment: true,
+      environmentOptions: CACHE_STABLE_ENVIRONMENT_OPTIONS,
       language: this.config.language,
       availableSkills: this.agentResources?.skills.generateAvailableSkillsList(),
       communicationStyle:
@@ -1090,6 +1095,7 @@ export class Agent {
       replaceDefault: replacePrompt,
       append: appendPrompt,
       includeEnvironment: true,
+      environmentOptions: CACHE_STABLE_ENVIRONMENT_OPTIONS,
       language: this.config.language,
       availableSkills: this.agentResources?.skills.generateAvailableSkillsList(),
       communicationStyle:

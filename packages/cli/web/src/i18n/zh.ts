@@ -514,6 +514,10 @@ export const zh: Dict = {
 
   'status.context': '上下文',
   'status.tokenLimitTooltip': '此为估算的 token 上限，模型回报上下文尺寸后会自动更新。',
+  'status.cache': '缓存',
+  'status.cacheTooltip': '本会话缓存读取输入占模型总输入的比例。',
+  'status.cacheDetails': '读取 {read} · 写入 {write} · 未缓存 {uncached}',
+  'status.cacheUnavailable': 'Provider 尚未回报本会话的提示词缓存用量。',
   'status.phase.running': '生成中…',
   'status.phase.providerStall': 'Provider 流暂无数据',
   'status.phase.actionStationarityRecovering': '正在纠正空转',

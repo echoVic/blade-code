@@ -262,6 +262,11 @@ TUI 使用相同的服务：
 
 覆盖 endpoint 不改变 pi-ai 为该 Provider 选择的协议。
 
+`enablePromptCaching` 启用 Provider Prompt Cache，并以 Blade Session ID 作为稳定的
+缓存亲和标识。自定义 OpenAI-compatible completion channel 使用 Provider 支持的 long
+retention；其他协议由 pi-ai 映射到各自的 cache-control 语义。CLI footer、Web
+StatusBar 和 `/cost` 会显示累计命中率；Provider 未回报缓存 token 时显示 `Cache —`。
+
 `providerForegroundRecoveryMs` 控制 root foreground turn 在首个瞬时 Provider
 故障后的有界恢复时间。默认 `600000`（10 分钟），`0` 禁用，其他值必须为
 `30000-3600000`。没有显式 `overrides.maxRetries` 时，root turn 最多追加 12 次请求；

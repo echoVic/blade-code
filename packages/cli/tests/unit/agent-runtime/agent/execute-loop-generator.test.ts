@@ -343,6 +343,7 @@ describe('executeLoopGenerator', () => {
         expect.any(Array),
         undefined,
         {
+          providerSessionId: 'test-session',
           providerAdmission: {
             sessionId: 'test-session',
             ownerId: 'test-session',
@@ -388,6 +389,7 @@ describe('executeLoopGenerator', () => {
         expect.any(Array),
         undefined,
         {
+          providerSessionId: 'test-session',
           providerAdmission: {
             sessionId: 'test-session',
             ownerId: 'parent-session',
@@ -681,6 +683,14 @@ describe('executeLoopGenerator', () => {
       expect(result.finalMessage).toBe('Hello from LLM');
       expect(result.metadata?.turnsCount).toBe(1);
       expect(result.metadata?.toolCallsCount).toBe(0);
+      expect(vi.mocked(deps.chatService.chat).mock.calls[0]?.[3]).toMatchObject({
+        providerSessionId: 'test-session',
+        providerAdmission: {
+          sessionId: 'test-session',
+          ownerId: 'test-session',
+          requestClass: 'foreground',
+        },
+      });
     });
 
     it('does not apply implementation completion gates to read-only review agents', async () => {
@@ -2508,6 +2518,7 @@ describe('executeLoopGenerator', () => {
       expect(result.success).toBe(true);
       expect(chatMock).toHaveBeenCalledTimes(4);
       expect(chatMock.mock.calls[2]?.[3]).toEqual({
+        providerSessionId: 'test-session',
         toolChoice: { type: 'tool', toolName: 'Task' },
         providerAdmission: {
           sessionId: 'test-session',
@@ -2831,6 +2842,7 @@ describe('executeLoopGenerator', () => {
         expect.objectContaining({ sessionId: 'test-session' })
       );
       expect(chatMock.mock.calls[2]?.[3]).toEqual({
+        providerSessionId: 'test-session',
         toolChoice: { type: 'tool', toolName: 'Task' },
         providerAdmission: {
           sessionId: 'test-session',
@@ -3094,6 +3106,7 @@ describe('executeLoopGenerator', () => {
         executeMock.mock.calls.filter(([toolName]) => toolName === 'Task')
       ).toHaveLength(2);
       expect(chatMock.mock.calls[5]?.[3]).toEqual({
+        providerSessionId: 'test-session',
         toolChoice: { type: 'tool', toolName: 'Task' },
         providerAdmission: {
           sessionId: 'test-session',
@@ -3471,6 +3484,7 @@ describe('executeLoopGenerator', () => {
 
       expect(result.success).toBe(true);
       expect(chatMock.mock.calls[1]?.[3]).toEqual({
+        providerSessionId: 'test-session',
         toolChoice: { type: 'tool', toolName: 'Task' },
         providerAdmission: {
           sessionId: 'test-session',
@@ -3479,6 +3493,7 @@ describe('executeLoopGenerator', () => {
         },
       });
       expect(chatMock.mock.calls[2]?.[3]).toEqual({
+        providerSessionId: 'test-session',
         toolChoice: { type: 'tool', toolName: 'Task' },
         providerAdmission: {
           sessionId: 'test-session',
@@ -3842,6 +3857,7 @@ describe('executeLoopGenerator', () => {
         expect.not.arrayContaining([expect.objectContaining({ name: 'Task' })]),
         undefined,
         {
+          providerSessionId: 'test-session',
           providerAdmission: {
             sessionId: 'test-session',
             ownerId: 'test-session',

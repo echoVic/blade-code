@@ -9,6 +9,7 @@ const mockUseGitBranch = vi.fn((_projectRoot?: string) => ({
 const mockGetProjectRoot = vi.fn(() => '/repo-root');
 const mockRecoveredSteeringCount = vi.fn(() => 0);
 const mockCommunicationStyle = vi.fn(() => 'auto');
+const mockPromptCacheHitRate = vi.fn<() => number | undefined>(() => undefined);
 
 vi.mock('ink', () => ({
   Box: ({ children }: { children?: React.ReactNode }) =>
@@ -26,6 +27,7 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
   useIsReady: () => true,
   usePendingCommands: () => [],
   usePermissionMode: () => 'default',
+  usePromptCacheHitRate: () => mockPromptCacheHitRate(),
   useRecoveredSteeringCount: () => mockRecoveredSteeringCount(),
   useSessionCost: () => null,
   useSessionId: () => 'status-bar-session',
@@ -51,6 +53,7 @@ describe('ChatStatusBar', () => {
     mockGetProjectRoot.mockClear();
     mockRecoveredSteeringCount.mockReturnValue(0);
     mockCommunicationStyle.mockReturnValue('auto');
+    mockPromptCacheHitRate.mockReturnValue(undefined);
   });
 
   it('应该使用当前会话的 active workspace 获取分支', async () => {
@@ -84,5 +87,26 @@ describe('ChatStatusBar', () => {
     const markup = renderToStaticMarkup(React.createElement(ChatStatusBar));
 
     expect(markup).toContain('Style pragmatic');
+  });
+
+  it('应该在状态栏显示同口径缓存命中率', async () => {
+    mockPromptCacheHitRate.mockReturnValue(0.6);
+    const { ChatStatusBar } = await import(
+      '../../../../src/ui/components/ChatStatusBar.js'
+    );
+
+    const markup = renderToStaticMarkup(React.createElement(ChatStatusBar));
+
+    expect(markup).toContain('Cache 60%');
+  });
+
+  it('Provider 未回报缓存用量时应该显示空值', async () => {
+    const { ChatStatusBar } = await import(
+      '../../../../src/ui/components/ChatStatusBar.js'
+    );
+
+    const markup = renderToStaticMarkup(React.createElement(ChatStatusBar));
+
+    expect(markup).toContain('Cache —');
   });
 });

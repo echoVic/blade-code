@@ -32,6 +32,8 @@ export const testTypes = {
       'tests/integration/real-api/release-coding-trajectory.test.ts',
       'tests/integration/real-api/provider-retry-trajectory.test.ts',
       'tests/integration/real-api/provider-attempt-deadline-web-trajectory.test.ts',
+      'tests/integration/real-api/prompt-cache-efficiency-trajectory.test.ts',
+      'tests/integration/real-api/prompt-cache-surface-trajectory.test.ts',
       'tests/integration/real-api/action-stationarity-trajectory.test.ts',
       'tests/integration/real-api/goal-mode-trajectory.test.ts',
       'tests/integration/real-api/root-turn-auto-resume-trajectory.test.ts',

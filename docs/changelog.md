@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.53] - 2026-08-18
+
+### 性能
+
+- Provider 请求现在携带稳定的 Session identity；显式启用 Prompt Cache 的自定义
+  OpenAI-compatible completion channel 使用 pi-ai 原生 long retention，由 Provider
+  生成稳定 `prompt_cache_key` 与 24h retention，不再因 Blade 未传 Session ID 而丢失
+  会话亲和与缓存路由
+- root system prompt 不再每轮嵌入实时 `git status`、最近 commit 和目录 listing；
+  workspace 路径、平台、Shell、Node 与文件工具基准仍保留，编码产生的工作区变更不再
+  改写稳定前缀
+- Provider tool declarations、Skill metadata 与 deferred tool listing 使用确定性名称
+  顺序，MCP/插件发现时序不再无意义地改变 Prompt Cache key
+
+### 交互体验
+
+- CLI footer 与 Web StatusBar 新增统一的累计 Prompt Cache 命中率：
+  `cache read input / total model input`；Provider 尚未回报 cache read/write bucket 时显示
+  `Cache —`，不会把未知状态误报为 `0%`
+- Web tooltip 显示 cache read、cache write 与 uncached input 明细；移动端隐藏分段
+  context meter 并收紧 footer 间距，命中率在 390px viewport 内仍完整可见
+- `/cost` 同步显示相同口径的 Cache hit rate，CLI、Web 与命令详情不再各自计算
+
+### 测试相关
+
+- 新增 framework retry=0 的真实 GPT Prompt Cache 轨迹，以唯一稳定前缀执行有界的
+  byte-identical warm/read 序列，要求至少一个 post-warm physical request 返回真实
+  cache read tokens
+- 新增 production Chromium 桌面/移动 viewport 与 production raw PTY 资格，覆盖
+  `Cache —`、Web tooltip、移动端边界、浏览器 fault、凭据脱敏和进程回收；单元测试覆盖
+  指标边界、Session identity、稳定 prompt 参数与三类确定性顺序
+
 ## [0.10.52] - 2026-08-18
 
 ### 稳定性

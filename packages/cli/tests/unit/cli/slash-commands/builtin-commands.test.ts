@@ -40,12 +40,15 @@ vi.mock('../../../../src/store/vanilla.js', () => ({
     session: {
       history: [],
       tokenUsage: {
-        turnCount: 0,
-        totalInputTokens: 0,
-        totalOutputTokens: 0,
+        turnCount: 2,
+        totalInputTokens: 1_000,
+        totalOutputTokens: 100,
         estimatedCostUsd: 0,
-        maxContextTokens: 0,
-        inputTokens: 0,
+        maxContextTokens: 2_000,
+        inputTokens: 500,
+        outputTokens: 50,
+        cacheReadTokens: 600,
+        cacheWriteTokens: 200,
       },
     },
   }),
@@ -119,6 +122,19 @@ describe('Builtin Slash Commands', () => {
       expect(message).toContain('模型配置');
       expect(message).toContain('会话统计');
       expect(message).toContain('配置状态');
+    });
+  });
+
+  describe('cost command', () => {
+    it('should display the cumulative prompt-cache hit rate', async () => {
+      const result = await builtinCommands.cost.handler([], mockContext);
+
+      expect(result.success).toBe(true);
+      expect(mockSendMessage).toHaveBeenCalledOnce();
+      const message = mockSendMessage.mock.calls[0][0];
+      expect(message).toContain('Cache hit rate: 60%');
+      expect(message).toContain('Cache read: 600 tokens');
+      expect(message).toContain('Cache write: 200 tokens');
     });
   });
 

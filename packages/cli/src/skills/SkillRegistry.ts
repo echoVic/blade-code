@@ -311,7 +311,9 @@ export class SkillRegistry {
    * 仅包含可被 AI 自动调用的 Skills
    */
   generateAvailableSkillsList(): string {
-    const modelInvocableSkills = this.getModelInvocableSkills();
+    const modelInvocableSkills = this.getModelInvocableSkills().sort((left, right) =>
+      left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+    );
     if (modelInvocableSkills.length === 0) {
       return '';
     }

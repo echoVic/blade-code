@@ -62,6 +62,46 @@ describe('buildPiOptions', () => {
     });
   });
 
+  it('projects the stable Provider session identity into cache options', () => {
+    const options = buildPiOptions(
+      {
+        provider: 'openai-compatible',
+        model: 'session-model',
+        enablePromptCaching: true,
+      },
+      { api: 'openai-responses' } as Model<Api>,
+      undefined,
+      { providerSessionId: 'session-cache-key' }
+    );
+
+    expect(options).toMatchObject({
+      cacheRetention: 'short',
+      sessionId: 'session-cache-key',
+    });
+  });
+
+  it('uses long retention for session-scoped custom OpenAI-compatible caches', () => {
+    const model = {
+      api: 'openai-completions',
+      baseUrl: 'https://gateway.example.com/v1',
+    } as Model<Api>;
+    const options = buildPiOptions(
+      {
+        provider: 'openai-compatible',
+        model: 'gpt-model',
+        enablePromptCaching: true,
+      },
+      model,
+      undefined,
+      { providerSessionId: `session-${'x'.repeat(80)}` }
+    );
+
+    expect(options).toMatchObject({
+      cacheRetention: 'long',
+      sessionId: `session-${'x'.repeat(80)}`,
+    });
+  });
+
   it.each([
     {
       api: 'openai-responses',
