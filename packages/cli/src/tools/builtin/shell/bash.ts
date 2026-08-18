@@ -1062,6 +1062,10 @@ async function executeWithTimeout(
     sandboxedCommand?.inheritProcessEnv === false
       ? selectVerificationEnvironment(process.env)
       : process.env;
+  const verificationPath =
+    sandboxedCommand?.inheritProcessEnv === false
+      ? inheritedEnvironment.PATH
+      : undefined;
   let prepared: Awaited<ReturnType<typeof prepareForegroundProcess>>;
   try {
     prepared = await prepareForegroundProcess(
@@ -1073,6 +1077,7 @@ async function executeWithTimeout(
           ...inheritedEnvironment,
           ...env,
           ...sandboxedCommand?.env,
+          ...(verificationPath !== undefined ? { PATH: verificationPath } : {}),
           BLADE_CLI: '1',
         },
         stdio: ['pipe', 'pipe', 'pipe'],

@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.54] - 2026-08-18
+
+### 稳定性
+
+- read-only verification Agent 的 sandbox 在拒绝读取用户 Home 时，现在会精确 re-allow
+  当前 Blade host runtime 的真实可执行文件；Node 安装在 `~/.nvm` 等 Home 子目录时，
+  `node --test` 不再错误返回 `command not found`
+- verification sandbox 的环境合并现在保持白名单宿主 `PATH` 的优先级，同时继续拒绝
+  Provider credential、Session environment 和其他未授权环境变量进入审计进程
+
+### 测试相关
+
+- 新增受控 sandbox 正负对照和真实 macOS Seatbelt 集成测试，证明 bare `node` 可执行、
+  workspace 仍为只读、Provider key 不可见，Git/TMP sandbox 环境保持有效
+- 使用真实 DeepSeek Pro 重新通过 ACP model-switch 轨迹，覆盖模型切换、Read/Edit、
+  `node --test`、独立 verifier PASS 与终端资源回收
+
 ## [0.10.53] - 2026-08-18
 
 ### 性能

@@ -349,11 +349,18 @@ describe('Bash Tool', () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-verifier-bash-'));
     const canonicalWorkspace = await realpath(workspace);
     const previousSecret = process.env.DEEPSEEK_API_KEY;
+    const previousPath = process.env.PATH;
+    const nodeDirectory = path.dirname(process.execPath);
+    const hostPath = [nodeDirectory, '/usr/bin', '/bin'].join(path.delimiter);
     process.env.DEEPSEEK_API_KEY = 'must-not-reach-verifier';
+    process.env.PATH = hostPath;
     const prepare = vi.fn<WorkspaceSandboxBackend['prepare']>(async (input) => ({
       executable: '/bin/bash',
       args: ['-c', input.command],
-      env: {},
+      env: {
+        PATH: '/sandbox-path-without-node',
+        TMPDIR: '/sandbox-verifier-tmp',
+      },
       sandboxed: true,
       inheritProcessEnv: false,
       cleanup: () => undefined,
@@ -365,14 +372,26 @@ describe('Bash Tool', () => {
         if (previousSecret === undefined) delete process.env.DEEPSEEK_API_KEY;
         else process.env.DEEPSEEK_API_KEY = previousSecret;
       },
+      () => {
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+      },
       () => rm(workspace, { recursive: true, force: true })
     );
 
+    const program = [
+      'process.stdout.write(JSON.stringify({',
+      'path: process.env.PATH,',
+      "secret: process.env.DEEPSEEK_API_KEY ?? 'unset',",
+      'gitConfig: process.env.GIT_CONFIG_GLOBAL,',
+      'tmpDir: process.env.TMPDIR,',
+      '}))',
+    ].join('');
+    const command = `node -e ${JSON.stringify(program)}`;
     for (const subagentType of ['verification', 'goal-verification', 'review']) {
       const result = await bashTool.execute(
         {
-          command:
-            'printf "%s:%s:%s" "$PATH" "${DEEPSEEK_API_KEY-unset}" "$GIT_CONFIG_GLOBAL"',
+          command,
           timeout: 10_000,
           env: {},
           run_in_background: false,
@@ -386,15 +405,25 @@ describe('Bash Tool', () => {
 
       expect(result.success).toBe(true);
       expect(result.metadata?.sandboxed).toBe(true);
-      expect(result.llmContent).toMatchObject({
-        stdout: expect.stringMatching(/.+:unset:\/dev\/null$/),
+      const stdout = (result.llmContent as { stdout: string }).stdout;
+      const projected = JSON.parse(stdout) as {
+        path: string;
+        secret: string;
+        gitConfig: string;
+        tmpDir: string;
+      };
+      expect(projected).toMatchObject({
+        secret: 'unset',
+        gitConfig: '/dev/null',
+        tmpDir: '/sandbox-verifier-tmp',
       });
+      expect(projected.path.split(path.delimiter)).toContain(nodeDirectory);
+      expect(projected.path).not.toBe('/sandbox-path-without-node');
     }
     expect(prepare).toHaveBeenCalledTimes(3);
     expect(prepare).toHaveBeenCalledWith(
       expect.objectContaining({
-        command:
-          'printf "%s:%s:%s" "$PATH" "${DEEPSEEK_API_KEY-unset}" "$GIT_CONFIG_GLOBAL"',
+        command,
         cwd: canonicalWorkspace,
         workspaceRoot: canonicalWorkspace,
         access: 'workspace-read-only',

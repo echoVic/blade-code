@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.54] - 2026-08-18
+
+### Fixed
+- Read-only verification agents can execute the host Node runtime when it is
+  installed below the otherwise unreadable user home directory
+- Verification sandbox environment merging preserves the allowlisted host
+  `PATH` without exposing Provider credentials or Session environment values
+
+### Tests
+- Added deterministic sandbox environment coverage and a native Seatbelt
+  integration test for bare `node` execution
+- Re-qualified ACP model switching through the selected DeepSeek Pro model,
+  including Edit, `node --test`, independent verification, and cleanup
+
 ## [0.10.53] - 2026-08-18
 
 ### Added

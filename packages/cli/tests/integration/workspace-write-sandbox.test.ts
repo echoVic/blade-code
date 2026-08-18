@@ -267,6 +267,46 @@ describe('Bash workspace-write sandbox integration', () => {
 });
 
 describe('native workspace-write sandbox', () => {
+  it('keeps the host runtime executable readable in a read-only workspace', async () => {
+    const { root, workspaceRoot } = await makeWorkspace();
+    const backend = new AnthropicWorkspaceSandboxBackend({
+      tempRoot: path.join(root, 'sandbox-temp'),
+    });
+    const sandbox = new WorkspaceWriteSandbox(backend);
+
+    let command: SandboxedCommand | undefined;
+    try {
+      command = await sandbox.prepare({
+        command: 'node -e "process.stdout.write(process.execPath)"',
+        cwd: workspaceRoot,
+        workspaceRoot,
+        access: 'workspace-read-only',
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(WorkspaceSandboxUnavailableError);
+      await backend.dispose();
+      return;
+    }
+
+    const child = spawn(command.executable, command.args, {
+      cwd: workspaceRoot,
+      env: { ...command.env, PATH: process.env.PATH },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const result = await waitForExit(child);
+    command.cleanup();
+    await backend.dispose();
+
+    if (isWorkspaceSandboxRuntimeFailure(result.code, result.stderr)) {
+      return;
+    }
+    expect(result).toMatchObject({
+      code: 0,
+      stdout: process.execPath,
+      stderr: '',
+    });
+  }, 60_000);
+
   it('enforces writes or fails closed when nested sandboxing is unavailable', async () => {
     const { root, workspaceRoot } = await makeWorkspace();
     const insidePath = path.join(workspaceRoot, 'inside.txt');

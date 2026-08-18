@@ -202,6 +202,9 @@ export class AnthropicWorkspaceSandboxBackend implements WorkspaceSandboxBackend
       (candidate) => !candidate.startsWith('/dev/')
     );
     const workspaceReadOnly = input.access === 'workspace-read-only';
+    const runtimeExecutable = workspaceReadOnly
+      ? await realpath(process.execPath).catch(() => path.resolve(process.execPath))
+      : undefined;
     const deniedReadPaths = workspaceReadOnly
       ? [
           os.homedir(),
@@ -249,7 +252,10 @@ export class AnthropicWorkspaceSandboxBackend implements WorkspaceSandboxBackend
                 },
             filesystem: {
               denyRead: deniedReadPaths,
-              allowRead: workspaceReadOnly ? [input.workspaceRoot] : [],
+              allowRead:
+                workspaceReadOnly && runtimeExecutable
+                  ? [input.workspaceRoot, runtimeExecutable]
+                  : [],
               allowWrite: workspaceReadOnly
                 ? [tempRoot]
                 : [input.workspaceRoot, tempRoot],

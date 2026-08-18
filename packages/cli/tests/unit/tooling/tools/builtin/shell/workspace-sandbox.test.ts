@@ -191,6 +191,7 @@ describe('AnthropicWorkspaceSandboxBackend', () => {
     const tempRoot = path.join(root, 'sandbox-temp');
     await mkdir(workspaceRoot);
     const canonicalWorkspace = await realpath(workspaceRoot);
+    const runtimeExecutable = await realpath(process.execPath);
     const runtime = makeRuntime();
     const backend = new AnthropicWorkspaceSandboxBackend({
       runtime,
@@ -216,7 +217,7 @@ describe('AnthropicWorkspaceSandboxBackend', () => {
         },
         filesystem: {
           denyRead: expect.arrayContaining([path.resolve(os.homedir())]),
-          allowRead: [canonicalWorkspace],
+          allowRead: [canonicalWorkspace, runtimeExecutable],
           allowWrite: [await realpath(tempRoot)],
           denyWrite: [canonicalWorkspace, '/home/user/.npm/_logs'],
         },
