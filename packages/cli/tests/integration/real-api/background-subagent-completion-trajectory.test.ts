@@ -1,4 +1,12 @@
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -304,9 +312,9 @@ async function assertBackgroundCompletion(input: PreparedFixture): Promise<void>
       input?: { file_path?: unknown };
     };
     expect(typeof payload.input?.file_path).toBe('string');
-    expect(path.resolve(input.workspace, String(payload.input?.file_path))).toBe(
-      input.fixture.independentMarkerPath
-    );
+    expect(
+      await realpath(path.resolve(input.workspace, String(payload.input?.file_path)))
+    ).toBe(await realpath(input.fixture.independentMarkerPath));
   }
   const runningMetadata = (
     runningResults[0]!.data.payload as {
