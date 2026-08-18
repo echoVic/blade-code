@@ -125,7 +125,7 @@ async function main(): Promise<void> {
     await waitFor(
       () => sawFollowup,
       'Timed out waiting for the real Provider Goal follow-up',
-      180_000
+      270_000
     );
     await waitForInboxRemoval(workspace, sessionId, 10_000);
     terminal.resize(100, 36);

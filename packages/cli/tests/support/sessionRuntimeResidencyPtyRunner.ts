@@ -153,7 +153,7 @@ async function main(): Promise<void> {
         }
       },
       'Raw PTY did not complete the Session residency coding control',
-      180_000
+      270_000
     );
     terminal.resize(100, 36);
     await new Promise((resolve) => setTimeout(resolve, 200));

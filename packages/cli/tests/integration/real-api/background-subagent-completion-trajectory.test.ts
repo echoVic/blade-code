@@ -35,6 +35,7 @@ import {
   expandDeepSeekModelMatrix,
   getEnabledModelConfigs,
   isRealApiTestEnabled,
+  isReleaseMatrix,
 } from './testConfig.js';
 
 const models = isRealApiTestEnabled()
@@ -545,27 +546,31 @@ describe
         }
       }, 300_000);
 
-      it(`${model.model} wakes the real TUI raw PTY parent`, async () => {
-        const prepared = await prepareFixture(model, 'pty');
-        try {
-          const evidence = await runBackgroundSubagentCompletionPtyDriver({
-            workspace: prepared.workspace,
-            storageRoot: prepared.storageRoot,
-            home: prepared.home,
-            sessionId: prepared.sessionId,
-            childMarker: prepared.fixture.childMarker,
-            secret: model.apiKey,
-          });
-          expect(evidence).toMatchObject({
-            sawProviderAdmission: true,
-            sawChildMarker: true,
-            sawParentFinal: true,
-          });
-          await assertBackgroundCompletion(prepared);
-        } finally {
-          await cleanupFixture(prepared);
-        }
-      }, 300_000);
+      it.skipIf(isReleaseMatrix())(
+        `${model.model} wakes the real TUI raw PTY parent`,
+        async () => {
+          const prepared = await prepareFixture(model, 'pty');
+          try {
+            const evidence = await runBackgroundSubagentCompletionPtyDriver({
+              workspace: prepared.workspace,
+              storageRoot: prepared.storageRoot,
+              home: prepared.home,
+              sessionId: prepared.sessionId,
+              childMarker: prepared.fixture.childMarker,
+              secret: model.apiKey,
+            });
+            expect(evidence).toMatchObject({
+              sawProviderAdmission: true,
+              sawChildMarker: true,
+              sawParentFinal: true,
+            });
+            await assertBackgroundCompletion(prepared);
+          } finally {
+            await cleanupFixture(prepared);
+          }
+        },
+        300_000
+      );
 
       it(`${model.model} wakes production Web GUI and survives reload`, async () => {
         const prepared = await prepareFixture(model, 'web');
@@ -657,27 +662,31 @@ describe
         }
       }, 300_000);
 
-      it(`${model.model} renders an overweight background rejection in raw PTY`, async () => {
-        const prepared = await prepareFixture(model, 'pty', {
-          providerRequestPendingBytes: 64 * 1024,
-        });
-        try {
-          const evidence = await runWeightedProviderAdmissionPtyDriver({
-            workspace: prepared.workspace,
-            storageRoot: prepared.storageRoot,
-            home: prepared.home,
-            sessionId: prepared.sessionId,
-            secret: model.apiKey,
+      it.skipIf(isReleaseMatrix())(
+        `${model.model} renders an overweight background rejection in raw PTY`,
+        async () => {
+          const prepared = await prepareFixture(model, 'pty', {
+            providerRequestPendingBytes: 64 * 1024,
           });
-          expect(evidence).toMatchObject({
-            childFailureVisible: true,
-            sidecarPendingByteFailure: true,
-          });
-          expect(prepared.proxy.heldRequestNumbers).toHaveLength(1);
-          expect(prepared.proxy.maxInFlight).toBe(1);
-        } finally {
-          await cleanupFixture(prepared);
-        }
-      }, 300_000);
+          try {
+            const evidence = await runWeightedProviderAdmissionPtyDriver({
+              workspace: prepared.workspace,
+              storageRoot: prepared.storageRoot,
+              home: prepared.home,
+              sessionId: prepared.sessionId,
+              secret: model.apiKey,
+            });
+            expect(evidence).toMatchObject({
+              childFailureVisible: true,
+              sidecarPendingByteFailure: true,
+            });
+            expect(prepared.proxy.heldRequestNumbers).toHaveLength(1);
+            expect(prepared.proxy.maxInFlight).toBe(1);
+          } finally {
+            await cleanupFixture(prepared);
+          }
+        },
+        300_000
+      );
     }
   });

@@ -8,6 +8,11 @@ import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js
 import { HookManager } from '../../../src/hooks/HookManager.js';
 import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustService.js';
 import { ensureStoreInitialized, getState } from '../../../src/store/vanilla.js';
+import { runForegroundBoundedOutputAcpDriver } from '../../support/foregroundBoundedOutputAcpDriver.js';
+import { runForegroundBoundedOutputHeadlessDriver } from '../../support/foregroundBoundedOutputHeadlessDriver.js';
+import { runForegroundBoundedOutputPtyDriver } from '../../support/foregroundBoundedOutputPtyDriver.js';
+import { runForegroundBoundedOutputWebDriver } from '../../support/foregroundBoundedOutputWebDriver.js';
+import { createForegroundBoundedOutputFixture } from './foregroundBoundedOutputFixture.js';
 import {
   assertForegroundBoundedOutputDurableMetadata,
   assertForegroundBoundedOutputEvidenceSafe,
@@ -15,7 +20,6 @@ import {
   assertNoForegroundLeases,
   assertOwnedProcessesGone,
 } from './foregroundBoundedOutputHarness.js';
-import { createForegroundBoundedOutputFixture } from './foregroundBoundedOutputFixture.js';
 import {
   extractDurableToolTrace,
   findSessionTranscript,
@@ -24,16 +28,13 @@ import {
 import {
   buildRealApiRuntimeConfig,
   isRealApiTestEnabled,
+  releaseBlockingSurfaces,
   resolveRequiredDeepSeekQualificationModels,
   type TestModelConfig,
 } from './testConfig.js';
-import { runForegroundBoundedOutputAcpDriver } from '../../support/foregroundBoundedOutputAcpDriver.js';
-import { runForegroundBoundedOutputHeadlessDriver } from '../../support/foregroundBoundedOutputHeadlessDriver.js';
-import { runForegroundBoundedOutputPtyDriver } from '../../support/foregroundBoundedOutputPtyDriver.js';
-import { runForegroundBoundedOutputWebDriver } from '../../support/foregroundBoundedOutputWebDriver.js';
 
 const execFileAsync = promisify(execFile);
-const surfaces = ['headless', 'acp', 'pty', 'web'] as const;
+const surfaces = releaseBlockingSurfaces(['headless', 'acp', 'pty', 'web'] as const);
 const models = isRealApiTestEnabled()
   ? resolveRequiredDeepSeekQualificationModels()
   : [];

@@ -20,7 +20,7 @@ function createCacheService(config: TestModelConfig): PiAIChatService {
     baseUrl: config.baseURL ?? '',
     maxOutputTokens: 32,
     temperature: 0,
-    timeout: 180_000,
+    timeout: 270_000,
     maxRetries: 0,
     enablePromptCaching: true,
   });

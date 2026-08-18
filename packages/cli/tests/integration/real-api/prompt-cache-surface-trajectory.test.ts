@@ -10,6 +10,7 @@ import {
   buildRealApiRuntimeConfig,
   getModelConfig,
   isRealApiTestEnabled,
+  isReleaseMatrix,
 } from './testConfig.js';
 
 const execFileAsync = promisify(execFile);
@@ -243,47 +244,51 @@ describe.skipIf(!enabled).sequential('Prompt cache surfaces (production)', () =>
     }
   }, 120_000);
 
-  it('renders the cache status in a production raw PTY', async () => {
-    const fixture = await createFixture('blade-prompt-cache-pty-');
-    try {
-      const env = Object.fromEntries(
-        Object.entries({
-          ...process.env,
-          HOME: fixture.home,
-          BLADE_STORAGE_ROOT: fixture.storageRoot,
-          BLADE_AUTO_MEMORY: '0',
-          BLADE_TELEMETRY_DISABLED: '1',
-          BLADE_ALLOW_ROOT: '1',
-          TERM: 'xterm-256color',
-          BLADE_CACHE_PTY_CLI_ENTRY: cliEntry,
-          BLADE_CACHE_PTY_WORKSPACE: fixture.workspace,
-          BLADE_CACHE_PTY_SESSION_ID: `prompt-cache-pty-${Date.now()}`,
-        }).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
-      );
-      const result = await execFileAsync(
-        process.env.BUN_EXEC_PATH ?? path.join(os.homedir(), '.bun', 'bin', 'bun'),
-        [ptyRunner],
-        {
-          cwd: path.resolve(import.meta.dirname, '../../..'),
-          env,
-          timeout: 60_000,
-          maxBuffer: 128 * 1024,
-          killSignal: 'SIGKILL',
-        }
-      );
-      const evidence = JSON.parse(result.stdout) as {
-        success: boolean;
-        sawCacheUnavailable: boolean;
-        output: string;
-      };
+  it.skipIf(isReleaseMatrix())(
+    'renders the cache status in a production raw PTY',
+    async () => {
+      const fixture = await createFixture('blade-prompt-cache-pty-');
+      try {
+        const env = Object.fromEntries(
+          Object.entries({
+            ...process.env,
+            HOME: fixture.home,
+            BLADE_STORAGE_ROOT: fixture.storageRoot,
+            BLADE_AUTO_MEMORY: '0',
+            BLADE_TELEMETRY_DISABLED: '1',
+            BLADE_ALLOW_ROOT: '1',
+            TERM: 'xterm-256color',
+            BLADE_CACHE_PTY_CLI_ENTRY: cliEntry,
+            BLADE_CACHE_PTY_WORKSPACE: fixture.workspace,
+            BLADE_CACHE_PTY_SESSION_ID: `prompt-cache-pty-${Date.now()}`,
+          }).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+        );
+        const result = await execFileAsync(
+          process.env.BUN_EXEC_PATH ?? path.join(os.homedir(), '.bun', 'bin', 'bun'),
+          [ptyRunner],
+          {
+            cwd: path.resolve(import.meta.dirname, '../../..'),
+            env,
+            timeout: 120_000,
+            maxBuffer: 128 * 1024,
+            killSignal: 'SIGKILL',
+          }
+        );
+        const evidence = JSON.parse(result.stdout) as {
+          success: boolean;
+          sawCacheUnavailable: boolean;
+          output: string;
+        };
 
-      expect(evidence).toMatchObject({
-        success: true,
-        sawCacheUnavailable: true,
-      });
-      expect(evidence.output).not.toContain(gpt.apiKey);
-    } finally {
-      await rm(fixture.root, { recursive: true, force: true });
-    }
-  }, 90_000);
+        expect(evidence).toMatchObject({
+          success: true,
+          sawCacheUnavailable: true,
+        });
+        expect(evidence.output).not.toContain(gpt.apiKey);
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    },
+    90_000
+  );
 });

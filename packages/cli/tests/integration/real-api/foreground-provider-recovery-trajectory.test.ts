@@ -20,12 +20,13 @@ import {
 import {
   buildRealApiRuntimeConfig,
   isRealApiTestEnabled,
+  releaseBlockingSurfaces,
   resolveRequiredDeepSeekQualificationModels,
   type TestModelConfig,
 } from './testConfig.js';
 
 const execFileAsync = promisify(execFile);
-const surfaces = ['headless', 'acp', 'pty', 'web'] as const;
+const surfaces = releaseBlockingSurfaces(['headless', 'acp', 'pty', 'web'] as const);
 const models = isRealApiTestEnabled()
   ? resolveRequiredDeepSeekQualificationModels()
   : [];

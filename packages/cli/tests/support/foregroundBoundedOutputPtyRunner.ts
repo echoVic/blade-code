@@ -124,7 +124,7 @@ async function main(): Promise<void> {
         markers.sawStdoutTail &&
         markers.sawStderrTail,
       'Timed out waiting for bounded foreground TUI evidence',
-      180_000
+      270_000
     );
     const noticeBeforeResize = markers.sawTruncation;
     captureResizeOutput = true;

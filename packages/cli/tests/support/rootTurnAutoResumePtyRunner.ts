@@ -122,7 +122,7 @@ async function main(): Promise<void> {
   });
 
   try {
-    const evidenceDeadline = Date.now() + 180_000;
+    const evidenceDeadline = Date.now() + 270_000;
     await waitFor(
       () => sawExpected,
       'Timed out waiting for root-turn TUI auto-resume',

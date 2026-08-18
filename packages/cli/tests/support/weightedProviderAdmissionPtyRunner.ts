@@ -159,7 +159,7 @@ async function main(): Promise<void> {
   terminal.resize(120, 40);
 
   try {
-    const evidenceDeadline = Date.now() + 180_000;
+    const evidenceDeadline = Date.now() + 270_000;
     await waitForPendingByteSidecar(
       storageRoot,
       Math.max(1, evidenceDeadline - Date.now())

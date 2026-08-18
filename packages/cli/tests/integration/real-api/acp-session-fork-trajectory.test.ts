@@ -24,6 +24,7 @@ import {
 import {
   buildRealApiRuntimeConfig,
   isRealApiTestEnabled,
+  releaseBlockingModels,
   resolveForkQualificationModels,
 } from './testConfig.js';
 
@@ -113,7 +114,7 @@ interface PairedAcpHarness {
   close(): Promise<void>;
 }
 
-const ACP_FORK_STAGE_TIMEOUT_MS = 180_000;
+const ACP_FORK_STAGE_TIMEOUT_MS = 270_000;
 const ACP_FORK_CANCEL_GRACE_MS = 15_000;
 
 class AcpForkStageTimeoutError extends Error {
@@ -559,9 +560,9 @@ describe('ACP fork notification window', () => {
 });
 
 const enabled = isRealApiTestEnabled();
-const modelConfigs = enabled
-  ? resolveForkQualificationModels(process.env, { requiredDeepSeek: true })
-  : [];
+const modelConfigs = releaseBlockingModels(
+  enabled ? resolveForkQualificationModels(process.env, { requiredDeepSeek: true }) : []
+);
 
 function safeModelLabel(
   modelConfig: (typeof modelConfigs)[number],

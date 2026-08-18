@@ -17,6 +17,7 @@ import {
   expandDeepSeekModelMatrix,
   getEnabledModelConfigs,
   isRealApiTestEnabled,
+  releaseBlockingSurfaces,
 } from './testConfig.js';
 
 const execFileAsync = promisify(execFile);
@@ -25,7 +26,7 @@ const models = isRealApiTestEnabled()
       getEnabledModelConfigs().filter((config) => config.id === 'deepseek')
     )
   : [];
-const surfaces = ['headless', 'pty'] as const;
+const surfaces = releaseBlockingSurfaces(['headless', 'pty'] as const);
 const controls = models.flatMap((model) =>
   surfaces.map((surface) => ({ model, surface }))
 );

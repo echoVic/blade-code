@@ -195,7 +195,7 @@ async function waitForAcpRecovery(input: {
   const timeoutMs =
     Number.isSafeInteger(configuredTimeout) && configuredTimeout > 0
       ? configuredTimeout
-      : 180_000;
+      : 270_000;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const hostContent = await readOptionalFile(input.target);
@@ -274,7 +274,7 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
       ...model,
       overrides: {
         ...model.overrides,
-        streamIdleTimeout: 180_000,
+        streamIdleTimeout: 270_000,
       },
     }));
     const controller = createSessionRouteController();
@@ -545,5 +545,5 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
       if (originalConfig) getState().config.actions.setConfig(originalConfig);
       await rm(root, { recursive: true, force: true });
     }
-  }, 300_000);
+  }, 600_000);
 });

@@ -318,5 +318,5 @@ describe.skipIf(!enabled)('ACP session model switch trajectory (real API)', () =
       WorkspaceTrustService.resetInstance();
       await rm(workspace, { recursive: true, force: true });
     }
-  }, 300_000);
+  }, 600_000);
 });

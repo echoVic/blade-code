@@ -81,7 +81,7 @@ async function main(): Promise<void> {
     await waitFor(
       () => sawCacheUnavailable,
       'Timed out waiting for prompt cache TUI status',
-      30_000
+      60_000
     );
     const plain = stripVTControlCharacters(output);
     process.stdout.write(

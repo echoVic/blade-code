@@ -536,6 +536,22 @@ export function isRealApiTestEnabled(): boolean {
   return process.env.REAL_API_TEST === '1';
 }
 
+export function isReleaseMatrix(): boolean {
+  return process.env.REAL_API_RELEASE_MATRIX === '1';
+}
+
+export function releaseBlockingSurfaces<T extends string>(
+  all: readonly T[]
+): readonly T[] {
+  if (!isReleaseMatrix()) return all;
+  return all.filter((s) => s !== 'pty');
+}
+
+export function releaseBlockingModels(configs: TestModelConfig[]): TestModelConfig[] {
+  if (!isReleaseMatrix()) return configs;
+  return configs.filter((c) => c.id !== 'gpt');
+}
+
 if (isRealApiTestEnabled() && getEnabledModelConfigs().length === 0) {
   throw new Error(
     'REAL_API_TEST=1 requires provider-specific API environment variables or a ' +

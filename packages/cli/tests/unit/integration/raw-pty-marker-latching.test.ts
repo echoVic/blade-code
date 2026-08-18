@@ -67,7 +67,7 @@ describe('raw PTY marker latching source contract', () => {
   it('gives background completion stages one shared evidence deadline', () => {
     const source = readRunner('backgroundSubagentCompletionPtyRunner.ts');
 
-    expect(source).toContain('const evidenceDeadline = Date.now() + 180_000');
+    expect(source).toContain('const evidenceDeadline = Date.now() + 270_000');
     expect(source).not.toContain(
       "'Raw PTY did not render Provider admission queue',\n      60_000"
     );

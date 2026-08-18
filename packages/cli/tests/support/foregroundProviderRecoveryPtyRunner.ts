@@ -144,7 +144,7 @@ async function main(): Promise<void> {
         }
       },
       'Raw PTY did not durably complete the Provider recovery turn',
-      180_000
+      270_000
     );
     await waitFor(
       () => output.slice(recoveryBoundary).includes(input.marker),

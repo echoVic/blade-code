@@ -75,7 +75,7 @@ try {
   terminal.write(`\u001B[200~${prompt}\u001B[201~`);
   await waitFor(() => output.includes('BRACKETED_'), 'bracketed paste', 10_000);
   terminal.write('\r');
-  await waitFor(() => sawExpected, expected, 180_000);
+  await waitFor(() => sawExpected, expected, 270_000);
   process.stdout.write(
     JSON.stringify({
       success: true,

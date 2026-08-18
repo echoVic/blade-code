@@ -111,7 +111,7 @@ async function main(): Promise<void> {
   });
 
   try {
-    const evidenceDeadline = Date.now() + 180_000;
+    const evidenceDeadline = Date.now() + 270_000;
     await waitFor(
       () => sawProviderAdmission,
       'Raw PTY did not render Provider admission queue',

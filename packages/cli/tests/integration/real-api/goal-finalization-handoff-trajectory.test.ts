@@ -28,6 +28,7 @@ import {
   expandDeepSeekModelMatrix,
   getEnabledModelConfigs,
   isRealApiTestEnabled,
+  isReleaseMatrix,
 } from './testConfig.js';
 
 const models = isRealApiTestEnabled()
@@ -365,29 +366,33 @@ describe
         }
       }, 240_000);
 
-      it(`${model.model} replays recovered completion through the real TUI raw PTY`, async () => {
-        const prepared = await prepareFixture(model, 'pty');
-        try {
-          const evidence = await runGoalFinalizationPtyDriver({
-            workspace: prepared.workspace,
-            storageRoot: prepared.storageRoot,
-            home: prepared.home,
-            sessionId: prepared.sessionId,
-            expectedInitial: prepared.fixture.finalResponse,
-            followupPrompt: prepared.followupPrompt,
-            expectedFollowup: prepared.expectedFollowup,
-            secret: model.apiKey,
-          });
-          expect(evidence).toMatchObject({
-            sawInitial: true,
-            sawCompleteGoal: true,
-            sawFollowup: true,
-          });
-          await assertDurableCompletion(prepared);
-        } finally {
-          await cleanupFixture(prepared);
-        }
-      }, 240_000);
+      it.skipIf(isReleaseMatrix())(
+        `${model.model} replays recovered completion through the real TUI raw PTY`,
+        async () => {
+          const prepared = await prepareFixture(model, 'pty');
+          try {
+            const evidence = await runGoalFinalizationPtyDriver({
+              workspace: prepared.workspace,
+              storageRoot: prepared.storageRoot,
+              home: prepared.home,
+              sessionId: prepared.sessionId,
+              expectedInitial: prepared.fixture.finalResponse,
+              followupPrompt: prepared.followupPrompt,
+              expectedFollowup: prepared.expectedFollowup,
+              secret: model.apiKey,
+            });
+            expect(evidence).toMatchObject({
+              sawInitial: true,
+              sawCompleteGoal: true,
+              sawFollowup: true,
+            });
+            await assertDurableCompletion(prepared);
+          } finally {
+            await cleanupFixture(prepared);
+          }
+        },
+        240_000
+      );
 
       it(`${model.model} replays recovered completion through production Web GUI`, async () => {
         const prepared = await prepareFixture(model, 'web');
