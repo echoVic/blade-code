@@ -2,13 +2,17 @@ import { createHash } from 'node:crypto';
 import type { Context, Tool as PiTool } from '@earendil-works/pi-ai';
 import type { PromptCacheBreakInfo, UsageInfo } from '../ChatServiceInterface.js';
 
+interface PromptCacheToolFingerprint {
+  identityHash: string;
+  contractHash: string;
+}
+
 interface PromptCacheRequestState {
   modelIdentity: string;
   systemHash: string;
   systemChars: number;
   toolsHash: string;
-  toolNames: string[];
-  perToolHashes: Record<string, string>;
+  toolFingerprints: PromptCacheToolFingerprint[];
   policyHash: string;
   contextEpoch: string;
   retention: 'none' | 'short' | 'long';
@@ -152,20 +156,24 @@ function buildState(
   input: PromptCacheObservation,
   recordedAt: number
 ): PromptCacheRequestState {
-  const tools = [...(input.tools ?? input.context.tools ?? [])].sort((left, right) =>
-    left.name < right.name ? -1 : left.name > right.name ? 1 : 0
-  );
-  const toolNames = tools.map((tool) => tool.name);
-  const perToolHashes = Object.fromEntries(
-    tools.map((tool) => [tool.name, hash(stableSerialize(tool))])
-  );
+  const toolFingerprints = [...(input.tools ?? input.context.tools ?? [])]
+    .map((tool) => ({
+      identityHash: hash(tool.name),
+      contractHash: hash(stableSerialize(tool)),
+    }))
+    .sort((left, right) =>
+      left.identityHash < right.identityHash
+        ? -1
+        : left.identityHash > right.identityHash
+          ? 1
+          : 0
+    );
   return {
     modelIdentity: input.modelIdentity,
     systemHash: hash(input.context.systemPrompt ?? ''),
     systemChars: input.context.systemPrompt?.length ?? 0,
-    toolsHash: hash(stableSerialize(tools)),
-    toolNames,
-    perToolHashes,
+    toolsHash: hash(stableSerialize(toolFingerprints)),
+    toolFingerprints,
     policyHash: hash(stableSerialize(input.policy)),
     contextEpoch: input.contextEpoch ?? '',
     retention: input.retention,
@@ -182,15 +190,20 @@ function diffTools(
   previous: PromptCacheRequestState,
   current: PromptCacheRequestState
 ): { added: number; removed: number; changed: number } {
-  const previousNames = new Set(previous.toolNames);
-  const currentNames = new Set(current.toolNames);
+  const previousTools = new Map(
+    previous.toolFingerprints.map((tool) => [tool.identityHash, tool.contractHash])
+  );
+  const currentTools = new Map(
+    current.toolFingerprints.map((tool) => [tool.identityHash, tool.contractHash])
+  );
   return {
-    added: current.toolNames.filter((name) => !previousNames.has(name)).length,
-    removed: previous.toolNames.filter((name) => !currentNames.has(name)).length,
-    changed: current.toolNames.filter(
-      (name) =>
-        previousNames.has(name) &&
-        current.perToolHashes[name] !== previous.perToolHashes[name]
+    added: [...currentTools.keys()].filter((identity) => !previousTools.has(identity))
+      .length,
+    removed: [...previousTools.keys()].filter((identity) => !currentTools.has(identity))
+      .length,
+    changed: [...currentTools].filter(
+      ([identity, contractHash]) =>
+        previousTools.has(identity) && previousTools.get(identity) !== contractHash
     ).length,
   };
 }

@@ -11,6 +11,7 @@ import {
 
 const gpt = getModelConfig('gpt');
 const enabled = isRealApiTestEnabled() && Boolean(gpt.apiKey);
+const MIN_ATTRIBUTABLE_CACHE_READ_TOKENS = 4_096;
 
 function createCacheService(config: TestModelConfig): PiAIChatService {
   return new PiAIChatService({
@@ -58,7 +59,7 @@ describe.skipIf(!enabled)('Prompt cache efficiency (Real API)', () => {
       hitRate?: number;
     }> = [];
 
-    for (let request = 0; request < 4; request++) {
+    for (let request = 0; request < 5; request++) {
       if (request > 0) {
         await new Promise((resolve) => setTimeout(resolve, 5_000));
       }
@@ -81,16 +82,18 @@ describe.skipIf(!enabled)('Prompt cache efficiency (Real API)', () => {
         cacheWriteTokens: metrics.cacheWriteTokens,
         hitRate: metrics.hitRate,
       });
-      if (metrics.cacheReadTokens > 0) break;
+      if (metrics.cacheReadTokens >= MIN_ATTRIBUTABLE_CACHE_READ_TOKENS) break;
     }
 
     const warmRead = observations.find(
-      (observation) => observation.cacheReadTokens > 0
+      (observation) => observation.cacheReadTokens >= MIN_ATTRIBUTABLE_CACHE_READ_TOKENS
     );
     expect(
       warmRead?.cacheReadTokens ?? 0,
-      `Provider cache did not become readable: ${JSON.stringify(observations)}`
-    ).toBeGreaterThan(0);
+      `Provider cache did not warm beyond the shared prefix: ${JSON.stringify(
+        observations
+      )}`
+    ).toBeGreaterThanOrEqual(MIN_ATTRIBUTABLE_CACHE_READ_TOKENS);
     expect(warmRead?.hitRate).toBeGreaterThan(0);
     expect(warmRead?.hitRate).toBeLessThanOrEqual(1);
 

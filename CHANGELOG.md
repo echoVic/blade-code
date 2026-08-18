@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.57] - 2026-08-18
+
+### Changed
+- Prompt-cache monitoring now retains tool identity and contract fingerprints
+  only as SHA-256 values, including user-controlled MCP tool names
+- Tool additions, removals, and contract changes are attributed by hashed
+  identity without retaining the source schema between requests
+
+### Tests
+- Added direct retained-state privacy coverage alongside the existing
+  attribution and bounded-Session tests
+- Strengthened the real GPT cache trajectory to warm beyond Provider-shared
+  prefix blocks before asserting cache-break attribution with framework retry 0
+
 ## [0.10.56] - 2026-08-18
 
 ### Added

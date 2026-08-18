@@ -44,6 +44,15 @@ function usage(cacheReadInputTokens: number, promptTokens = 8_000): UsageInfo {
   };
 }
 
+function retainedState(monitor: PromptCacheBreakMonitor): string {
+  const sessions = (
+    monitor as unknown as {
+      sessions: Map<string, unknown>;
+    }
+  ).sessions;
+  return JSON.stringify([...sessions]);
+}
+
 describe('PromptCacheBreakMonitor', () => {
   it('attributes a confirmed cache-read collapse to system prompt churn', () => {
     const monitor = new PromptCacheBreakMonitor();
@@ -109,6 +118,11 @@ describe('PromptCacheBreakMonitor', () => {
     expect(JSON.stringify(result)).not.toContain('"name":"Read"');
     expect(JSON.stringify(result)).not.toContain('Read a file');
     expect(JSON.stringify(result)).not.toContain('"name":"Write"');
+    const retained = retainedState(monitor);
+    expect(retained).not.toContain('"name":"Read"');
+    expect(retained).not.toContain('Read a file');
+    expect(retained).not.toContain('"name":"Write"');
+    expect(retained.match(/[a-f0-9]{64}/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
   it('separates TTL expiry from an unchanged short-gap server-side break', () => {
