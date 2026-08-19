@@ -29,6 +29,10 @@ bun run qualify:local
 
 每一步都在独立子进程中执行。第一步非零退出会立即停止，后续步骤不会被计为通过。该门禁不访问付费模型，也不依赖 `~/.blade/config.json`。
 
+Vitest setup 为每个 test-file lifecycle 创建唯一的临时
+`BLADE_STORAGE_ROOT`，并在 teardown 时同步删除。调用方显式传入的
+`BLADE_STORAGE_ROOT` 始终由调用方管理，测试 harness 不会删除。
+
 GitHub `Quality Gate` 在 build 前重复执行全仓 format check 与 CLI lint，并由 workflow
 source contract 固定 install → format → lint → build 顺序。root、CLI 与 Web 使用同一
 精确 Biome 版本，避免 workspace binary 解析差异让本地门禁和 CI 得到不同结果。

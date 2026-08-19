@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.63] - 2026-08-19
+
+### Fixed
+- Vitest workers now create collision-free owned storage roots and remove them
+  synchronously at test-file teardown instead of leaving PID-named state behind
+- Explicitly supplied `BLADE_STORAGE_ROOT` directories remain caller-owned and
+  are never removed by the test harness
+- npm publish now uses Trusted Publishing (OIDC) and declares `repository`
+  metadata so sigstore provenance verification succeeds
+
+### Tests
+- Added real child-process coverage proving owned roots disappear after natural
+  worker exit while externally managed roots and their contents remain intact
+
 ## [0.10.62] - 2026-08-19
 
 ### Changed
