@@ -50,6 +50,10 @@ interface SessionCommittedIdentity {
   messageId?: string;
 }
 
+type StreamReadResult = Awaited<
+  ReturnType<ReadableStreamDefaultReader<Uint8Array>['read']>
+>;
+
 class BoundedSseReader {
   private readonly decoder = new TextDecoder();
   private buffer = '';
@@ -77,22 +81,30 @@ class BoundedSseReader {
         throw new Error(`Timed out waiting for SSE frame after ${this.timeoutMs}ms`);
       }
 
-      const result = await Promise.race([
-        this.reader.read(),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () =>
-              reject(
-                new Error(`Timed out waiting for SSE bytes after ${this.timeoutMs}ms`)
-              ),
-            remainingMs
-          )
-        ),
-      ]);
+      const result = await this.readWithTimeout(remainingMs);
       if (result.done) {
         throw new Error('SSE stream ended before the next frame');
       }
       this.buffer += this.decoder.decode(result.value, { stream: true });
+    }
+  }
+
+  private async readWithTimeout(remainingMs: number): Promise<StreamReadResult> {
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      return await Promise.race([
+        this.reader.read(),
+        new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            reject(new Error(`Timed out waiting for SSE bytes after ${this.timeoutMs}ms`));
+          }, remainingMs);
+        }),
+      ]);
+    } finally {
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+      }
     }
   }
 }
