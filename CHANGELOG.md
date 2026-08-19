@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.10.62] - 2026-08-19
+
+### Changed
+- CLI Unicode code-point and string-width caches now use entry-count and
+  retained-size LRU limits instead of permanently retaining every rendered
+  non-ASCII string
+- Syntax highlighting now enforces both its existing 200-line limit and a
+  512K retained-character budget
+- Oversized width inputs and code lines are still rendered but no longer
+  admitted to process-wide caches
+
+### Tests
+- Added high-cardinality Unicode text churn, oversized input, cache reset,
+  unique highlighted-line churn, and giant code-line residency coverage
+- Re-ran the complete TUI platform UI suite across message rendering, Static
+  ownership, input, hooks, workspace trust, and Session switching
+
 ## [0.10.61] - 2026-08-19
 
 ### Changed

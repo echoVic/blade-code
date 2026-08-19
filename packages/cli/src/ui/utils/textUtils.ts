@@ -3,15 +3,21 @@
  * 提供 Unicode 感知的文本操作
  */
 
+import { LRUCache } from 'lru-cache';
 import stringWidth from 'string-width';
 
 // =========================================================================
 // Unicode 感知的字符处理（按 code point 而非 UTF-16 code unit）
 // =========================================================================
 
-// Code points 缓存，减少 GC 压力
-const codePointsCache = new Map<string, string[]>();
+export const MAX_CODE_POINTS_CACHE_ENTRIES = 1_024;
+export const MAX_CODE_POINTS_CACHE_SIZE = 1024 * 1024;
 const MAX_STRING_LENGTH_TO_CACHE = 1000;
+const codePointsCache = new LRUCache<string, string[]>({
+  max: MAX_CODE_POINTS_CACHE_ENTRIES,
+  maxSize: MAX_CODE_POINTS_CACHE_SIZE,
+  sizeCalculation: (value, key) => Math.max(1, key.length * 2 + value.length * 8),
+});
 
 /**
  * 将字符串分割为 code points 数组
@@ -58,8 +64,14 @@ export function toCodePoints(str: string): string[] {
 // 字符串宽度计算（带缓存）
 // =========================================================================
 
-// 宽度缓存，提高性能
-const stringWidthCache = new Map<string, number>();
+export const MAX_STRING_WIDTH_CACHE_ENTRIES = 2_048;
+export const MAX_STRING_WIDTH_CACHE_SIZE = 512 * 1024;
+export const MAX_STRING_WIDTH_CACHEABLE_LENGTH = 4_096;
+const stringWidthCache = new LRUCache<string, number>({
+  max: MAX_STRING_WIDTH_CACHE_ENTRIES,
+  maxSize: MAX_STRING_WIDTH_CACHE_SIZE,
+  sizeCalculation: (_value, key) => Math.max(1, key.length * 2 + 8),
+});
 
 /**
  * 带缓存的字符串宽度计算
@@ -76,14 +88,52 @@ export function getCachedStringWidth(str: string): number {
     return str.length;
   }
 
-  if (stringWidthCache.has(str)) {
-    return stringWidthCache.get(str)!;
+  const cached = stringWidthCache.get(str);
+  if (cached !== undefined) {
+    return cached;
   }
 
   const width = stringWidth(str);
-  stringWidthCache.set(str, width);
+  if (str.length <= MAX_STRING_WIDTH_CACHEABLE_LENGTH) {
+    stringWidthCache.set(str, width);
+  }
 
   return width;
+}
+
+export function getTextMeasurementCacheStats(): {
+  codePoints: {
+    entries: number;
+    size: number;
+    capacity: number;
+    maxSize: number;
+  };
+  stringWidth: {
+    entries: number;
+    size: number;
+    capacity: number;
+    maxSize: number;
+  };
+} {
+  return {
+    codePoints: {
+      entries: codePointsCache.size,
+      size: codePointsCache.calculatedSize,
+      capacity: MAX_CODE_POINTS_CACHE_ENTRIES,
+      maxSize: MAX_CODE_POINTS_CACHE_SIZE,
+    },
+    stringWidth: {
+      entries: stringWidthCache.size,
+      size: stringWidthCache.calculatedSize,
+      capacity: MAX_STRING_WIDTH_CACHE_ENTRIES,
+      maxSize: MAX_STRING_WIDTH_CACHE_SIZE,
+    },
+  };
+}
+
+export function clearTextMeasurementCaches(): void {
+  codePointsCache.clear();
+  stringWidthCache.clear();
 }
 
 /**

@@ -11,6 +11,7 @@
 import { Box, Text } from 'ink';
 import { isPlainObject } from 'lodash-es';
 import { common, createLowlight } from 'lowlight';
+import { LRUCache } from 'lru-cache';
 import React from 'react';
 import { useTheme } from '../../store/selectors/index.js';
 import { themeManager } from '../themes/ThemeManager.js';
@@ -22,21 +23,30 @@ const lowlight = createLowlight(common);
 
 // ==================== HAST 结果 LRU 缓存 ====================
 // 缓存 lowlight 的 HAST 解析结果，避免重复解析相同代码行
-const HIGHLIGHT_CACHE_CAPACITY = 200;
-const highlightCache = new Map<string, unknown>(); // key -> HAST root node
+export const HIGHLIGHT_CACHE_CAPACITY = 200;
+export const HIGHLIGHT_CACHE_MAX_RETAINED_CHARS = 512 * 1024;
+export const HIGHLIGHT_CACHE_MAX_LINE_LENGTH = 4_096;
+
+interface HighlightCacheEntry {
+  root: unknown;
+  retainedChars: number;
+}
+
+const highlightCache = new LRUCache<string, HighlightCacheEntry>({
+  max: HIGHLIGHT_CACHE_CAPACITY,
+  maxSize: HIGHLIGHT_CACHE_MAX_RETAINED_CHARS,
+  sizeCalculation: (entry) => entry.retainedChars,
+});
+
+function highlightCacheKey(line: string, language: string | undefined): string {
+  return `${language ?? '__auto__'}\0${line}`;
+}
 
 function getCachedHighlight(
   line: string,
   language: string | undefined
 ): unknown | undefined {
-  const key = `${language ?? '__auto__'}:${line}`;
-  const cached = highlightCache.get(key);
-  if (cached !== undefined) {
-    // LRU: 移到末尾
-    highlightCache.delete(key);
-    highlightCache.set(key, cached);
-  }
-  return cached;
+  return highlightCache.get(highlightCacheKey(line, language))?.root;
 }
 
 function setCachedHighlight(
@@ -44,15 +54,31 @@ function setCachedHighlight(
   language: string | undefined,
   result: unknown
 ): void {
-  const key = `${language ?? '__auto__'}:${line}`;
-  if (highlightCache.size >= HIGHLIGHT_CACHE_CAPACITY) {
-    // 删除最旧的条目（Map 的第一个 key）
-    const firstKey = highlightCache.keys().next().value;
-    if (firstKey !== undefined) {
-      highlightCache.delete(firstKey);
-    }
-  }
-  highlightCache.set(key, result);
+  if (line.length > HIGHLIGHT_CACHE_MAX_LINE_LENGTH) return;
+  const languageLength = language?.length ?? 0;
+  highlightCache.set(highlightCacheKey(line, language), {
+    root: result,
+    // The key and HAST text both retain the source line.
+    retainedChars: Math.max(1, line.length * 2 + languageLength),
+  });
+}
+
+export function getCodeHighlightCacheStats(): {
+  entries: number;
+  size: number;
+  capacity: number;
+  maxSize: number;
+} {
+  return {
+    entries: highlightCache.size,
+    size: highlightCache.calculatedSize,
+    capacity: HIGHLIGHT_CACHE_CAPACITY,
+    maxSize: HIGHLIGHT_CACHE_MAX_RETAINED_CHARS,
+  };
+}
+
+export function clearCodeHighlightCache(): void {
+  highlightCache.clear();
 }
 
 interface CodeHighlighterProps {
