@@ -196,24 +196,41 @@ interface RecordedTokenBudgetHandoff {
   event: TokenBudgetHandoffRecordedEvent;
 }
 
+interface SuppressedTokenBudgetHandoff {
+  outcome: 'suppressed';
+  recordId: string;
+}
+
 recordTokenBudgetHandoff(
   sessionId: string,
   payload: Omit<TokenBudgetHandoffRecordedV1, 'messageId' | 'createdAt'>
-): Promise<RecordedTokenBudgetHandoff>;
+): Promise<RecordedTokenBudgetHandoff | SuppressedTokenBudgetHandoff>;
 ```
 
 The implementation uses `SessionEventLog.commitValidatedBatch()`. Its validation
 callback captures and returns the existing epoch event with an empty append batch,
 or returns one new event. Therefore an `existing` result is never restamped,
 re-appended, or fanned out. The method generates `messageId` and `createdAt` only
-for the winning new event.
+for the winning new event. A malformed or unsupported existing record returns
+`suppressed` with only its bounded durable event ID; it neither invents a message
+identity nor projects a model message.
 
 Every active Agent loop already holds the cross-process `SessionLease`; this is
 the required single-writer boundary across Headless, Web, and ACP. Validated
 append closes same-process check/commit races, while the lease prevents two
 processes from independently entering that boundary for one Session. Tests must
 prove both assumptions. Session fork uses a new Session ID and therefore starts a
-new handoff epoch.
+new handoff epoch. `SessionService.forkSession()` copies the effective committed
+conversation and full-compaction checkpoints but explicitly omits
+`token_budget_handoff_recorded`; the child may issue its own marker when its own
+Provider usage enters the handoff band.
+
+Session rewind follows the same authoritative projection as other conversation
+events. A `conversation` or `both` rewind removes handoff events at or after the
+target user checkpoint, while a `code`-only rewind leaves conversation events,
+including the current handoff authority, unchanged. Epoch scans run over
+`materializeSessionEvents()` output so a rewound-away marker cannot suppress a new
+one.
 
 ## Handoff prompt contract
 
@@ -260,6 +277,11 @@ The projected message has this exact identity metadata:
 `isTokenBudgetHandoffMessage()` accepts only this bounded shape with matching
 outer and metadata identities. User-authored text that resembles the reminder is
 never classified as an internal marker.
+
+`ChatServiceInterface.Message` gains `id?: string` so this already-used durable
+identity is represented without casts. `createPiContext()` continues to build a
+fresh pi-ai context from role, content, reasoning, and tool protocol fields only;
+it does not forward `id` or Blade metadata as Provider message fields.
 
 ## Component boundaries
 
@@ -325,7 +347,8 @@ request, the loop performs this order:
 7. only after storage returns a newly created or existing authoritative event,
    project it to the hidden user message and append it if that identity is not
    already in `ConversationState`;
-8. continue to the already-planned Provider request. The internal event never
+8. if storage returns `suppressed`, append nothing and continue;
+9. continue to the already-planned Provider request. The internal event never
    becomes `lastMessageUuid`, because it is not part of the public parent-message
    chain.
 
@@ -371,6 +394,10 @@ contains no projected marker. Resume therefore begins a new epoch naturally.
 
 If compaction aborts, throws, or fails before its checkpoint is durable, the old
 context and marker remain authoritative. The runtime must not issue a duplicate.
+The existing post-compaction cooldown no longer authorizes another normal Provider
+request after the shared budget phase reaches `compaction_due`; direct and repeated
+80% crossings compact before the next task-model request. Hysteresis may still
+avoid optional work below that boundary, but cannot override the hard 80% phase.
 
 ## Continuation-ledger summary contract
 
@@ -473,6 +500,8 @@ Prove:
 - a Provider pre-stream retry reuses the same marker rather than committing a
   second one;
 - a model switch within the same epoch does not duplicate the reminder.
+- a Session fork retains the effective task context but omits the parent marker,
+  while the child can commit a distinct identity in its own epoch.
 
 ### Persistence and compaction tests
 
@@ -498,6 +527,8 @@ Prove with real temporary JSONL storage that:
   visible events and zero JSON payloads containing the internal event name, marker
   identity, or reminder text;
 - a full checkpoint replacement removes it on cold reload;
+- conversation/both rewind before a marker removes its authority, while code-only
+  rewind preserves it;
 - aborted or non-durable compaction keeps it;
 - LLM, reactive, turn-limit, manual, and fallback replacements contain no marker;
 - the compaction prompt contains the complete seven-heading contract;
