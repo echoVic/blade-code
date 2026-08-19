@@ -458,6 +458,106 @@ describe('SessionService with mocked filesystem', () => {
     ]);
   });
 
+  it('suppresses duplicate valid handoff markers within the current epoch', () => {
+    const entries: SessionEvent[] = [
+      {
+        id: 'before-message',
+        sessionId: 'session-duplicate-handoff',
+        type: 'message_created',
+        timestamp: '2026-08-18T00:00:00.000Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          messageId: 'before-user',
+          role: 'user',
+          createdAt: '2026-08-18T00:00:00.000Z',
+        },
+      },
+      {
+        id: 'before-text',
+        sessionId: 'session-duplicate-handoff',
+        type: 'part_created',
+        timestamp: '2026-08-18T00:00:01.000Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          partId: 'before-text-part',
+          messageId: 'before-user',
+          partType: 'text',
+          payload: { text: 'before visible' },
+          createdAt: '2026-08-18T00:00:01.000Z',
+        },
+      },
+      {
+        id: 'handoff-event-1',
+        sessionId: 'session-duplicate-handoff',
+        type: 'token_budget_handoff_recorded',
+        timestamp: '2026-08-18T00:00:02.000Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          version: 1,
+          messageId: 'handoff-message-1',
+          observedPromptTokens: 75,
+          availableForInput: 100,
+          handoffThreshold: 70,
+          compactionThreshold: 80,
+          createdAt: '2026-08-18T00:00:02.000Z',
+        },
+      },
+      {
+        id: 'handoff-event-2',
+        sessionId: 'session-duplicate-handoff',
+        type: 'token_budget_handoff_recorded',
+        timestamp: '2026-08-18T00:00:02.500Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          version: 1,
+          messageId: 'handoff-message-2',
+          observedPromptTokens: 76,
+          availableForInput: 100,
+          handoffThreshold: 70,
+          compactionThreshold: 80,
+          createdAt: '2026-08-18T00:00:02.500Z',
+        },
+      },
+      {
+        id: 'after-message',
+        sessionId: 'session-duplicate-handoff',
+        type: 'message_created',
+        timestamp: '2026-08-18T00:00:03.000Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          messageId: 'after-assistant',
+          role: 'assistant',
+          createdAt: '2026-08-18T00:00:03.000Z',
+        },
+      },
+      {
+        id: 'after-text',
+        sessionId: 'session-duplicate-handoff',
+        type: 'part_created',
+        timestamp: '2026-08-18T00:00:04.000Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          partId: 'after-text-part',
+          messageId: 'after-assistant',
+          partType: 'text',
+          payload: { text: 'after visible' },
+          createdAt: '2026-08-18T00:00:04.000Z',
+        },
+      },
+    ];
+
+    expect(SessionService.convertJSONLToModelContext(entries)).toEqual([
+      { role: 'user', content: 'before visible' },
+      { role: 'assistant', content: 'after visible' },
+    ]);
+  });
+
   it('replaces prior handoff markers with checkpoint messages and ignores unsupported suffix events', () => {
     const entries: SessionEvent[] = [
       {

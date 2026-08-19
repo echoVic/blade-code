@@ -23,7 +23,10 @@ import {
   findPendingSessionInteraction,
   toPendingInteraction,
 } from '../context/interactions.js';
-import { projectTokenBudgetHandoffEvent } from '../context/TokenBudgetHandoff.js';
+import {
+  findCurrentTokenBudgetHandoff,
+  projectTokenBudgetHandoffEvent,
+} from '../context/TokenBudgetHandoff.js';
 import {
   codeReviewMessageMetadata,
   projectSessionReviews,
@@ -2392,10 +2395,16 @@ export class SessionService {
     const toolCallIdByPartId = new Map<string, string>();
     const assistantMessageByToolCallId = new Map<string, Message>();
     const materialized = materializeSessionEvents(entries);
+    const currentTokenBudgetHandoff = options.includeTokenBudgetHandoffs
+      ? findCurrentTokenBudgetHandoff(materialized)
+      : { kind: 'none' as const };
     const materializedReviewIds = new Set<string>();
     for (const entry of materialized) {
       if (entry.type === 'token_budget_handoff_recorded') {
-        if (options.includeTokenBudgetHandoffs) {
+        if (
+          currentTokenBudgetHandoff.kind === 'valid' &&
+          currentTokenBudgetHandoff.event.id === entry.id
+        ) {
           const handoffMessage = projectTokenBudgetHandoffEvent(entry);
           if (handoffMessage) {
             messages.push(handoffMessage);
