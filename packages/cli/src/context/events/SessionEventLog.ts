@@ -1,4 +1,5 @@
 import { Bus } from '../../server/bus.js';
+import { isTokenBudgetHandoffEvent } from '../TokenBudgetHandoff.js';
 import { JSONLStore } from '../storage/JSONLStore.js';
 import { getSessionFilePath } from '../storage/pathUtils.js';
 import type { SessionEvent } from '../types.js';
@@ -144,6 +145,7 @@ export class SessionEventLog {
   async replay(subscriber: SessionStreamSubscriber, fromSeq: number): Promise<void> {
     const source = await this.store.readFromSeq(fromSeq);
     for (const event of source) {
+      if (isTokenBudgetHandoffEvent(event)) continue;
       await subscriber.onCommitted(event);
     }
   }
@@ -151,6 +153,9 @@ export class SessionEventLog {
   private record(event: SessionEvent): void {
     if (typeof event.seq === 'number' && event.seq > this.highestSeq) {
       this.highestSeq = event.seq;
+    }
+    if (isTokenBudgetHandoffEvent(event)) {
+      return;
     }
     for (const subscriber of this.subscribers) {
       const observed = subscriber.onCommitted(event);

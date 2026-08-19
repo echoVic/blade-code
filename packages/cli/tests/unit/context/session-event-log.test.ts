@@ -6,7 +6,11 @@ import type { EphemeralDelta } from '../../../src/context/events/EphemeralDelta.
 import { SessionEventLog } from '../../../src/context/events/SessionEventLog.js';
 import { JSONLStore } from '../../../src/context/storage/JSONLStore.js';
 import { getSessionFilePath } from '../../../src/context/storage/pathUtils.js';
-import type { SessionEvent } from '../../../src/context/types.js';
+import type { TokenBudgetHandoffRecordedV1 } from '../../../src/context/TokenBudgetHandoff.js';
+import type {
+  SessionEvent,
+  TokenBudgetHandoffRecordedEvent,
+} from '../../../src/context/types.js';
 import { Bus } from '../../../src/server/bus.js';
 
 function messageCreated(
@@ -23,6 +27,33 @@ function messageCreated(
     cwd: projectPath,
     version: 'test',
     data: { messageId: id, role: 'assistant', createdAt: '2024-01-01T00:00:00.000Z' },
+  };
+}
+
+function tokenBudgetHandoffRecorded(
+  sessionId: string,
+  projectPath: string,
+  id: string
+): TokenBudgetHandoffRecordedEvent {
+  const data = {
+    version: 1,
+    messageId: 'handoff-message-1',
+    observedPromptTokens: 75,
+    availableForInput: 100,
+    handoffThreshold: 70,
+    compactionThreshold: 80,
+    createdAt: '2026-08-19T08:00:00.000Z',
+  } satisfies TokenBudgetHandoffRecordedV1;
+
+  return {
+    id,
+    sessionId,
+    projectPath,
+    timestamp: '2026-08-19T08:00:00.000Z',
+    type: 'token_budget_handoff_recorded',
+    cwd: projectPath,
+    version: 'test',
+    data,
   };
 }
 
@@ -143,6 +174,61 @@ describe('SessionEventLog', () => {
       expect(delta?.seq).toBeUndefined();
     } finally {
       unsubscribe();
+    }
+  });
+
+  it('keeps token-budget handoff records durable while suppressing live, Bus, and replay fan-out', async () => {
+    const log = SessionEventLog.for(sessionId, projectPath);
+    const liveSeqs: number[] = [];
+    const busCommitted = new Map<string, number[]>();
+    const unsubscribeBus = Bus.subscribe((event) => {
+      if (event.sessionId !== sessionId || !event.type.startsWith('committed.')) return;
+      const observed = busCommitted.get(event.type) ?? [];
+      observed.push(event.seq ?? 0);
+      busCommitted.set(event.type, observed);
+    });
+    const unsubscribeLive = log.subscribe({
+      onCommitted: (event) => {
+        liveSeqs.push(event.seq ?? 0);
+      },
+    });
+
+    try {
+      await log.commit(messageCreated(sessionId, projectPath, 'visible-a'));
+      await log.commit(
+        tokenBudgetHandoffRecorded(sessionId, projectPath, 'handoff-record-1')
+      );
+      await log.commit(messageCreated(sessionId, projectPath, 'visible-b'));
+
+      const onDisk = await new JSONLStore(
+        getSessionFilePath(projectPath, sessionId)
+      ).readAll();
+      expect(onDisk.map((event) => event.seq)).toEqual([1, 2, 3]);
+      expect(onDisk.map((event) => event.type)).toEqual([
+        'message_created',
+        'token_budget_handoff_recorded',
+        'message_created',
+      ]);
+      expect(log.lastSeq).toBe(3);
+
+      expect(liveSeqs).toEqual([1, 3]);
+      expect(busCommitted).toEqual(
+        new Map<string, number[]>([['committed.message_created', [1, 3]]])
+      );
+
+      const replayedSeqs: number[] = [];
+      await log.replay(
+        {
+          onCommitted: async (event) => {
+            replayedSeqs.push(event.seq ?? 0);
+          },
+        },
+        1
+      );
+      expect(replayedSeqs).toEqual([1, 3]);
+    } finally {
+      unsubscribeLive();
+      unsubscribeBus();
     }
   });
 
