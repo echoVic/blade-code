@@ -393,7 +393,11 @@ summary event supersedes the earlier handoff event, and its replacement context
 contains no projected marker. Resume therefore begins a new epoch naturally.
 
 If compaction aborts, throws, or fails before its checkpoint is durable, the old
-context and marker remain authoritative. The runtime must not issue a duplicate.
+context and marker remain authoritative. An abort returns the existing interrupted
+turn result. Any other full-compaction or checkpoint-persistence failure at
+`compaction_due` ends the current turn with typed `context_compaction_failed`
+semantics; it must not issue another normal Provider request against the over-budget
+context. The runtime must not issue a duplicate marker.
 The existing post-compaction cooldown no longer authorizes another normal Provider
 request after the shared budget phase reaches `compaction_due`; direct and repeated
 80% crossings compact before the next task-model request. Hysteresis may still
@@ -497,6 +501,8 @@ Prove:
 - a persistence failure sends no uncommitted marker and does not fail the turn;
 - the in-memory failure flag prevents repeated writes in one process;
 - usage at or above 80% compacts before another task-model request;
+- a thrown compaction or checkpoint commit at/above 80% returns
+  `context_compaction_failed` with zero later task-model requests;
 - a Provider pre-stream retry reuses the same marker rather than committing a
   second one;
 - a model switch within the same epoch does not duplicate the reminder.
@@ -637,7 +643,8 @@ After every gate passes against the exact release commit, create and push
    handoff epoch across crash/resume;
 3. a marker persistence failure neither leaks an uncommitted prompt nor stops the
    coding turn;
-4. direct jumps to 80% compact without another task-model request;
+4. direct jumps to 80% compact without another task-model request, and compaction
+   or checkpoint failure fails the turn closed rather than crossing the boundary;
 5. every full-compaction path removes the marker and produces a recoverable
    continuation context;
 6. CLI, Web, ACP, exports, live/replayed event streams, and user-facing reloads
