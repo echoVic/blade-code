@@ -49,6 +49,17 @@ jobs:
       - name: Build
         run: bun run build
 
+      - name: Verify npm authentication
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if ! whoami_output="$(npm whoami --registry=https://registry.npmjs.org/ 2>&1)"; then
+            echo "npm authentication failed: ${whoami_output}" >&2
+            echo "The NPM_TOKEN secret is not a valid credential for registry.npmjs.org." >&2
+            exit 1
+          fi
+          echo "Authenticated to npm as: ${whoami_output}"
+
       - name: Publish to npm
         working-directory: packages/cli
         env:
