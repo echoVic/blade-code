@@ -17,6 +17,7 @@ import { SessionEventLog } from '../events/SessionEventLog.js';
 import { projectTurnLifecycle } from '../events/turnLifecycle.js';
 import {
   findCurrentTokenBudgetHandoff,
+  TOKEN_BUDGET_HANDOFF_MESSAGE_ID_PREFIX,
   type TokenBudgetHandoffRecordedV1,
   type ValidTokenBudgetHandoffEvent,
 } from '../TokenBudgetHandoff.js';
@@ -1355,7 +1356,7 @@ export class PersistentStore {
       return [
         this.createEvent('token_budget_handoff_recorded', sessionId, {
           ...payload,
-          messageId: nanoid(),
+          messageId: `${TOKEN_BUDGET_HANDOFF_MESSAGE_ID_PREFIX}${nanoid()}`,
           createdAt,
         }),
       ];

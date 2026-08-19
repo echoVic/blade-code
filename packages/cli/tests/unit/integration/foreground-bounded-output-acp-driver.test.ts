@@ -124,6 +124,7 @@ describe('child-backed ACP terminal driver', () => {
       const evidence = JSON.parse(result.stdout) as {
         exitCode: number;
         output: string;
+        observed: string;
         processes: Array<{ pid: number; identity: ProcessIdentity }>;
         observedPids: number[];
         releaseCount: number;
@@ -133,6 +134,7 @@ describe('child-backed ACP terminal driver', () => {
       expect(evidence).toMatchObject({
         exitCode: 0,
         output: 'alpha\nbeta\n',
+        observed: 'alpha\nbeta\n',
         releaseCount: 1,
         activeTerminalCount: 0,
       });

@@ -10,6 +10,7 @@ import {
   stripTokenBudgetHandoffMessages,
   TOKEN_BUDGET_COMPACTION_RATIO,
   TOKEN_BUDGET_HANDOFF_MAX_BYTES,
+  TOKEN_BUDGET_HANDOFF_MESSAGE_ID_PREFIX,
   TOKEN_BUDGET_HANDOFF_RATIO,
   TOKEN_BUDGET_HANDOFF_TAG,
   TOKEN_BUDGET_HANDOFF_VERSION,
@@ -592,6 +593,7 @@ describe('module contract constants', () => {
     expect(TOKEN_BUDGET_HANDOFF_RATIO).toBe(0.7);
     expect(TOKEN_BUDGET_COMPACTION_RATIO).toBe(0.8);
     expect(TOKEN_BUDGET_HANDOFF_MAX_BYTES).toBe(2000);
+    expect(TOKEN_BUDGET_HANDOFF_MESSAGE_ID_PREFIX).toBe('handoff-message-');
     expect(TOKEN_BUDGET_HANDOFF_TAG).toBe('<token-budget-handoff version="1">');
   });
 });

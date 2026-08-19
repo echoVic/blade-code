@@ -2650,6 +2650,48 @@ describe('eventHandlers', () => {
     expect(state.resyncSessionMessages).toHaveBeenCalledWith(properties);
   });
 
+  test('ignores an unknown committed handoff event between visible messages', () => {
+    const state = createState({ messages: [] });
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+    const properties = {
+      sessionId: 'session-1',
+      projectPath: '/workspace/a',
+    };
+
+    dispatch({
+      type: 'message.created',
+      properties: {
+        ...properties,
+        messageId: 'before',
+        role: 'assistant',
+        content: 'before',
+      },
+    });
+    dispatch({
+      type: 'committed.token_budget_handoff_recorded',
+      properties: {
+        ...properties,
+        seq: 2,
+        event: { type: 'token_budget_handoff_recorded' },
+      },
+    });
+    dispatch({
+      type: 'message.created',
+      properties: {
+        ...properties,
+        messageId: 'after',
+        role: 'assistant',
+        content: 'after',
+      },
+    });
+
+    expect(state.messages.map((message) => message.content)).toEqual([
+      'before',
+      'after',
+    ]);
+    expect(state.resyncSessionMessages).not.toHaveBeenCalled();
+  });
+
   test('projects user shell lifecycle as a user-owned command card', () => {
     const state = createState({ messages: [] });
     const set = vi.fn(

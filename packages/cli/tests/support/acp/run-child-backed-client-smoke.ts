@@ -3,7 +3,10 @@ import { ChildBackedRecordingAcpClient } from './ChildBackedRecordingAcpClient.j
 const workspace = process.argv[2];
 if (!workspace) throw new Error('Smoke runner requires a workspace');
 
-const client = new ChildBackedRecordingAcpClient();
+let observed = '';
+const client = new ChildBackedRecordingAcpClient((chunk) => {
+  observed += chunk;
+});
 let terminalId = '';
 try {
   const created = await client.createTerminal({
@@ -33,6 +36,7 @@ try {
     JSON.stringify({
       exitCode: exit.exitCode,
       output: output.output,
+      observed,
       processes: client.releasedProcesses,
       observedPids: pids,
       releaseCount: client.releaseCounts.get(terminalId),

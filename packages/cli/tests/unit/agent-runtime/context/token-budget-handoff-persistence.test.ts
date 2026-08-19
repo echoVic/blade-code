@@ -8,6 +8,7 @@ import { PersistentStore } from '../../../../src/context/storage/PersistentStore
 import { getSessionFilePath } from '../../../../src/context/storage/pathUtils.js';
 import {
   findCurrentTokenBudgetHandoff,
+  TOKEN_BUDGET_HANDOFF_MESSAGE_ID_PREFIX,
   type TokenBudgetHandoffRecordedV1,
 } from '../../../../src/context/TokenBudgetHandoff.js';
 import type {
@@ -94,6 +95,9 @@ describe('durable token-budget handoff persistence', () => {
       result.outcome === 'suppressed' ? [] : [result.event.data.messageId]
     );
     expect(new Set(identities).size).toBe(1);
+    expect(identities[0]).toMatch(
+      new RegExp(`^${TOKEN_BUDGET_HANDOFF_MESSAGE_ID_PREFIX}[A-Za-z0-9_-]+$`)
+    );
     expect(recorded).toHaveLength(1);
     expect(recorded[0]?.id).not.toBe(recorded[0]?.data.messageId);
   });

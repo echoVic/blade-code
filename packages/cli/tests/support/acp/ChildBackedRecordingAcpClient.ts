@@ -60,6 +60,8 @@ export class ChildBackedRecordingAcpClient implements acp.Client {
 
   private readonly terminals = new Map<string, TerminalState>();
 
+  constructor(private readonly onTerminalData?: (chunk: string) => void) {}
+
   async requestPermission(
     _params: acp.RequestPermissionRequest
   ): Promise<acp.RequestPermissionResponse> {
@@ -120,6 +122,7 @@ export class ChildBackedRecordingAcpClient implements acp.Client {
     };
     processHandle.onData((chunk) => {
       appendTerminalOutput(state, chunk);
+      this.onTerminalData?.(chunk);
     });
     processHandle.onExit(({ exitCode }) => {
       state.exited = true;

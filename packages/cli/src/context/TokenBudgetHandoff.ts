@@ -11,6 +11,7 @@ export const TOKEN_BUDGET_HANDOFF_RATIO = 0.7;
 export const TOKEN_BUDGET_COMPACTION_RATIO = 0.8;
 export const TOKEN_BUDGET_HANDOFF_MAX_BYTES = 2000;
 export const TOKEN_BUDGET_HANDOFF_TAG = '<token-budget-handoff version="1">';
+export const TOKEN_BUDGET_HANDOFF_MESSAGE_ID_PREFIX = 'handoff-message-';
 
 const MAX_MESSAGE_ID_LENGTH = 128;
 const TOKEN_BUDGET_HANDOFF_DATA_KEYS = [

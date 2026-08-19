@@ -40,6 +40,15 @@ import {
   type ProxyWritableResponse,
   writeWithBackpressure,
 } from '../../support/tokenBudgetHandoffProxy.js';
+import { parseTokenBudgetHandoffAcpEvidence } from '../../support/tokenBudgetHandoffAcpDriver.js';
+import {
+  parseTokenBudgetHandoffProjectionEvidence,
+  runTokenBudgetHandoffProjectionRunner,
+  TOKEN_BUDGET_PROJECTION_EVIDENCE_PREFIX,
+  TokenBudgetHandoffOutputSink,
+} from '../../support/tokenBudgetHandoffHeadlessDriver.js';
+import { parseTokenBudgetHandoffPtyEvidence } from '../../support/tokenBudgetHandoffPtyDriver.js';
+import { parseTokenBudgetHandoffWebEvidence } from '../../support/tokenBudgetHandoffWebDriver.js';
 
 vi.unmock('http');
 vi.unmock('node:http');
@@ -53,6 +62,25 @@ const LEDGER_HEADINGS = [
   'Open risks or blockers',
   'Exact next action',
 ] as const;
+
+const safeRecovery = {
+  kind: 'cold_projection' as const,
+  completed: true,
+  providerRequestsBefore: 5,
+  providerRequestsAfter: 5,
+};
+
+function baseSurfaceEvidence(surface: 'headless' | 'pty' | 'web' | 'acp') {
+  return {
+    success: true,
+    surface,
+    sessionId: 'safe-session',
+    finalMarkerSeen: true,
+    hiddenMarkerSeen: false,
+    recovery: safeRecovery,
+    faults: [] as string[],
+  };
+}
 
 let createServer: typeof import('node:http').createServer;
 const roots: string[] = [];
@@ -1336,5 +1364,214 @@ describe('token-budget handoff deterministic qualification foundation', () => {
         recovery,
       })
     ).toThrow('session');
+  });
+
+  it('parses only bounded safe cold-projection evidence', () => {
+    const safe = {
+      modelHasMarker: false,
+      publicHasMarker: false,
+      modelMessageCount: 3,
+      publicMessageCount: 8,
+    };
+    const encode = (value: unknown): string =>
+      `${TOKEN_BUDGET_PROJECTION_EVIDENCE_PREFIX}${JSON.stringify(value)}\n`;
+    expect(parseTokenBudgetHandoffProjectionEvidence(encode(safe))).toEqual(safe);
+    expect(() =>
+      parseTokenBudgetHandoffProjectionEvidence(
+        encode({ ...safe, modelHasMarker: true })
+      )
+    ).toThrow('marker');
+    expect(() =>
+      parseTokenBudgetHandoffProjectionEvidence(
+        encode({ ...safe, diagnostic: TOKEN_BUDGET_HANDOFF_TAG })
+      )
+    ).toThrow('hidden');
+    expect(() =>
+      parseTokenBudgetHandoffProjectionEvidence(
+        encode({ ...safe, diagnostic: 'projection-secret' }),
+        ['projection-secret']
+      )
+    ).toThrow('secret');
+    expect(() =>
+      parseTokenBudgetHandoffProjectionEvidence(encode({ ...safe, extra: true }))
+    ).toThrow('keys');
+    expect(() =>
+      parseTokenBudgetHandoffProjectionEvidence(`${JSON.stringify(safe)}\n`)
+    ).toThrow('prefix');
+    expect(() =>
+      parseTokenBudgetHandoffProjectionEvidence(
+        `${TOKEN_BUDGET_PROJECTION_EVIDENCE_PREFIX}{"modelHasMarker":true,"modelHasMarker":false,"publicHasMarker":false,"modelMessageCount":3,"publicMessageCount":8}\n`
+      )
+    ).toThrow('canonical');
+    expect(() =>
+      parseTokenBudgetHandoffProjectionEvidence(`\n${encode(safe)}`)
+    ).toThrow('prefix');
+    expect(() =>
+      parseTokenBudgetHandoffProjectionEvidence(encode(safe).trimEnd())
+    ).toThrow('prefix');
+    expect(() =>
+      parseTokenBudgetHandoffProjectionEvidence(
+        encode(safe),
+        ['stderr-secret'],
+        'stderr-secret'
+      )
+    ).toThrow('secret');
+    expect(() =>
+      parseTokenBudgetHandoffProjectionEvidence(
+        encode(safe),
+        [],
+        'unexpected diagnostic'
+      )
+    ).toThrow('stderr');
+    expect(() => parseTokenBudgetHandoffProjectionEvidence('x'.repeat(64_001))).toThrow(
+      'budget'
+    );
+  });
+
+  it('rejects unsafe projection runner isolation before spawning', async () => {
+    const base = {
+      sessionId: 'safe-session',
+      workspace: '/tmp/token-budget-workspace',
+      home: '/tmp/token-budget-home',
+      storageRoot: '/tmp/token-budget-storage',
+    };
+    await expect(
+      runTokenBudgetHandoffProjectionRunner({ ...base, home: 'relative-home' })
+    ).rejects.toThrow('absolute');
+    await expect(
+      runTokenBudgetHandoffProjectionRunner({
+        ...base,
+        storageRoot: 'relative-storage',
+      })
+    ).rejects.toThrow('absolute');
+    await expect(
+      runTokenBudgetHandoffProjectionRunner({ ...base, timeoutMs: 0 })
+    ).rejects.toThrow('timeout');
+  });
+
+  it('latches hidden output split across chunks before bounded-tail eviction', () => {
+    const sink = new TokenBudgetHandoffOutputSink(8, [TOKEN_BUDGET_HANDOFF_TAG]);
+    const midpoint = Math.floor(TOKEN_BUDGET_HANDOFF_TAG.length / 2);
+    sink.write(TOKEN_BUDGET_HANDOFF_TAG.slice(0, midpoint));
+    sink.write(TOKEN_BUDGET_HANDOFF_TAG.slice(midpoint));
+    sink.write('x'.repeat(64));
+    sink.close();
+
+    expect(sink.value()).toBe('xxxxxxxx');
+    expect(sink.forbiddenSeen()).toBe(true);
+  });
+
+  it('validates bounded PTY task and resume evidence', () => {
+    const safe = {
+      ...baseSurfaceEvidence('pty'),
+      recovery: { ...safeRecovery, kind: 'pty_resume' as const },
+      composerReady: true,
+      bracketedPasteAccepted: true,
+      taskExited: true,
+      resumeExited: true,
+      processGone: true,
+      resumeSubmittedInput: false,
+      output: 'FINAL_OK_safe',
+    };
+    expect(parseTokenBudgetHandoffPtyEvidence(JSON.stringify(safe))).toEqual(safe);
+    for (const unsafe of [
+      { ...safe, composerReady: false },
+      { ...safe, resumeSubmittedInput: true },
+      { ...safe, faults: ['timeout'] },
+      {
+        ...safe,
+        recovery: { ...safe.recovery, providerRequestsAfter: 6 },
+      },
+      { ...safe, output: TOKEN_BUDGET_HANDOFF_TAG },
+      { ...safe, output: 'token_budget_handoff_recorded' },
+      { ...safe, output: 'handoff-message-1' },
+    ]) {
+      expect(() =>
+        parseTokenBudgetHandoffPtyEvidence(JSON.stringify(unsafe))
+      ).toThrow();
+    }
+    expect(() =>
+      parseTokenBudgetHandoffPtyEvidence(
+        JSON.stringify({ ...safe, output: 'pty-secret' }),
+        ['pty-secret']
+      )
+    ).toThrow('secret');
+  });
+
+  it('validates bounded ACP task and load evidence', () => {
+    const safe = {
+      ...baseSurfaceEvidence('acp'),
+      recovery: { ...safeRecovery, kind: 'acp_load' as const },
+      stopReason: 'end_turn' as const,
+      hiddenUserChunkSeen: false,
+      terminalCreationCount: 1,
+      terminalReleaseCount: 1,
+      activeTerminalCount: 0,
+      releasedProcessesGone: true,
+      taskRunnerExited: true,
+      loadRunnerExited: true,
+    };
+    expect(parseTokenBudgetHandoffAcpEvidence(JSON.stringify(safe))).toEqual(safe);
+    for (const unsafe of [
+      { ...safe, stopReason: 'cancelled' },
+      { ...safe, hiddenUserChunkSeen: true },
+      { ...safe, terminalReleaseCount: 0 },
+      { ...safe, activeTerminalCount: 1 },
+      { ...safe, releasedProcessesGone: false },
+      { ...safe, nested: { text: TOKEN_BUDGET_HANDOFF_TAG } },
+      {
+        ...safe,
+        recovery: { ...safe.recovery, providerRequestsAfter: 6 },
+      },
+    ]) {
+      expect(() =>
+        parseTokenBudgetHandoffAcpEvidence(JSON.stringify(unsafe))
+      ).toThrow();
+    }
+    expect(() =>
+      parseTokenBudgetHandoffAcpEvidence(
+        JSON.stringify({ ...safe, nested: { text: 'acp-secret' } }),
+        ['acp-secret']
+      )
+    ).toThrow('secret');
+  });
+
+  it('validates bounded Web reload and cleanup evidence', () => {
+    const safe = {
+      ...baseSurfaceEvidence('web'),
+      recovery: { ...safeRecovery, kind: 'web_reload' as const },
+      httpHistoryClean: true,
+      sseClean: true,
+      domClean: true,
+      htmlClean: true,
+      reloadCompleted: true,
+      launcherGone: true,
+      portReusable: true,
+    };
+    expect(parseTokenBudgetHandoffWebEvidence(JSON.stringify(safe))).toEqual(safe);
+    for (const unsafe of [
+      { ...safe, httpHistoryClean: false },
+      { ...safe, sseClean: false },
+      { ...safe, domClean: false },
+      { ...safe, reloadCompleted: false },
+      { ...safe, launcherGone: false },
+      { ...safe, portReusable: false },
+      { ...safe, faults: ['pageerror'] },
+      { ...safe, nested: { html: TOKEN_BUDGET_HANDOFF_TAG } },
+      {
+        ...safe,
+        recovery: { ...safe.recovery, providerRequestsAfter: 6 },
+      },
+    ]) {
+      expect(() =>
+        parseTokenBudgetHandoffWebEvidence(JSON.stringify(unsafe))
+      ).toThrow();
+    }
+    expect(() =>
+      parseTokenBudgetHandoffWebEvidence(
+        JSON.stringify({ ...safe, nested: { html: 'web-secret' } }),
+        ['web-secret']
+      )
+    ).toThrow('secret');
   });
 });
