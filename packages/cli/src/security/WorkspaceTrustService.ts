@@ -3,6 +3,7 @@ import { constants, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Mutex } from 'async-mutex';
+import { LRUCache } from 'lru-cache';
 import writeFileAtomic from 'write-file-atomic';
 import { getBladeStorageRoot } from '../context/storage/pathUtils.js';
 import {
@@ -14,6 +15,7 @@ const DECISION_VERSION = 1;
 const MAX_DECISION_BYTES = 64 * 1024;
 const MAX_PROJECT_CONFIG_BYTES = 1024 * 1024;
 const MAX_REVIEW_ENTRIES = 100;
+export const MAX_RESIDENT_WORKSPACE_TRUST_STATUSES = 64;
 
 export type WorkspaceTrustState = 'not_required' | 'trusted' | 'untrusted' | 'error';
 
@@ -230,7 +232,9 @@ function isAncestor(ancestor: string, candidate: string): boolean {
 export class WorkspaceTrustService {
   private static instance: WorkspaceTrustService | null = null;
   private readonly mutex = new Mutex();
-  private readonly statusCache = new Map<string, WorkspaceTrustStatus>();
+  private readonly statusCache = new LRUCache<string, WorkspaceTrustStatus>({
+    max: MAX_RESIDENT_WORKSPACE_TRUST_STATUSES,
+  });
 
   constructor(
     private readonly storeDir = path.join(getBladeStorageRoot(), 'workspace-trust')
@@ -345,6 +349,13 @@ export class WorkspaceTrustService {
   isTrustedCached(projectDir: string): boolean {
     const status = this.getCachedStatus(projectDir);
     return status?.state === 'trusted';
+  }
+
+  getCacheStats(): { capacity: number; entries: number } {
+    return {
+      capacity: MAX_RESIDENT_WORKSPACE_TRUST_STATUSES,
+      entries: this.statusCache.size,
+    };
   }
 
   async trust(projectDir: string): Promise<WorkspaceTrustStatus> {

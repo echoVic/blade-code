@@ -126,7 +126,11 @@ export function applyWorkspaceTransition(
     return undefined;
   }
 
-  HookManager.getInstance().inheritProjectConfig(context.workspaceRoot, workspaceRoot);
+  HookManager.getInstance().inheritProjectConfig(
+    context.workspaceRoot,
+    workspaceRoot,
+    context.sessionId
+  );
   context.workspaceRoot = workspaceRoot;
   context.worktreeActive = metadata?.workspaceTransition === 'enter';
   return workspaceRoot;

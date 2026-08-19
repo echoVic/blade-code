@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.10.61] - 2026-08-19
+
+### Changed
+- HookManager now keeps at most 64 non-current workspace and worktree
+  configurations while active Sessions retain independent hook snapshots
+- Workspace trust reviews now use a 64-entry LRU instead of permanently
+  retaining every path inspected by a long-lived Web or ACP process
+- Managed worktree transitions bind inherited hooks to the owning Session so
+  workspace cache eviction cannot alter an active turn
+
+### Fixed
+- Session disposal now removes every dynamic hook config, pause alias, and
+  transient worktree reference for the Session ID, not only its final paths
+- HookManager cleanup now restores a reusable default state instead of retaining
+  the current workspace config or process-wide disabled flag
+
+### Tests
+- Added project and trust cache churn, active Session snapshot survival, dynamic
+  worktree eviction, full Session alias cleanup, and singleton reuse coverage
+
 ## [0.10.60] - 2026-08-19
 
 ### Changed

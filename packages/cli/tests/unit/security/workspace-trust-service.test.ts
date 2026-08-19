@@ -12,7 +12,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetWorkspaceIdentityCache } from '../../../src/security/WorkspaceIdentity.js';
-import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustService.js';
+import {
+  MAX_RESIDENT_WORKSPACE_TRUST_STATUSES,
+  WorkspaceTrustService,
+} from '../../../src/security/WorkspaceTrustService.js';
 
 vi.unmock('node:child_process');
 
@@ -66,6 +69,31 @@ describe('WorkspaceTrustService', () => {
       sensitiveSources: 0,
     });
     expect(service.isTrustedCached(project)).toBe(false);
+  });
+
+  it('bounds cached workspace trust reviews by LRU', async () => {
+    const service = new WorkspaceTrustService(storeDir);
+    const projects = Array.from(
+      { length: MAX_RESIDENT_WORKSPACE_TRUST_STATUSES + 1 },
+      (_, index) => path.join(root, `cache-${index}`)
+    );
+    await Promise.all(
+      projects.map((workspace) => mkdir(workspace, { recursive: true }))
+    );
+
+    for (const workspace of projects) {
+      await service.getStatus(workspace);
+    }
+
+    expect(service.getCacheStats()).toEqual({
+      capacity: MAX_RESIDENT_WORKSPACE_TRUST_STATUSES,
+      entries: MAX_RESIDENT_WORKSPACE_TRUST_STATUSES,
+    });
+    expect(service.getCachedStatus(projects[0])).toBeUndefined();
+    expect(service.getCachedStatus(projects.at(-1)!)).toMatchObject({
+      state: 'not_required',
+      trusted: true,
+    });
   });
 
   it('requires explicit trust before package scripts may execute', async () => {

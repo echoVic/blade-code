@@ -5,6 +5,7 @@
  */
 
 import path from 'node:path';
+import { LRUCache } from 'lru-cache';
 import { nanoid } from 'nanoid';
 import type { SessionModelResources } from '../agent/resources/WorkspaceModelResources.js';
 import type { PermissionMode } from '../config/types.js';
@@ -55,6 +56,8 @@ import {
   type UserPromptSubmitInput,
 } from './types/HookTypes.js';
 
+export const MAX_RESIDENT_HOOK_PROJECT_CONFIGS = 64;
+
 /**
  * Hook Manager
  *
@@ -70,7 +73,9 @@ export class HookManager {
   private processDisabled = false;
   private disabledSessions = new Set<string>();
   private sessionStateAliases = new Map<string, string>();
-  private projectConfigs = new Map<string, HookConfig>();
+  private projectConfigs = new LRUCache<string, HookConfig>({
+    max: MAX_RESIDENT_HOOK_PROJECT_CONFIGS,
+  });
   private sessionConfigs = new Map<string, HookConfig>();
   private managedFunctionMatchers: Partial<Record<HookEvent, HookMatcher[]>> = {};
 
@@ -123,15 +128,19 @@ export class HookManager {
     sessionId: string,
     projectDirs: readonly string[]
   ): Promise<void> {
-    const stateKeys = new Set<string>();
-    for (const projectDir of projectDirs) {
-      const key = this.sessionConfigKey(sessionId, projectDir);
-      stateKeys.add(this.sessionStateAliases.get(key) ?? key);
+    const prefix = `${sessionId}\0`;
+    for (const key of this.sessionConfigs.keys()) {
+      if (!key.startsWith(prefix)) continue;
       this.sessionConfigs.delete(key);
+    }
+    for (const key of this.sessionStateAliases.keys()) {
+      if (!key.startsWith(prefix)) continue;
       this.sessionStateAliases.delete(key);
+    }
+    for (const key of this.disabledSessions) {
+      if (!key.startsWith(prefix)) continue;
       this.disabledSessions.delete(key);
     }
-    for (const key of stateKeys) this.disabledSessions.delete(key);
     await this.executor.unbindSessionModelResources(sessionId, projectDirs);
   }
 
@@ -149,11 +158,7 @@ export class HookManager {
     const envConfig = parseEnvConfig();
     merged = mergeHookConfig(merged, envConfig);
 
-    const projectKey = path.resolve(projectDir);
-    if (projectKey === path.resolve(getCwd())) {
-      this.config = merged;
-    }
-    this.projectConfigs.set(projectKey, merged);
+    this.storeProjectConfig(projectDir, merged);
   }
 
   /**
@@ -268,11 +273,46 @@ export class HookManager {
     return snapshot;
   }
 
-  inheritProjectConfig(sourceDir: string, targetDir: string): void {
-    this.projectConfigs.set(
-      path.resolve(targetDir),
-      this.getConfig(sourceDir) as HookConfig
-    );
+  private storeProjectConfig(projectDir: string, config: HookConfig): void {
+    const projectKey = path.resolve(projectDir);
+    if (projectKey === path.resolve(getCwd())) {
+      this.config = config;
+      this.projectConfigs.delete(projectKey);
+      return;
+    }
+    this.projectConfigs.set(projectKey, config);
+  }
+
+  inheritProjectConfig(sourceDir: string, targetDir: string, sessionId?: string): void {
+    const config = sessionId
+      ? this.getExecutionConfig(sessionId, sourceDir)
+      : this.getConfig(sourceDir);
+    this.storeProjectConfig(targetDir, this.snapshotConfig(config));
+    if (!sessionId) return;
+
+    const sourceKey = this.sessionConfigKey(sessionId, sourceDir);
+    const targetKey = this.sessionConfigKey(sessionId, targetDir);
+    const canonicalKey = this.sessionStateAliases.get(sourceKey) ?? sourceKey;
+    const disabled =
+      this.disabledSessions.has(canonicalKey) || this.disabledSessions.has(targetKey);
+    this.sessionConfigs.set(targetKey, this.snapshotConfig(config));
+    this.sessionStateAliases.set(targetKey, canonicalKey);
+    if (targetKey !== canonicalKey) this.disabledSessions.delete(targetKey);
+    if (disabled) this.disabledSessions.add(canonicalKey);
+  }
+
+  getResidencyStats(): {
+    projectCapacity: number;
+    projectConfigs: number;
+    sessionConfigs: number;
+    sessionAliases: number;
+  } {
+    return {
+      projectCapacity: MAX_RESIDENT_HOOK_PROJECT_CONFIGS,
+      projectConfigs: this.projectConfigs.size,
+      sessionConfigs: this.sessionConfigs.size,
+      sessionAliases: this.sessionStateAliases.size,
+    };
   }
 
   getTrustStatus(projectDir: string = getCwd()): Promise<HookTrustStatus> {
@@ -350,7 +390,7 @@ export class HookManager {
       const config = this.getConfig(projectKey) as HookConfig;
       const existing = (config[event] ?? []) as HookMatcher[];
       (config[event] as HookMatcher[]) = [...existing, matcherEntry];
-      this.projectConfigs.set(projectKey, config);
+      this.storeProjectConfig(projectKey, config);
       return () => {
         const current = config[event] as HookMatcher[] | undefined;
         if (!current) return;
@@ -1352,7 +1392,12 @@ export class HookManager {
    */
   cleanup(): void {
     this.guard.cleanupAll();
+    this.config = DEFAULT_HOOK_CONFIG;
+    this.processDisabled = false;
     this.disabledSessions.clear();
     this.sessionStateAliases.clear();
+    this.projectConfigs.clear();
+    this.sessionConfigs.clear();
+    this.managedFunctionMatchers = {};
   }
 }

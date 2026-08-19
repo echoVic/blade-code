@@ -40,6 +40,13 @@ describe('toolDomainPolicy', () => {
       ).toBe('/worktrees/feature');
       expect(context.workspaceRoot).toBe('/worktrees/feature');
       expect(HookManager.getInstance().isEnabled('/worktrees/feature')).toBe(true);
+      expect(
+        HookManager.getInstance().isSessionEnabled('session-1', '/worktrees/feature')
+      ).toBe(true);
+      expect(HookManager.getInstance().getResidencyStats()).toMatchObject({
+        sessionConfigs: 1,
+        sessionAliases: 1,
+      });
     });
 
     it('ignores failed or unrelated tool results', () => {
