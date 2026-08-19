@@ -294,4 +294,36 @@ describe('SessionMarkdownExporter', () => {
       )
     ).toThrow('No conversation content to export');
   });
+
+  it('does not leak internal handoff events or reminder content in markdown exports', () => {
+    const events: SessionEvent[] = [
+      message('user-1', 'user'),
+      part('user-1', 'before', 'text', { text: 'before visible' }),
+      event(
+        'token_budget_handoff_recorded',
+        {
+          version: 1,
+          messageId: 'handoff-message-1',
+          observedPromptTokens: 75,
+          availableForInput: 100,
+          handoffThreshold: 70,
+          compactionThreshold: 80,
+          createdAt: timestamp,
+        },
+        'handoff-event'
+      ),
+      message('assistant-1', 'assistant'),
+      part('assistant-1', 'after', 'text', { text: 'after visible' }),
+    ];
+
+    const result = renderSessionMarkdown(events, metadata);
+    expect(result.markdown).toContain('before visible');
+    expect(result.markdown).toContain('after visible');
+    expect(result.markdown).not.toContain('token_budget_handoff_recorded');
+    expect(result.markdown).not.toContain('handoff-message-1');
+    expect(result.markdown).not.toContain('<token-budget-handoff version=\"1\">');
+    expect(result.markdown).not.toContain(
+      'Remaining prompt-token headroom before compaction: 5.'
+    );
+  });
 });

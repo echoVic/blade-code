@@ -23,6 +23,7 @@ import {
   findPendingSessionInteraction,
   toPendingInteraction,
 } from '../context/interactions.js';
+import { projectTokenBudgetHandoffEvent } from '../context/TokenBudgetHandoff.js';
 import {
   codeReviewMessageMetadata,
   projectSessionReviews,
@@ -2366,17 +2367,24 @@ export class SessionService {
     }
 
     if (checkpointIndex < 0 || !replacementMessages) {
-      return this.convertJSONLToMessages(materialized);
+      return this.convertJSONLToMessages(materialized, {
+        includeTokenBudgetHandoffs: true,
+      });
     }
 
-    const suffix = this.convertJSONLToMessages(materialized.slice(checkpointIndex + 1));
+    const suffix = this.convertJSONLToMessages(materialized.slice(checkpointIndex + 1), {
+      includeTokenBudgetHandoffs: true,
+    });
     return [...replacementMessages, ...suffix];
   }
 
   /**
    * 将 JSONL 条目转换为 OpenAI Message 格式
    */
-  static convertJSONLToMessages(entries: SessionEvent[]): Message[] {
+  static convertJSONLToMessages(
+    entries: SessionEvent[],
+    options: { includeTokenBudgetHandoffs?: boolean } = {}
+  ): Message[] {
     const messages: Message[] = [];
     const messageMap = new Map<string, Message>();
     const partMap = new Map<string, ContentPart[]>();
@@ -2386,6 +2394,15 @@ export class SessionService {
     const materialized = materializeSessionEvents(entries);
     const materializedReviewIds = new Set<string>();
     for (const entry of materialized) {
+      if (entry.type === 'token_budget_handoff_recorded') {
+        if (options.includeTokenBudgetHandoffs) {
+          const handoffMessage = projectTokenBudgetHandoffEvent(entry);
+          if (handoffMessage) {
+            messages.push(handoffMessage);
+          }
+        }
+        continue;
+      }
       if (entry.type === 'message_created') {
         const messageMetadata =
           entry.data.metadata &&

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SessionEvent } from '../../../../src/context/types.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
 
 const readdirMock = vi.fn();
@@ -363,8 +364,102 @@ describe('SessionService with mocked filesystem', () => {
     ]);
   });
 
-  it('projects the latest durable compaction checkpoint only for model context', () => {
-    const entries = [
+  it('restores valid token budget handoff markers only in model context', () => {
+    const entries: SessionEvent[] = [
+      {
+        id: 'before-message',
+        sessionId: 'session-handoff',
+        type: 'message_created',
+        timestamp: '2026-08-18T00:00:00.000Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          messageId: 'before-user',
+          role: 'user',
+          createdAt: '2026-08-18T00:00:00.000Z',
+        },
+      },
+      {
+        id: 'before-text',
+        sessionId: 'session-handoff',
+        type: 'part_created',
+        timestamp: '2026-08-18T00:00:01.000Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          partId: 'before-text-part',
+          messageId: 'before-user',
+          partType: 'text',
+          payload: { text: 'before visible' },
+          createdAt: '2026-08-18T00:00:01.000Z',
+        },
+      },
+      {
+        id: 'handoff-event',
+        sessionId: 'session-handoff',
+        type: 'token_budget_handoff_recorded',
+        timestamp: '2026-08-18T00:00:02.000Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          version: 1,
+          messageId: 'handoff-message-1',
+          observedPromptTokens: 75,
+          availableForInput: 100,
+          handoffThreshold: 70,
+          compactionThreshold: 80,
+          createdAt: '2026-08-18T00:00:02.000Z',
+        },
+      },
+      {
+        id: 'after-message',
+        sessionId: 'session-handoff',
+        type: 'message_created',
+        timestamp: '2026-08-18T00:00:03.000Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          messageId: 'after-assistant',
+          role: 'assistant',
+          createdAt: '2026-08-18T00:00:03.000Z',
+        },
+      },
+      {
+        id: 'after-text',
+        sessionId: 'session-handoff',
+        type: 'part_created',
+        timestamp: '2026-08-18T00:00:04.000Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          partId: 'after-text-part',
+          messageId: 'after-assistant',
+          partType: 'text',
+          payload: { text: 'after visible' },
+          createdAt: '2026-08-18T00:00:04.000Z',
+        },
+      },
+    ];
+
+    expect(SessionService.convertJSONLToMessages(entries)).toEqual([
+      { role: 'user', content: 'before visible' },
+      { role: 'assistant', content: 'after visible' },
+    ]);
+    expect(SessionService.convertJSONLToModelContext(entries)).toMatchObject([
+      { role: 'user', content: 'before visible' },
+      {
+        id: 'handoff-message-1',
+        role: 'user',
+        metadata: {
+          clientVisible: false,
+        },
+      },
+      { role: 'assistant', content: 'after visible' },
+    ]);
+  });
+
+  it('replaces prior handoff markers with checkpoint messages and ignores unsupported suffix events', () => {
+    const entries: SessionEvent[] = [
       {
         id: 'old-message',
         sessionId: 'session-compacted',
@@ -391,6 +486,23 @@ describe('SessionService with mocked filesystem', () => {
           partType: 'text',
           payload: { text: 'oversized history' },
           createdAt: '2024-01-01T00:00:01Z',
+        },
+      },
+      {
+        id: 'handoff-event',
+        sessionId: 'session-compacted',
+        type: 'token_budget_handoff_recorded',
+        timestamp: '2024-01-01T00:00:01.500Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          version: 1,
+          messageId: 'handoff-message-1',
+          observedPromptTokens: 75,
+          availableForInput: 100,
+          handoffThreshold: 70,
+          compactionThreshold: 80,
+          createdAt: '2024-01-01T00:00:01.500Z',
         },
       },
       {
@@ -460,12 +572,32 @@ describe('SessionService with mocked filesystem', () => {
           createdAt: '2024-01-01T00:00:05Z',
         },
       },
-    ] as any;
+      {
+        id: 'future-handoff',
+        sessionId: 'session-compacted',
+        type: 'token_budget_handoff_recorded',
+        timestamp: '2024-01-01T00:00:05.500Z',
+        cwd: '/project/demo',
+        version: '0.0.0',
+        data: {
+          version: 2,
+          messageId: 'handoff-message-2',
+          observedPromptTokens: 76,
+          availableForInput: 100,
+          handoffThreshold: 70,
+          compactionThreshold: 80,
+          createdAt: '2024-01-01T00:00:05.500Z',
+        },
+      },
+    ];
 
     expect(SessionService.convertJSONLToMessages(entries)).toContainEqual({
       role: 'user',
       content: 'oversized history',
     });
+    expect(SessionService.convertJSONLToMessages(entries)).not.toContainEqual(
+      expect.objectContaining({ id: 'handoff-message-1' })
+    );
     expect(SessionService.convertJSONLToModelContext(entries)).toEqual([
       {
         role: 'user',
@@ -475,6 +607,12 @@ describe('SessionService with mocked filesystem', () => {
       { role: 'user', content: 'active task' },
       { role: 'assistant', content: 'continued safely' },
     ]);
+    expect(SessionService.convertJSONLToModelContext(entries)).not.toContainEqual(
+      expect.objectContaining({ id: 'handoff-message-1' })
+    );
+    expect(SessionService.convertJSONLToModelContext(entries)).not.toContainEqual(
+      expect.objectContaining({ id: 'handoff-message-2' })
+    );
   });
 
   it('falls back to a summary-only model projection for legacy checkpoints', () => {

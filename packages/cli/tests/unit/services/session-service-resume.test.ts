@@ -93,6 +93,39 @@ describe('SessionService.toUISafeMessages', () => {
       },
     ]);
   });
+
+  it('does not surface hidden token budget handoff markers in public resume messages', () => {
+    const messages: Message[] = [
+      { role: 'user', content: 'before visible' },
+      {
+        id: 'handoff-message-1',
+        role: 'user',
+        content:
+          '<token-budget-handoff version="1">\n' +
+          'Context rollover is approaching. Continue the user task from this state only.\n' +
+          'Make objective, decisions, mutations, verification, background work, blockers, and the exact next action explicit.\n' +
+          'Do not claim success or completion unless it is already proven in the transcript.\n' +
+          'Do not create bookkeeping files the user did not request.\n' +
+          'Remaining prompt-token headroom before compaction: 5.',
+        metadata: {
+          clientVisible: false,
+          tokenBudgetHandoff: {
+            version: 1,
+            messageId: 'handoff-message-1',
+          },
+        },
+      },
+      { role: 'assistant', content: 'after visible' },
+    ];
+
+    expect(SessionService.toUISafeMessages(messages)).toMatchObject([
+      { role: 'user', content: 'before visible' },
+      { role: 'assistant', content: 'after visible' },
+    ]);
+    expect(SessionService.toUISafeMessages(messages)).not.toContainEqual(
+      expect.objectContaining({ id: 'handoff-message-1' })
+    );
+  });
 });
 
 describe('SessionService subagent history projection', () => {
