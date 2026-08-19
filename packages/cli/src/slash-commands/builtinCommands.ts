@@ -81,8 +81,8 @@ const helpCommand: SlashCommand = {
 
     // 添加自定义命令列表
     const workspaceRoot = context.workspaceRoot || context.cwd || getCwd();
-    const customRegistry = CustomCommandRegistry.getInstance(workspaceRoot);
-    if (customRegistry.isInitialized()) {
+    const customRegistry = CustomCommandRegistry.getExistingInstance(workspaceRoot);
+    if (customRegistry?.isInitialized()) {
       const customCommands = customRegistry.getAllCommands();
       if (customCommands.length > 0) {
         helpText += `\n\n**自定义命令:**\n`;

@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.10.60] - 2026-08-19
+
+### Changed
+- Workspace agent catalogs now retain at most 32 idle workspaces with
+  deterministic LRU eviction while protecting active and initializing entries
+- Total active or initializing workspace catalogs are capped at 64, and Web
+  requests receive retryable overload semantics before another catalog starts
+- Plugin, skill, command, and subagent registries release evicted workspace
+  generations by object identity, while active Sessions keep immutable snapshots
+
+### Fixed
+- Failed workspace catalog initialization no longer leaves partial registry
+  generations resident
+- Plugin lifecycle mutations now pin their workspace catalog across asynchronous
+  refresh, install, policy, and reconciliation work
+- Server shutdown releases workspace catalogs, and MCP/LSP plugin discovery no
+  longer creates an otherwise unused workspace PluginRegistry
+
+### Tests
+- Added concurrent 64-workspace active-use and hard-cap coverage, idle LRU
+  ordering, cross-registry reclamation, partial-failure cleanup, ABA protection,
+  and plugin-hook generation restoration tests
+
 ## [0.10.59] - 2026-08-19
 
 ### Fixed

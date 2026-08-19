@@ -7,13 +7,17 @@ import { brotliCompressSync, gzipSync, constants as zlibConstants } from 'node:z
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { WebSocketServer } from 'ws';
+import {
+  resetWorkspaceAgentResources,
+  WorkspaceAgentResourceCapacityError,
+} from '../agent/resources/WorkspaceAgentResources.js';
 import { TaskScheduler } from '../agent/runtime/TaskScheduler.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import { scheduleStore } from '../services/ScheduleStore.js';
 import { SessionService } from '../services/SessionService.js';
 import { getCwd } from '../utils/cwd.js';
 import { getVersion } from '../utils/packageInfo.js';
-import { BladeServerError } from './error.js';
+import { BladeServerError, TooManyRequestsError } from './error.js';
 import { ConfigRoutes } from './routes/config.js';
 import { EventRoutes } from './routes/events.js';
 import { GlobalRoutes } from './routes/global.js';
@@ -192,10 +196,18 @@ function createApp(): Hono<{ Variables: Variables }> {
   app.onError((err, c) => {
     logger.error('[Server] Request error:', err);
 
+    if (err instanceof WorkspaceAgentResourceCapacityError) {
+      const overload = new TooManyRequestsError(err.message, {
+        resource: 'workspace_agent_resources',
+        limit: err.capacity,
+      });
+      return c.json(overload.toObject(), 429);
+    }
+
     if (err instanceof BladeServerError) {
       return c.json(
         err.toObject(),
-        err.statusCode as 400 | 401 | 403 | 404 | 409 | 500
+        err.statusCode as 400 | 401 | 403 | 404 | 409 | 429 | 500 | 503
       );
     }
 
@@ -697,6 +709,7 @@ export namespace BladeServer {
 
       await attempt(() => handle.stop());
       await attempt(routeShutdown ? () => routeShutdown : undefined);
+      resetWorkspaceAgentResources();
 
       if (serverHandle === handle) {
         serverHandle = undefined;

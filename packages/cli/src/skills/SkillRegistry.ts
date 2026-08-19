@@ -87,6 +87,16 @@ export class SkillRegistry {
     instances.clear();
   }
 
+  static releaseInstance(
+    config: SkillRegistryConfig,
+    expected?: SkillRegistry
+  ): boolean {
+    const key = registryKey(config);
+    const current = instances.get(key);
+    if (!current || (expected && current !== expected)) return false;
+    return instances.delete(key);
+  }
+
   /**
    * 初始化注册表，扫描所有 skills 目录
    *

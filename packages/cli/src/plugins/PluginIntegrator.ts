@@ -20,11 +20,30 @@ import { logger } from '../logging/Logger.js';
 import { getSkillRegistry, type SkillRegistry } from '../skills/index.js';
 import { CustomCommandRegistry } from '../slash-commands/custom/CustomCommandRegistry.js';
 import { getCwd } from '../utils/cwd.js';
-import { getPluginRegistry } from './PluginRegistry.js';
+import { getPluginRegistry, type PluginRegistry } from './PluginRegistry.js';
 import type { LoadedPlugin } from './types.js';
 
-const pluginHookBaseConfigs = new Map<string, ReturnType<HookManager['getConfig']>>();
+interface PluginHookBaseState {
+  base: ReturnType<HookManager['getConfig']>;
+  registry: PluginRegistry;
+}
+
+const pluginHookBaseConfigs = new Map<string, PluginHookBaseState>();
 const HOOK_EVENTS = Object.values(HookEvent);
+
+function restorePluginHookBase(
+  workspaceRoot: string,
+  expectedRegistry?: PluginRegistry
+): boolean {
+  const root = path.resolve(workspaceRoot);
+  const state = pluginHookBaseConfigs.get(root);
+  if (!state || (expectedRegistry && state.registry !== expectedRegistry)) {
+    return false;
+  }
+  HookManager.getInstance().loadConfig(state.base, root);
+  pluginHookBaseConfigs.delete(root);
+  return true;
+}
 
 function cloneHookConfig(config: Readonly<HookConfig>): HookConfig {
   const cloned: HookConfig = { ...config };
@@ -101,11 +120,7 @@ class PluginIntegrator {
     // Clear plugin agents
     this.subagentRegistry.clearPluginAgents();
 
-    const hookBase = pluginHookBaseConfigs.get(this.workspaceRoot);
-    if (hookBase) {
-      this.hookManager.loadConfig(hookBase, this.workspaceRoot);
-      pluginHookBaseConfigs.delete(this.workspaceRoot);
-    }
+    restorePluginHookBase(this.workspaceRoot, getPluginRegistry(this.workspaceRoot));
 
     logger.debug('Cleared all plugin resources from subsystems');
   }
@@ -139,7 +154,7 @@ class PluginIntegrator {
       totalLspServers += result.lspServersRegistered;
       allErrors.push(...result.errors);
     }
-    this.integrateHooks(plugins);
+    this.integrateHooks(plugins, pluginRegistry);
 
     if (totalCommands + totalSkills + totalAgents > 0) {
       logger.info(
@@ -289,24 +304,27 @@ class PluginIntegrator {
    *
    * Plugin hooks are merged into the existing hook configuration.
    */
-  private integrateHooks(plugins: LoadedPlugin[]): void {
+  private integrateHooks(
+    plugins: LoadedPlugin[],
+    pluginRegistry: PluginRegistry
+  ): void {
     const pluginsWithHooks = plugins.filter((plugin) => plugin.hooks);
     if (pluginsWithHooks.length === 0) {
-      const base = pluginHookBaseConfigs.get(this.workspaceRoot);
-      if (base) {
-        this.hookManager.loadConfig(base, this.workspaceRoot);
-        pluginHookBaseConfigs.delete(this.workspaceRoot);
-      }
+      restorePluginHookBase(this.workspaceRoot, pluginRegistry);
       return;
     }
     const currentConfig = cloneHookConfig(
       this.hookManager.getConfig(this.workspaceRoot)
     );
     if (!pluginHookBaseConfigs.has(this.workspaceRoot)) {
-      pluginHookBaseConfigs.set(this.workspaceRoot, cloneHookConfig(currentConfig));
+      pluginHookBaseConfigs.set(this.workspaceRoot, {
+        base: cloneHookConfig(currentConfig),
+        registry: pluginRegistry,
+      });
     }
 
-    const baseConfig = pluginHookBaseConfigs.get(this.workspaceRoot) ?? currentConfig;
+    const baseConfig =
+      pluginHookBaseConfigs.get(this.workspaceRoot)?.base ?? currentConfig;
     const effective = cloneHookConfig(baseConfig);
     effective.enabled = true;
     for (const event of HOOK_EVENTS) {
@@ -362,4 +380,15 @@ export async function integrateAllPlugins(
 export function clearAllPluginResources(workspaceRoot: string = getCwd()): void {
   const integrator = new PluginIntegrator(workspaceRoot);
   integrator.clearAllPluginResources();
+}
+
+/**
+ * Release integration-only workspace state without mutating registry objects
+ * that may still be owned by a Session snapshot or an in-flight caller.
+ */
+export function releasePluginIntegrationState(
+  workspaceRoot: string = getCwd(),
+  expectedRegistry?: PluginRegistry
+): void {
+  restorePluginHookBase(workspaceRoot, expectedRegistry);
 }

@@ -10,20 +10,34 @@ vi.mock('../../../src/skills/SkillInstaller.js', () => ({
 }));
 
 import {
+  getWorkspaceAgentResourceCacheStats,
+  MAX_ACTIVE_WORKSPACE_AGENT_RESOURCES,
+  MAX_RESIDENT_WORKSPACE_AGENT_RESOURCES,
   resetWorkspaceAgentResources,
   resolveWorkspaceAgentResources,
   snapshotWorkspaceAgentResources,
+  WorkspaceAgentResourceCapacityError,
+  type WorkspaceAgentResources,
+  withWorkspaceAgentResources,
 } from '../../../src/agent/resources/WorkspaceAgentResources.js';
+import { SubagentRegistry } from '../../../src/agent/subagents/SubagentRegistry.js';
 import { ConfigManager } from '../../../src/config/ConfigManager.js';
 import { ConfigService } from '../../../src/config/ConfigService.js';
 import { setWorkspacePluginEnabled } from '../../../src/plugins/PluginLifecycle.js';
+import { PluginRegistry } from '../../../src/plugins/PluginRegistry.js';
 import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustService.js';
+import { SkillRegistry } from '../../../src/skills/SkillRegistry.js';
+import { CustomCommandRegistry } from '../../../src/slash-commands/custom/CustomCommandRegistry.js';
 import { getBuiltinTools } from '../../../src/tools/builtin/index.js';
 
 async function writeFixture(root: string, relativePath: string, content: string) {
   const filePath = path.join(root, relativePath);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, content, 'utf8');
+}
+
+async function flushScheduledResourceReleases(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
 async function createWorkspace(root: string, marker: 'a' | 'b') {
@@ -306,5 +320,134 @@ describe('workspace agent resource resolution', () => {
     const reloaded = await resolveWorkspaceAgentResources(workspaceA);
     expect(reloaded.plugins.get('plugin-a')?.status).toBe('active');
     expect(reloaded.commands.findPluginCommand('plugin-a:review')).toBeDefined();
+  });
+
+  it('bounds idle workspace registries by LRU without invalidating Session snapshots', async () => {
+    const roots = Array.from(
+      { length: MAX_RESIDENT_WORKSPACE_AGENT_RESOURCES + 1 },
+      (_, index) => path.join(tempRoot, `churn-${index}`)
+    );
+    await Promise.all(roots.map((root) => fs.mkdir(root, { recursive: true })));
+
+    const resources: WorkspaceAgentResources[] = [];
+    for (const root of roots.slice(0, MAX_RESIDENT_WORKSPACE_AGENT_RESOURCES)) {
+      resources.push(await resolveWorkspaceAgentResources(root));
+    }
+    await flushScheduledResourceReleases();
+
+    const evicted = resources[1];
+    evicted.subagents.applyOverrides([
+      {
+        name: 'snapshot-only',
+        description: 'Retained only by the immutable Session snapshot',
+      },
+    ]);
+    const session = snapshotWorkspaceAgentResources(evicted);
+
+    expect(await resolveWorkspaceAgentResources(roots[0])).toBe(resources[0]);
+    await resolveWorkspaceAgentResources(roots.at(-1)!);
+    await flushScheduledResourceReleases();
+
+    expect(getWorkspaceAgentResourceCacheStats()).toEqual({
+      capacity: MAX_RESIDENT_WORKSPACE_AGENT_RESOURCES,
+      activeCapacity: MAX_ACTIVE_WORKSPACE_AGENT_RESOURCES,
+      entries: MAX_RESIDENT_WORKSPACE_AGENT_RESOURCES,
+      initialized: MAX_RESIDENT_WORKSPACE_AGENT_RESOURCES,
+      inFlight: 0,
+      activeUsers: 0,
+    });
+
+    const reloaded = await resolveWorkspaceAgentResources(roots[1]);
+    expect(reloaded).not.toBe(evicted);
+    expect(reloaded.subagents).not.toBe(evicted.subagents);
+    expect(reloaded.skills).not.toBe(evicted.skills);
+    expect(reloaded.commands).not.toBe(evicted.commands);
+    expect(reloaded.plugins).not.toBe(evicted.plugins);
+    expect(reloaded.subagents.getSubagent('snapshot-only')).toBeUndefined();
+    expect(session.subagents.getSubagent('snapshot-only')).toBeDefined();
+
+    await flushScheduledResourceReleases();
+    expect(getWorkspaceAgentResourceCacheStats().entries).toBe(
+      MAX_RESIDENT_WORKSPACE_AGENT_RESOURCES
+    );
+  });
+
+  it('protects active workspace entries and converges after concurrent churn', async () => {
+    const count = MAX_ACTIVE_WORKSPACE_AGENT_RESOURCES;
+    const roots = Array.from({ length: count }, (_, index) =>
+      path.join(tempRoot, `active-churn-${index}`)
+    );
+    const overflowRoot = path.join(tempRoot, 'active-churn-overflow');
+    await Promise.all(
+      [...roots, overflowRoot].map((root) => fs.mkdir(root, { recursive: true }))
+    );
+
+    let entered = 0;
+    let notifyEntered: (() => void) | undefined;
+    const allEntered = new Promise<void>((resolve) => {
+      notifyEntered = resolve;
+    });
+    let releaseAll: (() => void) | undefined;
+    const release = new Promise<void>((resolve) => {
+      releaseAll = resolve;
+    });
+    const operations = roots.map((root) =>
+      withWorkspaceAgentResources(root, async () => {
+        entered++;
+        if (entered === count) notifyEntered?.();
+        await release;
+      })
+    );
+
+    await allEntered;
+    expect(getWorkspaceAgentResourceCacheStats()).toMatchObject({
+      capacity: MAX_RESIDENT_WORKSPACE_AGENT_RESOURCES,
+      activeCapacity: MAX_ACTIVE_WORKSPACE_AGENT_RESOURCES,
+      entries: count,
+      initialized: count,
+      inFlight: 0,
+      activeUsers: count,
+    });
+    await expect(resolveWorkspaceAgentResources(overflowRoot)).rejects.toBeInstanceOf(
+      WorkspaceAgentResourceCapacityError
+    );
+    expect(getWorkspaceAgentResourceCacheStats().entries).toBe(count);
+
+    releaseAll?.();
+    await Promise.all(operations);
+    expect(getWorkspaceAgentResourceCacheStats()).toEqual({
+      capacity: MAX_RESIDENT_WORKSPACE_AGENT_RESOURCES,
+      activeCapacity: MAX_ACTIVE_WORKSPACE_AGENT_RESOURCES,
+      entries: MAX_RESIDENT_WORKSPACE_AGENT_RESOURCES,
+      initialized: MAX_RESIDENT_WORKSPACE_AGENT_RESOURCES,
+      inFlight: 0,
+      activeUsers: 0,
+    });
+  });
+
+  it('releases every partial registry generation after initialization fails', async () => {
+    const workspace = path.join(tempRoot, 'failed-initialization');
+    await fs.mkdir(workspace, { recursive: true });
+    const agents = SubagentRegistry.getInstance(workspace);
+    const skills = SkillRegistry.getInstance({ cwd: workspace });
+    const commands = CustomCommandRegistry.getInstance(workspace);
+    const plugins = PluginRegistry.getInstance(workspace);
+    const initialize = vi
+      .spyOn(PluginRegistry.prototype, 'initialize')
+      .mockRejectedValueOnce(new Error('injected plugin initialization failure'));
+
+    try {
+      await expect(resolveWorkspaceAgentResources(workspace)).rejects.toThrow(
+        'injected plugin initialization failure'
+      );
+    } finally {
+      initialize.mockRestore();
+    }
+
+    expect(getWorkspaceAgentResourceCacheStats().entries).toBe(0);
+    expect(SubagentRegistry.getInstance(workspace)).not.toBe(agents);
+    expect(SkillRegistry.getInstance({ cwd: workspace })).not.toBe(skills);
+    expect(CustomCommandRegistry.getInstance(workspace)).not.toBe(commands);
+    expect(PluginRegistry.getInstance(workspace)).not.toBe(plugins);
   });
 });

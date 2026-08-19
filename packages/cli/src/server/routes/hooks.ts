@@ -1,15 +1,15 @@
 import path from 'node:path';
 import { Hono } from 'hono';
-import { resolveWorkspaceAgentResources } from '../../agent/resources/WorkspaceAgentResources.js';
+import { withWorkspaceAgentResources } from '../../agent/resources/WorkspaceAgentResources.js';
 import { ConfigManager } from '../../config/ConfigManager.js';
 import { DEFAULT_CONFIG } from '../../config/defaults.js';
+import { assertValidSessionId } from '../../context/storage/pathUtils.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { HookTrustDigestMismatchError } from '../../hooks/HookTrustService.js';
 import {
   clearAllPluginResources,
   integrateAllPlugins,
 } from '../../plugins/PluginIntegrator.js';
-import { assertValidSessionId } from '../../context/storage/pathUtils.js';
 import { StringEnum, safeParseSchema, Type } from '../../schema/index.js';
 import { getConfig } from '../../store/vanilla.js';
 import { BadRequestError, ConflictError } from '../error.js';
@@ -53,12 +53,13 @@ async function loadProjectHookConfig(projectPath: string) {
   const hooks = await ConfigManager.getInstance().loadWorkspaceHooks(root, base, {
     includeBaseForCurrentWorkspace: false,
   });
-  await resolveWorkspaceAgentResources(root);
-  clearAllPluginResources(root);
-  const manager = HookManager.getInstance();
-  manager.loadConfig(hooks, root);
-  await integrateAllPlugins(root);
-  return manager.getConfig(root);
+  return withWorkspaceAgentResources(root, async () => {
+    clearAllPluginResources(root);
+    const manager = HookManager.getInstance();
+    manager.loadConfig(hooks, root);
+    await integrateAllPlugins(root);
+    return manager.getConfig(root);
+  });
 }
 
 function sessionStatus(sessionId: string, projectPath: string) {

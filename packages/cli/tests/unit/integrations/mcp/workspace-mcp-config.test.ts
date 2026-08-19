@@ -30,13 +30,19 @@ vi.mock('../../../../src/config/index.js', () => ({
   },
 }));
 
-vi.mock('../../../../src/plugins/PluginRegistry.js', () => ({
-  getPluginRegistry: () => ({
+vi.mock('../../../../src/plugins/PluginRegistry.js', () => {
+  const registry = {
     isInitialized: () => true,
     getWorkspaceRoot: () => '/workspace',
     getActive: () => mocks.plugins,
-  }),
-}));
+  };
+  return {
+    getPluginRegistry: () => registry,
+    PluginRegistry: {
+      getExistingInstance: () => registry,
+    },
+  };
+});
 
 vi.mock('../../../../src/plugins/PluginLoader.js', () => ({
   PluginLoader: class MockPluginLoader {

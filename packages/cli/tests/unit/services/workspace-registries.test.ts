@@ -6,6 +6,7 @@ import { HookEvent, HookType } from '../../../src/hooks/types/HookTypes.js';
 import {
   clearAllPluginResources,
   integrateAllPlugins,
+  releasePluginIntegrationState,
 } from '../../../src/plugins/PluginIntegrator.js';
 import { PluginRegistry } from '../../../src/plugins/PluginRegistry.js';
 import type { LoadedPlugin, PluginCommand } from '../../../src/plugins/types.js';
@@ -64,6 +65,45 @@ describe('workspace-scoped registries', () => {
     expect(PluginRegistry.getInstance('/workspace/a')).not.toBe(
       PluginRegistry.getInstance('/workspace/b')
     );
+  });
+
+  it('releases only the expected workspace registry generation', () => {
+    const workspace = '/workspace/a';
+    const agents = SubagentRegistry.getInstance(workspace);
+    const skills = SkillRegistry.getInstance({ cwd: workspace });
+    const commands = CustomCommandRegistry.getInstance(workspace);
+    const plugins = PluginRegistry.getInstance(workspace);
+
+    expect(
+      SubagentRegistry.releaseInstance(workspace, new SubagentRegistry(workspace))
+    ).toBe(false);
+    expect(
+      SkillRegistry.releaseInstance(
+        { cwd: workspace },
+        new SkillRegistry({ cwd: workspace })
+      )
+    ).toBe(false);
+    expect(
+      CustomCommandRegistry.releaseInstance(
+        workspace,
+        CustomCommandRegistry.getInstance('/workspace/b')
+      )
+    ).toBe(false);
+    expect(
+      PluginRegistry.releaseInstance(
+        workspace,
+        PluginRegistry.getInstance('/workspace/b')
+      )
+    ).toBe(false);
+
+    expect(SubagentRegistry.releaseInstance(workspace, agents)).toBe(true);
+    expect(SkillRegistry.releaseInstance({ cwd: workspace }, skills)).toBe(true);
+    expect(CustomCommandRegistry.releaseInstance(workspace, commands)).toBe(true);
+    expect(PluginRegistry.releaseInstance(workspace, plugins)).toBe(true);
+    expect(SubagentRegistry.getInstance(workspace)).not.toBe(agents);
+    expect(SkillRegistry.getInstance({ cwd: workspace })).not.toBe(skills);
+    expect(CustomCommandRegistry.getInstance(workspace)).not.toBe(commands);
+    expect(PluginRegistry.getInstance(workspace)).not.toBe(plugins);
   });
 
   it('does not leak plugin commands between workspace command registries', () => {
@@ -228,5 +268,20 @@ describe('workspace-scoped registries', () => {
     expect(sessionConfigs.get(`live-session\0${workspace}`)?.PostToolUse).toHaveLength(
       2
     );
+
+    releasePluginIntegrationState(
+      workspace,
+      PluginRegistry.getInstance('/workspace/b')
+    );
+    expect(manager.getConfig(workspace)[HookEvent.PostToolUse]).toHaveLength(1);
+
+    releasePluginIntegrationState(workspace, registry);
+    expect(manager.getConfig(workspace)[HookEvent.PostToolUse]).toHaveLength(0);
+    expect(sessionConfigs.get(`live-session\0${workspace}`)?.PostToolUse).toHaveLength(
+      2
+    );
+
+    await integrateAllPlugins(workspace);
+    expect(manager.getConfig(workspace)[HookEvent.PostToolUse]).toHaveLength(1);
   });
 });

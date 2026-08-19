@@ -48,6 +48,22 @@ export class CustomCommandRegistry {
     CustomCommandRegistry.instances.clear();
   }
 
+  static releaseInstance(
+    workspaceRoot: string,
+    expected?: CustomCommandRegistry
+  ): boolean {
+    const key = path.resolve(workspaceRoot);
+    const current = CustomCommandRegistry.instances.get(key);
+    if (!current || (expected && current !== expected)) return false;
+    return CustomCommandRegistry.instances.delete(key);
+  }
+
+  static getExistingInstance(
+    workspaceRoot: string = getCwd()
+  ): CustomCommandRegistry | undefined {
+    return CustomCommandRegistry.instances.get(path.resolve(workspaceRoot));
+  }
+
   private constructor() {
     // 私有构造函数，确保单例
   }

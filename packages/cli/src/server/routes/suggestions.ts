@@ -60,10 +60,12 @@ export const SuggestionsRoutes = () => {
     try {
       const query = c.req.query('q') || '';
       const directory = c.get('directory') || getCwd();
-      await resolveWorkspaceAgentResources(directory);
-      const suggestions = getFuzzyCommandSuggestions(query, directory).filter(
-        (s) => !WEB_EXCLUDED_COMMANDS.has(s.command)
-      );
+      const resources = await resolveWorkspaceAgentResources(directory);
+      const suggestions = getFuzzyCommandSuggestions(
+        query,
+        directory,
+        resources
+      ).filter((s) => !WEB_EXCLUDED_COMMANDS.has(s.command));
       return c.json(suggestions);
     } catch (error) {
       logger.error('[SuggestionsRoutes] Failed to get command suggestions:', error);

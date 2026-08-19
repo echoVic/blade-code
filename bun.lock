@@ -17,7 +17,7 @@
     },
     "packages/cli": {
       "name": "blade-code",
-      "version": "0.10.59",
+      "version": "0.10.60",
       "bin": {
         "blade": "dist/blade.js",
       },

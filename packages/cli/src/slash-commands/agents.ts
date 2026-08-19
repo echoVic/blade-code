@@ -5,7 +5,6 @@
 import os from 'node:os';
 import path from 'node:path';
 import { resolveWorkspaceAgentResources } from '../agent/resources/WorkspaceAgentResources.js';
-import { getSubagentRegistry } from '../agent/subagents/SubagentRegistry.js';
 import { getCwd } from '../utils/cwd.js';
 import {
   getUI,
@@ -30,8 +29,8 @@ export const agentsCommand: SlashCommand = {
     const subcommand = args[0];
     const ui = getUI(context);
     const workspaceRoot = context.workspaceRoot || context.cwd || getCwd();
-    await resolveWorkspaceAgentResources(workspaceRoot);
-    const subagentRegistry = getSubagentRegistry(workspaceRoot);
+    const subagentRegistry = (await resolveWorkspaceAgentResources(workspaceRoot))
+      .subagents;
 
     // 无参数 - 显示 agents 管理对话框
     if (!subcommand) {

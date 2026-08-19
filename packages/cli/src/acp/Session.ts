@@ -869,7 +869,10 @@ export class AcpSession {
    */
   private async sendAvailableCommands(): Promise<void> {
     try {
-      const commands = getRegisteredCommands(this.cwd);
+      const commands = getRegisteredCommands(
+        this.cwd,
+        this.runtime?.getAgentResources()
+      );
 
       // 在 ACP 模式下过滤掉不需要的命令
       // - model/permissions/theme: Zed 已提供 UI

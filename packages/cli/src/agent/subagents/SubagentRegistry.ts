@@ -59,6 +59,13 @@ export class SubagentRegistry {
     SubagentRegistry.instances.clear();
   }
 
+  static releaseInstance(workspaceRoot: string, expected?: SubagentRegistry): boolean {
+    const key = path.resolve(workspaceRoot);
+    const current = SubagentRegistry.instances.get(key);
+    if (!current || (expected && current !== expected)) return false;
+    return SubagentRegistry.instances.delete(key);
+  }
+
   /**
    * 注册一个 subagent
    * @param config - 子代理配置

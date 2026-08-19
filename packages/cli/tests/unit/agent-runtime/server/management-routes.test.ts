@@ -49,6 +49,10 @@ vi.mock('../../../../src/skills/index.js', () => ({
 
 vi.mock('../../../../src/agent/resources/WorkspaceAgentResources.js', () => ({
   resolveWorkspaceAgentResources: mocks.resolveResources,
+  withWorkspaceAgentResources: async (
+    _workspaceRoot: string,
+    operation: (resources: unknown) => Promise<unknown>
+  ) => operation(await mocks.resolveResources()),
 }));
 
 vi.mock('../../../../src/store/vanilla.js', () => ({

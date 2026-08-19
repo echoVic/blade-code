@@ -64,8 +64,7 @@ const pluginsCommand: SlashCommand = {
   handler: async (args, context): Promise<SlashCommandResult> => {
     const subcommand = args[0]?.toLowerCase() || '';
     const workspaceRoot = context.workspaceRoot || context.cwd;
-    await resolveWorkspaceAgentResources(workspaceRoot);
-    const registry = getPluginRegistry(workspaceRoot);
+    const registry = (await resolveWorkspaceAgentResources(workspaceRoot)).plugins;
 
     switch (subcommand) {
       case '':

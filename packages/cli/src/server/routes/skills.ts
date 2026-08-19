@@ -2,13 +2,15 @@ import * as fs from 'node:fs/promises';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
 import { Hono } from 'hono';
-import { resolveWorkspaceAgentResources } from '../../agent/resources/WorkspaceAgentResources.js';
+import {
+  resolveWorkspaceAgentResources,
+  withWorkspaceAgentResources,
+} from '../../agent/resources/WorkspaceAgentResources.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import {
   clearAllPluginResources,
   integrateAllPlugins,
 } from '../../plugins/PluginIntegrator.js';
-import { getSkillRegistry } from '../../skills/index.js';
 import { getSkillInstaller } from '../../skills/SkillInstaller.js';
 import { getCwd } from '../../utils/cwd.js';
 
@@ -190,30 +192,32 @@ export const SkillsRoutes = () => {
     try {
       const name = c.req.param('name');
       const directory = c.get('directory') || getCwd();
-      const registry = (await resolveWorkspaceAgentResources(directory)).skills;
-      const skill = registry.get(name);
-      if (!skill) {
-        return c.json({ success: false, error: 'Skill not found' }, 404);
-      }
+      return withWorkspaceAgentResources(directory, async (resources) => {
+        const registry = resources.skills;
+        const skill = registry.get(name);
+        if (!skill) {
+          return c.json({ success: false, error: 'Skill not found' }, 404);
+        }
 
-      const skillPath = path.resolve(skill.basePath);
-      const userSkillsRoot = path.resolve(USER_SKILLS_ROOT);
-      if (skill.source !== 'user' || path.dirname(skillPath) !== userSkillsRoot) {
-        return c.json(
-          {
-            success: false,
-            error: 'Only Blade user skills can be uninstalled',
-          },
-          400
-        );
-      }
+        const skillPath = path.resolve(skill.basePath);
+        const userSkillsRoot = path.resolve(USER_SKILLS_ROOT);
+        if (skill.source !== 'user' || path.dirname(skillPath) !== userSkillsRoot) {
+          return c.json(
+            {
+              success: false,
+              error: 'Only Blade user skills can be uninstalled',
+            },
+            400
+          );
+        }
 
-      await fs.rm(skillPath, { recursive: true, force: true });
-      await registry.refresh();
-      clearAllPluginResources(directory);
-      await integrateAllPlugins(directory);
+        await fs.rm(skillPath, { recursive: true, force: true });
+        await registry.refresh();
+        clearAllPluginResources(directory);
+        await integrateAllPlugins(directory);
 
-      return c.json({ success: true });
+        return c.json({ success: true });
+      });
     } catch (error) {
       logger.error('[SkillsRoutes] Failed to uninstall skill:', error);
       return c.json({ success: false, error: (error as Error).message }, 500);
@@ -231,56 +235,58 @@ export const SkillsRoutes = () => {
 
       const installer = getSkillInstaller();
       const directory = c.get('directory') || getCwd();
-      const registry = getSkillRegistry({ cwd: directory });
-      let success = false;
+      return withWorkspaceAgentResources(directory, async (resources) => {
+        const registry = resources.skills;
+        let success = false;
 
-      if (body.source === 'catalog' && body.name) {
-        success = await installer.installOfficialSkill(body.name);
-        if (!success) {
-          return c.json(
-            { success: false, error: 'Failed to install skill from catalog' },
-            500
-          );
-        }
-      } else if (body.source === 'repo' && body.url) {
-        success = await installer.installFromRepo(body.url, body.name);
-        if (!success) {
+        if (body.source === 'catalog' && body.name) {
+          success = await installer.installOfficialSkill(body.name);
+          if (!success) {
+            return c.json(
+              { success: false, error: 'Failed to install skill from catalog' },
+              500
+            );
+          }
+        } else if (body.source === 'repo' && body.url) {
+          success = await installer.installFromRepo(body.url, body.name);
+          if (!success) {
+            return c.json(
+              {
+                success: false,
+                error:
+                  'Failed to install skill from repository. Make sure the repo contains a SKILL.md file.',
+              },
+              500
+            );
+          }
+        } else if (body.source === 'local' && body.path) {
+          success = await installer.installFromLocal(body.path, body.name);
+          if (!success) {
+            return c.json(
+              {
+                success: false,
+                error:
+                  'Failed to install skill from local path. Make sure the path exists and contains a SKILL.md file.',
+              },
+              500
+            );
+          }
+        } else {
           return c.json(
             {
               success: false,
               error:
-                'Failed to install skill from repository. Make sure the repo contains a SKILL.md file.',
+                'Invalid install parameters. Required: source with corresponding url/path/name',
             },
-            500
+            400
           );
         }
-      } else if (body.source === 'local' && body.path) {
-        success = await installer.installFromLocal(body.path, body.name);
-        if (!success) {
-          return c.json(
-            {
-              success: false,
-              error:
-                'Failed to install skill from local path. Make sure the path exists and contains a SKILL.md file.',
-            },
-            500
-          );
-        }
-      } else {
-        return c.json(
-          {
-            success: false,
-            error:
-              'Invalid install parameters. Required: source with corresponding url/path/name',
-          },
-          400
-        );
-      }
 
-      await registry.refresh();
-      clearAllPluginResources(directory);
-      await integrateAllPlugins(directory);
-      return c.json({ success: true });
+        await registry.refresh();
+        clearAllPluginResources(directory);
+        await integrateAllPlugins(directory);
+        return c.json({ success: true });
+      });
     } catch (error) {
       logger.error('[SkillsRoutes] Failed to install skill:', error);
       return c.json({ success: false, error: (error as Error).message }, 500);

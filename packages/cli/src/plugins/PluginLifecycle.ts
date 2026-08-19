@@ -2,7 +2,7 @@ import path from 'node:path';
 import { Mutex } from 'async-mutex';
 import {
   refreshWorkspaceCommunicationStyles,
-  resolveWorkspaceAgentResources,
+  withWorkspaceAgentResources,
 } from '../agent/resources/WorkspaceAgentResources.js';
 import { ConfigManager } from '../config/ConfigManager.js';
 import { getConfigService } from '../config/ConfigService.js';
@@ -38,39 +38,42 @@ export interface PluginStateChange {
 const lifecycleMutex = new Mutex();
 
 async function reconcileRegistry(registry: PluginRegistry): Promise<void> {
-  await registry.reapplyEnabledSettings();
-  clearAllPluginResources(registry.getWorkspaceRoot());
-  await integrateAllPlugins(registry.getWorkspaceRoot());
-  await refreshWorkspaceCommunicationStyles(
-    await resolveWorkspaceAgentResources(registry.getWorkspaceRoot())
-  );
+  const root = registry.getWorkspaceRoot();
+  await withWorkspaceAgentResources(root, async (resources) => {
+    await registry.reapplyEnabledSettings();
+    clearAllPluginResources(root);
+    await integrateAllPlugins(root);
+    await refreshWorkspaceCommunicationStyles(resources);
+  });
 }
 
 async function refreshRegistry(
   registry: PluginRegistry
 ): Promise<PluginDiscoveryResult> {
-  clearAllPluginResources(registry.getWorkspaceRoot());
-  const discovery = await registry.refresh();
-  await integrateAllPlugins(registry.getWorkspaceRoot());
-  await refreshWorkspaceCommunicationStyles(
-    await resolveWorkspaceAgentResources(registry.getWorkspaceRoot())
-  );
-  return discovery;
+  const root = registry.getWorkspaceRoot();
+  return withWorkspaceAgentResources(root, async (resources) => {
+    clearAllPluginResources(root);
+    const discovery = await registry.refresh();
+    await integrateAllPlugins(root);
+    await refreshWorkspaceCommunicationStyles(resources);
+    return discovery;
+  });
 }
 
 async function refreshGlobalPluginRegistries(
   workspaceRoot: string
 ): Promise<PluginDiscoveryResult> {
-  const resources = await resolveWorkspaceAgentResources(workspaceRoot);
-  const registries = Array.from(
-    new Set([resources.plugins, ...PluginRegistry.getInitializedInstances()])
-  );
-  let requestedDiscovery: PluginDiscoveryResult | undefined;
-  for (const registry of registries) {
-    const discovery = await refreshRegistry(registry);
-    if (registry === resources.plugins) requestedDiscovery = discovery;
-  }
-  return requestedDiscovery ?? { plugins: [], errors: [] };
+  return withWorkspaceAgentResources(workspaceRoot, async (resources) => {
+    const registries = Array.from(
+      new Set([resources.plugins, ...PluginRegistry.getInitializedInstances()])
+    );
+    let requestedDiscovery: PluginDiscoveryResult | undefined;
+    for (const registry of registries) {
+      const discovery = await refreshRegistry(registry);
+      if (registry === resources.plugins) requestedDiscovery = discovery;
+    }
+    return requestedDiscovery ?? { plugins: [], errors: [] };
+  });
 }
 
 async function removePluginSettingsUnlocked(
@@ -127,43 +130,46 @@ export async function setWorkspacePluginEnabled(
 ): Promise<PluginStateChange> {
   return lifecycleMutex.runExclusive(async () => {
     const root = path.resolve(workspaceRoot);
-    const resources = await resolveWorkspaceAgentResources(root);
-    const plugin = resources.plugins.get(name);
-    if (!plugin) throw new Error(`Plugin not found: ${name}`);
-    if (plugin.source === 'cli') {
-      throw new Error(
-        `Plugin "${name}" was loaded with --plugin-dir and is invocation-scoped`
+    return withWorkspaceAgentResources(root, async (resources) => {
+      const plugin = resources.plugins.get(name);
+      if (!plugin) throw new Error(`Plugin not found: ${name}`);
+      if (plugin.source === 'cli') {
+        throw new Error(
+          `Plugin "${name}" was loaded with --plugin-dir and is invocation-scoped`
+        );
+      }
+
+      await getConfigService().save(
+        { enabledPlugins: { [name]: enabled } },
+        { scope, projectDir: root, immediate: true }
       );
-    }
 
-    await getConfigService().save(
-      { enabledPlugins: { [name]: enabled } },
-      { scope, projectDir: root, immediate: true }
-    );
+      const registries =
+        scope === 'global'
+          ? Array.from(
+              new Set([resources.plugins, ...PluginRegistry.getInitializedInstances()])
+            )
+          : [resources.plugins];
+      for (const registry of registries) {
+        await reconcileRegistry(registry);
+      }
 
-    const registries =
-      scope === 'global'
-        ? Array.from(
-            new Set([resources.plugins, ...PluginRegistry.getInitializedInstances()])
-          )
-        : [resources.plugins];
-    for (const registry of registries) {
-      await reconcileRegistry(registry);
-    }
-
-    const updated = resources.plugins.get(name);
-    if (!updated) throw new Error(`Plugin disappeared during reconciliation: ${name}`);
-    const resolution =
-      await ConfigManager.getInstance().loadWorkspacePluginSettingsResolution(root);
-    return {
-      name,
-      requestedEnabled: enabled,
-      effectiveEnabled: updated.status === 'active',
-      scope,
-      source: updated.source,
-      status: updated.status,
-      effectiveScope: resolution.settings[name]?.effectiveScope ?? 'default',
-    };
+      const updated = resources.plugins.get(name);
+      if (!updated) {
+        throw new Error(`Plugin disappeared during reconciliation: ${name}`);
+      }
+      const resolution =
+        await ConfigManager.getInstance().loadWorkspacePluginSettingsResolution(root);
+      return {
+        name,
+        requestedEnabled: enabled,
+        effectiveEnabled: updated.status === 'active',
+        scope,
+        source: updated.source,
+        status: updated.status,
+        effectiveScope: resolution.settings[name]?.effectiveScope ?? 'default',
+      };
+    });
   });
 }
 
@@ -171,13 +177,14 @@ export async function refreshWorkspacePlugins(workspaceRoot: string): Promise<{
   registry: PluginRegistry;
   discovery: PluginDiscoveryResult;
 }> {
-  return lifecycleMutex.runExclusive(async () => {
-    const resources = await resolveWorkspaceAgentResources(workspaceRoot);
-    clearAllPluginResources(resources.workspaceRoot);
-    const discovery = await resources.plugins.refresh();
-    await integrateAllPlugins(resources.workspaceRoot);
-    return { registry: resources.plugins, discovery };
-  });
+  return lifecycleMutex.runExclusive(() =>
+    withWorkspaceAgentResources(workspaceRoot, async (resources) => {
+      clearAllPluginResources(resources.workspaceRoot);
+      const discovery = await resources.plugins.refresh();
+      await integrateAllPlugins(resources.workspaceRoot);
+      return { registry: resources.plugins, discovery };
+    })
+  );
 }
 
 export async function setWorkspacePluginSourcePolicy(
@@ -195,15 +202,16 @@ export async function setWorkspacePluginSourcePolicy(
       { pluginSourcePolicy: normalized },
       { scope, projectDir: root, immediate: true }
     );
-    const resources = await resolveWorkspaceAgentResources(root);
-    const registries =
-      scope === 'global'
-        ? Array.from(
-            new Set([resources.plugins, ...PluginRegistry.getInitializedInstances()])
-          )
-        : [resources.plugins];
-    for (const registry of registries) await reconcileRegistry(registry);
-    return ConfigManager.getInstance().loadWorkspacePluginSourcePolicy(root);
+    return withWorkspaceAgentResources(root, async (resources) => {
+      const registries =
+        scope === 'global'
+          ? Array.from(
+              new Set([resources.plugins, ...PluginRegistry.getInitializedInstances()])
+            )
+          : [resources.plugins];
+      for (const registry of registries) await reconcileRegistry(registry);
+      return ConfigManager.getInstance().loadWorkspacePluginSourcePolicy(root);
+    });
   });
 }
 
@@ -264,31 +272,32 @@ export async function uninstallWorkspacePlugin(
 }> {
   return lifecycleMutex.runExclusive(async () => {
     const root = path.resolve(workspaceRoot);
-    const resources = await resolveWorkspaceAgentResources(root);
-    const dependents = resources.plugins
-      .getAll()
-      .filter(
-        (plugin) =>
-          plugin.manifest.name !== name &&
-          plugin.manifest.dependencies?.[name] !== undefined
-      )
-      .map((plugin) => plugin.manifest.name)
-      .sort();
-    if (dependents.length > 0) {
-      return {
-        result: {
-          success: false,
-          pluginName: name,
-          code: 'PLUGIN_REQUIRED',
-          error: `Plugin "${name}" is required by: ${dependents.join(', ')}`,
-        },
-      };
-    }
-    const result = await getPluginInstaller().uninstall(name, confirmed);
-    if (!result.success) return { result };
-    await removePluginSettingsUnlocked(root, name);
-    const discovery = await refreshGlobalPluginRegistries(root);
-    return { result, discovery };
+    return withWorkspaceAgentResources(root, async (resources) => {
+      const dependents = resources.plugins
+        .getAll()
+        .filter(
+          (plugin) =>
+            plugin.manifest.name !== name &&
+            plugin.manifest.dependencies?.[name] !== undefined
+        )
+        .map((plugin) => plugin.manifest.name)
+        .sort();
+      if (dependents.length > 0) {
+        return {
+          result: {
+            success: false,
+            pluginName: name,
+            code: 'PLUGIN_REQUIRED' as const,
+            error: `Plugin "${name}" is required by: ${dependents.join(', ')}`,
+          },
+        };
+      }
+      const result = await getPluginInstaller().uninstall(name, confirmed);
+      if (!result.success) return { result };
+      await removePluginSettingsUnlocked(root, name);
+      const discovery = await refreshGlobalPluginRegistries(root);
+      return { result, discovery };
+    });
   });
 }
 

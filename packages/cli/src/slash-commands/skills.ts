@@ -2,8 +2,8 @@
  * /skills 命令 - 查看所有可用的 Skills
  */
 
+import { withWorkspaceAgentResources } from '../agent/resources/WorkspaceAgentResources.js';
 import { clearAllPluginResources, integrateAllPlugins } from '../plugins/index.js';
-import { getSkillRegistry } from '../skills/index.js';
 import { sessionActions } from '../store/vanilla.js';
 import type { SlashCommand, SlashCommandResult } from './types.js';
 
@@ -18,14 +18,13 @@ const skillsCommand: SlashCommand = {
 
   handler: async (_args, context): Promise<SlashCommandResult> => {
     try {
-      // 刷新 SkillRegistry，重新扫描所有 skills 目录
-      // 这样新创建的 Skill 会被发现
-      const registry = getSkillRegistry({
-        cwd: context.workspaceRoot ?? context.cwd,
+      const workspaceRoot = context.workspaceRoot ?? context.cwd;
+      await withWorkspaceAgentResources(workspaceRoot, async (resources) => {
+        // 重新扫描后再集成插件 skills，保持 workspace registry 原子更新。
+        await resources.skills.refresh();
+        clearAllPluginResources(workspaceRoot);
+        await integrateAllPlugins(workspaceRoot);
       });
-      await registry.refresh();
-      clearAllPluginResources(context.workspaceRoot ?? context.cwd);
-      await integrateAllPlugins(context.workspaceRoot ?? context.cwd);
 
       // 显示 Skills 管理面板
       return {

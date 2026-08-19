@@ -2,20 +2,20 @@ import path from 'node:path';
 import { ConfigManager } from '../config/index.js';
 import { WorkspaceTrustService } from '../security/WorkspaceTrustService.js';
 import { PluginLoader } from './PluginLoader.js';
-import { getPluginRegistry } from './PluginRegistry.js';
+import { PluginRegistry } from './PluginRegistry.js';
 import type { LoadedPlugin } from './types.js';
 
 export async function discoverWorkspacePlugins(
   workspaceRoot: string
 ): Promise<LoadedPlugin[]> {
-  const registry = getPluginRegistry(workspaceRoot);
+  const registry = PluginRegistry.getExistingInstance(workspaceRoot);
   const sameWorkspace =
-    registry.isInitialized() &&
+    registry?.isInitialized() === true &&
     path.resolve(registry.getWorkspaceRoot()) === path.resolve(workspaceRoot);
-  if (sameWorkspace) return registry.getActive();
+  if (sameWorkspace) return registry?.getActive() ?? [];
 
   const plugins = new Map<string, LoadedPlugin>();
-  for (const plugin of registry.getActive()) {
+  for (const plugin of registry?.getActive() ?? []) {
     if (plugin.source === 'cli') plugins.set(plugin.manifest.name, plugin);
   }
 

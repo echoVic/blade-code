@@ -76,6 +76,19 @@ export class PluginRegistry {
     PluginRegistry.instances.clear();
   }
 
+  static releaseInstance(workspaceRoot: string, expected?: PluginRegistry): boolean {
+    const key = path.resolve(workspaceRoot);
+    const current = PluginRegistry.instances.get(key);
+    if (!current || (expected && current !== expected)) return false;
+    return PluginRegistry.instances.delete(key);
+  }
+
+  static getExistingInstance(
+    workspaceRoot: string = getCwd()
+  ): PluginRegistry | undefined {
+    return PluginRegistry.instances.get(path.resolve(workspaceRoot));
+  }
+
   static getInitializedInstances(): PluginRegistry[] {
     return Array.from(PluginRegistry.instances.values()).filter((registry) =>
       registry.isInitialized()
