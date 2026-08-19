@@ -12,12 +12,14 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { parseCompactionReplacementMessages } from '../../../src/context/compactionCheckpoint.js';
 import { JSONLStore } from '../../../src/context/storage/JSONLStore.js';
 import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
 import {
   getSessionFilePath,
   getSessionInboxFilePath,
 } from '../../../src/context/storage/pathUtils.js';
+import { isTokenBudgetHandoffMessage } from '../../../src/context/TokenBudgetHandoff.js';
 import type { SessionEvent } from '../../../src/context/types.js';
 import {
   __resetSessionSnapshotIOForTesting,
@@ -304,6 +306,22 @@ describe('SessionService.forkSession', () => {
     const childEvents = await readTranscript(
       getSessionFilePath(projectPath, 'handoff-child')
     );
+    const checkpoint = childEvents.find(
+      (event): event is Extract<SessionEvent, { type: 'part_created' }> =>
+        event.type === 'part_created' && event.data.partType === 'summary'
+    );
+    if (!checkpoint) throw new Error('Expected forked compaction checkpoint');
+    const checkpointPayload = checkpoint.data.payload;
+    if (
+      !checkpointPayload ||
+      typeof checkpointPayload !== 'object' ||
+      Array.isArray(checkpointPayload)
+    ) {
+      throw new Error('Expected checkpoint payload object');
+    }
+    expect(
+      parseCompactionReplacementMessages(checkpointPayload.replacementMessages)
+    ).toEqual([{ role: 'user', content: 'effective replacement' }]);
     expect(
       childEvents.some(
         (event) =>
@@ -329,6 +347,19 @@ describe('SessionService.forkSession', () => {
     expect(
       childEvents.some((event) => event.type === 'token_budget_handoff_recorded')
     ).toBe(false);
+
+    const context = SessionService.convertJSONLToModelContext(childEvents);
+    expect(context).toContainEqual({
+      role: 'user',
+      content: 'effective replacement',
+    });
+    expect(context).not.toContainEqual(
+      expect.objectContaining({ content: 'parent request' })
+    );
+    expect(context).not.toContainEqual(
+      expect.objectContaining({ content: 'checkpoint summary' })
+    );
+    expect(context.some(isTokenBudgetHandoffMessage)).toBe(false);
   });
 
   it('rejects non-absolute or cross-workspace fork paths before reading transcripts', async () => {
