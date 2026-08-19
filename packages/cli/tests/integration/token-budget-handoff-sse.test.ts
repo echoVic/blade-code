@@ -44,6 +44,12 @@ interface GlobalFeedPayload {
   };
 }
 
+interface SessionCommittedIdentity {
+  type: string;
+  seq: number | undefined;
+  messageId?: string;
+}
+
 class BoundedSseReader {
   private readonly decoder = new TextDecoder();
   private buffer = '';
@@ -159,6 +165,16 @@ function eventMessageId(event: SessionEvent | undefined): string | undefined {
   return event?.type === 'message_created' ? event.data.messageId : undefined;
 }
 
+function committedIdentity(payload: SessionFeedPayload): SessionCommittedIdentity {
+  return {
+    type: payload.type,
+    seq: payload.seq,
+    ...(payload.type === 'committed.message_created'
+      ? { messageId: eventMessageId(payload.properties?.event) }
+      : {}),
+  };
+}
+
 async function openSessionFeed(
   controller: SessionRouteController,
   sessionId: string,
@@ -236,56 +252,118 @@ describe('token-budget handoff SSE suppression', () => {
     try {
       await persistent.initSession(sessionId);
       const filePath = getSessionFilePath(workspace, sessionId);
-      const onDiskBefore = await new JSONLStore(filePath).readAll();
-      const currentCursor = onDiskBefore.at(-1)?.seq ?? 0;
+      await log.commit(
+        messageCreated(
+          sessionId,
+          workspace,
+          'replay-visible-a',
+          '2026-08-19T08:00:01.000Z'
+        )
+      );
+      await log.commit(
+        tokenBudgetHandoffRecorded(sessionId, workspace, 'replay-handoff-record-1')
+      );
+      await log.commit(
+        messageCreated(
+          sessionId,
+          workspace,
+          'replay-visible-b',
+          '2026-08-19T08:00:02.000Z'
+        )
+      );
 
-      feed = await openSessionFeed(controller, sessionId, workspace, currentCursor);
+      feed = await openSessionFeed(controller, sessionId, workspace, 0);
       const connected = JSON.parse(
         (await feed.frames.nextFrame()).data
       ) as SessionFeedPayload;
       expect(connected.type).toBe('connected');
 
-      await log.commit(
-        messageCreated(
-          sessionId,
-          workspace,
-          'visible-a',
-          '2026-08-19T08:00:01.000Z'
-        )
-      );
-      await log.commit(
-        tokenBudgetHandoffRecorded(sessionId, workspace, 'handoff-record-1')
-      );
-      await log.commit(
-        messageCreated(
-          sessionId,
-          workspace,
-          'visible-b',
-          '2026-08-19T08:00:02.000Z'
-        )
-      );
-
-      const firstCommitted = JSON.parse(
+      const replayedCreated = JSON.parse(
         (await feed.frames.nextFrame()).data
       ) as SessionFeedPayload;
-      const secondCommitted = JSON.parse(
+      const replayedVisibleA = JSON.parse(
         (await feed.frames.nextFrame()).data
       ) as SessionFeedPayload;
-      const payloads = [firstCommitted, secondCommitted];
+      const replayedVisibleB = JSON.parse(
+        (await feed.frames.nextFrame()).data
+      ) as SessionFeedPayload;
 
-      expect(payloads.map((payload) => payload.type)).toEqual([
+      const replayPayloads = [replayedCreated, replayedVisibleA, replayedVisibleB];
+      expect(replayPayloads.map((payload) => payload.type)).toEqual([
+        'committed.session_created',
         'committed.message_created',
         'committed.message_created',
       ]);
-      expect(payloads.map((payload) => payload.seq)).toEqual([2, 4]);
-      expect(payloads.map((payload) => eventMessageId(payload.properties?.event))).toEqual(
-        ['visible-a', 'visible-b']
+      expect(replayPayloads.map((payload) => payload.seq)).toEqual([1, 2, 4]);
+      expect(committedIdentity(replayedCreated)).toEqual({
+        type: 'committed.session_created',
+        seq: 1,
+      });
+      expect(committedIdentity(replayedVisibleA)).toEqual({
+        type: 'committed.message_created',
+        seq: 2,
+        messageId: 'replay-visible-a',
+      });
+      expect(committedIdentity(replayedVisibleB)).toEqual({
+        type: 'committed.message_created',
+        seq: 4,
+        messageId: 'replay-visible-b',
+      });
+
+      await log.commit(
+        messageCreated(
+          sessionId,
+          workspace,
+          'live-visible-c',
+          '2026-08-19T08:00:03.000Z'
+        )
+      );
+      await log.commit(
+        tokenBudgetHandoffRecorded(sessionId, workspace, 'live-handoff-record-2')
+      );
+      await log.commit(
+        messageCreated(
+          sessionId,
+          workspace,
+          'live-visible-d',
+          '2026-08-19T08:00:04.000Z'
+        )
       );
 
+      const liveVisibleC = JSON.parse(
+        (await feed.frames.nextFrame()).data
+      ) as SessionFeedPayload;
+      const liveVisibleD = JSON.parse(
+        (await feed.frames.nextFrame()).data
+      ) as SessionFeedPayload;
+      const livePayloads = [liveVisibleC, liveVisibleD];
+
+      expect(livePayloads.map((payload) => payload.type)).toEqual([
+        'committed.message_created',
+        'committed.message_created',
+      ]);
+      expect(livePayloads.map((payload) => payload.seq)).toEqual([5, 7]);
+      expect(committedIdentity(liveVisibleC)).toEqual({
+        type: 'committed.message_created',
+        seq: 5,
+        messageId: 'live-visible-c',
+      });
+      expect(committedIdentity(liveVisibleD)).toEqual({
+        type: 'committed.message_created',
+        seq: 7,
+        messageId: 'live-visible-d',
+      });
+
+      const payloads = [...replayPayloads, ...livePayloads];
+      expect(payloads.map((payload) => payload.seq)).toEqual([1, 2, 4, 5, 7]);
+
       const transcript = await new JSONLStore(filePath).readAll();
-      expect(transcript.map((event) => event.seq)).toEqual([1, 2, 3, 4]);
+      expect(transcript.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6, 7]);
       expect(transcript.map((event) => event.type)).toEqual([
         'session_created',
+        'message_created',
+        'token_budget_handoff_recorded',
+        'message_created',
         'message_created',
         'token_budget_handoff_recorded',
         'message_created',
