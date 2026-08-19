@@ -1,18 +1,29 @@
+import type { Message } from '../services/ChatServiceInterface.js';
 import type {
   MessagePersistenceMetadata,
   SessionEvent,
   TokenBudgetHandoffRecordedEvent,
 } from './types.js';
-import type { Message } from '../services/ChatServiceInterface.js';
 
 export const TOKEN_BUDGET_HANDOFF_VERSION = 1 as const;
 export const TOKEN_BUDGET_HANDOFF_RATIO = 0.7;
 export const TOKEN_BUDGET_COMPACTION_RATIO = 0.8;
 export const TOKEN_BUDGET_HANDOFF_MAX_BYTES = 2000;
-export const TOKEN_BUDGET_HANDOFF_TAG =
-  '<token-budget-handoff version="1">';
+export const TOKEN_BUDGET_HANDOFF_TAG = '<token-budget-handoff version="1">';
 
 const MAX_MESSAGE_ID_LENGTH = 128;
+const TOKEN_BUDGET_HANDOFF_DATA_KEYS = [
+  'version',
+  'messageId',
+  'observedPromptTokens',
+  'availableForInput',
+  'handoffThreshold',
+  'compactionThreshold',
+  'createdAt',
+] as const;
+const CANONICAL_UTC_MILLISECOND_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const HEADROOM_TAIL =
+  /(?:^|\n)Remaining prompt-token headroom before compaction: (\d+)\.$/;
 
 export type TokenBudgetPhase =
   | 'unknown'
@@ -51,11 +62,7 @@ interface DeriveSnapshotInput {
 }
 
 function isSafeNonNegativeInteger(value: unknown): value is number {
-  return (
-    typeof value === 'number' &&
-    Number.isSafeInteger(value) &&
-    value >= 0
-  );
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
 function isStrictPositiveInteger(value: unknown): value is number {
@@ -75,36 +82,49 @@ function isValidMessageId(value: unknown): value is string {
   );
 }
 
-function isPlainObject(
-  value: unknown
-): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
-function exactThreshold(
-  availableForInput: number,
-  ratio: number
-): number {
+function exactThreshold(availableForInput: number, ratio: number): number {
   return Math.floor(availableForInput * ratio);
 }
 
-function buildReminder(data: TokenBudgetHandoffRecordedV1): string {
-  const remainingBeforeCompaction = Math.max(
-    0,
-    data.compactionThreshold - data.observedPromptTokens
-  );
+function isCanonicalUtcMillisecondIso(value: unknown): value is string {
+  if (typeof value !== 'string' || !CANONICAL_UTC_MILLISECOND_ISO.test(value)) {
+    return false;
+  }
+
+  try {
+    const date = new Date(value);
+    return Number.isFinite(date.getTime()) && date.toISOString() === value;
+  } catch {
+    return false;
+  }
+}
+
+function renderReminder(headroom: number): string {
+  if (!isSafeNonNegativeInteger(headroom)) {
+    throw new Error('Token budget handoff headroom must be a safe nonnegative integer');
+  }
+
   return [
     TOKEN_BUDGET_HANDOFF_TAG,
     'Context rollover is approaching. Continue the user task from this state only.',
     'Make objective, decisions, mutations, verification, background work, blockers, and the exact next action explicit.',
     'Do not claim success or completion unless it is already proven in the transcript.',
     'Do not create bookkeeping files the user did not request.',
-    `Remaining prompt-token headroom before compaction: ${remainingBeforeCompaction}.`,
+    `Remaining prompt-token headroom before compaction: ${headroom}.`,
   ].join('\n');
 }
 
-function boundedReminder(data: TokenBudgetHandoffRecordedV1): string {
-  const reminder = buildReminder(data);
+function boundedReminder(headroom: number): string {
+  const reminder = renderReminder(headroom);
   const bytes = new TextEncoder().encode(reminder).length;
   if (bytes > TOKEN_BUDGET_HANDOFF_MAX_BYTES) {
     throw new Error(
@@ -114,10 +134,7 @@ function boundedReminder(data: TokenBudgetHandoffRecordedV1): string {
   return reminder;
 }
 
-function exactKeys(
-  value: Record<string, unknown>,
-  keys: readonly string[]
-): boolean {
+function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   const actualKeys = Object.keys(value).sort();
   const expectedKeys = [...keys].sort();
   return (
@@ -208,14 +225,14 @@ export function parseTokenBudgetHandoffEvent(
 
   const data = event.data;
   if (
+    !exactKeys(data, TOKEN_BUDGET_HANDOFF_DATA_KEYS) ||
     data.version !== TOKEN_BUDGET_HANDOFF_VERSION ||
     !isValidMessageId(data.messageId) ||
     !isSafeNonNegativeInteger(data.observedPromptTokens) ||
     !isStrictPositiveInteger(data.availableForInput) ||
     !isSafeNonNegativeInteger(data.handoffThreshold) ||
     !isSafeNonNegativeInteger(data.compactionThreshold) ||
-    typeof data.createdAt !== 'string' ||
-    !Number.isFinite(Date.parse(data.createdAt))
+    !isCanonicalUtcMillisecondIso(data.createdAt)
   ) {
     return undefined;
   }
@@ -243,8 +260,8 @@ export function parseTokenBudgetHandoffEvent(
 
 export function isTokenBudgetHandoffEvent(
   event: SessionEvent
-): event is ValidTokenBudgetHandoffEvent {
-  return parseTokenBudgetHandoffEvent(event) !== undefined;
+): event is TokenBudgetHandoffRecordedEvent {
+  return event.type === 'token_budget_handoff_recorded' && isPlainObject(event.data);
 }
 
 export function projectTokenBudgetHandoffEvent(
@@ -269,14 +286,14 @@ export function projectTokenBudgetHandoffEvent(
   return {
     id: parsed.data.messageId,
     role: 'user',
-    content: boundedReminder(parsed.data),
+    content: boundedReminder(
+      Math.max(0, parsed.data.compactionThreshold - parsed.data.observedPromptTokens)
+    ),
     metadata,
   };
 }
 
-export function isTokenBudgetHandoffMessage(
-  message: Message
-): boolean {
+export function isTokenBudgetHandoffMessage(message: Message): boolean {
   if (
     typeof message.id !== 'string' ||
     message.role !== 'user' ||
@@ -304,10 +321,14 @@ export function isTokenBudgetHandoffMessage(
   }
 
   const bytes = new TextEncoder().encode(message.content).length;
+  if (bytes > TOKEN_BUDGET_HANDOFF_MAX_BYTES) return false;
+
+  const headroomMatch = HEADROOM_TAIL.exec(message.content);
+  if (!headroomMatch) return false;
+
+  const headroom = Number(headroomMatch[1]);
   return (
-    bytes <= TOKEN_BUDGET_HANDOFF_MAX_BYTES &&
-    message.content.includes(TOKEN_BUDGET_HANDOFF_TAG) &&
-    message.content.match(/<token-budget-handoff version=\"1\">/g)?.length === 1
+    isSafeNonNegativeInteger(headroom) && message.content === renderReminder(headroom)
   );
 }
 

@@ -1,22 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import type {
-  SessionEvent,
-  TokenBudgetHandoffRecordedEvent,
-} from '../../../../src/context/types.js';
-import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import {
-  TOKEN_BUDGET_COMPACTION_RATIO,
-  TOKEN_BUDGET_HANDOFF_MAX_BYTES,
-  TOKEN_BUDGET_HANDOFF_RATIO,
-  TOKEN_BUDGET_HANDOFF_TAG,
-  TOKEN_BUDGET_HANDOFF_VERSION,
   deriveTokenBudgetSnapshot,
   isTokenBudgetHandoffEvent,
   isTokenBudgetHandoffMessage,
   parseTokenBudgetHandoffEvent,
   projectTokenBudgetHandoffEvent,
   stripTokenBudgetHandoffMessages,
+  TOKEN_BUDGET_COMPACTION_RATIO,
+  TOKEN_BUDGET_HANDOFF_MAX_BYTES,
+  TOKEN_BUDGET_HANDOFF_RATIO,
+  TOKEN_BUDGET_HANDOFF_TAG,
+  TOKEN_BUDGET_HANDOFF_VERSION,
 } from '../../../../src/context/TokenBudgetHandoff.js';
+import type {
+  SessionEvent,
+  TokenBudgetHandoffRecordedEvent,
+} from '../../../../src/context/types.js';
+import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 
 const recordedEvent = {
   id: 'evt-handoff-1',
@@ -36,6 +36,18 @@ const recordedEvent = {
     createdAt: '2026-08-19T08:00:00.000Z',
   },
 } satisfies TokenBudgetHandoffRecordedEvent;
+
+function tokenBudgetHandoffEvent(
+  data: Record<string, unknown> = {}
+): TokenBudgetHandoffRecordedEvent {
+  return {
+    ...recordedEvent,
+    data: {
+      ...recordedEvent.data,
+      ...data,
+    },
+  };
+}
 
 function messageCreatedEvent(): SessionEvent {
   return {
@@ -151,105 +163,179 @@ describe('parseTokenBudgetHandoffEvent', () => {
     expect(isTokenBudgetHandoffEvent(recordedEvent)).toBe(true);
   });
 
-  it('rejects version and field-shape mismatches', () => {
-    expect(
-      parseTokenBudgetHandoffEvent({
-        ...recordedEvent,
-        data: { ...recordedEvent.data, version: 2 },
-      })
-    ).toBeUndefined();
+  it('treats token-budget handoff events as a raw event-type guard before strict parsing', () => {
+    const futureEvent = tokenBudgetHandoffEvent({
+      version: 2,
+      futureField: 'reserved',
+    });
+    const malformedEvent = tokenBudgetHandoffEvent({
+      version: 1,
+      createdAt: 'not-an-iso-date',
+    });
 
-    expect(
-      parseTokenBudgetHandoffEvent({
-        ...recordedEvent,
-        data: { version: 1 },
-      })
-    ).toBeUndefined();
+    expect(isTokenBudgetHandoffEvent(futureEvent)).toBe(true);
+    expect(parseTokenBudgetHandoffEvent(futureEvent)).toBeUndefined();
+    expect(projectTokenBudgetHandoffEvent(futureEvent)).toBeUndefined();
 
-    expect(
-      parseTokenBudgetHandoffEvent({
-        ...recordedEvent,
-        data: { ...recordedEvent.data, messageId: '' },
-      })
-    ).toBeUndefined();
-
-    expect(
-      parseTokenBudgetHandoffEvent({
-        ...recordedEvent,
-        data: { ...recordedEvent.data, messageId: 'x'.repeat(129) },
-      })
-    ).toBeUndefined();
-
-    expect(
-      parseTokenBudgetHandoffEvent({
-        ...recordedEvent,
-        data: { ...recordedEvent.data, messageId: 'bad\nid' },
-      })
-    ).toBeUndefined();
-
-    expect(
-      parseTokenBudgetHandoffEvent({
-        ...recordedEvent,
-        data: { ...recordedEvent.data, observedPromptTokens: -1 },
-      })
-    ).toBeUndefined();
-
-    expect(
-      parseTokenBudgetHandoffEvent({
-        ...recordedEvent,
-        data: { ...recordedEvent.data, availableForInput: 0 },
-      })
-    ).toBeUndefined();
-
-    expect(
-      parseTokenBudgetHandoffEvent({
-        ...recordedEvent,
-        data: {
-          ...recordedEvent.data,
-          handoffThreshold: recordedEvent.data.handoffThreshold + 1,
-        },
-      })
-    ).toBeUndefined();
-
-    expect(
-      parseTokenBudgetHandoffEvent({
-        ...recordedEvent,
-        data: {
-          ...recordedEvent.data,
-          compactionThreshold: recordedEvent.data.compactionThreshold + 1,
-        },
-      })
-    ).toBeUndefined();
-
-    expect(
-      parseTokenBudgetHandoffEvent({
-        ...recordedEvent,
-        data: { ...recordedEvent.data, createdAt: 'not-an-iso-date' },
-      })
-    ).toBeUndefined();
+    expect(isTokenBudgetHandoffEvent(malformedEvent)).toBe(true);
+    expect(parseTokenBudgetHandoffEvent(malformedEvent)).toBeUndefined();
+    expect(projectTokenBudgetHandoffEvent(malformedEvent)).toBeUndefined();
 
     expect(isTokenBudgetHandoffEvent(messageCreatedEvent())).toBe(false);
   });
 
-  it('rejects events outside the durable handoff band', () => {
+  it('rejects version and field-shape mismatches', () => {
+    const { createdAt: _createdAt, ...missingCreatedAt } = recordedEvent.data;
+
     expect(
-      parseTokenBudgetHandoffEvent({
-        ...recordedEvent,
-        data: {
-          ...recordedEvent.data,
-          observedPromptTokens: recordedEvent.data.handoffThreshold - 1,
-        },
-      })
+      parseTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          version: 2,
+        })
+      )
     ).toBeUndefined();
 
     expect(
       parseTokenBudgetHandoffEvent({
         ...recordedEvent,
-        data: {
-          ...recordedEvent.data,
-          observedPromptTokens: recordedEvent.data.compactionThreshold,
-        },
+        data: missingCreatedAt,
       })
+    ).toBeUndefined();
+
+    expect(
+      parseTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          version: 1,
+          messageId: undefined,
+          observedPromptTokens: undefined,
+          availableForInput: undefined,
+          handoffThreshold: undefined,
+          compactionThreshold: undefined,
+          createdAt: undefined,
+        })
+      )
+    ).toBeUndefined();
+
+    expect(
+      parseTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          messageId: '',
+        })
+      )
+    ).toBeUndefined();
+
+    expect(
+      parseTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          messageId: 'x'.repeat(129),
+        })
+      )
+    ).toBeUndefined();
+
+    expect(
+      parseTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          messageId: 'bad\nid',
+        })
+      )
+    ).toBeUndefined();
+
+    expect(
+      parseTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          observedPromptTokens: -1,
+        })
+      )
+    ).toBeUndefined();
+
+    expect(
+      parseTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          availableForInput: 0,
+        })
+      )
+    ).toBeUndefined();
+
+    expect(
+      parseTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          handoffThreshold: recordedEvent.data.handoffThreshold + 1,
+        })
+      )
+    ).toBeUndefined();
+
+    expect(
+      parseTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          compactionThreshold: recordedEvent.data.compactionThreshold + 1,
+        })
+      )
+    ).toBeUndefined();
+
+    expect(
+      parseTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          extra: true,
+        })
+      )
+    ).toBeUndefined();
+
+    expect(
+      parseTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          createdAt: 'not-an-iso-date',
+        })
+      )
+    ).toBeUndefined();
+
+    expect(
+      parseTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          createdAt: '2026-08-19',
+        })
+      )
+    ).toBeUndefined();
+
+    expect(
+      parseTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          createdAt: '2026-08-19T08:00:00Z',
+        })
+      )
+    ).toBeUndefined();
+
+    expect(
+      parseTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          createdAt: '2026-08-19T16:00:00.000+08:00',
+        })
+      )
+    ).toBeUndefined();
+
+    expect(
+      parseTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          createdAt: '2026-02-30T08:00:00.000Z',
+        })
+      )
+    ).toBeUndefined();
+  });
+
+  it('rejects events outside the durable handoff band', () => {
+    expect(
+      parseTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          observedPromptTokens: recordedEvent.data.handoffThreshold - 1,
+        })
+      )
+    ).toBeUndefined();
+
+    expect(
+      parseTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          observedPromptTokens: recordedEvent.data.compactionThreshold,
+        })
+      )
     ).toBeUndefined();
   });
 });
@@ -264,34 +350,52 @@ describe('projectTokenBudgetHandoffEvent', () => {
     expect(projected).toMatchObject({
       id: 'handoff-message-1',
       role: 'user',
-      metadata: {
-        clientVisible: false,
-        tokenBudgetHandoff: {
-          version: 1,
-          messageId: 'handoff-message-1',
-        },
+    });
+    expect(projected.metadata).toEqual({
+      clientVisible: false,
+      tokenBudgetHandoff: {
+        version: 1,
+        messageId: 'handoff-message-1',
       },
     });
     expect(typeof projected.content).toBe('string');
     expect(projected.content).toContain(TOKEN_BUDGET_HANDOFF_TAG);
-    expect(projected.content.match(/<token-budget-handoff version="1">/g)).toHaveLength(1);
+    expect(projected.content.match(/<token-budget-handoff version="1">/g)).toHaveLength(
+      1
+    );
     expect(projected.content).toContain('5000');
     expect(utf8Bytes).toBeLessThanOrEqual(TOKEN_BUDGET_HANDOFF_MAX_BYTES);
   });
 
   it('does not project invalid durable markers', () => {
     expect(
-      projectTokenBudgetHandoffEvent({
-        ...recordedEvent,
-        data: { ...recordedEvent.data, version: 2 },
-      })
+      projectTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          version: 2,
+        })
+      )
     ).toBeUndefined();
 
     expect(
-      projectTokenBudgetHandoffEvent({
-        ...recordedEvent,
-        data: { version: 1 },
-      })
+      projectTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          version: 1,
+          messageId: undefined,
+          observedPromptTokens: undefined,
+          availableForInput: undefined,
+          handoffThreshold: undefined,
+          compactionThreshold: undefined,
+          createdAt: undefined,
+        })
+      )
+    ).toBeUndefined();
+
+    expect(
+      projectTokenBudgetHandoffEvent(
+        tokenBudgetHandoffEvent({
+          extra: true,
+        })
+      )
     ).toBeUndefined();
   });
 });
@@ -329,6 +433,41 @@ describe('isTokenBudgetHandoffMessage', () => {
     ).toBe(false);
   });
 
+  it('requires content to exactly match the canonical reminder rebuilt from its tail headroom', () => {
+    const projected = projectTokenBudgetHandoffEvent(recordedEvent);
+    if (!projected || typeof projected.content !== 'string') {
+      throw new Error('Expected string handoff content');
+    }
+
+    const prefixed: Message = {
+      ...projected,
+      content: `prefix\n${projected.content}`,
+    };
+    const suffixed: Message = {
+      ...projected,
+      content: `${projected.content}\nsuffix`,
+    };
+    const tamperedNumber: Message = {
+      ...projected,
+      content: projected.content.replace('5000', '05000'),
+    };
+    const unsafeNumber: Message = {
+      ...projected,
+      content: projected.content.replace('5000', '9007199254740992'),
+    };
+    const arbitraryBodyWithTag: Message = {
+      ...projected,
+      content: `${TOKEN_BUDGET_HANDOFF_TAG}\narbitrary reminder body\nRemaining prompt-token headroom before compaction: 5000.`,
+    };
+
+    expect(isTokenBudgetHandoffMessage(projected)).toBe(true);
+    expect(isTokenBudgetHandoffMessage(prefixed)).toBe(false);
+    expect(isTokenBudgetHandoffMessage(suffixed)).toBe(false);
+    expect(isTokenBudgetHandoffMessage(tamperedNumber)).toBe(false);
+    expect(isTokenBudgetHandoffMessage(unsafeNumber)).toBe(false);
+    expect(isTokenBudgetHandoffMessage(arbitraryBodyWithTag)).toBe(false);
+  });
+
   it('does not misclassify plain user text even when the reminder matches', () => {
     const projected = projectTokenBudgetHandoffEvent(recordedEvent);
     if (!projected || typeof projected.content !== 'string') {
@@ -361,13 +500,17 @@ describe('stripTokenBudgetHandoffMessages', () => {
       role: 'user',
       content: 'continue the task',
     };
-    const source: Message[] = [regular, projected, plainReminder];
+    const spoofed: Message = {
+      ...projected,
+      content: `${TOKEN_BUDGET_HANDOFF_TAG}\nspoofed reminder`,
+    };
+    const source: Message[] = [regular, projected, plainReminder, spoofed];
 
     const stripped = stripTokenBudgetHandoffMessages(source);
 
     expect(stripped).not.toBe(source);
-    expect(stripped).toEqual([regular, plainReminder]);
-    expect(source).toEqual([regular, projected, plainReminder]);
+    expect(stripped).toEqual([regular, plainReminder, spoofed]);
+    expect(source).toEqual([regular, projected, plainReminder, spoofed]);
     expect(source[1]).toBe(projected);
   });
 });
