@@ -111,9 +111,13 @@ export class LspClient {
       });
       this.closePromise = new Promise<void>((resolve) => {
         child.once('close', (code, signal) => {
+          if (this.child !== child) {
+            resolve();
+            return;
+          }
           this.initialized = false;
           const crashed = !this.stopping;
-          if (!this.stopping) {
+          if (crashed) {
             const suffix = stderr.trim()
               ? `: ${stderr.trim().slice(0, 512)}`
               : signal
@@ -123,20 +127,18 @@ export class LspClient {
               new Error(`LSP server "${this.name}" exited with code ${code}${suffix}`)
             );
           }
-          if (this.child === child) {
-            const ownedTree = this.processTree;
-            try {
-              this.connection?.dispose();
-            } catch {
-              // The process exit remains authoritative.
-            }
-            this.connection = undefined;
-            this.child = undefined;
-            this.closePromise = undefined;
-            if (crashed && ownedTree) {
-              this.crashCleanup = ownedTree.terminate().then(() => undefined);
-              this.processTree = undefined;
-            }
+          const ownedTree = this.processTree;
+          try {
+            this.connection?.dispose();
+          } catch {
+            // The process exit remains authoritative.
+          }
+          this.connection = undefined;
+          this.child = undefined;
+          this.closePromise = undefined;
+          if (crashed && ownedTree) {
+            this.crashCleanup = ownedTree.terminate().then(() => undefined);
+            this.processTree = undefined;
           }
           resolve();
         });
@@ -153,7 +155,9 @@ export class LspClient {
         }
       });
       connection.onClose(() => {
-        this.initialized = false;
+        if (this.connection === connection) {
+          this.initialized = false;
+        }
       });
       for (const [method, handlers] of this.notificationHandlers) {
         for (const handler of handlers) {

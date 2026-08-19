@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.64] - 2026-08-19
+
+### Fixed
+- LSP clients now ignore delayed process and JSON-RPC close events from disposed
+  transport generations instead of reporting a clean shutdown as a crash or
+  clearing the initialized state of a replacement server
+
+### Tests
+- Added deterministic transport-generation coverage proving a stale LSP child
+  cannot mutate or fail a newly initialized connection
+
 ## [0.10.63] - 2026-08-19
 
 ### Fixed
