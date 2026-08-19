@@ -134,6 +134,7 @@ export type JSONLEventType =
   | 'interaction_recovered'
   | 'review_started'
   | 'review_completed'
+  | 'token_budget_handoff_recorded'
   | 'message_created'
   | 'part_created'
   | 'part_updated';
@@ -497,7 +498,13 @@ export interface SessionEventBase {
   version: string;
 }
 
+export type TokenBudgetHandoffRecordedEvent = SessionEventBase & {
+  type: 'token_budget_handoff_recorded';
+  data: JsonObject;
+};
+
 export type SessionEvent =
+  | TokenBudgetHandoffRecordedEvent
   | (SessionEventBase & { type: 'session_created'; data: SessionInfo })
   | (SessionEventBase & { type: 'session_updated'; data: Partial<SessionInfo> })
   | (SessionEventBase & { type: 'session_rewound'; data: SessionRewindInfo })

@@ -94,6 +94,7 @@ export type ContentPart = TextContentPart | ImageContentPart;
  * content 支持纯文本或多模态内容（文本+图片）
  */
 export type Message = {
+  id?: string;
   role: MessageRole;
   content: string | ContentPart[];
   reasoningContent?: string; // Thinking 模型的推理过程（如 DeepSeek Reasoner）

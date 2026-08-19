@@ -62,6 +62,34 @@ describe('createPiContext image capabilities', () => {
       ],
     });
   });
+
+  it('does not forward Blade-only identity or metadata to provider context', async () => {
+    const context = await createPiContext(
+      [
+        {
+          id: 'handoff-message-1',
+          role: 'user',
+          content: 'hidden runtime marker',
+          metadata: {
+            clientVisible: false,
+            tokenBudgetHandoff: {
+              version: 1,
+              messageId: 'handoff-message-1',
+            },
+          },
+        },
+      ],
+      model(['text'])
+    );
+
+    expect(context.messages[0]).toEqual({
+      role: 'user',
+      content: 'hidden runtime marker',
+      timestamp: expect.any(Number),
+    });
+    expect(context.messages[0]).not.toHaveProperty('id');
+    expect(context.messages[0]).not.toHaveProperty('metadata');
+  });
 });
 
 describe('createPiContext constrained tools', () => {
