@@ -147,6 +147,57 @@ describe('SessionService durable rewind', () => {
     await expect(readFile(targetFile, 'utf8')).resolves.toBe('changed');
   });
 
+  it.each(['conversation', 'both'] as const)(
+    'invalidates a handoff recorded after the target during %s rewind',
+    async (mode) => {
+      const { secondUser } = await createTwoTurnSession();
+      const persistent = new PersistentStore(workspace, 100, 'test');
+      await persistent.recordTokenBudgetHandoff(sessionId, {
+        version: 1,
+        observedPromptTokens: 75_000,
+        availableForInput: 100_000,
+        handoffThreshold: 70_000,
+        compactionThreshold: 80_000,
+      });
+
+      await SessionService.rewindSession(sessionId, workspace, {
+        targetMessageId: secondUser,
+        mode,
+      });
+
+      const raw = await readFile(getSessionFilePath(workspace, sessionId), 'utf8');
+      expect(
+        materializeSessionEvents(parseSessionJSONL(raw)).some(
+          (event) => event.type === 'token_budget_handoff_recorded'
+        )
+      ).toBe(false);
+    }
+  );
+
+  it('preserves a handoff during code-only rewind', async () => {
+    const { secondUser } = await createTwoTurnSession();
+    const persistent = new PersistentStore(workspace, 100, 'test');
+    await persistent.recordTokenBudgetHandoff(sessionId, {
+      version: 1,
+      observedPromptTokens: 75_000,
+      availableForInput: 100_000,
+      handoffThreshold: 70_000,
+      compactionThreshold: 80_000,
+    });
+
+    await SessionService.rewindSession(sessionId, workspace, {
+      targetMessageId: secondUser,
+      mode: 'code',
+    });
+
+    const raw = await readFile(getSessionFilePath(workspace, sessionId), 'utf8');
+    expect(
+      materializeSessionEvents(parseSessionJSONL(raw)).some(
+        (event) => event.type === 'token_budget_handoff_recorded'
+      )
+    ).toBe(true);
+  });
+
   it('removes review lifecycle created after the rewind checkpoint', async () => {
     const { secondUser } = await createTwoTurnSession();
     const persistent = new PersistentStore(workspace, 100, 'test');

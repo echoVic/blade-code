@@ -11,8 +11,10 @@ import { ContextCompressor } from './processors/ContextCompressor.js';
 import { ContextFilter } from './processors/ContextFilter.js';
 import { CacheStore } from './storage/CacheStore.js';
 import { MemoryStore } from './storage/MemoryStore.js';
+import type { RecordTokenBudgetHandoffResult } from './storage/PersistentStore.js';
 import { PersistentStore } from './storage/PersistentStore.js';
 import { getBladeStorageRoot } from './storage/pathUtils.js';
+import type { TokenBudgetHandoffRecordedV1 } from './TokenBudgetHandoff.js';
 import {
   CompressedContext,
   ContextData,
@@ -331,6 +333,13 @@ export class ContextManager {
     parentUuid: string | null = null
   ): Promise<string> {
     return this.persistent.saveCompaction(sessionId, summary, metadata, parentUuid);
+  }
+
+  async recordTokenBudgetHandoff(
+    sessionId: string,
+    payload: Omit<TokenBudgetHandoffRecordedV1, 'messageId' | 'createdAt'>
+  ): Promise<RecordTokenBudgetHandoffResult> {
+    return this.persistent.recordTokenBudgetHandoff(sessionId, payload);
   }
 
   /**

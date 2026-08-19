@@ -1300,6 +1300,7 @@ export class SessionService {
       .filter(
         (entry) =>
           entry.type !== 'session_created' &&
+          entry.type !== 'token_budget_handoff_recorded' &&
           entry.type !== 'inbox_acknowledged' &&
           entry.type !== 'interaction_requested' &&
           entry.type !== 'interaction_responded' &&

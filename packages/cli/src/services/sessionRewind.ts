@@ -18,6 +18,7 @@ export interface SessionRewindPlan {
 function isConversationEvent(event: SessionEvent): boolean {
   return (
     event.type === 'message_created' ||
+    event.type === 'token_budget_handoff_recorded' ||
     event.type === 'part_created' ||
     event.type === 'part_updated' ||
     event.type === 'turn_started' ||

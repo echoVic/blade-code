@@ -276,6 +276,61 @@ describe('SessionService.forkSession', () => {
     expect(await readFile(parentPath, 'utf-8')).toBe(parentBeforeFork);
   });
 
+  it('copies effective messages and compaction checkpoints without inheriting handoff authority', async () => {
+    const persistentStore = new PersistentStore(projectPath, 100, 'test');
+    await persistentStore.saveMessage('handoff-parent', 'user', 'parent request');
+    await persistentStore.recordTokenBudgetHandoff('handoff-parent', {
+      version: 1,
+      observedPromptTokens: 75_000,
+      availableForInput: 100_000,
+      handoffThreshold: 70_000,
+      compactionThreshold: 80_000,
+    });
+    await persistentStore.saveCompaction('handoff-parent', 'checkpoint summary', {
+      trigger: 'auto',
+      reason: 'threshold',
+      strategy: 'llm',
+      preTokens: 80_000,
+      postTokens: 10_000,
+      replacementMessages: [{ role: 'user', content: 'effective replacement' }],
+    });
+
+    await SessionService.forkSession('handoff-parent', {
+      newSessionId: 'handoff-child',
+      sourceProjectPath: projectPath,
+      targetProjectPath: projectPath,
+    });
+
+    const childEvents = await readTranscript(
+      getSessionFilePath(projectPath, 'handoff-child')
+    );
+    expect(
+      childEvents.some(
+        (event) =>
+          event.type === 'part_created' &&
+          event.data.partType === 'text' &&
+          event.data.payload &&
+          typeof event.data.payload === 'object' &&
+          !Array.isArray(event.data.payload) &&
+          event.data.payload.text === 'parent request'
+      )
+    ).toBe(true);
+    expect(
+      childEvents.some(
+        (event) =>
+          event.type === 'part_created' &&
+          event.data.partType === 'summary' &&
+          event.data.payload &&
+          typeof event.data.payload === 'object' &&
+          !Array.isArray(event.data.payload) &&
+          event.data.payload.text === 'checkpoint summary'
+      )
+    ).toBe(true);
+    expect(
+      childEvents.some((event) => event.type === 'token_budget_handoff_recorded')
+    ).toBe(false);
+  });
+
   it('rejects non-absolute or cross-workspace fork paths before reading transcripts', async () => {
     await expect(
       SessionService.forkSession('parent-session', {

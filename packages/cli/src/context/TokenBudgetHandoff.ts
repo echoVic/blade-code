@@ -1,4 +1,5 @@
 import type { Message } from '../services/ChatServiceInterface.js';
+import { parseCompactionReplacementMessages } from './compactionCheckpoint.js';
 import type {
   MessagePersistenceMetadata,
   SessionEvent,
@@ -54,6 +55,11 @@ export interface TokenBudgetHandoffRecordedV1 {
 export type ValidTokenBudgetHandoffEvent = TokenBudgetHandoffRecordedEvent & {
   data: TokenBudgetHandoffRecordedV1;
 };
+
+export type CurrentTokenBudgetHandoff =
+  | { kind: 'none' }
+  | { kind: 'valid'; event: ValidTokenBudgetHandoffEvent }
+  | { kind: 'suppressed'; recordId: string };
 
 interface DeriveSnapshotInput {
   actualPromptTokens?: number;
@@ -252,6 +258,38 @@ export function isTokenBudgetHandoffEvent(
   event: SessionEvent
 ): event is TokenBudgetHandoffRecordedEvent {
   return event.type === 'token_budget_handoff_recorded';
+}
+
+export function findCurrentTokenBudgetHandoff(
+  materializedEvents: readonly SessionEvent[]
+): CurrentTokenBudgetHandoff {
+  const checkpointIndex = materializedEvents.findLastIndex((event) => {
+    if (event.type !== 'part_created' || event.data.partType !== 'summary') {
+      return false;
+    }
+    const payload = event.data.payload;
+    return (
+      payload !== null &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      parseCompactionReplacementMessages(payload.replacementMessages) !== undefined
+    );
+  });
+  const records = materializedEvents
+    .slice(checkpointIndex + 1)
+    .filter(isTokenBudgetHandoffEvent);
+  if (records.length === 0) return { kind: 'none' };
+
+  const latest = records.at(-1);
+  if (!latest) return { kind: 'none' };
+  if (records.length !== 1) {
+    return { kind: 'suppressed', recordId: latest.id };
+  }
+
+  const parsed = parseTokenBudgetHandoffEvent(latest);
+  return parsed
+    ? { kind: 'valid', event: parsed }
+    : { kind: 'suppressed', recordId: latest.id };
 }
 
 export function projectTokenBudgetHandoffEvent(

@@ -15,6 +15,11 @@ import {
 } from '../compactionCheckpoint.js';
 import { SessionEventLog } from '../events/SessionEventLog.js';
 import { projectTurnLifecycle } from '../events/turnLifecycle.js';
+import {
+  findCurrentTokenBudgetHandoff,
+  type TokenBudgetHandoffRecordedV1,
+  type ValidTokenBudgetHandoffEvent,
+} from '../TokenBudgetHandoff.js';
 import type {
   ConversationContext,
   MessageInfo,
@@ -45,6 +50,20 @@ import {
 } from './pathUtils.js';
 
 class TurnLifecycleNoop extends Error {}
+
+export interface RecordedTokenBudgetHandoff {
+  outcome: 'created' | 'existing';
+  event: ValidTokenBudgetHandoffEvent;
+}
+
+export interface SuppressedTokenBudgetHandoff {
+  outcome: 'suppressed';
+  recordId: string;
+}
+
+export type RecordTokenBudgetHandoffResult =
+  | RecordedTokenBudgetHandoff
+  | SuppressedTokenBudgetHandoff;
 
 export const PROCESS_RESTART_TOOL_RESULT =
   'Tool execution was interrupted by a process restart. The operation may have ' +
@@ -1320,6 +1339,42 @@ export class PersistentStore {
       console.error(`[PersistentStore] 保存压缩失败 (session: ${sessionId}):`, error);
       throw error;
     }
+  }
+
+  async recordTokenBudgetHandoff(
+    sessionId: string,
+    payload: Omit<TokenBudgetHandoffRecordedV1, 'messageId' | 'createdAt'>
+  ): Promise<RecordTokenBudgetHandoffResult> {
+    await this.ensureSessionCreated(sessionId);
+    let current = findCurrentTokenBudgetHandoff([]);
+    const stamped = await this.log(sessionId).commitValidatedBatch((events) => {
+      current = findCurrentTokenBudgetHandoff(materializeSessionEvents(events));
+      if (current.kind !== 'none') return [];
+
+      const createdAt = new Date().toISOString();
+      return [
+        this.createEvent('token_budget_handoff_recorded', sessionId, {
+          ...payload,
+          messageId: nanoid(),
+          createdAt,
+        }),
+      ];
+    });
+
+    if (current.kind === 'valid') {
+      return { outcome: 'existing', event: current.event };
+    }
+    if (current.kind === 'suppressed') {
+      return { outcome: 'suppressed', recordId: current.recordId };
+    }
+    if (stamped.length !== 1) {
+      throw new Error('Token budget handoff commit produced an impossible result');
+    }
+    const event = findCurrentTokenBudgetHandoff(stamped);
+    if (event.kind !== 'valid') {
+      throw new Error('Token budget handoff commit produced an invalid event');
+    }
+    return { outcome: 'created', event: event.event };
   }
 
   /**
