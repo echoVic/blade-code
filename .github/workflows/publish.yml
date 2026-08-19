@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   publish:
@@ -49,21 +50,13 @@ jobs:
       - name: Build
         run: bun run build
 
-      - name: Verify npm authentication
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if ! whoami_output="$(npm whoami --registry=https://registry.npmjs.org/ 2>&1)"; then
-            echo "npm authentication failed: ${whoami_output}" >&2
-            echo "The NPM_TOKEN secret is not a valid credential for registry.npmjs.org." >&2
-            exit 1
-          fi
-          echo "Authenticated to npm as: ${whoami_output}"
+      # Trusted Publishing (OIDC) requires npm >= 11.5.1. The Node 22 runtime
+      # ships an older npm, so upgrade before publishing.
+      - name: Upgrade npm for Trusted Publishing
+        run: npm install -g npm@latest
 
       - name: Publish to npm
         working-directory: packages/cli
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           package_name="$(bun -p "require('./package.json').name")"
           package_version="$(bun -p "require('./package.json').version")"
