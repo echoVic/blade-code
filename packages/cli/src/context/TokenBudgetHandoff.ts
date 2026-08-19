@@ -91,8 +91,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
-function exactThreshold(availableForInput: number, ratio: number): number {
-  return Math.floor(availableForInput * ratio);
+function exactThreshold(availableForInput: number, numerator: number): number {
+  const quotient = Math.floor(availableForInput / 10);
+  const remainder = availableForInput % 10;
+  return quotient * numerator + Math.floor((remainder * numerator) / 10);
 }
 
 function isCanonicalUtcMillisecondIso(value: unknown): value is string {
@@ -161,14 +163,8 @@ export function deriveTokenBudgetSnapshot(
     return { phase: 'unknown' };
   }
 
-  const handoffThreshold = exactThreshold(
-    availableForInput,
-    TOKEN_BUDGET_HANDOFF_RATIO
-  );
-  const compactionThreshold = exactThreshold(
-    availableForInput,
-    TOKEN_BUDGET_COMPACTION_RATIO
-  );
+  const handoffThreshold = exactThreshold(availableForInput, 7);
+  const compactionThreshold = exactThreshold(availableForInput, 8);
 
   if (!isSafeNonNegativeInteger(actualPromptTokens)) {
     return {
@@ -237,14 +233,8 @@ export function parseTokenBudgetHandoffEvent(
     return undefined;
   }
 
-  const expectedHandoffThreshold = exactThreshold(
-    data.availableForInput,
-    TOKEN_BUDGET_HANDOFF_RATIO
-  );
-  const expectedCompactionThreshold = exactThreshold(
-    data.availableForInput,
-    TOKEN_BUDGET_COMPACTION_RATIO
-  );
+  const expectedHandoffThreshold = exactThreshold(data.availableForInput, 7);
+  const expectedCompactionThreshold = exactThreshold(data.availableForInput, 8);
 
   if (
     data.handoffThreshold !== expectedHandoffThreshold ||
@@ -261,7 +251,7 @@ export function parseTokenBudgetHandoffEvent(
 export function isTokenBudgetHandoffEvent(
   event: SessionEvent
 ): event is TokenBudgetHandoffRecordedEvent {
-  return event.type === 'token_budget_handoff_recorded' && isPlainObject(event.data);
+  return event.type === 'token_budget_handoff_recorded';
 }
 
 export function projectTokenBudgetHandoffEvent(

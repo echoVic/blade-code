@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parseSessionJSONL } from '../../../../src/context/storage/JSONLStore.js';
 import {
   deriveTokenBudgetSnapshot,
   isTokenBudgetHandoffEvent,
@@ -153,6 +154,24 @@ describe('deriveTokenBudgetSnapshot', () => {
       })?.phase
     ).toBe('unknown');
   });
+
+  it('computes exact thresholds for the maximum safe input budget', () => {
+    expect(
+      deriveTokenBudgetSnapshot({
+        actualPromptTokens: 7_205_759_403_792_792,
+        maxContextTokens: Number.MAX_SAFE_INTEGER,
+        maxOutputTokens: 0,
+      })
+    ).toEqual({
+      phase: 'compaction_due',
+      actualPromptTokens: 7_205_759_403_792_792,
+      maxContextTokens: Number.MAX_SAFE_INTEGER,
+      maxOutputTokens: 0,
+      availableForInput: Number.MAX_SAFE_INTEGER,
+      handoffThreshold: 6_305_039_478_318_693,
+      compactionThreshold: 7_205_759_403_792_792,
+    });
+  });
 });
 
 describe('parseTokenBudgetHandoffEvent', () => {
@@ -182,6 +201,29 @@ describe('parseTokenBudgetHandoffEvent', () => {
     expect(projectTokenBudgetHandoffEvent(malformedEvent)).toBeUndefined();
 
     expect(isTokenBudgetHandoffEvent(messageCreatedEvent())).toBe(false);
+  });
+
+  it('classifies malformed persisted handoff data by its raw discriminant', () => {
+    const persistedEvents = parseSessionJSONL(
+      `${JSON.stringify({ ...recordedEvent, data: null })}\n${JSON.stringify({
+        ...recordedEvent,
+        id: 'evt-handoff-array',
+        data: [],
+      })}\n`
+    );
+    const nullDataEvent = persistedEvents[0];
+    const arrayDataEvent = persistedEvents[1];
+    if (!nullDataEvent || !arrayDataEvent) {
+      throw new Error('Expected both persisted handoff events');
+    }
+
+    expect(isTokenBudgetHandoffEvent(nullDataEvent)).toBe(true);
+    expect(parseTokenBudgetHandoffEvent(nullDataEvent)).toBeUndefined();
+    expect(projectTokenBudgetHandoffEvent(nullDataEvent)).toBeUndefined();
+
+    expect(isTokenBudgetHandoffEvent(arrayDataEvent)).toBe(true);
+    expect(parseTokenBudgetHandoffEvent(arrayDataEvent)).toBeUndefined();
+    expect(projectTokenBudgetHandoffEvent(arrayDataEvent)).toBeUndefined();
   });
 
   it('rejects version and field-shape mismatches', () => {
