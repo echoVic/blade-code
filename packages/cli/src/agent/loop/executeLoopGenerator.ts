@@ -12,6 +12,13 @@ import { ReactiveCompaction } from '../../context/ReactiveCompaction.js';
 import { microCompact, snipCompact } from '../../context/SnipCompaction.js';
 import { createBudgetTracker, recordOutput } from '../../context/TokenBudget.js';
 import {
+  deriveTokenBudgetSnapshot,
+  isTokenBudgetHandoffMessage,
+  projectTokenBudgetHandoffEvent,
+  resolveCompactionOutputReserve,
+  type TokenBudgetSnapshot,
+} from '../../context/TokenBudgetHandoff.js';
+import {
   applyToolResultBudget,
   MessageBudgetTracker,
 } from '../../context/ToolResultBudget.js';
@@ -130,12 +137,6 @@ import type {
 } from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
-
-const COMPACTION_FALLBACK_OUTPUT_RATIO = 0.1;
-const COMPACTION_FALLBACK_MIN_OUTPUT_TOKENS = 8192;
-const COMPACTION_FALLBACK_MAX_OUTPUT_TOKENS = 32768;
-const COMPACTION_COOLDOWN_TURNS = 2;
-const COMPACTION_EMERGENCY_INPUT_RATIO = 0.95;
 
 function toTokenUsageInfo(usage: UsageInfo, maxContextTokens: number): TokenUsageInfo {
   return {
@@ -580,25 +581,116 @@ async function* processStreamResponse(
 
 // ===== checkAndCompactInLoop (extracted from Agent.ts) =====
 
-export type CompactResult = 'none' | 'snipped' | 'compacted';
+export type CompactResult =
+  | { kind: 'none' }
+  | { kind: 'snipped' }
+  | { kind: 'compacted'; postTokens: number }
+  | { kind: 'failed'; phase: 'compaction' | 'checkpoint' };
+
+type HandoffAttempt =
+  | { kind: 'appended'; message: Message }
+  | { kind: 'already_present' }
+  | { kind: 'suppressed' }
+  | { kind: 'failed' };
 
 export interface LoopCompactionState {
   lastCompactionTurn?: number;
+}
+
+function hashSessionForWarning(sessionId: string): string {
+  return createHash('sha256').update(sessionId).digest('hex').slice(0, 16);
+}
+
+function normalizeHandoffErrorToken(
+  value: unknown,
+  fallback: string
+): string {
+  return typeof value === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(value)
+    ? value
+    : fallback;
+}
+
+function normalizeHandoffError(error: unknown): string {
+  if (error instanceof Error) {
+    const coded = error as Error & { code?: unknown };
+    const name = normalizeHandoffErrorToken(error.name, 'Error');
+    const code = normalizeHandoffErrorToken(coded.code, 'unknown');
+    return `${name}:${code}`;
+  }
+  return 'UnknownError:unknown';
+}
+
+async function maybeAppendTokenBudgetHandoff(params: {
+  deps: LoopDependencies;
+  context: ChatContext;
+  state: ConversationState;
+  snapshot: TokenBudgetSnapshot;
+  attemptSpent: boolean;
+}): Promise<HandoffAttempt> {
+  const { deps, context, state, snapshot, attemptSpent } = params;
+  if (snapshot.phase !== 'handoff_band') {
+    return { kind: 'failed' };
+  }
+
+  const existing = state
+    .getHistory()
+    .find(
+      (message) => typeof message.id === 'string' && isTokenBudgetHandoffMessage(message)
+    );
+  if (existing) {
+    return { kind: 'already_present' };
+  }
+  if (attemptSpent) {
+    return { kind: 'failed' };
+  }
+
+  const contextManager = deps.executionEngine?.getContextManager();
+  if (!contextManager) {
+    return { kind: 'failed' };
+  }
+
+  try {
+    const recorded = await contextManager.recordTokenBudgetHandoff(context.sessionId, {
+      version: 1,
+      observedPromptTokens: snapshot.actualPromptTokens ?? 0,
+      availableForInput: snapshot.availableForInput ?? 0,
+      handoffThreshold: snapshot.handoffThreshold ?? 0,
+      compactionThreshold: snapshot.compactionThreshold ?? 0,
+    });
+
+    if (recorded.outcome === 'suppressed') {
+      return { kind: 'suppressed' };
+    }
+
+    const projected = projectTokenBudgetHandoffEvent(recorded.event);
+    if (!projected) {
+      return { kind: 'failed' };
+    }
+    state.appendDurableControl(projected);
+    return { kind: 'appended', message: projected };
+  } catch (error) {
+    const warning = `token_budget_handoff_persist_failed session=${hashSessionForWarning(
+      context.sessionId
+    )} error=${normalizeHandoffError(error)}`;
+    logger.warn(warning);
+    return { kind: 'failed' };
+  }
 }
 
 export async function* checkAndCompactInLoop(
   deps: LoopDependencies,
   context: ChatContext,
   currentTurn: number,
-  actualPromptTokens?: number,
+  snapshot: TokenBudgetSnapshot,
   signal?: AbortSignal,
   lastApiCallTime?: number,
   activeTask?: string,
   compactionState?: LoopCompactionState
 ): AsyncGenerator<LoopEvent, CompactResult, void> {
-  if (actualPromptTokens === undefined) {
+  const actualPromptTokens = snapshot.actualPromptTokens;
+  if (snapshot.phase === 'unknown') {
     logger.debug(`[Loop] [轮次 ${currentTurn}] 压缩检查: 跳过（无历史 usage 数据）`);
-    return 'none';
+    return { kind: 'none' };
   }
 
   // Level 0: MicroCompact — time-based aggressive clearing when cache expired
@@ -625,63 +717,40 @@ export async function* checkAndCompactInLoop(
   // Level 2: LLM compaction — 80% 阈值触发 LLM 摘要压缩
   const chatConfig = deps.chatService.getConfig();
   const modelName = chatConfig.model;
-  const maxContextTokens = chatConfig.maxContextTokens ?? 0;
+  const maxContextTokens = snapshot.maxContextTokens ?? chatConfig.maxContextTokens ?? 0;
   const maxOutputTokens =
-    chatConfig.maxOutputTokens ??
-    deps.config.maxOutputTokens ??
-    Math.min(
-      Math.max(
-        Math.floor(maxContextTokens * COMPACTION_FALLBACK_OUTPUT_RATIO),
-        COMPACTION_FALLBACK_MIN_OUTPUT_TOKENS
-      ),
-      COMPACTION_FALLBACK_MAX_OUTPUT_TOKENS
-    );
+    snapshot.maxOutputTokens ??
+    resolveCompactionOutputReserve({
+      maxContextTokens,
+      maxOutputTokens: chatConfig.maxOutputTokens,
+      configuredMaxOutputTokens: deps.config.maxOutputTokens,
+    }) ??
+    0;
 
-  const availableForInput = maxContextTokens - maxOutputTokens;
+  const availableForInput = snapshot.availableForInput ?? maxContextTokens - maxOutputTokens;
   if (maxContextTokens <= 0 || availableForInput <= 0) {
     if (didSnip) {
       context.messages = snipResult.messages;
     }
     logger.debug(`[Loop] [轮次 ${currentTurn}] 压缩检查: 跳过（模型上下文窗口未知）`);
-    return didSnip ? 'snipped' : 'none';
+    return didSnip ? { kind: 'snipped' } : { kind: 'none' };
   }
-  const threshold = Math.floor(availableForInput * 0.8);
 
   logger.debug(`[Loop] [轮次 ${currentTurn}] 压缩检查:`, {
     promptTokens: actualPromptTokens,
     maxContextTokens,
     maxOutputTokens,
     availableForInput,
-    threshold,
-    shouldCompact: actualPromptTokens >= threshold,
+    threshold: snapshot.compactionThreshold,
+    shouldCompact: snapshot.phase === 'compaction_due',
   });
 
-  if (actualPromptTokens < threshold) {
+  if (snapshot.phase !== 'compaction_due') {
     // 不需要 LLM compaction，安全写入 snip 结果
     if (didSnip) {
       context.messages = snipResult.messages;
     }
-    return didSnip ? 'snipped' : 'none';
-  }
-
-  const turnsSinceCompaction =
-    compactionState?.lastCompactionTurn === undefined
-      ? undefined
-      : currentTurn - compactionState.lastCompactionTurn;
-  const inCooldown =
-    turnsSinceCompaction !== undefined &&
-    turnsSinceCompaction <= COMPACTION_COOLDOWN_TURNS;
-  const emergencyThreshold = Math.floor(
-    availableForInput * COMPACTION_EMERGENCY_INPUT_RATIO
-  );
-  if (inCooldown && actualPromptTokens < emergencyThreshold) {
-    if (didSnip) {
-      context.messages = snipResult.messages;
-    }
-    logger.debug(
-      `[Loop] [轮次 ${currentTurn}] 跳过连续 LLM 压缩，距离上次压缩 ${turnsSinceCompaction} 轮`
-    );
-    return didSnip ? 'snipped' : 'none';
+    return didSnip ? { kind: 'snipped' } : { kind: 'none' };
   }
 
   logger.debug(
@@ -694,6 +763,7 @@ export async function* checkAndCompactInLoop(
   let strategy: 'llm' | 'fallback' | undefined;
   let preTokens: number | undefined;
   let postTokens: number | undefined;
+  let failurePhase: 'compaction' | 'checkpoint' = 'compaction';
   yield { kind: 'compaction', phase: 'start', reason: 'threshold' };
   try {
     // LLM compaction 使用 snip 后的消息（如有），但不提前写入 context.messages
@@ -732,6 +802,7 @@ export async function* checkAndCompactInLoop(
     }
 
     // 保存压缩数据到 JSONL
+    failurePhase = 'checkpoint';
     await persistCompaction(
       deps,
       context,
@@ -755,20 +826,16 @@ export async function* checkAndCompactInLoop(
       compactionState.lastCompactionTurn = currentTurn;
     }
     outcome = result.success ? 'completed' : 'fallback';
-    return 'compacted';
+    return { kind: 'compacted', postTokens: result.postTokens };
   } catch (error) {
     // AbortError（宽口径）: 返回 'none' 让控制流回到主循环的下一个 signal 检查点
     // 注意：abort 时不写入 snip 结果到 context.messages，保持原始状态
     if (isAbortError(error)) {
       logger.debug(`[Loop] [轮次 ${currentTurn}] 压缩被中止`);
-      return 'none';
+      return { kind: 'none' };
     }
-    // 非 abort 错误：snip 是安全的确定性操作，可以保留
-    if (didSnip) {
-      context.messages = snipResult.messages;
-    }
-    logger.error(`[Loop] [轮次 ${currentTurn}] 压缩失败，继续执行`, error);
-    return didSnip ? 'snipped' : 'none';
+    logger.error(`[Loop] [轮次 ${currentTurn}] 压缩失败，停止执行`, error);
+    return { kind: 'failed', phase: failurePhase };
   } finally {
     yield {
       kind: 'compaction',
@@ -817,6 +884,27 @@ function makeToolResultPersistenceFailure(
     error: {
       type: 'tool_persistence_failed',
       message: DURABLE_TOOL_RESULT_FAILURE_MESSAGE,
+    },
+    metadata: {
+      turnsCount,
+      toolCallsCount,
+      duration: Date.now() - startTime,
+    },
+  };
+}
+
+function makeContextCompactionFailure(
+  turnsCount: number,
+  toolCallsCount: number,
+  startTime: number,
+  phase: 'compaction' | 'checkpoint'
+): LoopResult {
+  return {
+    success: false,
+    error: {
+      type: 'context_compaction_failed',
+      message: 'Context compaction could not cross the hard budget boundary.',
+      details: { phase },
     },
     metadata: {
       turnsCount,
@@ -1000,6 +1088,7 @@ validates the object and may return a bounded corrective error.`;
     let totalTokens = 0;
     let lastPromptTokens: number | undefined;
     let lastApiCallTime: number | undefined;
+    let handoffAttemptSpent = false;
     let maxOutputRecoveryCount = 0;
     let incompleteIntentRetryCount = 0;
     let delegationRetryCount = 0;
@@ -1810,21 +1899,60 @@ validates the object and may return a bounded corrective error.`;
         // writeback 确保 context.messages 与 state.history 同步，
         // 因为 checkAndCompactInLoop 直接读取 context.messages
         state.writeback();
+        const chatConfig = deps.chatService.getConfig();
+        const sharedSnapshot = deriveTokenBudgetSnapshot({
+          actualPromptTokens: lastPromptTokens,
+          maxContextTokens: chatConfig.maxContextTokens,
+          maxOutputTokens: resolveCompactionOutputReserve({
+            maxContextTokens: chatConfig.maxContextTokens,
+            maxOutputTokens: chatConfig.maxOutputTokens,
+            configuredMaxOutputTokens: deps.config.maxOutputTokens,
+          }),
+        });
         const compactResult = yield* checkAndCompactInLoop(
           deps,
           context,
           turnsCount,
-          lastPromptTokens,
+          sharedSnapshot,
           options?.signal,
           lastApiCallTime,
           activeUserRequest,
           compactionState
         );
 
-        if (compactResult !== 'none') {
+        if (compactResult.kind === 'failed') {
+          return makeContextCompactionFailure(
+            turnsCount,
+            allToolResults.length,
+            startTime,
+            compactResult.phase
+          );
+        }
+
+        if (compactResult.kind === 'snipped' || compactResult.kind === 'compacted') {
           // checkAndCompactInLoop 已更新 context.messages，同步到 state
           state.replaceHistory(context.messages);
         }
+        if (compactResult.kind === 'compacted') {
+          lastPromptTokens = undefined;
+        }
+
+        if (sharedSnapshot.phase === 'handoff_band') {
+          const handoffAttempt = await maybeAppendTokenBudgetHandoff({
+            deps,
+            context,
+            state,
+            snapshot: sharedSnapshot,
+            attemptSpent: handoffAttemptSpent,
+          });
+          if (
+            handoffAttempt.kind === 'failed' ||
+            handoffAttempt.kind === 'suppressed'
+          ) {
+            handoffAttemptSpent = true;
+          }
+        }
+        state.writeback();
 
         // 3. 轮次计数
         turnsCount++;

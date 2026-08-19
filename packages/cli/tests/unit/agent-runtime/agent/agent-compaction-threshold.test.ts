@@ -4,6 +4,9 @@ import type { LoopDependencies } from '../../../../src/agent/loop/types.js';
 import type { ChatContext } from '../../../../src/agent/types.js';
 import { type BladeConfig, PermissionMode } from '../../../../src/config/types.js';
 import { CompactionService } from '../../../../src/context/CompactionService.js';
+import { deriveTokenBudgetSnapshot } from '../../../../src/context/TokenBudgetHandoff.js';
+import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
+import { ToolRegistry } from '../../../../src/tools/registry/ToolRegistry.js';
 
 function createConfig(overrides: Partial<BladeConfig> = {}): BladeConfig {
   return {
@@ -67,6 +70,34 @@ function createContext(): ChatContext {
   };
 }
 
+function createDeps(): LoopDependencies {
+  const toolExecutor = new ToolExecutor(new ToolRegistry());
+  return {
+    chatService: {
+      chat: async () => {
+        throw new Error('not used');
+      },
+      streamChat: async function* () {
+        return;
+      },
+      getConfig: () => ({
+        provider: 'openai',
+        model: 'test-model',
+        maxContextTokens: 200000,
+        apiKey: 'test-key',
+        baseUrl: 'https://example.com/v1',
+      }),
+      updateConfig: () => undefined,
+    },
+    toolExecutor,
+    executionEngine: undefined,
+    config: createConfig(),
+    runtimeOptions: {},
+    currentModelMaxContextTokens: 200000,
+    applySkillToolRestrictions: (tools) => tools,
+  };
+}
+
 describe('Agent compaction threshold fallback', () => {
   it('uses a larger dynamic fallback output budget when maxOutputTokens is not configured', async () => {
     const compactSpy = vi.spyOn(CompactionService, 'compact').mockResolvedValue({
@@ -80,27 +111,20 @@ describe('Agent compaction threshold fallback', () => {
       summaryMessage: { role: 'user', content: 'summary' },
     });
 
-    const deps = {
-      chatService: {
-        getConfig: () => ({
-          model: 'test-model',
-          maxContextTokens: 200000,
-          apiKey: 'test-key',
-          baseUrl: 'https://example.com/v1',
-        }),
-      },
-      config: createConfig(),
-      executionEngine: undefined,
-    } as unknown as LoopDependencies;
-
-    const compaction = checkAndCompactInLoop(deps, createContext(), 2, 148000);
+    const deps = createDeps();
+    const snapshot = deriveTokenBudgetSnapshot({
+      actualPromptTokens: 148000,
+      maxContextTokens: 200000,
+      maxOutputTokens: 20000,
+    });
+    const compaction = checkAndCompactInLoop(deps, createContext(), 2, snapshot);
     let next = await compaction.next();
     while (!next.done) {
       next = await compaction.next();
     }
     const didCompact = next.value;
 
-    expect(didCompact).toBe('compacted');
+    expect(didCompact).toEqual({ kind: 'compacted', postTokens: 24000 });
     expect(compactSpy).toHaveBeenCalledOnce();
   });
 });

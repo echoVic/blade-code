@@ -9,6 +9,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ===== Mock ALL external modules before imports =====
 
+const loggerSpies = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
 vi.mock('nanoid', () => ({ nanoid: () => 'mock-nanoid' }));
 
 vi.mock('../../../../src/context/CompactionService.js', () => ({
@@ -78,16 +85,31 @@ vi.mock('../../../../src/skills/index.js', () => ({
 
 vi.mock('../../../../src/logging/Logger.js', () => ({
   createLogger: () => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
+    debug: loggerSpies.debug,
+    info: loggerSpies.info,
+    warn: loggerSpies.warn,
+    error: loggerSpies.error,
   }),
   LogCategory: { AGENT: 'agent' },
 }));
 
 vi.mock('../../../../src/agent/loop/StreamingToolExecutor.js', () => ({
-  StreamingToolExecutor: class MockStreamingToolExecutor {},
+  StreamingToolExecutor: class MockStreamingToolExecutor {
+    setAdmissionPolicy(): void {}
+    setAdmissionRollback(): void {}
+    setExecutionPolicy(): void {}
+    addTool(): 'queued' {
+      return 'queued';
+    }
+    discard(): void {}
+    hasTools(): boolean {
+      return false;
+    }
+    getQueuedToolCalls(): readonly [] {
+      return [];
+    }
+    async *getRemainingResults(): AsyncGenerator<never> {}
+  },
 }));
 
 // ===== Imports (after mocks) =====
@@ -98,6 +120,7 @@ import {
   checkAndCompactInLoop,
   executeLoopGenerator,
 } from '../../../../src/agent/loop/executeLoopGenerator.js';
+import { ConversationState } from '../../../../src/agent/loop/ConversationState.js';
 import type { LoopDependencies, LoopEvent } from '../../../../src/agent/loop/types.js';
 import type {
   ChatContext,
@@ -107,11 +130,24 @@ import type {
 import { PermissionMode } from '../../../../src/config/types.js';
 import { CompactionService } from '../../../../src/context/CompactionService.js';
 import { ContextManager } from '../../../../src/context/ContextManager.js';
+import {
+  deriveTokenBudgetSnapshot,
+  projectTokenBudgetHandoffEvent,
+} from '../../../../src/context/TokenBudgetHandoff.js';
 import { ReactiveCompaction } from '../../../../src/context/ReactiveCompaction.js';
+import { Type } from '../../../../src/schema/index.js';
+import type {
+  ChatConfig,
+  ChatResponse,
+  Message,
+} from '../../../../src/services/ChatServiceInterface.js';
 import { markProviderReplayBoundary } from '../../../../src/services/pi/providerRetry.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
+import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
+import { ToolRegistry } from '../../../../src/tools/registry/ToolRegistry.js';
+import type { Tool, ToolResult } from '../../../../src/tools/types/index.js';
 import { TOOL_TURN_MAX_CALLS } from '../../../../src/tools/execution/ToolTurnAdmission.js';
-import { ToolErrorType } from '../../../../src/tools/types/index.js';
+import { ToolErrorType, ToolKind } from '../../../../src/tools/types/index.js';
 
 // Access the shared mock functions via a probe instance of the mocked class
 const reactiveCompactionState = new (
@@ -124,61 +160,227 @@ const reactiveCompactionState = new (
 
 // ===== Helpers =====
 
+const readTool: Tool = {
+  name: 'Read',
+  displayName: 'Read',
+  kind: ToolKind.ReadOnly,
+  isReadOnly: true,
+  isConcurrencySafe: true,
+  strict: false,
+  description: {
+    short: 'Read a file.',
+  },
+  version: '1.0.0',
+  tags: [],
+  getFunctionDeclaration() {
+    return {
+      name: 'Read',
+      description: 'Read a file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+          },
+        },
+        required: ['path'],
+      },
+    };
+  },
+  getMetadata() {
+    return { name: 'Read' };
+  },
+  build(params: unknown) {
+    return {
+      toolName: 'Read',
+      params,
+      getDescription: () => 'Read invocation',
+      getAffectedPaths: () => [],
+      async execute(): Promise<ToolResult> {
+        return {
+          success: true,
+          llmContent: 'read',
+        };
+      },
+    };
+  },
+  async execute(): Promise<ToolResult> {
+    return {
+      success: true,
+      llmContent: 'read',
+    };
+  },
+};
+
+function createTestChatConfig(overrides: Partial<ChatConfig> = {}): ChatConfig {
+  return {
+    provider: 'openai',
+    model: 'test-model',
+    apiKey: 'key',
+    maxContextTokens: 100_000,
+    maxOutputTokens: 4_096,
+    ...overrides,
+  };
+}
+
+function createHandoffChatConfig(overrides: Partial<ChatConfig> = {}): ChatConfig {
+  return createTestChatConfig({
+    maxContextTokens: 110_000,
+    maxOutputTokens: 10_000,
+    ...overrides,
+  });
+}
+
+function toolResponse(
+  promptTokens: number,
+  overrides: Partial<ChatResponse> = {}
+): ChatResponse {
+  return {
+    content: '',
+    toolCalls: [
+      {
+        id: 'tool-call-read-1',
+        type: 'function',
+        function: {
+          name: 'Read',
+          arguments: JSON.stringify({ path: 'package.json' }),
+        },
+      },
+    ],
+    usage: {
+      promptTokens,
+      completionTokens: 25,
+      totalTokens: promptTokens + 25,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+    },
+    finishReason: 'tool_calls',
+    ...overrides,
+  };
+}
+
+function finalResponse(
+  promptTokens: number,
+  content = 'final response',
+  overrides: Partial<ChatResponse> = {}
+): ChatResponse {
+  return {
+    content,
+    toolCalls: undefined,
+    usage: {
+      promptTokens,
+      completionTokens: 20,
+      totalTokens: promptTokens + 20,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+    },
+    finishReason: 'stop',
+    ...overrides,
+  };
+}
+
 function createMockDeps(overrides: Partial<LoopDependencies> = {}): LoopDependencies {
-  const mockRegistry = {
-    get: vi.fn().mockReturnValue({ isConcurrencySafe: true, kind: 'readonly' }),
-    getFunctionDeclarationsByMode: vi.fn().mockReturnValue([]),
-    getAll: vi.fn().mockReturnValue([]),
-    getDeferredToolsListing: vi.fn().mockReturnValue(''),
-    waitForMcpCatalogIdle: vi.fn().mockResolvedValue(undefined),
-    drainMcpCatalogChanges: vi.fn().mockReturnValue([]),
-    drainMcpContentChanges: vi.fn().mockReturnValue([]),
-    drainMcpResourceUpdates: vi.fn().mockReturnValue([]),
-    drainMcpConnectionChanges: vi.fn().mockReturnValue([]),
-    drainMcpLogs: vi.fn().mockReturnValue([]),
-    drainMcpInstructionsChanges: vi.fn().mockReturnValue([]),
-    drainMcpTaskChanges: vi.fn().mockReturnValue([]),
-    deferredToolManager: undefined,
+  const registry = new ToolRegistry();
+  registry.register(readTool);
+  vi.spyOn(registry, 'get').mockImplementation((name) => {
+    if (name === 'Read') {
+      return readTool;
+    }
+    return undefined;
+  });
+  vi.spyOn(registry, 'getFunctionDeclarationsByMode').mockReturnValue([]);
+  vi.spyOn(registry, 'getAll').mockReturnValue([]);
+  vi.spyOn(registry, 'getDeferredToolsListing').mockReturnValue('');
+  vi.spyOn(registry, 'waitForMcpCatalogIdle').mockResolvedValue(undefined);
+  vi.spyOn(registry, 'drainMcpCatalogChanges').mockReturnValue([]);
+  vi.spyOn(registry, 'drainMcpContentChanges').mockReturnValue([]);
+  vi.spyOn(registry, 'drainMcpResourceUpdates').mockReturnValue([]);
+  vi.spyOn(registry, 'drainMcpConnectionChanges').mockReturnValue([]);
+  vi.spyOn(registry, 'drainMcpLogs').mockReturnValue([]);
+  vi.spyOn(registry, 'drainMcpInstructionsChanges').mockReturnValue([]);
+  vi.spyOn(registry, 'drainMcpTaskChanges').mockReturnValue([]);
+
+  const toolExecutor = new ToolExecutor(registry);
+  vi.spyOn(toolExecutor, 'getRegistry').mockReturnValue(registry);
+  vi.spyOn(toolExecutor, 'execute').mockResolvedValue({
+    success: true,
+    llmContent: 'read',
+  } satisfies ToolResult);
+
+  const chatService = {
+    chat: vi.fn().mockResolvedValue({
+      content: 'Hello from LLM',
+      toolCalls: undefined,
+      usage: {
+        promptTokens: 100,
+        completionTokens: 50,
+        totalTokens: 150,
+        cacheReadInputTokens: 20,
+        cacheCreationInputTokens: 10,
+        costUsd: 0.0025,
+      },
+      finishReason: 'stop',
+    } satisfies ChatResponse),
+    streamChat: vi.fn(),
+    getConfig: vi.fn(() => createTestChatConfig()),
+    updateConfig: vi.fn(),
   };
 
-  return {
-    chatService: {
-      chat: vi.fn().mockResolvedValue({
-        content: 'Hello from LLM',
-        toolCalls: undefined,
-        usage: {
-          promptTokens: 100,
-          completionTokens: 50,
-          totalTokens: 150,
-          cacheReadInputTokens: 20,
-          cacheCreationInputTokens: 10,
-          costUsd: 0.0025,
-        },
-        finishReason: 'stop',
-      }),
-      streamChat: vi.fn(),
-      getConfig: vi.fn().mockReturnValue({
-        stream: false,
-        model: 'test-model',
-        apiKey: 'key',
-        maxOutputTokens: 4096,
-      }),
-      updateConfig: vi.fn(),
-    } as any,
-    toolExecutor: {
-      getRegistry: vi.fn().mockReturnValue(mockRegistry),
-      execute: vi.fn(),
-    } as any,
+  const deps = {
+    chatService,
+    toolExecutor,
     executionEngine: undefined,
     config: {
+      currentModelId: 'test-model',
+      models: [],
+      temperature: 0,
+      maxContextTokens: 100_000,
+      maxOutputTokens: 4_096,
+      stream: false,
+      topP: 0.9,
+      topK: 50,
+      timeout: 30_000,
+      codeTheme: 'dracula',
+      uiTheme: 'system',
+      language: 'zh-CN',
+      fontSize: 14,
+      autoSaveSessions: true,
+      notifyBuild: false,
+      notifyErrors: false,
+      notifySounds: false,
+      privacyTelemetry: false,
+      privacyCrash: true,
+      debug: false,
+      mcpEnabled: false,
+      mcpServers: {},
+      permissions: { allow: [], ask: [], deny: [] },
+      permissionMode: PermissionMode.DEFAULT,
+      hooks: {},
+      env: {},
+      disableAllHooks: false,
       maxTurns: 10,
-      compactionThreshold: 0.8,
-    } as any,
-    runtimeOptions: {} as any,
-    currentModelMaxContextTokens: 100000,
-    applySkillToolRestrictions: vi.fn((tools: unknown) => tools),
-    ...overrides,
-  } as unknown as LoopDependencies;
+      lspServers: {},
+      modelProviders: {},
+      enabledPlugins: {},
+      pluginSourcePolicy: {
+        restrictToAllowedSources: false,
+        requireGitCommitSha: false,
+        allowedGitHosts: [],
+        allowedMarketplaces: [],
+        allowedLocalRoots: [],
+      },
+      maxConcurrentTasks: 3,
+      maxQueuedTasks: 100,
+      maxQueuedTaskBytes: 64 * 1024 * 1024,
+      maxResidentSessionRuntimes: 32,
+      sessionRuntimeIdleMs: 5 * 60 * 1000,
+    },
+    runtimeOptions: {},
+    currentModelMaxContextTokens: 100_000,
+    applySkillToolRestrictions: vi.fn((tools) => tools),
+  } satisfies Partial<LoopDependencies>;
+
+  return { ...deps, ...overrides } as LoopDependencies;
 }
 
 function exposeIndependentVerificationTools(deps: LoopDependencies): void {
@@ -196,9 +398,9 @@ function createMockContext(overrides: Partial<ChatContext> = {}): ChatContext {
     sessionId: 'test-session',
     userId: 'test-user',
     workspaceRoot: '/tmp/test',
-    permissionMode: 'normal' as any,
+    permissionMode: PermissionMode.DEFAULT,
     ...overrides,
-  } as ChatContext;
+  };
 }
 
 async function drainGenerator(
@@ -263,6 +465,73 @@ function createTypedPersistenceHarness(options?: {
   );
   const deps: LoopDependencies = { ...baseDeps, executionEngine };
   return { deps, saveMessage, saveToolUse, saveToolResult };
+}
+
+function createHandoffPersistenceHarness(options?: {
+  rejectAssistantMessage?: boolean;
+  rejectToolUse?: boolean;
+  rejectToolResult?: boolean;
+}) {
+  const harness = createTypedPersistenceHarness(options);
+  vi.mocked(harness.deps.chatService.getConfig).mockImplementation(() =>
+    createHandoffChatConfig()
+  );
+  return harness;
+}
+
+function recordedHandoff(promptTokens: number) {
+  return {
+    version: 1 as const,
+    observedPromptTokens: promptTokens,
+    availableForInput: 100_000,
+    handoffThreshold: 70_000,
+    compactionThreshold: 80_000,
+  };
+}
+
+function recordedHandoffResult(
+  promptTokens: number,
+  messageId = 'mock-nanoid'
+) {
+  return {
+    outcome: 'created' as const,
+    event: {
+      id: 'evt-handoff-1',
+      sessionId: 'test-session',
+      projectPath: '/tmp/test',
+      timestamp: '2026-08-19T08:00:00.000Z',
+      type: 'token_budget_handoff_recorded' as const,
+      cwd: '/tmp/test',
+      version: '1',
+      data: {
+        ...recordedHandoff(promptTokens),
+        messageId,
+        createdAt: '2026-08-19T08:00:00.000Z',
+      },
+    },
+  };
+}
+
+function projectedHandoff(promptTokens: number): Message {
+  const event = {
+    id: 'evt-handoff-1',
+    sessionId: 'test-session',
+    projectPath: '/tmp/test',
+    timestamp: '2026-08-19T08:00:00.000Z',
+    type: 'token_budget_handoff_recorded' as const,
+    cwd: '/tmp/test',
+    version: '1',
+    data: {
+      ...recordedHandoff(promptTokens),
+      messageId: 'handoff-message-1',
+      createdAt: '2026-08-19T08:00:00.000Z',
+    },
+  };
+  const message = projectTokenBudgetHandoffEvent(event);
+  if (!message) {
+    throw new Error('Expected a projected token-budget handoff message');
+  }
+  return message;
 }
 
 function contextualRuleResolution() {
@@ -488,7 +757,11 @@ describe('executeLoopGenerator', () => {
           messages: [{ role: 'user', content: 'large history' }],
         }),
         1,
-        90_000
+        deriveTokenBudgetSnapshot({
+          actualPromptTokens: 90_000,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_096,
+        })
       );
       const events: LoopEvent[] = [];
       let step = await generator.next();
@@ -637,7 +910,7 @@ describe('executeLoopGenerator', () => {
       });
     });
 
-    it('applies post-compaction hysteresis while preserving emergency compaction', async () => {
+    it('compacts every hard-boundary crossing even during the former cooldown', async () => {
       const deps = createMockDeps();
       (deps.chatService.getConfig as ReturnType<typeof vi.fn>).mockReturnValue({
         stream: false,
@@ -656,9 +929,7 @@ describe('executeLoopGenerator', () => {
         boundaryMessage: { role: 'system', content: '' },
         summaryMessage: { role: 'user', content: 'summary' },
       };
-      vi.mocked(CompactionService.compact)
-        .mockResolvedValueOnce(compacted)
-        .mockResolvedValueOnce(compacted);
+      vi.mocked(CompactionService.compact).mockResolvedValue(compacted);
       const context = createMockContext({
         messages: [{ role: 'user', content: 'large history' }],
       });
@@ -669,7 +940,11 @@ describe('executeLoopGenerator', () => {
           deps,
           context,
           turn,
-          tokens,
+          deriveTokenBudgetSnapshot({
+            actualPromptTokens: tokens,
+            maxContextTokens: 100_000,
+            maxOutputTokens: 4_096,
+          }),
           undefined,
           undefined,
           'active task',
@@ -682,12 +957,432 @@ describe('executeLoopGenerator', () => {
         return step.value;
       };
 
-      await expect(runCheck(1, 85_000)).resolves.toBe('compacted');
-      await expect(runCheck(2, 85_000)).resolves.toBe('none');
-      expect(CompactionService.compact).toHaveBeenCalledTimes(1);
-
-      await expect(runCheck(2, 92_000)).resolves.toBe('compacted');
+      await expect(runCheck(1, 85_000)).resolves.toEqual({
+        kind: 'compacted',
+        postTokens: 1_000,
+      });
+      await expect(runCheck(2, 85_000)).resolves.toEqual({
+        kind: 'compacted',
+        postTokens: 1_000,
+      });
       expect(CompactionService.compact).toHaveBeenCalledTimes(2);
+    });
+
+    it('commits the marker before the handoff-band Provider request', async () => {
+      const { deps } = createHandoffPersistenceHarness();
+      const recordSpy = vi.spyOn(
+        deps.executionEngine!.getContextManager(),
+        'recordTokenBudgetHandoff'
+      );
+      const order: string[] = [];
+      recordSpy.mockImplementationOnce(async (...args) => {
+        const result = await ContextManager.prototype.recordTokenBudgetHandoff.apply(
+          deps.executionEngine!.getContextManager(),
+          args
+        );
+        order.push('commit');
+        return result;
+      });
+      vi.mocked(deps.chatService.chat).mockImplementation(async (messages) => {
+        if (
+          messages.some(
+            (message) => message.id === 'mock-nanoid' && message.role === 'user'
+          )
+        ) {
+          order.push('request');
+          return finalResponse(70_000, 'done');
+        }
+        return toolResponse(70_000);
+      });
+
+      const context = createMockContext();
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Read package.json before continuing.',
+          context,
+          { stream: false },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(recordSpy).toHaveBeenCalledOnce();
+      const secondRequest = vi.mocked(deps.chatService.chat).mock.calls[1];
+      expect(secondRequest).toBeDefined();
+      expect(
+        secondRequest?.[0].filter(
+          (message) => message.id === 'mock-nanoid' && message.role === 'user'
+        )
+      ).toHaveLength(1);
+      expect(order).toEqual(['commit', 'request']);
+    });
+
+    it('reuses a restored durable handoff marker without persisting another one', async () => {
+      const { deps } = createHandoffPersistenceHarness();
+      const recordSpy = vi.spyOn(
+        deps.executionEngine!.getContextManager(),
+        'recordTokenBudgetHandoff'
+      );
+      vi.mocked(deps.chatService.chat)
+        .mockResolvedValueOnce(toolResponse(70_000))
+        .mockResolvedValueOnce(finalResponse(75_000, 'still in handoff band'))
+        .mockResolvedValueOnce(finalResponse(75_000, 'done'));
+
+      const marker = projectedHandoff(70_000);
+      const context = createMockContext({
+        messages: [marker],
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Continue with restored context.',
+          context,
+          { stream: false },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(recordSpy).not.toHaveBeenCalled();
+      for (const call of vi.mocked(deps.chatService.chat).mock.calls) {
+        expect(call[0].filter((message) => message.id === marker.id)).toHaveLength(1);
+      }
+    });
+
+    it('logs one sanitized warning and avoids retrying handoff persistence after EIO', async () => {
+      const { deps } = createHandoffPersistenceHarness();
+      const recordSpy = vi
+        .spyOn(deps.executionEngine!.getContextManager(), 'recordTokenBudgetHandoff')
+        .mockRejectedValueOnce(
+          Object.assign(new Error('disk unavailable'), { code: 'EIO' })
+        );
+      vi.mocked(deps.chatService.chat)
+        .mockResolvedValueOnce(toolResponse(70_000))
+        .mockResolvedValueOnce(finalResponse(75_000, 'done in handoff band'));
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Continue after persistence error.',
+          createMockContext(),
+          { stream: false },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(recordSpy).toHaveBeenCalledTimes(1);
+      for (const call of vi.mocked(deps.chatService.chat).mock.calls) {
+        expect(
+          call[0].filter(
+            (message) =>
+              typeof message.content === 'string' &&
+              message.content.includes('<token-budget-handoff')
+          )
+        ).toHaveLength(0);
+      }
+      expect(loggerSpies.warn).toHaveBeenCalledTimes(1);
+      const warning = loggerSpies.warn.mock.calls[0]?.[0];
+      expect(typeof warning).toBe('string');
+      expect(warning).toMatch(
+        /^token_budget_handoff_persist_failed session=[a-f0-9]{16} error=Error:EIO$/
+      );
+      expect(new TextEncoder().encode(warning).length).toBeLessThanOrEqual(512);
+    });
+
+    it('never includes persistence error messages in the handoff warning', async () => {
+      const { deps } = createHandoffPersistenceHarness();
+      const recordSpy = vi
+        .spyOn(deps.executionEngine!.getContextManager(), 'recordTokenBudgetHandoff')
+        .mockRejectedValueOnce(
+          new Error('disk failed at /private/workspace with secret-token')
+        );
+      vi.mocked(deps.chatService.chat)
+        .mockResolvedValueOnce(toolResponse(70_000))
+        .mockResolvedValueOnce(finalResponse(75_000, 'done'));
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Continue without leaking diagnostics.',
+          createMockContext(),
+          { stream: false },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(recordSpy).toHaveBeenCalledOnce();
+      const warning = loggerSpies.warn.mock.calls[0]?.[0];
+      expect(warning).toMatch(
+        /^token_budget_handoff_persist_failed session=[a-f0-9]{16} error=Error:unknown$/
+      );
+      expect(warning).not.toContain('/private/workspace');
+      expect(warning).not.toContain('secret-token');
+      expect(new TextEncoder().encode(String(warning)).length).toBeLessThanOrEqual(512);
+    });
+
+    it('does not append a marker or retry after a suppressed durable handoff result', async () => {
+      const { deps } = createHandoffPersistenceHarness();
+      const recordSpy = vi
+        .spyOn(deps.executionEngine!.getContextManager(), 'recordTokenBudgetHandoff')
+        .mockResolvedValueOnce({ outcome: 'suppressed', recordId: 'raw' });
+      vi.mocked(deps.chatService.chat)
+        .mockResolvedValueOnce(toolResponse(70_000))
+        .mockResolvedValueOnce(finalResponse(75_000, 'suppressed handoff continues'));
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Continue after suppressed handoff.',
+          createMockContext(),
+          { stream: false },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(recordSpy).toHaveBeenCalledTimes(1);
+      for (const call of vi.mocked(deps.chatService.chat).mock.calls) {
+        expect(
+          call[0].filter(
+            (message) =>
+              typeof message.content === 'string' &&
+              message.content.includes('<token-budget-handoff')
+          )
+        ).toHaveLength(0);
+      }
+    });
+
+    it('reuses the same handoff marker identity across a model switch within one invocation', async () => {
+      const { deps } = createHandoffPersistenceHarness();
+      const recordSpy = vi.spyOn(
+        deps.executionEngine!.getContextManager(),
+        'recordTokenBudgetHandoff'
+      );
+      const handoffRecord = recordedHandoffResult(70_000);
+      const handoffMessageId = handoffRecord.event.data.messageId;
+      recordSpy.mockResolvedValueOnce(handoffRecord);
+      let configCall = 0;
+      vi.mocked(deps.chatService.getConfig).mockImplementation(() =>
+        createHandoffChatConfig({
+          model: configCall++ === 0 ? 'test-model-a' : 'test-model-b',
+        })
+      );
+      vi.mocked(deps.chatService.chat)
+        .mockResolvedValueOnce(toolResponse(70_000))
+        .mockResolvedValueOnce(toolResponse(72_000))
+        .mockResolvedValueOnce(finalResponse(75_000, 'done'));
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Continue across model switch.',
+          createMockContext(),
+          { stream: false },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(recordSpy).toHaveBeenCalledTimes(1);
+      const chatCalls = vi.mocked(deps.chatService.chat).mock.calls;
+      expect(chatCalls.length).toBeGreaterThanOrEqual(3);
+      expect(
+        chatCalls[0]?.[0].filter(
+          (message) => message.id === handoffMessageId && message.role === 'user'
+        )
+      ).toHaveLength(0);
+      for (const call of chatCalls.slice(1)) {
+        expect(
+          call[0].filter(
+            (message) => message.id === handoffMessageId && message.role === 'user'
+          )
+        ).toHaveLength(1);
+      }
+    });
+
+    it('commits only once across a zero-chunk streaming fallback boundary', async () => {
+      const { deps } = createHandoffPersistenceHarness();
+      const recordSpy = vi.spyOn(
+        deps.executionEngine!.getContextManager(),
+        'recordTokenBudgetHandoff'
+      );
+      const handoffRecord = recordedHandoffResult(70_000);
+      const handoffMessageId = handoffRecord.event.data.messageId;
+      recordSpy.mockResolvedValueOnce(handoffRecord);
+      vi.mocked(deps.chatService.streamChat)
+        .mockImplementationOnce(async function* () {
+        })
+        .mockImplementationOnce(async function* () {
+          return;
+        });
+      vi.mocked(deps.chatService.chat)
+        .mockResolvedValueOnce(toolResponse(70_000))
+        .mockResolvedValueOnce(finalResponse(75_000, 'fallback'));
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Stream then fallback.',
+          createMockContext(),
+          { stream: true },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(recordSpy).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(deps.chatService.chat)).toHaveBeenCalledTimes(2);
+      const firstFallbackRequest = vi.mocked(deps.chatService.chat).mock.calls[0];
+      expect(
+        firstFallbackRequest?.[0].filter(
+          (message) => message.id === handoffMessageId && message.role === 'user'
+        )
+      ).toHaveLength(0);
+      const secondFallbackRequest = vi.mocked(deps.chatService.chat).mock.calls[1];
+      expect(
+        secondFallbackRequest?.[0].filter(
+          (message) => message.id === handoffMessageId && message.role === 'user'
+        )
+      ).toHaveLength(1);
+    });
+
+    it('triggers full compaction before the next normal Provider request when usage reaches 80000 directly', async () => {
+      const { deps } = createHandoffPersistenceHarness();
+      const recordSpy = vi.spyOn(
+        deps.executionEngine!.getContextManager(),
+        'recordTokenBudgetHandoff'
+      );
+      const order: string[] = [];
+      const chatMock = vi.mocked(deps.chatService.chat);
+      chatMock.mockImplementation(async (messages) => {
+        order.push(
+          messages.some(
+            (message) =>
+              message.role === 'user' && message.content === 'POST_COMPACT'
+          )
+            ? 'chat:post'
+            : 'chat:initial'
+        );
+        return order.length === 1
+          ? toolResponse(80_000)
+          : finalResponse(24_000, 'after compact');
+      });
+      vi.mocked(CompactionService.compact).mockImplementationOnce(async () => {
+        order.push('compact');
+        return {
+          success: true,
+          summary: 'summary',
+          preTokens: 80_000,
+          postTokens: 24_000,
+          filesIncluded: [],
+          compactedMessages: [{ role: 'user', content: 'POST_COMPACT' }],
+          boundaryMessage: { role: 'system', content: '' },
+          summaryMessage: { role: 'user', content: 'summary' },
+        };
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Read package.json before continuing.',
+          createMockContext(),
+          { stream: false },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(recordSpy).not.toHaveBeenCalled();
+      expect(CompactionService.compact).toHaveBeenCalledOnce();
+      expect(order).toEqual(['chat:initial', 'compact', 'chat:post']);
+    });
+
+    it('fails closed when full compaction throws a non-abort error', async () => {
+      const { deps } = createHandoffPersistenceHarness();
+      vi.mocked(deps.chatService.chat).mockResolvedValueOnce(toolResponse(80_000));
+      vi.mocked(CompactionService.compact).mockRejectedValueOnce(new Error('compact failed'));
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Read package.json before continuing.',
+          createMockContext(),
+          { stream: false },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatchObject({
+        type: 'context_compaction_failed',
+        details: { phase: 'compaction' },
+      });
+      expect(vi.mocked(deps.chatService.chat)).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails closed when compaction checkpoint persistence throws after a successful compaction', async () => {
+      const { deps } = createHandoffPersistenceHarness();
+      vi.mocked(deps.chatService.chat).mockResolvedValueOnce(toolResponse(80_000));
+      vi.mocked(CompactionService.compact).mockResolvedValueOnce({
+        success: true,
+        summary: 'summary',
+        preTokens: 80_000,
+        postTokens: 24_000,
+        filesIncluded: [],
+        compactedMessages: [{ role: 'user', content: 'summary' }],
+        boundaryMessage: { role: 'system', content: '' },
+        summaryMessage: { role: 'user', content: 'summary' },
+      });
+      vi.spyOn(
+        deps.executionEngine!.getContextManager(),
+        'saveCompaction'
+      ).mockRejectedValueOnce(new Error('checkpoint failed'));
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Compact then checkpoint.',
+          createMockContext(),
+          { stream: false },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatchObject({
+        type: 'context_compaction_failed',
+        details: { phase: 'checkpoint' },
+      });
+      expect(vi.mocked(deps.chatService.chat)).toHaveBeenCalledTimes(1);
+    });
+
+    it('validates appendDurableControl identity and dedupes by message id', () => {
+      const state = new ConversationState(createMockContext(), undefined);
+
+      expect(() =>
+        state.appendDurableControl({ role: 'user', content: 'missing id' })
+      ).toThrow(
+        'Durable control messages require a user role and identity'
+      );
+      expect(() =>
+        state.appendDurableControl({
+          id: 'marker-1',
+          role: 'assistant',
+          content: 'wrong role',
+        })
+      ).toThrow(
+        'Durable control messages require a user role and identity'
+      );
+
+      const marker = projectedHandoff(70_000);
+      state.appendDurableControl(marker);
+      state.appendDurableControl(marker);
+
+      expect(state.getHistory().filter((message) => message.id === marker.id)).toHaveLength(1);
     });
   });
 

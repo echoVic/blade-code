@@ -67,6 +67,12 @@ interface DeriveSnapshotInput {
   maxOutputTokens?: number;
 }
 
+interface ResolveCompactionOutputReserveInput {
+  maxContextTokens?: number;
+  maxOutputTokens?: number;
+  configuredMaxOutputTokens?: number;
+}
+
 function isSafeNonNegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
@@ -148,6 +154,28 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boo
   return (
     actualKeys.length === expectedKeys.length &&
     actualKeys.every((key, index) => key === expectedKeys[index])
+  );
+}
+
+export function resolveCompactionOutputReserve(
+  input: ResolveCompactionOutputReserveInput
+): number | undefined {
+  const { maxContextTokens, maxOutputTokens, configuredMaxOutputTokens } = input;
+  if (isSafeNonNegativeInteger(maxOutputTokens)) {
+    return maxOutputTokens;
+  }
+  if (isSafeNonNegativeInteger(configuredMaxOutputTokens)) {
+    return configuredMaxOutputTokens;
+  }
+  if (!isStrictPositiveInteger(maxContextTokens)) {
+    return undefined;
+  }
+  return Math.min(
+    Math.max(
+      Math.floor(maxContextTokens * 0.1),
+      8192
+    ),
+    32768
   );
 }
 

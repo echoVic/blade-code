@@ -192,6 +192,7 @@ export interface LoopResult {
       | 'loop_detected'
       | 'aborted'
       | 'chat_disabled'
+      | 'context_compaction_failed'
       | 'delegation_protocol_failed'
       | 'verification_failed'
       | 'goal_verification_failed'

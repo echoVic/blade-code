@@ -189,6 +189,18 @@ export class ConversationState {
     this._pending.push(msg);
   }
 
+  appendDurableControl(message: Message): void {
+    if (!message.id || message.role !== 'user') {
+      throw new Error(
+        'Durable control messages require a user role and identity'
+      );
+    }
+    if (this._history.some((candidate) => candidate.id === message.id)) {
+      return;
+    }
+    this._history.push(message);
+  }
+
   /**
    * 直接追加消息到 history（跳过 pending）。
    *
