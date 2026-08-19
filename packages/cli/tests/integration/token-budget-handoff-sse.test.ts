@@ -97,7 +97,9 @@ class BoundedSseReader {
         this.reader.read(),
         new Promise<never>((_, reject) => {
           timeoutHandle = setTimeout(() => {
-            reject(new Error(`Timed out waiting for SSE bytes after ${this.timeoutMs}ms`));
+            reject(
+              new Error(`Timed out waiting for SSE bytes after ${this.timeoutMs}ms`)
+            );
           }, remainingMs);
         }),
       ]);
@@ -381,7 +383,9 @@ describe('token-budget handoff SSE suppression', () => {
         'message_created',
       ]);
 
-      const serializedFeed = payloads.map((payload) => JSON.stringify(payload)).join('\n');
+      const serializedFeed = payloads
+        .map((payload) => JSON.stringify(payload))
+        .join('\n');
       expect(serializedFeed).not.toContain('token_budget_handoff_recorded');
       expect(serializedFeed).not.toContain('handoff-message-1');
       expect(serializedFeed).not.toContain('Context rollover is approaching');
@@ -425,17 +429,13 @@ describe('token-budget handoff SSE suppression', () => {
         tokenBudgetHandoffRecorded(sessionId, workspace, 'handoff-record-2')
       );
       await nextImmediate();
-      Bus.publish(
-        { sessionId, projectPath: workspace },
-        'task.status',
-        {
-          taskStatus: 'completed',
-          updatedAt: '2026-08-19T08:00:03.000Z',
-          taskQueueDepth: 0,
-          taskConcurrencyLimit: 1,
-          taskInFlight: 0,
-        }
-      );
+      Bus.publish({ sessionId, projectPath: workspace }, 'task.status', {
+        taskStatus: 'completed',
+        updatedAt: '2026-08-19T08:00:03.000Z',
+        taskQueueDepth: 0,
+        taskConcurrencyLimit: 1,
+        taskInFlight: 0,
+      });
 
       const sentinel = JSON.parse(
         (await feed.frames.nextFrame()).data

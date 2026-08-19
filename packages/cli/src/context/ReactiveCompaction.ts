@@ -7,9 +7,10 @@
 
 import type { Message, UsageInfo } from '../services/ChatServiceInterface.js';
 import { isAbortError } from '../utils/abort.js';
-import { CompactionService } from './CompactionService.js';
+import { CompactionService, isCompactionBlockedError } from './CompactionService.js';
 import type { CompactionStrategy } from './compactionCheckpoint.js';
 import { snipCompact } from './SnipCompaction.js';
+import { stripTokenBudgetHandoffMessages } from './TokenBudgetHandoff.js';
 import { TokenCounter } from './TokenCounter.js';
 
 export interface ReactiveCompactOptions {
@@ -57,9 +58,10 @@ export class ReactiveCompaction {
       return { success: false, messages };
     }
     this.hasAttempted = true;
+    const sourceMessages = stripTokenBudgetHandoffMessages(messages);
 
     // Level 1: 激进 snip — 只保留最近 3 轮工具调用
-    const snipResult = snipCompact(messages, {
+    const snipResult = snipCompact(sourceMessages, {
       keepRecentTurns: 3,
       minMessagesForSnip: 10,
     });
@@ -94,7 +96,7 @@ export class ReactiveCompaction {
         };
       }
       if (snipResult.snippedCount > 0) {
-        return this.snipRecovery(messages, currentMessages, options.modelName);
+        return this.snipRecovery(sourceMessages, currentMessages, options.modelName);
       }
       return { success: false, messages };
     } catch (error) {
@@ -102,9 +104,12 @@ export class ReactiveCompaction {
       if (isAbortError(error)) {
         throw error;
       }
+      if (isCompactionBlockedError(error)) {
+        return { success: false, messages };
+      }
       // 如果 snip 至少释放了一些空间，也算部分成功
       if (snipResult.snippedCount > 0) {
-        return this.snipRecovery(messages, currentMessages, options.modelName);
+        return this.snipRecovery(sourceMessages, currentMessages, options.modelName);
       }
       return { success: false, messages };
     }

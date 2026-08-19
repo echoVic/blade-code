@@ -194,9 +194,7 @@ describe('resolveCompactionOutputReserve', () => {
   });
 
   it('uses the existing bounded ten-percent fallback', () => {
-    expect(resolveCompactionOutputReserve({ maxContextTokens: 100_000 })).toBe(
-      10_000
-    );
+    expect(resolveCompactionOutputReserve({ maxContextTokens: 100_000 })).toBe(10_000);
     expect(resolveCompactionOutputReserve({ maxContextTokens: 1_000 })).toBe(8_192);
     expect(resolveCompactionOutputReserve({ maxContextTokens: 1_000_000 })).toBe(
       32_768

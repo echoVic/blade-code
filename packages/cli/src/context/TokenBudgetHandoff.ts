@@ -169,13 +169,7 @@ export function resolveCompactionOutputReserve(
   if (!isStrictPositiveInteger(maxContextTokens)) {
     return undefined;
   }
-  return Math.min(
-    Math.max(
-      Math.floor(maxContextTokens * 0.1),
-      8192
-    ),
-    32768
-  );
+  return Math.min(Math.max(Math.floor(maxContextTokens * 0.1), 8192), 32768);
 }
 
 export function deriveTokenBudgetSnapshot(

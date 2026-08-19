@@ -115,28 +115,30 @@ vi.mock('../../../../src/agent/loop/StreamingToolExecutor.js', () => ({
 // ===== Imports (after mocks) =====
 
 import { ExecutionEngine } from '../../../../src/agent/ExecutionEngine.js';
+import { ConversationState } from '../../../../src/agent/loop/ConversationState.js';
 import { MAX_VERIFICATION_RETRIES } from '../../../../src/agent/loop/completionPolicy.js';
 import {
   checkAndCompactInLoop,
   executeLoopGenerator,
 } from '../../../../src/agent/loop/executeLoopGenerator.js';
-import { ConversationState } from '../../../../src/agent/loop/ConversationState.js';
 import type { LoopDependencies, LoopEvent } from '../../../../src/agent/loop/types.js';
 import type {
   ChatContext,
   LoopOptions,
   LoopResult,
 } from '../../../../src/agent/types.js';
-import { PermissionMode } from '../../../../src/config/types.js';
 import type { BladeConfig } from '../../../../src/config/types.js';
+import { PermissionMode } from '../../../../src/config/types.js';
+import type { CompactionResult } from '../../../../src/context/CompactionService.js';
 import { CompactionService } from '../../../../src/context/CompactionService.js';
 import { ContextManager } from '../../../../src/context/ContextManager.js';
-import {
-  deriveTokenBudgetSnapshot,
-  projectTokenBudgetHandoffEvent,
-} from '../../../../src/context/TokenBudgetHandoff.js';
 import { ReactiveCompaction } from '../../../../src/context/ReactiveCompaction.js';
 import { microCompact, snipCompact } from '../../../../src/context/SnipCompaction.js';
+import {
+  deriveTokenBudgetSnapshot,
+  isTokenBudgetHandoffMessage,
+  projectTokenBudgetHandoffEvent,
+} from '../../../../src/context/TokenBudgetHandoff.js';
 import { Type } from '../../../../src/schema/index.js';
 import type {
   ChatConfig,
@@ -148,9 +150,9 @@ import type {
 import { markProviderReplayBoundary } from '../../../../src/services/pi/providerRetry.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
+import { TOOL_TURN_MAX_CALLS } from '../../../../src/tools/execution/ToolTurnAdmission.js';
 import { ToolRegistry } from '../../../../src/tools/registry/ToolRegistry.js';
 import type { Tool, ToolResult } from '../../../../src/tools/types/index.js';
-import { TOOL_TURN_MAX_CALLS } from '../../../../src/tools/execution/ToolTurnAdmission.js';
 import { ToolErrorType, ToolKind } from '../../../../src/tools/types/index.js';
 
 // Access the shared mock functions via a probe instance of the mocked class
@@ -233,9 +235,7 @@ function createTestChatConfig(overrides: TestChatConfigOverrides = {}): ChatConf
   };
 }
 
-function createHandoffChatConfig(
-  overrides: TestChatConfigOverrides = {}
-): ChatConfig {
+function createHandoffChatConfig(overrides: TestChatConfigOverrides = {}): ChatConfig {
   return createTestChatConfig({
     maxContextTokens: 110_000,
     maxOutputTokens: 10_000,
@@ -288,9 +288,7 @@ interface TestLoopDependencyOverrides {
   executionEngine?: LoopDependencies['executionEngine'];
 }
 
-function createMockDeps(
-  overrides: TestLoopDependencyOverrides = {}
-): LoopDependencies {
+function createMockDeps(overrides: TestLoopDependencyOverrides = {}): LoopDependencies {
   const registry = new ToolRegistry();
   registry.register(readTool);
   vi.spyOn(registry, 'get').mockImplementation((name) => {
@@ -475,7 +473,7 @@ function createTypedPersistenceHarness(options?: {
     '/tmp/blade-execute-loop-durable-identity'
   );
   const deps: LoopDependencies = { ...baseDeps, executionEngine };
-  return { deps, saveMessage, saveToolUse, saveToolResult };
+  return { deps, contextManager, saveMessage, saveToolUse, saveToolResult };
 }
 
 function createHandoffPersistenceHarness(options?: {
@@ -500,10 +498,7 @@ function recordedHandoff(promptTokens: number) {
   };
 }
 
-function recordedHandoffResult(
-  promptTokens: number,
-  messageId = 'mock-nanoid'
-) {
+function recordedHandoffResult(promptTokens: number, messageId = 'mock-nanoid') {
   return {
     outcome: 'created' as const,
     event: {
@@ -769,9 +764,7 @@ describe('executeLoopGenerator', () => {
       expect(snipCompact).toHaveBeenCalledWith([
         { role: 'user', content: 'micro history' },
       ]);
-      expect(context.messages).toEqual([
-        { role: 'user', content: 'micro history' },
-      ]);
+      expect(context.messages).toEqual([{ role: 'user', content: 'micro history' }]);
       expect(CompactionService.compact).not.toHaveBeenCalled();
     });
 
@@ -801,9 +794,7 @@ describe('executeLoopGenerator', () => {
       while (!step.done) step = await generator.next();
 
       expect(step.value).toEqual({ kind: 'snipped' });
-      expect(context.messages).toEqual([
-        { role: 'user', content: 'snipped history' },
-      ]);
+      expect(context.messages).toEqual([{ role: 'user', content: 'snipped history' }]);
       expect(CompactionService.compact).not.toHaveBeenCalled();
     });
 
@@ -1300,8 +1291,7 @@ describe('executeLoopGenerator', () => {
       const handoffMessageId = handoffRecord.event.data.messageId;
       recordSpy.mockResolvedValueOnce(handoffRecord);
       vi.mocked(deps.chatService.streamChat)
-        .mockImplementationOnce(async function* () {
-        })
+        .mockImplementationOnce(async function* () {})
         .mockImplementationOnce(async function* () {
           return;
         });
@@ -1425,8 +1415,7 @@ describe('executeLoopGenerator', () => {
       chatMock.mockImplementation(async (messages) => {
         order.push(
           messages.some(
-            (message) =>
-              message.role === 'user' && message.content === 'POST_COMPACT'
+            (message) => message.role === 'user' && message.content === 'POST_COMPACT'
           )
             ? 'chat:post'
             : 'chat:initial'
@@ -1466,15 +1455,26 @@ describe('executeLoopGenerator', () => {
     });
 
     it('fails closed when full compaction throws a non-abort error', async () => {
-      const { deps } = createHandoffPersistenceHarness();
+      const { deps, contextManager } = createHandoffPersistenceHarness();
+      const saveCompaction = vi.spyOn(contextManager, 'saveCompaction');
+      const marker = projectedHandoff(70_000);
+      const context = createMockContext({
+        messages: [
+          { role: 'user', content: 'before' },
+          marker,
+          { role: 'assistant', content: 'after' },
+        ],
+      });
       vi.mocked(deps.chatService.chat).mockResolvedValueOnce(toolResponse(80_000));
-      vi.mocked(CompactionService.compact).mockRejectedValueOnce(new Error('compact failed'));
+      vi.mocked(CompactionService.compact).mockRejectedValueOnce(
+        new Error('compact failed')
+      );
 
       const { result } = await drainGenerator(
         executeLoopGenerator(
           deps,
           'Read package.json before continuing.',
-          createMockContext(),
+          context,
           { stream: false },
           undefined
         )
@@ -1486,6 +1486,8 @@ describe('executeLoopGenerator', () => {
         details: { phase: 'compaction' },
       });
       expect(vi.mocked(deps.chatService.chat)).toHaveBeenCalledTimes(1);
+      expect(saveCompaction).not.toHaveBeenCalled();
+      expect(context.messages.some(isTokenBudgetHandoffMessage)).toBe(true);
     });
 
     it('fails closed when compaction checkpoint persistence throws after a successful compaction', async () => {
@@ -1529,24 +1531,22 @@ describe('executeLoopGenerator', () => {
 
       expect(() =>
         state.appendDurableControl({ role: 'user', content: 'missing id' })
-      ).toThrow(
-        'Durable control messages require a user role and identity'
-      );
+      ).toThrow('Durable control messages require a user role and identity');
       expect(() =>
         state.appendDurableControl({
           id: 'marker-1',
           role: 'assistant',
           content: 'wrong role',
         })
-      ).toThrow(
-        'Durable control messages require a user role and identity'
-      );
+      ).toThrow('Durable control messages require a user role and identity');
 
       const marker = projectedHandoff(70_000);
       state.appendDurableControl(marker);
       state.appendDurableControl(marker);
 
-      expect(state.getHistory().filter((message) => message.id === marker.id)).toHaveLength(1);
+      expect(
+        state.getHistory().filter((message) => message.id === marker.id)
+      ).toHaveLength(1);
     });
   });
 
@@ -2461,6 +2461,143 @@ describe('executeLoopGenerator', () => {
     expect(result.error?.type).toBe('max_turns_exceeded');
     expect(result.metadata?.turnsCount).toBe(1);
     expect(chatMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('turn-limit continuation 原样持久化 CompactionService boundary 的无 marker replacement', async () => {
+    const { deps, contextManager } = createTypedPersistenceHarness();
+    const saveCompaction = vi
+      .spyOn(contextManager, 'saveCompaction')
+      .mockResolvedValue('turn-limit-checkpoint');
+    deps.runtimeOptions.maxTurns = 1;
+    const marker = projectedHandoff(70_000);
+    const sourceHistory: Message[] = [
+      { role: 'user', content: 'before' },
+      marker,
+      { role: 'assistant', content: 'after' },
+    ];
+    const context = createMockContext({
+      permissionMode: PermissionMode.YOLO,
+      messages: sourceHistory,
+    });
+    const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+    chatMock
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            id: 'tc-turn-limit-marker',
+            type: 'function',
+            function: { name: 'Read', arguments: '{"path":"frontier.ts"}' },
+          },
+        ],
+        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+        finishReason: 'tool_calls',
+      })
+      .mockResolvedValueOnce({
+        content: 'Continuation completed.',
+        finishReason: 'stop',
+      });
+    (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      success: true,
+      llmContent: 'frontier contents',
+    });
+    const boundaryReplacement: Message[] = [
+      { role: 'user', content: 'ledger summary' },
+      { role: 'assistant', content: 'frontier contents retained' },
+    ];
+    vi.mocked(CompactionService.compact).mockResolvedValueOnce({
+      success: true,
+      summary: 'ledger summary',
+      preTokens: 120,
+      postTokens: 20,
+      filesIncluded: [],
+      compactedMessages: boundaryReplacement,
+      boundaryMessage: { role: 'system', content: 'Conversation compacted' },
+      summaryMessage: { role: 'user', content: 'ledger summary' },
+    } satisfies CompactionResult);
+
+    const { result } = await drainGenerator(
+      executeLoopGenerator(
+        deps,
+        'Inspect the frontier.',
+        context,
+        {
+          stream: false,
+          onTurnLimitReached: async () => ({ continue: true }),
+        },
+        undefined
+      )
+    );
+
+    expect(result.success, JSON.stringify(result)).toBe(true);
+    const boundaryInput = vi.mocked(CompactionService.compact).mock.calls.at(-1)?.[0];
+    expect(boundaryInput?.some(isTokenBudgetHandoffMessage)).toBe(true);
+    const metadata = saveCompaction.mock.calls.at(-1)?.[2];
+    expect(metadata?.reason).toBe('turn_limit');
+    expect(metadata?.replacementMessages?.slice(0, -1)).toEqual(boundaryReplacement);
+    expect(metadata?.replacementMessages?.[0]).toBe(boundaryReplacement[0]);
+    expect(metadata?.replacementMessages?.[1]).toBe(boundaryReplacement[1]);
+    expect(metadata?.replacementMessages?.some(isTokenBudgetHandoffMessage)).toBe(
+      false
+    );
+    expect(metadata?.replacementMessages?.at(-1)?.content).toContain(
+      'Please continue the conversation'
+    );
+  });
+
+  it('turn-limit boundary 失败时不持久化 checkpoint 并保留原 marker', async () => {
+    const { deps, contextManager } = createTypedPersistenceHarness();
+    const saveCompaction = vi.spyOn(contextManager, 'saveCompaction');
+    deps.runtimeOptions.maxTurns = 1;
+    const marker = projectedHandoff(70_000);
+    const context = createMockContext({
+      permissionMode: PermissionMode.YOLO,
+      messages: [
+        { role: 'user', content: 'before' },
+        marker,
+        { role: 'assistant', content: 'after' },
+      ],
+    });
+    vi.mocked(deps.chatService.chat).mockResolvedValueOnce({
+      content: '',
+      toolCalls: [
+        {
+          id: 'tc-turn-limit-blocked',
+          type: 'function',
+          function: { name: 'Read', arguments: '{"path":"frontier.ts"}' },
+        },
+      ],
+      usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+      finishReason: 'tool_calls',
+    });
+    (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      success: true,
+      llmContent: 'frontier contents',
+    });
+    vi.mocked(CompactionService.compact).mockRejectedValueOnce(
+      new Error('policy denied compaction')
+    );
+
+    const { result } = await drainGenerator(
+      executeLoopGenerator(
+        deps,
+        'Inspect the frontier.',
+        context,
+        {
+          stream: false,
+          onTurnLimitReached: async () => ({ continue: true }),
+        },
+        undefined
+      )
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatchObject({
+      type: 'api_error',
+      message: 'policy denied compaction',
+    });
+    expect(saveCompaction).not.toHaveBeenCalled();
+    expect(context.messages.some(isTokenBudgetHandoffMessage)).toBe(true);
   });
 
   it('enforces a positive config turn limit for the main agent in yolo mode', async () => {
@@ -4570,6 +4707,50 @@ describe('executeLoopGenerator', () => {
       expect(result.success).toBe(false);
       expect(chatMock).toHaveBeenCalledOnce();
       expect(reactiveCompactionState.tryReactiveCompact).not.toHaveBeenCalled();
+    });
+
+    it('does not checkpoint or replay when reactive compaction is blocked', async () => {
+      const { deps, contextManager } = createTypedPersistenceHarness();
+      const saveCompaction = vi.spyOn(contextManager, 'saveCompaction');
+      const marker = projectedHandoff(70_000);
+      const context = createMockContext({
+        messages: [
+          { role: 'user', content: 'before' },
+          marker,
+          { role: 'assistant', content: 'after' },
+        ],
+      });
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock.mockRejectedValueOnce(
+        new Error('maximum context length exceeded; status 413')
+      );
+      reactiveCompactionState.tryReactiveCompact.mockResolvedValueOnce({
+        success: false,
+        messages: context.messages,
+      });
+
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Keep the durable marker.',
+          context,
+          { stream: false },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(false);
+      expect(chatMock).toHaveBeenCalledOnce();
+      expect(saveCompaction).not.toHaveBeenCalled();
+      expect(context.messages.some(isTokenBudgetHandoffMessage)).toBe(true);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          kind: 'compaction',
+          phase: 'end',
+          reason: 'context_limit',
+          outcome: 'failed',
+        })
+      );
     });
 
     it('does not replay when the reactive checkpoint cannot be committed', async () => {

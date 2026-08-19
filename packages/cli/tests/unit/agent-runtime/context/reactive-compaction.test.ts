@@ -4,12 +4,22 @@ import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 vi.mock('../../../../src/context/CompactionService.js');
 vi.mock('../../../../src/context/SnipCompaction.js');
 
-import { CompactionService } from '../../../../src/context/CompactionService.js';
+import {
+  type CompactionResult,
+  CompactionService,
+  isCompactionBlockedError,
+} from '../../../../src/context/CompactionService.js';
 import { ReactiveCompaction } from '../../../../src/context/ReactiveCompaction.js';
 import { snipCompact } from '../../../../src/context/SnipCompaction.js';
+import {
+  isTokenBudgetHandoffMessage,
+  projectTokenBudgetHandoffEvent,
+} from '../../../../src/context/TokenBudgetHandoff.js';
+import type { TokenBudgetHandoffRecordedEvent } from '../../../../src/context/types.js';
 
 const mockedSnipCompact = vi.mocked(snipCompact);
 const mockedCompact = vi.mocked(CompactionService.compact);
+const mockedIsCompactionBlockedError = vi.mocked(isCompactionBlockedError);
 
 const defaultOptions = {
   modelName: 'gpt-4o',
@@ -27,6 +37,35 @@ function makeMessages(count: number, prefix = 'msg'): Message[] {
   }));
 }
 
+function compactionResult(fixture: CompactionResult): CompactionResult {
+  return fixture;
+}
+
+function projectedHandoff(): Message {
+  const event = {
+    id: 'reactive-handoff-event',
+    sessionId: 'active-session',
+    timestamp: '2026-08-19T00:00:00.000Z',
+    type: 'token_budget_handoff_recorded',
+    cwd: '/tmp/active-worktree',
+    version: 'test',
+    data: {
+      version: 1,
+      messageId: 'reactive-handoff-message',
+      observedPromptTokens: 70_000,
+      availableForInput: 100_000,
+      handoffThreshold: 70_000,
+      compactionThreshold: 80_000,
+      createdAt: '2026-08-19T00:00:00.000Z',
+    },
+  } satisfies TokenBudgetHandoffRecordedEvent;
+  const marker = projectTokenBudgetHandoffEvent(event);
+  if (!marker) {
+    throw new Error('Expected a valid token-budget handoff marker fixture');
+  }
+  return marker;
+}
+
 describe('ReactiveCompaction', () => {
   let rc: ReactiveCompaction;
   let originalMsgs: Message[];
@@ -35,6 +74,9 @@ describe('ReactiveCompaction', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedIsCompactionBlockedError.mockImplementation(
+      (error) => error instanceof Error && error.name === 'CompactionBlockedError'
+    );
     rc = new ReactiveCompaction();
     originalMsgs = makeMessages(12, 'original');
     snippedMsgs = makeMessages(8, 'snipped');
@@ -47,14 +89,18 @@ describe('ReactiveCompaction', () => {
       snippedCount: 2,
       estimatedTokensFreed: 500,
     });
-    mockedCompact.mockResolvedValue({
-      success: true,
-      summary: 'durable summary',
-      preTokens: 96,
-      postTokens: 24,
-      filesIncluded: [],
-      compactedMessages: compactedMsgs,
-    } as any);
+    mockedCompact.mockResolvedValue(
+      compactionResult({
+        success: true,
+        summary: 'durable summary',
+        preTokens: 96,
+        postTokens: 24,
+        filesIncluded: [],
+        compactedMessages: compactedMsgs,
+        boundaryMessage: { role: 'system', content: 'Conversation compacted' },
+        summaryMessage: { role: 'user', content: 'durable summary' },
+      } satisfies CompactionResult)
+    );
 
     const result = await rc.tryReactiveCompact(originalMsgs, defaultOptions);
 
@@ -87,14 +133,18 @@ describe('ReactiveCompaction', () => {
       snippedCount: 2,
       estimatedTokensFreed: 500,
     });
-    mockedCompact.mockResolvedValue({
-      success: true,
-      summary: 'durable summary',
-      preTokens: 96,
-      postTokens: 24,
-      filesIncluded: [],
-      compactedMessages: compactedMsgs,
-    } as any);
+    mockedCompact.mockResolvedValue(
+      compactionResult({
+        success: true,
+        summary: 'durable summary',
+        preTokens: 96,
+        postTokens: 24,
+        filesIncluded: [],
+        compactedMessages: compactedMsgs,
+        boundaryMessage: { role: 'system', content: 'Conversation compacted' },
+        summaryMessage: { role: 'user', content: 'durable summary' },
+      } satisfies CompactionResult)
+    );
 
     await rc.tryReactiveCompact(originalMsgs, defaultOptions);
     expect(rc.canAttempt()).toBe(false);
@@ -112,14 +162,18 @@ describe('ReactiveCompaction', () => {
       snippedCount: 2,
       estimatedTokensFreed: 500,
     });
-    mockedCompact.mockResolvedValue({
-      success: true,
-      summary: 'durable summary',
-      preTokens: 96,
-      postTokens: 24,
-      filesIncluded: [],
-      compactedMessages: compactedMsgs,
-    } as any);
+    mockedCompact.mockResolvedValue(
+      compactionResult({
+        success: true,
+        summary: 'durable summary',
+        preTokens: 96,
+        postTokens: 24,
+        filesIncluded: [],
+        compactedMessages: compactedMsgs,
+        boundaryMessage: { role: 'system', content: 'Conversation compacted' },
+        summaryMessage: { role: 'user', content: 'durable summary' },
+      } satisfies CompactionResult)
+    );
 
     const firstResult = await rc.tryReactiveCompact(originalMsgs, defaultOptions);
     expect(firstResult.success).toBe(true);
@@ -143,11 +197,18 @@ describe('ReactiveCompaction', () => {
       snippedCount: 3,
       estimatedTokensFreed: 800,
     });
-    mockedCompact.mockResolvedValue({
-      success: false,
-      summary: '',
-      compactedMessages: [],
-    } as any);
+    mockedCompact.mockResolvedValue(
+      compactionResult({
+        success: false,
+        summary: '',
+        preTokens: 96,
+        postTokens: 96,
+        filesIncluded: [],
+        compactedMessages: [],
+        boundaryMessage: { role: 'system', content: 'Conversation compacted' },
+        summaryMessage: { role: 'user', content: '' },
+      } satisfies CompactionResult)
+    );
 
     const result = await rc.tryReactiveCompact(originalMsgs, defaultOptions);
 
@@ -167,14 +228,18 @@ describe('ReactiveCompaction', () => {
       snippedCount: 3,
       estimatedTokensFreed: 800,
     });
-    mockedCompact.mockResolvedValue({
-      success: false,
-      summary: 'fallback checkpoint',
-      preTokens: 96,
-      postTokens: 16,
-      filesIncluded: [],
-      compactedMessages: fallbackMessages,
-    } as any);
+    mockedCompact.mockResolvedValue(
+      compactionResult({
+        success: false,
+        summary: 'fallback checkpoint',
+        preTokens: 96,
+        postTokens: 16,
+        filesIncluded: [],
+        compactedMessages: fallbackMessages,
+        boundaryMessage: { role: 'system', content: 'Conversation compacted' },
+        summaryMessage: { role: 'user', content: 'fallback checkpoint' },
+      } satisfies CompactionResult)
+    );
 
     const result = await rc.tryReactiveCompact(originalMsgs, defaultOptions);
 
@@ -186,6 +251,40 @@ describe('ReactiveCompaction', () => {
       preTokens: 96,
       postTokens: 16,
     });
+  });
+
+  it('snip-only recovery 的输入与返回结果都应移除 token-budget marker', async () => {
+    const marker = projectedHandoff();
+    const messages: Message[] = [
+      ...makeMessages(6, 'before'),
+      marker,
+      ...makeMessages(6, 'after'),
+    ];
+    mockedSnipCompact.mockImplementation((input) => ({
+      messages: [...input],
+      snippedCount: 1,
+      estimatedTokensFreed: 1,
+    }));
+    mockedCompact.mockResolvedValue(
+      compactionResult({
+        success: false,
+        summary: '',
+        preTokens: 128,
+        postTokens: 128,
+        filesIncluded: [],
+        compactedMessages: [],
+        boundaryMessage: { role: 'system', content: 'Conversation compacted' },
+        summaryMessage: { role: 'user', content: '' },
+      } satisfies CompactionResult)
+    );
+
+    const result = await rc.tryReactiveCompact(messages, defaultOptions);
+    const snipInput = mockedSnipCompact.mock.calls.at(-1)?.[0];
+    const compactInput = mockedCompact.mock.calls.at(-1)?.[0];
+
+    expect(snipInput?.some(isTokenBudgetHandoffMessage)).toBe(false);
+    expect(compactInput?.some(isTokenBudgetHandoffMessage)).toBe(false);
+    expect(result.messages.some(isTokenBudgetHandoffMessage)).toBe(false);
   });
 
   it('falls back to snipped messages when compact throws but snip had effect', async () => {
@@ -205,17 +304,46 @@ describe('ReactiveCompaction', () => {
     });
   });
 
+  it('preserves the original marker when a hook blocks reactive compaction', async () => {
+    const marker = projectedHandoff();
+    const messages: Message[] = [
+      ...makeMessages(6, 'before'),
+      marker,
+      ...makeMessages(6, 'after'),
+    ];
+    mockedSnipCompact.mockImplementation((input) => ({
+      messages: input.filter((message) => message !== input[0]),
+      snippedCount: 1,
+      estimatedTokensFreed: 100,
+    }));
+    const blockedError = new Error('policy denied compaction');
+    blockedError.name = 'CompactionBlockedError';
+    mockedCompact.mockRejectedValueOnce(blockedError);
+
+    const result = await rc.tryReactiveCompact(messages, defaultOptions);
+
+    expect(result).toEqual({ success: false, messages });
+    expect(result.messages.some(isTokenBudgetHandoffMessage)).toBe(true);
+  });
+
   it('returns false when compact fails and snip had no effect', async () => {
     mockedSnipCompact.mockReturnValue({
       messages: originalMsgs,
       snippedCount: 0,
       estimatedTokensFreed: 0,
     });
-    mockedCompact.mockResolvedValue({
-      success: false,
-      summary: '',
-      compactedMessages: [],
-    } as any);
+    mockedCompact.mockResolvedValue(
+      compactionResult({
+        success: false,
+        summary: '',
+        preTokens: 96,
+        postTokens: 96,
+        filesIncluded: [],
+        compactedMessages: [],
+        boundaryMessage: { role: 'system', content: 'Conversation compacted' },
+        summaryMessage: { role: 'user', content: '' },
+      } satisfies CompactionResult)
+    );
 
     const result = await rc.tryReactiveCompact(originalMsgs, defaultOptions);
 

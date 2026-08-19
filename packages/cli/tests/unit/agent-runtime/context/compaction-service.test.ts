@@ -8,9 +8,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
+  buildCompactionPrompt,
+  type CompactionOptions,
   CompactionService,
   resetCompactionCircuitBreaker,
 } from '../../../../src/context/CompactionService.js';
+import type { FileContent } from '../../../../src/context/FileAnalyzer.js';
+import {
+  isTokenBudgetHandoffMessage,
+  projectTokenBudgetHandoffEvent,
+  stripTokenBudgetHandoffMessages,
+} from '../../../../src/context/TokenBudgetHandoff.js';
+import { TokenCounter } from '../../../../src/context/TokenCounter.js';
+import type { TokenBudgetHandoffRecordedEvent } from '../../../../src/context/types.js';
 import { HookManager } from '../../../../src/hooks/HookManager.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import { FileAccessTracker } from '../../../../src/tools/builtin/file/FileAccessTracker.js';
@@ -30,7 +40,225 @@ vi.mock('../../../../src/services/ChatServiceInterface.js', async (importOrigina
   };
 });
 
+function validHandoffEvent(): TokenBudgetHandoffRecordedEvent {
+  return {
+    id: 'handoff-event-1',
+    sessionId: 'token-budget-session',
+    timestamp: '2026-08-19T00:00:00.000Z',
+    type: 'token_budget_handoff_recorded',
+    cwd: '/tmp/token-budget-compaction',
+    version: 'test',
+    data: {
+      version: 1,
+      messageId: 'handoff-message-1',
+      observedPromptTokens: 70_000,
+      availableForInput: 100_000,
+      handoffThreshold: 70_000,
+      compactionThreshold: 80_000,
+      createdAt: '2026-08-19T00:00:00.000Z',
+    },
+  } satisfies TokenBudgetHandoffRecordedEvent;
+}
+
+function projectedHandoff(): Message {
+  const marker = projectTokenBudgetHandoffEvent(validHandoffEvent());
+  if (!marker) {
+    throw new Error('Expected a valid token-budget handoff marker fixture');
+  }
+  return marker;
+}
+
+function markerRetainedSourceMessages(marker: Message): Message[] {
+  return [
+    { role: 'user', content: 'before-1' },
+    { role: 'assistant', content: 'before-2' },
+    { role: 'user', content: 'before-3' },
+    { role: 'assistant', content: 'before-4' },
+    marker,
+    { role: 'assistant', content: 'after' },
+  ];
+}
+
+const markerCompactionOptions: CompactionOptions = {
+  trigger: 'auto',
+  modelName: 'test-model',
+  maxContextTokens: 128_000,
+  apiKey: 'test-key',
+  baseURL: 'https://example.invalid',
+  workspaceRoot: '/tmp/token-budget-compaction',
+  sessionId: 'token-budget-session',
+};
+
 describe('CompactionService - 输出协议', () => {
+  test('摘要请求应移除 token-budget marker', async () => {
+    const marker = projectedHandoff();
+    const sourceMessages = markerRetainedSourceMessages(marker);
+    compactChat.mockResolvedValueOnce({
+      content: '<summary>ledger</summary>',
+      usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+    });
+
+    await CompactionService.compact(sourceMessages, markerCompactionOptions);
+
+    const prompt = String(compactChat.mock.calls.at(-1)?.[0]?.[0]?.content);
+    expect(prompt).not.toContain(String(marker.content));
+  });
+
+  test('LLM replacement 应移除 token-budget marker', async () => {
+    const marker = projectedHandoff();
+    const sourceMessages = markerRetainedSourceMessages(marker);
+    compactChat.mockResolvedValueOnce({
+      content: '<summary>ledger</summary>',
+      usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+    });
+
+    const result = await CompactionService.compact(
+      sourceMessages,
+      markerCompactionOptions
+    );
+
+    expect(result.compactedMessages.some(isTokenBudgetHandoffMessage)).toBe(false);
+  });
+
+  test('marker 被剥离后 actual usage 不得旁路进入 token count 或 hook', async () => {
+    const marker = projectedHandoff();
+    const sourceMessages = markerRetainedSourceMessages(marker);
+    const filteredMessages = stripTokenBudgetHandoffMessages(sourceMessages);
+    const expectedPreTokens = TokenCounter.countTokens(
+      filteredMessages,
+      markerCompactionOptions.modelName
+    );
+    const hookSpy = vi
+      .spyOn(HookManager.getInstance(), 'executeCompactionHooks')
+      .mockResolvedValueOnce({ blockCompaction: false });
+    compactChat.mockResolvedValueOnce({
+      content: '<summary>ledger</summary>',
+      usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+    });
+
+    try {
+      const result = await CompactionService.compact(sourceMessages, {
+        ...markerCompactionOptions,
+        actualPreTokens: 99_999,
+      });
+
+      expect(result.preTokens).toBe(expectedPreTokens);
+      expect(hookSpy).toHaveBeenCalledWith(
+        'auto',
+        expect.objectContaining({
+          messagesBefore: filteredMessages.length,
+          tokensBefore: expectedPreTokens,
+        })
+      );
+    } finally {
+      hookSpy.mockRestore();
+    }
+  });
+
+  test('hook 明确阻止压缩时不得形成无 marker checkpoint', async () => {
+    const marker = projectedHandoff();
+    const sourceMessages = markerRetainedSourceMessages(marker);
+    const hookSpy = vi
+      .spyOn(HookManager.getInstance(), 'executeCompactionHooks')
+      .mockResolvedValueOnce({
+        blockCompaction: true,
+        blockReason: 'policy denied compaction',
+      });
+
+    try {
+      await expect(
+        CompactionService.compact(sourceMessages, markerCompactionOptions)
+      ).rejects.toThrow('policy denied compaction');
+      expect(compactChat).not.toHaveBeenCalled();
+      expect(sourceMessages.some(isTokenBudgetHandoffMessage)).toBe(true);
+    } finally {
+      hookSpy.mockRestore();
+    }
+  });
+
+  test('deterministic fallback replacement 应移除 token-budget marker', async () => {
+    const marker = projectedHandoff();
+    const sourceMessages = markerRetainedSourceMessages(marker);
+    compactChat.mockRejectedValueOnce(new Error('summary unavailable'));
+
+    const result = await CompactionService.compact(
+      sourceMessages,
+      markerCompactionOptions
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.compactedMessages.some(isTokenBudgetHandoffMessage)).toBe(false);
+  });
+
+  test('continuation ledger prompt 应精确声明七段执行交接契约', () => {
+    const fileContents: FileContent[] = [
+      {
+        path: 'src/frontier.ts',
+        content: 'export const frontier = true;',
+        truncated: false,
+        lines: 1,
+        includedLines: 1,
+      },
+    ];
+    const prompt = buildCompactionPrompt(
+      [{ role: 'user', content: 'Run `bun run type-check` after setting MODE=exact.' }],
+      fileContents
+    );
+    const headings = [
+      'Objective and constraints',
+      'Decisions and rationale',
+      'Workspace mutations',
+      'Verification evidence',
+      'Active tasks and background work',
+      'Open risks or blockers',
+      'Exact next action',
+    ];
+
+    for (const heading of headings) {
+      expect(prompt.match(new RegExp(heading, 'g'))).toHaveLength(1);
+    }
+    expect(prompt).toContain('distinguish observed facts from intended work');
+    expect(prompt).toContain(
+      'preserve exact commands and literals when necessary for continuation'
+    );
+    expect(prompt).toContain('never invent successful verification');
+    expect(prompt).toContain('never mark unfinished work complete');
+    expect(prompt).toContain('never convert a plan into a completed mutation');
+    expect(prompt).toContain('never include credentials or hidden control messages');
+    expect(prompt).toContain('never include raw reasoning');
+    expect(prompt).toContain('`bun run type-check`');
+    expect(prompt).toContain('MODE=exact');
+    expect(prompt).toContain('<analysis>');
+    expect(prompt).toContain('<summary>');
+  });
+
+  test('旧 compact summary 不得让 reserved ledger headings 在 prompt 中重复', () => {
+    const headings = [
+      'Objective and constraints',
+      'Decisions and rationale',
+      'Workspace mutations',
+      'Verification evidence',
+      'Active tasks and background work',
+      'Open risks or blockers',
+      'Exact next action',
+    ];
+    const prompt = buildCompactionPrompt(
+      [
+        {
+          role: 'user',
+          content: headings.join('\n'),
+          metadata: { isCompactSummary: true },
+        },
+      ],
+      []
+    );
+
+    for (const heading of headings) {
+      expect(prompt.match(new RegExp(heading, 'g'))).toHaveLength(1);
+    }
+    expect(prompt).toContain('Objective\\u0020and\\u0020constraints');
+  });
+
   test('compaction hook 应使用 active workspace', async () => {
     compactChat.mockResolvedValueOnce({
       content: '<summary>Preserve the active workspace.</summary>',

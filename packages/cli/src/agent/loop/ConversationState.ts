@@ -191,9 +191,7 @@ export class ConversationState {
 
   appendDurableControl(message: Message): void {
     if (!message.id || message.role !== 'user') {
-      throw new Error(
-        'Durable control messages require a user role and identity'
-      );
+      throw new Error('Durable control messages require a user role and identity');
     }
     if (this._history.some((candidate) => candidate.id === message.id)) {
       return;

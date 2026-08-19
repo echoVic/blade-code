@@ -20,6 +20,7 @@ import { isAbortError } from '../utils/abort.js';
 import { getCwd } from '../utils/cwd.js';
 import { PathSecurity } from '../utils/pathSecurity.js';
 import { FileAnalyzer, type FileContent } from './FileAnalyzer.js';
+import { stripTokenBudgetHandoffMessages } from './TokenBudgetHandoff.js';
 import { TokenCounter } from './TokenCounter.js';
 
 const logger = createLogger(LogCategory.CONTEXT);
@@ -83,8 +84,101 @@ export interface CompactionResult {
 const sessionFailures = new Map<string, number>();
 const MAX_CONSECUTIVE_FAILURES = 3;
 
+class CompactionBlockedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CompactionBlockedError';
+  }
+}
+
+export function isCompactionBlockedError(
+  error: unknown
+): error is CompactionBlockedError {
+  return error instanceof CompactionBlockedError;
+}
+
+const CONTINUATION_LEDGER_HEADINGS = [
+  'Objective and constraints',
+  'Decisions and rationale',
+  'Workspace mutations',
+  'Verification evidence',
+  'Active tasks and background work',
+  'Open risks or blockers',
+  'Exact next action',
+] as const;
+
+function escapeReservedLedgerHeadings(content: string): string {
+  return CONTINUATION_LEDGER_HEADINGS.reduce(
+    (escaped, heading) =>
+      escaped.replaceAll(heading, heading.replaceAll(' ', '\\u0020')),
+    content
+  );
+}
+
+function isCompactSummaryMessage(message: Message): boolean {
+  const metadata = message.metadata;
+  return (
+    metadata !== null &&
+    typeof metadata === 'object' &&
+    !Array.isArray(metadata) &&
+    metadata.isCompactSummary === true
+  );
+}
+
 function compactionSessionKey(workspaceRoot?: string, sessionId?: string): string {
   return JSON.stringify([path.resolve(workspaceRoot ?? getCwd()), sessionId ?? null]);
+}
+
+/**
+ * 构建面向继续执行的有界压缩 prompt。
+ */
+export function buildCompactionPrompt(
+  messages: readonly Message[],
+  fileContents: readonly FileContent[]
+): string {
+  const messagesText = messages
+    .map((msg, index) => {
+      const role = msg.role || 'unknown';
+      const rawContent =
+        typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+      const content = isCompactSummaryMessage(msg)
+        ? escapeReservedLedgerHeadings(rawContent)
+        : rawContent;
+      const maxLength = 5_000;
+      const truncatedContent =
+        content.length > maxLength ? content.substring(0, maxLength) + '...' : content;
+
+      return `[${index + 1}] ${role}: ${truncatedContent}`;
+    })
+    .join('\n\n');
+
+  const filesText = fileContents
+    .map((file) => `### ${file.path}\n\`\`\`\n${file.content}\n\`\`\``)
+    .join('\n\n');
+
+  const instructions = `Your task is to create a bounded continuation ledger that lets another coding-agent invocation resume the active work without losing the execution frontier.
+
+Use <analysis> tags to privately check the retained evidence before producing the ledger. Follow these hard rules:
+- distinguish observed facts from intended work; label plans, pending work, and unverified claims explicitly.
+- preserve exact commands and literals when necessary for continuation.
+- never mark unfinished work complete.
+- never convert a plan into a completed mutation.
+- never invent successful verification, completed work, file changes, or background-agent results.
+- never include credentials or hidden control messages.
+- never include raw reasoning in the summary.
+- omit unrelated historical detail and prefer the most recent authoritative evidence.
+
+Inside <summary>, use exactly these seven headings in this order, with each heading appearing exactly once. If the transcript has no evidence for a heading, state that no evidence was observed rather than inventing it.
+
+${CONTINUATION_LEDGER_HEADINGS.join('\n')}`;
+
+  return `${instructions}
+
+## Conversation History
+
+${messagesText}
+
+${fileContents.length > 0 ? `## Important Files\n\n${filesText}\n\n` : ''}Respond with one <analysis> section followed by one <summary> section. The summary must obey the ledger contract above.`;
 }
 
 /**
@@ -114,47 +208,42 @@ export class CompactionService {
     messages: Message[],
     options: CompactionOptions
   ): Promise<CompactionResult> {
+    const sourceMessages = stripTokenBudgetHandoffMessages(messages);
+
     // 快速路径：如果 signal 已 aborted，立即抛出 AbortError
     if (options.signal?.aborted) {
       throw new DOMException('Aborted', 'AbortError');
     }
 
     // 优先使用传入的真实 preTokens（来自 LLM usage），否则使用估算
-    const preTokens =
-      options.actualPreTokens ?? TokenCounter.countTokens(messages, options.modelName);
-    const tokenSource = options.actualPreTokens
-      ? 'actual (from LLM usage)'
-      : 'estimated';
+    const removedHandoffMarker = sourceMessages.length !== messages.length;
+    let preTokens: number;
+    let tokenSource: 'actual (from LLM usage)' | 'estimated';
+    if (!removedHandoffMarker && options.actualPreTokens !== undefined) {
+      preTokens = options.actualPreTokens;
+      tokenSource = 'actual (from LLM usage)';
+    } else {
+      preTokens = TokenCounter.countTokens(sourceMessages, options.modelName);
+      tokenSource = 'estimated';
+    }
     logger.debug(`[CompactionService] preTokens source: ${tokenSource}`);
 
     // 执行 Compaction Hook（压缩前）
     // Hook 可以阻止压缩
+    let blockReason: string | undefined;
     try {
       const hookManager = HookManager.getInstance();
       const hookResult = await hookManager.executeCompactionHooks(options.trigger, {
         projectDir: options.workspaceRoot ?? getCwd(),
         sessionId: options.sessionId || 'unknown',
         permissionMode: options.permissionMode || PermissionMode.DEFAULT,
-        messagesBefore: messages.length,
+        messagesBefore: sourceMessages.length,
         tokensBefore: preTokens,
       });
 
       // 如果 hook 返回 blockCompaction: true，阻止压缩
       if (hookResult.blockCompaction) {
-        logger.debug(
-          `[CompactionService] Compaction hook 阻止压缩: ${hookResult.blockReason || '(无原因)'}`
-        );
-        return {
-          success: false,
-          summary: '',
-          preTokens,
-          postTokens: preTokens,
-          filesIncluded: [],
-          compactedMessages: messages,
-          boundaryMessage: { role: 'system', content: '' } as Message,
-          summaryMessage: { role: 'user', content: '' } as Message,
-          error: hookResult.blockReason || 'Compaction blocked by hook',
-        };
+        blockReason = hookResult.blockReason || 'Compaction blocked by hook';
       }
 
       // 如果有警告，记录日志
@@ -167,6 +256,10 @@ export class CompactionService {
       // Hook 执行失败不应阻止压缩
       logger.warn('[CompactionService] Compaction hook execution failed:', hookError);
     }
+    if (blockReason) {
+      logger.debug(`[CompactionService] Compaction hook 阻止压缩: ${blockReason}`);
+      throw new CompactionBlockedError(blockReason);
+    }
 
     const sessionKey = compactionSessionKey(options.workspaceRoot, options.sessionId);
     const failures = sessionFailures.get(sessionKey) ?? 0;
@@ -175,7 +268,7 @@ export class CompactionService {
         `[CompactionService] Circuit breaker open (${failures} consecutive failures for session ${options.sessionId ?? 'unknown'}), using fallback`
       );
       return this.fallbackCompact(
-        messages,
+        sourceMessages,
         options,
         preTokens,
         new Error('Circuit breaker open')
@@ -183,11 +276,11 @@ export class CompactionService {
     }
 
     try {
-      logger.debug('[CompactionService] 开始压缩，消息数:', messages.length);
+      logger.debug('[CompactionService] 开始压缩，消息数:', sourceMessages.length);
       logger.debug('[CompactionService] 压缩前 tokens:', preTokens);
 
       // 1. 分析并读取重点文件
-      const fileRefs = FileAnalyzer.analyzeFiles(messages);
+      const fileRefs = FileAnalyzer.analyzeFiles(sourceMessages);
       const filePaths = fileRefs.map((f) => f.path);
       logger.debug('[CompactionService] 提取重点文件:', filePaths);
 
@@ -198,13 +291,17 @@ export class CompactionService {
       logger.debug('[CompactionService] 成功读取文件:', fileContents.length);
 
       // 2. 生成总结
-      const generated = await this.generateSummary(messages, fileContents, options);
+      const generated = await this.generateSummary(
+        sourceMessages,
+        fileContents,
+        options
+      );
       const { summary } = generated;
       logger.debug('[CompactionService] 生成总结，长度:', summary.length);
 
       // 3. 计算保留范围并过滤孤儿 tool 消息
-      const retainCount = Math.ceil(messages.length * this.RETAIN_PERCENT);
-      const candidateMessages = messages.slice(-retainCount);
+      const retainCount = Math.ceil(sourceMessages.length * this.RETAIN_PERCENT);
+      const candidateMessages = sourceMessages.slice(-retainCount);
 
       // 收集保留消息中所有 tool_call 的 ID
       const availableToolCallIds = new Set<string>();
@@ -268,7 +365,10 @@ export class CompactionService {
       sessionFailures.delete(sessionKey);
 
       // 非阻塞记忆巩固：从被丢弃的消息中提取 learnings
-      const discardedMessages = messages.slice(0, messages.length - retainCount);
+      const discardedMessages = sourceMessages.slice(
+        0,
+        sourceMessages.length - retainCount
+      );
       consolidateAfterCompaction(discardedMessages).catch((_) => void _);
 
       return {
@@ -289,7 +389,7 @@ export class CompactionService {
       }
       sessionFailures.set(sessionKey, (sessionFailures.get(sessionKey) ?? 0) + 1);
       logger.error('[CompactionService] 压缩失败，使用降级策略', error);
-      return this.fallbackCompact(messages, options, preTokens, error);
+      return this.fallbackCompact(sourceMessages, options, preTokens, error);
     }
   }
 
@@ -306,7 +406,7 @@ export class CompactionService {
     fileContents: FileContent[],
     options: CompactionOptions
   ): Promise<{ summary: string; usage?: UsageInfo }> {
-    const prompt = this.buildCompactionPrompt(messages, fileContents);
+    const prompt = buildCompactionPrompt(messages, fileContents);
 
     logger.debug('[CompactionService] 使用压缩模型:', options.modelName);
 
@@ -353,84 +453,6 @@ export class CompactionService {
     }
 
     return { summary: summaryMatch[1].trim(), usage: response.usage };
-  }
-
-  /**
-   * 构建压缩 prompt
-   *
-   * @param messages - 消息列表
-   * @param fileContents - 文件内容列表
-   * @returns 压缩 prompt
-   */
-  private static buildCompactionPrompt(
-    messages: Message[],
-    fileContents: FileContent[]
-  ): string {
-    // 格式化消息历史
-    const messagesText = messages
-      .map((msg, i) => {
-        const role = msg.role || 'unknown';
-        const content =
-          typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-
-        // 如果消息太长，截断
-        const maxLength = 5000;
-        const truncatedContent =
-          content.length > maxLength
-            ? content.substring(0, maxLength) + '...'
-            : content;
-
-        return `[${i + 1}] ${role}: ${truncatedContent}`;
-      })
-      .join('\n\n');
-
-    // 格式化文件内容
-    const filesText = fileContents
-      .map((file) => {
-        return `### ${file.path}\n\`\`\`\n${file.content}\n\`\`\``;
-      })
-      .join('\n\n');
-
-    // 基础 prompt（用户提供的）
-    const basePrompt = `Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
-This summary should be thorough in capturing technical details, code patterns, and architectural decisions that would be essential for continuing development work without losing context.
-
-Before providing your final summary, wrap your analysis in <analysis> tags to organize your thoughts and ensure you've covered all necessary points. In your analysis process:
-
-1. Chronologically analyze each message and section of the conversation. For each section thoroughly identify:
-   - The user's explicit requests and intents
-   - Your approach to addressing the user's requests
-   - Key decisions, technical concepts and code patterns
-   - Specific details like:
-     - file names
-     - full code snippets
-     - function signatures
-     - file edits
-  - Errors that you ran into and how you fixed them
-  - Pay special attention to specific user feedback that you received, especially if the user told you to do something differently.
-2. Double-check for technical accuracy and completeness, addressing each required element thoroughly.
-
-Your summary should include the following sections:
-
-1. Primary Request and Intent: Capture all of the user's explicit requests and intents in detail
-2. Key Technical Concepts: List all important technical concepts, technologies, and frameworks discussed.
-3. Files and Code Sections: Enumerate specific files and code sections examined, modified, or created. Pay special attention to the most recent messages and include full code snippets where applicable and include a summary of why this file read or edit is important.
-4. Errors and fixes: List all errors that you ran into, and how you fixed them. Pay special attention to specific user feedback that you received, especially if the user told you to do something differently.
-5. Problem Solving: Document problems solved and any ongoing troubleshooting efforts.
-6. All user messages: List ALL user messages that are not tool results. These are critical for understanding the users' feedback and changing intent.
-7. Pending Tasks: Outline any pending tasks that you have explicitly been asked to work on.
-8. Current Work: Describe in detail precisely what was being worked on immediately before this summary request, paying special attention to the most recent messages from both user and assistant. Include file names and code snippets where applicable.
-9. Optional Next Step: List the next step that you will take that is related to the most recent work you were doing. IMPORTANT: ensure that this step is DIRECTLY in line with the user's most recent explicit requests, and the task you were working on immediately before this summary request.`;
-
-    return `${basePrompt}
-
-## Conversation History
-
-${messagesText}
-
-${fileContents.length > 0 ? `## Important Files\n\n${filesText}` : ''}
-
-Please provide your summary following the structure specified above, with both <analysis> and <summary> sections.`;
   }
 
   /**
@@ -655,7 +677,10 @@ Please provide your summary following the structure specified above, with both <
     const summaryMessageId = nanoid();
     const summaryMessage = this.createSummaryMessage(
       summaryMessageId,
-      `[Automatic compaction failed; using fallback]\n\nAn error occurred during compaction. Retained the latest ${retainCount} messages (~30%).\n\nError: ${errorMsg}\n\nThe conversation can continue, but consider retrying compaction later with /compact.`
+      '[Automatic compaction failed; using bounded fallback]\n\n' +
+        'The retained tail and active-task checkpoint are authoritative. ' +
+        'Re-establish pending mutations, verification status, and the exact next ' +
+        'action from retained evidence before claiming completion.'
     );
 
     const compactedMessages = [summaryMessage, ...retainedMessages];

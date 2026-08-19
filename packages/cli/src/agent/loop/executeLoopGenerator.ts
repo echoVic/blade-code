@@ -647,7 +647,8 @@ async function maybeAppendTokenBudgetHandoff(params: {
   const existing = state
     .getHistory()
     .find(
-      (message) => typeof message.id === 'string' && isTokenBudgetHandoffMessage(message)
+      (message) =>
+        typeof message.id === 'string' && isTokenBudgetHandoffMessage(message)
     );
   if (existing) {
     return { kind: 'already_present' };

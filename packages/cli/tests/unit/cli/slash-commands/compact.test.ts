@@ -1,20 +1,48 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ContextManagerOptions } from '../../../../src/context/types.js';
+import type {
+  CompactionOptions,
+  CompactionResult,
+} from '../../../../src/context/CompactionService.js';
+import type { CompactionPersistenceMetadata } from '../../../../src/context/compactionCheckpoint.js';
+import {
+  isTokenBudgetHandoffMessage,
+  projectTokenBudgetHandoffEvent,
+} from '../../../../src/context/TokenBudgetHandoff.js';
+import type {
+  ContextManagerOptions,
+  TokenBudgetHandoffRecordedEvent,
+} from '../../../../src/context/types.js';
+import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import type { SlashCommandContext } from '../../../../src/slash-commands/types.js';
+
+type SaveCompaction = (
+  sessionId: string,
+  summary: string,
+  metadata: CompactionPersistenceMetadata,
+  parentUuid: string | null
+) => Promise<string>;
+type Compact = (
+  messages: Message[],
+  options: CompactionOptions
+) => Promise<CompactionResult>;
 
 const contextManagerState = vi.hoisted(
   (): {
     constructorOptions: Array<Partial<ContextManagerOptions> | undefined>;
-    saveCompaction: ReturnType<typeof vi.fn<(...args: any[]) => any>>;
+    saveCompaction: ReturnType<typeof vi.fn<SaveCompaction>>;
   } => ({
     constructorOptions: [],
     saveCompaction: vi.fn(),
   })
 );
 
-const compactionState = vi.hoisted(() => ({
-  compact: vi.fn(),
-}));
+const compactionState = vi.hoisted(
+  (): {
+    compact: ReturnType<typeof vi.fn<Compact>>;
+  } => ({
+    compact: vi.fn<Compact>(),
+  })
+);
 
 const storeState = vi.hoisted(() => ({
   getConfig: vi.fn(),
@@ -31,7 +59,7 @@ vi.mock('../../../../src/context/ContextManager.js', () => ({
     saveCompaction(
       sessionId: string,
       summary: string,
-      metadata: Record<string, unknown>,
+      metadata: CompactionPersistenceMetadata,
       parentUuid: string | null
     ): Promise<string> {
       return contextManagerState.saveCompaction(
@@ -58,6 +86,31 @@ vi.mock('../../../../src/store/vanilla.js', () => ({
   getState: storeState.getState,
   sessionActions: () => ({ addAssistantMessage: vi.fn() }),
 }));
+
+function projectedHandoff(): Message {
+  const event = {
+    id: 'manual-handoff-event',
+    sessionId: 'shared-session',
+    timestamp: '2026-08-19T00:00:00.000Z',
+    type: 'token_budget_handoff_recorded',
+    cwd: '/workspace/managed-worktree',
+    version: 'test',
+    data: {
+      version: 1,
+      messageId: 'manual-handoff-message',
+      observedPromptTokens: 70_000,
+      availableForInput: 100_000,
+      handoffThreshold: 70_000,
+      compactionThreshold: 80_000,
+      createdAt: '2026-08-19T00:00:00.000Z',
+    },
+  } satisfies TokenBudgetHandoffRecordedEvent;
+  const marker = projectTokenBudgetHandoffEvent(event);
+  if (!marker) {
+    throw new Error('Expected a valid token-budget handoff marker fixture');
+  }
+  return marker;
+}
 
 describe('/compact slash command', () => {
   beforeEach(() => {
@@ -154,5 +207,84 @@ describe('/compact slash command', () => {
       }),
       null
     );
+  });
+
+  it('原样持久化 CompactionService boundary 返回的无 marker replacement', async () => {
+    const { default: compactCommand } = await import(
+      '../../../../src/slash-commands/compact.js'
+    );
+    const marker = projectedHandoff();
+    const sourceMessages: Message[] = [
+      { role: 'user', content: 'before' },
+      marker,
+      { role: 'assistant', content: 'after' },
+    ];
+    const boundaryReplacement: Message[] = [
+      { role: 'user', content: 'ledger summary' },
+      { role: 'assistant', content: 'after' },
+    ];
+    compactionState.compact.mockResolvedValueOnce({
+      success: true,
+      summary: 'ledger summary',
+      preTokens: 600_000,
+      postTokens: 1_000,
+      filesIncluded: [],
+      compactedMessages: boundaryReplacement,
+      boundaryMessage: { role: 'system', content: 'boundary' },
+      summaryMessage: { role: 'user', content: 'ledger summary' },
+    });
+    const context: SlashCommandContext = {
+      cwd: '/workspace/original',
+      workspaceRoot: '/workspace/managed-worktree',
+      sessionId: 'shared-session',
+      messages: sourceMessages,
+      acp: { sendMessage: vi.fn() },
+    };
+
+    await expect(compactCommand.handler([], context)).resolves.toMatchObject({
+      success: true,
+      message: 'compact_completed',
+    });
+
+    expect(sourceMessages.some(isTokenBudgetHandoffMessage)).toBe(true);
+    expect(compactionState.compact).toHaveBeenCalledWith(
+      sourceMessages,
+      expect.any(Object)
+    );
+    const persistedMetadata = contextManagerState.saveCompaction.mock.calls.at(-1)?.[2];
+    expect(persistedMetadata?.replacementMessages).toBe(boundaryReplacement);
+    expect(
+      persistedMetadata?.replacementMessages?.some(isTokenBudgetHandoffMessage)
+    ).toBe(false);
+  });
+
+  it('boundary 阻止压缩时不持久化 checkpoint 并保留原 marker', async () => {
+    const { default: compactCommand } = await import(
+      '../../../../src/slash-commands/compact.js'
+    );
+    const marker = projectedHandoff();
+    const sourceMessages: Message[] = [
+      { role: 'user', content: 'before' },
+      marker,
+      { role: 'assistant', content: 'after' },
+    ];
+    compactionState.compact.mockRejectedValueOnce(
+      new Error('policy denied compaction')
+    );
+    const context: SlashCommandContext = {
+      cwd: '/workspace/original',
+      workspaceRoot: '/workspace/managed-worktree',
+      sessionId: 'shared-session',
+      messages: sourceMessages,
+      acp: { sendMessage: vi.fn() },
+    };
+
+    await expect(compactCommand.handler([], context)).resolves.toMatchObject({
+      success: false,
+      error: 'policy denied compaction',
+    });
+
+    expect(contextManagerState.saveCompaction).not.toHaveBeenCalled();
+    expect(sourceMessages.some(isTokenBudgetHandoffMessage)).toBe(true);
   });
 });

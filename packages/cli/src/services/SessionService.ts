@@ -2375,9 +2375,12 @@ export class SessionService {
       });
     }
 
-    const suffix = this.convertJSONLToMessages(materialized.slice(checkpointIndex + 1), {
-      includeTokenBudgetHandoffs: true,
-    });
+    const suffix = this.convertJSONLToMessages(
+      materialized.slice(checkpointIndex + 1),
+      {
+        includeTokenBudgetHandoffs: true,
+      }
+    );
     return [...replacementMessages, ...suffix];
   }
 
