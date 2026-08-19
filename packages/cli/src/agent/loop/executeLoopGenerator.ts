@@ -601,20 +601,32 @@ function hashSessionForWarning(sessionId: string): string {
   return createHash('sha256').update(sessionId).digest('hex').slice(0, 16);
 }
 
-function normalizeHandoffErrorToken(
-  value: unknown,
-  fallback: string
-): string {
-  return typeof value === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(value)
-    ? value
-    : fallback;
-}
+const SAFE_HANDOFF_ERROR_NAMES = new Set([
+  'AbortError',
+  'Error',
+  'RangeError',
+  'TypeError',
+]);
+const SAFE_HANDOFF_ERROR_CODES = new Set([
+  'EACCES',
+  'EEXIST',
+  'EIO',
+  'EMFILE',
+  'ENFILE',
+  'ENOENT',
+  'ENOSPC',
+  'EPERM',
+  'EROFS',
+]);
 
 function normalizeHandoffError(error: unknown): string {
   if (error instanceof Error) {
     const coded = error as Error & { code?: unknown };
-    const name = normalizeHandoffErrorToken(error.name, 'Error');
-    const code = normalizeHandoffErrorToken(coded.code, 'unknown');
+    const name = SAFE_HANDOFF_ERROR_NAMES.has(error.name) ? error.name : 'Error';
+    const code =
+      typeof coded.code === 'string' && SAFE_HANDOFF_ERROR_CODES.has(coded.code)
+        ? coded.code
+        : 'unknown';
     return `${name}:${code}`;
   }
   return 'UnknownError:unknown';
@@ -688,13 +700,10 @@ export async function* checkAndCompactInLoop(
   compactionState?: LoopCompactionState
 ): AsyncGenerator<LoopEvent, CompactResult, void> {
   const actualPromptTokens = snapshot.actualPromptTokens;
-  if (snapshot.phase === 'unknown') {
-    logger.debug(`[Loop] [轮次 ${currentTurn}] 压缩检查: 跳过（无历史 usage 数据）`);
-    return { kind: 'none' };
-  }
 
   // Level 0: MicroCompact — time-based aggressive clearing when cache expired
   const microResult = microCompact(context.messages, lastApiCallTime);
+  const didMicroCompact = microResult !== null;
   if (microResult) {
     context.messages = microResult.messages;
     logger.debug(
@@ -714,26 +723,26 @@ export async function* checkAndCompactInLoop(
     );
   }
 
+  if (snapshot.phase === 'unknown') {
+    if (didSnip) {
+      context.messages = snipResult.messages;
+    }
+    logger.debug(`[Loop] [轮次 ${currentTurn}] 压缩检查: 跳过（无历史 usage 数据）`);
+    return didMicroCompact || didSnip ? { kind: 'snipped' } : { kind: 'none' };
+  }
+
   // Level 2: LLM compaction — 80% 阈值触发 LLM 摘要压缩
   const chatConfig = deps.chatService.getConfig();
   const modelName = chatConfig.model;
-  const maxContextTokens = snapshot.maxContextTokens ?? chatConfig.maxContextTokens ?? 0;
-  const maxOutputTokens =
-    snapshot.maxOutputTokens ??
-    resolveCompactionOutputReserve({
-      maxContextTokens,
-      maxOutputTokens: chatConfig.maxOutputTokens,
-      configuredMaxOutputTokens: deps.config.maxOutputTokens,
-    }) ??
-    0;
-
-  const availableForInput = snapshot.availableForInput ?? maxContextTokens - maxOutputTokens;
+  const maxContextTokens = snapshot.maxContextTokens ?? 0;
+  const maxOutputTokens = snapshot.maxOutputTokens ?? 0;
+  const availableForInput = snapshot.availableForInput ?? 0;
   if (maxContextTokens <= 0 || availableForInput <= 0) {
     if (didSnip) {
       context.messages = snipResult.messages;
     }
     logger.debug(`[Loop] [轮次 ${currentTurn}] 压缩检查: 跳过（模型上下文窗口未知）`);
-    return didSnip ? { kind: 'snipped' } : { kind: 'none' };
+    return didMicroCompact || didSnip ? { kind: 'snipped' } : { kind: 'none' };
   }
 
   logger.debug(`[Loop] [轮次 ${currentTurn}] 压缩检查:`, {
@@ -750,7 +759,7 @@ export async function* checkAndCompactInLoop(
     if (didSnip) {
       context.messages = snipResult.messages;
     }
-    return didSnip ? { kind: 'snipped' } : { kind: 'none' };
+    return didMicroCompact || didSnip ? { kind: 'snipped' } : { kind: 'none' };
   }
 
   logger.debug(

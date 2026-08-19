@@ -69,8 +69,8 @@ interface DeriveSnapshotInput {
 
 interface ResolveCompactionOutputReserveInput {
   maxContextTokens?: number;
-  maxOutputTokens?: number;
-  configuredMaxOutputTokens?: number;
+  maxOutputTokens?: number | null;
+  configuredMaxOutputTokens?: number | null;
 }
 
 function isSafeNonNegativeInteger(value: unknown): value is number {
@@ -161,11 +161,10 @@ export function resolveCompactionOutputReserve(
   input: ResolveCompactionOutputReserveInput
 ): number | undefined {
   const { maxContextTokens, maxOutputTokens, configuredMaxOutputTokens } = input;
-  if (isSafeNonNegativeInteger(maxOutputTokens)) {
-    return maxOutputTokens;
-  }
-  if (isSafeNonNegativeInteger(configuredMaxOutputTokens)) {
-    return configuredMaxOutputTokens;
+  const explicitOutputTokens =
+    maxOutputTokens ?? configuredMaxOutputTokens ?? undefined;
+  if (explicitOutputTokens !== undefined) {
+    return explicitOutputTokens;
   }
   if (!isStrictPositiveInteger(maxContextTokens)) {
     return undefined;

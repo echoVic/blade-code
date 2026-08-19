@@ -128,6 +128,7 @@ import type {
   LoopResult,
 } from '../../../../src/agent/types.js';
 import { PermissionMode } from '../../../../src/config/types.js';
+import type { BladeConfig } from '../../../../src/config/types.js';
 import { CompactionService } from '../../../../src/context/CompactionService.js';
 import { ContextManager } from '../../../../src/context/ContextManager.js';
 import {
@@ -135,11 +136,14 @@ import {
   projectTokenBudgetHandoffEvent,
 } from '../../../../src/context/TokenBudgetHandoff.js';
 import { ReactiveCompaction } from '../../../../src/context/ReactiveCompaction.js';
+import { microCompact, snipCompact } from '../../../../src/context/SnipCompaction.js';
 import { Type } from '../../../../src/schema/index.js';
 import type {
   ChatConfig,
   ChatResponse,
+  IChatService,
   Message,
+  StreamChunk,
 } from '../../../../src/services/ChatServiceInterface.js';
 import { markProviderReplayBoundary } from '../../../../src/services/pi/providerRetry.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
@@ -212,7 +216,13 @@ const readTool: Tool = {
   },
 };
 
-function createTestChatConfig(overrides: Partial<ChatConfig> = {}): ChatConfig {
+interface TestChatConfigOverrides {
+  model?: string;
+  maxContextTokens?: number;
+  maxOutputTokens?: number;
+}
+
+function createTestChatConfig(overrides: TestChatConfigOverrides = {}): ChatConfig {
   return {
     provider: 'openai',
     model: 'test-model',
@@ -223,7 +233,9 @@ function createTestChatConfig(overrides: Partial<ChatConfig> = {}): ChatConfig {
   };
 }
 
-function createHandoffChatConfig(overrides: Partial<ChatConfig> = {}): ChatConfig {
+function createHandoffChatConfig(
+  overrides: TestChatConfigOverrides = {}
+): ChatConfig {
   return createTestChatConfig({
     maxContextTokens: 110_000,
     maxOutputTokens: 10_000,
@@ -231,10 +243,7 @@ function createHandoffChatConfig(overrides: Partial<ChatConfig> = {}): ChatConfi
   });
 }
 
-function toolResponse(
-  promptTokens: number,
-  overrides: Partial<ChatResponse> = {}
-): ChatResponse {
+function toolResponse(promptTokens: number): ChatResponse {
   return {
     content: '',
     toolCalls: [
@@ -255,15 +264,10 @@ function toolResponse(
       cacheCreationInputTokens: 0,
     },
     finishReason: 'tool_calls',
-    ...overrides,
   };
 }
 
-function finalResponse(
-  promptTokens: number,
-  content = 'final response',
-  overrides: Partial<ChatResponse> = {}
-): ChatResponse {
+function finalResponse(promptTokens: number, content = 'final response'): ChatResponse {
   return {
     content,
     toolCalls: undefined,
@@ -275,11 +279,18 @@ function finalResponse(
       cacheCreationInputTokens: 0,
     },
     finishReason: 'stop',
-    ...overrides,
   };
 }
 
-function createMockDeps(overrides: Partial<LoopDependencies> = {}): LoopDependencies {
+interface TestLoopDependencyOverrides {
+  config?: BladeConfig;
+  runtimeOptions?: LoopDependencies['runtimeOptions'];
+  executionEngine?: LoopDependencies['executionEngine'];
+}
+
+function createMockDeps(
+  overrides: TestLoopDependencyOverrides = {}
+): LoopDependencies {
   const registry = new ToolRegistry();
   registry.register(readTool);
   vi.spyOn(registry, 'get').mockImplementation((name) => {
@@ -324,9 +335,9 @@ function createMockDeps(overrides: Partial<LoopDependencies> = {}): LoopDependen
     streamChat: vi.fn(),
     getConfig: vi.fn(() => createTestChatConfig()),
     updateConfig: vi.fn(),
-  };
+  } satisfies IChatService;
 
-  const deps = {
+  const deps: LoopDependencies = {
     chatService,
     toolExecutor,
     executionEngine: undefined,
@@ -378,9 +389,9 @@ function createMockDeps(overrides: Partial<LoopDependencies> = {}): LoopDependen
     runtimeOptions: {},
     currentModelMaxContextTokens: 100_000,
     applySkillToolRestrictions: vi.fn((tools) => tools),
-  } satisfies Partial<LoopDependencies>;
+  };
 
-  return { ...deps, ...overrides } as LoopDependencies;
+  return { ...deps, ...overrides };
 }
 
 function exposeIndependentVerificationTools(deps: LoopDependencies): void {
@@ -724,6 +735,78 @@ describe('executeLoopGenerator', () => {
   });
 
   describe('compaction lifecycle', () => {
+    it('preserves deterministic micro compaction for unknown usage', async () => {
+      const deps = createMockDeps();
+      const context = createMockContext({
+        messages: [{ role: 'user', content: 'original history' }],
+      });
+      vi.mocked(microCompact).mockReturnValueOnce({
+        messages: [{ role: 'user', content: 'micro history' }],
+        snippedCount: 1,
+        estimatedTokensFreed: 10,
+      });
+      vi.mocked(snipCompact).mockReturnValueOnce({
+        messages: [{ role: 'user', content: 'micro history' }],
+        snippedCount: 0,
+        estimatedTokensFreed: 0,
+      });
+
+      const generator = checkAndCompactInLoop(
+        deps,
+        context,
+        1,
+        deriveTokenBudgetSnapshot({
+          actualPromptTokens: undefined,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_096,
+        })
+      );
+      let step = await generator.next();
+      while (!step.done) step = await generator.next();
+
+      expect(step.value).toEqual({ kind: 'snipped' });
+      expect(microCompact).toHaveBeenCalledOnce();
+      expect(snipCompact).toHaveBeenCalledWith([
+        { role: 'user', content: 'micro history' },
+      ]);
+      expect(context.messages).toEqual([
+        { role: 'user', content: 'micro history' },
+      ]);
+      expect(CompactionService.compact).not.toHaveBeenCalled();
+    });
+
+    it('preserves deterministic snip compaction for unknown usage', async () => {
+      const deps = createMockDeps();
+      const context = createMockContext({
+        messages: [{ role: 'user', content: 'original history' }],
+      });
+      vi.mocked(microCompact).mockReturnValueOnce(null);
+      vi.mocked(snipCompact).mockReturnValueOnce({
+        messages: [{ role: 'user', content: 'snipped history' }],
+        snippedCount: 1,
+        estimatedTokensFreed: 20,
+      });
+
+      const generator = checkAndCompactInLoop(
+        deps,
+        context,
+        1,
+        deriveTokenBudgetSnapshot({
+          actualPromptTokens: undefined,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_096,
+        })
+      );
+      let step = await generator.next();
+      while (!step.done) step = await generator.next();
+
+      expect(step.value).toEqual({ kind: 'snipped' });
+      expect(context.messages).toEqual([
+        { role: 'user', content: 'snipped history' },
+      ]);
+      expect(CompactionService.compact).not.toHaveBeenCalled();
+    });
+
     it('emits summary generation usage so compaction cost is accumulated', async () => {
       const deps = createMockDeps();
       (deps.chatService.getConfig as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -1097,7 +1180,10 @@ describe('executeLoopGenerator', () => {
       const recordSpy = vi
         .spyOn(deps.executionEngine!.getContextManager(), 'recordTokenBudgetHandoff')
         .mockRejectedValueOnce(
-          new Error('disk failed at /private/workspace with secret-token')
+          Object.assign(
+            new Error('disk failed at /private/workspace with secret-token'),
+            { name: 'SecretPathError', code: 'secret-token' }
+          )
         );
       vi.mocked(deps.chatService.chat)
         .mockResolvedValueOnce(toolResponse(70_000))
@@ -1247,6 +1333,84 @@ describe('executeLoopGenerator', () => {
         secondFallbackRequest?.[0].filter(
           (message) => message.id === handoffMessageId && message.role === 'user'
         )
+      ).toHaveLength(1);
+    });
+
+    it('reuses one marker across a Provider pre-stream retry lifecycle', async () => {
+      const { deps } = createHandoffPersistenceHarness();
+      const recordSpy = vi.spyOn(
+        deps.executionEngine!.getContextManager(),
+        'recordTokenBudgetHandoff'
+      );
+      const handoffRecord = recordedHandoffResult(70_000);
+      const handoffMessageId = handoffRecord.event.data.messageId;
+      recordSpy.mockResolvedValueOnce(handoffRecord);
+
+      vi.mocked(deps.chatService.streamChat)
+        .mockImplementationOnce(async function* () {
+          yield {
+            toolCalls: [
+              {
+                index: 0,
+                id: 'stream-read-1',
+                type: 'function',
+                function: { name: 'Read', arguments: '{"path":"package.json"}' },
+              },
+            ],
+            usage: {
+              promptTokens: 70_000,
+              completionTokens: 25,
+              totalTokens: 70_025,
+            },
+            finishReason: 'tool_calls',
+          } satisfies StreamChunk;
+        })
+        .mockImplementationOnce(async function* () {
+          yield {
+            providerRetry: {
+              phase: 'attempt',
+              attempt: 1,
+              maxRetries: 2,
+              reason: 'transport',
+            },
+          } satisfies StreamChunk;
+          yield {
+            content: 'done after retry',
+            usage: {
+              promptTokens: 75_000,
+              completionTokens: 20,
+              totalTokens: 75_020,
+            },
+            finishReason: 'stop',
+          } satisfies StreamChunk;
+        });
+
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Continue across a Provider retry.',
+          createMockContext(),
+          { stream: true },
+          undefined
+        )
+      );
+
+      expect(result.success).toBe(true);
+      expect(recordSpy).toHaveBeenCalledOnce();
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          kind: 'provider_retry',
+          phase: 'attempt',
+          attempt: 1,
+        })
+      );
+      const streamCalls = vi.mocked(deps.chatService.streamChat).mock.calls;
+      expect(streamCalls).toHaveLength(2);
+      expect(
+        streamCalls[0]?.[0].filter((message) => message.id === handoffMessageId)
+      ).toHaveLength(0);
+      expect(
+        streamCalls[1]?.[0].filter((message) => message.id === handoffMessageId)
       ).toHaveLength(1);
     });
 

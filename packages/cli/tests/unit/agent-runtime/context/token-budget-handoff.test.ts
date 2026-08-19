@@ -6,6 +6,7 @@ import {
   isTokenBudgetHandoffMessage,
   parseTokenBudgetHandoffEvent,
   projectTokenBudgetHandoffEvent,
+  resolveCompactionOutputReserve,
   stripTokenBudgetHandoffMessages,
   TOKEN_BUDGET_COMPACTION_RATIO,
   TOKEN_BUDGET_HANDOFF_MAX_BYTES,
@@ -171,6 +172,36 @@ describe('deriveTokenBudgetSnapshot', () => {
       handoffThreshold: 6_305_039_478_318_693,
       compactionThreshold: 7_205_759_403_792_792,
     });
+  });
+});
+
+describe('resolveCompactionOutputReserve', () => {
+  it('preserves provider then configured output-token precedence', () => {
+    expect(
+      resolveCompactionOutputReserve({
+        maxContextTokens: 100_000,
+        maxOutputTokens: 4_096,
+        configuredMaxOutputTokens: 2_048,
+      })
+    ).toBe(4_096);
+    expect(
+      resolveCompactionOutputReserve({
+        maxContextTokens: 100_000,
+        maxOutputTokens: null,
+        configuredMaxOutputTokens: 2_048,
+      })
+    ).toBe(2_048);
+  });
+
+  it('uses the existing bounded ten-percent fallback', () => {
+    expect(resolveCompactionOutputReserve({ maxContextTokens: 100_000 })).toBe(
+      10_000
+    );
+    expect(resolveCompactionOutputReserve({ maxContextTokens: 1_000 })).toBe(8_192);
+    expect(resolveCompactionOutputReserve({ maxContextTokens: 1_000_000 })).toBe(
+      32_768
+    );
+    expect(resolveCompactionOutputReserve({})).toBeUndefined();
   });
 });
 
