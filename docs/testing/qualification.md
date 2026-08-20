@@ -381,6 +381,32 @@ barrier；随后恰好一次 TaskOutput 获得交接前后两个 output marker�
 - TaskOutput 终态后 process/terminal、foreground/background lease、port、browser、
   PTY、SSE、临时根和 Provider credential 全部清零。
 
+Durable token-budget handoff 固定运行 DeepSeek Flash/Pro × Headless、raw PTY
+TUI、production Chromium Web 与真实 ACP SDK 八格矩阵，顺序固定且不经过 release
+surface 过滤。每格通过 loopback transparent proxy 转发真实 Provider 输出和真实
+compaction summary；proxy 只改写前两个 task response 的 usage counters，并要求请求
+顺序为 `task(70%) -> task(80%) -> compaction -> task -> task`。70%/80% 阈值来自
+production model catalog 的 context window 与 output reserve，而不是测试硬编码。每格证明：
+
+- handoff marker 在第二次 task Provider request 前持久化，当前 epoch 恰好一个
+  `handoff-message-` durable identity，pre-compaction request 至多一次 marker，
+  compaction 与其后请求为零；
+- latest replacement checkpoint 位于 marker 后，replacement/effective suffix 不含 marker，
+  七段 continuation ledger 精确保留 mutation、failed verification 和 pending action
+  sentinels，且真实 Bash fail、Write、Bash pass 的 durable 顺序正确；
+- Headless cold projection、PTY resume、ACP `session/load` 和 Web post-completion reload
+  均不得新增 Provider request；internal event/tag/identity/reminder 不进入 terminal bytes、
+  ACP updates/terminal、HTTP history、SSE、Zustand、DOM 或 HTML；
+- Web 在真实执行中 reload，并在每次 navigation 前搬运 page-owned EventSource evidence；
+  PTY byte stream 与 raw Session JSONL 是 terminal authority；ACP 使用真实 paired NDJSON
+  codec 与 child-backed terminal；
+- browser/page/SSE、PTY、ACP terminal/process、server/proxy/port、Session/foreground
+  lease、临时 HOME/storage/workspace 全部回收，evidence 与日志不含 Provider credentials。
+
+该 release-blocking trajectory 在 `REAL_API_RELEASE_MATRIX=1` 时 framework retry 为 0。
+Desktop computer-use 只能作为非阻断视觉观察；它不能证明 JSONL、Provider request
+顺序或 marker non-fan-out，因此不是本 runtime contract 的 authority。
+
 Fresh independent verification 资格要求主模型实际完成三个文件的非平凡实现，并在
 第一次尝试结束时由 runtime 强制启动新的内置 `verification` subagent。Verifier
 必须处于独立 child Session，运行项目已配置的真实测试，返回恰好一个结构化 PASS；

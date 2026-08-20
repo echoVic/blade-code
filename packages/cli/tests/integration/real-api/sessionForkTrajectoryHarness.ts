@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import type { SessionEvent } from '../../../src/context/types.js';
+import { isValidSessionId } from '../../../src/context/storage/pathUtils.js';
 
 export interface ForkFixture {
   workspace: string;
@@ -443,7 +444,7 @@ export function extractDurableToolTrace(
 }
 
 export function findSessionTranscript(storageRoot: string, sessionId: string): string {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(sessionId)) {
+  if (!isValidSessionId(sessionId)) {
     throw new Error(`Invalid session ID for transcript lookup: ${sessionId}`);
   }
   const projectsRoot = path.join(storageRoot, 'projects');

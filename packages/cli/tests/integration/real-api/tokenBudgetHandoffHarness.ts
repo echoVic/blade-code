@@ -254,7 +254,8 @@ function assertRequestShape(
 }
 
 export function assertTokenBudgetRequestSequence(
-  evidence: TokenBudgetProxyEvidence
+  evidence: TokenBudgetProxyEvidence,
+  targets: { handoffPromptTokens: number; compactionPromptTokens: number }
 ): void {
   if (evidence.maxInFlight !== 1) {
     throw new Error('Token-budget Provider requests must have maxInFlight equal to 1');
@@ -266,8 +267,18 @@ export function assertTokenBudgetRequestSequence(
   }
 
   const expected = [
-    { kind: 'task', marker: 0, target: 70_000, rewritten: true },
-    { kind: 'task', marker: 1, target: 80_000, rewritten: true },
+    {
+      kind: 'task',
+      marker: 0,
+      target: targets.handoffPromptTokens,
+      rewritten: true,
+    },
+    {
+      kind: 'task',
+      marker: 1,
+      target: targets.compactionPromptTokens,
+      rewritten: true,
+    },
     { kind: 'compaction', marker: 0, rewritten: false },
     { kind: 'task', marker: 0, rewritten: false },
     { kind: 'task', marker: 0, rewritten: false },

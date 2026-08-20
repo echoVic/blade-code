@@ -553,6 +553,35 @@ describe('real API coding-task harness', () => {
     ).not.toContain(secret);
   });
 
+  it('builds the fixed eight-cell token-budget qualification identity order', () => {
+    const models = resolveRequiredDeepSeekQualificationModels({
+      DEEPSEEK_API_KEY: 'token-budget-matrix-secret',
+      DEEPSEEK_BASE_URL: 'https://deepseek.invalid',
+      DEEPSEEK_MODELS: 'deepseek-v4-flash,deepseek-v4-pro',
+    });
+    const surfaces = ['headless', 'pty', 'web', 'acp'] as const;
+    const qualificationIds = models.flatMap((model) =>
+      surfaces.map((surface) => `${model.qualificationId}:${surface}`)
+    );
+
+    expect(models.map((model) => model.model)).toEqual([
+      'deepseek-v4-flash',
+      'deepseek-v4-pro',
+    ]);
+    expect(surfaces).toEqual(['headless', 'pty', 'web', 'acp']);
+    expect(qualificationIds).toEqual([
+      'deepseek:deepseek-v4-flash:headless',
+      'deepseek:deepseek-v4-flash:pty',
+      'deepseek:deepseek-v4-flash:web',
+      'deepseek:deepseek-v4-flash:acp',
+      'deepseek:deepseek-v4-pro:headless',
+      'deepseek:deepseek-v4-pro:pty',
+      'deepseek:deepseek-v4-pro:web',
+      'deepseek:deepseek-v4-pro:acp',
+    ]);
+    expect(new Set(qualificationIds).size).toBe(8);
+  });
+
   it('projects one shared DeepSeek channel for legacy real API trajectories', () => {
     expect(
       resolveDeepSeekQualificationSettings({
@@ -1134,6 +1163,29 @@ describe('real API session-fork trajectory harness', () => {
       rmSync(storageRoot, { recursive: true, force: true });
     }
   });
+
+  it.each(['_leading-session', '-leading-session'])(
+    'finds production-valid %s transcript identities',
+    (sessionId) => {
+      const storageRoot = mkdtempSync(
+        path.join(os.tmpdir(), 'blade-transcript-production-id-')
+      );
+      const directory = path.join(storageRoot, 'projects', 'workspace');
+      mkdirSync(directory, { recursive: true });
+      const transcriptPath = path.join(directory, `${sessionId}.jsonl`);
+      writeFileSync(
+        transcriptPath,
+        `${JSON.stringify(
+          createForkCreatedEvent(sessionId, 'parent-session', 'root-session')
+        )}\n`
+      );
+      try {
+        expect(findSessionTranscript(storageRoot, sessionId)).toBe(transcriptPath);
+      } finally {
+        rmSync(storageRoot, { recursive: true, force: true });
+      }
+    }
+  );
 
   it('reads validated session JSONL with a trailing blank line', () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'blade-session-events-'));

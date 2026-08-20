@@ -129,6 +129,27 @@ async function ensureGitFixture(workspace: string): Promise<void> {
   await execFileAsync('git', ['commit', '-qm', 'fixture'], { cwd: workspace });
 }
 
+async function waitForServer(
+  child: ReturnType<typeof spawn>,
+  port: number,
+  timeoutMs = 20_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error('Token-budget Blade server exited before readiness');
+    }
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}`);
+      if (response.ok) return;
+    } catch {
+      // The child is still binding its production HTTP listener.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error('Token-budget Blade server readiness timed out');
+}
+
 async function main(): Promise<void> {
   const input = loadInput();
   delete process.env.BLADE_TOKEN_BUDGET_WEB_INPUT;
@@ -186,13 +207,19 @@ async function main(): Promise<void> {
   );
   child.stdout.pipe(process.stdout);
   child.stderr.pipe(process.stderr);
-  process.stdout.write(`${JSON.stringify({ ready: true, port: input.port })}\n`);
 
   const stop = (): void => {
     child.kill('SIGTERM');
   };
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
+  try {
+    await waitForServer(child, input.port);
+  } catch (error) {
+    child.kill('SIGKILL');
+    throw error;
+  }
+  process.stdout.write(`${JSON.stringify({ ready: true, port: input.port })}\n`);
   await new Promise<void>((resolve, reject) => {
     child.once('error', reject);
     child.once('exit', (code, signal) => {

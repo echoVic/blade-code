@@ -107,6 +107,24 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
     });
   });
 
+  it('keeps the complete token-budget handoff matrix release-blocking', async () => {
+    const file = 'tests/integration/real-api/token-budget-handoff-trajectory.test.ts';
+    expect(testTypes.realApiQualification.files).toContain(file);
+    const source = await readFile(
+      path.resolve(import.meta.dirname, '../../..', file),
+      'utf8'
+    );
+    expect(source).toContain(
+      "const surfaces = ['headless', 'pty', 'web', 'acp'] as const"
+    );
+    expect(source).toContain('matrix.length !== 8');
+    expect(source).not.toContain('releaseBlockingSurfaces');
+    expect(testTypes.realApiQualification.env).toMatchObject({
+      REAL_API_TEST: '1',
+      REAL_API_RELEASE_MATRIX: '1',
+    });
+  });
+
   it('disables framework retry for the release-blocking real API matrix', async () => {
     const vitestConfig = await readFile(
       path.resolve(import.meta.dirname, '../../../vitest.config.ts'),

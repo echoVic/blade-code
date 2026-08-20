@@ -523,7 +523,12 @@ describe('token-budget handoff deterministic qualification foundation', () => {
           { kind: 'task', ordinal: 5, usageRewritten: false },
         ],
       });
-      expect(() => assertTokenBudgetRequestSequence(evidence)).not.toThrow();
+      expect(() =>
+        assertTokenBudgetRequestSequence(evidence, {
+          handoffPromptTokens: 70_000,
+          compactionPromptTokens: 80_000,
+        })
+      ).not.toThrow();
       expect(JSON.stringify(evidence)).not.toContain('stage one secret');
       expect(JSON.stringify(evidence)).not.toContain('proxy-test-secret');
       evidence.requests[0]!.kind = 'compaction';
@@ -1185,14 +1190,21 @@ describe('token-budget handoff deterministic qualification foundation', () => {
         },
       ],
     };
-    expect(() => assertTokenBudgetRequestSequence(evidence)).not.toThrow();
+    const targets = {
+      handoffPromptTokens: 70_000,
+      compactionPromptTokens: 80_000,
+    };
+    expect(() => assertTokenBudgetRequestSequence(evidence, targets)).not.toThrow();
     expect(() =>
-      assertTokenBudgetRequestSequence({
-        ...evidence,
-        requests: evidence.requests.map((request, index) =>
-          index === 1 ? { ...request, markerOccurrences: 2 } : request
-        ),
-      })
+      assertTokenBudgetRequestSequence(
+        {
+          ...evidence,
+          requests: evidence.requests.map((request, index) =>
+            index === 1 ? { ...request, markerOccurrences: 2 } : request
+          ),
+        },
+        targets
+      )
     ).toThrow('marker');
   });
 
