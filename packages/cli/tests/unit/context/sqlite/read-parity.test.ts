@@ -3,11 +3,21 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resetProjectionDbCache } from '../../../../src/context/storage/sqlite/projection.js';
-import type { SessionEvent } from '../../../../src/context/types.js';
+import type {
+  SessionEvent,
+  SessionTaskPriority,
+  SessionTaskStatus,
+} from '../../../../src/context/types.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
 import { searchTranscripts } from '../../../../src/services/TranscriptSearch.js';
 
 const ts = (s: number) => new Date(Date.UTC(2024, 0, 1, 0, 0, s)).toISOString();
+
+interface TaskFixture {
+  status?: SessionTaskStatus;
+  priority?: SessionTaskPriority;
+  dueAt?: string;
+}
 
 function ev(
   seq: number,
@@ -40,7 +50,8 @@ describe('SQLite read-model parity + FTS search', () => {
     sessionId: string,
     userText: string,
     assistantText: string,
-    at: string
+    at: string,
+    task?: TaskFixture
   ): Promise<void> {
     const dir = path.join(root, 'projects', escaped(projectPath));
     await mkdir(dir, { recursive: true });
@@ -48,7 +59,15 @@ describe('SQLite read-model parity + FTS search', () => {
       ev(
         1,
         'session_created',
-        { sessionId, rootId: sessionId, createdAt: at, updatedAt: at },
+        {
+          sessionId,
+          rootId: sessionId,
+          createdAt: at,
+          updatedAt: at,
+          ...(task?.status ? { taskStatus: task.status } : {}),
+          ...(task?.priority ? { taskPriority: task.priority } : {}),
+          ...(task?.dueAt ? { taskDueAt: task.dueAt } : {}),
+        },
         at,
         projectPath
       ),
@@ -141,5 +160,146 @@ describe('SQLite read-model parity + FTS search', () => {
 
     await SessionService.deleteSession('sess-x', projectPath);
     expect((await SessionService.listSessions({ cwd: projectPath })).length).toBe(0);
+  });
+
+  it('pushes a single taskStatus filter down to the projection', async () => {
+    await writeSession('sess-queued', 'q', 'a', ts(1), { status: 'queued' });
+    await writeSession('sess-running', 'r', 'a', ts(2), { status: 'running' });
+    await writeSession('sess-done', 'd', 'a', ts(3)); // defaults to completed
+
+    const queued = await SessionService.listSessions({
+      cwd: projectPath,
+      taskStatus: 'queued',
+    });
+    expect(queued.map((s) => s.sessionId)).toEqual(['sess-queued']);
+    expect(queued[0].taskStatus).toBe('queued');
+  });
+
+  it('supports a multi-status taskStatus filter', async () => {
+    await writeSession('sess-queued', 'q', 'a', ts(1), { status: 'queued' });
+    await writeSession('sess-running', 'r', 'a', ts(2), { status: 'running' });
+    await writeSession('sess-done', 'd', 'a', ts(3)); // completed
+
+    const active = await SessionService.listSessions({
+      cwd: projectPath,
+      taskStatus: ['queued', 'running'],
+    });
+    // Sorted newest-first by lastMessageTime.
+    expect(active.map((s) => s.sessionId)).toEqual(['sess-running', 'sess-queued']);
+  });
+
+  it('pushes priority and inclusive due-time ranges down to the projection', async () => {
+    await writeSession('sess-high-early', 'a', 'a', ts(1), {
+      priority: 'high',
+      dueAt: '2024-02-01T00:00:00.000Z',
+    });
+    await writeSession('sess-medium-window', 'b', 'a', ts(2), {
+      priority: 'medium',
+      dueAt: '2024-03-01T00:00:00.000Z',
+    });
+    await writeSession('sess-low-late', 'c', 'a', ts(3), {
+      priority: 'low',
+      dueAt: '2024-04-01T00:00:00.000Z',
+    });
+    await writeSession('sess-high-no-due', 'd', 'a', ts(4), {
+      priority: 'high',
+    });
+
+    const filtered = await SessionService.listSessions({
+      cwd: projectPath,
+      taskPriority: ['high', 'medium'],
+      taskDueAfter: '2024-02-01T00:00:00.000Z',
+      taskDueBefore: '2024-03-01T08:00:00+08:00',
+    });
+    expect(filtered.map((session) => session.sessionId)).toEqual([
+      'sess-medium-window',
+      'sess-high-early',
+    ]);
+  });
+
+  it('supports priority-only and due-only projection filters', async () => {
+    await writeSession('sess-high', 'a', 'a', ts(1), {
+      priority: 'high',
+      dueAt: '2024-02-01T00:00:00.000Z',
+    });
+    await writeSession('sess-low', 'b', 'a', ts(2), {
+      priority: 'low',
+      dueAt: '2024-04-01T00:00:00.000Z',
+    });
+    await writeSession('sess-unplanned', 'c', 'a', ts(3));
+
+    await expect(
+      SessionService.listSessions({
+        cwd: projectPath,
+        taskPriority: 'high',
+      })
+    ).resolves.toMatchObject([{ sessionId: 'sess-high', taskPriority: 'high' }]);
+
+    const due = await SessionService.listSessions({
+      cwd: projectPath,
+      taskDueBefore: '2024-03-01T00:00:00.000Z',
+    });
+    expect(due.map((session) => session.sessionId)).toEqual(['sess-high']);
+  });
+
+  it('applies identical priority and due-time filters on the JSONL fallback', async () => {
+    await mkdir(path.join(root, 'index.db'));
+    await writeSession('sess-window', 'a', 'a', ts(1), {
+      priority: 'medium',
+      dueAt: '2024-03-01T00:00:00.000Z',
+    });
+    await writeSession('sess-outside', 'b', 'a', ts(2), {
+      priority: 'low',
+      dueAt: '2024-04-01T00:00:00.000Z',
+    });
+    await writeSession('sess-no-due', 'c', 'a', ts(3), {
+      priority: 'medium',
+    });
+
+    const filtered = await SessionService.listSessions({
+      cwd: projectPath,
+      taskPriority: ['high', 'medium'],
+      taskDueAfter: '2024-02-01T00:00:00.000Z',
+      taskDueBefore: '2024-03-01T00:00:00.000Z',
+    });
+    expect(filtered.map((session) => session.sessionId)).toEqual(['sess-window']);
+  });
+
+  it('rejects invalid task filters before querying either persistence path', async () => {
+    await expect(
+      SessionService.listSessions({
+        cwd: projectPath,
+        taskStatus: 'pending' as 'queued',
+      })
+    ).rejects.toThrow('Invalid session task status filter');
+    await expect(
+      SessionService.listSessions({
+        cwd: projectPath,
+        taskPriority: 'urgent' as 'high',
+      })
+    ).rejects.toThrow('Invalid session task priority filter');
+    await expect(
+      SessionService.listSessions({
+        cwd: projectPath,
+        taskDueBefore: 'not-a-date',
+      })
+    ).rejects.toThrow('Invalid session taskDueBefore filter');
+    await expect(
+      SessionService.listSessions({
+        cwd: projectPath,
+        taskDueAfter: '2024-04-01T00:00:00.000Z',
+        taskDueBefore: '2024-03-01T00:00:00.000Z',
+      })
+    ).rejects.toThrow('Session task due range is inverted');
+  });
+
+  it('returns every session when no taskStatus filter is given', async () => {
+    await writeSession('sess-queued', 'q', 'a', ts(1), { status: 'queued' });
+    await writeSession('sess-done', 'd', 'a', ts(2)); // completed
+
+    const all = await SessionService.listSessions({ cwd: projectPath });
+    expect(new Set(all.map((s) => s.sessionId))).toEqual(
+      new Set(['sess-queued', 'sess-done'])
+    );
   });
 });

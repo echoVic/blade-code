@@ -39,6 +39,9 @@ export interface ProjectedSession {
     model?: string;
     parentId?: string;
     taskStatus: string;
+    taskPriority?: string;
+    taskKind?: string;
+    taskDueAt?: string;
     archivedAt?: string;
     messageCount: number;
     firstMessageTime: string;
@@ -170,15 +173,18 @@ function upsertSession(db: SqliteDb, meta: ProjectedSession['metadata']): void {
   db.prepare(
     `INSERT INTO sessions
        (project_path, session_id, root_id, parent_id, relation_type, title,
-        agent_type, model, task_status, archived_at, last_message_time, project_sort_key,
+        agent_type, model, task_status, task_priority, task_kind, task_due_at,
+        archived_at, last_message_time, project_sort_key,
         session_sort_key, first_message_time, message_count, has_errors,
         is_subagent, metadata_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(project_path, session_id) DO UPDATE SET
        root_id=excluded.root_id, parent_id=excluded.parent_id,
        relation_type=excluded.relation_type, title=excluded.title,
        agent_type=excluded.agent_type, model=excluded.model,
-       task_status=excluded.task_status, archived_at=excluded.archived_at,
+       task_status=excluded.task_status, task_priority=excluded.task_priority,
+       task_kind=excluded.task_kind, task_due_at=excluded.task_due_at,
+       archived_at=excluded.archived_at,
        last_message_time=excluded.last_message_time,
        project_sort_key=excluded.project_sort_key,
        session_sort_key=excluded.session_sort_key,
@@ -195,6 +201,9 @@ function upsertSession(db: SqliteDb, meta: ProjectedSession['metadata']): void {
     meta.agentType ?? null,
     meta.model ?? null,
     meta.taskStatus,
+    meta.taskPriority ?? null,
+    meta.taskKind ?? null,
+    meta.taskDueAt ?? null,
     meta.archivedAt ?? null,
     meta.lastMessageTime,
     sessionCatalogSortKey(meta.projectPath),
