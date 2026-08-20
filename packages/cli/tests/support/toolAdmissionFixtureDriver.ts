@@ -1,6 +1,7 @@
 import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  finalAssistantText,
   findSessionTranscript,
   readSessionEvents,
 } from '../integration/real-api/sessionForkTrajectoryHarness.js';
@@ -170,7 +171,8 @@ export async function driveToolAdmissionFixture(input: {
 
 export async function waitForToolAdmissionSessionCompletion(
   storageRoot: string,
-  sessionId: string
+  sessionId: string,
+  finalMarker: string
 ): Promise<void> {
   await waitFor(async () => {
     const events = readSessionEvents(findSessionTranscript(storageRoot, sessionId));
@@ -185,7 +187,8 @@ export async function waitForToolAdmissionSessionCompletion(
     );
     return (
       results.length === 4 &&
-      events.filter((event) => event.type === 'turn_completed').length === 1
+      events.filter((event) => event.type === 'turn_completed').length === 1 &&
+      finalAssistantText(events) === finalMarker
     );
-  }, 'Tool admission Session did not persist four results and one completed turn');
+  }, 'Tool admission Session did not persist four results, one completed turn, and the final marker');
 }

@@ -33,6 +33,95 @@ export function appendBoundedPtyEvidence(
   return `${current}${chunk}`.slice(-maxChars);
 }
 
+export class ArmedPtyMarkerLatch {
+  readonly #marker: string;
+  #armed = false;
+  #seen = false;
+  #scanTail = '';
+
+  constructor(marker: string) {
+    if (!marker) throw new Error('PTY marker latch requires a non-empty marker');
+    this.#marker = marker;
+  }
+
+  get seen(): boolean {
+    return this.#seen;
+  }
+
+  arm(): void {
+    this.#armed = true;
+    this.#seen = false;
+    this.#scanTail = '';
+  }
+
+  observe(chunk: string): void {
+    if (!this.#armed || this.#seen) return;
+    const scan = `${this.#scanTail}${chunk}`;
+    this.#seen = scan.includes(this.#marker);
+    const tailLength = this.#marker.length - 1;
+    this.#scanTail = tailLength > 0 ? scan.slice(-tailLength) : '';
+  }
+}
+
+export function createSplitPtyMarkerInstruction(marker: string): string {
+  if (!/^[A-Za-z0-9_-]{2,128}$/.test(marker)) {
+    throw new Error('PTY final marker violates the bounded ASCII contract');
+  }
+  const midpoint = Math.ceil(marker.length / 2);
+  const firstHalf = marker.slice(0, midpoint);
+  const secondHalf = marker.slice(midpoint);
+  return [
+    'Final response protocol: do not call tools.',
+    'Your entire response must be exactly the payload of PART_A immediately ' +
+      'followed by the payload of PART_B.',
+    'Copy payload characters literally. Output no labels, delimiters, quotes, ' +
+      'spaces, markdown, explanation, or leading/trailing newline.',
+    `The result must contain exactly ${marker.length} ASCII characters and match ` +
+      `^[A-Za-z0-9_-]{${marker.length}}$.`,
+    `PART_A=${firstHalf}`,
+    `PART_B=${secondHalf}`,
+  ].join('\n');
+}
+
+export function assertSplitPtyMarkerInstructionAtEnd(
+  prompt: string,
+  marker: string
+): void {
+  if (!prompt.endsWith(createSplitPtyMarkerInstruction(marker))) {
+    throw new Error('Split PTY marker instruction must terminate the prompt');
+  }
+}
+
+export async function waitForPtyExit(
+  exitPromise: Promise<void>,
+  message: string,
+  timeoutMs = 15_000
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      exitPromise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export function isCompleteRawPtyMarkerEvidence(value: unknown): boolean {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    'finalMarkerSeen' in value &&
+    value.finalMarkerSeen === true &&
+    'secretSeen' in value &&
+    value.secretSeen === false
+  );
+}
+
 export function projectForegroundBoundedPtyOutput(output: string): string {
   const plain = [...stripVTControlCharacters(output)]
     .filter((character) => {

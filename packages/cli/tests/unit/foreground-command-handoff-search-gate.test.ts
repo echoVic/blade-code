@@ -68,4 +68,28 @@ describe('foreground command handoff source gate', () => {
     expect(combined).not.toMatch(/NODE_ENV\s*===\s*['"]test['"]/);
     expect(combined).not.toMatch(/BLADE_TEST/);
   });
+
+  it('requires sticky raw PTY completion evidence in the release trajectory', () => {
+    const runner = source('../support/foregroundCommandHandoffPtyRunner.ts');
+    const trajectory = source(
+      '../integration/real-api/foreground-command-handoff-trajectory.test.ts'
+    );
+    const fixture = source('../support/foregroundCommandHandoffFixtureDriver.ts');
+
+    expect(runner).toContain('finalMarkerSeen: finalMarkerLatch.seen');
+    expect(runner).toContain('secretSeen: secretLatch.seen');
+    expect(fixture).toContain('createSplitPtyMarkerInstruction');
+    expect(fixture).toContain('assertSplitPtyMarkerInstructionAtEnd(prompt, marker)');
+    expect(fixture.indexOf('Do not call any other tool')).toBeLessThan(
+      fixture.lastIndexOf('createSplitPtyMarkerInstruction')
+    );
+    expect(fixture).toContain('finalAssistantText(events) !== input.fixture.marker');
+    expect(fixture).toContain(
+      'Foreground handoff Session did not persist its exact final authority'
+    );
+    expect(fixture).not.toContain(
+      "events.filter((event) => event.type === 'turn_completed').length === 1"
+    );
+    expect(trajectory).toContain('!isCompleteRawPtyMarkerEvidence(parsed)');
+  });
 });

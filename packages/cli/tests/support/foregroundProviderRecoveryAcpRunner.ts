@@ -2,7 +2,11 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
-import { findSessionTranscript } from '../integration/real-api/sessionForkTrajectoryHarness.js';
+import {
+  finalAssistantText,
+  findSessionTranscript,
+  readSessionEvents,
+} from '../integration/real-api/sessionForkTrajectoryHarness.js';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
 
 interface RunnerInput {
@@ -166,11 +170,15 @@ async function run(input: RunnerInput) {
     }
     let secondaryTranscript = '';
     if (secondarySessionId && input.secondaryMarker) {
-      secondaryTranscript = await readFile(
-        findSessionTranscript(input.storageRoot, secondarySessionId),
-        'utf8'
+      const secondaryTranscriptPath = findSessionTranscript(
+        input.storageRoot,
+        secondarySessionId
       );
-      if (!secondaryTranscript.includes(input.secondaryMarker)) {
+      secondaryTranscript = await readFile(secondaryTranscriptPath, 'utf8');
+      if (
+        finalAssistantText(readSessionEvents(secondaryTranscriptPath)) !==
+        input.secondaryMarker
+      ) {
         throw new Error(
           'Secondary ACP transcript did not contain the shared circuit marker'
         );

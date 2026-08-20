@@ -30,6 +30,7 @@ import {
   createForkFixture,
   type DurableToolTraceRecord,
   extractDurableToolTrace,
+  finalAssistantText,
   findSessionTranscript,
   readSessionEvents,
   startHeldProviderProxy,
@@ -178,6 +179,154 @@ function createPartEvent(
   };
 }
 
+function createAssistantMessageEvent(
+  sessionId: string,
+  messageId: string,
+  turnId?: string
+): Extract<SessionEvent, { type: 'message_created' }> {
+  return {
+    id: `${messageId}-event`,
+    sessionId,
+    timestamp: CREATED_AT,
+    type: 'message_created',
+    cwd: '/tmp/fork-workspace',
+    gitBranch: 'main',
+    version: 'test',
+    data: {
+      messageId,
+      role: 'assistant',
+      createdAt: CREATED_AT,
+      ...(turnId
+        ? {
+            metadata: {
+              turnFinalization: {
+                turnId,
+                inputMessageIds: [],
+                turnsCount: 1,
+                toolCallsCount: 0,
+                durationMs: 1,
+              },
+            },
+          }
+        : {}),
+    },
+  };
+}
+
+function createTurnCompletedEvent(
+  sessionId: string,
+  turnId: string
+): Extract<SessionEvent, { type: 'turn_completed' }> {
+  return {
+    id: `${turnId}-completed`,
+    sessionId,
+    timestamp: CREATED_AT,
+    type: 'turn_completed',
+    cwd: '/tmp/fork-workspace',
+    gitBranch: 'main',
+    version: 'test',
+    data: {
+      turnId,
+      completedAt: CREATED_AT,
+      turnsCount: 1,
+      toolCallsCount: 0,
+      durationMs: 1,
+    },
+  };
+}
+
+function createTurnStartedEvent(
+  sessionId: string,
+  turnId: string
+): Extract<SessionEvent, { type: 'turn_started' }> {
+  return {
+    id: `${turnId}-started`,
+    sessionId,
+    timestamp: CREATED_AT,
+    type: 'turn_started',
+    cwd: '/tmp/fork-workspace',
+    gitBranch: 'main',
+    version: 'test',
+    data: {
+      turnId,
+      kind: 'user',
+      startedAt: CREATED_AT,
+      inputMessageIds: [],
+    },
+  };
+}
+
+function createTaskStatusEvent(
+  sessionId: string,
+  taskStatus: 'completed' | 'failed' = 'completed'
+): Extract<SessionEvent, { type: 'session_updated' }> {
+  return {
+    id: `${sessionId}-${taskStatus}`,
+    sessionId,
+    timestamp: CREATED_AT,
+    type: 'session_updated',
+    cwd: '/tmp/fork-workspace',
+    gitBranch: 'main',
+    version: 'test',
+    data: {
+      sessionId,
+      taskStatus,
+      taskStatusReason: taskStatus === 'failed' ? 'fixture failure' : null,
+      taskFailure: null,
+      taskCompletedAt: CREATED_AT,
+      taskOwnerPid: null,
+      taskQueuePosition: null,
+      taskQueueDepth: null,
+      updatedAt: CREATED_AT,
+    },
+  };
+}
+
+function createTitleUpdateEvent(
+  sessionId: string
+): Extract<SessionEvent, { type: 'session_updated' }> {
+  return {
+    id: `${sessionId}-title`,
+    sessionId,
+    timestamp: CREATED_AT,
+    type: 'session_updated',
+    cwd: '/tmp/fork-workspace',
+    gitBranch: 'main',
+    version: 'test',
+    data: {
+      sessionId,
+      title: 'Backfilled title',
+      updatedAt: CREATED_AT,
+    },
+  };
+}
+
+function createAssistantPartEvent(
+  sessionId: string,
+  messageId: string,
+  partId: string,
+  partType: 'text' | 'reasoning',
+  text: string,
+  type: 'part_created' | 'part_updated' = 'part_created'
+): Extract<SessionEvent, { type: 'part_created' | 'part_updated' }> {
+  return {
+    id: `${partId}-${type}`,
+    sessionId,
+    timestamp: CREATED_AT,
+    type,
+    cwd: '/tmp/fork-workspace',
+    gitBranch: 'main',
+    version: 'test',
+    data: {
+      partId,
+      messageId,
+      partType,
+      payload: { text },
+      createdAt: CREATED_AT,
+    },
+  };
+}
+
 function createToolPartEvent(
   sessionId: string,
   index: number,
@@ -212,6 +361,181 @@ function thrownMessage(action: () => unknown): string {
 }
 
 describe('real API coding-task harness', () => {
+  it('projects only the final assistant text with part updates applied', () => {
+    const sessionId = 'final-assistant-session';
+    const marker = 'FINAL_MARKER';
+    const turnId = 'turn-final';
+    const events: SessionEvent[] = [
+      createTurnStartedEvent(sessionId, turnId),
+      createAssistantMessageEvent(sessionId, 'assistant-earlier'),
+      createAssistantPartEvent(
+        sessionId,
+        'assistant-earlier',
+        'earlier-text',
+        'text',
+        marker
+      ),
+      createAssistantMessageEvent(sessionId, 'assistant-final', turnId),
+      createAssistantPartEvent(
+        sessionId,
+        'assistant-final',
+        'final-reasoning',
+        'reasoning',
+        marker
+      ),
+      createAssistantPartEvent(
+        sessionId,
+        'assistant-final',
+        'final-text',
+        'text',
+        'FINAL_'
+      ),
+      createAssistantPartEvent(
+        sessionId,
+        'assistant-final',
+        'final-text',
+        'text',
+        marker,
+        'part_updated'
+      ),
+      createTurnCompletedEvent(sessionId, turnId),
+    ];
+
+    expect(finalAssistantText(events)).toBeUndefined();
+    expect(
+      finalAssistantText([
+        ...events,
+        createTitleUpdateEvent(sessionId),
+        createTaskStatusEvent(sessionId, 'completed'),
+      ])
+    ).toBe(marker);
+    expect(
+      finalAssistantText([
+        ...events,
+        createTaskStatusEvent(sessionId, 'completed'),
+        createTitleUpdateEvent(sessionId),
+      ])
+    ).toBe(marker);
+    expect(
+      finalAssistantText([
+        ...events.filter((event) => event.type !== 'turn_started'),
+        createTaskStatusEvent(sessionId, 'completed'),
+      ])
+    ).toBeUndefined();
+    const crossSessionStart = events.map((event) =>
+      event.type === 'turn_started'
+        ? { ...event, sessionId: 'different-session' }
+        : event
+    );
+    expect(
+      finalAssistantText([
+        ...crossSessionStart,
+        createTaskStatusEvent(sessionId, 'completed'),
+      ])
+    ).toBeUndefined();
+    const lateStart = [...events.slice(1, -1), events[0]!, events.at(-1)!];
+    expect(
+      finalAssistantText([...lateStart, createTaskStatusEvent(sessionId, 'completed')])
+    ).toBeUndefined();
+    const finalMessageIndex = events.findIndex(
+      (event) =>
+        event.type === 'message_created' && event.data.messageId === 'assistant-final'
+    );
+    const finalMessage = events[finalMessageIndex]!;
+    const lateFinalMessage = [
+      ...events.slice(0, finalMessageIndex),
+      ...events.slice(finalMessageIndex + 1, -1),
+      finalMessage,
+      events.at(-1)!,
+    ];
+    expect(
+      finalAssistantText([
+        ...lateFinalMessage,
+        createTaskStatusEvent(sessionId, 'completed'),
+      ])
+    ).toBeUndefined();
+    expect(
+      finalAssistantText([...events, createTaskStatusEvent(sessionId, 'failed')])
+    ).toBeUndefined();
+    expect(
+      finalAssistantText([
+        ...events,
+        createTaskStatusEvent('different-session', 'completed'),
+      ])
+    ).toBeUndefined();
+    const crossSessionMessage = events.map((event) =>
+      event.type === 'message_created' && event.data.messageId === 'assistant-final'
+        ? { ...event, sessionId: 'different-session' }
+        : event
+    );
+    expect(
+      finalAssistantText([
+        ...crossSessionMessage,
+        createTaskStatusEvent(sessionId, 'completed'),
+      ])
+    ).toBeUndefined();
+    const crossSessionPart = events.map((event) =>
+      (event.type === 'part_created' || event.type === 'part_updated') &&
+      event.data.messageId === 'assistant-final'
+        ? { ...event, sessionId: 'different-session' }
+        : event
+    );
+    expect(
+      finalAssistantText([
+        ...crossSessionPart,
+        createTaskStatusEvent(sessionId, 'completed'),
+      ])
+    ).toBeUndefined();
+    expect(finalAssistantText(events.slice(0, -1))).toBeUndefined();
+    expect(
+      finalAssistantText([
+        ...events.slice(0, -2),
+        createTurnCompletedEvent(sessionId, turnId),
+        createAssistantPartEvent(
+          sessionId,
+          'assistant-final',
+          'final-text',
+          'text',
+          marker,
+          'part_updated'
+        ),
+      ])
+    ).toBeUndefined();
+    expect(
+      finalAssistantText([
+        ...events.slice(0, 2),
+        createTurnCompletedEvent(sessionId, 'empty-final-turn'),
+      ])
+    ).toBeUndefined();
+    expect(
+      finalAssistantText([...events, createTurnStartedEvent(sessionId, 'next-turn')])
+    ).toBeUndefined();
+    const laterUser = createMessageEvent(sessionId);
+    laterUser.id = 'later-user-event';
+    laterUser.data.messageId = 'later-user';
+    expect(finalAssistantText([...events, laterUser])).toBeUndefined();
+    expect(
+      finalAssistantText([
+        ...events,
+        createTaskStatusEvent(sessionId, 'completed'),
+        laterUser,
+      ])
+    ).toBeUndefined();
+    expect(
+      finalAssistantText([
+        ...events,
+        createAssistantPartEvent(
+          sessionId,
+          'other-message',
+          'other-part',
+          'text',
+          'later text'
+        ),
+      ])
+    ).toBeUndefined();
+    expect(finalAssistantText([])).toBeUndefined();
+  });
+
   it('imports testConfig without reading the local Blade configuration', async () => {
     vi.resetModules();
     const credentialNames = [
@@ -1233,6 +1557,46 @@ describe('real API session-fork trajectory harness', () => {
 
     try {
       expect(readSessionEvents(transcriptPath)).toEqual([reasoning, rewound]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts only a structurally valid v1 token-budget handoff event', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'blade-session-handoff-schema-'));
+    const transcriptPath = path.join(root, 'child-session.jsonl');
+    const handoff: Extract<SessionEvent, { type: 'token_budget_handoff_recorded' }> = {
+      id: 'handoff-event',
+      sessionId: 'child-session',
+      timestamp: CREATED_AT,
+      type: 'token_budget_handoff_recorded',
+      cwd: '/tmp/fork-workspace',
+      gitBranch: 'main',
+      version: 'test',
+      data: {
+        version: 1,
+        messageId: 'handoff-message-123',
+        observedPromptTokens: 70,
+        availableForInput: 100,
+        handoffThreshold: 70,
+        compactionThreshold: 80,
+        createdAt: CREATED_AT,
+      },
+    };
+
+    try {
+      writeFileSync(transcriptPath, `${JSON.stringify(handoff)}\n`);
+      expect(readSessionEvents(transcriptPath)).toEqual([handoff]);
+      writeFileSync(
+        transcriptPath,
+        `${JSON.stringify({ ...handoff, data: { ...handoff.data, version: 2 } })}\n`
+      );
+      expect(() => readSessionEvents(transcriptPath)).toThrow(/session event/i);
+      writeFileSync(
+        transcriptPath,
+        `${JSON.stringify({ ...handoff, data: { ...handoff.data, extra: true } })}\n`
+      );
+      expect(() => readSessionEvents(transcriptPath)).toThrow(/session event/i);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

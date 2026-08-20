@@ -1,6 +1,15 @@
 import { readFile } from 'node:fs/promises';
 import { spawn } from 'bun-pty';
-import { findSessionTranscript } from '../integration/real-api/sessionForkTrajectoryHarness.js';
+import {
+  finalAssistantText,
+  findSessionTranscript,
+  readSessionEvents,
+} from '../integration/real-api/sessionForkTrajectoryHarness.js';
+import {
+  appendBoundedPtyEvidence,
+  ArmedPtyMarkerLatch,
+  waitForPtyExit,
+} from './foregroundBoundedOutputPtyDriver.js';
 
 interface RunnerInput {
   cliEntry: string;
@@ -52,6 +61,12 @@ function signalTerminalTree(
 
 async function main(): Promise<void> {
   const input = loadInput();
+  if (input.prompt.includes(input.marker)) {
+    throw new Error('Provider recovery final marker contaminated the prompt');
+  }
+  const finalMarkerLatch = new ArmedPtyMarkerLatch(input.marker);
+  const secretLatch = new ArmedPtyMarkerLatch(input.secret);
+  secretLatch.arm();
   const env = Object.fromEntries(
     Object.entries({
       ...process.env,
@@ -97,7 +112,9 @@ async function main(): Promise<void> {
     });
   });
   terminal.onData((chunk) => {
-    output = `${output}${chunk}`.slice(-256_000);
+    finalMarkerLatch.observe(chunk);
+    secretLatch.observe(chunk);
+    output = appendBoundedPtyEvidence(output, chunk, 256_000);
   });
 
   try {
@@ -117,6 +134,7 @@ async function main(): Promise<void> {
       'Provider recovery bracketed paste did not reach TUI',
       10_000
     );
+    finalMarkerLatch.arm();
     terminal.write('\r');
 
     await waitFor(
@@ -126,7 +144,6 @@ async function main(): Promise<void> {
       'Raw PTY did not render shared Provider circuit recovery',
       60_000
     );
-    const recoveryBoundary = output.length;
     let transcript = '';
     await waitFor(
       async () => {
@@ -135,9 +152,12 @@ async function main(): Promise<void> {
             findSessionTranscript(input.storageRoot, input.sessionId),
             'utf8'
           );
+          const events = readSessionEvents(
+            findSessionTranscript(input.storageRoot, input.sessionId)
+          );
           return (
-            transcript.includes(input.marker) &&
-            transcript.includes('"type":"turn_completed"')
+            events.some((event) => event.type === 'turn_completed') &&
+            finalAssistantText(events) === input.marker
           );
         } catch {
           return false;
@@ -147,31 +167,31 @@ async function main(): Promise<void> {
       270_000
     );
     await waitFor(
-      () => output.slice(recoveryBoundary).includes(input.marker),
+      () => finalMarkerLatch.seen,
       'Raw PTY did not render Provider recovery completion marker',
       30_000
     );
-    if (output.includes(input.secret) || transcript.includes(input.secret)) {
+    if (secretLatch.seen || transcript.includes(input.secret)) {
       throw new Error('Raw PTY Provider recovery capture contained credentials');
     }
 
     process.kill(terminal.pid, 'SIGTERM');
-    await Promise.race([
+    await waitForPtyExit(
       exitPromise,
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error('Provider recovery TUI did not exit after SIGTERM')),
-          15_000
-        )
-      ),
-    ]);
+      'Provider recovery TUI did not exit after SIGTERM'
+    );
     if (exitCode !== 0) {
       throw new Error(`Provider recovery TUI exit code was ${exitCode}`);
+    }
+    if (secretLatch.seen) {
+      throw new Error('Raw PTY Provider recovery capture contained credentials');
     }
     process.stdout.write(
       JSON.stringify({
         success: true,
         sessionId: input.sessionId,
+        finalMarkerSeen: finalMarkerLatch.seen,
+        secretSeen: secretLatch.seen,
         output,
       })
     );
@@ -190,10 +210,11 @@ async function main(): Promise<void> {
   } finally {
     if (!exited) {
       signalTerminalTree(terminal.pid, 'SIGTERM', () => terminal.kill('SIGTERM'));
-      await Promise.race([
+      await waitForPtyExit(
         exitPromise,
-        new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
-      ]);
+        'Provider recovery TUI did not exit during cleanup',
+        2_000
+      ).catch(() => undefined);
     }
     if (!exited) {
       signalTerminalTree(terminal.pid, 'SIGKILL', () => terminal.kill('SIGKILL'));

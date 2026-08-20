@@ -157,7 +157,11 @@ async function run(input: RunnerInput) {
     if (result.stopReason !== 'end_turn') {
       throw new Error(`Unexpected ACP stop reason: ${result.stopReason}`);
     }
-    await waitForToolAdmissionSessionCompletion(input.storageRoot, sessionId);
+    await waitForToolAdmissionSessionCompletion(
+      input.storageRoot,
+      sessionId,
+      input.marker
+    );
     const transcript = await readFile(
       findSessionTranscript(input.storageRoot, sessionId),
       'utf8'

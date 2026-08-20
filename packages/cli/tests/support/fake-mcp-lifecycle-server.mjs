@@ -3,6 +3,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
+  EmptyResultSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
@@ -85,6 +86,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     await report(extra, 2, 3, 'phase-two');
     await delay(progressDelay);
     await report(extra, 3, 3, 'phase-three');
+    await extra.sendRequest({ method: 'ping' }, EmptyResultSchema);
     return {
       content: [{ type: 'text', text: 'MCP_PROGRESS_OK' }],
     };

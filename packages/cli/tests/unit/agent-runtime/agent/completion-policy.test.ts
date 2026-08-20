@@ -132,6 +132,31 @@ describe('completionPolicy', () => {
       ).toBe(true);
       expect(
         isVerificationCommand(
+          'cd /workspace/project && npm test 2>&1 | tail -30',
+          '/workspace/project'
+        )
+      ).toBe(true);
+      expect(
+        isVerificationCommand(
+          'cd /workspace/project && npx vitest run 2>&1 | head -n 40',
+          '/workspace/project'
+        )
+      ).toBe(true);
+      expect(
+        isVerificationCommand(
+          'cd /workspace/project && npx tsc --noEmit 2>&1 | head -40; ' +
+            'echo "EXIT:${PIPESTATUS[0]}"',
+          '/workspace/project'
+        )
+      ).toBe(true);
+      expect(
+        isVerificationCommand(
+          'cd /workspace/project && npx tsc --noEmit 2>&1; echo "EXIT: $?"',
+          '/workspace/project'
+        )
+      ).toBe(true);
+      expect(
+        isVerificationCommand(
           'cd /workspace/project/packages/cli && npm test',
           '/workspace/project'
         )
@@ -143,6 +168,30 @@ describe('completionPolicy', () => {
       expect(
         isVerificationCommand(
           'cd /workspace/project && npm test && npm run build',
+          '/workspace/project'
+        )
+      ).toBe(false);
+      expect(
+        isVerificationCommand(
+          'cd /workspace/project && npm test | tee test.log',
+          '/workspace/project'
+        )
+      ).toBe(false);
+      expect(
+        isVerificationCommand(
+          'cd /workspace/project && npm test | tail /etc/passwd',
+          '/workspace/project'
+        )
+      ).toBe(false);
+      expect(
+        isVerificationCommand(
+          'cd /workspace/project && npm test | tail -30 | sh',
+          '/workspace/project'
+        )
+      ).toBe(false);
+      expect(
+        isVerificationCommand(
+          'cd /workspace/project && npm test | tail -30; echo "${HOME}"',
           '/workspace/project'
         )
       ).toBe(false);

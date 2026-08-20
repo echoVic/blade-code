@@ -3,9 +3,14 @@ import path from 'node:path';
 import type { SessionEvent } from '../../src/context/types.js';
 import {
   extractDurableToolTrace,
+  finalAssistantText,
   findSessionTranscript,
   readSessionEvents,
 } from '../integration/real-api/sessionForkTrajectoryHarness.js';
+import {
+  assertSplitPtyMarkerInstructionAtEnd,
+  createSplitPtyMarkerInstruction,
+} from './foregroundBoundedOutputPtyDriver.js';
 
 export interface ForegroundCommandHandoffFixture {
   stateDir: string;
@@ -121,9 +126,13 @@ export async function createForegroundCommandHandoffFixture(
     )}. Confirm it contains ${independentMarker}.`,
     '4. Call TaskOutput exactly once with task_id set to the same shell_id, block=true, and timeout=30000.',
     `5. Confirm TaskOutput status is exited and stdout contains both ${beforeMarker} and ${afterMarker}.`,
-    `Reply exactly ${marker}.`,
     'Do not call any other tool. Do not start another Bash command.',
+    createSplitPtyMarkerInstruction(marker),
   ].join('\n');
+  if (prompt.includes(marker)) {
+    throw new Error('Foreground handoff final marker contaminated the prompt');
+  }
+  assertSplitPtyMarkerInstructionAtEnd(prompt, marker);
   return {
     stateDir,
     nonce,
@@ -234,11 +243,8 @@ export async function driveForegroundCommandHandoffFixture(input: {
   await waitFor(() => {
     const events = readEvents(input.storageRoot, input.sessionId);
     const outputs = completedToolParts(events, 'TaskOutput');
-    return (
-      outputs.length === 1 &&
-      events.filter((event) => event.type === 'turn_completed').length === 1
-    );
-  }, 'Foreground handoff Session did not complete through TaskOutput');
+    return outputs.length === 1 && finalAssistantText(events) === input.fixture.marker;
+  }, 'Foreground handoff Session did not persist its exact final authority');
 
   const events = readEvents(input.storageRoot, input.sessionId);
   const trace = extractDurableToolTrace(events);
@@ -271,12 +277,8 @@ export async function driveForegroundCommandHandoffFixture(input: {
     throw new Error('Foreground handoff durable tool trace violated its contract');
   }
 
-  const transcript = await readFile(
-    findSessionTranscript(input.storageRoot, input.sessionId),
-    'utf8'
-  );
-  if (!transcript.includes(input.fixture.marker)) {
-    throw new Error('Foreground handoff final marker is absent from transcript');
+  if (finalAssistantText(events) !== input.fixture.marker) {
+    throw new Error('Foreground handoff final assistant text is not exact');
   }
   return { shellId, pid, events };
 }

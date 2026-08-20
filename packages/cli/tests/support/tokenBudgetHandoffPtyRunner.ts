@@ -1,20 +1,33 @@
 import path from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
-import { readFile } from 'node:fs/promises';
 import { spawn } from 'bun-pty';
 import {
   assertValidSessionId,
   getSessionFilePath,
 } from '../../src/context/storage/pathUtils.js';
-import { parseSessionJSONL } from '../../src/context/storage/JSONLStore.js';
 import { TOKEN_BUDGET_HANDOFF_MESSAGE_ID_PREFIX } from '../../src/context/TokenBudgetHandoff.js';
 import {
   captureProcessIdentity,
-  processIdentityMatches,
   type ProcessIdentity,
+  processIdentityMatches,
 } from '../../src/utils/process/ProcessIdentity.js';
+import {
+  finalAssistantText,
+  readSessionEvents,
+} from '../integration/real-api/sessionForkTrajectoryHarness.js';
 
 const MAX_PROJECTED_OUTPUT_CHARS = 12_000;
+const PTY_FAILURE_STAGES = [
+  'identity',
+  'composer',
+  'paste',
+  'marker',
+  'durable_completion',
+  'privacy',
+  'cleanup',
+] as const;
+
+type PtyFailureStage = (typeof PTY_FAILURE_STAGES)[number];
 
 interface RunnerInput {
   mode: 'task' | 'resume';
@@ -154,6 +167,14 @@ async function waitFor(
   throw new Error(message);
 }
 
+function remainingStageBudget(deadline: number, maximumMs: number): number {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) {
+    throw new Error('Token-budget PTY surface deadline exhausted');
+  }
+  return Math.max(1, Math.min(remaining, maximumMs));
+}
+
 async function captureIdentity(pid: number): Promise<ProcessIdentity> {
   const deadline = Date.now() + 2_000;
   while (Date.now() < deadline) {
@@ -164,16 +185,15 @@ async function captureIdentity(pid: number): Promise<ProcessIdentity> {
   throw new Error('Token-budget PTY process identity was unavailable');
 }
 
-async function waitForDurableCompletion(input: RunnerInput): Promise<void> {
+async function waitForDurableCompletion(
+  input: RunnerInput,
+  timeoutMs: number
+): Promise<void> {
   const transcriptPath = getSessionFilePath(input.workspace, input.sessionId);
-  const deadline = Date.now() + input.timeoutMs;
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const raw = await readFile(transcriptPath, 'utf8');
-    const events = parseSessionJSONL(raw, transcriptPath);
-    if (
-      events.some((event) => event.type === 'turn_completed') &&
-      JSON.stringify(events).includes(input.finalMarker)
-    ) {
+    const events = readSessionEvents(transcriptPath);
+    if (finalAssistantText(events) === input.finalMarker) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -205,6 +225,7 @@ function projectOutput(output: string): string {
 
 async function main(): Promise<void> {
   const input = loadInput();
+  const deadline = Date.now() + input.timeoutMs - 10_000;
   if (
     !/^FINAL_OK_[A-Za-z0-9_]{16,64}$/.test(input.finalMarker) ||
     input.prompt?.includes(input.finalMarker)
@@ -252,6 +273,11 @@ async function main(): Promise<void> {
   let bracketedPasteAccepted = false;
   let submittedInput = false;
   let exited = false;
+  let bracketedPasteModeSeen = false;
+  let setupWizardSeen = false;
+  let initializationErrorSeen = false;
+  let failureStage: PtyFailureStage = 'identity';
+  let failureCode = 'stage_failed';
   const forbidden = [
     '<token-budget-handoff version="1">',
     'token_budget_handoff_recorded',
@@ -275,7 +301,10 @@ async function main(): Promise<void> {
     const scan = `${scanTail}${chunk}`;
     finalMarkerSeen ||= scan.includes(input.finalMarker);
     hiddenMarkerSeen ||= forbidden.some((value) => value && scan.includes(value));
-    composerReady ||= scan.includes('请输入您的问题');
+    composerReady ||= scan.includes('输入命令...');
+    bracketedPasteModeSeen ||= scan.includes('\u001b[?2004h');
+    setupWizardSeen ||= scan.includes('Step 1: 选择 API 提供商');
+    initializationErrorSeen ||= scan.includes('初始化失败');
     bracketedPasteAccepted ||= scan.includes('PASTE:');
     scanTail = scan.slice(-(maxNeedle - 1));
   });
@@ -283,37 +312,53 @@ async function main(): Promise<void> {
   let failure: unknown;
   try {
     identity = await captureIdentity(terminal.pid);
+    failureStage = 'composer';
     await waitFor(
       () => composerReady,
       () => exited,
       'Timed out waiting for token-budget PTY composer',
-      Math.min(input.timeoutMs, 60_000)
+      remainingStageBudget(deadline, 60_000)
     );
     if (input.mode === 'task') {
+      failureStage = 'paste';
       terminal.write(`\u001B[200~${input.prompt ?? ''}\u001B[201~`);
       await waitFor(
         () => bracketedPasteAccepted,
         () => exited,
         'Token-budget PTY bracketed paste was not accepted',
-        10_000
+        remainingStageBudget(deadline, 10_000)
       );
       finalMarkerSeen = false;
       terminal.write('\r');
       submittedInput = true;
     }
+    failureStage = 'marker';
     await waitFor(
       () => finalMarkerSeen,
       () => exited,
       'Timed out waiting for token-budget PTY final marker',
-      input.timeoutMs
+      remainingStageBudget(deadline, input.timeoutMs)
     );
     if (input.mode === 'task') {
-      await waitForDurableCompletion(input);
+      failureStage = 'durable_completion';
+      await waitForDurableCompletion(
+        input,
+        remainingStageBudget(deadline, input.timeoutMs)
+      );
     }
+    failureStage = 'privacy';
     if (hiddenMarkerSeen) {
       throw new Error('Token-budget PTY exposed hidden marker or secret material');
     }
   } catch (error) {
+    if (failureStage === 'composer') {
+      const composerFailureCode =
+        `placeholder_${composerReady ? 1 : 0}:` +
+        `bracketed_${bracketedPasteModeSeen ? 1 : 0}:` +
+        `setup_${setupWizardSeen ? 1 : 0}:` +
+        `init_error_${initializationErrorSeen ? 1 : 0}`;
+      failureCode = composerFailureCode;
+    }
     failure = error;
   }
 
@@ -343,11 +388,22 @@ async function main(): Promise<void> {
   const processGone =
     identity !== undefined && !processIdentityMatches(terminal.pid, identity);
   if (!exited || !processGone || hiddenMarkerSeen) {
+    if (!failure) {
+      failureStage = 'cleanup';
+      failureCode = 'cleanup_incomplete';
+    }
     failure ??= new Error('Token-budget PTY process cleanup did not complete');
   }
 
   if (failure) {
-    process.stdout.write(JSON.stringify({ success: false, faults: ['runner_failed'] }));
+    process.stdout.write(
+      JSON.stringify({
+        success: false,
+        failureStage,
+        failureCode,
+        faults: ['runner_failed'],
+      })
+    );
     process.exitCode = 1;
     return;
   }

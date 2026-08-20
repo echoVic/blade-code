@@ -13,7 +13,12 @@ import {
   processIdentityMatches,
 } from '../../../src/utils/process/ProcessIdentity.js';
 import {
+  createSplitPtyMarkerInstruction,
+  isCompleteRawPtyMarkerEvidence,
+} from '../../support/foregroundBoundedOutputPtyDriver.js';
+import {
   assertNoSecrets,
+  finalAssistantText,
   findSessionTranscript,
   readSessionEvents,
 } from './sessionForkTrajectoryHarness.js';
@@ -56,6 +61,8 @@ const CIRCUIT_OPEN_MS = 2_000;
 interface SurfaceEvidence {
   sessionId: string;
   output: string;
+  finalMarkerSeen?: boolean;
+  secretSeen?: boolean;
   processes?: Array<{ pid: number; identity: ProcessIdentity }>;
   terminalReleaseCount?: number;
   secondarySessionId?: string;
@@ -516,7 +523,11 @@ async function runSubprocessRunner(input: {
       { cause: error }
     );
   }
-  if (parsed.success !== true) {
+  if (
+    parsed.success !== true ||
+    (input.envName === 'BLADE_FOREGROUND_PROVIDER_RECOVERY_PTY_INPUT' &&
+      !isCompleteRawPtyMarkerEvidence(parsed))
+  ) {
     throw new Error(`Provider recovery runner failed: ${String(parsed.error)}`);
   }
   return parsed;
@@ -812,14 +823,19 @@ async function runWeb(input: {
       timeout: 180_000,
     });
     let secondaryTranscript = '';
+    let secondaryTranscriptPath = '';
     await waitFor(
       async () => {
         try {
-          secondaryTranscript = await readFile(
-            findSessionTranscript(input.storageRoot, secondarySessionId),
-            'utf8'
+          secondaryTranscriptPath = findSessionTranscript(
+            input.storageRoot,
+            secondarySessionId
           );
-          return secondaryTranscript.includes(input.secondaryMarker);
+          secondaryTranscript = await readFile(secondaryTranscriptPath, 'utf8');
+          return (
+            finalAssistantText(readSessionEvents(secondaryTranscriptPath)) ===
+            input.secondaryMarker
+          );
         } catch {
           return false;
         }
@@ -925,15 +941,21 @@ describe
         )}-${surface}-${Date.now()}`;
         const marker = `PROVIDER_RECOVERY_OK_${Date.now()}`;
         const secondaryMarker = `PROVIDER_CIRCUIT_SHARED_OK_${Date.now()}`;
-        const prompt =
-          '[PASTE: bounded foreground provider recovery]\n' +
+        const prompt = [
+          '[PASTE: bounded foreground provider recovery]',
           'Read src/add.js and test/add.test.js. Use Edit exactly once to replace ' +
-          '"return left - right;" with "return left + right;" in src/add.js. ' +
+            '"return left - right;" with "return left + right;" in src/add.js.',
           'Do not use Write or any other mutation tool. Then call Bash exactly once ' +
-          `with command "npm test". Finish by replying with exactly ${marker}.`;
-        const secondaryPrompt =
-          `Reply with exactly ${secondaryMarker}. ` +
-          'Do not call tools and do not include any other text.';
+            'with command "npm test".',
+          createSplitPtyMarkerInstruction(marker),
+        ].join('\n');
+        if (prompt.includes(marker)) {
+          throw new Error('Provider recovery final marker contaminated the prompt');
+        }
+        const secondaryPrompt = createSplitPtyMarkerInstruction(secondaryMarker);
+        if (secondaryPrompt.includes(secondaryMarker)) {
+          throw new Error('Secondary Provider recovery marker contaminated the prompt');
+        }
         try {
           await Promise.all([
             mkdir(home, { recursive: true }),
@@ -986,7 +1008,7 @@ describe
                 marker,
                 secret: model.apiKey,
               },
-              timeoutMs: 240_000,
+              timeoutMs: 480_000,
             });
           } else {
             evidence = await runWeb({
@@ -1026,11 +1048,13 @@ describe
                 )
             ).toHaveLength(0);
             expect(evidence.providerProbeCount).toBe(1);
-            const secondaryTranscript = await readFile(
-              findSessionTranscript(storage, evidence.secondarySessionId as string),
-              'utf8'
+            const secondaryTranscriptPath = findSessionTranscript(
+              storage,
+              evidence.secondarySessionId as string
             );
-            expect(secondaryTranscript).toContain(secondaryMarker);
+            const secondaryTranscript = await readFile(secondaryTranscriptPath, 'utf8');
+            const secondaryEvents = readSessionEvents(secondaryTranscriptPath);
+            expect(finalAssistantText(secondaryEvents)).toBe(secondaryMarker);
             assertNoSecrets({ secondaryTranscript }, [
               model.apiKey,
               proxy.privateBodyMarker,
@@ -1057,7 +1081,7 @@ describe
             toolNames.filter((name) => ['Edit', 'Write', 'ApplyPatch'].includes(name))
           ).toEqual(['Edit']);
           expect(toolNames.filter((name) => name === 'Bash')).toHaveLength(1);
-          expect(transcript).toContain(marker);
+          expect(finalAssistantText(events)).toBe(marker);
           expect(
             await readFile(path.join(workspace, 'src', 'add.js'), 'utf8')
           ).toContain('return left + right;');
@@ -1085,6 +1109,6 @@ describe
           await rm(root, { recursive: true, force: true });
         }
       },
-      300_000
+      540_000
     );
   });
