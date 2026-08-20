@@ -466,6 +466,8 @@ describe('API Schemas', () => {
         projectPath: '/workspace/source',
         isolation: 'worktree',
         permissionMode: 'default',
+        taskPriority: 'medium',
+        taskKind: 'feature',
       });
       expect(() => CreateTaskRequestSchema.parse({ prompt: '   ' })).toThrow();
     });
@@ -478,6 +480,9 @@ describe('API Schemas', () => {
           rootId: 'task-1',
           taskStatus: 'queued',
           taskIsolation: 'worktree',
+          taskPriority: 'high',
+          taskKind: 'bug',
+          taskDueAt: '2026-08-21T09:30:00.000Z',
           taskSourceProjectPath: '/workspace/source',
           taskWorktreePath: '/workspace/worktree',
           taskWorktreeBranch: 'blade-worktree-task-1',
@@ -506,6 +511,11 @@ describe('API Schemas', () => {
       });
 
       expect(response.session.taskDiffStat?.additions).toBe(4);
+      expect(response.session).toMatchObject({
+        taskPriority: 'high',
+        taskKind: 'bug',
+        taskDueAt: '2026-08-21T09:30:00.000Z',
+      });
       expect(response).toMatchObject({
         status: 'queued',
         queuePosition: 2,

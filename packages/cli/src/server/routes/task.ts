@@ -6,6 +6,7 @@ import {
   SessionSchema,
   SessionTaskDeliveryRequestSchema,
   SessionTaskDiffArtifactSchema,
+  UpdateTaskRequestSchema,
 } from '../../api/schemas.js';
 import {
   type CommunicationStyleSelection,
@@ -68,11 +69,19 @@ export const TaskRoutes = (controller: SessionRouteController) => {
     if (attachmentBytes > MAX_INLINE_ATTACHMENT_BYTES) {
       throw new BadRequestError('Task attachments exceed the 5 MiB limit');
     }
+    if (parsed.data.taskDueAt && !Number.isFinite(Date.parse(parsed.data.taskDueAt))) {
+      throw new BadRequestError('Invalid task due date');
+    }
 
     try {
       const result = await controller.dispatchTask({
         prompt: parsed.data.prompt,
         title: parsed.data.title,
+        taskPriority: parsed.data.taskPriority,
+        taskKind: parsed.data.taskKind,
+        taskDueAt: parsed.data.taskDueAt
+          ? new Date(parsed.data.taskDueAt).toISOString()
+          : undefined,
         sourceProjectPath: parsed.data.projectPath || c.get('directory') || getCwd(),
         isolation: parsed.data.isolation,
         permissionMode: parsed.data.permissionMode as PermissionMode,
@@ -98,6 +107,57 @@ export const TaskRoutes = (controller: SessionRouteController) => {
       }
       logger.error('[TaskRoutes] Failed to dispatch task:', error);
       throw new InternalServerError('Failed to dispatch task');
+    }
+  });
+
+  app.patch('/:sessionId', async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      throw new BadRequestError('Invalid request body');
+    }
+    const parsed = safeParseSchema(UpdateTaskRequestSchema, body);
+    if (!parsed.success) {
+      throw new BadRequestError('Invalid task update');
+    }
+    if (
+      parsed.data.title === undefined &&
+      parsed.data.taskPriority === undefined &&
+      parsed.data.taskKind === undefined &&
+      parsed.data.taskDueAt === undefined
+    ) {
+      throw new BadRequestError('Task update must include at least one field');
+    }
+    if (
+      typeof parsed.data.taskDueAt === 'string' &&
+      !Number.isFinite(Date.parse(parsed.data.taskDueAt))
+    ) {
+      throw new BadRequestError('Invalid task due date');
+    }
+
+    try {
+      const session = await controller.updateTask(
+        c.req.param('sessionId'),
+        {
+          ...parsed.data,
+          ...(typeof parsed.data.taskDueAt === 'string'
+            ? { taskDueAt: new Date(parsed.data.taskDueAt).toISOString() }
+            : {}),
+        },
+        c.req.query('projectPath')
+      );
+      return c.json(SessionSchema.parse(session));
+    } catch (error) {
+      if (
+        error instanceof BadRequestError ||
+        error instanceof NotFoundError ||
+        error instanceof ConflictError
+      ) {
+        throw error;
+      }
+      logger.error('[TaskRoutes] Failed to update task:', error);
+      throw new InternalServerError('Failed to update task');
     }
   });
 

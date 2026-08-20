@@ -58,6 +58,8 @@ import type {
   SessionEvent,
   SessionTaskDelivery,
   SessionTaskDispatch,
+  SessionTaskKind,
+  SessionTaskPriority,
   SessionTaskRetryRef,
   SessionTaskWorktree,
 } from '../../context/types.js';
@@ -212,6 +214,9 @@ interface SessionInfo {
   taskStartedAt?: string;
   taskCompletedAt?: string;
   taskPromptSummary?: string;
+  taskPriority?: SessionTaskPriority;
+  taskKind?: SessionTaskKind;
+  taskDueAt?: string;
   taskModelId?: string;
   selectedModelId?: string;
   permissionMode?: PermissionMode;
@@ -966,6 +971,9 @@ function sessionInfoFromMetadata(
     taskStartedAt: metadata.taskStartedAt,
     taskCompletedAt: metadata.taskCompletedAt,
     taskPromptSummary: metadata.taskPromptSummary,
+    taskPriority: metadata.taskPriority,
+    taskKind: metadata.taskKind,
+    taskDueAt: metadata.taskDueAt,
     taskModelId: metadata.taskModelId,
     selectedModelId: metadata.selectedModelId,
     permissionMode: metadata.permissionMode as PermissionMode | undefined,
@@ -1092,12 +1100,16 @@ function syncSessionTaskMetadata(
   session: SessionInfo,
   metadata: SessionMetadata
 ): void {
+  session.title = metadata.title ?? session.title;
   session.taskStatus = metadata.taskStatus;
   session.taskStatusReason = metadata.taskStatusReason;
   session.taskFailure = metadata.taskFailure;
   session.taskStartedAt = metadata.taskStartedAt;
   session.taskCompletedAt = metadata.taskCompletedAt;
   session.taskPromptSummary = metadata.taskPromptSummary;
+  session.taskPriority = metadata.taskPriority;
+  session.taskKind = metadata.taskKind;
+  session.taskDueAt = metadata.taskDueAt;
   session.taskModelId = metadata.taskModelId;
   session.selectedModelId = metadata.selectedModelId;
   session.permissionMode = metadata.permissionMode as PermissionMode | undefined;
@@ -1153,6 +1165,9 @@ function projectActiveSession(session: SessionInfo) {
     taskStartedAt: session.taskStartedAt,
     taskCompletedAt: session.taskCompletedAt,
     taskPromptSummary: session.taskPromptSummary,
+    taskPriority: session.taskPriority,
+    taskKind: session.taskKind,
+    taskDueAt: session.taskDueAt,
     taskModelId: session.taskModelId,
     selectedModelId: session.selectedModelId,
     permissionMode: session.permissionMode,
@@ -1310,6 +1325,9 @@ function buildUserMessageContent(
 export interface DispatchTaskInput {
   prompt: string;
   title?: string;
+  taskPriority?: SessionTaskPriority;
+  taskKind?: SessionTaskKind;
+  taskDueAt?: string;
   sourceProjectPath: string;
   isolation: 'local' | 'worktree';
   permissionMode: PermissionMode;
@@ -1343,6 +1361,16 @@ export interface SessionRouteController {
   app: Hono<{ Variables: Variables }>;
   dispatchTask(input: DispatchTaskInput): Promise<DispatchTaskResult>;
   retryTask(sessionId: string, projectPath?: string): Promise<DispatchTaskResult>;
+  updateTask(
+    sessionId: string,
+    update: {
+      title?: string;
+      taskPriority?: SessionTaskPriority;
+      taskKind?: SessionTaskKind;
+      taskDueAt?: string | null;
+    },
+    projectPath?: string
+  ): Promise<SessionMetadata & { isActive: boolean }>;
   getTaskDiff(
     sessionId: string,
     projectPath?: string
@@ -1879,6 +1907,9 @@ export const createSessionRouteController = (): SessionRouteController => {
       version: 1,
       prompt: input.prompt,
       ...(input.title ? { title: input.title } : {}),
+      ...(input.taskPriority ? { taskPriority: input.taskPriority } : {}),
+      ...(input.taskKind ? { taskKind: input.taskKind } : {}),
+      ...(input.taskDueAt ? { taskDueAt: input.taskDueAt } : {}),
       sourceProjectPath,
       isolation: input.isolation,
       permissionMode: input.permissionMode,
@@ -1907,6 +1938,9 @@ export const createSessionRouteController = (): SessionRouteController => {
         sessionId,
         prompt: input.prompt,
         title: input.title,
+        taskPriority: input.taskPriority,
+        taskKind: input.taskKind,
+        taskDueAt: input.taskDueAt,
         sourceProjectPath,
         isolation: input.isolation,
         dispatch,
@@ -2043,7 +2077,10 @@ export const createSessionRouteController = (): SessionRouteController => {
     }
     return dispatchTask({
       prompt: dispatch.prompt,
-      title: dispatch.title,
+      title: metadata.title ?? dispatch.title,
+      taskPriority: metadata.taskPriority ?? dispatch.taskPriority,
+      taskKind: metadata.taskKind ?? dispatch.taskKind,
+      taskDueAt: metadata.taskDueAt,
       sourceProjectPath: dispatch.sourceProjectPath,
       isolation: dispatch.isolation,
       permissionMode: dispatch.permissionMode as PermissionMode,
@@ -2063,6 +2100,45 @@ export const createSessionRouteController = (): SessionRouteController => {
     projectPath?: string
   ): Promise<DispatchTaskResult> =>
     withAdmission(() => retryTaskOwned(sessionId, projectPath));
+
+  const updateTask = (
+    sessionId: string,
+    update: {
+      title?: string;
+      taskPriority?: SessionTaskPriority;
+      taskKind?: SessionTaskKind;
+      taskDueAt?: string | null;
+    },
+    projectPath?: string
+  ): Promise<SessionMetadata & { isActive: boolean }> =>
+    withAdmission(async () => {
+      const ref = await resolveSessionRef(sessionId, projectPath);
+      const current = await SessionService.findSessionMetadata(
+        ref.sessionId,
+        ref.projectPath
+      );
+      if (!current) throw new NotFoundError('Session', ref.sessionId);
+
+      const metadata = await SessionService.updateSessionMetadata(
+        ref.sessionId,
+        ref.projectPath,
+        update
+      );
+      const session = sessions.get(sessionRefKey(ref));
+      if (session) syncSessionTaskMetadata(session, metadata);
+      Bus.publish(ref, 'session.updated', {
+        ...(metadata.title ? { title: metadata.title } : {}),
+        ...(metadata.taskPriority ? { taskPriority: metadata.taskPriority } : {}),
+        ...(metadata.taskKind ? { taskKind: metadata.taskKind } : {}),
+        taskDueAt: metadata.taskDueAt ?? null,
+      });
+      return session
+        ? projectActiveSession(session)
+        : {
+            ...metadata,
+            isActive: false,
+          };
+    });
 
   const getTaskDiff = async (
     sessionId: string,
@@ -2283,11 +2359,8 @@ export const createSessionRouteController = (): SessionRouteController => {
       deferred: 0,
     };
     if (!admissionGate.stats().accepting) return result;
-    const queued = (await SessionService.listSessions())
-      .filter(
-        (metadata) =>
-          metadata.taskStatus === 'queued' && metadata.taskIsolation !== undefined
-      )
+    const queued = (await SessionService.listSessions({ taskStatus: 'queued' }))
+      .filter((metadata) => metadata.taskIsolation !== undefined)
       .sort(
         (left, right) =>
           left.firstMessageTime.localeCompare(right.firstMessageTime) ||
@@ -4163,6 +4236,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     app,
     dispatchTask,
     retryTask,
+    updateTask,
     getTaskDiff,
     deliverTask,
     recoverQueuedTasks,
@@ -4804,6 +4878,7 @@ async function executeRunAsync(
         taskQueueDepth: stats.queued,
         taskConcurrencyLimit: stats.maxConcurrent,
         taskInFlight: stats.inFlight,
+        taskAdmissionPaused: stats.paused,
         updatedAt: new Date().toISOString(),
       });
     }
