@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type * as acp from '@agentclientprotocol/sdk';
@@ -429,5 +429,43 @@ describe('Bash Tool', () => {
         access: 'workspace-read-only',
       })
     );
+  });
+
+  it('removes safe audit output truncation without hiding the command exit code', async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-verifier-exit-'));
+    const canonicalWorkspace = await realpath(workspace);
+    await writeFile(
+      path.join(workspace, 'failing.test.js'),
+      "const test = require('node:test'); test('fails', () => { throw new Error('expected failure'); });"
+    );
+    const prepare = vi.fn<WorkspaceSandboxBackend['prepare']>(async (input) => ({
+      executable: '/bin/bash',
+      args: ['-c', input.command],
+      env: { PATH: process.env.PATH },
+      sandboxed: true,
+      inheritProcessEnv: false,
+      cleanup: () => undefined,
+    }));
+    cleanups.push(installWorkspaceSandboxBackendForTests({ prepare }), () =>
+      rm(workspace, { recursive: true, force: true })
+    );
+
+    const result = await bashTool.execute(
+      {
+        command:
+          'node --test failing.test.js 2>&1 | tail -20; ' +
+          'echo "EXIT:${PIPESTATUS[0]}"',
+        timeout: 10_000,
+        run_in_background: false,
+      },
+      undefined,
+      { workspaceRoot: canonicalWorkspace, subagentType: 'verification' }
+    );
+
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'node --test failing.test.js' })
+    );
+    expect(result.success).toBe(false);
+    expect(result.metadata?.exit_code).toBe(1);
   });
 });

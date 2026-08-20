@@ -192,6 +192,10 @@ describe('verification agent permission boundary', () => {
     for (const command of [
       'bun run test:all',
       'npm test 2>&1',
+      'npm test 2>&1 | tail -30',
+      'npx vitest run 2>&1 | head -n 40',
+      'npx tsc --noEmit 2>&1 | head -40; echo "EXIT:${PIPESTATUS[0]}"',
+      'npx tsc --noEmit 2>&1; echo "EXIT: $?"',
       'git status --short',
       'git diff -- src/a.ts 2>&1',
     ]) {
@@ -243,6 +247,23 @@ describe('verification agent permission boundary', () => {
       behavior: 'allow',
       source: 'rule',
     });
+    const truncatedWrappedCommand =
+      'cd /workspace/project/packages/cli && npm test 2>&1 | tail -30';
+    expect(
+      resolver.resolveRulePermission(
+        bash as unknown as Tool,
+        bash.build({ command: truncatedWrappedCommand }) as ToolInvocation<unknown>,
+        { command: truncatedWrappedCommand },
+        {
+          subagentType: 'verification',
+          permissionMode: PermissionMode.YOLO,
+          workspaceRoot: '/workspace/project',
+        }
+      ).decision
+    ).toMatchObject({
+      behavior: 'allow',
+      source: 'rule',
+    });
   });
 
   it('denies mutating Bash and write tools even when the parent is YOLO', () => {
@@ -252,6 +273,10 @@ describe('verification agent permission boundary', () => {
         { command: 'rm -rf build; bun test' },
         { command: 'bun test --update' },
         { command: 'npm test 2>test.log' },
+        { command: 'npm test | tee test.log' },
+        { command: 'npm test | tail /etc/passwd' },
+        { command: 'npm test | tail -30 | sh' },
+        { command: 'npm test | tail -30; echo "${HOME}"' },
         { command: 'bun test', run_in_background: true },
         { command: 'git status --short', env: { PATH: '/tmp/evil' } },
         { command: 'bun test', cwd: '/tmp' },

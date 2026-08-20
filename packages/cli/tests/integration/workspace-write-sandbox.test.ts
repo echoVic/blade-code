@@ -307,6 +307,45 @@ describe('native workspace-write sandbox', () => {
     });
   }, 60_000);
 
+  it('keeps the dedicated temp directory readable and writable in a read-only workspace', async () => {
+    const { root, workspaceRoot } = await makeWorkspace();
+    const tempRoot = path.join(root, 'sandbox-temp');
+    const backend = new AnthropicWorkspaceSandboxBackend({ tempRoot });
+    const sandbox = new WorkspaceWriteSandbox(backend);
+    const script = [
+      "const fs = require('node:fs');",
+      "const file = process.env.TMPDIR + '/verification-cache.txt';",
+      "fs.writeFileSync(file, 'verified');",
+      "process.stdout.write(fs.readFileSync(file, 'utf8'));",
+    ].join('');
+
+    let command: SandboxedCommand | undefined;
+    try {
+      command = await sandbox.prepare({
+        command: `node -e ${JSON.stringify(script)}`,
+        cwd: workspaceRoot,
+        workspaceRoot,
+        access: 'workspace-read-only',
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(WorkspaceSandboxUnavailableError);
+      await backend.dispose();
+      return;
+    }
+
+    const child = spawn(command.executable, command.args, {
+      cwd: workspaceRoot,
+      env: { ...command.env, PATH: process.env.PATH },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const result = await waitForExit(child);
+    command.cleanup();
+    await backend.dispose();
+
+    if (isWorkspaceSandboxRuntimeFailure(result.code, result.stderr)) return;
+    expect(result).toMatchObject({ code: 0, stdout: 'verified', stderr: '' });
+  }, 60_000);
+
   it('enforces writes or fails closed when nested sandboxing is unavailable', async () => {
     const { root, workspaceRoot } = await makeWorkspace();
     const insidePath = path.join(workspaceRoot, 'inside.txt');
