@@ -125,6 +125,20 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
     });
   });
 
+  it('keeps raw PTY marker authorities in the release-blocking matrix', () => {
+    const files = testTypes.realApiQualification.files;
+
+    expect(files).toContain(
+      'tests/integration/real-api/foreground-command-handoff-trajectory.test.ts'
+    );
+    expect(files).toContain(
+      'tests/integration/real-api/foreground-provider-recovery-trajectory.test.ts'
+    );
+    expect(files).toContain(
+      'tests/integration/real-api/tool-admission-trajectory.test.ts'
+    );
+  });
+
   it('disables framework retry for the release-blocking real API matrix', async () => {
     const vitestConfig = await readFile(
       path.resolve(import.meta.dirname, '../../../vitest.config.ts'),

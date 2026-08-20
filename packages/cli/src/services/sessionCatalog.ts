@@ -1,8 +1,26 @@
 import * as path from 'node:path';
 import { isValidSessionId } from '../context/storage/pathUtils.js';
+import type {
+  SessionTaskPriority,
+  SessionTaskStatus,
+} from '../context/types.js';
 
 export const DEFAULT_SESSION_PAGE_SIZE = 50;
 export const MAX_SESSION_PAGE_SIZE = 100;
+
+const SESSION_TASK_STATUSES = new Set<SessionTaskStatus>([
+  'queued',
+  'running',
+  'completed',
+  'failed',
+  'cancelled',
+  'interrupted',
+]);
+const SESSION_TASK_PRIORITIES = new Set<SessionTaskPriority>([
+  'high',
+  'medium',
+  'low',
+]);
 
 export interface SessionListOptions {
   cwd?: string;
@@ -12,11 +30,36 @@ export interface SessionListOptions {
   archived?: boolean;
 }
 
+export interface SessionTaskFilterOptions {
+  /**
+   * 可选：仅返回这些任务状态的会话。投影路径下推为 SQL `task_status IN (...)`
+   * 并命中对应任务索引；JSONL 回退路径用等价内存过滤。
+   */
+  taskStatus?: SessionTaskStatus | readonly SessionTaskStatus[];
+  /** 可选：仅返回这些优先级的任务会话。 */
+  taskPriority?: SessionTaskPriority | readonly SessionTaskPriority[];
+  /** 可选：仅返回截止时间大于等于该时刻的任务会话。 */
+  taskDueAfter?: string;
+  /** 可选：仅返回截止时间小于等于该时刻的任务会话。 */
+  taskDueBefore?: string;
+}
+
+export interface SessionScanOptions
+  extends Omit<SessionListOptions, 'cursor' | 'limit'>,
+    SessionTaskFilterOptions {}
+
 export interface SessionCatalogItem {
   sessionId: string;
   projectPath: string;
   lastMessageTime: string;
   relationType?: 'subagent' | 'fork';
+}
+
+export interface NormalizedSessionTaskFilters {
+  taskStatuses?: readonly SessionTaskStatus[];
+  taskPriorities?: readonly SessionTaskPriority[];
+  taskDueAfter?: string;
+  taskDueBefore?: string;
 }
 
 export interface NormalizedSessionListOptions {
@@ -118,7 +161,13 @@ export function resolveSessionCursorBoundary(
 export function normalizeSessionListOptions(
   options: SessionListOptions = {}
 ): NormalizedSessionListOptions {
-  const { cwd, cursor, limit, includeSubagents = false, archived = false } = options;
+  const {
+    cwd,
+    cursor,
+    limit,
+    includeSubagents = false,
+    archived = false,
+  } = options;
 
   if (cwd !== undefined && !path.isAbsolute(cwd)) {
     throw new Error('Session catalog cwd must be absolute');
@@ -140,6 +189,75 @@ export function normalizeSessionListOptions(
     includeSubagents,
     archived,
   };
+}
+
+export function normalizeSessionTaskFilters(
+  options: SessionTaskFilterOptions = {}
+): NormalizedSessionTaskFilters {
+  const taskStatuses = normalizeEnumFilter(
+    options.taskStatus,
+    SESSION_TASK_STATUSES,
+    'task status'
+  );
+  const taskPriorities = normalizeEnumFilter(
+    options.taskPriority,
+    SESSION_TASK_PRIORITIES,
+    'task priority'
+  );
+  const taskDueAfter = normalizeDueBoundary(
+    options.taskDueAfter,
+    'taskDueAfter'
+  );
+  const taskDueBefore = normalizeDueBoundary(
+    options.taskDueBefore,
+    'taskDueBefore'
+  );
+  validateDueRange(taskDueAfter, taskDueBefore);
+  return {
+    ...(taskStatuses ? { taskStatuses } : {}),
+    ...(taskPriorities ? { taskPriorities } : {}),
+    ...(taskDueAfter ? { taskDueAfter } : {}),
+    ...(taskDueBefore ? { taskDueBefore } : {}),
+  };
+}
+
+function normalizeEnumFilter<T extends string>(
+  value: unknown,
+  allowed: ReadonlySet<T>,
+  label: string
+): readonly T[] | undefined {
+  if (value === undefined) return undefined;
+  const raw = Array.isArray(value) ? value : [value];
+  if (raw.length === 0) return undefined;
+  const normalized = new Set<T>();
+  for (const item of raw) {
+    if (typeof item !== 'string' || !allowed.has(item as T)) {
+      throw new Error(`Invalid session ${label} filter`);
+    }
+    normalized.add(item as T);
+  }
+  return [...normalized].sort();
+}
+
+function normalizeDueBoundary(value: unknown, label: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) {
+    throw new Error(`Invalid session ${label} filter`);
+  }
+  return new Date(value).toISOString();
+}
+
+function validateDueRange(
+  taskDueAfter: string | undefined,
+  taskDueBefore: string | undefined
+): void {
+  if (
+    taskDueAfter !== undefined &&
+    taskDueBefore !== undefined &&
+    taskDueAfter > taskDueBefore
+  ) {
+    throw new Error('Session task due range is inverted');
+  }
 }
 
 export function compareSessionCatalogItems(

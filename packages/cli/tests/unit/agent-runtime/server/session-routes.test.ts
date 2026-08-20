@@ -106,6 +106,9 @@ const makeSessionMetadata = (
   taskStartedAt: overrides.taskStartedAt,
   taskCompletedAt: overrides.taskCompletedAt,
   taskPromptSummary: overrides.taskPromptSummary,
+  taskPriority: overrides.taskPriority,
+  taskKind: overrides.taskKind,
+  taskDueAt: overrides.taskDueAt,
   taskModelId: overrides.taskModelId,
   selectedModelId: overrides.selectedModelId,
   permissionMode: overrides.permissionMode,
@@ -3100,8 +3103,12 @@ describe('SessionRoutes runtime reuse', () => {
     const source = makeSessionMetadata({
       sessionId: 'retry-source',
       projectPath: '/tmp/retry-source',
+      title: 'Edited retry source',
       taskStatus: 'failed',
       taskRetryAvailable: true,
+      taskPriority: 'high',
+      taskKind: 'bug',
+      taskDueAt: '2026-08-21T09:30:00.000Z',
     });
     const dispatch = {
       version: 1 as const,
@@ -3139,9 +3146,16 @@ describe('SessionRoutes runtime reuse', () => {
       result.session.sessionId,
       '/tmp/retry-source',
       expect.objectContaining({
-        title: 'Retry source',
+        title: 'Edited retry source',
+        taskPriority: 'high',
+        taskKind: 'bug',
+        taskDueAt: '2026-08-21T09:30:00.000Z',
         taskDispatch: {
           ...dispatch,
+          title: 'Edited retry source',
+          taskPriority: 'high',
+          taskKind: 'bug',
+          taskDueAt: '2026-08-21T09:30:00.000Z',
           modelId: 'model-1',
           reasoningEffort: 'off',
           serviceTier: 'auto',

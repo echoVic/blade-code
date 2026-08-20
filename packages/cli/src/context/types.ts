@@ -278,10 +278,16 @@ export interface SessionTaskAttachment {
   name?: string;
 }
 
+export type SessionTaskPriority = 'high' | 'medium' | 'low';
+export type SessionTaskKind = 'feature' | 'bug' | 'maintenance' | 'research';
+
 export interface SessionTaskDispatch {
   version: 1;
   prompt: string;
   title?: string;
+  taskPriority?: SessionTaskPriority;
+  taskKind?: SessionTaskKind;
+  taskDueAt?: string;
   sourceProjectPath: string;
   isolation: SessionTaskIsolation;
   permissionMode: SessionTaskPermissionMode;
@@ -342,6 +348,9 @@ export interface SessionInfo {
   taskCompletedAt?: string | null;
   taskOwnerPid?: number | null;
   taskPromptSummary?: string | null;
+  taskPriority?: SessionTaskPriority | null;
+  taskKind?: SessionTaskKind | null;
+  taskDueAt?: string | null;
   taskDispatch?: SessionTaskDispatch | null;
   taskModelId?: string | null;
   taskRetriedFrom?: SessionTaskRetryRef | null;

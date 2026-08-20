@@ -21,6 +21,7 @@ export type {
   SubagentSession,
   TaskDispatchInput,
   TaskEventConnectionState,
+  TaskUpdateInput,
   WorkspaceInfo,
 } from './sessionService';
 export { sessionService } from './sessionService';

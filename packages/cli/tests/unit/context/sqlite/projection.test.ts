@@ -33,11 +33,19 @@ const derive: MetadataDeriver = (entries, sessionId, projectPath) => {
   const created = entries.find((e) => e.type === 'session_created');
   if (!created) return null;
   const messageCount = entries.filter((e) => e.type === 'message_created').length;
+  const createdData = created.data as {
+    taskPriority?: string;
+    taskKind?: string;
+    taskDueAt?: string;
+  };
   return {
     sessionId,
     projectPath,
     rootId: sessionId,
     taskStatus: 'completed',
+    ...(createdData.taskPriority ? { taskPriority: createdData.taskPriority } : {}),
+    ...(createdData.taskKind ? { taskKind: createdData.taskKind } : {}),
+    ...(createdData.taskDueAt ? { taskDueAt: createdData.taskDueAt } : {}),
     title: 'T',
     messageCount,
     firstMessageTime: ts,
@@ -115,6 +123,113 @@ describe('SQLite projection sync', () => {
       .prepare("SELECT session_id FROM parts_fts WHERE parts_fts MATCH 'fts'")
       .get<{ session_id: string }>();
     expect(hit?.session_id).toBe(sessionId);
+  });
+
+  it('projects task planning metadata into dedicated, SQL-filterable columns', async () => {
+    await writeTranscript(sessionFile(), [
+      ev(1, 'session_created', {
+        sessionId,
+        rootId: sessionId,
+        createdAt: ts,
+        updatedAt: ts,
+        taskPriority: 'high',
+        taskKind: 'bug',
+        taskDueAt: '2024-03-01T00:00:00.000Z',
+      }),
+    ]);
+
+    expect(await syncSession(db, sessionId, projectPath, derive)).toBe(true);
+
+    // Dedicated columns are populated (not just embedded in metadata_json).
+    const row = db
+      .prepare(
+        'SELECT task_priority, task_kind, task_due_at FROM sessions WHERE session_id=?'
+      )
+      .get<{
+        task_priority: string | null;
+        task_kind: string | null;
+        task_due_at: string | null;
+      }>(sessionId);
+    expect(row).toEqual({
+      task_priority: 'high',
+      task_kind: 'bug',
+      task_due_at: '2024-03-01T00:00:00.000Z',
+    });
+
+    // The columns support pure-SQL filtering without deserializing metadata_json.
+    const filtered = db
+      .prepare(
+        `SELECT session_id FROM sessions
+         WHERE project_path=? AND task_status='completed' AND task_priority='high'`
+      )
+      .get<{ session_id: string }>(projectPath);
+    expect(filtered?.session_id).toBe(sessionId);
+  });
+
+  it('uses dedicated indexes for each supported task filter shape', async () => {
+    const explain = (sql: string, ...parameters: unknown[]): string[] =>
+      db
+        .prepare(`EXPLAIN QUERY PLAN ${sql}`)
+        .all<{ detail: string }>(...parameters)
+        .map((row) => row.detail);
+
+    expect(
+      explain(
+        `SELECT session_id FROM sessions
+         WHERE project_path=? AND task_status=? AND task_priority=?
+           AND task_due_at<=?`,
+        projectPath,
+        'completed',
+        'high',
+        '2024-03-01T00:00:00.000Z'
+      ).join('\n')
+    ).toContain('idx_sessions_task_board');
+    expect(
+      explain(
+        'SELECT session_id FROM sessions WHERE task_status=?',
+        'queued'
+      ).join('\n')
+    ).toContain('idx_sessions_task_status');
+    expect(
+      explain(
+        'SELECT session_id FROM sessions WHERE task_priority=?',
+        'high'
+      ).join('\n')
+    ).toContain('idx_sessions_task_priority');
+    expect(
+      explain(
+        'SELECT session_id FROM sessions WHERE task_due_at<=?',
+        '2024-03-01T00:00:00.000Z'
+      ).join('\n')
+    ).toContain('idx_sessions_task_due_at');
+  });
+
+  it('leaves task planning columns null when the session has no planning metadata', async () => {
+    await writeTranscript(sessionFile(), [
+      ev(1, 'session_created', {
+        sessionId,
+        rootId: sessionId,
+        createdAt: ts,
+        updatedAt: ts,
+      }),
+    ]);
+
+    expect(await syncSession(db, sessionId, projectPath, derive)).toBe(true);
+
+    const row = db
+      .prepare(
+        'SELECT task_priority, task_kind, task_due_at FROM sessions WHERE session_id=?'
+      )
+      .get<{
+        task_priority: string | null;
+        task_kind: string | null;
+        task_due_at: string | null;
+      }>(sessionId);
+    expect(row).toEqual({
+      task_priority: null,
+      task_kind: null,
+      task_due_at: null,
+    });
   });
 
   it('is mtime/size gated: unchanged session is skipped on second sync', async () => {

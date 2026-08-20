@@ -6,8 +6,8 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import type { SessionEvent } from '../../../src/context/types.js';
 import { isValidSessionId } from '../../../src/context/storage/pathUtils.js';
+import type { SessionEvent } from '../../../src/context/types.js';
 
 export interface ForkFixture {
   workspace: string;
@@ -90,6 +90,78 @@ function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0;
 }
 
+function isPositiveSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+function hasControlCharacters(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function isCanonicalUtcMillisecondIso(value: unknown): value is string {
+  if (
+    typeof value !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+  ) {
+    return false;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
+}
+
+function exactThreshold(availableForInput: number, numerator: number): number {
+  const quotient = Math.floor(availableForInput / 10);
+  const remainder = availableForInput % 10;
+  return quotient * numerator + Math.floor((remainder * numerator) / 10);
+}
+
+function hasExactKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[]
+): boolean {
+  const actual = Object.keys(value);
+  return (
+    actual.length === keys.length && keys.every((key) => Object.hasOwn(value, key))
+  );
+}
+
+function hasValidTokenBudgetHandoff(data: Record<string, unknown>): boolean {
+  const keys = [
+    'version',
+    'messageId',
+    'observedPromptTokens',
+    'availableForInput',
+    'handoffThreshold',
+    'compactionThreshold',
+    'createdAt',
+  ] as const;
+  if (
+    !hasExactKeys(data, keys) ||
+    data.version !== 1 ||
+    typeof data.messageId !== 'string' ||
+    data.messageId.length < 1 ||
+    data.messageId.length > 128 ||
+    hasControlCharacters(data.messageId) ||
+    !isNonNegativeInteger(data.observedPromptTokens) ||
+    !isPositiveSafeInteger(data.availableForInput) ||
+    !isNonNegativeInteger(data.handoffThreshold) ||
+    !isNonNegativeInteger(data.compactionThreshold) ||
+    !isCanonicalUtcMillisecondIso(data.createdAt)
+  ) {
+    return false;
+  }
+  return (
+    data.handoffThreshold === exactThreshold(data.availableForInput, 7) &&
+    data.compactionThreshold === exactThreshold(data.availableForInput, 8) &&
+    data.observedPromptTokens >= data.handoffThreshold &&
+    data.observedPromptTokens < data.compactionThreshold
+  );
+}
+
 function hasValidSessionInfo(data: Record<string, unknown>, partial: boolean): boolean {
   if (!partial) {
     if (
@@ -140,6 +212,8 @@ function isSessionEvent(value: unknown): value is SessionEvent {
       return hasValidSessionInfo(data, false);
     case 'session_updated':
       return hasValidSessionInfo(data, true);
+    case 'token_budget_handoff_recorded':
+      return hasValidTokenBudgetHandoff(data);
     case 'inbox_acknowledged':
       return (
         Array.isArray(data.messageIds) &&
@@ -247,6 +321,89 @@ export function readSessionEvents(filePath: string): SessionEvent[] {
     events.push(parsed);
   }
   return events;
+}
+
+export function finalAssistantText(
+  events: readonly SessionEvent[]
+): string | undefined {
+  const terminalIndex = events.findLastIndex(
+    (event) => event.type === 'turn_completed' || event.type === 'turn_aborted'
+  );
+  if (terminalIndex < 0) return undefined;
+  const completion = events[terminalIndex];
+  if (completion?.type !== 'turn_completed') return undefined;
+  const maintenanceSuffix = events.slice(terminalIndex + 1);
+  if (
+    !maintenanceSuffix.some(
+      (event) =>
+        event.type === 'session_updated' &&
+        event.sessionId === completion.sessionId &&
+        event.data.sessionId === completion.sessionId &&
+        event.data.taskStatus === 'completed'
+    )
+  ) {
+    return undefined;
+  }
+  if (
+    maintenanceSuffix.some(
+      (event) =>
+        event.type !== 'session_updated' ||
+        event.sessionId !== completion.sessionId ||
+        event.data.sessionId !== completion.sessionId ||
+        (event.data.taskStatus !== undefined && event.data.taskStatus !== 'completed')
+    )
+  ) {
+    return undefined;
+  }
+  const starts = events
+    .slice(0, terminalIndex)
+    .filter(
+      (event): event is Extract<SessionEvent, { type: 'turn_started' }> =>
+        event.type === 'turn_started' &&
+        event.sessionId === completion.sessionId &&
+        event.data.turnId === completion.data.turnId
+    );
+  if (starts.length !== 1) return undefined;
+  const startIndex = events.indexOf(starts[0]!);
+
+  const candidates = events
+    .slice(0, terminalIndex)
+    .filter((event): event is Extract<SessionEvent, { type: 'message_created' }> => {
+      if (event.type !== 'message_created' || event.data.role !== 'assistant') {
+        return false;
+      }
+      if (event.sessionId !== completion.sessionId) return false;
+      const metadata = event.data.metadata;
+      if (!isRecord(metadata) || !isRecord(metadata.turnFinalization)) {
+        return false;
+      }
+      return metadata.turnFinalization.turnId === completion.data.turnId;
+    });
+  if (candidates.length !== 1) return undefined;
+  const finalAssistant = candidates[0];
+  if (!finalAssistant) return undefined;
+  const finalAssistantIndex = events.indexOf(finalAssistant);
+  if (startIndex < 0 || finalAssistantIndex <= startIndex) return undefined;
+  const orderedPartIds: string[] = [];
+  const textByPartId = new Map<string, string>();
+  for (const event of events.slice(finalAssistantIndex + 1, terminalIndex)) {
+    if (
+      (event.type !== 'part_created' && event.type !== 'part_updated') ||
+      event.sessionId !== completion.sessionId ||
+      event.data.messageId !== finalAssistant.data.messageId ||
+      event.data.partType !== 'text' ||
+      !isRecord(event.data.payload) ||
+      typeof event.data.payload.text !== 'string'
+    ) {
+      continue;
+    }
+    if (!textByPartId.has(event.data.partId)) {
+      orderedPartIds.push(event.data.partId);
+    }
+    textByPartId.set(event.data.partId, event.data.payload.text);
+  }
+  if (orderedPartIds.length === 0) return undefined;
+  return orderedPartIds.map((partId) => textByPartId.get(partId) ?? '').join('');
 }
 
 export interface DurableToolTraceRecord {

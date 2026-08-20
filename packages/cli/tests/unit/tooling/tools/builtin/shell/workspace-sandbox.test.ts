@@ -217,7 +217,7 @@ describe('AnthropicWorkspaceSandboxBackend', () => {
         },
         filesystem: {
           denyRead: expect.arrayContaining([path.resolve(os.homedir())]),
-          allowRead: [canonicalWorkspace, runtimeExecutable],
+          allowRead: [canonicalWorkspace, runtimeExecutable, await realpath(tempRoot)],
           allowWrite: [await realpath(tempRoot)],
           denyWrite: [canonicalWorkspace, '/home/user/.npm/_logs'],
         },

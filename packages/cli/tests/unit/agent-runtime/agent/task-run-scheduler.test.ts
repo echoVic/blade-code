@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   TaskAdmissionCancelledError,
   TaskAdmissionConflictError,
-  TaskAdmissionQueueFullError,
   type TaskAdmissionOptions,
+  TaskAdmissionQueueFullError,
   TaskRunScheduler,
 } from '../../../../src/agent/runtime/TaskRunScheduler.js';
 
@@ -45,7 +45,30 @@ describe('TaskRunScheduler', () => {
       maxConcurrent: 2,
       maxQueued: 10,
       maxQueuedBytes: 64 * 1024,
+      paused: false,
     });
+  });
+
+  it('queues new work while paused and drains it after resume', async () => {
+    const scheduler = new TaskRunScheduler();
+    scheduler.setPaused(true);
+    const queued = admit(scheduler, { key: 'paused-task' });
+
+    expect(queued.getSnapshot()).toMatchObject({
+      state: 'queued',
+      queuePosition: 1,
+    });
+    expect(scheduler.getStats()).toMatchObject({
+      inFlight: 0,
+      queued: 1,
+      paused: true,
+    });
+
+    scheduler.setPaused(false);
+    const permit = await queued.ready;
+    expect(queued.getSnapshot().state).toBe('running');
+    expect(scheduler.getStats().paused).toBe(false);
+    permit.release();
   });
 
   it('queues in FIFO order and updates positions after cancellation', async () => {

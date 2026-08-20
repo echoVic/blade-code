@@ -1,7 +1,11 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'bun-pty';
-import { appendBoundedPtyEvidence } from './foregroundBoundedOutputPtyDriver.js';
+import {
+  appendBoundedPtyEvidence,
+  ArmedPtyMarkerLatch,
+  waitForPtyExit,
+} from './foregroundBoundedOutputPtyDriver.js';
 import {
   driveToolAdmissionFixture,
   TOOL_ADMISSION_CALL_IDS,
@@ -55,6 +59,12 @@ async function releaseAll(stateDir: string): Promise<void> {
 
 async function main(): Promise<void> {
   const input = loadInput();
+  if (input.prompt.includes(input.marker)) {
+    throw new Error('Tool admission final marker contaminated the prompt');
+  }
+  const finalMarkerLatch = new ArmedPtyMarkerLatch(input.marker);
+  const secretLatch = new ArmedPtyMarkerLatch(input.secret);
+  secretLatch.arm();
   const env = Object.fromEntries(
     Object.entries({
       ...process.env,
@@ -97,6 +107,8 @@ async function main(): Promise<void> {
     });
   });
   terminal.onData((chunk) => {
+    finalMarkerLatch.observe(chunk);
+    secretLatch.observe(chunk);
     output = appendBoundedPtyEvidence(output, chunk, 128_000);
   });
 
@@ -112,6 +124,7 @@ async function main(): Promise<void> {
       'Bracketed paste did not reach the TUI composer',
       10_000
     );
+    finalMarkerLatch.arm();
     terminal.write('\r');
 
     await driveToolAdmissionFixture({
@@ -124,27 +137,31 @@ async function main(): Promise<void> {
           'Raw PTY did not project two queued tool calls'
         ),
     });
-    await waitForToolAdmissionSessionCompletion(input.storageRoot, input.sessionId);
+    await waitForToolAdmissionSessionCompletion(
+      input.storageRoot,
+      input.sessionId,
+      input.marker
+    );
     await waitFor(
-      () => output.includes(input.marker),
+      () => finalMarkerLatch.seen,
       'Raw PTY did not render the final admission marker'
     );
-    if (output.includes(input.secret)) {
+    if (secretLatch.seen) {
       throw new Error('Raw PTY admission capture contained provider credentials');
     }
 
     process.kill(terminal.pid, 'SIGTERM');
-    await Promise.race([
-      exitPromise,
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('TUI did not exit after SIGTERM')), 15_000)
-      ),
-    ]);
+    await waitForPtyExit(exitPromise, 'TUI did not exit after SIGTERM');
     if (exitCode !== 0) throw new Error(`TUI graceful exit code was ${exitCode}`);
+    if (secretLatch.seen) {
+      throw new Error('Raw PTY admission capture contained provider credentials');
+    }
     process.stdout.write(
       JSON.stringify({
         success: true,
         sessionId: input.sessionId,
+        finalMarkerSeen: finalMarkerLatch.seen,
+        secretSeen: secretLatch.seen,
         output,
       })
     );

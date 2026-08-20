@@ -1,4 +1,11 @@
-import { type LucideIcon, Plus, Search, Settings, Terminal } from 'lucide-react';
+import {
+  LayoutDashboard,
+  type LucideIcon,
+  Plus,
+  Search,
+  Settings,
+  Terminal,
+} from 'lucide-react';
 import { type TranslationKey, useT } from '@/i18n';
 import { shortcutHint } from '@/lib/keyboardShortcuts';
 import { cn } from '@/lib/utils';
@@ -8,12 +15,14 @@ import { LanguageSwitcher } from './LanguageSwitcher';
 interface SidebarCollapsedProps {
   onExpand: () => void;
   onNewChat: () => void;
+  onOpenBoard: () => void;
   onOpenTaskSwitcher: () => void;
   onToggleTerminal: () => void;
   onToggleSettings: () => void;
   isTerminalOpen: boolean;
   taskEventsConnected: boolean;
   unreadCount: number;
+  boardActive: boolean;
   className?: string;
 }
 
@@ -24,12 +33,14 @@ interface SidebarCollapsedProps {
 export function SidebarCollapsed({
   onExpand,
   onNewChat,
+  onOpenBoard,
   onOpenTaskSwitcher,
   onToggleTerminal,
   onToggleSettings,
   isTerminalOpen,
   taskEventsConnected,
   unreadCount,
+  boardActive,
   className,
 }: SidebarCollapsedProps) {
   const t = useT();
@@ -63,6 +74,22 @@ export function SidebarCollapsed({
         className="mt-6 flex h-10 w-10 items-center justify-center rounded-md bg-[hsl(var(--deck-ink))] text-[hsl(var(--deck-canvas))] transition-colors hover:bg-[hsl(var(--deck-ink))]/85"
       >
         <Plus className="h-4 w-4 stroke-[2.5]" />
+      </button>
+
+      <button
+        type="button"
+        onClick={onOpenBoard}
+        aria-label={t('sidebar.action.taskBoard')}
+        aria-current={boardActive ? 'page' : undefined}
+        title={t('sidebar.action.taskBoard')}
+        className={cn(
+          'flex h-10 w-10 items-center justify-center rounded-md border transition-colors',
+          boardActive
+            ? 'border-[hsl(var(--deck-accent)/0.55)] bg-[hsl(var(--deck-accent-soft))] text-[hsl(var(--deck-accent))]'
+            : 'border-transparent text-[hsl(var(--deck-ink-muted))] hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))]'
+        )}
+      >
+        <LayoutDashboard className="h-4 w-4" />
       </button>
 
       <button

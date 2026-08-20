@@ -45,6 +45,8 @@ import {
   type SessionTaskDiffArtifact,
   SessionTaskDiffArtifactSchema,
   type SessionTaskIsolation,
+  type SessionTaskKind,
+  type SessionTaskPriority,
   type SessionUnarchiveResponse,
   SessionUnarchiveResponseSchema,
   type SubagentSession,
@@ -107,6 +109,9 @@ export interface SendMessagePayload {
 export interface TaskDispatchInput {
   prompt: string;
   title?: string;
+  taskPriority?: SessionTaskPriority;
+  taskKind?: SessionTaskKind;
+  taskDueAt?: string;
   projectPath?: string;
   modelId?: string;
   reasoningEffort?: ReasoningEffort;
@@ -117,6 +122,13 @@ export interface TaskDispatchInput {
   permissionMode?: PermissionMode;
   attachments?: ImageAttachmentInput[];
   outputSchema?: Record<string, unknown>;
+}
+
+export interface TaskUpdateInput {
+  title?: string;
+  taskPriority?: SessionTaskPriority;
+  taskKind?: SessionTaskKind;
+  taskDueAt?: string | null;
 }
 
 export interface CodeReviewDispatchInput {
@@ -135,6 +147,7 @@ export interface WorkspaceInfo {
     queued: number;
     maxConcurrent: number;
     maxQueued: number;
+    paused?: boolean;
   };
 }
 
@@ -170,6 +183,7 @@ const WorkspaceInfoSchema = Type.Object({
       queued: Type.Integer({ minimum: 0 }),
       maxConcurrent: Type.Integer({ minimum: 1 }),
       maxQueued: Type.Integer({ minimum: 1 }),
+      paused: Type.Optional(Type.Boolean()),
     })
   ),
 });
@@ -356,6 +370,34 @@ export const sessionService = {
       throw new Error(body?.error?.message || 'Failed to dispatch task');
     }
     return CreateTaskResponseSchema.parse(await res.json());
+  },
+
+  updateTask: async (ref: SessionRef, input: TaskUpdateInput): Promise<Session> => {
+    const res = await fetch(withSessionRef(`${API_BASE}/tasks/${ref.sessionId}`, ref), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => undefined)) as
+        | { error?: { message?: string } }
+        | undefined;
+      throw new Error(body?.error?.message || 'Failed to update task');
+    }
+    return SessionSchema.parse(await res.json());
+  },
+
+  setTaskAdmissionPaused: async (
+    paused: boolean
+  ): Promise<NonNullable<WorkspaceInfo['taskAdmission']>> => {
+    return parseSchema(
+      WorkspaceInfoSchema.properties.taskAdmission,
+      await requestJson<unknown>(`${API_BASE}/global/task-admission`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paused }),
+      })
+    );
   },
 
   retryTask: async (ref: SessionRef): Promise<CreateTaskResponse> => {

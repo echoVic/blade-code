@@ -9,12 +9,14 @@ function createController(
   dispatchTask: SessionRouteController['dispatchTask'],
   getTaskDiff: SessionRouteController['getTaskDiff'] = vi.fn(),
   retryTask: SessionRouteController['retryTask'] = vi.fn(),
-  deliverTask: SessionRouteController['deliverTask'] = vi.fn()
+  deliverTask: SessionRouteController['deliverTask'] = vi.fn(),
+  updateTask: SessionRouteController['updateTask'] = vi.fn()
 ): SessionRouteController {
   return {
     app: new Hono(),
     dispatchTask,
     retryTask,
+    updateTask,
     getTaskDiff,
     deliverTask,
     recoverQueuedTasks: vi.fn(async () => ({
@@ -74,6 +76,9 @@ describe('TaskRoutes', () => {
     expect(dispatchTask).toHaveBeenCalledWith({
       prompt: 'Implement task dispatch',
       title: undefined,
+      taskPriority: 'medium',
+      taskKind: 'feature',
+      taskDueAt: undefined,
       sourceProjectPath: '/tmp/source',
       isolation: 'worktree',
       permissionMode: 'default',
@@ -129,6 +134,72 @@ describe('TaskRoutes', () => {
       },
     });
     expect(dispatchTask).not.toHaveBeenCalled();
+  });
+
+  it('updates planning metadata for the exact task', async () => {
+    const updateTask = vi.fn<SessionRouteController['updateTask']>(
+      async (sessionId, update, projectPath) => ({
+        sessionId,
+        projectPath: projectPath ?? '/tmp/source',
+        title: update.title ?? 'Task one',
+        rootId: sessionId,
+        taskStatus: 'queued',
+        taskPriority: update.taskPriority,
+        taskKind: update.taskKind,
+        taskDueAt: update.taskDueAt ?? undefined,
+        messageCount: 0,
+        firstMessageTime: '2026-08-20T00:00:00.000Z',
+        lastMessageTime: '2026-08-20T00:00:00.000Z',
+        hasErrors: false,
+        isActive: true,
+      })
+    );
+    const app = TaskRoutes(
+      createController(vi.fn(), vi.fn(), vi.fn(), vi.fn(), updateTask)
+    );
+
+    const response = await app.request('/task-1?projectPath=%2Ftmp%2Fsource', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Fix scheduler',
+        taskPriority: 'high',
+        taskKind: 'bug',
+        taskDueAt: '2026-08-21T09:30:00.000Z',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(updateTask).toHaveBeenCalledWith(
+      'task-1',
+      {
+        title: 'Fix scheduler',
+        taskPriority: 'high',
+        taskKind: 'bug',
+        taskDueAt: '2026-08-21T09:30:00.000Z',
+      },
+      '/tmp/source'
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      taskPriority: 'high',
+      taskKind: 'bug',
+    });
+  });
+
+  it('rejects empty task metadata updates', async () => {
+    const updateTask = vi.fn<SessionRouteController['updateTask']>();
+    const app = TaskRoutes(
+      createController(vi.fn(), vi.fn(), vi.fn(), vi.fn(), updateTask)
+    );
+
+    const response = await app.request('/task-1', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(400);
+    expect(updateTask).not.toHaveBeenCalled();
   });
 
   it('does not expose worktree or provider failures', async () => {

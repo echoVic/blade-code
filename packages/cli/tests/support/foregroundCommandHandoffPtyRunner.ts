@@ -1,5 +1,9 @@
 import { spawn } from 'bun-pty';
-import { appendBoundedPtyEvidence } from './foregroundBoundedOutputPtyDriver.js';
+import {
+  appendBoundedPtyEvidence,
+  ArmedPtyMarkerLatch,
+  waitForPtyExit,
+} from './foregroundBoundedOutputPtyDriver.js';
 import {
   driveForegroundCommandHandoffFixture,
   type ForegroundCommandHandoffFixture,
@@ -37,6 +41,12 @@ async function waitFor(
 
 async function main(): Promise<void> {
   const input = loadInput();
+  if (input.fixture.prompt.includes(input.fixture.marker)) {
+    throw new Error('Foreground handoff final marker contaminated the prompt');
+  }
+  const finalMarkerLatch = new ArmedPtyMarkerLatch(input.fixture.marker);
+  const secretLatch = new ArmedPtyMarkerLatch(input.secret);
+  secretLatch.arm();
   const env = Object.fromEntries(
     Object.entries({
       ...process.env,
@@ -81,6 +91,8 @@ async function main(): Promise<void> {
     });
   });
   terminal.onData((chunk) => {
+    finalMarkerLatch.observe(chunk);
+    secretLatch.observe(chunk);
     output = appendBoundedPtyEvidence(output, chunk, 128_000);
   });
 
@@ -96,6 +108,7 @@ async function main(): Promise<void> {
       'Foreground handoff bracketed paste did not reach TUI',
       10_000
     );
+    finalMarkerLatch.arm();
     terminal.write('\r');
 
     await driveForegroundCommandHandoffFixture({
@@ -110,30 +123,27 @@ async function main(): Promise<void> {
       },
     });
     await waitFor(
-      () => output.includes(input.fixture.marker),
+      () => finalMarkerLatch.seen,
       'Raw PTY did not render foreground handoff marker'
     );
-    if (output.includes(input.secret)) {
+    if (secretLatch.seen) {
       throw new Error('Raw PTY handoff capture contained provider credentials');
     }
 
     process.kill(terminal.pid, 'SIGTERM');
-    await Promise.race([
-      exitPromise,
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error('TUI handoff runner did not exit after SIGTERM')),
-          15_000
-        )
-      ),
-    ]);
+    await waitForPtyExit(exitPromise, 'TUI handoff runner did not exit after SIGTERM');
     if (exitCode !== 0) {
       throw new Error(`TUI handoff graceful exit code was ${exitCode}`);
+    }
+    if (secretLatch.seen) {
+      throw new Error('Raw PTY handoff capture contained provider credentials');
     }
     process.stdout.write(
       JSON.stringify({
         success: true,
         sessionId: input.sessionId,
+        finalMarkerSeen: finalMarkerLatch.seen,
+        secretSeen: secretLatch.seen,
         output,
       })
     );

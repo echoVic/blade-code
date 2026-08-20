@@ -715,6 +715,7 @@ export class SessionRuntime {
         taskQueueDepth: snapshot.queueDepth,
         taskConcurrencyLimit: snapshot.maxConcurrent,
         taskInFlight: snapshot.inFlight,
+        taskAdmissionPaused: taskRunScheduler.getStats().paused,
         updatedAt: metadata.lastMessageTime,
       }
     );
@@ -732,6 +733,7 @@ export class SessionRuntime {
         taskQueueDepth: stats.queued,
         taskConcurrencyLimit: stats.maxConcurrent,
         taskInFlight: stats.inFlight,
+        taskAdmissionPaused: stats.paused,
         updatedAt: new Date().toISOString(),
       }
     );

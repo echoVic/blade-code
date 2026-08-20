@@ -146,27 +146,109 @@ function requireSentinel(
   }
 }
 
-function sentinelAppearsWith(
+function requireCanonicalStatusClause(
+  sections: Record<string, string>,
+  section: LedgerSectionKey,
+  sentinel: string,
+  status: 'applied' | 'failed' | 'pending',
+  label: string
+): void {
+  const clauses = (sections[section] ?? '')
+    .split(/\r?\n/)
+    .filter((clause) => clause.includes(sentinel));
+  if (clauses.length !== 1 || clauses[0] !== `${sentinel} status=${status}`) {
+    throw new Error(
+      `Continuation ledger ${label} must use one canonical status clause; ` +
+        canonicalStatusClauseDiagnostic(sections[section] ?? '', sentinel, status)
+    );
+  }
+}
+
+export function canonicalStatusClauseDiagnostic(
+  section: string,
+  sentinel: string,
+  status: 'applied' | 'failed' | 'pending'
+): string {
+  const clauses = section.split(/\r?\n/).filter((clause) => clause.includes(sentinel));
+  const expected = `${sentinel} status=${status}`;
+  const canonical = clauses.filter((clause) => clause === expected).length;
+  const starts = clauses.filter((clause) => clause.startsWith(sentinel)).length;
+  const withStatus = clauses.filter((clause) =>
+    clause.includes(`status=${status}`)
+  ).length;
+  const extra = clauses.filter((clause) => clause !== expected).length;
+  const expectedPrefix = `${sentinel} status=${status}`;
+  const suffixes = clauses
+    .filter((clause) => clause.startsWith(expectedPrefix))
+    .map((clause) => clause.slice(expectedPrefix.length).trim());
+  const suffixNone = suffixes.filter((suffix) => suffix.length === 0).length;
+  const punctuation = suffixes.filter((suffix) => /^[.,;:!?]+$/.test(suffix)).length;
+  const parenthetical = suffixes.filter((suffix) =>
+    /^\([^\r\n]*\)[.,;:!?]?$/.test(suffix)
+  ).length;
+  const prose = suffixes.filter(
+    (suffix) =>
+      suffix.length > 0 &&
+      !/^[.,;:!?]+$/.test(suffix) &&
+      !/^\([^\r\n]*\)[.,;:!?]?$/.test(suffix)
+  ).length;
+  const maximumSuffixLength = suffixes.reduce(
+    (maximum, suffix) => Math.max(maximum, suffix.length),
+    0
+  );
+  const maximumSuffixBucket =
+    maximumSuffixLength === 0
+      ? '0'
+      : maximumSuffixLength <= 8
+        ? '1_8'
+        : maximumSuffixLength <= 32
+          ? '9_32'
+          : 'overflow';
+  return (
+    `occurrences=${clauses.length};canonical=${canonical};` +
+    `starts=${starts};status=${withStatus};extra=${extra};` +
+    `suffix_none=${suffixNone};punctuation=${punctuation};` +
+    `parenthetical=${parenthetical};prose=${prose};` +
+    `max_suffix=${maximumSuffixBucket}`
+  );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function sentinelHasExplicitStatus(
   sections: Record<string, string>,
   sentinel: string,
-  contradictoryStatus: RegExp
+  statuses: readonly string[]
 ): boolean {
+  const escapedSentinel = escapeRegExp(sentinel);
+  const alternatives = statuses.map(escapeRegExp).join('|');
+  const statusBefore = new RegExp(
+    `^(?:${alternatives})\\s+${escapedSentinel}(?=\\s|[.,;:!?]|$)`,
+    'i'
+  );
+  const statusAfter = new RegExp(
+    `(?:^|\\s)${escapedSentinel}\\s+(?:(?:is|was|now)\\s+)?` +
+      `(?:${alternatives})(?=\\s|[.,;:!?]|$)`,
+    'i'
+  );
+  const assigned = new RegExp(
+    `(?:^|\\s)${escapedSentinel}\\s+status\\s*=\\s*` +
+      `(?:${alternatives})(?=\\s|[.,;:!?]|$)`,
+    'i'
+  );
+
   return LEDGER_SECTION_KEYS.some((key) =>
     (sections[key] ?? '')
       .split(/\r?\n/)
       .some((clause) =>
-        clause.includes(sentinel) ? contradictoryStatus.test(clause) : false
+        clause.includes(sentinel)
+          ? statusBefore.test(clause) ||
+            statusAfter.test(clause) ||
+            assigned.test(clause)
+          : false
       )
-  );
-}
-
-function sentinelAppearsOutside(
-  sections: Record<string, string>,
-  allowed: LedgerSectionKey,
-  sentinel: string
-): boolean {
-  return LEDGER_SECTION_KEYS.some(
-    (key) => key !== allowed && (sections[key] ?? '').includes(sentinel)
   );
 }
 
@@ -180,57 +262,62 @@ export function assertContinuationLedger(
     }
   }
   requireSentinel(sections, 'workspaceMutations', sentinels.mutation, 'mutation');
-  if (sentinelAppearsOutside(sections, 'workspaceMutations', sentinels.mutation)) {
-    throw new Error('Continuation ledger mutation sentinel appears outside mutations');
-  }
+  requireCanonicalStatusClause(
+    sections,
+    'workspaceMutations',
+    sentinels.mutation,
+    'applied',
+    'mutation'
+  );
   requireSentinel(
     sections,
     'verificationEvidence',
     sentinels.failedVerification,
     'failed verification'
   );
-  if (
-    sentinelAppearsOutside(
-      sections,
-      'verificationEvidence',
-      sentinels.failedVerification
-    )
-  ) {
-    throw new Error(
-      'Continuation ledger failed verification sentinel appears outside verification'
-    );
-  }
+  requireCanonicalStatusClause(
+    sections,
+    'verificationEvidence',
+    sentinels.failedVerification,
+    'failed',
+    'failed verification'
+  );
   requireSentinel(
     sections,
     'exactNextAction',
     sentinels.pendingAction,
     'pending action'
   );
-  if (sentinelAppearsOutside(sections, 'exactNextAction', sentinels.pendingAction)) {
-    throw new Error(
-      'Continuation ledger pending action sentinel appears outside next action'
-    );
-  }
-
+  requireCanonicalStatusClause(
+    sections,
+    'exactNextAction',
+    sentinels.pendingAction,
+    'pending',
+    'pending action'
+  );
   if (
-    sentinelAppearsWith(
-      sections,
-      sentinels.pendingAction,
-      /\b(?:complete|completed|done|finished|resolved)\b/i
-    )
+    sentinelHasExplicitStatus(sections, sentinels.pendingAction, [
+      'applied',
+      'complete',
+      'completed',
+      'done',
+      'finished',
+      'resolved',
+    ])
   ) {
-    throw new Error('Continuation ledger pending action sentinel is marked completed');
+    throw new Error('Continuation ledger pending action is marked completed');
   }
   if (
-    sentinelAppearsWith(
-      sections,
-      sentinels.failedVerification,
-      /\b(?:pass|passed|passing|success|succeeded|successful)\b/i
-    )
+    sentinelHasExplicitStatus(sections, sentinels.failedVerification, [
+      'pass',
+      'passed',
+      'passing',
+      'success',
+      'succeeded',
+      'successful',
+    ])
   ) {
-    throw new Error(
-      'Continuation ledger failed verification sentinel is marked passing'
-    );
+    throw new Error('Continuation ledger failed verification is marked passing');
   }
 }
 
@@ -261,8 +348,18 @@ export function assertTokenBudgetRequestSequence(
     throw new Error('Token-budget Provider requests must have maxInFlight equal to 1');
   }
   if (evidence.requests.length !== 5) {
+    const sequence = evidence.requests
+      .map(
+        (request) =>
+          `${request.ordinal}:${request.kind}:m${request.markerOccurrences}:` +
+          `r${request.usageRewritten ? 1 : 0}:s${request.upstreamStatus ?? 0}:` +
+          `k${request.responseKind ?? 'unknown'}:` +
+          `u${request.usageShape ?? 'unknown'}`
+      )
+      .join(',');
     throw new Error(
-      'Token-budget Provider evidence must contain exactly five requests'
+      'Token-budget Provider evidence must contain exactly five requests; ' +
+        `count=${evidence.requests.length}; sequence=${sequence}`
     );
   }
 

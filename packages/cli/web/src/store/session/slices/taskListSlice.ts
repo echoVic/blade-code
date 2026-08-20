@@ -81,6 +81,17 @@ const COMMUNICATION_STYLES = new Set<NonNullable<Session['communicationStyle']>>
   'friendly',
   'explanatory',
 ]);
+const TASK_PRIORITIES = new Set<NonNullable<Session['taskPriority']>>([
+  'high',
+  'medium',
+  'low',
+]);
+const TASK_KINDS = new Set<NonNullable<Session['taskKind']>>([
+  'feature',
+  'bug',
+  'maintenance',
+  'research',
+]);
 
 function isTaskStatus(value: unknown): value is Session['taskStatus'] {
   return typeof value === 'string' && TASK_STATUSES.has(value as Session['taskStatus']);
@@ -207,9 +218,11 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
     boundProjects: [],
     selectedProjectPath: readSelectedProject(),
     isDispatchingTask: false,
+    isUpdatingTaskAdmission: false,
     isBindingProject: false,
     cancellingTaskKeys: [],
     retryingTaskKeys: [],
+    updatingTaskKeys: [],
     taskDeliveryActions: {},
     unreadTaskKeys: readUnreadTaskKeys(),
 
@@ -269,6 +282,9 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
         const serviceTier = event.properties.serviceTier;
         const responseVerbosity = event.properties.responseVerbosity;
         const communicationStyle = event.properties.communicationStyle;
+        const taskPriority = event.properties.taskPriority;
+        const taskKind = event.properties.taskKind;
+        const taskDueAt = event.properties.taskDueAt;
         if (
           typeof sessionId !== 'string' ||
           typeof projectPath !== 'string' ||
@@ -287,7 +303,11 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
             ) ||
             COMMUNICATION_STYLES.has(
               communicationStyle as NonNullable<Session['communicationStyle']>
-            )
+            ) ||
+            TASK_PRIORITIES.has(taskPriority as NonNullable<Session['taskPriority']>) ||
+            TASK_KINDS.has(taskKind as NonNullable<Session['taskKind']>) ||
+            taskDueAt === null ||
+            (typeof taskDueAt === 'string' && Number.isFinite(Date.parse(taskDueAt)))
           )
         ) {
           return;
@@ -363,6 +383,26 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
                         >,
                       }
                     : {}),
+                  ...(TASK_PRIORITIES.has(
+                    taskPriority as NonNullable<Session['taskPriority']>
+                  )
+                    ? {
+                        taskPriority: taskPriority as NonNullable<
+                          Session['taskPriority']
+                        >,
+                      }
+                    : {}),
+                  ...(TASK_KINDS.has(taskKind as NonNullable<Session['taskKind']>)
+                    ? {
+                        taskKind: taskKind as NonNullable<Session['taskKind']>,
+                      }
+                    : {}),
+                  ...(taskDueAt === null
+                    ? { taskDueAt: undefined }
+                    : typeof taskDueAt === 'string' &&
+                        Number.isFinite(Date.parse(taskDueAt))
+                      ? { taskDueAt }
+                      : {}),
                 }
               : session
           ),
@@ -519,6 +559,10 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
         event.properties.taskConcurrencyLimit,
         1
       );
+      const taskAdmissionPaused =
+        typeof event.properties.taskAdmissionPaused === 'boolean'
+          ? event.properties.taskAdmissionPaused
+          : undefined;
       if (
         taskInFlight !== undefined &&
         taskQueueDepth !== undefined &&
@@ -533,6 +577,10 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
                   queued: taskQueueDepth,
                   maxConcurrent: taskConcurrencyLimit,
                   maxQueued: state.taskWorkspaceInfo.taskAdmission?.maxQueued ?? 100,
+                  paused:
+                    taskAdmissionPaused ??
+                    state.taskWorkspaceInfo.taskAdmission?.paused ??
+                    false,
                 },
               }
             : null,
@@ -867,6 +915,56 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
       set({ unreadTaskKeys: [] });
     },
 
+    setTaskAdmissionPaused: async (paused) => {
+      if (get().isUpdatingTaskAdmission) return;
+      set({ isUpdatingTaskAdmission: true, error: null, errorContext: null });
+      try {
+        const taskAdmission = await sessionService.setTaskAdmissionPaused(paused);
+        set((state) => ({
+          taskWorkspaceInfo: state.taskWorkspaceInfo
+            ? { ...state.taskWorkspaceInfo, taskAdmission }
+            : state.taskWorkspaceInfo,
+        }));
+      } catch (error) {
+        set({
+          error:
+            error instanceof Error ? error.message : 'Failed to update task admission',
+          errorContext: { kind: 'task_action' },
+        });
+        throw error;
+      } finally {
+        set({ isUpdatingTaskAdmission: false });
+      }
+    },
+
+    updateTask: async (ref, input) => {
+      const key = sessionRefKey(ref);
+      if (get().updatingTaskKeys.includes(key)) return;
+      set((state) => ({
+        updatingTaskKeys: [...state.updatingTaskKeys, key],
+        error: null,
+        errorContext: null,
+      }));
+      try {
+        const session = await sessionService.updateTask(ref, input);
+        set((state) => ({
+          sessions: upsertSessionByRef(state.sessions, session),
+        }));
+      } catch (error) {
+        set({
+          error: error instanceof Error ? error.message : 'Failed to update task',
+          errorContext: { kind: 'task_action', sessionRef: ref },
+        });
+        throw error;
+      } finally {
+        set((state) => ({
+          updatingTaskKeys: state.updatingTaskKeys.filter(
+            (candidate) => candidate !== key
+          ),
+        }));
+      }
+    },
+
     cancelTask: async (ref) => {
       const key = sessionRefKey(ref);
       if (get().cancellingTaskKeys.includes(key)) return;
@@ -998,7 +1096,7 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
       }
     },
 
-    dispatchTask: async (input) => {
+    dispatchTask: async (input, options) => {
       const navigationVersion = get().getNavigationVersion();
       const selectedProjectPath = get().selectedProjectPath;
       const projectPath = input.projectPath ?? selectedProjectPath ?? undefined;
@@ -1019,7 +1117,7 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
           sessions: upsertSessionByRef(state.sessions, result.session),
           isDispatchingTask: false,
         }));
-        if (ownsNavigation()) {
+        if (options?.selectSession !== false && ownsNavigation()) {
           await get().selectSession(sessionRefFromSession(result.session));
         }
       } catch (error) {

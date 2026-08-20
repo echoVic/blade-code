@@ -5,6 +5,10 @@ function source(relativePath: string): string {
   return readFileSync(new URL(`../../src/${relativePath}`, import.meta.url), 'utf8');
 }
 
+function testSource(relativePath: string): string {
+  return readFileSync(new URL(`../${relativePath}`, import.meta.url), 'utf8');
+}
+
 function occurrences(value: string, pattern: RegExp): number {
   return value.match(pattern)?.length ?? 0;
 }
@@ -51,5 +55,26 @@ describe('tool admission search gate', () => {
 
     expect(runtime).not.toContain('new ConcurrencyScheduler');
     expect(agent).not.toContain('new ConcurrencyScheduler');
+  });
+
+  it('requires sticky raw PTY completion evidence in the release trajectory', () => {
+    const runner = testSource('support/toolAdmissionPtyRunner.ts');
+    const trajectory = testSource(
+      'integration/real-api/tool-admission-trajectory.test.ts'
+    );
+
+    expect(runner).toContain('finalMarkerSeen: finalMarkerLatch.seen');
+    expect(runner).toContain('secretSeen: secretLatch.seen');
+    expect(runner).toContain('waitForPtyExit(');
+    expect(trajectory).toContain('finalAssistantText(events)');
+    expect(trajectory).toContain('createSplitPtyMarkerInstruction');
+    expect(trajectory).toContain(
+      'assertSplitPtyMarkerInstructionAtEnd(prompt, marker)'
+    );
+    expect(trajectory.indexOf('Do not call any other tool')).toBeLessThan(
+      trajectory.lastIndexOf('createSplitPtyMarkerInstruction')
+    );
+    expect(trajectory).toContain("kind === 'pty'");
+    expect(trajectory).toContain('!isCompleteRawPtyMarkerEvidence(evidence)');
   });
 });

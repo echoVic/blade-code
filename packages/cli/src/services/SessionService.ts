@@ -3,10 +3,10 @@
  * 负责加载和恢复历史会话
  */
 
+import { nanoid } from 'nanoid';
 import type { BigIntStats } from 'node:fs';
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import * as path from 'node:path';
-import { nanoid } from 'nanoid';
 import { SessionInUseError, SessionLease } from '../agent/runtime/SessionLease.js';
 import {
   MAX_INLINE_ATTACHMENT_BYTES,
@@ -23,10 +23,6 @@ import {
   findPendingSessionInteraction,
   toPendingInteraction,
 } from '../context/interactions.js';
-import {
-  findCurrentTokenBudgetHandoff,
-  projectTokenBudgetHandoffEvent,
-} from '../context/TokenBudgetHandoff.js';
 import {
   codeReviewMessageMetadata,
   projectSessionReviews,
@@ -51,6 +47,10 @@ import {
   syncAll,
 } from '../context/storage/sqlite/projection.js';
 import { isSessionTaskFailure, toTaskFailure } from '../context/taskFailure.js';
+import {
+  findCurrentTokenBudgetHandoff,
+  projectTokenBudgetHandoffEvent,
+} from '../context/TokenBudgetHandoff.js';
 import type {
   SessionEvent,
   SessionPendingInteraction,
@@ -62,6 +62,8 @@ import type {
   SessionTaskDispatch,
   SessionTaskFailure,
   SessionTaskIsolation,
+  SessionTaskKind,
+  SessionTaskPriority,
   SessionTaskRetryRef,
   SessionTaskStatus,
   SessionTaskWorktree,
@@ -79,26 +81,29 @@ import { isReasoningEffortSelection } from './pi/reasoningEffort.js';
 import { isResponseVerbositySelection } from './pi/responseVerbosity.js';
 import { isServiceTierSelection } from './pi/serviceTier.js';
 import {
+  compareSessionCatalogItems,
+  type NormalizedSessionListOptions,
+  type NormalizedSessionTaskFilters,
+  normalizeSessionListOptions,
+  normalizeSessionTaskFilters,
+  paginateSessionCatalog,
+  resolveSessionCursorBoundary,
+  sessionCatalogSortKey,
+  type SessionListOptions,
+  type SessionScanOptions,
+} from './sessionCatalog.js';
+import {
   renderSessionMarkdown,
   type SessionMarkdownExport,
   type SessionMarkdownExportOptions,
 } from './SessionMarkdownExporter.js';
-import { createStructuredOutputContract } from './StructuredOutputService.js';
-import {
-  compareSessionCatalogItems,
-  type NormalizedSessionListOptions,
-  normalizeSessionListOptions,
-  paginateSessionCatalog,
-  resolveSessionCursorBoundary,
-  type SessionListOptions,
-  sessionCatalogSortKey,
-} from './sessionCatalog.js';
 import {
   listSessionRewindCheckpoints as listProjectedRewindCheckpoints,
   materializeSessionEvents,
-  type SessionRewindCheckpoint as ProjectedRewindCheckpoint,
   planSessionRewind,
+  type SessionRewindCheckpoint as ProjectedRewindCheckpoint,
 } from './sessionRewind.js';
+import { createStructuredOutputContract } from './StructuredOutputService.js';
 import {
   renderUserShellCommandForDisplay,
   userShellCommandRecordFromMetadata,
@@ -114,6 +119,86 @@ const SESSION_TASK_STATUSES = new Set<SessionTaskStatus>([
   'interrupted',
 ]);
 const SESSION_TASK_ISOLATION = new Set<SessionTaskIsolation>(['local', 'worktree']);
+const SESSION_TASK_PRIORITIES = new Set<SessionTaskPriority>(['high', 'medium', 'low']);
+const SESSION_TASK_KINDS = new Set<SessionTaskKind>([
+  'feature',
+  'bug',
+  'maintenance',
+  'research',
+]);
+
+function appendTaskProjectionFilters(
+  filters: NormalizedSessionTaskFilters,
+  columnPrefix: '' | 's.',
+  conditions: string[],
+  parameters: unknown[]
+): void {
+  if (filters.taskStatuses) {
+    const statuses = filters.taskStatuses.includes('interrupted')
+      ? [...new Set([...filters.taskStatuses, 'running' as const])]
+      : filters.taskStatuses;
+    conditions.push(
+      `${columnPrefix}task_status IN (${statuses.map(() => '?').join(', ')})`
+    );
+    parameters.push(...statuses);
+  }
+  if (filters.taskPriorities) {
+    conditions.push(
+      `${columnPrefix}task_priority IN (${filters.taskPriorities
+        .map(() => '?')
+        .join(', ')})`
+    );
+    parameters.push(...filters.taskPriorities);
+  }
+  if (filters.taskDueAfter) {
+    conditions.push(`${columnPrefix}task_due_at >= ?`);
+    parameters.push(filters.taskDueAfter);
+  }
+  if (filters.taskDueBefore) {
+    conditions.push(`${columnPrefix}task_due_at <= ?`);
+    parameters.push(filters.taskDueBefore);
+  }
+}
+
+function matchesTaskFilters(
+  session: StoredSessionMetadata,
+  filters: NormalizedSessionTaskFilters
+): boolean {
+  if (!matchesTaskStatusFilter(session, filters)) return false;
+  if (
+    filters.taskPriorities &&
+    (session.taskPriority === undefined ||
+      !filters.taskPriorities.includes(session.taskPriority))
+  ) {
+    return false;
+  }
+  if (
+    filters.taskDueAfter &&
+    (session.taskDueAt === undefined ||
+      session.taskDueAt < filters.taskDueAfter)
+  ) {
+    return false;
+  }
+  if (
+    filters.taskDueBefore &&
+    (session.taskDueAt === undefined ||
+      session.taskDueAt > filters.taskDueBefore)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function matchesTaskStatusFilter(
+  session: StoredSessionMetadata,
+  filters: NormalizedSessionTaskFilters
+): boolean {
+  return (
+    filters.taskStatuses === undefined ||
+    filters.taskStatuses.includes(session.taskStatus)
+  );
+}
+
 const SESSION_PERMISSION_MODES = new Set<SessionPermissionMode>([
   'default',
   'autoEdit',
@@ -241,6 +326,13 @@ function parseTaskDispatch(value: unknown): SessionTaskDispatch | undefined {
       (typeof dispatch.title !== 'string' ||
         !dispatch.title.trim() ||
         dispatch.title.length > 200)) ||
+    (dispatch.taskPriority !== undefined &&
+      !SESSION_TASK_PRIORITIES.has(dispatch.taskPriority as SessionTaskPriority)) ||
+    (dispatch.taskKind !== undefined &&
+      !SESSION_TASK_KINDS.has(dispatch.taskKind as SessionTaskKind)) ||
+    (dispatch.taskDueAt !== undefined &&
+      (typeof dispatch.taskDueAt !== 'string' ||
+        !Number.isFinite(Date.parse(dispatch.taskDueAt)))) ||
     (dispatch.modelId !== undefined &&
       (typeof dispatch.modelId !== 'string' ||
         !dispatch.modelId.trim() ||
@@ -304,6 +396,15 @@ function parseTaskDispatch(value: unknown): SessionTaskDispatch | undefined {
     version: 1,
     prompt: dispatch.prompt as string,
     ...(typeof dispatch.title === 'string' ? { title: dispatch.title } : {}),
+    ...(SESSION_TASK_PRIORITIES.has(dispatch.taskPriority as SessionTaskPriority)
+      ? { taskPriority: dispatch.taskPriority as SessionTaskPriority }
+      : {}),
+    ...(SESSION_TASK_KINDS.has(dispatch.taskKind as SessionTaskKind)
+      ? { taskKind: dispatch.taskKind as SessionTaskKind }
+      : {}),
+    ...(typeof dispatch.taskDueAt === 'string'
+      ? { taskDueAt: new Date(dispatch.taskDueAt).toISOString() }
+      : {}),
     sourceProjectPath: path.resolve(dispatch.sourceProjectPath as string),
     isolation: dispatch.isolation as SessionTaskIsolation,
     permissionMode: dispatch.permissionMode as SessionTaskDispatch['permissionMode'],
@@ -409,6 +510,9 @@ export interface SessionMetadata {
   taskStartedAt?: string;
   taskCompletedAt?: string;
   taskPromptSummary?: string;
+  taskPriority?: SessionTaskPriority;
+  taskKind?: SessionTaskKind;
+  taskDueAt?: string;
   taskModelId?: string;
   taskRetryAvailable?: boolean;
   taskRetriedFrom?: SessionTaskRetryRef;
@@ -446,6 +550,9 @@ export interface SessionMetadataUpdate {
   taskCompletedAt?: string | null;
   taskOwnerPid?: number | null;
   taskPromptSummary?: string | null;
+  taskPriority?: SessionTaskPriority | null;
+  taskKind?: SessionTaskKind | null;
+  taskDueAt?: string | null;
   taskDispatch?: SessionTaskDispatch | null;
   taskModelId?: string | null;
   taskRetriedFrom?: SessionTaskRetryRef | null;
@@ -804,14 +911,16 @@ export class SessionService {
    * 扫描 ~/.blade/projects/ 目录下的所有 JSONL 文件
    */
   static async listSessions(
-    options: Omit<SessionListOptions, 'cursor' | 'limit'> = {}
+    options: SessionScanOptions = {}
   ): Promise<SessionMetadata[]> {
     const normalized = normalizeSessionListOptions(options);
+    const taskFilters = normalizeSessionTaskFilters(options);
     const stored = await this.scanStoredSessions(
       normalized.cwd ?? undefined,
       normalized.includeSubagents,
       0,
-      normalized.archived
+      normalized.archived,
+      taskFilters
     );
     const seenSessions = new Set<string>();
     return stored.sort(compareSessionCatalogItems).flatMap((session) => {
@@ -1264,6 +1373,9 @@ export class SessionService {
       taskCompletedAt: _sourceTaskCompletedAt,
       taskOwnerPid: _sourceTaskOwnerPid,
       taskPromptSummary: _sourceTaskPromptSummary,
+      taskPriority: _sourceTaskPriority,
+      taskKind: _sourceTaskKind,
+      taskDueAt: _sourceTaskDueAt,
       taskDispatch: _sourceTaskDispatch,
       taskModelId: _sourceTaskModelId,
       taskRetriedFrom: _sourceTaskRetriedFrom,
@@ -1331,6 +1443,9 @@ export class SessionService {
             taskCompletedAt: _taskCompletedAt,
             taskOwnerPid: _taskOwnerPid,
             taskPromptSummary: _taskPromptSummary,
+            taskPriority: _taskPriority,
+            taskKind: _taskKind,
+            taskDueAt: _taskDueAt,
             taskDispatch: _taskDispatch,
             taskModelId: _taskModelId,
             taskRetriedFrom: _taskRetriedFrom,
@@ -1521,6 +1636,27 @@ export class SessionService {
       throw new Error('Session task prompt summary must contain 1-1000 characters');
     }
     if (
+      update.taskPriority !== undefined &&
+      update.taskPriority !== null &&
+      !SESSION_TASK_PRIORITIES.has(update.taskPriority)
+    ) {
+      throw new Error('Invalid session task priority');
+    }
+    if (
+      update.taskKind !== undefined &&
+      update.taskKind !== null &&
+      !SESSION_TASK_KINDS.has(update.taskKind)
+    ) {
+      throw new Error('Invalid session task kind');
+    }
+    if (
+      update.taskDueAt !== undefined &&
+      update.taskDueAt !== null &&
+      !Number.isFinite(Date.parse(update.taskDueAt))
+    ) {
+      throw new Error('Invalid session task due date');
+    }
+    if (
       update.taskFailure !== undefined &&
       update.taskFailure !== null &&
       !isSessionTaskFailure(update.taskFailure)
@@ -1688,6 +1824,9 @@ export class SessionService {
       | 'title'
       | 'taskStatus'
       | 'taskPromptSummary'
+      | 'taskPriority'
+      | 'taskKind'
+      | 'taskDueAt'
       | 'taskDispatch'
       | 'taskModelId'
       | 'taskRetriedFrom'
@@ -1729,6 +1868,13 @@ export class SessionService {
         taskStatus: initial.taskStatus ?? 'queued',
         ...(initial.taskPromptSummary !== undefined
           ? { taskPromptSummary: initial.taskPromptSummary }
+          : {}),
+        ...(initial.taskPriority !== undefined
+          ? { taskPriority: initial.taskPriority }
+          : {}),
+        ...(initial.taskKind !== undefined ? { taskKind: initial.taskKind } : {}),
+        ...(typeof initial.taskDueAt === 'string'
+          ? { taskDueAt: new Date(initial.taskDueAt).toISOString() }
           : {}),
         ...(initial.taskDispatch !== undefined
           ? { taskDispatch: initial.taskDispatch }
@@ -2134,6 +2280,18 @@ export class SessionService {
               : {}),
             ...(update.taskPromptSummary !== undefined
               ? { taskPromptSummary: update.taskPromptSummary }
+              : {}),
+            ...(update.taskPriority !== undefined
+              ? { taskPriority: update.taskPriority }
+              : {}),
+            ...(update.taskKind !== undefined ? { taskKind: update.taskKind } : {}),
+            ...(update.taskDueAt !== undefined
+              ? {
+                  taskDueAt:
+                    update.taskDueAt === null
+                      ? null
+                      : new Date(update.taskDueAt).toISOString(),
+                }
               : {}),
             ...(update.taskDispatch !== undefined
               ? { taskDispatch: update.taskDispatch }
@@ -2626,22 +2784,28 @@ export class SessionService {
     scopedProjectPath: string | undefined,
     includeSubagents: boolean,
     projectionSyncMaxAgeMs = 0,
-    archived: boolean | null = false
+    archived: boolean | null = false,
+    taskFilters: NormalizedSessionTaskFilters = {}
   ): Promise<StoredSessionMetadata[] | null> {
     try {
       const db = await getProjectionDb();
       if (!db) return null;
       await syncAll(db, this.projectionDeriver(), projectionSyncMaxAgeMs);
 
-      const rows = scopedProjectPath
-        ? db
-            .prepare(
-              'SELECT metadata_json, is_subagent FROM sessions WHERE project_path=?'
-            )
-            .all<{ metadata_json: string; is_subagent: number }>(scopedProjectPath)
-        : db
-            .prepare('SELECT metadata_json, is_subagent FROM sessions')
-            .all<{ metadata_json: string; is_subagent: number }>();
+      const conditions: string[] = [];
+      const parameters: unknown[] = [];
+      if (scopedProjectPath !== undefined) {
+        conditions.push('project_path=?');
+        parameters.push(scopedProjectPath);
+      }
+      appendTaskProjectionFilters(taskFilters, '', conditions, parameters);
+      const whereClause =
+        conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+      const rows = db
+        .prepare(
+          `SELECT metadata_json, is_subagent FROM sessions${whereClause}`
+        )
+        .all<{ metadata_json: string; is_subagent: number }>(...parameters);
 
       const sessions: StoredSessionMetadata[] = [];
       for (const row of rows) {
@@ -2659,9 +2823,12 @@ export class SessionService {
           // 损坏行跳过；下次 syncAll 会重建。
         }
       }
+      const reconciled = await Promise.all(
+        sessions.map((session) => this.reconcileInterruptedTask(session))
+      );
       return filterArchiveState(
-        await Promise.all(
-          sessions.map((session) => this.reconcileInterruptedTask(session))
+        reconciled.filter((session) =>
+          matchesTaskStatusFilter(session, taskFilters)
         ),
         archived
       );
@@ -2674,7 +2841,8 @@ export class SessionService {
     cwd?: string,
     includeSubagents = false,
     projectionSyncMaxAgeMs = 0,
-    archived: boolean | null = false
+    archived: boolean | null = false,
+    taskFilters: NormalizedSessionTaskFilters = {}
   ): Promise<StoredSessionMetadata[]> {
     const scopedProjectPath = cwd ? path.resolve(cwd) : undefined;
 
@@ -2685,7 +2853,8 @@ export class SessionService {
       scopedProjectPath,
       includeSubagents,
       projectionSyncMaxAgeMs,
-      archived
+      archived,
+      taskFilters
     );
     if (projected) return projected;
 
@@ -2729,6 +2898,7 @@ export class SessionService {
             continue;
           }
           if (!includeSubagents && metadata.relationType === 'subagent') continue;
+          if (!matchesTaskFilters(metadata, taskFilters)) continue;
           sessions.push(metadata);
         } catch (error) {
           const code = (error as NodeJS.ErrnoException).code;
@@ -2968,6 +3138,19 @@ export class SessionService {
         : undefined;
     const taskDiffStat = parseTaskDiffStat(durable.taskDiffStat);
     const taskDispatch = parseTaskDispatch(durable.taskDispatch);
+    const taskPriority = SESSION_TASK_PRIORITIES.has(
+      durable.taskPriority as SessionTaskPriority
+    )
+      ? (durable.taskPriority as SessionTaskPriority)
+      : taskDispatch?.taskPriority;
+    const taskKind = SESSION_TASK_KINDS.has(durable.taskKind as SessionTaskKind)
+      ? (durable.taskKind as SessionTaskKind)
+      : taskDispatch?.taskKind;
+    const taskDueAt =
+      typeof durable.taskDueAt === 'string' &&
+      Number.isFinite(Date.parse(durable.taskDueAt))
+        ? new Date(durable.taskDueAt).toISOString()
+        : taskDispatch?.taskDueAt;
     const taskModelId =
       typeof durable.taskModelId === 'string' && durable.taskModelId.trim()
         ? durable.taskModelId
@@ -3095,6 +3278,9 @@ export class SessionService {
         : typeof durable.taskPromptSummary === 'string'
           ? durable.taskPromptSummary
           : undefined,
+      taskPriority,
+      taskKind,
+      taskDueAt,
       taskModelId,
       taskRetryAvailable: taskDispatch !== undefined,
       taskRetriedFrom,

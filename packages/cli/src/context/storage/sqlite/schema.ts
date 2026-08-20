@@ -8,7 +8,7 @@
  */
 
 /** schema 版本；不兼容变更时递增，落后版本直接 drop 重建（缓存可弃）。 */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 5;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS projection_state (
@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   agent_type         TEXT,
   model              TEXT,
   task_status        TEXT,
+  task_priority      TEXT,
+  task_kind          TEXT,
+  task_due_at        TEXT,
   archived_at        TEXT,
   last_message_time  TEXT,
   project_sort_key   TEXT NOT NULL,
@@ -52,6 +55,24 @@ CREATE INDEX IF NOT EXISTS idx_sessions_archived ON sessions(
   project_path,
   parent_id
 );
+-- 任务看板过滤/排序：按项目锁定后再按状态、优先级、截止时间收敛。
+CREATE INDEX IF NOT EXISTS idx_sessions_task_board ON sessions(
+  project_path,
+  task_status,
+  task_priority,
+  task_due_at
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_task_status ON sessions(
+  task_status,
+  project_path
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_task_priority ON sessions(
+  task_priority,
+  task_due_at
+) WHERE task_priority IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sessions_task_due_at ON sessions(
+  task_due_at
+) WHERE task_due_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS parts (
   project_path TEXT NOT NULL,

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 export type SidebarView = 'project' | 'status';
+export type MainView = 'workspace' | 'board';
 export type PreviewTab = 'diff' | 'files' | 'logs';
 export type SettingsSection =
   | 'general'
@@ -38,6 +39,10 @@ const readPreviewWidth = (): number => {
 };
 
 interface AppState {
+  mainView: MainView;
+  setMainView: (view: MainView) => void;
+  boardProjectPath: string | null;
+  setBoardProjectPath: (projectPath: string | null) => void;
   isSidebarOpen: boolean;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
@@ -66,6 +71,14 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set) => ({
+  mainView: 'workspace',
+  setMainView: (view) =>
+    set((state) => ({
+      mainView: view,
+      isFilePreviewOpen: view === 'board' ? false : state.isFilePreviewOpen,
+    })),
+  boardProjectPath: null,
+  setBoardProjectPath: (boardProjectPath) => set({ boardProjectPath }),
   isSidebarOpen: true,
   toggleSidebar: () => set((state) => ({ isSidebarOpen: !state.isSidebarOpen })),
   setSidebarOpen: (open) => set({ isSidebarOpen: open }),
