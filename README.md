@@ -34,7 +34,6 @@
 - 🤖 **多模型统一运行时** — 基于 [pi-ai](https://github.com/nicepkg/pi-ai) 统一 38+ Provider（OpenAI/Anthropic/DeepSeek/Google/Bedrock…），模型元数据动态获取
 - 🧠 **自动记忆** — 跨会话持久化项目知识，自动学习构建命令、代码模式、调试洞察
 - 🌐 **三种运行模式** — CLI 终端 / Web UI / Headless JSONL，场景灵活切换
-- 📊 **多项目任务看板** — 绑定项目、自动派发、阻塞处理、验收归档
 - 🛠️ **20+ 内置工具** — 文件编辑、代码搜索、Shell 执行、Git 操作、Web 抓取等
 - 📋 **结构化工作流** — Task 委托、Goal 模式、Spec/Plan、Subagent 编排
 - 🔗 **开放扩展** — MCP 协议、插件系统、Skills、Hooks

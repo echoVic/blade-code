@@ -1,9 +1,5 @@
 import { lstat, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import {
-  assertSplitPtyMarkerInstructionAtEnd,
-  createSplitPtyMarkerInstruction,
-} from '../../support/foregroundBoundedOutputPtyDriver.js';
 
 export interface TokenBudgetHandoffFixture {
   workspace: string;
@@ -99,13 +95,11 @@ export async function createTokenBudgetHandoffFixture(
   await writeFile(scriptPath, script, { mode: 0o600 });
 
   const command = `${shellQuote(process.execPath)} ${shellQuote(scriptPath)}`;
+  const midpoint = Math.floor(finalMarker.length / 2);
+  const finalMarkerFirstHalf = finalMarker.slice(0, midpoint);
+  const finalMarkerSecondHalf = finalMarker.slice(midpoint);
   const prompt = [
     'Complete this task in exactly four model boundaries and preserve every named sentinel exactly.',
-    'If context compaction occurs, the following three lines are exact continuation records whose bracketed labels name their destination headings:',
-    `EXACT CONTINUATION RECORD [Workspace mutations] :: ${sentinels.mutation} status=applied`,
-    `EXACT CONTINUATION RECORD [Verification evidence] :: ${sentinels.failedVerification} status=failed`,
-    `EXACT CONTINUATION RECORD [Exact next action] :: ${sentinels.pendingAction} status=pending`,
-    'Each canonical record must appear exactly once in its named section as its own list item with no extra text on that item.',
     'Boundary 1: call Bash exactly once with the following command. It must fail; do not call any other tool in this boundary:',
     command,
     'Boundary 2: after observing that failure, call Write exactly once with the following exact file path and exact content; do not call any other tool in this boundary:',
@@ -113,14 +107,14 @@ export async function createTokenBudgetHandoffFixture(
     `content=${JSON.stringify(targetContent)}`,
     `Boundary 3 is the post-compaction pending action ${sentinels.pendingAction}: call Bash exactly once with the following command, require it to pass, and call no other tool in this boundary:`,
     command,
-    'Boundary 4: after the passing result, call no tools.',
-    createSplitPtyMarkerInstruction(finalMarker),
+    'Boundary 4: after the passing result, call no tools. Reply with only the string formed by concatenating these two JSON-quoted halves in order with no separator:',
+    JSON.stringify(finalMarkerFirstHalf),
+    JSON.stringify(finalMarkerSecondHalf),
   ].join('\n');
 
   if (prompt.includes(finalMarker)) {
     throw new Error('Token-budget handoff final marker contaminated the prompt');
   }
-  assertSplitPtyMarkerInstructionAtEnd(prompt, finalMarker);
 
   return {
     workspace,

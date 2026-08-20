@@ -254,7 +254,7 @@ export class AnthropicWorkspaceSandboxBackend implements WorkspaceSandboxBackend
               denyRead: deniedReadPaths,
               allowRead:
                 workspaceReadOnly && runtimeExecutable
-                  ? [input.workspaceRoot, runtimeExecutable, tempRoot]
+                  ? [input.workspaceRoot, runtimeExecutable]
                   : [],
               allowWrite: workspaceReadOnly
                 ? [tempRoot]

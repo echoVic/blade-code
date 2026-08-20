@@ -40,7 +40,6 @@ describe('MCP call lifecycle over real stdio transport', () => {
         env: {
           MCP_LIFECYCLE_PID_FILE: pidFile,
           MCP_LIFECYCLE_CANCEL_FILE: cancelFile,
-          MCP_LIFECYCLE_PROGRESS_DELAY_MS: '0',
         },
         ...timeouts,
       },

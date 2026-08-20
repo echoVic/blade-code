@@ -5,8 +5,8 @@
  * 严格只读 — 不能修改代码，只能运行构建、测试、lint 和对抗性检查。
  */
 
-import type { JsonObject } from '../../store/types.js';
 import type { SubagentConfig } from './types.js';
+import type { JsonObject } from '../../store/types.js';
 
 export const INDEPENDENT_VERIFICATION_OUTPUT_SCHEMA: JsonObject = {
   type: 'object',
@@ -97,20 +97,11 @@ Run all applicable checks. Capture full output.
 | **Type checking** | \`bun run type-check\` or \`npx tsc --noEmit\` | HIGH |
 | **Tests** | \`bun run test:all\` or \`npm test\` | HIGH |
 | **Linting** | \`bun run lint\` or \`npx biome check\` | HIGH |
-| **Build** | Read-only equivalent such as \`npx tsc --noEmit\` | MEDIUM |
+| **Build** | \`bun run build\` | MEDIUM |
 
 - If a command fails, record the exact error output.
 - If a command succeeds, record confirmation.
 - Set reasonable timeouts (use Bash timeout parameter).
-- The audit workspace is intentionally read-only. Do not install dependencies or run
-  build commands that emit artifacts into the workspace. Inspect the configured build
-  script and use a no-write equivalent when available. If no safe equivalent exists,
-  report the build as not rerun; do not treat the sandbox write denial itself as a
-  product failure.
-- Output may be bounded with a single numeric \`head\` or \`tail\` pipeline. Do not use
-  \`tee\`, redirects, or chained output filters.
-- The Bash tool preserves the verification command's exit status when applying that
-  output bound. Do not append a shell status probe or any additional command.
 
 ### Phase 3: Code Review of Changed Files
 

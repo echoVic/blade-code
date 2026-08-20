@@ -1,37 +1,5 @@
 # Changelog
 
-## [Unreleased]
-
-### Added
-- Web now provides a multi-project task board with waiting, active, blocked, and
-  review stages driven by durable task state and the global SSE feed
-- Board tasks support local-workspace dispatch, project filtering, search,
-  priority, task type, due dates, cancellation, retry, change inspection, and
-  acceptance through archive
-- Automatic task claiming can be paused without interrupting active work and
-  resumed in FIFO order
-- Task status, priority, kind, and due dates are projected into dedicated
-  SQLite columns; task scans push status, priority, and due-time filters into
-  indexed SQL while preserving equivalent JSONL fallback behavior
-
-## [0.10.65] - 2026-08-20
-
-### Fixed
-- Read-only verification agents now accept test, lint, type-check, and build
-  commands whose output is bounded by a single numeric `head` or `tail`
-  pipeline; Blade removes that projection before execution so the original
-  command exit status remains authoritative
-- Verification sandboxes can read and write their dedicated temporary cache while
-  the source workspace remains read-only, and verifier guidance now substitutes
-  no-write checks for build scripts that emit workspace artifacts
-- Verification command admission continues to reject file-reading pipeline
-  arguments, output-writing `tee` pipelines, redirects, and chained commands
-
-### Tests
-- Added verification command and permission-boundary regressions for safe
-  output truncation, true exit-code preservation, unsafe pipeline variants,
-  and native read-only sandbox temporary storage
-
 ## [0.10.64] - 2026-08-19
 
 ### Fixed

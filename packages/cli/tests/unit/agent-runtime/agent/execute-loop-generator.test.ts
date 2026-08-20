@@ -95,30 +95,20 @@ vi.mock('../../../../src/logging/Logger.js', () => ({
 
 vi.mock('../../../../src/agent/loop/StreamingToolExecutor.js', () => ({
   StreamingToolExecutor: class MockStreamingToolExecutor {
-    setAdmissionPolicy(): void {
-      // No admission behavior is needed for this loop-level mock.
-    }
-    setAdmissionRollback(): void {
-      // No rollback behavior is needed for this loop-level mock.
-    }
-    setExecutionPolicy(): void {
-      // No execution behavior is needed for this loop-level mock.
-    }
+    setAdmissionPolicy(): void {}
+    setAdmissionRollback(): void {}
+    setExecutionPolicy(): void {}
     addTool(): 'queued' {
       return 'queued';
     }
-    discard(): void {
-      // The mock never retains queued tools.
-    }
+    discard(): void {}
     hasTools(): boolean {
       return false;
     }
     getQueuedToolCalls(): readonly [] {
       return [];
     }
-    async *getRemainingResults(): AsyncGenerator<never> {
-      yield* [];
-    }
+    async *getRemainingResults(): AsyncGenerator<never> {}
   },
 }));
 
@@ -148,7 +138,6 @@ import {
   deriveTokenBudgetSnapshot,
   isTokenBudgetHandoffMessage,
   projectTokenBudgetHandoffEvent,
-  TOKEN_BUDGET_HANDOFF_MESSAGE_ID_PREFIX,
 } from '../../../../src/context/TokenBudgetHandoff.js';
 import { Type } from '../../../../src/schema/index.js';
 import type {
@@ -509,12 +498,7 @@ function recordedHandoff(promptTokens: number) {
   };
 }
 
-const MOCK_HANDOFF_MESSAGE_ID = `${TOKEN_BUDGET_HANDOFF_MESSAGE_ID_PREFIX}mock-nanoid`;
-
-function recordedHandoffResult(
-  promptTokens: number,
-  messageId = MOCK_HANDOFF_MESSAGE_ID
-) {
+function recordedHandoffResult(promptTokens: number, messageId = 'mock-nanoid') {
   return {
     outcome: 'created' as const,
     event: {
@@ -1076,8 +1060,7 @@ describe('executeLoopGenerator', () => {
       vi.mocked(deps.chatService.chat).mockImplementation(async (messages) => {
         if (
           messages.some(
-            (message) =>
-              message.id === MOCK_HANDOFF_MESSAGE_ID && message.role === 'user'
+            (message) => message.id === 'mock-nanoid' && message.role === 'user'
           )
         ) {
           order.push('request');
@@ -1103,7 +1086,7 @@ describe('executeLoopGenerator', () => {
       expect(secondRequest).toBeDefined();
       expect(
         secondRequest?.[0].filter(
-          (message) => message.id === MOCK_HANDOFF_MESSAGE_ID && message.role === 'user'
+          (message) => message.id === 'mock-nanoid' && message.role === 'user'
         )
       ).toHaveLength(1);
       expect(order).toEqual(['commit', 'request']);
@@ -1308,11 +1291,9 @@ describe('executeLoopGenerator', () => {
       const handoffMessageId = handoffRecord.event.data.messageId;
       recordSpy.mockResolvedValueOnce(handoffRecord);
       vi.mocked(deps.chatService.streamChat)
+        .mockImplementationOnce(async function* () {})
         .mockImplementationOnce(async function* () {
-          yield* [];
-        })
-        .mockImplementationOnce(async function* () {
-          yield* [];
+          return;
         });
       vi.mocked(deps.chatService.chat)
         .mockResolvedValueOnce(toolResponse(70_000))

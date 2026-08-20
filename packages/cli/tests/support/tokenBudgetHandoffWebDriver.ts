@@ -14,7 +14,6 @@ import {
   stopForegroundGuiLauncher,
   waitForForegroundGuiLauncherReady,
 } from './foregroundBoundedOutputWebDriver.js';
-import type { TokenBudgetProxyEvidence } from './tokenBudgetHandoffProxy.js';
 
 declare global {
   interface Window {
@@ -29,129 +28,6 @@ declare global {
 
 const MAX_EVIDENCE_CHARS = 64_000;
 const FINAL_MARKER_PATTERN = /^FINAL_OK_[A-Za-z0-9_]{16,64}$/;
-const WEB_FAILURE_STAGES = [
-  'launcher_identity',
-  'launcher_ready',
-  'server_ready',
-  'session_create',
-  'browser_launch',
-  'page_ready',
-  'task_start',
-  'first_reload',
-  'completion',
-  'privacy',
-  'recovery_reload',
-  'browser_cleanup',
-  'launcher_cleanup',
-  'privacy_cleanup',
-  'port_cleanup',
-] as const;
-
-type WebFailureStage = (typeof WEB_FAILURE_STAGES)[number];
-
-type WebRunStatus =
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'cancelled'
-  | 'interrupted'
-  | 'idle'
-  | 'queued'
-  | 'waiting_permission'
-  | 'error'
-  | 'unknown';
-
-class TokenBudgetWebFinalTimeoutError extends Error {
-  constructor(readonly diagnostic: string) {
-    super('Token-budget Web final marker timed out');
-  }
-}
-
-export function formatTokenBudgetWebFinalDiagnostic(input: {
-  status: unknown;
-  providerRequests: number;
-  publicFinalSeen: boolean;
-  domFinalSeen: boolean;
-}): string {
-  const statuses = new Set<WebRunStatus>([
-    'running',
-    'completed',
-    'failed',
-    'cancelled',
-    'interrupted',
-    'idle',
-    'queued',
-    'waiting_permission',
-    'error',
-  ]);
-  const status: WebRunStatus =
-    typeof input.status === 'string' && statuses.has(input.status as WebRunStatus)
-      ? (input.status as WebRunStatus)
-      : 'unknown';
-  const requests = !Number.isSafeInteger(input.providerRequests)
-    ? 'invalid'
-    : input.providerRequests < 0
-      ? 'invalid'
-      : input.providerRequests <= 5
-        ? String(input.providerRequests)
-        : 'overflow';
-  return (
-    `status_${status}:requests_${requests}:` +
-    `history_${input.publicFinalSeen ? 1 : 0}:dom_${input.domFinalSeen ? 1 : 0}`
-  );
-}
-
-export function formatTokenBudgetWebProxyDiagnostic(
-  evidence: TokenBudgetProxyEvidence
-): string {
-  const first = evidence.requests[0];
-  const kind = first?.kind ?? 'none';
-  const status =
-    first?.upstreamStatus !== undefined &&
-    Number.isSafeInteger(first.upstreamStatus) &&
-    first.upstreamStatus >= 100 &&
-    first.upstreamStatus <= 599
-      ? String(first.upstreamStatus)
-      : first?.upstreamStatus === undefined
-        ? '0'
-        : 'invalid';
-  const responseKind = first?.responseKind ?? 'unknown';
-  const usageShape = first?.usageShape ?? 'unknown';
-  const inFlight =
-    !Number.isSafeInteger(evidence.maxInFlight) || evidence.maxInFlight < 0
-      ? 'invalid'
-      : evidence.maxInFlight <= 8
-        ? String(evidence.maxInFlight)
-        : 'overflow';
-  return (
-    `first_${kind}:s${status}:${responseKind}:${usageShape}:` +
-    `rewritten_${first?.usageRewritten === true ? 1 : 0}:inflight_${inFlight}`
-  );
-}
-
-function launcherReadyFailureCode(error: unknown, child: ChildProcess): string {
-  if (child.signalCode !== null) return 'child_signal';
-  if (child.exitCode !== null) {
-    const message = error instanceof Error ? error.message : '';
-    if (message.includes('Cannot find module')) return 'module_missing';
-    if (message.includes('DeepSeek') || message.includes('model')) {
-      return 'model_config';
-    }
-    if (message.includes('EADDRINUSE')) return 'port_in_use';
-    if (message.includes('readiness timed out')) return 'server_ready_timeout';
-    if (message.includes('exited before readiness')) return 'server_exit';
-    return 'child_exit_nonzero';
-  }
-  return 'ready_timeout';
-}
-
-function remainingStageBudget(deadline: number, maximumMs: number): number {
-  const remaining = deadline - Date.now();
-  if (remaining <= 0) {
-    throw new Error('Token-budget Web surface deadline exhausted');
-  }
-  return Math.max(1, Math.min(remaining, maximumMs));
-}
 const FORBIDDEN = [
   '<token-budget-handoff version="1">',
   'token_budget_handoff_recorded',
@@ -417,16 +293,11 @@ async function waitForFinal(input: {
   workspace: string;
   marker: string;
   timeoutMs: number;
-  providerRequestCount: () => number;
-  providerEvidence: () => TokenBudgetProxyEvidence;
 }): Promise<void> {
   const deadline = Date.now() + input.timeoutMs;
-  let status: unknown = 'unknown';
-  let publicFinalSeen = false;
-  let domFinalSeen = false;
   while (Date.now() < deadline) {
     const messages = await history(input);
-    publicFinalSeen =
+    const exactPublicFinal =
       Array.isArray(messages) &&
       messages.some(
         (message) =>
@@ -434,59 +305,15 @@ async function waitForFinal(input: {
           message.role === 'assistant' &&
           message.content === input.marker
       );
-    if (publicFinalSeen) {
+    if (exactPublicFinal) {
       const assistant = input.page
         .locator('[data-chat-role="assistant"]')
         .filter({ hasText: input.marker });
-      domFinalSeen = (await assistant.count()) > 0;
-      if (domFinalSeen) return;
-    }
-    const statusResponse = await fetch(
-      `${input.origin}/sessions/${encodeURIComponent(
-        input.sessionId
-      )}/status?projectPath=${encodeURIComponent(input.workspace)}`
-    );
-    if (statusResponse.ok) {
-      const value: unknown = await statusResponse.json();
-      status = isRecord(value) ? value.status : 'unknown';
-      if (
-        typeof status === 'string' &&
-        [
-          'completed',
-          'failed',
-          'cancelled',
-          'interrupted',
-          'idle',
-          'waiting_permission',
-          'error',
-        ].includes(status)
-      ) {
-        break;
-      }
+      if ((await assistant.count()) > 0) return;
     }
     await input.page.waitForTimeout(250);
   }
-  let providerRequests = Number.NaN;
-  try {
-    providerRequests = input.providerRequestCount();
-  } catch {
-    // The diagnostic formatter maps this to the fixed invalid bucket.
-  }
-  let proxyDiagnostic = 'first_none:s0:unknown:unknown:rewritten_0:inflight_invalid';
-  try {
-    proxyDiagnostic = formatTokenBudgetWebProxyDiagnostic(input.providerEvidence());
-  } catch {
-    // Keep the fixed invalid diagnostic if the evidence callback fails.
-  }
-  const finalDiagnostic = formatTokenBudgetWebFinalDiagnostic({
-    status,
-    providerRequests,
-    publicFinalSeen,
-    domFinalSeen,
-  });
-  throw new TokenBudgetWebFinalTimeoutError(
-    `${finalDiagnostic}:proxy_${proxyDiagnostic}`
-  );
+  throw new Error('Token-budget Web final marker timed out');
 }
 
 async function collectEvents(
@@ -542,7 +369,6 @@ export async function runTokenBudgetHandoffWebDriver(input: {
   proxyBaseURL: string;
   fixture: TokenBudgetHandoffFixture;
   providerRequestCount: () => number;
-  providerEvidence: () => TokenBudgetProxyEvidence;
   secrets?: readonly string[];
   timeoutMs?: number;
 }): Promise<TokenBudgetHandoffWebEvidence> {
@@ -558,7 +384,6 @@ export async function runTokenBudgetHandoffWebDriver(input: {
     throw new Error('Token-budget Web input contract is invalid');
   }
   const root = path.resolve(input.root);
-  const deadline = Date.now() + timeoutMs - 10_000;
   const workspace = path.resolve(input.fixture.workspace);
   const home = path.join(root, 'home');
   const storageRoot = path.join(root, 'storage');
@@ -601,24 +426,15 @@ export async function runTokenBudgetHandoffWebDriver(input: {
   let before = 0;
   let after = 0;
   let runError: unknown;
-  let failureStage: WebFailureStage = 'launcher_identity';
-  let failureCode = 'stage_failed';
   let launcherGone = false;
   let portReusable = false;
   try {
     if (!child.pid) throw new Error('Token-budget GUI launcher PID is missing');
     identity = await captureForegroundGuiLauncherIdentity(child.pid);
-    failureStage = 'launcher_ready';
-    const ready = await waitForForegroundGuiLauncherReady(
-      child,
-      remainingStageBudget(deadline, 20_000),
-      secrets
-    );
+    const ready = await waitForForegroundGuiLauncherReady(child, 20_000, secrets);
     stopStdoutDrain = ready.stopDrain;
     const origin = `http://127.0.0.1:${port}`;
-    failureStage = 'server_ready';
-    await waitForHttp(origin, remainingStageBudget(deadline, 20_000));
-    failureStage = 'session_create';
+    await waitForHttp(origin, 20_000);
     const create = await fetch(`${origin}/sessions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -634,7 +450,6 @@ export async function runTokenBudgetHandoffWebDriver(input: {
       throw new Error('Token-budget Web session identity is invalid');
     }
 
-    failureStage = 'browser_launch';
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext();
     let sseSecretSeen = false;
@@ -692,7 +507,6 @@ export async function runTokenBudgetHandoffWebDriver(input: {
       },
       { forbidden: [...FORBIDDEN] }
     );
-    failureStage = 'page_ready';
     const page = await context.newPage();
     page.on('pageerror', (error) => faults.push(`pageerror:${error.message}`));
     page.on('console', (message) => {
@@ -721,20 +535,6 @@ export async function runTokenBudgetHandoffWebDriver(input: {
     await page.goto(navigation.href, { waitUntil: 'domcontentloaded' });
     const composer = page.locator('textarea[data-blade-composer]');
     await composer.waitFor({ state: 'visible' });
-    const permissionMode = page.locator('[data-blade-permission-mode]');
-    await permissionMode.waitFor({ state: 'visible' });
-    if ((await permissionMode.getAttribute('data-blade-permission-mode')) !== 'yolo') {
-      await permissionMode.click();
-      await page.locator('[data-blade-permission-option="yolo"]').click();
-      await page.locator('[data-blade-yolo-confirm]').click();
-      await page.waitForFunction(
-        () =>
-          document
-            .querySelector('[data-blade-permission-mode]')
-            ?.getAttribute('data-blade-permission-mode') === 'yolo'
-      );
-    }
-    failureStage = 'task_start';
     await composer.fill(input.fixture.prompt);
     await composer.press('Enter');
     await waitForActiveRun({
@@ -742,13 +542,12 @@ export async function runTokenBudgetHandoffWebDriver(input: {
       origin,
       sessionId,
       workspace,
-      timeoutMs: remainingStageBudget(deadline, 30_000),
+      timeoutMs: Math.min(timeoutMs, 30_000),
     });
     const firstPage = await collectEvents(page, recordedSse);
     if (firstPage.hiddenSeen || firstPage.overflowed) {
       throw new Error('Token-budget Web first-page SSE evidence was unsafe');
     }
-    failureStage = 'first_reload';
     refreshing = true;
     await page.reload({ waitUntil: 'domcontentloaded' });
     refreshing = false;
@@ -759,17 +558,14 @@ export async function runTokenBudgetHandoffWebDriver(input: {
       sessionId,
       workspace,
       marker: input.fixture.finalMarker,
-      timeoutMs: remainingStageBudget(deadline, timeoutMs),
-      providerRequestCount: input.providerRequestCount,
-      providerEvidence: input.providerEvidence,
+      timeoutMs,
     });
-    failureStage = 'completion';
     await waitForCompletedRun({
       page,
       origin,
       sessionId,
       workspace,
-      timeoutMs: remainingStageBudget(deadline, 30_000),
+      timeoutMs: 30_000,
     });
 
     const count = (): number => {
@@ -786,7 +582,6 @@ export async function runTokenBudgetHandoffWebDriver(input: {
       throw new Error('Token-budget Web running-page SSE evidence was unsafe');
     }
     before = count();
-    failureStage = 'recovery_reload';
     refreshing = true;
     await page.reload({ waitUntil: 'domcontentloaded' });
     refreshing = false;
@@ -797,9 +592,7 @@ export async function runTokenBudgetHandoffWebDriver(input: {
       sessionId,
       workspace,
       marker: input.fixture.finalMarker,
-      timeoutMs: remainingStageBudget(deadline, 30_000),
-      providerRequestCount: input.providerRequestCount,
-      providerEvidence: input.providerEvidence,
+      timeoutMs: 30_000,
     });
     const finalPage = await collectEvents(page, recordedSse);
     if (finalPage.hiddenSeen || finalPage.overflowed) {
@@ -808,7 +601,6 @@ export async function runTokenBudgetHandoffWebDriver(input: {
     const publicHistory = await history({ origin, sessionId, workspace });
     const domText = await page.locator('body').innerText();
     const html = await page.content();
-    failureStage = 'privacy';
     assertSafe({ publicHistory, recordedSse, domText, html, faults }, secrets);
     if (faults.length !== 0 || chunkScan.hidden() || sseSecretSeen) {
       throw new Error('Token-budget Web surface recorded faults or hidden output');
@@ -819,24 +611,16 @@ export async function runTokenBudgetHandoffWebDriver(input: {
     }
     reloadCompleted = true;
   } catch (error) {
-    if (failureStage === 'launcher_ready') {
-      failureCode = launcherReadyFailureCode(error, child);
-    } else if (error instanceof TokenBudgetWebFinalTimeoutError) {
-      failureCode = error.diagnostic;
-    }
     runError = error;
   } finally {
     closing = true;
     await browser?.close().catch((error) => {
-      if (!runError) failureStage = 'browser_cleanup';
       runError ??= error;
     });
     await stopForegroundGuiLauncher(child, identity).catch((error) => {
-      if (!runError) failureStage = 'launcher_cleanup';
       runError ??= error;
     });
     if (chunkScan.hidden()) {
-      if (!runError) failureStage = 'privacy_cleanup';
       runError ??= new Error('Token-budget GUI teardown exposed hidden material');
     }
     stopStdoutDrain?.();
@@ -845,24 +629,16 @@ export async function runTokenBudgetHandoffWebDriver(input: {
       child.pid !== undefined &&
       identity !== undefined &&
       !processIdentityMatches(child.pid, identity);
-    if (!launcherGone && !runError) {
-      failureStage = 'launcher_cleanup';
-      failureCode = 'cleanup_incomplete';
-      runError = new Error('Token-budget GUI launcher remained alive');
-    }
     await assertPortReusable(port)
       .then(() => {
         portReusable = true;
       })
       .catch((error) => {
-        if (!runError) failureStage = 'port_cleanup';
         runError ??= error;
       });
   }
   if (runError || !launcherGone || !portReusable || !reloadCompleted) {
-    throw new Error(
-      `Token-budget Web production driver failed at ${failureStage}:${failureCode}`
-    );
+    throw new Error('Token-budget Web production driver failed');
   }
   return parseTokenBudgetHandoffWebEvidence(
     JSON.stringify({

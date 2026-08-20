@@ -19,18 +19,12 @@ import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js
 import type { SessionEvent } from '../../../src/context/types.js';
 import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustService.js';
 import {
-  assertSplitPtyMarkerInstructionAtEnd,
-  createSplitPtyMarkerInstruction,
-  isCompleteRawPtyMarkerEvidence,
-} from '../../support/foregroundBoundedOutputPtyDriver.js';
-import {
   driveToolAdmissionFixture,
   TOOL_ADMISSION_CALL_IDS,
   waitForToolAdmissionSessionCompletion,
 } from '../../support/toolAdmissionFixtureDriver.js';
 import { assertNoForegroundLeases } from './foregroundBoundedOutputHarness.js';
 import {
-  finalAssistantText,
   findSessionTranscript,
   readSessionEvents,
 } from './sessionForkTrajectoryHarness.js';
@@ -80,8 +74,6 @@ interface AdmissionFixture {
 interface SurfaceEvidence {
   sessionId: string;
   output: string;
-  finalMarkerSeen?: boolean;
-  secretSeen?: boolean;
 }
 
 interface SessionEventProbe {
@@ -147,7 +139,7 @@ function createAdmissionPrompt(
   if (!countName || callIds.length === 0) {
     throw new Error(`Unsupported admission fixture size: ${callIds.length}`);
   }
-  const prompt = [
+  return [
     callIds.length === 1
       ? 'Call Bash exactly once in ONE assistant response.'
       : `Call Bash exactly ${countName} times in ONE assistant response.`,
@@ -156,25 +148,17 @@ function createAdmissionPrompt(
       ? 'Use this exact call:'
       : `All ${countName} calls are independent and must be emitted together:`,
     ...calls.map((call, index) => `${index + 1}. ${call}`),
-    `After ${
-      callIds.length === 1 ? 'the call returns' : `all ${countName} calls return`
-    }, follow this final response instruction:`,
+    `After ${callIds.length === 1 ? 'the call returns' : `all ${countName} calls return`}, reply exactly ${marker}.`,
     `Do not call any other tool and do not answer before ${
       callIds.length === 1 ? 'the result arrives' : `all ${countName} results arrive`
     }.`,
-    createSplitPtyMarkerInstruction(marker),
   ].join('\n');
-  assertSplitPtyMarkerInstructionAtEnd(prompt, marker);
-  return prompt;
 }
 
 function createAdmissionFixture(workspace: string, nonce: string): AdmissionFixture {
   const stateDir = path.join(workspace, 'tool-admission-state');
   const marker = `TOOL_ADMISSION_OK_${nonce}`;
   const prompt = createAdmissionPrompt(stateDir, TOOL_ADMISSION_CALL_IDS, marker);
-  if (prompt.includes(marker)) {
-    throw new Error('Tool admission final marker contaminated the prompt');
-  }
   return { stateDir, marker, prompt };
 }
 
@@ -842,11 +826,7 @@ async function runHeadlessSurface(input: {
           .replaceAll(input.secret, '[redacted]')}`
       );
     }
-    await waitForToolAdmissionSessionCompletion(
-      input.storageRoot,
-      input.sessionId,
-      input.fixture.marker
-    );
+    await waitForToolAdmissionSessionCompletion(input.storageRoot, input.sessionId);
     if (!headlessContent(output).includes(input.fixture.marker)) {
       throw new Error('Headless did not return the final admission marker');
     }
@@ -912,8 +892,7 @@ async function runBunSurface(
   if (
     evidence.success !== true ||
     typeof evidence.sessionId !== 'string' ||
-    typeof evidence.output !== 'string' ||
-    (kind === 'pty' && !isCompleteRawPtyMarkerEvidence(evidence))
+    typeof evidence.output !== 'string'
   ) {
     throw new Error(
       `${kind.toUpperCase()} admission evidence is invalid: ${String(
@@ -969,11 +948,7 @@ async function runWebSurface(input: {
       stateDir: input.fixture.stateDir,
       waitForQueuedEvidence: () => waitForQueuedToolCards(page, eventProbe!, 2),
     });
-    await waitForToolAdmissionSessionCompletion(
-      input.storageRoot,
-      sessionId,
-      input.fixture.marker
-    );
+    await waitForToolAdmissionSessionCompletion(input.storageRoot, sessionId);
     await page.getByText(input.fixture.marker, { exact: true }).waitFor({
       state: 'visible',
       timeout: 90_000,
@@ -1108,7 +1083,6 @@ describe
           expect(
             events.filter((event) => event.type === 'turn_completed')
           ).toHaveLength(1);
-          expect(finalAssistantText(events)).toBe(fixture.marker);
           expect(await readdir(path.join(fixture.stateDir, 'active'))).toEqual([]);
           await assertNoForegroundLeases(workspace, evidence.sessionId);
           expect(

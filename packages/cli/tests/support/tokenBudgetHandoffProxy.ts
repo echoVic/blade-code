@@ -11,15 +11,6 @@ export interface TokenBudgetRequestEvidence {
   bodyBytes: number;
   bodySha256: string;
   targetPromptTokens?: number;
-  upstreamStatus?: number;
-  responseKind?: 'sse' | 'json' | 'other';
-  usageShape?:
-    | 'root-empty'
-    | 'root-terminal'
-    | 'root-nonempty'
-    | 'choice'
-    | 'missing'
-    | 'invalid';
   usageRewritten: boolean;
 }
 
@@ -49,7 +40,6 @@ interface FrameBoundary {
 interface RewrittenSseFrame {
   bytes: Buffer;
   rewritten: boolean;
-  usageShape: NonNullable<TokenBudgetRequestEvidence['usageShape']>;
 }
 
 interface SseDataSegment {
@@ -396,43 +386,6 @@ function cloneUsageWithTarget(
   };
 }
 
-function classifyUsageShape(
-  value: unknown
-): NonNullable<TokenBudgetRequestEvidence['usageShape']> {
-  if (!isRecord(value)) return 'missing';
-  const choices = Array.isArray(value.choices) ? value.choices : undefined;
-  if (isRecord(value.usage)) {
-    if (choices?.length === 0) return 'root-empty';
-    if (
-      choices &&
-      choices.length > 0 &&
-      choices.every(
-        (choice) =>
-          isRecord(choice) &&
-          typeof choice.finish_reason === 'string' &&
-          choice.finish_reason.length > 0
-      )
-    ) {
-      return 'root-terminal';
-    }
-    return 'root-nonempty';
-  }
-  if (choices?.some((choice) => isRecord(choice) && isRecord(choice.usage))) {
-    return 'choice';
-  }
-  return 'missing';
-}
-
-function classifyJsonUsageShape(
-  body: Uint8Array
-): NonNullable<TokenBudgetRequestEvidence['usageShape']> {
-  try {
-    return classifyUsageShape(JSON.parse(Buffer.from(body).toString('utf8')));
-  } catch {
-    return 'invalid';
-  }
-}
-
 function rewriteJsonBody(
   body: Uint8Array,
   targetPromptTokens: number
@@ -673,31 +626,28 @@ function rewriteSseFrame(frame: Buffer, targetPromptTokens: number): RewrittenSs
   const extracted = extractSseData(frame);
   if (!extracted) throw new TargetSseInvalidEncodingError();
   if (extracted.segments.length === 0 || extracted.data.trim() === '[DONE]') {
-    return { bytes: frame, rewritten: false, usageShape: 'missing' };
+    return { bytes: frame, rewritten: false };
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(extracted.data);
   } catch {
-    return { bytes: frame, rewritten: false, usageShape: 'invalid' };
+    return { bytes: frame, rewritten: false };
   }
-  const usageShape = classifyUsageShape(parsed);
   if (
     !isRecord(parsed) ||
     !Array.isArray(parsed.choices) ||
-    (usageShape !== 'root-empty' && usageShape !== 'root-terminal') ||
+    parsed.choices.length !== 0 ||
     !isRecord(parsed.usage) ||
     !isNonNegativeSafeInteger(parsed.usage.prompt_tokens) ||
     !isNonNegativeSafeInteger(parsed.usage.completion_tokens) ||
     !isNonNegativeSafeInteger(parsed.usage.total_tokens)
   ) {
-    return { bytes: frame, rewritten: false, usageShape };
+    return { bytes: frame, rewritten: false };
   }
   const totalTokens = targetPromptTokens + parsed.usage.completion_tokens;
-  if (!Number.isSafeInteger(totalTokens)) {
-    return { bytes: frame, rewritten: false, usageShape };
-  }
+  if (!Number.isSafeInteger(totalTokens)) return { bytes: frame, rewritten: false };
 
   const rootStart = skipJsonWhitespace(extracted.data, 0);
   const root = scanJsonObject(extracted.data, rootStart);
@@ -711,9 +661,7 @@ function rewriteSseFrame(frame: Buffer, targetPromptTokens: number): RewrittenSs
   const totalProperty = usage
     ? lastProperty(usage.properties, 'total_tokens')
     : undefined;
-  if (!promptProperty || !totalProperty) {
-    return { bytes: frame, rewritten: false, usageShape };
-  }
+  if (!promptProperty || !totalProperty) return { bytes: frame, rewritten: false };
   if (
     !/^(?:0|[1-9]\d*)$/.test(
       extracted.data.slice(promptProperty.valueStart, promptProperty.valueEnd)
@@ -722,7 +670,7 @@ function rewriteSseFrame(frame: Buffer, targetPromptTokens: number): RewrittenSs
       extracted.data.slice(totalProperty.valueStart, totalProperty.valueEnd)
     )
   ) {
-    return { bytes: frame, rewritten: false, usageShape };
+    return { bytes: frame, rewritten: false };
   }
 
   const promptReplacement = mapDataSpanToFrame(
@@ -736,38 +684,19 @@ function rewriteSseFrame(frame: Buffer, targetPromptTokens: number): RewrittenSs
     String(totalTokens)
   );
   if (!promptReplacement || !totalReplacement) {
-    return { bytes: frame, rewritten: false, usageShape };
+    return { bytes: frame, rewritten: false };
   }
   return {
     bytes: applyByteReplacements(frame, [promptReplacement, totalReplacement]),
     rewritten: true,
-    usageShape,
   };
-}
-
-function mergeUsageShape(
-  current: NonNullable<TokenBudgetRequestEvidence['usageShape']>,
-  next: NonNullable<TokenBudgetRequestEvidence['usageShape']>
-): NonNullable<TokenBudgetRequestEvidence['usageShape']> {
-  const rank = {
-    missing: 0,
-    invalid: 1,
-    choice: 2,
-    'root-nonempty': 3,
-    'root-terminal': 4,
-    'root-empty': 5,
-  } as const;
-  return rank[next] > rank[current] ? next : current;
 }
 
 async function forwardRewrittenSse(
   body: ReadableStream<Uint8Array> | null,
   response: ServerResponse,
   targetPromptTokens: number,
-  onValidated: () => void,
-  onUsageShape: (
-    usageShape: NonNullable<TokenBudgetRequestEvidence['usageShape']>
-  ) => void
+  onValidated: () => void
 ): Promise<boolean> {
   if (!body) return false;
   const reader = body.getReader();
@@ -800,14 +729,7 @@ async function forwardRewrittenSse(
           boundary.index + boundary.length
         );
         buffered = buffered.subarray(boundary.index + boundary.length);
-        let rewritten: RewrittenSseFrame;
-        try {
-          rewritten = rewriteSseFrame(frame, targetPromptTokens);
-        } catch (error) {
-          onUsageShape('invalid');
-          throw error;
-        }
-        onUsageShape(rewritten.usageShape);
+        const rewritten = rewriteSseFrame(frame, targetPromptTokens);
         const completeFrame = Buffer.concat([rewritten.bytes, delimiter]);
         pendingFrames.push(completeFrame);
         pendingBytes += completeFrame.byteLength;
@@ -956,15 +878,6 @@ export async function startTokenBudgetHandoffProxy(
             signal: controller.signal,
           }
         );
-        requestEvidence.upstreamStatus = upstreamResponse.status;
-        const contentType = upstreamResponse.headers.get('content-type') ?? '';
-        requestEvidence.responseKind = contentType
-          .toLowerCase()
-          .includes('text/event-stream')
-          ? 'sse'
-          : contentType.toLowerCase().includes('json')
-            ? 'json'
-            : 'other';
         if (closing || response.destroyed) {
           await upstreamResponse.body?.cancel().catch(() => undefined);
           return;
@@ -977,19 +890,13 @@ export async function startTokenBudgetHandoffProxy(
           return;
         }
 
+        const contentType = upstreamResponse.headers.get('content-type') ?? '';
         if (contentType.toLowerCase().includes('text/event-stream')) {
-          requestEvidence.usageShape = 'missing';
           const rewritten = await forwardRewrittenSse(
             upstreamResponse.body,
             response,
             targetPromptTokens,
-            () => writeUpstreamHead(upstreamResponse, response),
-            (usageShape) => {
-              requestEvidence.usageShape = mergeUsageShape(
-                requestEvidence.usageShape ?? 'missing',
-                usageShape
-              );
-            }
+            () => writeUpstreamHead(upstreamResponse, response)
           );
           requestEvidence.usageRewritten = rewritten;
           if (!rewritten) throw new TargetUsageMissingError();
@@ -998,7 +905,6 @@ export async function startTokenBudgetHandoffProxy(
         }
 
         const upstreamBody = new Uint8Array(await upstreamResponse.arrayBuffer());
-        requestEvidence.usageShape = classifyJsonUsageShape(upstreamBody);
         const rewritten = rewriteJsonBody(upstreamBody, targetPromptTokens);
         if (!rewritten) throw new TargetUsageMissingError();
         writeUpstreamHead(upstreamResponse, response);

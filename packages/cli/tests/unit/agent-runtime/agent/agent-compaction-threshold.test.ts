@@ -78,7 +78,7 @@ function createDeps(): LoopDependencies {
         throw new Error('not used');
       },
       streamChat: async function* () {
-        yield* [];
+        return;
       },
       getConfig: () => ({
         provider: 'openai',

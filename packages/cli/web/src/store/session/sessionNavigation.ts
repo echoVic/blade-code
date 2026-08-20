@@ -5,13 +5,11 @@ const LAST_SESSION_KEY = 'blade.sessions.last';
 const SESSION_PARAM = 'session';
 const PROJECT_PARAM = 'project';
 const WORKSPACE_PARAM = 'workspace';
-const VIEW_PARAM = 'view';
 
 export interface SessionNavigationIntent {
   sessionRef: SessionRef | null;
   projectPath: string | null;
   hasSessionParam: boolean;
-  view: 'workspace' | 'board';
 }
 
 function validRef(value: unknown): SessionRef | null {
@@ -33,7 +31,6 @@ export function parseSessionNavigation(search: string): SessionNavigationIntent 
   const sessionId = params.get(SESSION_PARAM)?.trim() || null;
   const projectPath = params.get(PROJECT_PARAM)?.trim() || null;
   const workspacePath = params.get(WORKSPACE_PARAM)?.trim() || null;
-  const view = params.get(VIEW_PARAM) === 'board' ? 'board' : 'workspace';
   return {
     sessionRef:
       sessionId && (workspacePath || projectPath)
@@ -41,7 +38,6 @@ export function parseSessionNavigation(search: string): SessionNavigationIntent 
         : null,
     projectPath,
     hasSessionParam: params.has(SESSION_PARAM),
-    view,
   };
 }
 
@@ -81,7 +77,6 @@ export function syncSessionNavigation(
   options: {
     href?: string;
     displayProjectPath?: string | null;
-    view?: 'workspace' | 'board';
     storage?: Pick<Storage, 'setItem' | 'removeItem'> | null;
     replaceState?: (url: string) => void;
   } = {}
@@ -90,14 +85,11 @@ export function syncSessionNavigation(
     options.href ??
     (typeof window === 'undefined' ? 'http://localhost/' : window.location.href);
   const url = new URL(href);
-  const view = options.view ?? 'workspace';
   const projectPath =
-    options.displayProjectPath ??
-    (view === 'board' ? selectedProjectPath : sessionRef?.projectPath) ??
-    selectedProjectPath;
+    options.displayProjectPath ?? sessionRef?.projectPath ?? selectedProjectPath;
   const sessionWorkspacePath = sessionRef?.projectPath ?? null;
 
-  if (sessionRef && view === 'workspace') {
+  if (sessionRef) {
     url.searchParams.set(SESSION_PARAM, sessionRef.sessionId);
   } else {
     url.searchParams.delete(SESSION_PARAM);
@@ -112,13 +104,6 @@ export function syncSessionNavigation(
   } else {
     url.searchParams.delete(WORKSPACE_PARAM);
   }
-  if (view === 'board') {
-    url.searchParams.set(VIEW_PARAM, 'board');
-    url.searchParams.delete(SESSION_PARAM);
-    url.searchParams.delete(WORKSPACE_PARAM);
-  } else {
-    url.searchParams.delete(VIEW_PARAM);
-  }
 
   const storage =
     options.storage === undefined
@@ -127,9 +112,9 @@ export function syncSessionNavigation(
         : localStorage
       : options.storage;
   try {
-    if (sessionRef && view === 'workspace') {
+    if (sessionRef) {
       storage?.setItem(LAST_SESSION_KEY, JSON.stringify(sessionRef));
-    } else if (view === 'workspace') {
+    } else {
       storage?.removeItem(LAST_SESSION_KEY);
     }
   } catch {

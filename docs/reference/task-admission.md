@@ -75,19 +75,6 @@ charge.
 Lowering the configured byte limit does not evict already accepted durable
 tasks. New tasks are rejected until the queue drains below the new limit.
 
-## Pause and Resume
-
-The Web task board can pause automatic claiming through
-`PUT /global/task-admission` with `{ "paused": true }`. Pausing is process-local:
-
-- running tasks keep their permits and continue;
-- newly dispatched tasks are durably prepared and enter the bounded FIFO queue;
-- pending-count and retained-byte limits remain enforced;
-- `{ "paused": false }` drains available slots in the original FIFO order.
-
-`GET /global/info` exposes the current `taskAdmission.paused` value. A server
-restart returns the scheduler to its safe default, automatic claiming enabled.
-
 ## Recovery
 
 Queued task input is durable. After restart, the Agent resumes with

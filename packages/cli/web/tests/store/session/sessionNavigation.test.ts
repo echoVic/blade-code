@@ -42,7 +42,6 @@ describe('session navigation', () => {
       sessionRef: refB,
       projectPath: '/workspace/b',
       hasSessionParam: true,
-      view: 'workspace',
     });
     expect(
       parseSessionNavigation(
@@ -55,13 +54,11 @@ describe('session navigation', () => {
       },
       projectPath: '/workspace/source',
       hasSessionParam: true,
-      view: 'workspace',
     });
     expect(parseSessionNavigation('?project=%2Fworkspace%2Fa')).toEqual({
       sessionRef: null,
       projectPath: '/workspace/a',
       hasSessionParam: false,
-      view: 'workspace',
     });
   });
 
@@ -130,25 +127,6 @@ describe('session navigation', () => {
     });
     expect(readStoredSessionRef(storage)).toBeNull();
     expect(replaceState).toHaveBeenLastCalledWith('/?debug=1&project=%2Fworkspace%2Fa');
-  });
-
-  it('parses and writes a board deep link without leaking a selected session', () => {
-    expect(parseSessionNavigation('?view=board&project=%2Fworkspace%2Fa')).toEqual({
-      sessionRef: null,
-      projectPath: '/workspace/a',
-      hasSessionParam: false,
-      view: 'board',
-    });
-
-    const replaceState = vi.fn();
-    const url = syncSessionNavigation(refB, '/workspace/a', {
-      href: 'http://localhost/?session=stale&workspace=%2Fworkspace%2Fb',
-      view: 'board',
-      storage: null,
-      replaceState,
-    });
-    expect(url).toBe('/?project=%2Fworkspace%2Fa&view=board');
-    expect(replaceState).toHaveBeenCalledWith(url);
   });
 
   it('fails open when stored navigation data is malformed', () => {

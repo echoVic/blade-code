@@ -1,7 +1,6 @@
 import {
   ChevronLeft,
   FolderPlus,
-  LayoutDashboard,
   Plus,
   Search,
   Settings,
@@ -47,10 +46,6 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
     sidebarView,
     setSidebarView,
     setTaskSwitcherOpen,
-    mainView,
-    setMainView,
-    setBoardProjectPath,
-    setFilePreviewOpen,
   } = useAppStore();
   const sessions = useSessionStore((state) => state.sessions);
   const catalogLoadState = useSessionStore((state) => state.catalogLoadState);
@@ -108,15 +103,7 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
   };
 
   const handleNewChat = () => {
-    setMainView('workspace');
     startTemporarySession(activeProjectPath ?? undefined);
-    onNavigate?.();
-  };
-
-  const handleOpenBoard = () => {
-    setFilePreviewOpen(false);
-    setBoardProjectPath(activeProjectPath);
-    setMainView('board');
     onNavigate?.();
   };
 
@@ -126,7 +113,6 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
     } else {
       selectProject(projectPath);
     }
-    setMainView('workspace');
     startTemporarySession(projectPath);
     onNavigate?.();
   };
@@ -137,7 +123,6 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
     } else {
       selectProject(projectPath);
     }
-    setMainView('workspace');
     startTemporarySession(projectPath);
     onNavigate?.();
   };
@@ -200,14 +185,12 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
         className={className}
         onExpand={toggleSidebar}
         onNewChat={handleNewChat}
-        onOpenBoard={handleOpenBoard}
         onOpenTaskSwitcher={() => runSidebarAction(() => setTaskSwitcherOpen(true))}
         onToggleTerminal={() => runSidebarAction(toggleTerminal)}
         onToggleSettings={() => runSidebarAction(toggleSettings)}
         isTerminalOpen={isTerminalOpen}
         taskEventsConnected={taskEventsConnected}
         unreadCount={unreadTaskKeys.length}
-        boardActive={mainView === 'board'}
       />
     );
   }
@@ -251,21 +234,6 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
             <span className="rounded-sm bg-white/10 px-1.5 py-[1px] font-mono text-[10px] text-white/80">
               {shortcutHint('newTask')}
             </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleOpenBoard}
-            aria-current={mainView === 'board' ? 'page' : undefined}
-            className={cn(
-              'flex h-9 w-full items-center gap-2 rounded-md border px-3 font-mono text-[12.5px] transition-colors',
-              mainView === 'board'
-                ? 'border-[hsl(var(--deck-accent)/0.45)] bg-[hsl(var(--deck-accent-soft))] text-[hsl(var(--deck-accent))]'
-                : 'border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] text-[hsl(var(--deck-ink-muted))] hover:border-[hsl(var(--deck-border-strong))] hover:text-[hsl(var(--deck-ink))]'
-            )}
-          >
-            <LayoutDashboard className="h-3.5 w-3.5" />
-            {t('sidebar.action.taskBoard')}
           </button>
 
           <button
@@ -385,7 +353,6 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
                     isExporting={exportingSessionKey === sessionKey}
                     onSelect={() => {
                       onNavigate?.();
-                      setMainView('workspace');
                       return selectSession(sessionRef);
                     }}
                     onCancelTask={() => {

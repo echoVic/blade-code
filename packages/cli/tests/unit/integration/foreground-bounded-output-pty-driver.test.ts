@@ -1,132 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  ArmedPtyMarkerLatch,
   appendBoundedPtyEvidence,
-  assertSplitPtyMarkerInstructionAtEnd,
-  createSplitPtyMarkerInstruction,
-  isCompleteRawPtyMarkerEvidence,
   latchForegroundBoundedPtyMarkers,
   latchPtyEvidence,
   latchPtyMarker,
   parseForegroundBoundedOutputPtyEvidence,
   projectForegroundBoundedPtyOutput,
-  waitForPtyExit,
 } from '../../support/foregroundBoundedOutputPtyDriver.js';
 
 describe('foreground bounded output PTY driver', () => {
-  it('arms after prompt echo and latches a split marker across output rotation', () => {
-    const marker = 'FINAL_MARKER_123456';
-    const latch = new ArmedPtyMarkerLatch(marker);
-
-    latch.observe(`prompt echo ${marker}`);
-    expect(latch.seen).toBe(false);
-
-    latch.arm();
-    latch.observe('prefix FINAL_MARKER_');
-    latch.observe(`123456${'x'.repeat(300_000)}`);
-    expect(latch.seen).toBe(true);
-
-    latch.observe('later redraw without the marker');
-    expect(latch.seen).toBe(true);
-  });
-
-  it.each([
-    ['minimum', 'AB'],
-    ['odd length', 'FINAL_MARKER_12345'],
-    ['hyphenated', 'FINAL_MARKER_deepseek-v4-flash'],
-    ['maximum', 'A'.repeat(128)],
-  ])(
-    'builds a mechanical %s final-marker instruction without embedding the marker',
-    (_case, marker) => {
-      const instruction = createSplitPtyMarkerInstruction(marker);
-      const partA = instruction.match(/^PART_A=([A-Za-z0-9_-]+)$/m)?.[1];
-      const partB = instruction.match(/^PART_B=([A-Za-z0-9_-]+)$/m)?.[1];
-
-      expect(instruction).not.toContain(marker);
-      expect(partA).toBeTypeOf('string');
-      expect(partB).toBeTypeOf('string');
-      expect(`${partA}${partB}`).toBe(marker);
-      expect(instruction).toContain(`exactly ${marker.length} ASCII characters`);
-      expect(instruction).toContain(`match ^[A-Za-z0-9_-]{${marker.length}}$`);
-      expect(instruction).not.toContain(JSON.stringify(partA));
-      expect(instruction).not.toContain(JSON.stringify(partB));
-      expect(instruction.endsWith(`PART_B=${partB}`)).toBe(true);
-    }
-  );
-
-  it.each([
-    ['', 'empty'],
-    ['A', 'short'],
-    ['A'.repeat(129), 'long'],
-    ['HAS SPACE', 'space'],
-    ['HAS"QUOTE', 'quote'],
-    ['HAS\nNEWLINE', 'newline'],
-    ['UNICODE_你好', 'non-ASCII'],
-  ])('rejects a %s marker outside the bounded ASCII contract', (marker) => {
-    expect(() => createSplitPtyMarkerInstruction(marker)).toThrow(
-      'bounded ASCII contract'
-    );
-  });
-
-  it('requires the complete split-marker instruction to terminate the prompt', () => {
-    const marker = 'FINAL_MARKER_123456';
-    const instruction = createSplitPtyMarkerInstruction(marker);
-
-    expect(() =>
-      assertSplitPtyMarkerInstructionAtEnd(`prefix\n${instruction}`, marker)
-    ).not.toThrow();
-    expect(() =>
-      assertSplitPtyMarkerInstructionAtEnd(`${instruction}\n`, marker)
-    ).toThrow('terminate the prompt');
-    expect(() =>
-      assertSplitPtyMarkerInstructionAtEnd(`${instruction}\nmore text`, marker)
-    ).toThrow('terminate the prompt');
-  });
-
-  it('clears the PTY exit deadline on success and timeout', async () => {
-    vi.useFakeTimers();
-    try {
-      await waitForPtyExit(Promise.resolve(), 'unused timeout', 100);
-      expect(vi.getTimerCount()).toBe(0);
-
-      const timedOut = waitForPtyExit(
-        new Promise<void>(() => undefined),
-        'PTY exit deadline',
-        100
-      );
-      const rejection = expect(timedOut).rejects.toThrow('PTY exit deadline');
-      await vi.advanceTimersByTimeAsync(100);
-      await rejection;
-      expect(vi.getTimerCount()).toBe(0);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('accepts only complete safe raw PTY marker evidence', () => {
-    expect(
-      isCompleteRawPtyMarkerEvidence({
-        finalMarkerSeen: true,
-        secretSeen: false,
-      })
-    ).toBe(true);
-    expect(isCompleteRawPtyMarkerEvidence({ secretSeen: false })).toBe(false);
-    expect(
-      isCompleteRawPtyMarkerEvidence({
-        finalMarkerSeen: false,
-        secretSeen: false,
-      })
-    ).toBe(false);
-    expect(isCompleteRawPtyMarkerEvidence({ finalMarkerSeen: true })).toBe(false);
-    expect(
-      isCompleteRawPtyMarkerEvidence({
-        finalMarkerSeen: true,
-        secretSeen: true,
-      })
-    ).toBe(false);
-    expect(isCompleteRawPtyMarkerEvidence(null)).toBe(false);
-  });
-
   it('retains only the latest bounded ANSI evidence', () => {
     const output = appendBoundedPtyEvidence('prefix-', `${'x'.repeat(100)}TAIL`, 16);
 

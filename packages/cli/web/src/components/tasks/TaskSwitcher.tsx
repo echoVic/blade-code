@@ -64,7 +64,6 @@ export function TaskSwitcher() {
   const mode = useAppStore((state) => state.taskSwitcherMode);
   const setOpen = useAppStore((state) => state.setTaskSwitcherOpen);
   const setMode = useAppStore((state) => state.setTaskSwitcherMode);
-  const setMainView = useAppStore((state) => state.setMainView);
   const toggleSidebar = useAppStore((state) => state.toggleSidebar);
   const isFilePreviewOpen = useAppStore((state) => state.isFilePreviewOpen);
   const setFilePreviewOpen = useAppStore((state) => state.setFilePreviewOpen);
@@ -107,7 +106,6 @@ export function TaskSwitcher() {
         icon: Plus,
         shortcut: shortcutHint('newTask'),
         run: () => {
-          setMainView('workspace');
           startTemporarySession();
           requestAnimationFrame(() => focusBladeComposer());
         },
@@ -197,7 +195,6 @@ export function TaskSwitcher() {
       openFilePreview,
       openSettings,
       setFilePreviewOpen,
-      setMainView,
       startTemporarySession,
       t,
       toggleSidebar,
@@ -249,7 +246,6 @@ export function TaskSwitcher() {
       selectProject(projectPath);
     }
     try {
-      setMainView('workspace');
       await selectSession(ref);
       setOpen(false);
     } catch (error) {

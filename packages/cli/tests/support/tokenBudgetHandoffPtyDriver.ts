@@ -10,17 +10,6 @@ import type { TokenBudgetHandoffSurfaceEvidence } from '../integration/real-api/
 const execFileAsync = promisify(execFile);
 const MAX_PTY_EVIDENCE_CHARS = 64_000;
 const FINAL_MARKER_PATTERN = /^FINAL_OK_[A-Za-z0-9_]{16,64}$/;
-const PTY_FAILURE_STAGES = new Set([
-  'identity',
-  'composer',
-  'paste',
-  'marker',
-  'durable_completion',
-  'privacy',
-  'cleanup',
-]);
-const COMPOSER_FAILURE_CODE_PATTERN =
-  /^placeholder_[01]:bracketed_[01]:setup_[01]:init_error_[01]$/;
 const FORBIDDEN = [
   '<token-budget-handoff version="1">',
   'token_budget_handoff_recorded',
@@ -71,42 +60,6 @@ function hasExactKeys(
     Object.keys(value).length === expected.length &&
     expected.every((key) => Object.hasOwn(value, key))
   );
-}
-
-function runnerFailureDiagnostic(error: unknown): string {
-  if (isRecord(error) && error.killed === true && error.signal === 'SIGKILL') {
-    return 'transport:timeout';
-  }
-  if (!isRecord(error) || typeof error.stdout !== 'string') {
-    return 'transport:exec_failed';
-  }
-  if (error.stdout.length > 4_096) return 'transport:invalid_evidence';
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(error.stdout);
-  } catch {
-    return 'transport:invalid_evidence';
-  }
-  if (
-    !isRecord(parsed) ||
-    !hasExactKeys(parsed, ['failureCode', 'failureStage', 'faults', 'success']) ||
-    parsed.success !== false ||
-    typeof parsed.failureStage !== 'string' ||
-    !PTY_FAILURE_STAGES.has(parsed.failureStage) ||
-    (parsed.failureCode !== 'stage_failed' &&
-      parsed.failureCode !== 'cleanup_incomplete' &&
-      !(
-        parsed.failureStage === 'composer' &&
-        typeof parsed.failureCode === 'string' &&
-        COMPOSER_FAILURE_CODE_PATTERN.test(parsed.failureCode)
-      )) ||
-    !Array.isArray(parsed.faults) ||
-    parsed.faults.length !== 1 ||
-    parsed.faults[0] !== 'runner_failed'
-  ) {
-    return 'transport:invalid_evidence';
-  }
-  return `${parsed.failureStage}:${parsed.failureCode}`;
 }
 
 function parseRunnerEvidence(
@@ -334,10 +287,8 @@ async function runMode(input: {
       input.sessionId,
       input.secrets
     );
-  } catch (error) {
-    throw new Error(
-      `Token-budget PTY runner failed at ${runnerFailureDiagnostic(error)}`
-    );
+  } catch {
+    throw new Error('Token-budget PTY runner failed');
   }
 }
 

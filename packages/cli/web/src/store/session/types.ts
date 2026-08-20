@@ -15,7 +15,6 @@ import type {
   StreamEvent,
   TaskDispatchInput,
   TaskEventConnectionState,
-  TaskUpdateInput,
   WorkspaceInfo,
 } from '@/services';
 
@@ -34,7 +33,6 @@ export type {
   StreamEvent,
   TaskDispatchInput,
   TaskEventConnectionState,
-  TaskUpdateInput,
   WorkspaceInfo,
 };
 
@@ -321,11 +319,9 @@ export interface TaskListSlice {
   boundProjects: BoundProject[];
   selectedProjectPath: string | null;
   isDispatchingTask: boolean;
-  isUpdatingTaskAdmission: boolean;
   isBindingProject: boolean;
   cancellingTaskKeys: string[];
   retryingTaskKeys: string[];
-  updatingTaskKeys: string[];
   taskDeliveryActions: Record<string, 'apply' | 'discard'>;
   unreadTaskKeys: string[];
 
@@ -340,15 +336,10 @@ export interface TaskListSlice {
   selectProject: (projectPath: string) => void;
   cancelTask: (ref: SessionRef) => Promise<void>;
   retryTask: (ref: SessionRef) => Promise<void>;
-  updateTask: (ref: SessionRef, input: TaskUpdateInput) => Promise<void>;
-  setTaskAdmissionPaused: (paused: boolean) => Promise<void>;
   deliverTask: (ref: SessionRef, action: 'apply' | 'discard') => Promise<void>;
   markTaskRead: (ref: SessionRef) => void;
   clearUnreadTasks: () => void;
-  dispatchTask: (
-    input: TaskDispatchInput,
-    options?: { selectSession?: boolean }
-  ) => Promise<void>;
+  dispatchTask: (input: TaskDispatchInput) => Promise<void>;
   startCodeReview: (input: CodeReviewDispatchInput) => Promise<void>;
 }
 

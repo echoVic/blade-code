@@ -95,7 +95,6 @@ export class TaskRunScheduler {
   private readonly queue: PendingAdmission[] = [];
   private readonly activeKeys = new Set<string>();
   private explicitlyConfigured = false;
-  private paused = false;
 
   admit(options: TaskAdmissionOptions): TaskAdmissionHandle {
     this.validateLimits(
@@ -115,7 +114,7 @@ export class TaskRunScheduler {
     if (this.activeKeys.has(options.key)) {
       throw new TaskAdmissionConflictError(options.key);
     }
-    const mustQueue = this.paused || this.inFlight >= this.maxConcurrent;
+    const mustQueue = this.inFlight >= this.maxConcurrent;
     if (mustQueue && this.queue.length >= this.maxQueued) {
       throw new TaskAdmissionQueueFullError('pending_count', this.maxQueued);
     }
@@ -183,13 +182,6 @@ export class TaskRunScheduler {
     this.applyConfiguration(maxConcurrent, maxQueued, maxQueuedBytes);
   }
 
-  setPaused(paused: boolean): void {
-    if (this.paused === paused) return;
-    this.paused = paused;
-    if (!paused) this.drain();
-    this.publishQueueSnapshots();
-  }
-
   private applyConfiguration(
     maxConcurrent: number,
     maxQueued: number,
@@ -209,7 +201,6 @@ export class TaskRunScheduler {
     maxConcurrent: number;
     maxQueued: number;
     maxQueuedBytes: number;
-    paused: boolean;
   } {
     return {
       inFlight: this.inFlight,
@@ -218,7 +209,6 @@ export class TaskRunScheduler {
       maxConcurrent: this.maxConcurrent,
       maxQueued: this.maxQueued,
       maxQueuedBytes: this.maxQueuedBytes,
-      paused: this.paused,
     };
   }
 
@@ -234,7 +224,6 @@ export class TaskRunScheduler {
     this.maxQueued = 100;
     this.maxQueuedBytes = DEFAULT_MAX_QUEUED_TASK_BYTES;
     this.explicitlyConfigured = false;
-    this.paused = false;
   }
 
   private startPending(pending: PendingAdmission): void {
@@ -276,7 +265,6 @@ export class TaskRunScheduler {
   }
 
   private drain(): void {
-    if (this.paused) return;
     while (this.inFlight < this.maxConcurrent && this.queue.length > 0) {
       const pending = this.queue.shift();
       if (pending && !pending.settled) this.startPending(pending);

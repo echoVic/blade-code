@@ -68,14 +68,6 @@ export type SessionTaskStatus = Static<typeof SessionTaskStatusSchema>;
 export const SessionTaskIsolationSchema = Runtime(StringEnum(['local', 'worktree']));
 export type SessionTaskIsolation = Static<typeof SessionTaskIsolationSchema>;
 
-export const SessionTaskPrioritySchema = Runtime(StringEnum(['high', 'medium', 'low']));
-export type SessionTaskPriority = Static<typeof SessionTaskPrioritySchema>;
-
-export const SessionTaskKindSchema = Runtime(
-  StringEnum(['feature', 'bug', 'maintenance', 'research'])
-);
-export type SessionTaskKind = Static<typeof SessionTaskKindSchema>;
-
 export const SessionTaskDeliveryStatusSchema = Runtime(
   StringEnum(['applied', 'discarded', 'conflicted'])
 );
@@ -260,9 +252,6 @@ export const SessionSchema = Runtime(
     taskStartedAt: Type.Optional(Type.String()),
     taskCompletedAt: Type.Optional(Type.String()),
     taskPromptSummary: Type.Optional(Type.String()),
-    taskPriority: Type.Optional(SessionTaskPrioritySchema),
-    taskKind: Type.Optional(SessionTaskKindSchema),
-    taskDueAt: Type.Optional(Type.String()),
     taskModelId: Type.Optional(Type.String()),
     selectedModelId: Type.Optional(Type.String()),
     permissionMode: Type.Optional(PermissionModeSchema),
@@ -542,9 +531,6 @@ export const CreateTaskRequestSchema = Runtime(
       pattern: '\\S',
     }),
     title: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
-    taskPriority: Default(SessionTaskPrioritySchema, 'medium'),
-    taskKind: Default(SessionTaskKindSchema, 'feature'),
-    taskDueAt: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
     projectPath: Type.Optional(Type.String()),
     modelId: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
     reasoningEffort: Type.Optional(ReasoningEffortSchema),
@@ -560,18 +546,6 @@ export const CreateTaskRequestSchema = Runtime(
   })
 );
 export type CreateTaskRequest = Static<typeof CreateTaskRequestSchema>;
-
-export const UpdateTaskRequestSchema = Runtime(
-  Type.Object({
-    title: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
-    taskPriority: Type.Optional(SessionTaskPrioritySchema),
-    taskKind: Type.Optional(SessionTaskKindSchema),
-    taskDueAt: Type.Optional(
-      Type.Union([Type.String({ minLength: 1, maxLength: 64 }), Type.Null()])
-    ),
-  })
-);
-export type UpdateTaskRequest = Static<typeof UpdateTaskRequestSchema>;
 
 export const CreateTaskResponseSchema = Runtime(
   Type.Object({

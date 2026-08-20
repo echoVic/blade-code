@@ -1032,47 +1032,6 @@ describe('SessionService strict session catalog', () => {
     expect(JSON.stringify(metadata)).not.toContain('sk-secret-value');
   });
 
-  it('persists editable task planning metadata and clears due dates', async () => {
-    const created = await SessionService.createSessionMetadata(
-      'planned-task',
-      workspaceA,
-      {
-        title: 'Plan the board',
-        taskStatus: 'queued',
-        taskPromptSummary: 'Build the task board',
-        taskPriority: 'high',
-        taskKind: 'feature',
-        taskDueAt: '2026-08-21T09:30:00.000Z',
-      }
-    );
-    expect(created).toMatchObject({
-      taskPriority: 'high',
-      taskKind: 'feature',
-      taskDueAt: '2026-08-21T09:30:00.000Z',
-    });
-
-    const updated = await SessionService.updateSessionMetadata(
-      'planned-task',
-      workspaceA,
-      {
-        taskPriority: 'low',
-        taskKind: 'maintenance',
-        taskDueAt: null,
-      }
-    );
-    expect(updated).toMatchObject({
-      taskPriority: 'low',
-      taskKind: 'maintenance',
-    });
-    expect(updated.taskDueAt).toBeUndefined();
-
-    await expect(
-      SessionService.updateSessionMetadata('planned-task', workspaceA, {
-        taskDueAt: 'not-a-date',
-      })
-    ).rejects.toThrow('Invalid session task due date');
-  });
-
   it('keeps the durable worktree lease private while projecting task artifacts', async () => {
     const taskWorktree = {
       sessionId: 'artifact-session',

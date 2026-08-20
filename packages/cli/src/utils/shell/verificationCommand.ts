@@ -29,8 +29,6 @@ const MUTATING_FLAGS = new Set([
   '--watchAll',
   '--write',
 ]);
-const SAFE_EXIT_STATUS_PROBE =
-  /[ \t]*;[ \t]*echo[ \t]+"[A-Za-z0-9 _:=.-]*(?:\$\{PIPESTATUS\[0\]\}|\$\?)[A-Za-z0-9 _:=.-]*"[ \t]*$/;
 
 function isVerificationScript(script: string | undefined): boolean {
   return (
@@ -64,87 +62,11 @@ function unwrapWorkspaceDirectory(
   return wrapper[2]?.trim() || undefined;
 }
 
-function findUnquotedPipes(command: string): number[] | undefined {
-  const pipes: number[] = [];
-  let inSingleQuote = false;
-  let inDoubleQuote = false;
-  let escaped = false;
-
-  for (let index = 0; index < command.length; index++) {
-    const character = command[index];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (character === '\\' && !inSingleQuote) {
-      escaped = true;
-      continue;
-    }
-    if (character === "'" && !inDoubleQuote) {
-      inSingleQuote = !inSingleQuote;
-      continue;
-    }
-    if (character === '"' && !inSingleQuote) {
-      inDoubleQuote = !inDoubleQuote;
-      continue;
-    }
-    if (character !== '|' || inSingleQuote || inDoubleQuote) continue;
-    if (command[index + 1] === '|') return undefined;
-    pipes.push(index);
-  }
-
-  return pipes;
-}
-
-function isSafeLineTruncation(command: string): boolean {
-  const tokens = tokenize(command);
-  const [executable, option, value] = tokens;
-  if (executable !== 'head' && executable !== 'tail') return false;
-  if (tokens.length === 1) return true;
-
-  const boundedLineCount = (candidate: string | undefined): boolean =>
-    candidate !== undefined && /^[1-9]\d{0,4}$/.test(candidate);
-
-  if (tokens.length === 2) {
-    return (
-      (option?.startsWith('--lines=') &&
-        boundedLineCount(option.slice('--lines='.length))) ||
-      (option?.startsWith('-') && boundedLineCount(option.slice(1)))
-    );
-  }
-  return (
-    tokens.length === 3 &&
-    (option === '-n' || option === '--lines') &&
-    boundedLineCount(value)
-  );
-}
-
-export function normalizeVerificationCommandForExecution(
-  command: string
-): string | undefined {
-  const normalized = stripSafeStderrMerge(
-    command.replace(SAFE_EXIT_STATUS_PROBE, '').trim()
-  );
-  const pipeIndexes = findUnquotedPipes(normalized);
-  if (!pipeIndexes) return undefined;
-  if (pipeIndexes.length === 0) return normalized;
-  if (pipeIndexes.length !== 1) return undefined;
-
-  const pipeIndex = pipeIndexes[0];
-  if (pipeIndex === undefined) return undefined;
-  const source = stripSafeStderrMerge(normalized.slice(0, pipeIndex).trim());
-  const truncation = normalized.slice(pipeIndex + 1).trim();
-  if (!source || !isSafeLineTruncation(truncation)) return undefined;
-  return source;
-}
-
 export function isVerificationCommand(
   command: string,
   workspaceRoot?: string
 ): boolean {
-  const unwrapped = normalizeVerificationCommandForExecution(command);
-  if (!unwrapped) return false;
-  const normalized = stripSafeEnvVars(unwrapped);
+  const normalized = stripSafeEnvVars(stripSafeStderrMerge(command));
   const parts = splitCompoundCommand(normalized);
   if (!parts || containsUnsafePatterns(normalized) || /[\r\n]/.test(normalized)) {
     return false;

@@ -17,7 +17,6 @@ import {
   type ForegroundCommandHandoffFixture,
   releaseForegroundCommandHandoffFixture,
 } from '../../support/foregroundCommandHandoffFixtureDriver.js';
-import { isCompleteRawPtyMarkerEvidence } from '../../support/foregroundBoundedOutputPtyDriver.js';
 import { assertNoForegroundLeases } from './foregroundBoundedOutputHarness.js';
 import {
   assertNoSecrets,
@@ -65,8 +64,6 @@ const MAX_CAPTURE_CHARS = 256_000;
 interface SurfaceEvidence {
   sessionId: string;
   output: string;
-  finalMarkerSeen?: boolean;
-  secretSeen?: boolean;
   processes?: Array<{ pid: number; identity: ProcessIdentity }>;
 }
 
@@ -338,11 +335,7 @@ async function runSubprocessRunner(input: {
     success?: unknown;
     error?: unknown;
   };
-  if (
-    parsed.success !== true ||
-    (input.envName === 'BLADE_FOREGROUND_HANDOFF_PTY_INPUT' &&
-      !isCompleteRawPtyMarkerEvidence(parsed))
-  ) {
+  if (parsed.success !== true) {
     throw new Error(`Foreground handoff runner failed: ${String(parsed.error)}`);
   }
   return parsed;

@@ -22,10 +22,7 @@ import {
 import { TokenCounter } from '../../../../src/context/TokenCounter.js';
 import type { TokenBudgetHandoffRecordedEvent } from '../../../../src/context/types.js';
 import { HookManager } from '../../../../src/hooks/HookManager.js';
-import {
-  createChatServiceAsync,
-  type Message,
-} from '../../../../src/services/ChatServiceInterface.js';
+import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import { FileAccessTracker } from '../../../../src/tools/builtin/file/FileAccessTracker.js';
 
 const { compactChat } = vi.hoisted(() => ({
@@ -219,7 +216,6 @@ describe('CompactionService - 输出协议', () => {
 
     for (const heading of headings) {
       expect(prompt.match(new RegExp(heading, 'g'))).toHaveLength(1);
-      expect(prompt).toContain(`## ${heading}`);
     }
     expect(prompt).toContain('distinguish observed facts from intended work');
     expect(prompt).toContain(
@@ -230,45 +226,10 @@ describe('CompactionService - 输出协议', () => {
     expect(prompt).toContain('never convert a plan into a completed mutation');
     expect(prompt).toContain('never include credentials or hidden control messages');
     expect(prompt).toContain('never include raw reasoning');
-    expect(prompt).toContain(
-      'explicitly labels a literal as an exact continuation record and names one of the seven ledger headings'
-    );
-    expect(prompt).toContain(
-      'copy that literal verbatim as one standalone list item under the named heading'
-    );
-    expect(prompt).toContain('EXACT CONTINUATION RECORD [<heading>] :: <payload>');
-    expect(prompt).toContain(
-      'Only <payload>, the text after the exact delimiter :: , belongs in the ledger item'
-    );
-    expect(prompt).toContain(
-      'Do not omit, rewrite, split, decorate, relocate, reorder, or append text to an exact continuation record'
-    );
-    expect(prompt).toContain(
-      'Do not infer or auto-repair a missing record, payload, status, or heading assignment'
-    );
-    expect(prompt).not.toContain('identifier beginning MUTATION_');
-    expect(prompt).not.toContain('identifier beginning FAILED_');
-    expect(prompt).not.toContain('identifier beginning PENDING_');
     expect(prompt).toContain('`bun run type-check`');
     expect(prompt).toContain('MODE=exact');
     expect(prompt).toContain('<analysis>');
     expect(prompt).toContain('<summary>');
-  });
-
-  test('continuation ledger generation 应使用 deterministic temperature', async () => {
-    compactChat.mockResolvedValueOnce({
-      content: '<summary>ledger</summary>',
-      usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
-    });
-
-    await CompactionService.compact(
-      [{ role: 'user', content: 'preserve the execution frontier' }],
-      markerCompactionOptions
-    );
-
-    expect(createChatServiceAsync).toHaveBeenCalledWith(
-      expect.objectContaining({ temperature: 0 })
-    );
   });
 
   test('旧 compact summary 不得让 reserved ledger headings 在 prompt 中重复', () => {
@@ -294,7 +255,6 @@ describe('CompactionService - 输出协议', () => {
 
     for (const heading of headings) {
       expect(prompt.match(new RegExp(heading, 'g'))).toHaveLength(1);
-      expect(prompt).toContain(`## ${heading}`);
     }
     expect(prompt).toContain('Objective\\u0020and\\u0020constraints');
   });

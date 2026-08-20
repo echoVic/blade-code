@@ -1,18 +1,18 @@
-import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, it } from 'vitest';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
-import { getProjectStoragePath } from '../../../src/context/storage/pathUtils.js';
 import {
   deriveTokenBudgetSnapshot,
   resolveCompactionOutputReserve,
   TOKEN_BUDGET_HANDOFF_MESSAGE_ID_PREFIX,
   TOKEN_BUDGET_HANDOFF_TAG,
 } from '../../../src/context/TokenBudgetHandoff.js';
+import { getProjectStoragePath } from '../../../src/context/storage/pathUtils.js';
 import { HookManager } from '../../../src/hooks/HookManager.js';
 import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustService.js';
 import { resolveModelConfig } from '../../../src/services/pi/resolveModelConfig.js';
@@ -20,8 +20,8 @@ import { SessionService } from '../../../src/services/SessionService.js';
 import { ensureStoreInitialized, getState } from '../../../src/store/vanilla.js';
 import { runTokenBudgetHandoffAcpDriver } from '../../support/tokenBudgetHandoffAcpDriver.js';
 import { runTokenBudgetHandoffHeadlessDriver } from '../../support/tokenBudgetHandoffHeadlessDriver.js';
-import { startTokenBudgetHandoffProxy } from '../../support/tokenBudgetHandoffProxy.js';
 import { runTokenBudgetHandoffPtyDriver } from '../../support/tokenBudgetHandoffPtyDriver.js';
+import { startTokenBudgetHandoffProxy } from '../../support/tokenBudgetHandoffProxy.js';
 import { runTokenBudgetHandoffWebDriver } from '../../support/tokenBudgetHandoffWebDriver.js';
 import { assertNoForegroundLeases } from './foregroundBoundedOutputHarness.js';
 import {
@@ -29,18 +29,18 @@ import {
   findSessionTranscript,
   readSessionEvents,
 } from './sessionForkTrajectoryHarness.js';
-import {
-  buildRealApiRuntimeConfig,
-  isRealApiTestEnabled,
-  resolveRequiredDeepSeekQualificationModels,
-  type TestModelConfig,
-} from './testConfig.js';
 import { createTokenBudgetHandoffFixture } from './tokenBudgetHandoffFixture.js';
 import {
   assertTokenBudgetEvidenceSafe,
   assertTokenBudgetRequestSequence,
   assertTokenBudgetTranscript,
 } from './tokenBudgetHandoffHarness.js';
+import {
+  buildRealApiRuntimeConfig,
+  isRealApiTestEnabled,
+  resolveRequiredDeepSeekQualificationModels,
+  type TestModelConfig,
+} from './testConfig.js';
 
 const execFileAsync = promisify(execFile);
 const surfaces = ['headless', 'pty', 'web', 'acp'] as const;
@@ -279,8 +279,6 @@ describe
               proxyBaseURL: proxy.baseURL,
               fixture,
               providerRequestCount,
-              providerEvidence: () =>
-                proxy?.evidence() ?? { requests: [], maxInFlight: 0 },
               secrets: [model.apiKey],
               timeoutMs: 270_000,
             });

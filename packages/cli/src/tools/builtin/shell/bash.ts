@@ -12,7 +12,6 @@ import {
   stripSafeWrappers,
 } from '../../../utils/shell/commandNormalizer.js';
 import { isReadOnlyAuditSubagent } from '../../../utils/shell/readOnlyAudit.js';
-import { normalizeVerificationCommandForExecution } from '../../../utils/shell/verificationCommand.js';
 import { createTool } from '../../core/createTool.js';
 import type {
   BashBackgroundMetadata,
@@ -196,9 +195,6 @@ Before executing commands:
     const { command, timeout = 30000, cwd, env, run_in_background = false } = params;
     const { updateOutput } = context;
     const readOnlyAudit = isReadOnlyAuditSubagent(context.subagentType);
-    const effectiveCommand = readOnlyAudit
-      ? (normalizeVerificationCommandForExecution(command) ?? command)
-      : command;
     const effectiveEnv = readOnlyAudit
       ? {
           GIT_CONFIG_GLOBAL: '/dev/null',
@@ -227,7 +223,7 @@ Before executing commands:
       context.foregroundCommandHandoffMs
     );
     const handoffEligible = isForegroundCommandHandoffEligible({
-      command: effectiveCommand,
+      command,
       timeoutMs: timeout,
       handoffMs: foregroundHandoffMs,
       sessionId: context.sessionId,
@@ -240,7 +236,7 @@ Before executing commands:
       const sandboxedCommand =
         readOnlyAudit && !acpMode
           ? await workspaceWriteSandbox.prepare({
-              command: effectiveCommand,
+              command,
               cwd: effectiveCwd,
               workspaceRoot,
               access: 'workspace-read-only',
@@ -248,7 +244,7 @@ Before executing commands:
             })
           : context.worktreeActive
             ? await workspaceWriteSandbox.prepare({
-                command: effectiveCommand,
+                command,
                 cwd: effectiveCwd,
                 workspaceRoot,
                 access: 'workspace-write',
@@ -258,7 +254,7 @@ Before executing commands:
 
       if (run_in_background) {
         return await executeInBackground(
-          effectiveCommand,
+          command,
           effectiveCwd,
           effectiveEnv,
           context.sessionId,
@@ -273,7 +269,7 @@ Before executing commands:
         // ACP 模式：通过 IDE 终端执行命令
         updateOutput?.('通过 IDE 终端执行命令...');
         return await executeWithAcpTerminal(
-          effectiveCommand,
+          command,
           effectiveCwd,
           effectiveEnv,
           timeout,
@@ -284,7 +280,7 @@ Before executing commands:
         );
       } else if (handoffEligible && foregroundOwnership) {
         return await executeWithForegroundHandoff(
-          effectiveCommand,
+          command,
           effectiveCwd,
           effectiveEnv,
           timeout,
@@ -295,7 +291,7 @@ Before executing commands:
         );
       } else {
         return await executeWithTimeout(
-          effectiveCommand,
+          command,
           effectiveCwd,
           effectiveEnv,
           timeout,

@@ -34,7 +34,6 @@
 - 🤖 **Unified Multi-Model Runtime** — Powered by [pi-ai](https://github.com/nicepkg/pi-ai), supports 38+ providers (OpenAI, Anthropic, DeepSeek, Google, Bedrock…) with auto-fetched model metadata
 - 🧠 **Auto Memory** — Persistent project knowledge across sessions; learns build commands, code patterns, and debugging insights
 - 🌐 **Three Runtime Modes** — CLI terminal / Web UI / Headless JSONL for flexible deployment
-- 📊 **Multi-project Task Board** — Bind projects, auto-dispatch work, resolve blockers, and archive accepted tasks
 - 🛠️ **20+ Built-in Tools** — File editing, code search, shell execution, git operations, web fetching, and more
 - 📋 **Structured Workflows** — Task delegation, Goal mode, Spec/Plan, Subagent orchestration
 - 🔗 **Extensible** — MCP protocol, plugin system, Skills, Hooks

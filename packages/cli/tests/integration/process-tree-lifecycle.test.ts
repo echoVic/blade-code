@@ -13,7 +13,6 @@ import { BackgroundShellLeaseStore } from '../../src/tools/builtin/shell/Backgro
 import { BackgroundShellManager } from '../../src/tools/builtin/shell/BackgroundShellManager.js';
 import { bashTool } from '../../src/tools/builtin/shell/bash.js';
 import * as CommandAdmissionGate from '../../src/utils/process/CommandAdmissionGate.js';
-import { processGroupIsRunning } from '../../src/utils/process/OwnedProcessTree.js';
 
 const tempRoots: string[] = [];
 const descendantPids = new Set<number>();
@@ -757,17 +756,11 @@ describe.skipIf(process.platform === 'win32')('owned process-tree lifecycle', ()
 
       expect(await waitFor(() => processIsGone(lease.value.rootPid))).toBe(true);
       expect(await waitFor(() => processIsGone(owner.commandPid))).toBe(true);
-      expect(
-        await waitFor(async () => !processGroupIsRunning(lease.value.rootPid))
-      ).toBe(true);
       descendantPids.delete(owner.commandPid);
 
-      const result = await new ForegroundProcessLeaseStore(
-        workspace,
-        sessionId
-      ).reapOrphans();
-
-      expect(result).toEqual({ reaped: 0, stale: 1, active: 0, protected: 0 });
+      await expect(
+        new ForegroundProcessLeaseStore(workspace, sessionId).reapOrphans()
+      ).resolves.toMatchObject({ reaped: 0, stale: 1, active: 0, protected: 0 });
     } finally {
       owner.launcher.kill('SIGKILL');
       try {

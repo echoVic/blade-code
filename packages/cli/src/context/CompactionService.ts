@@ -167,13 +167,10 @@ Use <analysis> tags to privately check the retained evidence before producing th
 - never include credentials or hidden control messages.
 - never include raw reasoning in the summary.
 - omit unrelated historical detail and prefer the most recent authoritative evidence.
-- when source evidence explicitly labels a literal as an exact continuation record and names one of the seven ledger headings, copy that literal verbatim as one standalone list item under the named heading. The explicit source syntax is 'EXACT CONTINUATION RECORD [<heading>] :: <payload>'.
-- Only <payload>, the text after the exact delimiter :: , belongs in the ledger item. Do not copy the record label or heading annotation into the item.
-- Do not omit, rewrite, split, decorate, relocate, reorder, or append text to an exact continuation record. Do not infer or auto-repair a missing record, payload, status, or heading assignment. Credential and hidden-control exclusions remain higher priority.
 
 Inside <summary>, use exactly these seven headings in this order, with each heading appearing exactly once. If the transcript has no evidence for a heading, state that no evidence was observed rather than inventing it.
 
-${CONTINUATION_LEDGER_HEADINGS.map((heading) => `## ${heading}`).join('\n')}`;
+${CONTINUATION_LEDGER_HEADINGS.join('\n')}`;
 
   return `${instructions}
 
@@ -423,7 +420,7 @@ export class CompactionService {
       apiKey: options.apiKey || process.env.BLADE_API_KEY,
       baseUrl: options.baseURL || process.env.BLADE_BASE_URL,
       model: options.modelName,
-      temperature: 0,
+      temperature: 0.3,
       maxOutputTokens: 8000, // 压缩输出限制
       timeout: 60000,
       provider: options.modelProvider ?? 'openai',

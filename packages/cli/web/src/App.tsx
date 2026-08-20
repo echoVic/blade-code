@@ -4,7 +4,6 @@ import { TaskAttention } from '@/components/tasks/TaskAttention';
 import { TaskHome } from '@/components/tasks/TaskHome';
 import { useT } from '@/i18n';
 import { projectPathOf } from '@/lib/projectIdentity';
-import { useAppStore } from '@/store/AppStore';
 import { useConfigStore } from '@/store/ConfigStore';
 import { useSettingsStore } from '@/store/SettingsStore';
 import { useSessionStore } from '@/store/session';
@@ -18,11 +17,6 @@ import {
 const ChatView = lazy(() =>
   import('@/components/chat/ChatView').then((module) => ({
     default: module.ChatView,
-  }))
-);
-const KanbanBoard = lazy(() =>
-  import('@/components/kanban/KanbanBoard').then((module) => ({
-    default: module.KanbanBoard,
   }))
 );
 
@@ -46,10 +40,6 @@ function App() {
   const selectedProjectPath = useSessionStore((state) => state.selectedProjectPath);
   const loadModels = useConfigStore((state) => state.loadModels);
   const loadSettings = useSettingsStore((state) => state.loadSettings);
-  const mainView = useAppStore((state) => state.mainView);
-  const setMainView = useAppStore((state) => state.setMainView);
-  const boardProjectPath = useAppStore((state) => state.boardProjectPath);
-  const setBoardProjectPath = useAppStore((state) => state.setBoardProjectPath);
 
   useEffect(() => {
     void subscribeToTaskEvents().catch((error) => {
@@ -65,17 +55,12 @@ function App() {
       void loadSettings();
       void loadModels();
       const intent = parseSessionNavigation(window.location.search);
-      setMainView(intent.view);
-      setBoardProjectPath(intent.view === 'board' ? intent.projectPath : null);
       const storedSessionRef = readStoredSessionRef();
-      const target =
-        intent.view === 'board'
+      const target = intent.hasSessionParam
+        ? intent.sessionRef
+        : intent.projectPath
           ? null
-          : intent.hasSessionParam
-            ? intent.sessionRef
-            : intent.projectPath
-              ? null
-              : storedSessionRef;
+          : storedSessionRef;
       const workspacePromise = Promise.all([
         loadTaskWorkspaceInfo(),
         loadBoundProjects(),
@@ -126,8 +111,6 @@ function App() {
     selectProject,
     selectSession,
     setError,
-    setBoardProjectPath,
-    setMainView,
     startTemporarySession,
   ]);
 
@@ -136,27 +119,12 @@ function App() {
     const currentSession = currentSessionRef
       ? findSessionByRef(sessions, currentSessionRef)
       : undefined;
-    syncSessionNavigation(
-      mainView === 'workspace' ? currentSessionRef : null,
-      mainView === 'board' ? boardProjectPath : selectedProjectPath,
-      {
-        displayProjectPath:
-          mainView === 'board'
-            ? boardProjectPath
-            : currentSession
-              ? projectPathOf(currentSession, selectedProjectPath)
-              : selectedProjectPath,
-        view: mainView,
-      }
-    );
-  }, [
-    boardProjectPath,
-    currentSessionRef,
-    isBootstrapped,
-    mainView,
-    selectedProjectPath,
-    sessions,
-  ]);
+    syncSessionNavigation(currentSessionRef, selectedProjectPath, {
+      displayProjectPath: currentSession
+        ? projectPathOf(currentSession, selectedProjectPath)
+        : selectedProjectPath,
+    });
+  }, [currentSessionRef, isBootstrapped, selectedProjectPath, sessions]);
 
   return (
     <>
@@ -166,16 +134,6 @@ function App() {
           <div className="flex h-full items-center justify-center font-mono text-[12px] text-[hsl(var(--deck-ink-faint))]">
             {t('app.restoring')}
           </div>
-        ) : mainView === 'board' ? (
-          <Suspense
-            fallback={
-              <div className="flex h-full items-center justify-center font-mono text-[12px] text-[hsl(var(--deck-ink-faint))]">
-                {t('app.restoring')}
-              </div>
-            }
-          >
-            <KanbanBoard />
-          </Suspense>
         ) : !currentSessionRef || isTemporarySession ? (
           <TaskHome />
         ) : (

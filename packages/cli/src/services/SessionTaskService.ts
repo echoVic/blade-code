@@ -2,8 +2,6 @@ import path from 'node:path';
 import type {
   SessionTaskDispatch,
   SessionTaskIsolation,
-  SessionTaskKind,
-  SessionTaskPriority,
   SessionTaskRetryRef,
   SessionTaskWorktree,
 } from '../context/types.js';
@@ -14,9 +12,6 @@ export interface CreateSessionTaskInput {
   sessionId: string;
   prompt: string;
   title?: string;
-  taskPriority?: SessionTaskPriority;
-  taskKind?: SessionTaskKind;
-  taskDueAt?: string;
   sourceProjectPath: string;
   isolation: SessionTaskIsolation;
   dispatch?: SessionTaskDispatch;
@@ -69,9 +64,6 @@ export class SessionTaskService {
         {
           title: input.title?.trim() || taskTitle(input.prompt),
           taskPromptSummary: taskPromptSummary(input.prompt),
-          taskPriority: input.taskPriority,
-          taskKind: input.taskKind,
-          taskDueAt: input.taskDueAt,
           taskDispatch: input.dispatch,
           taskModelId: input.dispatch?.modelId,
           selectedModelId: input.dispatch?.modelId,

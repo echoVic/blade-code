@@ -26,8 +26,6 @@ const TASK_STATUSES = new Set([
   'cancelled',
   'interrupted',
 ]);
-const TASK_PRIORITIES = new Set(['high', 'medium', 'low']);
-const TASK_KINDS = new Set(['feature', 'bug', 'maintenance', 'research']);
 
 function projectTaskDiffStat(value: unknown): Record<string, number> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
@@ -165,27 +163,15 @@ export const EventRoutes = () => {
           return;
         }
 
-        // Forward only board-safe metadata. Prompts and private execution
-        // details must stay out of the global cross-session feed.
+        // Session metadata updates (e.g. auto-derived titles) — forward the
+        // minimal payload so the sidebar can patch the session in place.
         if (event.type === 'session.updated') {
           const title = event.properties.title;
-          const taskPriority = event.properties.taskPriority;
-          const taskKind = event.properties.taskKind;
-          const taskDueAt = event.properties.taskDueAt;
-          const validTitle = typeof title === 'string' && Boolean(title.trim());
-          const validPriority = TASK_PRIORITIES.has(String(taskPriority));
-          const validKind = TASK_KINDS.has(String(taskKind));
-          const validDueAt =
-            taskDueAt === null ||
-            (typeof taskDueAt === 'string' && Number.isFinite(Date.parse(taskDueAt)));
-          if (!validTitle && !validPriority && !validKind && !validDueAt) return;
+          if (typeof title !== 'string' || !title.trim()) return;
           send(event.type, {
             sessionId: event.sessionId,
             projectPath: event.projectPath,
-            ...(validTitle ? { title } : {}),
-            ...(validPriority ? { taskPriority } : {}),
-            ...(validKind ? { taskKind } : {}),
-            ...(validDueAt ? { taskDueAt } : {}),
+            title,
           });
           return;
         }
@@ -236,10 +222,6 @@ export const EventRoutes = () => {
           1
         );
         const taskInFlight = projectInteger(event.properties.taskInFlight, 0);
-        const taskAdmissionPaused =
-          typeof event.properties.taskAdmissionPaused === 'boolean'
-            ? event.properties.taskAdmissionPaused
-            : undefined;
         send(event.type, {
           sessionId: event.sessionId,
           projectPath: event.projectPath,
@@ -267,7 +249,6 @@ export const EventRoutes = () => {
           ...(taskQueueDepth !== undefined ? { taskQueueDepth } : {}),
           ...(taskConcurrencyLimit !== undefined ? { taskConcurrencyLimit } : {}),
           ...(taskInFlight !== undefined ? { taskInFlight } : {}),
-          ...(taskAdmissionPaused !== undefined ? { taskAdmissionPaused } : {}),
         });
       });
 

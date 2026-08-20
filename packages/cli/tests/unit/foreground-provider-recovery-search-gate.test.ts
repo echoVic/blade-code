@@ -51,49 +51,4 @@ describe('foreground Provider recovery source gate', () => {
     expect(service).toContain('markProviderReplayBoundary(error)');
     expect(service).toContain('onRealChunk();');
   });
-
-  it('requires sticky raw PTY completion evidence in the release trajectory', () => {
-    const runner = source('../support/foregroundProviderRecoveryPtyRunner.ts');
-    const trajectory = source(
-      '../integration/real-api/foreground-provider-recovery-trajectory.test.ts'
-    );
-
-    expect(runner).toContain('finalMarkerSeen: finalMarkerLatch.seen');
-    expect(runner).toContain('secretSeen: secretLatch.seen');
-    expect(runner).not.toContain('recoveryBoundary');
-    expect(trajectory).toContain('createSplitPtyMarkerInstruction');
-    expect(trajectory).toContain(
-      'const secondaryPrompt = createSplitPtyMarkerInstruction(secondaryMarker)'
-    );
-    expect(trajectory).toContain(
-      'Secondary Provider recovery marker contaminated the prompt'
-    );
-    expect(trajectory).toContain(
-      'finalAssistantText(readSessionEvents(secondaryTranscriptPath)) ==='
-    );
-    expect(trajectory).toContain(
-      'expect(finalAssistantText(secondaryEvents)).toBe(secondaryMarker)'
-    );
-    const acpRunner = source('../support/foregroundProviderRecoveryAcpRunner.ts');
-    expect(acpRunner).toContain(
-      'finalAssistantText(readSessionEvents(secondaryTranscriptPath)) !=='
-    );
-    expect(trajectory).not.toContain('Reply with exactly ${secondaryMarker}');
-    expect(trajectory).not.toContain(
-      'secondaryTranscript.includes(input.secondaryMarker)'
-    );
-    expect(acpRunner).not.toContain(
-      'secondaryTranscript.includes(input.secondaryMarker)'
-    );
-    expect(trajectory).toContain('!isCompleteRawPtyMarkerEvidence(parsed)');
-    const ptyBranch = trajectory.indexOf(
-      "envName: 'BLADE_FOREGROUND_PROVIDER_RECOVERY_PTY_INPUT'"
-    );
-    const ptyTimeout = trajectory.indexOf('timeoutMs: 480_000', ptyBranch);
-    const webBranch = trajectory.indexOf('} else {', ptyBranch);
-    expect(ptyBranch).toBeGreaterThanOrEqual(0);
-    expect(ptyTimeout).toBeGreaterThan(ptyBranch);
-    expect(ptyTimeout).toBeLessThan(webBranch);
-    expect(trajectory).toContain('540_000');
-  });
 });

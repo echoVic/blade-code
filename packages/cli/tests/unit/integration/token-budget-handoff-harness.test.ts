@@ -15,15 +15,11 @@ import path from 'node:path';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { serializeCompactionReplacementMessages } from '../../../src/context/compactionCheckpoint.js';
 import {
-  projectTokenBudgetHandoffEvent,
   TOKEN_BUDGET_HANDOFF_TAG,
+  projectTokenBudgetHandoffEvent,
 } from '../../../src/context/TokenBudgetHandoff.js';
 import type { SessionEvent } from '../../../src/context/types.js';
 import type { Message } from '../../../src/services/ChatServiceInterface.js';
-import {
-  createTokenBudgetHandoffFixture,
-  type TokenBudgetHandoffFixture,
-} from '../../integration/real-api/tokenBudgetHandoffFixture.js';
 import {
   assertAndProjectSurfaceEvidence,
   assertContinuationLedger,
@@ -31,9 +27,19 @@ import {
   assertTokenBudgetRequestSequence,
   assertTokenBudgetTranscript,
   BoundedStringSink,
-  canonicalStatusClauseDiagnostic,
   parseContinuationLedger,
 } from '../../integration/real-api/tokenBudgetHandoffHarness.js';
+import {
+  createTokenBudgetHandoffFixture,
+  type TokenBudgetHandoffFixture,
+} from '../../integration/real-api/tokenBudgetHandoffFixture.js';
+import {
+  inspectTokenBudgetRequest,
+  startTokenBudgetHandoffProxy,
+  type TokenBudgetProxyEvidence,
+  type ProxyWritableResponse,
+  writeWithBackpressure,
+} from '../../support/tokenBudgetHandoffProxy.js';
 import { parseTokenBudgetHandoffAcpEvidence } from '../../support/tokenBudgetHandoffAcpDriver.js';
 import {
   parseTokenBudgetHandoffProjectionEvidence,
@@ -41,19 +47,8 @@ import {
   TOKEN_BUDGET_PROJECTION_EVIDENCE_PREFIX,
   TokenBudgetHandoffOutputSink,
 } from '../../support/tokenBudgetHandoffHeadlessDriver.js';
-import {
-  inspectTokenBudgetRequest,
-  type ProxyWritableResponse,
-  startTokenBudgetHandoffProxy,
-  type TokenBudgetProxyEvidence,
-  writeWithBackpressure,
-} from '../../support/tokenBudgetHandoffProxy.js';
 import { parseTokenBudgetHandoffPtyEvidence } from '../../support/tokenBudgetHandoffPtyDriver.js';
-import {
-  formatTokenBudgetWebFinalDiagnostic,
-  formatTokenBudgetWebProxyDiagnostic,
-  parseTokenBudgetHandoffWebEvidence,
-} from '../../support/tokenBudgetHandoffWebDriver.js';
+import { parseTokenBudgetHandoffWebEvidence } from '../../support/tokenBudgetHandoffWebDriver.js';
 
 vi.unmock('http');
 vi.unmock('node:http');
@@ -342,15 +337,15 @@ function transcript(
     '# Decisions and rationale',
     'preserve',
     '# Workspace mutations',
-    `- ${fixture.sentinels.mutation} status=applied`,
+    `- ${fixture.sentinels.mutation}`,
     '# Verification evidence',
-    `- ${fixture.sentinels.failedVerification} status=failed`,
+    `- failed ${fixture.sentinels.failedVerification}`,
     '# Active tasks and background work',
     'none',
     '# Open risks or blockers',
     'none',
     '# Exact next action',
-    `- ${fixture.sentinels.pendingAction} status=pending`,
+    `- pending ${fixture.sentinels.pendingAction}`,
   ].join('\n');
   const handoff = {
     ...eventBase('handoff-event', 'token_budget_handoff_recorded'),
@@ -514,9 +509,6 @@ describe('token-budget handoff deterministic qualification foundation', () => {
             kind: 'task',
             ordinal: 1,
             targetPromptTokens: 70_000,
-            upstreamStatus: 201,
-            responseKind: 'json',
-            usageShape: 'root-nonempty',
             usageRewritten: true,
           },
           {
@@ -577,11 +569,6 @@ describe('token-budget handoff deterministic qualification foundation', () => {
       expect(text).toContain('"total_tokens":70003');
       expect(text.endsWith('data: [DONE]\n\n')).toBe(true);
       expect(proxy.evidence().requests[0]).toMatchObject({ usageRewritten: true });
-      expect(proxy.evidence().requests[0]).toMatchObject({
-        upstreamStatus: 200,
-        responseKind: 'sse',
-        usageShape: 'root-empty',
-      });
     } finally {
       await proxy.close();
     }
@@ -650,7 +637,6 @@ describe('token-budget handoff deterministic qualification foundation', () => {
       expect(response.status).toBe(502);
       expect(await response.text()).not.toContain('prompt_tokens');
       expect(proxy.evidence().requests[0]).toMatchObject({
-        usageShape: 'invalid',
         usageRewritten: false,
       });
     } finally {
@@ -716,45 +702,6 @@ describe('token-budget handoff deterministic qualification foundation', () => {
         '"choices":[{"delta":{"content":"real"}}],"usage":{"prompt_tokens":5'
       );
       expect(text).toContain('"choices":[],"usage":{"prompt_tokens":70000');
-    } finally {
-      await proxy.close();
-    }
-  });
-
-  it('rewrites root usage on a terminal nonempty SSE choice only', async () => {
-    const nonterminal =
-      'data: {"choices":[{"delta":{"content":"real"},"finish_reason":null}],' +
-      '"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}}\n\n';
-    const terminal =
-      'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}],' +
-      '"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15}}\n\n';
-    const upstreamBaseURL = await startFragmentedSseUpstream([
-      nonterminal,
-      terminal,
-      'data: [DONE]\n\n',
-    ]);
-    const proxy = await startTokenBudgetHandoffProxy(upstreamBaseURL, {
-      handoffPromptTokens: 70_000,
-      compactionPromptTokens: 80_000,
-      markerTag: TOKEN_BUDGET_HANDOFF_TAG,
-    });
-    try {
-      const response = await fetch(`${proxy.baseURL}/chat/completions`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(taskBody('terminal usage choice')),
-      });
-      const text = await response.text();
-
-      expect(response.status).toBe(200);
-      expect(text).toContain('"finish_reason":null}],"usage":{"prompt_tokens":5');
-      expect(text).toContain(
-        '"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":70000'
-      );
-      expect(proxy.evidence().requests[0]).toMatchObject({
-        usageShape: 'root-terminal',
-        usageRewritten: true,
-      });
     } finally {
       await proxy.close();
     }
@@ -989,14 +936,6 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     writeFileSync(created.targetPath, created.targetContent);
     expect(spawnSync(created.passingCommand, { shell: true }).status).toBe(0);
 
-    const boundaryIndexes = [1, 2, 3, 4].map((boundary) => {
-      const label = `Boundary ${boundary}`;
-      expect(created.prompt.split(label)).toHaveLength(2);
-      return created.prompt.indexOf(label);
-    });
-    expect(boundaryIndexes).toEqual([...boundaryIndexes].sort((a, b) => a - b));
-    expect(boundaryIndexes.every((index) => index >= 0)).toBe(true);
-
     const failIndex = created.prompt.indexOf(created.failingCommand);
     const writeIndex = created.prompt.indexOf(created.targetPath);
     const passIndex = created.prompt.lastIndexOf(created.passingCommand);
@@ -1004,37 +943,14 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     expect(writeIndex).toBeGreaterThan(failIndex);
     expect(passIndex).toBeGreaterThan(writeIndex);
     expect(created.prompt).toContain(created.sentinels.pendingAction);
-    expect(created.prompt).toContain(`${created.sentinels.mutation} status=applied`);
-    expect(created.prompt).toContain(
-      `${created.sentinels.failedVerification} status=failed`
-    );
-    expect(created.prompt).toContain(
-      `${created.sentinels.pendingAction} status=pending`
-    );
-    expect(created.prompt).toContain(
-      `EXACT CONTINUATION RECORD [Workspace mutations] :: ${created.sentinels.mutation} status=applied`
-    );
-    expect(created.prompt).toContain(
-      `EXACT CONTINUATION RECORD [Verification evidence] :: ${created.sentinels.failedVerification} status=failed`
-    );
-    expect(created.prompt).toContain(
-      `EXACT CONTINUATION RECORD [Exact next action] :: ${created.sentinels.pendingAction} status=pending`
-    );
-    expect(created.prompt).not.toContain('nowhere else');
     expect(created.prompt).not.toContain(created.finalMarker);
-    const partA = created.prompt.match(/^PART_A=([A-Za-z0-9_-]+)$/m)?.[1];
-    const partB = created.prompt.match(/^PART_B=([A-Za-z0-9_-]+)$/m)?.[1];
-    expect(`${partA}${partB}`).toBe(created.finalMarker);
+    const midpoint = Math.floor(created.finalMarker.length / 2);
     expect(created.prompt).toContain(
-      `exactly ${created.finalMarker.length} ASCII characters`
+      JSON.stringify(created.finalMarker.slice(0, midpoint))
     );
     expect(created.prompt).toContain(
-      `match ^[A-Za-z0-9_-]{${created.finalMarker.length}}$`
+      JSON.stringify(created.finalMarker.slice(midpoint))
     );
-    expect(created.prompt.endsWith(`PART_B=${partB}`)).toBe(true);
-    expect(created.prompt.split(created.failingCommand)).toHaveLength(3);
-    expect(created.prompt.match(/call Bash exactly once/g)).toHaveLength(2);
-    expect(created.prompt.match(/call Write exactly once/g)).toHaveLength(1);
   });
 
   it('rejects fixture nonces outside the high-entropy sentinel contract', async () => {
@@ -1077,11 +993,11 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     const sections = parseContinuationLedger(
       '## Objective and constraints\n- continue\n' +
         '## Decisions and rationale\n- preserve\n' +
-        '### WORKSPACE   MUTATIONS\n- MUTATION_7f31ABCDEF12 status=applied\n' +
-        '## Verification Evidence\n* FAILED_19acABCDEF12 status=failed\n' +
+        '### WORKSPACE   MUTATIONS\n- MUTATION_7f31ABCDEF12\n' +
+        '## Verification Evidence\n* failed FAILED_19acABCDEF12\n' +
         '## Active tasks and background work\n- none\n' +
         '## Open risks or blockers\n- none\n' +
-        '#### Exact Next Action\n1. PENDING_a8d2ABCDEF12 status=pending'
+        '#### Exact Next Action\n1. pending PENDING_a8d2ABCDEF12'
     );
     expect(sections.workspaceMutations).toContain('MUTATION_7f31ABCDEF12');
     expect(sections.verificationEvidence).toContain('FAILED_19acABCDEF12');
@@ -1102,12 +1018,12 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     ).toThrow('mutation sentinel');
   });
 
-  it('requires canonical status clauses for execution-frontier identifiers', () => {
+  it('rejects ledgers that report pending work complete or failed checks passing', () => {
     const completedPending = parseContinuationLedger(
       '## Objective and constraints\ncontinue\n' +
         '## Decisions and rationale\npreserve\n' +
-        '## Workspace mutations\nMUTATION_7f31ABCDEF12 status=applied\n' +
-        '## Verification evidence\nFAILED_19acABCDEF12 status=failed\n' +
+        '## Workspace mutations\nMUTATION_7f31ABCDEF12\n' +
+        '## Verification evidence\nfailed FAILED_19acABCDEF12\n' +
         '## Active tasks and background work\nnone\n' +
         '## Open risks or blockers\nnone\n' +
         '## Exact next action\ncompleted PENDING_a8d2ABCDEF12'
@@ -1118,16 +1034,16 @@ describe('token-budget handoff deterministic qualification foundation', () => {
         failedVerification: 'FAILED_19acABCDEF12',
         pendingAction: 'PENDING_a8d2ABCDEF12',
       })
-    ).toThrow('pending action must use one canonical status clause');
+    ).toThrow('pending action sentinel');
 
     const passedFailure = parseContinuationLedger(
       '## Objective and constraints\ncontinue\n' +
         '## Decisions and rationale\npreserve\n' +
-        '## Workspace mutations\nMUTATION_7f31ABCDEF12 status=applied\n' +
+        '## Workspace mutations\nMUTATION_7f31ABCDEF12\n' +
         '## Verification evidence\npassed FAILED_19acABCDEF12\n' +
         '## Active tasks and background work\nnone\n' +
         '## Open risks or blockers\nnone\n' +
-        '## Exact next action\nPENDING_a8d2ABCDEF12 status=pending'
+        '## Exact next action\npending PENDING_a8d2ABCDEF12'
     );
     expect(() =>
       assertContinuationLedger(passedFailure, {
@@ -1135,50 +1051,16 @@ describe('token-budget handoff deterministic qualification foundation', () => {
         failedVerification: 'FAILED_19acABCDEF12',
         pendingAction: 'PENDING_a8d2ABCDEF12',
       })
-    ).toThrow('failed verification must use one canonical status clause');
-
-    const suffixPassedFailure = parseContinuationLedger(
-      '## Objective and constraints\ncontinue\n' +
-        '## Decisions and rationale\npreserve\n' +
-        '## Workspace mutations\nMUTATION_7f31ABCDEF12 status=applied\n' +
-        '## Verification evidence\nFAILED_19acABCDEF12 was successful\n' +
-        '## Active tasks and background work\nnone\n' +
-        '## Open risks or blockers\nnone\n' +
-        '## Exact next action\nPENDING_a8d2ABCDEF12 status=pending'
-    );
-    expect(() =>
-      assertContinuationLedger(suffixPassedFailure, {
-        mutation: 'MUTATION_7f31ABCDEF12',
-        failedVerification: 'FAILED_19acABCDEF12',
-        pendingAction: 'PENDING_a8d2ABCDEF12',
-      })
-    ).toThrow('failed verification must use one canonical status clause');
-
-    const observedExpectedFailure = parseContinuationLedger(
-      '## Objective and constraints\ncontinue\n' +
-        '## Decisions and rationale\npreserve\n' +
-        '## Workspace mutations\nMUTATION_7f31ABCDEF12 status=applied\n' +
-        '## Verification evidence\nsuccessfully observed expected failure FAILED_19acABCDEF12\n' +
-        '## Active tasks and background work\nnone\n' +
-        '## Open risks or blockers\nnone\n' +
-        '## Exact next action\nPENDING_a8d2ABCDEF12 status=pending'
-    );
-    expect(() =>
-      assertContinuationLedger(observedExpectedFailure, {
-        mutation: 'MUTATION_7f31ABCDEF12',
-        failedVerification: 'FAILED_19acABCDEF12',
-        pendingAction: 'PENDING_a8d2ABCDEF12',
-      })
-    ).toThrow('failed verification must use one canonical status clause');
+    ).toThrow('failed verification sentinel');
 
     const wrappedContradiction = parseContinuationLedger(
       '## Objective and constraints\ncontinue\n' +
         '## Decisions and rationale\npreserve\n' +
-        '## Workspace mutations\nMUTATION_7f31ABCDEF12 status=applied\n' +
-        '## Verification evidence\nFAILED_19acABCDEF12 status=failed\n' +
+        '## Workspace mutations\nMUTATION_7f31ABCDEF12\n' +
+        '## Verification evidence\nfailed FAILED_19acABCDEF12\n' +
         '## Active tasks and background work\nnone\n' +
         '## Open risks or blockers\nnone\n' +
-        '## Exact next action\n- PENDING_a8d2ABCDEF12 status=pending\n' +
+        '## Exact next action\n- PENDING_a8d2ABCDEF12\n' +
         '  This pending action is now completed'
     );
     expect(() =>
@@ -1187,49 +1069,18 @@ describe('token-budget handoff deterministic qualification foundation', () => {
         failedVerification: 'FAILED_19acABCDEF12',
         pendingAction: 'PENDING_a8d2ABCDEF12',
       })
-    ).toThrow('pending action must use one canonical status clause');
-  });
-
-  it('reports only bounded structural facts for noncanonical ledger clauses', () => {
-    expect(
-      canonicalStatusClauseDiagnostic(
-        'MUTATION_example status=applied\n' +
-          'The mutation MUTATION_example remains relevant',
-        'MUTATION_example',
-        'applied'
-      )
-    ).toBe(
-      'occurrences=2;canonical=1;starts=1;status=1;extra=1;' +
-        'suffix_none=1;punctuation=0;parenthetical=0;prose=0;max_suffix=0'
-    );
-    expect(
-      canonicalStatusClauseDiagnostic(
-        '**MUTATION_example status=applied**',
-        'MUTATION_example',
-        'applied'
-      )
-    ).toBe(
-      'occurrences=1;canonical=0;starts=0;status=1;extra=1;' +
-        'suffix_none=0;punctuation=0;parenthetical=0;prose=0;max_suffix=0'
-    );
-    expect(
-      canonicalStatusClauseDiagnostic(
-        'PENDING_example status=pending (run tests next)',
-        'PENDING_example',
-        'pending'
-      )
-    ).toContain('parenthetical=1;prose=0;max_suffix=9_32');
+    ).toThrow('pending action sentinel');
   });
 
   it('does not attach a contradictory status from a separate ledger item', () => {
     const independentStatus = parseContinuationLedger(
       '## Objective and constraints\ncontinue\n' +
         '## Decisions and rationale\npreserve\n' +
-        '## Workspace mutations\nMUTATION_7f31ABCDEF12 status=applied\n' +
-        '## Verification evidence\nFAILED_19acABCDEF12 status=failed\n' +
+        '## Workspace mutations\nMUTATION_7f31ABCDEF12\n' +
+        '## Verification evidence\nfailed FAILED_19acABCDEF12\n' +
         '## Active tasks and background work\nnone\n' +
         '## Open risks or blockers\nnone\n' +
-        '## Exact next action\n- PENDING_a8d2ABCDEF12 status=pending\n' +
+        '## Exact next action\n- PENDING_a8d2ABCDEF12\n' +
         '- completed unrelated cleanup'
     );
 
@@ -1242,186 +1093,12 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     ).not.toThrow();
   });
 
-  it('allows narrative sentinel citations outside their authoritative sections', () => {
-    const sections = parseContinuationLedger(
-      '## Objective and constraints\nPreserve MUTATION_7f31ABCDEF12 while continuing.\n' +
-        '## Decisions and rationale\nSuccessfully observed expected failure FAILED_19acABCDEF12.\n' +
-        '## Workspace mutations\nMUTATION_7f31ABCDEF12 status=applied\n' +
-        '## Verification evidence\nFAILED_19acABCDEF12 status=failed\n' +
-        '## Active tasks and background work\nPENDING_a8d2ABCDEF12 remains queued.\n' +
-        '## Open risks or blockers\nnone\n' +
-        '## Exact next action\nPENDING_a8d2ABCDEF12 status=pending'
-    );
-
-    expect(() =>
-      assertContinuationLedger(sections, {
-        mutation: 'MUTATION_7f31ABCDEF12',
-        failedVerification: 'FAILED_19acABCDEF12',
-        pendingAction: 'PENDING_a8d2ABCDEF12',
-      })
-    ).not.toThrow();
-  });
-
-  it('rejects explicit contradictory statuses outside authoritative sections', () => {
-    const completedPending = parseContinuationLedger(
-      '## Objective and constraints\ncontinue\n' +
-        '## Decisions and rationale\npreserve\n' +
-        '## Workspace mutations\n- MUTATION_7f31ABCDEF12 status=applied\n' +
-        '- PENDING_a8d2ABCDEF12 status=completed\n' +
-        '## Verification evidence\nFAILED_19acABCDEF12 status=failed\n' +
-        '## Active tasks and background work\nnone\n' +
-        '## Open risks or blockers\nnone\n' +
-        '## Exact next action\nPENDING_a8d2ABCDEF12 status=pending'
-    );
-    expect(() =>
-      assertContinuationLedger(completedPending, {
-        mutation: 'MUTATION_7f31ABCDEF12',
-        failedVerification: 'FAILED_19acABCDEF12',
-        pendingAction: 'PENDING_a8d2ABCDEF12',
-      })
-    ).toThrow('pending action is marked completed');
-
-    const passedFailure = parseContinuationLedger(
-      '## Objective and constraints\nFAILED_19acABCDEF12 status=passed\n' +
-        '## Decisions and rationale\npreserve\n' +
-        '## Workspace mutations\nMUTATION_7f31ABCDEF12 status=applied\n' +
-        '## Verification evidence\nFAILED_19acABCDEF12 status=failed\n' +
-        '## Active tasks and background work\nnone\n' +
-        '## Open risks or blockers\nnone\n' +
-        '## Exact next action\nPENDING_a8d2ABCDEF12 status=pending'
-    );
-    expect(() =>
-      assertContinuationLedger(passedFailure, {
-        mutation: 'MUTATION_7f31ABCDEF12',
-        failedVerification: 'FAILED_19acABCDEF12',
-        pendingAction: 'PENDING_a8d2ABCDEF12',
-      })
-    ).toThrow('failed verification is marked passing');
-
-    const proseContradictions = parseContinuationLedger(
-      '## Objective and constraints\nThe next action PENDING_a8d2ABCDEF12 is completed.\n' +
-        '## Decisions and rationale\nVerification for FAILED_19acABCDEF12 passed.\n' +
-        '## Workspace mutations\nMUTATION_7f31ABCDEF12 status=applied\n' +
-        '## Verification evidence\nFAILED_19acABCDEF12 status=failed\n' +
-        '## Active tasks and background work\nnone\n' +
-        '## Open risks or blockers\nnone\n' +
-        '## Exact next action\nPENDING_a8d2ABCDEF12 status=pending'
-    );
-    expect(() =>
-      assertContinuationLedger(proseContradictions, {
-        mutation: 'MUTATION_7f31ABCDEF12',
-        failedVerification: 'FAILED_19acABCDEF12',
-        pendingAction: 'PENDING_a8d2ABCDEF12',
-      })
-    ).toThrow('pending action is marked completed');
-
-    const prosePassedFailure = parseContinuationLedger(
-      '## Objective and constraints\ncontinue\n' +
-        '## Decisions and rationale\nVerification for FAILED_19acABCDEF12 passed.\n' +
-        '## Workspace mutations\nMUTATION_7f31ABCDEF12 status=applied\n' +
-        '## Verification evidence\nFAILED_19acABCDEF12 status=failed\n' +
-        '## Active tasks and background work\nnone\n' +
-        '## Open risks or blockers\nnone\n' +
-        '## Exact next action\nPENDING_a8d2ABCDEF12 status=pending'
-    );
-    expect(() =>
-      assertContinuationLedger(prosePassedFailure, {
-        mutation: 'MUTATION_7f31ABCDEF12',
-        failedVerification: 'FAILED_19acABCDEF12',
-        pendingAction: 'PENDING_a8d2ABCDEF12',
-      })
-    ).toThrow('failed verification is marked passing');
-  });
-
-  it('keeps bounded stage diagnostics in PTY and Web production drivers', () => {
-    const ptyDriver = readFileSync(
-      new URL('../../support/tokenBudgetHandoffPtyDriver.ts', import.meta.url),
-      'utf8'
-    );
-    const ptyRunner = readFileSync(
-      new URL('../../support/tokenBudgetHandoffPtyRunner.ts', import.meta.url),
-      'utf8'
-    );
-    const webDriver = readFileSync(
-      new URL('../../support/tokenBudgetHandoffWebDriver.ts', import.meta.url),
-      'utf8'
-    );
-
-    expect(ptyRunner).toContain('failureStage');
-    expect(ptyRunner).toContain('failureCode');
-    expect(ptyDriver).toContain('COMPOSER_FAILURE_CODE_PATTERN');
-    expect(ptyDriver).toContain("return 'transport:timeout'");
-    expect(ptyDriver).toContain('Token-budget PTY runner failed at');
-    expect(webDriver).toContain('Token-budget Web production driver failed at');
-    expect(webDriver).toContain('const deadline = Date.now() + timeoutMs - 10_000');
-    expect(webDriver).toContain('remainingStageBudget(deadline');
-    expect(webDriver).toContain('[data-blade-permission-option="yolo"]');
-    expect(webDriver).toContain('[data-blade-yolo-confirm]');
-    expect(webDriver).toContain(
-      "getAttribute('data-blade-permission-mode') === 'yolo'"
-    );
-    expect(webDriver).not.toContain(
-      'marker: input.fixture.finalMarker,\n      timeoutMs,'
-    );
-  });
-
-  it('bounds Web final-timeout diagnostics to structural facts', () => {
-    expect(
-      formatTokenBudgetWebFinalDiagnostic({
-        status: 'running',
-        providerRequests: 4,
-        publicFinalSeen: false,
-        domFinalSeen: false,
-      })
-    ).toBe('status_running:requests_4:history_0:dom_0');
-    expect(
-      formatTokenBudgetWebFinalDiagnostic({
-        status: 'provider secret text',
-        providerRequests: 99,
-        publicFinalSeen: true,
-        domFinalSeen: false,
-      })
-    ).toBe('status_unknown:requests_overflow:history_1:dom_0');
-    expect(
-      formatTokenBudgetWebFinalDiagnostic({
-        status: 'completed',
-        providerRequests: Number.NaN,
-        publicFinalSeen: true,
-        domFinalSeen: true,
-      })
-    ).toBe('status_completed:requests_invalid:history_1:dom_1');
-  });
-
-  it('bounds Web proxy diagnostics to the first request shape', () => {
-    expect(
-      formatTokenBudgetWebProxyDiagnostic({
-        maxInFlight: 1,
-        requests: [
-          {
-            ordinal: 1,
-            kind: 'task',
-            markerOccurrences: 0,
-            bodyBytes: 512,
-            bodySha256: 'a'.repeat(64),
-            upstreamStatus: 200,
-            responseKind: 'sse',
-            usageShape: 'root-terminal',
-            usageRewritten: true,
-          },
-        ],
-      })
-    ).toBe('first_task:s200:sse:root-terminal:rewritten_1:inflight_1');
-    expect(formatTokenBudgetWebProxyDiagnostic({ maxInFlight: 99, requests: [] })).toBe(
-      'first_none:s0:unknown:unknown:rewritten_0:inflight_overflow'
-    );
-  });
-
   it('rejects ledgers missing any required continuation section', () => {
     const sections = parseContinuationLedger(
       '## Objective and constraints\ncontinue\n' +
         '## Decisions and rationale\npreserve\n' +
-        '## Workspace mutations\nMUTATION_7f31ABCDEF12 status=applied\n' +
-        '## Verification evidence\nFAILED_19acABCDEF12 status=failed\n' +
+        '## Workspace mutations\nMUTATION_7f31ABCDEF12\n' +
+        '## Verification evidence\nfailed FAILED_19acABCDEF12\n' +
         '## Active tasks and background work\nnone\n' +
         '## Open risks or blockers\nnone'
     );
@@ -1434,7 +1111,7 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     ).toThrow('required section');
   });
 
-  it('rejects out-of-order headings and sentinels absent from authoritative sections', () => {
+  it('rejects out-of-order headings and sentinels copied into wrong sections', () => {
     expect(() =>
       parseContinuationLedger(
         '## Decisions and rationale\npreserve\n' +
@@ -1443,18 +1120,18 @@ describe('token-budget handoff deterministic qualification foundation', () => {
           '## Verification evidence\nfailed FAILED_19acABCDEF12\n' +
           '## Active tasks and background work\nnone\n' +
           '## Open risks or blockers\nnone\n' +
-          '## Exact next action\nPENDING_a8d2ABCDEF12 status=pending'
+          '## Exact next action\npending PENDING_a8d2ABCDEF12'
       )
     ).toThrow('order');
 
     const wrongSection = parseContinuationLedger(
       '## Objective and constraints\ncontinue\n' +
         '## Decisions and rationale\npreserve\n' +
-        '## Workspace mutations\nMUTATION_7f31ABCDEF12 status=applied\n' +
-        '## Verification evidence\nFAILED_19acABCDEF12 status=failed\n' +
-        '## Active tasks and background work\nPENDING_a8d2ABCDEF12 status=pending\n' +
+        '## Workspace mutations\nMUTATION_7f31ABCDEF12\n' +
+        '## Verification evidence\nfailed FAILED_19acABCDEF12\n' +
+        '## Active tasks and background work\nPENDING_a8d2ABCDEF12\n' +
         '## Open risks or blockers\nnone\n' +
-        '## Exact next action\ncontinue'
+        '## Exact next action\npending PENDING_a8d2ABCDEF12'
     );
     expect(() =>
       assertContinuationLedger(wrongSection, {
@@ -1463,23 +1140,6 @@ describe('token-budget handoff deterministic qualification foundation', () => {
         pendingAction: 'PENDING_a8d2ABCDEF12',
       })
     ).toThrow('pending action sentinel');
-
-    const mutationInWrongSection = parseContinuationLedger(
-      '## Objective and constraints\ncontinue\n' +
-        '## Decisions and rationale\npreserve\n' +
-        '## Workspace mutations\nnone\n' +
-        '## Verification evidence\nMUTATION_7f31ABCDEF12 status=applied\n' +
-        '## Active tasks and background work\nnone\n' +
-        '## Open risks or blockers\nnone\n' +
-        '## Exact next action\nMUTATION_7f31ABCDEF12 status=pending'
-    );
-    expect(() =>
-      assertContinuationLedger(mutationInWrongSection, {
-        mutation: 'MUTATION_7f31ABCDEF12',
-        failedVerification: 'MUTATION_7f31ABCDEF12',
-        pendingAction: 'MUTATION_7f31ABCDEF12',
-      })
-    ).toThrow('mutation sentinel');
   });
 
   it('validates the exact structural Provider request sequence', () => {
@@ -1535,17 +1195,6 @@ describe('token-budget handoff deterministic qualification foundation', () => {
       compactionPromptTokens: 80_000,
     };
     expect(() => assertTokenBudgetRequestSequence(evidence, targets)).not.toThrow();
-    expect(() =>
-      assertTokenBudgetRequestSequence(
-        { ...evidence, requests: evidence.requests.slice(0, 4) },
-        targets
-      )
-    ).toThrow(
-      'count=4; sequence=1:task:m0:r1:s0:kunknown:uunknown,' +
-        '2:task:m1:r1:s0:kunknown:uunknown,' +
-        '3:compaction:m0:r0:s0:kunknown:uunknown,' +
-        '4:task:m0:r0:s0:kunknown:uunknown'
-    );
     expect(() =>
       assertTokenBudgetRequestSequence(
         {

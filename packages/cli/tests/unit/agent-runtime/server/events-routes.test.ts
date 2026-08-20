@@ -61,25 +61,6 @@ describe('EventRoutes global task feed', () => {
 
       Bus.publish(
         { sessionId: 'session-1', projectPath: '/workspace/a' },
-        'session.updated',
-        {
-          title: 'Board task',
-          taskPriority: 'high',
-          taskKind: 'bug',
-          taskDueAt: '2026-08-21T09:30:00.000Z',
-          taskPromptSummary: 'private task prompt',
-        }
-      );
-      const updatedEvent = await readSseEvent(reader, decoder);
-      expect(updatedEvent).toContain('"type":"session.updated"');
-      expect(updatedEvent).toContain('"title":"Board task"');
-      expect(updatedEvent).toContain('"taskPriority":"high"');
-      expect(updatedEvent).toContain('"taskKind":"bug"');
-      expect(updatedEvent).toContain('"taskDueAt":"2026-08-21T09:30:00.000Z"');
-      expect(updatedEvent).not.toContain('private task prompt');
-
-      Bus.publish(
-        { sessionId: 'session-1', projectPath: '/workspace/a' },
         'message.created',
         { content: 'private prompt' }
       );
@@ -151,7 +132,6 @@ describe('EventRoutes global task feed', () => {
           taskQueueDepth: 4,
           taskConcurrencyLimit: 3,
           taskInFlight: 1,
-          taskAdmissionPaused: true,
           prompt: 'private prompt in task event',
           arguments: { secret: 'private task arguments' },
         }
@@ -169,7 +149,6 @@ describe('EventRoutes global task feed', () => {
       expect(taskEvent).toContain('"taskQueueDepth":4');
       expect(taskEvent).toContain('"taskConcurrencyLimit":3');
       expect(taskEvent).toContain('"taskInFlight":1');
-      expect(taskEvent).toContain('"taskAdmissionPaused":true');
       expect(taskEvent).not.toContain('private prompt');
       expect(taskEvent).not.toContain('private tool arguments');
       expect(taskEvent).not.toContain('private task arguments');
