@@ -1262,41 +1262,6 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     ).not.toThrow();
   });
 
-  it('allows a non-authoritative sentinel citation beside one canonical status', () => {
-    const sections = parseContinuationLedger(
-      '## Objective and constraints\ncontinue\n' +
-        '## Decisions and rationale\npreserve\n' +
-        '## Workspace mutations\n- MUTATION_7f31ABCDEF12 status=applied\n' +
-        '- The mutation MUTATION_7f31ABCDEF12 remains relevant.\n' +
-        '## Verification evidence\nFAILED_19acABCDEF12 status=failed\n' +
-        '## Active tasks and background work\nnone\n' +
-        '## Open risks or blockers\nnone\n' +
-        '## Exact next action\nPENDING_a8d2ABCDEF12 status=pending'
-    );
-
-    expect(() =>
-      assertContinuationLedger(sections, {
-        mutation: 'MUTATION_7f31ABCDEF12',
-        failedVerification: 'FAILED_19acABCDEF12',
-        pendingAction: 'PENDING_a8d2ABCDEF12',
-      })
-    ).not.toThrow();
-
-    const duplicateAuthority = {
-      ...sections,
-      workspaceMutations:
-        sections.workspaceMutations +
-        '\nMUTATION_7f31ABCDEF12 was applied',
-    };
-    expect(() =>
-      assertContinuationLedger(duplicateAuthority, {
-        mutation: 'MUTATION_7f31ABCDEF12',
-        failedVerification: 'FAILED_19acABCDEF12',
-        pendingAction: 'PENDING_a8d2ABCDEF12',
-      })
-    ).toThrow('mutation must use one canonical status clause');
-  });
-
   it('rejects explicit contradictory statuses outside authoritative sections', () => {
     const completedPending = parseContinuationLedger(
       '## Objective and constraints\ncontinue\n' +

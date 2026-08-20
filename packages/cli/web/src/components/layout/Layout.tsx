@@ -1,3 +1,5 @@
+import { FileCode, GitBranch, Menu, RotateCcw } from 'lucide-react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { RewindDialog } from '@/components/chat/RewindDialog';
 import { CapacityMeter } from '@/components/tasks/CapacityMeter';
 import { Button } from '@/components/ui/button';
@@ -8,8 +10,6 @@ import { sessionService } from '@/services';
 import { useAppStore } from '@/store/AppStore';
 import { useSessionStore } from '@/store/session';
 import { sameSessionRef, sessionRefKey } from '@/store/session/sessionIdentity';
-import { FileCode, GitBranch, Menu, RotateCcw } from 'lucide-react';
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Sidebar } from './Sidebar';
 
 interface LayoutProps {
@@ -69,6 +69,7 @@ export function Layout({ children }: LayoutProps) {
     openFilePreview,
     previewRequestId,
     setSidebarOpen,
+    mainView,
   } = useAppStore();
 
   useEffect(() => {
@@ -186,14 +187,20 @@ export function Layout({ children }: LayoutProps) {
   };
 
   const currentPath = useMemo(() => {
-    if (!currentSessionId || isTemporarySession) {
+    if (mainView === 'board' || !currentSessionId || isTemporarySession) {
       return selectedProjectPath ? formatPath(selectedProjectPath) : null;
     }
     if (!currentSession?.projectPath) return null;
     return formatPath(
       currentSession.taskSourceProjectPath || currentSession.projectPath
     );
-  }, [currentSessionId, currentSession, isTemporarySession, selectedProjectPath]);
+  }, [
+    currentSessionId,
+    currentSession,
+    isTemporarySession,
+    mainView,
+    selectedProjectPath,
+  ]);
 
   const pathSegments = useMemo(() => {
     if (!currentPath) return [] as string[];
@@ -224,10 +231,13 @@ export function Layout({ children }: LayoutProps) {
 
   const admission = taskWorkspaceInfo?.taskAdmission;
   const executionWorkspacePath =
-    currentWorkspacePath ?? selectedProjectPath ?? taskWorkspaceInfo?.cwd ?? null;
-  const previewWorkspaceKey = currentSessionRef
-    ? sessionRefKey(currentSessionRef)
-    : `project:${selectedProjectPath ?? 'none'}`;
+    mainView === 'board'
+      ? (selectedProjectPath ?? taskWorkspaceInfo?.cwd ?? null)
+      : (currentWorkspacePath ?? selectedProjectPath ?? taskWorkspaceInfo?.cwd ?? null);
+  const previewWorkspaceKey =
+    currentSessionRef && mainView === 'workspace'
+      ? sessionRefKey(currentSessionRef)
+      : `project:${selectedProjectPath ?? 'none'}`;
   const previewModalOpen = isFilePreviewOpen && isPreviewModalViewport;
 
   return (
@@ -367,7 +377,12 @@ export function Layout({ children }: LayoutProps) {
                 size="icon"
                 aria-label={t('layout.action.rewind')}
                 title={t('layout.action.rewind')}
-                disabled={!currentSessionRef || isTemporarySession || isStreaming}
+                disabled={
+                  mainView === 'board' ||
+                  !currentSessionRef ||
+                  isTemporarySession ||
+                  isStreaming
+                }
                 onClick={() => setIsRewindOpen(true)}
                 className="h-8 w-8 rounded-md text-[hsl(var(--deck-ink-faint))] hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))] disabled:opacity-35"
               >
@@ -388,6 +403,7 @@ export function Layout({ children }: LayoutProps) {
                       : undefined
                   );
                 }}
+                disabled={mainView === 'board'}
                 title={t('layout.action.filePreview')}
                 aria-label={t('layout.action.filePreviewToggle')}
                 className={cn(

@@ -3,6 +3,7 @@
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useAppStore } from '@/store/AppStore';
 
 const sessionState = vi.hoisted(() => ({
   sessions: [] as Array<{
@@ -71,6 +72,10 @@ vi.mock('@/components/chat/ChatView', () => ({
   ChatView: () => <div>Chat ready</div>,
 }));
 
+vi.mock('@/components/kanban/KanbanBoard', () => ({
+  KanbanBoard: () => <div>Kanban ready</div>,
+}));
+
 import App from '../src/App';
 
 describe('App bootstrap', () => {
@@ -88,6 +93,7 @@ describe('App bootstrap', () => {
     sessionState.isTemporarySession = true;
     sessionState.selectedProjectPath = null;
     sessionState.boundProjects = [];
+    useAppStore.setState({ mainView: 'workspace' });
     sessionState.loadBoundProjects.mockImplementation(async () => {
       sessionState.boundProjects = [
         {
@@ -212,5 +218,31 @@ describe('App bootstrap', () => {
       });
     });
     expect(sessionState.selectProject).toHaveBeenCalledWith('/workspace/blade');
+  });
+
+  it('opens the board deep link without restoring a stored session', async () => {
+    window.localStorage.setItem(
+      'blade.sessions.last',
+      JSON.stringify({
+        sessionId: 'stored-task',
+        projectPath: '/workspace/blade',
+      })
+    );
+    window.history.replaceState(null, '', '/?view=board&project=%2Fworkspace%2Fblade');
+
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      resolveWorkspace();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('Kanban ready');
+    });
+    expect(sessionState.selectSession).not.toHaveBeenCalled();
+    expect(useAppStore.getState().mainView).toBe('board');
   });
 });

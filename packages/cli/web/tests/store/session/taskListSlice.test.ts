@@ -6,6 +6,8 @@ const serviceMocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   getWorkspaceInfo: vi.fn(),
   createTask: vi.fn(),
+  updateTask: vi.fn(),
+  setTaskAdmissionPaused: vi.fn(),
   listProjects: vi.fn(),
   bindProject: vi.fn(),
   unbindProject: vi.fn(),
@@ -63,6 +65,8 @@ describe('taskListSlice', () => {
     serviceMocks.getSession.mockReset();
     serviceMocks.getWorkspaceInfo.mockReset();
     serviceMocks.createTask.mockReset();
+    serviceMocks.updateTask.mockReset();
+    serviceMocks.setTaskAdmissionPaused.mockReset();
     serviceMocks.listProjects.mockReset();
     serviceMocks.bindProject.mockReset();
     serviceMocks.unbindProject.mockReset();
@@ -93,9 +97,11 @@ describe('taskListSlice', () => {
       boundProjects: [],
       selectedProjectPath: null,
       isDispatchingTask: false,
+      isUpdatingTaskAdmission: false,
       isBindingProject: false,
       cancellingTaskKeys: [],
       retryingTaskKeys: [],
+      updatingTaskKeys: [],
       taskDeliveryActions: {},
       unreadTaskKeys: [],
       loadSessions: vi.fn().mockResolvedValue(undefined),
@@ -243,6 +249,36 @@ describe('taskListSlice', () => {
     expect(workspaceB?.responseVerbosity).toBeUndefined();
     expect(workspaceB?.communicationStyle).toBeUndefined();
     expect(useConfigStore.getState().currentMode).toBe('yolo');
+  });
+
+  it('patches task planning metadata and clears a due date from global events', () => {
+    const base = {
+      sessionId: 'shared-session',
+      projectPath: '/workspace/a',
+    };
+    useSessionStore.getState().handleTaskEvent({
+      type: 'session.updated',
+      properties: {
+        ...base,
+        taskPriority: 'high',
+        taskKind: 'bug',
+        taskDueAt: '2026-08-21T09:30:00.000Z',
+      },
+    });
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      taskPriority: 'high',
+      taskKind: 'bug',
+      taskDueAt: '2026-08-21T09:30:00.000Z',
+    });
+
+    useSessionStore.getState().handleTaskEvent({
+      type: 'session.updated',
+      properties: {
+        ...base,
+        taskDueAt: null,
+      },
+    });
+    expect(useSessionStore.getState().sessions[0]?.taskDueAt).toBeUndefined();
   });
 
   it('loads only the exact session when another client creates it', async () => {
@@ -542,6 +578,58 @@ describe('taskListSlice', () => {
 
     expect(useSessionStore.getState().unreadTaskKeys).toEqual([]);
     expect(localStorage.getItem('blade.tasks.unread')).toBe('[]');
+  });
+
+  it('updates task metadata and task admission without changing navigation', async () => {
+    const ref = {
+      sessionId: 'shared-session',
+      projectPath: '/workspace/a',
+    };
+    serviceMocks.updateTask.mockResolvedValueOnce({
+      ...createSession(ref.projectPath),
+      taskPriority: 'high',
+      taskKind: 'bug',
+    });
+    serviceMocks.setTaskAdmissionPaused.mockResolvedValueOnce({
+      inFlight: 1,
+      queued: 2,
+      maxConcurrent: 3,
+      maxQueued: 100,
+      paused: true,
+    });
+    useSessionStore.setState({
+      taskWorkspaceInfo: {
+        cwd: '/workspace/a',
+        taskAdmission: {
+          inFlight: 1,
+          queued: 0,
+          maxConcurrent: 3,
+          maxQueued: 100,
+          paused: false,
+        },
+      },
+    });
+
+    await useSessionStore.getState().updateTask(ref, {
+      taskPriority: 'high',
+      taskKind: 'bug',
+    });
+    await useSessionStore.getState().setTaskAdmissionPaused(true);
+
+    expect(serviceMocks.updateTask).toHaveBeenCalledWith(ref, {
+      taskPriority: 'high',
+      taskKind: 'bug',
+    });
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      taskPriority: 'high',
+      taskKind: 'bug',
+    });
+    expect(useSessionStore.getState().taskWorkspaceInfo?.taskAdmission).toMatchObject({
+      queued: 2,
+      paused: true,
+    });
+    expect(useSessionStore.getState().updatingTaskKeys).toEqual([]);
+    expect(useSessionStore.getState().isUpdatingTaskAdmission).toBe(false);
   });
 
   it('retries the exact compound task and selects the new session', async () => {
@@ -961,6 +1049,42 @@ describe('taskListSlice', () => {
       projectPath: '/workspace/task-worktree',
     });
     expect(useSessionStore.getState().isDispatchingTask).toBe(false);
+  });
+
+  it('keeps the board focused when dispatch requests no session selection', async () => {
+    const dispatched = {
+      ...createSession('/workspace/a'),
+      sessionId: 'task-board-dispatch',
+      taskStatus: 'queued' as const,
+      taskIsolation: 'local' as const,
+    };
+    serviceMocks.createTask.mockResolvedValueOnce({
+      session: dispatched,
+      runId: 'run-board',
+      messageId: 'message-board',
+      status: 'queued',
+    });
+    const selectSession = vi.fn().mockResolvedValue(undefined);
+    useSessionStore.setState({
+      selectedProjectPath: '/workspace/a',
+      selectSession,
+    });
+
+    await useSessionStore.getState().dispatchTask(
+      {
+        prompt: 'Queue from board',
+        isolation: 'local',
+        permissionMode: 'default',
+      },
+      { selectSession: false }
+    );
+
+    expect(selectSession).not.toHaveBeenCalled();
+    expect(
+      useSessionStore
+        .getState()
+        .sessions.some((session) => session.sessionId === dispatched.sessionId)
+    ).toBe(true);
   });
 
   it('does not open a dispatched task after the user switches projects', async () => {

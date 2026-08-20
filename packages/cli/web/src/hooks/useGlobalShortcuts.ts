@@ -6,6 +6,7 @@ import { useSessionStore } from '@/store/session';
 
 export function useGlobalShortcuts(): void {
   const setTaskSwitcherOpen = useAppStore((state) => state.setTaskSwitcherOpen);
+  const setMainView = useAppStore((state) => state.setMainView);
   const toggleSidebar = useAppStore((state) => state.toggleSidebar);
   const startTemporarySession = useSessionStore((state) => state.startTemporarySession);
 
@@ -34,6 +35,7 @@ export function useGlobalShortcuts(): void {
 
       if (shortcut.id === 'newTask') {
         event.preventDefault();
+        setMainView('workspace');
         startTemporarySession();
         requestAnimationFrame(() => focusBladeComposer());
         return;
@@ -52,5 +54,5 @@ export function useGlobalShortcuts(): void {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setTaskSwitcherOpen, startTemporarySession, toggleSidebar]);
+  }, [setMainView, setTaskSwitcherOpen, startTemporarySession, toggleSidebar]);
 }
