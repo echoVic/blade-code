@@ -91,12 +91,12 @@ import {
   INTERRUPTED_TURN_MARKER,
   saveCompaction as persistCompaction,
   saveToolResult as persistToolResult,
+  persistTurnContinuation,
   saveAssistantMessage,
   saveContextualProjectRulesMarker,
   saveInterruptedTurnMarker,
   saveToolUse,
   saveUserMessage,
-  persistTurnContinuation,
 } from './conversationPersistence.js';
 import { ensureDurableToolIdentity } from './durableToolIdentity.js';
 import {

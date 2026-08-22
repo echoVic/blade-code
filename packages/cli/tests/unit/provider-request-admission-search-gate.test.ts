@@ -29,8 +29,8 @@ describe('Provider request admission source gate', () => {
     expect(admission).toContain('PROVIDER_ADMISSION_DOMAIN_MAX_PENDING_BYTES');
     expect(admission).toContain('PROVIDER_ADMISSION_OWNER_MAX_PENDING_BYTES');
     expect(admission).toContain('this.#pendingConstraint(request, domain, owner)');
-    expect(admission).toContain('this.#globalPendingBytes += pending.pendingBytes');
-    expect(admission).toContain('this.#globalPendingBytes - pending.pendingBytes');
+    expect(admission).toContain('this.#globalCounters.pendingBytes[cls] += bytes');
+    expect(admission).toContain('this.#globalCounters.pendingBytes[cls] -= bytes');
     expect(admission).toContain('this.#domains.delete(domainKey)');
     expect(admission).toContain('this.#owners.delete(ownerId)');
     expect(admission).not.toContain('setInterval(');

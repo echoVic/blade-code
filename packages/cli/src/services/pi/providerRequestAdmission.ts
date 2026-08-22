@@ -839,10 +839,7 @@ export class ProviderRequestAdmissionScheduler {
           nonForegroundOf(owner.counters.pendingBytes),
           nonForegroundOwnerBytes
         ) ||
-        exceeds(
-          nonForegroundOf(domain.counters.pendingBytes),
-          nonForegroundDomainBytes
-        )
+        exceeds(nonForegroundOf(domain.counters.pendingBytes), nonForegroundDomainBytes)
       ) {
         return byteConstraint('class');
       }
@@ -896,8 +893,7 @@ export class ProviderRequestAdmissionScheduler {
     if (totalOf(this.#globalCounters.inFlight) >= this.#limits.globalMaxInFlight)
       return false;
     if (totalOf(domain.counters.inFlight) >= domain.maxConcurrent) return false;
-    if (totalOf(owner.counters.inFlight) >= this.#limits.ownerMaxInFlight)
-      return false;
+    if (totalOf(owner.counters.inFlight) >= this.#limits.ownerMaxInFlight) return false;
     if (requestClass === 'foreground') return true;
 
     if (
@@ -913,17 +909,13 @@ export class ProviderRequestAdmissionScheduler {
       return false;
     }
     const nonForegroundDomainLimit = Math.max(1, domain.maxConcurrent - 1);
-    if (
-      nonForegroundOf(domain.counters.inFlight) >= nonForegroundDomainLimit
-    )
+    if (nonForegroundOf(domain.counters.inFlight) >= nonForegroundDomainLimit)
       return false;
     if (requestClass !== 'internal') return true;
 
     return (
-      this.#globalCounters.inFlight.internal <
-        this.#limits.internalGlobalMaxInFlight &&
-      domain.counters.inFlight.internal <
-        this.#limits.internalDomainMaxInFlight
+      this.#globalCounters.inFlight.internal < this.#limits.internalGlobalMaxInFlight &&
+      domain.counters.inFlight.internal < this.#limits.internalDomainMaxInFlight
     );
   }
 
@@ -973,8 +965,7 @@ export class ProviderRequestAdmissionScheduler {
     }
     if (
       requestClass === 'internal' &&
-      domain.counters.inFlight.internal >=
-        this.#limits.internalDomainMaxInFlight
+      domain.counters.inFlight.internal >= this.#limits.internalDomainMaxInFlight
     ) {
       return {
         scope: 'class',
@@ -1005,8 +996,7 @@ export class ProviderRequestAdmissionScheduler {
     }
     if (
       requestClass === 'internal' &&
-      this.#globalCounters.inFlight.internal >=
-        this.#limits.internalGlobalMaxInFlight
+      this.#globalCounters.inFlight.internal >= this.#limits.internalGlobalMaxInFlight
     ) {
       return {
         scope: 'class',

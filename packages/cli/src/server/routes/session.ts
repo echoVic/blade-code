@@ -1183,10 +1183,8 @@ function projectActiveSession(session: SessionInfo) {
     taskWorktreeBranch: session.taskWorktreeBranch,
     taskBaseCommit: session.taskBaseCommit,
     taskDiffStat: session.taskDiffStat,
-    taskQueuePosition:
-      taskStatus === 'queued' ? session.taskQueuePosition : undefined,
-    taskQueueDepth:
-      taskStatus === 'queued' ? session.taskQueueDepth : undefined,
+    taskQueuePosition: taskStatus === 'queued' ? session.taskQueuePosition : undefined,
+    taskQueueDepth: taskStatus === 'queued' ? session.taskQueueDepth : undefined,
     taskConcurrencyLimit: session.taskConcurrencyLimit,
     archivedAt: session.archivedAt,
     archivedBySessionId: session.archivedBySessionId,

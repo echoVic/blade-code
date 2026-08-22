@@ -12,8 +12,8 @@ import {
 } from '../config/pluginSettings.js';
 import type { PluginSourcePolicy } from '../config/types.js';
 import {
-  WorkspaceTrustService,
   isWorkspaceTrusted,
+  WorkspaceTrustService,
 } from '../security/WorkspaceTrustService.js';
 import {
   getPluginInstaller,

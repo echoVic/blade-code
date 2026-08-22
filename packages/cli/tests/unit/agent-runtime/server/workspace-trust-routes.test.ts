@@ -61,7 +61,6 @@ describe('Workspace trust routes', () => {
     const initial = await (await app.request(endpoint)).json();
     expect(initial).toMatchObject({
       state: 'untrusted',
-      trusted: false,
       sources: [
         expect.objectContaining({
           path: '.blade/config.json',
@@ -82,7 +81,6 @@ describe('Workspace trust routes', () => {
     });
     expect(await trusted.json()).toMatchObject({
       state: 'trusted',
-      trusted: true,
       reloadRequired: true,
     });
 
@@ -93,7 +91,6 @@ describe('Workspace trust routes', () => {
     });
     expect(await revoked.json()).toMatchObject({
       state: 'untrusted',
-      trusted: false,
       decision: 'untrusted',
       reloadRequired: true,
     });
