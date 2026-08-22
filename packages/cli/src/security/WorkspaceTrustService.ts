@@ -7,6 +7,7 @@ import { LRUCache } from 'lru-cache';
 import writeFileAtomic from 'write-file-atomic';
 import { getBladeStorageRoot } from '../context/storage/pathUtils.js';
 import {
+  invalidateWorkspaceIdentityCache,
   resolveWorkspaceIdentity,
   type WorkspaceIdentity,
 } from './WorkspaceIdentity.js';
@@ -370,6 +371,7 @@ export class WorkspaceTrustService {
     trusted: boolean
   ): Promise<WorkspaceTrustStatus> {
     return this.mutex.runExclusive(async () => {
+      await invalidateWorkspaceIdentityCache(projectDir);
       const identity = await resolveWorkspaceIdentity(projectDir);
       await this.assertSafeTrustRoot(identity);
       const decision: WorkspaceTrustDecision = {

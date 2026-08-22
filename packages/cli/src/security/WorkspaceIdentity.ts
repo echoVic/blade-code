@@ -1,7 +1,12 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { LRUCache } from 'lru-cache';
 
-const identityCache = new Map<string, WorkspaceIdentity>();
+export const MAX_CACHED_WORKSPACE_IDENTITIES = 512;
+
+const identityCache = new LRUCache<string, WorkspaceIdentity>({
+  max: MAX_CACHED_WORKSPACE_IDENTITIES,
+});
 
 export interface WorkspaceIdentity {
   projectPath: string;
@@ -87,12 +92,18 @@ export async function resolveWorkspaceIdentity(
   }
 
   const identity = { projectPath, trustRoot };
-  if (identityCache.size >= 512) {
-    const oldest = identityCache.keys().next().value;
-    if (oldest) identityCache.delete(oldest);
-  }
   identityCache.set(projectPath, identity);
   return identity;
+}
+
+export async function invalidateWorkspaceIdentityCache(
+  projectDir: string
+): Promise<void> {
+  if (!path.isAbsolute(projectDir)) {
+    throw new Error('Workspace path must be absolute');
+  }
+  const projectPath = await fs.realpath(projectDir);
+  identityCache.delete(projectPath);
 }
 
 export function resetWorkspaceIdentityCache(): void {

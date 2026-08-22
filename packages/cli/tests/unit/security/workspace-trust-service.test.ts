@@ -3,6 +3,7 @@ import {
   mkdir,
   mkdtemp,
   readdir,
+  realpath,
   rm,
   stat,
   symlink,
@@ -91,6 +92,26 @@ describe('WorkspaceTrustService', () => {
     expect(service.getCachedStatus(projects[0])).toBeUndefined();
     expect(service.getCachedStatus(projects.at(-1)!)).toMatchObject({
       state: 'not_required',
+    });
+  });
+
+  it('refreshes workspace identity before persisting a trust decision', async () => {
+    const service = new WorkspaceTrustService(storeDir);
+    const canonicalProject = await realpath(project);
+    expect(await service.getStatus(project)).toMatchObject({
+      projectPath: canonicalProject,
+      trustRoot: canonicalProject,
+    });
+
+    const sourceRoot = path.join(root, 'source');
+    const gitDir = path.join(sourceRoot, '.git', 'worktrees', 'project');
+    await mkdir(gitDir, { recursive: true });
+    await writeFile(path.join(project, '.git'), `gitdir: ${gitDir}\n`);
+    await writeFile(path.join(gitDir, 'commondir'), '../..\n');
+
+    await expect(service.trust(project)).resolves.toMatchObject({
+      projectPath: canonicalProject,
+      trustRoot: await realpath(sourceRoot),
     });
   });
 
