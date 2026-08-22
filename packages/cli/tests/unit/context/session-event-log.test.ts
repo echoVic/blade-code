@@ -3,7 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { EphemeralDelta } from '../../../src/context/events/EphemeralDelta.js';
-import { SessionEventLog } from '../../../src/context/events/SessionEventLog.js';
+import {
+  MAX_CACHED_SESSION_EVENT_LOGS,
+  SessionEventLog,
+} from '../../../src/context/events/SessionEventLog.js';
 import { JSONLStore } from '../../../src/context/storage/JSONLStore.js';
 import { getSessionFilePath } from '../../../src/context/storage/pathUtils.js';
 import type { TokenBudgetHandoffRecordedV1 } from '../../../src/context/TokenBudgetHandoff.js';
@@ -236,5 +239,75 @@ describe('SessionEventLog', () => {
     const a = SessionEventLog.for(sessionId, projectPath);
     const b = SessionEventLog.for(sessionId, projectPath);
     expect(a).toBe(b);
+  });
+
+  it('evicts the least recently used idle log when the cache reaches capacity', () => {
+    const sessionIds = Array.from(
+      { length: MAX_CACHED_SESSION_EVENT_LOGS + 1 },
+      (_, index) => `bounded-log-${index}`
+    );
+
+    try {
+      const oldest = SessionEventLog.for(sessionIds[0]!, projectPath);
+      for (const candidate of sessionIds.slice(1)) {
+        SessionEventLog.for(candidate, projectPath);
+      }
+
+      const newestId = sessionIds.at(-1)!;
+      const newest = SessionEventLog.for(newestId, projectPath);
+      expect(SessionEventLog.for(newestId, projectPath)).toBe(newest);
+      expect(SessionEventLog.for(sessionIds[0]!, projectPath)).not.toBe(oldest);
+    } finally {
+      for (const candidate of sessionIds) {
+        SessionEventLog.release(candidate, projectPath);
+      }
+    }
+  });
+
+  it('does not evict a log with a live subscriber', () => {
+    const pinnedId = 'bounded-log-pinned';
+    const otherIds = Array.from(
+      { length: MAX_CACHED_SESSION_EVENT_LOGS },
+      (_, index) => `bounded-log-other-${index}`
+    );
+    const pinned = SessionEventLog.for(pinnedId, projectPath);
+    const unsubscribe = pinned.subscribe({ onCommitted: () => undefined });
+
+    try {
+      for (const candidate of otherIds) {
+        SessionEventLog.for(candidate, projectPath);
+      }
+      expect(SessionEventLog.for(pinnedId, projectPath)).toBe(pinned);
+    } finally {
+      unsubscribe();
+      SessionEventLog.release(pinnedId, projectPath);
+      for (const candidate of otherIds) {
+        SessionEventLog.release(candidate, projectPath);
+      }
+    }
+  });
+
+  it('keeps the newly returned log shared when every cached log is subscribed', () => {
+    const pinnedIds = Array.from(
+      { length: MAX_CACHED_SESSION_EVENT_LOGS },
+      (_, index) => `bounded-log-subscribed-${index}`
+    );
+    const unsubscribers = pinnedIds.map((candidate) =>
+      SessionEventLog.for(candidate, projectPath).subscribe({
+        onCommitted: () => undefined,
+      })
+    );
+    const nextId = 'bounded-log-after-subscribers';
+
+    try {
+      const next = SessionEventLog.for(nextId, projectPath);
+      expect(SessionEventLog.for(nextId, projectPath)).toBe(next);
+    } finally {
+      for (const unsubscribe of unsubscribers) unsubscribe();
+      SessionEventLog.release(nextId, projectPath);
+      for (const candidate of pinnedIds) {
+        SessionEventLog.release(candidate, projectPath);
+      }
+    }
   });
 });

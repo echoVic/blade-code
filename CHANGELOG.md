@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.67] - 2026-08-22
+
+### Fixed
+- Session event-log instances now use a bounded least-recently-used cache, so
+  long-running Web and ACP processes do not retain every historical Session
+  while active stream subscribers remain pinned
+
+### Tests
+- Added cache-capacity, least-recently-used eviction, and live-subscriber
+  retention coverage for the unified Session event stream
+
 ## [0.10.66] - 2026-08-22
 
 ### Added

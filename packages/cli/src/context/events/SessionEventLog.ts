@@ -1,9 +1,11 @@
 import { Bus } from '../../server/bus.js';
-import { isTokenBudgetHandoffEvent } from '../TokenBudgetHandoff.js';
 import { JSONLStore } from '../storage/JSONLStore.js';
 import { getSessionFilePath } from '../storage/pathUtils.js';
+import { isTokenBudgetHandoffEvent } from '../TokenBudgetHandoff.js';
 import type { SessionEvent } from '../types.js';
 import type { EphemeralDelta } from './EphemeralDelta.js';
+
+export const MAX_CACHED_SESSION_EVENT_LOGS = 256;
 
 /**
  * A subscriber over the unified session stream. Receives durable committed
@@ -57,6 +59,10 @@ export class SessionEventLog {
     if (!log) {
       log = new SessionEventLog(sessionId, projectPath);
       SessionEventLog.instances.set(key, log);
+      SessionEventLog.pruneIdleInstances(key);
+    } else {
+      SessionEventLog.instances.delete(key);
+      SessionEventLog.instances.set(key, log);
     }
     return log;
   }
@@ -64,6 +70,16 @@ export class SessionEventLog {
   /** Test/GC seam: drop the cached instance for a session. */
   static release(sessionId: string, projectPath: string): void {
     SessionEventLog.instances.delete(`${projectPath}\u0000${sessionId}`);
+  }
+
+  private static pruneIdleInstances(preservedKey?: string): void {
+    if (SessionEventLog.instances.size <= MAX_CACHED_SESSION_EVENT_LOGS) return;
+
+    for (const [key, log] of SessionEventLog.instances) {
+      if (key === preservedKey || log.subscribers.size > 0) continue;
+      SessionEventLog.instances.delete(key);
+      if (SessionEventLog.instances.size <= MAX_CACHED_SESSION_EVENT_LOGS) return;
+    }
   }
 
   /** Highest committed seq observed by this log instance. */
@@ -133,6 +149,7 @@ export class SessionEventLog {
     }
     return () => {
       this.subscribers.delete(subscriber);
+      SessionEventLog.pruneIdleInstances();
     };
   }
 
