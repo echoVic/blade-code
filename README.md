@@ -110,6 +110,7 @@ blade --headless --output-format jsonl "分析这个仓库"
 | `/model switch` | 切换当前模型 |
 | `/cost` | 查看当前会话费用 |
 | `/compact` | 手动压缩上下文 |
+| `/btw "..."` | 询问不写入主会话的旁路问题 |
 | `/memory list` | 列出记忆文件 |
 | `/tasks` | 查看任务列表 |
 | `/goal "..."` | 启动 Goal 模式 |

@@ -55,6 +55,7 @@ export const testTypes = {
       'tests/integration/real-api/session-runtime-residency-web-trajectory.test.ts',
       'tests/integration/real-api/graceful-shutdown-trajectory.test.ts',
       'tests/integration/real-api/tool-admission-trajectory.test.ts',
+      'tests/integration/real-api/side-conversation-trajectory.test.ts',
     ],
     env: {
       REAL_API_TEST: '1',

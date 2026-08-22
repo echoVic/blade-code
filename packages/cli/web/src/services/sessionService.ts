@@ -49,6 +49,8 @@ import {
   type SessionTaskPriority,
   type SessionUnarchiveResponse,
   SessionUnarchiveResponseSchema,
+  type SideConversationResponse,
+  SideConversationResponseSchema,
   type SubagentSession,
   SubagentSessionSchema,
   Type,
@@ -559,6 +561,24 @@ export const sessionService = {
       throw new Error(reason || 'Failed to send message');
     }
     return res.json();
+  },
+
+  askSideQuestion: async (
+    ref: SessionRef,
+    question: string,
+    signal?: AbortSignal
+  ): Promise<SideConversationResponse> => {
+    return SideConversationResponseSchema.parse(
+      await requestJson<unknown>(
+        `${API_BASE}/sessions/${ref.sessionId}/side-question`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question, projectPath: ref.projectPath }),
+          signal,
+        }
+      )
+    );
   },
 
   executeUserShellCommand: async (

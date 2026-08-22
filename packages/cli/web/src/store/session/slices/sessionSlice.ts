@@ -1,4 +1,5 @@
 import { deriveSessionTitle } from '@api/sessionTitle';
+import { parseSideConversationCommand } from '@api/sideConversation';
 import { projectPathOf } from '@/lib/projectIdentity';
 import { sessionService } from '@/services';
 import { DEFAULT_WEB_PERMISSION_MODE, useConfigStore } from '@/store/ConfigStore';
@@ -84,8 +85,11 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
   let catalogGeneration = 0;
   let archivedCatalogGeneration = 0;
   const messageResyncs = new Map<string, Promise<void>>();
+  let sideConversationController: AbortController | null = null;
 
   const beginNavigation = (): number => {
+    sideConversationController?.abort('session-navigation');
+    sideConversationController = null;
     navigationGeneration += 1;
     return navigationGeneration;
   };
@@ -116,6 +120,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     error: null,
     errorContext: null,
     goal: null,
+    sideConversation: null,
 
     setSessions: (sessions) => set({ sessions }),
 
@@ -142,6 +147,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           currentSessionRef: isCurrent ? null : currentState.currentSessionRef,
           messages: isCurrent ? [] : currentState.messages,
           goal: isCurrent ? null : currentState.goal,
+          sideConversation: isCurrent ? null : currentState.sideConversation,
           forkingSessionRef: cancelsFork ? null : currentState.forkingSessionRef,
           ...(isCurrent ? resetStreamingState() : {}),
         };
@@ -154,6 +160,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         currentSessionId: ref?.sessionId ?? null,
         currentSessionRef: ref,
         isTemporarySession: false,
+        sideConversation: null,
       });
     },
 
@@ -184,6 +191,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         isLoading: false,
         messages: [],
         goal: null,
+        sideConversation: null,
         tokenUsage: { ...initialTokenUsage },
         error: null,
         errorContext: null,
@@ -704,6 +712,93 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
       const isCurrentSend = (): boolean =>
         isCurrentNavigation(generation) &&
         sameSessionRef(get().currentSessionRef, expectedRef);
+      const sideCommand = parseSideConversationCommand(payload.content);
+
+      if (sideCommand) {
+        if ((payload.attachments?.length ?? 0) > 0) {
+          set({ error: 'Side conversations do not accept image attachments' });
+          return false;
+        }
+        if (!sideCommand.question) {
+          set({ error: 'Usage: /btw <question>' });
+          return false;
+        }
+        if (isTemporarySession || !sessionRef || !sessionId) {
+          set({ error: 'Start or select a Session before using /btw' });
+          return false;
+        }
+
+        sideConversationController?.abort('side-conversation-replaced');
+        const controller = new AbortController();
+        sideConversationController = controller;
+        const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        set({
+          sideConversation: {
+            requestId,
+            sessionRef,
+            question: sideCommand.question,
+            status: 'loading',
+          },
+          error: null,
+          errorContext: null,
+        });
+        try {
+          const result = await sessionService.askSideQuestion(
+            sessionRef,
+            sideCommand.question,
+            controller.signal
+          );
+          if (
+            controller.signal.aborted ||
+            !isCurrentSend() ||
+            get().sideConversation?.requestId !== requestId
+          ) {
+            return false;
+          }
+          set({
+            sideConversation: {
+              requestId,
+              sessionRef,
+              question: sideCommand.question,
+              status: 'completed',
+              response: result.response,
+              durationMs: result.durationMs,
+              modelId: result.modelId,
+            },
+          });
+          if (result.usage) {
+            get().updateTokenUsage({
+              inputTokens: result.usage.promptTokens,
+              outputTokens: result.usage.completionTokens,
+              totalTokens: result.usage.totalTokens,
+              cacheReadTokens: result.usage.cacheReadInputTokens ?? 0,
+              cacheWriteTokens: result.usage.cacheCreationInputTokens ?? 0,
+              costUsd: result.usage.costUsd,
+            });
+          }
+          return true;
+        } catch (error) {
+          if (controller.signal.aborted || !isCurrentSend()) return false;
+          set({
+            sideConversation: {
+              requestId,
+              sessionRef,
+              question: sideCommand.question,
+              status: 'error',
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
+          return false;
+        } finally {
+          if (sideConversationController === controller) {
+            sideConversationController = null;
+          }
+        }
+      }
+
+      sideConversationController?.abort('main-conversation-submitted');
+      sideConversationController = null;
+      if (get().sideConversation) set({ sideConversation: null });
 
       if (isTemporarySession || !sessionId || sessionId === TEMP_SESSION_ID) {
         try {
@@ -962,6 +1057,12 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         }));
         return false;
       }
+    },
+
+    dismissSideConversation: () => {
+      sideConversationController?.abort('side-conversation-dismissed');
+      sideConversationController = null;
+      set({ sideConversation: null });
     },
 
     abortSession: async () => {

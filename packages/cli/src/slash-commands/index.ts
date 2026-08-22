@@ -11,6 +11,7 @@ import { getPluginRegistry } from '../plugins/index.js';
 import { getSkillRegistry } from '../skills/index.js';
 import type { SkillMetadata } from '../skills/types.js';
 import { getCwd } from '../utils/cwd.js';
+import btwCommand from './btw.js';
 import { builtinCommands } from './builtinCommands.js';
 import {
   type CustomCommandDiscoveryResult,
@@ -42,6 +43,7 @@ import type {
 // 注册所有 slash commands
 const slashCommands: SlashCommandRegistry = {
   ...builtinCommands,
+  btw: btwCommand,
   init: initCommand,
   theme: themeCommand,
   permissions: permissionsCommand,

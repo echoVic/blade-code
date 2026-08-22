@@ -462,6 +462,10 @@ export const en = {
   'chat.connection.offline':
     'Live updates are offline. Progress shown here may be stale.',
   'chat.connection.retry': 'Reconnect',
+  'chat.side.title': 'Side conversation',
+  'chat.side.loading': 'Answering side question...',
+  'chat.side.failed': 'Side conversation failed.',
+  'chat.side.dismiss': 'Dismiss side conversation',
   'chat.footer.disclaimer':
     'Blade can make mistakes. Please check important information.',
   'chat.input.placeholder.default': 'Type @ for files, / for commands...',

@@ -116,6 +116,10 @@ function createMockAppActions(): AppActions {
     startSubagentProgress: vi.fn(),
     updateSubagentTool: vi.fn(),
     completeSubagentProgress: vi.fn(),
+    startSideConversation: vi.fn(),
+    completeSideConversation: vi.fn(),
+    failSideConversation: vi.fn(),
+    dismissSideConversation: vi.fn(),
   } satisfies AppActions;
 }
 

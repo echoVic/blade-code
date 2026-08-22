@@ -1,10 +1,3 @@
-import { TaskArtifactBar } from '@/components/tasks/TaskArtifactBar';
-import { useT } from '@/i18n';
-import { focusBladeComposer } from '@/lib/composerFocus';
-import { taskFailureIsRetryable, taskFailureMessageKey } from '@/lib/taskFailure';
-import { useAppStore } from '@/store/AppStore';
-import { useSessionStore } from '@/store/session';
-import { sameSessionRef, sessionRefKey } from '@/store/session/sessionIdentity';
 import type {
   CommunicationStyle,
   ReasoningEffort,
@@ -20,11 +13,19 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { TaskArtifactBar } from '@/components/tasks/TaskArtifactBar';
+import { useT } from '@/i18n';
+import { focusBladeComposer } from '@/lib/composerFocus';
+import { taskFailureIsRetryable, taskFailureMessageKey } from '@/lib/taskFailure';
+import { useAppStore } from '@/store/AppStore';
+import { useSessionStore } from '@/store/session';
+import { sameSessionRef, sessionRefKey } from '@/store/session/sessionIdentity';
 import type { ComposerImageAttachment } from './ChatInput';
 import { ChatInput } from './ChatInput';
 import { ChatList } from './ChatList';
 import { GoalControlBar } from './GoalControlBar';
 import { PendingInteractionBar } from './PendingInteractionBar';
+import { SideConversationPanel } from './SideConversationPanel';
 import { StatusBar } from './StatusBar';
 
 interface RecoveryDraft {
@@ -297,6 +298,7 @@ export function ChatView() {
         messages={messages}
         isLoading={isLoading}
       />
+      <SideConversationPanel />
       <PendingInteractionBar />
       <GoalControlBar />
       <ChatInput

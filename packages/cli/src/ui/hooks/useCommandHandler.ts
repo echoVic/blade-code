@@ -24,6 +24,7 @@ import type { LoopEvent } from '../../agent/loop/types.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
 import type { SubagentConfig } from '../../agent/subagents/types.js';
 import type { LoopResult } from '../../agent/types.js';
+import { parseSideConversationCommand } from '../../api/sideConversation.js';
 import type { PermissionMode } from '../../config/types.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
@@ -43,6 +44,7 @@ import {
   useServiceTier,
   useSessionActions,
   useSessionId,
+  useSideConversation,
   useThinkingModeEnabled,
   useWorkspaceRoot,
 } from '../../store/selectors/index.js';
@@ -101,6 +103,7 @@ export const useCommandHandler = (
   const serviceTier = useServiceTier();
   const responseVerbosity = useResponseVerbosity();
   const communicationStyle = useCommunicationStyle();
+  const sideConversation = useSideConversation();
 
   // ==================== Store Actions ====================
   const sessionActions = useSessionActions();
@@ -110,6 +113,7 @@ export const useCommandHandler = (
   // ==================== Local Refs ====================
   const abortMessageSentRef = useRef(false);
   const pendingResumeRequestedRef = useRef(false);
+  const sideConversationControllerRef = useRef<AbortController | null>(null);
 
   // ==================== 子模块组合 ====================
   const {
@@ -139,6 +143,7 @@ export const useCommandHandler = (
     getCommunicationStyleConfiguration,
     setCommunicationStyle,
     runCodeReview,
+    askSideQuestion,
     executeUserShellCommand,
   } = useAgent({
     sessionId,
@@ -205,6 +210,14 @@ export const useCommandHandler = (
   }, [streamingBuffer.resetStreamingBuffers]);
 
   useEffect(() => {
+    return () => {
+      sideConversationControllerRef.current?.abort('side-conversation-session-change');
+      sideConversationControllerRef.current = null;
+      appActions.dismissSideConversation();
+    };
+  }, [appActions, sessionId, workspaceRoot]);
+
+  useEffect(() => {
     if (!thinkingModeEnabled) {
       sessionActions.setCurrentThinkingContent(null);
     }
@@ -212,6 +225,12 @@ export const useCommandHandler = (
 
   // ==================== handleAbort ====================
   const handleAbort = useMemoizedFn(() => {
+    if (sideConversationControllerRef.current) {
+      sideConversationControllerRef.current.abort('user-cancel');
+      sideConversationControllerRef.current = null;
+      appActions.dismissSideConversation();
+      return;
+    }
     if (!isProcessing) return;
 
     // 0. dismiss 确认框（如果有）：先释放阻塞的 Promise，再 abort signal
@@ -241,6 +260,65 @@ export const useCommandHandler = (
       abortMessageSentRef.current = true;
     }
   });
+
+  const executeSideConversation = useMemoizedFn(
+    async (resolved: ResolvedInput, question: string): Promise<void> => {
+      const requestId = `side-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      appActions.startSideConversation(requestId, question);
+
+      if (resolved.images.length > 0) {
+        appActions.failSideConversation(
+          requestId,
+          'Side conversations do not accept image attachments'
+        );
+        return;
+      }
+      if (!question) {
+        appActions.failSideConversation(requestId, 'Usage: /btw <question>');
+        return;
+      }
+
+      sideConversationControllerRef.current?.abort('side-conversation-replaced');
+      const controller = new AbortController();
+      sideConversationControllerRef.current = controller;
+
+      try {
+        const result = await askSideQuestion(question, controller.signal);
+        if (
+          controller.signal.aborted ||
+          sideConversationControllerRef.current !== controller
+        ) {
+          return;
+        }
+        appActions.completeSideConversation(requestId, result);
+        if (result.usage) {
+          sessionActions.updateTokenUsage({
+            inputTokens: result.usage.promptTokens,
+            outputTokens: result.usage.completionTokens,
+            totalTokens: result.usage.totalTokens,
+            cacheReadTokens: result.usage.cacheReadInputTokens ?? 0,
+            cacheWriteTokens: result.usage.cacheCreationInputTokens ?? 0,
+            costUsd: result.usage.costUsd,
+          });
+        }
+      } catch (error) {
+        if (
+          controller.signal.aborted ||
+          sideConversationControllerRef.current !== controller
+        ) {
+          return;
+        }
+        appActions.failSideConversation(
+          requestId,
+          error instanceof Error ? error.message : String(error)
+        );
+      } finally {
+        if (sideConversationControllerRef.current === controller) {
+          sideConversationControllerRef.current = null;
+        }
+      }
+    }
+  );
 
   const consumeAgentStream = useMemoizedFn(
     async (
@@ -610,6 +688,16 @@ export const useCommandHandler = (
       return;
     }
 
+    const sideCommand = parseSideConversationCommand(resolved.text);
+    if (sideCommand) {
+      await executeSideConversation(resolved, sideCommand.question);
+      return;
+    }
+
+    sideConversationControllerRef.current?.abort('main-conversation-submitted');
+    sideConversationControllerRef.current = null;
+    appActions.dismissSideConversation();
+
     if (resolved.text.trimStart().startsWith('!') && isProcessing) {
       const abortController = commandActions.getAbortController();
       if (!abortController) {
@@ -830,7 +918,7 @@ export const useCommandHandler = (
   return {
     executeCommand,
     handleAbort,
-    isProcessing,
+    isProcessing: isProcessing || sideConversation?.status === 'loading',
     cleanupAgent,
   };
 };

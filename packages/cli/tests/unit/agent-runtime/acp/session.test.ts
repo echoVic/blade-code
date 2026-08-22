@@ -126,6 +126,10 @@ const runtimeState = vi.hoisted(() => ({
       revision: 0,
       instructions: [],
     })),
+    askSideQuestion: vi.fn().mockResolvedValue({
+      response: 'Side answer',
+      durationMs: 14,
+    }),
     executeUserShellCommand: vi.fn(),
   },
 }));
@@ -251,6 +255,10 @@ describe('AcpSession', () => {
     runtimeState.runtime.rewindSession.mockReset();
     runtimeState.runtime.listSubagents.mockReset().mockReturnValue([]);
     runtimeState.runtime.resumeSubagent.mockReset();
+    runtimeState.runtime.askSideQuestion.mockReset().mockResolvedValue({
+      response: 'Side answer',
+      durationMs: 14,
+    });
     runtimeState.runtime.executeUserShellCommand.mockReset();
     sessionServiceState.loadSession.mockReset().mockResolvedValue([]);
     sessionServiceState.loadSessionModelContext
@@ -2372,6 +2380,53 @@ describe('AcpSession', () => {
         ],
         { allowBeforeTurn: true }
       );
+    });
+
+    it('活动回合中的 /btw 应走独立旁路且不进入 steering', async () => {
+      const activeController = new AbortController();
+      (session as unknown as { pendingPrompt: AbortController | null }).pendingPrompt =
+        activeController;
+      const { executeSlashCommand } = await import(
+        '../../../../src/slash-commands/index.js'
+      );
+      vi.mocked(executeSlashCommand).mockImplementationOnce(
+        async (_command, context) => {
+          const result = await context.sideConversation?.ask(
+            'What is running?',
+            context.signal
+          );
+          return {
+            success: true,
+            content: result?.response,
+            data: { action: 'show_side_conversation' },
+          };
+        }
+      );
+
+      const response = await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: '/BTW What is running?' }],
+      });
+
+      expect(response.stopReason).toBe('end_turn');
+      expect(runtimeState.runtime.askSideQuestion).toHaveBeenCalledWith(
+        'What is running?',
+        { signal: expect.any(AbortSignal) }
+      );
+      const sideSignal = runtimeState.runtime.askSideQuestion.mock.calls[0]?.[1]
+        ?.signal as AbortSignal;
+      expect(sideSignal).not.toBe(activeController.signal);
+      expect(sideSignal.aborted).toBe(false);
+      expect(activeController.signal.aborted).toBe(false);
+      expect(runtimeState.runtime.enqueueSteering).not.toHaveBeenCalled();
+      expect(
+        mockConnection.sessionUpdates.some(
+          (notification) =>
+            notification.update.sessionUpdate === 'agent_message_chunk' &&
+            notification.update.content.type === 'text' &&
+            notification.update.content.text === 'Side answer'
+        )
+      ).toBe(true);
     });
 
     it('应该处理 slash command', async () => {

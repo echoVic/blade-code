@@ -60,6 +60,7 @@ const helpCommand: SlashCommand = {
 **/agents** - 管理 subagent 配置（创建、编辑、删除）
 **/mcp** - 显示 MCP 服务器状态和可用工具
 **/help** - 显示此帮助信息
+**/btw <question>** - 在不改变主对话的情况下询问一个旁路问题
 **/clear** - 清除屏幕内容
 **/resume** - 恢复历史会话
 **/branch** - 从当前会话创建独立分支

@@ -4,6 +4,7 @@ import {
   MAX_INLINE_ATTACHMENT_COUNT,
   MAX_USER_MESSAGE_TEXT_CHARS,
 } from './attachmentLimits.js';
+import { MAX_SIDE_QUESTION_CHARS } from './sideConversation.js';
 
 export { parseSchema } from '../schema/index.js';
 export { Type };
@@ -773,6 +774,38 @@ export const UserShellCommandResponseSchema = Runtime(
   })
 );
 export type UserShellCommandResponse = Static<typeof UserShellCommandResponseSchema>;
+
+export const SideConversationRequestSchema = Runtime(
+  Type.Object({
+    question: Type.String({
+      minLength: 1,
+      maxLength: MAX_SIDE_QUESTION_CHARS,
+      pattern: '^(?![\\s\\S]*\\x00)(?=[\\s\\S]*\\S)[\\s\\S]*$',
+    }),
+    projectPath: Type.Optional(Type.String()),
+  })
+);
+export type SideConversationRequest = Static<typeof SideConversationRequestSchema>;
+
+export const SideConversationResponseSchema = Runtime(
+  Type.Object({
+    response: Type.String({ minLength: 1 }),
+    durationMs: Type.Number({ minimum: 0 }),
+    modelId: Type.Optional(Type.String()),
+    usage: Type.Optional(
+      Type.Object({
+        promptTokens: Type.Number({ minimum: 0 }),
+        completionTokens: Type.Number({ minimum: 0 }),
+        totalTokens: Type.Number({ minimum: 0 }),
+        reasoningTokens: Type.Optional(Type.Number({ minimum: 0 })),
+        cacheCreationInputTokens: Type.Optional(Type.Number({ minimum: 0 })),
+        cacheReadInputTokens: Type.Optional(Type.Number({ minimum: 0 })),
+        costUsd: Type.Optional(Type.Number({ minimum: 0 })),
+      })
+    ),
+  })
+);
+export type SideConversationResponse = Static<typeof SideConversationResponseSchema>;
 
 export const CodeReviewRequestSchema = Runtime(
   Type.Object({

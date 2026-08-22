@@ -399,6 +399,15 @@ Launch an independent read-only reviewer:
 
 `/git review` is equivalent to `/review uncommitted`. The reviewer uses an independent Session, diff digest, structured P0-P3 findings, and workspace-read-only sandbox; it will not fix or modify the code being reviewed. See [Native Read-Only Code Review](/en/reference/native-code-review.md) for details.
 
+#### `/btw <question>`
+
+Run one context-aware question without changing the main Agent turn. The request
+reuses the current Session's persisted model context and Provider configuration,
+but cannot execute tools, create a main run, or write its question or answer to
+the Session JSONL. TUI and Web use a separate transient panel; ACP returns the
+answer through the slash-command response. Headless rejects the command because
+it has no active Session runtime.
+
 #### `/resume [sessionId]`
 
 Resume a historical session. Opens the session selector without an ID.

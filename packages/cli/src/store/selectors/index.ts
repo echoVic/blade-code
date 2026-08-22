@@ -137,6 +137,9 @@ export const useAwaitingSecondCtrlC = () =>
  */
 export const useAppActions = () => useBladeStore((state) => state.app.actions);
 
+export const useSideConversation = () =>
+  useBladeStore((state) => state.app.sideConversation);
+
 /**
  * 派生选择器：是否准备就绪
  */

@@ -126,11 +126,11 @@ import {
   VERIFICATION_SUBAGENT_TYPE,
   type VerificationVerdict,
 } from './independentVerification.js';
+import { composeProviderSystemPrompt } from './providerSystemPrompt.js';
 import { StreamingToolExecutor } from './StreamingToolExecutor.js';
 import { ToolProgressQueue } from './ToolProgressQueue.js';
 import type { FunctionToolCallRef } from './toolDomainPolicy.js';
 import { applyToolDomainEffects } from './toolDomainPolicy.js';
-import { composeProviderSystemPrompt } from './providerSystemPrompt.js';
 import type {
   LoopDependencies,
   LoopEvent,

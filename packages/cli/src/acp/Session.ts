@@ -33,6 +33,7 @@ import {
   MAX_INLINE_ATTACHMENT_COUNT,
   MAX_USER_MESSAGE_TEXT_CHARS,
 } from '../api/attachmentLimits.js';
+import { parseSideConversationCommand } from '../api/sideConversation.js';
 import {
   type BladeConfig,
   type CommunicationStyleSelection,
@@ -229,6 +230,8 @@ export class AcpSession {
   private pendingPromptCompletion: Promise<void> | null = null;
   private pendingUserShell: AbortController | null = null;
   private pendingUserShellCompletion: Promise<void> | null = null;
+  private pendingSideConversation: AbortController | null = null;
+  private pendingSideConversationCompletion: Promise<void> | null = null;
   private pendingResumeRequested = false;
   private availableCommandsTimer: ReturnType<typeof setTimeout> | null = null;
   private taskStatusUnsubscribe?: () => void;
@@ -732,6 +735,12 @@ export class AcpSession {
             return this.runtime.getMcpInstructions();
           },
         },
+        sideConversation: {
+          ask: async (question, sideSignal) => {
+            if (!this.runtime) throw new Error('Session runtime is unavailable');
+            return this.runtime.askSideQuestion(question, { signal: sideSignal });
+          },
+        },
         codeReview: {
           run: async (request, reviewSignal) => {
             if (!this.runtime) throw new Error('Session runtime is unavailable');
@@ -866,6 +875,9 @@ export class AcpSession {
       await this.flushUpdates();
       return { stopReason: result.success ? 'end_turn' : 'cancelled' };
     } catch (error) {
+      if (signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
+        return { stopReason: 'cancelled' };
+      }
       // 注意：abortHandler 在 try 块内定义，catch 无法直接访问
       // 但由于 signal 是 WeakRef 的，GC 会自动清理
       logger.error(`[AcpSession ${this.id}] Slash command error:`, error);
@@ -877,6 +889,42 @@ export class AcpSession {
         },
       });
       return { stopReason: 'cancelled' };
+    }
+  }
+
+  private async handleSideConversationCommand(
+    message: string
+  ): Promise<PromptResponse> {
+    if (this.pendingSideConversation) {
+      throw new Error('A side conversation is already running');
+    }
+
+    const controller = new AbortController();
+    let resolveCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    this.pendingSideConversation = controller;
+    this.pendingSideConversationCompletion = completion;
+
+    try {
+      return await this.handleSlashCommand(message, controller.signal);
+    } catch (error) {
+      if (
+        controller.signal.aborted ||
+        (error instanceof Error && error.name === 'AbortError')
+      ) {
+        return { stopReason: 'cancelled' };
+      }
+      throw error;
+    } finally {
+      resolveCompletion();
+      if (this.pendingSideConversationCompletion === completion) {
+        this.pendingSideConversationCompletion = null;
+      }
+      if (this.pendingSideConversation === controller) {
+        this.pendingSideConversation = null;
+      }
     }
   }
 
@@ -987,6 +1035,18 @@ export class AcpSession {
         throw new Error('Output schemas cannot be combined with user shell commands');
       }
       return this.handleUserShellCommand(messageText);
+    }
+    const sideCommand = parseSideConversationCommand(messageText);
+    if (sideCommand) {
+      if (outputSchema) {
+        throw new Error('Output schemas cannot be combined with slash commands');
+      }
+      if (Array.isArray(message) && message.some((part) => part.type === 'image_url')) {
+        throw new Error('Side conversations do not accept image attachments');
+      }
+      return this.handleSideConversationCommand(
+        sideCommand.question ? `/btw ${sideCommand.question}` : '/btw'
+      );
     }
     if (this.pendingPrompt) {
       if (outputSchema) {
@@ -1793,6 +1853,11 @@ export class AcpSession {
       this.pendingUserShell = null;
       cancelled = true;
     }
+    if (this.pendingSideConversation) {
+      this.pendingSideConversation.abort();
+      this.pendingSideConversation = null;
+      cancelled = true;
+    }
     if (!cancelled) {
       logger.warn(`[AcpSession ${this.id}] No pending prompt to cancel`);
     }
@@ -2126,6 +2191,7 @@ export class AcpSession {
       !this.destroyed &&
       this.pendingPrompt === null &&
       this.pendingUserShell === null &&
+      this.pendingSideConversation === null &&
       (this.runtime?.isIdleForResidency() ?? false)
     );
   }
@@ -2161,6 +2227,7 @@ export class AcpSession {
     const runtime = this.runtime;
     const promptCompletion = this.pendingPromptCompletion;
     const userShellCompletion = this.pendingUserShellCompletion;
+    const sideConversationCompletion = this.pendingSideConversationCompletion;
     this.agent = null;
     this.runtime = null;
     let firstError: unknown;
@@ -2175,6 +2242,9 @@ export class AcpSession {
     await attempt(() => this.cancel());
     if (promptCompletion) await attempt(() => promptCompletion);
     if (userShellCompletion) await attempt(() => userShellCompletion);
+    if (sideConversationCompletion) {
+      await attempt(() => sideConversationCompletion);
+    }
     if (discardPendingInput && promptCompletion && runtime) {
       await attempt(() => runtime.discardPendingInput());
     }
@@ -2315,6 +2385,7 @@ export class AcpSession {
     logger.warn(`[AcpSession ${this.id}] Update egress closed: kind=${error.kind}`);
     this.pendingPrompt?.abort('acp-egress-failed');
     this.pendingUserShell?.abort('acp-egress-failed');
+    this.pendingSideConversation?.abort('acp-egress-failed');
   }
 
   /**

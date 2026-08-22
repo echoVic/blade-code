@@ -29,6 +29,7 @@ import type { ProviderAdmissionEvent } from '../services/pi/providerRequestAdmis
 import type { ProviderRetryEvent } from '../services/pi/providerRetry.js';
 import type { ProviderStallEvent } from '../services/pi/providerStall.js';
 import type { SessionMetadata } from '../services/SessionService.js';
+import type { SideConversationResult } from '../services/SideConversationService.js';
 import type { SessionSelectionIntent } from '../slash-commands/types.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
 import type { ToolProgressUpdate } from '../tools/types/ExecutionTypes.js';
@@ -264,6 +265,15 @@ export interface SessionSelectorState {
   sessions: SessionMetadata[];
 }
 
+export interface SideConversationState {
+  requestId: string;
+  question: string;
+  status: 'loading' | 'completed' | 'error';
+  response?: string;
+  error?: string;
+  durationMs?: number;
+}
+
 /**
  * 应用状态（纯 UI 状态）
  */
@@ -281,6 +291,7 @@ export interface AppState {
   communicationStyle: CommunicationStyleSelection;
   subagentProgress: SubagentProgress | null; // 兼容投影：最近一条 subagent
   subagentProgresses: Record<string, SubagentProgress>;
+  sideConversation: SideConversationState | null;
 }
 
 /**
@@ -314,6 +325,10 @@ export interface AppActions {
     success: boolean,
     terminalSummary?: string
   ) => void;
+  startSideConversation: (requestId: string, question: string) => void;
+  completeSideConversation: (requestId: string, result: SideConversationResult) => void;
+  failSideConversation: (requestId: string, error: string) => void;
+  dismissSideConversation: () => void;
 }
 
 /**

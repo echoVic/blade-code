@@ -17,7 +17,6 @@ import {
   useFocusActions,
   useInitializationError,
   useInitializationStatus,
-  useIsProcessing,
   useModelEditorTarget,
   usePermissionMode,
   useSessionActions,
@@ -57,6 +56,7 @@ import { PermissionsManager } from './PermissionsManager.js';
 import { PluginsManager } from './PluginsManager.js';
 import { QuestionPrompt } from './QuestionPrompt.js';
 import { SessionSelector } from './SessionSelector.js';
+import { SideConversationPanel } from './SideConversationPanel.js';
 import { SkillsManager } from './SkillsManager.js';
 import { SubagentProgress } from './SubagentProgress.js';
 import { ThemeSelector } from './ThemeSelector.js';
@@ -114,9 +114,6 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   // 权限模式
   const permissionMode = usePermissionMode();
 
-  // 是否正在处理
-  const isProcessing = useIsProcessing();
-
   // 主题同步：统一在此处将 Store 中的主题名同步到 themeManager
   // 避免在每个 useTheme 选择器中触发副作用
   const themeName = useThemeName();
@@ -147,7 +144,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     dismissAll,
   } = useConfirmation();
 
-  const { executeCommand, handleAbort, cleanupAgent } = useCommandHandler(
+  const { executeCommand, handleAbort, isProcessing, cleanupAgent } = useCommandHandler(
     otherProps.systemPrompt,
     otherProps.appendSystemPrompt,
     confirmationHandler,
@@ -691,6 +688,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
         {/* Subagent 进度指示器 - 显示在加载指示器上方 */}
         <SubagentProgress />
+
+        <SideConversationPanel />
 
         {/* 加载指示器 - 当有阻塞弹窗时暂停动画，避免无意义的重渲染 */}
         <LoadingIndicator paused={hasBlockingModal} />

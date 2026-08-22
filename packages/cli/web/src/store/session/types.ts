@@ -266,6 +266,17 @@ export interface SessionErrorContext {
   failureCode?: NonNullable<Session['taskFailure']>['code'];
 }
 
+export interface SideConversationState {
+  requestId: string;
+  sessionRef: SessionRef;
+  question: string;
+  status: 'loading' | 'completed' | 'error';
+  response?: string;
+  error?: string;
+  durationMs?: number;
+  modelId?: string;
+}
+
 export interface SessionSlice {
   sessions: Session[];
   archivedSessions: Session[];
@@ -281,6 +292,7 @@ export interface SessionSlice {
   error: string | null;
   errorContext: SessionErrorContext | null;
   goal: Goal | null;
+  sideConversation: SideConversationState | null;
 
   setSessions: (sessions: Session[]) => void;
   addSession: (session: Session) => void;
@@ -309,6 +321,7 @@ export interface SessionSlice {
   resumeGoal: () => Promise<void>;
   editGoal: (objective: string) => Promise<void>;
   clearGoal: () => Promise<void>;
+  dismissSideConversation: () => void;
 }
 
 export interface TaskListSlice {

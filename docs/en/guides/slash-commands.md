@@ -30,6 +30,7 @@ Slash commands are Blade's shortcut entry point for quick actions. Type `/` to t
 | `/archive [sessionId]` | - | Archive the current or a specified inactive session tree |
 | `/unarchive <sessionId>` | - | Restore an archive root session |
 | `/export [path] [--reasoning]` | - | Export the current durable session as safe Markdown |
+| `/btw <question>` | - | Ask a one-turn question in an isolated side conversation |
 | `/compact` | - | Manually compact the context |
 | `/memory` | - | Manage project memory |
 | `/git` | `/g` | Git operations |
@@ -224,6 +225,21 @@ View the background Shells and Subagents owned by the current parent session and
 `resume` only accepts finished agents. Blade keeps the source run and creates a new child ID that inherits the source
 transcript, model, permissions, tools, and isolation config; the `Lineage` column in the list shows the source and resume depth.
 When the parent session is executing a turn or has durable pending input, a direct resume is rejected.
+
+### /btw
+
+Ask one side question using the current Session's persisted context:
+
+```bash
+/btw What caused the last test failure?
+```
+
+The side request runs for one turn and cannot execute tools. It can run beside an
+active main Agent turn, and its answer appears in a separate transient TUI or Web
+panel. Neither the question nor the answer is written to the main Session JSONL or
+included in later model context. ACP returns the same transient answer through
+`/btw`. Headless mode has no interactive Session runtime and rejects the command
+explicitly.
 
 ### /compact
 

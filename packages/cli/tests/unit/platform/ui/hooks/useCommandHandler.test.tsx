@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => {
     createAgent: vi.fn(),
     cleanupAgent: vi.fn(),
     steerActiveTurn: vi.fn(),
+    askSideQuestion: vi.fn(),
     getMcpContentCatalog: vi.fn(),
     refreshMcpContentCatalogs: vi.fn(),
     getMcpPrompt: vi.fn(),
@@ -41,8 +42,18 @@ const mocks = vi.hoisted(() => {
     addUserMessage: vi.fn(),
     addAssistantMessage: vi.fn(),
     addMessage: vi.fn(),
+    updateTokenUsage: vi.fn(),
     setCommand: vi.fn(),
     setCompactedContext: vi.fn(),
+    startSideConversation: vi.fn(),
+    completeSideConversation: vi.fn(),
+    failSideConversation: vi.fn(),
+    dismissSideConversation: vi.fn(),
+    sideConversation: null as {
+      requestId: string;
+      question: string;
+      status: 'loading' | 'completed' | 'error';
+    } | null,
     isProcessing: false,
     storeProcessing: false,
     setProcessing: vi.fn(),
@@ -75,6 +86,7 @@ vi.mock('../../../../../src/ui/hooks/useAgent.js', () => ({
     createAgent: mocks.createAgent,
     cleanupAgent: mocks.cleanupAgent,
     steerActiveTurn: mocks.steerActiveTurn,
+    askSideQuestion: mocks.askSideQuestion,
     getMcpContentCatalog: mocks.getMcpContentCatalog,
     refreshMcpContentCatalogs: mocks.refreshMcpContentCatalogs,
     getMcpPrompt: mocks.getMcpPrompt,
@@ -109,6 +121,7 @@ vi.mock('../../../../../src/store/selectors/index.js', () => ({
   useServiceTier: () => 'auto',
   useResponseVerbosity: () => 'auto',
   useCommunicationStyle: () => 'auto',
+  useSideConversation: () => mocks.sideConversation,
   useSessionActions: () => ({
     clearFinalizingStreamingMessageId: mocks.clearFinalizingStreamingMessageId,
     setCurrentThinkingContent: mocks.setCurrentThinkingContent,
@@ -117,10 +130,15 @@ vi.mock('../../../../../src/store/selectors/index.js', () => ({
     addMessage: mocks.addMessage,
     setCommand: mocks.setCommand,
     setCompactedContext: mocks.setCompactedContext,
+    updateTokenUsage: mocks.updateTokenUsage,
     setError: vi.fn(),
   }),
   useAppActions: () => ({
     setTasks: vi.fn(),
+    startSideConversation: mocks.startSideConversation,
+    completeSideConversation: mocks.completeSideConversation,
+    failSideConversation: mocks.failSideConversation,
+    dismissSideConversation: mocks.dismissSideConversation,
   }),
   useCommandActions: () => ({
     createAbortController: vi.fn(() => mocks.abortController),
@@ -213,6 +231,11 @@ describe('useCommandHandler durable recovery', () => {
   beforeEach(() => {
     mocks.isProcessing = false;
     mocks.storeProcessing = false;
+    mocks.sideConversation = null;
+    mocks.askSideQuestion.mockResolvedValue({
+      response: 'Side answer',
+      durationMs: 12,
+    });
     mocks.steerActiveTurn.mockResolvedValue({
       accepted: true,
       queued: 1,
@@ -699,5 +722,39 @@ describe('useCommandHandler durable recovery', () => {
     expect(mocks.addAssistantMessage).toHaveBeenCalledWith(
       '活动回合中不能执行 slash command；请先停止任务或等待完成。'
     );
+  });
+
+  it('runs /btw beside an active turn without steering or changing main messages', async () => {
+    mocks.isProcessing = true;
+    mocks.storeProcessing = true;
+
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    await hook?.executeCommand({
+      text: '/btw what is the current failure?',
+      displayText: '/btw what is the current failure?',
+      images: [],
+      parts: [{ type: 'text', text: '/btw what is the current failure?' }],
+    });
+
+    expect(mocks.askSideQuestion).toHaveBeenCalledWith(
+      'what is the current failure?',
+      expect.any(AbortSignal)
+    );
+    expect(mocks.startSideConversation).toHaveBeenCalledWith(
+      expect.stringMatching(/^side-/),
+      'what is the current failure?'
+    );
+    expect(mocks.completeSideConversation).toHaveBeenCalledWith(
+      expect.stringMatching(/^side-/),
+      expect.objectContaining({ response: 'Side answer' })
+    );
+    expect(mocks.steerActiveTurn).not.toHaveBeenCalled();
+    expect(mocks.addUserMessage).not.toHaveBeenCalled();
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalled();
+    expect(mocks.abort).not.toHaveBeenCalled();
   });
 });

@@ -30,6 +30,7 @@ Slash 命令是 Blade 的快捷操作入口，输入 `/` 触发建议，`Tab` �
 | `/archive [sessionId]` | - | 归档当前或指定的 inactive 会话树 |
 | `/unarchive <sessionId>` | - | 恢复归档根会话 |
 | `/export [path] [--reasoning]` | - | 导出当前 durable 会话为安全 Markdown |
+| `/btw <question>` | - | 在独立旁路中询问单轮问题 |
 | `/compact` | - | 手动压缩上下文 |
 | `/memory` | - | 管理项目记忆 |
 | `/git` | `/g` | Git 操作 |
@@ -225,6 +226,19 @@ summary 和经过清理的 tool/subagent/file activity。reasoning 默认省略�
 `resume` 只接受已结束的 agent。Blade 会保留源运行并创建新的 child ID，继承源
 transcript、模型、权限、工具与隔离配置；列表中的 `Lineage` 列显示来源和恢复深度。
 parent session 正在执行回合或存在 durable pending input 时，直接恢复会被拒绝。
+
+### /btw
+
+复用当前 Session 的持久化上下文回答一个旁路问题：
+
+```bash
+/btw 上一次测试失败的原因是什么？
+```
+
+旁路请求只执行一轮且不会调用工具。它可以与主 Agent 回合并行运行，结果显示在
+TUI 或 Web 的独立临时面板中；问题和回答都不会写入主会话 JSONL，也不会成为后续
+模型上下文。ACP 同样通过 `/btw` 返回临时回答。Headless 模式没有交互式 Session
+runtime，因此会明确拒绝该命令。
 
 ### /compact
 

@@ -89,6 +89,7 @@ Blade: 好的，我来帮你创建一个带搜索功能的下拉选择器组件.
 | `/model add` | 从 Provider Catalog 添加模型 |
 | `/clear` | 清空对话历史 |
 | `/compact` | 压缩上下文 |
+| `/btw <问题>` | 询问不写入主会话的旁路问题 |
 | `/status` | 查看当前状态 |
 | `/config` | 查看/修改配置 |
 

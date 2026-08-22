@@ -90,6 +90,7 @@ You: @src/utils/api.ts:10-50 what's wrong with this code?
 | `/model add` | Add a model from the Provider Catalog |
 | `/clear` | Clear conversation history |
 | `/compact` | Compact the context |
+| `/btw <question>` | Ask a side question without changing the main conversation |
 | `/status` | View current status |
 | `/config` | View/modify configuration |
 

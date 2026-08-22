@@ -220,6 +220,10 @@ const runtimeState = vi.hoisted(() => ({
     rewindSession: vi.fn(),
     listSubagents: vi.fn(() => []),
     resumeSubagent: vi.fn(),
+    askSideQuestion: vi.fn().mockResolvedValue({
+      response: 'Side answer',
+      durationMs: 9,
+    }),
     executeUserShellCommand: vi.fn(),
   },
 }));
@@ -636,6 +640,10 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.listSubagents.mockReset();
     runtimeState.runtime.listSubagents.mockReturnValue([]);
     runtimeState.runtime.resumeSubagent.mockReset();
+    runtimeState.runtime.askSideQuestion.mockReset().mockResolvedValue({
+      response: 'Side answer',
+      durationMs: 9,
+    });
     runtimeState.runtime.executeUserShellCommand.mockReset();
     worktreeState.enter.mockReset();
     worktreeState.restoreSession.mockReset();
@@ -6473,6 +6481,57 @@ describe('SessionRoutes runtime reuse', () => {
       'shell-session',
       '/tmp/shell-workspace'
     );
+    expect(agentState.chatStream).not.toHaveBeenCalled();
+  });
+
+  it('answers a side question without creating or steering a main run', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(
+      makeSessionMetadata({
+        sessionId: 'side-session',
+        projectPath: '/tmp/side-workspace',
+      })
+    );
+    vi.mocked(SessionService.loadSession).mockResolvedValue([
+      { role: 'user', content: 'Persisted context' },
+    ]);
+    runtimeState.runtime.hasActiveTurn.mockReturnValue(true);
+    runtimeState.runtime.askSideQuestion.mockResolvedValueOnce({
+      response: 'The main run is still active.',
+      durationMs: 17,
+      usage: {
+        promptTokens: 40,
+        completionTokens: 8,
+        totalTokens: 48,
+      },
+    });
+
+    const response = await SessionRoutes().request('/side-session/side-question', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        question: 'What is running?',
+        projectPath: '/tmp/side-workspace',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      response: 'The main run is still active.',
+      durationMs: 17,
+      modelId: 'model-1',
+      usage: {
+        promptTokens: 40,
+        completionTokens: 8,
+        totalTokens: 48,
+      },
+    });
+    expect(runtimeState.runtime.askSideQuestion).toHaveBeenCalledWith(
+      'What is running?',
+      { signal: expect.any(AbortSignal) }
+    );
+    expect(runtimeState.runtime.prepareInputTurn).not.toHaveBeenCalled();
+    expect(runtimeState.runtime.enqueueSteering).not.toHaveBeenCalled();
     expect(agentState.chatStream).not.toHaveBeenCalled();
   });
 });

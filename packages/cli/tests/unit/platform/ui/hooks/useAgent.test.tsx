@@ -65,6 +65,7 @@ describe('useAgent runtime ownership', () => {
     refresh: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
     enqueueSteering: ReturnType<typeof vi.fn>;
+    askSideQuestion: ReturnType<typeof vi.fn>;
     listRewindCheckpoints: ReturnType<typeof vi.fn>;
     rewindSession: ReturnType<typeof vi.fn>;
     listSubagents: ReturnType<typeof vi.fn>;
@@ -171,6 +172,10 @@ describe('useAgent runtime ownership', () => {
         turnId: 'turn-1',
         queued: 1,
       })),
+      askSideQuestion: vi.fn().mockResolvedValue({
+        response: 'Side answer',
+        durationMs: 8,
+      }),
       listRewindCheckpoints: vi.fn().mockResolvedValue([
         {
           messageId: 'user-2',
@@ -432,6 +437,33 @@ describe('useAgent runtime ownership', () => {
     });
     expect(runtime.enqueueSteering).toHaveBeenCalledWith('updated requirement', {
       allowBeforeTurn: true,
+    });
+  });
+
+  it('asks a side question through the owned runtime with prompt overrides', async () => {
+    function PromptHarness() {
+      hook = useAgent({
+        sessionId: 'session-1',
+        workspaceRoot: '/tmp/project',
+        systemPrompt: 'replacement prompt',
+        appendSystemPrompt: 'additional prompt',
+      });
+      return null;
+    }
+
+    await act(async () => {
+      root.render(<PromptHarness />);
+      await Promise.resolve();
+    });
+
+    const controller = new AbortController();
+    await expect(
+      hook?.askSideQuestion('What changed?', controller.signal)
+    ).resolves.toMatchObject({ response: 'Side answer' });
+    expect(runtime.askSideQuestion).toHaveBeenCalledWith('What changed?', {
+      signal: controller.signal,
+      systemPrompt: 'replacement prompt',
+      appendSystemPrompt: 'additional prompt',
     });
   });
 

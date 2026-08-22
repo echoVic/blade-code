@@ -37,6 +37,7 @@ import {
   SendMessageRequestSchema,
   SessionRewindRequestSchema,
   type SessionTaskDiffArtifact,
+  SideConversationRequestSchema,
   UserShellCommandRequestSchema,
 } from '../../api/schemas.js';
 import {
@@ -4040,6 +4041,30 @@ export const createSessionRouteController = (): SessionRouteController => {
       } finally {
         if (!transferred) runtimeLease.release();
       }
+    });
+  });
+
+  app.post('/:sessionId/side-question', async (c) => {
+    const sessionId = c.req.param('sessionId');
+    const parsed = safeParseSchema(SideConversationRequestSchema, await c.req.json());
+    if (!parsed.success) {
+      throw new BadRequestError('Invalid side conversation request');
+    }
+    const session = await resolveSessionForWrite(
+      sessionId,
+      parsed.data.projectPath ?? c.req.query('projectPath')
+    );
+
+    return withRuntime(session, async (runtime) => {
+      const result = await runtime.askSideQuestion(parsed.data.question, {
+        signal: c.req.raw.signal,
+      });
+      return c.json({
+        ...result,
+        ...(runtime.getCurrentModelId()
+          ? { modelId: runtime.getCurrentModelId() }
+          : {}),
+      });
     });
   });
 

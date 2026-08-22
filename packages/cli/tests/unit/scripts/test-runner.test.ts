@@ -105,6 +105,9 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
     expect(testTypes.realApiQualification.files).toContain(
       'tests/integration/real-api/keyed-coordination-reclamation-trajectory.test.ts'
     );
+    expect(testTypes.realApiQualification.files).toContain(
+      'tests/integration/real-api/side-conversation-trajectory.test.ts'
+    );
     expect(testTypes.realApiQualification.files).not.toContain(
       'tests/integration/real-api/blade-coding-task.test.ts'
     );

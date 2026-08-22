@@ -41,6 +41,7 @@ const initialAppState: AppState = {
   communicationStyle: 'auto',
   subagentProgress: null, // 当前无 subagent 执行
   subagentProgresses: {},
+  sideConversation: null,
 };
 
 /**
@@ -312,6 +313,63 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
           };
         });
       }, 1500);
+    },
+
+    startSideConversation: (requestId: string, question: string) => {
+      set((state) => ({
+        app: {
+          ...state.app,
+          sideConversation: {
+            requestId,
+            question,
+            status: 'loading',
+          },
+        },
+      }));
+    },
+
+    completeSideConversation: (requestId, result) => {
+      set((state) => {
+        if (state.app.sideConversation?.requestId !== requestId) return state;
+        return {
+          app: {
+            ...state.app,
+            sideConversation: {
+              requestId,
+              question: state.app.sideConversation.question,
+              status: 'completed',
+              response: result.response,
+              durationMs: result.durationMs,
+            },
+          },
+        };
+      });
+    },
+
+    failSideConversation: (requestId: string, error: string) => {
+      set((state) => {
+        if (state.app.sideConversation?.requestId !== requestId) return state;
+        return {
+          app: {
+            ...state.app,
+            sideConversation: {
+              requestId,
+              question: state.app.sideConversation.question,
+              status: 'error',
+              error,
+            },
+          },
+        };
+      });
+    },
+
+    dismissSideConversation: () => {
+      set((state) => ({
+        app: {
+          ...state.app,
+          sideConversation: null,
+        },
+      }));
     },
   },
 });

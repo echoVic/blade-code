@@ -24,6 +24,7 @@ vi.mock('../../../src/services', () => ({
     listRewindCheckpoints: vi.fn(),
     rewindSession: vi.fn(),
     sendMessage: vi.fn(),
+    askSideQuestion: vi.fn(),
     executeUserShellCommand: vi.fn(),
     abortSession: vi.fn(),
     forkSession: vi.fn(),
@@ -188,6 +189,7 @@ describe('sessionSlice multimodal sendMessage', () => {
       archivedCatalogError: null,
       error: null,
       errorContext: null,
+      sideConversation: null,
       messages: [],
       isStreaming: false,
       isStopping: false,
@@ -311,6 +313,87 @@ describe('sessionSlice multimodal sendMessage', () => {
       agentPhase: 'idle',
       error: null,
     });
+  });
+
+  it('runs /btw beside an active turn without adding a durable message', async () => {
+    const ref = createRef('side-session', '/tmp/side-workspace');
+    const existingMessages = [
+      createMessage({
+        id: 'persisted-user',
+        role: 'user',
+        content: 'Continue the main task',
+      }),
+    ];
+    useSessionStore.setState({
+      currentSessionId: ref.sessionId,
+      currentSessionRef: ref,
+      isTemporarySession: false,
+      isStreaming: true,
+      messages: existingMessages,
+    });
+    vi.mocked(sessionService.askSideQuestion).mockResolvedValue({
+      response: 'The provider is waiting for its first token.',
+      durationMs: 21,
+      modelId: 'model-1',
+      usage: {
+        promptTokens: 30,
+        completionTokens: 9,
+        totalTokens: 39,
+      },
+    });
+
+    const accepted = await useSessionStore.getState().sendMessage({
+      content: '/BTW What is blocking the main task?',
+    });
+
+    expect(accepted).toBe(true);
+    expect(sessionService.askSideQuestion).toHaveBeenCalledWith(
+      ref,
+      'What is blocking the main task?',
+      expect.any(AbortSignal)
+    );
+    expect(sessionService.sendMessage).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().messages).toEqual(existingMessages);
+    expect(useSessionStore.getState().sideConversation).toMatchObject({
+      sessionRef: ref,
+      question: 'What is blocking the main task?',
+      status: 'completed',
+      response: 'The provider is waiting for its first token.',
+      modelId: 'model-1',
+    });
+  });
+
+  it('cancels and removes an in-flight side conversation when dismissed', async () => {
+    const ref = createRef('side-session', '/tmp/side-workspace');
+    const started = deferred<AbortSignal>();
+    vi.mocked(sessionService.askSideQuestion).mockImplementation(
+      async (_ref, _question, signal) => {
+        started.resolve(signal as AbortSignal);
+        await new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true }
+          );
+        });
+        throw new Error('unreachable');
+      }
+    );
+    useSessionStore.setState({
+      currentSessionId: ref.sessionId,
+      currentSessionRef: ref,
+      isTemporarySession: false,
+    });
+
+    const request = useSessionStore.getState().sendMessage({
+      content: '/btw Is this still running?',
+    });
+    const signal = await started.promise;
+    useSessionStore.getState().dismissSideConversation();
+
+    await expect(request).resolves.toBe(false);
+    expect(signal.aborted).toBe(true);
+    expect(useSessionStore.getState().sideConversation).toBeNull();
   });
 
   it('subscribes before reading persisted history to close the bootstrap gap', async () => {

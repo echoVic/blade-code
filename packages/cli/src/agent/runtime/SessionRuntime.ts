@@ -112,6 +112,10 @@ import {
   SessionService,
 } from '../../services/SessionService.js';
 import {
+  runSideConversation,
+  type SideConversationResult,
+} from '../../services/SideConversationService.js';
+import {
   executeUserShellCommand,
   renderUserShellCommandForModel,
   type UserShellCommandEvent,
@@ -136,6 +140,10 @@ import type { Tool, ToolResult } from '../../tools/types/index.js';
 import { getCwd } from '../../utils/cwd.js';
 import { worktreeManager } from '../../worktree/WorktreeManager.js';
 import { ExecutionEngine } from '../ExecutionEngine.js';
+import {
+  CACHE_STABLE_ENVIRONMENT_OPTIONS,
+  composeProviderSystemPrompt,
+} from '../loop/providerSystemPrompt.js';
 import type { LoopEvent } from '../loop/types.js';
 import {
   resolveWorkspaceAgentResources,
@@ -171,6 +179,7 @@ import type {
   SubagentInfoForContext,
   UserMessageContent,
 } from '../types.js';
+import { ActiveOperationGate } from './ActiveOperationGate.js';
 import {
   type ActiveTurnHandle,
   ActiveTurnMailbox,
@@ -371,6 +380,7 @@ export class SessionRuntime {
   private autoVerifyRuntime?: AutoVerifyRuntime;
   private lspManager?: LspSessionManager;
   private readonly userShellMutex = new Mutex();
+  private readonly sideConversationOperations = new ActiveOperationGate();
   private readonly backgroundSubagentCompletionMutex = new Mutex();
   private readonly backgroundSubagentCompletionWaiters = new Set<() => void>();
   private backgroundSubagentCompletionRevision = 0;
@@ -758,6 +768,65 @@ export class SessionRuntime {
       throw new Error('Session runtime is not initialized');
     }
     return SessionService.loadSessionModelContext(this.sessionId, this.workspaceRoot);
+  }
+
+  async askSideQuestion(
+    question: string,
+    options: {
+      signal?: AbortSignal;
+      systemPrompt?: string;
+      appendSystemPrompt?: string;
+    } = {}
+  ): Promise<SideConversationResult> {
+    if (!this.initialized || !this.chatService) {
+      throw new Error('Session runtime is not initialized');
+    }
+    const operation = this.sideConversationOperations.enter(options.signal);
+    const permissionMode = this.config.permissionMode ?? PermissionMode.DEFAULT;
+    let toolExecutor: ToolExecutor | undefined;
+
+    try {
+      toolExecutor = this.createToolExecutor({ permissionMode });
+      const registry = toolExecutor.getRegistry();
+      await registry.waitForMcpCatalogIdle();
+      const [messages, builtPrompt] = await Promise.all([
+        this.loadModelContext(),
+        buildSystemPrompt({
+          projectPath: this.workspaceRoot,
+          replaceDefault: options.systemPrompt,
+          append: options.appendSystemPrompt,
+          ...(permissionMode === PermissionMode.PLAN
+            ? { mode: PermissionMode.PLAN }
+            : {}),
+          includeEnvironment: true,
+          environmentOptions: CACHE_STABLE_ENVIRONMENT_OPTIONS,
+          language: this.config.language,
+          availableSkills:
+            this.agentResources?.skills.generateAvailableSkillsList() ?? '',
+          communicationStyle: this.selectedCommunicationStyle,
+          communicationStyleCatalog: this.getCommunicationStyleCatalog(),
+          projectRuleCatalog: this.getProjectRuleCatalog(),
+          projectInstructionSourcePath: this.projectRoot,
+        }),
+      ]);
+      const systemPrompt = composeProviderSystemPrompt(builtPrompt.prompt, registry);
+      if (!systemPrompt) throw new Error('Side conversation system prompt is empty');
+
+      return await runSideConversation({
+        question,
+        sessionId: this.sessionId,
+        workspaceRoot: this.workspaceRoot,
+        systemPrompt,
+        messages,
+        tools: registry.getFunctionDeclarationsByMode(permissionMode),
+        chatService: this.chatService,
+        signal: operation.signal,
+        providerRecoveryBudgetMs: this.config.providerForegroundRecoveryMs,
+      });
+    } finally {
+      toolExecutor?.dispose();
+      operation.release();
+    }
   }
 
   getStartupTurnRecovery(): SessionTurnRecovery | undefined {
@@ -1525,6 +1594,7 @@ export class SessionRuntime {
       this.disposing ||
       this.hasActiveTurn() ||
       this.hasTurnOwner() ||
+      this.sideConversationOperations.stats().active > 0 ||
       this.getPendingSteeringCount() > 0 ||
       this.executorCatalogs.size > 0
     ) {
@@ -2217,6 +2287,9 @@ export class SessionRuntime {
     const sessionLease = this.sessionLease;
     const autoVerifyRuntime = this.autoVerifyRuntime;
     const lspManager = this.lspManager;
+    await attempt('stop side conversations', () =>
+      this.sideConversationOperations.shutdown('session-runtime-dispose')
+    );
     this.signalBackgroundSubagentCompletionWaiters();
     this.chatService = undefined;
     this.executionEngine = undefined;

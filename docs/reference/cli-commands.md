@@ -436,6 +436,13 @@ effective level。活动回合期间拒绝切换，Runtime 替换或 metadata �
 结构化 P0-P3 findings 与 workspace-read-only sandbox；不会修复或修改被审查代码。
 详见 [Native Read-Only Code Review](native-code-review.md)。
 
+#### `/btw <question>`
+
+在不改变主 Agent 回合的情况下执行一次上下文感知问答。该请求复用当前 Session
+的持久化模型上下文和 Provider 配置，但不执行工具、不创建主 run，也不把问题或
+回答写入 Session JSONL。TUI 和 Web 使用独立瞬态面板；ACP 通过 slash command
+响应返回结果。Headless 因没有活动 Session runtime 而拒绝该命令。
+
 #### `/resume [sessionId]`
 
 恢复历史会话。不带 ID 时打开会话选择器。

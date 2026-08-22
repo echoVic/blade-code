@@ -38,6 +38,7 @@ import type {
   SessionMetadata,
   SessionRewindCheckpoint,
 } from '../services/SessionService.js';
+import type { SideConversationResult } from '../services/SideConversationService.js';
 import { sessionActions } from '../store/vanilla.js';
 
 export type SessionSelectionIntent = 'resume' | 'fork';
@@ -76,6 +77,7 @@ export type SlashCommandAction =
   | 'goal_cleared'
   | 'rewind_session'
   | 'subagent_resumed'
+  | 'show_side_conversation'
   | 'select_session'
   | 'activate_session';
 
@@ -214,6 +216,10 @@ export interface SlashCommandContext {
       findings: number;
       content: string;
     }>;
+  };
+  /** Current surface-owned ephemeral side conversation boundary. */
+  sideConversation?: {
+    ask: (question: string, signal?: AbortSignal) => Promise<SideConversationResult>;
   };
   /** 当前表面拥有的 durable subagent 控制边界 */
   subagents?: {

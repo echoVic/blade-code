@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,6 +21,7 @@ import { HookManager } from '../../../../src/hooks/HookManager.js';
 import { HookEvent } from '../../../../src/hooks/types/HookTypes.js';
 import { McpRegistry } from '../../../../src/mcp/McpRegistry.js';
 import { McpTaskManager } from '../../../../src/mcp/McpTaskManager.js';
+import { buildSystemPrompt } from '../../../../src/prompts/index.js';
 import { Bus } from '../../../../src/server/bus.js';
 import {
   createChatServiceAsync,
@@ -91,7 +92,9 @@ const resourceMocks = vi.hoisted(() => {
       }) => ({
         projectRoot: resources.projectRoot ?? resources.workspaceRoot ?? '/workspace',
         subagents: resources.subagents.snapshot(),
-        skills: {},
+        skills: {
+          generateAvailableSkillsList: vi.fn(() => ''),
+        },
         commands: {},
       })
     ),
@@ -371,6 +374,66 @@ describe('SessionRuntime', () => {
 
     await runtime.dispose();
     expect(runtime.isIdleForResidency()).toBe(false);
+  });
+
+  it('answers a side question without changing the durable session JSONL', async () => {
+    const sessionId = 'side-conversation-session';
+    const workspaceRoot = path.join(storageRoot, 'side-conversation-workspace');
+    const chatService = createDisposableChatService(
+      vi.fn().mockResolvedValue(undefined)
+    );
+    chatService.chat.mockResolvedValueOnce({
+      content: 'The durable context contains one user message.',
+    });
+    vi.mocked(createChatServiceAsync).mockResolvedValueOnce(chatService);
+    vi.mocked(buildSystemPrompt)
+      .mockResolvedValueOnce({ prompt: 'warmup prompt', sources: [] })
+      .mockResolvedValueOnce({ prompt: 'runtime prompt', sources: [] });
+
+    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    (
+      runtime.getAgentResources().skills as {
+        generateAvailableSkillsList?: () => string;
+      }
+    ).generateAvailableSkillsList = () => '';
+    const contextManager = runtime.getExecutionEngine().getContextManager();
+    await contextManager.saveMessage(
+      sessionId,
+      'user',
+      'Persisted parent message',
+      null
+    );
+    const sessionFile = getSessionFilePath(workspaceRoot, sessionId);
+    const before = readFileSync(sessionFile);
+
+    await expect(
+      runtime.askSideQuestion('What context do you have?')
+    ).resolves.toMatchObject({
+      response: 'The durable context contains one user message.',
+    });
+
+    expect(readFileSync(sessionFile)).toEqual(before);
+    expect(chatService.chat).toHaveBeenCalledTimes(1);
+    const [messages, _tools, _signal, options] = chatService.chat.mock
+      .calls[0] as unknown as Parameters<IChatService['chat']>;
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'user',
+          content: 'Persisted parent message',
+        }),
+      ])
+    );
+    expect(options).toMatchObject({
+      providerSessionId: `${sessionId}:side`,
+      providerAdmission: {
+        sessionId,
+        ownerId: sessionId,
+        requestClass: 'foreground',
+      },
+    });
+
+    await runtime.dispose();
   });
 
   it('isolates session-provided MCP servers and releases them on dispose', async () => {

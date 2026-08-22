@@ -43,6 +43,7 @@ import {
   type SessionRewindCheckpoint,
   SessionService,
 } from '../../services/SessionService.js';
+import type { SideConversationResult } from '../../services/SideConversationService.js';
 import { appActions, vanillaStore } from '../../store/vanilla.js';
 import { getCwd } from '../../utils/cwd.js';
 
@@ -873,6 +874,21 @@ export function useAgent(options: AgentOptions) {
     }
   );
 
+  const askSideQuestion = useMemoizedFn(
+    async (question: string, signal?: AbortSignal): Promise<SideConversationResult> => {
+      const targetSessionId = options.sessionId;
+      if (!targetSessionId) {
+        throw new Error('Side conversation requires a Session');
+      }
+      const runtime = await getOrCreateSessionRuntime(targetSessionId);
+      return runtime.askSideQuestion(question, {
+        signal,
+        systemPrompt: options.systemPrompt,
+        appendSystemPrompt: options.appendSystemPrompt,
+      });
+    }
+  );
+
   const executeUserShellCommand = useMemoizedFn(
     async (
       command: string,
@@ -937,6 +953,7 @@ export function useAgent(options: AgentOptions) {
     createAgent,
     cleanupAgent,
     steerActiveTurn,
+    askSideQuestion,
     runCodeReview,
     executeUserShellCommand,
     listRewindCheckpoints,
