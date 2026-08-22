@@ -15,6 +15,7 @@ import {
   finalAssistantText,
   readSessionEvents,
 } from '../integration/real-api/sessionForkTrajectoryHarness.js';
+import { classifyTokenBudgetPtyFinal } from './tokenBudgetHandoffPtyDriver.js';
 
 const MAX_PROJECTED_OUTPUT_CHARS = 12_000;
 const PTY_FAILURE_STAGES = [
@@ -193,8 +194,11 @@ async function waitForDurableCompletion(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const events = readSessionEvents(transcriptPath);
-    if (finalAssistantText(events) === input.finalMarker) {
-      return;
+    const finalText = finalAssistantText(events);
+    const state = classifyTokenBudgetPtyFinal(finalText, input.finalMarker);
+    if (state === 'matched') return;
+    if (state === 'mismatched') {
+      throw new Error('Token-budget PTY durable final did not match');
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }

@@ -183,4 +183,100 @@ describe('pi model runtime', () => {
       else process.env.BLADE_API_KEY = originalGlobal;
     }
   });
+
+  it('resolves a fallback model through its own channel configuration', () => {
+    const primaryId = 'primary-claude';
+    const fallbackId = 'fallback-gpt';
+    const primaryCredential = getModelApiKeyEnvironmentVariable(primaryId);
+    const fallbackCredential = getModelApiKeyEnvironmentVariable(fallbackId);
+    const originalPrimary = process.env[primaryCredential];
+    const originalFallback = process.env[fallbackCredential];
+
+    try {
+      process.env[primaryCredential] = 'primary-key';
+      process.env[fallbackCredential] = 'fallback-key';
+      const primary = {
+        id: primaryId,
+        provider: 'anthropic',
+        model: 'claude-opus-4-8',
+        overrides: { baseUrl: 'https://claude.example.test' },
+        fallbackModels: [
+          {
+            provider: 'openai',
+            model: 'gpt-5.5',
+            configId: fallbackId,
+          },
+        ],
+      };
+      const fallback = {
+        id: fallbackId,
+        provider: 'openai',
+        model: 'gpt-5.5',
+        overrides: {
+          baseUrl: 'https://gpt.example.test/v1',
+          timeout: 42_000,
+          streamIdleTimeout: 7_000,
+        },
+      };
+      const resolved = resolveModelConfig(
+        primary,
+        {
+          temperature: 0,
+          timeout: 180_000,
+          models: [primary, fallback],
+        },
+        'off'
+      );
+
+      expect(resolved.chat.apiKey).toBe('primary-key');
+      expect(resolved.chat.fallbackModels).toEqual([
+        {
+          provider: 'openai',
+          model: 'gpt-5.5',
+          configId: fallbackId,
+          channel: {
+            apiKey: 'fallback-key',
+            baseUrl: 'https://gpt.example.test/v1',
+            temperature: 0,
+            maxOutputTokens: undefined,
+            timeout: 42_000,
+            streamIdleTimeout: 7_000,
+            apiVersion: undefined,
+            customHeaders: undefined,
+            enablePromptCaching: undefined,
+          },
+        },
+      ]);
+    } finally {
+      if (originalPrimary === undefined) delete process.env[primaryCredential];
+      else process.env[primaryCredential] = originalPrimary;
+      if (originalFallback === undefined) delete process.env[fallbackCredential];
+      else process.env[fallbackCredential] = originalFallback;
+    }
+  });
+
+  it('requires configId when duplicate fallback channels are ambiguous', () => {
+    const primary = {
+      id: 'primary',
+      provider: 'deepseek',
+      model: 'deepseek-v4-flash',
+      fallbackModels: [{ provider: 'openai', model: 'gpt-5.5' }],
+    };
+
+    expect(() =>
+      resolveModelConfig(
+        primary,
+        {
+          temperature: 0,
+          timeout: 180_000,
+          models: [
+            primary,
+            { id: 'gpt-a', provider: 'openai', model: 'gpt-5.5' },
+            { id: 'gpt-b', provider: 'openai', model: 'gpt-5.5' },
+          ],
+        },
+        'off'
+      )
+    ).toThrow('set configId');
+  });
 });

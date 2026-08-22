@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.10.68] - 2026-08-22
+
+### Added
+- Fallback model references can select a concrete model configuration with
+  `configId`, allowing each fallback to use its own credentials, endpoint, and
+  request overrides
+
+### Fixed
+- Pre-output Provider idle timeouts can switch to a different fallback
+  Provider without retrying the stalled Provider
+- Cross-Provider circuit breaking, request admission, and transport options now
+  use the fallback channel identity instead of the primary channel
+- Raw PTY qualification fails immediately when an authoritative durable final
+  does not match the required output instead of waiting for the full timeout
+
+### Tests
+- Added a real Claude-timeout-to-GPT-fallback trajectory with independent
+  channel credentials and strict no-primary-retry assertions
+- Added fallback configuration, replay-boundary, admission-isolation, and PTY
+  terminal classification coverage
+
 ## [0.10.67] - 2026-08-22
 
 ### Fixed

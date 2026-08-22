@@ -146,6 +146,12 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
     );
   });
 
+  it('keeps cross-provider fallback in the release-blocking matrix', () => {
+    expect(testTypes.realApiQualification.files).toContain(
+      'tests/integration/real-api/cross-provider-fallback-trajectory.test.ts'
+    );
+  });
+
   it('disables framework retry for the release-blocking real API matrix', async () => {
     const vitestConfig = await readFile(
       path.resolve(import.meta.dirname, '../../../vitest.config.ts'),

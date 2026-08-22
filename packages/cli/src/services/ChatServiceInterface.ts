@@ -65,6 +65,20 @@ export interface ProviderOptions {
   };
 }
 
+export interface ChatFallbackModel extends ModelRef {
+  channel?: {
+    apiKey?: string;
+    baseUrl?: string;
+    temperature?: number;
+    maxOutputTokens?: number;
+    timeout?: number;
+    streamIdleTimeout?: number;
+    apiVersion?: string;
+    customHeaders?: Record<string, string>;
+    enablePromptCaching?: boolean;
+  };
+}
+
 /**
  * 多模态内容部分 - 文本
  */
@@ -125,7 +139,7 @@ export interface ChatConfig {
   serviceTier?: 'default' | 'priority' | 'flex' | 'fast';
   responseVerbosity?: 'low' | 'medium' | 'high';
   customHeaders?: Record<string, string>;
-  fallbackModels?: ModelRef[];
+  fallbackModels?: ChatFallbackModel[];
   enablePromptCaching?: boolean;
   maxRetries?: number;
   providerCircuitBreakerOpenMs?: number;

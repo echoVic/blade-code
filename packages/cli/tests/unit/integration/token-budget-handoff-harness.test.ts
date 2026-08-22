@@ -70,7 +70,10 @@ import {
   type TokenBudgetProxyEvidence,
   writeWithBackpressure,
 } from '../../support/tokenBudgetHandoffProxy.js';
-import { parseTokenBudgetHandoffPtyEvidence } from '../../support/tokenBudgetHandoffPtyDriver.js';
+import {
+  classifyTokenBudgetPtyFinal,
+  parseTokenBudgetHandoffPtyEvidence,
+} from '../../support/tokenBudgetHandoffPtyDriver.js';
 import {
   classifyTokenBudgetWebTaskStartObservation,
   formatTokenBudgetWebFinalDiagnostic,
@@ -2288,6 +2291,16 @@ describe('token-budget handoff deterministic qualification foundation', () => {
         ['pty-secret']
       )
     ).toThrow('secret');
+  });
+
+  it('fails a PTY wait as soon as a nonmatching durable final is authoritative', () => {
+    expect(classifyTokenBudgetPtyFinal(undefined, 'FINAL_OK_expected')).toBe('pending');
+    expect(classifyTokenBudgetPtyFinal('FINAL_OK_expected', 'FINAL_OK_expected')).toBe(
+      'matched'
+    );
+    expect(
+      classifyTokenBudgetPtyFinal('FINAL_OK_expected\nextra text', 'FINAL_OK_expected')
+    ).toBe('mismatched');
   });
 
   it('validates bounded ACP task and load evidence', () => {

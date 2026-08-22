@@ -331,11 +331,21 @@ Fallback 使用完整的跨 Provider 模型引用：
   "fallbackModels": [
     {
       "provider": "anthropic",
-      "model": "claude-sonnet-4-5"
+      "model": "claude-sonnet-4-5",
+      "configId": "claude-fallback"
     }
   ]
 }
 ```
+
+`configId` 引用 `models` 中的具体配置，使 fallback 使用该配置自己的凭据、
+`baseUrl`、超时和请求覆盖。不同 Provider 或不同 NewAPI channel 应显式设置
+`configId`。未设置时，仅在 `provider` + `model` 唯一匹配一条模型配置时自动解析；
+存在多个匹配项会拒绝启动，避免静默选择错误的凭据。
+
+主 Provider 在尚未产生任何输出时发生 idle timeout，可以直接切换到下一 fallback，
+不会重试同一 Provider。一旦已产生文本、reasoning、tool call、usage 或 finish 事件，
+执行边界即不可重放，不会切换 Provider。
 
 ## 破坏性升级
 

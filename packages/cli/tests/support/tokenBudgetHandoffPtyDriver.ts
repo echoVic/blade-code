@@ -55,6 +55,14 @@ interface PtyRunnerEvidence {
   faults: [];
 }
 
+export function classifyTokenBudgetPtyFinal(
+  finalText: string | undefined,
+  finalMarker: string
+): 'pending' | 'matched' | 'mismatched' {
+  if (finalText === undefined) return 'pending';
+  return finalText === finalMarker ? 'matched' : 'mismatched';
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

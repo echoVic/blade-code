@@ -94,7 +94,11 @@ describe('raw PTY marker latching source contract', () => {
       'await waitFor(\n      () => finalMarkerSeen,\n      () => exited,'
     );
     expect(source).toContain('finalMarkerSeen: true,');
-    expect(source).toContain('finalAssistantText(events) === input.finalMarker');
+    expect(source).toContain(
+      'classifyTokenBudgetPtyFinal(finalText, input.finalMarker)'
+    );
+    expect(source).toContain("if (state === 'matched') return;");
+    expect(source).toContain("if (state === 'mismatched')");
     expect(source).toContain("composerReady ||= scan.includes('输入命令...')");
     expect(source).toContain('composerFailureCode');
     expect(source).toContain('const deadline = Date.now() + input.timeoutMs - 10_000');

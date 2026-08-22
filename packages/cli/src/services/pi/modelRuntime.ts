@@ -1,6 +1,5 @@
 import type { Api, Model, MutableModels } from '@earendil-works/pi-ai';
-import type { ModelRef } from '../../config/types.js';
-import type { ChatConfig } from '../ChatServiceInterface.js';
+import type { ChatConfig, ChatFallbackModel } from '../ChatServiceInterface.js';
 import { normalizeProviderBaseUrl } from './endpoint.js';
 import { getPiModelCatalog } from './PiModelCatalog.js';
 
@@ -29,7 +28,7 @@ export function createPiRuntime(config: ChatConfig): PiRuntime {
 
 export function createFallbackModel(
   config: ChatConfig,
-  fallback: ModelRef
+  fallback: ChatFallbackModel
 ): Model<Api> {
   const catalog = config.modelCatalog ?? getPiModelCatalog();
   return applyOverrides(catalog.getModel(fallback.provider, fallback.model), config);

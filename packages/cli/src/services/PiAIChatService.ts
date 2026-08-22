@@ -10,6 +10,7 @@ import { abortableSleep, combineAbortSignals } from '../utils/abort.js';
 import type {
   ChatCompletionMessageToolCall,
   ChatConfig,
+  ChatFallbackModel,
   ChatRequestOptions,
   ChatResponse,
   ChatToolDefinition,
@@ -71,6 +72,40 @@ import { DEFAULT_STREAM_IDLE_TIMEOUT_MS, streamPiModel } from './pi/streamAdapte
 
 const logger = createLogger(LogCategory.CHAT);
 let nextServiceAdmissionOwner = 1;
+
+function createFallbackChatConfig(
+  primary: ChatConfig,
+  fallback: ChatFallbackModel
+): ChatConfig {
+  const sameProvider = fallback.provider === primary.provider;
+  const inheritPrimaryChannel = sameProvider && fallback.channel === undefined;
+  const channel = fallback.channel;
+
+  return {
+    ...primary,
+    provider: fallback.provider,
+    model: fallback.model,
+    apiKey: channel?.apiKey ?? (inheritPrimaryChannel ? primary.apiKey : undefined),
+    baseUrl: channel?.baseUrl ?? (inheritPrimaryChannel ? primary.baseUrl : undefined),
+    temperature: channel?.temperature ?? primary.temperature,
+    maxOutputTokens:
+      channel?.maxOutputTokens ??
+      (inheritPrimaryChannel ? primary.maxOutputTokens : undefined),
+    timeout: channel?.timeout ?? primary.timeout,
+    streamIdleTimeout: channel?.streamIdleTimeout ?? primary.streamIdleTimeout,
+    apiVersion:
+      channel?.apiVersion ?? (inheritPrimaryChannel ? primary.apiVersion : undefined),
+    customHeaders:
+      channel?.customHeaders ??
+      (inheritPrimaryChannel ? primary.customHeaders : undefined),
+    enablePromptCaching:
+      channel?.enablePromptCaching ??
+      (inheritPrimaryChannel ? primary.enablePromptCaching : undefined),
+    serviceTier: sameProvider ? primary.serviceTier : undefined,
+    responseVerbosity: sameProvider ? primary.responseVerbosity : undefined,
+    fallbackModels: undefined,
+  };
+}
 
 function hasImageContent(message: Message | undefined): boolean {
   return Boolean(
@@ -336,28 +371,28 @@ export class PiAIChatService implements IChatService {
       requestClass: 'internal' as const,
     };
 
-    const circuitFor = (model: Model<Api>) =>
+    const circuitFor = (model: Model<Api>, candidateConfig: ChatConfig) =>
       circuitRegistry.get({
         provider: model.provider,
         api: model.api,
-        baseUrl: model.baseUrl ?? this.config.baseUrl ?? '',
+        baseUrl: model.baseUrl ?? candidateConfig.baseUrl ?? '',
         model: model.id,
-        serviceTier: this.config.serviceTier,
-        apiVersion: this.config.apiVersion,
-        apiKey: this.config.apiKey,
-        customHeaders: this.config.customHeaders,
+        serviceTier: candidateConfig.serviceTier,
+        apiVersion: candidateConfig.apiVersion,
+        apiKey: candidateConfig.apiKey,
+        customHeaders: candidateConfig.customHeaders,
         openDurationMs: circuitOpenDurationMs,
         probeLeaseMs: circuitProbeLeaseMs,
       });
-    const admissionScopeFor = (model: Model<Api>) => ({
+    const admissionScopeFor = (model: Model<Api>, candidateConfig: ChatConfig) => ({
       provider: model.provider,
       api: model.api,
-      baseUrl: model.baseUrl ?? this.config.baseUrl ?? '',
+      baseUrl: model.baseUrl ?? candidateConfig.baseUrl ?? '',
       model: model.id,
-      serviceTier: this.config.serviceTier,
-      apiVersion: this.config.apiVersion,
-      apiKey: this.config.apiKey,
-      customHeaders: this.config.customHeaders,
+      serviceTier: candidateConfig.serviceTier,
+      apiVersion: candidateConfig.apiVersion,
+      apiKey: candidateConfig.apiKey,
+      customHeaders: candidateConfig.customHeaders,
       maxConcurrent: providerRequestConcurrency,
       maxPendingBytes: providerRequestPendingBytes,
     });
@@ -430,7 +465,8 @@ export class PiAIChatService implements IChatService {
         : {}),
     });
     const acquireProviderPermit = async function* (
-      model: Model<Api>
+      model: Model<Api>,
+      candidateConfig: ChatConfig
     ): AsyncGenerator<StreamChunk, ProviderAdmissionPermit, unknown> {
       const recoveryRemainingMs = recoverySnapshot()?.recoveryRemainingMs;
       const maxWaitMs =
@@ -440,7 +476,7 @@ export class PiAIChatService implements IChatService {
       let ticket;
       try {
         ticket = providerAdmissionScheduler.admit({
-          scope: admissionScopeFor(model),
+          scope: admissionScopeFor(model, candidateConfig),
           sessionId: providerAdmissionIdentity.sessionId,
           ownerId: providerAdmissionIdentity.ownerId,
           requestClass: providerAdmissionIdentity.requestClass,
@@ -521,7 +557,7 @@ export class PiAIChatService implements IChatService {
       }
     };
 
-    const streamFrom = (model: Model<Api>) => {
+    const streamFrom = (model: Model<Api>, candidateConfig: ChatConfig) => {
       if (!hasLogicalAttemptCapacity()) throw budgetError();
       if (sharedAttemptLimit) logicalPhysicalAttempts++;
       responseMetadata = undefined;
@@ -530,10 +566,10 @@ export class PiAIChatService implements IChatService {
         ? combineAbortSignals(signal, watchdogController.signal)
         : watchdogController.signal;
       const requestTimeoutMs =
-        typeof this.config.timeout === 'number' &&
-        Number.isFinite(this.config.timeout) &&
-        this.config.timeout > 0
-          ? Math.max(1, Math.floor(this.config.timeout))
+        typeof candidateConfig.timeout === 'number' &&
+        Number.isFinite(candidateConfig.timeout) &&
+        candidateConfig.timeout > 0
+          ? Math.max(1, Math.floor(candidateConfig.timeout))
           : undefined;
       let recoveryDeadline:
         | { remainingMs: number; error: ProviderRecoveryBudgetExceededError }
@@ -550,7 +586,7 @@ export class PiAIChatService implements IChatService {
         };
       }
       const piOptions = buildPiOptions(
-        this.config,
+        candidateConfig,
         model,
         requestSignal,
         requestOptions,
@@ -560,7 +596,8 @@ export class PiAIChatService implements IChatService {
         responseMetadata = response;
       });
       const stream = streamPiModel(this.models, model, context, piOptions, {
-        idleTimeoutMs: this.config.streamIdleTimeout ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+        idleTimeoutMs:
+          candidateConfig.streamIdleTimeout ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
         signal: requestSignal,
         abort: (reason) => watchdogController.abort(reason),
       });
@@ -677,6 +714,7 @@ export class PiAIChatService implements IChatService {
 
     const streamWithRetries = async function* (
       model: Model<Api>,
+      candidateConfig: ChatConfig,
       onRealChunk: () => void,
       candidateMaxRetries: number,
       terminalCandidate: boolean
@@ -685,7 +723,7 @@ export class PiAIChatService implements IChatService {
       let emitted = false;
       let retryReason: ReturnType<typeof classifyProviderRetry>['reason'];
       let retryStatusCode: number | undefined;
-      const circuit = circuitFor(model);
+      const circuit = circuitFor(model, candidateConfig);
       for (let attempt = 0; attempt <= candidateMaxRetries; attempt++) {
         if (!hasLogicalAttemptCapacity()) break;
         let admission: Extract<ProviderCircuitAdmission, { allowed: true }> | undefined;
@@ -735,7 +773,7 @@ export class PiAIChatService implements IChatService {
           }
 
           try {
-            providerPermit = yield* acquireProviderPermit(model);
+            providerPermit = yield* acquireProviderPermit(model, candidateConfig);
           } catch (error) {
             if (error instanceof ProviderRecoveryBudgetExceededError) {
               yield recoveryExhausted(
@@ -764,7 +802,7 @@ export class PiAIChatService implements IChatService {
         try {
           let recoveredEmitted = false;
           let circuitSuccessRecorded = false;
-          for await (const chunk of streamFrom(model)) {
+          for await (const chunk of streamFrom(model, candidateConfig)) {
             if (chunk.providerStall) {
               yield chunk;
               continue;
@@ -1046,6 +1084,7 @@ export class PiAIChatService implements IChatService {
     try {
       for await (const chunk of streamWithRetries(
         this.model,
+        this.config,
         () => {
           primaryEmitted = true;
         },
@@ -1061,6 +1100,7 @@ export class PiAIChatService implements IChatService {
         primaryEmitted ||
         (!isProviderAdmissionError(error) &&
           !isProviderCircuitOpenError(error) &&
+          !isProviderStreamIdleTimeout(error) &&
           !classifyProviderRetry(error, responseMetadata).retryable)
       ) {
         throw error;
@@ -1072,7 +1112,8 @@ export class PiAIChatService implements IChatService {
       yield { modelFallback: true };
       let fallbackEmitted = false;
       try {
-        const fallbackModel = createFallbackModel(this.config, fallback);
+        const fallbackConfig = createFallbackChatConfig(this.config, fallback);
+        const fallbackModel = createFallbackModel(fallbackConfig, fallback);
         const terminalCandidate = index === fallbackModels.length - 1;
         const candidateRetryLimit =
           boundedRecovery && !terminalCandidate
@@ -1080,6 +1121,7 @@ export class PiAIChatService implements IChatService {
             : maxRetries;
         for await (const chunk of streamWithRetries(
           fallbackModel,
+          fallbackConfig,
           () => {
             fallbackEmitted = true;
           },
@@ -1095,6 +1137,7 @@ export class PiAIChatService implements IChatService {
           fallbackEmitted ||
           (!isProviderAdmissionError(error) &&
             !isProviderCircuitOpenError(error) &&
+            !isProviderStreamIdleTimeout(error) &&
             !classifyProviderRetry(error, responseMetadata).retryable)
         ) {
           throw error;

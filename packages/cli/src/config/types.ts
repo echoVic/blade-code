@@ -38,6 +38,7 @@ export enum PermissionMode {
 export interface ModelRef {
   provider: string;
   model: string;
+  configId?: string;
 }
 
 export type ModelProviderWireApi = 'openai-completions' | 'anthropic-messages';

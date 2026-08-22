@@ -107,6 +107,7 @@ const RuntimeSettingsSchema = Type.Object({
             Type.Object({
               provider: NonEmptyString,
               model: NonEmptyString,
+              configId: Type.Optional(NonEmptyString),
             })
           )
         ),

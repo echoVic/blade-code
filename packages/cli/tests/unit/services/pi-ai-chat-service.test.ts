@@ -949,7 +949,21 @@ describe('PiAIChatService', () => {
     );
 
     await expect(
-      (await service({ maxRetries: 2 })).chat([{ role: 'user', content: 'hello' }])
+      (
+        await service({
+          maxRetries: 2,
+          fallbackModels: [
+            {
+              provider: 'fallback-provider',
+              model: 'backup',
+              channel: {
+                apiKey: 'fallback-key',
+                baseUrl: 'https://fallback.example.test/v1',
+              },
+            },
+          ],
+        })
+      ).chat([{ role: 'user', content: 'hello' }])
     ).rejects.toThrow('stream idle timeout');
     expect(streamPiModel).toHaveBeenCalledOnce();
   });
@@ -1029,16 +1043,117 @@ describe('PiAIChatService', () => {
 
     const result = await (
       await service({
-        fallbackModels: [{ provider: 'test', model: 'backup' }],
+        fallbackModels: [
+          {
+            provider: 'fallback-provider',
+            model: 'backup',
+            channel: {
+              apiKey: 'fallback-key',
+              baseUrl: 'https://fallback.example.test/v1',
+              timeout: 42_000,
+              streamIdleTimeout: 7_000,
+            },
+          },
+        ],
       })
     ).chat([{ role: 'user', content: 'hello' }]);
 
     expect(result.content).toBe('fallback');
-    expect(createFallbackModel).toHaveBeenCalledWith(expect.any(Object), {
-      provider: 'test',
-      model: 'backup',
-    });
+    expect(createFallbackModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'fallback-provider',
+        model: 'backup',
+        apiKey: 'fallback-key',
+        baseUrl: 'https://fallback.example.test/v1',
+        timeout: 42_000,
+        streamIdleTimeout: 7_000,
+        fallbackModels: undefined,
+      }),
+      expect.objectContaining({
+        provider: 'fallback-provider',
+        model: 'backup',
+      })
+    );
+    expect(buildPiOptions).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        provider: 'fallback-provider',
+        apiKey: 'fallback-key',
+        baseUrl: 'https://fallback.example.test/v1',
+      }),
+      expect.objectContaining({ id: 'backup' }),
+      expect.any(AbortSignal),
+      undefined,
+      false
+    );
     expect(estimateProviderRequestPendingBytes).toHaveBeenCalledOnce();
+  });
+
+  it('switches providers after a pre-output idle timeout without retrying primary', async () => {
+    const idleTimeout = Object.assign(new Error('provider stream idle timeout'), {
+      code: 'STREAM_IDLE_TIMEOUT',
+    });
+    const scheduler = new ProviderRequestAdmissionScheduler({
+      processSecret: new Uint8Array(32).fill(19),
+    });
+    const admit = vi.spyOn(scheduler, 'admit');
+    streamPiModel
+      .mockReturnValueOnce(chunks([idleTimeout]))
+      .mockReturnValueOnce(chunks([{ content: 'fallback' }]));
+
+    const result = await (
+      await service({
+        maxRetries: 2,
+        providerRequestAdmissionScheduler: scheduler,
+        fallbackModels: [
+          {
+            provider: 'fallback-provider',
+            model: 'backup',
+            channel: {
+              apiKey: 'fallback-key',
+              baseUrl: 'https://fallback.example.test/v1',
+            },
+          },
+        ],
+      })
+    ).chat([{ role: 'user', content: 'hello' }]);
+
+    expect(result.content).toBe('fallback');
+    expect(streamPiModel).toHaveBeenCalledTimes(2);
+    expect(buildPiOptions).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        apiKey: 'test-key',
+        baseUrl: 'https://example.test/v1',
+      }),
+      expect.any(Object),
+      expect.any(AbortSignal),
+      undefined,
+      false
+    );
+    expect(buildPiOptions).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        apiKey: 'fallback-key',
+        baseUrl: 'https://fallback.example.test/v1',
+      }),
+      expect.any(Object),
+      expect.any(AbortSignal),
+      undefined,
+      false
+    );
+    expect(admit).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        scope: expect.objectContaining({ apiKey: 'test-key' }),
+      })
+    );
+    expect(admit).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        scope: expect.objectContaining({ apiKey: 'fallback-key' }),
+      })
+    );
   });
 
   it('preserves fallback when an explicit retry override is exhausted', async () => {
