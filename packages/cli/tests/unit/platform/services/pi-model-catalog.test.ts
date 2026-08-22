@@ -1,4 +1,7 @@
-import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
+import {
+  getSupportedThinkingLevels,
+  InMemoryCredentialStore,
+} from '@earendil-works/pi-ai';
 import { describe, expect, it } from 'vitest';
 import { PiModelCatalog } from '../../../../src/services/pi/PiModelCatalog.js';
 
@@ -24,6 +27,27 @@ describe('PiModelCatalog', () => {
         }),
       ])
     );
+  });
+
+  it('exposes DeepSeek V4 Flash low reasoning support from pi-ai', () => {
+    const catalog = new PiModelCatalog(new InMemoryCredentialStore());
+    const runtimeModel = catalog.getModel('deepseek', 'deepseek-v4-flash');
+    const listedModel = catalog
+      .listModels('deepseek')
+      .find((model) => model.id === 'deepseek-v4-flash');
+
+    expect(getSupportedThinkingLevels(runtimeModel)).toEqual([
+      'off',
+      'low',
+      'high',
+      'max',
+    ]);
+    expect(listedModel?.supportedReasoningEfforts).toEqual([
+      'off',
+      'low',
+      'high',
+      'max',
+    ]);
   });
 
   it('stores provider credentials independently from model config', async () => {

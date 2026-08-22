@@ -1,8 +1,15 @@
 #!/usr/bin/env node
 
+import { mkdtemp } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { testTypes } from './test-config.js';
+import {
+  createTestProcessEnvironment,
+  removeOwnedTestTemporaryRoot,
+  reportTestTemporaryRootCleanupFailure,
+} from './test-environment.js';
 import { runOwnedCommand } from './test-runner.js';
 import { resolveVitestCli } from './vitest-cli.js';
 
@@ -118,15 +125,24 @@ async function runTest(testType, options = {}) {
   const onSigterm = () => interrupt('SIGTERM');
   process.once('SIGINT', onSigint);
   process.once('SIGTERM', onSigterm);
+  const testTemporaryRoot = await mkdtemp(
+    path.join(os.tmpdir(), 'blade-test-process-')
+  );
+  let runError;
 
   try {
     console.log(`📝 执行命令: ${displayCommand}`);
 
     const startTime = Date.now();
+    const testEnvironment = createTestProcessEnvironment(
+      process.env,
+      testTemporaryRoot
+    );
     const result = await runOwnedCommand({
       command: process.execPath,
       args: [vitestPath, ...baseArgs],
       cwd: process.cwd(),
+      env: testEnvironment,
       timeoutMs: config.timeout,
       signal: controller.signal,
     });
@@ -147,11 +163,23 @@ async function runTest(testType, options = {}) {
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
     console.log(`✅ ${config.name}完成! 耗时: ${duration}s`);
   } catch (error) {
+    runError = error;
     console.error(`❌ ${config.name}失败:`, error.message);
     process.exitCode = interruptedBy === 'SIGINT' ? 130 : interruptedBy === 'SIGTERM' ? 143 : 1;
   } finally {
     process.off('SIGINT', onSigint);
     process.off('SIGTERM', onSigterm);
+    try {
+      await removeOwnedTestTemporaryRoot(testTemporaryRoot);
+    } catch (cleanupError) {
+      reportTestTemporaryRootCleanupFailure(runError, cleanupError, (message, error) => {
+        console.error(
+          `❌ ${message}:`,
+          error instanceof Error ? error.message : String(error)
+        );
+      });
+      process.exitCode ||= 1;
+    }
   }
 }
 

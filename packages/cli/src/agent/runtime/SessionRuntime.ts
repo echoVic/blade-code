@@ -1371,6 +1371,28 @@ export class SessionRuntime {
     return this.getActiveTurnMailbox().claimedMessageIds(handle);
   }
 
+  async getRecoveredEmptyFinalState(handle: ActiveTurnHandle): Promise<{
+    hadSuccessfulToolResult: boolean;
+    correctionSpent: boolean;
+  }> {
+    const recovery = this.startupTurnRecovery;
+    if (!recovery || recovery.outcome !== 'aborted') {
+      return { hadSuccessfulToolResult: false, correctionSpent: false };
+    }
+    const claimed = await this.getClaimedTurnMessageIds(handle);
+    const recoveredInputIds = new Set(recovery.inputMessageIds);
+    if (
+      claimed.length === 0 ||
+      claimed.some((messageId) => !recoveredInputIds.has(messageId))
+    ) {
+      return { hadSuccessfulToolResult: false, correctionSpent: false };
+    }
+    return {
+      hadSuccessfulToolResult: recovery.hadSuccessfulToolResult,
+      correctionSpent: recovery.emptyFinalCorrectionSpent,
+    };
+  }
+
   async discardPendingInput(): Promise<void> {
     const mailbox = this.getActiveTurnMailbox();
     const ids = mailbox.pendingMessages().map((message) => message.id);
@@ -1414,19 +1436,34 @@ export class SessionRuntime {
       );
       await this.getActiveTurnMailbox().acknowledge(inputMessageIds);
     } else {
-      await persistentStore.saveTurnAbort(this.sessionId, {
-        turnId: handle.id,
-        cause: outcome.cause,
-        abortedAt: new Date().toISOString(),
-        turnsCount: outcome.turnsCount,
-        toolCallsCount: outcome.toolCallsCount,
-        durationMs: outcome.durationMs,
-      });
+      const inheritedRecovery = await this.getRecoveredEmptyFinalState(handle);
+      const inputMessageIds =
+        await this.getActiveTurnMailbox().claimedMessageIds(handle);
+      const abortResult = await persistentStore.saveTurnAbort(
+        this.sessionId,
+        {
+          turnId: handle.id,
+          cause: outcome.cause,
+          abortedAt: new Date().toISOString(),
+          turnsCount: outcome.turnsCount,
+          toolCallsCount: outcome.toolCallsCount,
+          durationMs: outcome.durationMs,
+          recovery: {
+            version: 1,
+            inputMessageIds,
+            hadSuccessfulToolResult: inheritedRecovery.hadSuccessfulToolResult,
+            emptyFinalCorrectionSpent: inheritedRecovery.correctionSpent,
+          },
+        },
+        options.acknowledgeInput
+          ? { acknowledgeInputMessageIds: inputMessageIds }
+          : undefined
+      );
+      this.startupTurnRecovery = abortResult.recovery;
       if (options.acknowledgeInput) {
-        const inputMessageIds =
-          await this.getActiveTurnMailbox().claimedMessageIds(handle);
-        await persistentStore.acknowledgeInboxMessages(this.sessionId, inputMessageIds);
-        await this.getActiveTurnMailbox().acknowledge(inputMessageIds);
+        await this.getActiveTurnMailbox().acknowledge(
+          abortResult.acknowledgedInputMessageIds
+        );
       }
     }
 
@@ -1984,6 +2021,9 @@ export class SessionRuntime {
           ? {
               turnId: goalHandoff.turnId,
               outcome: 'completed',
+              inputMessageIds: goalHandoff.finalization.inputMessageIds,
+              hadSuccessfulToolResult: false,
+              emptyFinalCorrectionSpent: false,
               finalization: goalHandoff.finalization,
             }
           : undefined);

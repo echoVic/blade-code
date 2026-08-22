@@ -1288,6 +1288,220 @@ describe('SessionRuntime', () => {
     await recovered.dispose();
   });
 
+  it('binds recovered empty-final state to the originally claimed inbox input', async () => {
+    const workspaceRoot = path.join(storageRoot, 'empty-final-recovery-project');
+    const sessionId = 'empty-final-recovery-session';
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const prepared = await first.prepareInputTurn('finish after restart');
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    const contextManager = first.getExecutionEngine().getContextManager();
+    await contextManager.saveMessage(sessionId, 'user', 'finish after restart', null, {
+      inboxMessageId: prepared.messageId,
+    });
+    const toolCallId = await contextManager.saveToolUse(sessionId, 'Read', {
+      file_path: path.join(workspaceRoot, 'package.json'),
+    });
+    await contextManager.saveToolResult(
+      sessionId,
+      toolCallId,
+      'Read',
+      'package contents'
+    );
+    await contextManager.saveMessage(sessionId, 'user', 'internal corrective', null, {
+      clientVisible: false,
+      emptyFinalCorrection: true,
+    });
+    await first.dispose();
+
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    expect(recovered.getStartupTurnRecovery()).toEqual({
+      turnId: prepared.handle.id,
+      outcome: 'aborted',
+      inputMessageIds: [prepared.messageId],
+      hadSuccessfulToolResult: true,
+      emptyFinalCorrectionSpent: true,
+    });
+    const pendingTurn = await recovered.beginPendingTurn();
+    if (!pendingTurn) throw new Error('Expected recovered pending turn');
+    await expect(recovered.getRecoveredEmptyFinalState(pendingTurn)).resolves.toEqual({
+      hadSuccessfulToolResult: false,
+      correctionSpent: false,
+    });
+    const claimed = await recovered.drainSteering(pendingTurn);
+    expect(claimed.map((message) => message.id)).toEqual([prepared.messageId]);
+    await expect(recovered.getRecoveredEmptyFinalState(pendingTurn)).resolves.toEqual({
+      hadSuccessfulToolResult: true,
+      correctionSpent: true,
+    });
+    await recovered.finishTurn(pendingTurn);
+    await recovered.dispose();
+  });
+
+  it('does not bind recovered empty-final state to a different inbox input', async () => {
+    const workspaceRoot = path.join(storageRoot, 'empty-final-unrelated-project');
+    const sessionId = 'empty-final-unrelated-session';
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const prepared = await first.prepareInputTurn('old interrupted input');
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    const contextManager = first.getExecutionEngine().getContextManager();
+    await contextManager.saveMessage(sessionId, 'user', 'old interrupted input', null, {
+      inboxMessageId: prepared.messageId,
+    });
+    const toolCallId = await contextManager.saveToolUse(sessionId, 'Read', {
+      file_path: path.join(workspaceRoot, 'old.txt'),
+    });
+    await contextManager.saveToolResult(sessionId, toolCallId, 'Read', 'old success');
+    await first.dispose();
+
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    await recovered.discardPendingInput();
+    const unrelated = await recovered.prepareInputTurn('new unrelated input');
+    if (!unrelated.accepted) throw new Error('Expected unrelated input preparation');
+    await expect(
+      recovered.getRecoveredEmptyFinalState(unrelated.handle)
+    ).resolves.toEqual({
+      hadSuccessfulToolResult: false,
+      correctionSpent: false,
+    });
+    await recovered.finishTurn(unrelated.handle);
+    await recovered.dispose();
+  });
+
+  it('does not bind recovered empty-final state to a mixed-input turn', async () => {
+    const workspaceRoot = path.join(storageRoot, 'empty-final-mixed-input-project');
+    const sessionId = 'empty-final-mixed-input-session';
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const prepared = await first.prepareInputTurn('old interrupted input');
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    const contextManager = first.getExecutionEngine().getContextManager();
+    await contextManager.saveMessage(sessionId, 'user', 'old interrupted input', null, {
+      inboxMessageId: prepared.messageId,
+    });
+    const toolCallId = await contextManager.saveToolUse(sessionId, 'Read', {
+      file_path: path.join(workspaceRoot, 'old.txt'),
+    });
+    await contextManager.saveToolResult(sessionId, toolCallId, 'Read', 'old success');
+    await contextManager.saveMessage(sessionId, 'user', 'internal corrective', null, {
+      clientVisible: false,
+      emptyFinalCorrection: true,
+    });
+    await first.dispose();
+
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const mixed = await recovered.prepareInputTurn('new input in the recovered turn');
+    if (!mixed.accepted) throw new Error('Expected mixed input preparation');
+    expect(mixed.mode).toBe('pending');
+    const claimed = await recovered.drainSteering(mixed.handle);
+    expect(claimed.map((message) => message.id)).toEqual([
+      prepared.messageId,
+      mixed.messageId,
+    ]);
+
+    await expect(recovered.getRecoveredEmptyFinalState(mixed.handle)).resolves.toEqual({
+      hadSuccessfulToolResult: false,
+      correctionSpent: false,
+    });
+    await recovered.finishTurn(mixed.handle);
+    await recovered.dispose();
+  });
+
+  it('clears stale recovery authority after an unrelated abort', async () => {
+    const workspaceRoot = path.join(storageRoot, 'stale-recovery-project');
+    const sessionId = 'stale-recovery-session';
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const prepared = await first.prepareInputTurn('old interrupted input');
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    const contextManager = first.getExecutionEngine().getContextManager();
+    await contextManager.saveMessage(sessionId, 'user', 'old interrupted input', null, {
+      inboxMessageId: prepared.messageId,
+    });
+    const toolCallId = await contextManager.saveToolUse(sessionId, 'Read', {
+      file_path: path.join(workspaceRoot, 'old.txt'),
+    });
+    await contextManager.saveToolResult(sessionId, toolCallId, 'Read', 'old success');
+    await contextManager.saveMessage(sessionId, 'user', 'internal corrective', null, {
+      clientVisible: false,
+      emptyFinalCorrection: true,
+    });
+    await first.dispose();
+
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    expect(recovered.getStartupTurnRecovery()).toMatchObject({
+      turnId: prepared.handle.id,
+      inputMessageIds: [prepared.messageId],
+      hadSuccessfulToolResult: true,
+      emptyFinalCorrectionSpent: true,
+    });
+
+    const unrelated = await recovered.beginTurn('goal');
+    await recovered.finishTurn(unrelated);
+    expect(recovered.getStartupTurnRecovery()).toBeUndefined();
+
+    const retry = await recovered.beginPendingTurn();
+    if (!retry) throw new Error('Expected old input to remain pending');
+    const claimed = await recovered.drainSteering(retry);
+    expect(claimed.map((message) => message.id)).toEqual([prepared.messageId]);
+    await expect(recovered.getRecoveredEmptyFinalState(retry)).resolves.toEqual({
+      hadSuccessfulToolResult: false,
+      correctionSpent: false,
+    });
+    await recovered.dispose();
+  });
+
+  it('preserves empty-final recovery state for an unacknowledged retry in one runtime', async () => {
+    const workspaceRoot = path.join(storageRoot, 'empty-final-same-runtime-project');
+    const sessionId = 'empty-final-same-runtime-session';
+    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const prepared = await runtime.prepareInputTurn('retry after failure');
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    const contextManager = runtime.getExecutionEngine().getContextManager();
+    await contextManager.saveMessage(sessionId, 'user', 'retry after failure', null, {
+      inboxMessageId: prepared.messageId,
+    });
+    const toolCallId = await contextManager.saveToolUse(sessionId, 'Read', {
+      file_path: path.join(workspaceRoot, 'package.json'),
+    });
+    await contextManager.saveToolResult(
+      sessionId,
+      toolCallId,
+      'Read',
+      'package contents'
+    );
+    await contextManager.saveMessage(sessionId, 'user', 'internal corrective', null, {
+      clientVisible: false,
+      emptyFinalCorrection: true,
+    });
+    await runtime.finishTurn(prepared.handle, {
+      outcome: {
+        status: 'aborted',
+        cause: 'failed',
+        turnsCount: 2,
+        toolCallsCount: 1,
+        durationMs: 1,
+      },
+    });
+
+    const retry = await runtime.beginPendingTurn();
+    if (!retry) throw new Error('Expected same-runtime pending retry');
+    await runtime.drainSteering(retry);
+    await expect(runtime.getRecoveredEmptyFinalState(retry)).resolves.toEqual({
+      hadSuccessfulToolResult: true,
+      correctionSpent: true,
+    });
+    await runtime.finishTurn(retry);
+    await runtime.dispose();
+
+    const third = await SessionRuntime.create({ sessionId, workspaceRoot });
+    expect(third.getStartupTurnRecovery()).toEqual({
+      turnId: retry.id,
+      outcome: 'aborted',
+      inputMessageIds: [prepared.messageId],
+      hadSuccessfulToolResult: true,
+      emptyFinalCorrectionSpent: true,
+    });
+    await third.dispose();
+  });
+
   it('recovers a final-ready turn without replaying its durable input', async () => {
     const workspaceRoot = path.join(storageRoot, 'final-ready-turn-project');
     const sessionId = 'final-ready-turn-session';
@@ -1332,6 +1546,12 @@ describe('SessionRuntime', () => {
     const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
     const prepared = await runtime.prepareInputTurn('reject this exactly once');
     if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    await runtime
+      .getExecutionEngine()
+      .getContextManager()
+      .saveMessage(sessionId, 'user', 'reject this exactly once', null, {
+        inboxMessageId: prepared.messageId,
+      });
 
     await runtime.finishTurn(prepared.handle, {
       acknowledgeInput: true,
@@ -1367,10 +1587,63 @@ describe('SessionRuntime', () => {
       ])
     );
     expect(events?.filter((event) => event.type === 'turn_completed')).toHaveLength(0);
+    const acknowledgement = events?.find(
+      (event) =>
+        event.type === 'inbox_acknowledged' &&
+        event.data.messageIds.includes(prepared.messageId)
+    );
+    const abort = events?.find(
+      (event) =>
+        event.type === 'turn_aborted' && event.data.turnId === prepared.handle.id
+    );
+    expect(abort).toMatchObject({
+      data: { acknowledgedInputMessageIds: [prepared.messageId] },
+    });
+    expect(acknowledgement?.seq).toBe((abort?.seq ?? 0) + 1);
     await runtime.dispose();
 
     const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
     expect(recovered.getPendingSteeringCount()).toBe(0);
+    await recovered.dispose();
+  });
+
+  it('keeps claimed but unapplied input when terminal failure acknowledges input', async () => {
+    const workspaceRoot = path.join(storageRoot, 'partial-terminal-ack-project');
+    const sessionId = 'partial-terminal-ack-session';
+    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const prepared = await runtime.prepareInputTurn('applied input');
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    await runtime
+      .getExecutionEngine()
+      .getContextManager()
+      .saveMessage(sessionId, 'user', 'applied input', null, {
+        inboxMessageId: prepared.messageId,
+      });
+    const queued = await runtime.enqueueSteering('claimed but unapplied');
+    if (!queued.accepted || !queued.messageId) {
+      throw new Error('Expected pending steering input');
+    }
+    await runtime.drainSteering(prepared.handle);
+
+    await runtime.finishTurn(prepared.handle, {
+      acknowledgeInput: true,
+      outcome: {
+        status: 'aborted',
+        cause: 'failed',
+        turnsCount: 1,
+        toolCallsCount: 0,
+        durationMs: 1,
+      },
+    });
+
+    expect(runtime.getPendingSteeringMessages().map((message) => message.id)).toEqual([
+      queued.messageId,
+    ]);
+    await runtime.dispose();
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    expect(recovered.getPendingSteeringMessages().map((message) => message.id)).toEqual(
+      [queued.messageId]
+    );
     await recovered.dispose();
   });
 
@@ -1440,6 +1713,9 @@ describe('SessionRuntime', () => {
     expect(recovered.getStartupTurnRecovery()).toEqual({
       turnId: prepared.handle.id,
       outcome: 'aborted',
+      inputMessageIds: [prepared.messageId],
+      hadSuccessfulToolResult: true,
+      emptyFinalCorrectionSpent: false,
     });
     expect(recovered.getPendingSteeringCount()).toBe(1);
     expect(JSON.stringify(await recovered.loadModelContext())).toContain(

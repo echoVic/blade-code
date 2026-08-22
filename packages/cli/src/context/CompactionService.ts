@@ -107,6 +107,111 @@ const CONTINUATION_LEDGER_HEADINGS = [
   'Exact next action',
 ] as const;
 
+type ContinuationLedgerHeading = (typeof CONTINUATION_LEDGER_HEADINGS)[number];
+
+interface ExactContinuationRecord {
+  heading: ContinuationLedgerHeading;
+  payload: string;
+}
+
+const EXACT_CONTINUATION_RECORD_PATTERN =
+  /^EXACT CONTINUATION RECORD \[([^\]\r\n]{1,64})\] :: ([^\r\n]{1,2048})$/gm;
+const MAX_EXACT_CONTINUATION_RECORDS = 32;
+const MAX_EXACT_CONTINUATION_RECORD_CHARS = 16_384;
+
+function normalizedLedgerHeading(value: string): ContinuationLedgerHeading | undefined {
+  const normalized = value.trim().replace(/\s+/g, ' ').toLowerCase();
+  return CONTINUATION_LEDGER_HEADINGS.find(
+    (heading) => heading.toLowerCase() === normalized
+  );
+}
+
+function messageText(message: Message): string {
+  return typeof message.content === 'string'
+    ? message.content
+    : message.content
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n');
+}
+
+export function extractExactContinuationRecords(
+  messages: readonly Message[]
+): ExactContinuationRecord[] {
+  const records: ExactContinuationRecord[] = [];
+  const identities = new Set<string>();
+  let retainedChars = 0;
+
+  for (const message of messages) {
+    if (isCompactSummaryMessage(message)) continue;
+    const content = messageText(message);
+    for (const match of content.matchAll(EXACT_CONTINUATION_RECORD_PATTERN)) {
+      const heading = match[1] ? normalizedLedgerHeading(match[1]) : undefined;
+      const payload = match[2]?.trim();
+      if (!heading || !payload) continue;
+      const identity = `${heading}\0${payload}`;
+      if (identities.has(identity)) continue;
+      if (
+        records.length >= MAX_EXACT_CONTINUATION_RECORDS ||
+        retainedChars + payload.length > MAX_EXACT_CONTINUATION_RECORD_CHARS
+      ) {
+        return records;
+      }
+      identities.add(identity);
+      retainedChars += payload.length;
+      records.push({ heading, payload });
+    }
+  }
+  return records;
+}
+
+function normalizedLedgerLine(line: string): string {
+  return line
+    .trim()
+    .replace(/^(?:[-+*]|\d+[.)])\s+/, '')
+    .trim();
+}
+
+export function reconcileExactContinuationRecords(
+  summary: string,
+  messages: readonly Message[]
+): string {
+  const records = extractExactContinuationRecords(messages);
+  if (records.length === 0) return summary;
+
+  const protectedPayloads = records.map((record) => record.payload);
+  const sections = new Map<ContinuationLedgerHeading, string[]>(
+    CONTINUATION_LEDGER_HEADINGS.map((heading) => [heading, []])
+  );
+  let current: ContinuationLedgerHeading | undefined;
+
+  for (const line of summary.split(/\r?\n/)) {
+    const headingMatch = /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/.exec(line);
+    if (headingMatch) {
+      current = headingMatch[1] ? normalizedLedgerHeading(headingMatch[1]) : undefined;
+      continue;
+    }
+    const normalized = normalizedLedgerLine(line);
+    if (!normalized) continue;
+    if (protectedPayloads.some((payload) => normalized.includes(payload))) {
+      continue;
+    }
+    (sections.get(current ?? 'Objective and constraints') ?? []).push(line.trim());
+  }
+
+  for (const record of records) {
+    sections.get(record.heading)?.push(`- ${record.payload}`);
+  }
+
+  return CONTINUATION_LEDGER_HEADINGS.map((heading) => {
+    const lines = sections.get(heading) ?? [];
+    return [
+      `## ${heading}`,
+      ...(lines.length > 0 ? lines : ['- No evidence observed.']),
+    ].join('\n');
+  }).join('\n\n');
+}
+
 function escapeReservedLedgerHeadings(content: string): string {
   return CONTINUATION_LEDGER_HEADINGS.reduce(
     (escaped, heading) =>
@@ -160,7 +265,7 @@ export function buildCompactionPrompt(
 
 Use <analysis> tags to privately check the retained evidence before producing the ledger. Follow these hard rules:
 - distinguish observed facts from intended work; label plans, pending work, and unverified claims explicitly.
-- preserve exact commands and literals when necessary for continuation.
+- preserve exact commands, tool arguments, and final-response constraints when necessary for continuation.
 - never mark unfinished work complete.
 - never convert a plan into a completed mutation.
 - never invent successful verification, completed work, file changes, or background-agent results.
@@ -299,7 +404,10 @@ export class CompactionService {
         fileContents,
         options
       );
-      const { summary } = generated;
+      const summary = reconcileExactContinuationRecords(
+        generated.summary,
+        sourceMessages
+      );
       logger.debug('[CompactionService] 生成总结，长度:', summary.length);
 
       // 3. 计算保留范围并过滤孤儿 tool 消息
@@ -678,13 +786,14 @@ export class CompactionService {
 
     const errorMsg = error instanceof Error ? error.message : String(error);
     const summaryMessageId = nanoid();
-    const summaryMessage = this.createSummaryMessage(
-      summaryMessageId,
+    const fallbackSummary = reconcileExactContinuationRecords(
       '[Automatic compaction failed; using bounded fallback]\n\n' +
         'The retained tail and active-task checkpoint are authoritative. ' +
         'Re-establish pending mutations, verification status, and the exact next ' +
-        'action from retained evidence before claiming completion.'
+        'action from retained evidence before claiming completion.',
+      messages
     );
+    const summaryMessage = this.createSummaryMessage(summaryMessageId, fallbackSummary);
 
     const compactedMessages = [summaryMessage, ...retainedMessages];
     const activeTaskMessage = this.buildActiveTaskMessage(options.activeTask);

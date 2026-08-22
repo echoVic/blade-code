@@ -1,11 +1,12 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import { promisify } from 'node:util';
 import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SubagentWorktreeLifecycle } from '../../src/agent/subagents/SubagentWorktreeLifecycle.js';
 import { WorktreeManager } from '../../src/worktree/WorktreeManager.js';
+import { removeTestDirectory } from '../support/helpers/removeTestDirectory.js';
 
 vi.unmock('child_process');
 vi.unmock('node:child_process');
@@ -44,7 +45,7 @@ describe('SubagentWorktreeLifecycle integration', () => {
   });
 
   afterEach(async () => {
-    await rm(tempRoot, { recursive: true, force: true });
+    await removeTestDirectory(tempRoot);
   });
 
   it('removes a successful isolated workspace when no changes were made', async () => {

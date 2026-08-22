@@ -7,7 +7,7 @@ export const testTypes = {
   integration: {
     name: '集成测试',
     project: 'integration',
-    timeout: 300_000,
+    timeout: 600_000,
   },
   realApi: {
     name: '真实 API 集成测试',

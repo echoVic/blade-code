@@ -497,7 +497,6 @@ export const en = {
   'chat.input.effort.locked':
     'Wait for the active turn to finish before changing reasoning effort',
   'chat.input.effort.option': 'Use {effort} reasoning effort',
-  'chat.input.effort.autoHint': 'near high',
   'chat.input.serviceTier.label': 'Speed {tier}',
   'chat.input.serviceTier.heading': 'Provider service tier',
   'chat.input.serviceTier.change': 'Change provider service tier',

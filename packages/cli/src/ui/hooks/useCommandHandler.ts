@@ -70,6 +70,14 @@ import { useStreamingBuffer } from './useStreamingBuffer.js';
 
 const logger = createLogger(LogCategory.UI);
 
+function isLoopCancellation(result: LoopResult): boolean {
+  return (
+    result.error?.type === 'canceled' ||
+    result.error?.type === 'aborted' ||
+    result.metadata?.abortReason === 'interrupt'
+  );
+}
+
 /**
  * 命令处理 Hook
  * 负责命令的执行和状态管理
@@ -458,7 +466,7 @@ export const useCommandHandler = (
         }
 
         // --- 6. 后处理 ---
-        if (loopResult.metadata?.outputTruncated) {
+        if (loopResult.success && loopResult.metadata?.outputTruncated) {
           sessionActions.addAssistantMessage(
             '输出因达到 token 上限被截断，部分内容可能不完整。'
           );
@@ -472,10 +480,9 @@ export const useCommandHandler = (
           toolCallsCount: loopResult.metadata?.toolCallsCount,
         });
 
-        // API 错误（非 abort）时显示友好错误信息，而非"已取消"
-        if (!loopResult.success && loopResult.error?.type === 'api_error') {
-          const errorMsg =
-            loopResult.error.message || '请求失败，请检查网络连接和 API 配置';
+        // 非 abort 的失败必须保留 typed loop failure，不能误报为"已取消"。
+        if (!loopResult.success && !isLoopCancellation(loopResult)) {
+          const errorMsg = loopResult.error?.message || '任务执行失败';
           sessionActions.addAssistantMessage(errorMsg);
           return { success: false, error: errorMsg };
         }
@@ -567,14 +574,14 @@ export const useCommandHandler = (
         sessionActions.setCompactedContext(chatContext.messages);
       }
 
-      if (loopResult.metadata?.outputTruncated) {
+      if (loopResult.success && loopResult.metadata?.outputTruncated) {
         sessionActions.addAssistantMessage(
           '输出因达到 token 上限被截断，部分内容可能不完整。'
         );
       }
-      if (!loopResult.success && loopResult.error?.type === 'api_error') {
+      if (!loopResult.success && !isLoopCancellation(loopResult)) {
         sessionActions.addAssistantMessage(
-          loopResult.error.message || '恢复排队指令失败，请检查网络和 API 配置'
+          loopResult.error?.message || '恢复排队指令失败'
         );
       }
     } catch (error) {

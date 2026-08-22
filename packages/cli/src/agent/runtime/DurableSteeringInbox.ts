@@ -7,7 +7,11 @@ import {
   getSessionFilePath,
   getSessionInboxFilePath,
 } from '../../context/storage/pathUtils.js';
-import type { MessagePersistenceMetadata, SessionEvent } from '../../context/types.js';
+import {
+  type MessagePersistenceMetadata,
+  type SessionEvent,
+  turnAbortAppliedAcknowledgements,
+} from '../../context/types.js';
 import { createStructuredOutputContract } from '../../services/StructuredOutputService.js';
 import type { JsonObject } from '../../store/types.js';
 import type { UserMessageContent } from '../types.js';
@@ -152,9 +156,13 @@ function parseInboxRecord(
 
 function acknowledgedInboxIds(events: SessionEvent[]): Set<string> {
   return new Set(
-    events.flatMap((event) =>
-      event.type === 'inbox_acknowledged' ? event.data.messageIds : []
-    )
+    events.flatMap((event, index) => {
+      if (event.type === 'inbox_acknowledged') return event.data.messageIds;
+      if (event.type === 'turn_aborted') {
+        return turnAbortAppliedAcknowledgements(events, index);
+      }
+      return [];
+    })
   );
 }
 

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type * as acp from '@agentclientprotocol/sdk';
@@ -350,10 +350,12 @@ describe('Bash Tool', () => {
     const canonicalWorkspace = await realpath(workspace);
     const previousSecret = process.env.DEEPSEEK_API_KEY;
     const previousPath = process.env.PATH;
-    const nodeDirectory = path.dirname(process.execPath);
-    const hostPath = [nodeDirectory, '/usr/bin', '/bin'].join(path.delimiter);
+    const sessionBin = path.join(workspace, 'session-bin');
+    await mkdir(sessionBin);
+    await symlink(process.execPath, path.join(sessionBin, 'node'));
+    const sessionPath = [sessionBin, '/usr/bin', '/bin'].join(path.delimiter);
     process.env.DEEPSEEK_API_KEY = 'must-not-reach-verifier';
-    process.env.PATH = hostPath;
+    process.env.PATH = ['/usr/bin', '/bin'].join(path.delimiter);
     const prepare = vi.fn<WorkspaceSandboxBackend['prepare']>(async (input) => ({
       executable: '/bin/bash',
       args: ['-c', input.command],
@@ -398,6 +400,7 @@ describe('Bash Tool', () => {
         },
         undefined,
         {
+          environment: { PATH: sessionPath },
           workspaceRoot: canonicalWorkspace,
           subagentType,
         }
@@ -417,16 +420,39 @@ describe('Bash Tool', () => {
         gitConfig: '/dev/null',
         tmpDir: '/sandbox-verifier-tmp',
       });
-      expect(projected.path.split(path.delimiter)).toContain(nodeDirectory);
+      expect(projected.path.split(path.delimiter)).toContain(sessionBin);
       expect(projected.path).not.toBe('/sandbox-path-without-node');
     }
-    expect(prepare).toHaveBeenCalledTimes(3);
+    process.env.PATH = sessionPath;
+    const processPathResult = await bashTool.execute(
+      {
+        command,
+        timeout: 10_000,
+        env: {},
+        run_in_background: false,
+      },
+      undefined,
+      {
+        workspaceRoot: canonicalWorkspace,
+        subagentType: 'verification',
+      }
+    );
+    expect(processPathResult.success).toBe(true);
+    expect(
+      JSON.parse((processPathResult.llmContent as { stdout: string }).stdout)
+    ).toMatchObject({
+      secret: 'unset',
+      gitConfig: '/dev/null',
+      tmpDir: '/sandbox-verifier-tmp',
+    });
+    expect(prepare).toHaveBeenCalledTimes(4);
     expect(prepare).toHaveBeenCalledWith(
       expect.objectContaining({
         command,
         cwd: canonicalWorkspace,
         workspaceRoot: canonicalWorkspace,
         access: 'workspace-read-only',
+        trustedPath: sessionPath,
       })
     );
   });

@@ -160,6 +160,11 @@ export interface LoopOptions {
     turnId: string;
     getInputMessageIds: () => Promise<string[]>;
   };
+  /** Runtime-owned state recovered from an interrupted turn for the same inbox input. */
+  getRecoveredEmptyFinalState?: () => Promise<{
+    hadSuccessfulToolResult: boolean;
+    correctionSpent: boolean;
+  }>;
 
   // 行为回调（影响循环控制流，不是事件通知）
   /** 工具审批门控 - 返回 false 阻止工具执行 */
@@ -193,6 +198,7 @@ export interface LoopResult {
       | 'aborted'
       | 'chat_disabled'
       | 'context_compaction_failed'
+      | 'intent_fulfillment_failed'
       | 'delegation_protocol_failed'
       | 'verification_failed'
       | 'goal_verification_failed'

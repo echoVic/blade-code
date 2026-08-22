@@ -431,7 +431,7 @@ describe('ChatInput', () => {
     expect(onSend).toHaveBeenCalledWith({
       content: '',
       modelId: 'model-1',
-      reasoningEffort: 'off',
+      reasoningEffort: 'high',
       serviceTier: 'auto',
       responseVerbosity: 'auto',
       communicationStyle: 'auto',
@@ -482,7 +482,7 @@ describe('ChatInput', () => {
     expect(onSend).toHaveBeenCalledWith({
       content: '',
       modelId: 'model-1',
-      reasoningEffort: 'off',
+      reasoningEffort: 'high',
       serviceTier: 'auto',
       responseVerbosity: 'auto',
       communicationStyle: 'auto',
@@ -814,7 +814,7 @@ describe('ChatInput', () => {
     expect(onSend).toHaveBeenCalledWith({
       content: 'Edit this request',
       modelId: 'model-1',
-      reasoningEffort: 'off',
+      reasoningEffort: 'high',
       serviceTier: 'auto',
       responseVerbosity: 'auto',
       communicationStyle: 'auto',
@@ -927,6 +927,25 @@ describe('ChatInput', () => {
     expect(container.textContent).not.toContain('gpt-4');
   });
 
+  test('defaults to a concrete supported effort without exposing auto', async () => {
+    act(() => {
+      root.render(<ChatInput onSend={vi.fn()} />);
+    });
+
+    const trigger = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Change reasoning effort"]'
+    );
+    expect(trigger?.textContent).toContain('high');
+    expect(trigger?.textContent).not.toContain('off');
+    await act(async () => trigger?.click());
+    expect(
+      document.querySelector('button[aria-label="Use auto reasoning effort"]')
+    ).toBeNull();
+    expect(
+      document.querySelector('button[aria-label="Use high reasoning effort"]')
+    ).toBeInstanceOf(HTMLButtonElement);
+  });
+
   test('selects a model-supported reasoning effort and includes it in submission', async () => {
     const onSend = vi.fn().mockResolvedValue(true);
     await act(async () => {
@@ -972,6 +991,78 @@ describe('ChatInput', () => {
     });
   });
 
+  test('preserves an explicit persisted off reasoning selection', async () => {
+    useSessionStore.setState({
+      sessions: [
+        {
+          sessionId: 'session-off',
+          projectPath: '/tmp/project',
+          title: 'Explicit off session',
+          rootId: 'session-off',
+          taskStatus: 'completed',
+          selectedModelId: 'model-1',
+          reasoningEffort: 'off',
+          messageCount: 1,
+          firstMessageTime: '2026-08-21T00:00:00.000Z',
+          lastMessageTime: '2026-08-21T00:00:00.000Z',
+          hasErrors: false,
+        },
+      ],
+      currentSessionId: 'session-off',
+      currentSessionRef: {
+        sessionId: 'session-off',
+        projectPath: '/tmp/project',
+      },
+      isTemporarySession: false,
+    });
+
+    act(() => {
+      root.render(<ChatInput onSend={vi.fn()} />);
+    });
+
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Change reasoning effort"]'
+      )?.textContent
+    ).toContain('off');
+  });
+
+  test('resolves a historical persisted auto selection to a concrete effort', () => {
+    useSessionStore.setState({
+      sessions: [
+        {
+          sessionId: 'session-auto',
+          projectPath: '/tmp/project',
+          title: 'Historical auto session',
+          rootId: 'session-auto',
+          taskStatus: 'completed',
+          selectedModelId: 'model-1',
+          reasoningEffort: 'auto',
+          messageCount: 1,
+          firstMessageTime: '2026-08-21T00:00:00.000Z',
+          lastMessageTime: '2026-08-21T00:00:00.000Z',
+          hasErrors: false,
+        },
+      ],
+      currentSessionId: 'session-auto',
+      currentSessionRef: {
+        sessionId: 'session-auto',
+        projectPath: '/tmp/project',
+      },
+      isTemporarySession: false,
+    });
+
+    act(() => {
+      root.render(<ChatInput onSend={vi.fn()} />);
+    });
+
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Change reasoning effort"]'
+      )?.textContent
+    ).toContain('high');
+  });
+
   test('selects a model-supported provider service tier and includes it in submission', async () => {
     const onSend = vi.fn().mockResolvedValue(true);
     await act(async () => {
@@ -1009,7 +1100,7 @@ describe('ChatInput', () => {
     expect(onSend).toHaveBeenCalledWith({
       content: 'Use the priority provider tier',
       modelId: 'model-1',
-      reasoningEffort: 'off',
+      reasoningEffort: 'high',
       serviceTier: 'fast',
       responseVerbosity: 'auto',
       communicationStyle: 'auto',
@@ -1054,7 +1145,7 @@ describe('ChatInput', () => {
     expect(onSend).toHaveBeenCalledWith({
       content: 'Use detailed output',
       modelId: 'model-1',
-      reasoningEffort: 'off',
+      reasoningEffort: 'high',
       serviceTier: 'auto',
       responseVerbosity: 'high',
       communicationStyle: 'auto',

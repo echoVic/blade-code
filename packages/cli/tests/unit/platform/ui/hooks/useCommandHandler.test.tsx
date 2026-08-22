@@ -328,6 +328,71 @@ describe('useCommandHandler durable recovery', () => {
     });
   });
 
+  it('shows a typed non-abort failure from automatic pending recovery', async () => {
+    mocks.createAgent.mockResolvedValueOnce({
+      chatStream: vi.fn(async function* () {
+        if (Date.now() < 0) yield undefined;
+        return {
+          success: false,
+          error: {
+            type: 'intent_fulfillment_failed',
+            message: 'Recovered turn still produced an empty final response.',
+          },
+          metadata: {
+            turnsCount: 1,
+            toolCallsCount: 1,
+            duration: 1,
+            outputTruncated: true,
+          },
+        };
+      }),
+    });
+
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.addAssistantMessage).toHaveBeenCalledWith(
+        'Recovered turn still produced an empty final response.'
+      );
+    });
+    expect(mocks.addAssistantMessage).toHaveBeenCalledTimes(1);
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalledWith(
+      '输出因达到 token 上限被截断，部分内容可能不完整。'
+    );
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalledWith('已取消');
+  });
+
+  it('does not show a canceled failure from automatic pending recovery', async () => {
+    const canceledMessage = 'Recovered turn was canceled.';
+    mocks.createAgent.mockResolvedValueOnce({
+      chatStream: vi.fn(async function* () {
+        if (Date.now() < 0) yield undefined;
+        return {
+          success: false,
+          error: {
+            type: 'canceled',
+            message: canceledMessage,
+          },
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 1 },
+        };
+      }),
+    });
+
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.setProcessing).toHaveBeenLastCalledWith(false);
+    });
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalledWith(canceledMessage);
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalled();
+  });
+
   it('snapshots prior context before adding the optimistic user message', async () => {
     mocks.hasPendingInbox.mockResolvedValue(false);
     mocks.processSlashCommand.mockResolvedValueOnce({ type: 'not_slash' });
@@ -356,6 +421,87 @@ describe('useCommandHandler durable recovery', () => {
     expect(
       mocks.buildContextMessagesFromSession.mock.invocationCallOrder[0]
     ).toBeLessThan(mocks.addUserMessage.mock.invocationCallOrder[0]!);
+  });
+
+  it('returns a typed loop failure instead of reporting cancellation success', async () => {
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    mocks.processSlashCommand.mockResolvedValueOnce({ type: 'not_slash' });
+    mocks.createAgent.mockResolvedValueOnce({
+      chatStream: vi.fn(async function* () {
+        if (Date.now() < 0) yield undefined;
+        return {
+          success: false,
+          error: {
+            type: 'intent_fulfillment_failed',
+            message: 'The model returned an empty final response.',
+          },
+          metadata: {
+            turnsCount: 2,
+            toolCallsCount: 1,
+            duration: 1,
+            outputTruncated: true,
+          },
+        };
+      }),
+    });
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await hook!.executeCommand({
+        displayText: 'complete the task',
+        text: 'complete the task',
+        images: [],
+        parts: [{ type: 'text', text: 'complete the task' }],
+      });
+    });
+
+    expect(mocks.addAssistantMessage).toHaveBeenCalledWith(
+      'The model returned an empty final response.'
+    );
+    expect(mocks.addAssistantMessage).toHaveBeenCalledTimes(1);
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalledWith(
+      '输出因达到 token 上限被截断，部分内容可能不完整。'
+    );
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalledWith('已取消');
+  });
+
+  it('preserves direct cancellation without showing its error message', async () => {
+    const canceledMessage = 'The direct turn was canceled.';
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    mocks.processSlashCommand.mockResolvedValueOnce({ type: 'not_slash' });
+    mocks.createAgent.mockResolvedValueOnce({
+      chatStream: vi.fn(async function* () {
+        if (Date.now() < 0) yield undefined;
+        return {
+          success: false,
+          error: {
+            type: 'canceled',
+            message: canceledMessage,
+          },
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 1 },
+        };
+      }),
+    });
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await hook!.executeCommand({
+        displayText: 'cancel the task',
+        text: 'cancel the task',
+        images: [],
+        parts: [{ type: 'text', text: 'cancel the task' }],
+      });
+    });
+
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalledWith(canceledMessage);
+    expect(mocks.addAssistantMessage).toHaveBeenCalledOnce();
+    expect(mocks.addAssistantMessage).toHaveBeenCalledWith('已取消');
   });
 
   it('routes bang input to the Session shell without creating an Agent', async () => {

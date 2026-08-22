@@ -127,7 +127,7 @@ export function normalizeVerificationCommandForExecution(
   );
   const pipeIndexes = findUnquotedPipes(normalized);
   if (!pipeIndexes) return undefined;
-  if (pipeIndexes.length === 0) return normalized;
+  if (pipeIndexes.length === 0) return useReadOnlyVitestConfigLoader(normalized);
   if (pipeIndexes.length !== 1) return undefined;
 
   const pipeIndex = pipeIndexes[0];
@@ -135,7 +135,29 @@ export function normalizeVerificationCommandForExecution(
   const source = stripSafeStderrMerge(normalized.slice(0, pipeIndex).trim());
   const truncation = normalized.slice(pipeIndex + 1).trim();
   if (!source || !isSafeLineTruncation(truncation)) return undefined;
-  return source;
+  return useReadOnlyVitestConfigLoader(source);
+}
+
+function useReadOnlyVitestConfigLoader(command: string): string {
+  const parts = splitCompoundCommand(command);
+  const verificationCommand = parts?.at(-1);
+  if (!verificationCommand) return command;
+
+  const tokens = tokenize(verificationCommand);
+  const [executable, runner] = tokens;
+  const invokesVitest =
+    executable === 'vitest' ||
+    ((executable === 'npx' || executable === 'bunx') && runner === 'vitest');
+  if (
+    !invokesVitest ||
+    tokens.some(
+      (token) => token === '--configLoader' || token.startsWith('--configLoader=')
+    )
+  ) {
+    return command;
+  }
+
+  return `${command} --configLoader runner`;
 }
 
 export function isVerificationCommand(

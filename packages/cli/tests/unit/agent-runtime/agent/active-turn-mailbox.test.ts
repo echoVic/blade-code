@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs';
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,11 +7,16 @@ import {
   ActiveTurnMailbox,
   MAX_PENDING_BACKGROUND_COMPLETIONS,
   MAX_PENDING_STEER_CHARS,
+  MAX_PENDING_STEERS,
 } from '../../../../src/agent/runtime/ActiveTurnMailbox.js';
 import { DurableSteeringInbox } from '../../../../src/agent/runtime/DurableSteeringInbox.js';
 import type { BackgroundSubagentCompletion } from '../../../../src/agent/subagents/BackgroundSubagentCompletion.js';
 import { PersistentStore } from '../../../../src/context/storage/PersistentStore.js';
-import { getSessionInboxFilePath } from '../../../../src/context/storage/pathUtils.js';
+import {
+  getSessionFilePath,
+  getSessionInboxFilePath,
+} from '../../../../src/context/storage/pathUtils.js';
+import { MAX_TURN_INPUT_MESSAGE_IDS } from '../../../../src/context/types.js';
 
 describe('ActiveTurnMailbox', () => {
   let storageRoot: string;
@@ -31,6 +36,12 @@ describe('ActiveTurnMailbox', () => {
   async function createMailbox(sessionId = 'session-1') {
     return ActiveTurnMailbox.create(workspaceRoot, sessionId);
   }
+
+  it('keeps the durable turn identity limit aligned with mailbox capacities', () => {
+    expect(MAX_PENDING_STEERS + MAX_PENDING_BACKGROUND_COMPLETIONS).toBe(
+      MAX_TURN_INPUT_MESSAGE_IDS
+    );
+  });
 
   it('accepts steering only for an active turn and drains it in order', async () => {
     const mailbox = await createMailbox();
@@ -325,6 +336,98 @@ describe('ActiveTurnMailbox', () => {
         content: 'recover this initial prompt',
         recovered: true,
       }),
+    ]);
+  });
+
+  it('reconciles embedded abort acknowledgements when the compat tail is truncated', async () => {
+    const sessionId = 'embedded-abort-ack';
+    const first = await createMailbox(sessionId);
+    const prepared = await first.prepareInputTurn('do not replay this input');
+    if (!prepared.accepted) throw new Error('Expected input preparation to succeed');
+    const store = new PersistentStore(workspaceRoot);
+    await store.saveTurnStart(sessionId, {
+      turnId: prepared.handle.id,
+      kind: 'user',
+      startedAt: new Date(Date.now() - 1_000).toISOString(),
+      inputMessageIds: [prepared.messageId],
+    });
+    await store.saveMessage(sessionId, 'user', 'do not replay this input', null, {
+      inboxMessageId: prepared.messageId,
+    });
+    await store.saveTurnAbort(
+      sessionId,
+      {
+        turnId: prepared.handle.id,
+        cause: 'failed',
+        abortedAt: new Date().toISOString(),
+        turnsCount: 1,
+        toolCallsCount: 0,
+        durationMs: 1,
+      },
+      { acknowledgeInputMessageIds: [prepared.messageId] }
+    );
+    const transcriptPath = getSessionFilePath(workspaceRoot, sessionId);
+    const lines = (await readFile(transcriptPath, 'utf8')).trimEnd().split('\n');
+    const terminal = JSON.parse(lines.at(-2) ?? '{}') as {
+      type?: string;
+      data?: { acknowledgedInputMessageIds?: string[] };
+    };
+    const compatibilityAcknowledgement = JSON.parse(lines.at(-1) ?? '{}') as {
+      type?: string;
+    };
+    expect(terminal).toMatchObject({
+      type: 'turn_aborted',
+      data: { acknowledgedInputMessageIds: [prepared.messageId] },
+    });
+    expect(compatibilityAcknowledgement.type).toBe('inbox_acknowledged');
+    await writeFile(transcriptPath, `${lines.slice(0, -1).join('\n')}\n{`, 'utf8');
+
+    const recovered = await createMailbox(sessionId);
+    expect(recovered.pendingMessages()).toEqual([]);
+  });
+
+  it('keeps pending input when an isolated abort claims its acknowledgement', async () => {
+    const sessionId = 'isolated-embedded-abort-ack';
+    const messageId = 'pending-isolated-abort-input';
+    const inbox = await DurableSteeringInbox.open(workspaceRoot, sessionId);
+    await inbox.enqueue({
+      id: messageId,
+      content: 'must still run',
+      queuedAt: Date.now(),
+    });
+    const timestamp = new Date().toISOString();
+    await writeFile(
+      getSessionFilePath(workspaceRoot, sessionId),
+      `${JSON.stringify({
+        id: 'isolated-abort',
+        sessionId,
+        projectPath: workspaceRoot,
+        timestamp,
+        type: 'turn_aborted',
+        cwd: workspaceRoot,
+        version: 'test',
+        data: {
+          turnId: 'turn-without-start',
+          cause: 'process_restart',
+          abortedAt: timestamp,
+          turnsCount: 0,
+          toolCallsCount: 0,
+          durationMs: 0,
+          recovery: {
+            version: 1,
+            inputMessageIds: [messageId],
+            hadSuccessfulToolResult: false,
+            emptyFinalCorrectionSpent: false,
+          },
+          acknowledgedInputMessageIds: [messageId],
+        },
+      })}\n`,
+      'utf8'
+    );
+
+    const reopened = await DurableSteeringInbox.open(workspaceRoot, sessionId);
+    expect(reopened.list()).toEqual([
+      expect.objectContaining({ id: messageId, recovered: true }),
     ]);
   });
 

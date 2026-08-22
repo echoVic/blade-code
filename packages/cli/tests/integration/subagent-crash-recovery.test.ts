@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -19,6 +19,7 @@ import { ForegroundProcessLeaseStore } from '../../src/context/storage/Foregroun
 import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
 import { getSessionFilePath } from '../../src/context/storage/pathUtils.js';
 import { BackgroundShellManager } from '../../src/tools/builtin/shell/BackgroundShellManager.js';
+import { removeTestDirectory } from '../support/helpers/removeTestDirectory.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -49,7 +50,7 @@ describe('durable subagent crash recovery', () => {
     resetSingletons();
     if (previousStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
     else process.env.BLADE_STORAGE_ROOT = previousStorageRoot;
-    await rm(root, { recursive: true, force: true });
+    await removeTestDirectory(root);
   });
 
   function resetSingletons(): void {

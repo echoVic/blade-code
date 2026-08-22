@@ -5,7 +5,6 @@ import {
   mkdir,
   mkdtemp,
   realpath,
-  rm,
   symlink,
   writeFile,
 } from 'node:fs/promises';
@@ -22,6 +21,7 @@ import {
   HookEvent,
   HookType,
 } from '../../../src/hooks/types/HookTypes.js';
+import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
 
 const execFileAsync = promisify(execFile);
 vi.unmock('node:child_process');
@@ -52,7 +52,7 @@ describe('HookTrustService', () => {
   });
 
   afterEach(async () => {
-    await rm(root, { recursive: true, force: true });
+    await removeTestDirectory(root);
   });
 
   it('binds trust to the current external hook digest', async () => {

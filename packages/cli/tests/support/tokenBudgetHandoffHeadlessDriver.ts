@@ -3,14 +3,16 @@ import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { promisify } from 'node:util';
 import { runHeadless } from '../../src/commands/headless.js';
+import type { HeadlessJsonlEvent } from '../../src/commands/headlessEvents.js';
 import { PermissionMode } from '../../src/config/types.js';
 import {
   TOKEN_BUDGET_HANDOFF_MESSAGE_ID_PREFIX,
   TOKEN_BUDGET_HANDOFF_TAG,
 } from '../../src/context/TokenBudgetHandoff.js';
 import { runWithCwdOverride } from '../../src/utils/cwd.js';
-import type { TokenBudgetHandoffFixture } from '../integration/real-api/tokenBudgetHandoffFixture.js';
+import { parseHeadlessJsonl } from '../integration/real-api/codingTaskHarness.js';
 import { assertNoSecrets } from '../integration/real-api/sessionForkTrajectoryHarness.js';
+import type { TokenBudgetHandoffFixture } from '../integration/real-api/tokenBudgetHandoffFixture.js';
 import {
   assertAndProjectSurfaceEvidence,
   BoundedStringSink,
@@ -73,6 +75,26 @@ export class TokenBudgetHandoffOutputSink extends BoundedStringSink {
     this.#forbiddenSeen ||= this.#forbidden.some((value) => scan.includes(value));
     this.#scanTail = this.#tailLength > 0 ? scan.slice(-this.#tailLength) : '';
   }
+}
+
+export function finalHeadlessTextFromEvents(
+  events: readonly HeadlessJsonlEvent[]
+): string {
+  let finalText = '';
+  for (const event of events) {
+    if (event.type === 'tool_start') {
+      finalText = '';
+      continue;
+    }
+    if (event.type === 'content_delta') {
+      finalText += event.delta;
+      continue;
+    }
+    if (event.type === 'content') {
+      finalText += event.content;
+    }
+  }
+  return finalText;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -289,6 +311,7 @@ export async function runTokenBudgetHandoffHeadlessDriver(input: {
           permissionMode: PermissionMode.YOLO,
           verificationAgent: false,
           maxTurns: 8,
+          outputFormat: 'jsonl',
         },
         { stdout, stderr }
       )
@@ -312,6 +335,11 @@ export async function runTokenBudgetHandoffHeadlessDriver(input: {
     if (/(?:^|\n)Error:/m.test(stderr.value())) {
       throw new Error('Token-budget Headless stderr reported an execution error');
     }
+    const parsedOutput = parseHeadlessJsonl(stdout.value());
+    if (parsedOutput.nonJsonLines.length > 0) {
+      throw new Error('Token-budget Headless JSONL output was malformed');
+    }
+    const finalOutput = finalHeadlessTextFromEvents(parsedOutput.events);
     const providerRequestCount = (): number => {
       try {
         const count = input.providerRequestCount();
@@ -335,7 +363,7 @@ export async function runTokenBudgetHandoffHeadlessDriver(input: {
       surface: 'headless',
       sessionId: input.sessionId,
       exitCode,
-      output: stdout.value(),
+      output: finalOutput,
       // Production Headless emits normal tool/compaction progress on stderr. The
       // full stream is validated above, while the common projection stays raw-free.
       stderr: '',

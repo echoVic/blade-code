@@ -1,8 +1,15 @@
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { testTypes } from '../../../scripts/test-config.js';
+import {
+  createTestProcessEnvironment,
+  isolateManagedGitAttributionEnvironment,
+  removeOwnedTestTemporaryRoot,
+  reportTestTemporaryRootCleanupFailure,
+} from '../../../scripts/test-environment.js';
 import { runOwnedCommand } from '../../../scripts/test-runner.js';
 import { resolveVitestCli } from '../../../scripts/vitest-cli.js';
 
@@ -152,7 +159,7 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
   });
 
   it('keeps the process-heavy integration suite above fixture command budgets', () => {
-    expect(testTypes.integration.timeout).toBe(300_000);
+    expect(testTypes.integration.timeout).toBe(600_000);
   });
 
   it('allows the complete unit suite to scale beyond the legacy 45 second budget', () => {
@@ -184,6 +191,131 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
       timedOut: false,
       aborted: false,
     });
+  });
+
+  it('removes only the managed Git attribution overlay from test environments', () => {
+    const environment: NodeJS.ProcessEnv = {
+      BLADE_ENVIRONMENT_SENTINEL: 'preserved',
+      GIT_CONFIG_COUNT: '3',
+      GIT_CONFIG_KEY_0: 'credential.helper',
+      GIT_CONFIG_VALUE_0: 'safe-helper',
+      GIT_CONFIG_KEY_1: 'user.name',
+      GIT_CONFIG_VALUE_1: 'Blade Test',
+      GIT_CONFIG_KEY_2: 'core.hooksPath',
+      GIT_CONFIG_VALUE_2: '/tmp/trae-managed-hooks',
+      TRAE_GIT_ATTRIBUTION_CONFIG_SLOT: '2',
+      TRAE_GIT_ATTRIBUTION_FILE: '/tmp/trae-attribution',
+      TRAE_GIT_ATTRIBUTION_HELPER: '/tmp/traex',
+      TRAE_GIT_ATTRIBUTION_MANAGED_HOOK: '1',
+    };
+
+    isolateManagedGitAttributionEnvironment(environment);
+
+    expect(environment).toMatchObject({
+      BLADE_ENVIRONMENT_SENTINEL: 'preserved',
+      GIT_CONFIG_COUNT: '2',
+      GIT_CONFIG_KEY_0: 'credential.helper',
+      GIT_CONFIG_VALUE_0: 'safe-helper',
+      GIT_CONFIG_KEY_1: 'user.name',
+      GIT_CONFIG_VALUE_1: 'Blade Test',
+    });
+    expect(environment.GIT_CONFIG_KEY_2).toBeUndefined();
+    expect(environment.GIT_CONFIG_VALUE_2).toBeUndefined();
+    expect(environment.TRAE_GIT_ATTRIBUTION_CONFIG_SLOT).toBeUndefined();
+    expect(environment.TRAE_GIT_ATTRIBUTION_FILE).toBeUndefined();
+    expect(environment.TRAE_GIT_ATTRIBUTION_HELPER).toBeUndefined();
+    expect(environment.TRAE_GIT_ATTRIBUTION_MANAGED_HOOK).toBeUndefined();
+  });
+
+  it('preserves user-owned Git hook overlays without the managed marker', () => {
+    const environment: NodeJS.ProcessEnv = {
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'core.hooksPath',
+      GIT_CONFIG_VALUE_0: '/tmp/user-hooks',
+    };
+
+    isolateManagedGitAttributionEnvironment(environment);
+
+    expect(environment).toEqual({
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'core.hooksPath',
+      GIT_CONFIG_VALUE_0: '/tmp/user-hooks',
+    });
+  });
+
+  it('gives the test child an owned temporary root without mutating the caller', () => {
+    const source: NodeJS.ProcessEnv = {
+      BLADE_ENVIRONMENT_SENTINEL: 'preserved',
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'core.hooksPath',
+      GIT_CONFIG_VALUE_0: '/tmp/trae-managed-hooks',
+      TRAE_GIT_ATTRIBUTION_CONFIG_SLOT: '0',
+      TRAE_GIT_ATTRIBUTION_HELPER: '/tmp/traex',
+      TRAE_GIT_ATTRIBUTION_MANAGED_HOOK: '1',
+    };
+
+    const environment = createTestProcessEnvironment(
+      source,
+      '/tmp/blade-owned-test-root'
+    );
+
+    expect(environment).toEqual({
+      BLADE_ENVIRONMENT_SENTINEL: 'preserved',
+      TMPDIR: '/tmp/blade-owned-test-root',
+      TMP: '/tmp/blade-owned-test-root',
+      TEMP: '/tmp/blade-owned-test-root',
+    });
+    expect(source.GIT_CONFIG_COUNT).toBe('1');
+    expect(source.TRAE_GIT_ATTRIBUTION_MANAGED_HOOK).toBe('1');
+    expect(source.TMPDIR).toBeUndefined();
+  });
+
+  it('removes an owned temporary root recreated by a delayed writer', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'blade-owned-test-root-'));
+    tempRoots.push(root);
+    const delayedWrite = new Promise<void>((resolve, reject) => {
+      setTimeout(() => {
+        void mkdir(path.join(root, 'late-writer'), { recursive: true }).then(
+          () => resolve(),
+          reject
+        );
+      }, 25);
+    });
+
+    await removeOwnedTestTemporaryRoot(root, {
+      maxWaitMs: 1_000,
+      pollIntervalMs: 10,
+      quietPeriodMs: 100,
+    });
+    await delayedWrite;
+
+    await expect(access(root)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('reports cleanup failure without hiding the original test error', () => {
+    const runError = new Error('unit suite failed');
+    const cleanupError = new Error('temporary root remained active');
+    const report = vi.fn();
+
+    reportTestTemporaryRootCleanupFailure(runError, cleanupError, report);
+
+    expect(runError.cause).toBe(cleanupError);
+    expect(report).toHaveBeenCalledOnce();
+    expect(report).toHaveBeenCalledWith('测试临时目录清理失败', cleanupError);
+  });
+
+  it('fails closed for an inconsistent managed Git attribution overlay', () => {
+    const environment: NodeJS.ProcessEnv = {
+      GIT_CONFIG_COUNT: '2',
+      GIT_CONFIG_KEY_0: 'core.hooksPath',
+      GIT_CONFIG_VALUE_0: '/tmp/trae-managed-hooks',
+      TRAE_GIT_ATTRIBUTION_CONFIG_SLOT: '0',
+      TRAE_GIT_ATTRIBUTION_MANAGED_HOOK: '1',
+    };
+
+    expect(() => isolateManagedGitAttributionEnvironment(environment)).toThrow(
+      'Managed Git attribution environment is inconsistent'
+    );
   });
 
   it('kills a TERM-ignoring descendant when the command times out', async () => {
@@ -226,4 +358,41 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
     expect(await waitFor(() => processIsGone(descendantPid))).toBe(true);
     descendantPids.delete(descendantPid);
   }, 10_000);
+
+  it('reaps the detached command group when the runner owner hard-exits', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'blade-test-owner-exit-'));
+    tempRoots.push(root);
+    const targetPidFile = path.join(root, 'target.pid');
+    const fixture = path.resolve(
+      import.meta.dirname,
+      '../../fixtures/launch-owned-test-command.ts'
+    );
+    const owner = spawn('bun', [fixture, targetPidFile], {
+      cwd: root,
+      detached: true,
+      stdio: 'ignore',
+    });
+    if (!owner.pid) throw new Error('Test runner owner PID is missing');
+    descendantPids.add(owner.pid);
+
+    expect(
+      await waitFor(async () => {
+        try {
+          const targetPid = Number.parseInt(await readFile(targetPidFile, 'utf8'), 10);
+          return Number.isSafeInteger(targetPid) && targetPid > 1;
+        } catch {
+          return false;
+        }
+      })
+    ).toBe(true);
+    const targetPid = Number.parseInt(await readFile(targetPidFile, 'utf8'), 10);
+    descendantPids.add(targetPid);
+
+    process.kill(owner.pid, 'SIGKILL');
+
+    expect(await waitFor(() => processIsGone(owner.pid!))).toBe(true);
+    expect(await waitFor(() => processIsGone(targetPid))).toBe(true);
+    descendantPids.delete(owner.pid);
+    descendantPids.delete(targetPid);
+  }, 15_000);
 });

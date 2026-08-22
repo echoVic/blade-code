@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GitReviewTargetService } from '../../../src/services/GitReviewTargetService.js';
+import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
 
 vi.unmock('node:child_process');
 
@@ -27,7 +28,7 @@ describe('GitReviewTargetService', () => {
   });
 
   afterEach(async () => {
-    await rm(workspace, { recursive: true, force: true });
+    await removeTestDirectory(workspace);
   });
 
   it('hashes tracked and untracked uncommitted changes deterministically', async () => {

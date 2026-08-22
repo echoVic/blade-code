@@ -10,6 +10,7 @@ import { getSessionFilePath } from '../../../src/context/storage/pathUtils.js';
 import { CodeReviewService } from '../../../src/services/CodeReviewService.js';
 import { GitReviewTargetService } from '../../../src/services/GitReviewTargetService.js';
 import { SessionService } from '../../../src/services/SessionService.js';
+import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
 
 const executeReview = vi.hoisted(() => vi.fn());
 
@@ -92,7 +93,7 @@ describe('CodeReviewService', () => {
     delete process.env.BLADE_STORAGE_ROOT;
     vi.restoreAllMocks();
     await rm(storageRoot, { recursive: true, force: true });
-    await rm(workspace, { recursive: true, force: true });
+    await removeTestDirectory(workspace);
   });
 
   it('persists start before completion and materializes a structured report', async () => {

@@ -19,6 +19,7 @@ import {
   validateWorktreeName,
   WorktreeManager,
 } from '../../src/worktree/WorktreeManager.js';
+import { removeTestDirectory } from '../support/helpers/removeTestDirectory.js';
 
 vi.unmock('child_process');
 vi.unmock('node:child_process');
@@ -66,7 +67,7 @@ describe('WorktreeManager integration', () => {
       keys: 0,
       operations: 0,
     });
-    await rm(tempRoot, { recursive: true, force: true });
+    await removeTestDirectory(tempRoot);
   });
 
   async function publishMainBranch(): Promise<void> {

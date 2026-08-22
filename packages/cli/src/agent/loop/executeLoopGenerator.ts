@@ -1101,6 +1101,9 @@ validates the object and may return a bounded corrective error.`;
     let handoffAttemptSpent = false;
     let maxOutputRecoveryCount = 0;
     let incompleteIntentRetryCount = 0;
+    let emptyFinalCorrectionSpent = false;
+    let recoveredEmptyFinalStateLoaded = false;
+    let recoveredSuccessfulToolResult = false;
     let delegationRetryCount = 0;
     let verificationRetryCount = 0;
     let requiredToolName: 'Task' | 'Bash' | undefined;
@@ -1132,6 +1135,96 @@ validates the object and may return a bounded corrective error.`;
       : undefined;
     let structuredOutput: JsonObject | undefined = restoredStructuredOutput?.output;
     let structuredOutputAlreadyCompleted = restoredStructuredOutput?.completed === true;
+    let structuredOutputTruncated = false;
+    const buildStructuredOutputFinal = () => {
+      if (!structuredOutput || !structuredOutputContract) return undefined;
+      const output = structuredOutput;
+      const schemaDigest = structuredOutputContract.schemaDigest;
+      return {
+        finalMessage: JSON.stringify(output),
+        persistenceMetadata: {
+          structuredOutput: { output, schemaDigest },
+          structuredOutputSchemaDigest: schemaDigest,
+        } satisfies MessagePersistenceMetadata,
+        resultMetadata: {
+          structuredOutput: output,
+          structuredOutputSchemaDigest: schemaDigest,
+        },
+        event: {
+          kind: 'structured_output' as const,
+          output,
+          schemaDigest,
+        },
+      };
+    };
+    const handleEmptyFinalCandidate = async (
+      turnResult: ChatResponse
+    ): Promise<
+      | { action: 'none' }
+      | { action: 'continue' }
+      | { action: 'fail'; result: LoopResult }
+    > => {
+      if (
+        structuredOutput !== undefined ||
+        turnResult.content?.trim() ||
+        (turnResult.toolCalls?.length ?? 0) > 0
+      ) {
+        return { action: 'none' };
+      }
+      const hasSuccessfulToolResult = allToolResults.some((result) => result.success);
+      if (!recoveredEmptyFinalStateLoaded) {
+        const recoveredState = await options?.getRecoveredEmptyFinalState?.();
+        recoveredSuccessfulToolResult =
+          recoveredState?.hadSuccessfulToolResult === true;
+        emptyFinalCorrectionSpent ||= recoveredState?.correctionSpent === true;
+        recoveredEmptyFinalStateLoaded = true;
+      }
+      if (!hasSuccessfulToolResult && !recoveredSuccessfulToolResult) {
+        return { action: 'none' };
+      }
+      if (emptyFinalCorrectionSpent) {
+        return {
+          action: 'fail',
+          result: {
+            success: false,
+            error: {
+              type: 'intent_fulfillment_failed',
+              message:
+                'The model returned an empty final response after successful tool execution.',
+            },
+            metadata: {
+              turnsCount,
+              toolCallsCount: allToolResults.length,
+              duration: Date.now() - startTime,
+              tokensUsed: totalTokens,
+            },
+          },
+        };
+      }
+      emptyFinalCorrectionSpent = true;
+      const metadata = {
+        ...INTERNAL_CONTROL_MESSAGE_METADATA,
+        emptyFinalCorrection: true,
+      } as const;
+      const emptyFinalMessage: Message = {
+        role: 'user',
+        content:
+          'The previous response was empty after successful tool execution. ' +
+          "Return a non-empty final response that directly completes the user's request. " +
+          'Do not call tools unless unfinished work requires another tool action.',
+        metadata,
+      };
+      state.appendControl('user', emptyFinalMessage);
+      const emptyFinalMessageUuid = await saveUserMessage(
+        deps,
+        context,
+        emptyFinalMessage.content as string,
+        lastMessageUuid,
+        metadata
+      );
+      if (emptyFinalMessageUuid) lastMessageUuid = emptyFinalMessageUuid;
+      return { action: 'continue' };
+    };
     const restoredIndependentVerification = restoreIndependentVerificationState(
       context.messages
     );
@@ -2270,8 +2363,51 @@ validates the object and may return a bounded corrective error.`;
           maxOutputRecoveryCount,
           budgetTracker
         );
+        const deferTruncatedStructuredOutputToCompletionGates =
+          recoveryAction.action !== 'none' &&
+          structuredOutput !== undefined &&
+          structuredOutputContract !== undefined &&
+          (turnResult.toolCalls?.length ?? 0) === 0;
 
-        if (recoveryAction.action === 'recover') {
+        if (deferTruncatedStructuredOutputToCompletionGates) {
+          const completionSteering = await options?.turnSteering?.drainOrSeal();
+          if (completionSteering && completionSteering.messages.length > 0) {
+            structuredOutput = undefined;
+            structuredOutputAlreadyCompleted = false;
+            structuredOutputRetryCount = 0;
+            state.appendAssistant({
+              role: 'assistant',
+              content: turnResult.content || '',
+              reasoningContent: turnResult.reasoningContent,
+            });
+            const steeringAssistantUuid = await saveAssistantMessage(
+              deps,
+              context,
+              turnResult.content || '',
+              lastMessageUuid,
+              turnResult.reasoningContent
+            );
+            if (steeringAssistantUuid) {
+              lastMessageUuid = steeringAssistantUuid;
+            }
+            yield {
+              kind: 'steering_applied',
+              ...(await applySteeringMessages(completionSteering.messages)),
+              delivery: 'current_turn',
+            };
+            continue;
+          }
+          structuredOutputTruncated = true;
+        }
+
+        if (
+          recoveryAction.action === 'recover' &&
+          !deferTruncatedStructuredOutputToCompletionGates
+        ) {
+          const emptyFinalAction = await handleEmptyFinalCandidate(turnResult);
+          if (emptyFinalAction.action === 'continue') continue;
+          if (emptyFinalAction.action === 'fail') return emptyFinalAction.result;
+
           maxOutputRecoveryCount++;
           logger.warn(
             `[Loop] Max output tokens hit (recovery ${maxOutputRecoveryCount}/3)`
@@ -2319,19 +2455,45 @@ validates the object and may return a bounded corrective error.`;
         }
 
         if (
-          recoveryAction.action === 'truncated' ||
-          recoveryAction.action === 'budget_stop'
+          !deferTruncatedStructuredOutputToCompletionGates &&
+          (recoveryAction.action === 'truncated' ||
+            recoveryAction.action === 'budget_stop')
         ) {
+          if (!turnResult.content?.trim() && !structuredOutput) {
+            return {
+              success: false,
+              error: {
+                type: 'intent_fulfillment_failed',
+                message:
+                  'The model exhausted its output budget without a non-empty final response.',
+              },
+              metadata: {
+                turnsCount,
+                toolCallsCount: allToolResults.length,
+                duration: Date.now() - startTime,
+                tokensUsed: totalTokens,
+                outputTruncated: true,
+              },
+            };
+          }
+          const structuredFinal = buildStructuredOutputFinal();
+          const finalMessage =
+            structuredFinal?.finalMessage ?? turnResult.content ?? '';
           const turnFinalization = await buildTurnFinalization();
           const persistenceMetadata: MessagePersistenceMetadata | undefined =
-            turnFinalization ? { turnFinalization } : undefined;
+            structuredFinal || turnFinalization
+              ? {
+                  ...structuredFinal?.persistenceMetadata,
+                  ...(turnFinalization ? { turnFinalization } : {}),
+                }
+              : undefined;
           // 截断：recovery 达上限或 budget 递减收益，标记截断并正常结束
           // 必须将最终 assistant 消息写入 state，确保 writeback 时 context.messages 包含它
           state.appendAssistant({
             role: 'assistant',
-            content: turnResult.content || '',
-            reasoningContent: turnResult.reasoningContent,
-            tool_calls: turnResult.toolCalls,
+            content: finalMessage,
+            reasoningContent: structuredFinal ? undefined : turnResult.reasoningContent,
+            tool_calls: structuredFinal ? undefined : turnResult.toolCalls,
             ...(persistenceMetadata
               ? { metadata: toJsonValue(persistenceMetadata) }
               : {}),
@@ -2340,14 +2502,14 @@ validates the object and may return a bounded corrective error.`;
           const uuid = await saveAssistantMessage(
             deps,
             context,
-            turnResult.content || '',
+            finalMessage,
             lastMessageUuid,
-            turnResult.reasoningContent,
+            structuredFinal ? undefined : turnResult.reasoningContent,
             persistenceMetadata
           );
           if (uuid) lastMessageUuid = uuid;
 
-          if (structuredOutputContract) {
+          if (structuredOutputContract && !structuredFinal) {
             return {
               success: false,
               error: {
@@ -2366,23 +2528,22 @@ validates the object and may return a bounded corrective error.`;
               },
             };
           }
+          if (structuredFinal) {
+            yield structuredFinal.event;
+          }
 
           return {
             success: true,
-            finalMessage: turnResult.content,
+            finalMessage,
             metadata: {
               turnsCount,
               toolCallsCount: allToolResults.length,
               duration: Date.now() - startTime,
               tokensUsed: totalTokens,
               outputTruncated: true,
+              ...structuredFinal?.resultMetadata,
             },
           };
-        }
-
-        if (turnResult.finishReason !== 'length') {
-          // Reset recovery counter on normal completion to prevent drift
-          maxOutputRecoveryCount = 0;
         }
 
         // 5. 检查是否需要工具调用
@@ -2397,6 +2558,9 @@ validates the object and may return a bounded corrective error.`;
           }
           const queuedSteering = (await options?.turnSteering?.drain()) ?? [];
           if (queuedSteering.length > 0) {
+            if (turnResult.finishReason !== 'length') {
+              maxOutputRecoveryCount = 0;
+            }
             structuredOutput = undefined;
             structuredOutputAlreadyCompleted = false;
             structuredOutputRetryCount = 0;
@@ -2424,6 +2588,9 @@ validates the object and may return a bounded corrective error.`;
           }
 
           if (structuredOutputContract && !structuredOutput) {
+            if (turnResult.finishReason !== 'length') {
+              maxOutputRecoveryCount = 0;
+            }
             state.appendAssistant({
               role: 'assistant',
               content: turnResult.content || '',
@@ -2477,6 +2644,14 @@ validates the object and may return a bounded corrective error.`;
             continue;
           }
 
+          const emptyFinalAction = await handleEmptyFinalCandidate(turnResult);
+          if (emptyFinalAction.action === 'continue') continue;
+          if (emptyFinalAction.action === 'fail') return emptyFinalAction.result;
+          if (turnResult.finishReason !== 'length') {
+            // Preserve consumed recovery budget only while an empty-final correction
+            // continues the same recovery chain.
+            maxOutputRecoveryCount = 0;
+          }
           // Stale loop detection: if model repeats same output 3 times, inject warning
           if (
             turnResult.content &&
@@ -3049,19 +3224,10 @@ validates the object and may return a bounded corrective error.`;
             goalCompletionReady = true;
           }
 
-          const finalMessage = structuredOutput
-            ? JSON.stringify(structuredOutput)
-            : turnResult.content || '';
-          const structuredOutputMetadata =
-            structuredOutput && structuredOutputContract
-              ? {
-                  structuredOutput: {
-                    output: structuredOutput,
-                    schemaDigest: structuredOutputContract.schemaDigest,
-                  },
-                  structuredOutputSchemaDigest: structuredOutputContract.schemaDigest,
-                }
-              : undefined;
+          const structuredFinal = buildStructuredOutputFinal();
+          const finalMessage =
+            structuredFinal?.finalMessage ?? turnResult.content ?? '';
+          const structuredOutputMetadata = structuredFinal?.persistenceMetadata;
           let goalFinalization: SessionGoalFinalizationInfo | undefined;
           if (goalCompletionReady) {
             const verification = goalFinalizationSnapshot?.completionVerification;
@@ -3121,12 +3287,8 @@ validates the object and may return a bounded corrective error.`;
             goalCompletionVerified = true;
             yield { kind: 'goal_updated', goal: completedGoal };
           }
-          if (structuredOutput && structuredOutputContract) {
-            yield {
-              kind: 'structured_output',
-              output: structuredOutput,
-              schemaDigest: structuredOutputContract.schemaDigest,
-            };
+          if (structuredFinal) {
+            yield structuredFinal.event;
           }
 
           return {
@@ -3153,14 +3315,15 @@ validates the object and may return a bounded corrective error.`;
                       : {}),
                   }
                 : {}),
-              ...(structuredOutput && structuredOutputContract
-                ? {
-                    structuredOutput,
-                    structuredOutputSchemaDigest: structuredOutputContract.schemaDigest,
-                  }
-                : {}),
+              ...(structuredOutputTruncated ? { outputTruncated: true } : {}),
+              ...structuredFinal?.resultMetadata,
             },
           };
+        }
+
+        if (turnResult.finishReason !== 'length') {
+          // Tool calls are observable progress and start a fresh recovery scope.
+          maxOutputRecoveryCount = 0;
         }
 
         // 6. 添加 LLM 响应到消息历史

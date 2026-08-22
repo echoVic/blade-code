@@ -1,15 +1,26 @@
-import { access, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BladeAgent } from '../../../src/acp/BladeAgent.js';
-import { PermissionMode } from '../../../src/config/types.js';
+import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
 import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
 import {
   getSessionFilePath,
   getSessionInboxFilePath,
 } from '../../../src/context/storage/pathUtils.js';
+import { isSessionTaskFailure } from '../../../src/context/taskFailure.js';
+import type { SessionEvent } from '../../../src/context/types.js';
 import { Bus, type BusEvent } from '../../../src/server/bus.js';
 import { PermissionRoutes } from '../../../src/server/routes/permission.js';
 import {
@@ -24,7 +35,7 @@ import {
   createMockACPClient,
   type MockACPClient,
 } from '../../support/mocks/mockACPClient.js';
-import { assertNoSecrets } from './sessionForkTrajectoryHarness.js';
+import { assertNoSecrets, finalAssistantText } from './sessionForkTrajectoryHarness.js';
 import {
   buildRealApiRuntimeConfig,
   isRealApiTestEnabled,
@@ -41,57 +52,249 @@ interface WebRecoveryWaitInput {
   sessionId: string;
   projectPath: string;
   target: string;
-  secret: string;
+}
+
+const RECOVERY_DIAGNOSTIC_EVENT_TYPES = new Set([
+  'interaction_requested',
+  'interaction_responded',
+  'interaction_recovered',
+  'inbox_acknowledged',
+  'turn_completed',
+  'turn_aborted',
+  'message_created',
+  'part_created',
+  'session.completed',
+  'session.error',
+]);
+
+const ACP_RECOVERY_DIAGNOSTIC_EVENT_TYPES = new Set([
+  'session_created',
+  'session_updated',
+  'turn_started',
+  ...RECOVERY_DIAGNOSTIC_EVENT_TYPES,
+]);
+const WEB_RECOVERY_DIAGNOSTIC_TIMEOUT_MS = 1_000;
+const ACP_RECOVERY_DIAGNOSTIC_TIMEOUT_MS = 1_000;
+const DURABLE_INTERACTION_PROVIDER_BOUNDARIES = [
+  'recovered_tool_call',
+  'post_tool_final',
+  'optional_empty_final_correction',
+] as const;
+const DURABLE_INTERACTION_PROVIDER_ATTEMPT_MS = 35_000;
+const DURABLE_INTERACTION_PROVIDER_ADMISSION_MS = 5_000;
+const DURABLE_INTERACTION_PROVIDER_RECOVERY_MS = 30_000;
+const DURABLE_INTERACTION_WEB_WAIT_MS = 240_000;
+const DURABLE_INTERACTION_ACP_WAIT_MS = 270_000;
+const DURABLE_INTERACTION_STRICT_WAIT_MS = Math.min(
+  DURABLE_INTERACTION_WEB_WAIT_MS,
+  DURABLE_INTERACTION_ACP_WAIT_MS
+);
+const DURABLE_INTERACTION_FINALIZATION_RESERVE_MS = 30_000;
+
+export function buildDurableInteractionRecoveryConfig(
+  base: RuntimeConfig
+): RuntimeConfig {
+  const providerWorstCaseMs =
+    DURABLE_INTERACTION_PROVIDER_BOUNDARIES.length *
+    (DURABLE_INTERACTION_PROVIDER_ADMISSION_MS +
+      DURABLE_INTERACTION_PROVIDER_ATTEMPT_MS +
+      DURABLE_INTERACTION_PROVIDER_RECOVERY_MS);
+  if (
+    providerWorstCaseMs >
+    DURABLE_INTERACTION_STRICT_WAIT_MS - DURABLE_INTERACTION_FINALIZATION_RESERVE_MS
+  ) {
+    throw new Error('Durable interaction recovery budget exceeds its surface deadline');
+  }
+  return {
+    ...base,
+    providerForegroundRecoveryMs: DURABLE_INTERACTION_PROVIDER_RECOVERY_MS,
+    providerRequestAdmissionMs: DURABLE_INTERACTION_PROVIDER_ADMISSION_MS,
+    models: base.models.map((model) => ({
+      ...model,
+      overrides: {
+        ...model.overrides,
+        timeout: DURABLE_INTERACTION_PROVIDER_ATTEMPT_MS,
+        streamIdleTimeout: DURABLE_INTERACTION_PROVIDER_ATTEMPT_MS,
+      },
+    })),
+  };
+}
+
+function boundedByteSize(
+  bytes: number | undefined
+): 0 | '1_4096' | '4097_16384' | '16385_plus' {
+  if (!bytes) return 0;
+  if (bytes <= 4_096) return '1_4096';
+  if (bytes <= 16_384) return '4097_16384';
+  return '16385_plus';
+}
+
+function textDiagnostic(
+  text: string | undefined,
+  expectedText: string
+): {
+  present: boolean;
+  utf8ByteSizeBucket: ReturnType<typeof boundedByteSize>;
+  sha256Prefix: string | null;
+  expectedMarkerPresent: boolean;
+} {
+  const present = Boolean(text?.trim());
+  return {
+    present,
+    utf8ByteSizeBucket: boundedByteSize(
+      present && text ? Buffer.byteLength(text, 'utf8') : undefined
+    ),
+    sha256Prefix:
+      present && text
+        ? createHash('sha256').update(text).digest('hex').slice(0, 12)
+        : null,
+    expectedMarkerPresent: present && text ? text.includes(expectedText) : false,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function formatAcpRecoveryDiagnostic(input: {
+  events: readonly SessionEvent[];
+  acpText: string;
+  expectedText: string;
+  inboxMissing: boolean;
+  permissionRequests: number;
+  targetPresent: boolean;
+}): string {
+  const observedEventCounts: Record<string, number> = {};
+  const writeCallIds = new Set<string>();
+  const writeResults = new Map<string, boolean>();
+  for (const event of input.events) {
+    if (ACP_RECOVERY_DIAGNOSTIC_EVENT_TYPES.has(event.type)) {
+      observedEventCounts[event.type] = (observedEventCounts[event.type] ?? 0) + 1;
+    }
+    if (event.type !== 'part_created' || !isRecord(event.data.payload)) continue;
+    const { partType, payload } = event.data;
+    if (payload.toolName !== 'Write') continue;
+    const toolCallId = payload.toolCallId;
+    if (typeof toolCallId !== 'string' || !toolCallId) continue;
+    if (partType === 'tool_call') {
+      writeCallIds.add(toolCallId);
+    } else if (partType === 'tool_result') {
+      writeResults.set(toolCallId, payload.error === null && payload.output !== null);
+    }
+  }
+  const durableFinal = finalAssistantText(input.events);
+  const eventCounts = Object.fromEntries(
+    [...ACP_RECOVERY_DIAGNOSTIC_EVENT_TYPES].flatMap((type) =>
+      observedEventCounts[type] === undefined ? [] : [[type, observedEventCounts[type]]]
+    )
+  );
+
+  return JSON.stringify({
+    eventCounts,
+    turns: {
+      completed: eventCounts.turn_completed ?? 0,
+      aborted: eventCounts.turn_aborted ?? 0,
+    },
+    write: {
+      calls: writeCallIds.size,
+      results: writeResults.size,
+      succeeded:
+        writeCallIds.size > 0 &&
+        writeCallIds.size === writeResults.size &&
+        [...writeCallIds].every((toolCallId) => writeResults.get(toolCallId) === true),
+    },
+    durableFinal: textDiagnostic(durableFinal, input.expectedText),
+    acpEgress: textDiagnostic(input.acpText, input.expectedText),
+    inboxMissing: input.inboxMissing,
+    permissionRequests: input.permissionRequests,
+    targetPresent: input.targetPresent,
+  });
+}
+
+async function optionalFileSize(filePath: string): Promise<number | undefined> {
+  try {
+    return (await stat(filePath)).size;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 async function buildWebRecoveryDiagnostic(
   input: WebRecoveryWaitInput,
   observedEvents: readonly BusEvent[],
-  timeoutMs: number
+  outcome: { kind: 'timeout'; timeoutMs: number } | { kind: 'failure' }
 ): Promise<string> {
   const store = new PersistentStore(input.projectPath);
-  const [targetContent, transcript, inboxMissing, metadata, events] = await Promise.all(
-    [
-      readOptionalFile(input.target),
-      readOptionalFile(getSessionFilePath(input.projectPath, input.sessionId)),
+  const [targetBytes, transcriptBytes, inboxMissing, metadata, durableEvents] =
+    await Promise.all([
+      optionalFileSize(input.target),
+      optionalFileSize(getSessionFilePath(input.projectPath, input.sessionId)),
       fileIsMissing(getSessionInboxFilePath(input.projectPath, input.sessionId)),
       SessionService.findSessionMetadata(input.sessionId, input.projectPath),
       store.loadEvents(input.sessionId),
-    ]
-  );
-  const durableEvents = events
-    ?.filter(
-      (event) =>
-        event.type === 'interaction_requested' ||
-        event.type === 'interaction_responded' ||
-        event.type === 'interaction_recovered' ||
-        event.type === 'inbox_acknowledged' ||
-        event.type === 'turn_completed' ||
-        event.type === 'turn_aborted' ||
-        event.type === 'message_created' ||
-        (event.type === 'part_created' &&
-          ['text', 'tool_call', 'tool_result'].includes(event.data.partType))
-    )
-    .slice(-100);
+    ]);
+  const busEventCounts: Record<string, number> = {};
+  for (const type of observedEvents.map((event) => event.type)) {
+    if (!RECOVERY_DIAGNOSTIC_EVENT_TYPES.has(type)) continue;
+    busEventCounts[type] = (busEventCounts[type] ?? 0) + 1;
+  }
+  const durableEventCounts: Record<string, number> = {};
+  for (const type of (durableEvents ?? []).map((event) => event.type)) {
+    if (!RECOVERY_DIAGNOSTIC_EVENT_TYPES.has(type)) continue;
+    durableEventCounts[type] = (durableEventCounts[type] ?? 0) + 1;
+  }
+  const terminalFailure = observedEvents
+    .filter((event) => event.type === 'session.error')
+    .map((event) => event.properties.taskFailure)
+    .findLast(isSessionTaskFailure);
+  const taskFailure = metadata?.taskFailure ?? terminalFailure;
+
   return JSON.stringify({
-    timeoutMs,
-    targetContent,
-    inboxMissing,
-    metadata: metadata
+    outcome: outcome.kind,
+    ...(outcome.kind === 'timeout' ? { timeoutMs: outcome.timeoutMs } : {}),
+    taskFailure: taskFailure
       ? {
-          taskStatus: metadata.taskStatus,
-          taskStatusReason: metadata.taskStatusReason,
-          taskFailure: metadata.taskFailure,
-          pendingInteraction: metadata.pendingInteraction,
+          code: taskFailure.code,
+          retryable: taskFailure.retryable,
+          ...(taskFailure.resource ? { resource: taskFailure.resource } : {}),
         }
-      : undefined,
+      : null,
+    taskStatus: metadata?.taskStatus ?? null,
+    selectedModelDigest: metadata?.selectedModelId
+      ? createHash('sha256').update(metadata.selectedModelId).digest('hex').slice(0, 12)
+      : null,
+    pendingInteractionType: metadata?.pendingInteraction?.type ?? null,
+    busEventCounts,
+    durableEventCounts,
+    targetBytes: boundedByteSize(targetBytes),
+    transcriptBytes: boundedByteSize(transcriptBytes),
+    inboxMissing,
     runtimeResidency: input.controller.getRuntimeResidencyStats(),
-    busEvents: observedEvents.slice(-100),
-    durableEvents,
-    transcriptTail: transcript?.slice(-12_000),
-  })
-    .replaceAll(input.secret, '[redacted]')
-    .slice(-24_000);
+  });
+}
+
+export async function buildWebRecoveryDiagnosticBounded(
+  input: WebRecoveryWaitInput,
+  observedEvents: readonly BusEvent[],
+  outcome: { kind: 'timeout'; timeoutMs: number } | { kind: 'failure' },
+  timeoutMs = WEB_RECOVERY_DIAGNOSTIC_TIMEOUT_MS
+): Promise<string> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      buildWebRecoveryDiagnostic(input, observedEvents, outcome).catch(
+        () => 'diagnostic unavailable'
+      ),
+      new Promise<string>((resolve) => {
+        timeout = setTimeout(() => resolve('diagnostic unavailable'), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function waitForWebRecovery(input: WebRecoveryWaitInput): {
@@ -102,30 +305,23 @@ function waitForWebRecovery(input: WebRecoveryWaitInput): {
   const timeoutMs =
     Number.isSafeInteger(configuredTimeout) && configuredTimeout > 0
       ? configuredTimeout
-      : 240_000;
+      : DURABLE_INTERACTION_WEB_WAIT_MS;
   const observedEvents: BusEvent[] = [];
   let unsubscribe: () => void = () => undefined;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const promise = new Promise<void>((resolve, reject) => {
     timeout = setTimeout(() => {
       unsubscribe();
-      void buildWebRecoveryDiagnostic(input, observedEvents, timeoutMs).then(
-        (diagnostic) => {
-          reject(
-            new Error(
-              `Timed out waiting for durable Web interaction recovery: ${diagnostic}`
-            )
-          );
-        },
-        (error) => {
-          reject(
-            new Error(
-              `Timed out waiting for durable Web interaction recovery; ` +
-                `diagnostic failed: ${String(error)}`
-            )
-          );
-        }
-      );
+      void buildWebRecoveryDiagnosticBounded(input, observedEvents, {
+        kind: 'timeout',
+        timeoutMs,
+      }).then((diagnostic) => {
+        reject(
+          new Error(
+            `Timed out waiting for durable Web interaction recovery: ${diagnostic}`
+          )
+        );
+      });
     }, timeoutMs);
     unsubscribe = Bus.subscribe((event) => {
       if (
@@ -146,7 +342,13 @@ function waitForWebRecovery(input: WebRecoveryWaitInput): {
       } else if (event.type === 'session.error') {
         clearTimeout(timeout);
         unsubscribe();
-        reject(new Error(String(event.properties.error ?? 'Recovered run failed')));
+        void buildWebRecoveryDiagnosticBounded(input, observedEvents, {
+          kind: 'failure',
+        }).then((diagnostic) => {
+          reject(
+            new Error('Recovered Web interaction failed; diagnostic=' + diagnostic)
+          );
+        });
       }
     });
   });
@@ -182,6 +384,61 @@ async function fileIsMissing(filePath: string): Promise<boolean> {
   }
 }
 
+async function buildAcpRecoveryTimeoutDiagnostic(input: {
+  client: MockACPClient;
+  target: string;
+  workspace: string;
+  sessionId: string;
+  expectedText: string;
+}): Promise<string> {
+  const store = new PersistentStore(input.workspace);
+  const [events, hostTargetBytes, inboxMissing] = await Promise.all([
+    store.loadEvents(input.sessionId),
+    optionalFileSize(input.target),
+    fileIsMissing(getSessionInboxFilePath(input.workspace, input.sessionId)),
+  ]);
+  const acpText = input.client.sessionUpdates
+    .flatMap((notification) =>
+      notification.update.sessionUpdate === 'agent_message_chunk' &&
+      notification.update.content.type === 'text'
+        ? [notification.update.content.text]
+        : []
+    )
+    .join('');
+  return formatAcpRecoveryDiagnostic({
+    events: events ?? [],
+    acpText,
+    expectedText: input.expectedText,
+    inboxMissing,
+    permissionRequests: input.client.permissionRequests.length,
+    targetPresent:
+      hostTargetBytes !== undefined || input.client.files.has(input.target),
+  });
+}
+
+export async function buildAcpRecoveryTimeoutDiagnosticBounded(
+  input: {
+    client: MockACPClient;
+    target: string;
+    workspace: string;
+    sessionId: string;
+    expectedText: string;
+  },
+  timeoutMs = ACP_RECOVERY_DIAGNOSTIC_TIMEOUT_MS
+): Promise<string> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      buildAcpRecoveryTimeoutDiagnostic(input).catch(() => 'diagnostic unavailable'),
+      new Promise<string>((resolve) => {
+        timeout = setTimeout(() => resolve('diagnostic unavailable'), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 async function waitForAcpRecovery(input: {
   client: MockACPClient;
   target: string;
@@ -189,13 +446,12 @@ async function waitForAcpRecovery(input: {
   sessionId: string;
   expectedContent: string;
   expectedText: string;
-  secret: string;
 }): Promise<string> {
   const configuredTimeout = Number(process.env.BLADE_DURABLE_ACP_RECOVERY_TIMEOUT_MS);
   const timeoutMs =
     Number.isSafeInteger(configuredTimeout) && configuredTimeout > 0
       ? configuredTimeout
-      : 270_000;
+      : DURABLE_INTERACTION_ACP_WAIT_MS;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const hostContent = await readOptionalFile(input.target);
@@ -219,36 +475,680 @@ async function waitForAcpRecovery(input: {
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  const [hostContent, transcript, inboxMissing] = await Promise.all([
-    readOptionalFile(input.target),
-    readOptionalFile(getSessionFilePath(input.workspace, input.sessionId)),
-    fileIsMissing(getSessionInboxFilePath(input.workspace, input.sessionId)),
-  ]);
-  const updates = input.client.sessionUpdates.slice(-100).map((notification) => {
-    const update = notification.update;
-    return {
-      sessionUpdate: update.sessionUpdate,
-      ...(update.sessionUpdate === 'agent_message_chunk' &&
-      update.content.type === 'text'
-        ? { text: update.content.text }
-        : {}),
-    };
+  const diagnostic = await buildAcpRecoveryTimeoutDiagnosticBounded({
+    client: input.client,
+    target: input.target,
+    workspace: input.workspace,
+    sessionId: input.sessionId,
+    expectedText: input.expectedText,
   });
-  const diagnostic = JSON.stringify({
-    timeoutMs,
-    hostContent,
-    clientFiles: [...input.client.files.entries()],
-    inboxMissing,
-    permissionRequests: input.client.permissionRequests.length,
-    updates,
-    transcriptTail: transcript?.slice(-12_000),
-  })
-    .replaceAll(input.secret, '[redacted]')
-    .slice(-20_000);
   throw new Error(
     `Timed out waiting for durable ACP interaction completion: ${diagnostic}`
   );
 }
+
+describe('durable ACP recovery diagnostics', () => {
+  it('keeps Provider recovery inside the surface deadline', () => {
+    const base = buildRealApiRuntimeConfig({
+      id: 'gpt',
+      qualificationId: 'gpt:budget-contract',
+      name: 'GPT budget contract',
+      provider: 'openai-compatible',
+      model: 'gpt-budget-contract',
+      apiKey: 'budget-contract-key',
+      baseURL: 'https://gateway.invalid/v1',
+    });
+    const config = buildDurableInteractionRecoveryConfig(base);
+
+    expect(config.providerForegroundRecoveryMs).toBe(30_000);
+    expect(config.providerRequestAdmissionMs).toBe(5_000);
+    expect(config.models).toHaveLength(1);
+    expect(config.models[0]?.overrides).toMatchObject({
+      timeout: 35_000,
+      streamIdleTimeout: 35_000,
+    });
+    const threeProviderBoundariesMs = 3 * (5_000 + 35_000 + 30_000);
+    expect(DURABLE_INTERACTION_PROVIDER_BOUNDARIES).toEqual([
+      'recovered_tool_call',
+      'post_tool_final',
+      'optional_empty_final_correction',
+    ]);
+    expect(threeProviderBoundariesMs).toBeLessThanOrEqual(
+      DURABLE_INTERACTION_STRICT_WAIT_MS - DURABLE_INTERACTION_FINALIZATION_RESERVE_MS
+    );
+    expect(DURABLE_INTERACTION_ACP_WAIT_MS).toBeGreaterThanOrEqual(
+      DURABLE_INTERACTION_WEB_WAIT_MS
+    );
+  });
+
+  it('summarizes a completed Write without exposing durable or ACP text', () => {
+    const createdAt = '2026-08-20T00:00:00.000Z';
+    const sessionId = 'acp-recovery-diagnostic-session';
+    const turnId = 'acp-recovery-diagnostic-turn';
+    const toolCallId = 'acp-recovery-write-call';
+    const secret = 'acp-recovery-provider-secret';
+    const target = `/private/workspace/${secret}/selected-channel.txt`;
+    const expectedText = `ACP_INTERACTION_RECOVERED_${secret}`;
+    const rawToolOutput = `Wrote ${target} using ${secret}`;
+    const events: SessionEvent[] = [
+      {
+        id: 'session-created',
+        sessionId,
+        timestamp: createdAt,
+        type: 'session_created',
+        cwd: target,
+        version: 'test',
+        data: {
+          sessionId,
+          rootId: sessionId,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      },
+      {
+        id: 'interaction-requested',
+        sessionId,
+        timestamp: createdAt,
+        type: 'interaction_requested',
+        cwd: target,
+        version: 'test',
+        data: {
+          requestId: 'request-1',
+          toolCallId: 'question-call',
+          toolName: 'AskUserQuestion',
+          interactionType: 'question',
+          details: { prompt: secret, target },
+          requestedAt: createdAt,
+        },
+      },
+      {
+        id: 'interaction-responded',
+        sessionId,
+        timestamp: createdAt,
+        type: 'interaction_responded',
+        cwd: target,
+        version: 'test',
+        data: {
+          requestId: 'request-1',
+          response: { selected: secret },
+          respondedAt: createdAt,
+        },
+      },
+      {
+        id: 'interaction-recovered',
+        sessionId,
+        timestamp: createdAt,
+        type: 'interaction_recovered',
+        cwd: target,
+        version: 'test',
+        data: {
+          requestId: 'request-1',
+          inboxMessageId: 'inbox-message-1',
+          recoveredAt: createdAt,
+        },
+      },
+      {
+        id: 'turn-started',
+        sessionId,
+        timestamp: createdAt,
+        type: 'turn_started',
+        cwd: target,
+        version: 'test',
+        data: {
+          turnId,
+          kind: 'pending',
+          startedAt: createdAt,
+          inputMessageIds: ['inbox-message-1'],
+        },
+      },
+      {
+        id: 'write-message-created',
+        sessionId,
+        timestamp: createdAt,
+        type: 'message_created',
+        cwd: target,
+        version: 'test',
+        data: {
+          messageId: 'write-message',
+          role: 'assistant',
+          createdAt,
+        },
+      },
+      {
+        id: 'write-call-created',
+        sessionId,
+        timestamp: createdAt,
+        type: 'part_created',
+        cwd: target,
+        version: 'test',
+        data: {
+          partId: 'write-call-part',
+          messageId: 'write-message',
+          partType: 'tool_call',
+          payload: {
+            toolCallId,
+            toolName: 'Write',
+            input: { file_path: target, content: secret },
+          },
+          createdAt,
+        },
+      },
+      {
+        id: 'write-result-created',
+        sessionId,
+        timestamp: createdAt,
+        type: 'part_created',
+        cwd: target,
+        version: 'test',
+        data: {
+          partId: 'write-result-part',
+          messageId: 'write-message',
+          partType: 'tool_result',
+          payload: {
+            toolCallId,
+            toolName: 'Write',
+            output: rawToolOutput,
+            error: null,
+          },
+          createdAt,
+        },
+      },
+      {
+        id: 'inbox-acknowledged',
+        sessionId,
+        timestamp: createdAt,
+        type: 'inbox_acknowledged',
+        cwd: target,
+        version: 'test',
+        data: {
+          messageIds: ['inbox-message-1'],
+          acknowledgedAt: createdAt,
+        },
+      },
+      {
+        id: 'turn-completed',
+        sessionId,
+        timestamp: createdAt,
+        type: 'turn_completed',
+        cwd: target,
+        version: 'test',
+        data: {
+          turnId,
+          completedAt: createdAt,
+          turnsCount: 2,
+          toolCallsCount: 1,
+          durationMs: 1,
+        },
+      },
+      {
+        id: 'session-updated',
+        sessionId,
+        timestamp: createdAt,
+        type: 'session_updated',
+        cwd: target,
+        version: 'test',
+        data: {
+          sessionId,
+          rootId: sessionId,
+          taskStatus: 'completed',
+          createdAt,
+          updatedAt: createdAt,
+        },
+      },
+    ];
+
+    const diagnostic = formatAcpRecoveryDiagnostic({
+      events,
+      acpText: '',
+      expectedText,
+      inboxMissing: true,
+      permissionRequests: 1,
+      targetPresent: true,
+    });
+
+    expect(diagnostic).toContain(
+      '"eventCounts":{"session_created":1,"session_updated":1,' +
+        '"turn_started":1,"interaction_requested":1,' +
+        '"interaction_responded":1,"interaction_recovered":1,' +
+        '"inbox_acknowledged":1,"turn_completed":1,' +
+        '"message_created":1,"part_created":2}'
+    );
+    expect(diagnostic).toContain('"turns":{"completed":1,"aborted":0}');
+    expect(diagnostic).toContain('"write":{"calls":1,"results":1,"succeeded":true}');
+    expect(diagnostic).toContain(
+      '"durableFinal":{"present":false,"utf8ByteSizeBucket":0,' +
+        '"sha256Prefix":null,"expectedMarkerPresent":false}'
+    );
+    expect(diagnostic).toContain(
+      '"acpEgress":{"present":false,"utf8ByteSizeBucket":0,' +
+        '"sha256Prefix":null,"expectedMarkerPresent":false}'
+    );
+    expect(diagnostic).toContain(
+      '"inboxMissing":true,"permissionRequests":1,"targetPresent":true'
+    );
+    expect(diagnostic).not.toContain(secret);
+    expect(diagnostic).not.toContain(target);
+    expect(diagnostic).not.toContain(rawToolOutput);
+    expect(diagnostic).not.toContain(expectedText);
+    expect(Buffer.byteLength(diagnostic)).toBeLessThanOrEqual(4_096);
+  });
+
+  it('uses a fixed fallback when timeout evidence collection fails', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'blade-acp-diagnostic-fail-'));
+    const secret = 'acp-diagnostic-io-secret';
+    const workspace = path.join(root, `workspace-${secret}`);
+    const sessionId = `session-${secret}`;
+    const target = path.join(workspace, `target-${secret}.txt`);
+    const client = createMockACPClient();
+
+    try {
+      await writeFile(workspace, secret, { mode: 0o600 });
+      const diagnostic = await buildAcpRecoveryTimeoutDiagnosticBounded({
+        client,
+        target,
+        workspace,
+        sessionId,
+        expectedText: `EXPECTED_${secret}`,
+      });
+
+      expect(diagnostic).toBe('diagnostic unavailable');
+      expect(diagnostic).not.toContain(secret);
+      expect(diagnostic).not.toContain(workspace);
+      expect(diagnostic).not.toContain(target);
+      expect(diagnostic).not.toContain(sessionId);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves the safe diagnostic when evidence settles quickly', async () => {
+    const secret = 'acp-diagnostic-fast-secret';
+    const workspace = `/private/workspace-${secret}`;
+    const sessionId = `session-${secret}`;
+    const target = `${workspace}/target-${secret}.txt`;
+    const client = createMockACPClient();
+    const loadEventsSpy = vi
+      .spyOn(PersistentStore.prototype, 'loadEvents')
+      .mockResolvedValue([]);
+    const input = {
+      client,
+      target,
+      workspace,
+      sessionId,
+      expectedText: `EXPECTED_${secret}`,
+    };
+
+    try {
+      const expected = await buildAcpRecoveryTimeoutDiagnostic(input);
+      const diagnostic = await buildAcpRecoveryTimeoutDiagnosticBounded(input, 200);
+
+      expect(diagnostic).toBe(expected);
+      expect(diagnostic).toContain('"eventCounts":{}');
+      expect(diagnostic).toContain('"inboxMissing":true');
+      expect(diagnostic).not.toBe('diagnostic unavailable');
+      expect(diagnostic).not.toContain(secret);
+      expect(diagnostic).not.toContain(workspace);
+      expect(diagnostic).not.toContain(target);
+      expect(diagnostic).not.toContain(sessionId);
+    } finally {
+      loadEventsSpy.mockRestore();
+    }
+  });
+
+  it('returns a fixed fallback when durable event evidence never settles', async () => {
+    const secret = 'acp-diagnostic-deadline-secret';
+    const workspace = `/private/workspace-${secret}`;
+    const sessionId = `session-${secret}`;
+    const target = `${workspace}/target-${secret}.txt`;
+    const client = createMockACPClient();
+    const loadEventsSpy = vi
+      .spyOn(PersistentStore.prototype, 'loadEvents')
+      .mockImplementation(() => new Promise<never>(() => undefined));
+
+    try {
+      const startedAt = performance.now();
+      const diagnostic = await buildAcpRecoveryTimeoutDiagnosticBounded(
+        {
+          client,
+          target,
+          workspace,
+          sessionId,
+          expectedText: `EXPECTED_${secret}`,
+        },
+        20
+      );
+
+      expect(performance.now() - startedAt).toBeLessThan(1_000);
+      expect(diagnostic).toBe('diagnostic unavailable');
+      expect(diagnostic).not.toContain(secret);
+      expect(diagnostic).not.toContain(workspace);
+      expect(diagnostic).not.toContain(target);
+      expect(diagnostic).not.toContain(sessionId);
+    } finally {
+      loadEventsSpy.mockRestore();
+    }
+  }, 1_000);
+
+  it('returns a fixed fallback when evidence collection rejects quickly', async () => {
+    const secret = 'acp-diagnostic-rejection-secret';
+    const workspace = `/private/workspace-${secret}`;
+    const sessionId = `session-${secret}`;
+    const target = `${workspace}/target-${secret}.txt`;
+    const client = createMockACPClient();
+    const loadEventsSpy = vi
+      .spyOn(PersistentStore.prototype, 'loadEvents')
+      .mockRejectedValue(new Error(`failed at ${workspace}/${sessionId}/${secret}`));
+
+    try {
+      const diagnostic = await buildAcpRecoveryTimeoutDiagnosticBounded(
+        {
+          client,
+          target,
+          workspace,
+          sessionId,
+          expectedText: `EXPECTED_${secret}`,
+        },
+        200
+      );
+
+      expect(diagnostic).toBe('diagnostic unavailable');
+      expect(diagnostic).not.toContain(secret);
+      expect(diagnostic).not.toContain(workspace);
+      expect(diagnostic).not.toContain(target);
+      expect(diagnostic).not.toContain(sessionId);
+    } finally {
+      loadEventsSpy.mockRestore();
+    }
+  });
+
+  it('does not treat a mismatched Write result as a successful pair', () => {
+    const createdAt = '2026-08-20T00:00:00.000Z';
+    const events: SessionEvent[] = [
+      {
+        id: 'write-call-mismatch',
+        sessionId: 'write-pair-session',
+        timestamp: createdAt,
+        type: 'part_created',
+        cwd: '/private/write-pair',
+        version: 'test',
+        data: {
+          partId: 'write-call-part',
+          messageId: 'write-message',
+          partType: 'tool_call',
+          payload: {
+            toolCallId: 'write-call-a',
+            toolName: 'Write',
+            input: { file_path: '/private/write-pair/a.txt', content: 'a' },
+          },
+          createdAt,
+        },
+      },
+      {
+        id: 'write-result-mismatch',
+        sessionId: 'write-pair-session',
+        timestamp: createdAt,
+        type: 'part_created',
+        cwd: '/private/write-pair',
+        version: 'test',
+        data: {
+          partId: 'write-result-part',
+          messageId: 'write-message',
+          partType: 'tool_result',
+          payload: {
+            toolCallId: 'write-call-b',
+            toolName: 'Write',
+            output: 'written',
+            error: null,
+          },
+          createdAt,
+        },
+      },
+    ];
+
+    expect(
+      formatAcpRecoveryDiagnostic({
+        events,
+        acpText: '',
+        expectedText: 'EXPECTED',
+        inboxMissing: false,
+        permissionRequests: 0,
+        targetPresent: false,
+      })
+    ).toContain('"write":{"calls":1,"results":1,"succeeded":false}');
+  });
+});
+
+describe('durable Web recovery diagnostics', () => {
+  it('preserves the safe diagnostic structure when evidence settles quickly', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'blade-web-diagnostic-fast-'));
+    const secret = 'web-diagnostic-fast-secret';
+    const projectPath = path.join(root, `workspace-${secret}`);
+    const sessionId = `session-${secret}`;
+    const target = path.join(projectPath, `target-${secret}.txt`);
+    const controller = createSessionRouteController();
+    const input = { controller, sessionId, projectPath, target };
+
+    try {
+      await mkdir(projectPath, { recursive: true });
+      await writeFile(target, secret, { mode: 0o600 });
+      await SessionService.createSessionMetadata(sessionId, projectPath, {
+        taskStatus: 'running',
+        selectedModelId: `model-${secret}`,
+      });
+      const store = new PersistentStore(projectPath);
+      await store.saveMessage(sessionId, 'user', secret);
+      const outcome = { kind: 'failure' } as const;
+      const expected = await buildWebRecoveryDiagnostic(input, [], outcome);
+
+      const diagnostic = await buildWebRecoveryDiagnosticBounded(
+        input,
+        [],
+        outcome,
+        200
+      );
+
+      expect(diagnostic).toBe(expected);
+      expect(diagnostic).toContain('\"outcome\":\"failure\"');
+      expect(diagnostic).toContain('\"taskStatus\":\"running\"');
+      expect(diagnostic).toContain('\"targetBytes\":\"1_4096\"');
+      expect(diagnostic).toContain('\"transcriptBytes\":\"1_4096\"');
+      expect(diagnostic).not.toContain(secret);
+      expect(diagnostic).not.toContain(projectPath);
+      expect(diagnostic).not.toContain(sessionId);
+      expect(diagnostic).not.toContain(target);
+    } finally {
+      await controller.shutdown('fast Web diagnostic test cleanup');
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns a fixed fallback when durable event evidence never settles', async () => {
+    const secret = 'web-diagnostic-deadline-secret';
+    const projectPath = `/private/workspace-${secret}`;
+    const sessionId = `session-${secret}`;
+    const controller = createSessionRouteController();
+    const loadEventsSpy = vi
+      .spyOn(PersistentStore.prototype, 'loadEvents')
+      .mockImplementation(() => new Promise<never>(() => undefined));
+
+    try {
+      const startedAt = performance.now();
+      const diagnostic = await buildWebRecoveryDiagnosticBounded(
+        {
+          controller,
+          sessionId,
+          projectPath,
+          target: `${projectPath}/target-${secret}.txt`,
+        },
+        [],
+        { kind: 'failure' },
+        20
+      );
+
+      expect(performance.now() - startedAt).toBeLessThan(1_000);
+      expect(diagnostic).toBe('diagnostic unavailable');
+      expect(diagnostic).not.toContain(secret);
+      expect(diagnostic).not.toContain(projectPath);
+      expect(diagnostic).not.toContain(sessionId);
+    } finally {
+      loadEventsSpy.mockRestore();
+      await controller.shutdown('bounded Web diagnostic test cleanup');
+    }
+  }, 1_000);
+
+  it('returns a fixed fallback when evidence collection rejects quickly', async () => {
+    const secret = 'web-diagnostic-rejection-secret';
+    const projectPath = `/private/workspace-${secret}`;
+    const sessionId = `session-${secret}`;
+    const controller = createSessionRouteController();
+    const loadEventsSpy = vi
+      .spyOn(PersistentStore.prototype, 'loadEvents')
+      .mockRejectedValue(new Error(`failed at ${projectPath}/${sessionId}/${secret}`));
+
+    try {
+      const diagnostic = await buildWebRecoveryDiagnosticBounded(
+        {
+          controller,
+          sessionId,
+          projectPath,
+          target: `${projectPath}/target-${secret}.txt`,
+        },
+        [],
+        { kind: 'failure' },
+        200
+      );
+
+      expect(diagnostic).toBe('diagnostic unavailable');
+      expect(diagnostic).not.toContain(secret);
+      expect(diagnostic).not.toContain(projectPath);
+      expect(diagnostic).not.toContain(sessionId);
+    } finally {
+      loadEventsSpy.mockRestore();
+      await controller.shutdown('rejected Web diagnostic test cleanup');
+    }
+  });
+
+  it('bounds timeout evidence without serializing workspace or transcript content', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'blade-web-recovery-timeout-'));
+    const secret = 'web-timeout-secret';
+    const workspace = path.join(root, `workspace-${secret}`);
+    const sessionId = `web-timeout-${secret}`;
+    const target = path.join(workspace, `target-${secret}.txt`);
+    const modelId = `private-timeout-model-${secret}`;
+    const controller = createSessionRouteController();
+    const originalTimeout = process.env.BLADE_DURABLE_WEB_RECOVERY_TIMEOUT_MS;
+
+    try {
+      process.env.BLADE_DURABLE_WEB_RECOVERY_TIMEOUT_MS = '5';
+      await mkdir(workspace, { recursive: true });
+      await writeFile(target, `private target content ${secret}`, { mode: 0o600 });
+      await SessionService.createSessionMetadata(sessionId, workspace, {
+        taskStatus: 'running',
+        selectedModelId: modelId,
+      });
+      const store = new PersistentStore(workspace);
+      await store.saveMessage(sessionId, 'user', `private durable prompt ${secret}`);
+      const waiting = waitForWebRecovery({
+        controller,
+        sessionId,
+        projectPath: workspace,
+        target,
+      });
+
+      const failure = await waiting.promise.then(
+        () => new Error('expected Web recovery timeout'),
+        (error: unknown) => error
+      );
+      if (!(failure instanceof Error)) {
+        throw new Error('Web recovery timeout was not an Error');
+      }
+      expect(failure.message).toContain(
+        'Timed out waiting for durable Web interaction recovery'
+      );
+      expect(failure.message).toContain('"taskStatus":"running"');
+      expect(failure.message).toContain('"targetBytes":"1_4096"');
+      expect(failure.message).toContain('"transcriptBytes":"1_4096"');
+      expect(failure.message).not.toContain('targetContent');
+      expect(failure.message).not.toContain('transcriptTail');
+      expect(failure.message).not.toContain('durableEvents');
+      expect(failure.message).not.toContain('busEvents');
+      expect(failure.message).not.toContain(secret);
+      expect(failure.message).not.toContain(modelId);
+      expect(failure.message).not.toContain(sessionId);
+      expect(failure.message).not.toContain(workspace);
+      expect(failure.message).not.toContain(target);
+      expect(Buffer.byteLength(failure.message)).toBeLessThanOrEqual(4_096);
+    } finally {
+      if (originalTimeout === undefined) {
+        delete process.env.BLADE_DURABLE_WEB_RECOVERY_TIMEOUT_MS;
+      } else {
+        process.env.BLADE_DURABLE_WEB_RECOVERY_TIMEOUT_MS = originalTimeout;
+      }
+      await controller.shutdown('durable Web timeout diagnostic cleanup');
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('attaches bounded redacted evidence to an authoritative terminal failure', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'blade-web-recovery-error-'));
+    const workspace = path.join(root, 'workspace');
+    const controller = createSessionRouteController();
+    const sessionId = 'web-recovery-terminal-error';
+    const secret = 'terminal-error-secret';
+    const modelId = 'private-model-' + secret;
+    const target = path.join(workspace, 'never-written.txt');
+    const waiting = waitForWebRecovery({
+      controller,
+      sessionId,
+      projectPath: workspace,
+      target,
+    });
+
+    try {
+      await mkdir(workspace, { recursive: true });
+      await SessionService.createSessionMetadata(sessionId, workspace, {
+        taskStatus: 'failed',
+        selectedModelId: modelId,
+      });
+      Bus.publish({ sessionId, projectPath: workspace }, 'session.error', {
+        error: 'Provider rejected this request. Check account and model permissions.',
+        taskFailure: {
+          code: 'permission',
+          message:
+            'Provider rejected this request. Check account and model permissions.',
+          retryable: false,
+        },
+        unsafeDiagnostic: secret,
+      });
+
+      const failure = await waiting.promise.then(
+        () => new Error('expected Web recovery to fail'),
+        (error: unknown) => error
+      );
+      if (!(failure instanceof Error)) {
+        throw new Error('Web recovery failure was not an Error');
+      }
+      expect(failure.message).toContain('Recovered Web interaction failed');
+      expect(failure.message).toContain('\"code\":\"permission\"');
+      expect(failure.message).toContain('\"busEventCounts\":{\"session.error\":1}');
+      expect(failure.message).toContain('\"transcriptBytes\":\"1_4096\"');
+      expect(failure.message).toMatch(/"selectedModelDigest":"[a-f0-9]{12}"/);
+      expect(failure.message).not.toContain('unsafeDiagnostic');
+      expect(failure.message).not.toContain('transcriptTail');
+      expect(failure.message).not.toContain('targetContent');
+      expect(failure.message).not.toContain(secret);
+      expect(failure.message).not.toContain(modelId);
+      expect(failure.message).not.toContain(sessionId);
+      expect(failure.message).not.toContain(workspace);
+      expect(failure.message).not.toContain(target);
+      expect(Buffer.byteLength(failure.message)).toBeLessThanOrEqual(4_096);
+    } finally {
+      waiting.cancel();
+      await controller.shutdown('durable Web recovery diagnostic cleanup');
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describeReal('durable pending interaction recovery trajectory (real API)', () => {
   const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
@@ -266,17 +1166,10 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
     const target = path.join(workspace, 'selected-channel.txt');
     const sessionId = `interaction-web-${Date.now()}`;
     const originalConfig = getState().config.config;
-    const config = {
+    const config = buildDurableInteractionRecoveryConfig({
       ...buildRealApiRuntimeConfig(gpt),
       permissionMode: PermissionMode.DEFAULT,
-    };
-    config.models = config.models.map((model) => ({
-      ...model,
-      overrides: {
-        ...model.overrides,
-        streamIdleTimeout: 270_000,
-      },
-    }));
+    });
     const controller = createSessionRouteController();
     const app = new Hono();
     app.route('/sessions', controller.app);
@@ -356,7 +1249,6 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
         sessionId,
         projectPath: workspace,
         target,
-        secret: gpt.apiKey,
       });
       const response = await runWithCwdOverride(workspace, () =>
         app.request(
@@ -381,25 +1273,19 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
         getSessionFilePath(workspace, sessionId),
         'utf8'
       );
-      const [events, metadata] = await Promise.all([
-        store.loadEvents(sessionId),
-        SessionService.findSessionMetadata(sessionId, workspace),
-      ]);
+      const metadata = await SessionService.findSessionMetadata(sessionId, workspace);
       assertNoSecrets({ metadata, transcript }, [gpt.apiKey]);
       const targetContent = await readOptionalFile(target);
-      const diagnostic = JSON.stringify(
-        events?.filter(
-          (event) =>
-            event.type === 'interaction_requested' ||
-            event.type === 'interaction_responded' ||
-            event.type === 'interaction_recovered' ||
-            event.type === 'message_created' ||
-            (event.type === 'part_created' &&
-              ['text', 'tool_call', 'tool_result'].includes(event.data.partType))
-        )
-      )
-        .replaceAll(gpt.apiKey, '[redacted]')
-        .slice(-8_000);
+      const diagnostic = await buildWebRecoveryDiagnosticBounded(
+        {
+          controller,
+          sessionId,
+          projectPath: workspace,
+          target,
+        },
+        [],
+        { kind: 'failure' }
+      );
       expect(
         targetContent,
         `Recovered Web interaction did not commit the selected file: ${diagnostic}`
@@ -423,10 +1309,10 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
     const target = path.join(workspace, 'acp-selected-channel.txt');
     const sessionId = `interaction-acp-${Date.now()}`;
     const originalConfig = getState().config.config;
-    const config = {
+    const config = buildDurableInteractionRecoveryConfig({
       ...buildRealApiRuntimeConfig(gpt),
       permissionMode: PermissionMode.DEFAULT,
-    };
+    });
     const client = createMockACPClient();
     client.requestPermission = async (request) => {
       client.permissionRequests.push(request);
@@ -520,7 +1406,6 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
         sessionId,
         expectedContent: 'Stable\n',
         expectedText: 'ACP_INTERACTION_RECOVERED',
-        secret: gpt.apiKey,
       });
       expect(content).toBe('Stable\n');
       const transcript = await readFile(

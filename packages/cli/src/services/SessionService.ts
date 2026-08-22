@@ -3,10 +3,10 @@
  * 负责加载和恢复历史会话
  */
 
-import { nanoid } from 'nanoid';
 import type { BigIntStats } from 'node:fs';
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import * as path from 'node:path';
+import { nanoid } from 'nanoid';
 import { SessionInUseError, SessionLease } from '../agent/runtime/SessionLease.js';
 import {
   MAX_INLINE_ATTACHMENT_BYTES,
@@ -46,11 +46,11 @@ import {
   removeSessionFromProjection,
   syncAll,
 } from '../context/storage/sqlite/projection.js';
-import { isSessionTaskFailure, toTaskFailure } from '../context/taskFailure.js';
 import {
   findCurrentTokenBudgetHandoff,
   projectTokenBudgetHandoffEvent,
 } from '../context/TokenBudgetHandoff.js';
+import { isSessionTaskFailure, toTaskFailure } from '../context/taskFailure.js';
 import type {
   SessionEvent,
   SessionPendingInteraction,
@@ -81,6 +81,12 @@ import { isReasoningEffortSelection } from './pi/reasoningEffort.js';
 import { isResponseVerbositySelection } from './pi/responseVerbosity.js';
 import { isServiceTierSelection } from './pi/serviceTier.js';
 import {
+  renderSessionMarkdown,
+  type SessionMarkdownExport,
+  type SessionMarkdownExportOptions,
+} from './SessionMarkdownExporter.js';
+import { createStructuredOutputContract } from './StructuredOutputService.js';
+import {
   compareSessionCatalogItems,
   type NormalizedSessionListOptions,
   type NormalizedSessionTaskFilters,
@@ -88,22 +94,16 @@ import {
   normalizeSessionTaskFilters,
   paginateSessionCatalog,
   resolveSessionCursorBoundary,
-  sessionCatalogSortKey,
   type SessionListOptions,
   type SessionScanOptions,
+  sessionCatalogSortKey,
 } from './sessionCatalog.js';
-import {
-  renderSessionMarkdown,
-  type SessionMarkdownExport,
-  type SessionMarkdownExportOptions,
-} from './SessionMarkdownExporter.js';
 import {
   listSessionRewindCheckpoints as listProjectedRewindCheckpoints,
   materializeSessionEvents,
-  planSessionRewind,
   type SessionRewindCheckpoint as ProjectedRewindCheckpoint,
+  planSessionRewind,
 } from './sessionRewind.js';
-import { createStructuredOutputContract } from './StructuredOutputService.js';
 import {
   renderUserShellCommandForDisplay,
   userShellCommandRecordFromMetadata,
@@ -174,15 +174,13 @@ function matchesTaskFilters(
   }
   if (
     filters.taskDueAfter &&
-    (session.taskDueAt === undefined ||
-      session.taskDueAt < filters.taskDueAfter)
+    (session.taskDueAt === undefined || session.taskDueAt < filters.taskDueAfter)
   ) {
     return false;
   }
   if (
     filters.taskDueBefore &&
-    (session.taskDueAt === undefined ||
-      session.taskDueAt > filters.taskDueBefore)
+    (session.taskDueAt === undefined || session.taskDueAt > filters.taskDueBefore)
   ) {
     return false;
   }
@@ -2802,9 +2800,7 @@ export class SessionService {
       const whereClause =
         conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
       const rows = db
-        .prepare(
-          `SELECT metadata_json, is_subagent FROM sessions${whereClause}`
-        )
+        .prepare(`SELECT metadata_json, is_subagent FROM sessions${whereClause}`)
         .all<{ metadata_json: string; is_subagent: number }>(...parameters);
 
       const sessions: StoredSessionMetadata[] = [];
@@ -2827,9 +2823,7 @@ export class SessionService {
         sessions.map((session) => this.reconcileInterruptedTask(session))
       );
       return filterArchiveState(
-        reconciled.filter((session) =>
-          matchesTaskStatusFilter(session, taskFilters)
-        ),
+        reconciled.filter((session) => matchesTaskStatusFilter(session, taskFilters)),
         archived
       );
     } catch {

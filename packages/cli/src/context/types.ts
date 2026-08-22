@@ -10,6 +10,53 @@ import type {
 } from '../config/types.js';
 import type { JsonObject, JsonValue, MessageRole } from '../store/types.js';
 
+export const MAX_TURN_INPUT_MESSAGE_IDS = 120;
+export const MAX_TURN_INPUT_MESSAGE_ID_CHARS = 128;
+
+export function parseTurnInputMessageIds(value: unknown): string[] | undefined {
+  if (
+    !Array.isArray(value) ||
+    value.length > MAX_TURN_INPUT_MESSAGE_IDS ||
+    !value.every(
+      (messageId) =>
+        typeof messageId === 'string' &&
+        messageId.length > 0 &&
+        messageId.length <= MAX_TURN_INPUT_MESSAGE_ID_CHARS
+    )
+  ) {
+    return undefined;
+  }
+  return [...new Set(value)];
+}
+
+export function parseTurnAbortAcknowledgedInputMessageIds(data: unknown): string[] {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
+  if (!('recovery' in data) || !data.recovery) return [];
+  const recovery = data.recovery;
+  if (typeof recovery !== 'object' || Array.isArray(recovery)) return [];
+  if (
+    !('version' in recovery) ||
+    recovery.version !== 1 ||
+    !('inputMessageIds' in recovery) ||
+    !('hadSuccessfulToolResult' in recovery) ||
+    typeof recovery.hadSuccessfulToolResult !== 'boolean' ||
+    !('emptyFinalCorrectionSpent' in recovery) ||
+    typeof recovery.emptyFinalCorrectionSpent !== 'boolean' ||
+    !('acknowledgedInputMessageIds' in data)
+  ) {
+    return [];
+  }
+  const recoveryInputMessageIds = parseTurnInputMessageIds(recovery.inputMessageIds);
+  const acknowledgedInputMessageIds = parseTurnInputMessageIds(
+    data.acknowledgedInputMessageIds
+  );
+  if (!recoveryInputMessageIds || !acknowledgedInputMessageIds) return [];
+  const recoveryInputIds = new Set(recoveryInputMessageIds);
+  return acknowledgedInputMessageIds.filter((messageId) =>
+    recoveryInputIds.has(messageId)
+  );
+}
+
 export interface ContextMessage {
   id: string;
   role: MessageRole;
@@ -398,6 +445,7 @@ export interface MessagePersistenceMetadata {
   usage?: { input_tokens: number; output_tokens: number };
   inboxMessageId?: string;
   clientVisible?: boolean;
+  emptyFinalCorrection?: boolean;
   contextualProjectRules?: boolean;
   ruleReferences?: JsonValue;
   triggerPaths?: string[];
@@ -468,6 +516,13 @@ export interface SessionTurnAbortInfo extends SessionTurnMetrics {
   turnId: string;
   cause: SessionTurnAbortCause;
   abortedAt: string;
+  acknowledgedInputMessageIds?: string[];
+  recovery?: {
+    version: 1;
+    inputMessageIds: string[];
+    hadSuccessfulToolResult: boolean;
+    emptyFinalCorrectionSpent: boolean;
+  };
 }
 
 export interface SubagentRunRef {
@@ -550,3 +605,51 @@ export type SessionEvent =
   | (SessionEventBase & { type: 'message_created'; data: MessageInfo })
   | (SessionEventBase & { type: 'part_created'; data: PartInfo })
   | (SessionEventBase & { type: 'part_updated'; data: PartInfo });
+
+export function turnAbortAppliedAcknowledgements(
+  source: readonly SessionEvent[],
+  abortIndex: number
+): string[] {
+  const aborted = source[abortIndex];
+  if (aborted?.type !== 'turn_aborted') return [];
+  const acknowledgedInputMessageIds = parseTurnAbortAcknowledgedInputMessageIds(
+    aborted.data
+  );
+  if (acknowledgedInputMessageIds.length === 0) return [];
+
+  let turnStartIndex = -1;
+  for (let index = abortIndex - 1; index >= 0; index--) {
+    const event = source[index];
+    if (event.type === 'turn_started') {
+      if (event.data.turnId !== aborted.data.turnId) return [];
+      turnStartIndex = index;
+      break;
+    }
+    if (event.type === 'turn_completed' || event.type === 'turn_aborted') return [];
+  }
+  if (turnStartIndex < 0) return [];
+
+  const appliedInputMessageIds = new Set<string>();
+  for (let index = turnStartIndex + 1; index < abortIndex; index++) {
+    const event = source[index];
+    if (event.type !== 'message_created' || event.data.role !== 'user') continue;
+    const metadata = event.data.metadata;
+    const inboxMessageId =
+      event.data.inboxMessageId !== undefined
+        ? event.data.inboxMessageId
+        : metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata)
+          ? metadata.inboxMessageId
+          : undefined;
+    if (
+      typeof inboxMessageId === 'string' &&
+      inboxMessageId.length > 0 &&
+      inboxMessageId.length <= MAX_TURN_INPUT_MESSAGE_ID_CHARS
+    ) {
+      appliedInputMessageIds.add(inboxMessageId);
+    }
+  }
+
+  return acknowledgedInputMessageIds.filter((messageId) =>
+    appliedInputMessageIds.has(messageId)
+  );
+}

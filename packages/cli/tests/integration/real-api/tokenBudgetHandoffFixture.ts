@@ -27,6 +27,22 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
+export function renderTokenBudgetExactNextAction(input: {
+  command: string;
+  finalMarker: string;
+}): string {
+  const midpoint = Math.ceil(input.finalMarker.length / 2);
+  const firstHalf = input.finalMarker.slice(0, midpoint);
+  const secondHalf = input.finalMarker.slice(midpoint);
+  return (
+    'PRIOR_FAILED_BASH_COMPLETE; PRIOR_WRITE_COMPLETE; ' +
+    'DO_NOT_REPEAT_PRIOR_ACTIONS; ' +
+    `RUN_ONLY_EXACT_BASH=${JSON.stringify(input.command)}; REQUIRE_ZERO_EXIT; ` +
+    `FINAL_PART_A=${JSON.stringify(firstHalf)}; ` +
+    `FINAL_PART_B=${JSON.stringify(secondHalf)}; OUTPUT_NO_OTHER_TEXT`
+  );
+}
+
 function assertSentinel(value: string, name: string): void {
   if (!SENTINEL_PATTERN.test(value)) {
     throw new Error(`Token-budget handoff ${name} sentinel is invalid`);
@@ -106,6 +122,7 @@ export async function createTokenBudgetHandoffFixture(
     `EXACT CONTINUATION RECORD [Verification evidence] :: ${sentinels.failedVerification} status=failed`,
     `EXACT CONTINUATION RECORD [Exact next action] :: ${sentinels.pendingAction} status=pending`,
     'Each canonical record must appear exactly once in its named section as its own list item with no extra text on that item.',
+    'The exact-next-action execution record must also appear exactly once as its own list item and be followed literally after compaction.',
     'Boundary 1: call Bash exactly once with the following command. It must fail; do not call any other tool in this boundary:',
     command,
     'Boundary 2: after observing that failure, call Write exactly once with the following exact file path and exact content; do not call any other tool in this boundary:',
@@ -113,6 +130,9 @@ export async function createTokenBudgetHandoffFixture(
     `content=${JSON.stringify(targetContent)}`,
     `Boundary 3 is the post-compaction pending action ${sentinels.pendingAction}: call Bash exactly once with the following command, require it to pass, and call no other tool in this boundary:`,
     command,
+    `EXACT CONTINUATION RECORD [Exact next action] :: ${renderTokenBudgetExactNextAction(
+      { command, finalMarker }
+    )}`,
     'Boundary 4: after the passing result, call no tools.',
     createSplitPtyMarkerInstruction(finalMarker),
   ].join('\n');

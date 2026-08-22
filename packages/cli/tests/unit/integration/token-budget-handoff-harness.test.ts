@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import {
   mkdirSync,
@@ -12,6 +13,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import type * as acp from '@agentclientprotocol/sdk';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { serializeCompactionReplacementMessages } from '../../../src/context/compactionCheckpoint.js';
 import {
@@ -22,6 +24,7 @@ import type { SessionEvent } from '../../../src/context/types.js';
 import type { Message } from '../../../src/services/ChatServiceInterface.js';
 import {
   createTokenBudgetHandoffFixture,
+  renderTokenBudgetExactNextAction,
   type TokenBudgetHandoffFixture,
 } from '../../integration/real-api/tokenBudgetHandoffFixture.js';
 import {
@@ -29,13 +32,32 @@ import {
   assertContinuationLedger,
   assertTokenBudgetEvidenceSafe,
   assertTokenBudgetRequestSequence,
+  assertTokenBudgetRequestSequenceWithTranscript,
   assertTokenBudgetTranscript,
   BoundedStringSink,
   canonicalStatusClauseDiagnostic,
+  formatTokenBudgetTranscriptDiagnostic,
   parseContinuationLedger,
 } from '../../integration/real-api/tokenBudgetHandoffHarness.js';
-import { parseTokenBudgetHandoffAcpEvidence } from '../../support/tokenBudgetHandoffAcpDriver.js';
 import {
+  buildTokenBudgetAcpRunnerEnvironment,
+  describeTokenBudgetAcpCleanupProbeFailure,
+  describeTokenBudgetAcpCleanupProbeTeardownFailure,
+  describeTokenBudgetAcpRunnerFailure,
+  formatTokenBudgetAcpTaskFailureDiagnostic,
+  parseTokenBudgetAcpRunnerFailure,
+  parseTokenBudgetAcpRunnerSuccess,
+  parseTokenBudgetHandoffAcpEvidence,
+  resolveTokenBudgetAcpCleanupProbeTimeouts,
+  resolveTokenBudgetAcpRunTimeouts,
+} from '../../support/tokenBudgetHandoffAcpDriver.js';
+import {
+  finalAgentTextFromUpdates,
+  hasUnexpectedLoadUserChunk,
+  hasUnexpectedSurfaceMessageChunk,
+} from '../../support/tokenBudgetHandoffAcpRunner.js';
+import {
+  finalHeadlessTextFromEvents,
   parseTokenBudgetHandoffProjectionEvidence,
   runTokenBudgetHandoffProjectionRunner,
   TOKEN_BUDGET_PROJECTION_EVIDENCE_PREFIX,
@@ -50,10 +72,16 @@ import {
 } from '../../support/tokenBudgetHandoffProxy.js';
 import { parseTokenBudgetHandoffPtyEvidence } from '../../support/tokenBudgetHandoffPtyDriver.js';
 import {
+  classifyTokenBudgetWebTaskStartObservation,
   formatTokenBudgetWebFinalDiagnostic,
   formatTokenBudgetWebProxyDiagnostic,
+  formatTokenBudgetWebTaskStartDiagnostic,
+  isTokenBudgetWebRunFailure,
   parseTokenBudgetHandoffWebEvidence,
 } from '../../support/tokenBudgetHandoffWebDriver.js';
+
+vi.unmock('child_process');
+vi.unmock('node:child_process');
 
 vi.unmock('http');
 vi.unmock('node:http');
@@ -74,6 +102,10 @@ const safeRecovery = {
   providerRequestsBefore: 5,
   providerRequestsAfter: 5,
 };
+
+const ACP_FAILURE_PROBE_PROCESS_TIMEOUT_MS = 30_000;
+const ACP_FAILURE_PROBE_SINGLE_TEST_TIMEOUT_MS = 45_000;
+const ACP_FAILURE_PROBE_DOUBLE_TEST_TIMEOUT_MS = 70_000;
 
 function baseSurfaceEvidence(surface: 'headless' | 'pty' | 'web' | 'acp') {
   return {
@@ -351,6 +383,10 @@ function transcript(
     'none',
     '# Exact next action',
     `- ${fixture.sentinels.pendingAction} status=pending`,
+    `- ${renderTokenBudgetExactNextAction({
+      command: fixture.passingCommand,
+      finalMarker: fixture.finalMarker,
+    })}`,
   ].join('\n');
   const handoff = {
     ...eventBase('handoff-event', 'token_budget_handoff_recorded'),
@@ -1020,6 +1056,14 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     expect(created.prompt).toContain(
       `EXACT CONTINUATION RECORD [Exact next action] :: ${created.sentinels.pendingAction} status=pending`
     );
+    expect(created.prompt).toContain(
+      `EXACT CONTINUATION RECORD [Exact next action] :: ${renderTokenBudgetExactNextAction(
+        {
+          command: created.passingCommand,
+          finalMarker: created.finalMarker,
+        }
+      )}`
+    );
     expect(created.prompt).not.toContain('nowhere else');
     expect(created.prompt).not.toContain(created.finalMarker);
     const partA = created.prompt.match(/^PART_A=([A-Za-z0-9_-]+)$/m)?.[1];
@@ -1032,7 +1076,7 @@ describe('token-budget handoff deterministic qualification foundation', () => {
       `match ^[A-Za-z0-9_-]{${created.finalMarker.length}}$`
     );
     expect(created.prompt.endsWith(`PART_B=${partB}`)).toBe(true);
-    expect(created.prompt.split(created.failingCommand)).toHaveLength(3);
+    expect(created.prompt.split(created.failingCommand)).toHaveLength(4);
     expect(created.prompt.match(/call Bash exactly once/g)).toHaveLength(2);
     expect(created.prompt.match(/call Write exactly once/g)).toHaveLength(1);
   });
@@ -1262,6 +1306,180 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     ).not.toThrow();
   });
 
+  it('allows one canonical status beside a same-section narrative citation', () => {
+    const sections = parseContinuationLedger(
+      '## Objective and constraints\ncontinue\n' +
+        '## Decisions and rationale\npreserve\n' +
+        '## Workspace mutations\n- MUTATION_7f31ABCDEF12 status=applied\n' +
+        '- The mutation MUTATION_7f31ABCDEF12 remains relevant.\n' +
+        '## Verification evidence\nFAILED_19acABCDEF12 status=failed\n' +
+        '## Active tasks and background work\nnone\n' +
+        '## Open risks or blockers\nnone\n' +
+        '## Exact next action\nPENDING_a8d2ABCDEF12 status=pending'
+    );
+    const sentinels = {
+      mutation: 'MUTATION_7f31ABCDEF12',
+      failedVerification: 'FAILED_19acABCDEF12',
+      pendingAction: 'PENDING_a8d2ABCDEF12',
+    };
+
+    expect(() => assertContinuationLedger(sections, sentinels)).not.toThrow();
+
+    expect(() =>
+      assertContinuationLedger(
+        {
+          ...sections,
+          workspaceMutations:
+            sections.workspaceMutations + '\nMUTATION_7f31ABCDEF12 was applied',
+        },
+        sentinels
+      )
+    ).toThrow('mutation must use one canonical status clause');
+  });
+
+  it('allows narrative copulas that do not assign an execution status', () => {
+    const sections = parseContinuationLedger(
+      '## Objective and constraints\ncontinue\n' +
+        '## Decisions and rationale\npreserve\n' +
+        '## Workspace mutations\n- MUTATION_7f31ABCDEF12 status=applied\n' +
+        '- MUTATION_7f31ABCDEF12 was discussed during review.\n' +
+        '## Verification evidence\nFAILED_19acABCDEF12 status=failed\n' +
+        '## Active tasks and background work\nPENDING_a8d2ABCDEF12 is still referenced.\n' +
+        '## Open risks or blockers\nnone\n' +
+        '## Exact next action\nPENDING_a8d2ABCDEF12 status=pending'
+    );
+
+    expect(() =>
+      assertContinuationLedger(sections, {
+        mutation: 'MUTATION_7f31ABCDEF12',
+        failedVerification: 'FAILED_19acABCDEF12',
+        pendingAction: 'PENDING_a8d2ABCDEF12',
+      })
+    ).not.toThrow();
+  });
+
+  it('rejects every second explicit status authority across sections and formatting', () => {
+    const sections = parseContinuationLedger(
+      '## Objective and constraints\ncontinue\n' +
+        '## Decisions and rationale\npreserve\n' +
+        '## Workspace mutations\nMUTATION_7f31ABCDEF12 status=applied\n' +
+        '## Verification evidence\nFAILED_19acABCDEF12 status=failed\n' +
+        '## Active tasks and background work\nnone\n' +
+        '## Open risks or blockers\nnone\n' +
+        '## Exact next action\nPENDING_a8d2ABCDEF12 status=pending'
+    );
+    const sentinels = {
+      mutation: 'MUTATION_7f31ABCDEF12',
+      failedVerification: 'FAILED_19acABCDEF12',
+      pendingAction: 'PENDING_a8d2ABCDEF12',
+    };
+    const invalid: Array<Record<string, string>> = [
+      {
+        ...sections,
+        objectiveAndConstraints:
+          sections.objectiveAndConstraints + '\nMUTATION_7f31ABCDEF12 status=applied',
+      },
+      {
+        ...sections,
+        decisionsAndRationale:
+          sections.decisionsAndRationale + '\nFAILED_19acABCDEF12 status=failed',
+      },
+      {
+        ...sections,
+        activeTasksAndBackgroundWork:
+          sections.activeTasksAndBackgroundWork +
+          '\nPENDING_a8d2ABCDEF12 status=pending',
+      },
+      {
+        ...sections,
+        workspaceMutations:
+          sections.workspaceMutations + '\n`MUTATION_7f31ABCDEF12 status=applied`',
+      },
+      {
+        ...sections,
+        workspaceMutations:
+          sections.workspaceMutations + '\n**MUTATION_7f31ABCDEF12 status=applied**',
+      },
+      {
+        ...sections,
+        workspaceMutations:
+          sections.workspaceMutations + '\nMUTATION_7f31ABCDEF12 status=unknown',
+      },
+      {
+        ...sections,
+        workspaceMutations:
+          sections.workspaceMutations + '\nMUTATION_7f31ABCDEF12 status=applied-extra',
+      },
+      {
+        ...sections,
+        workspaceMutations:
+          sections.workspaceMutations + '\nMUTATION_7f31ABCDEF12 was not applied',
+      },
+      {
+        ...sections,
+        verificationEvidence:
+          sections.verificationEvidence + '\nFAILED_19acABCDEF12 did not fail',
+      },
+      {
+        ...sections,
+        exactNextAction:
+          sections.exactNextAction + '\nPENDING_a8d2ABCDEF12 is not pending',
+      },
+    ];
+
+    for (const candidate of invalid) {
+      expect(() => assertContinuationLedger(candidate, sentinels)).toThrow(
+        'must use one canonical status clause'
+      );
+    }
+  });
+
+  it('rejects a later authority after a narrative sentinel in the same clause', () => {
+    const sections = parseContinuationLedger(
+      '## Objective and constraints\ncontinue\n' +
+        '## Decisions and rationale\npreserve\n' +
+        '## Workspace mutations\nMUTATION_7f31ABCDEF12 status=applied\n' +
+        '## Verification evidence\nFAILED_19acABCDEF12 status=failed\n' +
+        '## Active tasks and background work\nnone\n' +
+        '## Open risks or blockers\nnone\n' +
+        '## Exact next action\nPENDING_a8d2ABCDEF12 status=pending'
+    );
+    const sentinels = {
+      mutation: 'MUTATION_7f31ABCDEF12',
+      failedVerification: 'FAILED_19acABCDEF12',
+      pendingAction: 'PENDING_a8d2ABCDEF12',
+    };
+
+    for (const duplicate of [
+      'MUTATION_7f31ABCDEF12 remains relevant; ' +
+        'MUTATION_7f31ABCDEF12 status=applied',
+      'MUTATION_7f31ABCDEF12 was discussed; ' + 'MUTATION_7f31ABCDEF12 status=unknown',
+    ]) {
+      expect(() =>
+        assertContinuationLedger(
+          {
+            ...sections,
+            workspaceMutations: sections.workspaceMutations + '\n' + duplicate,
+          },
+          sentinels
+        )
+      ).toThrow('mutation must use one canonical status clause');
+    }
+
+    expect(() =>
+      assertContinuationLedger(
+        {
+          ...sections,
+          exactNextAction:
+            sections.exactNextAction +
+            '\nPENDING_a8d2ABCDEF12 was discussed; ' +
+            'PENDING_a8d2ABCDEF12 status=completed',
+        },
+        sentinels
+      )
+    ).toThrow();
+  });
+
   it('rejects explicit contradictory statuses outside authoritative sections', () => {
     const completedPending = parseContinuationLedger(
       '## Objective and constraints\ncontinue\n' +
@@ -1365,6 +1583,145 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     );
   });
 
+  it('bounds token-budget transcript failures to structural lifecycle facts', () => {
+    const secret = 'transcript-diagnostic-secret';
+    const fixture = {
+      workspace: `/private/workspace/${secret}`,
+      failingCommand: `bun test ${secret}`,
+      passingCommand: `bun test ${secret}`,
+      targetPath: `/private/workspace/${secret}/src/status.txt`,
+      targetContent: `MUTATION_${secret}`,
+      prompt: `private prompt ${secret}`,
+      finalMarker: 'FINAL_OK_a8d2ABCDEF12',
+      sentinels: {
+        mutation: 'MUTATION_7f31ABCDEF12',
+        failedVerification: 'FAILED_19acABCDEF12',
+        pendingAction: 'PENDING_a8d2ABCDEF12',
+      },
+    } satisfies TokenBudgetHandoffFixture;
+    const turnId = 'diagnostic-turn';
+    const finalMessageId = 'diagnostic-final-message';
+    const events: SessionEvent[] = [
+      {
+        ...eventBase('diagnostic-turn-started', 'turn_started'),
+        type: 'turn_started',
+        data: {
+          turnId,
+          kind: 'user',
+          startedAt: '2026-08-19T00:00:00.000Z',
+          inputMessageIds: [],
+        },
+      },
+      ...transcript(fixture),
+      {
+        ...eventBase('diagnostic-final-message-created', 'message_created'),
+        type: 'message_created',
+        data: {
+          messageId: finalMessageId,
+          role: 'assistant',
+          createdAt: '2026-08-19T00:00:02.000Z',
+          metadata: {
+            turnFinalization: {
+              turnId,
+              inputMessageIds: [],
+              turnsCount: 4,
+              toolCallsCount: 3,
+              durationMs: 1,
+            },
+          },
+        },
+      },
+      {
+        ...eventBase('diagnostic-final-text', 'part_created'),
+        type: 'part_created',
+        data: {
+          partId: 'diagnostic-final-text',
+          messageId: finalMessageId,
+          partType: 'text',
+          payload: { text: fixture.finalMarker },
+          createdAt: '2026-08-19T00:00:02.000Z',
+        },
+      },
+      {
+        ...eventBase('diagnostic-turn-completed', 'turn_completed'),
+        type: 'turn_completed',
+        data: {
+          turnId,
+          completedAt: '2026-08-19T00:00:03.000Z',
+          turnsCount: 4,
+          toolCallsCount: 3,
+          durationMs: 1,
+        },
+      },
+      {
+        ...eventBase('diagnostic-session-updated', 'session_updated'),
+        type: 'session_updated',
+        data: {
+          sessionId: 'handoff-session',
+          taskStatus: 'completed',
+        },
+      },
+    ];
+
+    const diagnostic = formatTokenBudgetTranscriptDiagnostic({
+      events,
+      expectedFinal: fixture.finalMarker,
+      surfaceFinalSeen: true,
+    });
+
+    expect(diagnostic).toContain(
+      '"tools":{"bashCalls":2,"bashSuccesses":1,"writeCalls":1,' +
+        '"writeSuccesses":1,"otherCalls":0,"completeResults":3}'
+    );
+    expect(diagnostic).toContain(
+      '"lifecycle":{"checkpoints":1,"turnCompleted":1,' +
+        '"turnAborted":0,"surfaceFinalSeen":true}'
+    );
+    expect(diagnostic).toMatch(/"final":{"present":true,"expectedMarkerPresent":true,/);
+    expect(diagnostic).toMatch(/"sha256Prefix":"[a-f0-9]{12}"/);
+    expect(diagnostic).not.toContain(secret);
+    expect(diagnostic).not.toContain(fixture.finalMarker);
+    expect(diagnostic).not.toContain(fixture.targetPath);
+    expect(diagnostic).not.toContain(fixture.targetContent);
+    expect(Buffer.byteLength(diagnostic)).toBeLessThanOrEqual(2_048);
+  });
+
+  it('attaches only bounded transcript facts to request-sequence failures', () => {
+    const secret = 'request-sequence-diagnostic-secret';
+    const events: SessionEvent[] = [
+      toolPart('diagnostic-bash-call', 'diagnostic-bash', 'Bash', 'tool_call', {
+        input: { command: `bun test ${secret}` },
+      }),
+      toolPart('diagnostic-bash-result', 'diagnostic-bash', 'Bash', 'tool_result', {
+        output: { stdout: secret },
+        error: null,
+      }),
+    ];
+
+    expect(() =>
+      assertTokenBudgetRequestSequenceWithTranscript({
+        evidence: { requests: [], maxInFlight: 1 },
+        targets: { handoffPromptTokens: 70_000, compactionPromptTokens: 80_000 },
+        events,
+        expectedFinal: `FINAL_OK_${secret}`,
+        surfaceFinalSeen: false,
+      })
+    ).toThrow(
+      'count=0; sequence=; transcript={"tools":{"bashCalls":1,' + '"bashSuccesses":1'
+    );
+    try {
+      assertTokenBudgetRequestSequenceWithTranscript({
+        evidence: { requests: [], maxInFlight: 1 },
+        targets: { handoffPromptTokens: 70_000, compactionPromptTokens: 80_000 },
+        events,
+        expectedFinal: `FINAL_OK_${secret}`,
+        surfaceFinalSeen: false,
+      });
+    } catch (error) {
+      expect(String(error)).not.toContain(secret);
+    }
+  });
+
   it('bounds Web final-timeout diagnostics to structural facts', () => {
     expect(
       formatTokenBudgetWebFinalDiagnostic({
@@ -1390,6 +1747,78 @@ describe('token-budget handoff deterministic qualification foundation', () => {
         domFinalSeen: true,
       })
     ).toBe('status_completed:requests_invalid:history_1:dom_1');
+  });
+
+  it('bounds Web task-start diagnostics and reports request deltas', () => {
+    expect(
+      formatTokenBudgetWebTaskStartDiagnostic({
+        status: 'completed',
+        providerRequestsBefore: 2,
+        providerRequestsAfter: 2,
+        publicInputSeen: false,
+      })
+    ).toBe('status_completed:requests_0:input_0');
+    expect(
+      formatTokenBudgetWebTaskStartDiagnostic({
+        status: 'failed',
+        providerRequestsBefore: 2,
+        providerRequestsAfter: 4,
+        publicInputSeen: true,
+      })
+    ).toBe('status_failed:requests_2:input_1');
+    expect(
+      formatTokenBudgetWebTaskStartDiagnostic({
+        status: 'private status',
+        providerRequestsBefore: 4,
+        providerRequestsAfter: 3,
+        publicInputSeen: true,
+      })
+    ).toBe('status_unknown:requests_invalid:input_1');
+  });
+
+  it('does not treat a fresh Session terminal status as a submitted turn', () => {
+    expect(
+      classifyTokenBudgetWebTaskStartObservation({
+        status: 'completed',
+        providerRequestsBefore: 2,
+        providerRequestsAfter: 2,
+        publicInputSeen: false,
+      })
+    ).toBe('pending');
+    expect(
+      classifyTokenBudgetWebTaskStartObservation({
+        status: 'running',
+        providerRequestsBefore: 2,
+        providerRequestsAfter: 2,
+        publicInputSeen: true,
+      })
+    ).toBe('active');
+    expect(
+      classifyTokenBudgetWebTaskStartObservation({
+        status: 'completed',
+        providerRequestsBefore: 2,
+        providerRequestsAfter: 3,
+        publicInputSeen: true,
+      })
+    ).toBe('terminal');
+    expect(
+      classifyTokenBudgetWebTaskStartObservation({
+        status: 'failed',
+        providerRequestsBefore: 2,
+        providerRequestsAfter: 2,
+        publicInputSeen: true,
+      })
+    ).toBe('terminal');
+  });
+
+  it('waits for completed Web runs to publish their final projection', () => {
+    expect(isTokenBudgetWebRunFailure('completed')).toBe(false);
+    expect(isTokenBudgetWebRunFailure('idle')).toBe(false);
+    expect(isTokenBudgetWebRunFailure('waiting_permission')).toBe(false);
+    expect(isTokenBudgetWebRunFailure('failed')).toBe(true);
+    expect(isTokenBudgetWebRunFailure('cancelled')).toBe(true);
+    expect(isTokenBudgetWebRunFailure('interrupted')).toBe(true);
+    expect(isTokenBudgetWebRunFailure('error')).toBe(true);
   });
 
   it('bounds Web proxy diagnostics to the first request shape', () => {
@@ -1897,6 +2326,955 @@ describe('token-budget handoff deterministic qualification foundation', () => {
         ['acp-secret']
       )
     ).toThrow('secret');
+  });
+
+  it('parses only exact canonical bounded ACP runner failure evidence', () => {
+    const expectedFinal = 'FINAL_OK_RUNNER_FAILURE_1234567890';
+    const taskExpectation = { mode: 'task' as const, finalMarker: expectedFinal };
+    const loadExpectation = { mode: 'load' as const, finalMarker: expectedFinal };
+    const safe = {
+      success: false,
+      mode: 'task',
+      stage: 'prompt',
+      timedOut: true,
+      promptAttempted: true,
+      stopReason: null,
+      finalMarkerSeen: false,
+      hiddenMaterialSeen: false,
+      surfaceFinalPresent: true,
+      surfaceFinalByteSizeBucket: '1_4096',
+      surfaceFinalSha256Prefix: 'a1b2c3d4e5f6',
+      terminalCreationCount: 1,
+      terminalReleaseCount: 1,
+      activeTerminalCount: 0,
+      releasedProcessesGone: true,
+      cleanupComplete: true,
+      exited: true,
+      faults: ['runner_failed', 'timeout', 'final_missing'],
+    } as const;
+
+    expect(
+      parseTokenBudgetAcpRunnerFailure(JSON.stringify(safe), taskExpectation)
+    ).toEqual(safe);
+    const promptBudgetExpiredBeforeStart = {
+      ...safe,
+      promptAttempted: false,
+      finalMarkerSeen: false,
+      surfaceFinalPresent: false,
+      surfaceFinalByteSizeBucket: 0,
+      surfaceFinalSha256Prefix: null,
+      faults: ['runner_failed', 'timeout'],
+    } as const;
+    expect(
+      parseTokenBudgetAcpRunnerFailure(
+        JSON.stringify(promptBudgetExpiredBeforeStart),
+        taskExpectation
+      )
+    ).toEqual(promptBudgetExpiredBeforeStart);
+    expect(() =>
+      parseTokenBudgetAcpRunnerFailure(
+        JSON.stringify({ ...safe, extra: true }),
+        taskExpectation
+      )
+    ).toThrow('incomplete');
+    expect(() =>
+      parseTokenBudgetAcpRunnerFailure(
+        JSON.stringify({ ...safe, detail: 'runner-failure-secret' }),
+        { ...taskExpectation, secrets: ['runner-failure-secret'] }
+      )
+    ).toThrow('secret');
+    expect(() =>
+      parseTokenBudgetAcpRunnerFailure(
+        JSON.stringify({ ...safe, surfaceFinalSha256Prefix: 'INVALID_HASH' }),
+        taskExpectation
+      )
+    ).toThrow('incomplete');
+    for (const stage of ['initialize', 'new_session', 'set_mode'] as const) {
+      expect(() =>
+        parseTokenBudgetAcpRunnerFailure(
+          JSON.stringify({
+            ...safe,
+            stage,
+            timedOut: false,
+            promptAttempted: false,
+            surfaceFinalPresent: false,
+            surfaceFinalByteSizeBucket: 0,
+            surfaceFinalSha256Prefix: null,
+            faults: ['runner_failed', 'final_missing'],
+          }),
+          taskExpectation
+        )
+      ).toThrow('incomplete');
+    }
+    const invalidModeStages = [
+      { evidence: { ...safe, stage: 'load' }, expected: taskExpectation },
+      {
+        evidence: {
+          ...safe,
+          mode: 'load',
+          stage: 'prompt',
+          promptAttempted: false,
+          faults: ['runner_failed', 'timeout'],
+        },
+        expected: loadExpectation,
+      },
+      { evidence: { ...safe, stage: 'cleanup' }, expected: taskExpectation },
+      {
+        evidence: { ...safe, mode: 'load', stage: 'load' },
+        expected: taskExpectation,
+      },
+    ];
+    for (const invalid of invalidModeStages) {
+      expect(() =>
+        parseTokenBudgetAcpRunnerFailure(
+          JSON.stringify(invalid.evidence),
+          invalid.expected
+        )
+      ).toThrow('incomplete');
+    }
+    expect(() =>
+      parseTokenBudgetAcpRunnerFailure(
+        JSON.stringify({
+          ...safe,
+          terminalReleaseCount: 0,
+          releasedProcessesGone: false,
+        }),
+        taskExpectation
+      )
+    ).toThrow('incomplete');
+    expect(() =>
+      parseTokenBudgetAcpRunnerFailure(
+        JSON.stringify({
+          ...safe,
+          surfaceFinalByteSizeBucket: 0,
+        }),
+        taskExpectation
+      )
+    ).toThrow('incomplete');
+    const impossible = [
+      {
+        evidence: {
+          ...safe,
+          mode: 'load',
+          stage: 'load',
+          timedOut: false,
+          promptAttempted: false,
+          stopReason: 'end_turn',
+          finalMarkerSeen: false,
+          faults: ['runner_failed'],
+        },
+        expected: loadExpectation,
+      },
+      {
+        evidence: {
+          ...safe,
+          stage: 'initialize',
+          timedOut: false,
+          promptAttempted: false,
+          faults: ['runner_failed'],
+        },
+        expected: taskExpectation,
+      },
+      {
+        evidence: {
+          ...safe,
+          stage: 'cleanup',
+          timedOut: false,
+          cleanupComplete: true,
+          faults: ['runner_failed', 'final_missing'],
+        },
+        expected: taskExpectation,
+      },
+      {
+        evidence: {
+          ...safe,
+          timedOut: false,
+          surfaceFinalPresent: false,
+          surfaceFinalByteSizeBucket: 0,
+          surfaceFinalSha256Prefix: null,
+          faults: ['runner_failed'],
+        },
+        expected: taskExpectation,
+      },
+    ];
+    for (const entry of impossible) {
+      expect(() =>
+        parseTokenBudgetAcpRunnerFailure(JSON.stringify(entry.evidence), entry.expected)
+      ).toThrow('incomplete');
+    }
+    expect(() =>
+      parseTokenBudgetAcpRunnerFailure(JSON.stringify(safe, null, 2), taskExpectation)
+    ).toThrow('canonical');
+    expect(() =>
+      parseTokenBudgetAcpRunnerFailure('x'.repeat(64_001), taskExpectation)
+    ).toThrow('budget');
+    expect(() =>
+      parseTokenBudgetAcpRunnerFailure('界'.repeat(22_000), taskExpectation)
+    ).toThrow('budget');
+  });
+
+  it('parses only internally consistent ACP runner success evidence', () => {
+    const expectedFinal = 'FINAL_OK_RUNNER_SUCCESS_1234567890';
+    const expectedHash = createHash('sha256')
+      .update(expectedFinal)
+      .digest('hex')
+      .slice(0, 12);
+    const taskExpectation = { mode: 'task' as const, finalMarker: expectedFinal };
+    const loadExpectation = { mode: 'load' as const, finalMarker: expectedFinal };
+    const safe = {
+      success: true,
+      mode: 'task',
+      sessionId: 'safe-runner-session',
+      stopReason: 'end_turn',
+      finalMarkerSeen: true,
+      surfaceFinalPresent: true,
+      surfaceFinalByteSizeBucket: '1_4096',
+      surfaceFinalSha256Prefix: expectedHash,
+      hiddenMarkerSeen: false,
+      hiddenUserChunkSeen: false,
+      terminalCreationCount: 0,
+      terminalReleaseCount: 0,
+      activeTerminalCount: 0,
+      releasedProcessesGone: true,
+      exited: true,
+      faults: [],
+    } as const;
+
+    expect(
+      parseTokenBudgetAcpRunnerSuccess(JSON.stringify(safe), taskExpectation)
+    ).toEqual(safe);
+    expect(() =>
+      parseTokenBudgetAcpRunnerSuccess(
+        JSON.stringify({
+          ...safe,
+          surfaceFinalByteSizeBucket: '16385_plus',
+          surfaceFinalSha256Prefix: 'deadbeefcafe',
+        }),
+        taskExpectation
+      )
+    ).toThrow('incomplete');
+    expect(() =>
+      parseTokenBudgetAcpRunnerSuccess(
+        JSON.stringify({ ...safe, finalMarkerSeen: false }),
+        taskExpectation
+      )
+    ).toThrow('incomplete');
+    const validLoad = {
+      ...safe,
+      mode: 'load',
+      stopReason: null,
+      finalMarkerSeen: false,
+      surfaceFinalPresent: false,
+      surfaceFinalByteSizeBucket: 0,
+      surfaceFinalSha256Prefix: null,
+    } as const;
+    expect(
+      parseTokenBudgetAcpRunnerSuccess(JSON.stringify(validLoad), loadExpectation)
+    ).toEqual(validLoad);
+    const unsafe: Array<{
+      evidence: Record<string, unknown>;
+      expected: typeof taskExpectation | typeof loadExpectation;
+    }> = [
+      { evidence: { ...safe, surfaceFinalPresent: false }, expected: taskExpectation },
+      {
+        evidence: { ...safe, surfaceFinalByteSizeBucket: 0 },
+        expected: taskExpectation,
+      },
+      {
+        evidence: { ...safe, surfaceFinalSha256Prefix: null },
+        expected: taskExpectation,
+      },
+      {
+        evidence: { ...safe, mode: 'load', stopReason: null, finalMarkerSeen: false },
+        expected: loadExpectation,
+      },
+      {
+        evidence: {
+          ...validLoad,
+          surfaceFinalByteSizeBucket: '1_4096',
+        },
+        expected: loadExpectation,
+      },
+    ];
+    for (const entry of unsafe) {
+      expect(() =>
+        parseTokenBudgetAcpRunnerSuccess(JSON.stringify(entry.evidence), entry.expected)
+      ).toThrow('incomplete');
+    }
+  });
+
+  it('describes an ACP runner rejection using only validated stdout evidence', () => {
+    const stderrSecret = 'runner-stderr-secret';
+    const rawPath = '/private/token-budget/workspace/private-file.txt';
+    const safe = {
+      success: false,
+      mode: 'load',
+      stage: 'load',
+      timedOut: false,
+      promptAttempted: false,
+      stopReason: null,
+      finalMarkerSeen: false,
+      hiddenMaterialSeen: false,
+      surfaceFinalPresent: false,
+      surfaceFinalByteSizeBucket: 0,
+      surfaceFinalSha256Prefix: null,
+      terminalCreationCount: 0,
+      terminalReleaseCount: 0,
+      activeTerminalCount: 0,
+      releasedProcessesGone: true,
+      cleanupComplete: true,
+      exited: true,
+      faults: ['runner_failed'],
+    } as const;
+
+    const message = describeTokenBudgetAcpRunnerFailure(
+      {
+        stdout: JSON.stringify(safe),
+        stderr: `provider said ${stderrSecret}`,
+        message: `runner failed in ${rawPath}`,
+        code: 1,
+        signal: null,
+        killed: false,
+      },
+      {
+        mode: 'load',
+        finalMarker: 'FINAL_OK_RUNNER_FAILURE_1234567890',
+        secrets: [stderrSecret],
+      }
+    );
+
+    expect(message).toBe(
+      `Token-budget ACP runner failed; diagnostic=${JSON.stringify(safe)}`
+    );
+    expect(message).not.toContain(stderrSecret);
+    expect(message).not.toContain(rawPath);
+  });
+
+  it('uses fixed process diagnostics when ACP runner stdout is unavailable or unsafe', () => {
+    const secret = 'unsafe-runner-stdout-secret';
+    expect(
+      describeTokenBudgetAcpRunnerFailure(
+        { code: 'ETIMEDOUT', killed: false, stderr: secret },
+        {
+          mode: 'task',
+          finalMarker: 'FINAL_OK_RUNNER_FAILURE_1234567890',
+          secrets: [secret],
+        }
+      )
+    ).toBe(
+      'Token-budget ACP runner failed; diagnostic=' +
+        '{"stage":"process","exitKind":"timeout"}'
+    );
+    expect(
+      describeTokenBudgetAcpRunnerFailure(
+        { killed: true, signal: 'SIGKILL', stderr: secret },
+        {
+          mode: 'task',
+          finalMarker: 'FINAL_OK_RUNNER_FAILURE_1234567890',
+          secrets: [secret],
+        }
+      )
+    ).toBe(
+      'Token-budget ACP runner failed; diagnostic=' +
+        '{"stage":"process","exitKind":"timeout"}'
+    );
+    expect(
+      describeTokenBudgetAcpRunnerFailure(
+        {
+          stdout: JSON.stringify({ success: false, detail: secret }),
+          stderr: `unsafe stderr ${secret}`,
+          code: 7,
+        },
+        {
+          mode: 'task',
+          finalMarker: 'FINAL_OK_RUNNER_FAILURE_1234567890',
+          secrets: [secret],
+        }
+      )
+    ).toBe(
+      'Token-budget ACP runner failed; diagnostic=' +
+        '{"stage":"process","exitKind":"nonzero"}'
+    );
+  });
+
+  it('projects only fixed safe facts from cleanup probe failures', () => {
+    const secret = 'cleanup-probe-diagnostic-secret';
+    const path = `/private/cleanup/${secret}`;
+    const incomplete = JSON.stringify({
+      stage: 'set_mode',
+      promptAttempted: false,
+      timedOut: true,
+      cancelled: true,
+      closed: false,
+      naturalExit: false,
+    });
+
+    expect(
+      describeTokenBudgetAcpCleanupProbeFailure(
+        { stdout: incomplete, stderr: secret, message: path, code: 1 },
+        1
+      )
+    ).toBe(
+      'Token-budget ACP cleanup probe failed; diagnostic=' +
+        '{"stage":"runner","requestCount":"1","evidence":' +
+        '{"stage":"set_mode","promptAttempted":false,' +
+        '"timedOut":true,"cancelled":true,"closed":false,' +
+        '"naturalExit":false}}'
+    );
+    expect(
+      describeTokenBudgetAcpCleanupProbeFailure(
+        { code: 'ETIMEDOUT', killed: true, stderr: secret, message: path },
+        0
+      )
+    ).toBe(
+      'Token-budget ACP cleanup probe failed; diagnostic=' +
+        '{"stage":"process","requestCount":"0","exitKind":"timeout"}'
+    );
+  });
+
+  it('distinguishes cleanup probe teardown boundaries without raw errors', () => {
+    expect(
+      describeTokenBudgetAcpCleanupProbeTeardownFailure({
+        providerCloseFailed: true,
+        rootCleanupFailed: false,
+      })
+    ).toBe(
+      'Token-budget ACP cleanup probe teardown failed; diagnostic=' +
+        '{"providerCloseFailed":true,"rootCleanupFailed":false}'
+    );
+  });
+
+  it('latches only forbidden user message text during ACP load', () => {
+    const hiddenMarker = '<token-budget-handoff version="1">';
+    const forbidden = ['', hiddenMarker];
+    const visibleUserChunk = {
+      sessionId: 'token-budget-load-session',
+      update: {
+        sessionUpdate: 'user_message_chunk',
+        content: { type: 'text', text: 'ordinary replayed user text' },
+      },
+    } satisfies acp.SessionNotification;
+    const hiddenUserChunk = {
+      sessionId: 'token-budget-load-session',
+      update: {
+        sessionUpdate: 'user_message_chunk',
+        content: { type: 'text', text: `prefix ${hiddenMarker} suffix` },
+      },
+    } satisfies acp.SessionNotification;
+    const splitHiddenUserChunks = [
+      {
+        sessionId: 'token-budget-load-session',
+        update: {
+          sessionUpdate: 'user_message_chunk',
+          content: { type: 'text', text: '<token-budget-hand' },
+        },
+      },
+      {
+        sessionId: 'token-budget-load-session',
+        update: {
+          sessionUpdate: 'user_message_chunk',
+          content: { type: 'text', text: 'off version="1">' },
+        },
+      },
+    ] satisfies acp.SessionNotification[];
+
+    expect(hasUnexpectedLoadUserChunk('load', [visibleUserChunk], forbidden)).toBe(
+      false
+    );
+    expect(hasUnexpectedLoadUserChunk('load', [hiddenUserChunk], forbidden)).toBe(true);
+    expect(hasUnexpectedLoadUserChunk('load', splitHiddenUserChunks, forbidden)).toBe(
+      true
+    );
+    const splitAgentChunks = splitHiddenUserChunks.map((notification) => ({
+      ...notification,
+      update: {
+        ...notification.update,
+        sessionUpdate: 'agent_message_chunk' as const,
+      },
+    }));
+    expect(hasUnexpectedSurfaceMessageChunk(splitAgentChunks, forbidden)).toBe(true);
+    expect(hasUnexpectedLoadUserChunk('task', [hiddenUserChunk], forbidden)).toBe(
+      false
+    );
+    expect(hasUnexpectedLoadUserChunk('load', [], forbidden)).toBe(false);
+  });
+
+  it('projects only assistant chunks after the final ACP tool boundary', () => {
+    const sessionId = 'token-budget-task-session';
+    const updates = [
+      {
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'I will inspect the workspace.' },
+        },
+      },
+      {
+        sessionId,
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'call-1',
+          status: 'in_progress',
+          title: 'Executing Bash',
+          content: [],
+          kind: 'execute',
+        },
+      },
+      {
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'FINAL_OK_' },
+        },
+      },
+      {
+        sessionId,
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'ABCDEF1234567890' },
+        },
+      },
+    ] satisfies acp.SessionNotification[];
+
+    expect(finalAgentTextFromUpdates(updates)).toBe('FINAL_OK_ABCDEF1234567890');
+  });
+
+  it('projects only content after the final Headless tool boundary', () => {
+    expect(
+      finalHeadlessTextFromEvents([
+        {
+          event_version: 1,
+          type: 'content_delta',
+          delta: 'I will inspect the workspace.',
+        },
+        {
+          event_version: 1,
+          type: 'tool_start',
+          tool_name: 'Bash',
+          summary: 'Run verification',
+        },
+        {
+          event_version: 1,
+          type: 'content_delta',
+          delta: 'FINAL_OK_',
+        },
+        {
+          event_version: 1,
+          type: 'content_delta',
+          delta: 'ABCDEF1234567890',
+        },
+      ])
+    ).toBe('FINAL_OK_ABCDEF1234567890');
+  });
+
+  it('bounds ACP task final failures to surface and durable structural facts', () => {
+    const secret = 'acp-task-final-diagnostic-secret';
+    const events: SessionEvent[] = [
+      toolPart('acp-diag-call', 'acp-diag', 'Bash', 'tool_call', {
+        input: { command: `bun test ${secret}` },
+      }),
+      toolPart('acp-diag-result', 'acp-diag', 'Bash', 'tool_result', {
+        output: { stdout: secret },
+        error: null,
+      }),
+    ];
+
+    const diagnostic = formatTokenBudgetAcpTaskFailureDiagnostic({
+      stopReason: 'end_turn',
+      surfaceFinalSeen: false,
+      surfaceFinalPresent: true,
+      surfaceFinalByteSizeBucket: '1_4096',
+      surfaceFinalSha256Prefix: 'a1b2c3d4e5f6',
+      providerRequests: 4,
+      terminalCreationCount: 1,
+      terminalReleaseCount: 1,
+      activeTerminalCount: 0,
+      releasedProcessesGone: true,
+      events,
+      expectedFinal: `FINAL_OK_${secret}`,
+    });
+
+    expect(diagnostic).toContain(
+      'stop_end_turn:surface_final_0:surface_present_1:surface_bytes_1_4096:' +
+        'surface_sha_a1b2c3d4e5f6:requests_4:terminals_1_1_0:gone_1:'
+    );
+    expect(diagnostic).toContain(
+      'transcript_read={"tools":{"bashCalls":1,"bashSuccesses":1'
+    );
+    expect(diagnostic).not.toContain(secret);
+    expect(Buffer.byteLength(diagnostic)).toBeLessThanOrEqual(2_048);
+  });
+
+  it('gives each ACP operation bounded parent-process cleanup grace', () => {
+    const startedAt = 1_000_000;
+    const deadlineAt = startedAt + 270_000;
+
+    const task = resolveTokenBudgetAcpRunTimeouts({
+      stage: 'task',
+      deadlineAt,
+      now: startedAt,
+    });
+    const load = resolveTokenBudgetAcpRunTimeouts({
+      stage: 'load',
+      deadlineAt,
+      now: startedAt + 250_000,
+    });
+
+    expect(task).toEqual({
+      operationTimeoutMs: 230_000,
+      processTimeoutMs: 240_000,
+    });
+    expect(load).toEqual({
+      operationTimeoutMs: 10_000,
+      processTimeoutMs: 20_000,
+    });
+    expect(task.processTimeoutMs).toBeGreaterThan(task.operationTimeoutMs);
+    expect(load.processTimeoutMs).toBeGreaterThan(load.operationTimeoutMs);
+  });
+
+  it('keeps cleanup-probe setup separate from the intentional prompt timeout', () => {
+    expect(resolveTokenBudgetAcpCleanupProbeTimeouts()).toEqual({
+      setupTimeoutMs: 30_000,
+      promptTimeoutMs: 20_000,
+      processTimeoutMs: 70_000,
+    });
+  });
+
+  it('passes only the selected hashed Provider key to ACP runner children', () => {
+    const selected = 'selected-provider-secret';
+    const other = 'other-provider-secret';
+    const env = buildTokenBudgetAcpRunnerEnvironment({
+      source: {
+        PATH: '/usr/bin',
+        DEEPSEEK_API_KEY: selected,
+        CLAUDE_API_KEY: other,
+        BLADE_MODEL_API_KEY_A1B2: selected,
+        BLADE_REAL_API_PROVIDER_KEY_C3D4: selected,
+        BLADE_REAL_API_PROVIDER_KEY_E5F6: other,
+        SAFE_SETTING: 'visible',
+      },
+      home: '/tmp/blade-acp-home',
+      storageRoot: '/tmp/blade-acp-storage',
+      encodedInput: 'canonical-input',
+      secrets: [selected],
+    });
+
+    expect(env).toEqual({
+      PATH: '/usr/bin',
+      BLADE_MODEL_API_KEY_A1B2: selected,
+      BLADE_REAL_API_PROVIDER_KEY_C3D4: selected,
+      SAFE_SETTING: 'visible',
+      HOME: '/tmp/blade-acp-home',
+      BLADE_STORAGE_ROOT: '/tmp/blade-acp-storage',
+      BLADE_AUTO_MEMORY: '0',
+      BLADE_TELEMETRY_DISABLED: '1',
+      TERM: 'xterm-256color',
+      BLADE_TOKEN_BUDGET_ACP_INPUT: 'canonical-input',
+    });
+    expect(env).not.toHaveProperty('DEEPSEEK_API_KEY');
+    expect(env).not.toHaveProperty('CLAUDE_API_KEY');
+    expect(env).not.toHaveProperty('BLADE_REAL_API_PROVIDER_KEY_E5F6');
+  });
+
+  it(
+    'preserves visible ACP surface facts when the prompt rejects or times out',
+    () => {
+      const runner = path.resolve(
+        import.meta.dirname,
+        '../../support/tokenBudgetHandoffAcpRunner.ts'
+      );
+      const visibleText = 'VISIBLE_PARTIAL_FINAL';
+      for (const probe of ['visible-rejection', 'visible-timeout'] as const) {
+        const result = spawnSync('bun', [runner, '--failure-evidence-probe', probe], {
+          cwd: path.resolve(import.meta.dirname, '../../..'),
+          encoding: 'utf8',
+          timeout: ACP_FAILURE_PROBE_PROCESS_TIMEOUT_MS,
+          killSignal: 'SIGKILL',
+        });
+        const timedOut = probe === 'visible-timeout';
+        const finalMarker = timedOut ? visibleText : 'FINAL_OK_PROBE';
+
+        expect(result.status).toBe(0);
+        expect(result.stderr).toBe('');
+        expect(
+          parseTokenBudgetAcpRunnerFailure(result.stdout, {
+            mode: 'task',
+            finalMarker,
+          })
+        ).toEqual({
+          success: false,
+          mode: 'task',
+          stage: 'prompt',
+          timedOut,
+          promptAttempted: true,
+          stopReason: null,
+          finalMarkerSeen: timedOut,
+          hiddenMaterialSeen: false,
+          surfaceFinalPresent: true,
+          surfaceFinalByteSizeBucket: '1_4096',
+          surfaceFinalSha256Prefix: createHash('sha256')
+            .update(visibleText)
+            .digest('hex')
+            .slice(0, 12),
+          terminalCreationCount: 0,
+          terminalReleaseCount: 0,
+          activeTerminalCount: 0,
+          releasedProcessesGone: true,
+          cleanupComplete: true,
+          exited: true,
+          faults: [
+            'runner_failed',
+            ...(timedOut ? (['timeout'] as const) : []),
+            ...(timedOut ? [] : (['final_missing'] as const)),
+          ],
+        });
+      }
+    },
+    ACP_FAILURE_PROBE_DOUBLE_TEST_TIMEOUT_MS
+  );
+
+  it(
+    'times out ACP setup inside the operation budget and still closes cleanly',
+    () => {
+      const runner = path.resolve(
+        import.meta.dirname,
+        '../../support/tokenBudgetHandoffAcpRunner.ts'
+      );
+      const result = spawnSync(
+        'bun',
+        [runner, '--failure-evidence-probe', 'set-mode-timeout'],
+        {
+          cwd: path.resolve(import.meta.dirname, '../../..'),
+          encoding: 'utf8',
+          timeout: ACP_FAILURE_PROBE_PROCESS_TIMEOUT_MS,
+          killSignal: 'SIGKILL',
+        }
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+      expect(
+        parseTokenBudgetAcpRunnerFailure(result.stdout, {
+          mode: 'task',
+          finalMarker: 'FINAL_OK_PROBE',
+        })
+      ).toEqual({
+        success: false,
+        mode: 'task',
+        stage: 'set_mode',
+        timedOut: true,
+        promptAttempted: false,
+        stopReason: null,
+        finalMarkerSeen: false,
+        hiddenMaterialSeen: false,
+        surfaceFinalPresent: false,
+        surfaceFinalByteSizeBucket: 0,
+        surfaceFinalSha256Prefix: null,
+        terminalCreationCount: 0,
+        terminalReleaseCount: 0,
+        activeTerminalCount: 0,
+        releasedProcessesGone: true,
+        cleanupComplete: true,
+        exited: true,
+        faults: ['runner_failed', 'timeout'],
+      });
+    },
+    ACP_FAILURE_PROBE_SINGLE_TEST_TIMEOUT_MS
+  );
+
+  it(
+    'does not report a missing ACP final before prompt starts',
+    () => {
+      const runner = path.resolve(
+        import.meta.dirname,
+        '../../support/tokenBudgetHandoffAcpRunner.ts'
+      );
+      const result = spawnSync(
+        'bun',
+        [runner, '--failure-evidence-probe', 'pre-prompt-failure'],
+        {
+          cwd: path.resolve(import.meta.dirname, '../../..'),
+          encoding: 'utf8',
+          timeout: ACP_FAILURE_PROBE_PROCESS_TIMEOUT_MS,
+          killSignal: 'SIGKILL',
+        }
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+      expect(
+        parseTokenBudgetAcpRunnerFailure(result.stdout, {
+          mode: 'task',
+          finalMarker: 'FINAL_OK_PROBE',
+        })
+      ).toEqual({
+        success: false,
+        mode: 'task',
+        stage: 'initialize',
+        timedOut: false,
+        promptAttempted: false,
+        stopReason: null,
+        finalMarkerSeen: false,
+        hiddenMaterialSeen: false,
+        surfaceFinalPresent: false,
+        surfaceFinalByteSizeBucket: 0,
+        surfaceFinalSha256Prefix: null,
+        terminalCreationCount: 0,
+        terminalReleaseCount: 0,
+        activeTerminalCount: 0,
+        releasedProcessesGone: true,
+        cleanupComplete: true,
+        exited: true,
+        faults: ['runner_failed'],
+      });
+    },
+    ACP_FAILURE_PROBE_SINGLE_TEST_TIMEOUT_MS
+  );
+
+  it(
+    'reports a falsy ACP rejection instead of accepting a load as successful',
+    () => {
+      const runner = path.resolve(
+        import.meta.dirname,
+        '../../support/tokenBudgetHandoffAcpRunner.ts'
+      );
+      const result = spawnSync(
+        'bun',
+        [runner, '--failure-evidence-probe', 'falsy-load-rejection'],
+        {
+          cwd: path.resolve(import.meta.dirname, '../../..'),
+          encoding: 'utf8',
+          timeout: ACP_FAILURE_PROBE_PROCESS_TIMEOUT_MS,
+          killSignal: 'SIGKILL',
+        }
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+      expect(
+        parseTokenBudgetAcpRunnerFailure(result.stdout, {
+          mode: 'load',
+          finalMarker: 'FINAL_OK_PROBE',
+        })
+      ).toEqual({
+        success: false,
+        mode: 'load',
+        stage: 'load',
+        timedOut: false,
+        promptAttempted: false,
+        stopReason: null,
+        finalMarkerSeen: false,
+        hiddenMaterialSeen: false,
+        surfaceFinalPresent: false,
+        surfaceFinalByteSizeBucket: 0,
+        surfaceFinalSha256Prefix: null,
+        terminalCreationCount: 0,
+        terminalReleaseCount: 0,
+        activeTerminalCount: 0,
+        releasedProcessesGone: true,
+        cleanupComplete: true,
+        exited: true,
+        faults: ['runner_failed'],
+      });
+    },
+    ACP_FAILURE_PROBE_SINGLE_TEST_TIMEOUT_MS
+  );
+
+  it(
+    'reports a falsy ACP cleanup rejection instead of accepting success',
+    () => {
+      const runner = path.resolve(
+        import.meta.dirname,
+        '../../support/tokenBudgetHandoffAcpRunner.ts'
+      );
+      const result = spawnSync(
+        'bun',
+        [runner, '--failure-evidence-probe', 'falsy-cleanup-rejection'],
+        {
+          cwd: path.resolve(import.meta.dirname, '../../..'),
+          encoding: 'utf8',
+          timeout: ACP_FAILURE_PROBE_PROCESS_TIMEOUT_MS,
+          killSignal: 'SIGKILL',
+        }
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+      expect(
+        parseTokenBudgetAcpRunnerFailure(result.stdout, {
+          mode: 'load',
+          finalMarker: 'FINAL_OK_PROBE',
+        })
+      ).toEqual({
+        success: false,
+        mode: 'load',
+        stage: 'cleanup',
+        timedOut: false,
+        promptAttempted: false,
+        stopReason: null,
+        finalMarkerSeen: false,
+        hiddenMaterialSeen: false,
+        surfaceFinalPresent: false,
+        surfaceFinalByteSizeBucket: 0,
+        surfaceFinalSha256Prefix: null,
+        terminalCreationCount: 0,
+        terminalReleaseCount: 0,
+        activeTerminalCount: 0,
+        releasedProcessesGone: true,
+        cleanupComplete: false,
+        exited: true,
+        faults: ['runner_failed', 'cleanup_incomplete'],
+      });
+    },
+    ACP_FAILURE_PROBE_SINGLE_TEST_TIMEOUT_MS
+  );
+
+  it('refuses to start an ACP stage inside the cleanup reserve', () => {
+    expect(
+      resolveTokenBudgetAcpRunTimeouts({
+        stage: 'load',
+        deadlineAt: 1_270_000,
+        now: 1_260_000,
+      })
+    ).toEqual({ operationTimeoutMs: 0, processTimeoutMs: 0 });
+    expect(
+      resolveTokenBudgetAcpRunTimeouts({
+        stage: 'task',
+        deadlineAt: 1_270_000,
+        now: 1_230_000,
+      })
+    ).toEqual({ operationTimeoutMs: 0, processTimeoutMs: 0 });
+  });
+
+  it('caps each ACP stage and rejects unsafe deadline inputs', () => {
+    expect(
+      resolveTokenBudgetAcpRunTimeouts({
+        stage: 'task',
+        deadlineAt: 1_400_000,
+        now: 1_000_000,
+      })
+    ).toEqual({ operationTimeoutMs: 270_000, processTimeoutMs: 280_000 });
+    expect(
+      resolveTokenBudgetAcpRunTimeouts({
+        stage: 'load',
+        deadlineAt: 1_100_000,
+        now: 1_000_000,
+      })
+    ).toEqual({ operationTimeoutMs: 30_000, processTimeoutMs: 40_000 });
+    expect(() =>
+      resolveTokenBudgetAcpRunTimeouts({
+        stage: 'load',
+        deadlineAt: Number.MAX_SAFE_INTEGER + 1,
+        now: 1_000_000,
+      })
+    ).toThrow('Token-budget ACP deadline is invalid');
+    expect(() =>
+      resolveTokenBudgetAcpRunTimeouts({
+        stage: 'load',
+        deadlineAt: 1_100_000,
+        now: Number.MAX_SAFE_INTEGER + 1,
+      })
+    ).toThrow('Token-budget ACP deadline is invalid');
   });
 
   it('validates bounded Web reload and cleanup evidence', () => {

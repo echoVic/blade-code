@@ -1,6 +1,6 @@
 {
   "name": "blade-code",
-  "version": "0.10.65",
+  "version": "0.10.66",
   "private": false,
   "description": "🗡️ Blade Code - 智能代码助手命令行工具",
   "type": "module",
@@ -80,7 +80,7 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.3.0",
     "@anthropic-ai/sandbox-runtime": "0.0.67",
-    "@earendil-works/pi-ai": "0.83.0",
+    "@earendil-works/pi-ai": "0.84.2",
     "@inkjs/ui": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "ahooks": "^3.9.7",

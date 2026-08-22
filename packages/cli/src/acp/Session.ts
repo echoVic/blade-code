@@ -42,6 +42,7 @@ import {
   type ResponseVerbositySelection,
   type ServiceTierSelection,
 } from '../config/types.js';
+import { taskFailureForCode, toTaskFailure } from '../context/taskFailure.js';
 import type { SessionTaskIsolation, SessionTaskWorktree } from '../context/types.js';
 import type { GoalSnapshot } from '../goals/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
@@ -52,6 +53,8 @@ import type {
 import { Bus } from '../server/bus.js';
 import type { ContentPart, Message } from '../services/ChatServiceInterface.js';
 import { CodeReviewService, renderCodeReview } from '../services/CodeReviewService.js';
+import { isClientVisibleMessage } from '../services/clientMessageVisibility.js';
+import { isProviderAdmissionError } from '../services/pi/providerRequestAdmission.js';
 import { SessionInteractionService } from '../services/SessionInteractionService.js';
 import {
   SessionMissingCreationError,
@@ -202,6 +205,21 @@ function shellCompletionSummary(record: UserShellCommandRecord): string {
     `Exit code: ${record.exitCode ?? 'null'}`,
     `Duration: ${(record.durationMs / 1000).toFixed(3)} seconds`,
   ].join('\n');
+}
+
+function providerQueueCapacityFailure(details: unknown) {
+  if (
+    !isProviderAdmissionError(details) ||
+    details.reason !== 'queue_full' ||
+    (details.resource !== 'pending_count' && details.resource !== 'pending_bytes')
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...taskFailureForCode('capacity'),
+    resource: details.resource,
+  };
 }
 
 export class AcpSession {
@@ -485,6 +503,7 @@ export class AcpSession {
   async replayHistory(): Promise<void> {
     for (const message of this.messages) {
       if (!this.canSendUpdates()) return;
+      if (!isClientVisibleMessage(message)) continue;
       const sessionUpdate =
         message.role === 'user'
           ? 'user_message_chunk'
@@ -1521,8 +1540,21 @@ export class AcpSession {
         persistedMessages.length > 0 ? persistedMessages : [...context.messages];
       if (!loopResult.success) {
         const failureType = loopResult.error?.type ?? 'unknown';
+        const failureDetails =
+          loopResult.error?.details ??
+          loopResult.error?.message ??
+          'Agent execution failed';
+        const taskFailure =
+          providerQueueCapacityFailure(failureDetails) ?? toTaskFailure(failureDetails);
         throw RequestError.internalError(
-          { failureType },
+          {
+            failureType,
+            taskFailure: {
+              code: taskFailure.code,
+              retryable: taskFailure.retryable,
+              ...(taskFailure.resource ? { resource: taskFailure.resource } : {}),
+            },
+          },
           `Agent turn failed (${failureType})`
         );
       }

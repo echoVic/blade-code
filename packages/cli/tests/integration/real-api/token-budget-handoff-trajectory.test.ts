@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, realpath, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -18,6 +18,7 @@ import { WorkspaceTrustService } from '../../../src/security/WorkspaceTrustServi
 import { resolveModelConfig } from '../../../src/services/pi/resolveModelConfig.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import { ensureStoreInitialized, getState } from '../../../src/store/vanilla.js';
+import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
 import { runTokenBudgetHandoffAcpDriver } from '../../support/tokenBudgetHandoffAcpDriver.js';
 import { runTokenBudgetHandoffHeadlessDriver } from '../../support/tokenBudgetHandoffHeadlessDriver.js';
 import { startTokenBudgetHandoffProxy } from '../../support/tokenBudgetHandoffProxy.js';
@@ -38,11 +39,12 @@ import {
 import { createTokenBudgetHandoffFixture } from './tokenBudgetHandoffFixture.js';
 import {
   assertTokenBudgetEvidenceSafe,
-  assertTokenBudgetRequestSequence,
+  assertTokenBudgetRequestSequenceWithTranscript,
   assertTokenBudgetTranscript,
 } from './tokenBudgetHandoffHarness.js';
 
 const execFileAsync = promisify(execFile);
+const ACP_DRIVER_TOTAL_BUDGET_MS = 270_000;
 const surfaces = ['headless', 'pty', 'web', 'acp'] as const;
 const models = isRealApiTestEnabled()
   ? resolveRequiredDeepSeekQualificationModels()
@@ -268,7 +270,7 @@ describe
               storageRoot,
               providerRequestCount,
               secrets: [model.apiKey],
-              timeoutMs: 270_000,
+              timeoutMs: ACP_DRIVER_TOTAL_BUDGET_MS,
             });
             sessionId = evidence.sessionId;
             surfaceEvidence = evidence;
@@ -289,9 +291,15 @@ describe
           }
 
           const proxyEvidence = proxy.evidence();
-          assertTokenBudgetRequestSequence(proxyEvidence, targets);
           const transcriptPath = findSessionTranscript(storageRoot, sessionId);
           const events = readSessionEvents(transcriptPath);
+          assertTokenBudgetRequestSequenceWithTranscript({
+            evidence: proxyEvidence,
+            targets,
+            events,
+            expectedFinal: fixture.finalMarker,
+            surfaceFinalSeen: true,
+          });
           assertTokenBudgetTranscript(events, fixture);
           const publicMessages = await SessionService.loadSession(sessionId, workspace);
           const finalAssistant = publicMessages.findLast(
@@ -333,7 +341,7 @@ describe
           if (originalConfig) getState().config.actions.setConfig(originalConfig);
           WorkspaceTrustService.resetInstance();
           restoreEnvironment(environment);
-          await rm(root, { recursive: true, force: true }).catch((error) => {
+          await removeTestDirectory(root).catch((error) => {
             cellError ??= error;
           });
         }

@@ -204,6 +204,7 @@ Before executing commands:
           GIT_CONFIG_GLOBAL: '/dev/null',
           GIT_CONFIG_NOSYSTEM: '1',
           GIT_OPTIONAL_LOCKS: '0',
+          ...(context.environment?.PATH ? { PATH: context.environment.PATH } : {}),
         }
       : {
           ...context.environment,
@@ -244,6 +245,7 @@ Before executing commands:
               cwd: effectiveCwd,
               workspaceRoot,
               access: 'workspace-read-only',
+              trustedPath: context.environment?.PATH ?? process.env.PATH,
               signal,
             })
           : context.worktreeActive
@@ -1068,7 +1070,7 @@ async function executeWithTimeout(
       : process.env;
   const verificationPath =
     sandboxedCommand?.inheritProcessEnv === false
-      ? inheritedEnvironment.PATH
+      ? (env?.PATH ?? inheritedEnvironment.PATH)
       : undefined;
   let prepared: Awaited<ReturnType<typeof prepareForegroundProcess>>;
   try {

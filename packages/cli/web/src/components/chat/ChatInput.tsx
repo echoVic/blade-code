@@ -1,3 +1,30 @@
+import {
+  MAX_INLINE_ATTACHMENT_BYTES,
+  MAX_INLINE_ATTACHMENT_COUNT,
+} from '@api/attachmentLimits';
+import type {
+  CommunicationStyle,
+  ReasoningEffort,
+  ResponseVerbosity,
+  ServiceTier,
+} from '@api/schemas';
+import {
+  AlertCircle,
+  Braces,
+  Check,
+  ChevronDown,
+  ClipboardList,
+  Hand,
+  Info,
+  Loader2,
+  Paperclip,
+  Send,
+  ShieldAlert,
+  ShieldCheck,
+  Square,
+  X,
+} from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -29,33 +56,6 @@ import {
 } from '@/store/ConfigStore';
 import { useSettingsStore } from '@/store/SettingsStore';
 import { useSessionStore } from '@/store/session';
-import {
-  MAX_INLINE_ATTACHMENT_BYTES,
-  MAX_INLINE_ATTACHMENT_COUNT,
-} from '@api/attachmentLimits';
-import type {
-  CommunicationStyle,
-  ReasoningEffort,
-  ResponseVerbosity,
-  ServiceTier,
-} from '@api/schemas';
-import {
-  AlertCircle,
-  Braces,
-  Check,
-  ChevronDown,
-  ClipboardList,
-  Hand,
-  Info,
-  Loader2,
-  Paperclip,
-  Send,
-  ShieldAlert,
-  ShieldCheck,
-  Square,
-  X,
-} from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
 import { SuggestionPopover } from './SuggestionPopover';
 
 export interface ComposerImageAttachment {
@@ -128,8 +128,27 @@ const MODES: {
   },
 ];
 const DEFAULT_REASONING_EFFORTS: ReasoningEffort[] = ['off'];
+const DEFAULT_REASONING_EFFORT_PREFERENCE: ReasoningEffort[] = [
+  'high',
+  'xhigh',
+  'medium',
+  'max',
+  'low',
+  'minimal',
+  'off',
+];
 const DEFAULT_SERVICE_TIERS: ServiceTier[] = ['standard'];
 const DEFAULT_RESPONSE_VERBOSITIES: ResponseVerbosity[] = [];
+
+function defaultReasoningEffort(
+  supportedEfforts: readonly ReasoningEffort[]
+): ReasoningEffort {
+  return (
+    DEFAULT_REASONING_EFFORT_PREFERENCE.find((effort) =>
+      supportedEfforts.includes(effort)
+    ) ?? 'off'
+  );
+}
 
 function formatAttachmentBytes(bytes: number): string {
   if (bytes < 1024 * 1024) {
@@ -253,12 +272,17 @@ export function ChatInput({
   const currentModelInfo = configuredModels.find((m) => m.id === effectiveModelId);
   const supportedReasoningEfforts =
     currentModelInfo?.supportedReasoningEfforts ?? DEFAULT_REASONING_EFFORTS;
-  const reasoningEffortOptions: ReasoningEffort[] = [
-    'auto',
-    ...supportedReasoningEfforts,
-  ];
+  const reasoningEffortOptions = supportedReasoningEfforts.filter(
+    (effort) => effort !== 'auto'
+  );
+  const requestedReasoningEffort = sessionReasoningOverride ?? persistedReasoningEffort;
+  const fallbackReasoningEffort = defaultReasoningEffort(reasoningEffortOptions);
   const effectiveReasoningEffort =
-    sessionReasoningOverride ?? persistedReasoningEffort ?? 'off';
+    requestedReasoningEffort !== undefined &&
+    requestedReasoningEffort !== 'auto' &&
+    reasoningEffortOptions.includes(requestedReasoningEffort)
+      ? requestedReasoningEffort
+      : fallbackReasoningEffort;
   const supportedServiceTiers =
     currentModelInfo?.supportedServiceTiers ?? DEFAULT_SERVICE_TIERS;
   const serviceTierOptions: ServiceTier[] = ['auto', ...supportedServiceTiers];
@@ -330,15 +354,6 @@ export function ChatInput({
     setSessionServiceTierOverride(null);
     setSessionResponseVerbosityOverride(null);
   }, [currentSessionRef?.projectPath, currentSessionRef?.sessionId]);
-
-  useEffect(() => {
-    if (
-      effectiveReasoningEffort !== 'auto' &&
-      !supportedReasoningEfforts.includes(effectiveReasoningEffort)
-    ) {
-      setSessionReasoningOverride('auto');
-    }
-  }, [effectiveReasoningEffort, supportedReasoningEfforts]);
 
   useEffect(() => {
     if (
@@ -1206,11 +1221,6 @@ export function ChatInput({
                           }`}
                         >
                           <span className="capitalize">{effort}</span>
-                          {effort === 'auto' && (
-                            <span className="text-[9px] text-[#9CA3AF] dark:text-zinc-600">
-                              {t('chat.input.effort.autoHint')}
-                            </span>
-                          )}
                         </button>
                       ))}
                     </div>
@@ -1629,9 +1639,9 @@ export function ChatInput({
           hideCloseButton
         >
           <div className="flex flex-col gap-4 p-5">
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-950/40">
-                <ShieldAlert className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+            <div className="flex gap-3 items-center">
+              <div className="flex justify-center items-center w-9 h-9 bg-amber-100 rounded-full dark:bg-amber-950/40">
+                <ShieldAlert className="w-5 h-5 text-amber-600 dark:text-amber-400" />
               </div>
               <DialogTitle className="font-mono text-sm font-semibold">
                 {t('chat.input.mode.yolo.confirm.title')}
@@ -1643,7 +1653,7 @@ export function ChatInput({
             >
               {t('chat.input.mode.yolo.confirm.desc')}
             </DialogDescription>
-            <div className="flex items-center justify-end gap-2 pt-1">
+            <div className="flex gap-2 justify-end items-center pt-1">
               <button
                 type="button"
                 onClick={() => setYoloConfirmOpen(false)}

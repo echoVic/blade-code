@@ -189,9 +189,13 @@ describe('AnthropicWorkspaceSandboxBackend', () => {
     const root = await makeTempRoot();
     const workspaceRoot = path.join(root, 'workspace');
     const tempRoot = path.join(root, 'sandbox-temp');
+    const nodeBin = path.join(root, 'node-bin');
     await mkdir(workspaceRoot);
+    await mkdir(nodeBin);
+    await symlink('/bin/echo', path.join(nodeBin, 'node'));
     const canonicalWorkspace = await realpath(workspaceRoot);
     const runtimeExecutable = await realpath(process.execPath);
+    const nodeExecutable = await realpath(path.join(nodeBin, 'node'));
     const runtime = makeRuntime();
     const backend = new AnthropicWorkspaceSandboxBackend({
       runtime,
@@ -204,6 +208,7 @@ describe('AnthropicWorkspaceSandboxBackend', () => {
       cwd: canonicalWorkspace,
       workspaceRoot: canonicalWorkspace,
       access: 'workspace-read-only',
+      trustedPath: nodeBin,
     });
 
     expect(runtime.wrapWithSandboxArgv).toHaveBeenCalledWith(
@@ -217,7 +222,12 @@ describe('AnthropicWorkspaceSandboxBackend', () => {
         },
         filesystem: {
           denyRead: expect.arrayContaining([path.resolve(os.homedir())]),
-          allowRead: [canonicalWorkspace, runtimeExecutable, await realpath(tempRoot)],
+          allowRead: [
+            canonicalWorkspace,
+            runtimeExecutable,
+            nodeExecutable,
+            await realpath(tempRoot),
+          ],
           allowWrite: [await realpath(tempRoot)],
           denyWrite: [canonicalWorkspace, '/home/user/.npm/_logs'],
         },

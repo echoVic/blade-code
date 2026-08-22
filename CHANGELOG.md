@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.10.66] - 2026-08-22
 
 ### Added
 - Web now provides a multi-project task board with waiting, active, blocked, and
@@ -13,6 +13,32 @@
 - Task status, priority, kind, and due dates are projected into dedicated
   SQLite columns; task scans push status, priority, and due-time filters into
   indexed SQL while preserving equivalent JSONL fallback behavior
+
+### Changed
+- Web model selection defaults to a concrete supported reasoning effort instead
+  of ambiguous `auto`, while preserving an explicit `off`
+- Updated `pi-ai` to `0.84.2` so reasoning capabilities come from the provider catalog
+- Compaction treats bounded `EXACT CONTINUATION RECORD` lines as a host-owned
+  contract and restores them under canonical ledger headings
+
+### Fixed
+- Empty final responses after successful tools receive one durable correction
+  and fail closed if the model remains empty
+- Turn abort receipts atomically preserve input acknowledgements, successful
+  tool evidence, and spent correction state across process restarts
+- Structured output stays authoritative after a valid payload is committed at
+  the output-token boundary
+- Read-only verification sandboxes preserve the Session Node toolchain while
+  keeping the workspace and home directory denied
+- Test processes isolate and reclaim temporary roots and managed Git overlays
+- Web task-start/final waits and ACP/Headless final projection observe the
+  correct committed lifecycle boundary
+
+### Tests
+- Added release-blocking DeepSeek Flash/Pro token-budget handoff coverage across
+  Headless, raw PTY, production Web Chromium, and ACP with framework retry 0
+- Added deterministic coverage for exact-record reconciliation, empty-final
+  recovery, abort receipts, ACP cleanup deadlines, and bounded diagnostics
 
 ## [0.10.65] - 2026-08-20
 

@@ -35,8 +35,8 @@ import {
   type IChatService,
   type Message,
 } from '../services/ChatServiceInterface.js';
-import { resolveModelConfig as resolvePiModelConfig } from '../services/pi/resolveModelConfig.js';
 import { isProviderAdmissionError } from '../services/pi/providerRequestAdmission.js';
+import { resolveModelConfig as resolvePiModelConfig } from '../services/pi/resolveModelConfig.js';
 import { SessionService } from '../services/SessionService.js';
 import { createStructuredOutputContract } from '../services/StructuredOutputService.js';
 import {
@@ -807,6 +807,10 @@ export class Agent {
                     getInputMessageIds: () =>
                       this.sessionRuntime!.getClaimedTurnMessageIds(ownedHandle),
                   }
+                : undefined,
+            getRecoveredEmptyFinalState:
+              this.sessionRuntime && ownedHandle
+                ? () => this.sessionRuntime!.getRecoveredEmptyFinalState(ownedHandle)
                 : undefined,
           };
 

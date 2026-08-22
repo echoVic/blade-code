@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
@@ -15,8 +16,12 @@ import {
   assertNoSecrets,
   type DurableToolTraceRecord,
   extractDurableToolTrace,
+  finalAssistantText,
 } from './sessionForkTrajectoryHarness.js';
-import type { TokenBudgetHandoffFixture } from './tokenBudgetHandoffFixture.js';
+import {
+  renderTokenBudgetExactNextAction,
+  type TokenBudgetHandoffFixture,
+} from './tokenBudgetHandoffFixture.js';
 
 export interface TokenBudgetHandoffSurfaceEvidence {
   surface: 'headless' | 'pty' | 'web' | 'acp';
@@ -59,8 +64,93 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024;
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
 
+function diagnosticByteSize(
+  bytes: number | undefined
+): 0 | '1_4096' | '4097_16384' | '16385_plus' {
+  if (!bytes) return 0;
+  if (bytes <= 4_096) return '1_4096';
+  if (bytes <= 16_384) return '4097_16384';
+  return '16385_plus';
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function formatTokenBudgetTranscriptDiagnostic(input: {
+  events: readonly SessionEvent[];
+  expectedFinal: string;
+  surfaceFinalSeen: boolean;
+}): string {
+  const calls = new Map<string, 'Bash' | 'Write' | 'Other'>();
+  let bashCalls = 0;
+  let bashSuccesses = 0;
+  let writeCalls = 0;
+  let writeSuccesses = 0;
+  let otherCalls = 0;
+  let completeResults = 0;
+  let checkpoints = 0;
+
+  for (const event of input.events) {
+    if (event.type !== 'part_created') continue;
+    if (event.data.partType === 'summary') {
+      checkpoints += 1;
+      continue;
+    }
+    if (!isRecord(event.data.payload)) continue;
+    const payload = event.data.payload;
+    const toolCallId = payload.toolCallId;
+    const toolName = payload.toolName;
+    if (typeof toolCallId !== 'string' || typeof toolName !== 'string') continue;
+
+    if (event.data.partType === 'tool_call') {
+      const kind =
+        toolName === 'Bash' ? 'Bash' : toolName === 'Write' ? 'Write' : 'Other';
+      calls.set(toolCallId, kind);
+      if (kind === 'Bash') bashCalls += 1;
+      else if (kind === 'Write') writeCalls += 1;
+      else otherCalls += 1;
+      continue;
+    }
+    if (event.data.partType !== 'tool_result') continue;
+    const kind = calls.get(toolCallId);
+    if (!kind) continue;
+    completeResults += 1;
+    const succeeded = payload.error === null && payload.output !== null;
+    if (succeeded && kind === 'Bash') bashSuccesses += 1;
+    if (succeeded && kind === 'Write') writeSuccesses += 1;
+  }
+
+  const final = finalAssistantText(input.events);
+  const finalPresent = Boolean(final?.trim());
+  return JSON.stringify({
+    tools: {
+      bashCalls,
+      bashSuccesses,
+      writeCalls,
+      writeSuccesses,
+      otherCalls,
+      completeResults,
+    },
+    lifecycle: {
+      checkpoints,
+      turnCompleted: input.events.filter((event) => event.type === 'turn_completed')
+        .length,
+      turnAborted: input.events.filter((event) => event.type === 'turn_aborted').length,
+      surfaceFinalSeen: input.surfaceFinalSeen,
+    },
+    final: {
+      present: finalPresent,
+      expectedMarkerPresent: final === input.expectedFinal,
+      utf8ByteSizeBucket: diagnosticByteSize(
+        finalPresent && final ? Buffer.byteLength(final, 'utf8') : undefined
+      ),
+      sha256Prefix:
+        finalPresent && final
+          ? createHash('sha256').update(final).digest('hex').slice(0, 12)
+          : null,
+    },
+  });
 }
 
 function emptyLedger(): Record<LedgerSectionKey, string> {
@@ -153,13 +243,61 @@ function requireCanonicalStatusClause(
   status: 'applied' | 'failed' | 'pending',
   label: string
 ): void {
-  const clauses = (sections[section] ?? '')
-    .split(/\r?\n/)
-    .filter((clause) => clause.includes(sentinel));
-  if (clauses.length !== 1 || clauses[0] !== `${sentinel} status=${status}`) {
+  const expected = `${sentinel} status=${status}`;
+  const authorities = LEDGER_SECTION_KEYS.flatMap((key) =>
+    (sections[key] ?? '')
+      .split(/\r?\n/)
+      .filter((clause) => clause.includes(sentinel))
+      .filter((clause) => clauseAssignsExecutionStatus(clause, sentinel))
+      .map((clause) => ({ section: key, clause }))
+  );
+  const canonical = authorities.filter(
+    (authority) => authority.section === section && authority.clause === expected
+  );
+  const extras = authorities.filter(
+    (authority) => authority.section !== section || authority.clause !== expected
+  );
+  const deferredContradiction =
+    canonical.length === 1 &&
+    extras.length > 0 &&
+    extras.every((authority) =>
+      status === 'pending'
+        ? sentinelHasExplicitStatus(
+            { [authority.section]: authority.clause },
+            sentinel,
+            ['applied', 'complete', 'completed', 'done', 'finished', 'resolved']
+          )
+        : status === 'failed'
+          ? sentinelHasExplicitStatus(
+              { [authority.section]: authority.clause },
+              sentinel,
+              ['pass', 'passed', 'passing', 'success', 'succeeded', 'successful']
+            )
+          : false
+    );
+  if (!deferredContradiction && (authorities.length !== 1 || canonical.length !== 1)) {
     throw new Error(
       `Continuation ledger ${label} must use one canonical status clause; ` +
-        canonicalStatusClauseDiagnostic(sections[section] ?? '', sentinel, status)
+        canonicalStatusClauseDiagnostic(sections[section] ?? '', sentinel, status) +
+        `;global_authorities=${authorities.length}`
+    );
+  }
+}
+
+function assertExactNextAction(
+  sections: Record<string, string>,
+  fixture: TokenBudgetHandoffFixture
+): void {
+  const expected = renderTokenBudgetExactNextAction({
+    command: fixture.passingCommand,
+    finalMarker: fixture.finalMarker,
+  });
+  const matches = (sections.exactNextAction ?? '')
+    .split(/\r?\n/)
+    .filter((line) => line === expected);
+  if (matches.length !== 1) {
+    throw new Error(
+      'Continuation ledger must preserve one exact executable next action'
     );
   }
 }
@@ -215,6 +353,37 @@ export function canonicalStatusClauseDiagnostic(
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function clauseAssignsExecutionStatus(clause: string, sentinel: string): boolean {
+  const sentinelIndex = clause.indexOf(sentinel);
+  if (sentinelIndex < 0) return false;
+  if (clause.indexOf(sentinel, sentinelIndex + sentinel.length) >= 0) return true;
+
+  const decoration = /^[`*_~\s]+|[`*_~\s]+$/g;
+  const before = clause.slice(0, sentinelIndex).replace(decoration, '').trim();
+  const after = clause
+    .slice(sentinelIndex + sentinel.length)
+    .replace(decoration, '')
+    .trim();
+  const statusWord =
+    '(?:applied|fail|failed|pending|complete|completed|done|finished|resolved|' +
+    'pass|passed|passing|success|succeeded|successful)';
+  if (
+    /^status\s*=/i.test(after) ||
+    new RegExp(
+      '^(?:is|was|now|did)\\s+(?:not\\s+)?' + statusWord + '(?:\\b|[-_])',
+      'i'
+    ).test(after) ||
+    /\b(?:applied|fail|failed|pending|complete|completed|done|finished|resolved|pass|passed|passing|success|succeeded|successful)\s*$/i.test(
+      before
+    )
+  ) {
+    return true;
+  }
+  return /^(?:applied|fail|failed|pending|complete|completed|done|finished|resolved|pass|passed|passing|success|succeeded|successful)(?:\b|[-_])/i.test(
+    after
+  );
 }
 
 function sentinelHasExplicitStatus(
@@ -408,6 +577,29 @@ export function assertTokenBudgetRequestSequence(
   }
 }
 
+export function assertTokenBudgetRequestSequenceWithTranscript(input: {
+  evidence: TokenBudgetProxyEvidence;
+  targets: { handoffPromptTokens: number; compactionPromptTokens: number };
+  events: readonly SessionEvent[];
+  expectedFinal: string;
+  surfaceFinalSeen: boolean;
+}): void {
+  try {
+    assertTokenBudgetRequestSequence(input.evidence, input.targets);
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : 'Token-budget Provider request sequence validation failed';
+    const diagnostic = formatTokenBudgetTranscriptDiagnostic({
+      events: input.events,
+      expectedFinal: input.expectedFinal,
+      surfaceFinalSeen: input.surfaceFinalSeen,
+    });
+    throw new Error(`${message}; transcript=${diagnostic}`);
+  }
+}
+
 interface Checkpoint {
   index: number;
   summary: string;
@@ -588,10 +780,9 @@ export function assertTokenBudgetTranscript(
   }
   assertNoHandoffInReplacement(checkpoint);
   assertNoHandoffInSuffix(events, checkpoint);
-  assertContinuationLedger(
-    parseContinuationLedger(checkpoint.summary),
-    fixture.sentinels
-  );
+  const ledger = parseContinuationLedger(checkpoint.summary);
+  assertContinuationLedger(ledger, fixture.sentinels);
+  assertExactNextAction(ledger, fixture);
   assertToolTrace(events, fixture, markerIndex, checkpoint.index);
 
   if (readFileSync(fixture.targetPath, 'utf8') !== fixture.targetContent) {

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
@@ -16,6 +16,7 @@ import { CodeReviewService } from '../../../src/services/CodeReviewService.js';
 import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { useAgent } from '../../../src/ui/hooks/useAgent.js';
+import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
 import { createMockACPClient } from '../../support/mocks/mockACPClient.js';
 import { assertNoSecrets } from './sessionForkTrajectoryHarness.js';
 import {
@@ -214,7 +215,7 @@ describeReal('native read-only code review trajectory (real API)', () => {
         );
       }
       if (originalConfig) getState().config.actions.setConfig(originalConfig);
-      await rm(fixture.root, { recursive: true, force: true });
+      await removeTestDirectory(fixture.root);
     }
   }, 300_000);
 
@@ -257,7 +258,7 @@ describeReal('native read-only code review trajectory (real API)', () => {
     } finally {
       await session.destroy().catch(() => undefined);
       if (originalConfig) getState().config.actions.setConfig(originalConfig);
-      await rm(fixture.root, { recursive: true, force: true });
+      await removeTestDirectory(fixture.root);
     }
   }, 300_000);
 
@@ -315,7 +316,7 @@ describeReal('native read-only code review trajectory (real API)', () => {
       });
       container.remove();
       if (originalConfig) getState().config.actions.setConfig(originalConfig);
-      await rm(fixture.root, { recursive: true, force: true });
+      await removeTestDirectory(fixture.root);
     }
   }, 300_000);
 });

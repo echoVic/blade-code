@@ -4,9 +4,9 @@ import {
   MAX_INLINE_ATTACHMENT_BYTES,
   MAX_USER_MESSAGE_TEXT_CHARS,
 } from '../../api/attachmentLimits.js';
-import type { BackgroundSubagentCompletion } from '../subagents/BackgroundSubagentCompletion.js';
 import type { MessagePersistenceMetadata } from '../../context/types.js';
 import type { JsonObject } from '../../store/types.js';
+import type { BackgroundSubagentCompletion } from '../subagents/BackgroundSubagentCompletion.js';
 import type { UserMessageContent } from '../types.js';
 import {
   DurableSteeringInbox,

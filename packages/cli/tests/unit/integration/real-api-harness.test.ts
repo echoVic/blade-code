@@ -40,6 +40,7 @@ import {
   expandDeepSeekModelMatrix,
   loadBladeCurrentModel,
   normalizeNewApiBaseURL,
+  releaseBlockingModels,
   resolveDeepSeekQualificationSettings,
   resolveForkQualificationModels,
   resolveModelSettings,
@@ -1012,6 +1013,67 @@ describe('real API coding-task harness', () => {
       },
     ]);
     expect(() => assertNoSecrets(safeProjection, secrets)).not.toThrow();
+  });
+
+  it('keeps only DeepSeek and Claude in the release-blocking model matrix', () => {
+    const configs = resolveForkQualificationModels({
+      DEEPSEEK_API_KEY: 'deepseek-release-fake-secret',
+      DEEPSEEK_MODELS: 'deepseek-v4-flash,deepseek-v4-pro',
+      CLAUDE_API_KEY: 'claude-release-fake-secret',
+      CLAUDE_MODEL: 'claude-release-model',
+      GPT_API_KEY: 'gpt-release-fake-secret',
+      GPT_MODEL: 'gpt-release-model',
+      DOMESTIC_API_KEY: 'domestic-release-fake-secret',
+      DOMESTIC_MODEL: 'domestic-release-model',
+    });
+    vi.stubEnv('REAL_API_RELEASE_MATRIX', '1');
+    vi.stubEnv('REAL_API_INCLUDE_OPTIONAL_PROVIDERS', '1');
+
+    try {
+      const selected = releaseBlockingModels(configs);
+
+      expect(selected).not.toBe(configs);
+      expect(selected[0]).toBe(configs[0]);
+      expect(selected[1]).toBe(configs[1]);
+      expect(selected[2]).toBe(configs[2]);
+      expect(selected.map(({ id, model }) => ({ id, model }))).toEqual([
+        { id: 'deepseek', model: 'deepseek-v4-flash' },
+        { id: 'deepseek', model: 'deepseek-v4-pro' },
+        { id: 'claude', model: 'claude-release-model' },
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('returns every configured model unchanged outside the release matrix', () => {
+    const configs = resolveForkQualificationModels({
+      DEEPSEEK_API_KEY: 'deepseek-soak-fake-secret',
+      DEEPSEEK_MODELS: 'deepseek-v4-flash,deepseek-v4-pro',
+      CLAUDE_API_KEY: 'claude-soak-fake-secret',
+      CLAUDE_MODEL: 'claude-soak-model',
+      GPT_API_KEY: 'gpt-soak-fake-secret',
+      GPT_MODEL: 'gpt-soak-model',
+      DOMESTIC_API_KEY: 'domestic-soak-fake-secret',
+      DOMESTIC_MODEL: 'domestic-soak-model',
+    });
+    vi.stubEnv('REAL_API_RELEASE_MATRIX', '0');
+    vi.stubEnv('REAL_API_INCLUDE_OPTIONAL_PROVIDERS', '1');
+
+    try {
+      const selected = releaseBlockingModels(configs);
+
+      expect(selected).toBe(configs);
+      expect(selected.map((config) => config.id)).toEqual([
+        'deepseek',
+        'deepseek',
+        'claude',
+        'gpt',
+        'domestic',
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('keeps an explicit empty environment isolated from local Blade credentials', () => {

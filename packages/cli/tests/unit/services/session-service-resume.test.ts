@@ -104,6 +104,7 @@ describe('SessionService.toUISafeMessages', () => {
           '<token-budget-handoff version="1">\n' +
           'Context rollover is approaching. Continue the user task from this state only.\n' +
           'Make objective, decisions, mutations, verification, background work, blockers, and the exact next action explicit.\n' +
+          'For pending work, preserve exact commands, tool arguments, and required final-response constraints when they are known.\n' +
           'Do not claim success or completion unless it is already proven in the transcript.\n' +
           'Do not create bookkeeping files the user did not request.\n' +
           'Remaining prompt-token headroom before compaction: 5.',

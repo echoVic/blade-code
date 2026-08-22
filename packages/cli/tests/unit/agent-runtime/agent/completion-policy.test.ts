@@ -21,6 +21,7 @@ import {
   VERIFICATION_RETRY_PROMPT,
   WORKTREE_EXIT_RETRY_PROMPT,
 } from '../../../../src/agent/loop/completionPolicy.js';
+import { normalizeVerificationCommandForExecution } from '../../../../src/utils/shell/verificationCommand.js';
 
 describe('completionPolicy', () => {
   describe('checkOutputRecovery', () => {
@@ -126,6 +127,18 @@ describe('completionPolicy', () => {
   });
 
   describe('checkVerificationRequired', () => {
+    it('uses the in-memory config loader for read-only Vitest execution', () => {
+      expect(
+        normalizeVerificationCommandForExecution(
+          'cd /workspace/project && npx vitest run 2>&1 | tail -30'
+        )
+      ).toBe('cd /workspace/project && npx vitest run --configLoader runner');
+      expect(
+        normalizeVerificationCommandForExecution('vitest run --configLoader=native')
+      ).toBe('vitest run --configLoader=native');
+      expect(normalizeVerificationCommandForExecution('npm test')).toBe('npm test');
+    });
+
     it('accepts a verification command after a safe workspace cd', () => {
       expect(
         isVerificationCommand('cd /workspace/project && npm test', '/workspace/project')

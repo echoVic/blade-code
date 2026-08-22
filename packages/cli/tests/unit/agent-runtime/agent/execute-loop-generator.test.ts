@@ -144,6 +144,7 @@ import { CompactionService } from '../../../../src/context/CompactionService.js'
 import { ContextManager } from '../../../../src/context/ContextManager.js';
 import { ReactiveCompaction } from '../../../../src/context/ReactiveCompaction.js';
 import { microCompact, snipCompact } from '../../../../src/context/SnipCompaction.js';
+import { checkTokenBudget } from '../../../../src/context/TokenBudget.js';
 import {
   deriveTokenBudgetSnapshot,
   isTokenBudgetHandoffMessage,
@@ -2917,6 +2918,453 @@ describe('executeLoopGenerator', () => {
           (deps.chatService.chat as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]
         )
       ).toContain('CONTEXTUAL_TYPESCRIPT_RULE');
+    });
+
+    it('recovers one empty final after a successful tool call', async () => {
+      const { deps, saveMessage } = createTypedPersistenceHarness();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce(toolResponse(100))
+        .mockResolvedValueOnce(finalResponse(120, ''))
+        .mockResolvedValueOnce(finalResponse(140, 'Durable final response'));
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Read the file and finish with a non-empty response.',
+          createMockContext(),
+          { stream: false } as LoopOptions,
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: 'Durable final response',
+      });
+      expect(chatMock).toHaveBeenCalledTimes(3);
+      expect(JSON.stringify(chatMock.mock.calls[2]?.[0])).toContain(
+        'Return a non-empty final response'
+      );
+      expect(
+        saveMessage.mock.calls.filter(
+          (call) => call[1] === 'assistant' && String(call[2]).trim() === ''
+        )
+      ).toHaveLength(0);
+    });
+
+    it('recovers an empty final from turn-scoped durable tool evidence', async () => {
+      const { deps, saveMessage } = createTypedPersistenceHarness();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce(finalResponse(120, ''))
+        .mockResolvedValueOnce(finalResponse(140, 'Recovered durable final'));
+      const getRecoveredEmptyFinalState = vi.fn(async () => ({
+        hadSuccessfulToolResult: true,
+        correctionSpent: false,
+      }));
+      let recoveredInputDrained = false;
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          '',
+          createMockContext(),
+          {
+            stream: false,
+            pendingInputOnly: true,
+            turnSteering: {
+              drain: async () => {
+                if (recoveredInputDrained) return [];
+                recoveredInputDrained = true;
+                return [
+                  {
+                    id: 'recovered-input',
+                    content: 'Finish the recovered task.',
+                    queuedAt: 1,
+                    recovered: true,
+                  },
+                ];
+              },
+              drainOrSeal: async () => ({ messages: [], sealed: true }),
+            },
+            getRecoveredEmptyFinalState,
+          } satisfies LoopOptions,
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: 'Recovered durable final',
+      });
+      expect(chatMock).toHaveBeenCalledTimes(2);
+      expect(getRecoveredEmptyFinalState).toHaveBeenCalledOnce();
+      const corrective = saveMessage.mock.calls.find(
+        (call) =>
+          call[1] === 'user' &&
+          String(call[2]).includes('Return a non-empty final response')
+      );
+      expect(corrective?.[4]).toMatchObject({
+        clientVisible: false,
+        emptyFinalCorrection: true,
+      });
+    });
+
+    it('fails closed when the recovered turn already spent its empty-final correction', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock.mockResolvedValueOnce(finalResponse(120, ''));
+      let recoveredInputDrained = false;
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          '',
+          createMockContext(),
+          {
+            stream: false,
+            pendingInputOnly: true,
+            turnSteering: {
+              drain: async () => {
+                if (recoveredInputDrained) return [];
+                recoveredInputDrained = true;
+                return [
+                  {
+                    id: 'recovered-input',
+                    content: 'Finish the recovered task.',
+                    queuedAt: 1,
+                    recovered: true,
+                  },
+                ];
+              },
+              drainOrSeal: async () => ({ messages: [], sealed: true }),
+            },
+            getRecoveredEmptyFinalState: async () => ({
+              hadSuccessfulToolResult: true,
+              correctionSpent: true,
+            }),
+          } satisfies LoopOptions,
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatchObject({ type: 'intent_fulfillment_failed' });
+      expect(chatMock).toHaveBeenCalledOnce();
+    });
+
+    it('recovers one streamed empty final after a successful tool call', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      const streamChat = vi.mocked(deps.chatService.streamChat);
+      streamChat
+        .mockImplementationOnce(async function* () {
+          yield {
+            toolCalls: [
+              {
+                index: 0,
+                id: 'stream-read-empty-final',
+                type: 'function',
+                function: {
+                  name: 'Read',
+                  arguments: '{"path":"package.json"}',
+                },
+              },
+            ],
+            usage: {
+              promptTokens: 100,
+              completionTokens: 20,
+              totalTokens: 120,
+            },
+            finishReason: 'tool_calls',
+          } satisfies StreamChunk;
+        })
+        .mockImplementationOnce(async function* () {
+          yield {
+            usage: {
+              promptTokens: 120,
+              completionTokens: 0,
+              totalTokens: 120,
+            },
+            finishReason: 'stop',
+          } satisfies StreamChunk;
+        })
+        .mockImplementationOnce(async function* () {
+          yield {
+            content: 'Durable streamed final',
+            usage: {
+              promptTokens: 140,
+              completionTokens: 20,
+              totalTokens: 160,
+            },
+            finishReason: 'stop',
+          } satisfies StreamChunk;
+        });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Read the file and finish with a non-empty response.',
+          createMockContext(),
+          { stream: true },
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: 'Durable streamed final',
+      });
+      expect(streamChat).toHaveBeenCalledTimes(3);
+      expect(deps.chatService.chat).not.toHaveBeenCalled();
+      expect(JSON.stringify(streamChat.mock.calls[2]?.[0])).toContain(
+        'Return a non-empty final response'
+      );
+    });
+
+    it('fails closed after repeated empty finals following a successful tool', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce(toolResponse(100))
+        .mockResolvedValueOnce(finalResponse(120, ''))
+        .mockResolvedValueOnce(finalResponse(140, ''));
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Read the file and finish with a non-empty response.',
+          createMockContext(),
+          { stream: false } as LoopOptions,
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatchObject({
+        type: 'intent_fulfillment_failed',
+      });
+      expect(chatMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not accept an empty truncated response after successful tool execution', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce(toolResponse(100))
+        .mockResolvedValueOnce({
+          ...finalResponse(120, ''),
+          finishReason: 'length',
+        })
+        .mockResolvedValueOnce(finalResponse(140, 'Recovered after truncation'));
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Read and return a non-empty final.',
+          createMockContext(),
+          { stream: false } satisfies LoopOptions,
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: 'Recovered after truncation',
+      });
+      expect(chatMock).toHaveBeenCalledTimes(3);
+      expect(JSON.stringify(chatMock.mock.calls[2]?.[0])).toContain(
+        'Return a non-empty final response'
+      );
+    });
+
+    it('does not correct a blank length response after the output budget stops', async () => {
+      const { deps, saveMessage } = createTypedPersistenceHarness();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      const budgetCheck = vi.mocked(checkTokenBudget);
+      budgetCheck.mockReturnValueOnce('stop');
+      chatMock
+        .mockResolvedValueOnce(toolResponse(100))
+        .mockResolvedValueOnce({
+          ...finalResponse(120, ''),
+          usage: {
+            promptTokens: 120,
+            completionTokens: 90_000,
+            totalTokens: 90_120,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+          },
+          finishReason: 'length',
+        })
+        .mockResolvedValueOnce(finalResponse(140, 'Unexpected corrective response'));
+
+      try {
+        const { result } = await drainGenerator(
+          executeLoopGenerator(
+            deps,
+            'Read and return a non-empty final.',
+            createMockContext(),
+            { stream: false } satisfies LoopOptions,
+            'ROOT_SYSTEM_PROMPT'
+          )
+        );
+
+        expect(chatMock).toHaveBeenCalledTimes(2);
+        expect(result).toMatchObject({
+          success: false,
+          error: {
+            type: 'intent_fulfillment_failed',
+            message: expect.stringContaining('output budget'),
+          },
+          metadata: { outputTruncated: true },
+        });
+        expect(
+          saveMessage.mock.calls.filter(
+            (call) =>
+              call[1] === 'user' &&
+              String(call[2]).includes('Return a non-empty final response')
+          )
+        ).toHaveLength(0);
+      } finally {
+        budgetCheck.mockReturnValue('continue');
+      }
+    });
+
+    it('preserves the length recovery count across an empty-final correction', async () => {
+      const { deps, saveMessage } = createTypedPersistenceHarness();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce(toolResponse(100))
+        .mockResolvedValueOnce({
+          ...finalResponse(120, 'Initial truncated output'),
+          finishReason: 'length',
+        })
+        .mockResolvedValueOnce(finalResponse(140, ''))
+        .mockResolvedValueOnce({
+          ...finalResponse(160, 'First post-correction truncation'),
+          finishReason: 'length',
+        })
+        .mockResolvedValueOnce({
+          ...finalResponse(180, 'Second post-correction truncation'),
+          finishReason: 'length',
+        })
+        .mockResolvedValueOnce({
+          ...finalResponse(200, 'Final truncated response'),
+          finishReason: 'length',
+        });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Read and return a complete final response.',
+          createMockContext(),
+          { stream: false } satisfies LoopOptions,
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+
+      expect(chatMock).toHaveBeenCalledTimes(6);
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: 'Final truncated response',
+        metadata: { outputTruncated: true },
+      });
+      expect(
+        saveMessage.mock.calls.filter(
+          (call) =>
+            call[1] === 'user' &&
+            String(call[2]).includes('Return a non-empty final response')
+        )
+      ).toHaveLength(1);
+    });
+
+    it('resets the length recovery count after a successful tool call', async () => {
+      const { deps } = createTypedPersistenceHarness();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          ...finalResponse(100, 'Pre-tool truncated output'),
+          finishReason: 'length',
+        })
+        .mockResolvedValueOnce(toolResponse(120))
+        .mockResolvedValueOnce({
+          ...finalResponse(140, 'First post-tool truncation'),
+          finishReason: 'length',
+        })
+        .mockResolvedValueOnce({
+          ...finalResponse(160, 'Second post-tool truncation'),
+          finishReason: 'length',
+        })
+        .mockResolvedValueOnce({
+          ...finalResponse(180, 'Third post-tool truncation'),
+          finishReason: 'length',
+        })
+        .mockResolvedValueOnce({
+          ...finalResponse(200, 'Final post-tool truncation'),
+          finishReason: 'length',
+        });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Recover fully after reading the file.',
+          createMockContext(),
+          { stream: false } satisfies LoopOptions,
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+
+      expect(deps.toolExecutor.execute).toHaveBeenCalledOnce();
+      expect(chatMock).toHaveBeenCalledTimes(6);
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: 'Final post-tool truncation',
+        metadata: { outputTruncated: true },
+      });
+    });
+
+    it('does not reset the empty-final corrective budget after another tool call', async () => {
+      const { deps, saveMessage } = createTypedPersistenceHarness();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce(toolResponse(100))
+        .mockResolvedValueOnce(finalResponse(120, ''))
+        .mockResolvedValueOnce({
+          ...toolResponse(140),
+          toolCalls: [
+            {
+              id: 'tool-call-read-2',
+              type: 'function',
+              function: {
+                name: 'Read',
+                arguments: JSON.stringify({ path: 'README.md' }),
+              },
+            },
+          ],
+        })
+        .mockResolvedValueOnce(finalResponse(160, ''))
+        .mockResolvedValueOnce(finalResponse(180, ''));
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Read both files and finish with a non-empty response.',
+          createMockContext(),
+          { stream: false } as LoopOptions,
+          'ROOT_SYSTEM_PROMPT'
+        )
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatchObject({ type: 'intent_fulfillment_failed' });
+      expect(chatMock).toHaveBeenCalledTimes(4);
+      const correctiveCalls = saveMessage.mock.calls.filter(
+        (call) =>
+          call[1] === 'user' &&
+          String(call[2]).includes('Return a non-empty final response')
+      );
+      expect(correctiveCalls).toHaveLength(1);
+      expect(JSON.stringify(correctiveCalls[0])).toContain('"clientVisible":false');
     });
 
     it('decodes a double-encoded JSON object before tool validation', async () => {
@@ -6838,6 +7286,524 @@ describe('executeLoopGenerator', () => {
           structuredOutputSchemaDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
         },
       });
+    });
+
+    it('accepts empty prose after the reserved schema tool commits canonical output', async () => {
+      const deps = createMockDeps();
+      const chat = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chat
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'structured-empty-prose',
+              type: 'function',
+              function: {
+                name: 'StructuredOutput',
+                arguments: '{"answer":"validated"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          finishReason: 'stop',
+        });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Return a structured answer.',
+          createMockContext(),
+          { stream: false, outputSchema },
+          undefined
+        )
+      );
+
+      expect(chat).toHaveBeenCalledTimes(2);
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: '{"answer":"validated"}',
+        metadata: { structuredOutput: { answer: 'validated' } },
+      });
+    });
+
+    it('commits validated structured output when blank prose exhausts the output budget', async () => {
+      const { deps, saveMessage } = createTypedPersistenceHarness();
+      const chat = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      const budgetCheck = vi.mocked(checkTokenBudget);
+      budgetCheck.mockReturnValueOnce('stop');
+      chat
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'structured-output-budget-stop',
+              type: 'function',
+              function: {
+                name: 'StructuredOutput',
+                arguments: '{"answer":"validated"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          usage: {
+            promptTokens: 120,
+            completionTokens: 90_000,
+            totalTokens: 90_120,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+          },
+          finishReason: 'length',
+        });
+
+      try {
+        const { events, result } = await drainGenerator(
+          executeLoopGenerator(
+            deps,
+            'Return a structured answer.',
+            createMockContext(),
+            {
+              stream: false,
+              outputSchema,
+              turnFinalization: {
+                turnId: 'turn-structured-output-budget-stop',
+                getInputMessageIds: async () => ['input-structured-output-budget-stop'],
+              },
+            } satisfies LoopOptions,
+            undefined
+          )
+        );
+
+        expect(chat).toHaveBeenCalledTimes(2);
+        expect(result).toMatchObject({
+          success: true,
+          finalMessage: '{"answer":"validated"}',
+          metadata: {
+            outputTruncated: true,
+            structuredOutput: { answer: 'validated' },
+            structuredOutputSchemaDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+        });
+        expect(events).toContainEqual({
+          kind: 'structured_output',
+          output: { answer: 'validated' },
+          schemaDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        });
+        const canonicalFinalMessages = saveMessage.mock.calls.filter(
+          (call) => call[1] === 'assistant' && call[2] === '{"answer":"validated"}'
+        );
+        expect(canonicalFinalMessages).toHaveLength(1);
+        expect(canonicalFinalMessages[0]?.[4]).toMatchObject({
+          structuredOutput: {
+            output: { answer: 'validated' },
+            schemaDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+          structuredOutputSchemaDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+          turnFinalization: {
+            turnId: 'turn-structured-output-budget-stop',
+            inputMessageIds: ['input-structured-output-budget-stop'],
+          },
+        });
+      } finally {
+        budgetCheck.mockReturnValue('continue');
+      }
+    });
+
+    it('finalizes validated structured output before generic length recovery', async () => {
+      const { deps, saveMessage } = createTypedPersistenceHarness();
+      const chat = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      vi.mocked(checkTokenBudget).mockReturnValue('continue');
+      chat
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'structured-output-length-recovery',
+              type: 'function',
+              function: {
+                name: 'StructuredOutput',
+                arguments: '{"answer":"validated"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'trailing prose that must not replace canonical output',
+          usage: {
+            promptTokens: 120,
+            completionTokens: 90_000,
+            totalTokens: 90_120,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+          },
+          finishReason: 'length',
+        })
+        .mockResolvedValueOnce({
+          content: 'generic length recovery should not run',
+          finishReason: 'stop',
+        });
+
+      const { events, result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Return a structured answer.',
+          createMockContext(),
+          {
+            stream: false,
+            outputSchema,
+            turnFinalization: {
+              turnId: 'turn-structured-output-length-recovery',
+              getInputMessageIds: async () => [
+                'input-structured-output-length-recovery',
+              ],
+            },
+          } satisfies LoopOptions,
+          undefined
+        )
+      );
+
+      expect(chat).toHaveBeenCalledTimes(2);
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: '{"answer":"validated"}',
+        metadata: {
+          outputTruncated: true,
+          structuredOutput: { answer: 'validated' },
+          structuredOutputSchemaDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+      });
+      expect(events).toContainEqual({
+        kind: 'structured_output',
+        output: { answer: 'validated' },
+        schemaDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      const canonicalFinalMessages = saveMessage.mock.calls.filter(
+        (call) => call[1] === 'assistant' && call[2] === '{"answer":"validated"}'
+      );
+      expect(canonicalFinalMessages).toHaveLength(1);
+      expect(canonicalFinalMessages[0]?.[4]).toMatchObject({
+        structuredOutput: {
+          output: { answer: 'validated' },
+          schemaDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        },
+        structuredOutputSchemaDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        turnFinalization: {
+          turnId: 'turn-structured-output-length-recovery',
+          inputMessageIds: ['input-structured-output-length-recovery'],
+        },
+      });
+    });
+
+    it('runs required delegation before finalizing length-truncated structured output', async () => {
+      const deps = createMockDeps();
+      const chat = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      vi.mocked(checkTokenBudget).mockReturnValue('continue');
+      chat
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'structured-output-before-delegation',
+              type: 'function',
+              function: {
+                name: 'StructuredOutput',
+                arguments: '{"answer":"validated"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          usage: {
+            promptTokens: 120,
+            completionTokens: 90_000,
+            totalTokens: 90_120,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+          },
+          finishReason: 'length',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'required-delegation-after-structured-output',
+              type: 'function',
+              function: {
+                name: 'Task',
+                arguments:
+                  '{"subagent_type":"channel-specialist","description":"review","prompt":"review the result"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          finishReason: 'stop',
+        });
+      const execute = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
+      execute.mockResolvedValueOnce({
+        success: true,
+        llmContent: 'Delegated review completed.',
+        metadata: { subagentStatus: 'completed' },
+      });
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Delegate this review to channel-specialist with the Task tool, then return a structured answer.',
+          createMockContext(),
+          { stream: false, outputSchema } satisfies LoopOptions,
+          undefined
+        )
+      );
+
+      expect(chat).toHaveBeenCalledTimes(4);
+      expect(execute).toHaveBeenCalledWith(
+        'Task',
+        expect.objectContaining({ subagent_type: 'channel-specialist' }),
+        expect.objectContaining({ sessionId: 'test-session' })
+      );
+      expect(result).toMatchObject({
+        success: true,
+        finalMessage: '{"answer":"validated"}',
+        metadata: {
+          outputTruncated: true,
+          structuredOutput: { answer: 'validated' },
+        },
+      });
+    });
+
+    it('runs required Bash verification before finalizing budget-stopped structured output', async () => {
+      const deps = createMockDeps();
+      const chat = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      const budgetCheck = vi.mocked(checkTokenBudget);
+      budgetCheck.mockReturnValueOnce('stop');
+      chat
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'structured-output-before-verification',
+              type: 'function',
+              function: {
+                name: 'StructuredOutput',
+                arguments: '{"answer":"validated"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          usage: {
+            promptTokens: 120,
+            completionTokens: 90_000,
+            totalTokens: 90_120,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+          },
+          finishReason: 'length',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'required-verification-after-structured-output',
+              type: 'function',
+              function: {
+                name: 'Bash',
+                arguments: '{"command":"npm test"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          finishReason: 'stop',
+        });
+      const execute = deps.toolExecutor.execute as ReturnType<typeof vi.fn>;
+      execute.mockResolvedValueOnce({
+        success: true,
+        llmContent: 'Tests passed.',
+        metadata: { command: 'npm test', exit_code: 0 },
+      });
+
+      try {
+        const { result } = await drainGenerator(
+          executeLoopGenerator(
+            deps,
+            'Run npm test and return a structured answer only after it passes.',
+            createMockContext(),
+            { stream: false, outputSchema } satisfies LoopOptions,
+            undefined
+          )
+        );
+
+        expect(chat).toHaveBeenCalledTimes(4);
+        expect(execute).toHaveBeenCalledWith(
+          'Bash',
+          { command: 'npm test' },
+          expect.objectContaining({ sessionId: 'test-session' })
+        );
+        expect(result).toMatchObject({
+          success: true,
+          finalMessage: '{"answer":"validated"}',
+          metadata: {
+            outputTruncated: true,
+            structuredOutput: { answer: 'validated' },
+          },
+        });
+      } finally {
+        budgetCheck.mockReturnValue('continue');
+      }
+    });
+
+    it('streams validated structured output when blank prose exhausts the output budget', async () => {
+      const { deps, saveMessage } = createTypedPersistenceHarness();
+      const streamChat = vi.mocked(deps.chatService.streamChat);
+      const budgetCheck = vi.mocked(checkTokenBudget);
+      budgetCheck.mockReturnValueOnce('stop');
+      streamChat
+        .mockImplementationOnce(async function* () {
+          yield {
+            toolCalls: [
+              {
+                index: 0,
+                id: 'stream-structured-output-budget-stop',
+                type: 'function',
+                function: {
+                  name: 'StructuredOutput',
+                  arguments: '{"answer":"validated"}',
+                },
+              },
+            ],
+            usage: {
+              promptTokens: 100,
+              completionTokens: 20,
+              totalTokens: 120,
+            },
+            finishReason: 'tool_calls',
+          } satisfies StreamChunk;
+        })
+        .mockImplementationOnce(async function* () {
+          yield {
+            usage: {
+              promptTokens: 120,
+              completionTokens: 90_000,
+              totalTokens: 90_120,
+            },
+            finishReason: 'length',
+          } satisfies StreamChunk;
+        });
+
+      try {
+        const { events, result } = await drainGenerator(
+          executeLoopGenerator(
+            deps,
+            'Return a structured answer.',
+            createMockContext(),
+            { stream: true, outputSchema } satisfies LoopOptions,
+            undefined
+          )
+        );
+
+        expect(streamChat).toHaveBeenCalledTimes(2);
+        expect(deps.chatService.chat).not.toHaveBeenCalled();
+        expect(result).toMatchObject({
+          success: true,
+          finalMessage: '{"answer":"validated"}',
+          metadata: {
+            outputTruncated: true,
+            structuredOutput: { answer: 'validated' },
+            structuredOutputSchemaDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+        });
+        expect(events).toContainEqual({
+          kind: 'structured_output',
+          output: { answer: 'validated' },
+          schemaDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        });
+        expect(
+          saveMessage.mock.calls.filter(
+            (call) => call[1] === 'assistant' && call[2] === '{"answer":"validated"}'
+          )
+        ).toHaveLength(1);
+      } finally {
+        budgetCheck.mockReturnValue('continue');
+      }
+    });
+
+    it('fails closed when streamed structured output cannot be finally persisted', async () => {
+      const { deps } = createTypedPersistenceHarness({
+        rejectAssistantMessage: true,
+      });
+      const streamChat = vi.mocked(deps.chatService.streamChat);
+      const budgetCheck = vi.mocked(checkTokenBudget);
+      budgetCheck.mockReturnValueOnce('stop');
+      streamChat
+        .mockImplementationOnce(async function* () {
+          yield {
+            toolCalls: [
+              {
+                index: 0,
+                id: 'stream-structured-output-persistence-failure',
+                type: 'function',
+                function: {
+                  name: 'StructuredOutput',
+                  arguments: '{"answer":"validated"}',
+                },
+              },
+            ],
+            usage: {
+              promptTokens: 100,
+              completionTokens: 20,
+              totalTokens: 120,
+            },
+            finishReason: 'tool_calls',
+          } satisfies StreamChunk;
+        })
+        .mockImplementationOnce(async function* () {
+          yield {
+            usage: {
+              promptTokens: 120,
+              completionTokens: 90_000,
+              totalTokens: 90_120,
+            },
+            finishReason: 'length',
+          } satisfies StreamChunk;
+        });
+
+      try {
+        const { events, result } = await drainGenerator(
+          executeLoopGenerator(
+            deps,
+            'Return a structured answer.',
+            createMockContext(),
+            { stream: true, outputSchema } satisfies LoopOptions,
+            undefined
+          )
+        );
+
+        expect(streamChat).toHaveBeenCalledTimes(2);
+        expect(deps.chatService.chat).not.toHaveBeenCalled();
+        expect(result).toMatchObject({
+          success: false,
+          error: { type: 'message_persistence_failed' },
+        });
+        expect(events.some((event) => event.kind === 'structured_output')).toBe(false);
+      } finally {
+        budgetCheck.mockReturnValue('continue');
+      }
     });
 
     it('does not publish structured output before its final response commit', async () => {

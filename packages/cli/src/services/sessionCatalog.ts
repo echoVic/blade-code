@@ -1,9 +1,6 @@
 import * as path from 'node:path';
 import { isValidSessionId } from '../context/storage/pathUtils.js';
-import type {
-  SessionTaskPriority,
-  SessionTaskStatus,
-} from '../context/types.js';
+import type { SessionTaskPriority, SessionTaskStatus } from '../context/types.js';
 
 export const DEFAULT_SESSION_PAGE_SIZE = 50;
 export const MAX_SESSION_PAGE_SIZE = 100;
@@ -16,11 +13,7 @@ const SESSION_TASK_STATUSES = new Set<SessionTaskStatus>([
   'cancelled',
   'interrupted',
 ]);
-const SESSION_TASK_PRIORITIES = new Set<SessionTaskPriority>([
-  'high',
-  'medium',
-  'low',
-]);
+const SESSION_TASK_PRIORITIES = new Set<SessionTaskPriority>(['high', 'medium', 'low']);
 
 export interface SessionListOptions {
   cwd?: string;
@@ -161,13 +154,7 @@ export function resolveSessionCursorBoundary(
 export function normalizeSessionListOptions(
   options: SessionListOptions = {}
 ): NormalizedSessionListOptions {
-  const {
-    cwd,
-    cursor,
-    limit,
-    includeSubagents = false,
-    archived = false,
-  } = options;
+  const { cwd, cursor, limit, includeSubagents = false, archived = false } = options;
 
   if (cwd !== undefined && !path.isAbsolute(cwd)) {
     throw new Error('Session catalog cwd must be absolute');
@@ -204,14 +191,8 @@ export function normalizeSessionTaskFilters(
     SESSION_TASK_PRIORITIES,
     'task priority'
   );
-  const taskDueAfter = normalizeDueBoundary(
-    options.taskDueAfter,
-    'taskDueAfter'
-  );
-  const taskDueBefore = normalizeDueBoundary(
-    options.taskDueBefore,
-    'taskDueBefore'
-  );
+  const taskDueAfter = normalizeDueBoundary(options.taskDueAfter, 'taskDueAfter');
+  const taskDueBefore = normalizeDueBoundary(options.taskDueBefore, 'taskDueBefore');
   validateDueRange(taskDueAfter, taskDueBefore);
   return {
     ...(taskStatuses ? { taskStatuses } : {}),

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -12,6 +12,7 @@ import { runForegroundBoundedOutputAcpDriver } from '../../support/foregroundBou
 import { runForegroundBoundedOutputHeadlessDriver } from '../../support/foregroundBoundedOutputHeadlessDriver.js';
 import { runForegroundBoundedOutputPtyDriver } from '../../support/foregroundBoundedOutputPtyDriver.js';
 import { runForegroundBoundedOutputWebDriver } from '../../support/foregroundBoundedOutputWebDriver.js';
+import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
 import { createForegroundBoundedOutputFixture } from './foregroundBoundedOutputFixture.js';
 import {
   assertForegroundBoundedOutputDurableMetadata,
@@ -221,7 +222,7 @@ describe
           if (previousAutoMemory === undefined) delete process.env.BLADE_AUTO_MEMORY;
           else process.env.BLADE_AUTO_MEMORY = previousAutoMemory;
           WorkspaceTrustService.resetInstance();
-          await rm(root, { recursive: true, force: true });
+          await removeTestDirectory(root);
         }
       },
       240_000

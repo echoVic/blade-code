@@ -1,6 +1,12 @@
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
 
 const DEFAULT_GRACE_PERIOD_MS = 500;
+const WATCHDOG_SHUTDOWN_TIMEOUT_MS = 1_000;
+const WATCHDOG_PATH = fileURLToPath(
+  new URL('./test-owner-watchdog.js', import.meta.url)
+);
 
 function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -59,6 +65,30 @@ async function terminateProcessTree(child, gracePeriodMs) {
   signalPosixTree(child, 'SIGKILL');
 }
 
+function startOwnerWatchdog(targetPid) {
+  const watchdog = spawn(
+    process.execPath,
+    [WATCHDOG_PATH, String(process.pid), String(targetPid)],
+    {
+      detached: true,
+      stdio: ['pipe', 'ignore', 'ignore'],
+      windowsHide: true,
+    }
+  );
+  watchdog.unref();
+  return watchdog;
+}
+
+async function stopOwnerWatchdog(watchdog) {
+  if (watchdog.exitCode !== null || watchdog.signalCode !== null) return;
+  watchdog.stdin?.end('done\n');
+  const exited = once(watchdog, 'close');
+  const timeout = wait(WATCHDOG_SHUTDOWN_TIMEOUT_MS).then(() => 'timeout');
+  if ((await Promise.race([exited, timeout])) === 'timeout') {
+    watchdog.kill('SIGKILL');
+  }
+}
+
 export async function runOwnedCommand({
   command,
   args,
@@ -76,6 +106,7 @@ export async function runOwnedCommand({
     detached: process.platform !== 'win32',
     windowsHide: true,
   });
+  const watchdog = child.pid ? startOwnerWatchdog(child.pid) : undefined;
   let timedOut = false;
   let aborted = false;
   let terminationPromise;
@@ -106,5 +137,6 @@ export async function runOwnedCommand({
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener('abort', abort);
+    if (watchdog) await stopOwnerWatchdog(watchdog);
   }
 }

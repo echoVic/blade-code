@@ -67,12 +67,13 @@ class TokenBudgetWebFinalTimeoutError extends Error {
   }
 }
 
-export function formatTokenBudgetWebFinalDiagnostic(input: {
-  status: unknown;
-  providerRequests: number;
-  publicFinalSeen: boolean;
-  domFinalSeen: boolean;
-}): string {
+class TokenBudgetWebTaskStartError extends Error {
+  constructor(readonly diagnostic: string) {
+    super('Token-budget Web task start failed');
+  }
+}
+
+function normalizeWebRunStatus(status: unknown): WebRunStatus {
   const statuses = new Set<WebRunStatus>([
     'running',
     'completed',
@@ -84,10 +85,70 @@ export function formatTokenBudgetWebFinalDiagnostic(input: {
     'waiting_permission',
     'error',
   ]);
-  const status: WebRunStatus =
-    typeof input.status === 'string' && statuses.has(input.status as WebRunStatus)
-      ? (input.status as WebRunStatus)
-      : 'unknown';
+  return typeof status === 'string' && statuses.has(status as WebRunStatus)
+    ? (status as WebRunStatus)
+    : 'unknown';
+}
+
+export function formatTokenBudgetWebTaskStartDiagnostic(input: {
+  status: unknown;
+  providerRequestsBefore: unknown;
+  providerRequestsAfter: unknown;
+  publicInputSeen: boolean;
+}): string {
+  const before = input.providerRequestsBefore;
+  const after = input.providerRequestsAfter;
+  const delta =
+    isNonNegativeSafeInteger(before) &&
+    isNonNegativeSafeInteger(after) &&
+    after >= before
+      ? after - before
+      : undefined;
+  const requestDelta =
+    delta === undefined ? 'invalid' : delta <= 5 ? String(delta) : 'overflow';
+  return (
+    `status_${normalizeWebRunStatus(input.status)}:requests_${requestDelta}:` +
+    `input_${input.publicInputSeen ? 1 : 0}`
+  );
+}
+
+export function classifyTokenBudgetWebTaskStartObservation(input: {
+  status: unknown;
+  providerRequestsBefore: number;
+  providerRequestsAfter: unknown;
+  publicInputSeen: boolean;
+}): 'active' | 'pending' | 'terminal' {
+  const status = normalizeWebRunStatus(input.status);
+  if (status === 'running') return 'active';
+  if (
+    ['failed', 'cancelled', 'interrupted', 'error'].includes(status) &&
+    input.publicInputSeen
+  ) {
+    return 'terminal';
+  }
+  if (
+    status === 'completed' &&
+    isNonNegativeSafeInteger(input.providerRequestsAfter) &&
+    input.providerRequestsAfter > input.providerRequestsBefore
+  ) {
+    return 'terminal';
+  }
+  return 'pending';
+}
+
+export function isTokenBudgetWebRunFailure(status: unknown): boolean {
+  return ['failed', 'cancelled', 'interrupted', 'error'].includes(
+    normalizeWebRunStatus(status)
+  );
+}
+
+export function formatTokenBudgetWebFinalDiagnostic(input: {
+  status: unknown;
+  providerRequests: number;
+  publicFinalSeen: boolean;
+  domFinalSeen: boolean;
+}): string {
+  const status = normalizeWebRunStatus(input.status);
   const requests = !Number.isSafeInteger(input.providerRequests)
     ? 'invalid'
     : input.providerRequests < 0
@@ -340,9 +401,19 @@ async function waitForActiveRun(input: {
   sessionId: string;
   workspace: string;
   timeoutMs: number;
+  providerRequestCount: () => number;
+  providerRequestsBefore: number;
 }): Promise<void> {
   const deadline = Date.now() + input.timeoutMs;
+  let status: unknown = 'unknown';
+  let providerRequestsAfter: unknown = input.providerRequestsBefore;
+  let publicInputSeen = false;
   while (Date.now() < deadline) {
+    try {
+      providerRequestsAfter = input.providerRequestCount();
+    } catch {
+      providerRequestsAfter = undefined;
+    }
     const response = await fetch(
       `${input.origin}/sessions/${encodeURIComponent(
         input.sessionId
@@ -350,19 +421,41 @@ async function waitForActiveRun(input: {
     );
     if (response.ok) {
       const value: unknown = await response.json();
-      if (isRecord(value) && value.status === 'running') return;
-      if (
-        isRecord(value) &&
-        ['completed', 'failed', 'cancelled', 'interrupted'].includes(
-          String(value.status)
-        )
-      ) {
-        throw new Error('Token-budget Web run completed before reload injection');
+      status = isRecord(value) ? value.status : 'unknown';
+      if (!publicInputSeen) {
+        const messages = await history(input);
+        publicInputSeen =
+          Array.isArray(messages) &&
+          messages.some((message) => isRecord(message) && message.role === 'user');
+      }
+      const observation = classifyTokenBudgetWebTaskStartObservation({
+        status,
+        providerRequestsBefore: input.providerRequestsBefore,
+        providerRequestsAfter,
+        publicInputSeen,
+      });
+      if (observation === 'active') return;
+      if (observation === 'terminal') {
+        throw new TokenBudgetWebTaskStartError(
+          formatTokenBudgetWebTaskStartDiagnostic({
+            status,
+            providerRequestsBefore: input.providerRequestsBefore,
+            providerRequestsAfter,
+            publicInputSeen,
+          })
+        );
       }
     }
     await input.page.waitForTimeout(50);
   }
-  throw new Error('Token-budget Web active run was not observed');
+  throw new TokenBudgetWebTaskStartError(
+    formatTokenBudgetWebTaskStartDiagnostic({
+      status,
+      providerRequestsBefore: input.providerRequestsBefore,
+      providerRequestsAfter,
+      publicInputSeen,
+    })
+  );
 }
 
 async function waitForCompletedRun(input: {
@@ -449,18 +542,7 @@ async function waitForFinal(input: {
     if (statusResponse.ok) {
       const value: unknown = await statusResponse.json();
       status = isRecord(value) ? value.status : 'unknown';
-      if (
-        typeof status === 'string' &&
-        [
-          'completed',
-          'failed',
-          'cancelled',
-          'interrupted',
-          'idle',
-          'waiting_permission',
-          'error',
-        ].includes(status)
-      ) {
+      if (isTokenBudgetWebRunFailure(status)) {
         break;
       }
     }
@@ -735,6 +817,10 @@ export async function runTokenBudgetHandoffWebDriver(input: {
       );
     }
     failureStage = 'task_start';
+    const providerRequestsBeforeStart = input.providerRequestCount();
+    if (!isNonNegativeSafeInteger(providerRequestsBeforeStart)) {
+      throw new Error('Token-budget Web Provider request baseline is invalid');
+    }
     await composer.fill(input.fixture.prompt);
     await composer.press('Enter');
     await waitForActiveRun({
@@ -743,6 +829,8 @@ export async function runTokenBudgetHandoffWebDriver(input: {
       sessionId,
       workspace,
       timeoutMs: remainingStageBudget(deadline, 30_000),
+      providerRequestCount: input.providerRequestCount,
+      providerRequestsBefore: providerRequestsBeforeStart,
     });
     const firstPage = await collectEvents(page, recordedSse);
     if (firstPage.hiddenSeen || firstPage.overflowed) {
@@ -821,6 +909,8 @@ export async function runTokenBudgetHandoffWebDriver(input: {
   } catch (error) {
     if (failureStage === 'launcher_ready') {
       failureCode = launcherReadyFailureCode(error, child);
+    } else if (error instanceof TokenBudgetWebTaskStartError) {
+      failureCode = error.diagnostic;
     } else if (error instanceof TokenBudgetWebFinalTimeoutError) {
       failureCode = error.diagnostic;
     }

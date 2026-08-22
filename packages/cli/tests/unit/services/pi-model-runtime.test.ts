@@ -108,6 +108,28 @@ describe('pi model runtime', () => {
     });
   });
 
+  it('accepts low reasoning for DeepSeek V4 Flash', () => {
+    const resolved = resolveModelConfig(
+      {
+        id: 'deepseek',
+        provider: 'deepseek',
+        model: 'deepseek-v4-flash',
+      },
+      { temperature: 0, timeout: 180_000 },
+      'low'
+    );
+
+    expect(resolved.reasoning).toMatchObject({
+      selection: 'low',
+      effective: 'low',
+      supported: ['off', 'low', 'high', 'max'],
+    });
+    expect(resolved.chat).toMatchObject({
+      reasoningEnabled: true,
+      reasoningEffort: 'low',
+    });
+  });
+
   it('freezes Provider circuit and admission policy into chat config', () => {
     const resolved = resolveModelConfig(
       {

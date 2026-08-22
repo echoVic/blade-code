@@ -463,7 +463,6 @@ export const zh: Dict = {
   'chat.input.effort.change': '切换推理强度',
   'chat.input.effort.locked': '请等待当前轮次结束后再切换推理强度',
   'chat.input.effort.option': '使用 {effort} 推理强度',
-  'chat.input.effort.autoHint': '接近 high',
   'chat.input.serviceTier.label': '速度 {tier}',
   'chat.input.serviceTier.heading': 'Provider 服务等级',
   'chat.input.serviceTier.change': '切换 Provider 服务等级',

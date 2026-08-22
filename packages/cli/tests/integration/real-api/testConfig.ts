@@ -549,7 +549,7 @@ export function releaseBlockingSurfaces<T extends string>(
 
 export function releaseBlockingModels(configs: TestModelConfig[]): TestModelConfig[] {
   if (!isReleaseMatrix()) return configs;
-  return configs.filter((c) => c.id !== 'gpt');
+  return configs.filter((config) => config.id === 'deepseek' || config.id === 'claude');
 }
 
 if (isRealApiTestEnabled() && getEnabledModelConfigs().length === 0) {

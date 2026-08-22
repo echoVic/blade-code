@@ -1,4 +1,5 @@
-import { mkdir, realpath } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access, mkdir, realpath } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { SandboxRuntimeConfig } from '@anthropic-ai/sandbox-runtime';
@@ -11,6 +12,7 @@ export interface WorkspaceSandboxInput {
   cwd: string;
   workspaceRoot: string;
   access?: 'workspace-write' | 'workspace-read-only';
+  trustedPath?: string;
   signal?: AbortSignal;
 }
 
@@ -205,6 +207,9 @@ export class AnthropicWorkspaceSandboxBackend implements WorkspaceSandboxBackend
     const runtimeExecutable = workspaceReadOnly
       ? await realpath(process.execPath).catch(() => path.resolve(process.execPath))
       : undefined;
+    const nodeExecutable = workspaceReadOnly
+      ? await resolvePathExecutable('node', input.trustedPath)
+      : undefined;
     const deniedReadPaths = workspaceReadOnly
       ? [
           os.homedir(),
@@ -254,7 +259,12 @@ export class AnthropicWorkspaceSandboxBackend implements WorkspaceSandboxBackend
               denyRead: deniedReadPaths,
               allowRead:
                 workspaceReadOnly && runtimeExecutable
-                  ? [input.workspaceRoot, runtimeExecutable, tempRoot]
+                  ? [
+                      input.workspaceRoot,
+                      runtimeExecutable,
+                      ...(nodeExecutable ? [nodeExecutable] : []),
+                      tempRoot,
+                    ]
                   : [],
               allowWrite: workspaceReadOnly
                 ? [tempRoot]
@@ -371,6 +381,31 @@ export class AnthropicWorkspaceSandboxBackend implements WorkspaceSandboxBackend
     await mkdir(this.tempRoot, { recursive: true });
     return realpath(this.tempRoot);
   }
+}
+
+async function resolvePathExecutable(
+  executable: string,
+  trustedPath: string | undefined
+): Promise<string | undefined> {
+  if (!trustedPath) return undefined;
+  const names =
+    process.platform === 'win32'
+      ? [`${executable}.exe`, `${executable}.cmd`, executable]
+      : [executable];
+
+  for (const directory of trustedPath.split(path.delimiter)) {
+    if (!path.isAbsolute(directory)) continue;
+    for (const name of names) {
+      const candidate = path.join(directory, name);
+      try {
+        await access(candidate, constants.X_OK);
+        return await realpath(candidate);
+      } catch {
+        // Continue to the next trusted PATH entry.
+      }
+    }
+  }
+  return undefined;
 }
 
 export function isWorkspaceSandboxRuntimeFailure(

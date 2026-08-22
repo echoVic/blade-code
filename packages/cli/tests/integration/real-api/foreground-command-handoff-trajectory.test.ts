@@ -1,5 +1,5 @@
 import { type ChildProcess, execFile, spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,13 +11,14 @@ import {
   type ProcessIdentity,
   processIdentityMatches,
 } from '../../../src/utils/process/ProcessIdentity.js';
+import { isCompleteRawPtyMarkerEvidence } from '../../support/foregroundBoundedOutputPtyDriver.js';
 import {
   createForegroundCommandHandoffFixture,
   driveForegroundCommandHandoffFixture,
   type ForegroundCommandHandoffFixture,
   releaseForegroundCommandHandoffFixture,
 } from '../../support/foregroundCommandHandoffFixtureDriver.js';
-import { isCompleteRawPtyMarkerEvidence } from '../../support/foregroundBoundedOutputPtyDriver.js';
+import { removeTestDirectory } from '../../support/helpers/removeTestDirectory.js';
 import { assertNoForegroundLeases } from './foregroundBoundedOutputHarness.js';
 import {
   assertNoSecrets,
@@ -729,7 +730,7 @@ describe
               () => undefined
             );
           }
-          await rm(root, { recursive: true, force: true });
+          await removeTestDirectory(root);
         }
       },
       240_000

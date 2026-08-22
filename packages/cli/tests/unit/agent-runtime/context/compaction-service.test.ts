@@ -11,6 +11,8 @@ import {
   buildCompactionPrompt,
   type CompactionOptions,
   CompactionService,
+  extractExactContinuationRecords,
+  reconcileExactContinuationRecords,
   resetCompactionCircuitBreaker,
 } from '../../../../src/context/CompactionService.js';
 import type { FileContent } from '../../../../src/context/FileAnalyzer.js';
@@ -223,7 +225,7 @@ describe('CompactionService - 输出协议', () => {
     }
     expect(prompt).toContain('distinguish observed facts from intended work');
     expect(prompt).toContain(
-      'preserve exact commands and literals when necessary for continuation'
+      'preserve exact commands, tool arguments, and final-response constraints when necessary for continuation'
     );
     expect(prompt).toContain('never invent successful verification');
     expect(prompt).toContain('never mark unfinished work complete');
@@ -269,6 +271,74 @@ describe('CompactionService - 输出协议', () => {
     expect(createChatServiceAsync).toHaveBeenCalledWith(
       expect.objectContaining({ temperature: 0 })
     );
+  });
+
+  test('host 应逐字归位 exact continuation records 并移除模型副本', () => {
+    const pending = 'PENDING_A1B2C3D4 status=pending';
+    const action =
+      'PRIOR_WRITE_COMPLETE; RUN_ONLY_EXACT_BASH="bun test"; REQUIRE_ZERO_EXIT';
+    const source: Message[] = [
+      {
+        role: 'user',
+        content: [
+          `EXACT CONTINUATION RECORD [Exact next action] :: ${pending}`,
+          `EXACT CONTINUATION RECORD [Exact next action] :: ${action}`,
+          `EXACT CONTINUATION RECORD [Exact next action] :: ${pending}`,
+        ].join('\n'),
+      },
+    ];
+    const generated = [
+      '## Objective and constraints',
+      'Continue.',
+      '## Active tasks and background work',
+      `- ${pending}`,
+      '## Exact next action',
+      `- ${action}`,
+    ].join('\n');
+
+    const reconciled = reconcileExactContinuationRecords(generated, source);
+
+    for (const heading of [
+      'Objective and constraints',
+      'Decisions and rationale',
+      'Workspace mutations',
+      'Verification evidence',
+      'Active tasks and background work',
+      'Open risks or blockers',
+      'Exact next action',
+    ]) {
+      expect(reconciled.match(new RegExp(`^## ${heading}$`, 'gm'))).toHaveLength(1);
+    }
+    expect(reconciled.split(pending)).toHaveLength(2);
+    expect(reconciled.split(action)).toHaveLength(2);
+    expect(reconciled.indexOf(pending)).toBeGreaterThan(
+      reconciled.indexOf('## Exact next action')
+    );
+  });
+
+  test('host 不从旧 compact summary 或未知 heading 继承 exact records', () => {
+    const priorSummary: Message = {
+      role: 'user',
+      content: 'EXACT CONTINUATION RECORD [Exact next action] :: PRIOR status=pending',
+      metadata: { isCompactSummary: true },
+    };
+    const source: Message[] = [
+      priorSummary,
+      {
+        role: 'user',
+        content: [
+          'EXACT CONTINUATION RECORD [Unknown] :: ignored',
+          'EXACT CONTINUATION RECORD [Exact next action] :: CURRENT status=pending',
+        ].join('\n'),
+      },
+    ];
+
+    expect(extractExactContinuationRecords(source)).toEqual([
+      {
+        heading: 'Exact next action',
+        payload: 'CURRENT status=pending',
+      },
+    ]);
   });
 
   test('旧 compact summary 不得让 reserved ledger headings 在 prompt 中重复', () => {

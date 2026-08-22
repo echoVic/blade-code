@@ -185,16 +185,14 @@ describe('SQLite projection sync', () => {
       ).join('\n')
     ).toContain('idx_sessions_task_board');
     expect(
-      explain(
-        'SELECT session_id FROM sessions WHERE task_status=?',
-        'queued'
-      ).join('\n')
+      explain('SELECT session_id FROM sessions WHERE task_status=?', 'queued').join(
+        '\n'
+      )
     ).toContain('idx_sessions_task_status');
     expect(
-      explain(
-        'SELECT session_id FROM sessions WHERE task_priority=?',
-        'high'
-      ).join('\n')
+      explain('SELECT session_id FROM sessions WHERE task_priority=?', 'high').join(
+        '\n'
+      )
     ).toContain('idx_sessions_task_priority');
     expect(
       explain(

@@ -9,6 +9,7 @@ import type { LoopResult } from '../../../../src/agent/types.js';
 import { MAX_INLINE_ATTACHMENT_BYTES } from '../../../../src/api/attachmentLimits.js';
 import { Bus } from '../../../../src/server/bus.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
+import { ProviderAdmissionError } from '../../../../src/services/pi/providerRequestAdmission.js';
 import type {
   ConfirmationDetails,
   ConfirmationResponse,
@@ -813,6 +814,11 @@ describe('AcpSession', () => {
         },
         { role: 'tool', content: 'internal tool output', tool_call_id: 'tool-1' },
         { role: 'system', content: 'internal summary' },
+        {
+          role: 'user',
+          content: 'internal empty-final corrective',
+          metadata: { clientVisible: false },
+        },
       ];
       session = new AcpSession(
         'test-session-id',
@@ -1663,6 +1669,183 @@ describe('AcpSession', () => {
           failureType: 'intent_fulfillment_failed',
         },
       });
+    });
+
+    it.each(['pending_count', 'pending_bytes'] as const)(
+      'projects Provider queue_full %s as ACP task capacity',
+      async (resource) => {
+        const mockAgent = getMockAgent();
+        const providerError = new ProviderAdmissionError(
+          'queue_full',
+          'global',
+          'foreground',
+          resource,
+          1,
+          1,
+          0,
+          120_000
+        );
+        mockAgent.chatStream = vi.fn(async function* () {
+          yield* [] as LoopEvent[];
+          return {
+            success: false,
+            error: {
+              type: 'api_error',
+              message: providerError.message,
+              details: providerError,
+            },
+          } satisfies LoopResult;
+        }) as typeof mockAgent.chatStream;
+
+        await expect(
+          session.prompt({
+            sessionId: 'test-session-id',
+            prompt: [{ type: 'text', text: 'complete the task' }],
+          })
+        ).rejects.toMatchObject({
+          name: 'RequestError',
+          code: -32603,
+          data: {
+            failureType: 'api_error',
+            taskFailure: {
+              code: 'capacity',
+              retryable: true,
+              resource,
+            },
+          },
+        });
+      }
+    );
+
+    it('does not project a Provider stream queue as task capacity', async () => {
+      const mockAgent = getMockAgent();
+      const providerError = new ProviderAdmissionError(
+        'queue_full',
+        'global',
+        'foreground',
+        'stream',
+        1,
+        1,
+        0,
+        120_000
+      );
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield* [] as LoopEvent[];
+        return {
+          success: false,
+          error: {
+            type: 'api_error',
+            message: providerError.message,
+            details: providerError,
+          },
+        } satisfies LoopResult;
+      }) as typeof mockAgent.chatStream;
+
+      const failure = await session
+        .prompt({
+          sessionId: 'test-session-id',
+          prompt: [{ type: 'text', text: 'complete the task' }],
+        })
+        .then(
+          () => new Error('expected ACP prompt failure'),
+          (error: unknown) => error
+        );
+
+      expect(failure).toMatchObject({
+        name: 'RequestError',
+        code: -32603,
+        data: {
+          failureType: 'api_error',
+          taskFailure: { code: 'runtime', retryable: true },
+        },
+      });
+      expect(failure).not.toHaveProperty('data.taskFailure.resource');
+    });
+
+    it('does not trust unknown resources from ProviderAdmissionError-like details', async () => {
+      const mockAgent = getMockAgent();
+      const secret = 'malicious-provider-admission-secret';
+      const providerErrorLike = {
+        code: 'PROVIDER_ADMISSION_BUSY',
+        reason: 'queue_full',
+        resource: 'unknown_resource',
+        message: secret,
+        raw: secret,
+      };
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield* [] as LoopEvent[];
+        return {
+          success: false,
+          error: {
+            type: 'api_error',
+            message: secret,
+            details: providerErrorLike,
+          },
+        } satisfies LoopResult;
+      }) as typeof mockAgent.chatStream;
+
+      const failure = await session
+        .prompt({
+          sessionId: 'test-session-id',
+          prompt: [{ type: 'text', text: 'complete the task' }],
+        })
+        .then(
+          () => new Error('expected ACP prompt failure'),
+          (error: unknown) => error
+        );
+
+      expect(failure).toMatchObject({
+        name: 'RequestError',
+        code: -32603,
+        data: {
+          failureType: 'api_error',
+          taskFailure: { code: 'runtime', retryable: true },
+        },
+      });
+      expect(failure).not.toHaveProperty('data.taskFailure.resource');
+      expect(JSON.stringify(failure)).not.toContain(secret);
+      expect(JSON.stringify(failure)).not.toContain('unknown_resource');
+    });
+
+    it('projects a canonical task failure without exposing Provider details', async () => {
+      const mockAgent = getMockAgent();
+      const secret = 'provider-timeout-secret';
+      const providerError = Object.assign(
+        new Error(`Provider stream idle timeout after 180000ms ${secret}`),
+        { code: 'STREAM_IDLE_TIMEOUT', timeoutMs: 180_000 }
+      );
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield* [] as LoopEvent[];
+        return {
+          success: false,
+          error: {
+            type: 'api_error',
+            message: `Provider stream idle timeout after 180000ms ${secret}`,
+            details: providerError,
+          },
+        };
+      }) as typeof mockAgent.chatStream;
+
+      const failure = await session
+        .prompt({
+          sessionId: 'test-session-id',
+          prompt: [{ type: 'text', text: 'complete the task' }],
+        })
+        .then(
+          () => new Error('expected ACP prompt failure'),
+          (error: unknown) => error
+        );
+
+      expect(failure).toMatchObject({
+        name: 'RequestError',
+        code: -32603,
+        data: {
+          failureType: 'api_error',
+          taskFailure: { code: 'timeout', retryable: true },
+        },
+      });
+      expect(JSON.stringify(failure)).not.toContain(secret);
+      expect((failure as Error).cause).toBeUndefined();
     });
 
     it('projects bounded Bash details through a standard ACP tool update', async () => {
