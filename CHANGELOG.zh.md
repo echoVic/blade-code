@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.10.72] - 2026-08-22
+
+### 新增
+- 为 TUI、Web 与 ACP 新增 `/btw <question>` 旁路对话，并提供独立的瞬态加载、
+  结果、错误、取消和关闭状态
+- 旁路问题复用当前 Session 的模型上下文与 Provider 提示词前缀，同时保持单轮且
+  禁止工具执行
+- 为 Web 新增 `POST /sessions/:sessionId/side-question`
+
+### 修复
+- 旁路问题与回答不会进入主 Session transcript、durable inbox 或后续模型上下文，
+  也不会中断或引导正在执行的主回合
+- Runtime 销毁与表面导航现在会取消并等待进行中的旁路对话
+
+### 测试
+- 新增服务、Runtime、HTTP、ACP、TUI、Web store 与组件的确定性覆盖，包括 JSONL
+  字节完全一致断言
+- 在关闭框架重试的条件下完成真实 DeepSeek Runtime、GPT Web route、Claude ACP、
+  DeepSeek PTY，以及桌面/移动 Chromium 流程验证
+
 ## [0.10.69] - 2026-08-22
 
 ### 修复

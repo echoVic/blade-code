@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.10.72] - 2026-08-22
+
+### Added
+- Added `/btw <question>` side conversations to TUI, Web, and ACP, with
+  dedicated transient loading, result, error, cancellation, and dismissal
+  states
+- Side questions reuse the current Session's model context and Provider prompt
+  prefix while remaining single-turn and tool-free
+- Added `POST /sessions/:sessionId/side-question` for the Web surface
+
+### Fixed
+- Side questions and answers never enter the main Session transcript, durable
+  inbox, or later model context, and they do not interrupt or steer an active
+  main turn
+- Runtime disposal and surface navigation now cancel and drain in-flight side
+  conversations
+
+### Tests
+- Added deterministic service, Runtime, HTTP, ACP, TUI, Web store, and component
+  coverage, including byte-identical JSONL assertions
+- Qualified real DeepSeek Runtime, GPT Web route, Claude ACP, DeepSeek PTY, and
+  desktop/mobile Chromium flows with framework retries disabled
+
 ## [0.10.71] - 2026-08-22
 
 ### Fixed
