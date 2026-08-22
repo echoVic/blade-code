@@ -174,7 +174,7 @@ function resetStore(parentId: string): void {
       activeModal: 'none',
       sessionSelectorData: undefined,
       tasks: [],
-      thinkingModeEnabled: false,
+      reasoningEffort: 'off',
       subagentProgress: null,
       subagentProgresses: {},
     },

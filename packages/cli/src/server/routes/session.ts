@@ -188,9 +188,6 @@ export interface RunState {
   };
   pendingFollowUpRequested?: boolean;
   taskAdmission?: TaskAdmissionHandle;
-  taskQueuePosition?: number;
-  taskQueueDepth?: number;
-  taskConcurrencyLimit?: number;
   taskAdmissionUpdate?: Promise<void>;
   disposeRuntimeOnSettle?: boolean;
   completion?: Promise<void>;
@@ -1187,18 +1184,10 @@ function projectActiveSession(session: SessionInfo) {
     taskBaseCommit: session.taskBaseCommit,
     taskDiffStat: session.taskDiffStat,
     taskQueuePosition:
-      run?.status === 'queued'
-        ? run.taskQueuePosition
-        : taskStatus === 'queued'
-          ? session.taskQueuePosition
-          : undefined,
+      taskStatus === 'queued' ? session.taskQueuePosition : undefined,
     taskQueueDepth:
-      run?.status === 'queued'
-        ? run.taskQueueDepth
-        : taskStatus === 'queued'
-          ? session.taskQueueDepth
-          : undefined,
-    taskConcurrencyLimit: run?.taskConcurrencyLimit ?? session.taskConcurrencyLimit,
+      taskStatus === 'queued' ? session.taskQueueDepth : undefined,
+    taskConcurrencyLimit: session.taskConcurrencyLimit,
     archivedAt: session.archivedAt,
     archivedBySessionId: session.archivedBySessionId,
     pendingInteraction: run?.pendingPermission
@@ -1782,9 +1771,6 @@ export const createSessionRouteController = (): SessionRouteController => {
         signal: run.abortController.signal,
         onUpdate: (snapshot) => {
           run.status = snapshot.state;
-          run.taskQueuePosition = snapshot.queuePosition;
-          run.taskQueueDepth = snapshot.queueDepth;
-          run.taskConcurrencyLimit = snapshot.maxConcurrent;
           session.taskStatus = snapshot.state;
           session.taskQueuePosition = snapshot.queuePosition;
           session.taskQueueDepth = snapshot.queueDepth;
@@ -1804,9 +1790,10 @@ export const createSessionRouteController = (): SessionRouteController => {
       run.taskAdmission = admission;
       const snapshot = admission.getSnapshot();
       run.status = snapshot.state;
-      run.taskQueuePosition = snapshot.queuePosition;
-      run.taskQueueDepth = snapshot.queueDepth;
-      run.taskConcurrencyLimit = snapshot.maxConcurrent;
+      session.taskStatus = snapshot.state;
+      session.taskQueuePosition = snapshot.queuePosition;
+      session.taskQueueDepth = snapshot.queueDepth;
+      session.taskConcurrencyLimit = snapshot.maxConcurrent;
     }
     activeRuns.set(runId, run);
     session.currentRunId = runId;
@@ -1977,9 +1964,9 @@ export const createSessionRouteController = (): SessionRouteController => {
         runId: run.id,
         messageId: preparation.messageId,
         status: run.status === 'queued' ? 'queued' : 'running',
-        queuePosition: run.taskQueuePosition,
-        queueDepth: run.taskQueueDepth,
-        maxConcurrentTasks: run.taskConcurrencyLimit,
+        queuePosition: session.taskQueuePosition,
+        queueDepth: session.taskQueueDepth,
+        maxConcurrentTasks: session.taskConcurrencyLimit,
       };
     } catch (error) {
       runtimeLease?.release();
@@ -3126,9 +3113,9 @@ export const createSessionRouteController = (): SessionRouteController => {
             status: run.status === 'queued' ? 'queued' : 'running',
             runId: run.id,
             goal,
-            queuePosition: run.taskQueuePosition,
-            queueDepth: run.taskQueueDepth,
-            maxConcurrentTasks: run.taskConcurrencyLimit,
+            queuePosition: session.taskQueuePosition,
+            queueDepth: session.taskQueueDepth,
+            maxConcurrentTasks: session.taskConcurrencyLimit,
           },
           202
         );
@@ -3174,9 +3161,9 @@ export const createSessionRouteController = (): SessionRouteController => {
               status: run.status === 'queued' ? 'queued' : 'running',
               runId: run.id,
               goal,
-              queuePosition: run.taskQueuePosition,
-              queueDepth: run.taskQueueDepth,
-              maxConcurrentTasks: run.taskConcurrencyLimit,
+              queuePosition: session.taskQueuePosition,
+              queueDepth: session.taskQueueDepth,
+              maxConcurrentTasks: session.taskConcurrencyLimit,
             },
             202
           );
@@ -4046,9 +4033,9 @@ export const createSessionRouteController = (): SessionRouteController => {
             runId: run.id,
             messageId: preparation.messageId,
             status: run.status === 'queued' ? 'queued' : 'running',
-            queuePosition: run.taskQueuePosition,
-            queueDepth: run.taskQueueDepth,
-            maxConcurrentTasks: run.taskConcurrencyLimit,
+            queuePosition: session.taskQueuePosition,
+            queueDepth: session.taskQueueDepth,
+            maxConcurrentTasks: session.taskConcurrencyLimit,
           },
           202
         );

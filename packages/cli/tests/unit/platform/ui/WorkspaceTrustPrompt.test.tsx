@@ -45,7 +45,6 @@ describe('WorkspaceTrustPrompt', () => {
           projectPath: '/workspace/project',
           trustRoot: '/workspace/project',
           state: 'untrusted',
-          trusted: false,
           sensitiveSources: 1,
           decision: 'undecided',
           sources: [
@@ -82,7 +81,6 @@ describe('WorkspaceTrustPrompt', () => {
           projectPath: '/workspace/project',
           trustRoot: '/workspace/project',
           state: 'untrusted',
-          trusted: false,
           sensitiveSources: 1,
           decision: 'undecided',
           sources: [],

@@ -245,7 +245,7 @@ export const useRecoveredSteeringCount = () =>
  * 获取 Thinking 模式是否启用
  */
 export const useThinkingModeEnabled = () =>
-  useBladeStore((state) => state.app.thinkingModeEnabled);
+  useBladeStore((state) => state.app.reasoningEffort !== 'off');
 
 export const useReasoningEffort = () =>
   useBladeStore((state) => state.app.reasoningEffort);

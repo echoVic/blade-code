@@ -85,15 +85,14 @@ export interface SessionTurnRecovery {
 }
 
 function durableEmptyFinalCorrectionSpent(
-  source: readonly SessionEvent[],
+  projected: readonly SessionEvent[],
   turnId: string
 ): boolean {
-  const events = materializeSessionEvents(source);
-  const turnStartIndex = events.findLastIndex(
+  const turnStartIndex = projected.findLastIndex(
     (event) => event.type === 'turn_started' && event.data.turnId === turnId
   );
   if (turnStartIndex < 0) return false;
-  return events.slice(turnStartIndex + 1).some((event) => {
+  return projected.slice(turnStartIndex + 1).some((event) => {
     if (event.type !== 'message_created' || event.data.role !== 'user') {
       return false;
     }
@@ -109,16 +108,15 @@ function durableEmptyFinalCorrectionSpent(
 }
 
 function durableTurnInputMessageIds(
-  source: readonly SessionEvent[],
+  projected: readonly SessionEvent[],
   turnId: string
 ): string[] {
-  const events = materializeSessionEvents(source);
-  const turnStartIndex = events.findLastIndex(
+  const turnStartIndex = projected.findLastIndex(
     (event) => event.type === 'turn_started' && event.data.turnId === turnId
   );
   if (turnStartIndex < 0) return [];
   const appliedIds: string[] = [];
-  for (const event of events.slice(turnStartIndex + 1)) {
+  for (const event of projected.slice(turnStartIndex + 1)) {
     if (
       (event.type === 'turn_started' && event.data.turnId !== turnId) ||
       ((event.type === 'turn_completed' || event.type === 'turn_aborted') &&
@@ -176,13 +174,12 @@ function parseTurnAbortReceipt(value: unknown): ParsedTurnAbortReceipt | undefin
   };
 }
 
-function acknowledgedInboxIds(source: readonly SessionEvent[]): Set<string> {
-  const events = materializeSessionEvents(source);
+function acknowledgedInboxIds(projected: readonly SessionEvent[]): Set<string> {
   return new Set(
-    events.flatMap((event, index) => {
+    projected.flatMap((event, index) => {
       if (event.type === 'inbox_acknowledged') return event.data.messageIds;
       if (event.type === 'turn_aborted') {
-        return turnAbortAppliedAcknowledgements(events, index);
+        return turnAbortAppliedAcknowledgements(projected, index);
       }
       return [];
     })
@@ -214,13 +211,12 @@ function unacknowledgedTurnRecovery(
 }
 
 function latestUnacknowledgedTurnRecovery(
-  source: readonly SessionEvent[]
+  projected: readonly SessionEvent[]
 ): SessionTurnRecovery | undefined {
-  const events = materializeSessionEvents(source);
-  for (let index = events.length - 1; index >= 0; index--) {
-    const event = events[index];
+  for (let index = projected.length - 1; index >= 0; index--) {
+    const event = projected[index];
     if (event.type !== 'turn_aborted') continue;
-    const recovery = unacknowledgedTurnRecovery(events, event);
+    const recovery = unacknowledgedTurnRecovery(projected, event);
     if (recovery) return recovery;
   }
   return undefined;
@@ -370,17 +366,16 @@ function parseTurnFinalization(
 }
 
 function durableTurnFinalization(
-  source: readonly SessionEvent[],
+  projected: readonly SessionEvent[],
   turnId: string
 ): SessionTurnFinalizationInfo | undefined {
-  const events = materializeSessionEvents(source);
-  const turnStartIndex = events.findLastIndex(
+  const turnStartIndex = projected.findLastIndex(
     (event) => event.type === 'turn_started' && event.data.turnId === turnId
   );
   if (turnStartIndex < 0) return undefined;
 
-  for (let index = events.length - 1; index > turnStartIndex; index--) {
-    const event = events[index];
+  for (let index = projected.length - 1; index > turnStartIndex; index--) {
+    const event = projected[index];
     if (event?.type !== 'message_created') continue;
     const finalization = parseTurnFinalization(event, turnId);
     if (finalization) return finalization;
@@ -389,15 +384,14 @@ function durableTurnFinalization(
 }
 
 function latestGoalFinalization(
-  source: readonly SessionEvent[]
+  projected: readonly SessionEvent[]
 ): { turnId: string; finalization: SessionTurnFinalizationInfo } | undefined {
-  const events = materializeSessionEvents(source);
-  for (let index = events.length - 1; index >= 0; index--) {
-    const event = events[index];
+  for (let index = projected.length - 1; index >= 0; index--) {
+    const event = projected[index];
     if (event?.type !== 'message_created') continue;
     const finalization = parseTurnFinalization(event);
     if (!finalization?.goalFinalization) continue;
-    const hasEarlierStart = events
+    const hasEarlierStart = projected
       .slice(0, index)
       .some(
         (candidate) =>
@@ -414,16 +408,15 @@ function latestGoalFinalization(
 }
 
 function durableToolCalls(
-  source: readonly SessionEvent[],
+  projected: readonly SessionEvent[],
   turnId?: string
 ): {
   all: DurableToolCall[];
   orphaned: DurableToolCall[];
   hadSuccessfulResult: boolean;
 } {
-  const events = materializeSessionEvents(source);
   const turnStartIndex = turnId
-    ? events.findLastIndex(
+    ? projected.findLastIndex(
         (event) => event.type === 'turn_started' && event.data.turnId === turnId
       )
     : -1;
@@ -435,7 +428,7 @@ function durableToolCalls(
   const results = new Set<string>();
   const successfulResults = new Set<string>();
   const interactionCalls = new Set<string>();
-  for (const event of events.slice(turnStartIndex + 1)) {
+  for (const event of projected.slice(turnStartIndex + 1)) {
     if (event.type === 'interaction_requested') {
       interactionCalls.add(event.data.toolCallId);
       continue;

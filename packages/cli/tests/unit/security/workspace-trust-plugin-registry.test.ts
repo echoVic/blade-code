@@ -6,13 +6,14 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../src/security/WorkspaceTrustService.js', () => ({
+  isWorkspaceTrusted: (status: { state: string }) =>
+    status.state === 'trusted' || status.state === 'not_required',
   WorkspaceTrustService: {
     getInstance: () => ({
       getStatus: async () => ({
         projectPath: '/workspace',
         trustRoot: '/workspace',
         state: mocks.trusted ? 'trusted' : 'untrusted',
-        trusted: mocks.trusted,
       }),
     }),
   },

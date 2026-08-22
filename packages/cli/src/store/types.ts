@@ -275,7 +275,6 @@ export interface AppState {
   modelEditorTarget: ModelConfig | null;
   tasks: TaskListItem[];
   awaitingSecondCtrlC: boolean; // 是否等待第二次 Ctrl+C 退出
-  thinkingModeEnabled: boolean; // Thinking 模式是否启用（Tab 切换）
   reasoningEffort: ReasoningEffortSelection;
   serviceTier: ServiceTierSelection;
   responseVerbosity: ResponseVerbositySelection;

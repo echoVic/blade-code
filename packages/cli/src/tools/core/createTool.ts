@@ -6,7 +6,6 @@ import type {
   ToolInvocation,
   ToolResult,
 } from '../types/index.js';
-import { isReadOnlyKind } from '../types/ToolTypes.js';
 import { parseToolSchema } from '../validation/schemaErrorFormatter.js';
 import { schemaToFunctionSchema } from '../validation/schemaToJson.js';
 import { UnifiedToolInvocation } from './ToolInvocation.js';
@@ -23,10 +22,6 @@ export function createTool<T extends TSchema>(
     name: config.name,
     displayName: config.displayName,
     kind: config.kind,
-
-    // isReadOnly 字段
-    // 优先使用 config 中的显式设置，否则根据 kind 推断
-    isReadOnly: config.isReadOnly ?? isReadOnlyKind(config.kind),
 
     // isConcurrencySafe 字段
     // 优先使用 config 中的显式设置，否则默认 false

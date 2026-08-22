@@ -142,30 +142,60 @@ export interface ProviderRequestAdmissionSchedulerOptions {
   agingMs?: number;
 }
 
+interface ClassCounters {
+  foreground: number;
+  background: number;
+  internal: number;
+}
+
+interface ResourceCounters {
+  inFlight: ClassCounters;
+  queued: ClassCounters;
+  pendingBytes: ClassCounters;
+}
+
 interface DomainState {
   maxConcurrent: number;
-  inFlight: number;
-  nonForegroundInFlight: number;
-  internalInFlight: number;
-  queued: number;
-  nonForegroundQueued: number;
-  internalQueued: number;
-  pendingBytes: number;
-  nonForegroundPendingBytes: number;
-  internalPendingBytes: number;
+  counters: ResourceCounters;
 }
 
 interface OwnerState {
   order: number;
-  inFlight: number;
-  nonForegroundInFlight: number;
-  internalInFlight: number;
-  queued: number;
-  nonForegroundQueued: number;
-  internalQueued: number;
-  pendingBytes: number;
-  nonForegroundPendingBytes: number;
-  internalPendingBytes: number;
+  counters: ResourceCounters;
+}
+
+function createClassCounters(): ClassCounters {
+  return { foreground: 0, background: 0, internal: 0 };
+}
+
+function createResourceCounters(): ResourceCounters {
+  return {
+    inFlight: createClassCounters(),
+    queued: createClassCounters(),
+    pendingBytes: createClassCounters(),
+  };
+}
+
+function totalOf(counters: ClassCounters): number {
+  return counters.foreground + counters.background + counters.internal;
+}
+
+function nonForegroundOf(counters: ClassCounters): number {
+  return counters.background + counters.internal;
+}
+
+function isResourceCountersIdle(counters: ResourceCounters): boolean {
+  return (
+    counters.inFlight.foreground === 0 &&
+    counters.inFlight.background === 0 &&
+    counters.inFlight.internal === 0 &&
+    counters.queued.foreground === 0 &&
+    counters.queued.background === 0 &&
+    counters.queued.internal === 0 &&
+    counters.pendingBytes.foreground === 0 &&
+    counters.pendingBytes.background === 0 &&
+    counters.pendingBytes.internal === 0
+  );
 }
 
 interface CapacityConstraint {
@@ -511,14 +541,7 @@ export class ProviderRequestAdmissionScheduler {
   readonly #queue: PendingAdmission[] = [];
   readonly #domains = new Map<string, DomainState>();
   readonly #owners = new Map<string, OwnerState>();
-  #globalInFlight = 0;
-  #globalNonForegroundInFlight = 0;
-  #globalInternalInFlight = 0;
-  #globalNonForegroundQueued = 0;
-  #globalInternalQueued = 0;
-  #globalPendingBytes = 0;
-  #globalNonForegroundPendingBytes = 0;
-  #globalInternalPendingBytes = 0;
+  readonly #globalCounters: ResourceCounters = createResourceCounters();
   #nextOwnerOrder = 1;
   #lastAdmittedOwnerOrder = 0;
   #closed = false;
@@ -540,7 +563,7 @@ export class ProviderRequestAdmissionScheduler {
         {
           scope: 'global',
           resource: 'stream',
-          inFlight: this.#globalInFlight,
+          inFlight: totalOf(this.#globalCounters.inFlight),
           limit: this.#limits.globalMaxInFlight,
         },
         this.#queue.length
@@ -650,7 +673,7 @@ export class ProviderRequestAdmissionScheduler {
           : {
               scope: 'global' as const,
               resource: 'stream' as const,
-              inFlight: this.#globalInFlight,
+              inFlight: totalOf(this.#globalCounters.inFlight),
               limit: this.#limits.globalMaxInFlight,
             };
       this.#rejectPending(
@@ -671,15 +694,15 @@ export class ProviderRequestAdmissionScheduler {
 
   getStats(): ProviderAdmissionStats {
     return {
-      inFlight: this.#globalInFlight,
+      inFlight: totalOf(this.#globalCounters.inFlight),
       queued: this.#queue.length,
-      pendingBytes: this.#globalPendingBytes,
-      nonForegroundInFlight: this.#globalNonForegroundInFlight,
-      internalInFlight: this.#globalInternalInFlight,
-      nonForegroundQueued: this.#globalNonForegroundQueued,
-      internalQueued: this.#globalInternalQueued,
-      nonForegroundPendingBytes: this.#globalNonForegroundPendingBytes,
-      internalPendingBytes: this.#globalInternalPendingBytes,
+      pendingBytes: totalOf(this.#globalCounters.pendingBytes),
+      nonForegroundInFlight: nonForegroundOf(this.#globalCounters.inFlight),
+      internalInFlight: this.#globalCounters.inFlight.internal,
+      nonForegroundQueued: nonForegroundOf(this.#globalCounters.queued),
+      internalQueued: this.#globalCounters.queued.internal,
+      nonForegroundPendingBytes: nonForegroundOf(this.#globalCounters.pendingBytes),
+      internalPendingBytes: this.#globalCounters.pendingBytes.internal,
       domainCount: this.#domains.size,
       ownerCount: this.#owners.size,
       closed: this.#closed,
@@ -709,36 +732,44 @@ export class ProviderRequestAdmissionScheduler {
       const internalCount =
         count(
           'class',
-          this.#globalInternalQueued,
+          this.#globalCounters.queued.internal,
           this.#limits.internalGlobalMaxPending
         ) ??
-        count('class', owner.internalQueued, this.#limits.internalOwnerMaxPending) ??
-        count('class', domain.internalQueued, this.#limits.internalDomainMaxPending);
+        count(
+          'class',
+          owner.counters.queued.internal,
+          this.#limits.internalOwnerMaxPending
+        ) ??
+        count(
+          'class',
+          domain.counters.queued.internal,
+          this.#limits.internalDomainMaxPending
+        );
       if (internalCount) return internalCount;
     }
     if (request.requestClass !== 'foreground') {
       const nonForegroundCount =
         count(
           'class',
-          this.#globalNonForegroundQueued,
+          nonForegroundOf(this.#globalCounters.queued),
           this.#limits.nonForegroundGlobalMaxPending
         ) ??
         count(
           'class',
-          owner.nonForegroundQueued,
+          nonForegroundOf(owner.counters.queued),
           this.#limits.nonForegroundOwnerMaxPending
         ) ??
         count(
           'class',
-          domain.nonForegroundQueued,
+          nonForegroundOf(domain.counters.queued),
           this.#limits.nonForegroundDomainMaxPending
         );
       if (nonForegroundCount) return nonForegroundCount;
     }
     const totalCount =
       count('global', this.#queue.length, this.#limits.globalMaxPending) ??
-      count('owner', owner.queued, this.#limits.ownerMaxPending) ??
-      count('domain', domain.queued, this.#limits.domainMaxPending);
+      count('owner', totalOf(owner.counters.queued), this.#limits.ownerMaxPending) ??
+      count('domain', totalOf(domain.counters.queued), this.#limits.domainMaxPending);
     if (totalCount) return totalCount;
 
     const globalByteLimit = Math.min(
@@ -757,7 +788,7 @@ export class ProviderRequestAdmissionScheduler {
         return {
           scope,
           resource: 'pending_bytes',
-          inFlight: owner.inFlight,
+          inFlight: totalOf(owner.counters.inFlight),
           limit: this.#limits.ownerMaxInFlight,
         };
       }
@@ -765,14 +796,14 @@ export class ProviderRequestAdmissionScheduler {
         return {
           scope,
           resource: 'pending_bytes',
-          inFlight: domain.inFlight,
+          inFlight: totalOf(domain.counters.inFlight),
           limit: domain.maxConcurrent,
         };
       }
       return {
         scope,
         resource: 'pending_bytes',
-        inFlight: this.#globalInFlight,
+        inFlight: totalOf(this.#globalCounters.inFlight),
         limit: this.#limits.globalMaxInFlight,
       };
     };
@@ -782,9 +813,9 @@ export class ProviderRequestAdmissionScheduler {
       const internalDomainBytes = Math.max(1, Math.floor(domainByteLimit / 4));
       const internalOwnerBytes = Math.max(1, Math.floor(ownerByteLimit / 4));
       if (
-        exceeds(this.#globalInternalPendingBytes, internalGlobalBytes) ||
-        exceeds(owner.internalPendingBytes, internalOwnerBytes) ||
-        exceeds(domain.internalPendingBytes, internalDomainBytes)
+        exceeds(this.#globalCounters.pendingBytes.internal, internalGlobalBytes) ||
+        exceeds(owner.counters.pendingBytes.internal, internalOwnerBytes) ||
+        exceeds(domain.counters.pendingBytes.internal, internalDomainBytes)
       ) {
         return byteConstraint('class');
       }
@@ -800,20 +831,29 @@ export class ProviderRequestAdmissionScheduler {
       );
       const nonForegroundOwnerBytes = Math.max(1, Math.floor(ownerByteLimit / 2));
       if (
-        exceeds(this.#globalNonForegroundPendingBytes, nonForegroundGlobalBytes) ||
-        exceeds(owner.nonForegroundPendingBytes, nonForegroundOwnerBytes) ||
-        exceeds(domain.nonForegroundPendingBytes, nonForegroundDomainBytes)
+        exceeds(
+          nonForegroundOf(this.#globalCounters.pendingBytes),
+          nonForegroundGlobalBytes
+        ) ||
+        exceeds(
+          nonForegroundOf(owner.counters.pendingBytes),
+          nonForegroundOwnerBytes
+        ) ||
+        exceeds(
+          nonForegroundOf(domain.counters.pendingBytes),
+          nonForegroundDomainBytes
+        )
       ) {
         return byteConstraint('class');
       }
     }
-    if (exceeds(this.#globalPendingBytes, globalByteLimit)) {
+    if (exceeds(totalOf(this.#globalCounters.pendingBytes), globalByteLimit)) {
       return byteConstraint('global');
     }
-    if (exceeds(owner.pendingBytes, ownerByteLimit)) {
+    if (exceeds(totalOf(owner.counters.pendingBytes), ownerByteLimit)) {
       return byteConstraint('owner');
     }
-    if (exceeds(domain.pendingBytes, domainByteLimit)) {
+    if (exceeds(totalOf(domain.counters.pendingBytes), domainByteLimit)) {
       return byteConstraint('domain');
     }
     return undefined;
@@ -824,56 +864,27 @@ export class ProviderRequestAdmissionScheduler {
     owner: OwnerState,
     pending: PendingAdmission
   ): void {
-    domain.queued++;
-    owner.queued++;
-    this.#globalPendingBytes += pending.pendingBytes;
-    domain.pendingBytes += pending.pendingBytes;
-    owner.pendingBytes += pending.pendingBytes;
-    if (pending.requestClass !== 'foreground') {
-      this.#globalNonForegroundQueued++;
-      domain.nonForegroundQueued++;
-      owner.nonForegroundQueued++;
-      this.#globalNonForegroundPendingBytes += pending.pendingBytes;
-      domain.nonForegroundPendingBytes += pending.pendingBytes;
-      owner.nonForegroundPendingBytes += pending.pendingBytes;
-    }
-    if (pending.requestClass === 'internal') {
-      this.#globalInternalQueued++;
-      domain.internalQueued++;
-      owner.internalQueued++;
-      this.#globalInternalPendingBytes += pending.pendingBytes;
-      domain.internalPendingBytes += pending.pendingBytes;
-      owner.internalPendingBytes += pending.pendingBytes;
-    }
+    const cls = pending.requestClass;
+    const bytes = pending.pendingBytes;
+    this.#globalCounters.queued[cls]++;
+    domain.counters.queued[cls]++;
+    owner.counters.queued[cls]++;
+    this.#globalCounters.pendingBytes[cls] += bytes;
+    domain.counters.pendingBytes[cls] += bytes;
+    owner.counters.pendingBytes[cls] += bytes;
   }
 
   #createDomain(maxConcurrent: number): DomainState {
     return {
       maxConcurrent,
-      inFlight: 0,
-      nonForegroundInFlight: 0,
-      internalInFlight: 0,
-      queued: 0,
-      nonForegroundQueued: 0,
-      internalQueued: 0,
-      pendingBytes: 0,
-      nonForegroundPendingBytes: 0,
-      internalPendingBytes: 0,
+      counters: createResourceCounters(),
     };
   }
 
   #createOwner(): OwnerState {
     return {
       order: this.#nextOwnerOrder,
-      inFlight: 0,
-      nonForegroundInFlight: 0,
-      internalInFlight: 0,
-      queued: 0,
-      nonForegroundQueued: 0,
-      internalQueued: 0,
-      pendingBytes: 0,
-      nonForegroundPendingBytes: 0,
-      internalPendingBytes: 0,
+      counters: createResourceCounters(),
     };
   }
 
@@ -882,26 +893,37 @@ export class ProviderRequestAdmissionScheduler {
     owner: OwnerState,
     requestClass: ProviderRequestClass
   ): boolean {
-    if (this.#globalInFlight >= this.#limits.globalMaxInFlight) return false;
-    if (domain.inFlight >= domain.maxConcurrent) return false;
-    if (owner.inFlight >= this.#limits.ownerMaxInFlight) return false;
+    if (totalOf(this.#globalCounters.inFlight) >= this.#limits.globalMaxInFlight)
+      return false;
+    if (totalOf(domain.counters.inFlight) >= domain.maxConcurrent) return false;
+    if (totalOf(owner.counters.inFlight) >= this.#limits.ownerMaxInFlight)
+      return false;
     if (requestClass === 'foreground') return true;
 
     if (
-      this.#globalNonForegroundInFlight >= this.#limits.nonForegroundGlobalMaxInFlight
+      nonForegroundOf(this.#globalCounters.inFlight) >=
+      this.#limits.nonForegroundGlobalMaxInFlight
     ) {
       return false;
     }
-    if (owner.nonForegroundInFlight >= this.#limits.nonForegroundOwnerMaxInFlight) {
+    if (
+      nonForegroundOf(owner.counters.inFlight) >=
+      this.#limits.nonForegroundOwnerMaxInFlight
+    ) {
       return false;
     }
     const nonForegroundDomainLimit = Math.max(1, domain.maxConcurrent - 1);
-    if (domain.nonForegroundInFlight >= nonForegroundDomainLimit) return false;
+    if (
+      nonForegroundOf(domain.counters.inFlight) >= nonForegroundDomainLimit
+    )
+      return false;
     if (requestClass !== 'internal') return true;
 
     return (
-      this.#globalInternalInFlight < this.#limits.internalGlobalMaxInFlight &&
-      domain.internalInFlight < this.#limits.internalDomainMaxInFlight
+      this.#globalCounters.inFlight.internal <
+        this.#limits.internalGlobalMaxInFlight &&
+      domain.counters.inFlight.internal <
+        this.#limits.internalDomainMaxInFlight
     );
   }
 
@@ -910,89 +932,93 @@ export class ProviderRequestAdmissionScheduler {
     owner: OwnerState,
     requestClass: ProviderRequestClass
   ): CapacityConstraint {
-    if (owner.inFlight >= this.#limits.ownerMaxInFlight) {
+    if (totalOf(owner.counters.inFlight) >= this.#limits.ownerMaxInFlight) {
       return {
         scope: 'owner',
         resource: 'stream',
-        inFlight: owner.inFlight,
+        inFlight: totalOf(owner.counters.inFlight),
         limit: this.#limits.ownerMaxInFlight,
       };
     }
     if (
       requestClass !== 'foreground' &&
-      owner.nonForegroundInFlight >= this.#limits.nonForegroundOwnerMaxInFlight
+      nonForegroundOf(owner.counters.inFlight) >=
+        this.#limits.nonForegroundOwnerMaxInFlight
     ) {
       return {
         scope: 'class',
         resource: 'stream',
-        inFlight: owner.nonForegroundInFlight,
+        inFlight: nonForegroundOf(owner.counters.inFlight),
         limit: this.#limits.nonForegroundOwnerMaxInFlight,
       };
     }
-    if (domain.inFlight >= domain.maxConcurrent) {
+    if (totalOf(domain.counters.inFlight) >= domain.maxConcurrent) {
       return {
         scope: 'domain',
         resource: 'stream',
-        inFlight: domain.inFlight,
+        inFlight: totalOf(domain.counters.inFlight),
         limit: domain.maxConcurrent,
       };
     }
     if (requestClass !== 'foreground') {
       const limit = Math.max(1, domain.maxConcurrent - 1);
-      if (domain.nonForegroundInFlight >= limit) {
+      if (nonForegroundOf(domain.counters.inFlight) >= limit) {
         return {
           scope: 'class',
           resource: 'stream',
-          inFlight: domain.nonForegroundInFlight,
+          inFlight: nonForegroundOf(domain.counters.inFlight),
           limit,
         };
       }
     }
     if (
       requestClass === 'internal' &&
-      domain.internalInFlight >= this.#limits.internalDomainMaxInFlight
+      domain.counters.inFlight.internal >=
+        this.#limits.internalDomainMaxInFlight
     ) {
       return {
         scope: 'class',
         resource: 'stream',
-        inFlight: domain.internalInFlight,
+        inFlight: domain.counters.inFlight.internal,
         limit: this.#limits.internalDomainMaxInFlight,
       };
     }
-    if (this.#globalInFlight >= this.#limits.globalMaxInFlight) {
+    if (totalOf(this.#globalCounters.inFlight) >= this.#limits.globalMaxInFlight) {
       return {
         scope: 'global',
         resource: 'stream',
-        inFlight: this.#globalInFlight,
+        inFlight: totalOf(this.#globalCounters.inFlight),
         limit: this.#limits.globalMaxInFlight,
       };
     }
     if (
       requestClass !== 'foreground' &&
-      this.#globalNonForegroundInFlight >= this.#limits.nonForegroundGlobalMaxInFlight
+      nonForegroundOf(this.#globalCounters.inFlight) >=
+        this.#limits.nonForegroundGlobalMaxInFlight
     ) {
       return {
         scope: 'class',
         resource: 'stream',
-        inFlight: this.#globalNonForegroundInFlight,
+        inFlight: nonForegroundOf(this.#globalCounters.inFlight),
         limit: this.#limits.nonForegroundGlobalMaxInFlight,
       };
     }
     if (
       requestClass === 'internal' &&
-      this.#globalInternalInFlight >= this.#limits.internalGlobalMaxInFlight
+      this.#globalCounters.inFlight.internal >=
+        this.#limits.internalGlobalMaxInFlight
     ) {
       return {
         scope: 'class',
         resource: 'stream',
-        inFlight: this.#globalInternalInFlight,
+        inFlight: this.#globalCounters.inFlight.internal,
         limit: this.#limits.internalGlobalMaxInFlight,
       };
     }
     return {
       scope: 'domain',
       resource: 'stream',
-      inFlight: domain.inFlight,
+      inFlight: totalOf(domain.counters.inFlight),
       limit: domain.maxConcurrent,
     };
   }
@@ -1007,19 +1033,9 @@ export class ProviderRequestAdmissionScheduler {
     if (!domain || !owner) {
       throw new Error('Provider admission accounting state is unavailable');
     }
-    this.#globalInFlight++;
-    domain.inFlight++;
-    owner.inFlight++;
-    if (requestClass !== 'foreground') {
-      this.#globalNonForegroundInFlight++;
-      domain.nonForegroundInFlight++;
-      owner.nonForegroundInFlight++;
-    }
-    if (requestClass === 'internal') {
-      this.#globalInternalInFlight++;
-      domain.internalInFlight++;
-      owner.internalInFlight++;
-    }
+    this.#globalCounters.inFlight[requestClass]++;
+    domain.counters.inFlight[requestClass]++;
+    owner.counters.inFlight[requestClass]++;
 
     let released = false;
     return {
@@ -1038,30 +1054,9 @@ export class ProviderRequestAdmissionScheduler {
   ): void {
     const domain = this.#domains.get(domainKey);
     const owner = this.#owners.get(ownerId);
-    this.#globalInFlight = Math.max(0, this.#globalInFlight - 1);
-    if (domain) domain.inFlight = Math.max(0, domain.inFlight - 1);
-    if (owner) owner.inFlight = Math.max(0, owner.inFlight - 1);
-    if (requestClass !== 'foreground') {
-      this.#globalNonForegroundInFlight = Math.max(
-        0,
-        this.#globalNonForegroundInFlight - 1
-      );
-      if (domain) {
-        domain.nonForegroundInFlight = Math.max(0, domain.nonForegroundInFlight - 1);
-      }
-      if (owner) {
-        owner.nonForegroundInFlight = Math.max(0, owner.nonForegroundInFlight - 1);
-      }
-    }
-    if (requestClass === 'internal') {
-      this.#globalInternalInFlight = Math.max(0, this.#globalInternalInFlight - 1);
-      if (domain) {
-        domain.internalInFlight = Math.max(0, domain.internalInFlight - 1);
-      }
-      if (owner) {
-        owner.internalInFlight = Math.max(0, owner.internalInFlight - 1);
-      }
-    }
+    this.#globalCounters.inFlight[requestClass]--;
+    if (domain) domain.counters.inFlight[requestClass]--;
+    if (owner) owner.counters.inFlight[requestClass]--;
     this.#deleteIdleState(domainKey, ownerId);
     this.#drain();
   }
@@ -1157,7 +1152,7 @@ export class ProviderRequestAdmissionScheduler {
         : {
             scope: 'global' as const,
             resource: 'stream' as const,
-            inFlight: this.#globalInFlight,
+            inFlight: totalOf(this.#globalCounters.inFlight),
             limit: this.#limits.globalMaxInFlight,
           };
     this.#rejectPending(
@@ -1206,51 +1201,14 @@ export class ProviderRequestAdmissionScheduler {
     owner: OwnerState,
     pending: PendingAdmission
   ): void {
-    domain.queued = Math.max(0, domain.queued - 1);
-    owner.queued = Math.max(0, owner.queued - 1);
-    this.#globalPendingBytes = Math.max(
-      0,
-      this.#globalPendingBytes - pending.pendingBytes
-    );
-    domain.pendingBytes = Math.max(0, domain.pendingBytes - pending.pendingBytes);
-    owner.pendingBytes = Math.max(0, owner.pendingBytes - pending.pendingBytes);
-    if (pending.requestClass !== 'foreground') {
-      this.#globalNonForegroundQueued = Math.max(
-        0,
-        this.#globalNonForegroundQueued - 1
-      );
-      domain.nonForegroundQueued = Math.max(0, domain.nonForegroundQueued - 1);
-      owner.nonForegroundQueued = Math.max(0, owner.nonForegroundQueued - 1);
-      this.#globalNonForegroundPendingBytes = Math.max(
-        0,
-        this.#globalNonForegroundPendingBytes - pending.pendingBytes
-      );
-      domain.nonForegroundPendingBytes = Math.max(
-        0,
-        domain.nonForegroundPendingBytes - pending.pendingBytes
-      );
-      owner.nonForegroundPendingBytes = Math.max(
-        0,
-        owner.nonForegroundPendingBytes - pending.pendingBytes
-      );
-    }
-    if (pending.requestClass === 'internal') {
-      this.#globalInternalQueued = Math.max(0, this.#globalInternalQueued - 1);
-      domain.internalQueued = Math.max(0, domain.internalQueued - 1);
-      owner.internalQueued = Math.max(0, owner.internalQueued - 1);
-      this.#globalInternalPendingBytes = Math.max(
-        0,
-        this.#globalInternalPendingBytes - pending.pendingBytes
-      );
-      domain.internalPendingBytes = Math.max(
-        0,
-        domain.internalPendingBytes - pending.pendingBytes
-      );
-      owner.internalPendingBytes = Math.max(
-        0,
-        owner.internalPendingBytes - pending.pendingBytes
-      );
-    }
+    const cls = pending.requestClass;
+    const bytes = pending.pendingBytes;
+    this.#globalCounters.queued[cls]--;
+    domain.counters.queued[cls]--;
+    owner.counters.queued[cls]--;
+    this.#globalCounters.pendingBytes[cls] -= bytes;
+    domain.counters.pendingBytes[cls] -= bytes;
+    owner.counters.pendingBytes[cls] -= bytes;
   }
 
   #cleanupPending(pending: PendingAdmission): void {
@@ -1265,11 +1223,11 @@ export class ProviderRequestAdmissionScheduler {
 
   #deleteIdleState(domainKey: string, ownerId: string): void {
     const domain = this.#domains.get(domainKey);
-    if (domain && domain.inFlight === 0 && domain.queued === 0) {
+    if (domain && isResourceCountersIdle(domain.counters)) {
       this.#domains.delete(domainKey);
     }
     const owner = this.#owners.get(ownerId);
-    if (owner && owner.inFlight === 0 && owner.queued === 0) {
+    if (owner && isResourceCountersIdle(owner.counters)) {
       this.#owners.delete(ownerId);
     }
   }
@@ -1284,7 +1242,7 @@ export class ProviderRequestAdmissionScheduler {
         scope: 'domain',
         queuePosition: 0,
         queueDepth: this.#queue.length,
-        inFlight: this.#globalInFlight,
+        inFlight: totalOf(this.#globalCounters.inFlight),
         limit: this.#limits.globalMaxInFlight,
         waitMs,
         maxWaitMs: pending.maxWaitMs,
@@ -1298,7 +1256,7 @@ export class ProviderRequestAdmissionScheduler {
         : {
             scope: 'global' as const,
             resource: 'stream' as const,
-            inFlight: this.#globalInFlight,
+            inFlight: totalOf(this.#globalCounters.inFlight),
             limit: this.#limits.globalMaxInFlight,
           };
     return {
@@ -1327,7 +1285,7 @@ export class ProviderRequestAdmissionScheduler {
       scope: 'domain',
       queuePosition: 0,
       queueDepth: this.#queue.length,
-      inFlight: this.#globalInFlight,
+      inFlight: totalOf(this.#globalCounters.inFlight),
       limit: this.#limits.globalMaxInFlight,
       waitMs,
       maxWaitMs: request.maxWaitMs,

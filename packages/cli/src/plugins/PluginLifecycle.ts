@@ -11,7 +11,10 @@ import {
   type PersistedPluginSettingsScope,
 } from '../config/pluginSettings.js';
 import type { PluginSourcePolicy } from '../config/types.js';
-import { WorkspaceTrustService } from '../security/WorkspaceTrustService.js';
+import {
+  WorkspaceTrustService,
+  isWorkspaceTrusted,
+} from '../security/WorkspaceTrustService.js';
 import {
   getPluginInstaller,
   type PluginInstallOptions,
@@ -116,7 +119,9 @@ async function requireTrustedLocalSource(
 ): Promise<void> {
   if (
     isLocalSource(source) &&
-    !(await WorkspaceTrustService.getInstance().getStatus(workspaceRoot)).trusted
+    !isWorkspaceTrusted(
+      await WorkspaceTrustService.getInstance().getStatus(workspaceRoot)
+    )
   ) {
     throw new Error('Local plugin sources require a trusted workspace');
   }

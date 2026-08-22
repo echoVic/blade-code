@@ -29,6 +29,7 @@ vi.mock('../../../../../src/agent/subagents/BackgroundAgentManager.js', () => ({
 }));
 
 import { taskOutputTool } from '../../../../../src/tools/builtin/task/taskOutput.js';
+import { isReadOnlyKind } from '../../../../../src/tools/types/ToolTypes.js';
 
 describe('TaskOutput Tool', () => {
   beforeEach(() => {
@@ -45,7 +46,7 @@ describe('TaskOutput Tool', () => {
     });
 
     it('应是只读工具', () => {
-      expect(taskOutputTool.isReadOnly).toBe(true);
+      expect(isReadOnlyKind(taskOutputTool.kind)).toBe(true);
     });
   });
 

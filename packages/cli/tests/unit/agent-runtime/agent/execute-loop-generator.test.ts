@@ -182,7 +182,6 @@ const readTool: Tool = {
   name: 'Read',
   displayName: 'Read',
   kind: ToolKind.ReadOnly,
-  isReadOnly: true,
   isConcurrencySafe: true,
   strict: false,
   description: {

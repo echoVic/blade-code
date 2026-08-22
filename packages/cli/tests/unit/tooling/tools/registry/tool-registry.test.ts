@@ -3,8 +3,7 @@ import { ToolRegistry } from '../../../../../src/tools/registry/ToolRegistry.js'
 import type { ExecutionContext } from '../../../../../src/tools/types/ExecutionTypes.js';
 import {
   type Tool,
-  ToolKind,
-  type ToolResult,
+  ToolKind
 } from '../../../../../src/tools/types/ToolTypes.js';
 
 function createMockTool(
@@ -22,7 +21,6 @@ function createMockTool(
     name,
     displayName: overrides.displayName ?? `Display ${name}`,
     kind: overrides.kind ?? ToolKind.ReadOnly,
-    isReadOnly: overrides.isReadOnly ?? true,
     isConcurrencySafe: overrides.isConcurrencySafe ?? true,
     strict: overrides.strict ?? false,
     description: overrides.description ?? { short: `${name} description` },

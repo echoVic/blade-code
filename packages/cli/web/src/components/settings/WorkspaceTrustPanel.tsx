@@ -25,7 +25,6 @@ interface WorkspaceTrustStatus {
   projectPath: string;
   trustRoot: string;
   state: WorkspaceTrustState;
-  trusted: boolean;
   sensitiveSources: number;
   sources: WorkspaceTrustSource[];
   decision: string;

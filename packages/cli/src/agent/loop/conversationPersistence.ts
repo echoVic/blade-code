@@ -13,11 +13,12 @@ import type {
 } from '../../context/types.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { Bus } from '../../server/bus.js';
-import type { ContentPart } from '../../services/ChatServiceInterface.js';
+import type { ContentPart, Message } from '../../services/ChatServiceInterface.js';
 import { SessionService } from '../../services/SessionService.js';
 import type { JsonValue } from '../../store/types.js';
 import type { ProjectRuleReference } from '../resources/WorkspaceProjectRules.js';
 import type { ChatContext, UserMessageContent } from '../types.js';
+import type { ConversationState } from './ConversationState.js';
 import type { LoopDependencies } from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
@@ -375,4 +376,64 @@ export async function saveCompaction(
     if (options.required) throw error;
   }
   return null;
+}
+
+export interface PersistTurnContinuationParams {
+  deps: LoopDependencies;
+  context: ChatContext;
+  state: ConversationState;
+  assistantContent: string;
+  assistantReasoningContent?: string;
+  lastMessageUuid: string | null;
+  controlPrompt?: string;
+  controlMetadata?: MessagePersistenceMetadata;
+}
+
+export async function persistTurnContinuation(
+  params: PersistTurnContinuationParams
+): Promise<string | null> {
+  const {
+    deps,
+    context,
+    state,
+    assistantContent,
+    assistantReasoningContent,
+    lastMessageUuid,
+    controlPrompt,
+    controlMetadata,
+  } = params;
+
+  state.appendAssistant({
+    role: 'assistant',
+    content: assistantContent,
+    reasoningContent: assistantReasoningContent,
+  });
+
+  let uuid = lastMessageUuid;
+  const assistantUuid = await saveAssistantMessage(
+    deps,
+    context,
+    assistantContent,
+    uuid,
+    assistantReasoningContent
+  );
+  if (assistantUuid) uuid = assistantUuid;
+
+  if (controlPrompt !== undefined) {
+    const controlMsg: Message = { role: 'user', content: controlPrompt };
+    if (controlMetadata) {
+      controlMsg.metadata = controlMetadata as unknown as JsonValue;
+    }
+    state.appendControl('user', controlMsg);
+    const userUuid = await saveUserMessage(
+      deps,
+      context,
+      controlMsg.content as string,
+      uuid,
+      controlMetadata
+    );
+    if (userUuid) uuid = userUuid;
+  }
+
+  return uuid;
 }

@@ -35,7 +35,6 @@ const initialAppState: AppState = {
   modelEditorTarget: null,
   tasks: [],
   awaitingSecondCtrlC: false,
-  thinkingModeEnabled: false, // Thinking 模式默认关闭
   reasoningEffort: 'off',
   serviceTier: 'auto',
   responseVerbosity: 'auto',
@@ -158,11 +157,7 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
 
     setReasoningEffort: (reasoningEffort) => {
       set((state) => ({
-        app: {
-          ...state.app,
-          reasoningEffort,
-          thinkingModeEnabled: reasoningEffort !== 'off',
-        },
+        app: { ...state.app, reasoningEffort },
       }));
     },
 
@@ -191,21 +186,16 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
       set((state) => ({
         app: {
           ...state.app,
-          thinkingModeEnabled: enabled,
           reasoningEffort: enabled ? 'auto' : 'off',
         },
       }));
     },
 
-    /**
-     * 切换 Thinking 模式开关
-     */
     toggleThinkingMode: () => {
       set((state) => ({
         app: {
           ...state.app,
-          thinkingModeEnabled: !state.app.thinkingModeEnabled,
-          reasoningEffort: state.app.thinkingModeEnabled ? 'off' : 'auto',
+          reasoningEffort: state.app.reasoningEffort === 'off' ? 'auto' : 'off',
         },
       }));
     },

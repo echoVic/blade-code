@@ -174,7 +174,6 @@ export function createTaskTool(
     name: 'Task',
     displayName: 'Subagent Scheduler',
     kind: ToolKind.ReadOnly, // Plan 模式下允许：子 Agent 的工具使用受各自模式限制
-    isReadOnly: true,
     // Each Task owns an independent durable child session. Coding agents should
     // still use worktree isolation, as required by the tool contract below.
     isConcurrencySafe: false,

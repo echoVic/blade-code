@@ -480,8 +480,6 @@ export interface ToolConfig<TSchema = unknown, TParams = unknown> {
   displayName: string;
   /** 工具类型 */
   kind: ToolKind;
-  /** 是否为只读工具（可选，默认根据 kind 推断） */
-  isReadOnly?: boolean;
   /** 是否可与同批其他并发安全工具共享执行（可选，默认 false） */
   isConcurrencySafe?: boolean;
   /** 批内调度模式；shared 仍可由文件锁或 kind 配额进一步限流 */
@@ -543,8 +541,6 @@ export interface Tool<TParams = unknown> {
   readonly displayName: string;
   /** 工具类型 */
   readonly kind: ToolKind;
-  /** 是否为只读工具 */
-  readonly isReadOnly: boolean;
   /** 是否支持并发安全 */
   readonly isConcurrencySafe: boolean;
   /** 是否可与同批其他 shared 工具并发 */

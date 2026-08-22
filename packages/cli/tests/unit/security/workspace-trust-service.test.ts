@@ -65,7 +65,6 @@ describe('WorkspaceTrustService', () => {
     const status = await service.getStatus(project);
     expect(status).toMatchObject({
       state: 'not_required',
-      trusted: true,
       sensitiveSources: 0,
     });
     expect(service.isTrustedCached(project)).toBe(false);
@@ -92,7 +91,6 @@ describe('WorkspaceTrustService', () => {
     expect(service.getCachedStatus(projects[0])).toBeUndefined();
     expect(service.getCachedStatus(projects.at(-1)!)).toMatchObject({
       state: 'not_required',
-      trusted: true,
     });
   });
 
@@ -111,7 +109,6 @@ describe('WorkspaceTrustService', () => {
     const pending = await service.getStatus(project);
     expect(pending).toMatchObject({
       state: 'untrusted',
-      trusted: false,
       sensitiveSources: 1,
     });
     expect(pending.sources).toContainEqual(
@@ -125,7 +122,6 @@ describe('WorkspaceTrustService', () => {
 
     await expect(service.trust(project)).resolves.toMatchObject({
       state: 'trusted',
-      trusted: true,
     });
   });
 
@@ -181,7 +177,6 @@ describe('WorkspaceTrustService', () => {
     const serialized = JSON.stringify(status);
     expect(status).toMatchObject({
       state: 'untrusted',
-      trusted: false,
       sensitiveSources: 1,
       decision: 'undecided',
     });
@@ -238,14 +233,12 @@ describe('WorkspaceTrustService', () => {
     const inherited = await service.getStatus(child);
     expect(inherited).toMatchObject({
       state: 'trusted',
-      trusted: true,
       decision: 'inherited',
     });
 
     const denied = await service.revoke(child);
     expect(denied).toMatchObject({
       state: 'untrusted',
-      trusted: false,
       decision: 'untrusted',
     });
 
@@ -265,7 +258,6 @@ describe('WorkspaceTrustService', () => {
 
     await expect(service.getStatus(project)).resolves.toMatchObject({
       state: 'error',
-      trusted: false,
       error: expect.stringContaining('0700'),
     });
     await expect(service.revoke(project)).rejects.toThrow('0700');

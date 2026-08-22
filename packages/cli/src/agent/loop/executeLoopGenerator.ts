@@ -96,6 +96,7 @@ import {
   saveInterruptedTurnMarker,
   saveToolUse,
   saveUserMessage,
+  persistTurnContinuation,
 } from './conversationPersistence.js';
 import { ensureDurableToolIdentity } from './durableToolIdentity.js';
 import {
@@ -2591,19 +2592,14 @@ validates the object and may return a bounded corrective error.`;
             if (turnResult.finishReason !== 'length') {
               maxOutputRecoveryCount = 0;
             }
-            state.appendAssistant({
-              role: 'assistant',
-              content: turnResult.content || '',
-              reasoningContent: turnResult.reasoningContent,
-            });
-            const retryAssistantUuid = await saveAssistantMessage(
+            lastMessageUuid = await persistTurnContinuation({
               deps,
               context,
-              turnResult.content || '',
+              state,
+              assistantContent: turnResult.content || '',
+              assistantReasoningContent: turnResult.reasoningContent,
               lastMessageUuid,
-              turnResult.reasoningContent
-            );
-            if (retryAssistantUuid) lastMessageUuid = retryAssistantUuid;
+            });
 
             if (structuredOutputRetryCount >= MAX_STRUCTURED_OUTPUT_RETRIES) {
               return {
@@ -2625,19 +2621,16 @@ validates the object and may return a bounded corrective error.`;
             }
 
             structuredOutputRetryCount++;
-            const retryMsg: Message = {
-              role: 'user',
-              content:
-                `The final response is invalid because this turn requires the ` +
-                `${STRUCTURED_OUTPUT_TOOL_NAME} tool. Complete any remaining work, then ` +
-                `call ${STRUCTURED_OUTPUT_TOOL_NAME} exactly once with an object matching ` +
-                'its schema. Do not return JSON as prose.',
-            };
-            state.appendControl('user', retryMsg);
+            const retryPrompt =
+              `The final response is invalid because this turn requires the ` +
+              `${STRUCTURED_OUTPUT_TOOL_NAME} tool. Complete any remaining work, then ` +
+              `call ${STRUCTURED_OUTPUT_TOOL_NAME} exactly once with an object matching ` +
+              'its schema. Do not return JSON as prose.';
+            state.appendControl('user', { role: 'user', content: retryPrompt });
             const retryUserUuid = await saveUserMessage(
               deps,
               context,
-              retryMsg.content as string,
+              retryPrompt,
               lastMessageUuid
             );
             if (retryUserUuid) lastMessageUuid = retryUserUuid;
@@ -2657,14 +2650,14 @@ validates the object and may return a bounded corrective error.`;
             turnResult.content &&
             recordStaleOutput(staleDetector, turnResult.content)
           ) {
-            state.appendAssistant({
-              role: 'assistant',
-              content: turnResult.content || '',
-              reasoningContent: turnResult.reasoningContent,
-            });
-            state.appendControl('user', {
-              role: 'user',
-              content: `\n\n<system-reminder>\n${getStaleLoopHint()}\n</system-reminder>`,
+            lastMessageUuid = await persistTurnContinuation({
+              deps,
+              context,
+              state,
+              assistantContent: turnResult.content || '',
+              assistantReasoningContent: turnResult.reasoningContent,
+              lastMessageUuid,
+              controlPrompt: `\n\n<system-reminder>\n${getStaleLoopHint()}\n</system-reminder>`,
             });
             continue;
           }
@@ -2681,34 +2674,15 @@ validates the object and may return a bounded corrective error.`;
           if (intentAction.action === 'retry') {
             incompleteIntentRetryCount++;
             // assistant 输出与 retry 控制消息必须走同一条 pending 队列，保证下一轮看到的时序正确
-            state.appendAssistant({
-              role: 'assistant',
-              content: turnResult.content || '',
-              reasoningContent: turnResult.reasoningContent,
-            });
-
-            // JSONL 持久化：确保 resume 时能恢复此 assistant 消息
-            const retryAssistantUuid = await saveAssistantMessage(
+            lastMessageUuid = await persistTurnContinuation({
               deps,
               context,
-              turnResult.content || '',
+              state,
+              assistantContent: turnResult.content || '',
+              assistantReasoningContent: turnResult.reasoningContent,
               lastMessageUuid,
-              turnResult.reasoningContent
-            );
-            if (retryAssistantUuid) lastMessageUuid = retryAssistantUuid;
-
-            const retryMsg: Message = { role: 'user', content: intentAction.prompt };
-            state.appendControl('user', retryMsg);
-
-            // JSONL 持久化：确保 resume 时能恢复此 retry prompt
-            const retryUserUuid = await saveUserMessage(
-              deps,
-              context,
-              retryMsg.content as string,
-              lastMessageUuid
-            );
-            if (retryUserUuid) lastMessageUuid = retryUserUuid;
-
+              controlPrompt: intentAction.prompt,
+            });
             continue;
           }
 
@@ -2725,58 +2699,26 @@ validates the object and may return a bounded corrective error.`;
           if (delegationAction.action === 'retry') {
             delegationRetryCount++;
             requiredToolName = 'Task';
-            state.appendAssistant({
-              role: 'assistant',
-              content: turnResult.content || '',
-              reasoningContent: turnResult.reasoningContent,
-            });
-
-            const delegationAssistantUuid = await saveAssistantMessage(
+            lastMessageUuid = await persistTurnContinuation({
               deps,
               context,
-              turnResult.content || '',
+              state,
+              assistantContent: turnResult.content || '',
+              assistantReasoningContent: turnResult.reasoningContent,
               lastMessageUuid,
-              turnResult.reasoningContent
-            );
-            if (delegationAssistantUuid) {
-              lastMessageUuid = delegationAssistantUuid;
-            }
-
-            const delegationMsg: Message = {
-              role: 'user',
-              content: delegationAction.prompt,
-            };
-            state.appendControl('user', delegationMsg);
-
-            const delegationUserUuid = await saveUserMessage(
-              deps,
-              context,
-              delegationMsg.content as string,
-              lastMessageUuid
-            );
-            if (delegationUserUuid) {
-              lastMessageUuid = delegationUserUuid;
-            }
-
+              controlPrompt: delegationAction.prompt,
+            });
             continue;
           }
           if (delegationAction.action === 'fail') {
-            state.appendAssistant({
-              role: 'assistant',
-              content: turnResult.content || '',
-              reasoningContent: turnResult.reasoningContent,
-            });
-
-            const delegationAssistantUuid = await saveAssistantMessage(
+            lastMessageUuid = await persistTurnContinuation({
               deps,
               context,
-              turnResult.content || '',
+              state,
+              assistantContent: turnResult.content || '',
+              assistantReasoningContent: turnResult.reasoningContent,
               lastMessageUuid,
-              turnResult.reasoningContent
-            );
-            if (delegationAssistantUuid) {
-              lastMessageUuid = delegationAssistantUuid;
-            }
+            });
 
             return {
               success: false,
@@ -2803,58 +2745,26 @@ validates the object and may return a bounded corrective error.`;
               );
           if (worktreeAction.action === 'retry') {
             worktreeRetryCount++;
-            state.appendAssistant({
-              role: 'assistant',
-              content: turnResult.content || '',
-              reasoningContent: turnResult.reasoningContent,
-            });
-
-            const worktreeAssistantUuid = await saveAssistantMessage(
+            lastMessageUuid = await persistTurnContinuation({
               deps,
               context,
-              turnResult.content || '',
+              state,
+              assistantContent: turnResult.content || '',
+              assistantReasoningContent: turnResult.reasoningContent,
               lastMessageUuid,
-              turnResult.reasoningContent
-            );
-            if (worktreeAssistantUuid) {
-              lastMessageUuid = worktreeAssistantUuid;
-            }
-
-            const worktreeMsg: Message = {
-              role: 'user',
-              content: worktreeAction.prompt,
-            };
-            state.appendControl('user', worktreeMsg);
-
-            const worktreeUserUuid = await saveUserMessage(
-              deps,
-              context,
-              worktreeMsg.content as string,
-              lastMessageUuid
-            );
-            if (worktreeUserUuid) {
-              lastMessageUuid = worktreeUserUuid;
-            }
-
+              controlPrompt: worktreeAction.prompt,
+            });
             continue;
           }
           if (worktreeAction.action === 'fail') {
-            state.appendAssistant({
-              role: 'assistant',
-              content: turnResult.content || '',
-              reasoningContent: turnResult.reasoningContent,
-            });
-
-            const worktreeAssistantUuid = await saveAssistantMessage(
+            lastMessageUuid = await persistTurnContinuation({
               deps,
               context,
-              turnResult.content || '',
+              state,
+              assistantContent: turnResult.content || '',
+              assistantReasoningContent: turnResult.reasoningContent,
               lastMessageUuid,
-              turnResult.reasoningContent
-            );
-            if (worktreeAssistantUuid) {
-              lastMessageUuid = worktreeAssistantUuid;
-            }
+            });
 
             return {
               success: false,
@@ -2893,57 +2803,27 @@ validates the object and may return a bounded corrective error.`;
             if (independentVerificationTaskRequired) {
               requiredToolName = 'Task';
             }
-            state.appendAssistant({
-              role: 'assistant',
-              content: turnResult.content || '',
-              reasoningContent: turnResult.reasoningContent,
+            lastMessageUuid = await persistTurnContinuation({
+              deps,
+              context,
+              state,
+              assistantContent: turnResult.content || '',
+              assistantReasoningContent: turnResult.reasoningContent,
+              lastMessageUuid,
+              controlPrompt: independentVerificationAction.prompt,
+              controlMetadata: INTERNAL_CONTROL_MESSAGE_METADATA,
             });
-
-            const verificationGateAssistantUuid = await saveAssistantMessage(
-              deps,
-              context,
-              turnResult.content || '',
-              lastMessageUuid,
-              turnResult.reasoningContent
-            );
-            if (verificationGateAssistantUuid) {
-              lastMessageUuid = verificationGateAssistantUuid;
-            }
-
-            const verificationGateMsg: Message = {
-              role: 'user',
-              content: independentVerificationAction.prompt,
-              metadata: INTERNAL_CONTROL_MESSAGE_METADATA,
-            };
-            state.appendControl('user', verificationGateMsg);
-            const verificationGateUserUuid = await saveUserMessage(
-              deps,
-              context,
-              verificationGateMsg.content as string,
-              lastMessageUuid,
-              INTERNAL_CONTROL_MESSAGE_METADATA
-            );
-            if (verificationGateUserUuid) {
-              lastMessageUuid = verificationGateUserUuid;
-            }
             continue;
           }
           if (independentVerificationAction.action === 'fail') {
-            state.appendAssistant({
-              role: 'assistant',
-              content: turnResult.content || '',
-              reasoningContent: turnResult.reasoningContent,
-            });
-            const verificationGateAssistantUuid = await saveAssistantMessage(
+            lastMessageUuid = await persistTurnContinuation({
               deps,
               context,
-              turnResult.content || '',
+              state,
+              assistantContent: turnResult.content || '',
+              assistantReasoningContent: turnResult.reasoningContent,
               lastMessageUuid,
-              turnResult.reasoningContent
-            );
-            if (verificationGateAssistantUuid) {
-              lastMessageUuid = verificationGateAssistantUuid;
-            }
+            });
             return {
               success: false,
               error: {
@@ -2970,58 +2850,26 @@ validates the object and may return a bounded corrective error.`;
           if (verificationAction.action === 'retry') {
             verificationRetryCount++;
             requiredToolName = 'Bash';
-            state.appendAssistant({
-              role: 'assistant',
-              content: turnResult.content || '',
-              reasoningContent: turnResult.reasoningContent,
-            });
-
-            const verificationAssistantUuid = await saveAssistantMessage(
+            lastMessageUuid = await persistTurnContinuation({
               deps,
               context,
-              turnResult.content || '',
+              state,
+              assistantContent: turnResult.content || '',
+              assistantReasoningContent: turnResult.reasoningContent,
               lastMessageUuid,
-              turnResult.reasoningContent
-            );
-            if (verificationAssistantUuid) {
-              lastMessageUuid = verificationAssistantUuid;
-            }
-
-            const verificationMsg: Message = {
-              role: 'user',
-              content: verificationAction.prompt,
-            };
-            state.appendControl('user', verificationMsg);
-
-            const verificationUserUuid = await saveUserMessage(
-              deps,
-              context,
-              verificationMsg.content as string,
-              lastMessageUuid
-            );
-            if (verificationUserUuid) {
-              lastMessageUuid = verificationUserUuid;
-            }
-
+              controlPrompt: verificationAction.prompt,
+            });
             continue;
           }
           if (verificationAction.action === 'fail') {
-            state.appendAssistant({
-              role: 'assistant',
-              content: turnResult.content || '',
-              reasoningContent: turnResult.reasoningContent,
-            });
-
-            const verificationAssistantUuid = await saveAssistantMessage(
+            lastMessageUuid = await persistTurnContinuation({
               deps,
               context,
-              turnResult.content || '',
+              state,
+              assistantContent: turnResult.content || '',
+              assistantReasoningContent: turnResult.reasoningContent,
               lastMessageUuid,
-              turnResult.reasoningContent
-            );
-            if (verificationAssistantUuid) {
-              lastMessageUuid = verificationAssistantUuid;
-            }
+            });
 
             return {
               success: false,
@@ -3054,38 +2902,18 @@ validates the object and may return a bounded corrective error.`;
             await invalidateGoalVerification(
               'Goal completion evidence invalidated by a Stop hook continuation'
             );
-            // assistant 输出与 continue 控制消息必须走同一条 pending 队列，保证下一轮看到的时序正确
-            state.appendAssistant({
-              role: 'assistant',
-              content: turnResult.content || '',
-              reasoningContent: turnResult.reasoningContent,
-            });
-
-            // JSONL 持久化：确保 resume 时能恢复此 assistant 消息
-            const continueAssistantUuid = await saveAssistantMessage(
-              deps,
-              context,
-              turnResult.content || '',
-              lastMessageUuid,
-              turnResult.reasoningContent
-            );
-            if (continueAssistantUuid) lastMessageUuid = continueAssistantUuid;
-
             const continueMessage = stopAction.reason
               ? `\n\n<system-reminder>\n${stopAction.reason}\n</system-reminder>`
               : '\n\n<system-reminder>\nPlease continue the conversation from where we left it off without asking the user any further questions. Continue with the last task that you were asked to work on.\n</system-reminder>';
-            const continueMsg: Message = { role: 'user', content: continueMessage };
-            state.appendControl('user', continueMsg);
-
-            // JSONL 持久化：确保 resume 时能恢复此 continue prompt
-            const continueUserUuid = await saveUserMessage(
+            lastMessageUuid = await persistTurnContinuation({
               deps,
               context,
-              continueMsg.content as string,
-              lastMessageUuid
-            );
-            if (continueUserUuid) lastMessageUuid = continueUserUuid;
-
+              state,
+              assistantContent: turnResult.content || '',
+              assistantReasoningContent: turnResult.reasoningContent,
+              lastMessageUuid,
+              controlPrompt: continueMessage,
+            });
             continue;
           }
 
@@ -3133,53 +2961,26 @@ validates the object and may return a bounded corrective error.`;
             goalVerificationTaskRequired =
               goalVerificationAction.requireVerificationTask;
             if (goalVerificationTaskRequired) requiredToolName = 'Task';
-            state.appendAssistant({
-              role: 'assistant',
-              content: turnResult.content || '',
-              reasoningContent: turnResult.reasoningContent,
-            });
-            const goalVerificationAssistantUuid = await saveAssistantMessage(
+            lastMessageUuid = await persistTurnContinuation({
               deps,
               context,
-              turnResult.content || '',
+              state,
+              assistantContent: turnResult.content || '',
+              assistantReasoningContent: turnResult.reasoningContent,
               lastMessageUuid,
-              turnResult.reasoningContent
-            );
-            if (goalVerificationAssistantUuid) {
-              lastMessageUuid = goalVerificationAssistantUuid;
-            }
-            const goalVerificationMessage: Message = {
-              role: 'user',
-              content: goalVerificationAction.prompt,
-            };
-            state.appendControl('user', goalVerificationMessage);
-            const goalVerificationUserUuid = await saveUserMessage(
-              deps,
-              context,
-              goalVerificationMessage.content as string,
-              lastMessageUuid
-            );
-            if (goalVerificationUserUuid) {
-              lastMessageUuid = goalVerificationUserUuid;
-            }
+              controlPrompt: goalVerificationAction.prompt,
+            });
             continue;
           }
           if (goalVerificationAction.action === 'fail') {
-            state.appendAssistant({
-              role: 'assistant',
-              content: turnResult.content || '',
-              reasoningContent: turnResult.reasoningContent,
-            });
-            const goalVerificationAssistantUuid = await saveAssistantMessage(
+            lastMessageUuid = await persistTurnContinuation({
               deps,
               context,
-              turnResult.content || '',
+              state,
+              assistantContent: turnResult.content || '',
+              assistantReasoningContent: turnResult.reasoningContent,
               lastMessageUuid,
-              turnResult.reasoningContent
-            );
-            if (goalVerificationAssistantUuid) {
-              lastMessageUuid = goalVerificationAssistantUuid;
-            }
+            });
             return {
               success: false,
               error: {

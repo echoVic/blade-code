@@ -1,48 +1,30 @@
-import * as crypto from 'crypto';
-import { nanoid } from 'nanoid';
+/**
+ * 上下文管理器 - PersistentStore 的薄门面
+ *
+ * 历史上此类包含内存模型、压缩、过滤、搜索等功能，
+ * 但这些功能已迁移到独立模块（CompactionService、ReactiveCompaction 等），
+ * 仅保留 JSONL 持久化委托方法。
+ */
+
 import type { SubagentInfoForContext } from '../agent/types.js';
 import type { ContentPart } from '../services/ChatServiceInterface.js';
-import type { JsonObject, JsonValue } from '../store/types.js';
+import type { JsonValue } from '../store/types.js';
 import { getCwd } from '../utils/cwd.js';
-import { createSessionId } from '../utils/sessionId.js';
-import { ContextAssembler } from './ContextAssembler.js';
 import type { CompactionPersistenceMetadata } from './compactionCheckpoint.js';
-import { ContextCompressor } from './processors/ContextCompressor.js';
-import { ContextFilter } from './processors/ContextFilter.js';
-import { CacheStore } from './storage/CacheStore.js';
-import { MemoryStore } from './storage/MemoryStore.js';
 import type { RecordTokenBudgetHandoffResult } from './storage/PersistentStore.js';
 import { PersistentStore } from './storage/PersistentStore.js';
-import { getBladeStorageRoot } from './storage/pathUtils.js';
-import type { TokenBudgetHandoffRecordedV1 } from './TokenBudgetHandoff.js';
-import {
-  CompressedContext,
-  ContextData,
+import type {
   ContextManagerOptions,
-  ContextMessage,
-  ContextFilter as FilterOptions,
   MessagePersistenceMetadata,
   SubagentRunRef,
-  SystemContext,
-  ToolCall,
-  WorkspaceContext,
 } from './types.js';
-
-type SessionConfiguration = JsonObject & { sessionId?: string };
 
 /**
  * 上下文管理器 - 统一管理所有上下文相关操作
  */
 export class ContextManager {
-  private readonly memory: MemoryStore;
   private readonly persistent: PersistentStore;
-  private readonly cache: CacheStore;
-  private readonly compressor: ContextCompressor;
-  private readonly filter: ContextFilter;
   private readonly options: ContextManagerOptions;
-
-  private currentSessionId: string | null = null;
-  private initialized = false;
 
   /**
    * 获取持久化存储实例（供外部直接调用 JSONL 操作）
@@ -52,15 +34,11 @@ export class ContextManager {
   }
 
   constructor(options: Partial<ContextManagerOptions> = {}) {
-    // 默认使用 ~/.blade/ 作为存储根目录
-    const defaultPersistentPath =
-      options.storage?.persistentPath || getBladeStorageRoot();
-
     this.options = {
       projectPath: options.projectPath || getCwd(),
       storage: {
         maxMemorySize: 1000,
-        persistentPath: defaultPersistentPath,
+        persistentPath: '',
         cacheSize: 100,
         compressionEnabled: true,
         ...options.storage,
@@ -75,181 +53,14 @@ export class ContextManager {
       enableVectorSearch: options.enableVectorSearch || false,
     };
 
-    // 初始化存储层
-    this.memory = new MemoryStore(this.options.storage.maxMemorySize);
     this.persistent = new PersistentStore(this.options.projectPath, 100);
-    this.cache = new CacheStore(
-      this.options.storage.cacheSize,
-      5 * 60 * 1000 // 5分钟默认TTL
-    );
-
-    // 初始化处理器
-    this.compressor = new ContextCompressor();
-    this.filter = new ContextFilter(this.options.defaultFilter);
   }
 
   /**
-   * 初始化上下文管理器
+   * 初始化持久化存储目录
    */
   async initialize(): Promise<void> {
-    if (this.initialized) return;
-
-    try {
-      await this.persistent.initialize();
-
-      // 检查存储健康状态
-      const health = await this.persistent.checkStorageHealth();
-      if (!health.isAvailable) {
-        console.warn('警告：持久化存储不可用，将仅使用内存存储');
-      }
-
-      this.initialized = true;
-      console.log('上下文管理器初始化完成');
-    } catch (error) {
-      console.error('上下文管理器初始化失败:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * 创建新会话
-   */
-  async createSession(
-    userId?: string,
-    preferences: JsonObject = {},
-    configuration: SessionConfiguration = {}
-  ): Promise<string> {
-    // 优先使用配置中的sessionId，否则生成新的
-    const sessionId = configuration.sessionId || this.generateSessionId();
-    const now = Date.now();
-
-    // 创建初始上下文数据
-    const contextData: ContextData = {
-      layers: {
-        system: await this.createSystemContext(),
-        session: {
-          sessionId,
-          userId,
-          preferences,
-          configuration,
-          startTime: now,
-        },
-        conversation: {
-          messages: [],
-          topics: [],
-          lastActivity: now,
-        },
-        tool: {
-          recentCalls: [],
-          toolStates: {},
-          dependencies: {},
-        },
-        workspace: await this.createWorkspaceContext(),
-      },
-      metadata: {
-        totalTokens: 0,
-        priority: 1,
-        lastUpdated: now,
-      },
-    };
-
-    // 存储到内存和持久化存储
-    this.memory.setContext(contextData);
-    await this.persistent.initSession(sessionId);
-
-    this.currentSessionId = sessionId;
-
-    console.log(`新会话已创建: ${sessionId}`);
-    return sessionId;
-  }
-
-  /**
-   * 加载现有会话
-   */
-  async loadSession(sessionId: string): Promise<boolean> {
-    try {
-      // 先尝试从内存加载
-      let contextData = this.memory.getContext();
-
-      if (!contextData || contextData.layers.session.sessionId !== sessionId) {
-        // 从 JSONL 事件流重建
-        const events = await this.persistent.loadEvents(sessionId);
-        if (!events || events.length === 0) {
-          return false;
-        }
-
-        const assembler = new ContextAssembler();
-        contextData = assembler.assembleContextData(
-          events,
-          await this.createSystemContext(),
-          await this.createWorkspaceContext()
-        );
-
-        if (!contextData) {
-          return false;
-        }
-
-        this.memory.setContext(contextData);
-      }
-
-      this.currentSessionId = sessionId;
-      console.log(`会话已加载: ${sessionId}`);
-      return true;
-    } catch (error) {
-      console.error('加载会话失败:', error);
-      return false;
-    }
-  }
-
-  /**
-   * 添加消息到当前会话
-   */
-  async addMessage(
-    role: ContextMessage['role'],
-    content: string,
-    metadata?: JsonObject
-  ): Promise<void> {
-    if (!this.currentSessionId) {
-      throw new Error('没有活动会话');
-    }
-
-    const message: ContextMessage = {
-      id: this.generateMessageId(),
-      role,
-      content,
-      timestamp: Date.now(),
-      metadata,
-    };
-
-    this.memory.addMessage(message);
-
-    // 如果需要压缩，执行压缩
-    const contextData = this.memory.getContext();
-    if (contextData && this.shouldCompress(contextData)) {
-      await this.compressCurrentContext();
-    }
-
-    // 异步保存到持久化存储
-    this.saveCurrentSessionAsync();
-  }
-
-  /**
-   * 添加工具调用记录
-   */
-  async addToolCall(toolCall: ToolCall): Promise<void> {
-    if (!this.currentSessionId) {
-      throw new Error('没有活动会话');
-    }
-
-    this.memory.addToolCall(toolCall);
-
-    // 缓存成功的工具调用结果
-    if (toolCall.status === 'success' && toolCall.output) {
-      this.cache.cacheToolResult(toolCall.name, toolCall.input, toolCall.output);
-    }
-
-    // 异步保存
-    this.saveCurrentSessionAsync();
+    await this.persistent.initialize();
   }
 
   /**
@@ -337,255 +148,8 @@ export class ContextManager {
 
   async recordTokenBudgetHandoff(
     sessionId: string,
-    payload: Omit<TokenBudgetHandoffRecordedV1, 'messageId' | 'createdAt'>
+    payload: Parameters<PersistentStore['recordTokenBudgetHandoff']>[1]
   ): Promise<RecordTokenBudgetHandoffResult> {
     return this.persistent.recordTokenBudgetHandoff(sessionId, payload);
-  }
-
-  /**
-   * 更新工具状态
-   */
-  updateToolState(toolName: string, state: JsonValue): void {
-    if (!this.currentSessionId) {
-      throw new Error('没有活动会话');
-    }
-
-    this.memory.updateToolState(toolName, state);
-  }
-
-  /**
-   * 更新工作空间信息
-   */
-  updateWorkspace(updates: Partial<WorkspaceContext>): void {
-    if (!this.currentSessionId) {
-      throw new Error('没有活动会话');
-    }
-
-    this.memory.updateWorkspace(updates);
-  }
-
-  /**
-   * 获取格式化的上下文用于 Prompt 构建
-   */
-  async getFormattedContext(filterOptions?: FilterOptions): Promise<{
-    context: ContextData;
-    compressed?: CompressedContext;
-    tokenCount: number;
-  }> {
-    const contextData = this.memory.getContext();
-    if (!contextData) {
-      throw new Error('没有可用的上下文数据');
-    }
-
-    // 应用过滤器
-    const filteredContext = this.filter.filter(contextData, filterOptions);
-
-    // 检查是否需要压缩
-    const shouldCompress = this.shouldCompress(filteredContext);
-    let compressed: CompressedContext | undefined;
-
-    if (shouldCompress) {
-      // 尝试从缓存获取压缩结果
-      const contextHash = this.hashContext(filteredContext);
-      compressed = this.cache.getCompressedContext(contextHash) ?? undefined;
-
-      if (!compressed) {
-        compressed = await this.compressor.compress(filteredContext);
-        this.cache.cacheCompressedContext(contextHash, compressed);
-      }
-    }
-
-    return {
-      context: filteredContext,
-      compressed,
-      tokenCount: compressed
-        ? compressed.tokenCount
-        : filteredContext.metadata.totalTokens,
-    };
-  }
-
-  /**
-   * 搜索历史会话
-   */
-  async searchSessions(
-    query: string,
-    limit: number = 10
-  ): Promise<
-    Array<{
-      sessionId: string;
-      summary: string;
-      lastActivity: number;
-      relevanceScore: number;
-    }>
-  > {
-    const sessions = await this.persistent.listSessions();
-    const results: Array<{
-      sessionId: string;
-      summary: string;
-      lastActivity: number;
-      relevanceScore: number;
-    }> = [];
-
-    for (const sessionId of sessions) {
-      const summary = await this.persistent.getSessionSummary(sessionId);
-      if (summary) {
-        const relevanceScore = this.calculateRelevance(query, summary.topics);
-        if (relevanceScore > 0) {
-          results.push({
-            sessionId,
-            summary: `${summary.messageCount}条消息，主题：${summary.topics.join('、')}`,
-            lastActivity: summary.lastActivity,
-            relevanceScore,
-          });
-        }
-      }
-    }
-
-    return results.sort((a, b) => b.relevanceScore - a.relevanceScore).slice(0, limit);
-  }
-
-  /**
-   * 获取缓存的工具调用结果
-   */
-  getCachedToolResult(toolName: string, input: JsonValue): unknown | null {
-    return this.cache.getToolResult(toolName, input);
-  }
-
-  /**
-   * 获取管理器统计信息
-   */
-  async getStats(): Promise<{
-    currentSession: string | null;
-    memory: ReturnType<MemoryStore['getMemoryInfo']>;
-    cache: ReturnType<CacheStore['getStats']>;
-    storage: Awaited<ReturnType<PersistentStore['getStorageStats']>>;
-  }> {
-    const [memoryInfo, cacheStats, storageStats] = await Promise.all([
-      Promise.resolve(this.memory.getMemoryInfo()),
-      Promise.resolve(this.cache.getStats()),
-      this.persistent.getStorageStats(),
-    ]);
-
-    return {
-      currentSession: this.currentSessionId,
-      memory: memoryInfo,
-      cache: cacheStats,
-      storage: storageStats,
-    };
-  }
-
-  /**
-   * 清理资源
-   */
-  async cleanup(): Promise<void> {
-    if (this.currentSessionId) {
-      await this.saveCurrentSession();
-    }
-
-    this.memory.clear();
-    this.cache.clear();
-    await this.persistent.cleanupOldSessions();
-
-    this.currentSessionId = null;
-    console.log('上下文管理器资源清理完成');
-  }
-
-  // 私有方法
-
-  private generateSessionId(): string {
-    return createSessionId();
-  }
-
-  private generateMessageId(): string {
-    // 使用 nanoid 生成消息 ID
-    return nanoid();
-  }
-
-  private async createSystemContext(): Promise<SystemContext> {
-    return {
-      role: 'AI助手',
-      capabilities: ['对话', '工具调用', '代码生成', '文档分析'],
-      tools: ['文件操作', 'Git操作', '代码分析'],
-      version: '1.0.0',
-    };
-  }
-
-  private async createWorkspaceContext(): Promise<WorkspaceContext> {
-    try {
-      const cwd = this.options.projectPath;
-      return {
-        projectPath: cwd,
-        currentFiles: [],
-        recentFiles: [],
-        environment: {
-          nodeVersion: process.version,
-          platform: process.platform,
-          cwd,
-        },
-      };
-    } catch (_error) {
-      return {
-        currentFiles: [],
-        recentFiles: [],
-        environment: {},
-      };
-    }
-  }
-
-  private shouldCompress(contextData: ContextData): boolean {
-    return contextData.metadata.totalTokens > this.options.compressionThreshold;
-  }
-
-  private async compressCurrentContext(): Promise<void> {
-    const contextData = this.memory.getContext();
-    if (!contextData) return;
-
-    const compressed = await this.compressor.compress(contextData);
-
-    // 更新对话摘要
-    contextData.layers.conversation.summary = compressed.summary;
-
-    this.memory.setContext(contextData);
-  }
-
-  private async saveCurrentSession(): Promise<void> {
-    // JSONL 持久化已由 Agent.ts 通过 saveMessage/saveToolUse/saveToolResult 直接完成
-    // 此方法保留为空，避免重复写入
-  }
-
-  private saveCurrentSessionAsync(): void {
-    // 异步保存，不阻塞主流程
-    this.saveCurrentSession().catch((error) => {
-      console.warn('异步保存会话失败:', error);
-    });
-  }
-
-  private hashContext(contextData: ContextData): string {
-    const content = JSON.stringify({
-      messageCount: contextData.layers.conversation.messages.length,
-      lastMessage:
-        contextData.layers.conversation.messages[
-          contextData.layers.conversation.messages.length - 1
-        ]?.id,
-      toolCallCount: contextData.layers.tool.recentCalls.length,
-    });
-
-    return crypto.createHash('md5').update(content).digest('hex');
-  }
-
-  private calculateRelevance(query: string, topics: string[]): number {
-    const queryLower = query.toLowerCase();
-    let score = 0;
-
-    for (const topic of topics) {
-      if (
-        queryLower.includes(topic.toLowerCase()) ||
-        topic.toLowerCase().includes(queryLower)
-      ) {
-        score += 1;
-      }
-    }
-
-    return score;
   }
 }

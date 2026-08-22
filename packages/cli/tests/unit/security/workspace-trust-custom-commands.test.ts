@@ -10,7 +10,6 @@ vi.mock('../../../src/security/WorkspaceTrustService.js', () => ({
     getInstance: () => ({
       getStatus: async () => ({
         state: mocks.trusted ? 'trusted' : 'untrusted',
-        trusted: mocks.trusted,
       }),
     }),
   },

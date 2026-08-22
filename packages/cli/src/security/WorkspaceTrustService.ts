@@ -58,13 +58,16 @@ export interface WorkspaceTrustStatus {
   projectPath: string;
   trustRoot: string;
   state: WorkspaceTrustState;
-  trusted: boolean;
   sensitiveSources: number;
   sources: WorkspaceTrustSource[];
   decision: 'trusted' | 'untrusted' | 'inherited' | 'undecided';
   decidedAt?: string;
   inheritedFrom?: string;
   error?: string;
+}
+
+export function isWorkspaceTrusted(status: WorkspaceTrustStatus): boolean {
+  return status.state === 'trusted' || status.state === 'not_required';
 }
 
 interface WorkspaceTrustDecision {
@@ -260,7 +263,6 @@ export class WorkspaceTrustService {
       const status: WorkspaceTrustStatus = {
         ...identity,
         state: 'error',
-        trusted: false,
         sensitiveSources: 0,
         sources: [],
         decision: 'undecided',
@@ -274,7 +276,6 @@ export class WorkspaceTrustService {
       const status: WorkspaceTrustStatus = {
         ...identity,
         state: 'not_required',
-        trusted: true,
         sensitiveSources: 0,
         sources,
         decision: 'undecided',
@@ -290,7 +291,6 @@ export class WorkspaceTrustService {
       const status: WorkspaceTrustStatus = {
         ...identity,
         state: 'error',
-        trusted: false,
         sensitiveSources: sources.length,
         sources,
         decision: 'undecided',
@@ -320,7 +320,6 @@ export class WorkspaceTrustService {
     const status: WorkspaceTrustStatus = {
       ...identity,
       state: trusted ? 'trusted' : 'untrusted',
-      trusted,
       sensitiveSources: sources.length,
       sources,
       decision: winning

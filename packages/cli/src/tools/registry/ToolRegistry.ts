@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { PermissionMode } from '../../config/types.js';
 import { createMcpProviderServerPrefix } from '../../mcp/McpToolCatalog.js';
 import type { FunctionDeclaration, Tool } from '../types/index.js';
+import { isReadOnlyKind } from '../types/ToolTypes.js';
 import { DeferredToolManager } from './DeferredToolManager.js';
 
 export interface McpCatalogProjectionChange {
@@ -295,7 +296,7 @@ export class ToolRegistry extends EventEmitter {
    */
   getReadOnlyFunctionDeclarations(): FunctionDeclaration[] {
     return this.getAll()
-      .filter((tool) => tool.isReadOnly)
+      .filter((tool) => isReadOnlyKind(tool.kind))
       .map((tool) => tool.getFunctionDeclaration());
   }
 
@@ -327,7 +328,7 @@ export class ToolRegistry extends EventEmitter {
    * 获取只读工具
    */
   getReadOnlyTools(): Tool[] {
-    return this.getAll().filter((tool) => tool.isReadOnly);
+    return this.getAll().filter((tool) => isReadOnlyKind(tool.kind));
   }
 
   /**
