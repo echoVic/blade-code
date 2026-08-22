@@ -55,6 +55,7 @@ import { type Tool, ToolErrorType, type ToolResult } from '../tools/types/index.
 import { getCwd } from '../utils/cwd.js';
 import { ExecutionEngine } from './ExecutionEngine.js';
 import { executeLoopGenerator } from './loop/index.js';
+import { CACHE_STABLE_ENVIRONMENT_OPTIONS } from './loop/providerSystemPrompt.js';
 import {
   type FunctionToolCallRef,
   handleSubagentLifecycle,
@@ -91,10 +92,6 @@ import type {
 
 // 创建 Agent 专用 Logger
 const logger = createLogger(LogCategory.AGENT);
-const CACHE_STABLE_ENVIRONMENT_OPTIONS = {
-  includeGitSnapshot: false,
-  includeDirectoryListing: false,
-} as const;
 
 function isTerminalProviderAdmissionRejection(result: LoopResult): boolean {
   return (

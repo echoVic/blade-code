@@ -27,8 +27,9 @@ export default {
   changelog: {
     // 是否生成 changelog
     generate: true,
-    // 文件路径（相对于 monorepo 根目录）
-    file: '../../docs/changelog.md',
+    // 文件路径（相对于 monorepo 根目录）：根 CHANGELOG.md 为唯一权威源，
+    // 文档站点的 docs/changelog.md 由 Deploy Docs workflow 从此文件同步生成
+    file: '../../CHANGELOG.md',
     // 提交分类规则
     categories: {
       feat: '✨ 新功能',

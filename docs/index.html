@@ -21,10 +21,14 @@
       name: 'Blade Code',
       repo: 'echoVic/blade-code',
       loadSidebar: true,
+      loadNavbar: true,
       coverpage: true,
       auto2top: true,
       maxLevel: 4,
       subMaxLevel: 3,
+
+      // 多语言回退：访问 /en/ 下不存在的页面时回退到默认（中文）根目录
+      fallbackLanguages: ['en'],
 
       // 搜索配置
       search: {

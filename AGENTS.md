@@ -81,7 +81,9 @@ Blade/
 ## Release Process
 
 1. Bump version in `packages/cli/package.json`
-2. Update `CHANGELOG.md` with the new version's changes (what was added/changed/fixed)
+2. Update both changelogs with the new version's changes (what was added/changed/fixed):
+   - `CHANGELOG.md` (English, authoritative source consumed by npm/VersionChecker)
+   - `CHANGELOG.zh.md` (Chinese, kept in sync manually with the same version headings)
 3. Update related documentation if the feature affects user-facing behavior (docs/, README.md, AGENTS.md, etc.)
 4. Build and run full test suite: `bun run build && bun run test:all`
 5. Commit and tag: `git tag v<version>`
@@ -90,6 +92,11 @@ Blade/
 8. Verify: `npm view blade-code version`
 
 Each independent feature or fix must be released as a separate npm patch version.
+
+The docs site (`docs/`) is bilingual: Chinese is the default under the docs root
+and English lives under `docs/en/`. `docs/changelog.md` (zh) and
+`docs/en/changelog.md` (en) are build artifacts synced from `CHANGELOG.zh.md`
+and `CHANGELOG.md` by the Deploy Docs workflow — do not edit them directly.
 
 ## Documentation
 

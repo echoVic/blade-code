@@ -65,6 +65,10 @@ blade-context/
 *-context/
 *.context/
 
+# 文档站点构建产物（由 CI 从根 CHANGELOG.md / CHANGELOG.zh.md 同步生成）
+docs/changelog.md
+docs/en/changelog.md
+
 # 其他
 .cache/
 .parcel-cache/

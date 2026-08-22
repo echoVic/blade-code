@@ -130,6 +130,7 @@ import { StreamingToolExecutor } from './StreamingToolExecutor.js';
 import { ToolProgressQueue } from './ToolProgressQueue.js';
 import type { FunctionToolCallRef } from './toolDomainPolicy.js';
 import { applyToolDomainEffects } from './toolDomainPolicy.js';
+import { composeProviderSystemPrompt } from './providerSystemPrompt.js';
 import type {
   LoopDependencies,
   LoopEvent,
@@ -151,16 +152,6 @@ function toTokenUsageInfo(usage: UsageInfo, maxContextTokens: number): TokenUsag
     costUsd: usage.costUsd,
   };
 }
-
-const PLANNING_DIRECTIVE = `
-
-# Task Execution Strategy
-When facing complex multi-step tasks:
-1. Break the task into concrete, verifiable steps before acting.
-2. Execute one step at a time — verify each step succeeded before moving to the next.
-3. If a step fails, diagnose the root cause rather than repeating the same approach.
-4. When uncertain about file paths or project structure, use Grep/Glob/Read to gather facts first.
-5. Prefer the smallest change that achieves the goal — avoid unnecessary refactoring.`;
 
 function escapeReminderIdentifier(value: string): string {
   return JSON.stringify(value).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e');
@@ -969,18 +960,7 @@ export async function* executeLoopGenerator(
     const actionStationarity = createActionStationarityDetector();
 
     // 1.5 注入 deferred tools listing 到系统提示
-    let finalSystemPrompt = systemPrompt;
-    if (typeof registry.getDeferredToolsListing === 'function') {
-      const deferredListing = registry.getDeferredToolsListing();
-      if (deferredListing && finalSystemPrompt) {
-        finalSystemPrompt = `${finalSystemPrompt}\n\n${deferredListing}`;
-      }
-    }
-
-    // 1.6 注入任务分解与自主规划指令
-    if (finalSystemPrompt) {
-      finalSystemPrompt += PLANNING_DIRECTIVE;
-    }
+    let finalSystemPrompt = composeProviderSystemPrompt(systemPrompt, registry);
     if (structuredOutputContract) {
       finalSystemPrompt = `${finalSystemPrompt ?? ''}\n\n# Structured Final Output
 This turn has a required JSON Schema final-output contract. Complete the user's

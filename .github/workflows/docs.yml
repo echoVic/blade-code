@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
+      - 'CHANGELOG.md'
+      - 'CHANGELOG.zh.md'
   workflow_dispatch:
 
 permissions:
@@ -28,6 +30,14 @@ jobs:
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
+
+      - name: Sync changelog into docs site
+        run: |
+          # Chinese changelog is the default (root docs) page
+          cp CHANGELOG.zh.md docs/changelog.md
+          # English changelog feeds the /en/ subtree
+          mkdir -p docs/en
+          cp CHANGELOG.md docs/en/changelog.md
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
