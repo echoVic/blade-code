@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.10.70] - 2026-08-22
+
+### Fixed
+- Retry, verification, delegation, and stale-loop continuations now persist the
+  assistant response and host control prompt through one ordered JSONL path,
+  preserving the parent UUID chain across resume
+- Web task queue projections now read queue state from the durable Session
+  snapshot instead of duplicating mutable values in the active run
+
+### Changed
+- Context management is now a thin `PersistentStore` facade, removing the
+  unused in-memory context, cache, compression, and search model
+- Provider admission accounting now uses one request-class counter structure
+  for active streams, queued requests, and retained bytes
+- Thinking mode, tool read-only status, and workspace trust are derived from
+  their authoritative enum or configuration state instead of duplicated flags
+- Durable recovery helpers reuse one materialized event projection per lookup
+
+### Tests
+- Added and updated continuation persistence, Provider admission, workspace
+  trust, tool registry, and state projection coverage
+- Qualified Provider admission through real DeepSeek Web and ACP sessions and
+  workspace trust through real GPT sessions
+
 ## [0.10.69] - 2026-08-22
 
 ### Fixed
