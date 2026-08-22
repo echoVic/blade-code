@@ -8,6 +8,7 @@ import {
   type AgentSessionOwner,
   AgentSessionStore,
   isAgentSessionOwnedBy,
+  MAX_CACHED_AGENT_SESSIONS,
   toPublicAgentSession,
 } from '../../../../src/agent/subagents/AgentSessionStore.js';
 
@@ -294,6 +295,75 @@ describe('AgentSessionStore', () => {
     expect(store.cleanupExpiredSessions(1_000)).toBe(1);
     expect(store.loadSession('agent-old')).toBeUndefined();
     expect(store.loadSession('agent-running')).toBeDefined();
+  });
+
+  it('bounds terminal session cache entries and reloads evicted data from disk', () => {
+    const sessionIds = Array.from(
+      { length: MAX_CACHED_AGENT_SESSIONS + 1 },
+      (_, index) => `agent-cache-${index}`
+    );
+    for (const [index, id] of sessionIds.entries()) {
+      store.saveSession(
+        makeSession(id, {
+          status: 'completed',
+          lastActiveAt: index,
+        })
+      );
+    }
+
+    const cache = (
+      store as unknown as {
+        cache: Map<string, AgentSession>;
+      }
+    ).cache;
+    expect(cache.size).toBe(MAX_CACHED_AGENT_SESSIONS);
+    expect(cache.has(sessionIds[0]!)).toBe(false);
+    expect(cache.has(sessionIds.at(-1)!)).toBe(true);
+
+    const evictedPath = path.join(
+      storageRoot,
+      'agents',
+      'sessions',
+      `${sessionIds[0]}.json`
+    );
+    const persisted = JSON.parse(readFileSync(evictedPath, 'utf8')) as AgentSession;
+    writeFileSync(
+      evictedPath,
+      `${JSON.stringify({
+        ...persisted,
+        description: 'Reloaded from disk',
+      })}\n`
+    );
+
+    expect(store.loadSession(sessionIds[0]!)).toMatchObject({
+      description: 'Reloaded from disk',
+    });
+    expect(cache.size).toBe(MAX_CACHED_AGENT_SESSIONS);
+  });
+
+  it('pins running sessions while evicting older terminal sessions', () => {
+    const runningId = 'agent-cache-running';
+    store.saveSession(makeSession(runningId));
+    for (let index = 0; index < MAX_CACHED_AGENT_SESSIONS; index++) {
+      store.saveSession(
+        makeSession(`agent-cache-terminal-${index}`, {
+          status: 'completed',
+          lastActiveAt: index,
+        })
+      );
+    }
+
+    const cache = (
+      store as unknown as {
+        cache: Map<string, AgentSession>;
+      }
+    ).cache;
+    expect(cache.size).toBe(MAX_CACHED_AGENT_SESSIONS);
+    expect(cache.get(runningId)?.status).toBe('running');
+    expect(cache.has('agent-cache-terminal-0')).toBe(false);
+    expect(cache.has(`agent-cache-terminal-${MAX_CACHED_AGENT_SESSIONS - 1}`)).toBe(
+      true
+    );
   });
 
   it('keeps immutable resume lineage in independent sidecars', () => {

@@ -27,6 +27,7 @@ import type { SubagentIsolationMode } from './SubagentWorktreeLifecycle.js';
 import type { SubagentConfig } from './types.js';
 
 const logger = createLogger(LogCategory.AGENT);
+export const MAX_CACHED_AGENT_SESSIONS = 256;
 
 /**
  * Agent 会话状态
@@ -284,6 +285,22 @@ export class AgentSessionStore {
     }
   }
 
+  private cacheSession(session: AgentSession): void {
+    this.cache.delete(session.id);
+    this.cache.set(session.id, session);
+    this.pruneTerminalCache();
+  }
+
+  private pruneTerminalCache(): void {
+    if (this.cache.size <= MAX_CACHED_AGENT_SESSIONS) return;
+
+    for (const [agentId, session] of this.cache) {
+      if (session.status === 'running') continue;
+      this.cache.delete(agentId);
+      if (this.cache.size <= MAX_CACHED_AGENT_SESSIONS) return;
+    }
+  }
+
   /**
    * 获取会话文件路径
    */
@@ -305,7 +322,7 @@ export class AgentSessionStore {
       mode: 0o600,
       fsync: true,
     });
-    this.cache.set(normalized.id, normalized);
+    this.cacheSession(normalized);
     logger.debug(`Session saved: ${normalized.id}`);
   }
 
@@ -314,8 +331,10 @@ export class AgentSessionStore {
    */
   loadSession(agentId: string): AgentSession | undefined {
     // 先检查缓存
-    if (this.cache.has(agentId)) {
-      return this.cache.get(agentId);
+    const cached = this.cache.get(agentId);
+    if (cached) {
+      this.cacheSession(cached);
+      return cached;
     }
 
     try {
@@ -328,7 +347,7 @@ export class AgentSessionStore {
       const session = this.normalizeSession(JSON.parse(data), agentId);
 
       // 更新缓存
-      this.cache.set(agentId, session);
+      this.cacheSession(session);
 
       return session;
     } catch (error) {
@@ -538,8 +557,12 @@ export class AgentSessionStore {
         }
       }
 
-      // 按最后活跃时间倒序
-      return sessions.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+      // 按最后活跃时间倒序，并让缓存保留最近的 terminal 会话。
+      const sorted = sessions.sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+      for (const session of [...sorted].reverse()) {
+        this.cacheSession(session);
+      }
+      return sorted;
     } catch (error) {
       logger.warn('Failed to list sessions:', error);
       return [];

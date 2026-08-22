@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.69] - 2026-08-22
+
+### Fixed
+- The subagent session store now retains at most 256 inactive session sidecars
+  in memory while pinning running sessions, preventing historical Task traffic
+  from growing the long-lived Web and ACP process heap without bound
+- Session cache hits refresh least-recently-used order, and full session scans
+  retain the most recently active terminal sessions
+
+### Tests
+- Added terminal-session churn, disk reload after eviction, and active-session
+  pinning coverage
+
 ## [0.10.68] - 2026-08-22
 
 ### Added
