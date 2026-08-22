@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.10.73] - 2026-08-22
+
+### 新增
+- 为 TUI、Web 与 ACP 新增配置开关控制的 Agent Teams，复用 `.blade/agents`
+  和 `.claude/agents` 角色定义，并提供持久化团队定义与共享依赖任务图
+- 新增原子任务领取、依赖自动解锁、点对点与广播持久邮箱，以及实时 `team.*`
+  生命周期投影
+- 具备写能力的 teammate 默认使用隔离 worktree，并拒绝嵌套创建团队
+
+### 变更
+- Provider 请求默认不再受隐式 owner、global 或请求类别并发限制；只有显式配置
+  准入限制时才启用调度
+- Web 的 Team schema、传输与翻译跟随聊天界面按需加载，不增加首屏 bundle
+
+### 修复
+- teammate 消息不会出现在用户聊天中，同时保持持久化并对目标模型上下文可见
+- Team 状态由权威 agent session 与任务状态派生；关闭 Agent Teams 时 Web 不再发出
+  会失败的请求
+
+### 测试
+- 新增团队生命周期、所有权、任务 DAG、邮箱投递、HTTP 路由、slash command、ACP
+  metadata、TUI 状态、Web 状态与 UI 交互的确定性覆盖
+- 完成 DeepSeek Flash/Pro 团队协作、生产桌面/移动 Chromium、raw PTY 渲染以及完整
+  production release matrix 验证
+
 ## [0.10.72] - 2026-08-22
 
 ### 新增

@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.10.73] - 2026-08-22
+
+### Added
+- Added config-gated Agent Teams across TUI, Web, and ACP with reusable
+  `.blade/agents` and `.claude/agents` roles, durable team definitions, and a
+  shared dependency-aware task graph
+- Added atomic task claiming, automatic dependency unblocking, direct and
+  broadcast durable mailboxes, and live `team.*` lifecycle projections
+- Write-capable teammates now default to isolated worktrees, while nested team
+  creation is rejected
+
+### Changed
+- Provider requests now run without implicit owner, global, or request-class
+  concurrency limits unless explicit admission limits are configured
+- Web Team schemas, transport, and translations load with the chat surface
+  instead of increasing the initial bundle
+
+### Fixed
+- Teammate messages remain hidden from user chat while staying durable and
+  available to the intended model context
+- Team status is derived from authoritative agent sessions and task state, and
+  disabled Agent Teams no longer produce failing Web requests
+
+### Tests
+- Added deterministic coverage for team lifecycle, ownership, task DAGs,
+  mailbox delivery, HTTP routes, slash commands, ACP metadata, TUI state, Web
+  state, and UI interactions
+- Qualified DeepSeek Flash and Pro team coordination, production desktop/mobile
+  Chromium, raw PTY rendering, and the complete production release matrix
+
 ## [0.10.72] - 2026-08-22
 
 ### Added
