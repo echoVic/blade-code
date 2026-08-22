@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.10.71] - 2026-08-22
+
+### Fixed
+- Workspace identity resolution now uses a 512-entry least-recently-used cache,
+  preventing high-cardinality Web and ACP workspace traffic from retaining stale
+  FIFO entries
+- Canonical paths and symbolic-link aliases share one cache entry, and trust or
+  revoke decisions explicitly refresh identity before selecting the Git common
+  checkout root
+
+### Tests
+- Added high-cardinality eviction, cache-hit promotion, path-alias invalidation,
+  and trust-decision topology refresh coverage
+- Qualified the workspace trust boundary through real GPT runtime and MCP
+  isolation trajectories
+
 ## [0.10.70] - 2026-08-22
 
 ### Fixed
