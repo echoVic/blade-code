@@ -4,6 +4,12 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AgentSessionStore } from '../../../src/agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../src/agent/subagents/BackgroundAgentManager.js';
+import {
+  getSubagentRegistry,
+  SubagentRegistry,
+} from '../../../src/agent/subagents/SubagentRegistry.js';
+import { TeamMailbox } from '../../../src/agent/teams/TeamMailbox.js';
+import { TeamRuntime } from '../../../src/agent/teams/TeamRuntime.js';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { TaskListManager } from '../../../src/tools/builtin/task/TaskListManager.js';
@@ -161,6 +167,144 @@ describe.skipIf(!enabled)(
         } finally {
           BackgroundAgentManager.getInstance().killAll();
           resetBackgroundAgentState();
+          restoreEnvironment('BLADE_STORAGE_ROOT', originalStorageRoot);
+          await rm(root, { recursive: true, force: true });
+        }
+      }, 240_000);
+
+      it(`${modelConfig.model} completes a shared DAG and peer mailbox`, async () => {
+        const root = await mkdtemp(path.join(os.tmpdir(), 'blade-agent-team-'));
+        const workspace = path.join(root, 'workspace');
+        const storageRoot = path.join(root, 'storage');
+        const teamName = `collab-${modelConfig.model.replace(/[^a-z0-9]+/gi, '-')}`;
+        const parentSessionId = `parent-${teamName}`;
+
+        try {
+          await mkdir(workspace, { recursive: true });
+          process.env.BLADE_STORAGE_ROOT = storageRoot;
+          const runtimeConfig = buildRealApiRuntimeConfig(modelConfig);
+          getState().config.actions.setConfig({
+            ...runtimeConfig,
+            permissionMode: PermissionMode.YOLO,
+            agentTeamsEnabled: true,
+          });
+          resetBackgroundAgentState();
+          SubagentRegistry.resetInstances();
+
+          const registry = getSubagentRegistry(workspace);
+          registry.clear();
+          registry.register({
+            name: 'team-worker',
+            description: 'Claim one team task and message a peer',
+            systemPrompt:
+              'You are an execution-only Agent Team worker. You must call ' +
+              'TeamTaskClaim exactly once, then call SendMessage exactly once ' +
+              'using the recipient and message from the assignment. Do not claim ' +
+              'success unless both tools returned success.',
+            tools: ['TeamTaskClaim', 'SendMessage', 'TeamInbox'],
+            model: runtimeConfig.currentModelId,
+            permissionMode: PermissionMode.YOLO,
+            maxTurns: 5,
+            isolation: 'none',
+          });
+
+          const runtime = new TeamRuntime({
+            configDir: storageRoot,
+            subagentRegistry: registry,
+          });
+          const snapshot = await runWithCwdOverride(workspace, () =>
+            runtime.create({
+              name: teamName,
+              description: 'Exercise the real shared DAG and peer mailbox',
+              owner: {
+                sessionId: parentSessionId,
+                projectPath: workspace,
+              },
+              permissionMode: PermissionMode.YOLO,
+              modelId: runtimeConfig.currentModelId,
+              members: [
+                {
+                  name: 'alpha',
+                  subagentType: 'team-worker',
+                  prompt:
+                    'Call TeamTaskClaim with {}. Then call SendMessage with ' +
+                    'to="beta" and message="alpha-reviewed". Finally answer done.',
+                },
+                {
+                  name: 'beta',
+                  subagentType: 'team-worker',
+                  prompt:
+                    'Call TeamTaskClaim with {}. Then call SendMessage with ' +
+                    'to="alpha" and message="beta-reviewed". Finally answer done.',
+                },
+              ],
+              tasks: [
+                {
+                  subject: 'Alpha task',
+                  description: 'Task reserved for alpha',
+                  assignedTo: 'alpha',
+                  priority: 'high',
+                },
+                {
+                  subject: 'Beta task',
+                  description: 'Task reserved for beta',
+                  assignedTo: 'beta',
+                  priority: 'high',
+                },
+              ],
+            })
+          );
+
+          const agentIds = snapshot.members.flatMap((member) =>
+            member.status === 'leader' || !member.agentId ? [] : [member.agentId]
+          );
+          const completed = await Promise.all(
+            agentIds.map((agentId) =>
+              BackgroundAgentManager.getInstance().waitForCompletion(agentId, 180_000, {
+                sessionId: parentSessionId,
+                projectPath: workspace,
+              })
+            )
+          );
+          expect(completed).toHaveLength(2);
+          expect(
+            completed.every(
+              (session) =>
+                session?.status === 'completed' && session.result?.success === true
+            )
+          ).toBe(true);
+
+          const finalSnapshot = await runtime.getSnapshot(teamName, {
+            sessionId: parentSessionId,
+            projectPath: workspace,
+          });
+          expect(finalSnapshot.status).toBe('completed');
+          expect(finalSnapshot.tasks.every((task) => task.status === 'completed')).toBe(
+            true
+          );
+
+          const messages = await new TeamMailbox(teamName, storageRoot).list();
+          expect(messages).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                from: 'alpha',
+                to: 'beta',
+                body: 'alpha-reviewed',
+              }),
+              expect.objectContaining({
+                from: 'beta',
+                to: 'alpha',
+                body: 'beta-reviewed',
+              }),
+            ])
+          );
+          expect(JSON.stringify({ completed, messages })).not.toContain(
+            modelConfig.apiKey
+          );
+        } finally {
+          BackgroundAgentManager.getInstance().killAll();
+          resetBackgroundAgentState();
+          SubagentRegistry.resetInstances();
           restoreEnvironment('BLADE_STORAGE_ROOT', originalStorageRoot);
           await rm(root, { recursive: true, force: true });
         }

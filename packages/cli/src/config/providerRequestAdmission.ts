@@ -1,6 +1,7 @@
 export const DEFAULT_PROVIDER_REQUEST_CONCURRENCY = 4;
 export const MIN_PROVIDER_REQUEST_CONCURRENCY = 1;
 export const MAX_PROVIDER_REQUEST_CONCURRENCY = 16;
+export const MAX_PROVIDER_REQUEST_SCHEDULER_CONCURRENCY = Number.MAX_SAFE_INTEGER;
 
 export const DEFAULT_PROVIDER_REQUEST_ADMISSION_MS = 180_000;
 export const MIN_PROVIDER_REQUEST_ADMISSION_MS = 1_000;
@@ -24,6 +25,17 @@ export function normalizeProviderRequestConcurrency(
   fallback = DEFAULT_PROVIDER_REQUEST_CONCURRENCY
 ): number {
   return isValidProviderRequestConcurrency(value) ? value : fallback;
+}
+
+export function isValidProviderRequestSchedulerConcurrency(
+  value: unknown
+): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= MIN_PROVIDER_REQUEST_CONCURRENCY &&
+    value <= MAX_PROVIDER_REQUEST_SCHEDULER_CONCURRENCY
+  );
 }
 
 export function isValidProviderRequestAdmissionMs(value: unknown): value is number {

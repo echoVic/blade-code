@@ -211,7 +211,17 @@ descendant，不会从旧 ancestor 创建 sibling。
 
 ## Agent Teams
 
-Agent Team 是 Blade 在 Subagents 之上的团队协作层，参考 Claude Code 的 TeamCreate 工作流实现。它会创建持久化团队配置，并把多个 teammate 作为后台 subagents 并行启动。
+Agent Team 是 Blade 在 Subagents 之上的团队协作层。启用后，主 Agent 可启动多个
+角色化 teammate，共享带依赖关系的任务图，并通过持久化 mailbox 点对点或广播通信。
+TUI、Web 与 ACP 都会投影同一个团队状态。
+
+Agent Teams 默认关闭。在 `~/.blade/config.json` 或 Web 设置页开启：
+
+```json
+{
+  "agentTeamsEnabled": true
+}
+```
 
 团队配置存储位置：
 
@@ -228,7 +238,8 @@ Agent Team 是 Blade 在 Subagents 之上的团队协作层，参考 Claude Code
   "name": "TeamCreate",
   "arguments": {
     "team_name": "checkout-refactor",
-    "description": "并行分析和规划 checkout 重构",
+    "description": "并行分析和实现 checkout 重构",
+    "peer_messaging": true,
     "members": [
       {
         "name": "researcher",
@@ -239,24 +250,59 @@ Agent Team 是 Blade 在 Subagents 之上的团队协作层，参考 Claude Code
       {
         "name": "planner",
         "subagent_type": "Plan",
-        "description": "制定实施计划",
-        "prompt": "基于现有架构制定 checkout 重构计划。"
+        "description": "实现重构",
+        "prompt": "根据共享任务图实现 checkout 重构。"
+      }
+    ],
+    "tasks": [
+      {
+        "subject": "梳理 checkout 流程",
+        "description": "定位入口、状态流转和风险点",
+        "assigned_to": "researcher",
+        "priority": "high"
+      },
+      {
+        "subject": "实现 checkout 重构",
+        "description": "根据调研结果完成实现和测试",
+        "assigned_to": "planner",
+        "depends_on": ["1"]
       }
     ]
   }
 }
 ```
 
-每个 member 会作为后台 agent 启动，并共享以 team name 为作用域的任务列表。使用 `TeamStatus` 查看团队状态，使用 `TaskOutput` 读取具体 member 的结果。
+每个 member 会作为后台 agent 启动，并共享以 team name 为作用域的任务图。写能力
+角色默认使用独立 worktree；只读角色继续在当前 workspace 中运行。角色定义直接复用
+`.blade/agents` 和 `.claude/agents` 的 Markdown frontmatter。
 
-### TeamStatus / TeamDelete
+### 协作工具
 
 ```json
 { "name": "TeamStatus", "arguments": { "team_name": "checkout-refactor" } }
+{ "name": "TeamTaskClaim", "arguments": { "team_name": "checkout-refactor" } }
+{ "name": "SendMessage", "arguments": { "team_name": "checkout-refactor", "to": "planner", "message": "接口约束已确认" } }
+{ "name": "TeamInbox", "arguments": { "team_name": "checkout-refactor" } }
 { "name": "TeamDelete", "arguments": { "team_name": "checkout-refactor" } }
 ```
 
-`TeamDelete` 默认会取消仍在运行的 teammate agents。
+- `TeamTaskClaim` 在文件锁内原子领取依赖已完成的任务，不会被并发成员重复领取。
+- `SendMessage` 支持成员名和 `*` 广播；消息会持久化，并注入目标成员的下一个安全边界。
+- `TeamInbox` 读取和确认未即时投递的消息。
+- teammate 不能创建嵌套 team。
+- `TeamDelete` 默认取消仍在运行的成员。
+
+### 状态与命令
+
+Web 和 TUI 会显示成员状态、worktree 标记与任务图进度。TUI/ACP 还支持：
+
+```bash
+/team
+/team status checkout-refactor
+/team message checkout-refactor planner 请复核接口边界
+/team inbox checkout-refactor
+/team delete checkout-refactor
+```
 
 ### 管理命令
 

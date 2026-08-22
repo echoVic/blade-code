@@ -47,9 +47,11 @@ export class TaskListManager {
     activeForm?: string;
     owner?: string;
     priority?: TaskListItem['priority'];
+    blockedBy?: string[];
     metadata?: Record<string, unknown>;
   }): Promise<TaskListItem> {
     return this.mutate((current) => {
+      const blockedBy = unique(input.blockedBy ?? []);
       const task: TaskListItem = {
         id: String(current.nextId),
         subject: input.subject,
@@ -59,14 +61,20 @@ export class TaskListManager {
         priority: input.priority || 'medium',
         status: 'pending',
         blocks: [],
-        blockedBy: [],
+        blockedBy,
         metadata: input.metadata,
         createdAt: new Date().toISOString(),
       };
       return {
         state: {
           nextId: current.nextId + 1,
-          tasks: [...current.tasks, task],
+          tasks: current.tasks
+            .map((candidate) =>
+              blockedBy.includes(candidate.id)
+                ? { ...candidate, blocks: unique([...candidate.blocks, task.id]) }
+                : candidate
+            )
+            .concat(task),
         },
         result: task,
         persist: true,
@@ -82,6 +90,45 @@ export class TaskListManager {
   async listTasks(): Promise<TaskListItem[]> {
     await this.readLatest();
     return this.getSortedTasks();
+  }
+
+  async claimNextAvailable(owner: string): Promise<TaskListItem | null> {
+    const normalizedOwner = owner.trim();
+    if (!normalizedOwner) throw new Error('Task owner cannot be empty');
+
+    return this.mutate((current) => {
+      const completed = new Set(
+        current.tasks
+          .filter((task) => task.status === 'completed')
+          .map((task) => task.id)
+      );
+      const candidate = [...current.tasks]
+        .filter(
+          (task) =>
+            task.status === 'pending' &&
+            (task.owner === undefined || task.owner === normalizedOwner) &&
+            task.blockedBy.every((taskId) => completed.has(taskId))
+        )
+        .sort(compareTasks)[0];
+      if (!candidate) {
+        return { state: current, result: null, persist: false };
+      }
+
+      const claimed: TaskListItem = {
+        ...candidate,
+        owner: normalizedOwner,
+        status: 'in_progress',
+        startedAt: candidate.startedAt ?? new Date().toISOString(),
+      };
+      return {
+        state: {
+          ...current,
+          tasks: current.tasks.map((task) => (task.id === claimed.id ? claimed : task)),
+        },
+        result: claimed,
+        persist: true,
+      };
+    });
   }
 
   async updateTask(
@@ -202,24 +249,7 @@ export class TaskListManager {
   }
 
   private getSortedTasks(): TaskListItem[] {
-    const statusOrder: Record<TaskStatus, number> = {
-      in_progress: 0,
-      pending: 1,
-      completed: 2,
-    };
-    const priorityOrder: Record<TaskListItem['priority'], number> = {
-      high: 0,
-      medium: 1,
-      low: 2,
-    };
-
-    return [...this.tasks].sort((a, b) => {
-      const statusDiff = statusOrder[a.status] - statusOrder[b.status];
-      if (statusDiff !== 0) return statusDiff;
-      const priorityDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
-      if (priorityDiff !== 0) return priorityDiff;
-      return Number(a.id) - Number(b.id);
-    });
+    return [...this.tasks].sort(compareTasks);
   }
 
   private async readLatest(): Promise<TaskListFile> {
@@ -351,6 +381,24 @@ function taskListFileName(taskListId: string): string {
 
 function unique(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
+}
+
+function compareTasks(a: TaskListItem, b: TaskListItem): number {
+  const statusOrder: Record<TaskStatus, number> = {
+    in_progress: 0,
+    pending: 1,
+    completed: 2,
+  };
+  const priorityOrder: Record<TaskListItem['priority'], number> = {
+    high: 0,
+    medium: 1,
+    low: 2,
+  };
+  const statusDiff = statusOrder[a.status] - statusOrder[b.status];
+  if (statusDiff !== 0) return statusDiff;
+  const priorityDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
+  if (priorityDiff !== 0) return priorityDiff;
+  return Number(a.id) - Number(b.id);
 }
 
 function mergeMetadata(

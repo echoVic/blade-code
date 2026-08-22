@@ -16,6 +16,7 @@ import type {
   TaskDispatchInput,
   TaskEventConnectionState,
   TaskUpdateInput,
+  TeamSnapshot,
   WorkspaceInfo,
 } from '@/services';
 
@@ -35,6 +36,7 @@ export type {
   TaskDispatchInput,
   TaskEventConnectionState,
   TaskUpdateInput,
+  TeamSnapshot,
   WorkspaceInfo,
 };
 
@@ -293,6 +295,7 @@ export interface SessionSlice {
   errorContext: SessionErrorContext | null;
   goal: Goal | null;
   sideConversation: SideConversationState | null;
+  teams: TeamSnapshot[];
 
   setSessions: (sessions: Session[]) => void;
   addSession: (session: Session) => void;
@@ -322,6 +325,7 @@ export interface SessionSlice {
   editGoal: (objective: string) => Promise<void>;
   clearGoal: () => Promise<void>;
   dismissSideConversation: () => void;
+  loadTeams: (ref?: SessionRef) => Promise<void>;
 }
 
 export interface TaskListSlice {

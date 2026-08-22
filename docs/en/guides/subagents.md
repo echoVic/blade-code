@@ -210,7 +210,19 @@ card. After a Web refresh, Blade finds the latest descendant from persistent lin
 
 ## Agent Teams
 
-An Agent Team is Blade's team collaboration layer built on top of Subagents, implemented with reference to Claude Code's TeamCreate workflow. It creates a persistent team configuration and launches multiple teammates as background subagents in parallel.
+An Agent Team is Blade's collaboration layer on top of Subagents. When enabled,
+the lead can launch role-specific teammates, coordinate them through a shared
+dependency graph, and use a durable mailbox for direct or broadcast messages.
+TUI, Web, and ACP project the same team state.
+
+Agent Teams are disabled by default. Enable them in `~/.blade/config.json` or
+the Web settings page:
+
+```json
+{
+  "agentTeamsEnabled": true
+}
+```
 
 Team configuration is stored at:
 
@@ -227,7 +239,8 @@ When the user explicitly needs "a team / swarm / multiple agents collaborating,"
   "name": "TeamCreate",
   "arguments": {
     "team_name": "checkout-refactor",
-    "description": "Analyze and plan the checkout refactor in parallel",
+    "description": "Analyze and implement the checkout refactor in parallel",
+    "peer_messaging": true,
     "members": [
       {
         "name": "researcher",
@@ -238,24 +251,62 @@ When the user explicitly needs "a team / swarm / multiple agents collaborating,"
       {
         "name": "planner",
         "subagent_type": "Plan",
-        "description": "Draft an implementation plan",
-        "prompt": "Draft a checkout refactor plan based on the existing architecture."
+        "description": "Implement the refactor",
+        "prompt": "Implement the checkout refactor from the shared task graph."
+      }
+    ],
+    "tasks": [
+      {
+        "subject": "Map the checkout flow",
+        "description": "Locate entry points, state transitions, and risks",
+        "assigned_to": "researcher",
+        "priority": "high"
+      },
+      {
+        "subject": "Implement the checkout refactor",
+        "description": "Implement and test the refactor from the research",
+        "assigned_to": "planner",
+        "depends_on": ["1"]
       }
     ]
   }
 }
 ```
 
-Each member launches as a background agent and shares a task list scoped to the team name. Use `TeamStatus` to view team status, and `TaskOutput` to read a specific member's result.
+Each member launches as a background agent and shares a task graph scoped to the
+team name. Roles with write capabilities use isolated worktrees by default;
+read-only roles remain in the current workspace. Role definitions reuse the
+Markdown frontmatter under `.blade/agents` and `.claude/agents`.
 
-### TeamStatus / TeamDelete
+### Collaboration Tools
 
 ```json
 { "name": "TeamStatus", "arguments": { "team_name": "checkout-refactor" } }
+{ "name": "TeamTaskClaim", "arguments": { "team_name": "checkout-refactor" } }
+{ "name": "SendMessage", "arguments": { "team_name": "checkout-refactor", "to": "planner", "message": "The API contract is confirmed" } }
+{ "name": "TeamInbox", "arguments": { "team_name": "checkout-refactor" } }
 { "name": "TeamDelete", "arguments": { "team_name": "checkout-refactor" } }
 ```
 
-`TeamDelete` cancels any still-running teammate agents by default.
+- `TeamTaskClaim` atomically claims a dependency-ready task under a file lock.
+- `SendMessage` accepts a teammate name or `*`; messages are persisted and
+  injected at the recipient's next safe boundary.
+- `TeamInbox` reads and acknowledges messages that could not be delivered live.
+- Teammates cannot create nested teams.
+- `TeamDelete` cancels running members by default.
+
+### Status and Commands
+
+Web and TUI display member state, worktree markers, and task graph progress.
+TUI and ACP also support:
+
+```bash
+/team
+/team status checkout-refactor
+/team message checkout-refactor planner Please review the API boundary
+/team inbox checkout-refactor
+/team delete checkout-refactor
+```
 
 ### Management Commands
 

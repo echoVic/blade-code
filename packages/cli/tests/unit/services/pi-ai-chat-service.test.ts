@@ -208,6 +208,38 @@ describe('PiAIChatService', () => {
     estimateProviderRequestPendingBytes.mockReturnValue(1);
   });
 
+  it('bypasses process admission when no concurrency limit is configured', async () => {
+    const chat = await service({
+      providerRequestAdmissionScheduler: undefined,
+      providerRequestConcurrency: undefined,
+      providerGlobalConcurrency: undefined,
+      providerOwnerConcurrency: undefined,
+    });
+
+    expect(
+      (
+        chat as unknown as {
+          providerAdmissionScheduler?: ProviderRequestAdmissionScheduler;
+        }
+      ).providerAdmissionScheduler
+    ).toBeUndefined();
+  });
+
+  it('creates admission only when a concurrency limit is explicit', async () => {
+    const chat = await service({
+      providerRequestAdmissionScheduler: undefined,
+      providerOwnerConcurrency: 7,
+    });
+
+    expect(
+      (
+        chat as unknown as {
+          providerAdmissionScheduler?: ProviderRequestAdmissionScheduler;
+        }
+      ).providerAdmissionScheduler
+    ).toBeInstanceOf(ProviderRequestAdmissionScheduler);
+  });
+
   it('rejects a required tool that is unavailable', async () => {
     const chat = await service();
     await expect(

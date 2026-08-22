@@ -22,10 +22,14 @@ import { useEffect, useRef } from 'react';
 import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
+import { getSubagentRegistry } from '../../agent/subagents/SubagentRegistry.js';
 import type { SubagentConfig } from '../../agent/subagents/types.js';
+import { isTeamMessageMetadata, TeamMailbox } from '../../agent/teams/TeamMailbox.js';
+import { TeamRuntime } from '../../agent/teams/TeamRuntime.js';
 import type { LoopResult } from '../../agent/types.js';
 import { parseSideConversationCommand } from '../../api/sideConversation.js';
 import type { PermissionMode } from '../../config/types.js';
+import { getBladeStorageRoot } from '../../context/storage/pathUtils.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { Bus } from '../../server/bus.js';
@@ -33,6 +37,7 @@ import { sameSessionRef } from '../../server/sessionRef.js';
 import { SessionInteractionService } from '../../services/SessionInteractionService.js';
 import { renderUserShellCommandForDisplay } from '../../services/UserShellCommandService.js';
 import {
+  useAgentTeamsEnabled,
   useAppActions,
   useCommandActions,
   useCommunicationStyle,
@@ -104,6 +109,7 @@ export const useCommandHandler = (
   const responseVerbosity = useResponseVerbosity();
   const communicationStyle = useCommunicationStyle();
   const sideConversation = useSideConversation();
+  const agentTeamsEnabled = useAgentTeamsEnabled();
 
   // ==================== Store Actions ====================
   const sessionActions = useSessionActions();
@@ -120,6 +126,7 @@ export const useCommandHandler = (
     createAgent,
     cleanupAgent,
     steerActiveTurn,
+    enqueueSessionInput,
     listRewindCheckpoints,
     rewindSession,
     listSubagents,
@@ -161,6 +168,30 @@ export const useCommandHandler = (
   });
 
   const streamingBuffer = useStreamingBuffer(sessionActions);
+  const refreshTeams = useMemoizedFn(async (): Promise<void> => {
+    if (!agentTeamsEnabled || !sessionId) {
+      appActions.setTeams([]);
+      return;
+    }
+    try {
+      const runtime = new TeamRuntime({
+        configDir: getBladeStorageRoot(),
+        subagentRegistry: getSubagentRegistry(workspaceRoot),
+      });
+      const teams = await runtime.list({
+        sessionId,
+        projectPath: workspaceRoot,
+      });
+      if (
+        getState().session.sessionId === sessionId &&
+        getState().session.workspaceRoot === workspaceRoot
+      ) {
+        appActions.setTeams(teams);
+      }
+    } catch (error) {
+      logger.warn('[useCommandHandler] Failed to refresh Agent Teams', error);
+    }
+  });
 
   const handleUserShellCommand = useMemoizedFn(
     async (resolved: ResolvedInput, signal: AbortSignal): Promise<CommandResult> => {
@@ -216,6 +247,11 @@ export const useCommandHandler = (
       appActions.dismissSideConversation();
     };
   }, [appActions, sessionId, workspaceRoot]);
+
+  useEffect(() => {
+    appActions.setTeams([]);
+    void refreshTeams();
+  }, [agentTeamsEnabled, appActions, refreshTeams, sessionId, workspaceRoot]);
 
   useEffect(() => {
     if (!thinkingModeEnabled) {
@@ -863,12 +899,44 @@ export const useCommandHandler = (
 
   useEffect(() => {
     const unsubscribe = Bus.subscribe((event) => {
-      if (
-        event.type !== 'subagent.completion.queued' ||
-        !sameSessionRef(event, { sessionId, projectPath: workspaceRoot })
-      ) {
+      if (!sameSessionRef(event, { sessionId, projectPath: workspaceRoot })) return;
+      if (event.type.startsWith('team.')) {
+        const { teamName, messageId, content } = event.properties;
+        const metadata = event.properties.metadata;
+        if (
+          event.type === 'team.message.received' &&
+          typeof teamName === 'string' &&
+          typeof messageId === 'string' &&
+          typeof content === 'string' &&
+          isTeamMessageMetadata(metadata, { messageId, teamName })
+        ) {
+          void (async () => {
+            const steering = await enqueueSessionInput(content, {
+              messageId,
+              origin: 'team_message',
+              metadata,
+            });
+            if (!steering.accepted) return;
+            await new TeamMailbox(teamName, getBladeStorageRoot()).markDelivered([
+              messageId,
+            ]);
+            if (steering.delivery === 'next_turn') {
+              pendingResumeRequestedRef.current = true;
+              if (!getState().command.isProcessing) await resumePendingInput();
+            }
+          })().catch((error) => {
+            logger.warn(
+              '[useCommandHandler] Failed to deliver teammate message',
+              error
+            );
+          });
+        }
+        queueMicrotask(() => {
+          void refreshTeams();
+        });
         return;
       }
+      if (event.type !== 'subagent.completion.queued') return;
       pendingResumeRequestedRef.current = true;
       queueMicrotask(() => {
         void resumePendingInput();
@@ -877,7 +945,7 @@ export const useCommandHandler = (
     return () => {
       unsubscribe();
     };
-  }, [resumePendingInput, sessionId, workspaceRoot]);
+  }, [enqueueSessionInput, refreshTeams, resumePendingInput, sessionId, workspaceRoot]);
 
   useEffect(() => {
     let cancelled = false;

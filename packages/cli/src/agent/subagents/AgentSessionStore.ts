@@ -165,6 +165,9 @@ export interface AgentSession {
   /** 共享任务列表 ID（用于 Agent Team 协作） */
   taskListId?: string;
 
+  /** Agent Team identity for runtime projection and peer messaging. */
+  teamId?: string;
+
   /** 子代理源工作目录 */
   workspaceRoot?: string;
 
@@ -191,6 +194,7 @@ export type PublicAgentSession = Pick<
   | 'result'
   | 'stats'
   | 'restartRecovery'
+  | 'teamId'
 >;
 
 export function toPublicAgentSession(session: AgentSession): PublicAgentSession {
@@ -209,6 +213,7 @@ export function toPublicAgentSession(session: AgentSession): PublicAgentSession 
     result: session.result,
     stats: session.stats,
     restartRecovery: session.restartRecovery,
+    teamId: session.teamId,
   };
 }
 
@@ -446,6 +451,7 @@ export class AgentSessionStore {
       typeof value.providerAdmissionOwnerId === 'string'
         ? value.providerAdmissionOwnerId
         : undefined;
+    const teamId = typeof value.teamId === 'string' ? value.teamId : undefined;
 
     return {
       ...(value as unknown as AgentSession),
@@ -458,6 +464,7 @@ export class AgentSessionStore {
       restartRecovery,
       background,
       ...(providerAdmissionOwnerId ? { providerAdmissionOwnerId } : {}),
+      ...(teamId ? { teamId } : { teamId: undefined }),
       workspaceRoot,
       parentProjectPath,
     };

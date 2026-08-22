@@ -725,8 +725,11 @@ describe('ConfigManager 集成', () => {
     await service.save(
       {
         providerRequestConcurrency: 6,
+        providerGlobalConcurrency: 48,
+        providerOwnerConcurrency: 12,
         providerRequestAdmissionMs: 120_000,
         providerRequestPendingBytes: 8 * 1024 * 1024,
+        agentTeamsEnabled: true,
       },
       { scope: 'global', immediate: true }
     );
@@ -734,14 +737,20 @@ describe('ConfigManager 集成', () => {
     const userConfigPath = path.join(tempHome, '.blade', 'config.json');
     expect(JSON.parse(readFileSync(userConfigPath, 'utf8'))).toMatchObject({
       providerRequestConcurrency: 6,
+      providerGlobalConcurrency: 48,
+      providerOwnerConcurrency: 12,
       providerRequestAdmissionMs: 120_000,
       providerRequestPendingBytes: 8 * 1024 * 1024,
+      agentTeamsEnabled: true,
     });
 
     const loaded = await ConfigManager.getInstance().initialize();
     expect(loaded.providerRequestConcurrency).toBe(6);
+    expect(loaded.providerGlobalConcurrency).toBe(48);
+    expect(loaded.providerOwnerConcurrency).toBe(12);
     expect(loaded.providerRequestAdmissionMs).toBe(120_000);
     expect(loaded.providerRequestPendingBytes).toBe(8 * 1024 * 1024);
+    expect(loaded.agentTeamsEnabled).toBe(true);
   });
 
   it('does not retain historical config file locks after workspace churn', async () => {

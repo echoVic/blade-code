@@ -42,6 +42,7 @@ const initialAppState: AppState = {
   subagentProgress: null, // 当前无 subagent 执行
   subagentProgresses: {},
   sideConversation: null,
+  teams: [],
 };
 
 /**
@@ -368,6 +369,15 @@ export const createAppSlice: StateCreator<BladeStore, [], [], AppSlice> = (set) 
         app: {
           ...state.app,
           sideConversation: null,
+        },
+      }));
+    },
+
+    setTeams: (teams) => {
+      set((state) => ({
+        app: {
+          ...state.app,
+          teams,
         },
       }));
     },

@@ -5,9 +5,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentSession } from '../../../../../src/agent/subagents/AgentSessionStore';
 
 const mockSessions = new Map<string, Partial<AgentSession>>();
+const startOptions = new Map<string, any>();
 const mockManager = {
   startBackgroundAgent: vi.fn((options: any) => {
     const agentId = options.agentId;
+    startOptions.set(agentId, options);
     mockSessions.set(agentId, {
       id: agentId,
       subagentType: options.config.name,
@@ -18,6 +20,8 @@ const mockManager = {
       createdAt: Date.now(),
       lastActiveAt: Date.now(),
       parentSessionId: options.parentSessionId,
+      parentProjectPath: options.parentProjectPath,
+      teamId: options.teamId,
     });
     return agentId;
   }),
@@ -29,6 +33,7 @@ const mockManager = {
     session.completedAt = Date.now();
     return true;
   }),
+  enqueueSteering: vi.fn(async () => true),
 };
 
 vi.mock('../../../../../src/agent/subagents/BackgroundAgentManager', () => ({
@@ -38,7 +43,10 @@ vi.mock('../../../../../src/agent/subagents/BackgroundAgentManager', () => ({
 }));
 
 import { subagentRegistry } from '../../../../../src/agent/subagents/SubagentRegistry';
+import { TeamMailbox } from '../../../../../src/agent/teams/TeamMailbox';
 import { TeamStore } from '../../../../../src/agent/teams/TeamStore';
+import { TeamTaskGraph } from '../../../../../src/agent/teams/TeamTaskGraph';
+import { Bus } from '../../../../../src/server/bus';
 import { getBuiltinTools } from '../../../../../src/tools/builtin/index';
 import { createTeamTools } from '../../../../../src/tools/builtin/team/index';
 
@@ -58,6 +66,7 @@ describe('agent team tools', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSessions.clear();
+    startOptions.clear();
     subagentRegistry.clear();
     subagentRegistry.register({
       name: 'Explore',
@@ -70,6 +79,12 @@ describe('agent team tools', () => {
       description: 'Planning agent',
       systemPrompt: 'Plan work',
       tools: ['Read', 'Grep', 'Glob', 'TaskCreate', 'TaskUpdate'],
+    });
+    subagentRegistry.register({
+      name: 'Implement',
+      description: 'Implementation agent',
+      systemPrompt: 'Implement changes',
+      tools: ['Read', 'Edit', 'Bash'],
     });
   });
 
@@ -95,6 +110,8 @@ describe('agent team tools', () => {
 
   it('creates a persistent team and launches initial teammate agents', async () => {
     const configDir = await createTempConfigDir();
+    const registerBackgroundSubagent = vi.fn();
+    const notifyBackgroundSubagentCompleted = vi.fn(async () => undefined);
 
     try {
       const result = await getTool(configDir, 'TeamCreate').execute(
@@ -116,9 +133,27 @@ describe('agent team tools', () => {
               prompt: 'Plan the checkout refactor with concrete file changes.',
             },
           ],
+          tasks: [
+            {
+              subject: 'Map flow',
+              description: 'Map the checkout flow',
+              assigned_to: 'researcher',
+              priority: 'high',
+            },
+            {
+              subject: 'Write plan',
+              description: 'Plan from the completed map',
+              assigned_to: 'planner',
+              depends_on: ['1'],
+            },
+          ],
         },
         undefined,
-        { sessionId: 'session-a' }
+        {
+          sessionId: 'session-a',
+          registerBackgroundSubagent,
+          notifyBackgroundSubagentCompleted,
+        }
       );
 
       expect(result.success).toBe(true);
@@ -128,8 +163,17 @@ describe('agent team tools', () => {
           agentId: 'team-researcher-checkout-refactor',
           parentSessionId: 'session-a',
           taskListId: 'checkout-refactor',
+          config: expect.objectContaining({
+            tools: expect.arrayContaining([
+              'Read',
+              'TeamTaskClaim',
+              'TeamInbox',
+              'SendMessage',
+            ]),
+          }),
         })
       );
+      expect(registerBackgroundSubagent).toHaveBeenCalledTimes(2);
 
       const stored = JSON.parse(
         await fs.readFile(
@@ -146,13 +190,47 @@ describe('agent team tools', () => {
           expect.objectContaining({
             name: 'team-lead',
             subagentType: 'tech-lead',
-            status: 'leader',
           }),
           expect.objectContaining({
             name: 'researcher',
             agentId: 'team-researcher-checkout-refactor',
-            status: 'running',
           }),
+        ])
+      );
+      expect(stored.members.every((member: object) => !('status' in member))).toBe(
+        true
+      );
+      expect((result.llmContent as any).team.tasks).toEqual([
+        expect.objectContaining({
+          id: '1',
+          owner: 'team-researcher-checkout-refactor',
+          status: 'pending',
+        }),
+        expect.objectContaining({
+          id: '2',
+          owner: 'team-planner-checkout-refactor',
+          status: 'blocked',
+          dependsOn: ['1'],
+        }),
+      ]);
+
+      const graph = new TeamTaskGraph('checkout-refactor', configDir);
+      await graph.claimNext('team-researcher-checkout-refactor');
+      const researcher = mockSessions.get('team-researcher-checkout-refactor');
+      if (!researcher) throw new Error('Missing researcher session');
+      researcher.status = 'completed';
+      researcher.result = { success: true, message: 'Mapped checkout flow' };
+      const onCompleted = startOptions.get('team-researcher-checkout-refactor')
+        ?.onCompleted as ((session: AgentSession) => Promise<void>) | undefined;
+      await onCompleted?.(researcher as AgentSession);
+      expect(notifyBackgroundSubagentCompleted).toHaveBeenCalledWith(
+        'team-researcher-checkout-refactor'
+      );
+
+      await expect(graph.listTasks()).resolves.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: '1', status: 'completed' }),
+          expect.objectContaining({ id: '2', status: 'pending' }),
         ])
       );
     } finally {
@@ -225,6 +303,36 @@ describe('agent team tools', () => {
     }
   });
 
+  it('defaults write-capable teammates to managed worktree isolation', async () => {
+    const configDir = await createTempConfigDir();
+
+    try {
+      await getTool(configDir, 'TeamCreate').execute(
+        {
+          team_name: 'Writer Team',
+          members: [
+            {
+              name: 'implementer',
+              subagent_type: 'Implement',
+              prompt: 'Implement the requested change and run focused tests.',
+            },
+          ],
+        },
+        undefined,
+        { sessionId: 'session-a', workspaceRoot: '/workspace' }
+      );
+
+      expect(mockManager.startBackgroundAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentId: 'team-implementer-writer-team',
+          isolation: 'worktree',
+        })
+      );
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
   it('reports teammate status and exposes TaskOutput IDs', async () => {
     const configDir = await createTempConfigDir();
 
@@ -262,7 +370,7 @@ describe('agent team tools', () => {
           expect.objectContaining({
             name: 'researcher',
             status: 'completed',
-            task_output_id: 'team-researcher-search-work',
+            agentId: 'team-researcher-search-work',
             result: { success: true, message: 'Found modules' },
           }),
         ])
@@ -296,7 +404,10 @@ describe('agent team tools', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(mockManager.killAgent).toHaveBeenCalledWith('team-researcher-stop-me');
+      expect(mockManager.killAgent).toHaveBeenCalledWith(
+        'team-researcher-stop-me',
+        expect.objectContaining({ sessionId: 'session-a' })
+      );
 
       const stored = JSON.parse(
         await fs.readFile(
@@ -305,11 +416,7 @@ describe('agent team tools', () => {
         )
       );
       expect(stored.deletedAt).toEqual(expect.any(Number));
-      expect(stored.members).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ name: 'researcher', status: 'cancelled' }),
-        ])
-      );
+      expect(stored.members[1]).not.toHaveProperty('status');
     } finally {
       await fs.rm(configDir, { recursive: true, force: true });
     }
@@ -337,19 +444,250 @@ describe('agent team tools', () => {
       await fs.rm(configDir, { recursive: true, force: true });
     }
   });
-});
 
-describe('builtin team tool registration', () => {
-  it('exposes agent team tools', async () => {
+  it('atomically claims only unblocked tasks assigned to the caller', async () => {
     const configDir = await createTempConfigDir();
 
     try {
-      const names = (await getBuiltinTools({ sessionId: 'session-a', configDir })).map(
-        (tool) => tool.name
+      const graph = new TeamTaskGraph('claim-team', configDir);
+      await graph.createTask({
+        subject: 'Research',
+        description: 'Collect facts',
+        assignedTo: 'agent-a',
+        priority: 'high',
+      });
+      await graph.createTask({
+        subject: 'Implement',
+        description: 'Apply changes',
+        dependsOn: ['1'],
+      });
+
+      await expect(graph.claimNext('agent-b')).resolves.toBeNull();
+      const claims = await Promise.all([
+        graph.claimNext('agent-a'),
+        graph.claimNext('agent-a'),
+      ]);
+      expect(claims.filter(Boolean)).toHaveLength(1);
+      expect(claims.find(Boolean)).toMatchObject({ id: '1', owner: 'agent-a' });
+
+      await graph.completeTask('1', 'done');
+      await expect(graph.claimNext('agent-b')).resolves.toMatchObject({
+        id: '2',
+        owner: 'agent-b',
+      });
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  it('persists and delivers peer messages without leader relaying', async () => {
+    const configDir = await createTempConfigDir();
+
+    try {
+      await getTool(configDir, 'TeamCreate').execute(
+        {
+          team_name: 'Peer Team',
+          members: [
+            {
+              name: 'researcher',
+              subagent_type: 'Explore',
+              prompt: 'Research the implementation and report findings.',
+            },
+            {
+              name: 'planner',
+              subagent_type: 'Plan',
+              prompt: 'Plan the implementation and challenge assumptions.',
+            },
+          ],
+        },
+        undefined,
+        {
+          sessionId: 'session-a',
+          workspaceRoot: '/workspace',
+        }
       );
 
+      const send = await getTool(configDir, 'SendMessage').execute(
+        {
+          team_name: 'peer-team',
+          to: 'planner',
+          message: 'Review the task boundary.',
+        },
+        undefined,
+        {
+          sessionId: 'team-researcher-peer-team',
+          taskListId: 'peer-team',
+          workspaceRoot: '/workspace/.blade/worktrees/researcher',
+        }
+      );
+
+      expect(send.success).toBe(true);
+      expect(mockManager.enqueueSteering).toHaveBeenCalledWith(
+        'team-planner-peer-team',
+        expect.stringContaining('"body":"Review the task boundary."'),
+        {
+          sessionId: 'session-a',
+          projectPath: '/workspace',
+        }
+      );
+      const messages = await new TeamMailbox('peer-team', configDir).list(
+        'team-planner-peer-team'
+      );
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        from: 'researcher',
+        to: 'planner',
+        deliveredAt: expect.any(Number),
+      });
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  it('drains messages that arrive before a teammate runtime is ready', async () => {
+    const configDir = await createTempConfigDir();
+
+    try {
+      await getTool(configDir, 'TeamCreate').execute(
+        {
+          team_name: 'Durable Mailbox',
+          members: [
+            {
+              name: 'reviewer',
+              subagent_type: 'Explore',
+              prompt: 'Review the result after receiving a teammate message.',
+            },
+          ],
+        },
+        undefined,
+        { sessionId: 'session-a', workspaceRoot: '/workspace' }
+      );
+
+      mockManager.enqueueSteering.mockResolvedValueOnce(false);
+      const send = await getTool(configDir, 'SendMessage').execute(
+        {
+          team_name: 'durable-mailbox',
+          to: 'reviewer',
+          message: 'Inspect the pending changes.',
+        },
+        undefined,
+        { sessionId: 'session-a', workspaceRoot: '/workspace' }
+      );
+      expect(send.success).toBe(true);
+
+      mockManager.enqueueSteering.mockResolvedValueOnce(true);
+      const onStarted = startOptions.get('team-reviewer-durable-mailbox')?.onStarted as
+        | ((agentId: string) => Promise<void>)
+        | undefined;
+      expect(onStarted).toBeTypeOf('function');
+      await onStarted?.('team-reviewer-durable-mailbox');
+
+      const messages = await new TeamMailbox('durable-mailbox', configDir).list(
+        'team-reviewer-durable-mailbox'
+      );
+      expect(messages[0]?.deliveredAt).toEqual(expect.any(Number));
+      expect(mockManager.enqueueSteering).toHaveBeenCalledTimes(2);
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  it('publishes teammate messages to the lead and keeps them in the lead inbox', async () => {
+    const configDir = await createTempConfigDir();
+    const events: Array<{ type: string; properties: Record<string, unknown> }> = [];
+    const unsubscribe = Bus.subscribe((event) => {
+      if (event.sessionId === 'session-a') events.push(event);
+    });
+
+    try {
+      await getTool(configDir, 'TeamCreate').execute(
+        {
+          team_name: 'Lead Inbox',
+          members: [
+            {
+              name: 'reviewer',
+              subagent_type: 'Explore',
+              prompt: 'Review the implementation and message the team lead.',
+            },
+          ],
+        },
+        undefined,
+        { sessionId: 'session-a', workspaceRoot: '/workspace' }
+      );
+
+      const sent = await getTool(configDir, 'SendMessage').execute(
+        {
+          team_name: 'lead-inbox',
+          to: 'team-lead',
+          message: 'The dependency edge is unsafe.',
+        },
+        undefined,
+        {
+          sessionId: 'team-reviewer-lead-inbox',
+          taskListId: 'lead-inbox',
+          workspaceRoot: '/workspace/.blade/worktrees/reviewer',
+        }
+      );
+      expect(sent.success).toBe(true);
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: 'team.message.received',
+            properties: expect.objectContaining({
+              teamName: 'lead-inbox',
+              content: expect.stringContaining('The dependency edge is unsafe.'),
+            }),
+          }),
+        ])
+      );
+
+      const inbox = await getTool(configDir, 'TeamInbox').execute(
+        { team_name: 'lead-inbox' },
+        undefined,
+        { sessionId: 'session-a', workspaceRoot: '/workspace' }
+      );
+      expect(inbox.success).toBe(true);
+      expect((inbox.llmContent as any).messages).toEqual([
+        expect.objectContaining({
+          from: 'reviewer',
+          to: 'team-lead',
+          body: 'The dependency edge is unsafe.',
+        }),
+      ]);
+    } finally {
+      unsubscribe();
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('builtin team tool registration', () => {
+  it('registers team tools only when the feature is enabled', async () => {
+    const configDir = await createTempConfigDir();
+
+    try {
+      const disabledNames = (
+        await getBuiltinTools({ sessionId: 'session-a', configDir })
+      ).map((tool) => tool.name);
+      expect(disabledNames).not.toContain('TeamCreate');
+
+      const names = (
+        await getBuiltinTools({
+          sessionId: 'session-a',
+          configDir,
+          agentTeamsEnabled: true,
+        })
+      ).map((tool) => tool.name);
+
       expect(names).toEqual(
-        expect.arrayContaining(['TeamCreate', 'TeamStatus', 'TeamDelete'])
+        expect.arrayContaining([
+          'TeamCreate',
+          'TeamStatus',
+          'TeamTaskClaim',
+          'SendMessage',
+          'TeamInbox',
+          'TeamDelete',
+        ])
       );
     } finally {
       await fs.rm(configDir, { recursive: true, force: true });

@@ -464,4 +464,39 @@ describe('SettingsModal', () => {
     expect(styleTrigger).toBeInstanceOf(HTMLButtonElement);
     expect(styleTrigger?.textContent).toContain('Auto');
   });
+
+  it('exposes the Agent Teams feature switch on the General tab', async () => {
+    useSettingsStore.setState({
+      agentTeamsEnabled: false,
+      loadSettings,
+    });
+    useAppStore.getState().openSettings('general');
+
+    await act(async () => {
+      root.render(<SettingsModal />);
+      await Promise.resolve();
+    });
+
+    const toggle = document.body.querySelector<HTMLButtonElement>(
+      '[role="switch"][aria-label="Agent Teams"]'
+    );
+    expect(toggle?.getAttribute('aria-checked')).toBe('false');
+
+    await act(async () => {
+      toggle?.click();
+      await Promise.resolve();
+    });
+
+    expect(useSettingsStore.getState().agentTeamsEnabled).toBe(true);
+    expect(fetch).toHaveBeenCalledWith(
+      '/configs',
+      expect.objectContaining({
+        method: 'PUT',
+        body: JSON.stringify({
+          updates: { agentTeamsEnabled: true },
+          options: { scope: 'global' },
+        }),
+      })
+    );
+  });
 });

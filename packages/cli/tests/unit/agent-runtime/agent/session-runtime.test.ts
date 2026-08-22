@@ -10,6 +10,8 @@ import {
   AgentSessionStore,
 } from '../../../../src/agent/subagents/AgentSessionStore.js';
 import { BackgroundAgentManager } from '../../../../src/agent/subagents/BackgroundAgentManager.js';
+import { TeamMailbox } from '../../../../src/agent/teams/TeamMailbox.js';
+import { TeamStore } from '../../../../src/agent/teams/TeamStore.js';
 import { PermissionMode } from '../../../../src/config/types.js';
 import {
   PersistentStore,
@@ -224,6 +226,7 @@ vi.mock('../../../../src/store/vanilla.js', () => ({
     maxConcurrentTasks: 3,
     maxQueuedTasks: 100,
     maxQueuedTaskBytes: 64 * 1024 * 1024,
+    agentTeamsEnabled: true,
     env: { BASE_SESSION_ENV: 'base-value' },
     hooks: { enabled: true },
   })),
@@ -1170,6 +1173,43 @@ describe('SessionRuntime', () => {
     if (prepared.accepted) {
       await runtime.finishTurn(prepared.handle);
     }
+    await runtime.dispose();
+  });
+
+  it('recovers an offline teammate message into the leader durable inbox', async () => {
+    const workspaceRoot = path.join(storageRoot, 'team-lead-project');
+    const sessionId = 'team-lead-session';
+    mkdirSync(workspaceRoot, { recursive: true });
+    const team = await TeamStore.getInstance(storageRoot).createTeam({
+      name: 'recovery-team',
+      leadSessionId: sessionId,
+      workspaceRoot,
+      members: [],
+    });
+    const mailbox = new TeamMailbox(team.name, storageRoot);
+    const message = await mailbox.send({
+      from: 'reviewer',
+      to: 'team-lead',
+      body: 'Review the recovered dependency.',
+    });
+
+    await expect(
+      SessionRuntime.hasPendingInbox(workspaceRoot, sessionId)
+    ).resolves.toBe(true);
+    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+
+    expect(runtime.getPendingSteeringMessages()).toEqual([
+      expect.objectContaining({
+        id: message.id,
+        origin: 'team_message',
+        content: expect.stringContaining('Review the recovered dependency.'),
+        metadata: expect.objectContaining({
+          clientVisible: false,
+          teamMessage: expect.objectContaining({ messageId: message.id }),
+        }),
+      }),
+    ]);
+    await expect(mailbox.listPending('team-lead')).resolves.toEqual([]);
     await runtime.dispose();
   });
 

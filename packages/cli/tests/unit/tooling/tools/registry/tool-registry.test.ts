@@ -1,10 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolRegistry } from '../../../../../src/tools/registry/ToolRegistry.js';
 import type { ExecutionContext } from '../../../../../src/tools/types/ExecutionTypes.js';
-import {
-  type Tool,
-  ToolKind
-} from '../../../../../src/tools/types/ToolTypes.js';
+import { type Tool, ToolKind } from '../../../../../src/tools/types/ToolTypes.js';
 
 function createMockTool(
   name: string,

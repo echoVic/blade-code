@@ -59,6 +59,7 @@ import { SessionSelector } from './SessionSelector.js';
 import { SideConversationPanel } from './SideConversationPanel.js';
 import { SkillsManager } from './SkillsManager.js';
 import { SubagentProgress } from './SubagentProgress.js';
+import { TeamProgress } from './TeamProgress.js';
 import { ThemeSelector } from './ThemeSelector.js';
 
 // 创建 BladeInterface 专用 Logger
@@ -688,6 +689,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
 
         {/* Subagent 进度指示器 - 显示在加载指示器上方 */}
         <SubagentProgress />
+
+        <TeamProgress />
 
         <SideConversationPanel />
 

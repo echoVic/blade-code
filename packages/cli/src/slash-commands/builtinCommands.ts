@@ -61,6 +61,7 @@ const helpCommand: SlashCommand = {
 **/mcp** - 显示 MCP 服务器状态和可用工具
 **/help** - 显示此帮助信息
 **/btw <question>** - 在不改变主对话的情况下询问一个旁路问题
+**/team [action]** - 查看团队状态、发送消息或删除团队
 **/clear** - 清除屏幕内容
 **/resume** - 恢复历史会话
 **/branch** - 从当前会话创建独立分支

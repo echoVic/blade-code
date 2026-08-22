@@ -53,22 +53,21 @@ ACP 使用结构化字段。
 
 ## Provider 请求准入
 
-每条 primary、retry、fallback 和 HalfOpen probe physical stream 在创建 pi-ai iterator
-前都必须取得 process-wide admission permit。默认同一 endpoint/model/tier/credential
-failure domain 最多 4 条、全进程最多 16 条、同一 root Session 及全部 descendant
-subagent 最多 3 条 active stream。全局 pending 固定 128、每 domain 32、每 root owner
-16，队列按 request class 与 root owner 公平调度，不随 Session 数量增长。等待中的
-逻辑 request footprint 另受全局 128 MiB、每 domain 64 MiB、每 root owner 32 MiB
-约束；active capacity 空闲时不使用 pending byte budget。
+默认不创建 process-wide admission scheduler；primary、retry、fallback 与 HalfOpen
+probe physical stream 直接请求 Provider，由真实 `429`、`retry-after` 和共享熔断器
+提供背压。仅当用户显式设置 `providerRequestConcurrency`、
+`providerGlobalConcurrency` 或 `providerOwnerConcurrency` 时才启用准入。
 
-root foreground、background subagent 和 internal sampling 使用独立 class。
-background/internal 在默认 domain 最多占 3 条、全进程最多占 12 条；internal 另限制为
-全局 2 条、每 domain 1 条。等待默认最多 180 秒，每 15 秒投影 heartbeat，caller abort
-会原子移除 ticket。`providerRequestConcurrency` 可配置为 `1-16`；
+`providerRequestConcurrency` 限制同一 endpoint/model/tier/credential failure
+domain（`1-16`）；global 和 owner 分别限制全进程与同一 root Session 及其全部
+descendant。未设置的层级不限制，foreground、background 与 internal 也没有隐藏的
+class in-flight 配额。启用准入后，pending count 和 retained-footprint 仍保持有界，
+队列按 request class 与 root owner 公平调度。
+
+等待默认最多 180 秒，每 15 秒投影 heartbeat，caller abort 会原子移除 ticket。
 `providerRequestAdmissionMs=0` 表示 fail-fast，其他值必须为 `1000-600000`。
-`providerRequestPendingBytes` 默认 128 MiB，可配置为 64 KiB-128 MiB。
-background/internal 的 pending count 与 bytes 都有独立上限，给 foreground 保留排队
-容量；class aging 只改变调度 rank，不改变资源记账 class。
+`providerRequestPendingBytes` 默认 128 MiB，可配置为 64 KiB-128 MiB。active capacity
+空闲时不使用 pending byte budget。
 
 顺序固定为：
 

@@ -27,6 +27,7 @@ import { Agent } from '../agent/Agent.js';
 import { drainLoop } from '../agent/loop/index.js';
 import type { LoopEvent } from '../agent/loop/types.js';
 import { SessionRuntime } from '../agent/runtime/SessionRuntime.js';
+import { isTeamMessageMetadata, TeamMailbox } from '../agent/teams/TeamMailbox.js';
 import type { ChatContext, UserMessageContent } from '../agent/types.js';
 import {
   MAX_INLINE_ATTACHMENT_BYTES,
@@ -43,6 +44,7 @@ import {
   type ResponseVerbositySelection,
   type ServiceTierSelection,
 } from '../config/types.js';
+import { getBladeStorageRoot } from '../context/storage/pathUtils.js';
 import { taskFailureForCode, toTaskFailure } from '../context/taskFailure.js';
 import type { SessionTaskIsolation, SessionTaskWorktree } from '../context/types.js';
 import type { GoalSnapshot } from '../goals/types.js';
@@ -431,6 +433,47 @@ export class AcpSession {
             ...(event.properties.taskWorktreeRemoved === true
               ? { 'blade/taskWorktreeRemoved': true }
               : {}),
+          },
+        });
+        return;
+      }
+      if (event.type.startsWith('team.')) {
+        const { teamName, messageId, content } = event.properties;
+        const metadata = event.properties.metadata;
+        if (
+          event.type === 'team.message.received' &&
+          typeof teamName === 'string' &&
+          typeof messageId === 'string' &&
+          typeof content === 'string' &&
+          isTeamMessageMetadata(metadata, { messageId, teamName })
+        ) {
+          void (async () => {
+            const steering = await this.runtime?.enqueueSteering(content, {
+              allowBeforeTurn: true,
+              messageId,
+              origin: 'team_message',
+              metadata,
+            });
+            if (!steering?.accepted) return;
+            await new TeamMailbox(teamName, getBladeStorageRoot()).markDelivered([
+              messageId,
+            ]);
+            if (steering.delivery === 'next_turn') this.schedulePendingResume();
+          })().catch((error) => {
+            logger.warn(
+              `[AcpSession ${this.id}] Failed to deliver teammate message`,
+              error
+            );
+          });
+        }
+        this.sendUpdate({
+          sessionUpdate: 'session_info_update',
+          updatedAt: new Date().toISOString(),
+          _meta: {
+            'blade/teamEvent': {
+              type: event.type,
+              ...event.properties,
+            },
           },
         });
         return;
@@ -946,7 +989,9 @@ export class AcpSession {
       // - config/exit/ide: 在 IDE 中不适用
       const excludedInAcp = ['model', 'permissions', 'theme', 'config', 'exit', 'ide'];
       const filteredCommands = commands.filter(
-        (cmd) => !excludedInAcp.includes(cmd.name)
+        (cmd) =>
+          !excludedInAcp.includes(cmd.name) &&
+          (cmd.name !== 'team' || this.runtime?.getConfig().agentTeamsEnabled === true)
       );
 
       const availableCommands: AvailableCommand[] = filteredCommands.map((cmd) => {

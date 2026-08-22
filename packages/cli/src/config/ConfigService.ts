@@ -108,6 +108,18 @@ const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     mergeStrategy: 'replace',
     persistable: true,
   },
+  providerGlobalConcurrency: {
+    target: 'config',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
+  providerOwnerConcurrency: {
+    target: 'config',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
   providerRequestAdmissionMs: {
     target: 'config',
     defaultScope: 'global',
@@ -115,6 +127,12 @@ const FIELD_ROUTING_TABLE: Record<string, FieldRouting> = {
     persistable: true,
   },
   providerRequestPendingBytes: {
+    target: 'config',
+    defaultScope: 'global',
+    mergeStrategy: 'replace',
+    persistable: true,
+  },
+  agentTeamsEnabled: {
     target: 'config',
     defaultScope: 'global',
     mergeStrategy: 'replace',

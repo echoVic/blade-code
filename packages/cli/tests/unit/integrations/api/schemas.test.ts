@@ -840,6 +840,7 @@ describe('API Schemas', () => {
         notifySounds: false,
         privacyTelemetry: true,
         privacyCrash: false,
+        agentTeamsEnabled: true,
       };
 
       expect(() => GeneralSettingsSchema.parse(fullSettings)).not.toThrow();

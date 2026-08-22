@@ -58,9 +58,9 @@ the user policy. `BLADE_PLUGIN_REQUIRE_SHA=1` is a non-overridable host-level ti
 ```json
 {
   "currentModelId": "primary",
+  "agentTeamsEnabled": true,
   "providerForegroundRecoveryMs": 600000,
   "providerCircuitBreakerOpenMs": 10000,
-  "providerRequestConcurrency": 4,
   "providerRequestAdmissionMs": 180000,
   "providerRequestPendingBytes": 134217728,
   "modelProviders": {
@@ -303,17 +303,25 @@ Session-local config cannot override them. The single-root Runtime of CLI/TUI/pr
 multiplexed registry. For the full contract, see
 [Session Runtime Residency](/en/reference/session-runtime-residency.md).
 
-`providerRequestConcurrency` controls the concurrent physical streams of the same sensitive Provider failure domain,
-defaulting to `4`, and must be an integer in `1-16`. The whole process is still fixed to at most 16 streams; the same root
-Session and all of its Task/Team descendants total at most 3, background/internal occupy at most 3 of the default domain,
-reserving one unit of capacity for the root foreground. `providerRequestAdmissionMs` defaults to
-`180000`, can be set to `0` to fail immediately when capacity is insufficient, and other values must be `1000-600000`. During the wait,
-no Provider request is sent, no retry attempt is added, and it responds to TUI Esc, Web stop, ACP cancel, and
-Headless signal. `providerRequestPendingBytes` controls the logical retained-footprint of Provider requests that can be queued process-wide,
-with both the default and hard cap being `134217728` (128 MiB), configurable to
-`65536-134217728`. Each failure domain gets at most 64 MiB, and each root owner at most 32 MiB;
-background/internal can only occupy the reserved share within them, and cannot deprive the root foreground of queuing capacity.
-This limit only applies to waiting requests; when active capacity is idle, a single large context can still run immediately.
+Provider requests bypass in-process concurrency admission by default. Real upstream
+`429` responses, `retry-after` backoff, and the shared circuit breaker provide
+backpressure. To opt into proactive limits, set `providerRequestConcurrency`
+for one failure domain (`1-16`), `providerGlobalConcurrency` for the process, or
+`providerOwnerConcurrency` for one root Session and its Task/Team descendants.
+Unset layers impose no limit, and background/internal requests do not receive a
+hidden stream reservation or reduction.
+
+When any concurrency control is set, `providerRequestAdmissionMs` controls the
+maximum capacity wait. It defaults to `180000`, accepts `0` for fail-fast, and
+otherwise must be `1000-600000`. `providerRequestPendingBytes` bounds the retained
+footprint of waiting requests, defaults to and is capped at `134217728` (128 MiB),
+and accepts `65536-134217728`. Waiting sends no Provider traffic, consumes no retry
+attempt, and responds to TUI Esc, Web stop, ACP cancel, and Headless signals.
+
+`agentTeamsEnabled` defaults to `false`. Enabling it registers shared task DAG,
+worktree isolation, and teammate mailbox tools for newly initialized Session
+Runtimes; the Web settings page exposes the same switch. Re-enter an already
+initialized Session to refresh its tool set.
 
 The Anthropic SDK appends `/v1/messages` on its own. If the Anthropic `baseUrl` ends with `/v1`,
 Blade removes that trailing segment at runtime to avoid producing `/v1/v1/messages`. Other path prefixes remain

@@ -805,6 +805,7 @@ export const SideConversationResponseSchema = Runtime(
     ),
   })
 );
+
 export type SideConversationResponse = Static<typeof SideConversationResponseSchema>;
 
 export const CodeReviewRequestSchema = Runtime(
@@ -934,6 +935,7 @@ export const GeneralSettingsSchema = Runtime(
     notifySounds: Type.Boolean(),
     privacyTelemetry: Type.Boolean(),
     privacyCrash: Type.Boolean(),
+    agentTeamsEnabled: Type.Boolean(),
     communicationStyle: Type.Optional(CommunicationStyleSchema),
   })
 );

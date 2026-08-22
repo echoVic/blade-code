@@ -1,12 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import type { Api } from '@earendil-works/pi-ai';
 import {
-  DEFAULT_PROVIDER_REQUEST_ADMISSION_MS,
-  DEFAULT_PROVIDER_REQUEST_CONCURRENCY,
-  DEFAULT_PROVIDER_REQUEST_PENDING_BYTES,
   MAX_PROVIDER_REQUEST_ADMISSION_MS,
-  MAX_PROVIDER_REQUEST_CONCURRENCY,
   MAX_PROVIDER_REQUEST_PENDING_BYTES,
+  MAX_PROVIDER_REQUEST_SCHEDULER_CONCURRENCY,
   MIN_PROVIDER_REQUEST_CONCURRENCY,
 } from '../../config/providerRequestAdmission.js';
 import {
@@ -21,6 +18,7 @@ export {
   MAX_PROVIDER_REQUEST_ADMISSION_MS,
   MAX_PROVIDER_REQUEST_CONCURRENCY,
   MAX_PROVIDER_REQUEST_PENDING_BYTES,
+  MAX_PROVIDER_REQUEST_SCHEDULER_CONCURRENCY,
   MIN_PROVIDER_REQUEST_ADMISSION_MS,
   MIN_PROVIDER_REQUEST_CONCURRENCY,
   MIN_PROVIDER_REQUEST_PENDING_BYTES,
@@ -140,6 +138,7 @@ export interface ProviderRequestAdmissionSchedulerOptions {
   internalGlobalMaxInFlight?: number;
   internalDomainMaxInFlight?: number;
   agingMs?: number;
+  classLimitsEnabled?: boolean;
 }
 
 interface ClassCounters {
@@ -243,6 +242,7 @@ interface NormalizedSchedulerOptions {
   internalGlobalMaxInFlight: number;
   internalDomainMaxInFlight: number;
   agingMs: number;
+  classLimitsEnabled: boolean;
 }
 
 export class ProviderAdmissionError extends Error {
@@ -300,7 +300,7 @@ function normalizeOptions(
   const globalMaxInFlight = boundedPositiveInteger(
     options.globalMaxInFlight,
     PROVIDER_ADMISSION_GLOBAL_MAX_IN_FLIGHT,
-    PROVIDER_ADMISSION_GLOBAL_MAX_IN_FLIGHT
+    Number.MAX_SAFE_INTEGER
   );
   const globalMaxPending = boundedPositiveInteger(
     options.globalMaxPending,
@@ -316,7 +316,7 @@ function normalizeOptions(
     boundedPositiveInteger(
       options.ownerMaxInFlight,
       PROVIDER_ADMISSION_OWNER_MAX_IN_FLIGHT,
-      PROVIDER_ADMISSION_OWNER_MAX_IN_FLIGHT
+      Number.MAX_SAFE_INTEGER
     ),
     globalMaxInFlight
   );
@@ -422,7 +422,7 @@ function normalizeOptions(
         PROVIDER_ADMISSION_NON_FOREGROUND_GLOBAL_MAX_IN_FLIGHT,
         globalMaxInFlight
       ),
-      PROVIDER_ADMISSION_NON_FOREGROUND_GLOBAL_MAX_IN_FLIGHT
+      globalMaxInFlight
     ),
     globalMaxInFlight
   );
@@ -430,7 +430,7 @@ function normalizeOptions(
     boundedPositiveInteger(
       options.nonForegroundOwnerMaxInFlight,
       Math.min(PROVIDER_ADMISSION_NON_FOREGROUND_OWNER_MAX_IN_FLIGHT, ownerMaxInFlight),
-      PROVIDER_ADMISSION_NON_FOREGROUND_OWNER_MAX_IN_FLIGHT
+      ownerMaxInFlight
     ),
     ownerMaxInFlight
   );
@@ -472,6 +472,7 @@ function normalizeOptions(
     internalGlobalMaxInFlight,
     internalDomainMaxInFlight,
     agingMs,
+    classLimitsEnabled: options.classLimitsEnabled !== false,
   };
 }
 
@@ -485,10 +486,10 @@ function assertRequest(request: ProviderAdmissionRequest): void {
   if (
     !Number.isSafeInteger(request.scope.maxConcurrent) ||
     request.scope.maxConcurrent < MIN_PROVIDER_REQUEST_CONCURRENCY ||
-    request.scope.maxConcurrent > MAX_PROVIDER_REQUEST_CONCURRENCY
+    request.scope.maxConcurrent > MAX_PROVIDER_REQUEST_SCHEDULER_CONCURRENCY
   ) {
     throw new Error(
-      `maxConcurrent must be between ${MIN_PROVIDER_REQUEST_CONCURRENCY} and ${MAX_PROVIDER_REQUEST_CONCURRENCY}`
+      `maxConcurrent must be between ${MIN_PROVIDER_REQUEST_CONCURRENCY} and ${MAX_PROVIDER_REQUEST_SCHEDULER_CONCURRENCY}`
     );
   }
   if (
@@ -728,7 +729,7 @@ export class ProviderRequestAdmissionScheduler {
           }
         : undefined;
 
-    if (request.requestClass === 'internal') {
+    if (this.#limits.classLimitsEnabled && request.requestClass === 'internal') {
       const internalCount =
         count(
           'class',
@@ -747,7 +748,7 @@ export class ProviderRequestAdmissionScheduler {
         );
       if (internalCount) return internalCount;
     }
-    if (request.requestClass !== 'foreground') {
+    if (this.#limits.classLimitsEnabled && request.requestClass !== 'foreground') {
       const nonForegroundCount =
         count(
           'class',
@@ -894,7 +895,9 @@ export class ProviderRequestAdmissionScheduler {
       return false;
     if (totalOf(domain.counters.inFlight) >= domain.maxConcurrent) return false;
     if (totalOf(owner.counters.inFlight) >= this.#limits.ownerMaxInFlight) return false;
-    if (requestClass === 'foreground') return true;
+    if (requestClass === 'foreground' || !this.#limits.classLimitsEnabled) {
+      return true;
+    }
 
     if (
       nonForegroundOf(this.#globalCounters.inFlight) >=
@@ -933,6 +936,7 @@ export class ProviderRequestAdmissionScheduler {
       };
     }
     if (
+      this.#limits.classLimitsEnabled &&
       requestClass !== 'foreground' &&
       nonForegroundOf(owner.counters.inFlight) >=
         this.#limits.nonForegroundOwnerMaxInFlight
@@ -952,7 +956,7 @@ export class ProviderRequestAdmissionScheduler {
         limit: domain.maxConcurrent,
       };
     }
-    if (requestClass !== 'foreground') {
+    if (this.#limits.classLimitsEnabled && requestClass !== 'foreground') {
       const limit = Math.max(1, domain.maxConcurrent - 1);
       if (nonForegroundOf(domain.counters.inFlight) >= limit) {
         return {
@@ -964,6 +968,7 @@ export class ProviderRequestAdmissionScheduler {
       }
     }
     if (
+      this.#limits.classLimitsEnabled &&
       requestClass === 'internal' &&
       domain.counters.inFlight.internal >= this.#limits.internalDomainMaxInFlight
     ) {
@@ -983,6 +988,7 @@ export class ProviderRequestAdmissionScheduler {
       };
     }
     if (
+      this.#limits.classLimitsEnabled &&
       requestClass !== 'foreground' &&
       nonForegroundOf(this.#globalCounters.inFlight) >=
         this.#limits.nonForegroundGlobalMaxInFlight
@@ -995,6 +1001,7 @@ export class ProviderRequestAdmissionScheduler {
       };
     }
     if (
+      this.#limits.classLimitsEnabled &&
       requestClass === 'internal' &&
       this.#globalCounters.inFlight.internal >= this.#limits.internalGlobalMaxInFlight
     ) {
@@ -1319,8 +1326,10 @@ export class ProviderRequestAdmissionScheduler {
 
 let sharedScheduler: ProviderRequestAdmissionScheduler | undefined;
 
-export function getProviderRequestAdmissionScheduler(): ProviderRequestAdmissionScheduler {
-  sharedScheduler ??= new ProviderRequestAdmissionScheduler();
+export function getProviderRequestAdmissionScheduler(
+  options: ProviderRequestAdmissionSchedulerOptions = {}
+): ProviderRequestAdmissionScheduler {
+  sharedScheduler ??= new ProviderRequestAdmissionScheduler(options);
   return sharedScheduler;
 }
 

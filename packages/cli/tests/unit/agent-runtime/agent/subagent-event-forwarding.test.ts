@@ -447,7 +447,7 @@ describe('SubagentExecutor event forwarding', () => {
       runtimeState.runtime,
       expect.objectContaining({
         toolWhitelist: ['Read', 'Bash'],
-        toolBlacklist: ['EnterWorktree', 'ExitWorktree', 'Bash', 'Write'],
+        toolBlacklist: ['EnterWorktree', 'ExitWorktree', 'TeamCreate', 'Bash', 'Write'],
         maxTurns: 4,
         permissionMode: PermissionMode.PLAN,
       })

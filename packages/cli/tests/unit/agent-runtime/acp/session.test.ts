@@ -450,6 +450,37 @@ describe('AcpSession', () => {
       ).toBe(false);
     });
 
+    it('应该通过 session metadata 投影 team lifecycle 事件', async () => {
+      await session.initialize();
+      mockConnection.sessionUpdates = [];
+
+      Bus.publish(
+        { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+        'team.task.unblocked',
+        {
+          teamName: 'review-team',
+          task: { id: '2', status: 'pending' },
+        }
+      );
+
+      await vi.waitFor(() => {
+        expect(mockConnection.sessionUpdates).toContainEqual({
+          sessionId: 'test-session-id',
+          update: {
+            sessionUpdate: 'session_info_update',
+            updatedAt: expect.any(String),
+            _meta: {
+              'blade/teamEvent': {
+                type: 'team.task.unblocked',
+                teamName: 'review-team',
+                task: { id: '2', status: 'pending' },
+              },
+            },
+          },
+        });
+      });
+    });
+
     it('应该实时推送 task lifecycle metadata 并在 destroy 后取消订阅', async () => {
       await session.initialize();
       mockConnection.sessionUpdates = [];

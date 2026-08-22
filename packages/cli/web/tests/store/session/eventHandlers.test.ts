@@ -64,6 +64,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     errorContext: null,
     goal: null,
     sideConversation: null,
+    teams: [],
     messages,
     isStreaming: false,
     isStopping: false,
@@ -118,6 +119,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     startTemporarySession: vi.fn(),
     clearError: vi.fn(),
     setGoal: vi.fn(),
+    loadTeams: vi.fn(async () => undefined),
     loadSessions: vi.fn(),
     loadArchivedSessions: vi.fn(async () => undefined),
     selectSession: vi.fn(),
@@ -2767,5 +2769,31 @@ describe('eventHandlers', () => {
     ]);
     expect(state.isStreaming).toBe(false);
     expect(state.agentPhase).toBe('idle');
+  });
+
+  test('refreshes the team projection after every team lifecycle event', async () => {
+    const state = createState();
+    const set = vi.fn(
+      (
+        update:
+          | Partial<SessionStoreState>
+          | ((current: SessionStoreState) => Partial<SessionStoreState>)
+      ) => {
+        Object.assign(state, typeof update === 'function' ? update(state) : update);
+      }
+    );
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'team.message.received',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        teamName: 'review-team',
+      },
+    });
+    await Promise.resolve();
+
+    expect(state.loadTeams).toHaveBeenCalledWith(state.currentSessionRef);
   });
 });

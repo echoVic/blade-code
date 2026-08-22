@@ -18,6 +18,7 @@ import {
   MAX_PROVIDER_REQUEST_ADMISSION_MS,
   MAX_PROVIDER_REQUEST_CONCURRENCY,
   MAX_PROVIDER_REQUEST_PENDING_BYTES,
+  MAX_PROVIDER_REQUEST_SCHEDULER_CONCURRENCY,
   MIN_PROVIDER_REQUEST_ADMISSION_MS,
   MIN_PROVIDER_REQUEST_CONCURRENCY,
   MIN_PROVIDER_REQUEST_PENDING_BYTES,
@@ -63,6 +64,9 @@ const RUNTIME_SETTING_FIELDS = [
 const KNOWN_SETTING_FIELDS = new Set([
   ...Object.keys(DEFAULT_CONFIG),
   ...RUNTIME_SETTING_FIELDS,
+  'providerRequestConcurrency',
+  'providerGlobalConcurrency',
+  'providerOwnerConcurrency',
 ]);
 
 const PositiveNumber = Type.Number({ exclusiveMinimum: 0 });
@@ -153,6 +157,18 @@ const RuntimeSettingsSchema = Type.Object({
       maximum: MAX_PROVIDER_REQUEST_CONCURRENCY,
     })
   ),
+  providerGlobalConcurrency: Type.Optional(
+    Type.Integer({
+      minimum: MIN_PROVIDER_REQUEST_CONCURRENCY,
+      maximum: MAX_PROVIDER_REQUEST_SCHEDULER_CONCURRENCY,
+    })
+  ),
+  providerOwnerConcurrency: Type.Optional(
+    Type.Integer({
+      minimum: MIN_PROVIDER_REQUEST_CONCURRENCY,
+      maximum: MAX_PROVIDER_REQUEST_SCHEDULER_CONCURRENCY,
+    })
+  ),
   providerRequestAdmissionMs: Type.Optional(
     Type.Union([
       Type.Literal(0),
@@ -168,6 +184,7 @@ const RuntimeSettingsSchema = Type.Object({
       maximum: MAX_PROVIDER_REQUEST_PENDING_BYTES,
     })
   ),
+  agentTeamsEnabled: Type.Optional(Type.Boolean()),
   codeTheme: Type.Optional(Type.String()),
   uiTheme: Type.Optional(StringEnum(['light', 'dark', 'system'])),
   language: Type.Optional(Type.String()),

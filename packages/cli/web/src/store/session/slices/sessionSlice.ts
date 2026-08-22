@@ -3,6 +3,7 @@ import { parseSideConversationCommand } from '@api/sideConversation';
 import { projectPathOf } from '@/lib/projectIdentity';
 import { sessionService } from '@/services';
 import { DEFAULT_WEB_PERMISSION_MODE, useConfigStore } from '@/store/ConfigStore';
+import { useSettingsStore } from '@/store/SettingsStore';
 import { initialTokenUsage, TEMP_SESSION_ID } from '../constants';
 import {
   findSessionByRef,
@@ -16,6 +17,7 @@ import { persistUnreadTaskKeys, pruneUnreadTaskKeys } from '../taskAttention';
 import type {
   MessageContentPart,
   SendMessagePayload,
+  SessionRef,
   SessionSlice,
   SliceCreator,
   StreamEvent,
@@ -80,11 +82,15 @@ const waitForCatalogContinuation = (): Promise<void> =>
     }, 350);
   });
 
+const fetchTeams = async (ref: SessionRef) =>
+  (await import('@/services/teamService')).teamService.list(ref);
+
 export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
   let navigationGeneration = 0;
   let catalogGeneration = 0;
   let archivedCatalogGeneration = 0;
   const messageResyncs = new Map<string, Promise<void>>();
+  const teamLoads = new Map<string, Promise<void>>();
   let sideConversationController: AbortController | null = null;
 
   const beginNavigation = (): number => {
@@ -121,6 +127,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
     errorContext: null,
     goal: null,
     sideConversation: null,
+    teams: [],
 
     setSessions: (sessions) => set({ sessions }),
 
@@ -148,6 +155,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           messages: isCurrent ? [] : currentState.messages,
           goal: isCurrent ? null : currentState.goal,
           sideConversation: isCurrent ? null : currentState.sideConversation,
+          teams: isCurrent ? [] : currentState.teams,
           forkingSessionRef: cancelsFork ? null : currentState.forkingSessionRef,
           ...(isCurrent ? resetStreamingState() : {}),
         };
@@ -161,6 +169,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         currentSessionRef: ref,
         isTemporarySession: false,
         sideConversation: null,
+        teams: [],
       });
     },
 
@@ -192,6 +201,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         messages: [],
         goal: null,
         sideConversation: null,
+        teams: [],
         tokenUsage: { ...initialTokenUsage },
         error: null,
         errorContext: null,
@@ -337,12 +347,15 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           preparedUnsubscribe = null;
           return;
         }
-        const [rawMessages, goal, exactSession] = await Promise.all([
+        const [rawMessages, goal, exactSession, teams] = await Promise.all([
           sessionService.getMessages(ref),
           sessionService.getGoal(ref).catch(() => null),
           existingSession
             ? Promise.resolve(existingSession)
             : sessionService.getSession(ref),
+          useSettingsStore.getState().agentTeamsEnabled
+            ? fetchTeams(ref).catch(() => [])
+            : Promise.resolve([]),
         ]);
         if (!isCurrentNavigation(generation)) {
           closePreparedSubscription(preparedUnsubscribe);
@@ -370,6 +383,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           isTemporarySession: false,
           messages,
           goal,
+          teams,
           isLoading: false,
           tokenUsage: { ...initialTokenUsage },
           isStreaming: false,
@@ -1063,6 +1077,31 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
       sideConversationController?.abort('side-conversation-dismissed');
       sideConversationController = null;
       set({ sideConversation: null });
+    },
+
+    loadTeams: async (ref) => {
+      const target = ref ?? get().currentSessionRef;
+      if (!target || !useSettingsStore.getState().agentTeamsEnabled) {
+        set({ teams: [] });
+        return;
+      }
+      const key = sessionRefKey(target);
+      const existing = teamLoads.get(key);
+      if (existing) return existing;
+      let load!: Promise<void>;
+      load = (async () => {
+        try {
+          const teams = await fetchTeams(target);
+          if (!sameSessionRef(get().currentSessionRef, target)) return;
+          set({ teams });
+        } catch {
+          if (sameSessionRef(get().currentSessionRef, target)) set({ teams: [] });
+        } finally {
+          if (teamLoads.get(key) === load) teamLoads.delete(key);
+        }
+      })();
+      teamLoads.set(key, load);
+      await load;
     },
 
     abortSession: async () => {

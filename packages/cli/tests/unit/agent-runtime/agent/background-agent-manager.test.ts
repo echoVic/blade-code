@@ -353,7 +353,13 @@ describe('BackgroundAgentManager', () => {
         runtimeState.runtime,
         expect.objectContaining({
           toolWhitelist: ['Read', 'Bash'],
-          toolBlacklist: ['EnterWorktree', 'ExitWorktree', 'Bash', 'Write'],
+          toolBlacklist: [
+            'EnterWorktree',
+            'ExitWorktree',
+            'TeamCreate',
+            'Bash',
+            'Write',
+          ],
           maxTurns: 3,
           permissionMode: PermissionMode.PLAN,
         })

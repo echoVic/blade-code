@@ -2283,6 +2283,11 @@ const handleReviewToolCompleted: EventHandler = (props, get, set) => {
   handleToolResult(props, get, set);
 };
 
+const handleTeamEvent: EventHandler = (_props, get) => {
+  const ref = get().currentSessionRef;
+  if (ref) queueMicrotask(() => void get().loadTeams(ref));
+};
+
 const eventHandlers: Record<string, EventHandler> = {
   'message.created': handleMessageCreated,
   'message.delta': handleMessageDelta,
@@ -2392,6 +2397,11 @@ export const createEventDispatcher = (get: GetState, set: SetState) => {
     // delta 事件不打印日志，避免大量 console.log 阻塞主线程
     if (import.meta.env.DEV && !BUFFERED_EVENTS.has(event.type)) {
       console.log('[SSE Event]', event.type, event.properties);
+    }
+
+    if (event.type.startsWith('team.')) {
+      handleTeamEvent(props, get, set);
+      return;
     }
 
     // 流结束事件：先 drain buffer 确保内容不丢失，再执行 handler

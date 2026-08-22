@@ -29,6 +29,7 @@ import {
   type AgentSession,
   toPublicAgentSession,
 } from '../../agent/subagents/AgentSessionStore.js';
+import { isTeamMessageMetadata, TeamMailbox } from '../../agent/teams/TeamMailbox.js';
 import type { ChatContext, UserMessageContent } from '../../agent/types.js';
 import { MAX_INLINE_ATTACHMENT_BYTES } from '../../api/attachmentLimits.js';
 import {
@@ -53,7 +54,10 @@ import {
   type ServiceTierSelection,
 } from '../../config/types.js';
 import { SessionEventLog } from '../../context/events/SessionEventLog.js';
-import { assertValidSessionId } from '../../context/storage/pathUtils.js';
+import {
+  assertValidSessionId,
+  getBladeStorageRoot,
+} from '../../context/storage/pathUtils.js';
 import { toTaskFailure } from '../../context/taskFailure.js';
 import type {
   SessionEvent,
@@ -3497,6 +3501,46 @@ export const createSessionRouteController = (): SessionRouteController => {
           ).catch((error) => {
             logger.error(
               `[SessionRoutes] Failed to wake background completion for ${session.id}:`,
+              error
+            );
+          });
+        }
+        if (
+          event.type === 'team.message.received' &&
+          typeof event.properties.teamName === 'string' &&
+          typeof event.properties.messageId === 'string' &&
+          typeof event.properties.content === 'string' &&
+          isTeamMessageMetadata(event.properties.metadata, {
+            messageId: event.properties.messageId,
+            teamName: event.properties.teamName,
+          })
+        ) {
+          const teamName = event.properties.teamName;
+          const messageId = event.properties.messageId;
+          const content = event.properties.content;
+          const metadata = event.properties.metadata;
+          void withMessageSubmissionLock(ref, async () => {
+            const runtimeLease = await acquireRuntime(session);
+            let shouldResume = false;
+            try {
+              const steering = await runtimeLease.value.enqueueSteering(content, {
+                allowBeforeTurn: true,
+                messageId,
+                origin: 'team_message',
+                metadata,
+              });
+              if (!steering.accepted) return;
+              await new TeamMailbox(teamName, getBladeStorageRoot()).markDelivered([
+                messageId,
+              ]);
+              shouldResume = steering.delivery === 'next_turn';
+            } finally {
+              runtimeLease.release();
+            }
+            if (shouldResume) await resumePendingSession(session);
+          }).catch((error) => {
+            logger.error(
+              `[SessionRoutes] Failed to deliver teammate message for ${session.id}:`,
               error
             );
           });

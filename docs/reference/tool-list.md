@@ -326,7 +326,9 @@ background 运行都会持久化；每次 resume 创建新的不可变 child ID�
 | `team_name` | string | ✅ | 团队名称，会被规范化为安全目录名 |
 | `description` | string | | 团队目标说明 |
 | `agent_type` | string | | team lead 的角色标签 |
+| `peer_messaging` | boolean | | 是否启用成员通信（默认 true） |
 | `members` | array | | 初始 teammate 列表 |
+| `tasks` | array | | 初始共享任务 DAG |
 
 `members` 项字段：
 
@@ -339,7 +341,9 @@ background 运行都会持久化；每次 resume 创建新的不可变 child ID�
 
 **类型**: ReadOnly  
 **存储**: `~/.blade/teams/<team-name>/config.json`  
-**特性**: 基于后台 Task agent 启动 teammate，成员共享 team name 作用域的任务列表，可通过 `TaskOutput` 读取成员输出
+`tasks` 项支持 `subject`、`description`、`depends_on`、`assigned_to` 和
+`priority`。成员使用同一 team name 作用域的任务图；写能力角色默认在独立 worktree
+运行。成员完成结果会通知 team lead。
 
 ### TeamStatus
 
@@ -348,6 +352,42 @@ background 运行都会持久化；每次 resume 创建新的不可变 child ID�
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `team_name` | string | | 团队名称；省略时列出全部团队 |
+
+**类型**: ReadOnly
+
+### TeamTaskClaim
+
+原子领取下一个依赖已完成、且未被其他成员领取的任务。预分配任务只能由目标成员领取。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `team_name` | string | | 团队名称；成员上下文可省略 |
+| `member_id` | string | | 成员 ID；成员上下文可省略 |
+
+**类型**: ReadOnly
+
+### SendMessage
+
+向指定 teammate 发送持久化消息；`to: "*"` 表示广播。运行中的目标会在下一个安全
+边界接收，未即时投递的消息保留在 mailbox。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `team_name` | string | | 团队名称；成员上下文可省略 |
+| `to` | string | ✅ | teammate 名称或 `*` |
+| `message` | string | ✅ | 消息正文 |
+
+**类型**: ReadOnly
+
+### TeamInbox
+
+读取 durable team mailbox，并可确认指定消息 ID。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `team_name` | string | | 团队名称；成员上下文可省略 |
+| `recipient` | string | | 收件成员；默认当前成员或 team lead |
+| `acknowledge` | array | | 要确认的消息 ID |
 
 **类型**: ReadOnly
 

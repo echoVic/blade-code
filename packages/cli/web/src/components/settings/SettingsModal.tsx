@@ -21,6 +21,7 @@ import { ScheduleManager } from '@/components/schedules/ScheduleManager';
 import { SkillsPanel } from '@/components/skills/SkillsModal';
 import { Select } from '@/components/ui/select';
 import { type TranslationKey, useLocale, useT } from '@/i18n';
+import { teamText } from '@/i18n/team';
 import { DEFAULT_COMMUNICATION_STYLES } from '@/lib/communicationStyles';
 import { requestJson } from '@/lib/http';
 import {
@@ -975,6 +976,23 @@ export function SettingsModal() {
                         enabled={settings.autoSaveSessions}
                         onChange={(v) =>
                           settings.updateSettings({ autoSaveSessions: v })
+                        }
+                      />
+                    </div>
+                    <div className="flex justify-between items-center gap-4 py-2">
+                      <div className="flex min-w-0 flex-col gap-1">
+                        <span className="text-[13px] text-[#6B7280] dark:text-[#a1a1aa] font-mono">
+                          {teamText(locale, 'settingsTitle')}
+                        </span>
+                        <span className="text-[11px] text-[#9CA3AF] dark:text-[#71717a] font-mono">
+                          {teamText(locale, 'settingsHint')}
+                        </span>
+                      </div>
+                      <ToggleSwitch
+                        label={teamText(locale, 'settingsTitle')}
+                        enabled={settings.agentTeamsEnabled}
+                        onChange={(v) =>
+                          settings.updateSettings({ agentTeamsEnabled: v })
                         }
                       />
                     </div>

@@ -233,15 +233,15 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   credential。TUI loading、Web StatusBar、ACP
   `session_info_update._meta["blade/providerRetry"]`、Headless JSONL 和 subagent SSE
   消费同一协议；元事件不计为内容 chunk，不触发 stream commit 或工具执行。
-- Provider physical stream 使用 process-wide 有界公平准入：全局 active 16/pending
-  128，同一敏感 failure domain 默认 active 4/pending 32，同一 root Session 及全部
-  descendant subagent active 3/pending 16。非 foreground 保留全局和 domain 容量，
-  且 pending count 与 retained-footprint bytes 都不能占用 foreground reserve。排队
-  request footprint 全局最多 128 MiB、每 domain 64 MiB、每 root owner 32 MiB；
-  queued ticket 每 15 秒 heartbeat 并响应统一 AbortSignal。permit 只覆盖一个真实
-  iterator，error/EOF/consumer return 后先释放，再进入 retry、circuit wait 或 fallback。
-  `provider_admission` 只暴露 sanitized resource kind，不持久化 request bytes、
-  domain/owner/Session identity。
+- Provider physical stream 默认绕过进程内 admission，由真实 `429`、
+  `retry-after` 与共享熔断器处理背压。只有显式配置
+  `providerRequestConcurrency`、`providerGlobalConcurrency` 或
+  `providerOwnerConcurrency` 时才创建 process-wide 有界公平调度器；未配置的层级和
+  foreground/background/internal class 不施加隐藏 active 上限。启用后，pending
+  count 与 retained-footprint bytes 仍保持有界，queued ticket 每 15 秒 heartbeat
+  并响应统一 AbortSignal。permit 只覆盖一次真实 iterator；error/EOF/consumer
+  return 后先释放，再进入 retry、circuit wait 或 fallback。`provider_admission`
+  只暴露脱敏 resource 类型，不持久化 request bytes、domain/owner/Session identity。
 - 同一进程内的 Session 通过 128 项有界 failure-domain registry 共享 Provider circuit。
   每个 domain 使用最多 256 个样本的 60 秒窗口；Open 到期后只有一个 generation/lease
   token 可拥有 HalfOpen probe，abort/timeout 显式 abandon，lease takeover 后的 stale

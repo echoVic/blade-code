@@ -30,6 +30,7 @@ export function projectPublicConfig(config: BladeConfig) {
     notifySounds: config.notifySounds,
     privacyTelemetry: config.privacyTelemetry,
     privacyCrash: config.privacyCrash,
+    agentTeamsEnabled: config.agentTeamsEnabled === true,
     communicationStyle: config.communicationStyle,
     maxConcurrentTasks: config.maxConcurrentTasks,
     maxQueuedTasks: config.maxQueuedTasks,

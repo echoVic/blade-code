@@ -58,9 +58,9 @@ LSP 同样不使用进程全局单例。`lspServers` 从用户层、可信 sourc
 ```json
 {
   "currentModelId": "primary",
+  "agentTeamsEnabled": true,
   "providerForegroundRecoveryMs": 600000,
   "providerCircuitBreakerOpenMs": 10000,
-  "providerRequestConcurrency": 4,
   "providerRequestAdmissionMs": 180000,
   "providerRequestPendingBytes": 134217728,
   "modelProviders": {
@@ -303,17 +303,21 @@ Session-local 配置不能覆盖。CLI/TUI/print/Headless 的单 root Runtime �
 multiplexed registry。完整契约见
 [Session Runtime Residency](../reference/session-runtime-residency.md)。
 
-`providerRequestConcurrency` 控制同一敏感 Provider failure domain 的并发 physical
-stream，默认 `4`，必须为 `1-16` 的整数。全进程仍固定最多 16 条 stream；同一 root
-Session 及全部 Task/Team 后代合计最多 3 条，background/internal 最多占用默认 domain
-的 3 条，给 root foreground 保留一条容量。`providerRequestAdmissionMs` 默认
-`180000`，可设为 `0` 在容量不足时立即失败，其他值必须为 `1000-600000`。等待期间
-不发 Provider 请求、不增加 retry attempt，并响应 TUI Esc、Web stop、ACP cancel 和
-Headless signal。`providerRequestPendingBytes` 控制全进程可排队 Provider request 的
-逻辑 retained-footprint，默认和硬上限均为 `134217728`（128 MiB），可配置为
-`65536-134217728`。每 failure domain 最多 64 MiB、每 root owner 最多 32 MiB；
-background/internal 只能占用其中的保留份额，不能让 root foreground 失去排队容量。
-该限制只作用于等待中的 request；active capacity 空闲时，单个大上下文仍可立即运行。
+Provider 请求默认不经过进程内并发准入，直接由上游真实 `429`、`retry-after` 重试和
+共享熔断器提供背压。需要主动限流时，可显式设置 `providerRequestConcurrency`
+（单一 failure domain，`1-16`）、`providerGlobalConcurrency`（全进程）或
+`providerOwnerConcurrency`（同一 root Session 及其 Task/Team 后代）；未设置的层级
+不施加限制，也不会为 background/internal 隐式保留或削减 stream 容量。
+
+只要设置任一并发旋钮，`providerRequestAdmissionMs` 就控制等待容量的最长时间：
+默认 `180000`，可设为 `0` 立即失败，其他值必须为 `1000-600000`。
+`providerRequestPendingBytes` 控制等待请求的 retained-footprint，默认和硬上限均为
+`134217728`（128 MiB），可配置为 `65536-134217728`。等待期间不发 Provider 请求、
+不增加 retry attempt，并响应 TUI Esc、Web stop、ACP cancel 和 Headless signal。
+
+`agentTeamsEnabled` 默认 `false`。开启后，新建 Session Runtime 会注册共享任务 DAG、
+worktree 隔离和成员 mailbox 工具；Web 设置页也提供同一开关。已初始化的 Session
+需要重新进入后才会刷新工具集合。
 
 Anthropic SDK 会自行追加 `/v1/messages`。若 Anthropic 的 `baseUrl` 以 `/v1`
 结尾，Blade 会在运行时移除该尾段，避免产生 `/v1/v1/messages`。其他路径前缀保持

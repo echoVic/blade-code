@@ -301,7 +301,9 @@ Creates an Agent Team and can launch multiple background teammate subagents at o
 | `team_name` | string | ✅ | Team name, will be normalized to a safe directory name |
 | `description` | string | | Team goal description |
 | `agent_type` | string | | Role label for team lead |
+| `peer_messaging` | boolean | | Whether teammate messaging is enabled (default true) |
 | `members` | array | | Initial teammate list |
+| `tasks` | array | | Initial shared task DAG |
 
 `members` item fields:
 
@@ -314,7 +316,9 @@ Creates an Agent Team and can launch multiple background teammate subagents at o
 
 **Type**: ReadOnly  
 **Storage**: `~/.blade/teams/<team-name>/config.json`  
-**Features**: Launches teammates based on background Task agent, members share a task list scoped by team name, member output can be read via `TaskOutput`
+Each `tasks` item supports `subject`, `description`, `depends_on`, `assigned_to`,
+and `priority`. Members share a task graph scoped by team name; write-capable
+roles use isolated worktrees by default. Member completions notify the team lead.
 
 ### TeamStatus
 
@@ -323,6 +327,44 @@ Lists Agent Teams, or views member status for a specified team.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `team_name` | string | | Team name; lists all teams when omitted |
+
+**Type**: ReadOnly
+
+### TeamTaskClaim
+
+Atomically claims the next dependency-ready task that has not been claimed by
+another member. A preassigned task can only be claimed by its target member.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `team_name` | string | | Team name; omitted in teammate context |
+| `member_id` | string | | Member ID; omitted in teammate context |
+
+**Type**: ReadOnly
+
+### SendMessage
+
+Sends a durable message to a teammate; `to: "*"` broadcasts. A running target
+receives it at the next safe boundary, while messages that cannot be delivered
+immediately remain in the mailbox.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `team_name` | string | | Team name; omitted in teammate context |
+| `to` | string | Yes | Teammate name or `*` |
+| `message` | string | Yes | Message body |
+
+**Type**: ReadOnly
+
+### TeamInbox
+
+Reads the durable team mailbox and can acknowledge selected message IDs.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `team_name` | string | | Team name; omitted in teammate context |
+| `recipient` | string | | Recipient; defaults to the current member or team lead |
+| `acknowledge` | array | | Message IDs to acknowledge |
 
 **Type**: ReadOnly
 

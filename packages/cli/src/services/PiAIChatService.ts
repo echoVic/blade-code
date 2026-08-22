@@ -41,15 +41,16 @@ import {
 } from './pi/providerCircuitBreaker.js';
 import {
   DEFAULT_PROVIDER_REQUEST_ADMISSION_MS,
-  DEFAULT_PROVIDER_REQUEST_CONCURRENCY,
   DEFAULT_PROVIDER_REQUEST_PENDING_BYTES,
   getProviderRequestAdmissionScheduler,
   isProviderAdmissionError,
+  MAX_PROVIDER_REQUEST_SCHEDULER_CONCURRENCY,
   PROVIDER_ADMISSION_HEARTBEAT_MS,
   type ProviderAdmissionError,
   type ProviderAdmissionEvent,
   type ProviderAdmissionPermit,
   type ProviderAdmissionQueueSnapshot,
+  ProviderRequestAdmissionScheduler,
 } from './pi/providerRequestAdmission.js';
 import { estimateProviderRequestPendingBytes } from './pi/providerRequestFootprint.js';
 import {
@@ -179,6 +180,7 @@ export class PiAIChatService implements IChatService {
   private models: MutableModels;
   private model: Model<Api>;
   private readonly promptCacheBreakMonitor = new PromptCacheBreakMonitor();
+  private providerAdmissionScheduler?: ProviderRequestAdmissionScheduler;
   private readonly admissionFallbackOwnerId =
     `pi-service-${process.pid}-${nextServiceAdmissionOwner++}`;
 
@@ -191,6 +193,7 @@ export class PiAIChatService implements IChatService {
     };
     this.models = runtime.models;
     this.model = runtime.model;
+    this.providerAdmissionScheduler = createAdmissionScheduler(this.config);
     logger.debug('[PiAIChatService] Initialized', {
       provider: this.model.provider,
       model: this.model.id,
@@ -356,11 +359,10 @@ export class PiAIChatService implements IChatService {
         MAX_PROVIDER_CIRCUIT_PROBE_LEASE_MS
       )
     );
-    const providerAdmissionScheduler =
-      this.config.providerRequestAdmissionScheduler ??
-      getProviderRequestAdmissionScheduler();
+    const providerAdmissionScheduler = this.providerAdmissionScheduler;
     const providerRequestConcurrency =
-      this.config.providerRequestConcurrency ?? DEFAULT_PROVIDER_REQUEST_CONCURRENCY;
+      this.config.providerRequestConcurrency ??
+      MAX_PROVIDER_REQUEST_SCHEDULER_CONCURRENCY;
     const providerRequestAdmissionMs =
       this.config.providerRequestAdmissionMs ?? DEFAULT_PROVIDER_REQUEST_ADMISSION_MS;
     const providerRequestPendingBytes =
@@ -468,6 +470,9 @@ export class PiAIChatService implements IChatService {
       model: Model<Api>,
       candidateConfig: ChatConfig
     ): AsyncGenerator<StreamChunk, ProviderAdmissionPermit, unknown> {
+      if (!providerAdmissionScheduler) {
+        return { release: () => undefined };
+      }
       const recoveryRemainingMs = recoverySnapshot()?.recoveryRemainingMs;
       const maxWaitMs =
         recoveryRemainingMs !== undefined && boundedRecovery?.startedAt !== undefined
@@ -1186,5 +1191,33 @@ export class PiAIChatService implements IChatService {
     };
     this.models = runtime.models;
     this.model = runtime.model;
+    this.providerAdmissionScheduler = createAdmissionScheduler(this.config);
   }
+}
+
+function createAdmissionScheduler(
+  config: ChatConfig
+): ProviderRequestAdmissionScheduler | undefined {
+  if (config.providerRequestAdmissionScheduler) {
+    return config.providerRequestAdmissionScheduler;
+  }
+  if (
+    config.providerRequestConcurrency === undefined &&
+    config.providerGlobalConcurrency === undefined &&
+    config.providerOwnerConcurrency === undefined
+  ) {
+    return undefined;
+  }
+  const globalMaxInFlight = config.providerGlobalConcurrency ?? Number.MAX_SAFE_INTEGER;
+  const ownerMaxInFlight = config.providerOwnerConcurrency ?? Number.MAX_SAFE_INTEGER;
+  return getProviderRequestAdmissionScheduler({
+    globalMaxInFlight,
+    ownerMaxInFlight,
+    nonForegroundGlobalMaxInFlight: globalMaxInFlight,
+    nonForegroundOwnerMaxInFlight: ownerMaxInFlight,
+    internalGlobalMaxInFlight: globalMaxInFlight,
+    internalDomainMaxInFlight:
+      config.providerRequestConcurrency ?? MAX_PROVIDER_REQUEST_SCHEDULER_CONCURRENCY,
+    classLimitsEnabled: false,
+  });
 }

@@ -23,6 +23,7 @@ Slash 命令是 Blade 的快捷操作入口，输入 `/` 触发建议，`Tab` �
 | `/mcp` | - | 显示 MCP 状态 |
 | `/agents` | - | 管理子代理 |
 | `/tasks` | - | 查看后台任务并恢复已结束的子代理 |
+| `/team [action]` | - | 查看团队状态、发送消息或删除团队 |
 | `/skills` | - | 管理 Skills |
 | `/plugins` | - | 管理插件 |
 | `/hooks` | - | 管理 Hooks |

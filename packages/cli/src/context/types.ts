@@ -451,6 +451,7 @@ export interface MessagePersistenceMetadata {
   triggerPaths?: string[];
   userShellCommand?: JsonValue;
   backgroundSubagentCompletion?: JsonValue;
+  teamMessage?: JsonValue;
   codeReview?: JsonValue;
   structuredOutput?: JsonValue;
   structuredOutputSchemaDigest?: string;

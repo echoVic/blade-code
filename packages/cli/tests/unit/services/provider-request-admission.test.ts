@@ -207,6 +207,39 @@ describe('ProviderRequestAdmissionScheduler', () => {
     background[1].release();
   });
 
+  it('does not impose hidden class limits when they are disabled', async () => {
+    const gate = scheduler({
+      globalMaxInFlight: 4,
+      ownerMaxInFlight: 4,
+      classLimitsEnabled: false,
+    });
+    const background = await Promise.all(
+      Array.from({ length: 4 }, (_, index) =>
+        permit(
+          gate.admit(
+            request('shared-model', 'owner-a', 'background', {
+              sessionId: `child-${index}`,
+            })
+          )
+        )
+      )
+    );
+    const waiting = gate.admit(
+      request('shared-model', 'owner-a', 'background', {
+        sessionId: 'child-waiting',
+      })
+    );
+
+    expect(waiting.getSnapshot()).toMatchObject({
+      state: 'queued',
+      scope: 'owner',
+      inFlight: 4,
+      limit: 4,
+    });
+    for (const held of background) held.release();
+    (await waiting.ready).release();
+  });
+
   it('allows one background stream when domain concurrency is one', async () => {
     const gate = scheduler();
     const held = await permit(

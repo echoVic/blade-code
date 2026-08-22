@@ -140,6 +140,8 @@ export const useAppActions = () => useBladeStore((state) => state.app.actions);
 export const useSideConversation = () =>
   useBladeStore((state) => state.app.sideConversation);
 
+export const useTeams = () => useBladeStore((state) => state.app.teams);
+
 /**
  * 派生选择器：是否准备就绪
  */
@@ -187,6 +189,9 @@ export const useCurrentModel = () =>
  */
 export const useCurrentModelId = () =>
   useBladeStore((state) => state.config.config?.currentModelId);
+
+export const useAgentTeamsEnabled = () =>
+  useBladeStore((state) => state.config.config?.agentTeamsEnabled === true);
 
 /**
  * 派生选择器：当前主题对象（纯读取，无副作用）

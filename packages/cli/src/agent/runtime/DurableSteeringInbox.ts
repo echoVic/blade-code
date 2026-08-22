@@ -26,7 +26,7 @@ export interface DurableSteeringMessage {
   recovered: boolean;
   persisted?: boolean;
   outputSchema?: JsonObject;
-  origin?: 'user' | 'background_subagent';
+  origin?: 'user' | 'background_subagent' | 'team_message';
   metadata?: MessagePersistenceMetadata;
 }
 
@@ -113,7 +113,8 @@ function parseInboxRecord(
       ('persisted' in message && typeof message.persisted !== 'boolean') ||
       ('origin' in message &&
         message.origin !== 'user' &&
-        message.origin !== 'background_subagent') ||
+        message.origin !== 'background_subagent' &&
+        message.origin !== 'team_message') ||
       ('metadata' in message &&
         (message.metadata === null ||
           typeof message.metadata !== 'object' ||
@@ -138,7 +139,9 @@ function parseInboxRecord(
         ? { persisted: true }
         : {}),
       ...('origin' in message && message.origin
-        ? { origin: message.origin as 'user' | 'background_subagent' }
+        ? {
+            origin: message.origin as 'user' | 'background_subagent' | 'team_message',
+          }
         : {}),
       ...('metadata' in message && message.metadata
         ? {

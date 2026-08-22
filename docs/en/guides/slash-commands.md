@@ -23,6 +23,7 @@ Slash commands are Blade's shortcut entry point for quick actions. Type `/` to t
 | `/mcp` | - | Show MCP status |
 | `/agents` | - | Manage subagents |
 | `/tasks` | - | View background tasks and resume finished subagents |
+| `/team [action]` | - | Inspect teams, send messages, or delete a team |
 | `/skills` | - | Manage Skills |
 | `/plugins` | - | Manage plugins |
 | `/hooks` | - | Manage Hooks |

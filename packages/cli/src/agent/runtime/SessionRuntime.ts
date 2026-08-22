@@ -30,6 +30,7 @@ import {
 } from '../../context/storage/pathUtils.js';
 import { toTaskFailure } from '../../context/taskFailure.js';
 import type {
+  MessagePersistenceMetadata,
   SessionTaskDiffStat,
   SessionTaskFailure,
   SessionTaskIsolation,
@@ -174,6 +175,12 @@ import { buildBackgroundSubagentCompletion } from '../subagents/BackgroundSubage
 import type { SubagentRegistry } from '../subagents/SubagentRegistry.js';
 import { buildSubagentResultAdoption } from '../subagents/SubagentResultAdoption.js';
 import type { SubagentConfig } from '../subagents/types.js';
+import {
+  formatTeamMessage,
+  TeamMailbox,
+  teamMessageMetadata,
+} from '../teams/TeamMailbox.js';
+import { TeamStore } from '../teams/TeamStore.js';
 import type {
   AgentOptions,
   SubagentInfoForContext,
@@ -607,11 +614,33 @@ export class SessionRuntime {
     sessionId: string
   ): Promise<boolean> {
     try {
-      return (await stat(getSessionInboxFilePath(workspaceRoot, sessionId))).size > 0;
+      if ((await stat(getSessionInboxFilePath(workspaceRoot, sessionId))).size > 0) {
+        return true;
+      }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
-      throw error;
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
+    if (getConfig()?.agentTeamsEnabled !== true) return false;
+    const teams = (
+      await TeamStore.getInstance(getBladeStorageRoot()).listTeams()
+    ).filter(
+      (team) =>
+        team.deletedAt === undefined &&
+        team.leadSessionId === sessionId &&
+        team.workspaceRoot === workspaceRoot
+    );
+    for (const team of teams) {
+      if (
+        (
+          await new TeamMailbox(team.name, getBladeStorageRoot()).listPending(
+            'team-lead'
+          )
+        ).length > 0
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   static async hasActiveGoal(
@@ -1418,7 +1447,13 @@ export class SessionRuntime {
 
   async enqueueSteering(
     content: UserMessageContent,
-    options?: { allowBeforeTurn?: boolean; outputSchema?: JsonObject }
+    options?: {
+      allowBeforeTurn?: boolean;
+      messageId?: string;
+      outputSchema?: JsonObject;
+      origin?: SteeringMessage['origin'];
+      metadata?: MessagePersistenceMetadata;
+    }
   ): Promise<SteeringEnqueueResult> {
     const result = await this.getActiveTurnMailbox().enqueue(content, options);
     if (result.accepted) this.signalBackgroundSubagentCompletionWaiters();
@@ -1812,6 +1847,31 @@ export class SessionRuntime {
     );
   }
 
+  private async recoverTeamLeadMessages(): Promise<void> {
+    if (this.config.agentTeamsEnabled !== true) return;
+    const teams = (
+      await TeamStore.getInstance(getBladeStorageRoot()).listTeams()
+    ).filter(
+      (team) =>
+        team.deletedAt === undefined &&
+        team.leadSessionId === this.sessionId &&
+        team.workspaceRoot === this.workspaceRoot
+    );
+    for (const team of teams) {
+      const mailbox = new TeamMailbox(team.name, getBladeStorageRoot());
+      const messages = await mailbox.listPending('team-lead');
+      for (const message of messages) {
+        const queued = await this.enqueueSteering(formatTeamMessage(message), {
+          allowBeforeTurn: true,
+          messageId: message.id,
+          origin: 'team_message',
+          metadata: teamMessageMetadata(message),
+        });
+        if (queued.accepted) await mailbox.markDelivered([message.id]);
+      }
+    }
+  }
+
   async executeUserShellCommand(
     command: string,
     options: {
@@ -2100,6 +2160,7 @@ export class SessionRuntime {
       if (this.startupTurnRecovery?.outcome === 'completed') {
         await this.reloadPendingInbox();
       }
+      await this.recoverTeamLeadMessages();
       await this.reconcileBackgroundSubagentCompletions();
       if (recovery) {
         logger.warn(
@@ -2598,6 +2659,7 @@ export class SessionRuntime {
       getServiceTier: () => this.selectedServiceTier,
       getResponseVerbosity: () => this.selectedResponseVerbosity,
       getCommunicationStyle: () => this.selectedCommunicationStyle,
+      agentTeamsEnabled: this.config.agentTeamsEnabled === true,
     });
 
     const builtin = builtinTools.filter((tool) => !tool.name.startsWith('mcp__'));

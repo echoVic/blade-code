@@ -25,3 +25,4 @@ export type {
   WorkspaceInfo,
 } from './sessionService';
 export { sessionService } from './sessionService';
+export type { TeamSnapshot } from './teamService';

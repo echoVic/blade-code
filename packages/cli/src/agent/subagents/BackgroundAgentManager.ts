@@ -202,6 +202,9 @@ export interface StartBackgroundAgentOptions {
   /** Shared task-list scope for coordinated agent teams */
   taskListId?: string;
 
+  /** Agent Team identity for runtime projection and peer messaging. */
+  teamId?: string;
+
   /** Parent workspace inherited by the child */
   workspaceRoot?: string;
 
@@ -227,6 +230,9 @@ export interface StartBackgroundAgentOptions {
 
   /** Forward child loop events to the owning surface */
   onEvent?: (event: LoopEvent, agentId: string) => void | Promise<void>;
+
+  /** Notify callers once the child runtime can accept steering messages. */
+  onStarted?: (agentId: string) => void | Promise<void>;
 
   /** Notify the owning surface after durable completion */
   onCompleted?: (session: AgentSession) => void | Promise<void>;
@@ -263,6 +269,7 @@ export class BackgroundAgentManager {
 
   // 运行中的 agent
   private runningAgents = new Map<string, BackgroundAgentRuntime>();
+  private activeRuntimes = new Map<string, SessionRuntime>();
 
   // 会话存储
   private sessionStore = AgentSessionStore.getInstance();
@@ -475,6 +482,7 @@ export class BackgroundAgentManager {
       agentId,
       existingMessages,
       taskListId,
+      teamId,
       workspaceRoot = getCwd(),
       isolation = config.isolation ?? 'none',
       restoredWorktree,
@@ -485,6 +493,7 @@ export class BackgroundAgentManager {
       modelResources,
       lspResources,
       onEvent,
+      onStarted,
       onCompleted,
     } = options;
 
@@ -519,6 +528,7 @@ export class BackgroundAgentManager {
       resumeDepth,
       configSnapshot: createAgentSessionConfigSnapshot(config),
       taskListId,
+      teamId,
       workspaceRoot,
       isolation,
       worktree: restoredWorktree,
@@ -543,6 +553,7 @@ export class BackgroundAgentManager {
       abortController.signal,
       existingMessages,
       taskListId,
+      teamId,
       workspaceRoot,
       isolation,
       restoredWorktree,
@@ -550,6 +561,7 @@ export class BackgroundAgentManager {
       modelResources,
       lspResources,
       onEvent,
+      onStarted,
       onCompleted
     );
 
@@ -588,6 +600,7 @@ export class BackgroundAgentManager {
     signal: AbortSignal,
     existingMessages?: Message[],
     taskListId?: string,
+    teamId?: string,
     workspaceRoot: string = getCwd(),
     isolation: SubagentIsolationMode = 'none',
     restoredWorktree?: WorktreeSession,
@@ -595,6 +608,7 @@ export class BackgroundAgentManager {
     modelResources?: SessionModelResources,
     lspResources?: SessionLspResources,
     onEvent?: (event: LoopEvent, agentId: string) => void | Promise<void>,
+    onStarted?: (agentId: string) => void | Promise<void>,
     onCompleted?: (session: AgentSession) => void | Promise<void>
   ): Promise<SubagentResult> {
     const startTime = Date.now();
@@ -671,12 +685,15 @@ export class BackgroundAgentManager {
             }
           : undefined,
       });
+      this.activeRuntimes.set(agentId, runtime);
+      await onStarted?.(agentId);
       agent = await Agent.createWithRuntime(runtime, {
         sessionId: agentId,
         toolWhitelist: config.tools,
         toolBlacklist: [
           'EnterWorktree',
           'ExitWorktree',
+          'TeamCreate',
           ...(config.disallowedTools ?? []),
         ],
         modelId,
@@ -860,6 +877,7 @@ export class BackgroundAgentManager {
         worktree: worktreeOutcome?.worktree,
       };
     } finally {
+      this.activeRuntimes.delete(agentId);
       try {
         if (agent && typeof agent.destroy === 'function') {
           await agent.destroy();
@@ -890,6 +908,20 @@ export class BackgroundAgentManager {
    */
   isRunning(agentId: string): boolean {
     return this.runningAgents.has(agentId);
+  }
+
+  async enqueueSteering(
+    agentId: string,
+    content: string,
+    owner?: AgentSessionOwner
+  ): Promise<boolean> {
+    if (owner && !this.getAgent(agentId, owner)) return false;
+    const runtime = this.activeRuntimes.get(agentId);
+    if (!runtime) return false;
+    const result = await runtime.enqueueSteering(content, {
+      allowBeforeTurn: true,
+    });
+    return result.accepted;
   }
 
   /**
@@ -1007,6 +1039,7 @@ export class BackgroundAgentManager {
       agentId: newAgentId,
       existingMessages: session.messages,
       taskListId: session.taskListId,
+      teamId: session.teamId,
       workspaceRoot: session.workspaceRoot,
       isolation: session.isolation,
       restoredWorktree: session.worktree,

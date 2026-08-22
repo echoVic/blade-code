@@ -142,6 +142,8 @@ describe('pi model runtime', () => {
         timeout: 180_000,
         providerCircuitBreakerOpenMs: 20_000,
         providerRequestConcurrency: 6,
+        providerGlobalConcurrency: 48,
+        providerOwnerConcurrency: 12,
         providerRequestAdmissionMs: 120_000,
         providerRequestPendingBytes: 8 * 1024 * 1024,
       },
@@ -150,6 +152,8 @@ describe('pi model runtime', () => {
 
     expect(resolved.chat.providerCircuitBreakerOpenMs).toBe(20_000);
     expect(resolved.chat.providerRequestConcurrency).toBe(6);
+    expect(resolved.chat.providerGlobalConcurrency).toBe(48);
+    expect(resolved.chat.providerOwnerConcurrency).toBe(12);
     expect(resolved.chat.providerRequestAdmissionMs).toBe(120_000);
     expect(resolved.chat.providerRequestPendingBytes).toBe(8 * 1024 * 1024);
   });

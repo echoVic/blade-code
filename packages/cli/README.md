@@ -30,7 +30,7 @@
 - 🌐 **双模式界面** - CLI 终端 + Web UI，随心切换
 - 🛠️ **丰富工具** - 20+ 内置工具：文件/搜索/Shell/Git/Web 等
 - 🔗 **扩展能力** - MCP、插件与 Skills 系统
-- 📋 **结构化工作流** - Spec / Plan / Subagents
+- 📋 **结构化工作流** - Spec / Plan / Subagents / Agent Teams
 - 🔒 **安全可控** - default/autoEdit/plan/yolo 权限模式与工具白/黑名单
 - 🎨 **现代 UI** - React + Ink 终端 UI / React + Vite Web UI
 

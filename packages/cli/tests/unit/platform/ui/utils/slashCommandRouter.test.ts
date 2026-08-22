@@ -120,6 +120,7 @@ function createMockAppActions(): AppActions {
     completeSideConversation: vi.fn(),
     failSideConversation: vi.fn(),
     dismissSideConversation: vi.fn(),
+    setTeams: vi.fn(),
   } satisfies AppActions;
 }
 

@@ -23,6 +23,7 @@ import type {
   ResponseVerbositySelection,
   ServiceTierSelection,
 } from '../../config/types.js';
+import type { MessagePersistenceMetadata } from '../../context/types.js';
 import type {
   McpCompletionInput,
   McpNormalizedCompletionResult,
@@ -874,6 +875,27 @@ export function useAgent(options: AgentOptions) {
     }
   );
 
+  const enqueueSessionInput = useMemoizedFn(
+    async (
+      content: UserMessageContent,
+      enqueueOptions?: {
+        messageId?: string;
+        origin?: 'user' | 'background_subagent' | 'team_message';
+        metadata?: MessagePersistenceMetadata;
+      }
+    ): Promise<SteeringEnqueueResult> => {
+      const targetSessionId = options.sessionId;
+      if (!targetSessionId) {
+        return { accepted: false, queued: 0, reason: 'no_active_turn' };
+      }
+      const runtime = await getOrCreateSessionRuntime(targetSessionId);
+      return runtime.enqueueSteering(content, {
+        allowBeforeTurn: true,
+        ...enqueueOptions,
+      });
+    }
+  );
+
   const askSideQuestion = useMemoizedFn(
     async (question: string, signal?: AbortSignal): Promise<SideConversationResult> => {
       const targetSessionId = options.sessionId;
@@ -953,6 +975,7 @@ export function useAgent(options: AgentOptions) {
     createAgent,
     cleanupAgent,
     steerActiveTurn,
+    enqueueSessionInput,
     askSideQuestion,
     runCodeReview,
     executeUserShellCommand,

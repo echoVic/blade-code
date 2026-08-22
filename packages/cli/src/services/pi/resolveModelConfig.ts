@@ -69,6 +69,8 @@ type ModelResolutionAppConfig = Pick<
   | 'timeout'
   | 'providerCircuitBreakerOpenMs'
   | 'providerRequestConcurrency'
+  | 'providerGlobalConcurrency'
+  | 'providerOwnerConcurrency'
   | 'providerRequestAdmissionMs'
   | 'providerRequestPendingBytes'
 > &
@@ -178,6 +180,8 @@ export function resolveModelConfig(
       maxRetries: overrides?.maxRetries,
       providerCircuitBreakerOpenMs: appConfig.providerCircuitBreakerOpenMs,
       providerRequestConcurrency: appConfig.providerRequestConcurrency,
+      providerGlobalConcurrency: appConfig.providerGlobalConcurrency,
+      providerOwnerConcurrency: appConfig.providerOwnerConcurrency,
       providerRequestAdmissionMs: appConfig.providerRequestAdmissionMs,
       providerRequestPendingBytes: appConfig.providerRequestPendingBytes,
       modelCatalog: catalog,

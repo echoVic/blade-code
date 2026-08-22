@@ -1,5 +1,6 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import writeFileAtomic from 'write-file-atomic';
 
 export type TeamMemberStatus =
   | 'leader'
@@ -16,12 +17,11 @@ export interface TeamMember {
   description: string;
   prompt?: string;
   agentId?: string;
-  status: TeamMemberStatus;
   joinedAt: number;
-  completedAt?: number;
 }
 
 export interface AgentTeam {
+  schemaVersion: 2;
   name: string;
   description?: string;
   createdAt: number;
@@ -29,6 +29,9 @@ export interface AgentTeam {
   deletedAt?: number;
   leadAgentId: string;
   leadSessionId?: string;
+  workspaceRoot?: string;
+  taskListId: string;
+  peerMessagingEnabled: boolean;
   teamFilePath: string;
   members: TeamMember[];
 }
@@ -66,18 +69,24 @@ export class TeamStore {
     description?: string;
     leadAgentType?: string;
     leadSessionId?: string;
+    workspaceRoot?: string;
+    peerMessagingEnabled?: boolean;
     members: TeamMember[];
   }): Promise<AgentTeam> {
     const name = await this.getUniqueTeamName(input.name);
     const now = Date.now();
     const teamFilePath = this.getTeamFilePath(name);
     const team: AgentTeam = {
+      schemaVersion: 2,
       name,
       description: input.description,
       createdAt: now,
       updatedAt: now,
       leadAgentId: `team-lead-${name}`,
       leadSessionId: input.leadSessionId,
+      workspaceRoot: input.workspaceRoot,
+      taskListId: name,
+      peerMessagingEnabled: input.peerMessagingEnabled ?? true,
       teamFilePath,
       members: [
         {
@@ -85,7 +94,6 @@ export class TeamStore {
           name: 'team-lead',
           subagentType: input.leadAgentType || 'team-lead',
           description: 'Team lead for coordinating the agent team',
-          status: 'leader',
           joinedAt: now,
         },
         ...input.members,
@@ -110,15 +118,15 @@ export class TeamStore {
 
   async saveTeam(team: AgentTeam): Promise<void> {
     const filePath = this.getTeamFilePath(team.name);
-    await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o755 });
-    await fs.writeFile(
+    await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+    await writeFileAtomic(
       filePath,
       JSON.stringify(
         { ...team, teamFilePath: filePath, updatedAt: Date.now() },
         null,
         2
       ),
-      'utf-8'
+      { encoding: 'utf8', mode: 0o600, fsync: true }
     );
   }
 
@@ -148,11 +156,6 @@ export class TeamStore {
       ...team,
       deletedAt: now,
       updatedAt: now,
-      members: team.members.map((member) =>
-        member.status === 'running'
-          ? { ...member, status: 'cancelled', completedAt: member.completedAt || now }
-          : member
-      ),
     };
     await this.saveTeam(deletedTeam);
     return deletedTeam;
@@ -180,6 +183,7 @@ function normalizeTeam(data: unknown): AgentTeam | undefined {
   if (!team.name || !Array.isArray(team.members)) return undefined;
 
   return {
+    schemaVersion: 2,
     name: team.name,
     description: team.description,
     createdAt: typeof team.createdAt === 'number' ? team.createdAt : Date.now(),
@@ -187,6 +191,9 @@ function normalizeTeam(data: unknown): AgentTeam | undefined {
     deletedAt: typeof team.deletedAt === 'number' ? team.deletedAt : undefined,
     leadAgentId: team.leadAgentId || `team-lead@${team.name}`,
     leadSessionId: team.leadSessionId,
+    workspaceRoot: team.workspaceRoot,
+    taskListId: team.taskListId || team.name,
+    peerMessagingEnabled: team.peerMessagingEnabled !== false,
     teamFilePath: team.teamFilePath || '',
     members: team.members.map((member) => ({
       id: member.id,
@@ -195,9 +202,7 @@ function normalizeTeam(data: unknown): AgentTeam | undefined {
       description: member.description,
       prompt: member.prompt,
       agentId: member.agentId,
-      status: member.status,
       joinedAt: member.joinedAt,
-      completedAt: member.completedAt,
     })),
   };
 }

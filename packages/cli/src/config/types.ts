@@ -162,8 +162,11 @@ export interface BladeConfig {
   providerForegroundRecoveryMs?: number; // 0 禁用；否则 root turn 的有界 Provider 恢复预算
   providerCircuitBreakerOpenMs?: number; // 0 禁用；否则共享 Provider circuit 的 open 时间
   providerRequestConcurrency?: number; // 同一敏感 Provider failure-domain 的 active stream 上限
+  providerGlobalConcurrency?: number; // 显式启用的进程级 Provider active stream 上限
+  providerOwnerConcurrency?: number; // 显式启用的 owner 级 Provider active stream 上限
   providerRequestAdmissionMs?: number; // 0 fail-fast；否则等待 Provider stream capacity 的上限
   providerRequestPendingBytes?: number; // 进程级 Provider admission pending request footprint 上限
+  agentTeamsEnabled?: boolean; // 启用正式 Agent Teams 协作能力
 
   // UI
   codeTheme: string;

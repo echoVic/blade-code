@@ -140,6 +140,7 @@ export function buildBackgroundSubagentCompletion(
     resultTruncated,
     rootAgentId: session.rootAgentId,
     resumeDepth: session.resumeDepth,
+    ...(session.teamId ? { teamId: session.teamId } : {}),
     ...(error.text ? { error: error.text } : {}),
     ...(session.resumedFrom ? { resumedFrom: session.resumedFrom } : {}),
     ...(session.completedAt !== undefined ? { completedAt: session.completedAt } : {}),

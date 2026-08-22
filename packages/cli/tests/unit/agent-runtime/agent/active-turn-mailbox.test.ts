@@ -282,6 +282,59 @@ describe('ActiveTurnMailbox', () => {
     });
   });
 
+  it('keeps durable teammate messages idempotent across mailbox recovery', async () => {
+    const first = await createMailbox('team-message-session');
+    await expect(
+      first.enqueue('untrusted teammate payload', {
+        allowBeforeTurn: true,
+        messageId: 'team-message-1',
+        origin: 'team_message',
+        metadata: {
+          clientVisible: false,
+          teamMessage: {
+            messageId: 'team-message-1',
+            teamName: 'review-team',
+            from: 'reviewer',
+            to: 'team-lead',
+          },
+        },
+      })
+    ).resolves.toMatchObject({
+      accepted: true,
+      delivery: 'next_turn',
+    });
+
+    const recovered = await createMailbox('team-message-session');
+    await expect(
+      recovered.enqueue('untrusted teammate payload', {
+        allowBeforeTurn: true,
+        messageId: 'team-message-1',
+        origin: 'team_message',
+        metadata: {
+          clientVisible: false,
+          teamMessage: {
+            messageId: 'team-message-1',
+            teamName: 'review-team',
+            from: 'reviewer',
+            to: 'team-lead',
+          },
+        },
+      })
+    ).resolves.toMatchObject({
+      accepted: true,
+      duplicate: true,
+      queued: 1,
+    });
+    expect(recovered.pendingMessages()).toEqual([
+      expect.objectContaining({
+        id: 'team-message-1',
+        origin: 'team_message',
+        recovered: true,
+        metadata: expect.objectContaining({ clientVisible: false }),
+      }),
+    ]);
+  });
+
   it('rejects a hard-limit overflow without throwing or mutating the inbox', async () => {
     const inbox = await DurableSteeringInbox.open(workspaceRoot, 'hard-limit-capacity');
     await expect(

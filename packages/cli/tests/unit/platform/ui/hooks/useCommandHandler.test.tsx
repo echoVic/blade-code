@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => {
     createAgent: vi.fn(),
     cleanupAgent: vi.fn(),
     steerActiveTurn: vi.fn(),
+    enqueueSessionInput: vi.fn(),
     askSideQuestion: vi.fn(),
     getMcpContentCatalog: vi.fn(),
     refreshMcpContentCatalogs: vi.fn(),
@@ -86,6 +87,7 @@ vi.mock('../../../../../src/ui/hooks/useAgent.js', () => ({
     createAgent: mocks.createAgent,
     cleanupAgent: mocks.cleanupAgent,
     steerActiveTurn: mocks.steerActiveTurn,
+    enqueueSessionInput: mocks.enqueueSessionInput,
     askSideQuestion: mocks.askSideQuestion,
     getMcpContentCatalog: mocks.getMcpContentCatalog,
     refreshMcpContentCatalogs: mocks.refreshMcpContentCatalogs,
@@ -122,6 +124,7 @@ vi.mock('../../../../../src/store/selectors/index.js', () => ({
   useResponseVerbosity: () => 'auto',
   useCommunicationStyle: () => 'auto',
   useSideConversation: () => mocks.sideConversation,
+  useAgentTeamsEnabled: () => false,
   useSessionActions: () => ({
     clearFinalizingStreamingMessageId: mocks.clearFinalizingStreamingMessageId,
     setCurrentThinkingContent: mocks.setCurrentThinkingContent,
@@ -139,6 +142,7 @@ vi.mock('../../../../../src/store/selectors/index.js', () => ({
     completeSideConversation: mocks.completeSideConversation,
     failSideConversation: mocks.failSideConversation,
     dismissSideConversation: mocks.dismissSideConversation,
+    setTeams: vi.fn(),
   }),
   useCommandActions: () => ({
     createAbortController: vi.fn(() => mocks.abortController),

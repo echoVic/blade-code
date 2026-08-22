@@ -72,6 +72,7 @@ export async function getBuiltinTools(opts?: {
   getServiceTier?: () => ServiceTierSelection;
   getResponseVerbosity?: () => ResponseVerbositySelection;
   getCommunicationStyle?: () => CommunicationStyleSelection;
+  agentTeamsEnabled?: boolean;
 }): Promise<Tool[]> {
   const sessionId = opts?.sessionId || `session_${Date.now()}`;
   const configDir = opts?.configDir || getBladeStorageRoot();
@@ -130,19 +131,21 @@ export async function getBuiltinTools(opts?: {
     // Goal mode: GetGoal, CreateGoal, UpdateGoal
     ...createGoalTools({ sessionId, workspaceRoot }),
 
-    // Agent Teams: TeamCreate, TeamStatus, TeamDelete
-    ...createTeamTools({
-      sessionId,
-      configDir,
-      subagentRegistry,
-      agentResources: opts?.agentResources,
-      modelResources: opts?.modelResources,
-      lspResources: opts?.lspResources,
-      getReasoningEffort: opts?.getReasoningEffort,
-      getServiceTier: opts?.getServiceTier,
-      getResponseVerbosity: opts?.getResponseVerbosity,
-      getCommunicationStyle: opts?.getCommunicationStyle,
-    }),
+    // Agent Teams are a formal capability gated by explicit configuration.
+    ...(opts?.agentTeamsEnabled
+      ? createTeamTools({
+          sessionId,
+          configDir,
+          subagentRegistry,
+          agentResources: opts?.agentResources,
+          modelResources: opts?.modelResources,
+          lspResources: opts?.lspResources,
+          getReasoningEffort: opts?.getReasoningEffort,
+          getServiceTier: opts?.getServiceTier,
+          getResponseVerbosity: opts?.getResponseVerbosity,
+          getCommunicationStyle: opts?.getCommunicationStyle,
+        })
+      : []),
 
     // Worktree isolation: EnterWorktree, ExitWorktree
     ...createWorktreeTools({ sessionId }),

@@ -9,6 +9,7 @@
  */
 
 import type { ActionStationarityEvent } from '../agent/loop/actionStationarity.js';
+import type { TeamSnapshot } from '../agent/teams/TeamRuntime.js';
 import type {
   CommunicationStyleSelection,
   ModelConfig,
@@ -292,6 +293,7 @@ export interface AppState {
   subagentProgress: SubagentProgress | null; // 兼容投影：最近一条 subagent
   subagentProgresses: Record<string, SubagentProgress>;
   sideConversation: SideConversationState | null;
+  teams: TeamSnapshot[];
 }
 
 /**
@@ -329,6 +331,7 @@ export interface AppActions {
   completeSideConversation: (requestId: string, result: SideConversationResult) => void;
   failSideConversation: (requestId: string, error: string) => void;
   dismissSideConversation: () => void;
+  setTeams: (teams: TeamSnapshot[]) => void;
 }
 
 /**

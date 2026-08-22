@@ -36,6 +36,7 @@ import {
 import { SkillsRoutes } from './routes/skills.js';
 import { SuggestionsRoutes } from './routes/suggestions.js';
 import { TaskRoutes } from './routes/task.js';
+import { TeamRoutes } from './routes/team.js';
 import {
   setupNodeWebSocket,
   TerminalRoutes,
@@ -316,6 +317,7 @@ function createApp(): Hono<{ Variables: Variables }> {
   app.route('/events', EventRoutes());
   app.route('/sessions', sessionController.app);
   app.route('/tasks', TaskRoutes(sessionController));
+  app.route('/teams', TeamRoutes());
   app.route('/schedules', ScheduleRoutes(scheduleStore, taskScheduler));
   app.route('/configs', ConfigRoutes());
   app.route('/permissions', PermissionRoutes());

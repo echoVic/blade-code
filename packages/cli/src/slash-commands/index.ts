@@ -30,6 +30,7 @@ import scheduleCommand from './schedule.js';
 import searchCommand from './search.js';
 import skillsCommand from './skills.js';
 import tasksCommand from './tasks.js';
+import teamCommand from './team.js';
 import themeCommand from './theme.js';
 import trustCommand from './trust.js';
 import type {
@@ -55,6 +56,7 @@ const slashCommands: SlashCommandRegistry = {
   skills: skillsCommand,
   hooks: hooksCommand,
   tasks: tasksCommand,
+  team: teamCommand,
   plugins: pluginsCommand,
   review: reviewCommand,
   schedule: scheduleCommand,

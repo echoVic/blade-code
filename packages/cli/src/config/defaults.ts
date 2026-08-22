@@ -7,7 +7,6 @@ import { DEFAULT_FOREGROUND_PROVIDER_RECOVERY_MS } from './foregroundProviderRec
 import { DEFAULT_PROVIDER_CIRCUIT_OPEN_MS } from './providerCircuitBreaker.js';
 import {
   DEFAULT_PROVIDER_REQUEST_ADMISSION_MS,
-  DEFAULT_PROVIDER_REQUEST_CONCURRENCY,
   DEFAULT_PROVIDER_REQUEST_PENDING_BYTES,
 } from './providerRequestAdmission.js';
 import {
@@ -37,8 +36,8 @@ export const DEFAULT_CONFIG: BladeConfig = {
   bashForegroundHandoffMs: DEFAULT_FOREGROUND_COMMAND_HANDOFF_MS,
   providerForegroundRecoveryMs: DEFAULT_FOREGROUND_PROVIDER_RECOVERY_MS,
   providerCircuitBreakerOpenMs: DEFAULT_PROVIDER_CIRCUIT_OPEN_MS,
-  providerRequestConcurrency: DEFAULT_PROVIDER_REQUEST_CONCURRENCY,
   providerRequestAdmissionMs: DEFAULT_PROVIDER_REQUEST_ADMISSION_MS,
+  agentTeamsEnabled: false,
   providerRequestPendingBytes: DEFAULT_PROVIDER_REQUEST_PENDING_BYTES,
 
   // UI

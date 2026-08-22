@@ -64,9 +64,11 @@ import {
   isValidProviderRequestAdmissionMs,
   isValidProviderRequestConcurrency,
   isValidProviderRequestPendingBytes,
+  isValidProviderRequestSchedulerConcurrency,
   MAX_PROVIDER_REQUEST_ADMISSION_MS,
   MAX_PROVIDER_REQUEST_CONCURRENCY,
   MAX_PROVIDER_REQUEST_PENDING_BYTES,
+  MAX_PROVIDER_REQUEST_SCHEDULER_CONCURRENCY,
   MIN_PROVIDER_REQUEST_ADMISSION_MS,
   MIN_PROVIDER_REQUEST_CONCURRENCY,
   MIN_PROVIDER_REQUEST_PENDING_BYTES,
@@ -113,6 +115,8 @@ export interface WorkspaceModelConfig {
   timeout: number;
   providerCircuitBreakerOpenMs?: number;
   providerRequestConcurrency?: number;
+  providerGlobalConcurrency?: number;
+  providerOwnerConcurrency?: number;
   providerRequestAdmissionMs?: number;
   providerRequestPendingBytes?: number;
 }
@@ -573,6 +577,12 @@ export class ConfigManager {
         ...(base.providerRequestConcurrency !== undefined
           ? { providerRequestConcurrency: base.providerRequestConcurrency }
           : {}),
+        ...(base.providerGlobalConcurrency !== undefined
+          ? { providerGlobalConcurrency: base.providerGlobalConcurrency }
+          : {}),
+        ...(base.providerOwnerConcurrency !== undefined
+          ? { providerOwnerConcurrency: base.providerOwnerConcurrency }
+          : {}),
         ...(base.providerRequestAdmissionMs !== undefined
           ? { providerRequestAdmissionMs: base.providerRequestAdmissionMs }
           : {}),
@@ -601,6 +611,16 @@ export class ConfigManager {
       ...(DEFAULT_CONFIG.providerRequestConcurrency !== undefined
         ? {
             providerRequestConcurrency: DEFAULT_CONFIG.providerRequestConcurrency,
+          }
+        : {}),
+      ...(DEFAULT_CONFIG.providerGlobalConcurrency !== undefined
+        ? {
+            providerGlobalConcurrency: DEFAULT_CONFIG.providerGlobalConcurrency,
+          }
+        : {}),
+      ...(DEFAULT_CONFIG.providerOwnerConcurrency !== undefined
+        ? {
+            providerOwnerConcurrency: DEFAULT_CONFIG.providerOwnerConcurrency,
           }
         : {}),
       ...(DEFAULT_CONFIG.providerRequestAdmissionMs !== undefined
@@ -642,6 +662,12 @@ export class ConfigManager {
       }
       if (layer.providerRequestConcurrency !== undefined) {
         resolved.providerRequestConcurrency = layer.providerRequestConcurrency;
+      }
+      if (layer.providerGlobalConcurrency !== undefined) {
+        resolved.providerGlobalConcurrency = layer.providerGlobalConcurrency;
+      }
+      if (layer.providerOwnerConcurrency !== undefined) {
+        resolved.providerOwnerConcurrency = layer.providerOwnerConcurrency;
       }
       if (layer.providerRequestAdmissionMs !== undefined) {
         resolved.providerRequestAdmissionMs = layer.providerRequestAdmissionMs;
@@ -1279,6 +1305,17 @@ export class ConfigManager {
         'providerRequestConcurrency 必须是 ' +
           `${MIN_PROVIDER_REQUEST_CONCURRENCY}-${MAX_PROVIDER_REQUEST_CONCURRENCY} 之间的整数`
       );
+    }
+    for (const [field, value] of [
+      ['providerGlobalConcurrency', config.providerGlobalConcurrency],
+      ['providerOwnerConcurrency', config.providerOwnerConcurrency],
+    ] as const) {
+      if (value !== undefined && !isValidProviderRequestSchedulerConcurrency(value)) {
+        errors.push(
+          `${field} 必须是 ${MIN_PROVIDER_REQUEST_CONCURRENCY}-` +
+            `${MAX_PROVIDER_REQUEST_SCHEDULER_CONCURRENCY} 之间的整数`
+        );
+      }
     }
     if (
       config.providerRequestAdmissionMs !== undefined &&

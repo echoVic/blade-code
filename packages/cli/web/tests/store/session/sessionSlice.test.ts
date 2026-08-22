@@ -36,8 +36,18 @@ vi.mock('../../../src/services', () => ({
   },
 }));
 
+vi.mock('../../../src/services/teamService', () => ({
+  teamService: {
+    list: vi.fn(),
+    sendMessage: vi.fn(),
+    delete: vi.fn(),
+  },
+}));
+
 import { sessionService } from '../../../src/services';
+import { teamService } from '../../../src/services/teamService';
 import { useConfigStore } from '../../../src/store/ConfigStore';
+import { useSettingsStore } from '../../../src/store/SettingsStore';
 import { TEMP_SESSION_ID, useSessionStore } from '../../../src/store/session';
 import { globalStreamingBuffer } from '../../../src/store/session/handlers/streamingBuffer';
 import type { Message } from '../../../src/store/session/types';
@@ -161,6 +171,8 @@ describe('sessionSlice multimodal sendMessage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(sessionService.getGoal).mockResolvedValue(null);
+    vi.mocked(teamService.list).mockResolvedValue([]);
+    useSettingsStore.setState({ agentTeamsEnabled: true });
 
     useConfigStore.setState({
       currentModelId: null,
@@ -437,6 +449,23 @@ describe('sessionSlice multimodal sendMessage', () => {
     expect(useSessionStore.getState().messages).toEqual([
       expect.objectContaining({ role: 'user', content: 'persisted' }),
     ]);
+  });
+
+  it('does not request Agent Teams while the feature is disabled', async () => {
+    const session = createSession({
+      sessionId: 'teams-disabled',
+      projectPath: '/tmp/teams-disabled',
+    });
+    useSettingsStore.setState({ agentTeamsEnabled: false });
+    useSessionStore.setState({ sessions: [session] });
+    vi.mocked(sessionService.getMessages).mockResolvedValue([]);
+
+    await useSessionStore
+      .getState()
+      .selectSession(createRef(session.sessionId, session.projectPath));
+
+    expect(teamService.list).not.toHaveBeenCalled();
+    expect(useSessionStore.getState().teams).toEqual([]);
   });
 
   it('restores the exact session permission mode when selecting history', async () => {

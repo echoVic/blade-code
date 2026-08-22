@@ -102,6 +102,7 @@ export class SubagentExecutor {
         toolBlacklist: [
           'EnterWorktree',
           'ExitWorktree',
+          'TeamCreate',
           ...(this.config.disallowedTools ?? []),
         ],
         modelId,

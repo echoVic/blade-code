@@ -27,6 +27,7 @@ import { GoalControlBar } from './GoalControlBar';
 import { PendingInteractionBar } from './PendingInteractionBar';
 import { SideConversationPanel } from './SideConversationPanel';
 import { StatusBar } from './StatusBar';
+import { TeamPanel } from './TeamPanel';
 
 interface RecoveryDraft {
   revision: number;
@@ -298,6 +299,7 @@ export function ChatView() {
         messages={messages}
         isLoading={isLoading}
       />
+      <TeamPanel />
       <SideConversationPanel />
       <PendingInteractionBar />
       <GoalControlBar />

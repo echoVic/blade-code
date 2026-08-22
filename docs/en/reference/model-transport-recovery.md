@@ -44,9 +44,25 @@ These fields belong only to runtime surface metadata and do not enter Provider p
 
 ## Provider Request Admission
 
-Every primary, retry, fallback, and HalfOpen probe physical stream must obtain a process-wide admission permit before creating the pi-ai iterator. By default, there is a limit of 4 active streams per endpoint/model/tier/credential failure domain, 16 process-wide, and 3 active streams per root Session and all descendant subagents. Global pending is fixed at 128, 32 per domain, 16 per root owner; queues are scheduled fairly by request class and root owner, and do not grow with Session count. Waiting logical request footprint is additionally constrained by global 128 MiB, 64 MiB per domain, and 32 MiB per root owner; active capacity idle does not consume the pending byte budget.
+Blade does not create a process-wide admission scheduler by default. Primary,
+retry, fallback, and HalfOpen probe physical streams go directly to the Provider,
+with real `429` responses, `retry-after` backoff, and the shared circuit breaker
+providing backpressure. Admission is enabled only when the user explicitly sets
+`providerRequestConcurrency`, `providerGlobalConcurrency`, or
+`providerOwnerConcurrency`.
 
-Root foreground, background subagent, and internal sampling use independent classes. Background/internal occupy at most 3 per default domain and 12 process-wide; internal is additionally limited to 2 globally and 1 per domain. Waiting defaults to a maximum of 180 seconds, projects a heartbeat every 15 seconds, and caller abort atomically removes the ticket. `providerRequestConcurrency` is configurable from `1-16`; `providerRequestAdmissionMs=0` means fail-fast, other values must be `1000-600000`. `providerRequestPendingBytes` defaults to 128 MiB and is configurable from 64 KiB-128 MiB. Background/internal have independent upper limits on both pending count and bytes, reserving queue capacity for foreground; class aging only changes scheduling rank, not resource accounting class.
+`providerRequestConcurrency` limits one endpoint/model/tier/credential failure
+domain (`1-16`). The global and owner settings respectively limit the process and
+one root Session plus all descendants. Unset layers impose no limit, and
+foreground, background, and internal requests have no hidden class in-flight
+quota. Once admission is enabled, pending counts and retained footprint remain
+bounded, with fair scheduling by request class and root owner.
+
+Waiting defaults to 180 seconds, projects a heartbeat every 15 seconds, and
+caller abort atomically removes the ticket. `providerRequestAdmissionMs=0` means
+fail-fast; other values must be `1000-600000`.
+`providerRequestPendingBytes` defaults to 128 MiB and is configurable from
+64 KiB-128 MiB. Idle active capacity does not consume the pending byte budget.
 
 The order is fixed as:
 

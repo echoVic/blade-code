@@ -144,6 +144,8 @@ export interface ChatConfig {
   maxRetries?: number;
   providerCircuitBreakerOpenMs?: number;
   providerRequestConcurrency?: number;
+  providerGlobalConcurrency?: number;
+  providerOwnerConcurrency?: number;
   providerRequestAdmissionMs?: number;
   providerRequestPendingBytes?: number;
   /** Process-shared runtime coordinator. Never serialize this field. */

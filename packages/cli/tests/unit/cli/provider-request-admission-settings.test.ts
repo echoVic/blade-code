@@ -8,6 +8,7 @@ import {
   MAX_PROVIDER_REQUEST_ADMISSION_MS,
   MAX_PROVIDER_REQUEST_CONCURRENCY,
   MAX_PROVIDER_REQUEST_PENDING_BYTES,
+  MAX_PROVIDER_REQUEST_SCHEDULER_CONCURRENCY,
   MIN_PROVIDER_REQUEST_ADMISSION_MS,
   MIN_PROVIDER_REQUEST_CONCURRENCY,
   MIN_PROVIDER_REQUEST_PENDING_BYTES,
@@ -27,10 +28,41 @@ describe('Provider request admission settings', () => {
     expect(DEFAULT_PROVIDER_REQUEST_PENDING_BYTES).toBe(128 * 1024 * 1024);
     expect(MIN_PROVIDER_REQUEST_PENDING_BYTES).toBe(64 * 1024);
     expect(MAX_PROVIDER_REQUEST_PENDING_BYTES).toBe(128 * 1024 * 1024);
-    expect(DEFAULT_CONFIG.providerRequestConcurrency).toBe(4);
+    expect(DEFAULT_CONFIG.providerRequestConcurrency).toBeUndefined();
+    expect(DEFAULT_CONFIG.providerGlobalConcurrency).toBeUndefined();
+    expect(DEFAULT_CONFIG.providerOwnerConcurrency).toBeUndefined();
     expect(DEFAULT_CONFIG.providerRequestAdmissionMs).toBe(180_000);
     expect(DEFAULT_CONFIG.providerRequestPendingBytes).toBe(128 * 1024 * 1024);
   });
+
+  it.each([1, 16, MAX_PROVIDER_REQUEST_SCHEDULER_CONCURRENCY])(
+    'accepts explicit scheduler concurrency=%i',
+    async (value) => {
+      await expect(
+        loadCliSettings(
+          JSON.stringify({
+            providerGlobalConcurrency: value,
+            providerOwnerConcurrency: value,
+          })
+        )
+      ).resolves.toMatchObject({
+        providerGlobalConcurrency: value,
+        providerOwnerConcurrency: value,
+      });
+    }
+  );
+
+  it.each([0, -1, MAX_PROVIDER_REQUEST_SCHEDULER_CONCURRENCY + 1, 1.5])(
+    'rejects scheduler concurrency=%s',
+    async (value) => {
+      await expect(
+        loadCliSettings(JSON.stringify({ providerGlobalConcurrency: value }))
+      ).rejects.toThrow('Invalid --settings value');
+      await expect(
+        loadCliSettings(JSON.stringify({ providerOwnerConcurrency: value }))
+      ).rejects.toThrow('Invalid --settings value');
+    }
+  );
 
   it.each([1, 4, 16])('accepts providerRequestConcurrency=%i', async (value) => {
     await expect(
