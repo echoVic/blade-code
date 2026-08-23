@@ -226,7 +226,11 @@ describe
           const targets = deriveTargets(model);
           proxy = await startTokenBudgetHandoffProxy(
             model.baseURL ?? 'https://api.deepseek.com',
-            { ...targets, markerTag: TOKEN_BUDGET_HANDOFF_TAG }
+            {
+              ...targets,
+              markerTag: TOKEN_BUDGET_HANDOFF_TAG,
+              failFirstCompaction: true,
+            }
           );
           const runtimeConfig = await writeRuntimeConfig(home, {
             ...model,
@@ -299,8 +303,11 @@ describe
             events,
             expectedFinal: fixture.finalMarker,
             surfaceFinalSeen: true,
+            expectCompactionRetry: true,
           });
-          assertTokenBudgetTranscript(events, fixture);
+          assertTokenBudgetTranscript(events, fixture, {
+            expectedSampleAttempts: 2,
+          });
           const publicMessages = await SessionService.loadSession(sessionId, workspace);
           const finalAssistant = publicMessages.findLast(
             (message) => message.role === 'assistant'

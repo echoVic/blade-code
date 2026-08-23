@@ -416,7 +416,11 @@ function transcript(
       partType: 'summary',
       payload: {
         text: ledger,
-        metadata: { checkpointVersion: 1, reason: 'threshold' },
+        metadata: {
+          checkpointVersion: 1,
+          reason: 'threshold',
+          sampleAttempts: 2,
+        },
         replacementMessages:
           serializeCompactionReplacementMessages(replacementMessages),
       },
@@ -583,6 +587,42 @@ describe('token-budget handoff deterministic qualification foundation', () => {
       expect(upstream.requests()).toBe(5);
     } finally {
       await proxy.close();
+      await proxy.close();
+    }
+  });
+
+  it('injects exactly one bounded transient compaction failure', async () => {
+    const upstream = await startJsonUpstream();
+    const proxy = await startTokenBudgetHandoffProxy(upstream.baseURL, {
+      handoffPromptTokens: 70_000,
+      compactionPromptTokens: 80_000,
+      markerTag: TOKEN_BUDGET_HANDOFF_TAG,
+      failFirstCompaction: true,
+    });
+    try {
+      const first = await postJson(proxy.baseURL, compactionBody());
+      const second = await postJson(proxy.baseURL, compactionBody());
+
+      expect(first.status).toBe(503);
+      expect(second.status).toBe(201);
+      expect(upstream.requests()).toBe(1);
+      expect(proxy.evidence().requests).toEqual([
+        expect.objectContaining({
+          ordinal: 1,
+          kind: 'compaction',
+          upstreamStatus: 503,
+          responseKind: 'json',
+          injectedFailure: 'compaction_transient',
+          usageRewritten: false,
+        }),
+        expect.objectContaining({
+          ordinal: 2,
+          kind: 'compaction',
+          upstreamStatus: 201,
+          usageRewritten: false,
+        }),
+      ]);
+    } finally {
       await proxy.close();
     }
   });
@@ -1967,6 +2007,44 @@ describe('token-budget handoff deterministic qualification foundation', () => {
       compactionPromptTokens: 80_000,
     };
     expect(() => assertTokenBudgetRequestSequence(evidence, targets)).not.toThrow();
+    const retryEvidence: TokenBudgetProxyEvidence = {
+      maxInFlight: 1,
+      requests: [
+        ...evidence.requests.slice(0, 2),
+        {
+          ...evidence.requests[2]!,
+          upstreamStatus: 503,
+          responseKind: 'json',
+          injectedFailure: 'compaction_transient',
+        },
+        {
+          ...evidence.requests[2]!,
+          ordinal: 4,
+          bodySha256: 'f'.repeat(64),
+          upstreamStatus: 200,
+        },
+        {
+          ...evidence.requests[3]!,
+          ordinal: 5,
+          bodySha256: '1'.repeat(64),
+        },
+        {
+          ...evidence.requests[4]!,
+          ordinal: 6,
+          bodySha256: '2'.repeat(64),
+        },
+      ],
+    };
+    expect(() =>
+      assertTokenBudgetRequestSequence(retryEvidence, targets, {
+        expectCompactionRetry: true,
+      })
+    ).not.toThrow();
+    expect(() =>
+      assertTokenBudgetRequestSequence(evidence, targets, {
+        expectCompactionRetry: true,
+      })
+    ).toThrow('6 to 10 requests');
     expect(() =>
       assertTokenBudgetRequestSequence(
         {
@@ -2041,6 +2119,11 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     const events = transcript(fixture);
 
     expect(() => assertTokenBudgetTranscript(events, fixture)).not.toThrow();
+    expect(() =>
+      assertTokenBudgetTranscript(events, fixture, {
+        expectedSampleAttempts: 2,
+      })
+    ).not.toThrow();
     expect(() => assertTokenBudgetTranscript([...events, events[2]!], fixture)).toThrow(
       'one v1 marker'
     );

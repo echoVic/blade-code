@@ -6,6 +6,7 @@
 
 import type { BladeConfig } from '../../config/index.js';
 import type {
+  CompactionFailureReason,
   CompactionOutcome,
   CompactionReason,
   CompactionStrategy,
@@ -72,6 +73,8 @@ export type SystemEvent =
       outcome?: CompactionOutcome;
       preTokens?: number;
       postTokens?: number;
+      sampleAttempts?: number;
+      failureReason?: CompactionFailureReason;
     }
   | { kind: 'token_usage'; usage: TokenUsageInfo }
   | ({ kind: 'provider_admission' } & ProviderAdmissionEvent)

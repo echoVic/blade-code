@@ -42,6 +42,7 @@ describe('durable compaction checkpoint recovery', () => {
       strategy: 'llm',
       preTokens: 120_000,
       postTokens: 2_000,
+      sampleAttempts: 2,
       filesIncluded: ['src/runtime.ts'],
       replacementMessages,
     });
@@ -82,6 +83,7 @@ describe('durable compaction checkpoint recovery', () => {
         strategy: 'llm',
         preTokens: 120_000,
         postTokens: 2_000,
+        sampleAttempts: 2,
       },
       replacementMessages,
     });

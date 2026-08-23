@@ -8,6 +8,7 @@
 import { createHash } from 'node:crypto';
 import { type PermissionMode } from '../../config/index.js';
 import { CompactionService } from '../../context/CompactionService.js';
+import type { CompactionFailureReason } from '../../context/compactionCheckpoint.js';
 import { ReactiveCompaction } from '../../context/ReactiveCompaction.js';
 import { microCompact, snipCompact } from '../../context/SnipCompaction.js';
 import { createBudgetTracker, recordOutput } from '../../context/TokenBudget.js';
@@ -765,6 +766,8 @@ export async function* checkAndCompactInLoop(
   let strategy: 'llm' | 'fallback' | undefined;
   let preTokens: number | undefined;
   let postTokens: number | undefined;
+  let sampleAttempts: number | undefined;
+  let failureReason: CompactionFailureReason | undefined;
   let failurePhase: 'compaction' | 'checkpoint' = 'compaction';
   yield { kind: 'compaction', phase: 'start', reason: 'threshold' };
   try {
@@ -793,6 +796,8 @@ export async function* checkAndCompactInLoop(
     strategy = result.success ? 'llm' : 'fallback';
     preTokens = result.preTokens;
     postTokens = result.postTokens;
+    sampleAttempts = result.sampleAttempts;
+    failureReason = result.failureReason;
     if (result.success) {
       logger.debug(
         `[Loop] [轮次 ${currentTurn}] 压缩完成: ${result.preTokens} -> ${result.postTokens} tokens`
@@ -815,6 +820,8 @@ export async function* checkAndCompactInLoop(
         strategy,
         preTokens: result.preTokens,
         postTokens: result.postTokens,
+        sampleAttempts: result.sampleAttempts,
+        failureReason: result.failureReason,
         filesIncluded: result.filesIncluded,
         replacementMessages: result.compactedMessages,
       },
@@ -847,6 +854,8 @@ export async function* checkAndCompactInLoop(
       strategy,
       preTokens,
       postTokens,
+      sampleAttempts,
+      failureReason,
     };
   }
 }
@@ -2182,6 +2191,8 @@ validates the object and may return a bounded corrective error.`;
             let strategy: 'llm' | 'fallback' | 'snip' | undefined;
             let preTokens: number | undefined;
             let postTokens: number | undefined;
+            let sampleAttempts: number | undefined;
+            let failureReason: CompactionFailureReason | undefined;
             yield {
               kind: 'compaction',
               phase: 'start',
@@ -2206,6 +2217,8 @@ validates the object and may return a bounded corrective error.`;
               strategy = result.strategy;
               preTokens = result.preTokens;
               postTokens = result.postTokens;
+              sampleAttempts = result.sampleAttempts;
+              failureReason = result.failureReason;
               if (
                 result.success &&
                 result.strategy &&
@@ -2231,6 +2244,8 @@ validates the object and may return a bounded corrective error.`;
                     strategy: result.strategy,
                     preTokens: result.preTokens,
                     postTokens: result.postTokens,
+                    sampleAttempts: result.sampleAttempts,
+                    failureReason: result.failureReason,
                     filesIncluded: result.filesIncluded,
                     replacementMessages: result.messages,
                   },
@@ -2259,6 +2274,8 @@ validates the object and may return a bounded corrective error.`;
                 strategy,
                 preTokens,
                 postTokens,
+                sampleAttempts,
+                failureReason,
               };
             }
             if (recovered) {
@@ -4083,6 +4100,8 @@ validates the object and may return a bounded corrective error.`;
               let compactionStrategy: 'llm' | 'fallback' | undefined;
               let compactionPreTokens: number | undefined;
               let compactionPostTokens: number | undefined;
+              let compactionSampleAttempts: number | undefined;
+              let compactionFailureReason: CompactionFailureReason | undefined;
               yield {
                 kind: 'compaction',
                 phase: 'start',
@@ -4131,6 +4150,8 @@ validates the object and may return a bounded corrective error.`;
                 compactionStrategy = compactResult.success ? 'llm' : 'fallback';
                 compactionPreTokens = compactResult.preTokens;
                 compactionPostTokens = compactResult.postTokens;
+                compactionSampleAttempts = compactResult.sampleAttempts;
+                compactionFailureReason = compactResult.failureReason;
 
                 // 保存压缩数据到 JSONL
                 await persistCompaction(
@@ -4143,6 +4164,8 @@ validates the object and may return a bounded corrective error.`;
                     strategy: compactionStrategy,
                     preTokens: compactResult.preTokens,
                     postTokens: compactResult.postTokens,
+                    sampleAttempts: compactResult.sampleAttempts,
+                    failureReason: compactResult.failureReason,
                     filesIncluded: compactResult.filesIncluded,
                     replacementMessages,
                   },
@@ -4163,6 +4186,8 @@ validates the object and may return a bounded corrective error.`;
                   strategy: compactionStrategy,
                   preTokens: compactionPreTokens,
                   postTokens: compactionPostTokens,
+                  sampleAttempts: compactionSampleAttempts,
+                  failureReason: compactionFailureReason,
                 };
               }
 

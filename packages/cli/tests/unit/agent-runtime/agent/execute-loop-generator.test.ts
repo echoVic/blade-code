@@ -839,6 +839,7 @@ describe('executeLoopGenerator', () => {
           cacheCreationInputTokens: 10,
           costUsd: 0.125,
         },
+        sampleAttempts: 2,
       });
 
       const generator = checkAndCompactInLoop(
@@ -871,6 +872,17 @@ describe('executeLoopGenerator', () => {
           cacheWriteTokens: 10,
           costUsd: 0.125,
         },
+      });
+      expect(events).toContainEqual({
+        kind: 'compaction',
+        phase: 'end',
+        reason: 'threshold',
+        strategy: 'llm',
+        outcome: 'completed',
+        preTokens: 90_000,
+        postTokens: 1_000,
+        sampleAttempts: 2,
+        failureReason: undefined,
       });
     });
 

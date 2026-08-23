@@ -1043,6 +1043,8 @@ function createEventWriter(
           outcome: event.outcome,
           pre_tokens: event.preTokens,
           post_tokens: event.postTokens,
+          sample_attempts: event.sampleAttempts,
+          failure_reason: event.failureReason,
         });
         return;
       }
@@ -1050,7 +1052,13 @@ function createEventWriter(
         io.stderr,
         isCompacting
           ? `[context] compacting started${event.reason ? ` (${event.reason})` : ''}`
-          : `[context] compacting ${event.outcome ?? 'completed'}`
+          : `[context] compacting ${event.outcome ?? 'completed'}${
+              event.sampleAttempts !== undefined
+                ? ` after ${event.sampleAttempts} sample attempt${
+                    event.sampleAttempts === 1 ? '' : 's'
+                  }`
+                : ''
+            }`
       );
     },
     providerAdmission(event: Extract<LoopEvent, { kind: 'provider_admission' }>) {

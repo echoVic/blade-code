@@ -262,17 +262,22 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   只允许在零真实输出边界内执行一次 reactive compaction；任意 content、thinking、
   usage 或 tool call 已出现时拒绝重放，第二次仍超限时也直接失败，不能形成无限压缩
   循环。
+- compaction summary 使用独立的单层三次采样预算。内部 ChatService 禁用自动重试，
+  由 CompactionService 统一分类：`408/409/429`、`5xx`、网络、超时、断流和空摘要
+  可以指数退避重试；认证、权限、请求参数、context overflow 与 caller abort 立即停止。
+  这避免 Provider retry 与 compaction retry 相乘，同时允许摘要流在已有部分输出后安全
+  重放，因为摘要采样没有工具副作用。多次成功采样前产生的 usage 与 cost 会累计。
 - compaction 在重试 Provider 前必须先原子提交 exact replacement context。JSONL
   summary part 保存有界 `replacementMessages` checkpoint、reason、strategy 和
-  pre/post tokens；提交失败不应用内存替换，也不重试 Provider。完整可见 transcript
-  继续保留用于 UI、导出和审计，`SessionService.loadSessionModelContext()` 只从最新
-  checkpoint 加载 replacement context 与其后的事件；旧版无 replacement 的摘要以
-  summary-only 投影安全降级。
+  pre/post tokens，并记录 `sampleAttempts` 与稳定的 `failureReason`；提交失败不应用
+  内存替换，也不重试 Provider。完整可见 transcript 继续保留用于 UI、导出和审计，
+  `SessionService.loadSessionModelContext()` 只从最新 checkpoint 加载 replacement
+  context 与其后的事件；旧版无 replacement 或采样元数据的摘要安全降级。
 - `compaction` LoopEvent 统一携带 `threshold|context_limit|turn_limit` reason、
-  `llm|fallback|snip` strategy 和 `completed|fallback|failed` outcome。Web 在 reactive
-  recovery 显示独立的 context-limit 状态；TUI、Headless JSONL、Server SSE 与 ACP
-  `session_info_update._meta["blade/compaction"]` 使用同一生命周期，不把内部摘要或
-  Provider 错误正文写入 assistant 内容。
+  `llm|fallback|snip` strategy、`completed|fallback|failed` outcome、采样次数和有界
+  失败分类。Web 在 reactive recovery 显示独立的 context-limit 状态；TUI、Headless
+  JSONL、Server SSE 与 ACP `session_info_update._meta["blade/compaction"]` 使用同一
+  生命周期，不把内部摘要或 Provider 错误正文写入 assistant 内容。
 - user-turn rewind 不截断 transcript，而是追加 `session_rewound` marker。resume、
   catalog、fork、search 和 ContextManager 通过同一 projector 累积计算有效历史，
   被回退的原始事件保留用于审计但不会重新进入模型或 UI。

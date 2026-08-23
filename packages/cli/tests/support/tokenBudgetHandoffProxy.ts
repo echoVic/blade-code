@@ -13,6 +13,7 @@ export interface TokenBudgetRequestEvidence {
   targetPromptTokens?: number;
   upstreamStatus?: number;
   responseKind?: 'sse' | 'json' | 'other';
+  injectedFailure?: 'compaction_transient';
   usageShape?:
     | 'root-empty'
     | 'root-terminal'
@@ -866,6 +867,7 @@ export async function startTokenBudgetHandoffProxy(
     handoffPromptTokens: number;
     compactionPromptTokens: number;
     markerTag: string;
+    failFirstCompaction?: boolean;
   }
 ): Promise<{
   baseURL: string;
@@ -896,6 +898,7 @@ export async function startTokenBudgetHandoffProxy(
   const activeHandlers = new Set<Promise<void>>();
   let requestOrdinal = 0;
   let taskOrdinal = 0;
+  let compactionFailuresInjected = 0;
   let inFlight = 0;
   let maxInFlight = 0;
   let closing = false;
@@ -931,6 +934,18 @@ export async function startTokenBudgetHandoffProxy(
 
       if (closing || response.destroyed) {
         if (!response.destroyed) response.destroy();
+        return;
+      }
+      if (
+        options.failFirstCompaction &&
+        facts.kind === 'compaction' &&
+        compactionFailuresInjected === 0
+      ) {
+        compactionFailuresInjected++;
+        requestEvidence.upstreamStatus = 503;
+        requestEvidence.responseKind = 'json';
+        requestEvidence.injectedFailure = 'compaction_transient';
+        sendBoundedError(response, 503, 'Temporary compaction service failure');
         return;
       }
       const controller = new AbortController();

@@ -15,10 +15,15 @@ import {
   type Message,
   type UsageInfo,
 } from '../services/ChatServiceInterface.js';
+import {
+  classifyProviderRetry,
+  computeProviderRetryDelay,
+} from '../services/pi/providerRetry.js';
 import { FileAccessTracker } from '../tools/builtin/file/FileAccessTracker.js';
-import { isAbortError } from '../utils/abort.js';
+import { abortableSleep, isAbortError } from '../utils/abort.js';
 import { getCwd } from '../utils/cwd.js';
 import { PathSecurity } from '../utils/pathSecurity.js';
+import type { CompactionFailureReason } from './compactionCheckpoint.js';
 import { FileAnalyzer, type FileContent } from './FileAnalyzer.js';
 import { stripTokenBudgetHandoffMessages } from './TokenBudgetHandoff.js';
 import { TokenCounter } from './TokenCounter.js';
@@ -79,10 +84,64 @@ export interface CompactionResult {
   error?: string;
   /** 生成压缩摘要所消耗的模型 usage */
   usage?: UsageInfo;
+  /** 摘要模型实际调用次数；本地 circuit-open fallback 为 0 */
+  sampleAttempts?: number;
+  /** fallback 的稳定失败分类 */
+  failureReason?: CompactionFailureReason;
 }
 
 const sessionFailures = new Map<string, number>();
 const MAX_CONSECUTIVE_FAILURES = 3;
+export const MAX_COMPACTION_SAMPLE_ATTEMPTS = 3;
+
+class CompactionSamplingError extends Error {
+  constructor(
+    message: string,
+    readonly attempts: number,
+    readonly failureReason: Exclude<CompactionFailureReason, 'circuit_open'>,
+    options?: ErrorOptions
+  ) {
+    super(message, options);
+    this.name = 'CompactionSamplingError';
+  }
+}
+
+function mergeUsage(
+  accumulated: UsageInfo | undefined,
+  current: UsageInfo | undefined
+): UsageInfo | undefined {
+  if (!current) return accumulated;
+  if (!accumulated) return { ...current };
+  const sumOptional = (
+    left: number | undefined,
+    right: number | undefined
+  ): number | undefined =>
+    left === undefined && right === undefined ? undefined : (left ?? 0) + (right ?? 0);
+  const reasoningTokens = sumOptional(
+    accumulated.reasoningTokens,
+    current.reasoningTokens
+  );
+  const cacheCreationInputTokens = sumOptional(
+    accumulated.cacheCreationInputTokens,
+    current.cacheCreationInputTokens
+  );
+  const cacheReadInputTokens = sumOptional(
+    accumulated.cacheReadInputTokens,
+    current.cacheReadInputTokens
+  );
+  const costUsd = sumOptional(accumulated.costUsd, current.costUsd);
+  const promptCacheBreak = current.promptCacheBreak ?? accumulated.promptCacheBreak;
+  return {
+    promptTokens: accumulated.promptTokens + current.promptTokens,
+    completionTokens: accumulated.completionTokens + current.completionTokens,
+    totalTokens: accumulated.totalTokens + current.totalTokens,
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
+    ...(promptCacheBreak ? { promptCacheBreak } : {}),
+    ...(costUsd !== undefined ? { costUsd } : {}),
+  };
+}
 
 class CompactionBlockedError extends Error {
   constructor(message: string) {
@@ -339,6 +398,7 @@ export class CompactionService {
     // 执行 Compaction Hook（压缩前）
     // Hook 可以阻止压缩
     let blockReason: string | undefined;
+    let completedSampleAttempts = 0;
     try {
       const hookManager = HookManager.getInstance();
       const hookResult = await hookManager.executeCompactionHooks(options.trigger, {
@@ -379,7 +439,9 @@ export class CompactionService {
         sourceMessages,
         options,
         preTokens,
-        new Error('Circuit breaker open')
+        new Error('Circuit breaker open'),
+        0,
+        'circuit_open'
       );
     }
 
@@ -404,6 +466,7 @@ export class CompactionService {
         fileContents,
         options
       );
+      completedSampleAttempts = generated.attempts;
       const summary = reconcileExactContinuationRecords(
         generated.summary,
         sourceMessages
@@ -492,6 +555,7 @@ export class CompactionService {
         boundaryMessage,
         summaryMessage,
         usage: generated.usage,
+        sampleAttempts: generated.attempts,
       };
     } catch (error) {
       // AbortError（宽口径）: 用户取消/interrupt，不应计入失败次数也不应走 fallback
@@ -500,7 +564,16 @@ export class CompactionService {
       }
       sessionFailures.set(sessionKey, (sessionFailures.get(sessionKey) ?? 0) + 1);
       logger.error('[CompactionService] 压缩失败，使用降级策略', error);
-      return this.fallbackCompact(sourceMessages, options, preTokens, error);
+      return this.fallbackCompact(
+        sourceMessages,
+        options,
+        preTokens,
+        error,
+        error instanceof CompactionSamplingError
+          ? error.attempts
+          : completedSampleAttempts,
+        error instanceof CompactionSamplingError ? error.failureReason : 'deterministic'
+      );
     }
   }
 
@@ -516,7 +589,7 @@ export class CompactionService {
     messages: Message[],
     fileContents: FileContent[],
     options: CompactionOptions
-  ): Promise<{ summary: string; usage?: UsageInfo }> {
+  ): Promise<{ summary: string; usage?: UsageInfo; attempts: number }> {
     const prompt = buildCompactionPrompt(messages, fileContents);
 
     logger.debug('[CompactionService] 使用压缩模型:', options.modelName);
@@ -534,36 +607,77 @@ export class CompactionService {
       temperature: 0,
       maxOutputTokens: 8000, // 压缩输出限制
       timeout: 60000,
+      maxRetries: 0,
       provider: options.modelProvider ?? 'openai',
     });
 
-    const response = await chatService.chat(
-      [{ role: 'user', content: prompt }],
-      [], // 不传递工具参数
-      options.signal, // 传递 abort signal
-      {
-        providerAdmission: {
-          sessionId:
-            options.sessionId ??
-            `compaction:${compactionSessionKey(options.workspaceRoot)}`,
-          ownerId:
-            options.sessionId ??
-            `compaction:${compactionSessionKey(options.workspaceRoot)}`,
-          requestClass: 'foreground',
-        },
+    let usage: UsageInfo | undefined;
+    for (let attempt = 1; attempt <= MAX_COMPACTION_SAMPLE_ATTEMPTS; attempt++) {
+      try {
+        const response = await chatService.chat(
+          [{ role: 'user', content: prompt }],
+          [], // 不传递工具参数
+          options.signal, // 传递 abort signal
+          {
+            providerAdmission: {
+              sessionId:
+                options.sessionId ??
+                `compaction:${compactionSessionKey(options.workspaceRoot)}`,
+              ownerId:
+                options.sessionId ??
+                `compaction:${compactionSessionKey(options.workspaceRoot)}`,
+              requestClass: 'foreground',
+            },
+          }
+        );
+        usage = mergeUsage(usage, response.usage);
+
+        // 提取 <summary> 标签内容
+        const content = response.content || '';
+        const summaryMatch = content.match(/<summary>([\s\S]*?)<\/summary>/);
+        const summary = (summaryMatch ? summaryMatch[1] : content).trim();
+        if (summary) {
+          if (!summaryMatch) {
+            logger.warn('[CompactionService] 总结格式不正确，使用完整响应');
+          }
+          return { summary, usage, attempts: attempt };
+        }
+
+        if (attempt === MAX_COMPACTION_SAMPLE_ATTEMPTS) {
+          throw new CompactionSamplingError(
+            'Compaction summary was empty after bounded retries',
+            attempt,
+            'empty_exhausted'
+          );
+        }
+        logger.warn(
+          `[CompactionService] 摘要响应为空，准备重试 (${attempt}/${MAX_COMPACTION_SAMPLE_ATTEMPTS})`
+        );
+      } catch (error) {
+        if (isAbortError(error)) throw error;
+        if (error instanceof CompactionSamplingError) throw error;
+        const retryable = classifyProviderRetry(error).retryable;
+        if (!retryable || attempt === MAX_COMPACTION_SAMPLE_ATTEMPTS) {
+          throw new CompactionSamplingError(
+            error instanceof Error ? error.message : String(error),
+            attempt,
+            retryable ? 'transient_exhausted' : 'deterministic',
+            { cause: error }
+          );
+        }
+        logger.warn(
+          `[CompactionService] 摘要采样瞬态失败，准备重试 (${attempt}/${MAX_COMPACTION_SAMPLE_ATTEMPTS})`
+        );
       }
-    );
-
-    // 提取 <summary> 标签内容
-    const content = response.content || '';
-    const summaryMatch = content.match(/<summary>([\s\S]*?)<\/summary>/);
-
-    if (!summaryMatch) {
-      logger.warn('[CompactionService] 总结格式不正确，使用完整响应');
-      return { summary: content, usage: response.usage };
+      const delayMs = computeProviderRetryDelay(attempt, undefined, { random: 0 });
+      await abortableSleep(delayMs, options.signal, { throwOnAbort: true });
     }
 
-    return { summary: summaryMatch[1].trim(), usage: response.usage };
+    throw new CompactionSamplingError(
+      'Compaction summary retry loop exhausted',
+      MAX_COMPACTION_SAMPLE_ATTEMPTS,
+      'transient_exhausted'
+    );
   }
 
   /**
@@ -754,7 +868,9 @@ export class CompactionService {
     messages: Message[],
     options: CompactionOptions,
     preTokens: number,
-    error: unknown
+    error: unknown,
+    sampleAttempts: number,
+    failureReason: CompactionFailureReason
   ): CompactionResult {
     const retainCount = Math.ceil(messages.length * this.FALLBACK_RETAIN_PERCENT);
     const candidateMessages = messages.slice(-retainCount);
@@ -818,6 +934,8 @@ export class CompactionService {
       boundaryMessage,
       summaryMessage,
       error: errorMsg,
+      sampleAttempts,
+      failureReason,
     };
   }
 }

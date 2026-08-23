@@ -109,6 +109,8 @@ async function compactCommandHandler(
           strategy: result.success ? 'llm' : 'fallback',
           preTokens: result.preTokens,
           postTokens: result.postTokens,
+          sampleAttempts: result.sampleAttempts,
+          failureReason: result.failureReason,
           filesIncluded: result.filesIncluded,
           replacementMessages: result.compactedMessages,
         },
@@ -124,6 +126,7 @@ async function compactCommandHandler(
 **Token 变化**
   • 压缩前: ${result.preTokens.toLocaleString()} tokens
   • 压缩后: ${result.postTokens.toLocaleString()} tokens
+  • 摘要尝试: ${result.sampleAttempts ?? 0}
   • 压缩率: ${((1 - result.postTokens / result.preTokens) * 100).toFixed(1)}%`;
 
       if (result.filesIncluded.length > 0) {
@@ -158,8 +161,10 @@ async function compactCommandHandler(
 **Token 变化**
   • 压缩前: ${result.preTokens.toLocaleString()} tokens
   • 压缩后: ${result.postTokens.toLocaleString()} tokens
+  • 摘要尝试: ${result.sampleAttempts ?? 0}
 
 由于压缩过程出现错误，已使用简单截断策略。
+   失败分类: ${result.failureReason ?? 'deterministic'}
    错误信息: ${result.error}`);
 
       return {
@@ -172,6 +177,8 @@ async function compactCommandHandler(
           summaryMessage: result.summaryMessage,
           preTokens: result.preTokens,
           postTokens: result.postTokens,
+          sampleAttempts: result.sampleAttempts,
+          failureReason: result.failureReason,
         },
       };
     }

@@ -550,6 +550,10 @@ export class PersistentStore {
     if (metadata.reason) result.reason = metadata.reason;
     if (metadata.strategy) result.strategy = metadata.strategy;
     if (metadata.postTokens !== undefined) result.postTokens = metadata.postTokens;
+    if (metadata.sampleAttempts !== undefined) {
+      result.sampleAttempts = metadata.sampleAttempts;
+    }
+    if (metadata.failureReason) result.failureReason = metadata.failureReason;
     if (metadata.filesIncluded) result.filesIncluded = metadata.filesIncluded;
     if (metadata.replacementMessages) {
       result.checkpointVersion = COMPACTION_CHECKPOINT_VERSION;

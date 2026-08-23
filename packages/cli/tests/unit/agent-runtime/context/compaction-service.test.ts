@@ -193,6 +193,106 @@ describe('CompactionService - 输出协议', () => {
 
     expect(result.success).toBe(false);
     expect(result.compactedMessages.some(isTokenBudgetHandoffMessage)).toBe(false);
+    expect(result.sampleAttempts).toBe(1);
+    expect(result.failureReason).toBe('deterministic');
+    expect(compactChat).toHaveBeenCalledOnce();
+  });
+
+  test('瞬态 Provider 失败后应有界重试并累计 usage', async () => {
+    vi.useFakeTimers();
+    const transient = Object.assign(new Error('service unavailable'), {
+      status: 503,
+    });
+    compactChat
+      .mockRejectedValueOnce(transient)
+      .mockResolvedValueOnce({
+        content: '   ',
+        usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+      })
+      .mockResolvedValueOnce({
+        content: '<summary>Recovered summary.</summary>',
+        usage: {
+          promptTokens: 20,
+          completionTokens: 3,
+          totalTokens: 23,
+          costUsd: 0.02,
+        },
+      });
+
+    try {
+      const pending = CompactionService.compact(
+        [{ role: 'user', content: 'Preserve the active task.' }],
+        {
+          ...markerCompactionOptions,
+          sessionId: 'transient-retry',
+        }
+      );
+      await vi.runAllTimersAsync();
+      const result = await pending;
+
+      expect(result.success).toBe(true);
+      expect(result.summary).toBe('Recovered summary.');
+      expect(result.sampleAttempts).toBe(3);
+      expect(result.failureReason).toBeUndefined();
+      expect(result.usage).toEqual({
+        promptTokens: 30,
+        completionTokens: 5,
+        totalTokens: 35,
+        costUsd: 0.02,
+      });
+      expect(compactChat).toHaveBeenCalledTimes(3);
+      expect(createChatServiceAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ maxRetries: 0 })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('三次瞬态失败后应记录 exhausted 分类并回退', async () => {
+    vi.useFakeTimers();
+    compactChat.mockRejectedValue(
+      Object.assign(new Error('upstream service unavailable'), { status: 503 })
+    );
+
+    try {
+      const pending = CompactionService.compact(
+        [{ role: 'user', content: 'Preserve the active task.' }],
+        {
+          ...markerCompactionOptions,
+          sessionId: 'transient-exhausted',
+        }
+      );
+      await vi.runAllTimersAsync();
+      const result = await pending;
+
+      expect(result.success).toBe(false);
+      expect(result.sampleAttempts).toBe(3);
+      expect(result.failureReason).toBe('transient_exhausted');
+      expect(compactChat).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('abort 应在重试等待前终止且不得写入 fallback', async () => {
+    const controller = new AbortController();
+    compactChat.mockImplementationOnce(async () => {
+      controller.abort();
+      throw Object.assign(new Error('service unavailable'), { status: 503 });
+    });
+
+    await expect(
+      CompactionService.compact(
+        [{ role: 'user', content: 'Preserve the active task.' }],
+        {
+          ...markerCompactionOptions,
+          sessionId: 'retry-aborted',
+          signal: controller.signal,
+        }
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(compactChat).toHaveBeenCalledOnce();
   });
 
   test('continuation ledger prompt 应精确声明七段执行交接契约', () => {

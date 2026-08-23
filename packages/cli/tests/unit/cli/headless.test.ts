@@ -1284,10 +1284,12 @@ describe('headless runner', () => {
           kind: 'compaction',
           phase: 'end',
           reason: 'context_limit',
-          strategy: 'llm',
-          outcome: 'completed',
+          strategy: 'fallback',
+          outcome: 'fallback',
           preTokens: 120_000,
           postTokens: 2_000,
+          sampleAttempts: 3,
+          failureReason: 'transient_exhausted',
         },
       ])
     );
@@ -1326,10 +1328,12 @@ describe('headless runner', () => {
         type: 'compacting',
         state: 'completed',
         reason: 'context_limit',
-        strategy: 'llm',
-        outcome: 'completed',
+        strategy: 'fallback',
+        outcome: 'fallback',
         pre_tokens: 120_000,
         post_tokens: 2_000,
+        sample_attempts: 3,
+        failure_reason: 'transient_exhausted',
       },
     ]);
     expect(stderr.write).not.toHaveBeenCalled();

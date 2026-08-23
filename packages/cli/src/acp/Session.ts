@@ -1636,6 +1636,12 @@ export class AcpSession {
                     ...(event.postTokens !== undefined
                       ? { postTokens: event.postTokens }
                       : {}),
+                    ...(event.sampleAttempts !== undefined
+                      ? { sampleAttempts: event.sampleAttempts }
+                      : {}),
+                    ...(event.failureReason
+                      ? { failureReason: event.failureReason }
+                      : {}),
                   },
                 },
               });

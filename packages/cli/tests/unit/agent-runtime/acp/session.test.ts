@@ -1737,6 +1737,7 @@ describe('AcpSession', () => {
           outcome: 'completed',
           preTokens: 120_000,
           postTokens: 2_000,
+          sampleAttempts: 2,
         } as LoopEvent;
         return { success: true, finalMessage: 'recovered' };
       }) as typeof mockAgent.chatStream;
@@ -1770,6 +1771,7 @@ describe('AcpSession', () => {
                   outcome: 'completed',
                   preTokens: 120_000,
                   postTokens: 2_000,
+                  sampleAttempts: 2,
                 },
               },
             }),

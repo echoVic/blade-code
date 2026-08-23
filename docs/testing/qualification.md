@@ -391,16 +391,19 @@ barrier；随后恰好一次 TaskOutput 获得交接前后两个 output marker�
 Durable token-budget handoff 固定运行 DeepSeek Flash/Pro × Headless、raw PTY
 TUI、production Chromium Web 与真实 ACP SDK 八格矩阵，顺序固定且不经过 release
 surface 过滤。每格通过 loopback transparent proxy 转发真实 Provider 输出和真实
-compaction summary；proxy 只改写前两个 task response 的 usage counters，并要求请求
-顺序为 `task(70%) -> task(80%) -> compaction -> task -> task`。70%/80% 阈值来自
-production model catalog 的 context window 与 output reserve，而不是测试硬编码。每格证明：
+compaction summary；proxy 改写前两个 task response 的 usage counters，并让首个
+compaction request 返回受控 `503`，随后透明转发第二个真实摘要请求。请求顺序必须为
+`task(70%) -> task(80%) -> compaction(503) -> compaction(real) -> task -> task`。
+70%/80% 阈值来自 production model catalog 的 context window 与 output reserve，而不是
+测试硬编码。每格证明：
 
 - handoff marker 在第二次 task Provider request 前持久化，当前 epoch 恰好一个
   `handoff-message-` durable identity，pre-compaction request 至多一次 marker，
   compaction 与其后请求为零；
 - latest replacement checkpoint 位于 marker 后，replacement/effective suffix 不含 marker，
   七段 continuation ledger 精确保留 mutation、failed verification 和 pending action
-  sentinels，且真实 Bash fail、Write、Bash pass 的 durable 顺序正确；
+  sentinels，checkpoint 记录 `sampleAttempts: 2` 且无 failure reason，真实 Bash fail、
+  Write、Bash pass 的 durable 顺序正确；
 - Headless cold projection、PTY resume、ACP `session/load` 和 Web post-completion reload
   均不得新增 Provider request；internal event/tag/identity/reminder 不进入 terminal bytes、
   ACP updates/terminal、HTTP history、SSE、Zustand、DOM 或 HTML；

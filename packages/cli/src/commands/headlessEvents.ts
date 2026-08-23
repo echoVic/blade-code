@@ -363,6 +363,15 @@ const CompactingEventSchema = event({
   outcome: Type.Optional(StringEnum(['completed', 'fallback', 'failed'])),
   pre_tokens: Type.Optional(Type.Number({ minimum: 0 })),
   post_tokens: Type.Optional(Type.Number({ minimum: 0 })),
+  sample_attempts: Type.Optional(Type.Integer({ minimum: 0 })),
+  failure_reason: Type.Optional(
+    StringEnum([
+      'circuit_open',
+      'deterministic',
+      'empty_exhausted',
+      'transient_exhausted',
+    ])
+  ),
 });
 
 const ProviderRetryEventSchema = event({

@@ -2619,6 +2619,7 @@ describe('SessionRoutes runtime reuse', () => {
         outcome: 'completed',
         preTokens: 120_000,
         postTokens: 2_000,
+        sampleAttempts: 2,
       };
       yield { kind: 'model_fallback' };
       yield {
@@ -2773,6 +2774,7 @@ describe('SessionRoutes runtime reuse', () => {
         outcome: 'completed',
         preTokens: 120_000,
         postTokens: 2_000,
+        sampleAttempts: 2,
       }
     );
     expect(Bus.publish).toHaveBeenCalledWith(

@@ -511,12 +511,18 @@ function assertRequestShape(
 
 export function assertTokenBudgetRequestSequence(
   evidence: TokenBudgetProxyEvidence,
-  targets: { handoffPromptTokens: number; compactionPromptTokens: number }
+  targets: { handoffPromptTokens: number; compactionPromptTokens: number },
+  options: { expectCompactionRetry?: boolean } = {}
 ): void {
   if (evidence.maxInFlight !== 1) {
     throw new Error('Token-budget Provider requests must have maxInFlight equal to 1');
   }
-  if (evidence.requests.length < 5 || evidence.requests.length > 9) {
+  const minimumRequests = options.expectCompactionRetry ? 6 : 5;
+  const maximumRequests = options.expectCompactionRetry ? 10 : 9;
+  if (
+    evidence.requests.length < minimumRequests ||
+    evidence.requests.length > maximumRequests
+  ) {
     const sequence = evidence.requests
       .map(
         (request) =>
@@ -527,12 +533,20 @@ export function assertTokenBudgetRequestSequence(
       )
       .join(',');
     throw new Error(
-      'Token-budget Provider evidence must contain five to nine requests; ' +
+      `Token-budget Provider evidence must contain ${minimumRequests} to ` +
+        `${maximumRequests} requests; ` +
         `count=${evidence.requests.length}; sequence=${sequence}`
     );
   }
 
-  const expected = [
+  const expected: Array<{
+    kind: 'task' | 'compaction';
+    marker: number;
+    rewritten: boolean;
+    target?: number;
+    status?: number;
+    injectedFailure?: 'compaction_transient';
+  }> = [
     {
       kind: 'task',
       marker: 0,
@@ -545,10 +559,32 @@ export function assertTokenBudgetRequestSequence(
       target: targets.compactionPromptTokens,
       rewritten: true,
     },
-    { kind: 'compaction', marker: 0, rewritten: false },
+    ...(options.expectCompactionRetry
+      ? [
+          {
+            kind: 'compaction' as const,
+            marker: 0,
+            rewritten: false,
+            status: 503,
+            injectedFailure: 'compaction_transient' as const,
+          },
+          {
+            kind: 'compaction' as const,
+            marker: 0,
+            rewritten: false,
+            status: 200,
+          },
+        ]
+      : [
+          {
+            kind: 'compaction' as const,
+            marker: 0,
+            rewritten: false,
+          },
+        ]),
     { kind: 'task', marker: 0, rewritten: false },
     { kind: 'task', marker: 0, rewritten: false },
-  ] as const;
+  ];
 
   for (const [index, request] of evidence.requests.entries()) {
     assertRequestShape(request, index);
@@ -575,7 +611,7 @@ export function assertTokenBudgetRequestSequence(
     if (request.usageRewritten !== contract.rewritten) {
       throw new Error(`Token-budget request ${index + 1} has an invalid rewrite state`);
     }
-    if ('target' in contract) {
+    if (contract.target !== undefined) {
       if (request.targetPromptTokens !== contract.target) {
         throw new Error(
           `Token-budget request ${index + 1} has an invalid token target`
@@ -583,6 +619,14 @@ export function assertTokenBudgetRequestSequence(
       }
     } else if (Object.hasOwn(request, 'targetPromptTokens')) {
       throw new Error(`Token-budget request ${index + 1} must not have a token target`);
+    }
+    if (contract.status !== undefined && request.upstreamStatus !== contract.status) {
+      throw new Error(`Token-budget request ${index + 1} has an invalid status`);
+    }
+    if (request.injectedFailure !== contract.injectedFailure) {
+      throw new Error(
+        `Token-budget request ${index + 1} has an invalid injected failure`
+      );
     }
   }
 }
@@ -593,9 +637,12 @@ export function assertTokenBudgetRequestSequenceWithTranscript(input: {
   events: readonly SessionEvent[];
   expectedFinal: string;
   surfaceFinalSeen: boolean;
+  expectCompactionRetry?: boolean;
 }): void {
   try {
-    assertTokenBudgetRequestSequence(input.evidence, input.targets);
+    assertTokenBudgetRequestSequence(input.evidence, input.targets, {
+      expectCompactionRetry: input.expectCompactionRetry,
+    });
   } catch (error) {
     const message =
       error instanceof Error
@@ -614,6 +661,8 @@ interface Checkpoint {
   index: number;
   summary: string;
   replacements: NonNullable<ReturnType<typeof parseCompactionReplacementMessages>>;
+  sampleAttempts?: number;
+  failureReason?: string;
 }
 
 function latestValidCheckpoint(
@@ -634,7 +683,20 @@ function latestValidCheckpoint(
       event.data.payload.replacementMessages
     );
     if (replacements) {
-      return { index, summary: event.data.payload.text, replacements };
+      const metadata = event.data.payload.metadata;
+      return {
+        index,
+        summary: event.data.payload.text,
+        replacements,
+        ...(isRecord(metadata) &&
+        typeof metadata.sampleAttempts === 'number' &&
+        Number.isSafeInteger(metadata.sampleAttempts)
+          ? { sampleAttempts: metadata.sampleAttempts }
+          : {}),
+        ...(isRecord(metadata) && typeof metadata.failureReason === 'string'
+          ? { failureReason: metadata.failureReason }
+          : {}),
+      };
     }
   }
   return undefined;
@@ -759,7 +821,8 @@ function assertToolTrace(
 
 export function assertTokenBudgetTranscript(
   events: readonly SessionEvent[],
-  fixture: TokenBudgetHandoffFixture
+  fixture: TokenBudgetHandoffFixture,
+  options: { expectedSampleAttempts?: number } = {}
 ): void {
   const handoffEvents = events.filter(isTokenBudgetHandoffEvent);
   const validHandoffs = events.flatMap((event) => {
@@ -788,6 +851,15 @@ export function assertTokenBudgetTranscript(
   const checkpoint = latestValidCheckpoint(events);
   if (!checkpoint || checkpoint.index <= markerIndex) {
     throw new Error('Latest valid compaction checkpoint must follow the v1 marker');
+  }
+  if (
+    options.expectedSampleAttempts !== undefined &&
+    (checkpoint.sampleAttempts !== options.expectedSampleAttempts ||
+      checkpoint.failureReason !== undefined)
+  ) {
+    throw new Error(
+      'Compaction checkpoint does not prove the expected recovered sample attempts'
+    );
   }
   assertNoHandoffInReplacement(checkpoint);
   assertNoHandoffInSuffix(events, checkpoint);

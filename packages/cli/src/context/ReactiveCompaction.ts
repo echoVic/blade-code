@@ -8,7 +8,10 @@
 import type { Message, UsageInfo } from '../services/ChatServiceInterface.js';
 import { isAbortError } from '../utils/abort.js';
 import { CompactionService, isCompactionBlockedError } from './CompactionService.js';
-import type { CompactionStrategy } from './compactionCheckpoint.js';
+import type {
+  CompactionFailureReason,
+  CompactionStrategy,
+} from './compactionCheckpoint.js';
 import { snipCompact } from './SnipCompaction.js';
 import { stripTokenBudgetHandoffMessages } from './TokenBudgetHandoff.js';
 import { TokenCounter } from './TokenCounter.js';
@@ -32,6 +35,8 @@ export interface ReactiveCompactResult {
   summary?: string;
   preTokens?: number;
   postTokens?: number;
+  sampleAttempts?: number;
+  failureReason?: CompactionFailureReason;
   filesIncluded?: string[];
   usage?: UsageInfo;
 }
@@ -91,6 +96,8 @@ export class ReactiveCompaction {
           summary: compactResult.summary,
           preTokens: compactResult.preTokens,
           postTokens: compactResult.postTokens,
+          sampleAttempts: compactResult.sampleAttempts,
+          failureReason: compactResult.failureReason,
           filesIncluded: compactResult.filesIncluded,
           usage: compactResult.usage,
         };

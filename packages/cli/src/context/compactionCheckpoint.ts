@@ -11,12 +11,20 @@ export type CompactionStrategy = 'llm' | 'fallback' | 'snip';
 
 export type CompactionOutcome = 'completed' | 'fallback' | 'failed';
 
+export type CompactionFailureReason =
+  | 'circuit_open'
+  | 'deterministic'
+  | 'empty_exhausted'
+  | 'transient_exhausted';
+
 export interface CompactionPersistenceMetadata {
   trigger: 'auto' | 'manual';
   reason?: CompactionReason;
   strategy?: CompactionStrategy;
   preTokens: number;
   postTokens?: number;
+  sampleAttempts?: number;
+  failureReason?: CompactionFailureReason;
   filesIncluded?: string[];
   replacementMessages?: Message[];
 }
