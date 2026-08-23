@@ -179,6 +179,9 @@ export const ChatStatusBar: React.FC = React.memo(() => {
                 {goal.prematureStop
                   ? ` recovery:${goal.prematureStop.consecutiveCount}`
                   : ''}
+                {goal.verificationStall
+                  ? ` verify-gap:${goal.verificationStall.consecutiveCount}`
+                  : ''}
               </Text>
               <Text color="gray">·</Text>
             </>

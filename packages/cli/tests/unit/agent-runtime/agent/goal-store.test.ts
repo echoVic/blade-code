@@ -106,6 +106,14 @@ describe('GoalStore', () => {
         evidenceSha256: 'a'.repeat(64),
       })
     ).rejects.toThrow('Session identity');
+    await expect(
+      store.recordCompletionVerification({
+        verdict: 'fail',
+        verifierSessionId: 'verifier-invalid-feedback',
+        evidenceSha256: 'a'.repeat(64),
+        feedbackSha256: 'not-a-digest',
+      })
+    ).rejects.toThrow('feedback requires a SHA-256 digest');
 
     await expect(
       store.recordCompletionVerification({
@@ -189,6 +197,102 @@ describe('GoalStore', () => {
         status: 'pass',
         verifierSessionId: 'verifier-attempt-2',
         evidenceSha256: '2'.repeat(64),
+      },
+    });
+  });
+
+  it('persists verifier feedback and blocks an identical gap after three attempts', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    await store.create({ objective: 'converge on the same missing requirement' });
+    const feedbackSha256 = 'a'.repeat(64);
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await store.requestCompletion();
+      await expect(
+        store.recordCompletionVerification({
+          verdict: attempt === 1 ? 'fail' : 'partial',
+          verifierSessionId: `verifier-${attempt}`,
+          summary: 'Missing the required restart regression test.',
+          evidenceSha256: String(attempt).repeat(64),
+          feedbackSha256,
+        })
+      ).resolves.toMatchObject({
+        status: 'verifying',
+        completionVerification: {
+          attempt,
+          summary: 'Missing the required restart regression test.',
+        },
+        verificationStall: {
+          feedbackSha256,
+          consecutiveCount: attempt,
+        },
+      });
+    }
+
+    const pending = await store.requestCompletion();
+    expect(pending).toMatchObject({
+      completionVerification: {
+        attempt: 3,
+        status: 'pending',
+        summary: 'Missing the required restart regression test.',
+      },
+      verificationStall: { consecutiveCount: 2 },
+    });
+    await expect(
+      store.recordCompletionVerification({
+        verdict: 'fail',
+        verifierSessionId: 'verifier-3',
+        summary: 'Missing the required restart regression test.',
+        evidenceSha256: '3'.repeat(64),
+        feedbackSha256,
+      })
+    ).resolves.toMatchObject({
+      status: 'blocked',
+      statusReason:
+        'automatic verification convergence guard after 3 identical gap reports',
+      completionVerification: {
+        attempt: 3,
+        status: 'fail',
+        summary: 'Missing the required restart regression test.',
+      },
+      verificationStall: {
+        feedbackSha256,
+        consecutiveCount: 3,
+      },
+    });
+    await expect(store.tryBeginContinuation()).resolves.toBeNull();
+    await expect(store.resume()).resolves.toMatchObject({
+      status: 'active',
+      verificationStall: undefined,
+    });
+  });
+
+  it('resets verifier convergence when the reported gap changes', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    await store.create({ objective: 'resolve changing verification gaps' });
+    await store.requestCompletion();
+    await store.recordCompletionVerification({
+      verdict: 'fail',
+      verifierSessionId: 'verifier-1',
+      summary: 'First gap.',
+      evidenceSha256: '1'.repeat(64),
+      feedbackSha256: 'a'.repeat(64),
+    });
+    await store.requestCompletion();
+
+    await expect(
+      store.recordCompletionVerification({
+        verdict: 'fail',
+        verifierSessionId: 'verifier-2',
+        summary: 'Second gap.',
+        evidenceSha256: '2'.repeat(64),
+        feedbackSha256: 'b'.repeat(64),
+      })
+    ).resolves.toMatchObject({
+      status: 'verifying',
+      verificationStall: {
+        feedbackSha256: 'b'.repeat(64),
+        consecutiveCount: 1,
       },
     });
   });

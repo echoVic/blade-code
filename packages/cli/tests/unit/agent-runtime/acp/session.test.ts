@@ -914,6 +914,7 @@ describe('AcpSession', () => {
           requestedAt: '2026-08-14T00:00:00.000Z',
           completedAt: '2026-08-14T00:00:01.000Z',
           verifierSessionId: 'verifier-acp-recovered',
+          summary: 'All requirements were verified from current workspace state.',
           evidenceSha256: 'a'.repeat(64),
         },
         createdAt: '2026-08-14T00:00:00.000Z',
@@ -954,6 +955,9 @@ describe('AcpSession', () => {
                   verificationStatus: 'pass',
                   verifierSessionId: 'verifier-acp-recovered',
                   verificationEvidenceSha256: 'a'.repeat(64),
+                  verificationSummary:
+                    'All requirements were verified from current workspace state.',
+                  verificationStallCount: undefined,
                 },
               },
             },
@@ -1622,6 +1626,35 @@ describe('AcpSession', () => {
       const mockAgent = getMockAgent();
       mockAgent.chatStream = vi.fn(async function* () {
         yield {
+          kind: 'goal_updated',
+          goal: {
+            version: 1,
+            sessionId: 'test-session-id',
+            goalId: 'goal-recovery',
+            objective: 'finish the migration',
+            status: 'verifying',
+            tokensUsed: 100,
+            timeUsedSeconds: 2,
+            continuationCount: 2,
+            completionVerification: {
+              attempt: 2,
+              status: 'fail',
+              requestedAt: '2026-08-22T00:00:00.000Z',
+              completedAt: '2026-08-22T00:00:01.000Z',
+              verifierSessionId: 'verifier-2',
+              summary: 'The restart assertion is still missing.',
+              evidenceSha256: 'a'.repeat(64),
+            },
+            verificationStall: {
+              feedbackSha256: 'b'.repeat(64),
+              consecutiveCount: 2,
+              detectedAt: '2026-08-22T00:00:01.000Z',
+            },
+            createdAt: '2026-08-22T00:00:00.000Z',
+            updatedAt: '2026-08-22T00:00:01.000Z',
+          },
+        } as LoopEvent;
+        yield {
           kind: 'goal_continuation_started',
           goal: {
             version: 1,
@@ -1663,6 +1696,25 @@ describe('AcpSession', () => {
               continuation: 2,
               prematureStopPattern: 'self_deferral',
               prematureStopCount: 2,
+            },
+          },
+        },
+      });
+      expect(mockConnection.sessionUpdates).toContainEqual({
+        sessionId: 'test-session-id',
+        update: {
+          sessionUpdate: 'session_info_update',
+          updatedAt: '2026-08-22T00:00:01.000Z',
+          _meta: {
+            'blade/goal': {
+              goalId: 'goal-recovery',
+              status: 'verifying',
+              verificationAttempt: 2,
+              verificationStatus: 'fail',
+              verifierSessionId: 'verifier-2',
+              verificationEvidenceSha256: 'a'.repeat(64),
+              verificationSummary: 'The restart assertion is still missing.',
+              verificationStallCount: 2,
             },
           },
         },

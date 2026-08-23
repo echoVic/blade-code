@@ -24,6 +24,7 @@ function completedSession(overrides: Partial<AgentSession> = {}): AgentSession {
     result: {
       success: true,
       message: 'CHILD_DURABLE_MARKER',
+      verificationFeedback: 'Missing a restart assertion.',
       modifiedFiles: ['src/marker.ts'],
     },
     stats: { tokens: 120, toolCalls: 2, duration: 450 },
@@ -77,6 +78,7 @@ describe('completed subagent result adoption', () => {
         subagentType: 'Explore',
         subagentStatus: 'completed',
         subagentSummary: 'CHILD_DURABLE_MARKER',
+        verificationFeedback: 'Missing a restart assertion.',
         subagentRootId: 'agent-adopted-child',
         subagentResumeDepth: 0,
       },
@@ -181,6 +183,17 @@ describe('completed subagent result adoption', () => {
         result: {
           success: true,
           message: 'x'.repeat(1_000_001),
+        },
+      }),
+    },
+    {
+      name: 'oversized verification feedback',
+      call: taskCall(),
+      session: completedSession({
+        result: {
+          success: true,
+          message: 'done',
+          verificationFeedback: 'x'.repeat(4_001),
         },
       }),
     },

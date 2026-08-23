@@ -5,6 +5,15 @@ import {
   isNewGoalCompletionAttempt,
   isNewGoalCompletionCandidate,
 } from '../../../../src/agent/loop/goalCompletionVerification.js';
+import {
+  goalVerificationFeedbackFromOutput,
+  goalVerificationOutputFromValue,
+} from '../../../../src/agent/subagents/builtinGoalVerificationAgent.js';
+import { buildGoalContinuationPrompt } from '../../../../src/goals/prompts.js';
+import {
+  type GoalSnapshot,
+  MAX_GOAL_VERIFICATION_FEEDBACK_CHARS,
+} from '../../../../src/goals/types.js';
 
 function gate(
   overrides: Partial<Parameters<typeof checkGoalCompletionVerificationGate>[0]> = {}
@@ -89,6 +98,115 @@ describe('goal completion verification gate', () => {
     ).toMatchObject({
       action: 'retry',
       requireVerificationTask: false,
+    });
+  });
+
+  it('returns bounded sanitized feedback from structured verifier output', () => {
+    const workspaceRoot = '/tmp/private-workspace';
+    const output = {
+      verdict: 'fail',
+      summary: `Missing proof in ${workspaceRoot}/src/runtime.ts`,
+      findings: [
+        'API_KEY=visible-secret must not be projected',
+        `Inspect ${workspaceRoot}/tests/runtime.test.ts`,
+        'x'.repeat(1_000),
+      ],
+    };
+
+    expect(goalVerificationOutputFromValue(output)).toEqual(output);
+    const feedback = goalVerificationFeedbackFromOutput(output, workspaceRoot);
+    expect(feedback).toContain('Missing proof in ./src/runtime.ts');
+    expect(feedback).toContain('Findings:');
+    expect(feedback).toContain('API_KEY=[redacted]');
+    expect(feedback).not.toContain('visible-secret');
+    expect(feedback).not.toContain(workspaceRoot);
+    expect([...(feedback ?? '')].length).toBeLessThanOrEqual(
+      MAX_GOAL_VERIFICATION_FEEDBACK_CHARS
+    );
+  });
+
+  it('rejects malformed verifier feedback instead of parsing prose', () => {
+    expect(
+      goalVerificationOutputFromValue({
+        verdict: 'fail',
+        summary: '',
+        findings: ['missing evidence'],
+      })
+    ).toBeUndefined();
+    expect(
+      goalVerificationFeedbackFromOutput({
+        verdict: 'fail',
+        summary: 'Missing evidence.',
+        findings: 'not-an-array',
+      })
+    ).toBeUndefined();
+  });
+
+  it('injects feedback and escalates a repeated verification gap', () => {
+    const action = gate({
+      verificationRevision: 2,
+      verificationVerdict: 'fail',
+      verificationFeedback: 'Missing <proof> & regression coverage.',
+      verificationStallCount: 2,
+    });
+
+    expect(action).toMatchObject({
+      action: 'retry',
+      requireVerificationTask: false,
+    });
+    expect(action).toHaveProperty(
+      'prompt',
+      expect.stringContaining('Missing &lt;proof&gt; &amp; regression coverage.')
+    );
+    expect(action).toHaveProperty(
+      'prompt',
+      expect.stringContaining('same verification gap has repeated')
+    );
+  });
+
+  it('keeps verifier feedback in a later durable goal continuation', () => {
+    const goal: GoalSnapshot = {
+      version: 1,
+      sessionId: 'session-1',
+      goalId: 'goal-1',
+      objective: 'finish <migration>',
+      status: 'verifying',
+      tokensUsed: 100,
+      timeUsedSeconds: 5,
+      continuationCount: 3,
+      completionVerification: {
+        attempt: 2,
+        status: 'fail',
+        requestedAt: '2026-08-23T00:00:00.000Z',
+        summary: 'Missing <restart> & rollback coverage.',
+      },
+      verificationStall: {
+        feedbackSha256: 'a'.repeat(64),
+        consecutiveCount: 2,
+        detectedAt: '2026-08-23T00:00:01.000Z',
+      },
+      createdAt: '2026-08-23T00:00:00.000Z',
+      updatedAt: '2026-08-23T00:00:01.000Z',
+    };
+
+    const prompt = buildGoalContinuationPrompt(goal);
+    expect(prompt).toContain('Missing &lt;restart&gt; &amp; rollback coverage.');
+    expect(prompt).toContain('same verification gap has repeated');
+    expect(prompt).not.toContain('Missing <restart>');
+  });
+
+  it('fails closed after the same verification gap repeats three times', () => {
+    expect(
+      gate({
+        verificationRevision: 2,
+        verificationVerdict: 'fail',
+        verificationStallCount: 3,
+      })
+    ).toEqual({
+      action: 'fail',
+      message:
+        'Goal completion was blocked after the same independent verification ' +
+        'gap repeated without convergence.',
     });
   });
 

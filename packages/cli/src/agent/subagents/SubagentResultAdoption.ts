@@ -2,6 +2,7 @@ import type {
   SessionAdoptedToolResult,
   SessionInterruptedToolCall,
 } from '../../context/storage/PersistentStore.js';
+import { MAX_GOAL_VERIFICATION_FEEDBACK_CHARS } from '../../goals/types.js';
 import type { JsonValue } from '../../store/types.js';
 import { isVerificationAuditSubagent } from '../../utils/shell/readOnlyAudit.js';
 import {
@@ -60,6 +61,9 @@ function sessionResult(session: AgentSession): SubagentResult | undefined {
         result.error.length > MAX_ADOPTED_ERROR_CHARS)) ||
     !validStringList(result.verificationCommands) ||
     !validStringList(result.modifiedFiles) ||
+    (result.verificationFeedback !== undefined &&
+      (typeof result.verificationFeedback !== 'string' ||
+        result.verificationFeedback.length > MAX_GOAL_VERIFICATION_FEEDBACK_CHARS)) ||
     (session.status === 'completed' && result.success !== true) ||
     (session.status === 'failed' && result.success !== false)
   ) {
@@ -71,6 +75,7 @@ function sessionResult(session: AgentSession): SubagentResult | undefined {
     error: result.error,
     verificationCommands: result.verificationCommands,
     verificationVerdict: result.verificationVerdict,
+    verificationFeedback: result.verificationFeedback,
     modifiedFiles: result.modifiedFiles,
     stats: session.stats,
     messages: session.messages,
@@ -105,6 +110,7 @@ export function buildCompletedSubagentTaskResult(
     resumed_from: input.resumedFrom,
     verificationCommands: input.result.verificationCommands,
     verificationVerdict: input.result.verificationVerdict,
+    verificationFeedback: input.result.verificationFeedback,
     modifiedFiles: input.result.modifiedFiles,
     verificationAgentBuiltin:
       isVerificationAuditSubagent(input.subagentType) &&

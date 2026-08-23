@@ -2421,6 +2421,8 @@ export class AcpSession {
           verificationStatus: goal.completionVerification?.status,
           verifierSessionId: goal.completionVerification?.verifierSessionId,
           verificationEvidenceSha256: goal.completionVerification?.evidenceSha256,
+          verificationSummary: goal.completionVerification?.summary,
+          verificationStallCount: goal.verificationStall?.consecutiveCount,
         },
       },
     };

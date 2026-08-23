@@ -297,6 +297,8 @@ const GoalEventSchema = event({
   verification_evidence_sha256: Type.Optional(
     Type.String({ pattern: '^[a-f0-9]{64}$' })
   ),
+  verification_summary: Type.Optional(Type.String()),
+  verification_stall_count: Type.Optional(Type.Integer({ minimum: 1 })),
   premature_stop_pattern: Type.Optional(StringEnum(GOAL_PREMATURE_STOP_PATTERNS)),
   premature_stop_count: Type.Optional(Type.Integer({ minimum: 1 })),
 });

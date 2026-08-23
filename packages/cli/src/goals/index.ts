@@ -9,8 +9,11 @@ export type {
   GoalProgress,
   GoalSnapshot,
   GoalStatus,
+  GoalVerificationStallState,
 } from './types.js';
 export {
   GOAL_PREMATURE_STOP_PATTERNS,
   MAX_CONSECUTIVE_GOAL_PREMATURE_STOPS,
+  MAX_CONSECUTIVE_GOAL_VERIFICATION_STALLS,
+  MAX_GOAL_VERIFICATION_FEEDBACK_CHARS,
 } from './types.js';

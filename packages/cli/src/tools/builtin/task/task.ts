@@ -648,6 +648,7 @@ function createSubagentEventBridge(input: {
         summary: terminalSummary?.slice(0, 500),
         type: session.subagentType,
         verificationVerdict: session.result?.verificationVerdict,
+        verificationFeedback: session.result?.verificationFeedback,
         ...lineage,
       });
     },
@@ -798,6 +799,7 @@ async function executeForegroundTask(input: ForegroundTaskInput): Promise<ToolRe
         error: result.error,
         verificationCommands: result.verificationCommands,
         verificationVerdict: result.verificationVerdict,
+        verificationFeedback: result.verificationFeedback,
         modifiedFiles: result.modifiedFiles,
       },
       {

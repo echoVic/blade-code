@@ -4284,6 +4284,7 @@ describe('executeLoopGenerator', () => {
             subagentSummary: '## Verification Result: PASS',
             verificationAgentBuiltin: true,
             verificationVerdict: 'pass',
+            verificationFeedback: 'All requirements proved with direct evidence.',
           },
         })
         .mockResolvedValueOnce({
@@ -4334,8 +4335,9 @@ describe('executeLoopGenerator', () => {
       expect(recordVerification).toHaveBeenCalledWith({
         verdict: 'pass',
         verifierSessionId: 'verifier-session',
-        summary: 'Independent verifier returned PASS.',
+        summary: 'All requirements proved with direct evidence.',
         evidenceSha256: expectedEvidenceSha256,
+        feedbackSha256: undefined,
       });
       expect(recordVerification).toHaveBeenCalledOnce();
       expect(finalizeCompletion).toHaveBeenCalledOnce();

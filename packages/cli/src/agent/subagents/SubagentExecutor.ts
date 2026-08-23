@@ -19,6 +19,7 @@ import { SessionRuntime } from '../runtime/SessionRuntime.js';
 import type { ChatContext } from '../types.js';
 import {
   GOAL_VERIFICATION_OUTPUT_SCHEMA,
+  goalVerificationFeedbackFromOutput,
   goalVerificationVerdictFromOutput,
 } from './builtinGoalVerificationAgent.js';
 import {
@@ -171,6 +172,7 @@ export class SubagentExecutor {
       }
 
       const duration = Date.now() - startTime;
+      const goalVerificationOutput = loopResult.metadata?.structuredOutput;
 
       return {
         success: true,
@@ -180,12 +182,16 @@ export class SubagentExecutor {
         verificationCommands: [...verificationCommands],
         verificationVerdict:
           this.config.name === GOAL_VERIFICATION_SUBAGENT_TYPE
-            ? goalVerificationVerdictFromOutput(loopResult.metadata?.structuredOutput)
+            ? goalVerificationVerdictFromOutput(goalVerificationOutput)
             : isVerificationAuditSubagent(this.config.name)
               ? (independentVerificationVerdictFromOutput(
                   loopResult.metadata?.structuredOutput
                 ) ?? parseVerificationVerdict(finalMessage))
               : undefined,
+        verificationFeedback:
+          this.config.name === GOAL_VERIFICATION_SUBAGENT_TYPE
+            ? goalVerificationFeedbackFromOutput(goalVerificationOutput, workspaceRoot)
+            : undefined,
         modifiedFiles: [...modifiedFiles],
         stats: {
           tokens: tokensUsed,

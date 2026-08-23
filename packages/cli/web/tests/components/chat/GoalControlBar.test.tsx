@@ -39,6 +39,13 @@ const sessionState = vi.hoisted(() => ({
           consecutiveCount: number;
           detectedAt: string;
         },
+    verificationStall: undefined as
+      | undefined
+      | {
+          feedbackSha256: string;
+          consecutiveCount: number;
+          detectedAt: string;
+        },
     createdAt: '2026-08-04T00:00:00.000Z',
     updatedAt: '2026-08-04T00:01:35.000Z',
   },
@@ -65,6 +72,7 @@ describe('GoalControlBar', () => {
     sessionState.goal.statusReason = 'paused by user';
     sessionState.goal.completionVerification = undefined;
     sessionState.goal.prematureStop = undefined;
+    sessionState.goal.verificationStall = undefined;
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -155,8 +163,13 @@ describe('GoalControlBar', () => {
       requestedAt: '2026-08-04T00:01:00.000Z',
       completedAt: '2026-08-04T00:01:30.000Z',
       verifierSessionId: 'verifier-session-123456',
-      summary: 'Independent verifier returned PARTIAL.',
+      summary: 'The restart assertion is still missing.',
       evidenceSha256: 'a'.repeat(64),
+    };
+    sessionState.goal.verificationStall = {
+      feedbackSha256: 'b'.repeat(64),
+      consecutiveCount: 2,
+      detectedAt: '2026-08-23T00:00:00.000Z',
     };
     act(() => {
       root.render(<GoalControlBar />);
@@ -172,9 +185,13 @@ describe('GoalControlBar', () => {
     });
 
     expect(container.querySelector('[data-goal-verification="partial"]')).toBeTruthy();
+    expect(
+      container.querySelector('[data-blade-goal-verification-stall="2"]')
+    ).toBeTruthy();
     expect(container.textContent).toContain('#2 · PARTIAL');
+    expect(container.textContent).toContain('repeat 2/3');
     expect(container.textContent).toContain('verifier-ses');
-    expect(container.textContent).toContain('Independent verifier returned PARTIAL.');
+    expect(container.textContent).toContain('The restart assertion is still missing.');
     expect(container.textContent).toContain('sha256:aaaaaaaaaaaa');
   });
 

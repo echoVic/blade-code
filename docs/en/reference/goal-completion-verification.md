@@ -82,6 +82,12 @@ While a Goal remains `active` or `verifying`, the host checks whether the final 
 
 This mechanism has no global continuation limit. The liveness breaker only trips after three consecutive matches of the same auditable pattern; a different pattern restarts the count at one. The user can explicitly resume after inspecting the evidence. A genuine external blocker should still be reported by the executing Agent through `UpdateGoal blocked` with concrete evidence. Full completion still requires the independent verifier.
 
+## Verifier Feedback and Convergence
+
+The `goal-verification` structured output is no longer reduced to a generic `FAIL/PARTIAL` message. The host combines its summary and findings into bounded repair feedback, normalizes whitespace, replaces the absolute workspace path, and redacts common credentials. At most 4,000 characters are written to the Goal sidecar and reinjected into later continuations as explicitly untrusted diagnostic data. The executing Agent therefore retains the concrete verifier gaps even when compaction removes the original tool result or the process restarts before the repair.
+
+For a non-PASS result, the host also records a SHA-256 fingerprint of the sanitized feedback. A second consecutive occurrence of the same fingerprint requires a different implementation or verification strategy. A third atomically changes the Goal to `blocked`, preventing unbounded retries against the same gap. Different feedback resets the count to one; PASS, Goal edits, and explicit user resume clear the state. This fingerprint is comparison-only and does not replace the verifier evidence digest or expose the original response.
+
 ## Cross-Platform Projection
 
 ### CLI / TUI
@@ -99,16 +105,18 @@ The status bar displays `goal:verifying`. Headless JSONL uses a stable `goal` ev
   "verification_status": "pass",
   "verifier_session_id": "agent_...",
   "verification_evidence_sha256": "...",
+  "verification_summary": "All required checks passed.",
+  "verification_stall_count": 2,
   "premature_stop_pattern": "internal_wait",
   "premature_stop_count": 2
 }
 ```
 
-Text output writes the lifecycle to stderr, avoiding pollution of final stdout. During recovery, the TUI status bar displays `recovery:N`.
+Text output writes the lifecycle to stderr, avoiding pollution of final stdout. `/goal status` displays persisted verifier feedback; during recovery, the TUI status bar displays `recovery:N`, while a repeated verifier gap displays `verify-gap:N`.
 
 ### Web
 
-The Goal control bar displays `Verifying completion / 正在验证完成声明`. When expanded, it shows the attempt, stable verdict, opaque verifier Session ID, security summary, and SHA-256 prefix. A fresh tab recovers the same evidence from GoalSnapshot. Automation can inspect durable recovery state through `data-blade-goal-recovery` and `data-blade-goal-recovery-pattern`.
+The Goal control bar displays `Verifying completion / 正在验证完成声明`. When expanded, it shows the attempt, stable verdict, opaque verifier Session ID, bounded feedback, SHA-256 prefix, and repeated-gap count. A fresh tab recovers the same evidence from GoalSnapshot. Automation can inspect durable recovery state through `data-blade-goal-recovery`, `data-blade-goal-recovery-pattern`, and `data-blade-goal-verification-stall`.
 
 ### ACP
 
@@ -127,7 +135,7 @@ Goal lifecycle and verifier Task use standard session updates. On synchronous pr
 }
 ```
 
-ACP projection does not include verifier transcripts, host paths, or credentials.
+ACP projection does not include the full verifier transcript or credentials, and the workspace root is replaced with `.`. It carries the bounded `verificationSummary` and `verificationStallCount`.
 Each continuation additionally projects its continuation number, premature-stop pattern, and consecutive count through `blade/goalContinuation` metadata.
 
 ## Qualification
@@ -141,6 +149,7 @@ Deterministic tests cover:
 - Reserved agent, read-only sandbox, permission boundaries, and structured verdict;
 - GoalStore `0600` atomic persistence;
 - Conservative premature-stop matching, false-positive controls, consecutive-count reset, and graded recovery prompts;
+- Normalization, redaction, persistence, reinjection, and repeated-gap breaking for structured verifier feedback;
 - Crash handoff, idempotent retry, and stale receipt rejection between the final assistant and Goal sidecar;
 - CLI JSONL, TUI, Web bilingual/fresh-tab, and ACP `_meta`.
 

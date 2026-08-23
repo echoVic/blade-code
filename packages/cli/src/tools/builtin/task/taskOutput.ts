@@ -392,6 +392,7 @@ async function handleAgentOutput(
           : undefined,
       verificationCommands: session.result?.verificationCommands,
       verificationVerdict: session.result?.verificationVerdict,
+      verificationFeedback: session.result?.verificationFeedback,
       modifiedFiles: session.result?.modifiedFiles,
       verificationAgentBuiltin:
         isVerificationAuditSubagent(session.subagentType) &&

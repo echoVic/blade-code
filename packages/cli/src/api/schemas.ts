@@ -1,4 +1,7 @@
-import type { GoalPrematureStopPattern } from '../goals/types.js';
+import type {
+  GoalPrematureStopPattern,
+  GoalVerificationStallState,
+} from '../goals/types.js';
 import { Default, Runtime, type Static, StringEnum, Type } from '../schema/index.js';
 import {
   MAX_INLINE_ATTACHMENT_BYTES,
@@ -365,6 +368,9 @@ export const GoalSchema = Runtime(
         consecutiveCount: Type.Integer({ minimum: 1 }),
         detectedAt: Type.String(),
       })
+    ),
+    verificationStall: Type.Optional(
+      Type.Unsafe<GoalVerificationStallState>({ type: 'object' })
     ),
     createdAt: Type.String(),
     updatedAt: Type.String(),

@@ -76,6 +76,11 @@ describe('API Schemas', () => {
           consecutiveCount: 2,
           detectedAt: '2026-08-11T00:00:02.000Z',
         },
+        verificationStall: {
+          feedbackSha256: 'c'.repeat(64),
+          consecutiveCount: 2,
+          detectedAt: '2026-08-11T00:00:03.000Z',
+        },
         createdAt: '2026-08-11T00:00:00.000Z',
         updatedAt: '2026-08-11T00:00:03.000Z',
       });
@@ -90,6 +95,10 @@ describe('API Schemas', () => {
         },
         prematureStop: {
           pattern: 'internal_wait',
+          consecutiveCount: 2,
+        },
+        verificationStall: {
+          feedbackSha256: 'c'.repeat(64),
           consecutiveCount: 2,
         },
       });

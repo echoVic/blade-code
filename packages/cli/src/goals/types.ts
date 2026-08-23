@@ -20,6 +20,15 @@ export const GOAL_COMPLETION_VERIFICATION_STATUSES = [
 export type GoalCompletionVerificationStatus =
   (typeof GOAL_COMPLETION_VERIFICATION_STATUSES)[number];
 
+export const MAX_GOAL_VERIFICATION_FEEDBACK_CHARS = 4_000;
+export const MAX_CONSECUTIVE_GOAL_VERIFICATION_STALLS = 3;
+
+export interface GoalVerificationStallState {
+  feedbackSha256: string;
+  consecutiveCount: number;
+  detectedAt: string;
+}
+
 export const GOAL_PREMATURE_STOP_PATTERNS = [
   'unable_to_proceed',
   'stopping_here',
@@ -60,6 +69,7 @@ export interface GoalSnapshot {
   continuationCount: number;
   statusReason?: string;
   completionVerification?: GoalCompletionVerification;
+  verificationStall?: GoalVerificationStallState;
   prematureStop?: GoalPrematureStopState;
   createdAt: string;
   updatedAt: string;
@@ -87,4 +97,5 @@ export interface GoalCompletionVerificationResult {
   verifierSessionId?: string;
   summary?: string;
   evidenceSha256?: string;
+  feedbackSha256?: string;
 }

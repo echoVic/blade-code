@@ -56,6 +56,7 @@ import {
 } from './AgentSessionStore.js';
 import {
   GOAL_VERIFICATION_OUTPUT_SCHEMA,
+  goalVerificationFeedbackFromOutput,
   goalVerificationVerdictFromOutput,
 } from './builtinGoalVerificationAgent.js';
 import {
@@ -769,6 +770,7 @@ export class BackgroundAgentManager {
       });
 
       const duration = Date.now() - startTime;
+      const goalVerificationOutput = loopResult.metadata?.structuredOutput;
       const result: SubagentResult = loopResult.success
         ? {
             success: true,
@@ -777,14 +779,19 @@ export class BackgroundAgentManager {
             verificationCommands: [...verificationCommands],
             verificationVerdict:
               config.name === GOAL_VERIFICATION_SUBAGENT_TYPE
-                ? goalVerificationVerdictFromOutput(
-                    loopResult.metadata?.structuredOutput
-                  )
+                ? goalVerificationVerdictFromOutput(goalVerificationOutput)
                 : isVerificationAuditSubagent(config.name)
                   ? (independentVerificationVerdictFromOutput(
                       loopResult.metadata?.structuredOutput
                     ) ?? parseVerificationVerdict(loopResult.finalMessage))
                   : undefined,
+            verificationFeedback:
+              config.name === GOAL_VERIFICATION_SUBAGENT_TYPE
+                ? goalVerificationFeedbackFromOutput(
+                    goalVerificationOutput,
+                    context.workspaceRoot
+                  )
+                : undefined,
             modifiedFiles: [...modifiedFiles],
             stats: {
               tokens: loopResult.metadata?.tokensUsed || 0,
@@ -814,6 +821,7 @@ export class BackgroundAgentManager {
           error: result.error,
           verificationCommands: result.verificationCommands,
           verificationVerdict: result.verificationVerdict,
+          verificationFeedback: result.verificationFeedback,
           modifiedFiles: result.modifiedFiles,
         },
         result.stats

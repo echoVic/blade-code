@@ -441,6 +441,8 @@ describe('headless event contract', () => {
       verification_status: 'partial',
       verifier_session_id: 'verifier-2',
       verification_evidence_sha256: 'e'.repeat(64),
+      verification_summary: 'The restart assertion is still missing.',
+      verification_stall_count: 2,
       premature_stop_pattern: 'internal_wait',
       premature_stop_count: 2,
     });
@@ -454,6 +456,8 @@ describe('headless event contract', () => {
       verification_status: 'partial',
       verifier_session_id: 'verifier-2',
       verification_evidence_sha256: 'e'.repeat(64),
+      verification_summary: 'The restart assertion is still missing.',
+      verification_stall_count: 2,
       premature_stop_pattern: 'internal_wait',
       premature_stop_count: 2,
     });

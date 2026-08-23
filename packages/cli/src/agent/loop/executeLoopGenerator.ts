@@ -1108,6 +1108,9 @@ validates the object and may return a bounded corrective error.`;
     let goalObjective = options?.goalLifecycle?.snapshot?.objective ?? '';
     let goalVerifierSessionId: string | undefined;
     let goalVerifierSummary: string | undefined;
+    let goalVerificationFeedbackSha256: string | undefined;
+    let goalVerificationStallCount =
+      options?.goalLifecycle?.snapshot?.verificationStall?.consecutiveCount;
     let goalVerificationEvidenceSha256: string | undefined;
     let goalFinalizationSnapshot: GoalSnapshot | undefined;
     let structuredOutputRetryCount = 0;
@@ -2934,6 +2937,8 @@ validates the object and may return a bounded corrective error.`;
             mutationRevision,
             verificationRevision: goalVerificationRevision,
             verificationVerdict: goalVerificationVerdict,
+            verificationFeedback: goalVerifierSummary,
+            verificationStallCount: goalVerificationStallCount,
             retryCount: goalVerificationRetryCount,
           });
           if (goalVerificationAction.action === 'retry') {
@@ -3605,6 +3610,7 @@ validates the object and may return a bounded corrective error.`;
                   subagentRootId: resultMetadata.subagentRootId,
                   subagentResumeDepth: resultMetadata.subagentResumeDepth,
                   verificationVerdict: resultMetadata.verificationVerdict,
+                  verificationFeedback: resultMetadata.verificationFeedback,
                 }
               : undefined;
           if (result.success) {
@@ -3646,6 +3652,7 @@ validates the object and may return a bounded corrective error.`;
                 goalVerificationVerdict = undefined;
                 goalVerifierSessionId = undefined;
                 goalVerifierSummary = undefined;
+                goalVerificationFeedbackSha256 = undefined;
                 goalVerificationEvidenceSha256 = undefined;
                 goalFinalizationSnapshot = undefined;
               }
@@ -3657,7 +3664,10 @@ validates the object and may return a bounded corrective error.`;
                   ? resultMetadata.goalObjective
                   : goalObjective;
               const goal = await options?.goalLifecycle?.getSnapshot();
-              if (goal) yield { kind: 'goal_updated', goal };
+              if (goal) {
+                goalVerificationStallCount = goal.verificationStall?.consecutiveCount;
+                yield { kind: 'goal_updated', goal };
+              }
             } else if (
               toolCall.function.name === 'UpdateGoal' &&
               resultMetadata?.goalStatus === 'blocked'
@@ -3670,6 +3680,8 @@ validates the object and may return a bounded corrective error.`;
               goalVerificationRevision = -1;
               goalVerifierSessionId = undefined;
               goalVerifierSummary = undefined;
+              goalVerificationFeedbackSha256 = undefined;
+              goalVerificationStallCount = undefined;
               goalVerificationEvidenceSha256 = undefined;
               goalFinalizationSnapshot = undefined;
               const goal = await options?.goalLifecycle?.getSnapshot();
@@ -3695,7 +3707,10 @@ validates the object and may return a bounded corrective error.`;
                   'Goal completion evidence invalidated by a workspace mutation'
                 );
                 const goal = await options?.goalLifecycle?.getSnapshot();
-                if (goal) yield { kind: 'goal_updated', goal };
+                if (goal) {
+                  goalVerificationStallCount = goal.verificationStall?.consecutiveCount;
+                  yield { kind: 'goal_updated', goal };
+                }
               }
             }
             const verificationSubagentType =
@@ -3745,9 +3760,21 @@ validates the object and may return a bounded corrective error.`;
                     : typeof resultMetadata?.subagentSummary === 'string'
                       ? resultMetadata.subagentSummary
                       : undefined;
+                const verificationFeedback =
+                  typeof resultMetadata?.verificationFeedback === 'string' &&
+                  resultMetadata.verificationFeedback.trim()
+                    ? resultMetadata.verificationFeedback.trim()
+                    : undefined;
                 goalVerifierSummary = goalVerificationVerdict
-                  ? `Independent verifier returned ${goalVerificationVerdict.toUpperCase()}.`
+                  ? (verificationFeedback ??
+                    `Independent verifier returned ${goalVerificationVerdict.toUpperCase()}.`)
                   : undefined;
+                goalVerificationFeedbackSha256 =
+                  goalVerificationVerdict !== 'pass' && verificationFeedback
+                    ? createHash('sha256')
+                        .update(verificationFeedback, 'utf8')
+                        .digest('hex')
+                    : undefined;
                 if (goalVerificationVerdict && options?.goalLifecycle) {
                   const evidencePayload = JSON.stringify({
                     goalId,
@@ -3765,8 +3792,10 @@ validates the object and may return a bounded corrective error.`;
                     verifierSessionId: goalVerifierSessionId,
                     summary: goalVerifierSummary,
                     evidenceSha256: goalVerificationEvidenceSha256,
+                    feedbackSha256: goalVerificationFeedbackSha256,
                   });
                   goalFinalizationSnapshot = goal;
+                  goalVerificationStallCount = goal.verificationStall?.consecutiveCount;
                   yield { kind: 'goal_updated', goal };
                 }
               }

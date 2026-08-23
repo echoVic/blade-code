@@ -16,11 +16,12 @@ import {
   type GoalProgress,
   type GoalSnapshot,
   MAX_CONSECUTIVE_GOAL_PREMATURE_STOPS,
+  MAX_CONSECUTIVE_GOAL_VERIFICATION_STALLS,
+  MAX_GOAL_VERIFICATION_FEEDBACK_CHARS,
 } from './types.js';
 
 const MAX_GOAL_FILE_BYTES = 1024 * 1024;
 const MAX_OBJECTIVE_CHARS = 100_000;
-const MAX_VERIFICATION_SUMMARY_CHARS = 4_000;
 
 export interface GoalFinalizationReconciliation {
   goal: GoalSnapshot;
@@ -33,7 +34,9 @@ const GoalCompletionVerificationSchema = Type.Object({
   requestedAt: Type.String({ format: 'date-time' }),
   completedAt: Type.Optional(Type.String({ format: 'date-time' })),
   verifierSessionId: Type.Optional(Type.String({ minLength: 1 })),
-  summary: Type.Optional(Type.String({ maxLength: MAX_VERIFICATION_SUMMARY_CHARS })),
+  summary: Type.Optional(
+    Type.String({ maxLength: MAX_GOAL_VERIFICATION_FEEDBACK_CHARS })
+  ),
   evidenceSha256: Type.Optional(Type.String({ pattern: '^[a-f0-9]{64}$' })),
 });
 
@@ -49,6 +52,13 @@ const GoalSnapshotSchema = Type.Object({
   continuationCount: Type.Integer({ minimum: 0 }),
   statusReason: Type.Optional(Type.String()),
   completionVerification: Type.Optional(GoalCompletionVerificationSchema),
+  verificationStall: Type.Optional(
+    Type.Object({
+      feedbackSha256: Type.String({ pattern: '^[a-f0-9]{64}$' }),
+      consecutiveCount: Type.Integer({ minimum: 1 }),
+      detectedAt: Type.String({ format: 'date-time' }),
+    })
+  ),
   prematureStop: Type.Optional(
     Type.Object({
       pattern: StringEnum(GOAL_PREMATURE_STOP_PATTERNS),
@@ -88,7 +98,7 @@ function normalizeTokenBudget(tokenBudget: number | undefined): number | undefin
 function normalizeVerificationSummary(summary: string | undefined): string | undefined {
   const normalized = summary?.trim();
   if (!normalized) return undefined;
-  return normalized.slice(0, MAX_VERIFICATION_SUMMARY_CHARS);
+  return normalized.slice(0, MAX_GOAL_VERIFICATION_FEEDBACK_CHARS);
 }
 
 export class GoalStore {
@@ -164,6 +174,7 @@ export class GoalStore {
         ...goal,
         objective: normalizeObjective(objective),
         completionVerification: undefined,
+        verificationStall: undefined,
         prematureStop: undefined,
         status: goal.status === 'verifying' ? 'active' : goal.status,
         statusReason: goal.status === 'verifying' ? undefined : goal.statusReason,
@@ -220,6 +231,7 @@ export class GoalStore {
         ...goal,
         status: completionPending ? 'verifying' : 'active',
         statusReason: undefined,
+        verificationStall: undefined,
         prematureStop: undefined,
         updatedAt: new Date().toISOString(),
       };
@@ -250,6 +262,9 @@ export class GoalStore {
           attempt: (goal.completionVerification?.attempt ?? 0) + 1,
           status: 'pending',
           requestedAt: now,
+          ...(goal.completionVerification?.summary
+            ? { summary: goal.completionVerification.summary }
+            : {}),
         },
         updatedAt: now,
       };
@@ -266,6 +281,12 @@ export class GoalStore {
     if (!/^[a-f0-9]{64}$/.test(result.evidenceSha256 ?? '')) {
       throw new Error('Goal verification requires a SHA-256 evidence digest');
     }
+    if (
+      result.feedbackSha256 !== undefined &&
+      !/^[a-f0-9]{64}$/.test(result.feedbackSha256)
+    ) {
+      throw new Error('Goal verification feedback requires a SHA-256 digest');
+    }
     return this.updateExisting((goal) => {
       if (goal.status !== 'verifying' || !goal.completionVerification) {
         throw new Error(
@@ -273,20 +294,37 @@ export class GoalStore {
         );
       }
       const now = new Date().toISOString();
+      const summary = normalizeVerificationSummary(result.summary);
+      const feedbackSha256 = result.feedbackSha256;
+      const verificationStall =
+        result.verdict !== 'pass' && feedbackSha256
+          ? {
+              feedbackSha256,
+              consecutiveCount:
+                goal.verificationStall?.feedbackSha256 === feedbackSha256
+                  ? goal.verificationStall.consecutiveCount + 1
+                  : 1,
+              detectedAt: now,
+            }
+          : undefined;
+      const livenessBlocked =
+        verificationStall !== undefined &&
+        verificationStall.consecutiveCount >= MAX_CONSECUTIVE_GOAL_VERIFICATION_STALLS;
       return {
         ...goal,
-        statusReason:
-          result.verdict === 'pass'
+        status: livenessBlocked ? 'blocked' : goal.status,
+        statusReason: livenessBlocked
+          ? `automatic verification convergence guard after ${verificationStall.consecutiveCount} identical gap reports`
+          : result.verdict === 'pass'
             ? 'independent completion verification passed'
             : `independent completion verification returned ${result.verdict}`,
+        verificationStall,
         completionVerification: {
           ...goal.completionVerification,
           status: result.verdict,
           completedAt: now,
           verifierSessionId,
-          ...(normalizeVerificationSummary(result.summary)
-            ? { summary: normalizeVerificationSummary(result.summary) }
-            : {}),
+          ...(summary ? { summary } : {}),
           evidenceSha256: result.evidenceSha256,
         },
         updatedAt: now,
@@ -307,6 +345,9 @@ export class GoalStore {
           attempt: goal.completionVerification.attempt,
           status: 'pending',
           requestedAt: goal.completionVerification.requestedAt,
+          ...(goal.completionVerification.summary
+            ? { summary: goal.completionVerification.summary }
+            : {}),
         },
         updatedAt: new Date().toISOString(),
       };
@@ -329,6 +370,7 @@ export class GoalStore {
         ...goal,
         status: 'complete',
         statusReason: undefined,
+        verificationStall: undefined,
         prematureStop: undefined,
         updatedAt: new Date().toISOString(),
       };
@@ -361,6 +403,7 @@ export class GoalStore {
         ...goal,
         status: 'complete',
         statusReason: undefined,
+        verificationStall: undefined,
         updatedAt: new Date().toISOString(),
       });
       await this.persistUnlocked(next);
@@ -381,6 +424,7 @@ export class GoalStore {
         status: 'blocked',
         statusReason: normalizedReason,
         completionVerification: undefined,
+        verificationStall: undefined,
         updatedAt: new Date().toISOString(),
       };
     });

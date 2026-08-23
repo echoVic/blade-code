@@ -159,6 +159,7 @@ export function GoalControlBar() {
           data-blade-goal-status={goal.status}
           data-blade-goal-recovery={goal.prematureStop?.consecutiveCount}
           data-blade-goal-recovery-pattern={goal.prematureStop?.pattern}
+          data-blade-goal-verification-stall={goal.verificationStall?.consecutiveCount}
         >
           {/* Compact strip */}
           <div
@@ -345,6 +346,11 @@ export function GoalControlBar() {
                         {goal.completionVerification.status.toUpperCase()} ·{' '}
                         {goal.completionVerification.verifierSessionId?.slice(0, 12) ??
                           '-'}
+                        {goal.verificationStall
+                          ? locale === 'zh'
+                            ? ` · 重复 ${goal.verificationStall.consecutiveCount}/3`
+                            : ` · repeat ${goal.verificationStall.consecutiveCount}/3`
+                          : ''}
                       </p>
                       {goal.completionVerification.summary && (
                         <p className="mt-1 line-clamp-3 whitespace-pre-wrap opacity-80">

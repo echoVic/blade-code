@@ -101,6 +101,20 @@ liveness breaker；pattern 改变会从 1 重新计数。用户可以在检查�
 真实外部阻塞仍应由执行 Agent 通过 `UpdateGoal blocked` 和具体证据表达；完整完成
 仍走独立 verifier。
 
+## Verifier 反馈与收敛
+
+`goal-verification` 的 structured output 不再被降级为通用的 `FAIL/PARTIAL` 文案。
+宿主会把 summary 与 findings 组合成有界修复反馈，归一化空白、替换 workspace 绝对
+路径并脱敏常见 credential。最多 4,000 字符的反馈写入 Goal sidecar，并在后续
+continuation 中作为明确标注的非可信诊断数据重新注入。因此即使工具结果被 compaction
+移出当前 context，或进程在修复前重启，执行 Agent 仍能看到 verifier 的具体缺口。
+
+对于非 PASS 结果，宿主还会记录脱敏反馈的 SHA-256 指纹。相同指纹连续第二次出现时，
+continuation 明确要求改变实现或验证策略；连续第三次出现时，Goal 原子切换为
+`blocked`，避免在同一缺口上无界消耗。不同反馈会把连续次数重置为 1，PASS、Goal
+编辑或用户显式 resume 会清除该状态。指纹只用于比较，不替代 verifier evidence
+digest，也不暴露反馈原文。
+
 ## 跨端投影
 
 ### CLI / TUI
@@ -118,20 +132,24 @@ liveness breaker；pattern 改变会从 1 重新计数。用户可以在检查�
   "verification_status": "pass",
   "verifier_session_id": "agent_...",
   "verification_evidence_sha256": "...",
+  "verification_summary": "All required checks passed.",
+  "verification_stall_count": 2,
   "premature_stop_pattern": "internal_wait",
   "premature_stop_count": 2
 }
 ```
 
-文本输出把 lifecycle 写入 stderr，不污染最终 stdout。TUI 状态栏在恢复期间显示
-`recovery:N`。
+文本输出把 lifecycle 写入 stderr，不污染最终 stdout。`/goal status` 显示持久化的
+verifier 反馈；TUI 状态栏在恢复期间显示 `recovery:N`，重复验证缺口显示
+`verify-gap:N`。
 
 ### Web
 
 Goal control bar 显示 `Verifying completion / 正在验证完成声明`。展开后展示 attempt、
 稳定 verdict、opaque verifier Session ID、安全摘要与 SHA-256 前缀。fresh tab 从
 GoalSnapshot 恢复相同证据。自动化可通过 `data-blade-goal-recovery` 和
-`data-blade-goal-recovery-pattern` 检查 durable recovery 状态。
+`data-blade-goal-recovery-pattern` 检查 premature-stop 状态，并通过
+`data-blade-goal-verification-stall` 检查重复 verifier 缺口。
 
 ### ACP
 
@@ -150,7 +168,9 @@ Goal lifecycle 和 verifier Task 使用标准 session update。同步 prompt 完
 }
 ```
 
-ACP projection 不包含 verifier 原文、宿主路径或 credential。
+ACP projection 不包含完整 verifier transcript 或 credential，workspace root 会被
+替换为 `.`；它会携带有界 `verificationSummary` 与
+`verificationStallCount`。
 每次 continuation 还会通过 `blade/goalContinuation` metadata 投影 continuation、
 premature-stop pattern 和连续次数。
 
@@ -165,6 +185,7 @@ premature-stop pattern 和连续次数。
 - reserved agent、只读 sandbox、权限边界和 structured verdict；
 - GoalStore `0600` 原子持久化；
 - premature-stop 保守匹配、误报对照组、连续计数重置和分级恢复提示；
+- verifier structured feedback 的归一化、脱敏、持久化、恢复注入与重复缺口熔断；
 - final assistant 与 Goal sidecar 之间的 crash handoff、幂等重试和 stale receipt 拒绝；
 - CLI JSONL、TUI、Web bilingual/fresh-tab 与 ACP `_meta`。
 

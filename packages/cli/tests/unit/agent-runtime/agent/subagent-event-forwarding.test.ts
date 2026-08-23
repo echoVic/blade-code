@@ -202,6 +202,7 @@ describe('SubagentExecutor event forwarding', () => {
     }).execute({ prompt: 'verify the goal' });
 
     expect(result.verificationVerdict).toBe('pass');
+    expect(result.verificationFeedback).toBe('All requirements proved.');
     expect(mockChatStream).toHaveBeenCalledWith(
       'verify the goal',
       expect.any(Object),

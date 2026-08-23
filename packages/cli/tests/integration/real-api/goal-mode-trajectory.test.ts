@@ -57,6 +57,19 @@ function formatGoalFailure(
           ? [event.toolCall.function.name]
           : []
       ),
+      goalEvents: events.flatMap((event) =>
+        event.kind === 'goal_updated' && event.goal
+          ? [
+              {
+                status: event.goal.status,
+                attempt: event.goal.completionVerification?.attempt,
+                verificationStatus: event.goal.completionVerification?.status,
+                verificationSummary: event.goal.completionVerification?.summary,
+                verificationStall: event.goal.verificationStall,
+              },
+            ]
+          : []
+      ),
       subagents: runtime.listSubagents().map((session) => ({
         id: session.id,
         type: session.subagentType,
@@ -207,10 +220,13 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
           completionVerification: {
             status: 'pass',
             verifierSessionId: expect.any(String),
-            summary: 'Independent verifier returned PASS.',
+            summary: expect.any(String),
             evidenceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
           },
         });
+        expect(completedGoal?.completionVerification?.summary).not.toBe(
+          'Independent verifier returned PASS.'
+        );
         const verificationAttempt =
           completedGoal?.completionVerification?.attempt ?? Number.NaN;
         expect(Number.isSafeInteger(verificationAttempt)).toBe(true);
@@ -345,6 +361,134 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
         expect(transcript).not.toContain('<goal-liveness>');
         expect(JSON.stringify(events)).not.toContain(modelConfig.apiKey);
       } finally {
+        await agent?.destroy().catch(() => undefined);
+        await runtime?.dispose().catch(() => undefined);
+        await rm(workspace, { recursive: true, force: true });
+      }
+    }, 300_000);
+
+    it(`${modelConfig.model} repairs from durable verifier feedback`, async () => {
+      const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-goal-feedback-'));
+      process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+      getState().config.actions.setConfig(buildRealApiRuntimeConfig(modelConfig));
+      const sessionId = `goal-feedback-${modelConfig.id}-${Date.now()}`;
+      const resultPath = path.join(workspace, 'goal-feedback.txt');
+      let runtime: SessionRuntime | undefined;
+      let agent: Agent | undefined;
+      let removedFirstCandidate = false;
+      let deletionTimer: NodeJS.Timeout | undefined;
+      let deletionChain = Promise.resolve();
+
+      try {
+        runtime = await SessionRuntime.create({
+          sessionId,
+          workspaceRoot: workspace,
+        });
+        await runtime.createGoal({
+          tokenBudget: 160_000,
+          objective:
+            'Create goal-feedback.txt containing exactly GOAL_FEEDBACK_COMPLETE ' +
+            'followed by a newline, read it back, and call UpdateGoal complete.',
+        });
+        agent = await Agent.createWithRuntime(runtime, { sessionId });
+        const context: ChatContext = {
+          messages: [],
+          userId: 'goal-feedback-real-api',
+          sessionId,
+          workspaceRoot: workspace,
+          permissionMode: 'yolo' as ChatContext['permissionMode'],
+        };
+        const events: LoopEvent[] = [];
+        const result = await drainLoop(
+          agent.chatStream('', context, {
+            stream: true,
+            goalContinuationOnly: true,
+          }),
+          async (event) => {
+            events.push(event);
+            if (
+              !removedFirstCandidate &&
+              event.kind === 'goal_updated' &&
+              event.goal?.status === 'verifying' &&
+              event.goal.completionVerification?.status === 'pending' &&
+              event.goal.completionVerification.attempt === 1
+            ) {
+              removedFirstCandidate = true;
+              await rm(resultPath, { force: true });
+              deletionTimer = setInterval(() => {
+                deletionChain = deletionChain.then(() =>
+                  rm(resultPath, { force: true })
+                );
+              }, 10);
+            } else if (
+              deletionTimer &&
+              event.kind === 'goal_updated' &&
+              event.goal?.completionVerification?.status !== undefined &&
+              event.goal.completionVerification.status !== 'pending'
+            ) {
+              clearInterval(deletionTimer);
+              deletionTimer = undefined;
+              await deletionChain;
+            }
+          }
+        );
+
+        const currentGoal = await runtime.getGoal();
+        expect(
+          result.success,
+          formatGoalFailure(result, currentGoal, events, runtime)
+        ).toBe(true);
+        expect(removedFirstCandidate).toBe(true);
+        expect(await readFile(resultPath, 'utf8')).toBe('GOAL_FEEDBACK_COMPLETE\n');
+        expect(currentGoal).toMatchObject({
+          status: 'complete',
+          completionVerification: {
+            attempt: expect.any(Number),
+            status: 'pass',
+            summary: expect.any(String),
+          },
+        });
+        expect(currentGoal?.verificationStall).toBeUndefined();
+        expect(currentGoal?.completionVerification?.attempt).toBe(1);
+        const verifierEvents = events.filter(
+          (event): event is Extract<LoopEvent, { kind: 'subagent_completed' }> =>
+            event.kind === 'subagent_completed' && event.type === 'goal-verification'
+        );
+        expect(verifierEvents.length).toBeGreaterThanOrEqual(2);
+        expect(verifierEvents.map((event) => event.verificationVerdict)).toEqual(
+          expect.arrayContaining(['fail', 'pass'])
+        );
+        const rejectedGoal = events.find(
+          (event) =>
+            event.kind === 'goal_updated' &&
+            event.goal?.completionVerification?.status === 'fail'
+        );
+        expect(rejectedGoal).toMatchObject({
+          kind: 'goal_updated',
+          goal: {
+            verificationStall: {
+              feedbackSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+              consecutiveCount: 1,
+            },
+          },
+        });
+        if (rejectedGoal?.kind !== 'goal_updated') {
+          throw new Error('Expected a rejected Goal snapshot');
+        }
+        expect(rejectedGoal.goal?.completionVerification?.summary).toBeTruthy();
+        expect(rejectedGoal.goal?.completionVerification?.summary).not.toBe(
+          'Independent verifier returned FAIL.'
+        );
+        const transcript = await readFile(
+          getSessionFilePath(workspace, sessionId),
+          'utf8'
+        );
+        expect(transcript).toContain('"verificationFeedback"');
+        expect(transcript).not.toContain('<goal-verification-feedback>');
+        expect(transcript).not.toContain(modelConfig.apiKey);
+      } finally {
+        if (deletionTimer) clearInterval(deletionTimer);
+        await deletionChain.catch(() => undefined);
         await agent?.destroy().catch(() => undefined);
         await runtime?.dispose().catch(() => undefined);
         await rm(workspace, { recursive: true, force: true });

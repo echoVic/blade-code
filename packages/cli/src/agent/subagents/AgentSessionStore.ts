@@ -110,6 +110,7 @@ export interface AgentSession {
     error?: string;
     verificationCommands?: string[];
     verificationVerdict?: VerificationVerdict;
+    verificationFeedback?: string;
     modifiedFiles?: string[];
   };
 
@@ -517,6 +518,7 @@ export class AgentSessionStore {
       error?: string;
       verificationCommands?: string[];
       verificationVerdict?: VerificationVerdict;
+      verificationFeedback?: string;
       modifiedFiles?: string[];
     },
     stats?: AgentSession['stats']

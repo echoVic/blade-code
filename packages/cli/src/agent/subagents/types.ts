@@ -227,6 +227,9 @@ export interface SubagentResult {
   /** verification subagent 的结构化最终判定 */
   verificationVerdict?: VerificationVerdict;
 
+  /** Goal verifier 的有界、脱敏修复反馈 */
+  verificationFeedback?: string;
+
   /** 子代理执行期间成功修改的文件路径 */
   modifiedFiles?: string[];
 
