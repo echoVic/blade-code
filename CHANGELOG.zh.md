@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.10.82] - 2026-08-23
+
+### 新增
+- 预测式上下文窗口计数现在使用最新的完整 Provider token usage 作为基线，并在下一次
+  请求前只估算响应后的 tool result、control message 与请求形状正向增长
+- Durable compaction checkpoint 与 Headless、Web、ACP 生命周期投影新增
+  `preTokenSource` 和 `estimatedPendingTokens`
+
+### 变更
+- 70% handoff 与 80% compaction 阈值改为共享同一个完整上下文投影，不再依赖上一请求
+  的 prompt tokens
+- 模型与 tool schema 切换会保留 Provider usage 作为保守下限；历史被破坏性改写或
+  usage 缺失时，对完整 system、tools 与 history 执行本地估算
+- TUI 上下文占用改用完整 Provider total tokens，与 Web 保持一致
+
+### 修复
+- 大模型响应、tool result、runtime control message 和新激活的 project rule 不再让
+  下一次 Provider 请求持续低估，直至触发反应式 context-limit failure
+- Turn-limit compaction 的压缩前 token 投影现在包含完整响应与 tool-result 增量
+
+### 测试
+- 新增边界、过期基线、模型/schema 切换、历史改写、持久化与跨端确定性覆盖
+- 使用真实 DeepSeek Flash/Pro 在 Headless、raw PTY、production Chromium Web 与 ACP
+  验证 prompt usage 低于阈值一 token 的负向对照
+
 ## [0.10.81] - 2026-08-23
 
 ### 新增

@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.10.82] - 2026-08-23
+
+### Added
+- Predictive context-window accounting now uses the latest complete Provider
+  token usage as a baseline and estimates only post-response tool results,
+  control messages, and positive request-shape growth before the next request
+- Durable compaction checkpoints and Headless, Web, and ACP lifecycle
+  projections now expose `preTokenSource` and `estimatedPendingTokens`
+
+### Changed
+- The 70% handoff and 80% compaction thresholds now share one complete-context
+  projection instead of relying on the previous request's prompt tokens
+- Model and tool-schema switches retain Provider usage as a conservative floor;
+  destructive history rewrites or missing usage fall back to a complete local
+  system, tool, and history estimate
+- TUI context occupancy now uses complete Provider total tokens, matching Web
+
+### Fixed
+- Large model completions, tool results, runtime control messages, and newly
+  activated project rules can no longer leave the next Provider request
+  undercounted until a reactive context-limit failure
+- Turn-limit compaction now includes all response and tool-result growth in its
+  pre-compaction token projection
+
+### Tests
+- Added boundary, stale-baseline, model/schema switch, history-rewrite,
+  persistence, and cross-surface deterministic coverage
+- Qualified the one-token-below-threshold negative control with real DeepSeek
+  Flash/Pro across Headless, raw PTY, production Chromium Web, and ACP
+
 ## [0.10.81] - 2026-08-23
 
 ### Added
