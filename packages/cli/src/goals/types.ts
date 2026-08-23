@@ -20,6 +20,24 @@ export const GOAL_COMPLETION_VERIFICATION_STATUSES = [
 export type GoalCompletionVerificationStatus =
   (typeof GOAL_COMPLETION_VERIFICATION_STATUSES)[number];
 
+export const GOAL_PREMATURE_STOP_PATTERNS = [
+  'unable_to_proceed',
+  'stopping_here',
+  'internal_wait',
+  'self_deferral',
+  'handoff',
+] as const;
+
+export type GoalPrematureStopPattern = (typeof GOAL_PREMATURE_STOP_PATTERNS)[number];
+
+export const MAX_CONSECUTIVE_GOAL_PREMATURE_STOPS = 3;
+
+export interface GoalPrematureStopState {
+  pattern: GoalPrematureStopPattern;
+  consecutiveCount: number;
+  detectedAt: string;
+}
+
 export interface GoalCompletionVerification {
   attempt: number;
   status: GoalCompletionVerificationStatus;
@@ -42,6 +60,7 @@ export interface GoalSnapshot {
   continuationCount: number;
   statusReason?: string;
   completionVerification?: GoalCompletionVerification;
+  prematureStop?: GoalPrematureStopState;
   createdAt: string;
   updatedAt: string;
 }
@@ -60,6 +79,7 @@ export interface GoalCreateInput {
 export interface GoalProgress {
   tokens: number;
   elapsedMs: number;
+  prematureStopPattern?: GoalPrematureStopPattern;
 }
 
 export interface GoalCompletionVerificationResult {

@@ -1603,6 +1603,22 @@ export class AcpSession {
               }
               break;
             case 'goal_continuation_started':
+              this.sendUpdate({
+                sessionUpdate: 'session_info_update',
+                updatedAt: new Date().toISOString(),
+                _meta: {
+                  'blade/goalContinuation': {
+                    goalId: event.goal.goalId,
+                    continuation: event.continuation,
+                    ...(event.prematureStopPattern
+                      ? { prematureStopPattern: event.prematureStopPattern }
+                      : {}),
+                    ...(event.prematureStopCount !== undefined
+                      ? { prematureStopCount: event.prematureStopCount }
+                      : {}),
+                  },
+                },
+              });
               break;
             case 'compaction':
               this.sendUpdate({

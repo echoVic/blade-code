@@ -347,6 +347,109 @@ describe('GoalStore', () => {
     await expect(store.beginContinuation()).rejects.toThrow('budget_limited');
   });
 
+  it('persists consecutive premature stops and clears the streak on progress', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    await store.create({ objective: 'keep making progress' });
+
+    await expect(
+      store.recordProgress({
+        tokens: 10,
+        elapsedMs: 1_000,
+        prematureStopPattern: 'self_deferral',
+      })
+    ).resolves.toMatchObject({
+      prematureStop: {
+        pattern: 'self_deferral',
+        consecutiveCount: 1,
+      },
+    });
+    await expect(
+      store.recordProgress({
+        tokens: 10,
+        elapsedMs: 1_000,
+        prematureStopPattern: 'self_deferral',
+      })
+    ).resolves.toMatchObject({
+      prematureStop: {
+        pattern: 'self_deferral',
+        consecutiveCount: 2,
+      },
+    });
+    await expect(new GoalStore(workspaceRoot, sessionId).get()).resolves.toMatchObject({
+      prematureStop: {
+        pattern: 'self_deferral',
+        consecutiveCount: 2,
+        detectedAt: expect.any(String),
+      },
+    });
+
+    await expect(
+      store.recordProgress({
+        tokens: 10,
+        elapsedMs: 1_000,
+        prematureStopPattern: 'internal_wait',
+      })
+    ).resolves.toMatchObject({
+      prematureStop: {
+        pattern: 'internal_wait',
+        consecutiveCount: 1,
+      },
+    });
+    await expect(
+      store.recordProgress({ tokens: 10, elapsedMs: 1_000 })
+    ).resolves.toMatchObject({ prematureStop: undefined });
+  });
+
+  it('clears stale premature-stop recovery after explicit user resume', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    await store.create({ objective: 'resume with fresh evidence' });
+    await store.recordProgress({
+      tokens: 10,
+      elapsedMs: 1_000,
+      prematureStopPattern: 'stopping_here',
+    });
+    await store.pause();
+
+    await expect(store.resume()).resolves.toMatchObject({
+      status: 'active',
+      prematureStop: undefined,
+    });
+  });
+
+  it('blocks a goal after the same premature-stop pattern repeats three times', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    await store.create({ objective: 'stop an unproductive loop' });
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await expect(
+        store.recordProgress({
+          tokens: 10,
+          elapsedMs: 1_000,
+          prematureStopPattern: 'internal_wait',
+        })
+      ).resolves.toMatchObject({
+        status: 'active',
+        prematureStop: { consecutiveCount: attempt },
+      });
+    }
+    await expect(
+      store.recordProgress({
+        tokens: 10,
+        elapsedMs: 1_000,
+        prematureStopPattern: 'internal_wait',
+      })
+    ).resolves.toMatchObject({
+      status: 'blocked',
+      statusReason: 'automatic liveness guard after 3 consecutive internal_wait turns',
+      completionVerification: undefined,
+      prematureStop: {
+        pattern: 'internal_wait',
+        consecutiveCount: 3,
+      },
+    });
+    await expect(store.tryBeginContinuation()).resolves.toBeNull();
+  });
+
   it('fails closed on corrupt or mismatched persisted state', async () => {
     const filePath = getSessionGoalFilePath(workspaceRoot, sessionId);
     await mkdir(path.dirname(filePath), { recursive: true });

@@ -27,6 +27,18 @@ const sessionState = vi.hoisted(() => ({
           summary?: string;
           evidenceSha256?: string;
         },
+    prematureStop: undefined as
+      | undefined
+      | {
+          pattern:
+            | 'unable_to_proceed'
+            | 'stopping_here'
+            | 'internal_wait'
+            | 'self_deferral'
+            | 'handoff';
+          consecutiveCount: number;
+          detectedAt: string;
+        },
     createdAt: '2026-08-04T00:00:00.000Z',
     updatedAt: '2026-08-04T00:01:35.000Z',
   },
@@ -52,6 +64,7 @@ describe('GoalControlBar', () => {
     (sessionState.goal as { status: string }).status = 'paused';
     sessionState.goal.statusReason = 'paused by user';
     sessionState.goal.completionVerification = undefined;
+    sessionState.goal.prematureStop = undefined;
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -103,6 +116,33 @@ describe('GoalControlBar', () => {
       await Promise.resolve();
     });
     expect(sessionState.pauseGoal).toHaveBeenCalledOnce();
+  });
+
+  it('projects durable premature-stop recovery state for automation', async () => {
+    (sessionState.goal as { status: string }).status = 'active';
+    sessionState.goal.prematureStop = {
+      pattern: 'internal_wait',
+      consecutiveCount: 2,
+      detectedAt: '2026-08-22T00:00:00.000Z',
+    };
+
+    act(() => {
+      root.render(<GoalControlBar />);
+    });
+
+    expect(
+      container.querySelector(
+        '[data-blade-goal-recovery="2"][data-blade-goal-recovery-pattern="internal_wait"]'
+      )
+    ).toBeTruthy();
+    await act(async () => {
+      container
+        .querySelector('[aria-label="Expand goal details"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain('Recovery nudge 2');
+    expect(container.textContent).toContain('internal wait');
   });
 
   it('renders durable independent verification evidence', async () => {

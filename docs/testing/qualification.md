@@ -92,6 +92,10 @@ Goal completion 的 fresh PASS authority 同时绑定当前 host run、mutation 
 verifier Session ID、verdict、evidence digest 与 finalization snapshot；候选变化、
 workspace mutation 或进程重启才能使 receipt 失效，不能因重复候选额外消耗
 verification retry budget。
+Goal premature-stop recovery 固定运行当前资格环境中的 DeepSeek、Claude、GPT 与国产
+模型。每个模型必须先产生一次无工具的 `self_deferral`，随后在没有用户输入的情况下
+接收 host recovery continuation，完成真实文件写入、读取验证和独立 Goal verifier。
+测试使用显式 token budget 防止失败夹具形成无界循环。
 完整 `test:real-api` 另含 GPT Prompt Cache efficiency 轨迹：先等待真实 cache read，
 再替换全部稳定 prompt block，并要求 runtime 输出 `system_prompt_changed` attribution。
 该轨迹同时验证自适应 token 阈值；不得用 mock usage、固定 cache counter 或仅比较

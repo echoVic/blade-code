@@ -176,6 +176,9 @@ export const ChatStatusBar: React.FC = React.memo(() => {
                 }
               >
                 goal:{goal.status} {goal.objective.slice(0, 32)}
+                {goal.prematureStop
+                  ? ` recovery:${goal.prematureStop.consecutiveCount}`
+                  : ''}
               </Text>
               <Text color="gray">·</Text>
             </>

@@ -82,6 +82,25 @@ receipt durable commit。Runtime 只在 receipt 的 goal ID、attempt、verifier
 evidence SHA-256 与 Goal `updatedAt` 全部匹配当前 `verifying/pass` sidecar 时，幂等
 finalize 为 `complete`。receipt 缺失、损坏或不匹配时不会信任旧 PASS。
 
+## Premature Stop 恢复
+
+当 Goal 仍为 `active` 或 `verifying` 时，宿主会检查成功回合最后一个非空段落是否以
+保守的自我延期或交接语句结束，例如等待内部 worker、自行稍后重试、停止在此或声明
+ready for review。命中后：
+
+- Goal sidecar 只持久化稳定 pattern、连续次数和检测时间，不保存模型原文；
+- 下一次 continuation 会明确要求读取 durable task 状态、接收已完成工作并立即执行
+  下一步；
+- 第二次连续命中后提示必须改变策略，检查或重启停滞 worker，并验证当前假设；
+- 同一 pattern 连续第三次命中后，宿主把 Goal 原子切换为 `blocked`，阻止无界 token
+  消耗；
+- 普通进展、用户显式 resume、编辑 Goal 或提交完成候选会清空连续计数。
+
+该机制没有全局 continuation 上限。只有同一可审计 pattern 连续三次命中才触发
+liveness breaker；pattern 改变会从 1 重新计数。用户可以在检查证据后显式 resume。
+真实外部阻塞仍应由执行 Agent 通过 `UpdateGoal blocked` 和具体证据表达；完整完成
+仍走独立 verifier。
+
 ## 跨端投影
 
 ### CLI / TUI
@@ -98,17 +117,21 @@ finalize 为 `complete`。receipt 缺失、损坏或不匹配时不会信任旧 
   "verification_attempt": 1,
   "verification_status": "pass",
   "verifier_session_id": "agent_...",
-  "verification_evidence_sha256": "..."
+  "verification_evidence_sha256": "...",
+  "premature_stop_pattern": "internal_wait",
+  "premature_stop_count": 2
 }
 ```
 
-文本输出把 lifecycle 写入 stderr，不污染最终 stdout。
+文本输出把 lifecycle 写入 stderr，不污染最终 stdout。TUI 状态栏在恢复期间显示
+`recovery:N`。
 
 ### Web
 
 Goal control bar 显示 `Verifying completion / 正在验证完成声明`。展开后展示 attempt、
 稳定 verdict、opaque verifier Session ID、安全摘要与 SHA-256 前缀。fresh tab 从
-GoalSnapshot 恢复相同证据。
+GoalSnapshot 恢复相同证据。自动化可通过 `data-blade-goal-recovery` 和
+`data-blade-goal-recovery-pattern` 检查 durable recovery 状态。
 
 ### ACP
 
@@ -128,6 +151,8 @@ Goal lifecycle 和 verifier Task 使用标准 session update。同步 prompt 完
 ```
 
 ACP projection 不包含 verifier 原文、宿主路径或 credential。
+每次 continuation 还会通过 `blade/goalContinuation` metadata 投影 continuation、
+premature-stop pattern 和连续次数。
 
 ## 准出
 
@@ -139,6 +164,7 @@ ACP projection 不包含 verifier 原文、宿主路径或 credential。
 - mutation、steering、restart 和 Stop continuation 使证据失效；
 - reserved agent、只读 sandbox、权限边界和 structured verdict；
 - GoalStore `0600` 原子持久化；
+- premature-stop 保守匹配、误报对照组、连续计数重置和分级恢复提示；
 - final assistant 与 Goal sidecar 之间的 crash handoff、幂等重试和 stale receipt 拒绝；
 - CLI JSONL、TUI、Web bilingual/fresh-tab 与 ACP `_meta`。
 

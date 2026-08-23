@@ -20,6 +20,7 @@ import {
 import type { ModelConfig } from '../config/types.js';
 import { ContextManager } from '../context/ContextManager.js';
 import { getBladeStorageRoot } from '../context/storage/pathUtils.js';
+import { detectGoalPrematureStop } from '../goals/prematureStop.js';
 import { buildGoalContinuationPrompt } from '../goals/prompts.js';
 import type { GoalSnapshot } from '../goals/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
@@ -747,6 +748,12 @@ export class Agent {
             kind: 'goal_continuation_started',
             goal: currentGoal,
             continuation: currentGoal.continuationCount,
+            ...(currentGoal.prematureStop
+              ? {
+                  prematureStopPattern: currentGoal.prematureStop.pattern,
+                  prematureStopCount: currentGoal.prematureStop.consecutiveCount,
+                }
+              : {}),
           };
           yield { kind: 'goal_updated', goal: currentGoal };
         }
@@ -872,6 +879,9 @@ export class Agent {
           let goal = await this.sessionRuntime.recordGoalProgress({
             tokens: result.metadata?.tokensUsed ?? 0,
             elapsedMs: result.metadata?.duration ?? 0,
+            prematureStopPattern: result.success
+              ? detectGoalPrematureStop(result.finalMessage)
+              : undefined,
           });
           if (goal) {
             yield { kind: 'goal_updated', goal };
@@ -957,6 +967,12 @@ export class Agent {
             kind: 'goal_continuation_started',
             goal: currentGoal,
             continuation: currentGoal.continuationCount,
+            ...(currentGoal.prematureStop
+              ? {
+                  prematureStopPattern: currentGoal.prematureStop.pattern,
+                  prematureStopCount: currentGoal.prematureStop.consecutiveCount,
+                }
+              : {}),
           };
           yield { kind: 'goal_updated', goal: currentGoal };
         }

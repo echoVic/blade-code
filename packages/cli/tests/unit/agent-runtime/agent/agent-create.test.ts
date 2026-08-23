@@ -1679,4 +1679,120 @@ describe('Agent runLoop system prompt injection', () => {
     ).toHaveLength(totalContinuations);
     expect(next.value).toMatchObject({ success: true });
   });
+
+  it('persists a premature stop and injects recovery into the next goal turn', async () => {
+    const makeGoal = (
+      status: 'active' | 'complete',
+      continuationCount: number,
+      withRecovery = false
+    ) => ({
+      version: 1 as const,
+      sessionId: 'session-1',
+      goalId: 'goal-1',
+      objective: 'finish the migration',
+      status,
+      tokensUsed: continuationCount * 100,
+      timeUsedSeconds: continuationCount,
+      continuationCount,
+      ...(withRecovery
+        ? {
+            prematureStop: {
+              pattern: 'self_deferral' as const,
+              consecutiveCount: 1,
+              detectedAt: '2026-08-22T00:00:00.000Z',
+            },
+          }
+        : {}),
+      createdAt: '2026-08-22T00:00:00.000Z',
+      updatedAt: '2026-08-22T00:00:00.000Z',
+    });
+    let completedTurns = 0;
+    let claimedTurns = 0;
+    const runtime = {
+      ...createGoalRuntimeMocks(),
+      beginTurn: vi.fn(() => ({ id: `goal-turn-${claimedTurns}` })),
+      beginGoalContinuation: vi.fn(async () => {
+        claimedTurns++;
+        return makeGoal('active', claimedTurns, claimedTurns > 1);
+      }),
+      getGoal: vi.fn(async () =>
+        completedTurns >= 2
+          ? makeGoal('complete', 2)
+          : makeGoal('active', completedTurns, completedTurns === 1)
+      ),
+      recordGoalProgress: vi.fn(async () => {
+        completedTurns++;
+        return completedTurns >= 2
+          ? makeGoal('complete', 2)
+          : makeGoal('active', 1, true);
+      }),
+      acknowledgeTurn: vi.fn().mockResolvedValue(undefined),
+      finishTurn: vi.fn().mockResolvedValue(undefined),
+      drainSteering: vi.fn().mockResolvedValue([]),
+      drainSteeringOrSeal: vi.fn().mockResolvedValue({
+        messages: [],
+        sealed: true,
+      }),
+      prepareInputTurn: vi.fn(),
+    };
+    const agent = new Agent(
+      createConfig(),
+      {},
+      { getRegistry: () => ({ getAll: () => [] }) } as any,
+      runtime as any
+    );
+    (agent as any).isInitialized = true;
+    const messages: string[] = [];
+    (agent as any).runLoop = vi.fn(async function* (message: string) {
+      messages.push(message);
+      if (Date.now() < 0) yield undefined;
+      return {
+        success: true,
+        finalMessage:
+          messages.length === 1
+            ? "I'll check back later."
+            : 'Migration completed after recovery.',
+        metadata: {
+          turnsCount: 1,
+          toolCallsCount: 0,
+          duration: 1_000,
+          tokensUsed: 100,
+        },
+      };
+    });
+
+    const events = [];
+    const stream = agent.chatStream(
+      '',
+      {
+        messages: [],
+        userId: 'user-1',
+        sessionId: 'session-1',
+        workspaceRoot: process.cwd(),
+      },
+      { goalContinuationOnly: true }
+    );
+    let next;
+    while (!(next = await stream.next()).done) {
+      events.push(next.value);
+    }
+
+    expect(runtime.recordGoalProgress).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ prematureStopPattern: 'self_deferral' })
+    );
+    expect(runtime.recordGoalProgress).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ prematureStopPattern: undefined })
+    );
+    expect(messages[1]).toContain('Previous turn pattern: self_deferral');
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'goal_continuation_started',
+        prematureStopPattern: 'self_deferral',
+        prematureStopCount: 1,
+      })
+    );
+    expect(next.value).toMatchObject({ success: true });
+  });
 });

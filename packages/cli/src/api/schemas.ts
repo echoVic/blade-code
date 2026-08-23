@@ -1,3 +1,4 @@
+import type { GoalPrematureStopPattern } from '../goals/types.js';
 import { Default, Runtime, type Static, StringEnum, Type } from '../schema/index.js';
 import {
   MAX_INLINE_ATTACHMENT_BYTES,
@@ -356,6 +357,13 @@ export const GoalSchema = Runtime(
         verifierSessionId: Type.Optional(Type.String()),
         summary: Type.Optional(Type.String()),
         evidenceSha256: Type.Optional(Type.String({ pattern: '^[a-f0-9]{64}$' })),
+      })
+    ),
+    prematureStop: Type.Optional(
+      Type.Object({
+        pattern: Type.Unsafe<GoalPrematureStopPattern>({ type: 'string' }),
+        consecutiveCount: Type.Integer({ minimum: 1 }),
+        detectedAt: Type.String(),
       })
     ),
     createdAt: Type.String(),

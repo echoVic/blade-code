@@ -441,6 +441,8 @@ describe('headless event contract', () => {
       verification_status: 'partial',
       verifier_session_id: 'verifier-2',
       verification_evidence_sha256: 'e'.repeat(64),
+      premature_stop_pattern: 'internal_wait',
+      premature_stop_count: 2,
     });
     expect(goal).toEqual({
       event_version: 1,
@@ -452,6 +454,8 @@ describe('headless event contract', () => {
       verification_status: 'partial',
       verifier_session_id: 'verifier-2',
       verification_evidence_sha256: 'e'.repeat(64),
+      premature_stop_pattern: 'internal_wait',
+      premature_stop_count: 2,
     });
     expect(() => HeadlessJsonlEventSchema.parse(goal)).not.toThrow();
 

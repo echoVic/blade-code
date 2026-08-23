@@ -951,6 +951,8 @@ function createEventWriter(
           verifier_session_id: event.goal?.completionVerification?.verifierSessionId,
           verification_evidence_sha256:
             event.goal?.completionVerification?.evidenceSha256,
+          premature_stop_pattern: event.goal?.prematureStop?.pattern,
+          premature_stop_count: event.goal?.prematureStop?.consecutiveCount,
         });
         return;
       }

@@ -4781,6 +4781,12 @@ async function executeRunAsync(
           emit('goal.continuation.started', {
             goal: event.goal,
             continuation: event.continuation,
+            ...(event.prematureStopPattern
+              ? { prematureStopPattern: event.prematureStopPattern }
+              : {}),
+            ...(event.prematureStopCount !== undefined
+              ? { prematureStopCount: event.prematureStopCount }
+              : {}),
           });
           ensureAssistantMessage();
           break;

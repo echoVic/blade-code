@@ -1618,6 +1618,57 @@ describe('AcpSession', () => {
       );
     });
 
+    it('projects Goal premature-stop recovery through ACP metadata', async () => {
+      const mockAgent = getMockAgent();
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield {
+          kind: 'goal_continuation_started',
+          goal: {
+            version: 1,
+            sessionId: 'test-session-id',
+            goalId: 'goal-recovery',
+            objective: 'finish the migration',
+            status: 'active',
+            tokensUsed: 100,
+            timeUsedSeconds: 2,
+            continuationCount: 2,
+            prematureStop: {
+              pattern: 'self_deferral',
+              consecutiveCount: 2,
+              detectedAt: '2026-08-22T00:00:00.000Z',
+            },
+            createdAt: '2026-08-22T00:00:00.000Z',
+            updatedAt: '2026-08-22T00:00:00.000Z',
+          },
+          continuation: 2,
+          prematureStopPattern: 'self_deferral',
+          prematureStopCount: 2,
+        } as LoopEvent;
+        return { success: true, finalMessage: 'continuing' };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'continue the goal' }],
+      });
+
+      expect(mockConnection.sessionUpdates).toContainEqual({
+        sessionId: 'test-session-id',
+        update: {
+          sessionUpdate: 'session_info_update',
+          updatedAt: expect.any(String),
+          _meta: {
+            'blade/goalContinuation': {
+              goalId: 'goal-recovery',
+              continuation: 2,
+              prematureStopPattern: 'self_deferral',
+              prematureStopCount: 2,
+            },
+          },
+        },
+      });
+    });
+
     it('projects reactive compaction lifecycle through ACP metadata only', async () => {
       const mockAgent = getMockAgent();
       mockAgent.chatStream = vi.fn(async function* () {

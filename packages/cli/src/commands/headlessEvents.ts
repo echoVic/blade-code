@@ -4,6 +4,8 @@
  * The external wire format intentionally uses snake_case so tests and sandbox
  * integrations can consume it without depending on internal TypeScript naming.
  */
+
+import { GOAL_PREMATURE_STOP_PATTERNS } from '../goals/types.js';
 import {
   Runtime,
   type Static,
@@ -295,6 +297,8 @@ const GoalEventSchema = event({
   verification_evidence_sha256: Type.Optional(
     Type.String({ pattern: '^[a-f0-9]{64}$' })
   ),
+  premature_stop_pattern: Type.Optional(StringEnum(GOAL_PREMATURE_STOP_PATTERNS)),
+  premature_stop_count: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 
 const SubagentEventSchema = event({

@@ -157,6 +157,8 @@ export function GoalControlBar() {
           aria-label={t('goal.aria.section')}
           className="mx-3 mb-1 shrink-0"
           data-blade-goal-status={goal.status}
+          data-blade-goal-recovery={goal.prematureStop?.consecutiveCount}
+          data-blade-goal-recovery-pattern={goal.prematureStop?.pattern}
         >
           {/* Compact strip */}
           <div
@@ -325,6 +327,14 @@ export function GoalControlBar() {
                           })}
                     </span>
                   </div>
+                  {goal.prematureStop && (
+                    <div className="mt-2 inline-flex items-center gap-1.5 font-mono text-[10px] text-amber-700 dark:text-amber-300">
+                      <RotateCcw className="h-3 w-3" />
+                      {locale === 'zh' ? '恢复提示' : 'Recovery nudge'}{' '}
+                      {goal.prematureStop.consecutiveCount} ·{' '}
+                      {goal.prematureStop.pattern.replaceAll('_', ' ')}
+                    </div>
+                  )}
                   {goal.completionVerification && (
                     <div
                       data-goal-verification={goal.completionVerification.status}

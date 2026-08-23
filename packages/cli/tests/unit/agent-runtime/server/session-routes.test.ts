@@ -2697,6 +2697,29 @@ describe('SessionRoutes runtime reuse', () => {
         delivery: 'next_turn',
       };
       yield {
+        kind: 'goal_continuation_started',
+        goal: {
+          version: 1,
+          sessionId: 'surface-events',
+          goalId: 'goal-recovery',
+          objective: 'finish the migration',
+          status: 'active',
+          tokensUsed: 100,
+          timeUsedSeconds: 2,
+          continuationCount: 2,
+          prematureStop: {
+            pattern: 'internal_wait',
+            consecutiveCount: 2,
+            detectedAt: '2026-08-22T00:00:00.000Z',
+          },
+          createdAt: '2026-08-22T00:00:00.000Z',
+          updatedAt: '2026-08-22T00:00:00.000Z',
+        },
+        continuation: 2,
+        prematureStopPattern: 'internal_wait',
+        prematureStopCount: 2,
+      };
+      yield {
         kind: 'tool_result',
         toolCall: {
           id: 'tool-failed-without-error-payload',
@@ -2843,6 +2866,15 @@ describe('SessionRoutes runtime reuse', () => {
         messageIds: ['recovered-steer'],
         count: 1,
         recovered: 1,
+      })
+    );
+    expect(Bus.publish).toHaveBeenCalledWith(
+      refFor('surface-events'),
+      'goal.continuation.started',
+      expect.objectContaining({
+        continuation: 2,
+        prematureStopPattern: 'internal_wait',
+        prematureStopCount: 2,
       })
     );
     expect(Bus.publish).toHaveBeenCalledWith(

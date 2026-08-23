@@ -8,12 +8,14 @@ import { parseSchema, StringEnum, safeParseSchema, Type } from '../schema/index.
 import { KeyedMutexRegistry } from '../utils/KeyedMutexRegistry.js';
 import {
   GOAL_COMPLETION_VERIFICATION_STATUSES,
+  GOAL_PREMATURE_STOP_PATTERNS,
   GOAL_STATUSES,
   type GoalChangeEvent,
   type GoalCompletionVerificationResult,
   type GoalCreateInput,
   type GoalProgress,
   type GoalSnapshot,
+  MAX_CONSECUTIVE_GOAL_PREMATURE_STOPS,
 } from './types.js';
 
 const MAX_GOAL_FILE_BYTES = 1024 * 1024;
@@ -47,6 +49,13 @@ const GoalSnapshotSchema = Type.Object({
   continuationCount: Type.Integer({ minimum: 0 }),
   statusReason: Type.Optional(Type.String()),
   completionVerification: Type.Optional(GoalCompletionVerificationSchema),
+  prematureStop: Type.Optional(
+    Type.Object({
+      pattern: StringEnum(GOAL_PREMATURE_STOP_PATTERNS),
+      consecutiveCount: Type.Integer({ minimum: 1 }),
+      detectedAt: Type.String({ format: 'date-time' }),
+    })
+  ),
   createdAt: Type.String({ format: 'date-time' }),
   updatedAt: Type.String({ format: 'date-time' }),
 });
@@ -155,6 +164,7 @@ export class GoalStore {
         ...goal,
         objective: normalizeObjective(objective),
         completionVerification: undefined,
+        prematureStop: undefined,
         status: goal.status === 'verifying' ? 'active' : goal.status,
         statusReason: goal.status === 'verifying' ? undefined : goal.statusReason,
         updatedAt: new Date().toISOString(),
@@ -210,6 +220,7 @@ export class GoalStore {
         ...goal,
         status: completionPending ? 'verifying' : 'active',
         statusReason: undefined,
+        prematureStop: undefined,
         updatedAt: new Date().toISOString(),
       };
     });
@@ -234,6 +245,7 @@ export class GoalStore {
         ...goal,
         status: 'verifying',
         statusReason: 'awaiting independent completion verification',
+        prematureStop: undefined,
         completionVerification: {
           attempt: (goal.completionVerification?.attempt ?? 0) + 1,
           status: 'pending',
@@ -317,6 +329,7 @@ export class GoalStore {
         ...goal,
         status: 'complete',
         statusReason: undefined,
+        prematureStop: undefined,
         updatedAt: new Date().toISOString(),
       };
     });
@@ -383,15 +396,41 @@ export class GoalStore {
       const tokens = Math.max(0, Math.round(progress.tokens));
       const elapsedSeconds = Math.max(0, Math.round(progress.elapsedMs / 1000));
       const tokensUsed = goal.tokensUsed + tokens;
+      const now = new Date().toISOString();
       const budgetLimited =
         goal.tokenBudget !== undefined && tokensUsed >= goal.tokenBudget;
+      const consecutivePrematureStops = progress.prematureStopPattern
+        ? goal.prematureStop?.pattern === progress.prematureStopPattern
+          ? goal.prematureStop.consecutiveCount + 1
+          : 1
+        : 0;
+      const prematureStop = progress.prematureStopPattern
+        ? {
+            pattern: progress.prematureStopPattern,
+            consecutiveCount: consecutivePrematureStops,
+            detectedAt: now,
+          }
+        : undefined;
+      const livenessBlocked =
+        prematureStop !== undefined &&
+        prematureStop.consecutiveCount >= MAX_CONSECUTIVE_GOAL_PREMATURE_STOPS;
       const next: GoalSnapshot = {
         ...goal,
         tokensUsed,
         timeUsedSeconds: goal.timeUsedSeconds + elapsedSeconds,
-        status: budgetLimited ? 'budget_limited' : goal.status,
-        statusReason: budgetLimited ? 'token budget exhausted' : goal.statusReason,
-        updatedAt: new Date().toISOString(),
+        status: budgetLimited
+          ? 'budget_limited'
+          : livenessBlocked
+            ? 'blocked'
+            : goal.status,
+        statusReason: budgetLimited
+          ? 'token budget exhausted'
+          : livenessBlocked
+            ? `automatic liveness guard after ${prematureStop.consecutiveCount} consecutive ${prematureStop.pattern} turns`
+            : goal.statusReason,
+        ...(livenessBlocked ? { completionVerification: undefined } : {}),
+        prematureStop,
+        updatedAt: now,
       };
       await this.persistUnlocked(next);
       this.emit(next);

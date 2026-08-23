@@ -71,6 +71,11 @@ describe('API Schemas', () => {
           summary: 'One requirement lacks evidence.',
           evidenceSha256: 'b'.repeat(64),
         },
+        prematureStop: {
+          pattern: 'internal_wait',
+          consecutiveCount: 2,
+          detectedAt: '2026-08-11T00:00:02.000Z',
+        },
         createdAt: '2026-08-11T00:00:00.000Z',
         updatedAt: '2026-08-11T00:00:03.000Z',
       });
@@ -82,6 +87,10 @@ describe('API Schemas', () => {
           status: 'partial',
           verifierSessionId: 'verifier-2',
           evidenceSha256: 'b'.repeat(64),
+        },
+        prematureStop: {
+          pattern: 'internal_wait',
+          consecutiveCount: 2,
         },
       });
     });

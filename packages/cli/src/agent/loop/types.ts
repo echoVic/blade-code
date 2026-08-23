@@ -10,12 +10,12 @@ import type {
   CompactionReason,
   CompactionStrategy,
 } from '../../context/compactionCheckpoint.js';
-import type { GoalSnapshot } from '../../goals/types.js';
+import type { GoalPrematureStopPattern, GoalSnapshot } from '../../goals/types.js';
 import type {
   ChatCompletionMessageToolCall,
   IChatService,
+  PromptCacheBreakInfo,
 } from '../../services/ChatServiceInterface.js';
-import type { PromptCacheBreakInfo } from '../../services/ChatServiceInterface.js';
 import type { ProviderCircuitEvent } from '../../services/pi/providerCircuitBreaker.js';
 import type { ProviderAdmissionEvent } from '../../services/pi/providerRequestAdmission.js';
 import type { ProviderRetryEvent } from '../../services/pi/providerRetry.js';
@@ -209,6 +209,8 @@ export type DomainEvent =
       kind: 'goal_continuation_started';
       goal: GoalSnapshot;
       continuation: number;
+      prematureStopPattern?: GoalPrematureStopPattern;
+      prematureStopCount?: number;
     }
   | {
       kind: 'subagent_spawned';

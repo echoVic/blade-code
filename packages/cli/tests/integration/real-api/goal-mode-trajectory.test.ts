@@ -278,6 +278,79 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
       }
     }, 300_000);
 
+    it(`${modelConfig.model} recovers a premature Goal stop without user input`, async () => {
+      const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-goal-recovery-'));
+      process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');
+      getState().config.actions.setConfig(buildRealApiRuntimeConfig(modelConfig));
+      const sessionId = `goal-recovery-${modelConfig.id}-${Date.now()}`;
+      const resultPath = path.join(workspace, 'goal-recovery.txt');
+      let runtime: SessionRuntime | undefined;
+      let agent: Agent | undefined;
+
+      try {
+        runtime = await SessionRuntime.create({
+          sessionId,
+          workspaceRoot: workspace,
+        });
+        await runtime.createGoal({
+          tokenBudget: 120_000,
+          objective:
+            'Follow the Continuation number in the host goal-state exactly. When ' +
+            'Continuation is 1, use no tools and output exactly: I will check back ' +
+            'later. When Continuation is 2 or greater, write GOAL_RECOVERY_COMPLETE ' +
+            'followed by a newline to goal-recovery.txt, read the file to verify its ' +
+            'exact content, then call UpdateGoal with status complete.',
+        });
+        agent = await Agent.createWithRuntime(runtime, { sessionId });
+        const context: ChatContext = {
+          messages: [],
+          userId: 'goal-recovery-real-api',
+          sessionId,
+          workspaceRoot: workspace,
+          permissionMode: 'yolo' as ChatContext['permissionMode'],
+        };
+        const events: LoopEvent[] = [];
+        const result = await drainLoop(
+          agent.chatStream('', context, {
+            stream: true,
+            goalContinuationOnly: true,
+          }),
+          (event) => {
+            events.push(event);
+          }
+        );
+
+        const currentGoal = await runtime.getGoal();
+        expect(
+          result.success,
+          formatGoalFailure(result, currentGoal, events, runtime)
+        ).toBe(true);
+        expect(await readFile(resultPath, 'utf8')).toBe('GOAL_RECOVERY_COMPLETE\n');
+        expect(currentGoal).toMatchObject({
+          status: 'complete',
+          completionVerification: { status: 'pass' },
+        });
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            kind: 'goal_continuation_started',
+            prematureStopPattern: 'self_deferral',
+            prematureStopCount: 1,
+          })
+        );
+        const transcript = await readFile(
+          getSessionFilePath(workspace, sessionId),
+          'utf8'
+        );
+        expect(transcript).toContain('I will check back later.');
+        expect(transcript).not.toContain('<goal-liveness>');
+        expect(JSON.stringify(events)).not.toContain(modelConfig.apiKey);
+      } finally {
+        await agent?.destroy().catch(() => undefined);
+        await runtime?.dispose().catch(() => undefined);
+        await rm(workspace, { recursive: true, force: true });
+      }
+    }, 300_000);
+
     it(`${modelConfig.model} completes a goal through Web REST and lifecycle events`, async () => {
       const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-web-goal-'));
       process.env.BLADE_STORAGE_ROOT = path.join(workspace, '.blade-storage');

@@ -70,6 +70,18 @@ On restart, even if an old PASS already exists on disk, the host reruns a fresh 
 
 The sole exception is when the final assistant already carries a host-owned `turnFinalization.goalFinalization` receipt durable commit. The Runtime only idempotently finalizes to `complete` when the receipt's goal ID, attempt, verifier Session ID, evidence SHA-256, and Goal `updatedAt` all match the current `verifying/pass` sidecar. When the receipt is missing, corrupted, or mismatched, the old PASS is not trusted.
 
+## Premature-Stop Recovery
+
+While a Goal remains `active` or `verifying`, the host checks whether the final non-empty paragraph of a successful turn begins with a conservative self-deferral or handoff phrase, such as waiting for an internal worker, retrying later, stopping here, or declaring the work ready for review. On a match:
+
+- The Goal sidecar persists only a stable pattern, consecutive count, and detection time; it does not store the model's original text;
+- The next continuation explicitly requires reading durable task state, retrieving completed work, and taking the next concrete action immediately;
+- After the second consecutive match, the prompt requires a strategy change, inspection or restart of stalled workers, and validation of current assumptions;
+- On the third consecutive match of the same pattern, the host atomically changes the Goal to `blocked`, preventing unbounded token consumption;
+- Ordinary progress, explicit user resume, Goal editing, or submission of a completion candidate clears the consecutive count.
+
+This mechanism has no global continuation limit. The liveness breaker only trips after three consecutive matches of the same auditable pattern; a different pattern restarts the count at one. The user can explicitly resume after inspecting the evidence. A genuine external blocker should still be reported by the executing Agent through `UpdateGoal blocked` with concrete evidence. Full completion still requires the independent verifier.
+
 ## Cross-Platform Projection
 
 ### CLI / TUI
@@ -86,15 +98,17 @@ The status bar displays `goal:verifying`. Headless JSONL uses a stable `goal` ev
   "verification_attempt": 1,
   "verification_status": "pass",
   "verifier_session_id": "agent_...",
-  "verification_evidence_sha256": "..."
+  "verification_evidence_sha256": "...",
+  "premature_stop_pattern": "internal_wait",
+  "premature_stop_count": 2
 }
 ```
 
-Text output writes the lifecycle to stderr, avoiding pollution of final stdout.
+Text output writes the lifecycle to stderr, avoiding pollution of final stdout. During recovery, the TUI status bar displays `recovery:N`.
 
 ### Web
 
-The Goal control bar displays `Verifying completion / 正在验证完成声明`. When expanded, it shows the attempt, stable verdict, opaque verifier Session ID, security summary, and SHA-256 prefix. A fresh tab recovers the same evidence from GoalSnapshot.
+The Goal control bar displays `Verifying completion / 正在验证完成声明`. When expanded, it shows the attempt, stable verdict, opaque verifier Session ID, security summary, and SHA-256 prefix. A fresh tab recovers the same evidence from GoalSnapshot. Automation can inspect durable recovery state through `data-blade-goal-recovery` and `data-blade-goal-recovery-pattern`.
 
 ### ACP
 
@@ -114,6 +128,7 @@ Goal lifecycle and verifier Task use standard session updates. On synchronous pr
 ```
 
 ACP projection does not include verifier transcripts, host paths, or credentials.
+Each continuation additionally projects its continuation number, premature-stop pattern, and consecutive count through `blade/goalContinuation` metadata.
 
 ## Qualification
 
@@ -125,6 +140,7 @@ Deterministic tests cover:
 - Mutation, steering, restart, and Stop continuation invalidate evidence;
 - Reserved agent, read-only sandbox, permission boundaries, and structured verdict;
 - GoalStore `0600` atomic persistence;
+- Conservative premature-stop matching, false-positive controls, consecutive-count reset, and graded recovery prompts;
 - Crash handoff, idempotent retry, and stale receipt rejection between the final assistant and Goal sidecar;
 - CLI JSONL, TUI, Web bilingual/fresh-tab, and ACP `_meta`.
 
