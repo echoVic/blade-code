@@ -57,6 +57,9 @@ export class ConversationState {
   /** 当前轮次追加的消息（assistant + tool results） */
   private _pending: Message[] = [];
 
+  /** 非追加式上下文变更代际，用于失效 Provider token 基线。 */
+  private _contextRevision = 0;
+
   /** 原始 context 引用（用于 writeback） */
   private readonly context: ChatContext;
 
@@ -115,6 +118,10 @@ export class ConversationState {
   /** 获取 pending 引用（用于调试） */
   get pending(): ReadonlyArray<Message> {
     return this._pending;
+  }
+
+  get contextRevision(): number {
+    return this._contextRevision;
   }
 
   /**
@@ -234,6 +241,7 @@ export class ConversationState {
     this._history = newHistory.filter(
       (msg) => !isRootSystemPrompt(msg) && !isContextualProjectInstructionMessage(msg)
     );
+    this._contextRevision++;
   }
 
   /** Replace all mutable state with an authoritative durable projection. */
@@ -247,15 +255,28 @@ export class ConversationState {
     );
     this._pending = [];
     this.syncContextualSystemMessages();
+    this._contextRevision++;
   }
 
   removeMessages(predicate: (message: Message) => boolean): void {
+    const previousLengths = [
+      this._history.length,
+      this._pending.length,
+      this._contextualSystemMessages.length,
+    ] as const;
     this._history = this._history.filter((message) => !predicate(message));
     this._pending = this._pending.filter((message) => !predicate(message));
     this._contextualSystemMessages = this._contextualSystemMessages.filter(
       (message) => !predicate(message)
     );
     this.syncContextualSystemMessages();
+    if (
+      this._history.length !== previousLengths[0] ||
+      this._pending.length !== previousLengths[1] ||
+      this._contextualSystemMessages.length !== previousLengths[2]
+    ) {
+      this._contextRevision++;
+    }
   }
 
   /**

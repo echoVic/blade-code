@@ -1633,6 +1633,14 @@ export class AcpSession {
                     ...(event.preTokens !== undefined
                       ? { preTokens: event.preTokens }
                       : {}),
+                    ...(event.preTokenSource
+                      ? { preTokenSource: event.preTokenSource }
+                      : {}),
+                    ...(event.estimatedPendingTokens !== undefined
+                      ? {
+                          estimatedPendingTokens: event.estimatedPendingTokens,
+                        }
+                      : {}),
                     ...(event.postTokens !== undefined
                       ? { postTokens: event.postTokens }
                       : {}),

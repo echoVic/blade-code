@@ -362,6 +362,10 @@ const CompactingEventSchema = event({
   strategy: Type.Optional(StringEnum(['llm', 'fallback', 'snip'])),
   outcome: Type.Optional(StringEnum(['completed', 'fallback', 'failed'])),
   pre_tokens: Type.Optional(Type.Number({ minimum: 0 })),
+  pre_token_source: Type.Optional(
+    StringEnum(['provider', 'provider_plus_estimate', 'local_estimate'])
+  ),
+  estimated_pending_tokens: Type.Optional(Type.Number({ minimum: 0 })),
   post_tokens: Type.Optional(Type.Number({ minimum: 0 })),
   sample_attempts: Type.Optional(Type.Integer({ minimum: 0 })),
   input_reductions: Type.Optional(Type.Integer({ minimum: 0 })),

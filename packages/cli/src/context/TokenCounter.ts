@@ -26,7 +26,7 @@ export class TokenCounter {
    * @param modelName - 模型名称
    * @returns token 总数
    */
-  static countTokens(messages: Message[], modelName: string): number {
+  static countTokens(messages: readonly Message[], modelName: string): number {
     const encoding = this.getEncoding(modelName);
     let totalTokens = 0;
 
@@ -66,6 +66,10 @@ export class TokenCounter {
     }
 
     return totalTokens;
+  }
+
+  static countTextTokens(text: string, modelName: string): number {
+    return this.getEncoding(modelName).encode(text).length;
   }
 
   /**

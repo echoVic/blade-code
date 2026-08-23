@@ -113,7 +113,7 @@ describe('Agent compaction threshold fallback', () => {
 
     const deps = createDeps();
     const snapshot = deriveTokenBudgetSnapshot({
-      actualPromptTokens: 148000,
+      contextTokens: 148000,
       maxContextTokens: 200000,
       maxOutputTokens: 20000,
     });

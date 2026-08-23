@@ -549,6 +549,12 @@ export class PersistentStore {
     };
     if (metadata.reason) result.reason = metadata.reason;
     if (metadata.strategy) result.strategy = metadata.strategy;
+    if (metadata.preTokenSource) {
+      result.preTokenSource = metadata.preTokenSource;
+    }
+    if (metadata.estimatedPendingTokens !== undefined) {
+      result.estimatedPendingTokens = metadata.estimatedPendingTokens;
+    }
     if (metadata.postTokens !== undefined) result.postTokens = metadata.postTokens;
     if (metadata.sampleAttempts !== undefined) {
       result.sampleAttempts = metadata.sampleAttempts;

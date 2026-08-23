@@ -4798,6 +4798,10 @@ async function executeRunAsync(
               ...(event.strategy ? { strategy: event.strategy } : {}),
               ...(event.outcome ? { outcome: event.outcome } : {}),
               ...(event.preTokens !== undefined ? { preTokens: event.preTokens } : {}),
+              ...(event.preTokenSource ? { preTokenSource: event.preTokenSource } : {}),
+              ...(event.estimatedPendingTokens !== undefined
+                ? { estimatedPendingTokens: event.estimatedPendingTokens }
+                : {}),
               ...(event.postTokens !== undefined
                 ? { postTokens: event.postTokens }
                 : {}),

@@ -717,6 +717,8 @@ interface Checkpoint {
   summary: string;
   replacements: NonNullable<ReturnType<typeof parseCompactionReplacementMessages>>;
   strategy?: string;
+  preTokenSource?: string;
+  estimatedPendingTokens?: number;
   postTokens?: number;
   sampleAttempts?: number;
   inputReductions?: number;
@@ -754,6 +756,14 @@ function latestValidCheckpoint(
         replacements,
         ...(isRecord(metadata) && typeof metadata.strategy === 'string'
           ? { strategy: metadata.strategy }
+          : {}),
+        ...(isRecord(metadata) && typeof metadata.preTokenSource === 'string'
+          ? { preTokenSource: metadata.preTokenSource }
+          : {}),
+        ...(isRecord(metadata) &&
+        typeof metadata.estimatedPendingTokens === 'number' &&
+        Number.isSafeInteger(metadata.estimatedPendingTokens)
+          ? { estimatedPendingTokens: metadata.estimatedPendingTokens }
           : {}),
         ...(isRecord(metadata) &&
         typeof metadata.postTokens === 'number' &&
@@ -964,6 +974,15 @@ export function assertTokenBudgetTranscript(
   const checkpoint = latestValidCheckpoint(events);
   if (!checkpoint || checkpoint.index <= markerIndex) {
     throw new Error('Latest valid compaction checkpoint must follow the v1 marker');
+  }
+  if (
+    checkpoint.preTokenSource !== 'provider_plus_estimate' ||
+    checkpoint.estimatedPendingTokens === undefined ||
+    checkpoint.estimatedPendingTokens < 1
+  ) {
+    throw new Error(
+      'Compaction checkpoint does not prove predictive context accounting'
+    );
   }
   if (
     options.expectedSampleAttempts !== undefined &&

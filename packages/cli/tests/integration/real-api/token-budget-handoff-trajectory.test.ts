@@ -144,7 +144,7 @@ function deriveTargets(model: TestModelConfig): {
     configuredMaxOutputTokens: config.maxOutputTokens,
   });
   const snapshot = deriveTokenBudgetSnapshot({
-    actualPromptTokens: 0,
+    contextTokens: 0,
     maxContextTokens,
     maxOutputTokens,
   });
@@ -155,8 +155,11 @@ function deriveTargets(model: TestModelConfig): {
     throw new Error('Token-budget model thresholds are unavailable');
   }
   return {
-    handoffPromptTokens: snapshot.handoffThreshold,
-    compactionPromptTokens: snapshot.compactionThreshold,
+    // Keep Provider prompt usage one token below each boundary. The model's
+    // completion usage must carry the projected context across the threshold
+    // before the next Provider request.
+    handoffPromptTokens: snapshot.handoffThreshold - 1,
+    compactionPromptTokens: snapshot.compactionThreshold - 1,
   };
 }
 

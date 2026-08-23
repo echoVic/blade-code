@@ -84,9 +84,9 @@ export const useSessionActions = () => useBladeStore((state) => state.session.ac
  */
 export const useContextRemaining = () =>
   useBladeStore((state) => {
-    const { inputTokens, maxContextTokens } = state.session.tokenUsage;
+    const { totalTokens, maxContextTokens } = state.session.tokenUsage;
     if (maxContextTokens <= 0) return 100;
-    const remaining = Math.max(0, 100 - (inputTokens / maxContextTokens) * 100);
+    const remaining = Math.max(0, 100 - (totalTokens / maxContextTokens) * 100);
     return Math.round(remaining);
   });
 

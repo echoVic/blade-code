@@ -113,6 +113,8 @@ describe('durable compaction checkpoint recovery', () => {
       reason: 'threshold',
       strategy: 'fallback',
       preTokens: 60_000,
+      preTokenSource: 'provider_plus_estimate',
+      estimatedPendingTokens: 1_250,
       postTokens: 12_000,
       sampleAttempts: 1,
       inputReductions: 0,
@@ -139,6 +141,8 @@ describe('durable compaction checkpoint recovery', () => {
       metadata: {
         checkpointVersion: 1,
         strategy: 'fallback',
+        preTokenSource: 'provider_plus_estimate',
+        estimatedPendingTokens: 1_250,
         fallbackTargetTokens: 32_000,
         fallbackMessagesOmitted: 7,
         fallbackMessagesTruncated: 1,

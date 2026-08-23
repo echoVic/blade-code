@@ -73,7 +73,7 @@ describe('deriveTokenBudgetSnapshot', () => {
   it('classifies the handoff phases across the configured thresholds', () => {
     expect(
       deriveTokenBudgetSnapshot({
-        actualPromptTokens: undefined,
+        contextTokens: undefined,
         maxContextTokens: 110_000,
         maxOutputTokens: 10_000,
       })
@@ -88,7 +88,7 @@ describe('deriveTokenBudgetSnapshot', () => {
 
     expect(
       deriveTokenBudgetSnapshot({
-        actualPromptTokens: 69_999,
+        contextTokens: 69_999,
         maxContextTokens: 110_000,
         maxOutputTokens: 10_000,
       })?.phase
@@ -96,7 +96,22 @@ describe('deriveTokenBudgetSnapshot', () => {
 
     expect(
       deriveTokenBudgetSnapshot({
-        actualPromptTokens: 70_000,
+        contextTokens: 70_000,
+        tokenSource: 'provider_plus_estimate',
+        estimatedPendingTokens: 125,
+        maxContextTokens: 110_000,
+        maxOutputTokens: 10_000,
+      })
+    ).toMatchObject({
+      phase: 'handoff_band',
+      contextTokens: 70_000,
+      tokenSource: 'provider_plus_estimate',
+      estimatedPendingTokens: 125,
+    });
+
+    expect(
+      deriveTokenBudgetSnapshot({
+        contextTokens: 79_999,
         maxContextTokens: 110_000,
         maxOutputTokens: 10_000,
       })?.phase
@@ -104,15 +119,7 @@ describe('deriveTokenBudgetSnapshot', () => {
 
     expect(
       deriveTokenBudgetSnapshot({
-        actualPromptTokens: 79_999,
-        maxContextTokens: 110_000,
-        maxOutputTokens: 10_000,
-      })?.phase
-    ).toBe('handoff_band');
-
-    expect(
-      deriveTokenBudgetSnapshot({
-        actualPromptTokens: 80_000,
+        contextTokens: 80_000,
         maxContextTokens: 110_000,
         maxOutputTokens: 10_000,
       })?.phase
@@ -120,12 +127,12 @@ describe('deriveTokenBudgetSnapshot', () => {
   });
 
   it('falls back to unknown for invalid inputs', () => {
-    const invalidActuals = [1.5, Number.NaN, Number.POSITIVE_INFINITY, -1];
+    const invalidContextTokens = [1.5, Number.NaN, Number.POSITIVE_INFINITY, -1];
 
-    for (const actualPromptTokens of invalidActuals) {
+    for (const contextTokens of invalidContextTokens) {
       expect(
         deriveTokenBudgetSnapshot({
-          actualPromptTokens,
+          contextTokens,
           maxContextTokens: 110_000,
           maxOutputTokens: 10_000,
         })?.phase
@@ -134,7 +141,7 @@ describe('deriveTokenBudgetSnapshot', () => {
 
     expect(
       deriveTokenBudgetSnapshot({
-        actualPromptTokens: 1,
+        contextTokens: 1,
         maxContextTokens: 110_000,
         maxOutputTokens: 110_000,
       })?.phase
@@ -142,7 +149,7 @@ describe('deriveTokenBudgetSnapshot', () => {
 
     expect(
       deriveTokenBudgetSnapshot({
-        actualPromptTokens: 1,
+        contextTokens: 1,
         maxContextTokens: 110_000,
         maxOutputTokens: -1,
       })?.phase
@@ -150,7 +157,7 @@ describe('deriveTokenBudgetSnapshot', () => {
 
     expect(
       deriveTokenBudgetSnapshot({
-        actualPromptTokens: 1,
+        contextTokens: 1,
         maxContextTokens: 0,
         maxOutputTokens: 10_000,
       })?.phase
@@ -160,13 +167,13 @@ describe('deriveTokenBudgetSnapshot', () => {
   it('computes exact thresholds for the maximum safe input budget', () => {
     expect(
       deriveTokenBudgetSnapshot({
-        actualPromptTokens: 7_205_759_403_792_792,
+        contextTokens: 7_205_759_403_792_792,
         maxContextTokens: Number.MAX_SAFE_INTEGER,
         maxOutputTokens: 0,
       })
     ).toEqual({
       phase: 'compaction_due',
-      actualPromptTokens: 7_205_759_403_792_792,
+      contextTokens: 7_205_759_403_792_792,
       maxContextTokens: Number.MAX_SAFE_INTEGER,
       maxOutputTokens: 0,
       availableForInput: Number.MAX_SAFE_INTEGER,

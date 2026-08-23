@@ -1042,6 +1042,8 @@ function createEventWriter(
           strategy: event.strategy,
           outcome: event.outcome,
           pre_tokens: event.preTokens,
+          pre_token_source: event.preTokenSource,
+          estimated_pending_tokens: event.estimatedPendingTokens,
           post_tokens: event.postTokens,
           sample_attempts: event.sampleAttempts,
           input_reductions: event.inputReductions,

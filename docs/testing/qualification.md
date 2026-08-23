@@ -396,11 +396,16 @@ compaction request 返回受控 context overflow，要求第二个请求使用�
 再返回一次 `503`。Pro 最后透明转发第三个真实摘要请求；Flash 则让第三个 compaction
 继续返回 `503`，强制进入 token-targeted deterministic fallback。
 70%/80% 阈值来自 production model catalog 的 context window 与 output reserve，而不是
-测试硬编码。每格证明：
+测试硬编码。proxy 将对应请求的 `promptTokens` 固定为阈值减一；只有把真实
+`completionTokens` 与响应后的 tool/control 增量计入下一请求前的完整上下文投影，才会
+跨过边界，因此旧的 prompt-only 实现不能通过。每格证明：
 
 - handoff marker 在第二次 task Provider request 前持久化，当前 epoch 恰好一个
   `handoff-message-` durable identity，pre-compaction request 至多一次 marker，
   compaction 与其后请求为零；
+- threshold checkpoint 必须记录 `preTokenSource=provider_plus_estimate` 且
+  `estimatedPendingTokens > 0`；Headless JSONL、Web SSE 和 ACP metadata 投影相同字段，
+  TUI/Web context meter 使用完整 Provider total，而不是 prompt-only usage；
 - latest replacement checkpoint 位于 marker 后，replacement/effective suffix 不含 marker，
   七段 continuation ledger 精确保留 mutation、failed verification 和 pending action
   sentinels，checkpoint 记录 `sampleAttempts: 3`、`inputReductions: 1`，

@@ -767,7 +767,7 @@ describe('executeLoopGenerator', () => {
         context,
         1,
         deriveTokenBudgetSnapshot({
-          actualPromptTokens: undefined,
+          contextTokens: undefined,
           maxContextTokens: 100_000,
           maxOutputTokens: 4_096,
         })
@@ -801,7 +801,7 @@ describe('executeLoopGenerator', () => {
         context,
         1,
         deriveTokenBudgetSnapshot({
-          actualPromptTokens: undefined,
+          contextTokens: undefined,
           maxContextTokens: 100_000,
           maxOutputTokens: 4_096,
         })
@@ -857,7 +857,7 @@ describe('executeLoopGenerator', () => {
         }),
         1,
         deriveTokenBudgetSnapshot({
-          actualPromptTokens: 90_000,
+          contextTokens: 90_000,
           maxContextTokens: 100_000,
           maxOutputTokens: 4_096,
         })
@@ -1058,7 +1058,7 @@ describe('executeLoopGenerator', () => {
           context,
           turn,
           deriveTokenBudgetSnapshot({
-            actualPromptTokens: tokens,
+            contextTokens: tokens,
             maxContextTokens: 100_000,
             maxOutputTokens: 4_096,
           }),
@@ -1110,7 +1110,7 @@ describe('executeLoopGenerator', () => {
           order.push('request');
           return finalResponse(70_000, 'done');
         }
-        return toolResponse(70_000);
+        return toolResponse(69_999);
       });
 
       const context = createMockContext();
@@ -1450,7 +1450,7 @@ describe('executeLoopGenerator', () => {
       ).toHaveLength(1);
     });
 
-    it('triggers full compaction before the next normal Provider request when usage reaches 80000 directly', async () => {
+    it('triggers full compaction before the next Provider request when total context crosses the boundary', async () => {
       const { deps } = createHandoffPersistenceHarness();
       const recordSpy = vi.spyOn(
         deps.executionEngine!.getContextManager(),
@@ -1467,7 +1467,7 @@ describe('executeLoopGenerator', () => {
             : 'chat:initial'
         );
         return order.length === 1
-          ? toolResponse(80_000)
+          ? toolResponse(79_999)
           : finalResponse(24_000, 'after compact');
       });
       vi.mocked(CompactionService.compact).mockImplementationOnce(async () => {
@@ -2562,7 +2562,7 @@ describe('executeLoopGenerator', () => {
       summaryMessage: { role: 'user', content: 'ledger summary' },
     } satisfies CompactionResult);
 
-    const { result } = await drainGenerator(
+    const { events, result } = await drainGenerator(
       executeLoopGenerator(
         deps,
         'Inspect the frontier.',
@@ -2580,6 +2580,8 @@ describe('executeLoopGenerator', () => {
     expect(boundaryInput?.some(isTokenBudgetHandoffMessage)).toBe(true);
     const metadata = saveCompaction.mock.calls.at(-1)?.[2];
     expect(metadata?.reason).toBe('turn_limit');
+    expect(metadata?.preTokenSource).toBe('provider_plus_estimate');
+    expect(metadata?.estimatedPendingTokens).toBeGreaterThan(0);
     expect(metadata?.replacementMessages?.slice(0, -1)).toEqual(boundaryReplacement);
     expect(metadata?.replacementMessages?.[0]).toBe(boundaryReplacement[0]);
     expect(metadata?.replacementMessages?.[1]).toBe(boundaryReplacement[1]);
@@ -2588,6 +2590,23 @@ describe('executeLoopGenerator', () => {
     );
     expect(metadata?.replacementMessages?.at(-1)?.content).toContain(
       'Please continue the conversation'
+    );
+    expect(vi.mocked(CompactionService.compact).mock.calls.at(-1)?.[1]).toEqual(
+      expect.objectContaining({
+        actualPreTokens: expect.any(Number),
+      })
+    );
+    expect(
+      vi.mocked(CompactionService.compact).mock.calls.at(-1)?.[1].actualPreTokens
+    ).toBeGreaterThan(120);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'compaction',
+        phase: 'end',
+        reason: 'turn_limit',
+        preTokenSource: 'provider_plus_estimate',
+        estimatedPendingTokens: expect.any(Number),
+      })
     );
   });
 
@@ -7530,6 +7549,9 @@ describe('executeLoopGenerator', () => {
 
     it('runs required delegation before finalizing length-truncated structured output', async () => {
       const deps = createMockDeps();
+      vi.mocked(deps.chatService.getConfig).mockReturnValue(
+        createTestChatConfig({ maxContextTokens: 1_000_000 })
+      );
       const chat = deps.chatService.chat as ReturnType<typeof vi.fn>;
       vi.mocked(checkTokenBudget).mockReturnValue('continue');
       chat
@@ -7612,6 +7634,9 @@ describe('executeLoopGenerator', () => {
 
     it('runs required Bash verification before finalizing budget-stopped structured output', async () => {
       const deps = createMockDeps();
+      vi.mocked(deps.chatService.getConfig).mockReturnValue(
+        createTestChatConfig({ maxContextTokens: 1_000_000 })
+      );
       const chat = deps.chatService.chat as ReturnType<typeof vi.fn>;
       const budgetCheck = vi.mocked(checkTokenBudget);
       budgetCheck.mockReturnValueOnce('stop');

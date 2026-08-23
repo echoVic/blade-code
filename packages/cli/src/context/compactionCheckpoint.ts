@@ -1,5 +1,6 @@
 import type { Message } from '../services/ChatServiceInterface.js';
 import type { JsonValue } from '../store/types.js';
+import type { ContextTokenSource } from './ContextTokenTracker.js';
 
 export const COMPACTION_CHECKPOINT_VERSION = 1;
 export const MAX_COMPACTION_CHECKPOINT_MESSAGES = 4_096;
@@ -24,6 +25,8 @@ export interface CompactionPersistenceMetadata {
   reason?: CompactionReason;
   strategy?: CompactionStrategy;
   preTokens: number;
+  preTokenSource?: ContextTokenSource;
+  estimatedPendingTokens?: number;
   postTokens?: number;
   sampleAttempts?: number;
   inputReductions?: number;

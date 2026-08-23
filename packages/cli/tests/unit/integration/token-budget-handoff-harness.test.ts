@@ -419,6 +419,8 @@ function transcript(
         metadata: {
           checkpointVersion: 1,
           reason: 'threshold',
+          preTokenSource: 'provider_plus_estimate',
+          estimatedPendingTokens: 125,
           sampleAttempts: 3,
           inputReductions: 1,
           messagesOmitted: 2,
@@ -2292,6 +2294,8 @@ describe('token-budget handoff deterministic qualification foundation', () => {
       reason: 'threshold',
       strategy: 'fallback',
       preTokens: 90_000,
+      preTokenSource: 'provider_plus_estimate',
+      estimatedPendingTokens: 125,
       postTokens: 42_000,
       sampleAttempts: 3,
       inputReductions: 1,

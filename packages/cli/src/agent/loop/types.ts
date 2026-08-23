@@ -5,6 +5,7 @@
  */
 
 import type { BladeConfig } from '../../config/index.js';
+import type { ContextTokenSource } from '../../context/ContextTokenTracker.js';
 import type {
   CompactionFailureReason,
   CompactionOutcome,
@@ -72,6 +73,8 @@ export type SystemEvent =
       strategy?: CompactionStrategy;
       outcome?: CompactionOutcome;
       preTokens?: number;
+      preTokenSource?: ContextTokenSource;
+      estimatedPendingTokens?: number;
       postTokens?: number;
       sampleAttempts?: number;
       inputReductions?: number;

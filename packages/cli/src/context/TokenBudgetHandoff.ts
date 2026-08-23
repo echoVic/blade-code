@@ -1,4 +1,5 @@
 import type { Message } from '../services/ChatServiceInterface.js';
+import type { ContextTokenSource } from './ContextTokenTracker.js';
 import { parseCompactionReplacementMessages } from './compactionCheckpoint.js';
 import type {
   MessagePersistenceMetadata,
@@ -35,7 +36,9 @@ export type TokenBudgetPhase =
 
 export interface TokenBudgetSnapshot {
   phase: TokenBudgetPhase;
-  actualPromptTokens?: number;
+  contextTokens?: number;
+  tokenSource?: ContextTokenSource;
+  estimatedPendingTokens?: number;
   maxContextTokens?: number;
   maxOutputTokens?: number;
   availableForInput?: number;
@@ -63,7 +66,9 @@ export type CurrentTokenBudgetHandoff =
   | { kind: 'suppressed'; recordId: string };
 
 interface DeriveSnapshotInput {
-  actualPromptTokens?: number;
+  contextTokens?: number;
+  tokenSource?: TokenBudgetSnapshot['tokenSource'];
+  estimatedPendingTokens?: number;
   maxContextTokens?: number;
   maxOutputTokens?: number;
 }
@@ -181,7 +186,13 @@ export function resolveCompactionOutputReserve(
 export function deriveTokenBudgetSnapshot(
   input: DeriveSnapshotInput
 ): TokenBudgetSnapshot {
-  const { actualPromptTokens, maxContextTokens, maxOutputTokens } = input;
+  const {
+    contextTokens,
+    tokenSource,
+    estimatedPendingTokens,
+    maxContextTokens,
+    maxOutputTokens,
+  } = input;
 
   if (
     !isStrictPositiveInteger(maxContextTokens) ||
@@ -199,9 +210,13 @@ export function deriveTokenBudgetSnapshot(
   const handoffThreshold = exactThreshold(availableForInput, 7);
   const compactionThreshold = exactThreshold(availableForInput, 8);
 
-  if (!isSafeNonNegativeInteger(actualPromptTokens)) {
+  if (!isSafeNonNegativeInteger(contextTokens)) {
     return {
       phase: 'unknown',
+      ...(tokenSource ? { tokenSource } : {}),
+      ...(isSafeNonNegativeInteger(estimatedPendingTokens)
+        ? { estimatedPendingTokens }
+        : {}),
       maxContextTokens,
       maxOutputTokens,
       availableForInput,
@@ -210,38 +225,36 @@ export function deriveTokenBudgetSnapshot(
     };
   }
 
-  if (actualPromptTokens < handoffThreshold) {
-    return {
-      phase: 'below_handoff',
-      actualPromptTokens,
-      maxContextTokens,
-      maxOutputTokens,
-      availableForInput,
-      handoffThreshold,
-      compactionThreshold,
-    };
-  }
-
-  if (actualPromptTokens < compactionThreshold) {
-    return {
-      phase: 'handoff_band',
-      actualPromptTokens,
-      maxContextTokens,
-      maxOutputTokens,
-      availableForInput,
-      handoffThreshold,
-      compactionThreshold,
-    };
-  }
-
-  return {
-    phase: 'compaction_due',
-    actualPromptTokens,
+  const projection = {
+    contextTokens,
+    ...(tokenSource ? { tokenSource } : {}),
+    ...(isSafeNonNegativeInteger(estimatedPendingTokens)
+      ? { estimatedPendingTokens }
+      : {}),
     maxContextTokens,
     maxOutputTokens,
     availableForInput,
     handoffThreshold,
     compactionThreshold,
+  };
+
+  if (contextTokens < handoffThreshold) {
+    return {
+      phase: 'below_handoff',
+      ...projection,
+    };
+  }
+
+  if (contextTokens < compactionThreshold) {
+    return {
+      phase: 'handoff_band',
+      ...projection,
+    };
+  }
+
+  return {
+    phase: 'compaction_due',
+    ...projection,
   };
 }
 

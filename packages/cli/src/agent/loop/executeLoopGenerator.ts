@@ -8,6 +8,12 @@
 import { createHash } from 'node:crypto';
 import { type PermissionMode } from '../../config/index.js';
 import { CompactionService } from '../../context/CompactionService.js';
+import {
+  type ContextTokenSource,
+  ContextTokenTracker,
+  createContextTokenRequestProfile,
+  resolveProviderContextTokens,
+} from '../../context/ContextTokenTracker.js';
 import type { CompactionFailureReason } from '../../context/compactionCheckpoint.js';
 import { ReactiveCompaction } from '../../context/ReactiveCompaction.js';
 import { microCompact, snipCompact } from '../../context/SnipCompaction.js';
@@ -145,7 +151,7 @@ function toTokenUsageInfo(usage: UsageInfo, maxContextTokens: number): TokenUsag
   return {
     inputTokens: usage.promptTokens ?? 0,
     outputTokens: usage.completionTokens ?? 0,
-    totalTokens: usage.totalTokens ?? 0,
+    totalTokens: resolveProviderContextTokens(usage) ?? 0,
     maxContextTokens,
     cacheReadTokens: usage.cacheReadInputTokens ?? 0,
     cacheWriteTokens: usage.cacheCreationInputTokens ?? 0,
@@ -658,7 +664,7 @@ async function maybeAppendTokenBudgetHandoff(params: {
   try {
     const recorded = await contextManager.recordTokenBudgetHandoff(context.sessionId, {
       version: 1,
-      observedPromptTokens: snapshot.actualPromptTokens ?? 0,
+      observedPromptTokens: snapshot.contextTokens ?? 0,
       availableForInput: snapshot.availableForInput ?? 0,
       handoffThreshold: snapshot.handoffThreshold ?? 0,
       compactionThreshold: snapshot.compactionThreshold ?? 0,
@@ -693,7 +699,7 @@ export async function* checkAndCompactInLoop(
   activeTask?: string,
   compactionState?: LoopCompactionState
 ): AsyncGenerator<LoopEvent, CompactResult, void> {
-  const actualPromptTokens = snapshot.actualPromptTokens;
+  const contextTokens = snapshot.contextTokens;
 
   // Level 0: MicroCompact — time-based aggressive clearing when cache expired
   const microResult = microCompact(context.messages, lastApiCallTime);
@@ -740,7 +746,9 @@ export async function* checkAndCompactInLoop(
   }
 
   logger.debug(`[Loop] [轮次 ${currentTurn}] 压缩检查:`, {
-    promptTokens: actualPromptTokens,
+    contextTokens,
+    tokenSource: snapshot.tokenSource,
+    estimatedPendingTokens: snapshot.estimatedPendingTokens,
     maxContextTokens,
     maxOutputTokens,
     availableForInput,
@@ -787,7 +795,7 @@ export async function* checkAndCompactInLoop(
       maxContextTokens,
       apiKey: chatConfig.apiKey,
       baseURL: chatConfig.baseUrl,
-      actualPreTokens: actualPromptTokens,
+      actualPreTokens: contextTokens,
       signal,
       activeTask,
       workspaceRoot: context.workspaceRoot || getCwd(),
@@ -833,6 +841,10 @@ export async function* checkAndCompactInLoop(
         reason: 'threshold',
         strategy,
         preTokens: result.preTokens,
+        ...(snapshot.tokenSource ? { preTokenSource: snapshot.tokenSource } : {}),
+        ...(snapshot.estimatedPendingTokens !== undefined
+          ? { estimatedPendingTokens: snapshot.estimatedPendingTokens }
+          : {}),
         postTokens: result.postTokens,
         sampleAttempts: result.sampleAttempts,
         inputReductions: result.inputReductions,
@@ -874,6 +886,10 @@ export async function* checkAndCompactInLoop(
       outcome,
       strategy,
       preTokens,
+      ...(snapshot.tokenSource ? { preTokenSource: snapshot.tokenSource } : {}),
+      ...(snapshot.estimatedPendingTokens !== undefined
+        ? { estimatedPendingTokens: snapshot.estimatedPendingTokens }
+        : {}),
       postTokens,
       sampleAttempts,
       inputReductions,
@@ -1114,7 +1130,6 @@ validates the object and may return a bounded corrective error.`;
     const maxTurns = configuredMaxTurns === -1 ? Infinity : configuredMaxTurns;
 
     let totalTokens = 0;
-    let lastPromptTokens: number | undefined;
     let lastApiCallTime: number | undefined;
     let handoffAttemptSpent = false;
     let maxOutputRecoveryCount = 0;
@@ -1607,6 +1622,7 @@ validates the object and may return a bounded corrective error.`;
     });
 
     const reactiveCompaction = new ReactiveCompaction();
+    const contextTokenTracker = new ContextTokenTracker();
     const compactionState: LoopCompactionState = {};
 
     const applySteeringMessages = async (
@@ -2019,13 +2035,53 @@ validates the object and may return a bounded corrective error.`;
           }
         }
 
+        const nextTurn = turnsCount + 1;
+        const reflectionMessage: Message | undefined =
+          shouldInjectReflection(nextTurn) && nextTurn > 1
+            ? {
+                role: 'user',
+                content:
+                  '\n\n<system-reminder>\n' +
+                  `${getReflectionPrompt(nextTurn, failureTracker.totalFailures)}\n` +
+                  '</system-reminder>',
+              }
+            : undefined;
+
+        // ToolSearch may activate deferred schemas during the previous turn.
+        // Resolve declarations before the budget check so request-shape growth
+        // is included above the conservative Provider token floor.
+        const tools = resolveTools();
+        const availableTurnTools =
+          singleTaskDelegationClaimed &&
+          resolveSingleTaskDelegationRequirement(delegationPolicySources)
+            ? tools.filter((tool) => tool.name !== 'Task')
+            : tools;
+        const turnRequiredToolName = requiredToolName;
+        const turnTools = turnRequiredToolName
+          ? availableTurnTools.filter((tool) => tool.name === turnRequiredToolName)
+          : availableTurnTools;
+
         // 2. 上下文压缩检查
         // writeback 确保 context.messages 与 state.history 同步，
         // 因为 checkAndCompactInLoop 直接读取 context.messages
         state.writeback();
         const chatConfig = deps.chatService.getConfig();
+        const requestProfile = createContextTokenRequestProfile(
+          state.systemMessages,
+          turnTools,
+          chatConfig.model
+        );
+        const contextProjection = contextTokenTracker.project({
+          history: state.getHistory(),
+          pendingMessages: reflectionMessage ? [reflectionMessage] : [],
+          contextRevision: state.contextRevision,
+          modelName: chatConfig.model,
+          requestProfile,
+        });
         const sharedSnapshot = deriveTokenBudgetSnapshot({
-          actualPromptTokens: lastPromptTokens,
+          contextTokens: contextProjection.contextTokens,
+          tokenSource: contextProjection.source,
+          estimatedPendingTokens: contextProjection.estimatedPendingTokens,
           maxContextTokens: chatConfig.maxContextTokens,
           maxOutputTokens: resolveCompactionOutputReserve({
             maxContextTokens: chatConfig.maxContextTokens,
@@ -2056,9 +2112,7 @@ validates the object and may return a bounded corrective error.`;
         if (compactResult.kind === 'snipped' || compactResult.kind === 'compacted') {
           // checkAndCompactInLoop 已更新 context.messages，同步到 state
           state.replaceHistory(context.messages);
-        }
-        if (compactResult.kind === 'compacted') {
-          lastPromptTokens = undefined;
+          contextTokenTracker.reset();
         }
 
         if (sharedSnapshot.phase === 'handoff_band') {
@@ -2079,7 +2133,7 @@ validates the object and may return a bounded corrective error.`;
         state.writeback();
 
         // 3. 轮次计数
-        turnsCount++;
+        turnsCount = nextTurn;
         yield { kind: 'turn_start', turn: turnsCount, maxTurns };
 
         if (options?.signal?.aborted) {
@@ -2091,33 +2145,12 @@ validates the object and may return a bounded corrective error.`;
         }
 
         // 3.5 Self-reflection injection (every N turns)
-        if (shouldInjectReflection(turnsCount) && turnsCount > 1) {
-          const reflectionPrompt = getReflectionPrompt(
-            turnsCount,
-            failureTracker.totalFailures
-          );
-          state.appendControl('user', {
-            role: 'user',
-            content: `\n\n<system-reminder>\n${reflectionPrompt}\n</system-reminder>`,
-          });
-        }
+        if (reflectionMessage) state.appendControl('user', reflectionMessage);
 
         // 4. 调用 LLM
         const isStreamEnabled = options?.stream !== false;
-        // ToolSearch may activate deferred schemas during the previous turn.
-        // Resolve declarations at every provider boundary instead of freezing
-        // the initial subset for the whole loop.
-        const tools = resolveTools();
-        const availableTurnTools =
-          singleTaskDelegationClaimed &&
-          resolveSingleTaskDelegationRequirement(delegationPolicySources)
-            ? tools.filter((tool) => tool.name !== 'Task')
-            : tools;
-        const turnRequiredToolName = requiredToolName;
         requiredToolName = undefined;
-        const turnTools = turnRequiredToolName
-          ? availableTurnTools.filter((tool) => tool.name === turnRequiredToolName)
-          : availableTurnTools;
+        const requestHistoryLength = state.historyLength + state.pending.length;
         const foregroundProviderRecovery =
           !isSubagent && (deps.config.providerForegroundRecoveryMs ?? 0) > 0
             ? {
@@ -2303,6 +2336,7 @@ validates the object and may return a bounded corrective error.`;
                 context.messages = result.messages;
                 // 同步到 state（此时 pending 已被 writeback() commit，为空）
                 state.replaceHistory(context.messages);
+                contextTokenTracker.reset();
                 requiredToolName = turnRequiredToolName;
                 outcome = result.strategy === 'llm' ? 'completed' : 'fallback';
                 recovered = true;
@@ -2370,7 +2404,6 @@ validates the object and may return a bounded corrective error.`;
           if (turnResult.usage.totalTokens) {
             totalTokens += turnResult.usage.totalTokens;
           }
-          lastPromptTokens = turnResult.usage.promptTokens;
           yield {
             kind: 'token_usage',
             usage: toTokenUsageInfo(
@@ -2379,6 +2412,13 @@ validates the object and may return a bounded corrective error.`;
             ),
           };
         }
+        contextTokenTracker.recordProviderUsage({
+          usage: turnResult.usage,
+          contextRevision: state.contextRevision,
+          historyLength: requestHistoryLength,
+          modelName: chatConfig.model,
+          requestProfile,
+        });
 
         // Record output for token budget tracking
         const outputTokens = turnResult.usage?.completionTokens ?? 0;
@@ -4155,6 +4195,8 @@ validates the object and may return a bounded corrective error.`;
               let compactionOutcome: 'completed' | 'fallback' | 'failed' = 'failed';
               let compactionStrategy: 'llm' | 'fallback' | undefined;
               let compactionPreTokens: number | undefined;
+              let compactionPreTokenSource: ContextTokenSource | undefined;
+              let compactionEstimatedPendingTokens: number | undefined;
               let compactionPostTokens: number | undefined;
               let compactionSampleAttempts: number | undefined;
               let compactionInputReductions: number | undefined;
@@ -4172,6 +4214,31 @@ validates the object and may return a bounded corrective error.`;
               };
               try {
                 const chatConfig = deps.chatService.getConfig();
+                const availableTools = resolveTools();
+                const availableTurnLimitTools =
+                  singleTaskDelegationClaimed &&
+                  resolveSingleTaskDelegationRequirement(delegationPolicySources)
+                    ? availableTools.filter((tool) => tool.name !== 'Task')
+                    : availableTools;
+                const turnLimitTools = requiredToolName
+                  ? availableTurnLimitTools.filter(
+                      (tool) => tool.name === requiredToolName
+                    )
+                  : availableTurnLimitTools;
+                const turnLimitRequestProfile = createContextTokenRequestProfile(
+                  state.systemMessages,
+                  turnLimitTools,
+                  chatConfig.model
+                );
+                const turnLimitProjection = contextTokenTracker.project({
+                  history: state.getHistory(),
+                  contextRevision: state.contextRevision,
+                  modelName: chatConfig.model,
+                  requestProfile: turnLimitRequestProfile,
+                });
+                compactionPreTokenSource = turnLimitProjection.source;
+                compactionEstimatedPendingTokens =
+                  turnLimitProjection.estimatedPendingTokens;
                 const compactResult = await CompactionService.compact(
                   context.messages,
                   {
@@ -4181,7 +4248,7 @@ validates the object and may return a bounded corrective error.`;
                     maxContextTokens: chatConfig.maxContextTokens ?? 0,
                     apiKey: chatConfig.apiKey,
                     baseURL: chatConfig.baseUrl,
-                    actualPreTokens: lastPromptTokens,
+                    actualPreTokens: turnLimitProjection.contextTokens,
                     signal: options?.signal,
                     activeTask: activeUserRequest,
                     workspaceRoot: context.workspaceRoot || getCwd(),
@@ -4235,6 +4302,13 @@ validates the object and may return a bounded corrective error.`;
                     reason: 'turn_limit',
                     strategy: compactionStrategy,
                     preTokens: compactResult.preTokens,
+                    preTokenSource: turnLimitProjection.source,
+                    ...(turnLimitProjection.estimatedPendingTokens !== undefined
+                      ? {
+                          estimatedPendingTokens:
+                            turnLimitProjection.estimatedPendingTokens,
+                        }
+                      : {}),
                     postTokens: compactResult.postTokens,
                     sampleAttempts: compactResult.sampleAttempts,
                     inputReductions: compactResult.inputReductions,
@@ -4252,6 +4326,7 @@ validates the object and may return a bounded corrective error.`;
                 );
                 context.messages = replacementMessages;
                 state.replaceHistory(context.messages);
+                contextTokenTracker.reset();
                 compactionOutcome = compactResult.success ? 'completed' : 'fallback';
               } catch (compactError) {
                 logger.error('[Loop] 轮次上限压缩失败，停止继续执行:', compactError);
@@ -4264,6 +4339,8 @@ validates the object and may return a bounded corrective error.`;
                   outcome: compactionOutcome,
                   strategy: compactionStrategy,
                   preTokens: compactionPreTokens,
+                  preTokenSource: compactionPreTokenSource,
+                  estimatedPendingTokens: compactionEstimatedPendingTokens,
                   postTokens: compactionPostTokens,
                   sampleAttempts: compactionSampleAttempts,
                   inputReductions: compactionInputReductions,
