@@ -406,8 +406,9 @@ compaction request 返回受控 context overflow，要求第二个请求使用�
   sentinels，checkpoint 记录 `sampleAttempts: 3`、`inputReductions: 1`，
   `messagesOmitted` 与 `filesOmitted` 至少一项非零；Pro 无 failure reason，Flash 记录
   `transient_exhausted` 且证明 `postTokens <= fallbackTargetTokens`，
-  `fallbackTargetTokens > 0`，两个 fallback 消息计数均存在且非负。真实 Bash fail、
-  Write、Bash pass 的 durable 顺序正确；
+  `fallbackTargetTokens > 0`，原始 active-task 消息已去重且两个 fallback 消息计数均
+  存在。完整 final marker 只由成功的验证命令产生，最终 assistant 必须逐字回显；
+  真实 Bash fail、Write、Bash pass 的 durable 顺序正确；
 - Headless cold projection、PTY resume、ACP `session/load` 和 Web post-completion reload
   均不得新增 Provider request；internal event/tag/identity/reminder 不进入 terminal bytes、
   ACP updates/terminal、HTTP history、SSE、Zustand、DOM 或 HTML；

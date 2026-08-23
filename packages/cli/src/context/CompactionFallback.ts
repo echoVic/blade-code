@@ -258,7 +258,11 @@ export function resolveCompactionTargetTokens(
 export function planFallbackMessages(
   messages: readonly Message[],
   fixedMessages: readonly Message[],
-  options: { maxContextTokens: number; modelName: string }
+  options: {
+    maxContextTokens: number;
+    modelName: string;
+    preservedActiveTask?: string;
+  }
 ): FallbackMessagePlan {
   const estimatedSourceTokens = TokenCounter.countTokens(
     [...messages],
@@ -273,7 +277,18 @@ export function planFallbackMessages(
   let remainingTokens = targetTokens - fixedTokens;
   const selectedUnits: FallbackMessageCandidate[][] = [];
 
-  const units = compactionMessageUnits(messages);
+  const duplicateActiveTaskIndex = options.preservedActiveTask
+    ? messages.findLastIndex(
+        (message) =>
+          message.role === 'user' &&
+          compactionMessageText(message) === options.preservedActiveTask
+      )
+    : -1;
+  const units = compactionMessageUnits(
+    duplicateActiveTaskIndex < 0
+      ? messages
+      : messages.filter((_, index) => index !== duplicateActiveTaskIndex)
+  );
   for (let index = units.length - 1; index >= 0; index--) {
     const unit = normalizeFallbackUnit(units[index]!);
     if (unit.length === 0) continue;

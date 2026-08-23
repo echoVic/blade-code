@@ -999,7 +999,7 @@ export function assertTokenBudgetTranscript(
       checkpoint.fallbackTargetTokens <= 0 ||
       checkpoint.postTokens > checkpoint.fallbackTargetTokens ||
       checkpoint.fallbackMessagesOmitted === undefined ||
-      checkpoint.fallbackMessagesOmitted < 0 ||
+      checkpoint.fallbackMessagesOmitted < 1 ||
       checkpoint.fallbackMessagesTruncated === undefined ||
       checkpoint.fallbackMessagesTruncated < 0
     ) {

@@ -1143,11 +1143,17 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     expect(`${failing.stdout}${failing.stderr}`).toContain(
       created.sentinels.failedVerification
     );
+    expect(`${failing.stdout}${failing.stderr}`).not.toContain(created.finalMarker);
     mkdirSync(path.dirname(created.targetPath), { recursive: true });
     writeFileSync(created.targetPath, `${created.targetContent}-wrong`);
     expect(spawnSync(created.passingCommand, { shell: true }).status).toBe(1);
     writeFileSync(created.targetPath, created.targetContent);
-    expect(spawnSync(created.passingCommand, { shell: true }).status).toBe(0);
+    const passing = spawnSync(created.passingCommand, {
+      shell: true,
+      encoding: 'utf8',
+    });
+    expect(passing.status).toBe(0);
+    expect(passing.stdout).toContain(created.finalMarker);
 
     const boundaryIndexes = [1, 2, 3, 4].map((boundary) => {
       const label = `Boundary ${boundary}`;
@@ -1200,7 +1206,7 @@ describe('token-budget handoff deterministic qualification foundation', () => {
       `match ^[A-Za-z0-9_-]{${created.finalMarker.length}}$`
     );
     expect(created.prompt.endsWith(`PART_B=${partB}`)).toBe(true);
-    expect(created.prompt.split(created.failingCommand)).toHaveLength(4);
+    expect(created.prompt.split(created.failingCommand)).toHaveLength(3);
     expect(created.prompt.match(/call Bash exactly once/g)).toHaveLength(2);
     expect(created.prompt.match(/call Write exactly once/g)).toHaveLength(1);
   });
@@ -2292,7 +2298,7 @@ describe('token-budget handoff deterministic qualification foundation', () => {
       messagesOmitted: 2,
       filesOmitted: 0,
       fallbackTargetTokens: 50_000,
-      fallbackMessagesOmitted: 0,
+      fallbackMessagesOmitted: 1,
       fallbackMessagesTruncated: 0,
       failureReason: 'transient_exhausted',
     };

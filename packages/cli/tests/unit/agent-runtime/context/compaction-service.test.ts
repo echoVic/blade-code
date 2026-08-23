@@ -644,6 +644,45 @@ describe('CompactionService - 输出协议', () => {
     expect(result.postTokens).toBeLessThanOrEqual(MIN_COMPACTION_EFFECTIVENESS_TOKENS);
   });
 
+  test('fallback 不应重复保留已由完整 active-task checkpoint 覆盖的用户消息', async () => {
+    const activeTask =
+      'Apply the pending mutation, verify it, and report exactly DONE.';
+    const messages: Message[] = [
+      { role: 'user', content: activeTask },
+      { role: 'assistant', content: 'The mutation has been applied.' },
+    ];
+    compactChat.mockRejectedValueOnce(new Error('summary unavailable'));
+
+    const result = await CompactionService.compact(messages, {
+      ...markerCompactionOptions,
+      sessionId: 'fallback-active-task-deduplication',
+      activeTask,
+    });
+
+    expect(
+      result.compactedMessages.filter(
+        (message) => message.role === 'user' && message.content === activeTask
+      )
+    ).toHaveLength(0);
+    expect(
+      result.compactedMessages.filter((message) =>
+        String(message.content).includes(activeTask)
+      )
+    ).toHaveLength(1);
+    expect(
+      result.compactedMessages.some((message) =>
+        String(message.content).includes(
+          'obey any exact final-response protocol literally'
+        )
+      )
+    ).toBe(true);
+    expect(result.compactedMessages).toContainEqual({
+      role: 'assistant',
+      content: 'The mutation has been applied.',
+    });
+    expect(result.fallbackMessagesOmitted).toBe(1);
+  });
+
   test('mandatory active-task checkpoint 超过目标时只提升到其实际大小', async () => {
     const activeTask = `ACTIVE_HEAD_${'task constraint '.repeat(800)}_ACTIVE_TAIL`;
     compactChat.mockRejectedValueOnce(new Error('summary unavailable'));

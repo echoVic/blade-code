@@ -285,9 +285,10 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   exact continuation records 与 active-task checkpoint，再在“`max(5,000, 原消息体
   80%)`”“模型 context window 50%”和“50,000 tokens”的最小目标内，从最新消息开始
   装入完整原子单元；边界单元过大时对可见文本做保留头尾的 token-aware 截断。tool
-  call 与对应 result 不会拆开，
-  reasoning 和图片载荷不会进入 fallback replacement。mandatory checkpoint 本身超过
-  目标时，目标仅提升到其实际大小，不能通过静默丢弃用户约束来伪造达标。
+  call 与对应 result 不会拆开，reasoning 和图片载荷不会进入 fallback replacement。
+  已由未截断 active-task checkpoint 精确覆盖的最后一条用户消息不会在 tail 中重复；
+  超长 checkpoint 不做该去重。mandatory checkpoint 本身超过目标时，目标仅提升到其
+  实际大小，不能通过静默丢弃用户约束来伪造达标。
 - compaction 在重试 Provider 前必须先原子提交 exact replacement context。JSONL
   summary part 保存有界 `replacementMessages` checkpoint、reason、strategy 和
   pre/post tokens，并记录 `sampleAttempts`、`inputReductions`、`messagesOmitted`、

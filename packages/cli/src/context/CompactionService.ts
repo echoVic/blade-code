@@ -1054,6 +1054,7 @@ export class CompactionService {
         'Treat failed actions as historical evidence and follow the pending exact next action, which may require a corrected retry.',
         "Preserve the request's exact literals and constraints:",
         checkpoint,
+        'Resume only the pending exact next action. After it succeeds, obey any exact final-response protocol literally and add no unrequested text.',
         '</system-reminder>',
       ].join('\n'),
       metadata: {
@@ -1099,7 +1100,8 @@ export class CompactionService {
         'execution status. Do not repeat actions marked complete, applied, or ' +
         'passed. Treat failed actions as historical evidence and execute only the ' +
         'pending exact next action, which may require a corrected retry, before ' +
-        'claiming completion.',
+        'claiming completion. After pending work succeeds, obey exact final-response ' +
+        'constraints from the preserved request literally.',
       messages
     );
     const summaryMessage = this.createSummaryMessage(summaryMessageId, fallbackSummary);
@@ -1109,7 +1111,14 @@ export class CompactionService {
       summaryMessage,
       ...(activeTaskMessage ? [activeTaskMessage] : []),
     ];
-    const fallbackPlan = planFallbackMessages(messages, fixedMessages, options);
+    const fallbackPlan = planFallbackMessages(messages, fixedMessages, {
+      maxContextTokens: options.maxContextTokens,
+      modelName: options.modelName,
+      preservedActiveTask:
+        options.activeTask && options.activeTask.length <= this.ACTIVE_TASK_MAX_CHARS
+          ? options.activeTask
+          : undefined,
+    });
     const compactedMessages = [
       summaryMessage,
       ...fallbackPlan.messages,

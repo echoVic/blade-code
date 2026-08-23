@@ -113,7 +113,13 @@ export async function createTokenBudgetHandoffFixture(
   ].join('\n');
   await writeFile(scriptPath, script, { mode: 0o600 });
 
-  const command = `${shellQuote(process.execPath)} --test ${shellQuote(scriptPath)}`;
+  const finalMarkerMidpoint = Math.ceil(finalMarker.length / 2);
+  const command = [
+    `${shellQuote(process.execPath)} --test ${shellQuote(scriptPath)}`,
+    `printf '%s%s\\n' ${shellQuote(
+      finalMarker.slice(0, finalMarkerMidpoint)
+    )} ${shellQuote(finalMarker.slice(finalMarkerMidpoint))}`,
+  ].join(' && ');
   const prompt = [
     'Complete this task in exactly four model boundaries and preserve every named sentinel exactly.',
     'If context compaction occurs, the following three lines are exact continuation records whose bracketed labels name their destination headings:',
@@ -132,7 +138,7 @@ export async function createTokenBudgetHandoffFixture(
     `EXACT CONTINUATION RECORD [Exact next action] :: ${renderTokenBudgetExactNextAction(
       { command, finalMarker }
     )}`,
-    'Boundary 4: after the passing result, call no tools.',
+    'Boundary 4: after the passing result, call no tools. Copy the final non-empty line of the successful Bash output verbatim as your entire response.',
     createSplitPtyMarkerInstruction(finalMarker),
   ].join('\n');
 
