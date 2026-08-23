@@ -1742,6 +1742,9 @@ describe('AcpSession', () => {
           messagesOmitted: 2,
           filesOmitted: 0,
           imagesOmitted: 1,
+          fallbackTargetTokens: 64_000,
+          fallbackMessagesOmitted: 8,
+          fallbackMessagesTruncated: 1,
           failureReason: 'insufficient_reduction',
         } as LoopEvent;
         return { success: true, finalMessage: 'recovered' };
@@ -1781,6 +1784,9 @@ describe('AcpSession', () => {
                   messagesOmitted: 2,
                   filesOmitted: 0,
                   imagesOmitted: 1,
+                  fallbackTargetTokens: 64_000,
+                  fallbackMessagesOmitted: 8,
+                  fallbackMessagesTruncated: 1,
                   failureReason: 'insufficient_reduction',
                 },
               },

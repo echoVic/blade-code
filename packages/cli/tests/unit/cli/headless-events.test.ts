@@ -552,9 +552,15 @@ describe('headless event contract', () => {
         pre_tokens: 60_000,
         post_tokens: 12_000,
         sample_attempts: 1,
+        fallback_target_tokens: 32_000,
+        fallback_messages_omitted: 7,
+        fallback_messages_truncated: 1,
         failure_reason: 'insufficient_reduction',
       })
     ).toMatchObject({
+      fallback_target_tokens: 32_000,
+      fallback_messages_omitted: 7,
+      fallback_messages_truncated: 1,
       failure_reason: 'insufficient_reduction',
     });
   });

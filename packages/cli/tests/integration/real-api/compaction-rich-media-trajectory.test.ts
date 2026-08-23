@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   CompactionService,
+  MAX_COMPACTION_CONTEXT_RATIO,
   MAX_COMPACTION_RESULT_RATIO,
   MIN_COMPACTION_EFFECTIVENESS_TOKENS,
   resetCompactionCircuitBreaker,
@@ -22,6 +23,7 @@ const models = isRealApiTestEnabled()
       requiredDeepSeek: true,
     }).filter((model) => model.id !== 'domestic')
   : [];
+const flash = models.find((model) => model.model === 'deepseek-v4-flash');
 
 let hooksWereEnabled = false;
 const roots: string[] = [];
@@ -145,6 +147,64 @@ describe
         } finally {
           await proxy.close();
         }
+      },
+      180_000
+    );
+
+    it.skipIf(!flash)(
+      'bounds an ineffective real summary with a token-targeted fallback',
+      async () => {
+        if (!flash) throw new Error('DeepSeek Flash is required');
+        const root = await mkdtemp(path.join(os.tmpdir(), 'blade-compact-fallback-'));
+        roots.push(root);
+        const nonce = randomBytes(16).toString('hex');
+        const exactRecords = Array.from({ length: 4 }, (_, index) => {
+          const payload = `FALLBACK_RECORD_${index}_${randomBytes(700).toString('hex')}`;
+          return {
+            line: `EXACT CONTINUATION RECORD [Decisions and rationale] :: ${payload}`,
+            payload,
+          };
+        });
+        const tailHead = `FALLBACK_TAIL_HEAD_${nonce}`;
+        const tailEnd = `FALLBACK_TAIL_END_${nonce}`;
+        const messages: Message[] = [
+          {
+            role: 'user',
+            content: exactRecords.map((record) => record.line).join('\n'),
+          },
+          {
+            role: 'user',
+            content: `${tailHead}_${randomBytes(16_000).toString('hex')}_${tailEnd}`,
+          },
+        ];
+        const originalMessages = structuredClone(messages);
+        const contextTarget = Math.floor(12_000 * MAX_COMPACTION_CONTEXT_RATIO);
+
+        const result = await CompactionService.compact(messages, {
+          trigger: 'auto',
+          modelName: flash.model,
+          modelProvider: flash.provider,
+          maxContextTokens: 12_000,
+          apiKey: flash.apiKey,
+          baseURL: flash.baseURL,
+          workspaceRoot: root,
+          sessionId: `compact-fallback-${nonce}`,
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.failureReason).toBe('insufficient_reduction');
+        expect(result.usage?.totalTokens).toBeGreaterThan(0);
+        expect(result.fallbackTargetTokens).toBe(contextTarget);
+        expect(result.postTokens).toBeLessThanOrEqual(contextTarget);
+        expect(result.fallbackMessagesOmitted).toBe(1);
+        expect(result.fallbackMessagesTruncated).toBe(1);
+        expect(String(result.compactedMessages[1]?.content)).toContain(tailHead);
+        expect(String(result.compactedMessages[1]?.content)).toContain(tailEnd);
+        for (const record of exactRecords) {
+          expect(result.summary).toContain(record.payload);
+        }
+        expect(messages).toEqual(originalMessages);
+        assertNoSecrets(result, [flash.apiKey]);
       },
       180_000
     );

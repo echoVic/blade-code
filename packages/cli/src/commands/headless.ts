@@ -1048,6 +1048,9 @@ function createEventWriter(
           messages_omitted: event.messagesOmitted,
           files_omitted: event.filesOmitted,
           images_omitted: event.imagesOmitted,
+          fallback_target_tokens: event.fallbackTargetTokens,
+          fallback_messages_omitted: event.fallbackMessagesOmitted,
+          fallback_messages_truncated: event.fallbackMessagesTruncated,
           failure_reason: event.failureReason,
         });
         return;
@@ -1073,6 +1076,12 @@ function createEventWriter(
                 ? ` and ${event.imagesOmitted} image${
                     event.imagesOmitted === 1 ? '' : 's'
                   } omitted`
+                : ''
+            }${
+              event.fallbackTargetTokens !== undefined
+                ? `; fallback target ${event.fallbackTargetTokens} tokens, ${
+                    event.fallbackMessagesOmitted ?? 0
+                  } messages omitted, ${event.fallbackMessagesTruncated ?? 0} truncated`
                 : ''
             }`
       );

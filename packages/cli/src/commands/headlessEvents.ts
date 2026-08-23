@@ -368,6 +368,9 @@ const CompactingEventSchema = event({
   messages_omitted: Type.Optional(Type.Integer({ minimum: 0 })),
   files_omitted: Type.Optional(Type.Integer({ minimum: 0 })),
   images_omitted: Type.Optional(Type.Integer({ minimum: 0 })),
+  fallback_target_tokens: Type.Optional(Type.Integer({ minimum: 0 })),
+  fallback_messages_omitted: Type.Optional(Type.Integer({ minimum: 0 })),
+  fallback_messages_truncated: Type.Optional(Type.Integer({ minimum: 0 })),
   failure_reason: Type.Optional(
     StringEnum([
       'circuit_open',

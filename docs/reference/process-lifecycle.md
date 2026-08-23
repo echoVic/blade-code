@@ -271,24 +271,37 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   因为摘要采样没有工具副作用。多次成功采样前产生的 usage 与 cost 会累计。
 - Compaction 是纯文本内部请求。多模态消息中的文本按原顺序保留，每个 `image_url`
   在摘要输入中替换为固定占位符；data URL、远程 URL 和 base64 payload 均不会发送给
-  摘要 Provider。该派生过程不修改 canonical transcript 或 post-compact 保留消息，
-  `imagesOmitted` 只记录本次摘要输入省略的图片数量。
+  摘要 Provider。该派生过程不修改 canonical transcript；LLM 成功路径的 retained
+  messages 保持原样，deterministic fallback 则移除 reasoning 并将图片替换为相同
+  占位符。`imagesOmitted` 记录本次摘要输入省略的图片数量。
 - 对估算达到 5,000 tokens 的可压缩消息体，宿主只接受完整 post-compact replacement
   不超过原消息体 80% 的 LLM 结果。非空但缩减不足的摘要不会作为成功结果提交，而是以
   `insufficient_reduction` 进入确定性 fallback；该次已计费 Provider usage 仍会投影。
-  小于门槛的手动压缩不应用该比例检查，避免固定 ledger 开销造成误判。
+  小于门槛的手动压缩以 5,000 tokens 为源目标下限，避免固定 ledger 开销造成误判，
+  同时禁止异常摘要膨胀到 5,000 tokens 以上；所有 LLM replacement 还不得超过模型
+  context window 的 50% 或 50,000 tokens，为 system prompt、tool schema、checkpoint
+  存储与下一轮执行保留确定性 headroom。
+- deterministic fallback 不再按消息数量保留固定比例。宿主先保留 fallback ledger、
+  exact continuation records 与 active-task checkpoint，再在“`max(5,000, 原消息体
+  80%)`”“模型 context window 50%”和“50,000 tokens”的最小目标内，从最新消息开始
+  装入完整原子单元；边界单元过大时对可见文本做保留头尾的 token-aware 截断。tool
+  call 与对应 result 不会拆开，
+  reasoning 和图片载荷不会进入 fallback replacement。mandatory checkpoint 本身超过
+  目标时，目标仅提升到其实际大小，不能通过静默丢弃用户约束来伪造达标。
 - compaction 在重试 Provider 前必须先原子提交 exact replacement context。JSONL
   summary part 保存有界 `replacementMessages` checkpoint、reason、strategy 和
   pre/post tokens，并记录 `sampleAttempts`、`inputReductions`、`messagesOmitted`、
-  `filesOmitted`、`imagesOmitted` 与稳定的 `failureReason`；提交失败不应用内存替换，
-  也不重试 Provider。完整可见 transcript 继续保留用于 UI、导出和审计，宿主还会从
-  完整原 transcript 逐字回填 exact continuation records；
+  `filesOmitted`、`imagesOmitted`、`fallbackTargetTokens`、
+  `fallbackMessagesOmitted`、`fallbackMessagesTruncated` 与稳定的
+  `failureReason`；提交失败不应用内存替换，也不重试 Provider。完整可见 transcript
+  继续保留用于 UI、导出和审计，宿主还会从完整原 transcript 逐字回填 exact
+  continuation records；
   `SessionService.loadSessionModelContext()` 只从最新 checkpoint 加载 replacement
   context 与其后的事件，旧版元数据安全降级。
 - `compaction` LoopEvent 统一携带 `threshold|context_limit|turn_limit` reason、
   `llm|fallback|snip` strategy、`completed|fallback|failed` outcome、采样/缩减/省略
-  计数和有界失败分类。Web 在 reactive recovery 显示独立的 context-limit 状态；TUI、
-  Headless JSONL、Server SSE 与 ACP
+  计数、fallback token 目标与有界失败分类。Web 在 reactive recovery 显示独立的
+  context-limit 状态；TUI、Headless JSONL、Server SSE 与 ACP
   `session_info_update._meta["blade/compaction"]` 使用同一生命周期，不把内部摘要或
   Provider 错误正文写入 assistant 内容。
 - user-turn rewind 不截断 transcript，而是追加 `session_rewound` marker。resume、

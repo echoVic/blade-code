@@ -119,6 +119,9 @@ describe('durable compaction checkpoint recovery', () => {
       messagesOmitted: 0,
       filesOmitted: 0,
       imagesOmitted: 0,
+      fallbackTargetTokens: 32_000,
+      fallbackMessagesOmitted: 7,
+      fallbackMessagesTruncated: 1,
       failureReason: 'insufficient_reduction',
       replacementMessages,
     });
@@ -136,6 +139,9 @@ describe('durable compaction checkpoint recovery', () => {
       metadata: {
         checkpointVersion: 1,
         strategy: 'fallback',
+        fallbackTargetTokens: 32_000,
+        fallbackMessagesOmitted: 7,
+        fallbackMessagesTruncated: 1,
         failureReason: 'insufficient_reduction',
       },
       replacementMessages,

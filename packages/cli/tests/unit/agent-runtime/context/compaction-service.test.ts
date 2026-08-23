@@ -12,7 +12,9 @@ import {
   type CompactionOptions,
   CompactionService,
   extractExactContinuationRecords,
+  MAX_COMPACTION_CONTEXT_RATIO,
   MAX_COMPACTION_RESULT_RATIO,
+  MAX_COMPACTION_TARGET_TOKENS,
   MIN_COMPACTION_EFFECTIVENESS_TOKENS,
   reconcileExactContinuationRecords,
   resetCompactionCircuitBreaker,
@@ -255,6 +257,189 @@ describe('CompactionService - 输出协议', () => {
     expect(compactChat).toHaveBeenCalledOnce();
   });
 
+  test('deterministic fallback 应按 token 目标截断超大单消息并保留头尾', async () => {
+    const messages: Message[] = [
+      {
+        role: 'user',
+        content: `HEAD_KEEP ${'historical payload '.repeat(8_000)} TAIL_KEEP`,
+      },
+    ];
+    const original = structuredClone(messages);
+    compactChat.mockRejectedValueOnce(new Error('summary unavailable'));
+
+    const result = await CompactionService.compact(messages, {
+      ...markerCompactionOptions,
+      maxContextTokens: 6_000,
+      sessionId: 'fallback-single-message-budget',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.fallbackTargetTokens).toBe(
+      Math.floor(6_000 * MAX_COMPACTION_CONTEXT_RATIO)
+    );
+    expect(result.postTokens).toBeLessThanOrEqual(result.fallbackTargetTokens!);
+    expect(result.fallbackMessagesOmitted).toBe(0);
+    expect(result.fallbackMessagesTruncated).toBe(1);
+    expect(String(result.compactedMessages[1]?.content)).toContain('HEAD_KEEP');
+    expect(String(result.compactedMessages[1]?.content)).toContain('TAIL_KEEP');
+    expect(String(result.compactedMessages[1]?.content)).toContain(
+      'message truncated to fit fallback token budget'
+    );
+    expect(messages).toEqual(original);
+  });
+
+  test('deterministic fallback 在超大 context window 中仍受绝对 token 上限约束', async () => {
+    const messages: Message[] = [
+      {
+        role: 'user',
+        content: `ABSOLUTE_HEAD_${'0123456789abcdef'.repeat(50_000)}_ABSOLUTE_TAIL`,
+      },
+    ];
+    compactChat.mockRejectedValueOnce(new Error('summary unavailable'));
+
+    const result = await CompactionService.compact(messages, {
+      ...markerCompactionOptions,
+      maxContextTokens: 1_000_000,
+      sessionId: 'fallback-absolute-budget',
+    });
+
+    expect(result.fallbackTargetTokens).toBe(MAX_COMPACTION_TARGET_TOKENS);
+    expect(result.postTokens).toBeLessThanOrEqual(MAX_COMPACTION_TARGET_TOKENS);
+    expect(result.fallbackMessagesTruncated).toBe(1);
+  });
+
+  test('deterministic fallback 应原子保留并截断最新 tool-call 单元', async () => {
+    const messages: Message[] = [
+      { role: 'user', content: `old context ${'old '.repeat(8_000)}` },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'bounded-tool-call',
+            type: 'function',
+            function: { name: 'Read', arguments: '{"file_path":"large.log"}' },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        name: 'Read',
+        tool_call_id: 'bounded-tool-call',
+        content: `TOOL_HEAD ${'tool output '.repeat(8_000)} TOOL_TAIL`,
+      },
+    ];
+    compactChat.mockRejectedValueOnce(new Error('summary unavailable'));
+
+    const result = await CompactionService.compact(messages, {
+      ...markerCompactionOptions,
+      maxContextTokens: 6_000,
+      sessionId: 'fallback-tool-unit-budget',
+    });
+
+    const assistant = result.compactedMessages.find(
+      (message) =>
+        message.role === 'assistant' &&
+        message.tool_calls?.some((call) => call.id === 'bounded-tool-call')
+    );
+    const tool = result.compactedMessages.find(
+      (message) =>
+        message.role === 'tool' && message.tool_call_id === 'bounded-tool-call'
+    );
+    expect(result.postTokens).toBeLessThanOrEqual(result.fallbackTargetTokens!);
+    expect(result.fallbackMessagesOmitted).toBe(1);
+    expect(result.fallbackMessagesTruncated).toBe(1);
+    expect(assistant).toBeDefined();
+    expect(tool).toBeDefined();
+    expect(String(tool?.content)).toContain('TOOL_HEAD');
+    expect(String(tool?.content)).toContain('TOOL_TAIL');
+  });
+
+  test('deterministic fallback 应省略只含未完成 tool call 的空 assistant', async () => {
+    const messages: Message[] = [
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'incomplete-tool-call',
+            type: 'function',
+            function: { name: 'Write', arguments: '{"file_path":"pending.txt"}' },
+          },
+        ],
+      },
+      { role: 'user', content: 'Retain the latest user evidence.' },
+    ];
+    compactChat.mockRejectedValueOnce(new Error('summary unavailable'));
+
+    const result = await CompactionService.compact(messages, {
+      ...markerCompactionOptions,
+      sessionId: 'fallback-incomplete-tool-call',
+    });
+
+    expect(result.compactedMessages).toContainEqual({
+      role: 'user',
+      content: 'Retain the latest user evidence.',
+    });
+    expect(
+      result.compactedMessages.some(
+        (message) =>
+          message.role === 'assistant' &&
+          message.tool_calls?.some((call) => call.id === 'incomplete-tool-call')
+      )
+    ).toBe(false);
+    expect(
+      result.compactedMessages.some(
+        (message) =>
+          message.role === 'assistant' &&
+          !String(message.content).trim() &&
+          !message.tool_calls?.length
+      )
+    ).toBe(false);
+    expect(result.fallbackMessagesOmitted).toBe(1);
+  });
+
+  test('deterministic fallback 不得保留 reasoning 或图片载荷', async () => {
+    const imageSecret = 'FALLBACK_IMAGE_PAYLOAD_MUST_NOT_SURVIVE';
+    const reasoningSecret = 'FALLBACK_REASONING_MUST_NOT_SURVIVE';
+    const messages: Message[] = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `Retain visible evidence. ${'visible context '.repeat(500)}`,
+          },
+          {
+            type: 'image_url',
+            image_url: {
+              url: `data:image/png;base64,${imageSecret}`,
+            },
+          },
+        ],
+      },
+      {
+        role: 'assistant',
+        content: `Visible response. ${'answer context '.repeat(500)}`,
+        reasoningContent: reasoningSecret,
+      },
+    ];
+    compactChat.mockRejectedValueOnce(new Error('summary unavailable'));
+
+    const result = await CompactionService.compact(messages, {
+      ...markerCompactionOptions,
+      maxContextTokens: 6_000,
+      sessionId: 'fallback-private-payload-budget',
+    });
+    const serialized = JSON.stringify(result.compactedMessages);
+
+    expect(serialized).toContain('Retain visible evidence.');
+    expect(serialized).toContain('[image omitted from compaction]');
+    expect(serialized).not.toContain(imageSecret);
+    expect(serialized).not.toContain(reasoningSecret);
+    expect(result.fallbackMessagesTruncated).toBe(2);
+  });
+
   test('瞬态 Provider 失败后应有界重试并累计 usage', async () => {
     vi.useFakeTimers();
     const transient = Object.assign(new Error('service unavailable'), {
@@ -394,6 +579,97 @@ describe('CompactionService - 输出协议', () => {
     expect(result.summary).not.toContain('ineffective summary output');
     expect(messages).toEqual(original);
     expect(compactChat).toHaveBeenCalledOnce();
+  });
+
+  test('LLM replacement 即使满足源缩减比例也不得超过 context headroom', async () => {
+    const messages: Message[] = Array.from({ length: 12 }, (_, index) => ({
+      role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+      content: `source-${index} ${'historical evidence '.repeat(1_200)}`,
+    }));
+    const estimatedSourceTokens = TokenCounter.countTokens(
+      messages,
+      markerCompactionOptions.modelName
+    );
+    const contextTarget = Math.floor(6_000 * MAX_COMPACTION_CONTEXT_RATIO);
+    const oversizedSummary = 'context headroom output '.repeat(1_400);
+    const summaryTokens = TokenCounter.countTokens(
+      [{ role: 'user', content: oversizedSummary }],
+      markerCompactionOptions.modelName
+    );
+    expect(summaryTokens).toBeGreaterThan(contextTarget);
+    expect(summaryTokens).toBeLessThan(
+      Math.floor(estimatedSourceTokens * MAX_COMPACTION_RESULT_RATIO)
+    );
+    compactChat.mockResolvedValueOnce({
+      content: `<summary>${oversizedSummary}</summary>`,
+    });
+
+    const result = await CompactionService.compact(messages, {
+      ...markerCompactionOptions,
+      maxContextTokens: 6_000,
+      sessionId: 'context-headroom-rejection',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.failureReason).toBe('insufficient_reduction');
+    expect(result.fallbackTargetTokens).toBe(contextTarget);
+    expect(result.postTokens).toBeLessThanOrEqual(contextTarget);
+  });
+
+  test('小历史跳过比例检查时仍拒绝超过 5,000-token floor 的异常膨胀', async () => {
+    const messages: Message[] = [{ role: 'user', content: 'small manual history' }];
+    const expandedSummary = 'unexpected expansion '.repeat(6_000);
+    expect(
+      TokenCounter.countTokens(messages, markerCompactionOptions.modelName)
+    ).toBeLessThan(MIN_COMPACTION_EFFECTIVENESS_TOKENS);
+    expect(
+      TokenCounter.countTokens(
+        [{ role: 'user', content: expandedSummary }],
+        markerCompactionOptions.modelName
+      )
+    ).toBeGreaterThan(MIN_COMPACTION_EFFECTIVENESS_TOKENS);
+    compactChat.mockResolvedValueOnce({
+      content: `<summary>${expandedSummary}</summary>`,
+    });
+
+    const result = await CompactionService.compact(messages, {
+      ...markerCompactionOptions,
+      maxContextTokens: 128_000,
+      sessionId: 'small-history-expansion',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.failureReason).toBe('insufficient_reduction');
+    expect(result.fallbackTargetTokens).toBe(MIN_COMPACTION_EFFECTIVENESS_TOKENS);
+    expect(result.postTokens).toBeLessThanOrEqual(MIN_COMPACTION_EFFECTIVENESS_TOKENS);
+  });
+
+  test('mandatory active-task checkpoint 超过目标时只提升到其实际大小', async () => {
+    const activeTask = `ACTIVE_HEAD_${'task constraint '.repeat(800)}_ACTIVE_TAIL`;
+    compactChat.mockRejectedValueOnce(new Error('summary unavailable'));
+
+    const result = await CompactionService.compact(
+      [{ role: 'user', content: 'small history' }],
+      {
+        ...markerCompactionOptions,
+        maxContextTokens: 1_000,
+        sessionId: 'fallback-mandatory-floor',
+        activeTask,
+      }
+    );
+
+    expect(result.fallbackTargetTokens).toBe(result.postTokens);
+    expect(result.fallbackTargetTokens).toBeGreaterThan(
+      Math.floor(1_000 * MAX_COMPACTION_CONTEXT_RATIO)
+    );
+    expect(result.fallbackMessagesOmitted).toBe(1);
+    const checkpoint = result.compactedMessages.find(
+      (message) =>
+        (message.metadata as Record<string, unknown> | undefined)
+          ?.isPostCompactActiveTask === true
+    );
+    expect(String(checkpoint?.content)).toContain('ACTIVE_HEAD_');
+    expect(String(checkpoint?.content)).toContain('_ACTIVE_TAIL');
   });
 
   test('连续缩减不足应打开 session 熔断并停止后续采样', async () => {

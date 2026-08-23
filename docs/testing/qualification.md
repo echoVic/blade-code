@@ -393,9 +393,8 @@ TUI、production Chromium Web 与真实 ACP SDK 八格矩阵，顺序固定且�
 surface 过滤。每格通过 loopback transparent proxy 转发真实 Provider 输出和真实
 compaction summary；proxy 改写前两个 task response 的 usage counters，让首个
 compaction request 返回受控 context overflow，要求第二个请求使用严格更小的 payload，
-再返回一次 `503`，最后透明转发第三个真实摘要请求。请求顺序必须为
-`task(70%) -> task(80%) -> compaction(context) -> compaction(503) -> compaction(real)
--> task -> task`。
+再返回一次 `503`。Pro 最后透明转发第三个真实摘要请求；Flash 则让第三个 compaction
+继续返回 `503`，强制进入 token-targeted deterministic fallback。
 70%/80% 阈值来自 production model catalog 的 context window 与 output reserve，而不是
 测试硬编码。每格证明：
 
@@ -405,7 +404,9 @@ compaction request 返回受控 context overflow，要求第二个请求使用�
 - latest replacement checkpoint 位于 marker 后，replacement/effective suffix 不含 marker，
   七段 continuation ledger 精确保留 mutation、failed verification 和 pending action
   sentinels，checkpoint 记录 `sampleAttempts: 3`、`inputReductions: 1`，
-  `messagesOmitted` 与 `filesOmitted` 至少一项非零且无 failure reason，真实 Bash fail、
+  `messagesOmitted` 与 `filesOmitted` 至少一项非零；Pro 无 failure reason，Flash 记录
+  `transient_exhausted` 且证明 `postTokens <= fallbackTargetTokens`，
+  `fallbackTargetTokens > 0`，两个 fallback 消息计数均存在且非负。真实 Bash fail、
   Write、Bash pass 的 durable 顺序正确；
 - Headless cold projection、PTY resume、ACP `session/load` 和 Web post-completion reload
   均不得新增 Provider request；internal event/tag/identity/reminder 不进入 terminal bytes、
@@ -430,10 +431,22 @@ ACP 投影。
 
 Compaction effectiveness guard 使用同一 DeepSeek Flash/Pro、Claude 与 GPT 真实
 Provider 矩阵，并确保每格输入都超过 5,000-token 生效门槛。正常真实摘要必须使完整
-replacement 不超过原可压缩消息体的 80%；确定性负向对照注入非空但过大的摘要，要求
-宿主拒绝该 LLM candidate、保留已计费 usage，以 `insufficient_reduction` 写入 durable
-fallback checkpoint，并通过 TUI、Headless JSONL、Server SSE 与 ACP 元数据投影稳定
-分类。测试不得只比较模型返回的 summary 文本，必须比较实际 replacement context。
+replacement 不超过原可压缩消息体的 80% 且不超过模型 context window 的 50%；
+确定性负向对照注入非空但过大的摘要，要求宿主拒绝该 LLM candidate、保留已计费
+usage，以 `insufficient_reduction` 写入 durable fallback checkpoint，并通过 TUI、
+Headless JSONL、Server SSE 与 ACP 元数据投影稳定分类。测试不得只比较模型返回的
+summary 文本，必须比较实际 replacement context。
+
+Token-targeted deterministic fallback 资格必须覆盖：按 token 而非消息数量选择最新
+完整单元；assistant tool call 与对应 tool results 不拆分；超大边界消息保留头尾并截断；
+reasoning 与图片 payload 不进入 replacement；canonical source messages 不变；
+`postTokens <= fallbackTargetTokens`。目标取 `max(5,000, 原消息体 80%)`、模型
+context window 50% 与 50,000 tokens 的最小值，仅当 exact continuation records 与
+active-task checkpoint 本身更大时提升到 mandatory payload 的实际大小。DeepSeek
+Flash 真实 Provider 对照必须先产生一个真实 summary，再由完整 replacement 的 50%
+headroom guard 确定性触发 fallback，并验证
+`fallbackTargetTokens`、`fallbackMessagesOmitted`、`fallbackMessagesTruncated`
+持久化和跨端投影。
 
 Fresh independent verification 资格要求主模型实际完成三个文件的非平凡实现，并在
 第一次尝试结束时由 runtime 强制启动新的内置 `verification` subagent。Verifier

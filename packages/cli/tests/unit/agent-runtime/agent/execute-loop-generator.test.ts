@@ -844,6 +844,9 @@ describe('executeLoopGenerator', () => {
         messagesOmitted: 2,
         filesOmitted: 0,
         imagesOmitted: 1,
+        fallbackTargetTokens: 50_000,
+        fallbackMessagesOmitted: 6,
+        fallbackMessagesTruncated: 1,
         failureReason: 'insufficient_reduction',
       });
 
@@ -891,6 +894,9 @@ describe('executeLoopGenerator', () => {
         messagesOmitted: 2,
         filesOmitted: 0,
         imagesOmitted: 1,
+        fallbackTargetTokens: 50_000,
+        fallbackMessagesOmitted: 6,
+        fallbackMessagesTruncated: 1,
         failureReason: 'insufficient_reduction',
       });
     });

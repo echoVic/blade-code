@@ -114,6 +114,9 @@ async function compactCommandHandler(
           messagesOmitted: result.messagesOmitted,
           filesOmitted: result.filesOmitted,
           imagesOmitted: result.imagesOmitted,
+          fallbackTargetTokens: result.fallbackTargetTokens,
+          fallbackMessagesOmitted: result.fallbackMessagesOmitted,
+          fallbackMessagesTruncated: result.fallbackMessagesTruncated,
           failureReason: result.failureReason,
           filesIncluded: result.filesIncluded,
           replacementMessages: result.compactedMessages,
@@ -162,6 +165,9 @@ async function compactCommandHandler(
           messagesOmitted: result.messagesOmitted,
           filesOmitted: result.filesOmitted,
           imagesOmitted: result.imagesOmitted,
+          fallbackTargetTokens: result.fallbackTargetTokens,
+          fallbackMessagesOmitted: result.fallbackMessagesOmitted,
+          fallbackMessagesTruncated: result.fallbackMessagesTruncated,
           maxContextTokens: tokenLimit,
         },
       };
@@ -175,8 +181,11 @@ async function compactCommandHandler(
   • 摘要尝试: ${result.sampleAttempts ?? 0}
   • 输入缩减: ${result.inputReductions ?? 0}
   • 省略图片: ${result.imagesOmitted ?? 0}
+  • 降级 token 目标: ${(result.fallbackTargetTokens ?? 0).toLocaleString()} tokens
+  • 降级省略消息: ${result.fallbackMessagesOmitted ?? 0}
+  • 降级截断消息: ${result.fallbackMessagesTruncated ?? 0}
 
-由于压缩过程出现错误，已使用简单截断策略。
+由于压缩过程出现错误，已使用 token 预算约束的确定性保留策略。
    失败分类: ${result.failureReason ?? 'deterministic'}
    错误信息: ${result.error}`);
 
@@ -196,6 +205,9 @@ async function compactCommandHandler(
           messagesOmitted: result.messagesOmitted,
           filesOmitted: result.filesOmitted,
           imagesOmitted: result.imagesOmitted,
+          fallbackTargetTokens: result.fallbackTargetTokens,
+          fallbackMessagesOmitted: result.fallbackMessagesOmitted,
+          fallbackMessagesTruncated: result.fallbackMessagesTruncated,
           failureReason: result.failureReason,
           maxContextTokens: tokenLimit,
         },

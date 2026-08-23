@@ -1651,6 +1651,19 @@ export class AcpSession {
                     ...(event.imagesOmitted !== undefined
                       ? { imagesOmitted: event.imagesOmitted }
                       : {}),
+                    ...(event.fallbackTargetTokens !== undefined
+                      ? { fallbackTargetTokens: event.fallbackTargetTokens }
+                      : {}),
+                    ...(event.fallbackMessagesOmitted !== undefined
+                      ? {
+                          fallbackMessagesOmitted: event.fallbackMessagesOmitted,
+                        }
+                      : {}),
+                    ...(event.fallbackMessagesTruncated !== undefined
+                      ? {
+                          fallbackMessagesTruncated: event.fallbackMessagesTruncated,
+                        }
+                      : {}),
                     ...(event.failureReason
                       ? { failureReason: event.failureReason }
                       : {}),

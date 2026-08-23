@@ -49,6 +49,11 @@ export class TokenCounter {
         }
       }
 
+      // Thinking content is sent back to providers as part of assistant history.
+      if (msg.reasoningContent) {
+        totalTokens += encoding.encode(msg.reasoningContent).length;
+      }
+
       // 工具调用
       if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
         totalTokens += this.countToolCallTokens(msg.tool_calls, encoding);

@@ -30,6 +30,9 @@ export interface CompactionPersistenceMetadata {
   messagesOmitted?: number;
   filesOmitted?: number;
   imagesOmitted?: number;
+  fallbackTargetTokens?: number;
+  fallbackMessagesOmitted?: number;
+  fallbackMessagesTruncated?: number;
   failureReason?: CompactionFailureReason;
   filesIncluded?: string[];
   replacementMessages?: Message[];

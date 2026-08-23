@@ -78,6 +78,9 @@ export type SystemEvent =
       messagesOmitted?: number;
       filesOmitted?: number;
       imagesOmitted?: number;
+      fallbackTargetTokens?: number;
+      fallbackMessagesOmitted?: number;
+      fallbackMessagesTruncated?: number;
       failureReason?: CompactionFailureReason;
     }
   | { kind: 'token_usage'; usage: TokenUsageInfo }

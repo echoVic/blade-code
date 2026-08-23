@@ -247,6 +247,9 @@ describe('/compact slash command', () => {
       messagesOmitted: 0,
       filesOmitted: 0,
       imagesOmitted: 0,
+      fallbackTargetTokens: 64_000,
+      fallbackMessagesOmitted: 8,
+      fallbackMessagesTruncated: 1,
       failureReason: 'insufficient_reduction',
     });
     const sendMessage = vi.fn();
@@ -265,6 +268,9 @@ describe('/compact slash command', () => {
       data: {
         usage,
         maxContextTokens: expect.any(Number),
+        fallbackTargetTokens: 64_000,
+        fallbackMessagesOmitted: 8,
+        fallbackMessagesTruncated: 1,
         failureReason: 'insufficient_reduction',
       },
     });
@@ -274,11 +280,17 @@ describe('/compact slash command', () => {
     expect(sendMessage).toHaveBeenCalledWith(
       expect.stringContaining('失败分类: insufficient_reduction')
     );
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.stringContaining('降级 token 目标: 64,000 tokens')
+    );
     expect(contextManagerState.saveCompaction).toHaveBeenCalledWith(
       'shared-session',
       'bounded fallback',
       expect.objectContaining({
         strategy: 'fallback',
+        fallbackTargetTokens: 64_000,
+        fallbackMessagesOmitted: 8,
+        fallbackMessagesTruncated: 1,
         failureReason: 'insufficient_reduction',
       }),
       null

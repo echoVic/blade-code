@@ -515,6 +515,7 @@ export function assertTokenBudgetRequestSequence(
   options: {
     expectCompactionRetry?: boolean;
     expectCompactionStepDown?: boolean;
+    expectCompactionFallback?: boolean;
   } = {}
 ): void {
   if (evidence.maxInFlight !== 1) {
@@ -587,7 +588,12 @@ export function assertTokenBudgetRequestSequence(
             kind: 'compaction' as const,
             marker: 0,
             rewritten: false,
-            status: 200,
+            status: options.expectCompactionFallback ? 503 : 200,
+            ...(options.expectCompactionFallback
+              ? {
+                  injectedFailure: 'compaction_transient' as const,
+                }
+              : {}),
           },
         ]
       : options.expectCompactionRetry
@@ -684,11 +690,13 @@ export function assertTokenBudgetRequestSequenceWithTranscript(input: {
   surfaceFinalSeen: boolean;
   expectCompactionRetry?: boolean;
   expectCompactionStepDown?: boolean;
+  expectCompactionFallback?: boolean;
 }): void {
   try {
     assertTokenBudgetRequestSequence(input.evidence, input.targets, {
       expectCompactionRetry: input.expectCompactionRetry,
       expectCompactionStepDown: input.expectCompactionStepDown,
+      expectCompactionFallback: input.expectCompactionFallback,
     });
   } catch (error) {
     const message =
@@ -708,11 +716,16 @@ interface Checkpoint {
   index: number;
   summary: string;
   replacements: NonNullable<ReturnType<typeof parseCompactionReplacementMessages>>;
+  strategy?: string;
+  postTokens?: number;
   sampleAttempts?: number;
   inputReductions?: number;
   messagesOmitted?: number;
   filesOmitted?: number;
   imagesOmitted?: number;
+  fallbackTargetTokens?: number;
+  fallbackMessagesOmitted?: number;
+  fallbackMessagesTruncated?: number;
   failureReason?: string;
 }
 
@@ -739,6 +752,14 @@ function latestValidCheckpoint(
         index,
         summary: event.data.payload.text,
         replacements,
+        ...(isRecord(metadata) && typeof metadata.strategy === 'string'
+          ? { strategy: metadata.strategy }
+          : {}),
+        ...(isRecord(metadata) &&
+        typeof metadata.postTokens === 'number' &&
+        Number.isSafeInteger(metadata.postTokens)
+          ? { postTokens: metadata.postTokens }
+          : {}),
         ...(isRecord(metadata) &&
         typeof metadata.sampleAttempts === 'number' &&
         Number.isSafeInteger(metadata.sampleAttempts)
@@ -763,6 +784,23 @@ function latestValidCheckpoint(
         typeof metadata.imagesOmitted === 'number' &&
         Number.isSafeInteger(metadata.imagesOmitted)
           ? { imagesOmitted: metadata.imagesOmitted }
+          : {}),
+        ...(isRecord(metadata) &&
+        typeof metadata.fallbackTargetTokens === 'number' &&
+        Number.isSafeInteger(metadata.fallbackTargetTokens)
+          ? { fallbackTargetTokens: metadata.fallbackTargetTokens }
+          : {}),
+        ...(isRecord(metadata) &&
+        typeof metadata.fallbackMessagesOmitted === 'number' &&
+        Number.isSafeInteger(metadata.fallbackMessagesOmitted)
+          ? { fallbackMessagesOmitted: metadata.fallbackMessagesOmitted }
+          : {}),
+        ...(isRecord(metadata) &&
+        typeof metadata.fallbackMessagesTruncated === 'number' &&
+        Number.isSafeInteger(metadata.fallbackMessagesTruncated)
+          ? {
+              fallbackMessagesTruncated: metadata.fallbackMessagesTruncated,
+            }
           : {}),
         ...(isRecord(metadata) && typeof metadata.failureReason === 'string'
           ? { failureReason: metadata.failureReason }
@@ -896,6 +934,7 @@ export function assertTokenBudgetTranscript(
   options: {
     expectedSampleAttempts?: number;
     expectedInputReductions?: number;
+    expectCompactionFallback?: boolean;
   } = {}
 ): void {
   const handoffEvents = events.filter(isTokenBudgetHandoffEvent);
@@ -928,8 +967,7 @@ export function assertTokenBudgetTranscript(
   }
   if (
     options.expectedSampleAttempts !== undefined &&
-    (checkpoint.sampleAttempts !== options.expectedSampleAttempts ||
-      checkpoint.failureReason !== undefined)
+    checkpoint.sampleAttempts !== options.expectedSampleAttempts
   ) {
     throw new Error(
       'Compaction checkpoint does not prove the expected recovered sample attempts'
@@ -938,8 +976,7 @@ export function assertTokenBudgetTranscript(
   if (
     options.expectedInputReductions !== undefined &&
     (checkpoint.inputReductions !== options.expectedInputReductions ||
-      (checkpoint.messagesOmitted ?? 0) + (checkpoint.filesOmitted ?? 0) < 1 ||
-      checkpoint.failureReason !== undefined)
+      (checkpoint.messagesOmitted ?? 0) + (checkpoint.filesOmitted ?? 0) < 1)
   ) {
     throw new Error(
       `Compaction checkpoint does not prove the expected input reduction: ${JSON.stringify(
@@ -952,6 +989,33 @@ export function assertTokenBudgetTranscript(
         }
       )}`
     );
+  }
+  if (options.expectCompactionFallback) {
+    if (
+      checkpoint.strategy !== 'fallback' ||
+      checkpoint.failureReason !== 'transient_exhausted' ||
+      checkpoint.postTokens === undefined ||
+      checkpoint.fallbackTargetTokens === undefined ||
+      checkpoint.fallbackTargetTokens <= 0 ||
+      checkpoint.postTokens > checkpoint.fallbackTargetTokens ||
+      checkpoint.fallbackMessagesOmitted === undefined ||
+      checkpoint.fallbackMessagesOmitted < 0 ||
+      checkpoint.fallbackMessagesTruncated === undefined ||
+      checkpoint.fallbackMessagesTruncated < 0
+    ) {
+      throw new Error(
+        `Compaction checkpoint does not prove bounded fallback: ${JSON.stringify({
+          strategy: checkpoint.strategy,
+          postTokens: checkpoint.postTokens,
+          fallbackTargetTokens: checkpoint.fallbackTargetTokens,
+          fallbackMessagesOmitted: checkpoint.fallbackMessagesOmitted,
+          fallbackMessagesTruncated: checkpoint.fallbackMessagesTruncated,
+          failureReason: checkpoint.failureReason,
+        })}`
+      );
+    }
+  } else if (checkpoint.failureReason !== undefined) {
+    throw new Error('Recovered compaction checkpoint has a failure reason');
   }
   assertNoHandoffInReplacement(checkpoint);
   assertNoHandoffInSuffix(events, checkpoint);

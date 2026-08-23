@@ -2165,6 +2165,25 @@ describe('token-budget handoff deterministic qualification foundation', () => {
         expectCompactionStepDown: true,
       })
     ).not.toThrow();
+    const fallbackEvidence: TokenBudgetProxyEvidence = {
+      ...stepDownEvidence,
+      requests: stepDownEvidence.requests.map((request, index) =>
+        index === 4
+          ? {
+              ...request,
+              upstreamStatus: 503,
+              responseKind: 'json',
+              injectedFailure: 'compaction_transient',
+            }
+          : request
+      ),
+    };
+    expect(() =>
+      assertTokenBudgetRequestSequence(fallbackEvidence, targets, {
+        expectCompactionStepDown: true,
+        expectCompactionFallback: true,
+      })
+    ).not.toThrow();
     expect(() =>
       assertTokenBudgetRequestSequence(evidence, targets, {
         expectCompactionRetry: true,
@@ -2248,6 +2267,40 @@ describe('token-budget handoff deterministic qualification foundation', () => {
       assertTokenBudgetTranscript(events, fixture, {
         expectedSampleAttempts: 3,
         expectedInputReductions: 1,
+      })
+    ).not.toThrow();
+    const fallbackEvents = structuredClone(events);
+    const fallbackCheckpoint = fallbackEvents.find(
+      (event) => event.type === 'part_created' && event.data.partType === 'summary'
+    ) as Extract<SessionEvent, { type: 'part_created' }> | undefined;
+    if (
+      !fallbackCheckpoint ||
+      !fallbackCheckpoint.data.payload ||
+      typeof fallbackCheckpoint.data.payload !== 'object' ||
+      Array.isArray(fallbackCheckpoint.data.payload)
+    ) {
+      throw new Error('Expected fallback checkpoint fixture');
+    }
+    fallbackCheckpoint.data.payload.metadata = {
+      checkpointVersion: 1,
+      reason: 'threshold',
+      strategy: 'fallback',
+      preTokens: 90_000,
+      postTokens: 42_000,
+      sampleAttempts: 3,
+      inputReductions: 1,
+      messagesOmitted: 2,
+      filesOmitted: 0,
+      fallbackTargetTokens: 50_000,
+      fallbackMessagesOmitted: 0,
+      fallbackMessagesTruncated: 0,
+      failureReason: 'transient_exhausted',
+    };
+    expect(() =>
+      assertTokenBudgetTranscript(fallbackEvents, fixture, {
+        expectedSampleAttempts: 3,
+        expectedInputReductions: 1,
+        expectCompactionFallback: true,
       })
     ).not.toThrow();
     expect(() => assertTokenBudgetTranscript([...events, events[2]!], fixture)).toThrow(

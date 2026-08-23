@@ -224,12 +224,15 @@ describe
           process.env.BLADE_TELEMETRY_DISABLED = '1';
 
           const targets = deriveTargets(model);
+          const expectCompactionFallback = model.model === 'deepseek-v4-flash';
           proxy = await startTokenBudgetHandoffProxy(
             model.baseURL ?? 'https://api.deepseek.com',
             {
               ...targets,
               markerTag: TOKEN_BUDGET_HANDOFF_TAG,
-              compactionFailureSequence: ['context_overflow', 'transient'],
+              compactionFailureSequence: expectCompactionFallback
+                ? ['context_overflow', 'transient', 'transient']
+                : ['context_overflow', 'transient'],
             }
           );
           const runtimeConfig = await writeRuntimeConfig(home, {
@@ -304,10 +307,12 @@ describe
             expectedFinal: fixture.finalMarker,
             surfaceFinalSeen: true,
             expectCompactionStepDown: true,
+            expectCompactionFallback,
           });
           assertTokenBudgetTranscript(events, fixture, {
             expectedSampleAttempts: 3,
             expectedInputReductions: 1,
+            expectCompactionFallback,
           });
           const publicMessages = await SessionService.loadSession(sessionId, workspace);
           const finalAssistant = publicMessages.findLast(

@@ -565,6 +565,15 @@ export class PersistentStore {
     if (metadata.imagesOmitted !== undefined) {
       result.imagesOmitted = metadata.imagesOmitted;
     }
+    if (metadata.fallbackTargetTokens !== undefined) {
+      result.fallbackTargetTokens = metadata.fallbackTargetTokens;
+    }
+    if (metadata.fallbackMessagesOmitted !== undefined) {
+      result.fallbackMessagesOmitted = metadata.fallbackMessagesOmitted;
+    }
+    if (metadata.fallbackMessagesTruncated !== undefined) {
+      result.fallbackMessagesTruncated = metadata.fallbackMessagesTruncated;
+    }
     if (metadata.failureReason) result.failureReason = metadata.failureReason;
     if (metadata.filesIncluded) result.filesIncluded = metadata.filesIncluded;
     if (metadata.replacementMessages) {

@@ -42,6 +42,21 @@ describe('TokenCounter', () => {
       const count = TokenCounter.countTokens(messages, modelName);
       expect(count).toBeGreaterThan(0);
     });
+
+    it('counts reasoning content that is replayed to the provider', () => {
+      const visibleOnly: Message[] = [{ role: 'assistant', content: 'answer' }];
+      const withReasoning: Message[] = [
+        {
+          role: 'assistant',
+          content: 'answer',
+          reasoningContent: 'private reasoning '.repeat(100),
+        },
+      ];
+
+      expect(TokenCounter.countTokens(withReasoning, modelName)).toBeGreaterThan(
+        TokenCounter.countTokens(visibleOnly, modelName)
+      );
+    });
   });
 
   describe('shouldCompact', () => {

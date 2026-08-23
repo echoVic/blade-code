@@ -238,6 +238,9 @@ describe('ReactiveCompaction', () => {
         compactedMessages: fallbackMessages,
         boundaryMessage: { role: 'system', content: 'Conversation compacted' },
         summaryMessage: { role: 'user', content: 'fallback checkpoint' },
+        fallbackTargetTokens: 64,
+        fallbackMessagesOmitted: 4,
+        fallbackMessagesTruncated: 1,
       } satisfies CompactionResult)
     );
 
@@ -250,6 +253,9 @@ describe('ReactiveCompaction', () => {
       summary: 'fallback checkpoint',
       preTokens: 96,
       postTokens: 16,
+      fallbackTargetTokens: 64,
+      fallbackMessagesOmitted: 4,
+      fallbackMessagesTruncated: 1,
     });
   });
 

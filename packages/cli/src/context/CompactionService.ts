@@ -24,6 +24,12 @@ import { FileAccessTracker } from '../tools/builtin/file/FileAccessTracker.js';
 import { abortableSleep, isAbortError } from '../utils/abort.js';
 import { getCwd } from '../utils/cwd.js';
 import { PathSecurity } from '../utils/pathSecurity.js';
+import {
+  compactionMessageText,
+  compactionMessageUnits,
+  planFallbackMessages,
+  resolveCompactionTargetTokens,
+} from './CompactionFallback.js';
 import type { CompactionFailureReason } from './compactionCheckpoint.js';
 import { FileAnalyzer, type FileContent } from './FileAnalyzer.js';
 import { stripTokenBudgetHandoffMessages } from './TokenBudgetHandoff.js';
@@ -95,6 +101,12 @@ export interface CompactionResult {
   filesOmitted?: number;
   /** 摘要请求中替换为固定占位符的图片数 */
   imagesOmitted?: number;
+  /** deterministic fallback 的 post-compact token 目标 */
+  fallbackTargetTokens?: number;
+  /** deterministic fallback 从 replacement tail 省略的源消息数 */
+  fallbackMessagesOmitted?: number;
+  /** deterministic fallback 为满足目标而缩减载荷的保留消息数 */
+  fallbackMessagesTruncated?: number;
   /** fallback 的稳定失败分类 */
   failureReason?: CompactionFailureReason;
 }
@@ -102,8 +114,12 @@ export interface CompactionResult {
 const sessionFailures = new Map<string, number>();
 const MAX_CONSECUTIVE_FAILURES = 3;
 export const MAX_COMPACTION_SAMPLE_ATTEMPTS = 3;
-export const MIN_COMPACTION_EFFECTIVENESS_TOKENS = 5_000;
-export const MAX_COMPACTION_RESULT_RATIO = 0.8;
+export {
+  MAX_COMPACTION_CONTEXT_RATIO,
+  MAX_COMPACTION_RESULT_RATIO,
+  MAX_COMPACTION_TARGET_TOKENS,
+  MIN_COMPACTION_EFFECTIVENESS_TOKENS,
+} from './CompactionFallback.js';
 
 class CompactionSamplingError extends Error {
   constructor(
@@ -309,7 +325,6 @@ function compactionSessionKey(workspaceRoot?: string, sessionId?: string): strin
 
 const DEFAULT_COMPACTION_MESSAGE_CHARS = 5_000;
 const MIN_COMPACTION_MESSAGE_CHARS = 625;
-const COMPACTION_IMAGE_PLACEHOLDER = '[image omitted from compaction]';
 
 interface CompactionSampleInput {
   messages: Message[];
@@ -329,38 +344,6 @@ function countCompactionImages(messages: readonly Message[]): number {
         : 0),
     0
   );
-}
-
-function compactionMessageText(message: Message): string {
-  if (typeof message.content === 'string') return message.content;
-  return message.content
-    .map((part) => (part.type === 'text' ? part.text : COMPACTION_IMAGE_PLACEHOLDER))
-    .join('\n');
-}
-
-function compactionMessageUnits(messages: readonly Message[]): Message[][] {
-  const units: Message[][] = [];
-  for (let index = 0; index < messages.length; index++) {
-    const message = messages[index]!;
-    const unit = [message];
-    if (message.role === 'assistant' && message.tool_calls?.length) {
-      const callIds = new Set(message.tool_calls.map((call) => call.id));
-      while (index + 1 < messages.length) {
-        const candidate = messages[index + 1]!;
-        if (
-          candidate.role !== 'tool' ||
-          !candidate.tool_call_id ||
-          !callIds.has(candidate.tool_call_id)
-        ) {
-          break;
-        }
-        unit.push(candidate);
-        index++;
-      }
-    }
-    units.push(unit);
-  }
-  return units;
 }
 
 function reduceCompactionSampleInput(
@@ -476,9 +459,6 @@ ${fileContents.length > 0 ? `## Important Files\n\n${filesText}\n\n` : ''}Respon
 export class CompactionService {
   /** 保留比例（20%） */
   private static readonly RETAIN_PERCENT = 0.2;
-
-  /** 降级时保留比例（30%） */
-  private static readonly FALLBACK_RETAIN_PERCENT = 0.3;
 
   /** Active task checkpoint 的最大长度，避免把超长原始输入重新塞回上下文。 */
   private static readonly ACTIVE_TASK_MAX_CHARS = 6_000;
@@ -655,13 +635,11 @@ export class CompactionService {
       }
 
       const postTokens = TokenCounter.countTokens(compactedMessages, options.modelName);
-      const maxEffectivePostTokens = Math.floor(
-        estimatedSourceTokens * MAX_COMPACTION_RESULT_RATIO
+      const maxEffectivePostTokens = resolveCompactionTargetTokens(
+        estimatedSourceTokens,
+        options.maxContextTokens
       );
-      if (
-        estimatedSourceTokens >= MIN_COMPACTION_EFFECTIVENESS_TOKENS &&
-        postTokens > maxEffectivePostTokens
-      ) {
+      if (postTokens > maxEffectivePostTokens) {
         const error = new Error(
           `Compaction output retained ${postTokens} estimated tokens; maximum is ${maxEffectivePostTokens}`
         );
@@ -1071,7 +1049,10 @@ export class CompactionService {
       role: 'user',
       content: [
         '<system-reminder>',
-        'Post-compaction active task checkpoint. Continue this user-authored request; preserve its exact literals and constraints:',
+        'Post-compaction active task checkpoint. This preserves the user request, not execution status.',
+        'Continue from the authoritative statuses in the compaction ledger and retained tail; never repeat actions already marked complete, applied, or passed.',
+        'Treat failed actions as historical evidence and follow the pending exact next action, which may require a corrected retry.',
+        "Preserve the request's exact literals and constraints:",
         checkpoint,
         '</system-reminder>',
       ].join('\n'),
@@ -1082,7 +1063,7 @@ export class CompactionService {
   }
 
   /**
-   * 降级策略：简单截断
+   * 降级策略：按 token 预算保留最近完整消息单元
    *
    * @param messages - 消息列表
    * @param options - 压缩选项
@@ -1103,27 +1084,6 @@ export class CompactionService {
     imagesOmitted: number,
     usage?: UsageInfo
   ): CompactionResult {
-    const retainCount = Math.ceil(messages.length * this.FALLBACK_RETAIN_PERCENT);
-    const candidateMessages = messages.slice(-retainCount);
-
-    // 收集保留消息中所有 tool_call 的 ID
-    const availableToolCallIds = new Set<string>();
-    for (const msg of candidateMessages) {
-      if (msg.role === 'assistant' && msg.tool_calls) {
-        for (const tc of msg.tool_calls) {
-          availableToolCallIds.add(tc.id);
-        }
-      }
-    }
-
-    // 过滤掉孤儿 tool 消息
-    const retainedMessages = candidateMessages.filter((msg) => {
-      if (msg.role === 'tool' && msg.tool_call_id) {
-        return availableToolCallIds.has(msg.tool_call_id);
-      }
-      return true;
-    });
-
     const boundaryMessageId = nanoid();
     const boundaryMessage = this.createBoundaryMessage(
       boundaryMessageId,
@@ -1135,19 +1095,32 @@ export class CompactionService {
     const summaryMessageId = nanoid();
     const fallbackSummary = reconcileExactContinuationRecords(
       '[Automatic compaction failed; using bounded fallback]\n\n' +
-        'The retained tail and active-task checkpoint are authoritative. ' +
-        'Re-establish pending mutations, verification status, and the exact next ' +
-        'action from retained evidence before claiming completion.',
+        'The exact continuation records and retained tail are authoritative for ' +
+        'execution status. Do not repeat actions marked complete, applied, or ' +
+        'passed. Treat failed actions as historical evidence and execute only the ' +
+        'pending exact next action, which may require a corrected retry, before ' +
+        'claiming completion.',
       messages
     );
     const summaryMessage = this.createSummaryMessage(summaryMessageId, fallbackSummary);
 
-    const compactedMessages = [summaryMessage, ...retainedMessages];
     const activeTaskMessage = this.buildActiveTaskMessage(options.activeTask);
-    if (activeTaskMessage) {
-      compactedMessages.push(activeTaskMessage);
-    }
+    const fixedMessages = [
+      summaryMessage,
+      ...(activeTaskMessage ? [activeTaskMessage] : []),
+    ];
+    const fallbackPlan = planFallbackMessages(messages, fixedMessages, options);
+    const compactedMessages = [
+      summaryMessage,
+      ...fallbackPlan.messages,
+      ...(activeTaskMessage ? [activeTaskMessage] : []),
+    ];
     const postTokens = TokenCounter.countTokens(compactedMessages, options.modelName);
+    if (postTokens > fallbackPlan.targetTokens) {
+      throw new Error(
+        `Fallback compaction retained ${postTokens} estimated tokens; target is ${fallbackPlan.targetTokens}`
+      );
+    }
 
     return {
       success: false,
@@ -1171,6 +1144,9 @@ export class CompactionService {
       messagesOmitted,
       filesOmitted,
       imagesOmitted,
+      fallbackTargetTokens: fallbackPlan.targetTokens,
+      fallbackMessagesOmitted: fallbackPlan.messagesOmitted,
+      fallbackMessagesTruncated: fallbackPlan.messagesTruncated,
       failureReason,
     };
   }

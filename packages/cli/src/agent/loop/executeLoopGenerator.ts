@@ -771,6 +771,9 @@ export async function* checkAndCompactInLoop(
   let messagesOmitted: number | undefined;
   let filesOmitted: number | undefined;
   let imagesOmitted: number | undefined;
+  let fallbackTargetTokens: number | undefined;
+  let fallbackMessagesOmitted: number | undefined;
+  let fallbackMessagesTruncated: number | undefined;
   let failureReason: CompactionFailureReason | undefined;
   let failurePhase: 'compaction' | 'checkpoint' = 'compaction';
   yield { kind: 'compaction', phase: 'start', reason: 'threshold' };
@@ -805,6 +808,9 @@ export async function* checkAndCompactInLoop(
     messagesOmitted = result.messagesOmitted;
     filesOmitted = result.filesOmitted;
     imagesOmitted = result.imagesOmitted;
+    fallbackTargetTokens = result.fallbackTargetTokens;
+    fallbackMessagesOmitted = result.fallbackMessagesOmitted;
+    fallbackMessagesTruncated = result.fallbackMessagesTruncated;
     failureReason = result.failureReason;
     if (result.success) {
       logger.debug(
@@ -833,6 +839,9 @@ export async function* checkAndCompactInLoop(
         messagesOmitted: result.messagesOmitted,
         filesOmitted: result.filesOmitted,
         imagesOmitted: result.imagesOmitted,
+        fallbackTargetTokens: result.fallbackTargetTokens,
+        fallbackMessagesOmitted: result.fallbackMessagesOmitted,
+        fallbackMessagesTruncated: result.fallbackMessagesTruncated,
         failureReason: result.failureReason,
         filesIncluded: result.filesIncluded,
         replacementMessages: result.compactedMessages,
@@ -871,6 +880,9 @@ export async function* checkAndCompactInLoop(
       messagesOmitted,
       filesOmitted,
       imagesOmitted,
+      fallbackTargetTokens,
+      fallbackMessagesOmitted,
+      fallbackMessagesTruncated,
       failureReason,
     };
   }
@@ -2212,6 +2224,9 @@ validates the object and may return a bounded corrective error.`;
             let messagesOmitted: number | undefined;
             let filesOmitted: number | undefined;
             let imagesOmitted: number | undefined;
+            let fallbackTargetTokens: number | undefined;
+            let fallbackMessagesOmitted: number | undefined;
+            let fallbackMessagesTruncated: number | undefined;
             let failureReason: CompactionFailureReason | undefined;
             yield {
               kind: 'compaction',
@@ -2242,6 +2257,9 @@ validates the object and may return a bounded corrective error.`;
               messagesOmitted = result.messagesOmitted;
               filesOmitted = result.filesOmitted;
               imagesOmitted = result.imagesOmitted;
+              fallbackTargetTokens = result.fallbackTargetTokens;
+              fallbackMessagesOmitted = result.fallbackMessagesOmitted;
+              fallbackMessagesTruncated = result.fallbackMessagesTruncated;
               failureReason = result.failureReason;
               if (
                 result.success &&
@@ -2273,6 +2291,9 @@ validates the object and may return a bounded corrective error.`;
                     messagesOmitted: result.messagesOmitted,
                     filesOmitted: result.filesOmitted,
                     imagesOmitted: result.imagesOmitted,
+                    fallbackTargetTokens: result.fallbackTargetTokens,
+                    fallbackMessagesOmitted: result.fallbackMessagesOmitted,
+                    fallbackMessagesTruncated: result.fallbackMessagesTruncated,
                     failureReason: result.failureReason,
                     filesIncluded: result.filesIncluded,
                     replacementMessages: result.messages,
@@ -2307,6 +2328,9 @@ validates the object and may return a bounded corrective error.`;
                 messagesOmitted,
                 filesOmitted,
                 imagesOmitted,
+                fallbackTargetTokens,
+                fallbackMessagesOmitted,
+                fallbackMessagesTruncated,
                 failureReason,
               };
             }
@@ -4137,6 +4161,9 @@ validates the object and may return a bounded corrective error.`;
               let compactionMessagesOmitted: number | undefined;
               let compactionFilesOmitted: number | undefined;
               let compactionImagesOmitted: number | undefined;
+              let compactionFallbackTargetTokens: number | undefined;
+              let compactionFallbackMessagesOmitted: number | undefined;
+              let compactionFallbackMessagesTruncated: number | undefined;
               let compactionFailureReason: CompactionFailureReason | undefined;
               yield {
                 kind: 'compaction',
@@ -4191,6 +4218,11 @@ validates the object and may return a bounded corrective error.`;
                 compactionMessagesOmitted = compactResult.messagesOmitted;
                 compactionFilesOmitted = compactResult.filesOmitted;
                 compactionImagesOmitted = compactResult.imagesOmitted;
+                compactionFallbackTargetTokens = compactResult.fallbackTargetTokens;
+                compactionFallbackMessagesOmitted =
+                  compactResult.fallbackMessagesOmitted;
+                compactionFallbackMessagesTruncated =
+                  compactResult.fallbackMessagesTruncated;
                 compactionFailureReason = compactResult.failureReason;
 
                 // 保存压缩数据到 JSONL
@@ -4209,6 +4241,9 @@ validates the object and may return a bounded corrective error.`;
                     messagesOmitted: compactResult.messagesOmitted,
                     filesOmitted: compactResult.filesOmitted,
                     imagesOmitted: compactResult.imagesOmitted,
+                    fallbackTargetTokens: compactResult.fallbackTargetTokens,
+                    fallbackMessagesOmitted: compactResult.fallbackMessagesOmitted,
+                    fallbackMessagesTruncated: compactResult.fallbackMessagesTruncated,
                     failureReason: compactResult.failureReason,
                     filesIncluded: compactResult.filesIncluded,
                     replacementMessages,
@@ -4235,6 +4270,9 @@ validates the object and may return a bounded corrective error.`;
                   messagesOmitted: compactionMessagesOmitted,
                   filesOmitted: compactionFilesOmitted,
                   imagesOmitted: compactionImagesOmitted,
+                  fallbackTargetTokens: compactionFallbackTargetTokens,
+                  fallbackMessagesOmitted: compactionFallbackMessagesOmitted,
+                  fallbackMessagesTruncated: compactionFallbackMessagesTruncated,
                   failureReason: compactionFailureReason,
                 };
               }

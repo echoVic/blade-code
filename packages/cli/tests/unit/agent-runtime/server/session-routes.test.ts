@@ -2624,6 +2624,9 @@ describe('SessionRoutes runtime reuse', () => {
         messagesOmitted: 2,
         filesOmitted: 0,
         imagesOmitted: 1,
+        fallbackTargetTokens: 64_000,
+        fallbackMessagesOmitted: 8,
+        fallbackMessagesTruncated: 1,
         failureReason: 'insufficient_reduction',
       };
       yield { kind: 'model_fallback' };
@@ -2784,6 +2787,9 @@ describe('SessionRoutes runtime reuse', () => {
         messagesOmitted: 2,
         filesOmitted: 0,
         imagesOmitted: 1,
+        fallbackTargetTokens: 64_000,
+        fallbackMessagesOmitted: 8,
+        fallbackMessagesTruncated: 1,
         failureReason: 'insufficient_reduction',
       }
     );

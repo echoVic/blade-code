@@ -40,6 +40,9 @@ export interface ReactiveCompactResult {
   messagesOmitted?: number;
   filesOmitted?: number;
   imagesOmitted?: number;
+  fallbackTargetTokens?: number;
+  fallbackMessagesOmitted?: number;
+  fallbackMessagesTruncated?: number;
   failureReason?: CompactionFailureReason;
   filesIncluded?: string[];
   usage?: UsageInfo;
@@ -105,6 +108,9 @@ export class ReactiveCompaction {
           messagesOmitted: compactResult.messagesOmitted,
           filesOmitted: compactResult.filesOmitted,
           imagesOmitted: compactResult.imagesOmitted,
+          fallbackTargetTokens: compactResult.fallbackTargetTokens,
+          fallbackMessagesOmitted: compactResult.fallbackMessagesOmitted,
+          fallbackMessagesTruncated: compactResult.fallbackMessagesTruncated,
           failureReason: compactResult.failureReason,
           filesIncluded: compactResult.filesIncluded,
           usage: compactResult.usage,
