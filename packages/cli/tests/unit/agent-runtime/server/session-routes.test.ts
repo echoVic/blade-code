@@ -2615,8 +2615,8 @@ describe('SessionRoutes runtime reuse', () => {
         kind: 'compaction',
         phase: 'end',
         reason: 'context_limit',
-        strategy: 'llm',
-        outcome: 'completed',
+        strategy: 'fallback',
+        outcome: 'fallback',
         preTokens: 120_000,
         postTokens: 2_000,
         sampleAttempts: 2,
@@ -2624,6 +2624,7 @@ describe('SessionRoutes runtime reuse', () => {
         messagesOmitted: 2,
         filesOmitted: 0,
         imagesOmitted: 1,
+        failureReason: 'insufficient_reduction',
       };
       yield { kind: 'model_fallback' };
       yield {
@@ -2774,8 +2775,8 @@ describe('SessionRoutes runtime reuse', () => {
       'compaction.completed',
       {
         reason: 'context_limit',
-        strategy: 'llm',
-        outcome: 'completed',
+        strategy: 'fallback',
+        outcome: 'fallback',
         preTokens: 120_000,
         postTokens: 2_000,
         sampleAttempts: 2,
@@ -2783,6 +2784,7 @@ describe('SessionRoutes runtime reuse', () => {
         messagesOmitted: 2,
         filesOmitted: 0,
         imagesOmitted: 1,
+        failureReason: 'insufficient_reduction',
       }
     );
     expect(Bus.publish).toHaveBeenCalledWith(

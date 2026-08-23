@@ -823,14 +823,14 @@ describe('executeLoopGenerator', () => {
         maxOutputTokens: 4_096,
       });
       vi.mocked(CompactionService.compact).mockResolvedValueOnce({
-        success: true,
-        summary: 'summary',
+        success: false,
+        summary: 'bounded fallback',
         preTokens: 90_000,
-        postTokens: 1_000,
+        postTokens: 12_000,
         filesIncluded: [],
-        compactedMessages: [{ role: 'user', content: 'summary' }],
+        compactedMessages: [{ role: 'user', content: 'bounded fallback' }],
         boundaryMessage: { role: 'system', content: '' },
-        summaryMessage: { role: 'user', content: 'summary' },
+        summaryMessage: { role: 'user', content: 'bounded fallback' },
         usage: {
           promptTokens: 100,
           completionTokens: 20,
@@ -844,6 +844,7 @@ describe('executeLoopGenerator', () => {
         messagesOmitted: 2,
         filesOmitted: 0,
         imagesOmitted: 1,
+        failureReason: 'insufficient_reduction',
       });
 
       const generator = checkAndCompactInLoop(
@@ -881,16 +882,16 @@ describe('executeLoopGenerator', () => {
         kind: 'compaction',
         phase: 'end',
         reason: 'threshold',
-        strategy: 'llm',
-        outcome: 'completed',
+        strategy: 'fallback',
+        outcome: 'fallback',
         preTokens: 90_000,
-        postTokens: 1_000,
+        postTokens: 12_000,
         sampleAttempts: 2,
         inputReductions: 1,
         messagesOmitted: 2,
         filesOmitted: 0,
         imagesOmitted: 1,
-        failureReason: undefined,
+        failureReason: 'insufficient_reduction',
       });
     });
 

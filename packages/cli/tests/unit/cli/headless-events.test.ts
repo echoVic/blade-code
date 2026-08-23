@@ -536,6 +536,29 @@ describe('headless event contract', () => {
     });
   });
 
+  it('accepts the insufficient compaction reduction failure class', async () => {
+    const { HEADLESS_EVENT_VERSION, HeadlessJsonlEventSchema } = await import(
+      '../../../src/commands/headlessEvents.js'
+    );
+
+    expect(
+      HeadlessJsonlEventSchema.parse({
+        event_version: HEADLESS_EVENT_VERSION,
+        type: 'compacting',
+        state: 'completed',
+        reason: 'threshold',
+        strategy: 'fallback',
+        outcome: 'fallback',
+        pre_tokens: 60_000,
+        post_tokens: 12_000,
+        sample_attempts: 1,
+        failure_reason: 'insufficient_reduction',
+      })
+    ).toMatchObject({
+      failure_reason: 'insufficient_reduction',
+    });
+  });
+
   it('validates durable subagent lineage events', async () => {
     const { HEADLESS_EVENT_VERSION, HeadlessJsonlEventSchema } = await import(
       '../../../src/commands/headlessEvents.js'

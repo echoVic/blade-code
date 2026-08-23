@@ -5,8 +5,11 @@ import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   CompactionService,
+  MAX_COMPACTION_RESULT_RATIO,
+  MIN_COMPACTION_EFFECTIVENESS_TOKENS,
   resetCompactionCircuitBreaker,
 } from '../../../src/context/CompactionService.js';
+import { TokenCounter } from '../../../src/context/TokenCounter.js';
 import { HookManager } from '../../../src/hooks/HookManager.js';
 import type { Message } from '../../../src/services/ChatServiceInterface.js';
 import { startTokenBudgetHandoffProxy } from '../../support/tokenBudgetHandoffProxy.js';
@@ -43,9 +46,9 @@ afterAll(async () => {
 
 describe
   .skipIf(!isRealApiTestEnabled())
-  .sequential('compaction rich-media elision (real API)', () => {
+  .sequential('compaction safety controls (real API)', () => {
     it.each(models)(
-      '$qualificationId sends only text and fixed image placeholders',
+      '$qualificationId elides media and produces an effective replacement',
       async (model) => {
         const root = await mkdtemp(path.join(os.tmpdir(), 'blade-compact-media-'));
         roots.push(root);
@@ -65,7 +68,14 @@ describe
           }
         );
         const messages: Message[] = [
-          { role: 'user', content: 'Older text remains available.' },
+          {
+            role: 'user',
+            content: Array.from(
+              { length: 600 },
+              (_, index) =>
+                `Historical checkpoint ${index} remained complete and verified.`
+            ).join('\n'),
+          },
           {
             role: 'user',
             content: [
@@ -87,6 +97,7 @@ describe
           { role: 'assistant', content: 'Continue from the textual evidence.' },
         ];
         const originalMessages = structuredClone(messages);
+        const estimatedSourceTokens = TokenCounter.countTokens(messages, model.model);
 
         try {
           const result = await CompactionService.compact(messages, {
@@ -113,6 +124,12 @@ describe
           expect(result.sampleAttempts).toBe(1);
           expect(result.imagesOmitted).toBe(2);
           expect(result.failureReason).toBeUndefined();
+          expect(estimatedSourceTokens).toBeGreaterThanOrEqual(
+            MIN_COMPACTION_EFFECTIVENESS_TOKENS
+          );
+          expect(result.postTokens).toBeLessThanOrEqual(
+            Math.floor(estimatedSourceTokens * MAX_COMPACTION_RESULT_RATIO)
+          );
           expect(messages).toEqual(originalMessages);
 
           expect(evidence.maxInFlight).toBe(1);

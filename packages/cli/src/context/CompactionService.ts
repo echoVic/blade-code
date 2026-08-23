@@ -102,6 +102,8 @@ export interface CompactionResult {
 const sessionFailures = new Map<string, number>();
 const MAX_CONSECUTIVE_FAILURES = 3;
 export const MAX_COMPACTION_SAMPLE_ATTEMPTS = 3;
+export const MIN_COMPACTION_EFFECTIVENESS_TOKENS = 5_000;
+export const MAX_COMPACTION_RESULT_RATIO = 0.8;
 
 class CompactionSamplingError extends Error {
   constructor(
@@ -472,9 +474,6 @@ ${fileContents.length > 0 ? `## Important Files\n\n${filesText}\n\n` : ''}Respon
  * Compaction Service - 上下文压缩服务
  */
 export class CompactionService {
-  /** 压缩阈值百分比（80%） */
-  private static readonly THRESHOLD_PERCENT = 0.8;
-
   /** 保留比例（20%） */
   private static readonly RETAIN_PERCENT = 0.2;
 
@@ -504,13 +503,17 @@ export class CompactionService {
 
     // 优先使用传入的真实 preTokens（来自 LLM usage），否则使用估算
     const removedHandoffMarker = sourceMessages.length !== messages.length;
+    const estimatedSourceTokens = TokenCounter.countTokens(
+      sourceMessages,
+      options.modelName
+    );
     let preTokens: number;
     let tokenSource: 'actual (from LLM usage)' | 'estimated';
     if (!removedHandoffMarker && options.actualPreTokens !== undefined) {
       preTokens = options.actualPreTokens;
       tokenSource = 'actual (from LLM usage)';
     } else {
-      preTokens = TokenCounter.countTokens(sourceMessages, options.modelName);
+      preTokens = estimatedSourceTokens;
       tokenSource = 'estimated';
     }
     logger.debug(`[CompactionService] preTokens source: ${tokenSource}`);
@@ -652,6 +655,36 @@ export class CompactionService {
       }
 
       const postTokens = TokenCounter.countTokens(compactedMessages, options.modelName);
+      const maxEffectivePostTokens = Math.floor(
+        estimatedSourceTokens * MAX_COMPACTION_RESULT_RATIO
+      );
+      if (
+        estimatedSourceTokens >= MIN_COMPACTION_EFFECTIVENESS_TOKENS &&
+        postTokens > maxEffectivePostTokens
+      ) {
+        const error = new Error(
+          `Compaction output retained ${postTokens} estimated tokens; maximum is ${maxEffectivePostTokens}`
+        );
+        sessionFailures.set(sessionKey, (sessionFailures.get(sessionKey) ?? 0) + 1);
+        logger.warn('[CompactionService] 摘要缩减不足，使用降级策略', {
+          estimatedSourceTokens,
+          postTokens,
+          maxEffectivePostTokens,
+        });
+        return this.fallbackCompact(
+          sourceMessages,
+          options,
+          preTokens,
+          error,
+          generated.attempts,
+          'insufficient_reduction',
+          generated.inputReductions,
+          generated.messagesOmitted,
+          generated.filesOmitted,
+          imagesOmitted,
+          generated.usage
+        );
+      }
 
       logger.debug('[CompactionService] 压缩完成！');
       logger.debug(
@@ -1067,7 +1100,8 @@ export class CompactionService {
     inputReductions: number,
     messagesOmitted: number,
     filesOmitted: number,
-    imagesOmitted: number
+    imagesOmitted: number,
+    usage?: UsageInfo
   ): CompactionResult {
     const retainCount = Math.ceil(messages.length * this.FALLBACK_RETAIN_PERCENT);
     const candidateMessages = messages.slice(-retainCount);
@@ -1131,6 +1165,7 @@ export class CompactionService {
       boundaryMessage,
       summaryMessage,
       error: errorMsg,
+      usage,
       sampleAttempts,
       inputReductions,
       messagesOmitted,

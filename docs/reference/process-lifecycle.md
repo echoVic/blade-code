@@ -273,6 +273,10 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   在摘要输入中替换为固定占位符；data URL、远程 URL 和 base64 payload 均不会发送给
   摘要 Provider。该派生过程不修改 canonical transcript 或 post-compact 保留消息，
   `imagesOmitted` 只记录本次摘要输入省略的图片数量。
+- 对估算达到 5,000 tokens 的可压缩消息体，宿主只接受完整 post-compact replacement
+  不超过原消息体 80% 的 LLM 结果。非空但缩减不足的摘要不会作为成功结果提交，而是以
+  `insufficient_reduction` 进入确定性 fallback；该次已计费 Provider usage 仍会投影。
+  小于门槛的手动压缩不应用该比例检查，避免固定 ledger 开销造成误判。
 - compaction 在重试 Provider 前必须先原子提交 exact replacement context。JSONL
   summary part 保存有界 `replacementMessages` checkpoint、reason、strategy 和
   pre/post tokens，并记录 `sampleAttempts`、`inputReductions`、`messagesOmitted`、

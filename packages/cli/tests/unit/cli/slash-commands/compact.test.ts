@@ -221,6 +221,70 @@ describe('/compact slash command', () => {
     );
   });
 
+  it('保留缩减不足 fallback 的 usage 与稳定分类', async () => {
+    const { default: compactCommand } = await import(
+      '../../../../src/slash-commands/compact.js'
+    );
+    const usage = {
+      promptTokens: 7_000,
+      completionTokens: 9_000,
+      totalTokens: 16_000,
+      costUsd: 0.25,
+    };
+    compactionState.compact.mockResolvedValueOnce({
+      success: false,
+      summary: 'bounded fallback',
+      preTokens: 60_000,
+      postTokens: 12_000,
+      filesIncluded: [],
+      compactedMessages: [{ role: 'user', content: 'bounded fallback' }],
+      boundaryMessage: { role: 'system', content: 'boundary' },
+      summaryMessage: { role: 'user', content: 'bounded fallback' },
+      error: 'Compaction output retained too many tokens',
+      usage,
+      sampleAttempts: 1,
+      inputReductions: 0,
+      messagesOmitted: 0,
+      filesOmitted: 0,
+      imagesOmitted: 0,
+      failureReason: 'insufficient_reduction',
+    });
+    const sendMessage = vi.fn();
+
+    const result = await compactCommand.handler([], {
+      cwd: '/workspace/original',
+      workspaceRoot: '/workspace/managed-worktree',
+      sessionId: 'shared-session',
+      messages: [{ role: 'user', content: 'compact this history' }],
+      acp: { sendMessage },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      message: 'compact_fallback',
+      data: {
+        usage,
+        maxContextTokens: expect.any(Number),
+        failureReason: 'insufficient_reduction',
+      },
+    });
+    expect((result.data?.maxContextTokens as number | undefined) ?? 0).toBeGreaterThan(
+      0
+    );
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.stringContaining('失败分类: insufficient_reduction')
+    );
+    expect(contextManagerState.saveCompaction).toHaveBeenCalledWith(
+      'shared-session',
+      'bounded fallback',
+      expect.objectContaining({
+        strategy: 'fallback',
+        failureReason: 'insufficient_reduction',
+      }),
+      null
+    );
+  });
+
   it('原样持久化 CompactionService boundary 返回的无 marker replacement', async () => {
     const { default: compactCommand } = await import(
       '../../../../src/slash-commands/compact.js'

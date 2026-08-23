@@ -190,12 +190,14 @@ async function compactCommandHandler(
           summaryMessage: result.summaryMessage,
           preTokens: result.preTokens,
           postTokens: result.postTokens,
+          usage: result.usage,
           sampleAttempts: result.sampleAttempts,
           inputReductions: result.inputReductions,
           messagesOmitted: result.messagesOmitted,
           filesOmitted: result.filesOmitted,
           imagesOmitted: result.imagesOmitted,
           failureReason: result.failureReason,
+          maxContextTokens: tokenLimit,
         },
       };
     }

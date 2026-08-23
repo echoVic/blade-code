@@ -1733,8 +1733,8 @@ describe('AcpSession', () => {
           kind: 'compaction',
           phase: 'end',
           reason: 'context_limit',
-          strategy: 'llm',
-          outcome: 'completed',
+          strategy: 'fallback',
+          outcome: 'fallback',
           preTokens: 120_000,
           postTokens: 2_000,
           sampleAttempts: 2,
@@ -1742,6 +1742,7 @@ describe('AcpSession', () => {
           messagesOmitted: 2,
           filesOmitted: 0,
           imagesOmitted: 1,
+          failureReason: 'insufficient_reduction',
         } as LoopEvent;
         return { success: true, finalMessage: 'recovered' };
       }) as typeof mockAgent.chatStream;
@@ -1771,8 +1772,8 @@ describe('AcpSession', () => {
                 'blade/compaction': {
                   phase: 'end',
                   reason: 'context_limit',
-                  strategy: 'llm',
-                  outcome: 'completed',
+                  strategy: 'fallback',
+                  outcome: 'fallback',
                   preTokens: 120_000,
                   postTokens: 2_000,
                   sampleAttempts: 2,
@@ -1780,6 +1781,7 @@ describe('AcpSession', () => {
                   messagesOmitted: 2,
                   filesOmitted: 0,
                   imagesOmitted: 1,
+                  failureReason: 'insufficient_reduction',
                 },
               },
             }),

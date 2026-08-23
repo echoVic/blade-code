@@ -428,6 +428,13 @@ Provider 并发为 1，且 proxy evidence 不保留 Provider credential 或被�
 确定性测试覆盖相同 sanitizer、fallback 元数据以及 Headless JSONL、Server SSE 和
 ACP 投影。
 
+Compaction effectiveness guard 使用同一 DeepSeek Flash/Pro、Claude 与 GPT 真实
+Provider 矩阵，并确保每格输入都超过 5,000-token 生效门槛。正常真实摘要必须使完整
+replacement 不超过原可压缩消息体的 80%；确定性负向对照注入非空但过大的摘要，要求
+宿主拒绝该 LLM candidate、保留已计费 usage，以 `insufficient_reduction` 写入 durable
+fallback checkpoint，并通过 TUI、Headless JSONL、Server SSE 与 ACP 元数据投影稳定
+分类。测试不得只比较模型返回的 summary 文本，必须比较实际 replacement context。
+
 Fresh independent verification 资格要求主模型实际完成三个文件的非平凡实现，并在
 第一次尝试结束时由 runtime 强制启动新的内置 `verification` subagent。Verifier
 必须处于独立 child Session，运行项目已配置的真实测试，返回恰好一个结构化 PASS；

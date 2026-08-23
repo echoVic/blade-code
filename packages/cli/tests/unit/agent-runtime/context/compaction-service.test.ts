@@ -12,6 +12,8 @@ import {
   type CompactionOptions,
   CompactionService,
   extractExactContinuationRecords,
+  MAX_COMPACTION_RESULT_RATIO,
+  MIN_COMPACTION_EFFECTIVENESS_TOKENS,
   reconcileExactContinuationRecords,
   resetCompactionCircuitBreaker,
 } from '../../../../src/context/CompactionService.js';
@@ -327,6 +329,101 @@ describe('CompactionService - 输出协议', () => {
       expect(compactChat).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  test('LLM replacement 缩减不足时应回退并保留已计费 usage', async () => {
+    const messages: Message[] = Array.from({ length: 10 }, (_, index) => ({
+      role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+      content: `source-${index} ${'historical evidence '.repeat(1_000)}`,
+    }));
+    const original = structuredClone(messages);
+    const estimatedSourceTokens = TokenCounter.countTokens(
+      messages,
+      markerCompactionOptions.modelName
+    );
+    const usage = {
+      promptTokens: 7_000,
+      completionTokens: 9_000,
+      totalTokens: 16_000,
+      costUsd: 0.25,
+    };
+    const ineffectiveSummary = 'ineffective summary output '.repeat(4_200);
+    const reconciledSummary = reconcileExactContinuationRecords(
+      ineffectiveSummary,
+      messages
+    );
+    const maxEffectivePostTokens = Math.floor(
+      estimatedSourceTokens * MAX_COMPACTION_RESULT_RATIO
+    );
+    expect(
+      TokenCounter.countTokens(
+        [{ role: 'user', content: reconciledSummary }],
+        markerCompactionOptions.modelName
+      )
+    ).toBeLessThanOrEqual(maxEffectivePostTokens);
+    expect(
+      TokenCounter.countTokens(
+        [
+          { role: 'user', content: reconciledSummary },
+          ...messages.slice(-Math.ceil(messages.length * 0.2)),
+        ],
+        markerCompactionOptions.modelName
+      )
+    ).toBeGreaterThan(maxEffectivePostTokens);
+    compactChat.mockResolvedValueOnce({
+      content: `<summary>${ineffectiveSummary}</summary>`,
+      usage,
+    });
+
+    const result = await CompactionService.compact(messages, {
+      ...markerCompactionOptions,
+      actualPreTokens: 60_000,
+      sessionId: 'insufficient-reduction',
+    });
+
+    expect(estimatedSourceTokens).toBeGreaterThanOrEqual(
+      MIN_COMPACTION_EFFECTIVENESS_TOKENS
+    );
+    expect(result.success).toBe(false);
+    expect(result.preTokens).toBe(60_000);
+    expect(result.postTokens).toBeLessThanOrEqual(maxEffectivePostTokens);
+    expect(result.failureReason).toBe('insufficient_reduction');
+    expect(result.sampleAttempts).toBe(1);
+    expect(result.usage).toEqual(usage);
+    expect(result.summary).not.toContain('ineffective summary output');
+    expect(messages).toEqual(original);
+    expect(compactChat).toHaveBeenCalledOnce();
+  });
+
+  test('连续缩减不足应打开 session 熔断并停止后续采样', async () => {
+    const messages: Message[] = Array.from({ length: 10 }, (_, index) => ({
+      role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+      content: `source-${index} ${'historical evidence '.repeat(1_000)}`,
+    }));
+    const oversizedSummary = 'ineffective summary output '.repeat(4_200);
+    compactChat.mockResolvedValue({
+      content: `<summary>${oversizedSummary}</summary>`,
+      usage: { promptTokens: 7_000, completionTokens: 9_000, totalTokens: 16_000 },
+    });
+    const options = {
+      ...markerCompactionOptions,
+      sessionId: 'insufficient-reduction-circuit',
+    };
+
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const result = await CompactionService.compact(messages, options);
+        expect(result.failureReason).toBe('insufficient_reduction');
+        expect(result.sampleAttempts).toBe(1);
+      }
+
+      const circuitResult = await CompactionService.compact(messages, options);
+      expect(circuitResult.failureReason).toBe('circuit_open');
+      expect(circuitResult.sampleAttempts).toBe(0);
+      expect(compactChat).toHaveBeenCalledTimes(3);
+    } finally {
+      resetCompactionCircuitBreaker();
     }
   });
 

@@ -96,4 +96,49 @@ describe('durable compaction checkpoint recovery', () => {
       replacementMessages,
     });
   });
+
+  it('persists insufficient reduction as a durable fallback classification', async () => {
+    const contextManager = new ContextManager({ projectPath: workspace });
+    await contextManager.saveMessage(sessionId, 'user', 'oversized request');
+    const replacementMessages = [
+      {
+        role: 'user' as const,
+        content: 'bounded deterministic fallback',
+        metadata: { isCompactSummary: true },
+      },
+    ];
+
+    await contextManager.saveCompaction(sessionId, 'bounded deterministic fallback', {
+      trigger: 'auto',
+      reason: 'threshold',
+      strategy: 'fallback',
+      preTokens: 60_000,
+      postTokens: 12_000,
+      sampleAttempts: 1,
+      inputReductions: 0,
+      messagesOmitted: 0,
+      filesOmitted: 0,
+      imagesOmitted: 0,
+      failureReason: 'insufficient_reduction',
+      replacementMessages,
+    });
+
+    const persisted = await readFile(getSessionFilePath(workspace, sessionId), 'utf8');
+    const checkpoint = persisted
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .findLast(
+        (event) => event.type === 'part_created' && event.data.partType === 'summary'
+      );
+
+    expect(checkpoint.data.payload).toMatchObject({
+      metadata: {
+        checkpointVersion: 1,
+        strategy: 'fallback',
+        failureReason: 'insufficient_reduction',
+      },
+      replacementMessages,
+    });
+  });
 });

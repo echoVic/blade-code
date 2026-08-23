@@ -352,6 +352,55 @@ describe('processSlashCommand', () => {
       });
       expect(sessionActions.resetContextUsage).toHaveBeenCalledOnce();
     });
+
+    it('压缩缩减不足时仍应用 fallback context 并累计 Provider usage', async () => {
+      const compactedMessages = [
+        { role: 'user' as const, content: 'bounded fallback' },
+      ];
+      executeSlashCommand.mockResolvedValue({
+        success: false,
+        message: 'compact_fallback',
+        data: {
+          compactedMessages,
+          maxContextTokens: 128000,
+          usage: {
+            promptTokens: 7000,
+            completionTokens: 9000,
+            totalTokens: 16000,
+            costUsd: 0.25,
+          },
+          failureReason: 'insufficient_reduction',
+        },
+      });
+      const sessionActions = createMockSessionActions();
+
+      const result = await processSlashCommand(
+        createResolvedInput('/compact'),
+        createMockAppActions(),
+        sessionActions,
+        new AbortController().signal,
+        async () => undefined,
+        'session-owner'
+      );
+
+      expect(result).toEqual({
+        type: 'handled',
+        commandResult: { success: true },
+      });
+      expect(sessionActions.setCompactedContext).toHaveBeenCalledWith(
+        compactedMessages
+      );
+      expect(sessionActions.updateTokenUsage).toHaveBeenCalledWith({
+        inputTokens: 7000,
+        outputTokens: 9000,
+        totalTokens: 16000,
+        maxContextTokens: 128000,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        costUsd: 0.25,
+      });
+      expect(sessionActions.resetContextUsage).toHaveBeenCalledOnce();
+    });
   });
 
   // ==================== 场景 1: invoke_custom_command ====================

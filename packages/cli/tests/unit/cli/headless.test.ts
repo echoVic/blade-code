@@ -1293,7 +1293,7 @@ describe('headless runner', () => {
           messagesOmitted: 4,
           filesOmitted: 0,
           imagesOmitted: 1,
-          failureReason: 'context_exhausted',
+          failureReason: 'insufficient_reduction',
         },
       ])
     );
@@ -1341,7 +1341,7 @@ describe('headless runner', () => {
         messages_omitted: 4,
         files_omitted: 0,
         images_omitted: 1,
-        failure_reason: 'context_exhausted',
+        failure_reason: 'insufficient_reduction',
       },
     ]);
     expect(stderr.write).not.toHaveBeenCalled();

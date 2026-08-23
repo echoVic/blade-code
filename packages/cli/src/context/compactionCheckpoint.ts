@@ -16,6 +16,7 @@ export type CompactionFailureReason =
   | 'context_exhausted'
   | 'deterministic'
   | 'empty_exhausted'
+  | 'insufficient_reduction'
   | 'transient_exhausted';
 
 export interface CompactionPersistenceMetadata {
