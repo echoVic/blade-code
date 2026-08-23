@@ -55,7 +55,7 @@ describe.skipIf(!isRealApiTestEnabled())(
             baseUrl: gpt.baseURL,
             maxOutputTokens: 64,
             timeout: 30_000,
-            streamIdleTimeout: 20_000,
+            streamIdleTimeout: 30_000,
           },
         };
 
