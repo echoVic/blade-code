@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.10.78] - 2026-08-23
+
+### 新增
+- Compaction 在原有三次总预算内自适应缩减超窗摘要输入：依次移除可重读文件、
+  丢弃最旧完整 tool-call 单元，再降低单消息字符上限
+- Durable checkpoint 与 Headless、Web、ACP 生命周期事件新增输入缩减次数以及省略
+  消息/文件计数
+
+### 修复
+- Context window 失败不再重放相同 compaction payload；宿主无法生成严格更小请求时
+  会立即进入 fallback
+- 缩减输入的摘要成功后，exact continuation records 会从完整 canonical transcript
+  逐字恢复
+
+### 测试
+- 真实 DeepSeek Flash/Pro × Headless、raw PTY、production Chromium Web、ACP
+  矩阵现在依次注入 context overflow 和 `503`，证明 retry payload 更小并验证 durable
+  reduction metadata
+
 ## [0.10.77] - 2026-08-23
 
 ### 新增

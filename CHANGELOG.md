@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.10.78] - 2026-08-23
+
+### Added
+- Compaction now adapts oversized summary inputs within the existing
+  three-attempt budget by removing re-readable files, dropping the oldest
+  complete tool-call units, then lowering the per-message character cap
+- Durable checkpoints and Headless, Web, and ACP lifecycle events now expose
+  input reduction and omitted message/file counts
+
+### Fixed
+- Context-window failures no longer replay an identical compaction payload;
+  fallback starts immediately when the host cannot produce a strictly smaller
+  request
+- Exact continuation records are restored from the full canonical transcript
+  after a reduced-input summary succeeds
+
+### Tests
+- The real DeepSeek Flash/Pro Headless, raw PTY, production Chromium Web, and
+  ACP matrix now injects context overflow followed by `503`, proves the retry
+  payload is smaller, and verifies the durable reduction metadata
+
 ## [0.10.77] - 2026-08-23
 
 ### Added
