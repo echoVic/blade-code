@@ -2,6 +2,10 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
 import { Readable, Writable } from 'node:stream';
 import * as acp from '@agentclientprotocol/sdk';
+import {
+  findSessionTranscript,
+  readSessionEvents,
+} from '../integration/real-api/sessionForkTrajectoryHarness.js';
 import { ChildBackedRecordingAcpClient } from './acp/ChildBackedRecordingAcpClient.js';
 
 interface RunnerInput {
@@ -84,6 +88,45 @@ function agentText(client: ChildBackedRecordingAcpClient, sessionId: string): st
         : []
     )
     .join('');
+}
+
+function hasAcknowledgedUserText(
+  storageRoot: string,
+  sessionId: string,
+  expectedText: string
+): boolean {
+  const events = readSessionEvents(findSessionTranscript(storageRoot, sessionId));
+  const userInboxIdsByMessageId = new Map(
+    events.flatMap((event) =>
+      event.type === 'message_created' &&
+      event.data.role === 'user' &&
+      typeof event.data.inboxMessageId === 'string'
+        ? [[event.data.messageId, event.data.inboxMessageId] as const]
+        : []
+    )
+  );
+  const matchingInboxIds = new Set(
+    events.flatMap((event) => {
+      if (
+        event.type !== 'part_created' ||
+        event.data.partType !== 'text' ||
+        typeof event.data.payload !== 'object' ||
+        event.data.payload === null ||
+        Array.isArray(event.data.payload) ||
+        typeof event.data.payload.text !== 'string' ||
+        !event.data.payload.text.includes(expectedText)
+      ) {
+        return [];
+      }
+      const inboxMessageId = userInboxIdsByMessageId.get(event.data.messageId);
+      return inboxMessageId ? [inboxMessageId] : [];
+    })
+  );
+  return events.some(
+    (event) =>
+      event.type === 'inbox_acknowledged' &&
+      event.data.messageIds.some((messageId) => matchingInboxIds.has(messageId))
+  );
 }
 
 async function createSession(
@@ -221,17 +264,52 @@ async function run(input: RunnerInput) {
         `Session residency ACP follow-up stopped with ${followUp.stopReason}`
       );
     }
+    try {
+      await waitFor(async () => {
+        try {
+          return hasAcknowledgedUserText(
+            input.storageRoot,
+            primarySessionId,
+            input.followUpMarker
+          );
+        } catch {
+          return false;
+        }
+      }, 'Session residency ACP follow-up did not reach durable completion');
+    } catch {
+      const events = readSessionEvents(
+        findSessionTranscript(input.storageRoot, primarySessionId)
+      );
+      throw new Error(
+        `Session residency ACP follow-up did not reach durable completion: ${JSON.stringify(
+          {
+            followUpPersisted: events.some(
+              (event) =>
+                event.type === 'part_created' &&
+                event.data.partType === 'text' &&
+                typeof event.data.payload === 'object' &&
+                event.data.payload !== null &&
+                !Array.isArray(event.data.payload) &&
+                typeof event.data.payload.text === 'string' &&
+                event.data.payload.text.includes(input.followUpMarker)
+            ),
+            eventTail: events.slice(-20).map((event) => event.type),
+            primaryTextTail: agentText(client, primarySessionId).slice(-2_048),
+            recentUpdates: client.sessionUpdates
+              .filter((notification) => notification.sessionId === primarySessionId)
+              .slice(-20)
+              .map((notification) => notification.update.sessionUpdate),
+          }
+        )}`
+      );
+    }
     await connection.closeSession({ sessionId: primarySessionId });
 
     const primaryText = agentText(client, primarySessionId);
     const secondaryText = agentText(client, secondarySessionId);
-    if (
-      !primaryText.includes(input.followUpMarker) ||
-      !secondaryText.includes(input.secondaryMarker)
-    ) {
+    if (!secondaryText.includes(input.secondaryMarker)) {
       throw new Error(
         `Session residency ACP controls did not finish: ${JSON.stringify({
-          primaryHasFollowUp: primaryText.includes(input.followUpMarker),
           secondaryHasMarker: secondaryText.includes(input.secondaryMarker),
           primaryTextTail: primaryText.slice(-2_048),
           secondaryTextTail: secondaryText.slice(-2_048),

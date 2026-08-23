@@ -29,6 +29,8 @@
   persistence, and cross-surface deterministic coverage
 - Qualified the one-token-below-threshold negative control with real DeepSeek
   Flash/Pro across Headless, raw PTY, production Chromium Web, and ACP
+- Hardened ACP residency qualification to await durable completion before
+  closing a follow-up that was accepted as steering
 
 ## [0.10.81] - 2026-08-23
 

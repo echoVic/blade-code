@@ -24,6 +24,8 @@
 - 新增边界、过期基线、模型/schema 切换、历史改写、持久化与跨端确定性覆盖
 - 使用真实 DeepSeek Flash/Pro 在 Headless、raw PTY、production Chromium Web 与 ACP
   验证 prompt usage 低于阈值一 token 的负向对照
+- ACP residency 资格测试现在会等待作为 steering 接受的 follow-up 完成 durable
+  acknowledgement 后再关闭会话
 
 ## [0.10.81] - 2026-08-23
 
