@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.79] - 2026-08-23
+
+### 新增
+- Compaction 在调用纯文本 summary Provider 前，将每个多模态图片部分替换为固定文本
+  占位符
+- Durable checkpoint 与 TUI、Headless、Web、ACP 生命周期投影新增每次压缩请求
+  省略的图片数量
+
+### 修复
+- 内联 data URL、base64 图片载荷和远程图片 URL 不再进入 compaction Provider，
+  同时保持 canonical history 与 retained messages 不变
+- 真实 API 恢复资格测试不再使用容易触发隐私拒绝的 marker 措辞，并将串行 Web 与
+  ACP trajectory 隔离到不同 Provider channel
+
+### 测试
+- 新增 fail-closed proxy 检查以及真实 DeepSeek Flash/Pro、Claude、GPT trajectory，
+  证明图片载荷隔离、文本保留、durable 指标和 canonical message 不可变性
+
 ## [0.10.78] - 2026-08-23
 
 ### 新增

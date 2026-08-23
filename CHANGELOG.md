@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.10.79] - 2026-08-23
+
+### Added
+- Compaction now replaces every multimodal image part with a fixed text
+  placeholder before calling the text-only summary Provider
+- Durable checkpoints and TUI, Headless, Web, and ACP lifecycle projections now
+  expose the number of images omitted from each compaction request
+
+### Fixed
+- Inline data URLs, base64 image payloads, and remote image URLs no longer reach
+  the compaction Provider, while canonical history and retained messages remain
+  unchanged
+- Real-API recovery qualification now avoids privacy-triggering marker language
+  and isolates sequential Web and ACP trajectories across Provider channels
+
+### Tests
+- Added fail-closed proxy checks and a real DeepSeek Flash/Pro, Claude, and GPT
+  trajectory proving image payload elision, text preservation, durable metrics,
+  and canonical message immutability
+
 ## [0.10.78] - 2026-08-23
 
 ### Added
