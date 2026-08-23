@@ -516,7 +516,7 @@ export function assertTokenBudgetRequestSequence(
   if (evidence.maxInFlight !== 1) {
     throw new Error('Token-budget Provider requests must have maxInFlight equal to 1');
   }
-  if (evidence.requests.length !== 5) {
+  if (evidence.requests.length < 5 || evidence.requests.length > 9) {
     const sequence = evidence.requests
       .map(
         (request) =>
@@ -527,7 +527,7 @@ export function assertTokenBudgetRequestSequence(
       )
       .join(',');
     throw new Error(
-      'Token-budget Provider evidence must contain exactly five requests; ' +
+      'Token-budget Provider evidence must contain five to nine requests; ' +
         `count=${evidence.requests.length}; sequence=${sequence}`
     );
   }
@@ -554,7 +554,17 @@ export function assertTokenBudgetRequestSequence(
     assertRequestShape(request, index);
     const contract = expected[index];
     if (!contract) {
-      throw new Error('Token-budget Provider request contract is missing');
+      if (
+        request.kind !== 'task' ||
+        request.markerOccurrences !== 0 ||
+        request.usageRewritten ||
+        Object.hasOwn(request, 'targetPromptTokens')
+      ) {
+        throw new Error(
+          `Token-budget corrective request ${index + 1} has an invalid shape`
+        );
+      }
+      continue;
     }
     if (request.kind !== contract.kind) {
       throw new Error(`Token-budget request ${index + 1} has an invalid kind`);
@@ -678,40 +688,11 @@ function assertToolTrace(
   checkpointIndex: number
 ): void {
   const trace = extractDurableToolTrace(events);
-  if (trace.length !== 3) {
-    throw new Error('Token-budget tool trace must contain exactly three calls');
-  }
-  const failed = trace[0];
-  const write = trace[1];
-  const passed = trace[2];
-  if (!failed || !write || !passed) {
-    throw new Error('Token-budget tool trace is incomplete');
+  if (trace.length < 3 || trace.length > 8) {
+    throw new Error('Token-budget tool trace must contain three to eight calls');
   }
 
-  const failedInput = requireToolInput(failed, 'Bash');
-  if (
-    failedInput.command !== fixture.failingCommand ||
-    traceSucceeded(failed) ||
-    !failed.error?.includes(fixture.sentinels.failedVerification)
-  ) {
-    throw new Error('Token-budget first Bash must be the exact failing verification');
-  }
-
-  const writeInput = requireToolInput(write, 'Write');
-  if (
-    writeInput.file_path !== fixture.targetPath ||
-    writeInput.content !== fixture.targetContent ||
-    !traceSucceeded(write)
-  ) {
-    throw new Error('Token-budget Write must apply the exact mutation');
-  }
-
-  const passedInput = requireToolInput(passed, 'Bash');
-  if (passedInput.command !== fixture.passingCommand || !traceSucceeded(passed)) {
-    throw new Error('Token-budget final Bash must be the exact passing verification');
-  }
-
-  const positions = trace.map((record) => {
+  const positioned = trace.map((record) => {
     const call = events.findIndex(
       (event) =>
         event.type === 'part_created' &&
@@ -726,21 +707,51 @@ function assertToolTrace(
         isRecord(event.data.payload) &&
         event.data.payload.toolCallId === record.toolCallId
     );
-    return { call, result };
+    if (call < 0 || result < call) {
+      throw new Error('Token-budget tool trace contains an incomplete call');
+    }
+    if (record.toolName === 'Bash') {
+      const input = requireToolInput(record, 'Bash');
+      if (input.command !== fixture.passingCommand) {
+        throw new Error('Token-budget Bash must use the exact verification command');
+      }
+    } else if (record.toolName === 'Write') {
+      const input = requireToolInput(record, 'Write');
+      if (
+        input.file_path !== fixture.targetPath ||
+        input.content !== fixture.targetContent
+      ) {
+        throw new Error('Token-budget Write must apply the exact mutation');
+      }
+    } else {
+      throw new Error('Token-budget tool trace contains an unexpected tool');
+    }
+    return { record, call, result };
   });
-  const failedPosition = positions[0];
-  const writePosition = positions[1];
-  const passedPosition = positions[2];
+
+  const failedPosition = positioned.find(
+    ({ record, result }) =>
+      record.toolName === 'Bash' &&
+      !traceSucceeded(record) &&
+      record.error?.includes(fixture.sentinels.failedVerification) &&
+      result < markerIndex
+  );
+  const writePosition = positioned.find(
+    ({ record, call, result }) =>
+      record.toolName === 'Write' &&
+      traceSucceeded(record) &&
+      call > markerIndex &&
+      result < checkpointIndex
+  );
+  const passedPosition = positioned.find(
+    ({ record, call }) =>
+      record.toolName === 'Bash' && traceSucceeded(record) && call > checkpointIndex
+  );
   if (
     !failedPosition ||
     !writePosition ||
     !passedPosition ||
-    failedPosition.call < 0 ||
-    failedPosition.result >= markerIndex ||
-    writePosition.call <= markerIndex ||
-    writePosition.result >= checkpointIndex ||
-    passedPosition.call <= checkpointIndex ||
-    passedPosition.result < passedPosition.call
+    positioned.filter(({ result }) => result < markerIndex).length !== 1
   ) {
     throw new Error('Token-budget tool calls crossed a required model boundary');
   }

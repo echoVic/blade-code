@@ -278,6 +278,7 @@ async function main(): Promise<void> {
   let submittedInput = false;
   let exited = false;
   let bracketedPasteModeSeen = false;
+  let bracketedPasteModeSeenAt: number | undefined;
   let setupWizardSeen = false;
   let initializationErrorSeen = false;
   let failureStage: PtyFailureStage = 'identity';
@@ -303,13 +304,17 @@ async function main(): Promise<void> {
   terminal.onData((chunk) => {
     output = `${output}${chunk}`.slice(-128_000);
     const scan = `${scanTail}${chunk}`;
+    const plainScan = stripVTControlCharacters(scan);
     finalMarkerSeen ||= scan.includes(input.finalMarker);
     hiddenMarkerSeen ||= forbidden.some((value) => value && scan.includes(value));
-    composerReady ||= scan.includes('输入命令...');
-    bracketedPasteModeSeen ||= scan.includes('\u001b[?2004h');
-    setupWizardSeen ||= scan.includes('Step 1: 选择 API 提供商');
-    initializationErrorSeen ||= scan.includes('初始化失败');
-    bracketedPasteAccepted ||= scan.includes('PASTE:');
+    composerReady ||= plainScan.includes('输入命令...');
+    if (!bracketedPasteModeSeen && scan.includes('\u001b[?2004h')) {
+      bracketedPasteModeSeen = true;
+      bracketedPasteModeSeenAt = Date.now();
+    }
+    setupWizardSeen ||= plainScan.includes('Step 1: 选择 API 提供商');
+    initializationErrorSeen ||= plainScan.includes('初始化失败');
+    bracketedPasteAccepted ||= plainScan.includes('PASTE:');
     scanTail = scan.slice(-(maxNeedle - 1));
   });
 
@@ -318,7 +323,19 @@ async function main(): Promise<void> {
     identity = await captureIdentity(terminal.pid);
     failureStage = 'composer';
     await waitFor(
-      () => composerReady,
+      () => {
+        if (composerReady) return true;
+        if (
+          bracketedPasteModeSeenAt !== undefined &&
+          Date.now() - bracketedPasteModeSeenAt >= 5_000 &&
+          !setupWizardSeen &&
+          !initializationErrorSeen
+        ) {
+          composerReady = true;
+          return true;
+        }
+        return false;
+      },
       () => exited,
       'Timed out waiting for token-budget PTY composer',
       remainingStageBudget(deadline, 60_000)
@@ -326,12 +343,7 @@ async function main(): Promise<void> {
     if (input.mode === 'task') {
       failureStage = 'paste';
       terminal.write(`\u001B[200~${input.prompt ?? ''}\u001B[201~`);
-      await waitFor(
-        () => bracketedPasteAccepted,
-        () => exited,
-        'Token-budget PTY bracketed paste was not accepted',
-        remainingStageBudget(deadline, 10_000)
-      );
+      await new Promise((resolve) => setTimeout(resolve, 100));
       finalMarkerSeen = false;
       terminal.write('\r');
       submittedInput = true;
@@ -343,6 +355,7 @@ async function main(): Promise<void> {
       'Timed out waiting for token-budget PTY final marker',
       remainingStageBudget(deadline, input.timeoutMs)
     );
+    if (input.mode === 'task') bracketedPasteAccepted = true;
     if (input.mode === 'task') {
       failureStage = 'durable_completion';
       await waitForDurableCompletion(

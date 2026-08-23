@@ -94,27 +94,26 @@ export async function createTokenBudgetHandoffFixture(
   await mkdir(path.dirname(targetPath), { recursive: true });
   await assertTargetAbsent(targetPath);
   const script = [
+    "import test from 'node:test';",
+    "import assert from 'node:assert/strict';",
     "import { readFileSync } from 'node:fs';",
     `const targetPath = ${JSON.stringify(targetPath)};`,
     `const expected = ${JSON.stringify(targetContent)};`,
     `const failed = ${JSON.stringify(sentinels.failedVerification)};`,
-    'let actual;',
-    'try {',
-    "  actual = readFileSync(targetPath, 'utf8');",
-    '} catch {',
-    '  process.stderr.write(failed);',
-    '  process.exit(1);',
-    '}',
-    'if (actual !== expected) {',
-    '  process.stderr.write(failed);',
-    '  process.exit(1);',
-    '}',
-    'process.stdout.write(expected);',
+    "test('status is durable', () => {",
+    '  let actual;',
+    '  try {',
+    "    actual = readFileSync(targetPath, 'utf8');",
+    '  } catch {',
+    '    assert.fail(failed);',
+    '  }',
+    '  assert.equal(actual, expected, failed);',
+    '});',
     '',
   ].join('\n');
   await writeFile(scriptPath, script, { mode: 0o600 });
 
-  const command = `${shellQuote(process.execPath)} ${shellQuote(scriptPath)}`;
+  const command = `${shellQuote(process.execPath)} --test ${shellQuote(scriptPath)}`;
   const prompt = [
     'Complete this task in exactly four model boundaries and preserve every named sentinel exactly.',
     'If context compaction occurs, the following three lines are exact continuation records whose bracketed labels name their destination headings:',
@@ -123,12 +122,12 @@ export async function createTokenBudgetHandoffFixture(
     `EXACT CONTINUATION RECORD [Exact next action] :: ${sentinels.pendingAction} status=pending`,
     'Each canonical record must appear exactly once in its named section as its own list item with no extra text on that item.',
     'The exact-next-action execution record must also appear exactly once as its own list item and be followed literally after compaction.',
-    'Boundary 1: call Bash exactly once with the following command. It must fail; do not call any other tool in this boundary:',
+    'Boundary 1: call Bash exactly once with the following verification command. It must fail; do not call any other tool in this boundary:',
     command,
     'Boundary 2: after observing that failure, call Write exactly once with the following exact file path and exact content; do not call any other tool in this boundary:',
     `file_path=${JSON.stringify(targetPath)}`,
     `content=${JSON.stringify(targetContent)}`,
-    `Boundary 3 is the post-compaction pending action ${sentinels.pendingAction}: call Bash exactly once with the following command, require it to pass, and call no other tool in this boundary:`,
+    `Boundary 3 is the post-compaction pending action ${sentinels.pendingAction}: call Bash exactly once with the following verification command, require it to pass, and call no other tool in this boundary:`,
     command,
     `EXACT CONTINUATION RECORD [Exact next action] :: ${renderTokenBudgetExactNextAction(
       { command, finalMarker }

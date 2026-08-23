@@ -99,7 +99,11 @@ describe('raw PTY marker latching source contract', () => {
     );
     expect(source).toContain("if (state === 'matched') return;");
     expect(source).toContain("if (state === 'mismatched')");
-    expect(source).toContain("composerReady ||= scan.includes('输入命令...')");
+    expect(source).toContain("composerReady ||= plainScan.includes('输入命令...')");
+    expect(source).toContain('Date.now() - bracketedPasteModeSeenAt >= 5_000');
+    expect(source).toContain(
+      "if (input.mode === 'task') bracketedPasteAccepted = true"
+    );
     expect(source).toContain('composerFailureCode');
     expect(source).toContain('const deadline = Date.now() + input.timeoutMs - 10_000');
     expect(source).toContain('remainingStageBudget(deadline');

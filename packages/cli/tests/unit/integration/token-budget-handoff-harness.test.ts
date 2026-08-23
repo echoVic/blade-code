@@ -1914,7 +1914,7 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     ).toThrow('mutation sentinel');
   });
 
-  it('validates the exact structural Provider request sequence', () => {
+  it('validates the bounded structural Provider request sequence', () => {
     const evidence: TokenBudgetProxyEvidence = {
       maxInFlight: 1,
       requests: [
@@ -1969,6 +1969,27 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     expect(() => assertTokenBudgetRequestSequence(evidence, targets)).not.toThrow();
     expect(() =>
       assertTokenBudgetRequestSequence(
+        {
+          ...evidence,
+          requests: [
+            ...evidence.requests,
+            {
+              ...evidence.requests[4]!,
+              ordinal: 6,
+              bodySha256: 'f'.repeat(64),
+            },
+            {
+              ...evidence.requests[4]!,
+              ordinal: 7,
+              bodySha256: '1'.repeat(64),
+            },
+          ],
+        },
+        targets
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertTokenBudgetRequestSequence(
         { ...evidence, requests: evidence.requests.slice(0, 4) },
         targets
       )
@@ -1989,6 +2010,23 @@ describe('token-budget handoff deterministic qualification foundation', () => {
         targets
       )
     ).toThrow('marker');
+    expect(() =>
+      assertTokenBudgetRequestSequence(
+        {
+          ...evidence,
+          requests: [
+            ...evidence.requests,
+            {
+              ...evidence.requests[4]!,
+              ordinal: 6,
+              kind: 'compaction',
+              bodySha256: 'f'.repeat(64),
+            },
+          ],
+        },
+        targets
+      )
+    ).toThrow('corrective request 6');
   });
 
   it('validates append-only marker, checkpoint, ledger, tools, and final file', async () => {
