@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.10.80] - 2026-08-23
+
+### Added
+- Compaction now validates the complete replacement, including retained messages
+  and restored checkpoints, against a same-basis token estimate
+- Durable checkpoints and TUI, Headless, Web, and ACP lifecycle projections now
+  expose the stable `insufficient_reduction` fallback classification
+
+### Fixed
+- Non-empty summaries for histories of at least 5,000 estimated tokens are no
+  longer committed when the complete replacement retains more than 80% of the
+  source; Blade falls back deterministically and preserves billable usage
+- Repeated ineffective summaries now participate in the existing per-session
+  circuit breaker instead of issuing unbounded Provider requests
+- Cross-provider release qualification now aligns the GPT fallback idle
+  deadline with its request deadline while retaining the 45-second recovery cap
+
+### Tests
+- Added complete-replacement, usage, circuit-breaker, checkpoint, and
+  cross-surface projection coverage
+- Qualified effective compaction with real DeepSeek Flash/Pro, Claude, and GPT,
+  plus the complete production Web, raw PTY, Headless, and ACP release matrix
+
 ## [0.10.79] - 2026-08-23
 
 ### Added

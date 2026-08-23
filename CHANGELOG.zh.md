@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.10.80] - 2026-08-23
+
+### 新增
+- Compaction 现在使用同一 token 估算基准检查完整 replacement，包括 retained
+  messages 与恢复的 checkpoint
+- Durable checkpoint 与 TUI、Headless、Web、ACP 生命周期投影新增稳定的
+  `insufficient_reduction` fallback 分类
+
+### 修复
+- 对至少 5,000 个估算 token 的历史，当完整 replacement 保留超过源内容的 80%
+  时，不再提交非空摘要；Blade 会确定性 fallback 并保留已计费 usage
+- 连续无效摘要会进入现有的 session 级熔断器，不再无界请求 Provider
+- 跨 Provider 发布资格测试将 GPT fallback 的 idle deadline 与 request deadline
+  对齐，同时保留 45 秒整体恢复上限
+
+### 测试
+- 新增完整 replacement、usage、熔断器、checkpoint 与跨端投影覆盖
+- 使用真实 DeepSeek Flash/Pro、Claude、GPT 验证有效压缩，并完成生产 Web、
+  raw PTY、Headless 与 ACP 发布矩阵
+
 ## [0.10.79] - 2026-08-23
 
 ### 新增
