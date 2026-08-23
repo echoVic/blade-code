@@ -1,9 +1,5 @@
 import { lstat, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import {
-  assertSplitPtyMarkerInstructionAtEnd,
-  createSplitPtyMarkerInstruction,
-} from '../../support/foregroundBoundedOutputPtyDriver.js';
 
 export interface TokenBudgetHandoffFixture {
   workspace: string;
@@ -27,19 +23,12 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-export function renderTokenBudgetExactNextAction(input: {
-  command: string;
-  finalMarker: string;
-}): string {
-  const midpoint = Math.ceil(input.finalMarker.length / 2);
-  const firstHalf = input.finalMarker.slice(0, midpoint);
-  const secondHalf = input.finalMarker.slice(midpoint);
+export function renderTokenBudgetExactNextAction(input: { command: string }): string {
   return (
     'PRIOR_FAILED_BASH_COMPLETE; PRIOR_WRITE_COMPLETE; ' +
     'DO_NOT_REPEAT_PRIOR_ACTIONS; ' +
     `RUN_ONLY_EXACT_BASH=${JSON.stringify(input.command)}; REQUIRE_ZERO_EXIT; ` +
-    `FINAL_PART_A=${JSON.stringify(firstHalf)}; ` +
-    `FINAL_PART_B=${JSON.stringify(secondHalf)}; OUTPUT_NO_OTHER_TEXT`
+    'COPY_FINAL_NONEMPTY_LINE_VERBATIM; OUTPUT_NO_OTHER_TEXT'
   );
 }
 
@@ -94,32 +83,25 @@ export async function createTokenBudgetHandoffFixture(
   await mkdir(path.dirname(targetPath), { recursive: true });
   await assertTargetAbsent(targetPath);
   const script = [
-    "import test from 'node:test';",
     "import assert from 'node:assert/strict';",
     "import { readFileSync } from 'node:fs';",
     `const targetPath = ${JSON.stringify(targetPath)};`,
     `const expected = ${JSON.stringify(targetContent)};`,
     `const failed = ${JSON.stringify(sentinels.failedVerification)};`,
-    "test('status is durable', () => {",
-    '  let actual;',
-    '  try {',
-    "    actual = readFileSync(targetPath, 'utf8');",
-    '  } catch {',
-    '    assert.fail(failed);',
-    '  }',
-    '  assert.equal(actual, expected, failed);',
-    '});',
+    `const final = ${JSON.stringify(finalMarker)};`,
+    'let actual;',
+    'try {',
+    "  actual = readFileSync(targetPath, 'utf8');",
+    '} catch {',
+    '  assert.fail(failed);',
+    '}',
+    'assert.equal(actual, expected, failed);',
+    'process.stdout.write(`${final}\\n`);',
     '',
   ].join('\n');
   await writeFile(scriptPath, script, { mode: 0o600 });
 
-  const finalMarkerMidpoint = Math.ceil(finalMarker.length / 2);
-  const command = [
-    `${shellQuote(process.execPath)} --test ${shellQuote(scriptPath)}`,
-    `printf '%s%s\\n' ${shellQuote(
-      finalMarker.slice(0, finalMarkerMidpoint)
-    )} ${shellQuote(finalMarker.slice(finalMarkerMidpoint))}`,
-  ].join(' && ');
+  const command = `${shellQuote(process.execPath)} ${shellQuote(scriptPath)}`;
   const prompt = [
     'Complete this task in exactly four model boundaries and preserve every named sentinel exactly.',
     'If context compaction occurs, the following three lines are exact continuation records whose bracketed labels name their destination headings:',
@@ -136,16 +118,15 @@ export async function createTokenBudgetHandoffFixture(
     `Boundary 3 is the post-compaction pending action ${sentinels.pendingAction}: call Bash exactly once with the following verification command, require it to pass, and call no other tool in this boundary:`,
     command,
     `EXACT CONTINUATION RECORD [Exact next action] :: ${renderTokenBudgetExactNextAction(
-      { command, finalMarker }
+      { command }
     )}`,
     'Boundary 4: after the passing result, call no tools. Copy the final non-empty line of the successful Bash output verbatim as your entire response.',
-    createSplitPtyMarkerInstruction(finalMarker),
+    'The final response value is intentionally absent from this prompt and must not be guessed.',
   ].join('\n');
 
   if (prompt.includes(finalMarker)) {
     throw new Error('Token-budget handoff final marker contaminated the prompt');
   }
-  assertSplitPtyMarkerInstructionAtEnd(prompt, finalMarker);
 
   return {
     workspace,

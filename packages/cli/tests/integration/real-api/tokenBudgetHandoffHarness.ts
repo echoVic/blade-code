@@ -290,7 +290,6 @@ function assertExactNextAction(
 ): void {
   const expected = renderTokenBudgetExactNextAction({
     command: fixture.passingCommand,
-    finalMarker: fixture.finalMarker,
   });
   const matches = (sections.exactNextAction ?? '')
     .split(/\r?\n/)

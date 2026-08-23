@@ -29,6 +29,8 @@
   persistence, and cross-surface deterministic coverage
 - Qualified the one-token-below-threshold negative control with real DeepSeek
   Flash/Pro across Headless, raw PTY, production Chromium Web, and ACP
+- Withheld the final token-budget marker until the passing verification command,
+  preventing models from bypassing the required four-boundary tool trajectory
 - Hardened ACP residency qualification to await durable completion before
   closing a follow-up that was accepted as steering
 

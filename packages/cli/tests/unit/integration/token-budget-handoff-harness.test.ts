@@ -388,7 +388,6 @@ function transcript(
     `- ${fixture.sentinels.pendingAction} status=pending`,
     `- ${renderTokenBudgetExactNextAction({
       command: fixture.passingCommand,
-      finalMarker: fixture.finalMarker,
     })}`,
   ].join('\n');
   const handoff = {
@@ -1136,6 +1135,9 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     expect(readFileSync(path.join(workspace, 'test.mjs'), 'utf8')).toContain(
       created.sentinels.failedVerification
     );
+    expect(readFileSync(path.join(workspace, 'test.mjs'), 'utf8')).toContain(
+      created.finalMarker
+    );
     expect(() => readFileSync(created.targetPath)).toThrow();
     const failing = spawnSync(created.failingCommand, {
       shell: true,
@@ -1192,23 +1194,14 @@ describe('token-budget handoff deterministic qualification foundation', () => {
       `EXACT CONTINUATION RECORD [Exact next action] :: ${renderTokenBudgetExactNextAction(
         {
           command: created.passingCommand,
-          finalMarker: created.finalMarker,
         }
       )}`
     );
     expect(created.prompt).not.toContain('nowhere else');
     expect(created.prompt).not.toContain(created.finalMarker);
-    const partA = created.prompt.match(/^PART_A=([A-Za-z0-9_-]+)$/m)?.[1];
-    const partB = created.prompt.match(/^PART_B=([A-Za-z0-9_-]+)$/m)?.[1];
-    expect(`${partA}${partB}`).toBe(created.finalMarker);
-    expect(created.prompt).toContain(
-      `exactly ${created.finalMarker.length} ASCII characters`
-    );
-    expect(created.prompt).toContain(
-      `match ^[A-Za-z0-9_-]{${created.finalMarker.length}}$`
-    );
-    expect(created.prompt.endsWith(`PART_B=${partB}`)).toBe(true);
-    expect(created.prompt.split(created.failingCommand)).toHaveLength(3);
+    expect(created.passingCommand).not.toContain(created.finalMarker);
+    expect(created.prompt).toContain('final response value is intentionally absent');
+    expect(created.prompt.split(created.failingCommand)).toHaveLength(4);
     expect(created.prompt.match(/call Bash exactly once/g)).toHaveLength(2);
     expect(created.prompt.match(/call Write exactly once/g)).toHaveLength(1);
   });
