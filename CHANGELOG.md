@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.10.77] - 2026-08-23
+
+### Added
+- Compaction summaries now use a bounded three-attempt recovery loop for
+  transient Provider failures, stream closures, and empty responses
+- Durable checkpoints and Headless, Web, and ACP lifecycle events now expose
+  compaction sample attempts and stable fallback classifications
+
+### Changed
+- Compaction disables nested ChatService retries so one host-owned policy
+  controls classification, exponential backoff, aborts, and request count
+
+### Fixed
+- Authentication, permission, invalid-request, context-overflow, and caller
+  abort failures now stop compaction retries immediately
+- Usage and cost from successful empty compaction samples are accumulated
+- Web recovery qualification retains protocol evidence separately from large
+  rendered HTML, preventing valid early retry events from being truncated
+
+### Tests
+- The real DeepSeek Flash/Pro Headless, raw PTY, production Chromium Web, and
+  ACP token-budget matrix now injects one compaction `503`, requires a fresh
+  real summary request, and verifies durable `sampleAttempts: 2`
+
 ## [0.10.76] - 2026-08-23
 
 ### Added

@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.10.77] - 2026-08-23
+
+### 新增
+- Compaction summary 针对 Provider 瞬态失败、断流和空响应增加最多三次的有界恢复
+- Durable checkpoint 以及 Headless、Web、ACP 生命周期事件新增压缩采样次数和稳定
+  fallback 分类
+
+### 变更
+- Compaction 禁用嵌套 ChatService retry，由单一宿主策略统一控制分类、指数退避、
+  abort 和请求次数
+
+### 修复
+- 认证、权限、非法请求、context overflow 和 caller abort 现在会立即停止压缩重试
+- 成功但为空的压缩采样所消耗的 usage 与 cost 会累计
+- Web recovery 资格测试将协议证据与大型渲染 HTML 分开保存，避免有效的早期 retry
+  事件被尾部截断
+
+### 测试
+- 真实 DeepSeek Flash/Pro × Headless、raw PTY、production Chromium Web、ACP
+  token-budget 矩阵现在注入一次 compaction `503`，要求发起新的真实摘要请求，并验证
+  durable `sampleAttempts: 2`
+
 ## [0.10.76] - 2026-08-23
 
 ### 新增
