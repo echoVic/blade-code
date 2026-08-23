@@ -770,6 +770,7 @@ export async function* checkAndCompactInLoop(
   let inputReductions: number | undefined;
   let messagesOmitted: number | undefined;
   let filesOmitted: number | undefined;
+  let imagesOmitted: number | undefined;
   let failureReason: CompactionFailureReason | undefined;
   let failurePhase: 'compaction' | 'checkpoint' = 'compaction';
   yield { kind: 'compaction', phase: 'start', reason: 'threshold' };
@@ -803,6 +804,7 @@ export async function* checkAndCompactInLoop(
     inputReductions = result.inputReductions;
     messagesOmitted = result.messagesOmitted;
     filesOmitted = result.filesOmitted;
+    imagesOmitted = result.imagesOmitted;
     failureReason = result.failureReason;
     if (result.success) {
       logger.debug(
@@ -830,6 +832,7 @@ export async function* checkAndCompactInLoop(
         inputReductions: result.inputReductions,
         messagesOmitted: result.messagesOmitted,
         filesOmitted: result.filesOmitted,
+        imagesOmitted: result.imagesOmitted,
         failureReason: result.failureReason,
         filesIncluded: result.filesIncluded,
         replacementMessages: result.compactedMessages,
@@ -867,6 +870,7 @@ export async function* checkAndCompactInLoop(
       inputReductions,
       messagesOmitted,
       filesOmitted,
+      imagesOmitted,
       failureReason,
     };
   }
@@ -2207,6 +2211,7 @@ validates the object and may return a bounded corrective error.`;
             let inputReductions: number | undefined;
             let messagesOmitted: number | undefined;
             let filesOmitted: number | undefined;
+            let imagesOmitted: number | undefined;
             let failureReason: CompactionFailureReason | undefined;
             yield {
               kind: 'compaction',
@@ -2236,6 +2241,7 @@ validates the object and may return a bounded corrective error.`;
               inputReductions = result.inputReductions;
               messagesOmitted = result.messagesOmitted;
               filesOmitted = result.filesOmitted;
+              imagesOmitted = result.imagesOmitted;
               failureReason = result.failureReason;
               if (
                 result.success &&
@@ -2266,6 +2272,7 @@ validates the object and may return a bounded corrective error.`;
                     inputReductions: result.inputReductions,
                     messagesOmitted: result.messagesOmitted,
                     filesOmitted: result.filesOmitted,
+                    imagesOmitted: result.imagesOmitted,
                     failureReason: result.failureReason,
                     filesIncluded: result.filesIncluded,
                     replacementMessages: result.messages,
@@ -2299,6 +2306,7 @@ validates the object and may return a bounded corrective error.`;
                 inputReductions,
                 messagesOmitted,
                 filesOmitted,
+                imagesOmitted,
                 failureReason,
               };
             }
@@ -4128,6 +4136,7 @@ validates the object and may return a bounded corrective error.`;
               let compactionInputReductions: number | undefined;
               let compactionMessagesOmitted: number | undefined;
               let compactionFilesOmitted: number | undefined;
+              let compactionImagesOmitted: number | undefined;
               let compactionFailureReason: CompactionFailureReason | undefined;
               yield {
                 kind: 'compaction',
@@ -4181,6 +4190,7 @@ validates the object and may return a bounded corrective error.`;
                 compactionInputReductions = compactResult.inputReductions;
                 compactionMessagesOmitted = compactResult.messagesOmitted;
                 compactionFilesOmitted = compactResult.filesOmitted;
+                compactionImagesOmitted = compactResult.imagesOmitted;
                 compactionFailureReason = compactResult.failureReason;
 
                 // 保存压缩数据到 JSONL
@@ -4198,6 +4208,7 @@ validates the object and may return a bounded corrective error.`;
                     inputReductions: compactResult.inputReductions,
                     messagesOmitted: compactResult.messagesOmitted,
                     filesOmitted: compactResult.filesOmitted,
+                    imagesOmitted: compactResult.imagesOmitted,
                     failureReason: compactResult.failureReason,
                     filesIncluded: compactResult.filesIncluded,
                     replacementMessages,
@@ -4223,6 +4234,7 @@ validates the object and may return a bounded corrective error.`;
                   inputReductions: compactionInputReductions,
                   messagesOmitted: compactionMessagesOmitted,
                   filesOmitted: compactionFilesOmitted,
+                  imagesOmitted: compactionImagesOmitted,
                   failureReason: compactionFailureReason,
                 };
               }

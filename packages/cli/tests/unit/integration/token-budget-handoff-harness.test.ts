@@ -298,9 +298,9 @@ function taskBody(content: string, extra: Record<string, unknown> = {}): unknown
   };
 }
 
-function compactionBody(): unknown {
+function compactionBody(content = LEDGER_HEADINGS.join('\n')): unknown {
   return {
-    messages: [{ role: 'user', content: LEDGER_HEADINGS.join('\n') }],
+    messages: [{ role: 'user', content }],
     tools: [],
   };
 }
@@ -656,6 +656,50 @@ describe('token-budget handoff deterministic qualification foundation', () => {
         }),
         expect.objectContaining({
           ordinal: 3,
+          upstreamStatus: 201,
+        }),
+      ]);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it('rejects compaction bodies that leak elided media content', async () => {
+    const upstream = await startJsonUpstream();
+    const proxy = await startTokenBudgetHandoffProxy(upstream.baseURL, {
+      handoffPromptTokens: 70_000,
+      compactionPromptTokens: 80_000,
+      markerTag: TOKEN_BUDGET_HANDOFF_TAG,
+      compactionContentPolicy: {
+        forbidden: ['RAW_MEDIA_PAYLOAD'],
+        required: ['[image omitted from compaction]'],
+      },
+    });
+    try {
+      const rejected = await postJson(
+        proxy.baseURL,
+        compactionBody(
+          `${LEDGER_HEADINGS.join('\n')}\n` +
+            '[image omitted from compaction]\nRAW_MEDIA_PAYLOAD'
+        )
+      );
+      const accepted = await postJson(
+        proxy.baseURL,
+        compactionBody(`${LEDGER_HEADINGS.join('\n')}\n[image omitted from compaction]`)
+      );
+
+      expect(rejected.status).toBe(422);
+      expect(accepted.status).toBe(201);
+      expect(upstream.requests()).toBe(1);
+      expect(proxy.evidence().requests).toEqual([
+        expect.objectContaining({
+          ordinal: 1,
+          compactionContentPolicyPassed: false,
+          upstreamStatus: 422,
+        }),
+        expect.objectContaining({
+          ordinal: 2,
+          compactionContentPolicyPassed: true,
           upstreamStatus: 201,
         }),
       ]);

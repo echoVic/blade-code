@@ -14,6 +14,7 @@ export interface TokenBudgetRequestEvidence {
   upstreamStatus?: number;
   responseKind?: 'sse' | 'json' | 'other';
   injectedFailure?: 'compaction_context_overflow' | 'compaction_transient';
+  compactionContentPolicyPassed?: boolean;
   usageShape?:
     | 'root-empty'
     | 'root-terminal'
@@ -869,6 +870,10 @@ export async function startTokenBudgetHandoffProxy(
     markerTag: string;
     failFirstCompaction?: boolean;
     compactionFailureSequence?: Array<'context_overflow' | 'transient'>;
+    compactionContentPolicy?: {
+      forbidden: string[];
+      required: string[];
+    };
   }
 ): Promise<{
   baseURL: string;
@@ -935,6 +940,24 @@ export async function startTokenBudgetHandoffProxy(
         usageRewritten: false,
       };
       recordedRequests.push(requestEvidence);
+
+      if (facts.kind === 'compaction' && options.compactionContentPolicy) {
+        const bodyText = requestResult.body.toString('utf8');
+        const policyPassed =
+          options.compactionContentPolicy.forbidden.every(
+            (value) => value.length > 0 && !bodyText.includes(value)
+          ) &&
+          options.compactionContentPolicy.required.every(
+            (value) => value.length > 0 && bodyText.includes(value)
+          );
+        requestEvidence.compactionContentPolicyPassed = policyPassed;
+        if (!policyPassed) {
+          requestEvidence.upstreamStatus = 422;
+          requestEvidence.responseKind = 'json';
+          sendBoundedError(response, 422, 'Compaction content policy rejected');
+          return;
+        }
+      }
 
       if (closing || response.destroyed) {
         if (!response.destroyed) response.destroy();

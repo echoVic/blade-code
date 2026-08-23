@@ -109,6 +109,49 @@ describe('CompactionService - 输出协议', () => {
     expect(prompt).not.toContain(String(marker.content));
   });
 
+  test('摘要请求应保留多模态文本但用固定占位符替换所有图片', async () => {
+    const inlineSecret = 'INLINE_IMAGE_PAYLOAD_MUST_NOT_LEAK';
+    const remoteSecret = 'REMOTE_IMAGE_URL_MUST_NOT_LEAK';
+    const messages: Message[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Inspect the attached evidence.' },
+          {
+            type: 'image_url',
+            image_url: {
+              url: `data:image/png;base64,${inlineSecret}`,
+            },
+          },
+          {
+            type: 'image_url',
+            image_url: {
+              url: `https://images.example.invalid/${remoteSecret}.png`,
+            },
+          },
+        ],
+      },
+    ];
+    const original = structuredClone(messages);
+    compactChat.mockResolvedValueOnce({
+      content: '<summary>Image evidence was attached.</summary>',
+    });
+
+    const result = await CompactionService.compact(messages, {
+      ...markerCompactionOptions,
+      sessionId: 'rich-media-elision',
+    });
+
+    const prompt = String(compactChat.mock.calls.at(-1)?.[0]?.[0]?.content);
+    expect(result.success).toBe(true);
+    expect(result.imagesOmitted).toBe(2);
+    expect(prompt).toContain('Inspect the attached evidence.');
+    expect(prompt.match(/\[image omitted from compaction\]/g)).toHaveLength(2);
+    expect(prompt).not.toContain(inlineSecret);
+    expect(prompt).not.toContain(remoteSecret);
+    expect(messages).toEqual(original);
+  });
+
   test('LLM replacement 应移除 token-budget marker', async () => {
     const marker = projectedHandoff();
     const sourceMessages = markerRetainedSourceMessages(marker);
@@ -183,7 +226,18 @@ describe('CompactionService - 输出协议', () => {
 
   test('deterministic fallback replacement 应移除 token-budget marker', async () => {
     const marker = projectedHandoff();
-    const sourceMessages = markerRetainedSourceMessages(marker);
+    const sourceMessages = [
+      ...markerRetainedSourceMessages(marker),
+      {
+        role: 'user' as const,
+        content: [
+          {
+            type: 'image_url' as const,
+            image_url: { url: 'data:image/png;base64,FALLBACK_IMAGE' },
+          },
+        ],
+      },
+    ];
     compactChat.mockRejectedValueOnce(new Error('summary unavailable'));
 
     const result = await CompactionService.compact(
@@ -194,6 +248,7 @@ describe('CompactionService - 输出协议', () => {
     expect(result.success).toBe(false);
     expect(result.compactedMessages.some(isTokenBudgetHandoffMessage)).toBe(false);
     expect(result.sampleAttempts).toBe(1);
+    expect(result.imagesOmitted).toBe(1);
     expect(result.failureReason).toBe('deterministic');
     expect(compactChat).toHaveBeenCalledOnce();
   });

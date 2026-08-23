@@ -77,6 +77,7 @@ export type SystemEvent =
       inputReductions?: number;
       messagesOmitted?: number;
       filesOmitted?: number;
+      imagesOmitted?: number;
       failureReason?: CompactionFailureReason;
     }
   | { kind: 'token_usage'; usage: TokenUsageInfo }

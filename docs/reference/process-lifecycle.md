@@ -269,13 +269,18 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   tool-call 单元 → 降低单消息字符上限”生成严格更小的输入后重试；无法继续缩小时立即
   fallback。这避免 Provider retry 与 compaction retry 相乘，同时允许摘要流安全重放，
   因为摘要采样没有工具副作用。多次成功采样前产生的 usage 与 cost 会累计。
+- Compaction 是纯文本内部请求。多模态消息中的文本按原顺序保留，每个 `image_url`
+  在摘要输入中替换为固定占位符；data URL、远程 URL 和 base64 payload 均不会发送给
+  摘要 Provider。该派生过程不修改 canonical transcript 或 post-compact 保留消息，
+  `imagesOmitted` 只记录本次摘要输入省略的图片数量。
 - compaction 在重试 Provider 前必须先原子提交 exact replacement context。JSONL
   summary part 保存有界 `replacementMessages` checkpoint、reason、strategy 和
   pre/post tokens，并记录 `sampleAttempts`、`inputReductions`、`messagesOmitted`、
-  `filesOmitted` 与稳定的 `failureReason`；提交失败不应用内存替换，也不重试 Provider。
-  完整可见 transcript 继续保留用于 UI、导出和审计，宿主还会从完整原 transcript
-  逐字回填 exact continuation records；`SessionService.loadSessionModelContext()` 只从
-  最新 checkpoint 加载 replacement context 与其后的事件，旧版元数据安全降级。
+  `filesOmitted`、`imagesOmitted` 与稳定的 `failureReason`；提交失败不应用内存替换，
+  也不重试 Provider。完整可见 transcript 继续保留用于 UI、导出和审计，宿主还会从
+  完整原 transcript 逐字回填 exact continuation records；
+  `SessionService.loadSessionModelContext()` 只从最新 checkpoint 加载 replacement
+  context 与其后的事件，旧版元数据安全降级。
 - `compaction` LoopEvent 统一携带 `threshold|context_limit|turn_limit` reason、
   `llm|fallback|snip` strategy、`completed|fallback|failed` outcome、采样/缩减/省略
   计数和有界失败分类。Web 在 reactive recovery 显示独立的 context-limit 状态；TUI、

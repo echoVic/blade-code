@@ -1047,6 +1047,7 @@ function createEventWriter(
           input_reductions: event.inputReductions,
           messages_omitted: event.messagesOmitted,
           files_omitted: event.filesOmitted,
+          images_omitted: event.imagesOmitted,
           failure_reason: event.failureReason,
         });
         return;
@@ -1066,6 +1067,12 @@ function createEventWriter(
                 ? ` with ${event.inputReductions} input reduction${
                     event.inputReductions === 1 ? '' : 's'
                   }`
+                : ''
+            }${
+              event.imagesOmitted
+                ? ` and ${event.imagesOmitted} image${
+                    event.imagesOmitted === 1 ? '' : 's'
+                  } omitted`
                 : ''
             }`
       );

@@ -39,6 +39,7 @@ export interface ReactiveCompactResult {
   inputReductions?: number;
   messagesOmitted?: number;
   filesOmitted?: number;
+  imagesOmitted?: number;
   failureReason?: CompactionFailureReason;
   filesIncluded?: string[];
   usage?: UsageInfo;
@@ -103,6 +104,7 @@ export class ReactiveCompaction {
           inputReductions: compactResult.inputReductions,
           messagesOmitted: compactResult.messagesOmitted,
           filesOmitted: compactResult.filesOmitted,
+          imagesOmitted: compactResult.imagesOmitted,
           failureReason: compactResult.failureReason,
           filesIncluded: compactResult.filesIncluded,
           usage: compactResult.usage,

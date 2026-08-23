@@ -93,6 +93,8 @@ export interface CompactionResult {
   messagesOmitted?: number;
   /** 为适配摘要窗口而从模型输入中省略的可重读文件数 */
   filesOmitted?: number;
+  /** 摘要请求中替换为固定占位符的图片数 */
+  imagesOmitted?: number;
   /** fallback 的稳定失败分类 */
   failureReason?: CompactionFailureReason;
 }
@@ -305,6 +307,7 @@ function compactionSessionKey(workspaceRoot?: string, sessionId?: string): strin
 
 const DEFAULT_COMPACTION_MESSAGE_CHARS = 5_000;
 const MIN_COMPACTION_MESSAGE_CHARS = 625;
+const COMPACTION_IMAGE_PLACEHOLDER = '[image omitted from compaction]';
 
 interface CompactionSampleInput {
   messages: Message[];
@@ -313,6 +316,24 @@ interface CompactionSampleInput {
   inputReductions: number;
   messagesOmitted: number;
   filesOmitted: number;
+}
+
+function countCompactionImages(messages: readonly Message[]): number {
+  return messages.reduce(
+    (count, message) =>
+      count +
+      (Array.isArray(message.content)
+        ? message.content.filter((part) => part.type === 'image_url').length
+        : 0),
+    0
+  );
+}
+
+function compactionMessageText(message: Message): string {
+  if (typeof message.content === 'string') return message.content;
+  return message.content
+    .map((part) => (part.type === 'text' ? part.text : COMPACTION_IMAGE_PLACEHOLDER))
+    .join('\n');
 }
 
 function compactionMessageUnits(messages: readonly Message[]): Message[][] {
@@ -402,8 +423,7 @@ export function buildCompactionPrompt(
   const messagesText = messages
     .map((msg, index) => {
       const role = msg.role || 'unknown';
-      const rawContent =
-        typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+      const rawContent = compactionMessageText(msg);
       const content = isCompactSummaryMessage(msg)
         ? escapeReservedLedgerHeadings(rawContent)
         : rawContent;
@@ -499,6 +519,7 @@ export class CompactionService {
     // Hook 可以阻止压缩
     let blockReason: string | undefined;
     let completedSampleAttempts = 0;
+    let imagesOmitted = 0;
     try {
       const hookManager = HookManager.getInstance();
       const hookResult = await hookManager.executeCompactionHooks(options.trigger, {
@@ -544,6 +565,7 @@ export class CompactionService {
         'circuit_open',
         0,
         0,
+        0,
         0
       );
     }
@@ -564,6 +586,7 @@ export class CompactionService {
       logger.debug('[CompactionService] 成功读取文件:', fileContents.length);
 
       // 2. 生成总结
+      imagesOmitted = countCompactionImages(sourceMessages);
       const generated = await this.generateSummary(
         sourceMessages,
         fileContents,
@@ -663,6 +686,7 @@ export class CompactionService {
         inputReductions: generated.inputReductions,
         messagesOmitted: generated.messagesOmitted,
         filesOmitted: generated.filesOmitted,
+        imagesOmitted,
       };
     } catch (error) {
       // AbortError（宽口径）: 用户取消/interrupt，不应计入失败次数也不应走 fallback
@@ -684,7 +708,8 @@ export class CompactionService {
           : 'deterministic',
         error instanceof CompactionSamplingError ? error.inputReductions : 0,
         error instanceof CompactionSamplingError ? error.messagesOmitted : 0,
-        error instanceof CompactionSamplingError ? error.filesOmitted : 0
+        error instanceof CompactionSamplingError ? error.filesOmitted : 0,
+        imagesOmitted
       );
     }
   }
@@ -1041,7 +1066,8 @@ export class CompactionService {
     failureReason: CompactionFailureReason,
     inputReductions: number,
     messagesOmitted: number,
-    filesOmitted: number
+    filesOmitted: number,
+    imagesOmitted: number
   ): CompactionResult {
     const retainCount = Math.ceil(messages.length * this.FALLBACK_RETAIN_PERCENT);
     const candidateMessages = messages.slice(-retainCount);
@@ -1109,6 +1135,7 @@ export class CompactionService {
       inputReductions,
       messagesOmitted,
       filesOmitted,
+      imagesOmitted,
       failureReason,
     };
   }

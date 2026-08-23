@@ -1741,6 +1741,7 @@ describe('AcpSession', () => {
           inputReductions: 1,
           messagesOmitted: 2,
           filesOmitted: 0,
+          imagesOmitted: 1,
         } as LoopEvent;
         return { success: true, finalMessage: 'recovered' };
       }) as typeof mockAgent.chatStream;
@@ -1778,6 +1779,7 @@ describe('AcpSession', () => {
                   inputReductions: 1,
                   messagesOmitted: 2,
                   filesOmitted: 0,
+                  imagesOmitted: 1,
                 },
               },
             }),

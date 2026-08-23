@@ -843,6 +843,7 @@ describe('executeLoopGenerator', () => {
         inputReductions: 1,
         messagesOmitted: 2,
         filesOmitted: 0,
+        imagesOmitted: 1,
       });
 
       const generator = checkAndCompactInLoop(
@@ -888,6 +889,7 @@ describe('executeLoopGenerator', () => {
         inputReductions: 1,
         messagesOmitted: 2,
         filesOmitted: 0,
+        imagesOmitted: 1,
         failureReason: undefined,
       });
     });

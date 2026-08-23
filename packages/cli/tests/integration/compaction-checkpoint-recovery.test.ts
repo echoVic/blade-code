@@ -46,6 +46,7 @@ describe('durable compaction checkpoint recovery', () => {
       inputReductions: 1,
       messagesOmitted: 2,
       filesOmitted: 0,
+      imagesOmitted: 1,
       filesIncluded: ['src/runtime.ts'],
       replacementMessages,
     });
@@ -90,6 +91,7 @@ describe('durable compaction checkpoint recovery', () => {
         inputReductions: 1,
         messagesOmitted: 2,
         filesOmitted: 0,
+        imagesOmitted: 1,
       },
       replacementMessages,
     });

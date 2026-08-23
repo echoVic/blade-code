@@ -712,6 +712,7 @@ interface Checkpoint {
   inputReductions?: number;
   messagesOmitted?: number;
   filesOmitted?: number;
+  imagesOmitted?: number;
   failureReason?: string;
 }
 
@@ -757,6 +758,11 @@ function latestValidCheckpoint(
         typeof metadata.filesOmitted === 'number' &&
         Number.isSafeInteger(metadata.filesOmitted)
           ? { filesOmitted: metadata.filesOmitted }
+          : {}),
+        ...(isRecord(metadata) &&
+        typeof metadata.imagesOmitted === 'number' &&
+        Number.isSafeInteger(metadata.imagesOmitted)
+          ? { imagesOmitted: metadata.imagesOmitted }
           : {}),
         ...(isRecord(metadata) && typeof metadata.failureReason === 'string'
           ? { failureReason: metadata.failureReason }
@@ -941,6 +947,7 @@ export function assertTokenBudgetTranscript(
           inputReductions: checkpoint.inputReductions,
           messagesOmitted: checkpoint.messagesOmitted,
           filesOmitted: checkpoint.filesOmitted,
+          imagesOmitted: checkpoint.imagesOmitted,
           failureReason: checkpoint.failureReason,
         }
       )}`

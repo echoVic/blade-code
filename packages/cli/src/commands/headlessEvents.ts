@@ -367,6 +367,7 @@ const CompactingEventSchema = event({
   input_reductions: Type.Optional(Type.Integer({ minimum: 0 })),
   messages_omitted: Type.Optional(Type.Integer({ minimum: 0 })),
   files_omitted: Type.Optional(Type.Integer({ minimum: 0 })),
+  images_omitted: Type.Optional(Type.Integer({ minimum: 0 })),
   failure_reason: Type.Optional(
     StringEnum([
       'circuit_open',

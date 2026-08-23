@@ -1292,6 +1292,7 @@ describe('headless runner', () => {
           inputReductions: 2,
           messagesOmitted: 4,
           filesOmitted: 0,
+          imagesOmitted: 1,
           failureReason: 'context_exhausted',
         },
       ])
@@ -1339,6 +1340,7 @@ describe('headless runner', () => {
         input_reductions: 2,
         messages_omitted: 4,
         files_omitted: 0,
+        images_omitted: 1,
         failure_reason: 'context_exhausted',
       },
     ]);

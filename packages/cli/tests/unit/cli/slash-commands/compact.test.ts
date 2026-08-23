@@ -143,6 +143,11 @@ describe('/compact slash command', () => {
       compactedMessages: [{ role: 'user', content: 'summary' }],
       boundaryMessage: { role: 'system', content: 'boundary' },
       summaryMessage: { role: 'user', content: 'summary' },
+      sampleAttempts: 1,
+      inputReductions: 0,
+      messagesOmitted: 0,
+      filesOmitted: 0,
+      imagesOmitted: 2,
     });
   });
 
@@ -184,6 +189,13 @@ describe('/compact slash command', () => {
     await expect(compactCommand.handler([], context)).resolves.toMatchObject({
       success: true,
       message: 'compact_completed',
+      data: {
+        sampleAttempts: 1,
+        inputReductions: 0,
+        messagesOmitted: 0,
+        filesOmitted: 0,
+        imagesOmitted: 2,
+      },
     });
 
     expect(compactionState.compact).toHaveBeenCalledWith(

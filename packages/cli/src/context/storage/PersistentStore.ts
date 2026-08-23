@@ -562,6 +562,9 @@ export class PersistentStore {
     if (metadata.filesOmitted !== undefined) {
       result.filesOmitted = metadata.filesOmitted;
     }
+    if (metadata.imagesOmitted !== undefined) {
+      result.imagesOmitted = metadata.imagesOmitted;
+    }
     if (metadata.failureReason) result.failureReason = metadata.failureReason;
     if (metadata.filesIncluded) result.filesIncluded = metadata.filesIncluded;
     if (metadata.replacementMessages) {

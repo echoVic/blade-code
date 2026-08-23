@@ -1648,6 +1648,9 @@ export class AcpSession {
                     ...(event.filesOmitted !== undefined
                       ? { filesOmitted: event.filesOmitted }
                       : {}),
+                    ...(event.imagesOmitted !== undefined
+                      ? { imagesOmitted: event.imagesOmitted }
+                      : {}),
                     ...(event.failureReason
                       ? { failureReason: event.failureReason }
                       : {}),

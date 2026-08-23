@@ -28,6 +28,7 @@ export interface CompactionPersistenceMetadata {
   inputReductions?: number;
   messagesOmitted?: number;
   filesOmitted?: number;
+  imagesOmitted?: number;
   failureReason?: CompactionFailureReason;
   filesIncluded?: string[];
   replacementMessages?: Message[];

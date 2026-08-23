@@ -2623,6 +2623,7 @@ describe('SessionRoutes runtime reuse', () => {
         inputReductions: 1,
         messagesOmitted: 2,
         filesOmitted: 0,
+        imagesOmitted: 1,
       };
       yield { kind: 'model_fallback' };
       yield {
@@ -2781,6 +2782,7 @@ describe('SessionRoutes runtime reuse', () => {
         inputReductions: 1,
         messagesOmitted: 2,
         filesOmitted: 0,
+        imagesOmitted: 1,
       }
     );
     expect(Bus.publish).toHaveBeenCalledWith(

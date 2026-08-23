@@ -420,6 +420,14 @@ compaction request 返回受控 context overflow，要求第二个请求使用�
 Desktop computer-use 只能作为非阻断视觉观察；它不能证明 JSONL、Provider request
 顺序或 marker non-fan-out，因此不是本 runtime contract 的 authority。
 
+Compaction rich-media elision 使用已配置的 DeepSeek Flash/Pro、Claude 与 GPT 真实
+Provider 直接生成摘要。每个请求包含文本、inline data URL 图片与远程图片 URL；
+loopback proxy 必须在转发前证明两个原始图片 payload 均不存在、固定图片占位符和
+文本证据存在。测试还要求 `imagesOmitted` 精确计数、canonical source messages 不变、
+Provider 并发为 1，且 proxy evidence 不保留 Provider credential 或被省略的媒体标记。
+确定性测试覆盖相同 sanitizer、fallback 元数据以及 Headless JSONL、Server SSE 和
+ACP 投影。
+
 Fresh independent verification 资格要求主模型实际完成三个文件的非平凡实现，并在
 第一次尝试结束时由 runtime 强制启动新的内置 `verification` subagent。Verifier
 必须处于独立 child Session，运行项目已配置的真实测试，返回恰好一个结构化 PASS；
