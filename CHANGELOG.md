@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.10.81] - 2026-08-23
+
+### Added
+- Deterministic compaction fallback now targets the smallest of an 80% source
+  budget with a 5,000-token floor, 50% of the model context window, and an
+  absolute 50,000-token cap
+- Durable checkpoints and TUI, Headless, Web, and ACP lifecycle projections now
+  expose fallback target, omitted-message, and truncated-message metrics
+
+### Changed
+- Fallback history is packed newest-first as complete atomic tool-call units and
+  token-truncates at most one oversized boundary unit while retaining its head
+  and tail
+- Mandatory continuation checkpoints can raise the fallback target only to
+  their measured size
+
+### Fixed
+- Fallback history no longer retains reasoning payloads, images, orphaned tool
+  results, incomplete empty assistant turns, or a fully checkpointed duplicate
+  active-task request
+- Token accounting now includes replayed reasoning content, and compaction
+  reminders preserve exact pending actions and final-response constraints
+
+### Tests
+- Qualified deterministic fallback and real-summary recovery with DeepSeek
+  Flash/Pro across Headless, raw PTY, production Chromium Web, and ACP
+- Qualified compaction safety with real DeepSeek Flash/Pro, Claude, and GPT;
+  Production Qualification passed all 16 checks with 174 real-API tests
+
 ## [0.10.80] - 2026-08-23
 
 ### Added

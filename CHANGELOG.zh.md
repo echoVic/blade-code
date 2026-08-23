@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.10.81] - 2026-08-23
+
+### 新增
+- 确定性 compaction fallback 现在取以下目标的最小值：带 5,000-token 下限的
+  源内容 80% 预算、模型上下文窗口的 50%，以及 50,000-token 绝对上限
+- Durable checkpoint 与 TUI、Headless、Web、ACP 生命周期投影新增 fallback
+  token 目标、省略消息数和截断消息数
+
+### 变更
+- Fallback 历史按从新到旧保留完整原子 tool-call 单元，并最多对一个超大边界单元
+  按实测 token 截断，同时保留头尾
+- 强制 continuation checkpoint 仅可将 fallback 目标提升到自身实测大小
+
+### 修复
+- Fallback 历史不再保留 reasoning 载荷、图片、孤立 tool result、不完整的空
+  assistant turn，也不会重复保留已由完整 checkpoint 覆盖的 active-task 请求
+- Token 统计现在包含重放的 reasoning 内容，compaction reminder 会保留精确的待执行
+  动作与最终响应约束
+
+### 测试
+- 使用 DeepSeek Flash/Pro 在 Headless、raw PTY、production Chromium Web 与 ACP
+  验证确定性 fallback 和真实摘要恢复
+- 使用真实 DeepSeek Flash/Pro、Claude、GPT 验证 compaction 安全性；Production
+  Qualification 全部 16 项通过，真实 API 测试 174 项通过
+
 ## [0.10.80] - 2026-08-23
 
 ### 新增
