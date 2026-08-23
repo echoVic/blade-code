@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.75] - 2026-08-23
+
+### Tests
+- Give the intentional over-16 MiB SSE validation test an explicit timeout
+  budget so full coverage instrumentation remains stable on constrained CI
+  runners without changing the production response limit
+
 ## [0.10.74] - 2026-08-23
 
 ### Added
