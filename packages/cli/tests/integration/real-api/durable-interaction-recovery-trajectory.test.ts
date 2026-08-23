@@ -42,10 +42,12 @@ import {
   resolveForkQualificationModels,
 } from './testConfig.js';
 
-const gpt = isRealApiTestEnabled()
-  ? resolveForkQualificationModels(process.env).find((model) => model.id === 'gpt')
-  : undefined;
-const describeReal = gpt ? describe.sequential : describe.skip;
+const qualificationModels = isRealApiTestEnabled()
+  ? resolveForkQualificationModels(process.env)
+  : [];
+const gpt = qualificationModels.find((model) => model.id === 'gpt');
+const deepseek = qualificationModels.find((model) => model.id === 'deepseek');
+const describeReal = gpt && deepseek ? describe.sequential : describe.skip;
 
 interface WebRecoveryWaitInput {
   controller: SessionRouteController;
@@ -1302,7 +1304,7 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
   }, 360_000);
 
   it('replays a durable ACP question on session/load and resumes automatically', async () => {
-    if (!gpt) throw new Error('GPT qualification channel is unavailable');
+    if (!deepseek) throw new Error('DeepSeek qualification channel is unavailable');
     const root = await mkdtemp(path.join(os.tmpdir(), 'blade-real-acp-interaction-'));
     const workspace = path.join(root, 'workspace');
     const storageRoot = path.join(root, 'storage');
@@ -1310,7 +1312,7 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
     const sessionId = `interaction-acp-${Date.now()}`;
     const originalConfig = getState().config.config;
     const config = buildDurableInteractionRecoveryConfig({
-      ...buildRealApiRuntimeConfig(gpt),
+      ...buildRealApiRuntimeConfig(deepseek),
       permissionMode: PermissionMode.DEFAULT,
     });
     const client = createMockACPClient();
@@ -1423,7 +1425,7 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
           requests: client.permissionRequests,
           transcript,
         },
-        [gpt.apiKey]
+        [deepseek.apiKey]
       );
     } finally {
       await agent.destroy().catch(() => undefined);

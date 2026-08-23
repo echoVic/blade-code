@@ -81,7 +81,7 @@ async function createFixture(
     .saveMessage(
       sessionId,
       'user',
-      `The private verification token for this conversation is ${token}.`,
+      `The public test marker for this conversation is ${token}.`,
       null
     );
 
@@ -122,7 +122,7 @@ describe.skipIf(!deepseek)('Side conversation runtime trajectory (real API)', ()
     try {
       const before = await readFile(fixture.sessionFile);
       const result = await fixture.runtime.askSideQuestion(
-        'What is the private verification token from the earlier user message? Reply with only that token.'
+        'What is the public test marker from the earlier user message? Reply with only that marker.'
       );
 
       expect(result.response).toContain(fixture.token);
@@ -148,7 +148,7 @@ describe.skipIf(!gpt)('Side conversation Web route trajectory (real API)', () =>
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             question:
-              'What is the private verification token from the earlier user message? Reply with only that token.',
+              'What is the public test marker from the earlier user message? Reply with only that marker.',
             projectPath: fixture.workspace,
           }),
         })
@@ -197,7 +197,7 @@ describe.skipIf(!claude)('Side conversation ACP trajectory (real API)', () => {
           prompt: [
             {
               type: 'text',
-              text: '/btw What is the private verification token from the earlier user message? Reply with only that token.',
+              text: '/btw What is the public test marker from the earlier user message? Reply with only that marker.',
             },
           ],
         })
