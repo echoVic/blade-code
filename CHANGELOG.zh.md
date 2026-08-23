@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.10.74] - 2026-08-23
+
+### 新增
+- 活跃 Goal 现在会保守识别 assistant 最后段落中的提前停止模式，并且只持久化
+  pattern、连续次数与检测时间
+- Goal 恢复状态会投影到 TUI 状态、Headless JSONL、Web SSE 与 DOM 属性，以及
+  ACP metadata
+
+### 变更
+- Goal continuation 在检测到延期或交接后会发出可执行的恢复指令；同一模式连续
+  第二次出现后会要求改变执行策略
+
+### 修复
+- 同一提前停止模式连续出现三次时，Goal 会原子切换为 `blocked`，避免无界
+  continuation 和 token 消耗，同时不设置全局 continuation 上限
+- 正常进展与用户显式 Goal 操作会清理过期恢复状态
+
+### 测试
+- 新增分类器、持久化、提示词、生命周期投影与 Web 组件的确定性覆盖，并包含误报
+  对照组
+- 使用真实 DeepSeek、Claude、GPT 与 Qwen Provider 验证自主恢复，并完成生产桌面/
+  移动 Chromium、raw PTY 渲染及完整 16 项 production release matrix
+
 ## [0.10.73] - 2026-08-22
 
 ### 新增

@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.10.74] - 2026-08-23
+
+### Added
+- Active Goals now detect conservative premature-stop patterns in the final
+  assistant paragraph and persist only the pattern, consecutive count, and
+  detection time
+- Goal recovery state is projected through TUI status, Headless JSONL, Web SSE
+  and DOM attributes, and ACP metadata
+
+### Changed
+- Goal continuations now issue an actionable recovery directive after a
+  deferral or handoff, escalating to a strategy change after the second
+  consecutive match
+
+### Fixed
+- Three consecutive matches of the same premature-stop pattern now atomically
+  block the Goal, preventing unbounded continuation and token consumption
+  without imposing a global continuation limit
+- Normal progress and explicit Goal actions clear stale recovery state
+
+### Tests
+- Added deterministic classifier, persistence, prompt, lifecycle projection,
+  and Web component coverage with false-positive controls
+- Qualified autonomous recovery with real DeepSeek, Claude, GPT, and Qwen
+  providers, production desktop/mobile Chromium, raw PTY rendering, and the
+  complete 16-check production release matrix
+
 ## [0.10.73] - 2026-08-22
 
 ### Added
