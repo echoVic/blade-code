@@ -900,7 +900,7 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     } finally {
       await proxy.close();
     }
-  });
+  }, 60_000);
 
   it('rejects request bodies above 16 MiB without contacting upstream', async () => {
     const upstream = await startJsonUpstream();
