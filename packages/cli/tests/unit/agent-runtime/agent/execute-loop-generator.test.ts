@@ -840,6 +840,9 @@ describe('executeLoopGenerator', () => {
           costUsd: 0.125,
         },
         sampleAttempts: 2,
+        inputReductions: 1,
+        messagesOmitted: 2,
+        filesOmitted: 0,
       });
 
       const generator = checkAndCompactInLoop(
@@ -882,6 +885,9 @@ describe('executeLoopGenerator', () => {
         preTokens: 90_000,
         postTokens: 1_000,
         sampleAttempts: 2,
+        inputReductions: 1,
+        messagesOmitted: 2,
+        filesOmitted: 0,
         failureReason: undefined,
       });
     });

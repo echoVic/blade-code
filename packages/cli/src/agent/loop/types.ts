@@ -74,6 +74,9 @@ export type SystemEvent =
       preTokens?: number;
       postTokens?: number;
       sampleAttempts?: number;
+      inputReductions?: number;
+      messagesOmitted?: number;
+      filesOmitted?: number;
       failureReason?: CompactionFailureReason;
     }
   | { kind: 'token_usage'; usage: TokenUsageInfo }

@@ -43,6 +43,9 @@ describe('durable compaction checkpoint recovery', () => {
       preTokens: 120_000,
       postTokens: 2_000,
       sampleAttempts: 2,
+      inputReductions: 1,
+      messagesOmitted: 2,
+      filesOmitted: 0,
       filesIncluded: ['src/runtime.ts'],
       replacementMessages,
     });
@@ -84,6 +87,9 @@ describe('durable compaction checkpoint recovery', () => {
         preTokens: 120_000,
         postTokens: 2_000,
         sampleAttempts: 2,
+        inputReductions: 1,
+        messagesOmitted: 2,
+        filesOmitted: 0,
       },
       replacementMessages,
     });

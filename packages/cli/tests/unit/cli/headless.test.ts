@@ -1289,7 +1289,10 @@ describe('headless runner', () => {
           preTokens: 120_000,
           postTokens: 2_000,
           sampleAttempts: 3,
-          failureReason: 'transient_exhausted',
+          inputReductions: 2,
+          messagesOmitted: 4,
+          filesOmitted: 0,
+          failureReason: 'context_exhausted',
         },
       ])
     );
@@ -1333,7 +1336,10 @@ describe('headless runner', () => {
         pre_tokens: 120_000,
         post_tokens: 2_000,
         sample_attempts: 3,
-        failure_reason: 'transient_exhausted',
+        input_reductions: 2,
+        messages_omitted: 4,
+        files_omitted: 0,
+        failure_reason: 'context_exhausted',
       },
     ]);
     expect(stderr.write).not.toHaveBeenCalled();

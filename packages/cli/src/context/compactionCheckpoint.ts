@@ -13,6 +13,7 @@ export type CompactionOutcome = 'completed' | 'fallback' | 'failed';
 
 export type CompactionFailureReason =
   | 'circuit_open'
+  | 'context_exhausted'
   | 'deterministic'
   | 'empty_exhausted'
   | 'transient_exhausted';
@@ -24,6 +25,9 @@ export interface CompactionPersistenceMetadata {
   preTokens: number;
   postTokens?: number;
   sampleAttempts?: number;
+  inputReductions?: number;
+  messagesOmitted?: number;
+  filesOmitted?: number;
   failureReason?: CompactionFailureReason;
   filesIncluded?: string[];
   replacementMessages?: Message[];

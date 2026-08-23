@@ -4804,6 +4804,15 @@ async function executeRunAsync(
               ...(event.sampleAttempts !== undefined
                 ? { sampleAttempts: event.sampleAttempts }
                 : {}),
+              ...(event.inputReductions !== undefined
+                ? { inputReductions: event.inputReductions }
+                : {}),
+              ...(event.messagesOmitted !== undefined
+                ? { messagesOmitted: event.messagesOmitted }
+                : {}),
+              ...(event.filesOmitted !== undefined
+                ? { filesOmitted: event.filesOmitted }
+                : {}),
               ...(event.failureReason ? { failureReason: event.failureReason } : {}),
             }
           );

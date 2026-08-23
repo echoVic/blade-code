@@ -229,7 +229,7 @@ describe
             {
               ...targets,
               markerTag: TOKEN_BUDGET_HANDOFF_TAG,
-              failFirstCompaction: true,
+              compactionFailureSequence: ['context_overflow', 'transient'],
             }
           );
           const runtimeConfig = await writeRuntimeConfig(home, {
@@ -303,10 +303,11 @@ describe
             events,
             expectedFinal: fixture.finalMarker,
             surfaceFinalSeen: true,
-            expectCompactionRetry: true,
+            expectCompactionStepDown: true,
           });
           assertTokenBudgetTranscript(events, fixture, {
-            expectedSampleAttempts: 2,
+            expectedSampleAttempts: 3,
+            expectedInputReductions: 1,
           });
           const publicMessages = await SessionService.loadSession(sessionId, workspace);
           const finalAssistant = publicMessages.findLast(

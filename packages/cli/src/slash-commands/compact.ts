@@ -110,6 +110,9 @@ async function compactCommandHandler(
           preTokens: result.preTokens,
           postTokens: result.postTokens,
           sampleAttempts: result.sampleAttempts,
+          inputReductions: result.inputReductions,
+          messagesOmitted: result.messagesOmitted,
+          filesOmitted: result.filesOmitted,
           failureReason: result.failureReason,
           filesIncluded: result.filesIncluded,
           replacementMessages: result.compactedMessages,
@@ -127,6 +130,7 @@ async function compactCommandHandler(
   • 压缩前: ${result.preTokens.toLocaleString()} tokens
   • 压缩后: ${result.postTokens.toLocaleString()} tokens
   • 摘要尝试: ${result.sampleAttempts ?? 0}
+  • 输入缩减: ${result.inputReductions ?? 0}
   • 压缩率: ${((1 - result.postTokens / result.preTokens) * 100).toFixed(1)}%`;
 
       if (result.filesIncluded.length > 0) {
@@ -162,6 +166,7 @@ async function compactCommandHandler(
   • 压缩前: ${result.preTokens.toLocaleString()} tokens
   • 压缩后: ${result.postTokens.toLocaleString()} tokens
   • 摘要尝试: ${result.sampleAttempts ?? 0}
+  • 输入缩减: ${result.inputReductions ?? 0}
 
 由于压缩过程出现错误，已使用简单截断策略。
    失败分类: ${result.failureReason ?? 'deterministic'}
@@ -178,6 +183,9 @@ async function compactCommandHandler(
           preTokens: result.preTokens,
           postTokens: result.postTokens,
           sampleAttempts: result.sampleAttempts,
+          inputReductions: result.inputReductions,
+          messagesOmitted: result.messagesOmitted,
+          filesOmitted: result.filesOmitted,
           failureReason: result.failureReason,
         },
       };

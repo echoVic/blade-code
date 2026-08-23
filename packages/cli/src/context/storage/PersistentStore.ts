@@ -553,6 +553,15 @@ export class PersistentStore {
     if (metadata.sampleAttempts !== undefined) {
       result.sampleAttempts = metadata.sampleAttempts;
     }
+    if (metadata.inputReductions !== undefined) {
+      result.inputReductions = metadata.inputReductions;
+    }
+    if (metadata.messagesOmitted !== undefined) {
+      result.messagesOmitted = metadata.messagesOmitted;
+    }
+    if (metadata.filesOmitted !== undefined) {
+      result.filesOmitted = metadata.filesOmitted;
+    }
     if (metadata.failureReason) result.failureReason = metadata.failureReason;
     if (metadata.filesIncluded) result.filesIncluded = metadata.filesIncluded;
     if (metadata.replacementMessages) {

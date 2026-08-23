@@ -512,13 +512,21 @@ function assertRequestShape(
 export function assertTokenBudgetRequestSequence(
   evidence: TokenBudgetProxyEvidence,
   targets: { handoffPromptTokens: number; compactionPromptTokens: number },
-  options: { expectCompactionRetry?: boolean } = {}
+  options: {
+    expectCompactionRetry?: boolean;
+    expectCompactionStepDown?: boolean;
+  } = {}
 ): void {
   if (evidence.maxInFlight !== 1) {
     throw new Error('Token-budget Provider requests must have maxInFlight equal to 1');
   }
-  const minimumRequests = options.expectCompactionRetry ? 6 : 5;
-  const maximumRequests = options.expectCompactionRetry ? 10 : 9;
+  const compactionRequestCount = options.expectCompactionStepDown
+    ? 3
+    : options.expectCompactionRetry
+      ? 2
+      : 1;
+  const minimumRequests = 4 + compactionRequestCount;
+  const maximumRequests = 8 + compactionRequestCount;
   if (
     evidence.requests.length < minimumRequests ||
     evidence.requests.length > maximumRequests
@@ -545,7 +553,7 @@ export function assertTokenBudgetRequestSequence(
     rewritten: boolean;
     target?: number;
     status?: number;
-    injectedFailure?: 'compaction_transient';
+    injectedFailure?: 'compaction_context_overflow' | 'compaction_transient';
   }> = [
     {
       kind: 'task',
@@ -559,8 +567,15 @@ export function assertTokenBudgetRequestSequence(
       target: targets.compactionPromptTokens,
       rewritten: true,
     },
-    ...(options.expectCompactionRetry
+    ...(options.expectCompactionStepDown
       ? [
+          {
+            kind: 'compaction' as const,
+            marker: 0,
+            rewritten: false,
+            status: 400,
+            injectedFailure: 'compaction_context_overflow' as const,
+          },
           {
             kind: 'compaction' as const,
             marker: 0,
@@ -575,13 +590,29 @@ export function assertTokenBudgetRequestSequence(
             status: 200,
           },
         ]
-      : [
-          {
-            kind: 'compaction' as const,
-            marker: 0,
-            rewritten: false,
-          },
-        ]),
+      : options.expectCompactionRetry
+        ? [
+            {
+              kind: 'compaction' as const,
+              marker: 0,
+              rewritten: false,
+              status: 503,
+              injectedFailure: 'compaction_transient' as const,
+            },
+            {
+              kind: 'compaction' as const,
+              marker: 0,
+              rewritten: false,
+              status: 200,
+            },
+          ]
+        : [
+            {
+              kind: 'compaction' as const,
+              marker: 0,
+              rewritten: false,
+            },
+          ]),
     { kind: 'task', marker: 0, rewritten: false },
     { kind: 'task', marker: 0, rewritten: false },
   ];
@@ -629,6 +660,20 @@ export function assertTokenBudgetRequestSequence(
       );
     }
   }
+  if (options.expectCompactionStepDown) {
+    const firstCompaction = evidence.requests[2];
+    const reducedCompaction = evidence.requests[3];
+    if (
+      !firstCompaction ||
+      !reducedCompaction ||
+      firstCompaction.bodySha256 === reducedCompaction.bodySha256 ||
+      reducedCompaction.bodyBytes >= firstCompaction.bodyBytes
+    ) {
+      throw new Error(
+        'Token-budget compaction retry did not prove a smaller changed payload'
+      );
+    }
+  }
 }
 
 export function assertTokenBudgetRequestSequenceWithTranscript(input: {
@@ -638,10 +683,12 @@ export function assertTokenBudgetRequestSequenceWithTranscript(input: {
   expectedFinal: string;
   surfaceFinalSeen: boolean;
   expectCompactionRetry?: boolean;
+  expectCompactionStepDown?: boolean;
 }): void {
   try {
     assertTokenBudgetRequestSequence(input.evidence, input.targets, {
       expectCompactionRetry: input.expectCompactionRetry,
+      expectCompactionStepDown: input.expectCompactionStepDown,
     });
   } catch (error) {
     const message =
@@ -662,6 +709,9 @@ interface Checkpoint {
   summary: string;
   replacements: NonNullable<ReturnType<typeof parseCompactionReplacementMessages>>;
   sampleAttempts?: number;
+  inputReductions?: number;
+  messagesOmitted?: number;
+  filesOmitted?: number;
   failureReason?: string;
 }
 
@@ -692,6 +742,21 @@ function latestValidCheckpoint(
         typeof metadata.sampleAttempts === 'number' &&
         Number.isSafeInteger(metadata.sampleAttempts)
           ? { sampleAttempts: metadata.sampleAttempts }
+          : {}),
+        ...(isRecord(metadata) &&
+        typeof metadata.inputReductions === 'number' &&
+        Number.isSafeInteger(metadata.inputReductions)
+          ? { inputReductions: metadata.inputReductions }
+          : {}),
+        ...(isRecord(metadata) &&
+        typeof metadata.messagesOmitted === 'number' &&
+        Number.isSafeInteger(metadata.messagesOmitted)
+          ? { messagesOmitted: metadata.messagesOmitted }
+          : {}),
+        ...(isRecord(metadata) &&
+        typeof metadata.filesOmitted === 'number' &&
+        Number.isSafeInteger(metadata.filesOmitted)
+          ? { filesOmitted: metadata.filesOmitted }
           : {}),
         ...(isRecord(metadata) && typeof metadata.failureReason === 'string'
           ? { failureReason: metadata.failureReason }
@@ -822,7 +887,10 @@ function assertToolTrace(
 export function assertTokenBudgetTranscript(
   events: readonly SessionEvent[],
   fixture: TokenBudgetHandoffFixture,
-  options: { expectedSampleAttempts?: number } = {}
+  options: {
+    expectedSampleAttempts?: number;
+    expectedInputReductions?: number;
+  } = {}
 ): void {
   const handoffEvents = events.filter(isTokenBudgetHandoffEvent);
   const validHandoffs = events.flatMap((event) => {
@@ -859,6 +927,23 @@ export function assertTokenBudgetTranscript(
   ) {
     throw new Error(
       'Compaction checkpoint does not prove the expected recovered sample attempts'
+    );
+  }
+  if (
+    options.expectedInputReductions !== undefined &&
+    (checkpoint.inputReductions !== options.expectedInputReductions ||
+      (checkpoint.messagesOmitted ?? 0) + (checkpoint.filesOmitted ?? 0) < 1 ||
+      checkpoint.failureReason !== undefined)
+  ) {
+    throw new Error(
+      `Compaction checkpoint does not prove the expected input reduction: ${JSON.stringify(
+        {
+          inputReductions: checkpoint.inputReductions,
+          messagesOmitted: checkpoint.messagesOmitted,
+          filesOmitted: checkpoint.filesOmitted,
+          failureReason: checkpoint.failureReason,
+        }
+      )}`
     );
   }
   assertNoHandoffInReplacement(checkpoint);

@@ -1044,6 +1044,9 @@ function createEventWriter(
           pre_tokens: event.preTokens,
           post_tokens: event.postTokens,
           sample_attempts: event.sampleAttempts,
+          input_reductions: event.inputReductions,
+          messages_omitted: event.messagesOmitted,
+          files_omitted: event.filesOmitted,
           failure_reason: event.failureReason,
         });
         return;
@@ -1056,6 +1059,12 @@ function createEventWriter(
               event.sampleAttempts !== undefined
                 ? ` after ${event.sampleAttempts} sample attempt${
                     event.sampleAttempts === 1 ? '' : 's'
+                  }`
+                : ''
+            }${
+              event.inputReductions
+                ? ` with ${event.inputReductions} input reduction${
+                    event.inputReductions === 1 ? '' : 's'
                   }`
                 : ''
             }`

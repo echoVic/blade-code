@@ -36,6 +36,9 @@ export interface ReactiveCompactResult {
   preTokens?: number;
   postTokens?: number;
   sampleAttempts?: number;
+  inputReductions?: number;
+  messagesOmitted?: number;
+  filesOmitted?: number;
   failureReason?: CompactionFailureReason;
   filesIncluded?: string[];
   usage?: UsageInfo;
@@ -97,6 +100,9 @@ export class ReactiveCompaction {
           preTokens: compactResult.preTokens,
           postTokens: compactResult.postTokens,
           sampleAttempts: compactResult.sampleAttempts,
+          inputReductions: compactResult.inputReductions,
+          messagesOmitted: compactResult.messagesOmitted,
+          filesOmitted: compactResult.filesOmitted,
           failureReason: compactResult.failureReason,
           filesIncluded: compactResult.filesIncluded,
           usage: compactResult.usage,

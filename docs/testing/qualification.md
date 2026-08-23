@@ -391,9 +391,11 @@ barrier；随后恰好一次 TaskOutput 获得交接前后两个 output marker�
 Durable token-budget handoff 固定运行 DeepSeek Flash/Pro × Headless、raw PTY
 TUI、production Chromium Web 与真实 ACP SDK 八格矩阵，顺序固定且不经过 release
 surface 过滤。每格通过 loopback transparent proxy 转发真实 Provider 输出和真实
-compaction summary；proxy 改写前两个 task response 的 usage counters，并让首个
-compaction request 返回受控 `503`，随后透明转发第二个真实摘要请求。请求顺序必须为
-`task(70%) -> task(80%) -> compaction(503) -> compaction(real) -> task -> task`。
+compaction summary；proxy 改写前两个 task response 的 usage counters，让首个
+compaction request 返回受控 context overflow，要求第二个请求使用严格更小的 payload，
+再返回一次 `503`，最后透明转发第三个真实摘要请求。请求顺序必须为
+`task(70%) -> task(80%) -> compaction(context) -> compaction(503) -> compaction(real)
+-> task -> task`。
 70%/80% 阈值来自 production model catalog 的 context window 与 output reserve，而不是
 测试硬编码。每格证明：
 
@@ -402,7 +404,8 @@ compaction request 返回受控 `503`，随后透明转发第二个真实摘要�
   compaction 与其后请求为零；
 - latest replacement checkpoint 位于 marker 后，replacement/effective suffix 不含 marker，
   七段 continuation ledger 精确保留 mutation、failed verification 和 pending action
-  sentinels，checkpoint 记录 `sampleAttempts: 2` 且无 failure reason，真实 Bash fail、
+  sentinels，checkpoint 记录 `sampleAttempts: 3`、`inputReductions: 1`，
+  `messagesOmitted` 与 `filesOmitted` 至少一项非零且无 failure reason，真实 Bash fail、
   Write、Bash pass 的 durable 顺序正确；
 - Headless cold projection、PTY resume、ACP `session/load` 和 Web post-completion reload
   均不得新增 Provider request；internal event/tag/identity/reminder 不进入 terminal bytes、

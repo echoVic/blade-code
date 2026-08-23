@@ -364,9 +364,13 @@ const CompactingEventSchema = event({
   pre_tokens: Type.Optional(Type.Number({ minimum: 0 })),
   post_tokens: Type.Optional(Type.Number({ minimum: 0 })),
   sample_attempts: Type.Optional(Type.Integer({ minimum: 0 })),
+  input_reductions: Type.Optional(Type.Integer({ minimum: 0 })),
+  messages_omitted: Type.Optional(Type.Integer({ minimum: 0 })),
+  files_omitted: Type.Optional(Type.Integer({ minimum: 0 })),
   failure_reason: Type.Optional(
     StringEnum([
       'circuit_open',
+      'context_exhausted',
       'deterministic',
       'empty_exhausted',
       'transient_exhausted',

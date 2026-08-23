@@ -419,7 +419,10 @@ function transcript(
         metadata: {
           checkpointVersion: 1,
           reason: 'threshold',
-          sampleAttempts: 2,
+          sampleAttempts: 3,
+          inputReductions: 1,
+          messagesOmitted: 2,
+          filesOmitted: 0,
         },
         replacementMessages:
           serializeCompactionReplacementMessages(replacementMessages),
@@ -620,6 +623,40 @@ describe('token-budget handoff deterministic qualification foundation', () => {
           kind: 'compaction',
           upstreamStatus: 201,
           usageRewritten: false,
+        }),
+      ]);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it('injects context step-down before transient compaction recovery', async () => {
+    const upstream = await startJsonUpstream();
+    const proxy = await startTokenBudgetHandoffProxy(upstream.baseURL, {
+      handoffPromptTokens: 70_000,
+      compactionPromptTokens: 80_000,
+      markerTag: TOKEN_BUDGET_HANDOFF_TAG,
+      compactionFailureSequence: ['context_overflow', 'transient'],
+    });
+    try {
+      const first = await postJson(proxy.baseURL, compactionBody());
+      const second = await postJson(proxy.baseURL, compactionBody());
+      const third = await postJson(proxy.baseURL, compactionBody());
+
+      expect([first.status, second.status, third.status]).toEqual([400, 503, 201]);
+      expect(upstream.requests()).toBe(1);
+      expect(proxy.evidence().requests).toEqual([
+        expect.objectContaining({
+          ordinal: 1,
+          injectedFailure: 'compaction_context_overflow',
+        }),
+        expect.objectContaining({
+          ordinal: 2,
+          injectedFailure: 'compaction_transient',
+        }),
+        expect.objectContaining({
+          ordinal: 3,
+          upstreamStatus: 201,
         }),
       ]);
     } finally {
@@ -2040,6 +2077,50 @@ describe('token-budget handoff deterministic qualification foundation', () => {
         expectCompactionRetry: true,
       })
     ).not.toThrow();
+    const stepDownEvidence: TokenBudgetProxyEvidence = {
+      maxInFlight: 1,
+      requests: [
+        ...evidence.requests.slice(0, 2),
+        {
+          ...evidence.requests[2]!,
+          bodyBytes: 4_096,
+          upstreamStatus: 400,
+          responseKind: 'json',
+          injectedFailure: 'compaction_context_overflow',
+        },
+        {
+          ...evidence.requests[2]!,
+          ordinal: 4,
+          bodyBytes: 3_000,
+          bodySha256: 'e'.repeat(64),
+          upstreamStatus: 503,
+          responseKind: 'json',
+          injectedFailure: 'compaction_transient',
+        },
+        {
+          ...evidence.requests[2]!,
+          ordinal: 5,
+          bodyBytes: 3_000,
+          bodySha256: 'd'.repeat(64),
+          upstreamStatus: 200,
+        },
+        {
+          ...evidence.requests[3]!,
+          ordinal: 6,
+          bodySha256: 'c'.repeat(64),
+        },
+        {
+          ...evidence.requests[4]!,
+          ordinal: 7,
+          bodySha256: 'b'.repeat(64),
+        },
+      ],
+    };
+    expect(() =>
+      assertTokenBudgetRequestSequence(stepDownEvidence, targets, {
+        expectCompactionStepDown: true,
+      })
+    ).not.toThrow();
     expect(() =>
       assertTokenBudgetRequestSequence(evidence, targets, {
         expectCompactionRetry: true,
@@ -2121,7 +2202,8 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     expect(() => assertTokenBudgetTranscript(events, fixture)).not.toThrow();
     expect(() =>
       assertTokenBudgetTranscript(events, fixture, {
-        expectedSampleAttempts: 2,
+        expectedSampleAttempts: 3,
+        expectedInputReductions: 1,
       })
     ).not.toThrow();
     expect(() => assertTokenBudgetTranscript([...events, events[2]!], fixture)).toThrow(

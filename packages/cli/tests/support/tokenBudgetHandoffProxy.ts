@@ -13,7 +13,7 @@ export interface TokenBudgetRequestEvidence {
   targetPromptTokens?: number;
   upstreamStatus?: number;
   responseKind?: 'sse' | 'json' | 'other';
-  injectedFailure?: 'compaction_transient';
+  injectedFailure?: 'compaction_context_overflow' | 'compaction_transient';
   usageShape?:
     | 'root-empty'
     | 'root-terminal'
@@ -868,6 +868,7 @@ export async function startTokenBudgetHandoffProxy(
     compactionPromptTokens: number;
     markerTag: string;
     failFirstCompaction?: boolean;
+    compactionFailureSequence?: Array<'context_overflow' | 'transient'>;
   }
 ): Promise<{
   baseURL: string;
@@ -899,6 +900,9 @@ export async function startTokenBudgetHandoffProxy(
   let requestOrdinal = 0;
   let taskOrdinal = 0;
   let compactionFailuresInjected = 0;
+  const compactionFailureSequence =
+    options.compactionFailureSequence ??
+    (options.failFirstCompaction ? (['transient'] as const) : []);
   let inFlight = 0;
   let maxInFlight = 0;
   let closing = false;
@@ -937,15 +941,21 @@ export async function startTokenBudgetHandoffProxy(
         return;
       }
       if (
-        options.failFirstCompaction &&
         facts.kind === 'compaction' &&
-        compactionFailuresInjected === 0
+        compactionFailuresInjected < compactionFailureSequence.length
       ) {
+        const injected = compactionFailureSequence[compactionFailuresInjected]!;
         compactionFailuresInjected++;
-        requestEvidence.upstreamStatus = 503;
         requestEvidence.responseKind = 'json';
-        requestEvidence.injectedFailure = 'compaction_transient';
-        sendBoundedError(response, 503, 'Temporary compaction service failure');
+        if (injected === 'context_overflow') {
+          requestEvidence.upstreamStatus = 400;
+          requestEvidence.injectedFailure = 'compaction_context_overflow';
+          sendBoundedError(response, 400, 'context_length_exceeded');
+        } else {
+          requestEvidence.upstreamStatus = 503;
+          requestEvidence.injectedFailure = 'compaction_transient';
+          sendBoundedError(response, 503, 'Temporary compaction service failure');
+        }
         return;
       }
       const controller = new AbortController();

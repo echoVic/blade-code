@@ -275,6 +275,207 @@ describe('CompactionService - 输出协议', () => {
     }
   });
 
+  test('context overflow 应缩减旧消息后在同一总预算内恢复', async () => {
+    const exactRecord =
+      'EXACT CONTINUATION RECORD [Exact next action] :: RUN_STEPDOWN_CHECK';
+    const messages = [
+      { role: 'user' as const, content: `${exactRecord}\n${'a'.repeat(2_000)}` },
+      { role: 'assistant' as const, content: `old reply ${'b'.repeat(1_000)}` },
+      { role: 'user' as const, content: `middle task ${'c'.repeat(1_000)}` },
+      { role: 'assistant' as const, content: `middle reply ${'d'.repeat(1_000)}` },
+      { role: 'user' as const, content: `recent task ${'e'.repeat(1_000)}` },
+      { role: 'assistant' as const, content: 'recent reply must survive' },
+    ];
+    compactChat
+      .mockRejectedValueOnce(
+        Object.assign(new Error('context_length_exceeded'), { status: 400 })
+      )
+      .mockResolvedValueOnce({
+        content: '<summary>Recovered reduced summary.</summary>',
+      });
+
+    const result = await CompactionService.compact(messages, {
+      ...markerCompactionOptions,
+      sessionId: 'context-stepdown',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.sampleAttempts).toBe(2);
+    expect(result.inputReductions).toBe(1);
+    expect(result.messagesOmitted).toBe(2);
+    expect(result.filesOmitted).toBe(0);
+    expect(result.summary).toContain('RUN_STEPDOWN_CHECK');
+    const firstPrompt = compactChat.mock.calls[0]?.[0]?.[0]?.content;
+    const secondPrompt = compactChat.mock.calls[1]?.[0]?.[0]?.content;
+    expect(typeof firstPrompt).toBe('string');
+    expect(typeof secondPrompt).toBe('string');
+    expect(String(secondPrompt).length).toBeLessThan(String(firstPrompt).length);
+    expect(secondPrompt).not.toContain(exactRecord);
+    expect(secondPrompt).toContain('recent reply must survive');
+  });
+
+  test('context overflow 应先移除可重读文件内容', async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'compaction-files-'));
+    await fs.mkdir(path.join(workspace, 'src'), { recursive: true });
+    await fs.writeFile(
+      path.join(workspace, 'src', 'stepdown.ts'),
+      "export const FILE_STEPDOWN_SENTINEL = 'present';\n"
+    );
+    compactChat
+      .mockRejectedValueOnce(
+        Object.assign(new Error('context_length_exceeded'), { status: 400 })
+      )
+      .mockResolvedValueOnce({
+        content: '<summary>Recovered without re-readable files.</summary>',
+      });
+
+    try {
+      const result = await CompactionService.compact(
+        [{ role: 'user', content: 'Continue editing src/stepdown.ts.' }],
+        {
+          ...markerCompactionOptions,
+          sessionId: 'context-stepdown-files',
+          workspaceRoot: workspace,
+        }
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.inputReductions).toBe(1);
+      expect(result.messagesOmitted).toBe(0);
+      expect(result.filesOmitted).toBe(1);
+      expect(result.filesIncluded).toEqual([]);
+      const firstPrompt = String(compactChat.mock.calls[0]?.[0]?.[0]?.content);
+      const secondPrompt = String(compactChat.mock.calls[1]?.[0]?.[0]?.content);
+      expect(firstPrompt).toContain('FILE_STEPDOWN_SENTINEL');
+      expect(secondPrompt).not.toContain('FILE_STEPDOWN_SENTINEL');
+      expect(secondPrompt).toContain('Continue editing src/stepdown.ts.');
+      expect(secondPrompt.length).toBeLessThan(firstPrompt.length);
+    } finally {
+      await fs.rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test('context overflow 应将最旧 tool call 与结果作为完整单元移除', async () => {
+    const messages: Message[] = [
+      {
+        role: 'assistant',
+        content: 'OLD_TOOL_CALL_SENTINEL',
+        tool_calls: [
+          {
+            id: 'old-call',
+            type: 'function',
+            function: { name: 'Read', arguments: '{"file_path":"old.ts"}' },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        content: 'OLD_TOOL_RESULT_SENTINEL',
+        tool_call_id: 'old-call',
+      },
+      { role: 'user', content: 'RECENT_TASK_SENTINEL' },
+      { role: 'assistant', content: 'RECENT_REPLY_SENTINEL' },
+    ];
+    compactChat
+      .mockRejectedValueOnce(
+        Object.assign(new Error('context_length_exceeded'), { status: 400 })
+      )
+      .mockResolvedValueOnce({
+        content: '<summary>Recovered without the oldest tool unit.</summary>',
+      });
+
+    const result = await CompactionService.compact(messages, {
+      ...markerCompactionOptions,
+      sessionId: 'context-stepdown-tool-unit',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.inputReductions).toBe(1);
+    expect(result.messagesOmitted).toBe(2);
+    const secondPrompt = String(compactChat.mock.calls[1]?.[0]?.[0]?.content);
+    expect(secondPrompt).not.toContain('OLD_TOOL_CALL_SENTINEL');
+    expect(secondPrompt).not.toContain('OLD_TOOL_RESULT_SENTINEL');
+    expect(secondPrompt).toContain('RECENT_TASK_SENTINEL');
+    expect(secondPrompt).toContain('RECENT_REPLY_SENTINEL');
+  });
+
+  test('单消息 context overflow 应降低字符上限并从完整原文回填 exact record', async () => {
+    const exactRecord =
+      'EXACT CONTINUATION RECORD [Exact next action] :: RUN_AFTER_CHAR_STEPDOWN';
+    const messages: Message[] = [
+      {
+        role: 'user',
+        content: `${'x'.repeat(7_000)}\n${exactRecord}`,
+      },
+    ];
+    compactChat
+      .mockRejectedValueOnce(
+        Object.assign(new Error('context_length_exceeded'), { status: 400 })
+      )
+      .mockResolvedValueOnce({
+        content: '<summary>Recovered after reducing the character cap.</summary>',
+      });
+
+    const result = await CompactionService.compact(messages, {
+      ...markerCompactionOptions,
+      sessionId: 'context-stepdown-character-cap',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.inputReductions).toBe(1);
+    expect(result.messagesOmitted).toBe(0);
+    expect(result.filesOmitted).toBe(0);
+    expect(result.summary).toContain('RUN_AFTER_CHAR_STEPDOWN');
+    const firstPrompt = String(compactChat.mock.calls[0]?.[0]?.[0]?.content);
+    const secondPrompt = String(compactChat.mock.calls[1]?.[0]?.[0]?.content);
+    expect(firstPrompt).not.toContain(exactRecord);
+    expect(secondPrompt).not.toContain(exactRecord);
+    expect(secondPrompt.length).toBeLessThan(firstPrompt.length);
+  });
+
+  test('context overflow 预算耗尽后应记录缩减损失并 fallback', async () => {
+    const messages = Array.from({ length: 8 }, (_, index) => ({
+      role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
+      content: `message-${index}-${'x'.repeat(1_000)}`,
+    }));
+    compactChat.mockRejectedValue(
+      Object.assign(new Error('maximum context length exceeded'), { status: 400 })
+    );
+
+    const result = await CompactionService.compact(messages, {
+      ...markerCompactionOptions,
+      sessionId: 'context-stepdown-exhausted',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.sampleAttempts).toBe(3);
+    expect(result.inputReductions).toBe(2);
+    expect(result.messagesOmitted).toBe(4);
+    expect(result.filesOmitted).toBe(0);
+    expect(result.failureReason).toBe('context_exhausted');
+    expect(compactChat).toHaveBeenCalledTimes(3);
+  });
+
+  test('context overflow 无法产生更小 payload 时不得重放相同请求', async () => {
+    compactChat.mockRejectedValueOnce(
+      Object.assign(new Error('prompt_too_long'), { status: 400 })
+    );
+
+    const result = await CompactionService.compact(
+      [{ role: 'user', content: 'tiny' }],
+      {
+        ...markerCompactionOptions,
+        sessionId: 'context-stepdown-no-progress',
+      }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.sampleAttempts).toBe(1);
+    expect(result.inputReductions).toBe(0);
+    expect(result.failureReason).toBe('context_exhausted');
+    expect(compactChat).toHaveBeenCalledOnce();
+  });
+
   test('abort 应在重试等待前终止且不得写入 fallback', async () => {
     const controller = new AbortController();
     compactChat.mockImplementationOnce(async () => {

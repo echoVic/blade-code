@@ -18,6 +18,7 @@ import {
 import {
   classifyProviderRetry,
   computeProviderRetryDelay,
+  isProviderContextLimitError,
 } from '../services/pi/providerRetry.js';
 import { FileAccessTracker } from '../tools/builtin/file/FileAccessTracker.js';
 import { abortableSleep, isAbortError } from '../utils/abort.js';
@@ -86,6 +87,12 @@ export interface CompactionResult {
   usage?: UsageInfo;
   /** 摘要模型实际调用次数；本地 circuit-open fallback 为 0 */
   sampleAttempts?: number;
+  /** context overflow 后实际执行的输入缩减次数 */
+  inputReductions?: number;
+  /** 为适配摘要窗口而从模型输入中省略的消息数 */
+  messagesOmitted?: number;
+  /** 为适配摘要窗口而从模型输入中省略的可重读文件数 */
+  filesOmitted?: number;
   /** fallback 的稳定失败分类 */
   failureReason?: CompactionFailureReason;
 }
@@ -99,6 +106,9 @@ class CompactionSamplingError extends Error {
     message: string,
     readonly attempts: number,
     readonly failureReason: Exclude<CompactionFailureReason, 'circuit_open'>,
+    readonly inputReductions: number,
+    readonly messagesOmitted: number,
+    readonly filesOmitted: number,
     options?: ErrorOptions
   ) {
     super(message, options);
@@ -293,13 +303,102 @@ function compactionSessionKey(workspaceRoot?: string, sessionId?: string): strin
   return JSON.stringify([path.resolve(workspaceRoot ?? getCwd()), sessionId ?? null]);
 }
 
+const DEFAULT_COMPACTION_MESSAGE_CHARS = 5_000;
+const MIN_COMPACTION_MESSAGE_CHARS = 625;
+
+interface CompactionSampleInput {
+  messages: Message[];
+  fileContents: FileContent[];
+  maxMessageChars: number;
+  inputReductions: number;
+  messagesOmitted: number;
+  filesOmitted: number;
+}
+
+function compactionMessageUnits(messages: readonly Message[]): Message[][] {
+  const units: Message[][] = [];
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index]!;
+    const unit = [message];
+    if (message.role === 'assistant' && message.tool_calls?.length) {
+      const callIds = new Set(message.tool_calls.map((call) => call.id));
+      while (index + 1 < messages.length) {
+        const candidate = messages[index + 1]!;
+        if (
+          candidate.role !== 'tool' ||
+          !candidate.tool_call_id ||
+          !callIds.has(candidate.tool_call_id)
+        ) {
+          break;
+        }
+        unit.push(candidate);
+        index++;
+      }
+    }
+    units.push(unit);
+  }
+  return units;
+}
+
+function reduceCompactionSampleInput(
+  input: CompactionSampleInput
+): CompactionSampleInput | undefined {
+  const currentChars = buildCompactionPrompt(input.messages, input.fileContents, {
+    maxMessageChars: input.maxMessageChars,
+  }).length;
+
+  let nextMessages = input.messages;
+  let nextFiles = input.fileContents;
+  let nextMaxMessageChars = input.maxMessageChars;
+  let omittedMessages = input.messagesOmitted;
+  let omittedFiles = input.filesOmitted;
+
+  if (nextFiles.length > 0) {
+    omittedFiles += nextFiles.length;
+    nextFiles = [];
+  } else {
+    const units = compactionMessageUnits(nextMessages);
+    if (units.length > 1) {
+      const dropCount = Math.min(
+        units.length - 1,
+        Math.max(1, Math.ceil(units.length * 0.25))
+      );
+      const dropped = units.slice(0, dropCount).flat();
+      nextMessages = units.slice(dropCount).flat();
+      omittedMessages += dropped.length;
+    } else if (nextMaxMessageChars > MIN_COMPACTION_MESSAGE_CHARS) {
+      nextMaxMessageChars = Math.max(
+        MIN_COMPACTION_MESSAGE_CHARS,
+        Math.floor(nextMaxMessageChars / 2)
+      );
+    } else {
+      return undefined;
+    }
+  }
+
+  const next: CompactionSampleInput = {
+    messages: nextMessages,
+    fileContents: nextFiles,
+    maxMessageChars: nextMaxMessageChars,
+    inputReductions: input.inputReductions + 1,
+    messagesOmitted: omittedMessages,
+    filesOmitted: omittedFiles,
+  };
+  const nextChars = buildCompactionPrompt(next.messages, next.fileContents, {
+    maxMessageChars: next.maxMessageChars,
+  }).length;
+  return nextChars < currentChars ? next : undefined;
+}
+
 /**
  * 构建面向继续执行的有界压缩 prompt。
  */
 export function buildCompactionPrompt(
   messages: readonly Message[],
-  fileContents: readonly FileContent[]
+  fileContents: readonly FileContent[],
+  options: { maxMessageChars?: number } = {}
 ): string {
+  const maxMessageChars = options.maxMessageChars ?? DEFAULT_COMPACTION_MESSAGE_CHARS;
   const messagesText = messages
     .map((msg, index) => {
       const role = msg.role || 'unknown';
@@ -308,9 +407,10 @@ export function buildCompactionPrompt(
       const content = isCompactSummaryMessage(msg)
         ? escapeReservedLedgerHeadings(rawContent)
         : rawContent;
-      const maxLength = 5_000;
       const truncatedContent =
-        content.length > maxLength ? content.substring(0, maxLength) + '...' : content;
+        content.length > maxMessageChars
+          ? content.substring(0, maxMessageChars) + '...'
+          : content;
 
       return `[${index + 1}] ${role}: ${truncatedContent}`;
     })
@@ -441,7 +541,10 @@ export class CompactionService {
         preTokens,
         new Error('Circuit breaker open'),
         0,
-        'circuit_open'
+        'circuit_open',
+        0,
+        0,
+        0
       );
     }
 
@@ -550,12 +653,16 @@ export class CompactionService {
         summary,
         preTokens,
         postTokens,
-        filesIncluded: fileContents.map((file) => file.path),
+        filesIncluded:
+          generated.filesOmitted > 0 ? [] : fileContents.map((file) => file.path),
         compactedMessages,
         boundaryMessage,
         summaryMessage,
         usage: generated.usage,
         sampleAttempts: generated.attempts,
+        inputReductions: generated.inputReductions,
+        messagesOmitted: generated.messagesOmitted,
+        filesOmitted: generated.filesOmitted,
       };
     } catch (error) {
       // AbortError（宽口径）: 用户取消/interrupt，不应计入失败次数也不应走 fallback
@@ -572,7 +679,12 @@ export class CompactionService {
         error instanceof CompactionSamplingError
           ? error.attempts
           : completedSampleAttempts,
-        error instanceof CompactionSamplingError ? error.failureReason : 'deterministic'
+        error instanceof CompactionSamplingError
+          ? error.failureReason
+          : 'deterministic',
+        error instanceof CompactionSamplingError ? error.inputReductions : 0,
+        error instanceof CompactionSamplingError ? error.messagesOmitted : 0,
+        error instanceof CompactionSamplingError ? error.filesOmitted : 0
       );
     }
   }
@@ -589,9 +701,14 @@ export class CompactionService {
     messages: Message[],
     fileContents: FileContent[],
     options: CompactionOptions
-  ): Promise<{ summary: string; usage?: UsageInfo; attempts: number }> {
-    const prompt = buildCompactionPrompt(messages, fileContents);
-
+  ): Promise<{
+    summary: string;
+    usage?: UsageInfo;
+    attempts: number;
+    inputReductions: number;
+    messagesOmitted: number;
+    filesOmitted: number;
+  }> {
     logger.debug('[CompactionService] 使用压缩模型:', options.modelName);
 
     // 预检查：如果 signal 已 aborted，不发起 LLM 调用
@@ -612,8 +729,21 @@ export class CompactionService {
     });
 
     let usage: UsageInfo | undefined;
+    let sampleInput: CompactionSampleInput = {
+      messages,
+      fileContents,
+      maxMessageChars: DEFAULT_COMPACTION_MESSAGE_CHARS,
+      inputReductions: 0,
+      messagesOmitted: 0,
+      filesOmitted: 0,
+    };
     for (let attempt = 1; attempt <= MAX_COMPACTION_SAMPLE_ATTEMPTS; attempt++) {
       try {
+        const prompt = buildCompactionPrompt(
+          sampleInput.messages,
+          sampleInput.fileContents,
+          { maxMessageChars: sampleInput.maxMessageChars }
+        );
         const response = await chatService.chat(
           [{ role: 'user', content: prompt }],
           [], // 不传递工具参数
@@ -640,14 +770,24 @@ export class CompactionService {
           if (!summaryMatch) {
             logger.warn('[CompactionService] 总结格式不正确，使用完整响应');
           }
-          return { summary, usage, attempts: attempt };
+          return {
+            summary,
+            usage,
+            attempts: attempt,
+            inputReductions: sampleInput.inputReductions,
+            messagesOmitted: sampleInput.messagesOmitted,
+            filesOmitted: sampleInput.filesOmitted,
+          };
         }
 
         if (attempt === MAX_COMPACTION_SAMPLE_ATTEMPTS) {
           throw new CompactionSamplingError(
             'Compaction summary was empty after bounded retries',
             attempt,
-            'empty_exhausted'
+            'empty_exhausted',
+            sampleInput.inputReductions,
+            sampleInput.messagesOmitted,
+            sampleInput.filesOmitted
           );
         }
         logger.warn(
@@ -656,12 +796,37 @@ export class CompactionService {
       } catch (error) {
         if (isAbortError(error)) throw error;
         if (error instanceof CompactionSamplingError) throw error;
+        if (isProviderContextLimitError(error)) {
+          const reduced =
+            attempt < MAX_COMPACTION_SAMPLE_ATTEMPTS
+              ? reduceCompactionSampleInput(sampleInput)
+              : undefined;
+          if (!reduced) {
+            throw new CompactionSamplingError(
+              error instanceof Error ? error.message : String(error),
+              attempt,
+              'context_exhausted',
+              sampleInput.inputReductions,
+              sampleInput.messagesOmitted,
+              sampleInput.filesOmitted,
+              { cause: error }
+            );
+          }
+          sampleInput = reduced;
+          logger.warn(
+            `[CompactionService] 摘要输入超出窗口，缩减后重试 (${attempt}/${MAX_COMPACTION_SAMPLE_ATTEMPTS})`
+          );
+          continue;
+        }
         const retryable = classifyProviderRetry(error).retryable;
         if (!retryable || attempt === MAX_COMPACTION_SAMPLE_ATTEMPTS) {
           throw new CompactionSamplingError(
             error instanceof Error ? error.message : String(error),
             attempt,
             retryable ? 'transient_exhausted' : 'deterministic',
+            sampleInput.inputReductions,
+            sampleInput.messagesOmitted,
+            sampleInput.filesOmitted,
             { cause: error }
           );
         }
@@ -676,7 +841,10 @@ export class CompactionService {
     throw new CompactionSamplingError(
       'Compaction summary retry loop exhausted',
       MAX_COMPACTION_SAMPLE_ATTEMPTS,
-      'transient_exhausted'
+      'transient_exhausted',
+      sampleInput.inputReductions,
+      sampleInput.messagesOmitted,
+      sampleInput.filesOmitted
     );
   }
 
@@ -870,7 +1038,10 @@ export class CompactionService {
     preTokens: number,
     error: unknown,
     sampleAttempts: number,
-    failureReason: CompactionFailureReason
+    failureReason: CompactionFailureReason,
+    inputReductions: number,
+    messagesOmitted: number,
+    filesOmitted: number
   ): CompactionResult {
     const retainCount = Math.ceil(messages.length * this.FALLBACK_RETAIN_PERCENT);
     const candidateMessages = messages.slice(-retainCount);
@@ -935,6 +1106,9 @@ export class CompactionService {
       summaryMessage,
       error: errorMsg,
       sampleAttempts,
+      inputReductions,
+      messagesOmitted,
+      filesOmitted,
       failureReason,
     };
   }
