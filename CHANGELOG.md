@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.10.76] - 2026-08-23
+
+### Added
+- Goal verification now preserves bounded, sanitized structured feedback across
+  continuations, compaction, process restarts, and subagent result adoption
+- Verification gap state is projected through TUI, Headless JSONL, Web, and ACP
+
+### Changed
+- Repeated identical verifier gaps now request a strategy change on the second
+  occurrence and atomically block the Goal on the third
+- Goal edits, explicit resume, and a fresh verifier PASS clear stale
+  verification-stall state
+
+### Fixed
+- Verifier feedback now replaces workspace roots, redacts common credential
+  forms, escapes control markup, and remains capped at 4,000 characters
+- Real API handoff qualification now preserves strict durable-boundary checks
+  while tolerating bounded model correction turns and delayed TUI rendering
+
+### Tests
+- Added deterministic persistence, sanitization, convergence, projection, and
+  crash-adoption coverage
+- Qualified a real verifier FAIL-to-repair-to-PASS trajectory across DeepSeek,
+  Claude, GPT, and Qwen, plus production Web, raw PTY, ACP, and the complete
+  16-check production release matrix
+
 ## [0.10.75] - 2026-08-23
 
 ### Tests

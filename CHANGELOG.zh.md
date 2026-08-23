@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.10.76] - 2026-08-23
+
+### 新增
+- Goal 验证现在会在 continuation、上下文压缩、进程重启和 subagent 结果接管之间
+  保留有界、脱敏的结构化反馈
+- 验证缺口状态会投影到 TUI、Headless JSONL、Web 与 ACP
+
+### 变更
+- 相同 verifier 缺口第二次出现时会要求改变策略，第三次出现时会原子阻断 Goal
+- Goal 编辑、显式恢复以及新的 verifier PASS 会清理过期验证停滞状态
+
+### 修复
+- Verifier 反馈现在会替换工作区根路径、脱敏常见凭据、转义控制标记，并限制在
+  4,000 字符以内
+- 真实 API handoff 资格测试在保持严格持久边界检查的同时，允许有界模型纠正回合
+  与延迟 TUI 渲染
+
+### 测试
+- 新增持久化、脱敏、收敛、跨端投影和崩溃接管的确定性覆盖
+- 使用真实 DeepSeek、Claude、GPT 与 Qwen 验证 verifier
+  FAIL-to-repair-to-PASS 轨迹，并完成生产 Web、raw PTY、ACP 与完整 16 项
+  production release matrix
+
 ## [0.10.75] - 2026-08-23
 
 ### 测试
