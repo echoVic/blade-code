@@ -62,6 +62,7 @@ const CIRCUIT_OPEN_MS = 2_000;
 interface SurfaceEvidence {
   sessionId: string;
   output: string;
+  protocolOutput?: string;
   finalMarkerSeen?: boolean;
   secretSeen?: boolean;
   processes?: Array<{ pid: number; identity: ProcessIdentity }>;
@@ -891,7 +892,8 @@ async function runWeb(input: {
       secondarySessionId,
       secondarySubmittedAt,
       providerProbeCount,
-      output: `${output}\n${eventOutput}\n${html}`.slice(-MAX_CAPTURE_CHARS),
+      output: `${output}\n${html}`.slice(-MAX_CAPTURE_CHARS),
+      protocolOutput: eventOutput.slice(-MAX_CAPTURE_CHARS),
     };
   } finally {
     await probe?.close().catch(() => undefined);
@@ -1065,8 +1067,9 @@ describe
             expect(evidence.output).toContain('Provider 故障已隔离，等待恢复探测');
             expect(evidence.output).toContain('Provider 正在执行唯一恢复探测');
           } else {
-            expect(evidence.output).toContain('bounded_foreground');
-            expect(evidence.output).toMatch(
+            const protocolOutput = evidence.protocolOutput ?? evidence.output;
+            expect(protocolOutput).toContain('bounded_foreground');
+            expect(protocolOutput).toMatch(
               /provider[_./]circuit|blade\/providerCircuit/
             );
           }
