@@ -18,6 +18,8 @@ export interface TokenBudgetHandoffFixture {
 
 const NONCE_PATTERN = /^[A-Za-z0-9_]{16,64}$/;
 const SENTINEL_PATTERN = /^[A-Za-z0-9_]{16,80}$/;
+export const TOKEN_BUDGET_FINAL_COPY_INSTRUCTION =
+  'FINAL_RESPONSE_CONTRACT: COPY_THE_NEXT_LINE_BYTE_FOR_BYTE_AS_THE_ENTIRE_RESPONSE; OUTPUT_NOTHING_ELSE';
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
@@ -97,6 +99,9 @@ export async function createTokenBudgetHandoffFixture(
     '  assert.fail(failed);',
     '}',
     'assert.equal(actual, expected, failed);',
+    `process.stdout.write(${JSON.stringify(
+      `${TOKEN_BUDGET_FINAL_COPY_INSTRUCTION}\n`
+    )});`,
     'process.stdout.write(`${final}\\n`);',
     '',
   ].join('\n');

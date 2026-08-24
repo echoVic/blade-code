@@ -20,6 +20,8 @@
   Web GUI 与 ACP
 - Provider recovery Web 资格测试现在会在有界诊断尾部截断前锁存完整的结构化生命周期
   证据
+- Token-budget 资格测试现在会在隐藏 Bash marker 前输出显式终答复制契约，同时保留
+  精确输出断言和零测试重试
 
 ## [0.10.83] - 2026-08-23
 

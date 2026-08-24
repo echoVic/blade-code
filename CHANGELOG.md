@@ -24,6 +24,8 @@
   PTY TUI, production Chromium Web GUI, and ACP
 - Provider-recovery Web qualification now latches full structured lifecycle
   evidence before bounded diagnostic-tail truncation
+- Token-budget qualification now emits an explicit final-copy contract before
+  the hidden Bash marker while retaining exact-output assertions and zero test retry
 
 ## [0.10.83] - 2026-08-23
 

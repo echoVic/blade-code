@@ -25,6 +25,7 @@ import type { Message } from '../../../src/services/ChatServiceInterface.js';
 import {
   createTokenBudgetHandoffFixture,
   renderTokenBudgetExactNextAction,
+  TOKEN_BUDGET_FINAL_COPY_INSTRUCTION,
   type TokenBudgetHandoffFixture,
 } from '../../integration/real-api/tokenBudgetHandoffFixture.js';
 import {
@@ -1158,6 +1159,8 @@ describe('token-budget handoff deterministic qualification foundation', () => {
     });
     expect(passing.status).toBe(0);
     expect(passing.stdout).toContain(created.finalMarker);
+    expect(passing.stdout).toContain(TOKEN_BUDGET_FINAL_COPY_INSTRUCTION);
+    expect(passing.stdout.trimEnd().split('\n').at(-1)).toBe(created.finalMarker);
 
     const boundaryIndexes = [1, 2, 3, 4].map((boundary) => {
       const label = `Boundary ${boundary}`;
