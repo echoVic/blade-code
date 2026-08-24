@@ -70,6 +70,8 @@ interface SurfaceEvidence {
   secondarySessionId?: string;
   secondarySubmittedAt?: number;
   providerProbeCount?: number;
+  sawBoundedForegroundRecovery?: boolean;
+  sawProviderLifecycle?: boolean;
 }
 
 interface SessionEventProbe {
@@ -857,7 +859,10 @@ async function runWeb(input: {
       primary: probe.events,
       secondary: secondaryProbe.events,
     });
-    const providerProbeCount = [...probe.events, ...secondaryProbe.events].filter(
+    const providerEvents = [...probe.events, ...secondaryProbe.events].filter(
+      (event) => event.type === 'provider.retry' || event.type === 'provider.circuit'
+    );
+    const providerProbeCount = providerEvents.filter(
       (event) => event.type === 'provider.circuit' && event.properties.phase === 'probe'
     ).length;
     assertNoSecrets(
@@ -892,6 +897,10 @@ async function runWeb(input: {
       secondarySessionId,
       secondarySubmittedAt,
       providerProbeCount,
+      sawBoundedForegroundRecovery: providerEvents.some(
+        (event) => event.properties.mode === 'bounded_foreground'
+      ),
+      sawProviderLifecycle: providerEvents.length > 0,
       output: `${output}\n${html}`.slice(-MAX_CAPTURE_CHARS),
       protocolOutput: eventOutput.slice(-MAX_CAPTURE_CHARS),
     };
@@ -1068,10 +1077,14 @@ describe
             expect(evidence.output).toContain('Provider 正在执行唯一恢复探测');
           } else {
             const protocolOutput = evidence.protocolOutput ?? evidence.output;
-            expect(protocolOutput).toContain('bounded_foreground');
-            expect(protocolOutput).toMatch(
-              /provider[_./]circuit|blade\/providerCircuit/
-            );
+            expect(
+              evidence.sawBoundedForegroundRecovery ??
+                protocolOutput.includes('bounded_foreground')
+            ).toBe(true);
+            expect(
+              evidence.sawProviderLifecycle ??
+                /provider[_./]circuit|blade\/providerCircuit/.test(protocolOutput)
+            ).toBe(true);
           }
           if (surface === 'acp') {
             expect(evidence.terminalReleaseCount).toBeGreaterThanOrEqual(1);

@@ -18,6 +18,8 @@
   delete/recreate 与有界 LRU 淘汰的确定性覆盖
 - 发布资格继续使用真实 Provider 覆盖 Headless、raw PTY TUI、production Chromium
   Web GUI 与 ACP
+- Provider recovery Web 资格测试现在会在有界诊断尾部截断前锁存完整的结构化生命周期
+  证据
 
 ## [0.10.83] - 2026-08-23
 

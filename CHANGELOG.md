@@ -22,6 +22,8 @@
   validation retry, delete/recreate behavior, and bounded LRU eviction
 - Release qualification retains real Provider coverage across Headless, raw
   PTY TUI, production Chromium Web GUI, and ACP
+- Provider-recovery Web qualification now latches full structured lifecycle
+  evidence before bounded diagnostic-tail truncation
 
 ## [0.10.83] - 2026-08-23
 
