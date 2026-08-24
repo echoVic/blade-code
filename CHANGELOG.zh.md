@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.10.84] - 2026-08-23
+
+### 变更
+- Session transcript 初始化现在由不同存储 facade 共享同一个首访问执行，并在每个
+  facade 中使用最多 256 项的 LRU 正向缓存保存成功结果
+- 普通消息、工具、交互、评审、压缩与生命周期追加不再仅为确认不可变 Session
+  metadata 已存在而重复读取并解析完整 transcript
+
+### 修复
+- 新 Session 的并发首次写入不再提交重复的 `session_created` 事件
+- 失败或损坏的初始化不会进入缓存；删除 Session 时会在复用前使本地初始化正向缓存
+  失效
+
+### 测试
+- 新增独立 facade 并发首写、连续 event sequence、热路径零重扫、失败后重试、
+  delete/recreate 与有界 LRU 淘汰的确定性覆盖
+- 发布资格继续使用真实 Provider 覆盖 Headless、raw PTY TUI、production Chromium
+  Web GUI 与 ACP
+
 ## [0.10.83] - 2026-08-23
 
 ### 新增

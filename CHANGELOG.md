@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.10.84] - 2026-08-23
+
+### Changed
+- Session transcript initialization now shares one in-flight first-access
+  operation across storage facades and retains successful initialization in a
+  256-entry per-facade LRU cache
+- Ordinary message, tool, interaction, review, compaction, and lifecycle
+  appends no longer re-read and parse the complete transcript solely to prove
+  that immutable Session metadata already exists
+
+### Fixed
+- Concurrent first writes to a new Session can no longer commit duplicate
+  `session_created` events
+- Failed or corrupt initialization is never cached, and deleting a Session
+  invalidates its local positive initialization state before reuse
+
+### Tests
+- Added deterministic coverage for concurrent first writes through independent
+  facades, gapless event sequences, scan-free hot-path appends, failed
+  validation retry, delete/recreate behavior, and bounded LRU eviction
+- Release qualification retains real Provider coverage across Headless, raw
+  PTY TUI, production Chromium Web GUI, and ACP
+
 ## [0.10.83] - 2026-08-23
 
 ### Added
