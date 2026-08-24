@@ -28,6 +28,9 @@
 - Release qualification now includes a real DeepSeek turn followed by
   production Chromium desktop/mobile browser navigation, sandbox assertions,
   console fault checks, and complete server/browser/port cleanup
+- Token-budget qualification now enforces zero prefix/suffix bytes around the
+  copied final marker, forbids observed boundary/copy narration, and reports
+  only bounded redacted mismatch diagnostics
 
 ## [0.10.84] - 2026-08-23
 

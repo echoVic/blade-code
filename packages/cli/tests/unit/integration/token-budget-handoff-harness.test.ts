@@ -1204,7 +1204,10 @@ describe('token-budget handoff deterministic qualification foundation', () => {
       'AFTER_ZERO_EXIT_COPY_FINAL_NONEMPTY_STDOUT_LINE_BYTE_FOR_BYTE_AS_ENTIRE_RESPONSE'
     );
     expect(created.prompt).toContain(
-      'OUTPUT_NO_PREFIX_SUFFIX_QUOTES_CODE_FENCE_EXPLANATION_OR_STATUS_TEXT'
+      'FINAL_PREFIX_BYTES=0; FINAL_SUFFIX_BYTES=0; FIRST_CHARACTER=F'
+    );
+    expect(created.prompt).toContain(
+      'PROHIBIT_BOUNDARY_STATUS_ACKNOWLEDGEMENT_OR_COPY_NARRATION'
     );
     expect(created.prompt).not.toContain('nowhere else');
     expect(created.prompt).not.toContain(created.finalMarker);
@@ -2471,6 +2474,20 @@ describe('token-budget handoff deterministic qualification foundation', () => {
         recovery,
       })
     ).toThrow('session');
+    expect(() =>
+      assertAndProjectSurfaceEvidence({
+        surface: 'headless',
+        sessionId: 'safe-session',
+        exitCode: 0,
+        output: 'Completed FINAL_OK_1234567890.',
+        stderr: '',
+        expected: 'FINAL_OK_1234567890',
+        forbidden: [],
+        recovery,
+      })
+    ).toThrow(
+      'marker_occurrences=1;output_chars=30;' + 'preview="Completed [expected-marker]."'
+    );
   });
 
   it('parses only bounded safe cold-projection evidence', () => {

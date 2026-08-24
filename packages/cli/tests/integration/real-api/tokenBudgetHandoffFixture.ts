@@ -19,7 +19,8 @@ export interface TokenBudgetHandoffFixture {
 const NONCE_PATTERN = /^[A-Za-z0-9_]{16,64}$/;
 const SENTINEL_PATTERN = /^[A-Za-z0-9_]{16,80}$/;
 export const TOKEN_BUDGET_FINAL_COPY_INSTRUCTION =
-  'FINAL_RESPONSE_CONTRACT: COPY_THE_NEXT_LINE_BYTE_FOR_BYTE_AS_THE_ENTIRE_RESPONSE; OUTPUT_NOTHING_ELSE';
+  'FINAL_RESPONSE_CONTRACT=NEXT_LINE_ONLY; PREFIX_BYTES=0; SUFFIX_BYTES=0; ' +
+  'FIRST_CHARACTER=F; FORBID_BOUNDARY_STATUS=1; FORBID_ACKNOWLEDGEMENT=1';
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
@@ -31,7 +32,8 @@ export function renderTokenBudgetExactNextAction(input: { command: string }): st
     'DO_NOT_REPEAT_PRIOR_ACTIONS; ' +
     `RUN_ONLY_EXACT_BASH=${JSON.stringify(input.command)}; REQUIRE_ZERO_EXIT; ` +
     'AFTER_ZERO_EXIT_COPY_FINAL_NONEMPTY_STDOUT_LINE_BYTE_FOR_BYTE_AS_ENTIRE_RESPONSE; ' +
-    'OUTPUT_NO_PREFIX_SUFFIX_QUOTES_CODE_FENCE_EXPLANATION_OR_STATUS_TEXT'
+    'FINAL_PREFIX_BYTES=0; FINAL_SUFFIX_BYTES=0; FIRST_CHARACTER=F; ' +
+    'PROHIBIT_BOUNDARY_STATUS_ACKNOWLEDGEMENT_OR_COPY_NARRATION'
   );
 }
 
@@ -126,7 +128,9 @@ export async function createTokenBudgetHandoffFixture(
     `EXACT CONTINUATION RECORD [Exact next action] :: ${renderTokenBudgetExactNextAction(
       { command }
     )}`,
-    'Boundary 4: after the passing result, call no tools. Copy the final non-empty line of the successful Bash output verbatim as your entire response.',
+    'Boundary 4: call no tools. Emit exactly the final non-empty stdout line from the successful Bash as the complete assistant content.',
+    'The first assistant character must be F and the last character must be the final marker character; prefix and suffix byte counts must both be zero.',
+    'Do not emit any boundary status, acknowledgement, verification summary, copying narration, quotation, code fence, or blank line.',
     'The final response value is intentionally absent from this prompt and must not be guessed.',
   ].join('\n');
 

@@ -23,6 +23,8 @@
   覆盖
 - 发布资格新增真实 DeepSeek 回合后的 production Chromium 桌面/移动端浏览器导航、
   sandbox 断言、console fault 检查及 server/browser/port 完整回收
+- Token-budget 资格现在强制复制终答 marker 前后的字节数均为零，禁止已观察到的
+  boundary/copy 叙述，并只报告有界、脱敏的 mismatch 诊断
 
 ## [0.10.84] - 2026-08-23
 

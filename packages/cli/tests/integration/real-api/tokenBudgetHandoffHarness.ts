@@ -1142,7 +1142,16 @@ export function assertAndProjectSurfaceEvidence(input: {
     }
   }
   if (input.output.trim() !== input.expected) {
-    throw new Error('Token-budget surface output did not match the exact final marker');
+    const trimmed = input.output.trim();
+    const markerOccurrences = trimmed.split(input.expected).length - 1;
+    const redacted = trimmed.replaceAll(input.expected, '[expected-marker]');
+    const preview = Array.from(redacted).slice(0, 160).join('');
+    throw new Error(
+      'Token-budget surface output did not match the exact final marker; ' +
+        `marker_occurrences=${markerOccurrences};` +
+        `output_chars=${Array.from(trimmed).length};` +
+        `preview=${JSON.stringify(preview)}`
+    );
   }
   if (input.stderr !== '') {
     throw new Error('Token-budget surface stderr must be exactly empty');
