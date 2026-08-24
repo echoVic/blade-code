@@ -9,6 +9,10 @@ import * as path from 'node:path';
 import { nanoid } from 'nanoid';
 import { SessionInUseError, SessionLease } from '../agent/runtime/SessionLease.js';
 import {
+  collectUserPromptArtifactIds,
+  UserPromptArtifactStore,
+} from '../agent/runtime/UserPromptArtifactStore.js';
+import {
   MAX_INLINE_ATTACHMENT_BYTES,
   MAX_INLINE_ATTACHMENT_COUNT,
 } from '../api/attachmentLimits.js';
@@ -1513,9 +1517,37 @@ export class SessionService {
     const childEntries: SessionEvent[] = [childCreated, ...copiedEntries, forkBoundary];
     const targetFilePath = getSessionFilePath(targetProjectPath, targetSessionId);
 
+    let targetCreated = false;
     try {
       await new JSONLStore(targetFilePath).createExclusive(childEntries);
+      targetCreated = true;
+      const artifactIds = collectUserPromptArtifactIds(
+        sourceEntries.flatMap((entry) =>
+          entry.type === 'message_created' ? [entry.data.metadata] : []
+        )
+      );
+      if (artifactIds.length > 0) {
+        const sourceArtifacts = new UserPromptArtifactStore(
+          sourceProjectPath,
+          sourceSessionId,
+          { storageRoot: getBladeStorageRoot() }
+        );
+        const targetArtifacts = new UserPromptArtifactStore(
+          targetProjectPath,
+          targetSessionId,
+          { storageRoot: getBladeStorageRoot() }
+        );
+        await sourceArtifacts.copyReferencedTo(artifactIds, targetArtifacts);
+      }
     } catch (error) {
+      if (targetCreated) {
+        await new JSONLStore(targetFilePath).delete().catch(() => undefined);
+        await new UserPromptArtifactStore(targetProjectPath, targetSessionId, {
+          storageRoot: getBladeStorageRoot(),
+        })
+          .removeAll()
+          .catch(() => undefined);
+      }
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
         throw new Error(`Fork session already exists: ${targetSessionId}`, {
           cause: error,
@@ -1581,6 +1613,9 @@ export class SessionService {
       await rm(getSessionGoalFilePath(resolvedProjectPath, sessionId), {
         force: true,
       });
+      await new UserPromptArtifactStore(resolvedProjectPath, sessionId, {
+        storageRoot: getBladeStorageRoot(),
+      }).removeAll();
       await this.removeFromProjection(sessionId, resolvedProjectPath);
       return 1;
     }
@@ -1603,6 +1638,9 @@ export class SessionService {
         await rm(getSessionGoalFilePath(session.projectPath, session.sessionId), {
           force: true,
         });
+        await new UserPromptArtifactStore(session.projectPath, session.sessionId, {
+          storageRoot: getBladeStorageRoot(),
+        }).removeAll();
         await this.removeFromProjection(session.sessionId, session.projectPath);
       })
     );

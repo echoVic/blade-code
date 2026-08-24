@@ -62,6 +62,7 @@ export const STREAMING_PRELAUNCH_ALLOWLIST: ReadonlySet<string> = new Set([
   'WebFetch',
   'WebSearch',
   'MemoryRead',
+  'ReadPromptArtifact',
   'GetSpecContext',
   'ValidateSpec',
   'TaskOutput',

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProjectRuleCatalog } from '../../../../src/agent/resources/WorkspaceProjectRules.js';
 import { DurableSteeringInbox } from '../../../../src/agent/runtime/DurableSteeringInbox.js';
 import { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
+import { getUserPromptArtifactReference } from '../../../../src/agent/runtime/UserPromptArtifactStore.js';
 import {
   type AgentSession,
   AgentSessionStore,
@@ -12,6 +13,7 @@ import {
 import { BackgroundAgentManager } from '../../../../src/agent/subagents/BackgroundAgentManager.js';
 import { TeamMailbox } from '../../../../src/agent/teams/TeamMailbox.js';
 import { TeamStore } from '../../../../src/agent/teams/TeamStore.js';
+import { MAX_INLINE_USER_MESSAGE_TEXT_BYTES } from '../../../../src/api/attachmentLimits.js';
 import { PermissionMode } from '../../../../src/config/types.js';
 import {
   PersistentStore,
@@ -1174,6 +1176,39 @@ describe('SessionRuntime', () => {
       await runtime.finishTurn(prepared.handle);
     }
     await runtime.dispose();
+  });
+
+  it('offloads oversized direct input before committing it to the durable inbox', async () => {
+    const workspaceRoot = path.join(storageRoot, 'large-prompt-project');
+    const sessionId = 'large-prompt-session';
+    const fullPrompt = `${'a'.repeat(
+      MAX_INLINE_USER_MESSAGE_TEXT_BYTES
+    )}_PRIVATE_MIDDLE_${'b'.repeat(10_000)}`;
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+
+    const prepared = await first.prepareInputTurn(fullPrompt);
+    if (!prepared.accepted) throw new Error('Expected direct input preparation');
+    const reference = getUserPromptArtifactReference(prepared.metadata);
+    expect(reference?.sizeBytes).toBe(Buffer.byteLength(fullPrompt));
+    expect(Buffer.byteLength(String(prepared.content))).toBeLessThanOrEqual(
+      MAX_INLINE_USER_MESSAGE_TEXT_BYTES
+    );
+    expect(String(prepared.content)).not.toContain('_PRIVATE_MIDDLE_');
+    expect(first.getPendingSteeringMessages()).toEqual([
+      expect.objectContaining({
+        id: prepared.messageId,
+        content: prepared.content,
+        metadata: prepared.metadata,
+      }),
+    ]);
+
+    await first.dispose();
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const pending = recovered.getPendingSteeringMessages()[0]!;
+    await expect(
+      recovered.restoreUserMessage(pending.content, pending.metadata)
+    ).resolves.toBe(fullPrompt);
+    await recovered.dispose();
   });
 
   it('recovers an offline teammate message into the leader durable inbox', async () => {
@@ -2988,6 +3023,36 @@ describe('SessionRuntime', () => {
 
     expect(runtime.createExecutionPipeline()).toBeInstanceOf(ToolExecutor);
     expect(runtime.createToolExecutor()).toBeInstanceOf(ToolExecutor);
+  });
+
+  it('keeps prompt artifact reads available through explicit tool filters', async () => {
+    const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
+    const { createReadPromptArtifactTool } = await import(
+      '../../../../src/tools/builtin/system/readPromptArtifact.js'
+    );
+    vi.mocked(getBuiltinTools).mockImplementationOnce(async (options) => [
+      createReadPromptArtifactTool(options!.userPromptArtifactStore!) as never,
+    ]);
+    const runtime = await SessionRuntime.create({
+      sessionId: 'prompt-artifact-tool-filter',
+      workspaceRoot: storageRoot,
+    });
+    const executor = runtime.createToolExecutor({
+      permissionMode: PermissionMode.YOLO,
+      toolWhitelist: ['Read'],
+      toolBlacklist: ['ReadPromptArtifact'],
+    });
+    const internals = executor as unknown as {
+      registry: { get(name: string): unknown };
+      toolWhitelist: ReadonlySet<string> | null;
+      toolBlacklist: ReadonlySet<string> | null;
+    };
+
+    expect(internals.registry.get('ReadPromptArtifact')).toBeDefined();
+    expect(internals.toolWhitelist?.has('ReadPromptArtifact')).toBe(true);
+    expect(internals.toolBlacklist?.has('ReadPromptArtifact') ?? false).toBe(false);
+    executor.dispose();
+    await runtime.dispose();
   });
 
   it('only attaches hidden project verification to an explicit YOLO executor', async () => {

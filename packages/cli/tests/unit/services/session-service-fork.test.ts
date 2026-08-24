@@ -12,6 +12,11 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  getUserPromptArtifactReference,
+  UserPromptArtifactStore,
+} from '../../../src/agent/runtime/UserPromptArtifactStore.js';
+import { MAX_INLINE_USER_MESSAGE_TEXT_BYTES } from '../../../src/api/attachmentLimits.js';
 import { parseCompactionReplacementMessages } from '../../../src/context/compactionCheckpoint.js';
 import { JSONLStore } from '../../../src/context/storage/JSONLStore.js';
 import { PersistentStore } from '../../../src/context/storage/PersistentStore.js';
@@ -360,6 +365,47 @@ describe('SessionService.forkSession', () => {
       expect.objectContaining({ content: 'checkpoint summary' })
     );
     expect(context.some(isTokenBudgetHandoffMessage)).toBe(false);
+  });
+
+  it('copies referenced private prompt artifacts into a fork', async () => {
+    const sourceSessionId = 'prompt-artifact-parent';
+    const targetSessionId = 'prompt-artifact-child';
+    const fullPrompt = `${'a'.repeat(
+      MAX_INLINE_USER_MESSAGE_TEXT_BYTES
+    )}_FORKED_PROMPT_TAIL`;
+    const sourceArtifacts = new UserPromptArtifactStore(projectPath, sourceSessionId, {
+      storageRoot,
+    });
+    const materialized = await sourceArtifacts.materialize(fullPrompt);
+    const reference = getUserPromptArtifactReference(materialized.metadata)!;
+    const persistentStore = new PersistentStore(projectPath, 100, 'test');
+    await persistentStore.saveMessage(
+      sourceSessionId,
+      'user',
+      materialized.content,
+      null,
+      materialized.metadata
+    );
+
+    await SessionService.forkSession(sourceSessionId, {
+      newSessionId: targetSessionId,
+      sourceProjectPath: projectPath,
+      targetProjectPath: projectPath,
+    });
+
+    const targetArtifacts = new UserPromptArtifactStore(projectPath, targetSessionId, {
+      storageRoot,
+    });
+    await expect(
+      targetArtifacts.restore(materialized.content, materialized.metadata)
+    ).resolves.toBe(fullPrompt);
+    await expect(
+      SessionService.deleteSession(targetSessionId, projectPath)
+    ).resolves.toBe(1);
+    await expect(targetArtifacts.read(reference.id)).rejects.toThrow();
+    await expect(
+      sourceArtifacts.restore(materialized.content, materialized.metadata)
+    ).resolves.toBe(fullPrompt);
   });
 
   it('rejects non-absolute or cross-workspace fork paths before reading transcripts', async () => {

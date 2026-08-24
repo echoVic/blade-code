@@ -102,6 +102,7 @@ describe('StreamingToolExecutor', () => {
         'WebFetch',
         'WebSearch',
         'MemoryRead',
+        'ReadPromptArtifact',
         'GetSpecContext',
         'ValidateSpec',
         'TaskOutput',

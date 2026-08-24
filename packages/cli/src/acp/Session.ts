@@ -32,6 +32,7 @@ import type { ChatContext, UserMessageContent } from '../agent/types.js';
 import {
   MAX_INLINE_ATTACHMENT_BYTES,
   MAX_INLINE_ATTACHMENT_COUNT,
+  MAX_USER_MESSAGE_TEXT_BYTES,
   MAX_USER_MESSAGE_TEXT_CHARS,
 } from '../api/attachmentLimits.js';
 import { parseSideConversationCommand } from '../api/sideConversation.js';
@@ -2414,6 +2415,10 @@ export class AcpSession {
       throw new Error(
         `ACP prompt text exceeds ${MAX_USER_MESSAGE_TEXT_CHARS} characters`
       );
+    }
+    const textBytes = Buffer.byteLength(displayParts.join('\n'), 'utf8');
+    if (textBytes > MAX_USER_MESSAGE_TEXT_BYTES) {
+      throw new Error(`ACP prompt text exceeds ${MAX_USER_MESSAGE_TEXT_BYTES} bytes`);
     }
 
     const displayText = displayParts.join('\n');

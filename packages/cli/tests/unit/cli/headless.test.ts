@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MAX_USER_MESSAGE_TEXT_CHARS } from '../../../src/api/attachmentLimits.js';
 import { Bus } from '../../../src/server/bus.js';
 
 const agentState = vi.hoisted(() => ({
@@ -128,6 +129,29 @@ describe('headless runner', () => {
         pendingInputOnly: true,
         goalContinuationOnly: false,
       })
+    );
+  });
+
+  it('rejects oversized input before resolving a durable Session', async () => {
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        message: 'x'.repeat(MAX_USER_MESSAGE_TEXT_CHARS + 1),
+      },
+      { stdout, stderr }
+    );
+
+    expect(exitCode).toBe(1);
+    expect(sessionState.resolveNonInteractiveSession).not.toHaveBeenCalled();
+    expect(runtimeState.create).not.toHaveBeenCalled();
+    expect(
+      stderr.write.mock.calls.map((call) => String(call[0] ?? '')).join('')
+    ).toContain(
+      `User prompt exceeds the ${MAX_USER_MESSAGE_TEXT_CHARS}-character durable input limit`
     );
   });
 

@@ -36,6 +36,7 @@ const ALWAYS_LOADED_TOOLS = new Set([
   'Skill',
   'SlashCommand',
   'ToolSearch', // ToolSearch 自身必须立即加载
+  'ReadPromptArtifact',
   'EnterPlanMode',
   'ExitPlanMode',
   'EnterWorktree',

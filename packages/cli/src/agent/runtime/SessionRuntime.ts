@@ -196,6 +196,10 @@ import {
 } from './ActiveTurnMailbox.js';
 import { SessionInUseError, SessionLease } from './SessionLease.js';
 import { type TaskAdmissionSnapshot, taskRunScheduler } from './TaskRunScheduler.js';
+import {
+  type MaterializedUserPrompt,
+  UserPromptArtifactStore,
+} from './UserPromptArtifactStore.js';
 
 const logger = createLogger(LogCategory.AGENT);
 const staleWorktreeCleanupRuns = new Map<string, Promise<void>>();
@@ -344,6 +348,7 @@ export class SessionRuntime {
   private baseRegistry = new ToolRegistry();
   private readonly attachmentCollector: AttachmentCollector;
   private readonly goalStore: GoalStore;
+  private readonly userPromptArtifactStore: UserPromptArtifactStore;
   private activeTurnMailbox?: ActiveTurnMailbox;
 
   private chatService?: IChatService;
@@ -425,6 +430,11 @@ export class SessionRuntime {
     );
     this.sessionEnvironment = Object.freeze({ ...config.env });
     this.goalStore = new GoalStore(this.workspaceRoot, this.sessionId);
+    this.userPromptArtifactStore = new UserPromptArtifactStore(
+      this.projectRoot,
+      this.sessionId,
+      { storageRoot: getBladeStorageRoot() }
+    );
     this.attachmentCollector = new AttachmentCollector({
       cwd: this.workspaceRoot,
       maxFileSize: 1024 * 1024,
@@ -1429,7 +1439,11 @@ export class SessionRuntime {
     options?: { outputSchema?: JsonObject }
   ): Promise<InputTurnPreparation> {
     const mailbox = this.getActiveTurnMailbox();
-    const preparation = await mailbox.prepareInputTurn(content, options);
+    const materialized = await this.materializeUserMessage(content);
+    const preparation = await mailbox.prepareInputTurn(materialized.content, {
+      ...options,
+      ...(materialized.metadata ? { metadata: materialized.metadata } : {}),
+    });
     if (!preparation.accepted) return preparation;
 
     try {
@@ -1455,9 +1469,30 @@ export class SessionRuntime {
       metadata?: MessagePersistenceMetadata;
     }
   ): Promise<SteeringEnqueueResult> {
-    const result = await this.getActiveTurnMailbox().enqueue(content, options);
+    const materialized =
+      (options?.origin ?? 'user') === 'user'
+        ? await this.materializeUserMessage(content, options?.metadata)
+        : { content, metadata: options?.metadata, offloaded: false };
+    const result = await this.getActiveTurnMailbox().enqueue(materialized.content, {
+      ...options,
+      ...(materialized.metadata ? { metadata: materialized.metadata } : {}),
+    });
     if (result.accepted) this.signalBackgroundSubagentCompletionWaiters();
     return result;
+  }
+
+  materializeUserMessage(
+    content: UserMessageContent,
+    metadata?: MessagePersistenceMetadata
+  ): Promise<MaterializedUserPrompt> {
+    return this.userPromptArtifactStore.materialize(content, metadata);
+  }
+
+  restoreUserMessage(
+    content: UserMessageContent,
+    metadata?: MessagePersistenceMetadata
+  ): Promise<UserMessageContent> {
+    return this.userPromptArtifactStore.restore(content, metadata);
   }
 
   async drainSteering(handle: ActiveTurnHandle): Promise<SteeringMessage[]> {
@@ -2242,8 +2277,15 @@ export class SessionRuntime {
   createToolExecutor(options: AgentOptions = {}): ToolExecutor {
     const registry = new ToolRegistry();
     registry.setMcpCatalogBarrier(this.mcpCatalogBarrier);
-    const allowed = options.toolWhitelist ? new Set(options.toolWhitelist) : null;
-    const blocked = options.toolBlacklist ? new Set(options.toolBlacklist) : null;
+    const requiredPromptTool = 'ReadPromptArtifact';
+    const toolWhitelist = options.toolWhitelist
+      ? [...new Set([...options.toolWhitelist, requiredPromptTool])]
+      : undefined;
+    const toolBlacklist = options.toolBlacklist?.filter(
+      (toolName) => toolName !== requiredPromptTool
+    );
+    const allowed = toolWhitelist ? new Set(toolWhitelist) : null;
+    const blocked = toolBlacklist ? new Set(toolBlacklist) : null;
 
     for (const tool of this.baseRegistry.getBuiltinTools()) {
       if (blocked?.has(tool.name)) continue;
@@ -2291,8 +2333,8 @@ export class SessionRuntime {
       permissionMode,
       approvalStore: this.approvalStore,
       maxHistorySize: 1000,
-      toolWhitelist: options.toolWhitelist,
-      toolBlacklist: options.toolBlacklist,
+      toolWhitelist,
+      toolBlacklist,
       contextDefaults: {
         sessionId: this.sessionId,
         workspaceRoot: this.workspaceRoot,
@@ -2660,6 +2702,7 @@ export class SessionRuntime {
       getResponseVerbosity: () => this.selectedResponseVerbosity,
       getCommunicationStyle: () => this.selectedCommunicationStyle,
       agentTeamsEnabled: this.config.agentTeamsEnabled === true,
+      userPromptArtifactStore: this.userPromptArtifactStore,
     });
 
     const builtin = builtinTools.filter((tool) => !tool.name.startsWith('mcp__'));

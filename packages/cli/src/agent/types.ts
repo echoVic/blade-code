@@ -4,6 +4,7 @@
 
 import type { PermissionConfig } from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
+import type { MessagePersistenceMetadata } from '../context/types.js';
 import type { GoalCompletionVerificationResult, GoalSnapshot } from '../goals/types.js';
 import type {
   ChatCompletionMessageToolCall,
@@ -127,6 +128,10 @@ export interface LoopOptions {
   preparedInputTurn?: PreparedInputTurn;
   /** Durable inbox identity attached to the direct user transcript entry. */
   inputMessageId?: string;
+  /** Metadata attached to the durable direct user transcript entry. */
+  inputPersistenceMetadata?: MessagePersistenceMetadata;
+  /** Original user input retained in memory for host policy evaluation. */
+  policyUserMessage?: UserMessageContent;
   /** Start or resume work from the persisted goal instead of a user prompt. */
   goalContinuationOnly?: boolean;
   /** Model-visible control input that must not remain in transcript history. */

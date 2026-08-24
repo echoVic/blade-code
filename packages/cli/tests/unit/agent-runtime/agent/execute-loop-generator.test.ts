@@ -1724,6 +1724,97 @@ describe('executeLoopGenerator', () => {
       });
     });
 
+    it('persists prompt artifact metadata while evaluating host policy from the original input', async () => {
+      const contextManager = createMockContextManager();
+      contextManager.saveToolUse.mockResolvedValueOnce('durable-verification-tool');
+      contextManager.saveToolResult.mockResolvedValueOnce(
+        'durable-verification-result'
+      );
+      const deps = createMockDeps({
+        executionEngine: {
+          getContextManager: () => contextManager,
+        } as any,
+      });
+      const context = createMockContext();
+      const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+      chatMock
+        .mockResolvedValueOnce({
+          content: 'The implementation is complete.',
+          finishReason: 'stop',
+        })
+        .mockResolvedValueOnce({
+          content: '',
+          toolCalls: [
+            {
+              id: 'verify-offloaded-input',
+              type: 'function',
+              function: {
+                name: 'Bash',
+                arguments: '{"command":"npm test"}',
+              },
+            },
+          ],
+          finishReason: 'tool_calls',
+        })
+        .mockResolvedValueOnce({
+          content: 'The implementation and tests are complete.',
+          finishReason: 'stop',
+        });
+      (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        success: true,
+        llmContent: 'tests passed',
+        metadata: { command: 'npm test', exit_code: 0 },
+      });
+      const reference = {
+        version: 1,
+        id: 'a'.repeat(64),
+        sha256: 'a'.repeat(64),
+        sizeBytes: 40_000,
+        textChars: 40_000,
+        inlineBytes: 31_000,
+      };
+
+      const { result } = await drainGenerator(
+        executeLoopGenerator(
+          deps,
+          'Bounded prompt artifact preview.',
+          context,
+          {
+            stream: false,
+            inputMessageId: 'offloaded-input-1',
+            inputPersistenceMetadata: {
+              userPromptArtifact: reference,
+            },
+            policyUserMessage:
+              'Implement the requested change and run npm test before finishing.',
+          },
+          undefined
+        )
+      );
+
+      expect(result.success, JSON.stringify(result)).toBe(true);
+      expect(chatMock).toHaveBeenCalledTimes(3);
+      expect(contextManager.saveMessage).toHaveBeenCalledWith(
+        'test-session',
+        'user',
+        'Bounded prompt artifact preview.',
+        null,
+        {
+          inboxMessageId: 'offloaded-input-1',
+          userPromptArtifact: reference,
+        },
+        undefined
+      );
+      expect(context.messages).toContainEqual({
+        role: 'user',
+        content: 'Bounded prompt artifact preview.',
+        metadata: {
+          inboxMessageId: 'offloaded-input-1',
+          userPromptArtifact: reference,
+        },
+      });
+    });
+
     it('keeps a goal continuation model-visible but removes it from transcript', async () => {
       const contextManager = createMockContextManager();
       const deps = createMockDeps({

@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vite
 import { AcpSession } from '../../../../src/acp/Session.js';
 import type { LoopEvent } from '../../../../src/agent/loop/types.js';
 import type { LoopResult } from '../../../../src/agent/types.js';
-import { MAX_INLINE_ATTACHMENT_BYTES } from '../../../../src/api/attachmentLimits.js';
+import {
+  MAX_INLINE_ATTACHMENT_BYTES,
+  MAX_USER_MESSAGE_TEXT_CHARS,
+} from '../../../../src/api/attachmentLimits.js';
 import { Bus } from '../../../../src/server/bus.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import { ProviderAdmissionError } from '../../../../src/services/pi/providerRequestAdmission.js';
@@ -1063,6 +1066,37 @@ describe('AcpSession', () => {
 
       expect(response).toBeDefined();
       expect(response.stopReason).toBe('end_turn');
+    });
+
+    it('accepts large ACP prompts for durable runtime offload', async () => {
+      const text = `ACP_HEAD_${'x'.repeat(40_000)}_ACP_TAIL`;
+
+      await expect(
+        session.prompt({
+          sessionId: 'test-session-id',
+          prompt: [{ type: 'text', text }],
+        })
+      ).resolves.toMatchObject({ stopReason: 'end_turn' });
+
+      expect(getMockAgent().getLastCall()?.message).toBe(text);
+    });
+
+    it('rejects ACP prompts above the durable character limit before Agent use', async () => {
+      await expect(
+        session.prompt({
+          sessionId: 'test-session-id',
+          prompt: [
+            {
+              type: 'text',
+              text: 'x'.repeat(MAX_USER_MESSAGE_TEXT_CHARS + 1),
+            },
+          ],
+        })
+      ).rejects.toThrow(
+        `ACP prompt text exceeds ${MAX_USER_MESSAGE_TEXT_CHARS} characters`
+      );
+
+      expect(getMockAgent().calls).toHaveLength(0);
     });
 
     it('serializes ACP updates and backpressures the Agent loop', async () => {

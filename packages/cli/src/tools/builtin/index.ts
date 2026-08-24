@@ -4,6 +4,7 @@
 
 import type { SessionAgentResources } from '../../agent/resources/WorkspaceAgentResources.js';
 import type { SessionModelResources } from '../../agent/resources/WorkspaceModelResources.js';
+import type { UserPromptArtifactStore } from '../../agent/runtime/UserPromptArtifactStore.js';
 import {
   getSubagentRegistry,
   type SubagentRegistry,
@@ -40,6 +41,7 @@ import { bashTool, killShellTool, writeStdinTool } from './shell/index.js';
 // System 工具
 import {
   askUserQuestionTool,
+  createReadPromptArtifactTool,
   createSkillTool,
   createSlashCommandTool,
   toolSearchTool,
@@ -73,6 +75,7 @@ export async function getBuiltinTools(opts?: {
   getResponseVerbosity?: () => ResponseVerbositySelection;
   getCommunicationStyle?: () => CommunicationStyleSelection;
   agentTeamsEnabled?: boolean;
+  userPromptArtifactStore?: UserPromptArtifactStore;
 }): Promise<Tool[]> {
   const sessionId = opts?.sessionId || `session_${Date.now()}`;
   const configDir = opts?.configDir || getBladeStorageRoot();
@@ -159,6 +162,9 @@ export async function getBuiltinTools(opts?: {
     createSkillTool(skillRegistry),
     createSlashCommandTool(commandRegistry),
     toolSearchTool,
+    ...(opts?.userPromptArtifactStore
+      ? [createReadPromptArtifactTool(opts.userPromptArtifactStore)]
+      : []),
 
     // Memory: MemoryRead, MemoryWrite
     memoryReadTool,

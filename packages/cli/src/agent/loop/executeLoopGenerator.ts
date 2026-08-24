@@ -1078,10 +1078,15 @@ validates the object and may return a bounded corrective error.`;
     const pendingInputOnly = options?.pendingInputOnly === true;
     if (!pendingInputOnly) {
       const persistenceMetadata = options?.inputMessageId
-        ? { inboxMessageId: options.inputMessageId }
+        ? {
+            ...options.inputPersistenceMetadata,
+            inboxMessageId: options.inputMessageId,
+          }
         : undefined;
       const messageMetadata: JsonValue | undefined =
-        persistenceMetadata ??
+        (persistenceMetadata
+          ? (JSON.parse(JSON.stringify(persistenceMetadata)) as JsonValue)
+          : undefined) ??
         (options?.transientInput === 'goal_continuation'
           ? { transientGoalContinuation: true }
           : undefined);
@@ -1279,10 +1284,11 @@ validates the object and may return a bounded corrective error.`;
     const successfulTools = new Set<string>(
       context.worktreeActive ? ['EnterWorktree', 'TaskWorktree'] : []
     );
+    const policyUserMessage = options?.policyUserMessage ?? message;
     const originalUserRequest =
-      typeof message === 'string'
-        ? message
-        : message
+      typeof policyUserMessage === 'string'
+        ? policyUserMessage
+        : policyUserMessage
             .filter((part) => part.type === 'text')
             .map((part) => part.text)
             .join('\n');
@@ -1626,7 +1632,7 @@ validates the object and may return a bounded corrective error.`;
     const compactionState: LoopCompactionState = {};
 
     const applySteeringMessages = async (
-      messages: SteeringMessage[]
+      messages: Array<SteeringMessage & { policyText?: string }>
     ): Promise<{ messageIds: string[]; count: number; recovered: number }> => {
       for (const steering of messages) {
         const steeringMetadata = {
@@ -1665,12 +1671,15 @@ validates the object and may return a bounded corrective error.`;
             metadata: stateMetadata,
           });
         } else if (
-          !state
-            .getHistory()
-            .some(
-              (message) =>
-                message.role === 'user' && message.content === steering.content
-            )
+          !state.getHistory().some((message) => {
+            const metadata = message.metadata;
+            return (
+              metadata !== null &&
+              typeof metadata === 'object' &&
+              !Array.isArray(metadata) &&
+              metadata.inboxMessageId === steering.id
+            );
+          })
         ) {
           state.appendUser({
             role: 'user',
@@ -1680,12 +1689,13 @@ validates the object and may return a bounded corrective error.`;
         }
 
         const steeringText =
-          typeof steering.content === 'string'
+          steering.policyText ??
+          (typeof steering.content === 'string'
             ? steering.content
             : steering.content
                 .filter((part) => part.type === 'text')
                 .map((part) => part.text)
-                .join('\n');
+                .join('\n'));
         if (steering.origin !== 'background_subagent' && steeringText.trim()) {
           activeUserRequest = [activeUserRequest, steeringText].join('\n');
           delegationUserRequests.push(steeringText);

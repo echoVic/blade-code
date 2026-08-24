@@ -10,7 +10,10 @@ import {
   type SessionRuntimeOptions,
 } from '../../../../src/agent/runtime/SessionRuntime.js';
 import { taskRunScheduler } from '../../../../src/agent/runtime/TaskRunScheduler.js';
-import { MAX_INLINE_ATTACHMENT_BYTES } from '../../../../src/api/attachmentLimits.js';
+import {
+  MAX_INLINE_ATTACHMENT_BYTES,
+  MAX_USER_MESSAGE_TEXT_CHARS,
+} from '../../../../src/api/attachmentLimits.js';
 import { PermissionMode } from '../../../../src/config/types.js';
 import type { SessionEvent } from '../../../../src/context/types.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
@@ -2420,6 +2423,44 @@ describe('SessionRoutes runtime reuse', () => {
         message: 'Message attachments exceed the 5 MiB limit',
       },
     });
+    expect(agentState.chatStream).not.toHaveBeenCalled();
+  });
+
+  it('accepts large Web prompts for durable runtime offload', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('large-web-prompt-session');
+    const content = `WEB_HEAD_${'x'.repeat(40_000)}_WEB_TAIL`;
+
+    const response = await SessionRoutes().request(
+      '/large-web-prompt-session/message',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content }),
+      }
+    );
+
+    expect(response.status).toBe(202);
+    expect(runtimeState.runtime.prepareInputTurn).toHaveBeenCalledWith(content);
+  });
+
+  it('rejects Web prompts above the durable character limit before runtime use', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('too-large-web-prompt-session');
+
+    const response = await SessionRoutes().request(
+      '/too-large-web-prompt-session/message',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          content: 'x'.repeat(MAX_USER_MESSAGE_TEXT_CHARS + 1),
+        }),
+      }
+    );
+
+    expect(response.status).toBe(400);
+    expect(runtimeState.runtime.prepareInputTurn).not.toHaveBeenCalled();
     expect(agentState.chatStream).not.toHaveBeenCalled();
   });
 

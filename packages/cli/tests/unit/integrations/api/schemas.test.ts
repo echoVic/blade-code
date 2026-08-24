@@ -635,6 +635,14 @@ describe('API Schemas', () => {
         })
       ).toThrow();
     });
+
+    it('accepts text above the inline threshold for durable prompt offload', () => {
+      expect(() =>
+        SendMessageRequestSchema.parse({
+          content: 'x'.repeat(40_000),
+        })
+      ).not.toThrow();
+    });
   });
 
   describe('SendMessageResponseSchema', () => {

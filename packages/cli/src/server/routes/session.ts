@@ -31,7 +31,10 @@ import {
 } from '../../agent/subagents/AgentSessionStore.js';
 import { isTeamMessageMetadata, TeamMailbox } from '../../agent/teams/TeamMailbox.js';
 import type { ChatContext, UserMessageContent } from '../../agent/types.js';
-import { MAX_INLINE_ATTACHMENT_BYTES } from '../../api/attachmentLimits.js';
+import {
+  MAX_INLINE_ATTACHMENT_BYTES,
+  MAX_USER_MESSAGE_TEXT_BYTES,
+} from '../../api/attachmentLimits.js';
 import {
   CodeReviewRequestSchema,
   ResumeSubagentRequestSchema,
@@ -3743,6 +3746,11 @@ export const createSessionRouteController = (): SessionRouteController => {
     const requestedCommunicationStyle = rawRequestedCommunicationStyle as
       | CommunicationStyleSelection
       | undefined;
+    if (Buffer.byteLength(content, 'utf8') > MAX_USER_MESSAGE_TEXT_BYTES) {
+      throw new BadRequestError(
+        `Message text exceeds the ${MAX_USER_MESSAGE_TEXT_BYTES}-byte limit`
+      );
+    }
     const requestedModelId = modelId?.trim();
     const attachmentBytes = (attachments ?? []).reduce(
       (total, attachment) =>

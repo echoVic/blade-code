@@ -13,6 +13,10 @@ import { drainLoop } from '../agent/loop/index.js';
 import type { LoopEvent } from '../agent/loop/types.js';
 import { SessionRuntime } from '../agent/runtime/SessionRuntime.js';
 import type { ChatContext } from '../agent/types.js';
+import {
+  MAX_USER_MESSAGE_TEXT_BYTES,
+  MAX_USER_MESSAGE_TEXT_CHARS,
+} from '../api/attachmentLimits.js';
 import { parseCliAgents } from '../cli/agents.js';
 import { globalOptions } from '../cli/config.js';
 import {
@@ -1346,6 +1350,19 @@ export async function runHeadless(
         eventWriter.output(normalized.content, normalized.exitCode ?? 0);
       }
       return await finish(normalized.exitCode ?? 0);
+    }
+    if (!inputlessResume && normalized.content.length > MAX_USER_MESSAGE_TEXT_CHARS) {
+      throw new Error(
+        `User prompt exceeds the ${MAX_USER_MESSAGE_TEXT_CHARS}-character durable input limit`
+      );
+    }
+    if (
+      !inputlessResume &&
+      Buffer.byteLength(normalized.content, 'utf8') > MAX_USER_MESSAGE_TEXT_BYTES
+    ) {
+      throw new Error(
+        `User prompt exceeds the ${MAX_USER_MESSAGE_TEXT_BYTES}-byte durable input limit`
+      );
     }
     const userShellCommand = normalized.content.trimStart().startsWith('!')
       ? normalized.content.trimStart().slice(1).trim()

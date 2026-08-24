@@ -449,6 +449,7 @@ export interface MessagePersistenceMetadata {
   contextualProjectRules?: boolean;
   ruleReferences?: JsonValue;
   triggerPaths?: string[];
+  userPromptArtifact?: JsonValue;
   userShellCommand?: JsonValue;
   backgroundSubagentCompletion?: JsonValue;
   teamMessage?: JsonValue;

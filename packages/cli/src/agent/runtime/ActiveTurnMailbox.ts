@@ -40,6 +40,8 @@ export interface PreparedInputTurn {
   messageId: string;
   queued: number;
   mode: 'direct' | 'pending';
+  content?: UserMessageContent;
+  metadata?: MessagePersistenceMetadata;
 }
 
 export type InputTurnPreparation =
@@ -142,7 +144,10 @@ export class ActiveTurnMailbox {
 
   async prepareInputTurn(
     content: UserMessageContent,
-    options: { outputSchema?: JsonObject } = {}
+    options: {
+      outputSchema?: JsonObject;
+      metadata?: MessagePersistenceMetadata;
+    } = {}
   ): Promise<InputTurnPreparation> {
     return this.transitionMutex.runExclusive(async () => {
       if (this.activeTurn) {
@@ -181,6 +186,8 @@ export class ActiveTurnMailbox {
         messageId: queued.messageId,
         queued: queued.queued,
         mode: hadPendingInput ? 'pending' : 'direct',
+        content,
+        ...(options.metadata ? { metadata: options.metadata } : {}),
       };
     });
   }

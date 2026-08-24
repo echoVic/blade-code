@@ -606,6 +606,9 @@ export class Agent {
         preparedInputTurn = preparation;
       }
     }
+    const preparedMessage =
+      preparedInputTurn?.content !== undefined ? preparedInputTurn.content : message;
+    const preparedMetadata = preparedInputTurn?.metadata;
     if (
       context &&
       this.sessionRuntime &&
@@ -620,7 +623,9 @@ export class Agent {
       yield event;
     }
 
-    let enhancedMessage = message;
+    let enhancedMessage = preparedMessage;
+    let policyUserMessage = message;
+    let inputPersistenceMetadata = preparedMetadata;
     let initialGoal: GoalSnapshot | null = null;
     if (requestedGoalContinuationOnly) {
       initialGoal = await this.sessionRuntime!.beginGoalContinuation();
@@ -634,7 +639,25 @@ export class Agent {
       enhancedMessage = buildGoalContinuationPrompt(initialGoal);
     } else if (!requestedPendingInputOnly && preparedInputTurn?.mode !== 'pending') {
       try {
-        enhancedMessage = await this.processAtMentionsForContent(message);
+        const restoredMessage = this.sessionRuntime
+          ? await this.sessionRuntime.restoreUserMessage(
+              preparedMessage,
+              preparedMetadata
+            )
+          : preparedMessage;
+        policyUserMessage = restoredMessage;
+        const expandedMessage = await this.processAtMentionsForContent(restoredMessage);
+        if (this.sessionRuntime) {
+          const materialized =
+            await this.sessionRuntime.materializeUserMessage(expandedMessage);
+          enhancedMessage = materialized.content;
+          inputPersistenceMetadata = {
+            ...preparedMetadata,
+            ...materialized.metadata,
+          };
+        } else {
+          enhancedMessage = expandedMessage;
+        }
       } catch (error) {
         if (this.sessionRuntime && preparedInputTurn) {
           await this.sessionRuntime
@@ -662,6 +685,8 @@ export class Agent {
       let goalContinuation = requestedGoalContinuationOnly;
       let currentOutputSchema = goalContinuation ? undefined : requestedOutputSchema;
       let currentGoal = initialGoal;
+      let currentPolicyUserMessage = policyUserMessage;
+      let currentInputPersistenceMetadata = inputPersistenceMetadata;
       let inputMessageId: string | undefined;
       let turnHandle: ActiveTurnHandle | undefined;
       if (this.sessionRuntime) {
@@ -720,18 +745,37 @@ export class Agent {
       if (pendingInputOnly && this.sessionRuntime) {
         currentOutputSchema = pendingOutputSchema();
       }
+      type EnhancedSteeringMessage = SteeringMessage & { policyText?: string };
       const enhancePendingMessages = async (
         messages: SteeringMessage[]
-      ): Promise<SteeringMessage[]> =>
+      ): Promise<EnhancedSteeringMessage[]> =>
         Promise.all(
-          messages.map(async (pending) =>
-            pending.origin === 'background_subagent'
-              ? pending
-              : {
-                  ...pending,
-                  content: await this.processAtMentionsForContent(pending.content),
-                }
-          )
+          messages.map(async (pending) => {
+            if (pending.origin === 'background_subagent') return pending;
+            const restored = await this.sessionRuntime!.restoreUserMessage(
+              pending.content,
+              pending.metadata
+            );
+            const policyText =
+              typeof restored === 'string'
+                ? restored
+                : restored
+                    .filter((part) => part.type === 'text')
+                    .map((part) => part.text)
+                    .join('\n');
+            const expanded = await this.processAtMentionsForContent(restored);
+            const materialized =
+              await this.sessionRuntime!.materializeUserMessage(expanded);
+            return {
+              ...pending,
+              content: materialized.content,
+              metadata: {
+                ...pending.metadata,
+                ...materialized.metadata,
+              },
+              policyText,
+            };
+          })
         );
 
       try {
@@ -768,6 +812,14 @@ export class Agent {
             goalContinuationOnly: undefined,
             preparedInputTurn: undefined,
             inputMessageId: pendingInputOnly ? undefined : inputMessageId,
+            inputPersistenceMetadata:
+              pendingInputOnly || !inputMessageId
+                ? undefined
+                : currentInputPersistenceMetadata,
+            policyUserMessage:
+              pendingInputOnly || !inputMessageId
+                ? undefined
+                : currentPolicyUserMessage,
             transientInput: goalContinuation ? 'goal_continuation' : undefined,
             outputSchema: goalContinuation ? undefined : currentOutputSchema,
             ...(this.sessionRuntime
@@ -935,6 +987,8 @@ export class Agent {
             currentGoal = null;
             currentMessage = '';
             inputMessageId = undefined;
+            currentPolicyUserMessage = '';
+            currentInputPersistenceMetadata = undefined;
             currentOutputSchema = pendingOutputSchema();
             yield {
               kind: 'follow_up_started',
@@ -1610,6 +1664,9 @@ export class Agent {
 
     // 过滤工具列表，只保留 allowed-tools 中指定的工具
     const filteredTools = tools.filter((tool) => {
+      if (tool.name === 'ReadPromptArtifact') {
+        return true;
+      }
       // 检查工具名称是否在 allowed-tools 列表中
       // 支持精确匹配和通配符模式（如 Bash(git:*)）
       return allowedTools.some((allowed) => {

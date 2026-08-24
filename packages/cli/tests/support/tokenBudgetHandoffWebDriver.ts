@@ -627,6 +627,7 @@ export async function runTokenBudgetHandoffWebDriver(input: {
   providerEvidence: () => TokenBudgetProxyEvidence;
   secrets?: readonly string[];
   timeoutMs?: number;
+  reloadDuringRun?: boolean;
 }): Promise<TokenBudgetHandoffWebEvidence> {
   const timeoutMs = input.timeoutMs ?? 300_000;
   if (
@@ -832,15 +833,18 @@ export async function runTokenBudgetHandoffWebDriver(input: {
       providerRequestCount: input.providerRequestCount,
       providerRequestsBefore: providerRequestsBeforeStart,
     });
-    const firstPage = await collectEvents(page, recordedSse);
-    if (firstPage.hiddenSeen || firstPage.overflowed) {
-      throw new Error('Token-budget Web first-page SSE evidence was unsafe');
+    if (input.reloadDuringRun !== false) {
+      const firstPage = await collectEvents(page, recordedSse);
+      if (firstPage.hiddenSeen || firstPage.overflowed) {
+        throw new Error('Token-budget Web first-page SSE evidence was unsafe');
+      }
+      failureStage = 'first_reload';
+      refreshing = true;
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      refreshing = false;
+      await composer.waitFor({ state: 'visible' });
     }
-    failureStage = 'first_reload';
-    refreshing = true;
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    refreshing = false;
-    await composer.waitFor({ state: 'visible' });
+    failureStage = 'completion';
     await waitForFinal({
       page,
       origin,
@@ -851,7 +855,6 @@ export async function runTokenBudgetHandoffWebDriver(input: {
       providerRequestCount: input.providerRequestCount,
       providerEvidence: input.providerEvidence,
     });
-    failureStage = 'completion';
     await waitForCompletedRun({
       page,
       origin,

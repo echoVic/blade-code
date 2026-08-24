@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { Agent } from '../../../../src/agent/Agent.js';
 import type { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
 import { taskRunScheduler } from '../../../../src/agent/runtime/TaskRunScheduler.js';
+import type { UserMessageContent } from '../../../../src/agent/types.js';
 import { type BladeConfig, PermissionMode } from '../../../../src/config/types.js';
+import type { MessagePersistenceMetadata } from '../../../../src/context/types.js';
 import * as promptBuilder from '../../../../src/prompts/index.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
 import type { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
@@ -74,6 +76,14 @@ function createGoalRuntimeMocks() {
     getGoal: vi.fn().mockResolvedValue(null),
     pauseActiveGoal: vi.fn().mockResolvedValue(null),
     loadModelContext: vi.fn().mockResolvedValue([]),
+    materializeUserMessage: vi.fn(
+      async (content: UserMessageContent, metadata?: MessagePersistenceMetadata) => ({
+        content,
+        metadata,
+        offloaded: false,
+      })
+    ),
+    restoreUserMessage: vi.fn(async (content: UserMessageContent) => content),
     getPendingSteeringMessages: vi.fn(() => []),
     takeStartupAdoptedToolResults: vi.fn(() => []),
     waitForBackgroundSubagentFollowUp: vi.fn().mockResolvedValue(false),
