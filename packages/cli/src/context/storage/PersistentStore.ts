@@ -265,6 +265,7 @@ const MAX_TURN_FINALIZATION_TOOL_CALLS = 100_000;
 const MAX_TURN_FINALIZATION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_GOAL_FINALIZATION_ID_CHARS = 128;
 const MAX_GOAL_FINALIZATION_ATTEMPTS = 1_000_000;
+const MAX_INITIALIZED_SESSIONS_PER_STORE = 256;
 
 function parseGoalFinalization(
   value: unknown
@@ -474,9 +475,14 @@ function durableToolCalls(
  * 存储路径: ~/.blade/projects/{escaped-path}/{sessionId}.jsonl
  */
 export class PersistentStore {
+  /** Shared only while first-access validation or creation is in flight. */
+  private static readonly sessionInitializationRuns = new Map<string, Promise<void>>();
+
   private readonly projectPath: string;
   private readonly maxSessions: number;
   private readonly version: string;
+  /** Positive per-facade cache; Runtime ownership prevents active-file deletion. */
+  private readonly initializedSessions = new Set<string>();
 
   constructor(
     projectPath: string = getCwd(),
@@ -516,6 +522,42 @@ export class PersistentStore {
     subagentInfo?: SubagentInfoForContext
   ): Promise<void> {
     const filePath = getSessionFilePath(this.projectPath, sessionId);
+    if (this.initializedSessions.delete(sessionId)) {
+      this.initializedSessions.add(sessionId);
+      return;
+    }
+
+    let initialization = PersistentStore.sessionInitializationRuns.get(filePath);
+    if (!initialization) {
+      initialization = this.initializeSessionFile(sessionId, filePath, subagentInfo);
+      PersistentStore.sessionInitializationRuns.set(filePath, initialization);
+    }
+
+    try {
+      await initialization;
+      this.rememberInitializedSession(sessionId);
+    } finally {
+      if (PersistentStore.sessionInitializationRuns.get(filePath) === initialization) {
+        PersistentStore.sessionInitializationRuns.delete(filePath);
+      }
+    }
+  }
+
+  private rememberInitializedSession(sessionId: string): void {
+    this.initializedSessions.delete(sessionId);
+    this.initializedSessions.add(sessionId);
+    while (this.initializedSessions.size > MAX_INITIALIZED_SESSIONS_PER_STORE) {
+      const oldest = this.initializedSessions.values().next().value;
+      if (oldest === undefined) return;
+      this.initializedSessions.delete(oldest);
+    }
+  }
+
+  private async initializeSessionFile(
+    sessionId: string,
+    filePath: string,
+    subagentInfo?: SubagentInfoForContext
+  ): Promise<void> {
     const store = new JSONLStore(filePath);
     const entries = await store.readAll();
     if (entries.length > 0) return;
@@ -1934,6 +1976,7 @@ export class PersistentStore {
    * 删除会话数据
    */
   async deleteSession(sessionId: string): Promise<void> {
+    this.initializedSessions.delete(sessionId);
     try {
       const filePath = getSessionFilePath(this.projectPath, sessionId);
       const store = new JSONLStore(filePath);
@@ -1955,6 +1998,8 @@ export class PersistentStore {
       }
     } catch (error) {
       console.warn(`[PersistentStore] 删除会话失败 (session: ${sessionId}):`, error);
+    } finally {
+      this.initializedSessions.delete(sessionId);
     }
   }
 
