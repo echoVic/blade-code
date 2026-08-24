@@ -17,6 +17,7 @@ import { runTokenBudgetHandoffWebDriver } from '../../support/tokenBudgetHandoff
 import {
   assertLargePromptOffloadEvidence,
   createLargePromptOffloadFixture,
+  formatLargePromptProxyDiagnostic,
   startLargePromptRecordingProxy,
 } from './largePromptOffloadHarness.js';
 import {
@@ -29,12 +30,15 @@ import {
 import {
   buildRealApiRuntimeConfig,
   isRealApiTestEnabled,
+  REAL_API_OUTPUT_BUDGET,
   resolveRequiredDeepSeekQualificationModels,
   type TestModelConfig,
 } from './testConfig.js';
+import { formatTokenBudgetTranscriptDiagnostic } from './tokenBudgetHandoffHarness.js';
 
 const execFileAsync = promisify(execFile);
 const surfaces = ['headless', 'pty', 'web', 'acp'] as const;
+const SURFACE_TIMEOUT_MS = 270_000;
 const models = isRealApiTestEnabled()
   ? resolveRequiredDeepSeekQualificationModels()
   : [];
@@ -80,8 +84,20 @@ async function writeRuntimeConfig(
   home: string,
   model: TestModelConfig
 ): Promise<RuntimeConfig> {
-  const config = {
-    ...buildRealApiRuntimeConfig(model),
+  const baseConfig = buildRealApiRuntimeConfig(model);
+  const config: RuntimeConfig = {
+    ...baseConfig,
+    models: baseConfig.models.map((candidate) => ({
+      ...candidate,
+      overrides: {
+        ...candidate.overrides,
+        maxRetries: 0,
+        maxOutputTokens: REAL_API_OUTPUT_BUDGET,
+        temperature: 0,
+        timeout: 150_000,
+        streamIdleTimeout: 150_000,
+      },
+    })),
     permissionMode: PermissionMode.YOLO,
   };
   await mkdir(path.join(home, '.blade'), { recursive: true });
@@ -231,7 +247,7 @@ describe
               storageRoot,
               providerRequestCount: () => proxy.evidence().requests.length,
               secrets: [model.apiKey],
-              timeoutMs: 180_000,
+              timeoutMs: SURFACE_TIMEOUT_MS,
             });
           } else if (surface === 'pty') {
             surfaceEvidence = await runTokenBudgetHandoffPtyDriver({
@@ -241,7 +257,7 @@ describe
               storageRoot,
               providerRequestCount: () => proxy.evidence().requests.length,
               secrets: [model.apiKey],
-              timeoutMs: 180_000,
+              timeoutMs: SURFACE_TIMEOUT_MS,
             });
           } else if (surface === 'web') {
             const evidence = await runTokenBudgetHandoffWebDriver({
@@ -252,8 +268,11 @@ describe
               providerRequestCount: () => proxy.evidence().requests.length,
               providerEvidence: proxy.tokenBudgetEvidence,
               secrets: [model.apiKey],
-              timeoutMs: 180_000,
+              timeoutMs: SURFACE_TIMEOUT_MS,
               reloadDuringRun: false,
+              modelMaxRetries: 0,
+              modelMaxOutputTokens: REAL_API_OUTPUT_BUDGET,
+              modelTemperature: 0,
             });
             sessionId = evidence.sessionId;
             surfaceEvidence = evidence;
@@ -264,7 +283,7 @@ describe
               storageRoot,
               providerRequestCount: () => proxy.evidence().requests.length,
               secrets: [model.apiKey],
-              timeoutMs: 180_000,
+              timeoutMs: SURFACE_TIMEOUT_MS,
             });
             sessionId = evidence.sessionId;
             surfaceEvidence = evidence;
@@ -286,7 +305,23 @@ describe
           );
           assertNoSecrets({ surfaceEvidence, proxyEvidence }, [model.apiKey]);
         } catch (error) {
-          cellError = error;
+          let transcriptDiagnostic = 'unavailable';
+          try {
+            transcriptDiagnostic = formatTokenBudgetTranscriptDiagnostic({
+              events: readSessionEvents(findSessionTranscript(storageRoot, sessionId)),
+              expectedFinal: fixture.finalMarker,
+              surfaceFinalSeen: false,
+            });
+          } catch {
+            // The Session may not have reached durable transcript creation.
+          }
+          const message =
+            error instanceof Error ? error.message : 'unknown surface failure';
+          cellError = new Error(
+            `${message}; provider=${formatLargePromptProxyDiagnostic(
+              proxy.evidence()
+            )}; transcript=${transcriptDiagnostic}`
+          );
         } finally {
           await proxy.close().catch((error) => {
             cellError ??= error;
@@ -300,6 +335,6 @@ describe
         }
         if (cellError !== undefined) throw cellError;
       },
-      240_000
+      300_000
     );
   });

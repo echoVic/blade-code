@@ -146,6 +146,13 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
       "const surfaces = ['headless', 'pty', 'web', 'acp'] as const"
     );
     expect(source).toContain('matrix.length !== 8');
+    expect(source).toContain('const SURFACE_TIMEOUT_MS = 270_000');
+    expect(source).toContain('maxRetries: 0');
+    expect(source).toContain('maxOutputTokens: REAL_API_OUTPUT_BUDGET');
+    expect(source).toContain('temperature: 0');
+    expect(source).toContain('modelMaxRetries: 0');
+    expect(source).toContain('modelMaxOutputTokens: REAL_API_OUTPUT_BUDGET');
+    expect(source).toContain('modelTemperature: 0');
   });
 
   it('keeps raw PTY marker authorities in the release-blocking matrix', () => {

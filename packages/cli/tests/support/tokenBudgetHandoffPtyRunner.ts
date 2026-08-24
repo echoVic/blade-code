@@ -15,6 +15,7 @@ import {
   finalAssistantText,
   readSessionEvents,
 } from '../integration/real-api/sessionForkTrajectoryHarness.js';
+import { writeBracketedPaste } from './ptyInput.js';
 import { classifyTokenBudgetPtyFinal } from './tokenBudgetHandoffPtyDriver.js';
 
 const MAX_PROJECTED_OUTPUT_CHARS = 12_000;
@@ -342,8 +343,13 @@ async function main(): Promise<void> {
     );
     if (input.mode === 'task') {
       failureStage = 'paste';
-      terminal.write(`\u001B[200~${input.prompt ?? ''}\u001B[201~`);
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await writeBracketedPaste(terminal, input.prompt ?? '');
+      await waitFor(
+        () => bracketedPasteAccepted,
+        () => exited,
+        'Timed out waiting for token-budget PTY paste acknowledgement',
+        remainingStageBudget(deadline, 10_000)
+      );
       finalMarkerSeen = false;
       terminal.write('\r');
       submittedInput = true;
@@ -355,7 +361,6 @@ async function main(): Promise<void> {
       'Timed out waiting for token-budget PTY final marker',
       remainingStageBudget(deadline, input.timeoutMs)
     );
-    if (input.mode === 'task') bracketedPasteAccepted = true;
     if (input.mode === 'task') {
       failureStage = 'durable_completion';
       await waitForDurableCompletion(

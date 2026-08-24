@@ -46,6 +46,26 @@ export interface LargePromptProxyEvidence {
   maxInFlight: number;
 }
 
+export function formatLargePromptProxyDiagnostic(
+  evidence: LargePromptProxyEvidence
+): string {
+  const requests = evidence.requests.slice(0, 8).map((request) => ({
+    ordinal: request.ordinal,
+    status: request.upstreamStatus ?? 0,
+    kind: request.responseKind ?? 'unknown',
+    readCalls: request.readArtifactIds.length,
+    hiddenInToolResult: request.hiddenInToolResult,
+  }));
+  return JSON.stringify({
+    requestCount: evidence.requests.length <= 8 ? evidence.requests.length : 'overflow',
+    maxInFlight:
+      Number.isSafeInteger(evidence.maxInFlight) && evidence.maxInFlight >= 0
+        ? evidence.maxInFlight
+        : 'invalid',
+    requests,
+  });
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

@@ -9,7 +9,7 @@ import {
   resolveRequiredDeepSeekQualificationModels,
 } from '../integration/real-api/testConfig.js';
 
-interface LauncherInput {
+export interface LauncherInput {
   root: string;
   workspace: string;
   home: string;
@@ -17,6 +17,9 @@ interface LauncherInput {
   port: number;
   model: string;
   proxyBaseURL: string;
+  maxRetries?: number;
+  maxOutputTokens?: number;
+  temperature?: number;
 }
 
 const execFileAsync = promisify(execFile);
@@ -49,8 +52,9 @@ function canonicalBase64(value: string): Buffer {
   return decoded;
 }
 
-function loadInput(): LauncherInput {
-  const encoded = process.env.BLADE_TOKEN_BUDGET_WEB_INPUT;
+export function parseTokenBudgetHandoffGuiInput(
+  encoded: string | undefined
+): LauncherInput {
   if (!encoded) throw new Error('Token-budget GUI input is missing');
   let serialized: string;
   let parsed: unknown;
@@ -61,7 +65,7 @@ function loadInput(): LauncherInput {
     if (error instanceof Error && error.message.includes('Token-budget')) throw error;
     throw new Error('Token-budget GUI input is invalid');
   }
-  const keys = [
+  const requiredKeys = [
     'home',
     'model',
     'port',
@@ -70,17 +74,36 @@ function loadInput(): LauncherInput {
     'storageRoot',
     'workspace',
   ];
+  const allowedKeys = new Set([
+    ...requiredKeys,
+    'maxOutputTokens',
+    'maxRetries',
+    'temperature',
+  ]);
   if (
     JSON.stringify(parsed) !== serialized ||
     !isRecord(parsed) ||
-    Object.keys(parsed).length !== keys.length ||
-    !keys.every((key) => Object.hasOwn(parsed, key)) ||
+    Object.keys(parsed).some((key) => !allowedKeys.has(key)) ||
+    !requiredKeys.every((key) => Object.hasOwn(parsed, key)) ||
     typeof parsed.root !== 'string' ||
     typeof parsed.workspace !== 'string' ||
     typeof parsed.home !== 'string' ||
     typeof parsed.storageRoot !== 'string' ||
     typeof parsed.model !== 'string' ||
     typeof parsed.proxyBaseURL !== 'string' ||
+    (parsed.maxRetries !== undefined &&
+      (!Number.isSafeInteger(parsed.maxRetries) ||
+        (parsed.maxRetries as number) < 0 ||
+        (parsed.maxRetries as number) > 20)) ||
+    (parsed.maxOutputTokens !== undefined &&
+      (!Number.isSafeInteger(parsed.maxOutputTokens) ||
+        (parsed.maxOutputTokens as number) < 64 ||
+        (parsed.maxOutputTokens as number) > 65_536)) ||
+    (parsed.temperature !== undefined &&
+      (typeof parsed.temperature !== 'number' ||
+        !Number.isFinite(parsed.temperature) ||
+        parsed.temperature < 0 ||
+        parsed.temperature > 2)) ||
     !isValidPort(parsed.port) ||
     !path.isAbsolute(parsed.root) ||
     !path.isAbsolute(parsed.workspace) ||
@@ -108,6 +131,13 @@ function loadInput(): LauncherInput {
     port: parsed.port,
     model: parsed.model,
     proxyBaseURL: proxy.href.replace(/\/$/, ''),
+    ...(typeof parsed.maxRetries === 'number' ? { maxRetries: parsed.maxRetries } : {}),
+    ...(typeof parsed.maxOutputTokens === 'number'
+      ? { maxOutputTokens: parsed.maxOutputTokens }
+      : {}),
+    ...(typeof parsed.temperature === 'number'
+      ? { temperature: parsed.temperature }
+      : {}),
   };
 }
 
@@ -151,7 +181,9 @@ async function waitForServer(
 }
 
 async function main(): Promise<void> {
-  const input = loadInput();
+  const input = parseTokenBudgetHandoffGuiInput(
+    process.env.BLADE_TOKEN_BUDGET_WEB_INPUT
+  );
   delete process.env.BLADE_TOKEN_BUDGET_WEB_INPUT;
   const projectedEnvironment = materializeRealApiEnvironment(process.env);
   for (const [name, value] of Object.entries(projectedEnvironment)) {
@@ -167,10 +199,33 @@ async function main(): Promise<void> {
     (candidate) => candidate.model === input.model
   );
   if (!selected) throw new Error('Token-budget GUI model is unavailable');
-  const config = buildRealApiRuntimeConfig({
+  const baseConfig = buildRealApiRuntimeConfig({
     ...selected,
     baseURL: input.proxyBaseURL,
   });
+  const config = {
+    ...baseConfig,
+    models:
+      input.maxRetries === undefined &&
+      input.maxOutputTokens === undefined &&
+      input.temperature === undefined
+        ? baseConfig.models
+        : baseConfig.models.map((model) => ({
+            ...model,
+            overrides: {
+              ...model.overrides,
+              ...(input.maxRetries === undefined
+                ? {}
+                : { maxRetries: input.maxRetries }),
+              ...(input.maxOutputTokens === undefined
+                ? {}
+                : { maxOutputTokens: input.maxOutputTokens }),
+              ...(input.temperature === undefined
+                ? {}
+                : { temperature: input.temperature }),
+            },
+          })),
+  };
   await Promise.all([
     mkdir(path.join(input.home, '.blade'), { recursive: true }),
     mkdir(input.workspace, { recursive: true }),

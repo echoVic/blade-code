@@ -3,8 +3,10 @@ import { MAX_INLINE_USER_MESSAGE_TEXT_BYTES } from '../../../src/api/attachmentL
 import {
   assertLargePromptOffloadEvidence,
   createLargePromptOffloadFixture,
+  formatLargePromptProxyDiagnostic,
   inspectLargePromptRequest,
 } from '../../integration/real-api/largePromptOffloadHarness.js';
+import { parseTokenBudgetHandoffGuiInput } from '../../support/launch-token-budget-handoff-gui.js';
 
 describe('large-prompt offload qualification foundation', () => {
   it('places the hidden authority outside the bounded head and tail preview', () => {
@@ -83,5 +85,61 @@ describe('large-prompt offload qualification foundation', () => {
         maxInFlight: 1,
       })
     ).toThrow('first Provider request');
+  });
+
+  it('preserves an explicit zero retry budget through the Web launcher contract', () => {
+    const serialized = JSON.stringify({
+      root: '/tmp/large-prompt-web',
+      workspace: '/tmp/large-prompt-web/project',
+      home: '/tmp/large-prompt-web/home',
+      storageRoot: '/tmp/large-prompt-web/storage',
+      port: 41_083,
+      model: 'deepseek-v4-flash',
+      proxyBaseURL: 'http://127.0.0.1:41084',
+      maxRetries: 0,
+      maxOutputTokens: 1_024,
+      temperature: 0,
+    });
+
+    expect(
+      parseTokenBudgetHandoffGuiInput(
+        Buffer.from(serialized, 'utf8').toString('base64')
+      )
+    ).toMatchObject({
+      maxRetries: 0,
+      maxOutputTokens: 1_024,
+      temperature: 0,
+    });
+  });
+
+  it('reports bounded Provider facts without retaining request content', () => {
+    const diagnostic = formatLargePromptProxyDiagnostic({
+      maxInFlight: 1,
+      requests: [
+        {
+          ordinal: 1,
+          bodyBytes: 45_000,
+          bodySha256: 'a'.repeat(64),
+          upstreamStatus: 503,
+          responseKind: 'json',
+          artifactIds: ['b'.repeat(64)],
+          readArtifactIds: [],
+          readToolAdvertised: true,
+          hasArtifactNotice: true,
+          hiddenOccurrences: 0,
+          hiddenInToolResult: false,
+          hiddenOutsideToolResult: false,
+          maxUserTextBytes: 32_000,
+        },
+      ],
+    });
+
+    expect(diagnostic).toBe(
+      '{"requestCount":1,"maxInFlight":1,"requests":' +
+        '[{"ordinal":1,"status":503,"kind":"json","readCalls":0,' +
+        '"hiddenInToolResult":false}]}'
+    );
+    expect(diagnostic).not.toContain('a'.repeat(64));
+    expect(diagnostic).not.toContain('b'.repeat(64));
   });
 });

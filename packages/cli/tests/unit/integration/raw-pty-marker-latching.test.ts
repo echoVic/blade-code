@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { chunkUtf8PtyInput } from '../../support/ptyInput.js';
 
 const supportDir = path.resolve(import.meta.dirname, '../../support');
 const runnerInventory = [
@@ -102,6 +103,19 @@ describe('raw PTY marker latching source contract', () => {
     expect(source).toContain("composerReady ||= plainScan.includes('输入命令...')");
     expect(source).toContain('Date.now() - bracketedPasteModeSeenAt >= 5_000');
     expect(source).toContain(
+      "'Timed out waiting for token-budget PTY paste acknowledgement'"
+    );
+    const pasteWriteIndex = source.indexOf(
+      "await writeBracketedPaste(terminal, input.prompt ?? '');"
+    );
+    const pasteAcknowledgementIndex = source.indexOf(
+      "'Timed out waiting for token-budget PTY paste acknowledgement'"
+    );
+    const submitIndex = source.indexOf("terminal.write('\\r');");
+    expect(pasteWriteIndex).toBeGreaterThanOrEqual(0);
+    expect(pasteAcknowledgementIndex).toBeGreaterThan(pasteWriteIndex);
+    expect(submitIndex).toBeGreaterThan(pasteAcknowledgementIndex);
+    expect(source).not.toContain(
       "if (input.mode === 'task') bracketedPasteAccepted = true"
     );
     expect(source).toContain('composerFailureCode');
@@ -112,6 +126,14 @@ describe('raw PTY marker latching source contract', () => {
     expect(source).not.toMatch(
       /finalMarkerSeen\s*(?:=|:)\s*(?:output|scanTail|scan|projectOutput)\b/
     );
+  });
+
+  it('chunks large PTY input without splitting UTF-8 code points', () => {
+    const input = `${'a'.repeat(8)}你😀${'b'.repeat(8)}`;
+    const chunks = chunkUtf8PtyInput(input, 4);
+
+    expect(chunks.join('')).toBe(input);
+    expect(chunks.every((chunk) => Buffer.byteLength(chunk, 'utf8') <= 4)).toBe(true);
   });
 
   it.each([

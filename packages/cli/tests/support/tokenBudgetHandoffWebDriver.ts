@@ -628,6 +628,9 @@ export async function runTokenBudgetHandoffWebDriver(input: {
   secrets?: readonly string[];
   timeoutMs?: number;
   reloadDuringRun?: boolean;
+  modelMaxRetries?: number;
+  modelMaxOutputTokens?: number;
+  modelTemperature?: number;
 }): Promise<TokenBudgetHandoffWebEvidence> {
   const timeoutMs = input.timeoutMs ?? 300_000;
   if (
@@ -635,6 +638,18 @@ export async function runTokenBudgetHandoffWebDriver(input: {
     !path.isAbsolute(input.fixture.workspace) ||
     !Number.isSafeInteger(timeoutMs) ||
     timeoutMs <= 0 ||
+    (input.modelMaxRetries !== undefined &&
+      (!Number.isSafeInteger(input.modelMaxRetries) ||
+        input.modelMaxRetries < 0 ||
+        input.modelMaxRetries > 20)) ||
+    (input.modelMaxOutputTokens !== undefined &&
+      (!Number.isSafeInteger(input.modelMaxOutputTokens) ||
+        input.modelMaxOutputTokens < 64 ||
+        input.modelMaxOutputTokens > 65_536)) ||
+    (input.modelTemperature !== undefined &&
+      (!Number.isFinite(input.modelTemperature) ||
+        input.modelTemperature < 0 ||
+        input.modelTemperature > 2)) ||
     !FINAL_MARKER_PATTERN.test(input.fixture.finalMarker) ||
     input.fixture.prompt.includes(input.fixture.finalMarker)
   ) {
@@ -660,6 +675,15 @@ export async function runTokenBudgetHandoffWebDriver(input: {
       port,
       model: input.model,
       proxyBaseURL: input.proxyBaseURL,
+      ...(input.modelMaxRetries === undefined
+        ? {}
+        : { maxRetries: input.modelMaxRetries }),
+      ...(input.modelMaxOutputTokens === undefined
+        ? {}
+        : { maxOutputTokens: input.modelMaxOutputTokens }),
+      ...(input.modelTemperature === undefined
+        ? {}
+        : { temperature: input.modelTemperature }),
     }),
     'utf8'
   ).toString('base64');
