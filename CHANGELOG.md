@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.10.85] - 2026-08-23
+
+### Added
+- The right-side Preview panel now includes a Browser tab with address
+  navigation, bounded back/forward history, reload, and explicit system-browser
+  opening
+- Bare local and private-network development addresses resolve to HTTP, while
+  ordinary bare hosts resolve to HTTPS
+
+### Changed
+- Browser state remains mounted while switching Preview tabs, and project-only
+  Preview sessions now default to Files once without overriding later tab
+  choices
+- Browser-specific translations remain in the lazy Preview chunk so the
+  initial Web bundle stays within its existing gzip budget
+
+### Security
+- Embedded navigation accepts only HTTP(S), rejects credential-bearing URLs
+  and Blade Web's own origin, and runs in a no-referrer sandboxed iframe
+- Blade does not proxy target pages or remove their `X-Frame-Options` or CSP
+  boundaries
+
+### Tests
+- Added deterministic URL, history, navigation, reload, error, external-open,
+  tab-preservation, and compact-focus coverage
+- Release qualification now includes a real DeepSeek turn followed by
+  production Chromium desktop/mobile browser navigation, sandbox assertions,
+  console fault checks, and complete server/browser/port cleanup
+
 ## [0.10.84] - 2026-08-23
 
 ### Changed

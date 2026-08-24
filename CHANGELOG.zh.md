@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.10.85] - 2026-08-23
+
+### 新增
+- 右侧预览面板新增浏览器标签，支持地址跳转、有界前进/后退历史、刷新，以及显式使用
+  系统浏览器打开
+- 未写协议的本机与私网开发地址默认解析为 HTTP，普通裸域名默认解析为 HTTPS
+
+### 变更
+- 切换预览标签时保留浏览器运行状态；仅选择项目而没有 Session 时只默认切换一次
+  Files，不再覆盖用户后续选择的标签
+- 浏览器专属翻译保留在 lazy Preview chunk 中，首屏 Web bundle 继续满足原有 gzip
+  预算
+
+### 安全
+- 内嵌导航只接受 HTTP(S)，拒绝包含凭据的 URL 与 Blade Web 自身 origin，并在
+  no-referrer sandbox iframe 中运行
+- Blade 不代理目标页面，也不移除目标站点的 `X-Frame-Options` 或 CSP 边界
+
+### 测试
+- 新增 URL、历史、导航、刷新、错误、外部打开、标签状态保留与紧凑视图焦点的确定性
+  覆盖
+- 发布资格新增真实 DeepSeek 回合后的 production Chromium 桌面/移动端浏览器导航、
+  sandbox 断言、console fault 检查及 server/browser/port 完整回收
+
 ## [0.10.84] - 2026-08-23
 
 ### 变更
