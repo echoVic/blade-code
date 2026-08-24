@@ -103,6 +103,12 @@ Goal verifier feedback 轨迹必须先让真实 verifier 拒绝缺失产物，�
 再替换全部稳定 prompt block，并要求 runtime 输出 `system_prompt_changed` attribution。
 该轨迹同时验证自适应 token 阈值；不得用 mock usage、固定 cache counter 或仅比较
 累计命中率替代。由于 GPT 通道延迟与可用性不稳定，它不属于 release-blocking matrix。
+内嵌浏览器预览资格使用真实 DeepSeek Flash Session 与 production Chromium：同一 Web
+页面必须先完成真实 Provider 回合，再从右侧 Preview 打开 Browser，加载两个独立
+loopback fixture 页面并验证后退、前进、刷新、系统浏览器打开及移动端全屏模态边界。
+iframe 必须保持 sandbox 和 no-referrer，URL 边界拒绝非 HTTP(S)、嵌入凭据与 Blade
+自身 origin；console/page/request fault、Provider credential、server/browser/port 与
+临时目录残留必须为零。测试固定加入 realApiQualification，不能退化为只跑 jsdom。
 前台有界输出固定运行 DeepSeek Flash/Pro × Headless/production Chromium Web/raw PTY
 TUI/真实 ACP SDK terminal 八格；单格 Provider deadline 180 秒、测试 timeout 240 秒，
 完整 realApiQualification watchdog 为 90 分钟，发布矩阵固定 framework `retry=0`。

@@ -15,8 +15,8 @@ export const zh: Dict = {
   'layout.workspace.pathAria': '工作区路径',
   'layout.workspace.empty': '未选择工作区',
   'layout.action.rewind': '回溯会话',
-  'layout.action.filePreview': '文件预览',
-  'layout.action.filePreviewToggle': '切换文件预览',
+  'layout.action.filePreview': '预览面板',
+  'layout.action.filePreviewToggle': '切换预览面板',
   'layout.action.openNavigation': '打开导航',
 
   // Terminal
@@ -166,7 +166,7 @@ export const zh: Dict = {
   'commandCenter.action.newTask': '新建任务',
   'commandCenter.action.newTaskDescription': '打开一个干净的任务编辑器',
   'commandCenter.action.preview': '切换预览区',
-  'commandCenter.action.previewDescription': '审查文件、Diff 与运行日志',
+  'commandCenter.action.previewDescription': '审查文件、Diff、运行日志与网页',
   'commandCenter.action.terminal': '切换终端',
   'commandCenter.action.terminalDescription': '打开或关闭工作区 Shell',
   'commandCenter.action.settings': '打开设置',
@@ -603,6 +603,7 @@ export const zh: Dict = {
   'preview.tab.diff': '变更',
   'preview.tab.files': '文件',
   'preview.tab.logs': '日志',
+  'preview.tab.browser': '浏览器',
   'preview.diff.loadingTitle': '正在加载任务变更…',
   'preview.diff.loadingHint': '正在读取持久化的 worktree 产物。',
   'preview.diff.failedTitle': '任务变更加载失败',

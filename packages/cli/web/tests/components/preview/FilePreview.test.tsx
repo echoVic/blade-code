@@ -970,6 +970,59 @@ describe('FilePreview', () => {
     );
   });
 
+  test('keeps the embedded browser mounted while switching preview tabs', async () => {
+    const { FilePreview } = await import('../../../src/components/preview/FilePreview');
+    const { useAppStore } = await import('../../../src/store/AppStore');
+    useAppStore.setState({ previewTab: 'browser' });
+    useSessionStore.setState({
+      currentSessionId: null,
+      currentSessionRef: null,
+      selectedProjectPath: '/workspace/project',
+    });
+    fetchMock.mockResolvedValue(createJsonResponse([]));
+
+    await act(async () => {
+      root.render(<FilePreview />);
+    });
+    const browserTab = await vi.waitFor(() => {
+      const tab = Array.from(container.querySelectorAll('[role="tab"]')).find(
+        (element) => element.textContent?.includes('Browser')
+      );
+      expect(tab?.getAttribute('aria-selected')).toBe('true');
+      return tab;
+    });
+    const address = container.querySelector<HTMLInputElement>(
+      '[data-preview-browser-address]'
+    );
+    const form = address?.closest('form');
+    await act(async () => {
+      if (!address || !form) throw new Error('Browser address form was not rendered');
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        'value'
+      )?.set;
+      setter?.call(address, 'localhost:4173');
+      address.dispatchEvent(new Event('input', { bubbles: true }));
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    const frame = container.querySelector<HTMLIFrameElement>(
+      '[data-preview-browser-frame]'
+    );
+    expect(frame?.getAttribute('src')).toBe('http://localhost:4173/');
+
+    await showFilesTab();
+    expect(frame?.closest('[role="tabpanel"]')?.hasAttribute('hidden')).toBe(true);
+
+    await act(async () => {
+      browserTab?.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })
+      );
+    });
+    expect(
+      container.querySelector<HTMLIFrameElement>('[data-preview-browser-frame]')
+    ).toBe(frame);
+  });
+
   test('renders every diff carried by an ApplyPatch tool result', async () => {
     const { FilePreview } = await import('../../../src/components/preview/FilePreview');
     useSessionStore.setState({

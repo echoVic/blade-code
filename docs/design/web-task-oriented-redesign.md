@@ -80,7 +80,7 @@
 - **多 session 并行**：模块级 `sessions` Map（`session.ts:80`）+ JSONL 持久化；跨进程有 `SessionLease` 文件锁防抢占。✅
 - **每任务独立环境**：`WorktreeManager`（`packages/cli/src/worktree/WorktreeManager.ts`）+ subagent 已在用自动 worktree 做并行隔离。✅ 现成底座。
 - **全局事件总线**：`Bus`（`packages/cli/src/server/bus.ts`）本就是全局单例 EventEmitter，`publish(sessionId, type, props)`。✅ 全局流几乎免费。
-- **review 组件齐全**：`FilePreview.tsx`（Diff/Files/Logs 三 Tab）、`ChatMessage.tsx`（权限确认卡片含 diff、任务进度、subagent 进度）。✅
+- **review 组件齐全**：`FilePreview.tsx`（Diff/Files/Logs/Browser 四 Tab）、`ChatMessage.tsx`（权限确认卡片含 diff、任务进度、subagent 进度）。✅
 - **Zustand slice 架构**：`web/src/store/session/`（session / message / streaming / ui 四 slice）。✅ 详情页可整体复用。
 
 ## 3. 关键缺口（4 个，按成本排序）
@@ -107,7 +107,7 @@ queued → running → needs_review → done
 
 - 引入轻量路由（react-router 或自建 hash 路由）：
   - `/`（或 `/tasks`）：**任务首页**——中央一个大 composer 作为派发核心（对标 Codex/Trae Work 的居中输入框）+ 空状态给几张**任务类型卡片**引导（对标 Codex 的 4 卡片）；左侧是**任务列表**（对标 Codex「项目→线程」嵌套 / Trae Work「任务列表」，按状态分组 queued/running/needs_review/done，非分列看板），列表项显示标题、状态 pill、diffStat（对标 Trae DiffView 的「文件数 + 变更行数」）、耗时。
-  - `/tasks/:id`：**任务详情**——采用 SOLO 式**三栏**：左「任务列表」（复用升级后的 Sidebar）+ 中「对话流」（复用现有 `ChatView`）+ 右「工具面板」（复用现有 `FilePreview` 的 Diff/Files/Logs）。
+  - `/tasks/:id`：**任务详情**——采用 SOLO 式**三栏**：左「任务列表」（复用升级后的 Sidebar）+ 中「对话流」（复用现有 `ChatView`）+ 右「工具面板」（复用现有 `FilePreview` 的 Diff/Files/Logs/Browser）。
 - composer 上带 **context chips**：仓库/项目 + `本地` + 分支（对标 Codex「项目+本地+main」、Trae Work「选择仓库+Environment」），直接驱动缺口 4 的 worktree 选择。
 - 新增 store slice：`taskListSlice`（任务列表 + 全局 SSE 订阅 + 状态聚合），与现有 session slice 并存。
 - `Sidebar` 从「历史会话列表」升级为「任务列表面板」：按状态分组 + 各自进度实时刷新。

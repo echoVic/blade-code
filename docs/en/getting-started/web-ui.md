@@ -70,6 +70,7 @@ The Web UI supports all of Blade Code's core features:
 - 💬 **Smart conversation** - Multi-turn dialogue with the AI
 - 📊 **Task board** - Bind multiple projects, dispatch tasks, and manage them centrally by execution stage
 - 📁 **File operations** - Read, edit, and search files
+- 🧭 **Embedded browser** - Inspect and reload local development pages in the right preview panel
 - 🖥️ **Terminal** - Run commands and view output
 - 📋 **Session management** - Create, switch, and resume sessions
 - ⚙️ **Model configuration** - Add and switch models
@@ -103,6 +104,18 @@ The board supports:
 
 The board address uses `?view=board` and can be combined with the `project` parameter to form a project-level deep link.
 
+## Embedded Browser Preview
+
+The right-side Preview panel includes a Browser tab for local development
+servers and HTTP(S) pages. Its toolbar provides back, forward, reload, address
+navigation, and an explicit open-in-system-browser action.
+
+Browser history lives only for the current Preview panel lifecycle and is capped
+at 50 entries. Blade accepts only HTTP(S) addresses and rejects credential-bearing
+URLs and Blade Web's own origin. Pages run in a no-referrer sandboxed iframe.
+Blade does not proxy pages or remove their `X-Frame-Options` or CSP; use the
+external-open action for sites that deny embedding.
+
 ## Differences from the CLI
 
 | Feature | CLI | Web UI |
@@ -112,6 +125,7 @@ The board address uses `?view=board` and can be combined with the `project` para
 | Remote access | Requires SSH | Direct access |
 | Session sharing | Same directory | Same directory |
 | File operations | ✅ | ✅ |
+| Embedded browser preview | ❌ | ✅ |
 | Terminal execution | ✅ | ✅ |
 
 ## Common Issues

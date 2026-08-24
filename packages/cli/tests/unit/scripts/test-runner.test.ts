@@ -155,6 +155,21 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
     expect(source).toContain('modelTemperature: 0');
   });
 
+  it('keeps the real Provider embedded-browser GUI trajectory release-blocking', async () => {
+    const file = 'tests/integration/real-api/browser-preview-trajectory.test.ts';
+    expect(testTypes.realApiQualification.files).toContain(file);
+    const source = await readFile(
+      path.resolve(import.meta.dirname, '../../..', file),
+      'utf8'
+    );
+    expect(source).toContain('buildRealApiRuntimeConfig(model)');
+    expect(source).toContain('await chromium.launch({ headless: true })');
+    expect(source).toContain("frameLocator('[data-preview-browser-frame]')");
+    expect(source).toContain("getByRole('button', { name: 'Go back' })");
+    expect(source).toContain("getByRole('button', { name: 'Go forward' })");
+    expect(source).toContain("getByRole('button', { name: 'Reload page' })");
+  });
+
   it('keeps raw PTY marker authorities in the release-blocking matrix', () => {
     const files = testTypes.realApiQualification.files;
 

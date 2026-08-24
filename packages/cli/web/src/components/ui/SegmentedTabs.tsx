@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
  *
  * Why not Radix here: the preview panel's Radix Tabs did not activate on real
  * pointer clicks (only keyboard), a known pointer-activation quirk. This
- * controlled 3-tab switcher needs deterministic click behavior, so we own it.
+ * controlled preview switcher needs deterministic click behavior, so we own it.
  */
 
 interface TabsContextValue {
@@ -87,13 +87,20 @@ interface TabsContentProps {
   value: string;
   className?: string;
   children: React.ReactNode;
+  forceMount?: boolean;
 }
 
-function TabsContent({ value, className, children }: TabsContentProps) {
+function TabsContent({
+  value,
+  className,
+  children,
+  forceMount = false,
+}: TabsContentProps) {
   const { value: active } = useTabsContext('TabsContent');
-  if (active !== value) return null;
+  const isActive = active === value;
+  if (!isActive && !forceMount) return null;
   return (
-    <div role="tabpanel" className={className}>
+    <div role="tabpanel" hidden={!isActive} className={className}>
       {children}
     </div>
   );

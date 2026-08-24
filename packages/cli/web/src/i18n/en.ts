@@ -15,8 +15,8 @@ export const en = {
   'layout.workspace.pathAria': 'Workspace path',
   'layout.workspace.empty': 'No workspace',
   'layout.action.rewind': 'Rewind session',
-  'layout.action.filePreview': 'File preview',
-  'layout.action.filePreviewToggle': 'Toggle file preview',
+  'layout.action.filePreview': 'Preview panel',
+  'layout.action.filePreviewToggle': 'Toggle preview panel',
   'layout.action.openNavigation': 'Open navigation',
 
   // -------- Terminal --------
@@ -172,7 +172,8 @@ export const en = {
   'commandCenter.action.newTask': 'New task',
   'commandCenter.action.newTaskDescription': 'Open a clean task composer',
   'commandCenter.action.preview': 'Toggle preview',
-  'commandCenter.action.previewDescription': 'Review files, diffs, and run logs',
+  'commandCenter.action.previewDescription':
+    'Review files, diffs, run logs, and web pages',
   'commandCenter.action.terminal': 'Toggle terminal',
   'commandCenter.action.terminalDescription': 'Open or close the workspace shell',
   'commandCenter.action.settings': 'Open settings',
@@ -645,6 +646,7 @@ export const en = {
   'preview.tab.diff': 'Diff',
   'preview.tab.files': 'Files',
   'preview.tab.logs': 'Logs',
+  'preview.tab.browser': 'Browser',
   'preview.diff.loadingTitle': 'Loading task diff…',
   'preview.diff.loadingHint': 'Reading the durable worktree artifact.',
   'preview.diff.failedTitle': 'Failed to load task diff',

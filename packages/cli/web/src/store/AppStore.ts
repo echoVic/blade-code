@@ -2,7 +2,7 @@ import { create } from 'zustand';
 
 export type SidebarView = 'project' | 'status';
 export type MainView = 'workspace' | 'board';
-export type PreviewTab = 'diff' | 'files' | 'logs';
+export type PreviewTab = 'diff' | 'files' | 'logs' | 'browser';
 export type SettingsSection =
   | 'general'
   | 'models'

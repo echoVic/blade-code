@@ -25,10 +25,11 @@ import {
   sessionDirectoryHeaders,
   sessionService,
 } from '@/services/sessionService';
-import { useAppStore } from '@/store/AppStore';
+import { type PreviewTab, useAppStore } from '@/store/AppStore';
 import { useSettingsStore } from '@/store/SettingsStore';
 import { type Session, useSessionStore } from '@/store/session';
 import { sameSessionRef } from '@/store/session/sessionIdentity';
+import { BrowserPreview } from './BrowserPreview';
 import { type PreviewDiffData, PreviewDiffList } from './PreviewDiffList';
 import {
   type DirectoryLoadState,
@@ -161,7 +162,7 @@ export function FilePreview({ returnFocusElement }: FilePreviewProps = {}) {
     () => previewWorkspaceRef(currentSessionRef, selectedProjectPath, currentSession),
     [currentSession, currentSessionRef, selectedProjectPath]
   );
-  const [activeTab, setActiveTab] = useState<'diff' | 'files' | 'logs'>(previewTab);
+  const [activeTab, setActiveTab] = useState<PreviewTab>(previewTab);
   const [isCompact, setIsCompact] = useState(
     () =>
       typeof window !== 'undefined' &&
@@ -209,6 +210,7 @@ export function FilePreview({ returnFocusElement }: FilePreviewProps = {}) {
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const dragWidthRef = useRef(previewWidth);
   const previousSessionRef = useRef<SessionRef | null>(currentSessionRef);
+  const projectFallbackPathRef = useRef<string | null>(null);
 
   useLayoutEffect(() => {
     if (!sameSessionRef(latestSessionRef.current, workspaceRef)) {
@@ -257,7 +259,7 @@ export function FilePreview({ returnFocusElement }: FilePreviewProps = {}) {
       panelRef.current?.querySelectorAll<HTMLElement>(
         'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
       ) ?? []
-    ).filter((element) => !element.hasAttribute('hidden'));
+    ).filter((element) => !element.closest('[hidden]'));
     if (focusable.length === 0) return;
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
@@ -448,11 +450,15 @@ export function FilePreview({ returnFocusElement }: FilePreviewProps = {}) {
   useEffect(() => {
     const previous = previousSessionRef.current;
     previousSessionRef.current = currentSessionRef;
-    if (
-      !currentSessionRef &&
-      selectedProjectPath &&
-      (previous || activeTab !== 'files')
-    ) {
+    if (currentSessionRef || !selectedProjectPath) {
+      projectFallbackPathRef.current = null;
+      return;
+    }
+
+    const shouldDefaultToFiles =
+      Boolean(previous) || projectFallbackPathRef.current !== selectedProjectPath;
+    projectFallbackPathRef.current = selectedProjectPath;
+    if (shouldDefaultToFiles && activeTab === 'diff') {
       setActiveTab('files');
       setPreviewTab('files');
     }
@@ -799,24 +805,30 @@ export function FilePreview({ returnFocusElement }: FilePreviewProps = {}) {
         className="flex flex-col flex-1 min-h-0"
       >
         <div className="px-4 py-3 border-b border-[hsl(var(--deck-border))]">
-          <TabsList className="bg-[hsl(var(--deck-surface))] border border-[hsl(var(--deck-border))] h-9 p-1 rounded-md w-full justify-start">
+          <TabsList className="grid h-9 w-full grid-cols-4 rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] p-1">
             <TabsTrigger
               value="diff"
-              className="text-[12px] font-mono px-3 text-[hsl(var(--deck-ink-muted))] data-[state=active]:bg-[hsl(var(--deck-canvas-veil))] data-[state=active]:text-[hsl(var(--deck-ink))]"
+              className="px-2 font-mono text-[12px] text-[hsl(var(--deck-ink-muted))] data-[state=active]:bg-[hsl(var(--deck-canvas-veil))] data-[state=active]:text-[hsl(var(--deck-ink))]"
             >
               {t('preview.tab.diff')}
             </TabsTrigger>
             <TabsTrigger
               value="files"
-              className="text-[12px] font-mono px-3 text-[hsl(var(--deck-ink-muted))] data-[state=active]:bg-[hsl(var(--deck-canvas-veil))] data-[state=active]:text-[hsl(var(--deck-ink))]"
+              className="px-2 font-mono text-[12px] text-[hsl(var(--deck-ink-muted))] data-[state=active]:bg-[hsl(var(--deck-canvas-veil))] data-[state=active]:text-[hsl(var(--deck-ink))]"
             >
               {t('preview.tab.files')}
             </TabsTrigger>
             <TabsTrigger
               value="logs"
-              className="text-[12px] font-mono px-3 text-[hsl(var(--deck-ink-muted))] data-[state=active]:bg-[hsl(var(--deck-canvas-veil))] data-[state=active]:text-[hsl(var(--deck-ink))]"
+              className="px-2 font-mono text-[12px] text-[hsl(var(--deck-ink-muted))] data-[state=active]:bg-[hsl(var(--deck-canvas-veil))] data-[state=active]:text-[hsl(var(--deck-ink))]"
             >
               {t('preview.tab.logs')}
+            </TabsTrigger>
+            <TabsTrigger
+              value="browser"
+              className="px-2 font-mono text-[12px] text-[hsl(var(--deck-ink-muted))] data-[state=active]:bg-[hsl(var(--deck-canvas-veil))] data-[state=active]:text-[hsl(var(--deck-ink))]"
+            >
+              {t('preview.tab.browser')}
             </TabsTrigger>
           </TabsList>
         </div>
@@ -1036,6 +1048,14 @@ export function FilePreview({ returnFocusElement }: FilePreviewProps = {}) {
 
         <TabsContent value="logs" className="overflow-hidden flex-1 mt-0">
           <PreviewLogList logs={logs} />
+        </TabsContent>
+
+        <TabsContent
+          value="browser"
+          forceMount
+          className="min-h-0 flex-1 overflow-hidden"
+        >
+          <BrowserPreview />
         </TabsContent>
       </Tabs>
     </div>
