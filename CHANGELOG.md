@@ -31,6 +31,12 @@
 - Added a release-blocking DeepSeek Flash/Pro matrix across Headless, raw PTY,
   production Chromium Web, and ACP that proves hidden prompt content reaches the
   Provider only through the matching durable tool result
+- Hardened token-budget continuation fixtures to preserve the exact final-output
+  protocol across fallback compaction, and expanded the complete release matrix
+  watchdog from 60 to 90 minutes for the new eight-cell large-prompt coverage
+- Gave the large-output foreground accounting control a five-second handoff
+  margin so loaded hosts cannot accidentally exercise the background path, and
+  made the TUI batched-input harness submit its latest rendered value
 
 ## [0.10.82] - 2026-08-23
 

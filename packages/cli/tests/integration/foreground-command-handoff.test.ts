@@ -252,7 +252,7 @@ describe.skipIf(process.platform === 'win32')(
         {
           sessionId: `handoff-fast-output-${Date.now()}`,
           workspaceRoot: os.tmpdir(),
-          foregroundCommandHandoffMs: 1_000,
+          foregroundCommandHandoffMs: 5_000,
         } as HandoffExecutionContext
       );
 

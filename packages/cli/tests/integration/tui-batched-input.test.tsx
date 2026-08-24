@@ -108,7 +108,7 @@ describe('TUI batched input integration', () => {
       const [cursorPosition, setCursorPosition] = useState(0);
       currentValue = value;
       useInput((_input, key) => {
-        if (key.return) submitted.push(value);
+        if (key.return) submitted.push(currentValue);
       });
       return (
         <CustomTextInput

@@ -27,6 +27,12 @@
   transport 上限、工具过滤与原始输入宿主策略的确定性覆盖
 - 新增 release-blocking DeepSeek Flash/Pro × Headless、raw PTY、production Chromium
   Web、ACP 矩阵，证明隐藏 Prompt 内容只能通过匹配的 durable tool result 进入 Provider
+- 强化 token-budget continuation fixture，确保 fallback compaction 后仍保留精确
+  最终输出协议；为新增的大 Prompt 八格覆盖将完整发布矩阵 watchdog 从 60 分钟提升到
+  90 分钟
+- 将大输出 foreground accounting 对照的 handoff 余量提升到 5 秒，避免高负载宿主
+  意外进入后台路径；TUI batched-input 测试 Harness 提交最新已渲染输入，避免旧闭包
+  造成假失败
 
 ## [0.10.82] - 2026-08-23
 

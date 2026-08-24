@@ -105,7 +105,7 @@ Goal verifier feedback 轨迹必须先让真实 verifier 拒绝缺失产物，�
 累计命中率替代。由于 GPT 通道延迟与可用性不稳定，它不属于 release-blocking matrix。
 前台有界输出固定运行 DeepSeek Flash/Pro × Headless/production Chromium Web/raw PTY
 TUI/真实 ACP SDK terminal 八格；单格 Provider deadline 180 秒、测试 timeout 240 秒，
-完整 realApiQualification watchdog 为 60 分钟，发布矩阵固定 framework `retry=0`。
+完整 realApiQualification watchdog 为 90 分钟，发布矩阵固定 framework `retry=0`。
 每格还验证 surface egress：Headless
 等待 `write(false) -> drain`，ACP 最多一个 `sessionUpdate()` in-flight，raw PTY 暂停
 reader 后继续渲染，Web 在运行中 reload 后按 durable cursor 恢复同一 tool/final state。

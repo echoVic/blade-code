@@ -58,8 +58,8 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
     expect(testTypes.realApi.timeout).toBe(60 * 60 * 1000);
   });
 
-  it('keeps goal completion verification in the release-blocking matrix', () => {
-    expect(testTypes.realApiQualification.timeout).toBe(60 * 60 * 1000);
+  it('allows the expanded release-blocking matrix to run for ninety minutes', () => {
+    expect(testTypes.realApiQualification.timeout).toBe(90 * 60 * 1000);
     expect(testTypes.realApiQualification.files).toContain(
       'tests/integration/real-api/goal-mode-trajectory.test.ts'
     );

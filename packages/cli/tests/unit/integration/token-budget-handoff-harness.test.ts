@@ -1197,6 +1197,12 @@ describe('token-budget handoff deterministic qualification foundation', () => {
         }
       )}`
     );
+    expect(created.prompt).toContain(
+      'AFTER_ZERO_EXIT_COPY_FINAL_NONEMPTY_STDOUT_LINE_BYTE_FOR_BYTE_AS_ENTIRE_RESPONSE'
+    );
+    expect(created.prompt).toContain(
+      'OUTPUT_NO_PREFIX_SUFFIX_QUOTES_CODE_FENCE_EXPLANATION_OR_STATUS_TEXT'
+    );
     expect(created.prompt).not.toContain('nowhere else');
     expect(created.prompt).not.toContain(created.finalMarker);
     expect(created.passingCommand).not.toContain(created.finalMarker);
