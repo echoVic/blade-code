@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.10.83] - 2026-08-23
+
+### 新增
+- 超过 32 KiB 的用户 Prompt 现在写入 Session 私有、内容寻址的 artifact；Provider
+  只接收 UTF-8 安全的有界摘要和 opaque artifact ID
+- 新增始终可用的只读 `ReadPromptArtifact` 工具，支持最大 64 KiB 的校验后分页读取，
+  且不暴露宿主路径
+
+### 变更
+- TUI、Headless、Web 与 ACP 统一使用 1,000,000 字符和 4 MiB 的 durable 用户输入
+  契约，覆盖 active-turn steering 与重启恢复
+- Session fork 只复制实际引用的 prompt artifact；删除 Session 会清理私有 artifact，
+  且不影响 source 或 sibling Session
+
+### 修复
+- 大型规格、日志和迁移请求不再受旧 32,000 字符传输上限阻断，也不会完整进入首次
+  Provider 请求
+- 宿主 verification、worktree、delegation 与 completion policy 仍基于完整原始请求，
+  多模态分流保持图片顺序
+- artifact ID、owner、权限、大小、哈希、layout 或 symlink 替换不合法时，读取统一
+  fail closed
+
+### 测试
+- 新增 UTF-8 分页、metadata 持久化、重启、fork/delete 生命周期、多模态顺序、配额、
+  transport 上限、工具过滤与原始输入宿主策略的确定性覆盖
+- 新增 release-blocking DeepSeek Flash/Pro × Headless、raw PTY、production Chromium
+  Web、ACP 矩阵，证明隐藏 Prompt 内容只能通过匹配的 durable tool result 进入 Provider
+
 ## [0.10.82] - 2026-08-23
 
 ### 新增

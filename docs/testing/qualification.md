@@ -969,6 +969,31 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
   Web live/reload 一致及资源/凭据清理；
 - 输出协议、工具调用、错误事件和 key 泄漏检查。
 
+### Durable 大型 Prompt 分流轨迹
+
+该能力验证大型用户请求不会在第一次 Provider 调用中无界展开，同时模型仍能可靠取得
+完整指令：
+
+1. fixture 必须超过 32 KiB inline 阈值，并把唯一 hidden authority 放在头尾摘要都无法
+   覆盖的中段；最终值只能由该 authority 中分离的 token 组合得到，首轮请求不能包含
+   hidden marker 或完整最终值。
+2. 透明代理必须直接验证首轮 user content 不超过 32 KiB、包含一个合法 opaque
+   artifact ID、声明 `ReadPromptArtifact`，且尚未包含 hidden marker。
+3. 后续请求只有在 assistant 使用同一 artifact ID 调用 `ReadPromptArtifact` 后，才允许
+   hidden marker 出现在对应 tool result；marker 不能出现在 user、assistant 或 system
+   内容中。模型必须读取到 `[End of prompt artifact]` 并返回精确最终值。
+4. JSONL 必须持久化同一 `userPromptArtifact` 引用、完整 ReadPromptArtifact
+   tool-call/result 轨迹和精确 final；cold projection、PTY resume、Web reload 与 ACP
+   `session/load` 都不能为已完成输入新增 Provider 请求。
+5. 确定性门禁还必须覆盖 UTF-8 分页、哈希/权限/篡改失败、并发 artifact 数量配额、
+   多模态顺序、fork 引用复制、Session 删除清理，以及 1,000,000 字符/4 MiB 输入上限。
+
+required matrix 固定包含 `deepseek-v4-flash` 和 `deepseek-v4-pro`，每个模型都必须通过
+Headless、真实 raw PTY TUI、production Chromium Web GUI 和 ACP 四个入口，共八格。
+测试结束必须回收 browser/page/SSE、PTY、ACP connection、server、port、Session
+lease、artifact 与临时根；API key 不得进入 transcript、页面、终端、ACP update、
+诊断或结构化代理证据。
+
 ### Durable Subagent resume 轨迹
 
 该能力必须覆盖相同的 immutable lineage 契约：

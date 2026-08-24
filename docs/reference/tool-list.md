@@ -91,7 +91,7 @@ delete/rename 时 Add/Delete/Move fail closed
 | `ignore` | string[] | | 忽略的模式列表 |
 | `limit` | number | | 结果数量限制 |
 
-**类型**: ReadOnly  
+**类型**: ReadOnly
 **特性**: 基于 fast-glob，内置忽略 node_modules 等常见目录
 
 ### Grep
@@ -425,6 +425,21 @@ background 运行都会持久化；每次 resume 创建新的不可变 child ID�
 
 ## 系统工具
 
+### ReadPromptArtifact
+
+分页读取当前 Session 私有的大型用户请求。Blade 会在用户文本超过 32 KiB 时自动提供
+opaque `artifact_id`；模型应从 offset `0` 开始读取，并按返回的下一 offset 继续，直到
+结果包含 `[End of prompt artifact]`。
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `artifact_id` | string | ✅ | 用户消息中提供的 64 位小写十六进制 ID |
+| `offset` | number | | UTF-8 byte offset，默认 `0` |
+| `limit` | number | | 单次读取字节数，范围 `4-65536`，默认 `24576` |
+
+**类型**: ReadOnly
+**特性**: Session 隔离、内容哈希校验、UTF-8 边界对齐、不暴露宿主路径
+
 ### MemoryRead
 
 读取项目记忆文件。Agent 自动记录的项目知识跨会话持久化。
@@ -557,6 +572,7 @@ blade mcp list
 | 任务 | TaskList | ReadOnly | 列出当前任务 |
 | Plan | EnterPlanMode | ReadOnly | 进入只读调研模式 |
 | Plan | ExitPlanMode | ReadOnly | 退出并提交方案 |
+| 系统 | ReadPromptArtifact | ReadOnly | 分页读取 Session 私有的大型用户请求 |
 | 系统 | MemoryRead | ReadOnly | 读取项目记忆文件 |
 | 系统 | MemoryWrite | Write | 保存项目记忆 |
 | 系统 | AskUserQuestion | ReadOnly | 向用户提问 |

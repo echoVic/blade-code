@@ -159,6 +159,33 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   owner 校验。
 - 缺失 session 上下文时，后台 Bash 和后台 agent 启动会 fail closed，不会退化为全局可见任务。
 
+## 大型用户请求
+
+- TUI、Headless、Web 与 ACP 的普通用户输入共享同一个 Runtime 边界。UTF-8 文本不超过
+  32 KiB 时保持内联；超过 32 KiB 时写入 Session 私有 prompt artifact。单次输入最多
+  1,000,000 字符且最多 4 MiB，超过任一上限会在 Provider 请求前 fail closed。
+- artifact 以完整文本的 SHA-256 作为 opaque ID，按 canonical project 与 Session 的
+  SHA-256 目录隔离。目录权限为 `0700`，文件权限为 `0600`；创建使用
+  `O_CREAT | O_EXCL | O_NOFOLLOW`，读取通过同一 `O_NOFOLLOW` 文件句柄校验 owner、
+  mode、size 和内容哈希。模型、公开 API 和错误消息都不会获得宿主路径。
+- 首次 Provider 请求只包含 UTF-8 安全的有界头尾摘要、artifact ID、字节数和读取要求。
+  `ReadPromptArtifact` 是 Session 绑定、只读、可流式预启动的基础设施工具，即使普通
+  tool whitelist/blacklist 或 Skill `allowed-tools` 生效也保持可用；每次默认读取
+  24 KiB，最大 64 KiB，并返回下一 UTF-8 byte offset。
+- 多模态请求只将文本写入 artifact，图片继续内联；artifact metadata 保存有界的
+  text/image layout，使初始摘要和恢复后的原始请求都保持图片相对顺序。宿主侧
+  worktree、verification、delegation 与 completion policy 始终基于恢复后的完整原始
+  用户请求；`@` mention 展开后若仍超出内联阈值，会再次内容寻址物化。
+- bounded 内容与 `userPromptArtifact` metadata 先进入 durable inbox，再提交到 JSONL。
+  冷启动和 pending steering 通过 metadata 重新校验并恢复全文；缺失、篡改、权限错误、
+  非法 layout 或超限 artifact 均停止本轮，不会猜测省略内容或发起 Provider 请求。
+- 每个 Session 最多保留 128 个 artifact、累计 64 MiB；重复内容复用同一哈希文件。
+  Session fork 只复制 transcript 实际引用且重新校验通过的 artifact，失败时回滚 child；
+  删除 Session 同步删除其私有 artifact，且不影响 source/其他 Session。
+- 模型调用 `ReadPromptArtifact` 后，返回 chunk 按普通 durable `tool_result` 提交，因此
+  crash recovery 和后续 Provider 请求看到的是同一已读取事实，而不是重新读取或隐式
+  注入完整请求。
+
 ## Transcript 提交与恢复
 
 - session transcript 使用逐行 JSONL，换行符是单条事件的提交边界。加载时只允许忽略最后一个未换行且无法解析的尾片段，它代表进程在 append 过程中退出；任何已换行的坏记录或中间损坏都会 fail closed。
@@ -350,5 +377,9 @@ PTY terminal 和只启动单个固定二进制的内部查询工具使用各自�
   1 MiB、累计字节精确、两个尾部 nonce 可见、两个省略前缀 sentinel 不进入模型、
   DOM、PTY、ACP update 或 durable transcript，并在结束后清零 process tree、lease、
   port 和 terminal handle。
+- Flash 和 Pro 在 Headless、raw PTY TUI、production Chromium Web 与 ACP 中处理超过
+  32 KiB 的请求；首轮 Provider payload 只能看到有界摘要和 artifact ID，隐藏中段只能
+  在匹配的 `ReadPromptArtifact` durable tool result 后出现，完成后的冷加载不得重放
+  Provider 请求。
 - 首个 CLI 在工具执行期间持有 session，第二个同 session CLI 必须返回结构化占用错误且不写入输入；首个 CLI 退出后，第三个 CLI 必须恢复该 session 并完成写入与 Bash 验证。
 - 在完整 session 尾部注入未换行的截断 JSON 记录，第二个 CLI 必须恢复原有历史、完成 Write/Bash 任务，并使最终 transcript 的每一行重新成为合法 JSON。

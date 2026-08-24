@@ -328,6 +328,38 @@ Real API project coverage includes production CLI trajectories:
 - durable background-Subagent completion wake-up: Both Flash and Pro must have real parents call `Task(run_in_background=true)`, after Task returns running parent continues independent Read, with zero `TaskOutput` throughout. child obtains markers not present in parent input through Read; terminal sidecars, hidden canonical receipts, and durable inboxes must automatically wake parents. Headless, raw PTY TUI, production Chromium Web GUI, and ACP `session/load` each verify terminal ref/inbox ACK/parent final, child and lineage unique, sidecar bytes stable, no pseudo-user messages, Web live/reload consistency, and resource/credential cleanup;
 - Output protocol, tool calls, error events, and key leakage checks.
 
+### Durable Large-Prompt Offload Trajectory
+
+This capability proves that large user requests do not expand without bound in
+the first Provider call while the model can still retrieve complete instructions:
+
+1. The fixture must exceed the 32 KiB inline threshold and place a unique hidden
+   authority in a middle region excluded from both preview ends. The final value
+   can only be assembled from separated tokens in that authority; the first
+   request cannot contain the hidden marker or complete final value.
+2. A transparent proxy must directly prove that first-request user content is at
+   most 32 KiB, contains one valid opaque artifact ID, advertises
+   `ReadPromptArtifact`, and does not yet contain the hidden marker.
+3. A later request may contain the hidden marker only in the corresponding tool
+   result after the assistant calls `ReadPromptArtifact` with the same ID. The
+   marker cannot occur in user, assistant, or system content. The model must read
+   through `[End of prompt artifact]` and return the exact final value.
+4. JSONL must persist the same `userPromptArtifact` reference, complete
+   ReadPromptArtifact call/result trace, and exact final. Cold projection, PTY
+   resume, Web reload, and ACP `session/load` cannot issue another Provider
+   request for completed input.
+5. Deterministic gates must additionally cover UTF-8 pagination, hash/mode/
+   tamper failures, concurrent artifact-count quota, multimodal ordering, fork
+   reference copying, Session deletion cleanup, and the 1,000,000-character/
+   4 MiB input limits.
+
+The required matrix fixedly includes `deepseek-v4-flash` and
+`deepseek-v4-pro`; each model must pass Headless, real raw PTY TUI, production
+Chromium Web GUI, and ACP, totaling eight cells. Tests must reclaim
+browser/page/SSE, PTY, ACP connection, server, port, Session lease, artifacts,
+and temporary roots. API keys cannot enter transcripts, pages, terminals, ACP
+updates, diagnostics, or structured proxy evidence.
+
 ### Durable Subagent resume Trajectory
 
 This capability must cover the same immutable lineage contract:

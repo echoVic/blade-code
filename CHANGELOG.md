@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.10.83] - 2026-08-23
+
+### Added
+- User prompts above 32 KiB are now stored as Session-private,
+  content-addressed artifacts, while Providers receive a bounded UTF-8-safe
+  preview and opaque artifact ID
+- The always-available read-only `ReadPromptArtifact` tool supports verified,
+  paginated reads up to 64 KiB without exposing host paths
+
+### Changed
+- TUI, Headless, Web, and ACP now share a 1,000,000-character and 4 MiB durable
+  user-input contract, including active-turn steering and restart recovery
+- Session forks copy only referenced prompt artifacts; Session deletion removes
+  private artifacts without affecting source or sibling Sessions
+
+### Fixed
+- Large specifications, logs, and migration requests no longer fail at the
+  previous 32,000-character transport limit or enter the first Provider request
+  in full
+- Host verification, worktree, delegation, and completion policy still evaluate
+  the complete original request, and multimodal offload preserves image order
+- Artifact reads now fail closed on invalid IDs, ownership, permissions, size,
+  hashes, layouts, or symlink substitution
+
+### Tests
+- Added deterministic coverage for UTF-8 pagination, metadata persistence,
+  restart, fork/delete lifecycle, multimodal order, quotas, transport limits,
+  tool filtering, and original-input host policy
+- Added a release-blocking DeepSeek Flash/Pro matrix across Headless, raw PTY,
+  production Chromium Web, and ACP that proves hidden prompt content reaches the
+  Provider only through the matching durable tool result
+
 ## [0.10.82] - 2026-08-23
 
 ### Added

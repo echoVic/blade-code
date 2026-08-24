@@ -65,6 +65,44 @@ PTY terminals and internal query tools that only launch a single fixed binary us
 - Resuming subagents directly from TUI, Web, or ACP is only permitted when the parent turn is idle and the durable input queue is empty; the model calling Task `resume_from` during its own active turn still goes through the same persistence and owner verification.
 - When session context is missing, background Bash and background agent startup fail closed and do not degrade to globally visible tasks.
 
+## Large User Requests
+
+- Ordinary user input from TUI, Headless, Web, and ACP shares one Runtime boundary.
+  UTF-8 text up to 32 KiB remains inline; larger text is stored in a Session-private
+  prompt artifact. A single input may contain at most 1,000,000 characters and
+  4 MiB; either limit fails closed before a Provider request.
+- An artifact uses the complete text's SHA-256 as its opaque ID and is isolated
+  under SHA-256 directories for the canonical project and Session. Directories
+  use `0700`, files use `0600`, creation uses
+  `O_CREAT | O_EXCL | O_NOFOLLOW`, and reads validate owner, mode, size, and
+  content hash through the same `O_NOFOLLOW` file handle. Models, public APIs,
+  and errors never receive host paths.
+- The initial Provider request contains only a UTF-8-safe bounded head/tail
+  preview, artifact ID, byte count, and read requirement. `ReadPromptArtifact`
+  is a Session-bound, read-only infrastructure tool eligible for streaming
+  prelaunch; it remains available under ordinary tool allowlists/denylists and
+  Skill `allowed-tools`. Reads default to 24 KiB, are capped at 64 KiB, and
+  return the next UTF-8 byte offset.
+- Multimodal requests store only text in the artifact while images remain
+  inline. Bounded text/image layout metadata preserves relative image ordering
+  in both the initial preview and restored original request. Host-side
+  worktree, verification, delegation, and completion policy always evaluate
+  the restored original user request; expanded `@` mentions are content-
+  addressed again when they still exceed the inline threshold.
+- Bounded content and `userPromptArtifact` metadata enter the durable inbox
+  before JSONL commit. Cold starts and pending steering revalidate metadata and
+  restore full text. Missing, tampered, wrongly permissioned, malformed-layout,
+  or oversized artifacts stop the turn before any Provider request instead of
+  guessing omitted content.
+- Each Session retains at most 128 artifacts and 64 MiB total; duplicate content
+  reuses one hash file. Session fork copies only transcript-referenced artifacts
+  that pass revalidation and rolls the child back on failure. Session deletion
+  removes its private artifacts without affecting the source or another Session.
+- Once the model calls `ReadPromptArtifact`, each returned chunk is committed as
+  an ordinary durable `tool_result`. Crash recovery and subsequent Provider
+  requests therefore observe the same already-read fact rather than silently
+  rereading or injecting the complete request.
+
 ## Transcript Commit and Recovery
 
 - Session transcripts use line-by-line JSONL, with newlines as commit boundaries for individual events. When loading, only the final unwrapped and unparseable tail fragment may be ignored, which represents the process exiting mid-append; any wrapped bad record or intermediate corruption fails closed.
@@ -114,5 +152,10 @@ Production qualification gates also require `deepseek-v4-flash` and `deepseek-v4
 - The model starts background Bash waiting for input in TUI, Web, and ACP, reads the dynamic `shell_id`, writes and closes stdin via `WriteStdin`, then waits for exit via `TaskOutput`; both Flash and Pro must produce correct host files and all three tool events must be fully visible.
 - The model starts background Bash producing over 1 MiB output in TUI, Web, and ACP, then verifies tail markers, structured omitted byte counts, and shared display summary via `TaskOutput`; both Flash and Pro must continue completing host file writes after truncation.
 - The model executes foreground Bash once each in production Chromium Web, raw PTY TUI, and real ACP SDK terminal; all six Flash/Pro cells must prove that per-stream or merged retained bytes do not exceed 1 MiB, cumulative bytes are accurate, both tail nonces are visible, both omitted prefix sentinels do not enter the model, DOM, PTY, ACP update, or durable transcript, and process trees, leases, ports, and terminal handles are cleared after completion.
+- Flash and Pro process requests above 32 KiB through Headless, raw PTY TUI,
+  production Chromium Web, and ACP. The first Provider payload may contain only
+  a bounded preview and artifact ID; hidden middle content may appear only after
+  the matching durable `ReadPromptArtifact` result, and completed cold loads
+  must not replay Provider requests.
 - The first CLI holds the session during tool execution; the second same-session CLI must return a structured occupied error without writing input; after the first CLI exits, the third CLI must recover that session and complete writes and Bash verification.
 - An unwrapped truncated JSON record is injected at the end of a complete session; the second CLI must recover original history, complete Write/Bash tasks, and make every line of the final transcript legal JSON again.

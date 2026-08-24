@@ -15,7 +15,7 @@ Reads file content, supports text, images, PDF, Jupyter Notebook.
 | `limit` | number | | Number of lines to read (default 2000) |
 | `encoding` | string | | File encoding (default utf-8) |
 
-**Type**: ReadOnly  
+**Type**: ReadOnly
 **Returns**: File content with line numbers
 
 ### Write
@@ -402,6 +402,22 @@ This tool is only valid when current permission mode is Plan. If compressed cont
 
 ## System Tools
 
+### ReadPromptArtifact
+
+Reads a large user request from the current Session's private storage in bounded
+chunks. Blade provides an opaque `artifact_id` when user text exceeds 32 KiB.
+Start at offset `0` and continue from the returned offset until the result
+contains `[End of prompt artifact]`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `artifact_id` | string | ✅ | 64-character lowercase hexadecimal ID supplied in the user message |
+| `offset` | number | | UTF-8 byte offset; defaults to `0` |
+| `limit` | number | | Bytes per read, from `4` through `65536`; defaults to `24576` |
+
+**Type**: ReadOnly
+**Features**: Session isolation, content-hash verification, UTF-8 boundary alignment, and no host-path exposure
+
 ### MemoryRead
 
 Reads project memory files. Project knowledge automatically recorded by the Agent persists across sessions.
@@ -503,6 +519,7 @@ See the [Permission System](/en/configuration/permissions.md) section for detail
 | Tasks | TaskList | ReadOnly | List current tasks |
 | Plan | EnterPlanMode | ReadOnly | Enter read-only research mode |
 | Plan | ExitPlanMode | ReadOnly | Exit and submit plan |
+| System | ReadPromptArtifact | ReadOnly | Read a Session-private large user request in chunks |
 | System | MemoryRead | ReadOnly | Read project memory file |
 | System | MemoryWrite | Write | Save project memory |
 | System | AskUserQuestion | ReadOnly | Ask user a question |
