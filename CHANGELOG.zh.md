@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.88] - 2026-08-25
+
+### 修复
+- CI coverage 在执行浏览器集成测试前会显式安装并缓存固定版本的 Playwright
+  Chromium Runtime
+
 ## [0.10.87] - 2026-08-25
 
 ### 新增

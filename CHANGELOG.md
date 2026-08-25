@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.88] - 2026-08-25
+
+### Fixed
+- CI coverage now explicitly installs and caches the pinned Playwright Chromium
+  runtime before executing browser integration tests
+
 ## [0.10.87] - 2026-08-25
 
 ### Added
