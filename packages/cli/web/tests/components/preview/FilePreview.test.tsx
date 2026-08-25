@@ -558,6 +558,23 @@ describe('FilePreview', () => {
     ).toBe('664px');
   });
 
+  test('fills the workspace without a resize handle when maximized', async () => {
+    const { FilePreview } = await import('../../../src/components/preview/FilePreview');
+    fetchMock.mockResolvedValue(createJsonResponse([]));
+
+    await act(async () => {
+      root.render(<FilePreview maximized />);
+    });
+
+    const preview = container.querySelector<HTMLElement>(
+      '[data-testid="file-preview"]'
+    );
+    expect(preview?.style.width).toBe('100%');
+    expect(preview?.style.maxWidth).toBe('none');
+    expect(preview?.className).toContain('shadow-none');
+    expect(container.querySelector('[role="separator"]')).toBeNull();
+  });
+
   test('reloads the tree when only the current session projectPath changes and sends exact directory headers', async () => {
     const { FilePreview } = await import('../../../src/components/preview/FilePreview');
 

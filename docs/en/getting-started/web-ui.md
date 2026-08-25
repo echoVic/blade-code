@@ -110,6 +110,12 @@ The right-side Preview panel includes a Browser tab for local development
 servers and HTTP(S) pages. Its toolbar provides back, forward, reload, address
 navigation, and an explicit open-in-system-browser action.
 
+Use the global control in the upper-right corner to maximize Preview across the
+workspace, then select it again to restore the previous split width. Maximized
+Preview keeps the sidebar and application header visible and floats the current
+Session composer over the bottom of the content. Expand its status row to inspect
+the conversation, context usage, cache hit rate, and current run phase.
+
 Browser history lives only for the current Preview panel lifecycle and is capped
 at 50 entries. Blade accepts only HTTP(S) addresses and rejects credential-bearing
 URLs and Blade Web's own origin. Pages run in a no-referrer sandboxed iframe.

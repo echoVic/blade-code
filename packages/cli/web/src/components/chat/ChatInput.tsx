@@ -873,13 +873,17 @@ export function ChatInput({
 
   return (
     <div
+      data-chat-input-shell
       className={
         variant === 'task'
           ? 'bg-transparent'
           : 'py-2.5 border-t border-[hsl(var(--deck-hairline))] bg-[hsl(var(--deck-canvas))]'
       }
     >
-      <div className={variant === 'task' ? 'w-full' : 'px-4 w-full md:px-6'}>
+      <div
+        data-chat-input-inner
+        className={variant === 'task' ? 'w-full' : 'px-4 w-full md:px-6'}
+      >
         <div
           className={`relative border rounded-lg bg-[hsl(var(--deck-surface))] transition-all duration-200 flex flex-col ${
             variant === 'task'

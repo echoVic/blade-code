@@ -8,12 +8,17 @@
   redundant title row or close action
 - Desktop users collapse Preview through the existing global toolbar toggle;
   the full-screen compact dialog retains its internal close action
+- A new global maximize/restore control lets Preview occupy the complete
+  workspace while preserving the sidebar, application header, and the user's
+  split-view width
+- Maximized Preview keeps the current Session composer available as a bottom
+  overlay with a status row that expands into conversation and runtime details
 - The panel retains its accessible Preview label while reclaiming vertical
   space on both desktop and compact mobile layouts
 
 ### Tests
-- Added toolbar structure and compact keyboard-focus coverage, plus desktop and
-  mobile production Chromium validation
+- Added toolbar structure, maximize/restore layout, and compact keyboard-focus
+  coverage, plus desktop and mobile production Chromium validation
 - Re-ran the complete Web suite, bundle-size gate, and real DeepSeek embedded
   browser trajectory
 

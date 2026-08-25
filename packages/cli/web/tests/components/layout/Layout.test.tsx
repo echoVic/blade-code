@@ -33,8 +33,44 @@ vi.mock('../../../src/components/layout/Sidebar', () => ({
 }));
 
 vi.mock('../../../src/components/preview/FilePreview', () => ({
-  FilePreview: () => (
-    <div data-testid="mock-file-preview" role="dialog" aria-modal="true">
+  PreviewControls: ({
+    open,
+    maximized,
+    disabled,
+    onToggleMaximized,
+    onTogglePreview,
+  }: {
+    open: boolean;
+    maximized: boolean;
+    disabled: boolean;
+    onToggleMaximized: () => void;
+    onTogglePreview: () => void;
+  }) => (
+    <>
+      {open && (
+        <button
+          type="button"
+          aria-label={maximized ? 'Restore split preview' : 'Maximize preview'}
+          aria-pressed={Boolean(maximized)}
+          onClick={onToggleMaximized}
+          className="hidden lg:inline-flex"
+        />
+      )}
+      <button
+        type="button"
+        aria-label="Toggle preview panel"
+        disabled={disabled}
+        onClick={onTogglePreview}
+      />
+    </>
+  ),
+  FilePreview: ({ maximized }: { maximized?: boolean }) => (
+    <div
+      data-testid="mock-file-preview"
+      data-maximized={maximized ? 'true' : 'false'}
+      role="dialog"
+      aria-modal="true"
+    >
       Preview
     </div>
   ),
@@ -191,6 +227,67 @@ describe('Layout', () => {
     expect(rewind?.disabled).toBe(true);
   });
 
+  test('maximizes preview within the workspace and restores the split view', async () => {
+    const { Layout } = await import('../../../src/components/layout/Layout');
+    const { useAppStore } = await import('../../../src/store/AppStore');
+    useAppStore.setState({ isFilePreviewOpen: true });
+
+    await act(async () => {
+      root.render(
+        <Layout>
+          <button type="button">Workspace action</button>
+        </Layout>
+      );
+    });
+
+    const content = container.querySelector<HTMLElement>(
+      '[data-preview-background="content"]'
+    );
+    const preview = await vi.waitFor(() => {
+      const element = container.querySelector<HTMLElement>(
+        '[data-testid="mock-file-preview"]'
+      );
+      expect(element).toBeTruthy();
+      return element;
+    });
+    expect(preview?.dataset.maximized).toBe('false');
+
+    const maximize = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Maximize preview"]'
+    );
+    expect(maximize?.getAttribute('aria-pressed')).toBe('false');
+    await act(async () => maximize?.click());
+
+    expect(content?.dataset.previewMaximized).toBe('true');
+    expect(preview?.dataset.maximized).toBe('true');
+
+    const restore = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Restore split preview"]'
+    );
+    expect(restore?.getAttribute('aria-pressed')).toBe('true');
+    await act(async () => restore?.click());
+
+    expect(content?.dataset.previewMaximized).toBe('false');
+    expect(preview?.dataset.maximized).toBe('false');
+
+    const maximizeAgain = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Maximize preview"]'
+    );
+    await act(async () => maximizeAgain?.click());
+    const previewToggle = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Toggle preview panel"]'
+    );
+    await act(async () => previewToggle?.click());
+    expect(useAppStore.getState().isFilePreviewOpen).toBe(false);
+
+    await act(async () => previewToggle?.click());
+    expect(
+      container
+        .querySelector('[aria-label="Maximize preview"]')
+        ?.getAttribute('aria-pressed')
+    ).toBe('false');
+  });
+
   test('uses a focus-contained navigation drawer without reserving a mobile rail', async () => {
     const mobileMedia = {
       matches: true,
@@ -227,7 +324,6 @@ describe('Layout', () => {
     expect(closedShell?.className).toContain('fixed');
     expect(closedShell?.className).toContain('-translate-x-full');
     expect(closedShell?.hasAttribute('inert')).toBe(true);
-    expect(closedShell?.getAttribute('aria-hidden')).toBe('true');
 
     await act(async () => open?.click());
     const dialog = container.querySelector<HTMLElement>(
@@ -298,9 +394,11 @@ describe('Layout', () => {
 
     for (const background of [sidebarShell, header, content]) {
       expect(background?.hasAttribute('inert')).toBe(true);
-      expect(background?.getAttribute('aria-hidden')).toBe('true');
     }
     expect(preview.hasAttribute('inert')).toBe(false);
     expect(preview.getAttribute('aria-modal')).toBe('true');
+    expect(
+      container.querySelector('[aria-label="Maximize preview"]')?.className
+    ).toContain('hidden');
   });
 });

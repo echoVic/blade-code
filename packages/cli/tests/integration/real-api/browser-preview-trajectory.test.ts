@@ -298,6 +298,55 @@ describe
 
         await page.getByRole('button', { name: 'Toggle preview panel' }).click();
         await page.getByRole('tab', { name: 'Browser' }).click();
+        const previewPanel = page.locator('[data-testid="file-preview"]');
+        const splitBounds = await previewPanel.boundingBox();
+        if (!splitBounds) throw new Error('Split Preview panel has no bounds');
+        await page.getByRole('button', { name: 'Maximize preview' }).click();
+        await page
+          .getByRole('button', { name: 'Restore split preview' })
+          .waitFor({ state: 'visible' });
+        const maximizedBounds = await previewPanel.boundingBox();
+        if (!maximizedBounds) {
+          throw new Error('Maximized Preview panel has no bounds');
+        }
+        expect(maximizedBounds.x).toBeLessThan(splitBounds.x);
+        expect(maximizedBounds.width).toBeGreaterThan(splitBounds.width);
+        const previewBackground = page.locator('[data-preview-background="content"]');
+        expect(await previewBackground.getAttribute('data-preview-maximized')).toBe(
+          'true'
+        );
+        const floatingComposer = page.locator('[data-chat-composer-dock]');
+        await floatingComposer.waitFor({ state: 'visible' });
+        const composerBounds = await floatingComposer.boundingBox();
+        if (!composerBounds) {
+          throw new Error('Maximized Preview composer has no bounds');
+        }
+        expect(composerBounds.x).toBeGreaterThan(maximizedBounds.x);
+        expect(composerBounds.x + composerBounds.width).toBeLessThan(
+          maximizedBounds.x + maximizedBounds.width
+        );
+        expect(composerBounds.y + composerBounds.height).toBeLessThanOrEqual(
+          maximizedBounds.y + maximizedBounds.height
+        );
+        const activity = page.locator('[data-preview-status-disclosure]');
+        await activity.locator('summary').click();
+        await page
+          .locator('[data-preview-activity-details]')
+          .waitFor({ state: 'visible' });
+        await activity.locator('summary').click();
+        expect(await page.getByRole('separator').count()).toBe(0);
+        expect(await page.getByRole('button', { name: 'Close preview' }).count()).toBe(
+          0
+        );
+        await page.getByRole('button', { name: 'Restore split preview' }).click();
+        await page
+          .getByRole('button', { name: 'Maximize preview' })
+          .waitFor({ state: 'visible' });
+        expect(await previewBackground.getAttribute('data-preview-maximized')).toBe(
+          'false'
+        );
+        expect(await page.getByRole('separator').count()).toBe(1);
+
         const address = page.locator('[data-preview-browser-address]');
         await address.fill(`${fixtureOrigin}/one`);
         await address.press('Enter');

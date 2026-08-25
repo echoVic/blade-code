@@ -15,8 +15,6 @@ export const en = {
   'layout.workspace.pathAria': 'Workspace path',
   'layout.workspace.empty': 'No workspace',
   'layout.action.rewind': 'Rewind session',
-  'layout.action.filePreview': 'Preview panel',
-  'layout.action.filePreviewToggle': 'Toggle preview panel',
   'layout.action.openNavigation': 'Open navigation',
 
   // -------- Terminal --------

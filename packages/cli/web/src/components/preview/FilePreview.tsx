@@ -1,6 +1,7 @@
 import type { Monaco } from '@monaco-editor/react';
-import { Loader2, Search, X } from 'lucide-react';
+import { ArrowUpRight, FileCode, Loader2, Search, X } from 'lucide-react';
 import {
+  forwardRef,
   lazy,
   type PointerEvent as ReactPointerEvent,
   Suspense,
@@ -17,7 +18,7 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui/SegmentedTabs';
-import { useT } from '@/i18n';
+import { useLocale, useT } from '@/i18n';
 import { registerMonacoTheme } from '@/lib/monacoTheme';
 import { cn } from '@/lib/utils';
 import {
@@ -54,6 +55,75 @@ type FullDiffPayload = {
 const DEFAULT_PREVIEW_WIDTH = 640;
 const MIN_PREVIEW_WIDTH = 360;
 const MAX_PREVIEW_WIDTH = 960;
+
+interface PreviewControlsProps {
+  open: boolean;
+  maximized?: boolean;
+  disabled: boolean;
+  onToggleMaximized: () => void;
+  onTogglePreview: () => void;
+}
+
+// Keep Preview-only header controls behind the same lazy boundary as the panel.
+export const PreviewControls = forwardRef<HTMLButtonElement, PreviewControlsProps>(
+  function PreviewControls(
+    { open, maximized, disabled, onToggleMaximized, onTogglePreview },
+    ref
+  ) {
+    const t = useT();
+    const { locale } = useLocale();
+    const labels =
+      locale === 'zh'
+        ? {
+            maximize: '全屏预览',
+            restore: '还原分栏预览',
+          }
+        : {
+            maximize: 'Maximize preview',
+            restore: 'Restore split preview',
+          };
+    const sizeLabel = maximized ? labels.restore : labels.maximize;
+
+    return (
+      <>
+        {open && (
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-pressed={Boolean(maximized)}
+            aria-label={sizeLabel}
+            title={sizeLabel}
+            onClick={onToggleMaximized}
+            className={cn(
+              'hidden h-8 w-8 rounded-md text-[hsl(var(--deck-ink-faint))] hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))] lg:inline-flex',
+              maximized && 'bg-[hsl(var(--deck-surface))] text-[hsl(var(--deck-ink))]'
+            )}
+          >
+            <ArrowUpRight
+              className={cn('h-4 w-4 transition-transform', maximized && 'rotate-180')}
+            />
+          </Button>
+        )}
+        <Button
+          ref={ref}
+          variant="ghost"
+          size="icon"
+          onClick={onTogglePreview}
+          disabled={disabled}
+          title={t('preview.title')}
+          aria-label={locale === 'zh' ? '切换预览面板' : 'Toggle preview panel'}
+          className={cn(
+            'h-8 w-8 rounded-md text-[hsl(var(--deck-ink-faint))] hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))]',
+            open &&
+              'bg-[hsl(var(--deck-accent-soft))] text-[hsl(var(--deck-accent))] hover:bg-[hsl(var(--deck-accent-soft))] hover:text-[hsl(var(--deck-accent))]'
+          )}
+        >
+          <FileCode className="h-4 w-4" />
+        </Button>
+      </>
+    );
+  }
+);
 
 function clampPanelWidth(width: number): number {
   const viewportLimit =
@@ -131,9 +201,13 @@ function errorMessage(error: unknown, fallback: string): string {
 
 interface FilePreviewProps {
   returnFocusElement?: HTMLElement | null;
+  maximized?: boolean;
 }
 
-export function FilePreview({ returnFocusElement }: FilePreviewProps = {}) {
+export function FilePreview({
+  returnFocusElement,
+  maximized = false,
+}: FilePreviewProps = {}) {
   const t = useT();
   const {
     toggleFilePreview,
@@ -749,35 +823,46 @@ export function FilePreview({ returnFocusElement }: FilePreviewProps = {}) {
       aria-modal={isCompact || undefined}
       aria-label={t('preview.title')}
       onKeyDown={handlePanelKeyDown}
-      style={{ width: displayedWidth, maxWidth: '72vw' }}
-      className="relative flex h-full min-w-[360px] shrink-0 flex-col border-l border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-canvas))] shadow-xl max-lg:fixed max-lg:inset-0 max-lg:z-[60] max-lg:!h-dvh max-lg:!w-full max-lg:!max-w-full max-lg:min-w-0 max-lg:border-l-0"
+      style={
+        maximized
+          ? { width: '100%', maxWidth: 'none' }
+          : { width: displayedWidth, maxWidth: '72vw' }
+      }
+      className={cn(
+        'relative flex h-full flex-col bg-[hsl(var(--deck-canvas))] max-lg:fixed max-lg:inset-0 max-lg:z-[60] max-lg:!h-dvh max-lg:!w-full max-lg:!max-w-full max-lg:min-w-0 max-lg:border-l-0',
+        maximized
+          ? 'absolute inset-0 z-20 min-w-0 border-l-0 shadow-none'
+          : 'border-l shadow-xl min-w-[360px] shrink-0 border-[hsl(var(--deck-border))]'
+      )}
     >
-      <div
-        role="separator"
-        aria-label={t('preview.action.resize')}
-        aria-orientation="vertical"
-        aria-valuemin={MIN_PREVIEW_WIDTH}
-        aria-valuemax={MAX_PREVIEW_WIDTH}
-        aria-valuenow={displayedWidth}
-        aria-hidden={isCompact || undefined}
-        tabIndex={isCompact ? -1 : 0}
-        onPointerDown={handleResizeStart}
-        onPointerMove={handleResizeMove}
-        onPointerUp={handleResizeEnd}
-        onPointerCancel={handleResizeEnd}
-        onDoubleClick={() => setPreviewWidth(DEFAULT_PREVIEW_WIDTH)}
-        onKeyDown={(event) => {
-          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-          event.preventDefault();
-          setPreviewWidth(displayedWidth + (event.key === 'ArrowLeft' ? 24 : -24));
-        }}
-        className={cn(
-          'absolute inset-y-0 -left-1 z-20 w-2 cursor-col-resize touch-none outline-none max-lg:hidden',
-          'after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-transparent after:transition-colors',
-          'hover:after:bg-[hsl(var(--deck-accent)/0.6)] focus-visible:after:bg-[hsl(var(--deck-accent))]',
-          isResizing && 'after:bg-[hsl(var(--deck-accent))]'
-        )}
-      />
+      {!maximized && (
+        <div
+          role="separator"
+          aria-label={t('preview.action.resize')}
+          aria-orientation="vertical"
+          aria-valuemin={MIN_PREVIEW_WIDTH}
+          aria-valuemax={MAX_PREVIEW_WIDTH}
+          aria-valuenow={displayedWidth}
+          aria-hidden={isCompact || undefined}
+          tabIndex={isCompact ? -1 : 0}
+          onPointerDown={handleResizeStart}
+          onPointerMove={handleResizeMove}
+          onPointerUp={handleResizeEnd}
+          onPointerCancel={handleResizeEnd}
+          onDoubleClick={() => setPreviewWidth(DEFAULT_PREVIEW_WIDTH)}
+          onKeyDown={(event) => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            event.preventDefault();
+            setPreviewWidth(displayedWidth + (event.key === 'ArrowLeft' ? 24 : -24));
+          }}
+          className={cn(
+            'absolute inset-y-0 -left-1 z-20 w-2 cursor-col-resize touch-none outline-none max-lg:hidden',
+            'after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-transparent after:transition-colors',
+            'hover:after:bg-[hsl(var(--deck-accent)/0.6)] focus-visible:after:bg-[hsl(var(--deck-accent))]',
+            isResizing && 'after:bg-[hsl(var(--deck-accent))]'
+          )}
+        />
+      )}
       <Tabs
         value={activeTab}
         onValueChange={(value: string) => {
@@ -827,7 +912,7 @@ export function FilePreview({ returnFocusElement }: FilePreviewProps = {}) {
               title={t('preview.action.close')}
               className="h-9 w-9 shrink-0 rounded-md text-[hsl(var(--deck-ink-faint))] hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))]"
             >
-              <X className="h-4 w-4" />
+              <X className="w-4 h-4" />
             </Button>
           )}
         </div>
@@ -918,7 +1003,7 @@ export function FilePreview({ returnFocusElement }: FilePreviewProps = {}) {
                     aria-label={
                       fileQuery ? t('preview.files.searchResultsAria') : undefined
                     }
-                    className="min-h-0 flex-1 overflow-y-auto p-2"
+                    className="overflow-y-auto flex-1 p-2 min-h-0"
                   >
                     {fileQuery ? (
                       fileSearchError ? (
@@ -1052,7 +1137,7 @@ export function FilePreview({ returnFocusElement }: FilePreviewProps = {}) {
         <TabsContent
           value="browser"
           forceMount
-          className="min-h-0 flex-1 overflow-hidden"
+          className="overflow-hidden flex-1 min-h-0"
         >
           <BrowserPreview />
         </TabsContent>

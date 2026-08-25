@@ -40,7 +40,7 @@ vi.mock('../../../src/components/chat/ChatInput', () => ({
 }));
 
 vi.mock('../../../src/components/chat/StatusBar', () => ({
-  StatusBar: () => null,
+  StatusBar: () => <div data-testid="status-bar">Status details</div>,
 }));
 
 import { ChatView } from '../../../src/components/chat/ChatView';
@@ -81,6 +81,7 @@ describe('ChatView session event recovery', () => {
       errorContext: null,
       isStreaming: true,
       isStopping: false,
+      agentPhase: 'running',
       sessionEventConnectionState: 'offline',
       reconnectSessionEvents,
       unsubscribeFromEvents,
@@ -125,6 +126,30 @@ describe('ChatView session event recovery', () => {
     expect(
       container.querySelector<HTMLButtonElement>('[data-testid="chat-input"]')?.disabled
     ).toBe(false);
+  });
+
+  it('keeps one composer and expands task information for preview overlay mode', async () => {
+    await act(async () => {
+      root.render(<ChatView />);
+    });
+
+    const disclosure = container.querySelector<HTMLDetailsElement>(
+      '[data-preview-status-disclosure]'
+    );
+    const summary = disclosure?.querySelector('summary');
+    expect(summary?.textContent).toContain('Generating');
+    expect(container.querySelectorAll('[data-testid="chat-input"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-testid="chat-list"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-testid="status-bar"]')).toHaveLength(1);
+
+    await act(async () => {
+      summary?.click();
+      disclosure?.dispatchEvent(new Event('toggle'));
+    });
+
+    expect(disclosure?.open).toBe(true);
+    expect(container.querySelectorAll('[data-testid="chat-list"]')).toHaveLength(2);
+    expect(container.querySelectorAll('[data-testid="status-bar"]')).toHaveLength(2);
   });
 
   it('keeps the store-owned event subscription across StrictMode effect replay', async () => {

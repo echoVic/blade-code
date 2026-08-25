@@ -1,4 +1,4 @@
-import { FileCode, GitBranch, Menu, RotateCcw } from 'lucide-react';
+import { GitBranch, Menu, RotateCcw } from 'lucide-react';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { RewindDialog } from '@/components/chat/RewindDialog';
 import { CapacityMeter } from '@/components/tasks/CapacityMeter';
@@ -26,9 +26,15 @@ const loadTaskSwitcher = () =>
     default: module.TaskSwitcher,
   }));
 const TaskSwitcher = lazy(loadTaskSwitcher);
+const loadFilePreview = () => import('@/components/preview/FilePreview');
 const FilePreview = lazy(() =>
-  import('@/components/preview/FilePreview').then((module) => ({
+  loadFilePreview().then((module) => ({
     default: module.FilePreview,
+  }))
+);
+const PreviewControls = lazy(() =>
+  loadFilePreview().then((module) => ({
+    default: module.PreviewControls,
   }))
 );
 const TerminalPanel = lazy(() =>
@@ -88,6 +94,7 @@ export function Layout({ children }: LayoutProps) {
   const selectedProjectPath = useSessionStore((state) => state.selectedProjectPath);
   const [gitBranch, setGitBranch] = useState<string | null>(null);
   const [isRewindOpen, setIsRewindOpen] = useState(false);
+  const [isFilePreviewMaximized, setIsFilePreviewMaximized] = useState<boolean>();
   const [isMobile, setIsMobile] = useState(
     () =>
       typeof window !== 'undefined' &&
@@ -239,6 +246,7 @@ export function Layout({ children }: LayoutProps) {
       ? sessionRefKey(currentSessionRef)
       : `project:${selectedProjectPath ?? 'none'}`;
   const previewModalOpen = isFilePreviewOpen && isPreviewModalViewport;
+  const previewWorkspaceMaximized = isFilePreviewOpen && isFilePreviewMaximized;
 
   return (
     <div className="flex h-screen overflow-hidden bg-[hsl(var(--deck-canvas))]">
@@ -258,9 +266,6 @@ export function Layout({ children }: LayoutProps) {
           isMobile && isSidebarOpen && !previewModalOpen
             ? t('sidebar.navigationAria')
             : undefined
-        }
-        aria-hidden={
-          previewModalOpen || (isMobile && !isSidebarOpen) ? true : undefined
         }
         inert={previewModalOpen || (isMobile && !isSidebarOpen) ? true : undefined}
         onKeyDown={handleMobileSidebarKeyDown}
@@ -289,8 +294,7 @@ export function Layout({ children }: LayoutProps) {
 
       <div className="flex flex-col flex-1 min-w-0">
         <header
-          aria-hidden={previewModalOpen || undefined}
-          inert={previewModalOpen || undefined}
+          inert={previewModalOpen}
           className="relative z-10 flex h-14 items-center gap-2 border-b border-[hsl(var(--deck-hairline))] bg-[hsl(var(--deck-canvas))]/90 px-3 backdrop-blur-md sm:gap-4 sm:px-6"
         >
           {isMobile && (
@@ -388,41 +392,39 @@ export function Layout({ children }: LayoutProps) {
               >
                 <RotateCcw className="w-4 h-4" />
               </Button>
-              <Button
-                ref={previewButtonRef}
-                variant="ghost"
-                size="icon"
-                onClick={() => {
-                  if (isFilePreviewOpen) {
-                    toggleFilePreview();
-                    return;
+              <Suspense fallback={null}>
+                <PreviewControls
+                  ref={previewButtonRef}
+                  open={isFilePreviewOpen}
+                  maximized={isFilePreviewMaximized}
+                  disabled={mainView === 'board'}
+                  onToggleMaximized={() =>
+                    setIsFilePreviewMaximized((current) => !current)
                   }
-                  openFilePreview(
-                    (!currentSessionRef || isTemporarySession) && previewRequestId === 0
-                      ? { tab: 'files' }
-                      : undefined
-                  );
-                }}
-                disabled={mainView === 'board'}
-                title={t('layout.action.filePreview')}
-                aria-label={t('layout.action.filePreviewToggle')}
-                className={cn(
-                  'h-8 w-8 rounded-md text-[hsl(var(--deck-ink-faint))] hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))]',
-                  isFilePreviewOpen &&
-                    'bg-[hsl(var(--deck-accent-soft))] text-[hsl(var(--deck-accent))] hover:bg-[hsl(var(--deck-accent-soft))] hover:text-[hsl(var(--deck-accent))]'
-                )}
-              >
-                <FileCode className="w-4 h-4" />
-              </Button>
+                  onTogglePreview={() => {
+                    if (isFilePreviewOpen) {
+                      setIsFilePreviewMaximized(false);
+                      toggleFilePreview();
+                      return;
+                    }
+                    openFilePreview(
+                      (!currentSessionRef || isTemporarySession) &&
+                        previewRequestId === 0
+                        ? { tab: 'files' }
+                        : undefined
+                    );
+                  }}
+                />
+              </Suspense>
             </div>
           </div>
         </header>
         <main className="flex-1 overflow-hidden relative flex bg-[hsl(var(--deck-canvas))]">
           <div
             data-preview-background="content"
-            aria-hidden={previewModalOpen || undefined}
-            inert={previewModalOpen || undefined}
-            className="flex relative flex-col flex-1 min-w-0"
+            data-preview-maximized={previewWorkspaceMaximized}
+            inert={previewModalOpen}
+            className="relative flex min-w-0 flex-1 flex-col"
           >
             {isSettingsOpen ? (
               <Suspense fallback={null}>
@@ -437,6 +439,7 @@ export function Layout({ children }: LayoutProps) {
               <FilePreview
                 key={previewWorkspaceKey}
                 returnFocusElement={previewButtonRef.current}
+                maximized={previewWorkspaceMaximized}
               />
             </Suspense>
           )}

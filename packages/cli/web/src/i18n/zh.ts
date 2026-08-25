@@ -15,8 +15,6 @@ export const zh: Dict = {
   'layout.workspace.pathAria': '工作区路径',
   'layout.workspace.empty': '未选择工作区',
   'layout.action.rewind': '回溯会话',
-  'layout.action.filePreview': '预览面板',
-  'layout.action.filePreviewToggle': '切换预览面板',
   'layout.action.openNavigation': '打开导航',
 
   // Terminal

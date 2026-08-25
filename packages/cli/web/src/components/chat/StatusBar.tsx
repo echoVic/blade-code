@@ -106,7 +106,10 @@ export function StatusBar() {
   const state = usagePercent > 95 ? 'danger' : usagePercent > 80 ? 'warn' : 'safe';
 
   return (
-    <div className="flex items-center gap-2 border-t border-[hsl(var(--deck-hairline))] bg-[hsl(var(--deck-canvas-veil))]/70 px-3 py-2 font-mono text-[11px] text-[hsl(var(--deck-ink-muted))] backdrop-blur-sm sm:gap-4 sm:px-5">
+    <div
+      data-chat-status-bar
+      className="flex items-center gap-2 border-t border-[hsl(var(--deck-hairline))] bg-[hsl(var(--deck-canvas-veil))]/70 px-3 py-2 font-mono text-[11px] text-[hsl(var(--deck-ink-muted))] backdrop-blur-sm sm:gap-4 sm:px-5"
+    >
       <div className="flex items-center gap-2 sm:gap-3">
         <span className="deck-eyebrow text-[hsl(var(--deck-ink-faint))]">
           {t('status.context')}
