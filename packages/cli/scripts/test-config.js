@@ -43,6 +43,7 @@ export const testTypes = {
       'tests/integration/real-api/foreground-command-handoff-trajectory.test.ts',
       'tests/integration/real-api/token-budget-handoff-trajectory.test.ts',
       'tests/integration/real-api/browser-preview-trajectory.test.ts',
+      'tests/integration/real-api/browser-tool-trajectory.test.ts',
       'tests/integration/real-api/large-prompt-offload-trajectory.test.ts',
       'tests/integration/real-api/compaction-rich-media-trajectory.test.ts',
       'tests/integration/real-api/foreground-provider-recovery-trajectory.test.ts',

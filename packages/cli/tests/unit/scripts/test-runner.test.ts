@@ -170,6 +170,32 @@ describe.skipIf(process.platform === 'win32')('test runner process ownership', (
     expect(source).toContain("getByRole('button', { name: 'Reload page' })");
   });
 
+  it('keeps the complete native Browser Tool matrix release-blocking', async () => {
+    const file = 'tests/integration/real-api/browser-tool-trajectory.test.ts';
+    expect(testTypes.realApiQualification.files).toContain(file);
+    const source = await readFile(
+      path.resolve(import.meta.dirname, '../../..', file),
+      'utf8'
+    );
+    expect(source).toContain(
+      "const surfaces = ['headless', 'pty', 'web', 'acp'] as const"
+    );
+    expect(source).toContain('matrix.length !== 8');
+    expect(source).toContain(
+      'select:BrowserNavigate,BrowserSnapshot,BrowserInteract,BrowserWait,BrowserInspect,BrowserPage'
+    );
+    for (const toolName of [
+      'BrowserNavigate',
+      'BrowserSnapshot',
+      'BrowserInteract',
+      'BrowserWait',
+      'BrowserInspect',
+      'BrowserPage',
+    ]) {
+      expect(source).toContain(`'${toolName}'`);
+    }
+  });
+
   it('keeps raw PTY marker authorities in the release-blocking matrix', () => {
     const files = testTypes.realApiQualification.files;
 
