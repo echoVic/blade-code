@@ -803,13 +803,18 @@ describe('FilePreview', () => {
     const close = container.querySelector<HTMLButtonElement>(
       '[aria-label="Close preview"]'
     );
+    const toolbar = container.querySelector<HTMLElement>('[data-preview-toolbar]');
+    expect(toolbar).toBeTruthy();
+    expect(toolbar?.querySelector('[role="tablist"]')).toBeTruthy();
+    expect(close?.parentElement).toBe(toolbar);
+    expect(toolbar?.textContent?.replace(/\s+/g, '')).toBe('DiffFilesLogsBrowser');
+    expect(toolbar?.textContent).not.toContain('Preview');
     expect(document.activeElement).toBe(close);
 
     await act(async () => {
       close?.dispatchEvent(
         new KeyboardEvent('keydown', {
           key: 'Tab',
-          shiftKey: true,
           bubbles: true,
         })
       );

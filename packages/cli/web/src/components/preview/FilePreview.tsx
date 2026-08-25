@@ -778,23 +778,6 @@ export function FilePreview({ returnFocusElement }: FilePreviewProps = {}) {
           isResizing && 'after:bg-[hsl(var(--deck-accent))]'
         )}
       />
-      <div className="flex items-center justify-between px-4 h-12 border-b border-[hsl(var(--deck-border))] shrink-0">
-        <span className="font-normal text-[13px] text-[hsl(var(--deck-ink-muted))] font-mono">
-          {t('preview.title')}
-        </span>
-        <Button
-          ref={closeButtonRef}
-          variant="ghost"
-          size="icon"
-          onClick={toggleFilePreview}
-          aria-label={t('preview.action.close')}
-          title={t('preview.action.close')}
-          className="h-8 w-8 text-[hsl(var(--deck-ink-faint))] hover:text-[hsl(var(--deck-ink))] hover:bg-[hsl(var(--deck-surface))]"
-        >
-          <X className="w-4 h-4" />
-        </Button>
-      </div>
-
       <Tabs
         value={activeTab}
         onValueChange={(value: string) => {
@@ -804,8 +787,11 @@ export function FilePreview({ returnFocusElement }: FilePreviewProps = {}) {
         }}
         className="flex flex-col flex-1 min-h-0"
       >
-        <div className="px-4 py-3 border-b border-[hsl(var(--deck-border))]">
-          <TabsList className="grid h-9 w-full grid-cols-4 rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] p-1">
+        <div
+          data-preview-toolbar
+          className="flex shrink-0 items-center gap-2 border-b border-[hsl(var(--deck-border))] px-3 py-3"
+        >
+          <TabsList className="grid h-9 min-w-0 flex-1 grid-cols-4 rounded-md border border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface))] p-1">
             <TabsTrigger
               value="diff"
               className="px-2 font-mono text-[12px] text-[hsl(var(--deck-ink-muted))] data-[state=active]:bg-[hsl(var(--deck-canvas-veil))] data-[state=active]:text-[hsl(var(--deck-ink))]"
@@ -831,6 +817,17 @@ export function FilePreview({ returnFocusElement }: FilePreviewProps = {}) {
               {t('preview.tab.browser')}
             </TabsTrigger>
           </TabsList>
+          <Button
+            ref={closeButtonRef}
+            variant="ghost"
+            size="icon"
+            onClick={toggleFilePreview}
+            aria-label={t('preview.action.close')}
+            title={t('preview.action.close')}
+            className="h-9 w-9 shrink-0 rounded-md text-[hsl(var(--deck-ink-faint))] hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))]"
+          >
+            <X className="h-4 w-4" />
+          </Button>
         </div>
 
         <TabsContent value="diff" className="overflow-hidden flex-1 mt-0">
