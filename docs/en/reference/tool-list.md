@@ -233,6 +233,8 @@ Security boundaries:
 - unapproved cross-origin top-level navigation, redirects, and popups are blocked;
 - cross-origin iframe refs and credential-like password, OTP, API key, token, or
   card-security-code controls reject `fill` and `type`;
+- a click's accept/dismiss policy is consumed by one dialog; downloads are cancelled
+  and return `browser_download_blocked`;
 - arbitrary selectors, JavaScript evaluation, uploads, retained downloads,
   cookie/storage reads, browser permissions, and persistent profiles are absent;
 - console/network diagnostics omit headers, bodies, cookies, and query values;

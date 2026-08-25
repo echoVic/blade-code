@@ -10,7 +10,10 @@ import type {
   Response,
   Route,
 } from 'playwright';
-import { BrowserArtifactStore } from './BrowserArtifactStore.js';
+import {
+  BrowserArtifactStore,
+  createBrowserSessionIdentity,
+} from './BrowserArtifactStore.js';
 import { BrowserOperationGate } from './BrowserOperationGate.js';
 import {
   type BrowserContextLease,
@@ -28,7 +31,7 @@ import {
 } from './BrowserSecurity.js';
 import { BrowserSnapshotAuthority } from './BrowserSnapshotAuthority.js';
 import {
-  BROWSER_POPUP_SETTLE_TIMEOUT_MS,
+  BROWSER_CLICK_SETTLE_TIMEOUT_MS,
   DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
   DEFAULT_BROWSER_DIAGNOSTIC_RESULT_ENTRIES,
   DEFAULT_BROWSER_NAVIGATION_TIMEOUT_MS,
@@ -75,7 +78,7 @@ interface PageState {
   openerPageId?: string;
   transientOrigin?: string;
   blockedCandidateOrigin?: string;
-  popupPending?: boolean;
+  downloadBlocked?: boolean;
   nextDialogAction?: 'accept' | 'dismiss';
   createdSequence: number;
 }
@@ -221,10 +224,12 @@ export class SessionBrowserRuntime {
   private readonly popupOpeners = new WeakMap<Page, string>();
   private readonly pageRegistrations = new WeakMap<Page, Promise<void>>();
   private readonly blockedPopups: BlockedPopup[] = [];
+  private readonly downloadCancellations = new WeakMap<Download, Promise<void>>();
   private readonly consoleEntries: BrowserDiagnosticEntry[] = [];
   private readonly pageErrorEntries: BrowserDiagnosticEntry[] = [];
   private readonly networkEntries: BrowserDiagnosticEntry[] = [];
   private readonly pendingPageRegistrations = new Set<Promise<void>>();
+  private readonly pendingDownloadCancellations = new Set<Promise<void>>();
   private lease?: BrowserContextLease;
   private context?: BrowserContext;
   private selectedPageId?: string;
@@ -236,14 +241,18 @@ export class SessionBrowserRuntime {
   private disposed = false;
 
   constructor(
-    private readonly sessionIdentity: string,
+    projectPath: string,
+    sessionId: string,
     options: SessionBrowserRuntimeOptions = {}
   ) {
     this.pool = options.pool ?? getBrowserProcessPool();
-    this.artifacts = new BrowserArtifactStore(sessionIdentity, {
-      storageRoot: options.storageRoot,
-      exposePaths: options.exposeArtifactPaths,
-    });
+    this.artifacts = new BrowserArtifactStore(
+      createBrowserSessionIdentity(projectPath, sessionId),
+      {
+        storageRoot: options.storageRoot,
+        exposePaths: options.exposeArtifactPaths,
+      }
+    );
   }
 
   navigate(options: BrowserNavigateOptions): Promise<BrowserObservation> {
@@ -412,12 +421,12 @@ export class SessionBrowserRuntime {
         'action timeout'
       );
       const state = this.requireExistingPage(options.pageId);
-      this.assertExpectedOrigin(state, options.expectedOrigin);
+      const expectedOrigin = this.assertExpectedOrigin(state, options.expectedOrigin);
       const snapshotInput = {
         pageId: state.id,
         snapshotId: options.snapshotId,
         pageGeneration: state.generation,
-        origin: options.expectedOrigin,
+        origin: expectedOrigin,
       };
       const authority = this.snapshots.validateSnapshot(snapshotInput);
       const validation = options.ref
@@ -492,26 +501,51 @@ export class SessionBrowserRuntime {
       }
 
       state.blockedCandidateOrigin = undefined;
+      state.downloadBlocked = false;
       this.invalidatePage(state);
       const generation = this.runtimeGeneration;
       this.activeInteractionPageId = state.id;
+      let actionFailed = false;
+      let actionError: unknown;
+      const downloadPromise =
+        options.action.kind === 'click'
+          ? state.page
+              .waitForEvent('download', {
+                timeout: Math.min(timeout, BROWSER_CLICK_SETTLE_TIMEOUT_MS),
+              })
+              .catch(() => undefined)
+          : undefined;
       try {
         if (options.action.kind === 'click') {
           state.nextDialogAction = options.action.dialog?.action;
         }
         await this.executeAction(state.page, locator, options.action, timeout, signal);
-        if (options.action.kind === 'click' && state.popupPending) {
-          await delay(Math.min(timeout, BROWSER_POPUP_SETTLE_TIMEOUT_MS), signal);
+        const download = downloadPromise
+          ? await raceWithAbort(downloadPromise, signal)
+          : undefined;
+        if (download) {
+          this.trackDownloadCancellation(state, download);
         }
         await this.settlePageRegistrations(signal);
+        await this.settleDownloadCancellations(signal);
       } catch (error) {
-        return this.uncertainInteraction(state, generation, error);
+        actionFailed = true;
+        actionError = error;
       } finally {
         state.nextDialogAction = undefined;
-        state.popupPending = false;
         if (this.activeInteractionPageId === state.id) {
           this.activeInteractionPageId = undefined;
         }
+      }
+      if (state.downloadBlocked) {
+        state.downloadBlocked = false;
+        throw new BrowserRuntimeError(
+          'browser_download_blocked',
+          'Browser download was blocked'
+        );
+      }
+      if (actionFailed) {
+        return this.uncertainInteraction(state, generation, actionError);
       }
       if (state.blockedCandidateOrigin) {
         return {
@@ -566,7 +600,7 @@ export class SessionBrowserRuntime {
 
   wait(options: BrowserWaitOptions): Promise<BrowserObservation> {
     return this.run(async (signal) => {
-      const state = await this.resolvePage(options.pageId, true, signal);
+      const state = await this.resolvePage(options.pageId, false, signal);
       if (options.expectedOrigin) {
         this.assertExpectedOrigin(state, options.expectedOrigin);
       }
@@ -667,7 +701,7 @@ export class SessionBrowserRuntime {
 
   inspect(options: BrowserInspectOptions): Promise<BrowserInspectResult> {
     return this.run(async (signal) => {
-      const state = await this.resolvePage(options.pageId, true, signal);
+      const state = await this.resolvePage(options.pageId, false, signal);
       if (options.expectedOrigin) {
         this.assertExpectedOrigin(state, options.expectedOrigin);
       }
@@ -1067,7 +1101,7 @@ export class SessionBrowserRuntime {
       void this.dismissDialog(state, dialog);
     });
     page.on('download', (download) => {
-      void this.cancelDownload(state, download);
+      this.trackDownloadCancellation(state, download);
     });
     page.on('popup', (popup) => {
       void this.trackDiscoveredPage(popup, state.id);
@@ -1106,7 +1140,6 @@ export class SessionBrowserRuntime {
       const openerState = this.activeInteractionPageId
         ? this.pages.get(this.activeInteractionPageId)
         : undefined;
-      if (openerState) openerState.popupPending = true;
       if (
         openerState?.authorizedOrigin &&
         candidateOrigin === openerState.authorizedOrigin
@@ -1210,7 +1243,7 @@ export class SessionBrowserRuntime {
     }
   }
 
-  private assertExpectedOrigin(state: PageState, expectedOrigin: string): void {
+  private assertExpectedOrigin(state: PageState, expectedOrigin: string): string {
     const normalizedExpectedOrigin = normalizeExpectedBrowserOrigin(expectedOrigin);
     const currentOrigin = browserOriginFromPageUrl(state.page.url());
     if (
@@ -1223,6 +1256,7 @@ export class SessionBrowserRuntime {
         'Browser page origin changed; capture a new snapshot or navigate explicitly'
       );
     }
+    return normalizedExpectedOrigin;
   }
 
   private async observe(
@@ -1530,7 +1564,9 @@ export class SessionBrowserRuntime {
         MAX_BROWSER_DIAGNOSTIC_TEXT_BYTES
       ),
     });
-    if (state.nextDialogAction === 'accept') {
+    const action = state.nextDialogAction;
+    state.nextDialogAction = undefined;
+    if (action === 'accept') {
       await dialog.accept().catch(() => undefined);
     } else {
       await dialog.dismiss().catch(() => undefined);
@@ -1538,6 +1574,7 @@ export class SessionBrowserRuntime {
   }
 
   private async cancelDownload(state: PageState, download: Download): Promise<void> {
+    state.downloadBlocked = true;
     this.addPageError({
       sequence: ++this.diagnosticSequence,
       pageId: state.id,
@@ -1545,6 +1582,25 @@ export class SessionBrowserRuntime {
       text: 'Browser download was blocked',
     });
     await download.cancel().catch(() => undefined);
+  }
+
+  private trackDownloadCancellation(state: PageState, download: Download): void {
+    if (this.downloadCancellations.has(download)) return;
+    const cancellation = this.cancelDownload(state, download);
+    this.downloadCancellations.set(download, cancellation);
+    this.pendingDownloadCancellations.add(cancellation);
+    void cancellation
+      .finally(() => this.pendingDownloadCancellations.delete(cancellation))
+      .catch(() => undefined);
+  }
+
+  private async settleDownloadCancellations(signal: AbortSignal): Promise<void> {
+    const pending = [...this.pendingDownloadCancellations];
+    if (pending.length === 0) return;
+    await raceWithAbort(
+      Promise.allSettled(pending).then(() => undefined),
+      signal
+    );
   }
 
   private addConsole(entry: BrowserDiagnosticEntry): void {
@@ -1587,7 +1643,7 @@ export class SessionBrowserRuntime {
     this.snapshots.clear();
   }
 
-  private throwIfDisconnected(error: unknown, signal: AbortSignal): never {
+  private throwIfDisconnected(error: unknown, signal: AbortSignal): void {
     if (
       (signal.aborted &&
         signal.reason instanceof BrowserRuntimeError &&
@@ -1600,6 +1656,5 @@ export class SessionBrowserRuntime {
         { retryable: true }
       );
     }
-    throw error;
   }
 }

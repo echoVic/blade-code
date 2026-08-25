@@ -538,6 +538,8 @@ With injected Playwright-shaped fakes, prove:
 - active and queued pre-disconnect operations fail `browser_disconnected` without
   replay;
 - only later Navigate/Snapshot/Page-open calls acquire a new generation;
+- Wait and Inspect fail with `browser_page_not_found` instead of implicitly
+  recreating a Context after reset or disconnect;
 - disposal settles while Context acquisition is pending and releases a late lease;
 - disposal closes the gate and releases the sole context-closing lease exactly once.
 
@@ -572,8 +574,9 @@ replace this handler.
 - [x] **Step 3: Write failing diagnostics and download tests**
 
 Prove bounded console, page-error, request, response, failure, dialog, popup-cap, and
-download events. Assert no headers, bodies, cookies, query values, object handles, or
-raw stacks survive.
+download events. A click dialog policy applies to exactly one dialog, and a blocked
+download fails the initiating interaction with `browser_download_blocked`. Assert no
+headers, bodies, cookies, query values, object handles, or raw stacks survive.
 
 - [x] **Step 4: Implement context/page/diagnostic ownership**
 
@@ -603,6 +606,10 @@ but observation fails, return
 `sideEffectsUncertain=true`, and apply exact precedence:
 `browser_cross_origin_navigation`, `browser_disconnected`, `browser_timeout`, then
 `browser_action_uncertain`. Never advise blind retry.
+
+Non-timeout navigation failures after Playwright starts also retain
+`browser_action_uncertain` and `sideEffectsUncertain=true`; validation failures
+before invocation do not invalidate the existing snapshot authority.
 
 Credential-control tests apply NFKC, whitespace collapse, trim, lowercase, the exact
 ASCII pattern, accessible-name handling, lowercase autocomplete tokens, and
@@ -739,6 +746,8 @@ Assert:
   leased context;
 - repeated disposal is idempotent;
 - fork and cold resume receive fresh browser identities.
+- Browser screenshot identity uses the active `workspaceRoot + sessionId`, matching
+  the explicit deletion path for worktree-backed Sessions.
 
 - [x] **Step 2: Add Runtime ownership**
 
@@ -918,6 +927,13 @@ Prove `page.ariaSnapshot({ mode: 'ai' })` emits refs and
 Also prove:
 
 - cross-origin iframe refs are rejected;
+- same-origin popups remain registered, cross-origin popups close, and popup
+  capacity is enforced;
+- one dialog authorization is consumed once and a blocked download returns
+  `browser_download_blocked`;
+- invalid navigation arguments leave the latest snapshot usable;
+- non-timeout navigation failure reports uncertain side effects;
+- Wait and Inspect do not recreate a Context after reset;
 - a resolved action followed by snapshot failure reports `actionApplied=true`;
 - a thrown/timed-out action reports `sideEffectsUncertain=true` and is not replayed;
 - an empty browser cache plus blocked installer/network makes tool calls fail

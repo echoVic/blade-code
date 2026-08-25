@@ -16,7 +16,7 @@ describe('SessionBrowserRuntime lifecycle', () => {
           resolveAcquire = resolve;
         })
     );
-    const runtime = new SessionBrowserRuntime('project\u0000session', {
+    const runtime = new SessionBrowserRuntime('/project', 'session', {
       pool: { acquire } as unknown as BrowserProcessPool,
     });
 

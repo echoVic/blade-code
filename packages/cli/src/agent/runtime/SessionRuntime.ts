@@ -3,7 +3,6 @@ import { Mutex } from 'async-mutex';
 import { nanoid } from 'nanoid';
 import * as path from 'path';
 import { isAcpMode } from '../../acp/AcpServiceContext.js';
-import { createBrowserSessionIdentity } from '../../browser/BrowserArtifactStore.js';
 import { SessionBrowserRuntime } from '../../browser/SessionBrowserRuntime.js';
 import {
   type BladeConfig,
@@ -2695,7 +2694,8 @@ export class SessionRuntime {
 
   private async registerBuiltinTools(): Promise<void> {
     this.browserRuntime ??= new SessionBrowserRuntime(
-      createBrowserSessionIdentity(this.projectRoot, this.sessionId),
+      this.workspaceRoot,
+      this.sessionId,
       {
         storageRoot: getBladeStorageRoot(),
         exposeArtifactPaths: !isAcpMode(this.sessionId),

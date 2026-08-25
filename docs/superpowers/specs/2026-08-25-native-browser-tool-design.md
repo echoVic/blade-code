@@ -167,6 +167,9 @@ processes retain their existing exit behavior.
 
 Every initialized `SessionRuntime` owns one lightweight
 `SessionBrowserRuntime`. Construction does not launch Chromium.
+Its artifact identity uses the active Session workspace and Session ID, including
+for worktree-backed Sessions, so explicit Session deletion resolves the same
+namespace that screenshot writes used.
 
 The first Browser operation lazily acquires:
 
@@ -235,7 +238,7 @@ The first release fixes these constants:
 | Select values | 16 items, 4 KiB each, 16 KiB total |
 | Browser error message | 4 KiB |
 | Action timeout | integer 100..30000 ms, default 10000 ms |
-| Detected popup settlement | 500 ms within the action timeout |
+| Click event settlement | 500 ms within the action timeout |
 | Navigation timeout | integer 100..60000 ms, default 30000 ms |
 | Wait timeout | integer 100..30000 ms, default 10000 ms |
 | Explicit time wait | integer 0..5000 ms; zero snapshots immediately |
@@ -643,6 +646,9 @@ interface BrowserWaitInput {
 - returns a fresh `BrowserObservation`;
 - timeout is a typed failure, not a successful empty snapshot.
 
+`BrowserWait` requires an existing page and does not create a fresh Context after a
+crash or reset. Recovery must enter through Navigate, Snapshot, or Page-open.
+
 ### BrowserInspect
 
 ```ts
@@ -678,6 +684,9 @@ Screenshots are viewport-only in this release. An oversized image is rejected be
 being committed as an artifact. ACP receives the descriptor without a path and
 cannot retrieve screenshot bytes through Browser tools in this release; ARIA remains
 the portable Agent observation channel.
+
+`BrowserInspect` also requires an existing page and cannot become an implicit
+post-crash recovery path.
 
 ### BrowserPage
 
@@ -924,7 +933,10 @@ Playwright stacks, page text, and unredacted URLs are not logged, including in d
 mode.
 
 Dialogs are dismissed to prevent a blocked Runtime and recorded as diagnostics.
-Downloads are cancelled and reported as `browser_download_blocked`.
+An explicit click dialog policy is consumed by the first dialog only; later dialogs
+from the same click use the default dismissal policy. Downloads are cancelled,
+recorded, and make the initiating interaction fail with
+`browser_download_blocked`.
 
 Aggregate Runtime statistics expose only process/context/page/queue counts through
 an in-process test seam. They are not added to HTTP, ACP, CLI JSON, Session events,
@@ -973,6 +985,10 @@ All four set `actionApplied='unknown'` and `sideEffectsUncertain=true`. Precondi
 failures happen before invocation and use their ordinary error without an uncertain
 interaction result.
 
+A non-timeout navigation failure after Playwright invocation is also reported as
+`browser_action_uncertain` with uncertain side effects; it is not collapsed into a
+generic operation failure.
+
 Browser crashes do not replay actions automatically. The pool invalidates its
 generation, active and already queued operations fail `browser_disconnected`, and
 all affected Session runtimes discard contexts/pages/snapshots. A new recovery-entry
@@ -1011,8 +1027,8 @@ Unit tests cover:
 - snapshot byte/depth bounds, ref parsing, fingerprint stability and overflow,
   stale IDs, precondition-preserved authority, origin mismatch, cross-origin frame
   rejection, and no selector fallback;
-- action schemas, key allowlist, value bounds, password-field rejection, and
-  download blocking;
+- action schemas, key allowlist, value bounds, password/oversized-name rejection,
+  one-shot dialog policy, and download blocking;
 - action-applied/observation-failed and action-side-effect-uncertain results;
 - diagnostic ring bounds and omission of headers/bodies/query values;
 - screenshot ownership, mode, hash, per-file limit, and Session quota;

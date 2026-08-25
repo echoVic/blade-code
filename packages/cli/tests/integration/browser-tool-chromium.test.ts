@@ -76,6 +76,14 @@ describe('SessionBrowserRuntime with real Chromium', () => {
         response.end('<h1>Same origin page</h1>');
         return;
       }
+      if (request.url === '/download') {
+        response.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'content-disposition': 'attachment; filename="blocked.txt"',
+        });
+        response.end('blocked download');
+        return;
+      }
       response.writeHead(200, { 'content-type': 'text/html' });
       response.end(`<!doctype html>
         <html>
@@ -99,8 +107,16 @@ describe('SessionBrowserRuntime with real Chromium', () => {
                 document.querySelector('#status').textContent = 'Confirmed';
               }
             ">Confirm</button>
+            <button onclick="
+              if (confirm('First?') && confirm('Second?')) {
+                document.querySelector('#status').textContent = 'Both accepted';
+              } else {
+                document.querySelector('#status').textContent = 'Second dismissed';
+              }
+            ">Two dialogs</button>
             <a href="/same">Same origin</a>
             <a href="http://127.0.0.1:${otherPort}/blocked">Cross origin</a>
+            <a href="/download" download>Download file</a>
             <button onclick="window.open('/same', '_blank')">Same origin popup</button>
             <button onclick="window.open(
               'http://127.0.0.1:${otherPort}/blocked',
@@ -118,7 +134,7 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     roots.push(root);
     const pool = new BrowserProcessPool();
     pools.push(pool);
-    const runtime = new SessionBrowserRuntime('integration\u0000browser', {
+    const runtime = new SessionBrowserRuntime('integration', 'browser', {
       pool,
       storageRoot: root,
     });
@@ -149,7 +165,7 @@ describe('SessionBrowserRuntime with real Chromium', () => {
       pageId: first.pageId,
       snapshotId: first.snapshotId,
       ref: refFor(first, 'Name'),
-      expectedOrigin: origin,
+      expectedOrigin: origin.toUpperCase(),
       action: { kind: 'fill', value: 'Blade' },
     });
     expect(filled.outcome).toBe('applied');
@@ -224,9 +240,23 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     if (confirmed.outcome !== 'applied') throw new Error('Dialog was not accepted');
     expect(confirmed.observation.snapshot).toContain('Confirmed');
 
+    const beforeTwoDialogs = await runtime.snapshot({ pageId: first.pageId });
+    const twoDialogs = await runtime.interact({
+      pageId: beforeTwoDialogs.pageId,
+      snapshotId: beforeTwoDialogs.snapshotId,
+      ref: refFor(beforeTwoDialogs, 'Two dialogs'),
+      expectedOrigin: origin,
+      action: { kind: 'click', dialog: { action: 'accept' } },
+    });
+    expect(twoDialogs.outcome).toBe('applied');
+    if (twoDialogs.outcome !== 'applied') {
+      throw new Error('Multiple-dialog control did not finish');
+    }
+    expect(twoDialogs.observation.snapshot).toContain('Second dismissed');
+
     const scrolled = await runtime.interact({
-      pageId: confirmed.pageId,
-      snapshotId: confirmed.observation.snapshotId,
+      pageId: twoDialogs.pageId,
+      snapshotId: twoDialogs.observation.snapshotId,
       expectedOrigin: origin,
       action: { kind: 'scroll', direction: 'down', amount: 100 },
     });
@@ -288,6 +318,17 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     expect((await readFile(screenshot.artifact!.path!)).subarray(0, 8)).toEqual(
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
     );
+
+    const beforeDownload = await runtime.snapshot({ pageId: first.pageId });
+    await expect(
+      runtime.interact({
+        pageId: beforeDownload.pageId,
+        snapshotId: beforeDownload.snapshotId,
+        ref: refFor(beforeDownload, 'Download file'),
+        expectedOrigin: origin,
+        action: { kind: 'click' },
+      })
+    ).rejects.toMatchObject({ code: 'browser_download_blocked' });
 
     const beforeSameOrigin = await runtime.snapshot({ pageId: first.pageId });
     const sameOrigin = await runtime.interact({
@@ -412,9 +453,29 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     });
     expect(crossOriginRequests).toBe(0);
 
+    const unavailable = createServer();
+    const unavailablePort = await listen(unavailable);
+    await closeServer(unavailable);
+    await expect(
+      runtime.navigate({ url: `http://127.0.0.1:${unavailablePort}/unreachable` })
+    ).rejects.toMatchObject({
+      code: 'browser_action_uncertain',
+      details: { sideEffectsUncertain: true },
+    });
+
     await expect(runtime.page({ action: { kind: 'reset' } })).resolves.toEqual({
       tabs: [],
     });
+    expect(pool.stats()).toMatchObject({
+      contexts: 0,
+      running: false,
+    });
+    await expect(
+      runtime.wait({ condition: { kind: 'time', milliseconds: 0 } })
+    ).rejects.toMatchObject({ code: 'browser_page_not_found' });
+    await expect(
+      runtime.inspect({ target: { kind: 'console' } })
+    ).rejects.toMatchObject({ code: 'browser_page_not_found' });
     expect(pool.stats()).toMatchObject({
       contexts: 0,
       running: false,
@@ -440,11 +501,11 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     roots.push(root);
     const pool = new BrowserProcessPool();
     pools.push(pool);
-    const first = new SessionBrowserRuntime('project\u0000first', {
+    const first = new SessionBrowserRuntime('project', 'first', {
       pool,
       storageRoot: root,
     });
-    const second = new SessionBrowserRuntime('project\u0000second', {
+    const second = new SessionBrowserRuntime('project', 'second', {
       pool,
       storageRoot: root,
     });

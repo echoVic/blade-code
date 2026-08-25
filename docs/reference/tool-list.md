@@ -242,6 +242,8 @@ DOM 变化后旧 ref 会以 `browser_snapshot_stale` 拒绝，Agent 必须重新
 - 阻止未单独授权的跨 origin 顶层跳转、重定向和 popup；
 - 拒绝跨 origin iframe ref，以及 password、OTP、API key、token、银行卡安全码等
   credential-like 控件的 `fill`/`type`；
+- click 的 accept/dismiss 只消费一个 dialog；下载会取消并返回
+  `browser_download_blocked`；
 - 不提供任意 selector、JavaScript evaluate、上传、下载保留、Cookie/storage 读取、
   浏览器权限或持久化 Profile；
 - console/network 诊断不包含 header、body、Cookie 或 query value；截图写入有界的
