@@ -2,6 +2,7 @@ import { Mutex } from 'async-mutex';
 import {
   classifyBrowserHostname,
   normalizeBrowserUrl,
+  normalizeExpectedBrowserOrigin,
 } from '../../browser/BrowserSecurity.js';
 import { getConfigService } from '../../config/ConfigService.js';
 import {
@@ -241,11 +242,9 @@ function generatePreviewForTool(
     }
     if (typeof params.expectedOrigin === 'string') {
       try {
-        const hostname = new URL(params.expectedOrigin).hostname;
-        return (
-          `Origin: ${params.expectedOrigin}\n` +
-          `Network: ${classifyBrowserHostname(hostname)}`
-        );
+        const origin = normalizeExpectedBrowserOrigin(params.expectedOrigin);
+        const hostname = new URL(origin).hostname;
+        return `Origin: ${origin}\nNetwork: ${classifyBrowserHostname(hostname)}`;
       } catch {
         return 'Origin: invalid';
       }
@@ -253,9 +252,11 @@ function generatePreviewForTool(
     return 'Origin: invalid';
   }
   if (toolName === 'BrowserInteract' && typeof params.expectedOrigin === 'string') {
+    let origin = 'invalid';
     let classification = 'invalid';
     try {
-      classification = classifyBrowserHostname(new URL(params.expectedOrigin).hostname);
+      origin = normalizeExpectedBrowserOrigin(params.expectedOrigin);
+      classification = classifyBrowserHostname(new URL(origin).hostname);
     } catch {
       // Keep invalid classification for the permission preview.
     }
@@ -266,7 +267,7 @@ function generatePreviewForTool(
       typeof (params.action as Record<string, unknown>).kind === 'string'
         ? (params.action as Record<string, unknown>).kind
         : 'unknown';
-    return `Origin: ${params.expectedOrigin}\nNetwork: ${classification}\nAction: ${action}`;
+    return `Origin: ${origin}\nNetwork: ${classification}\nAction: ${action}`;
   }
   if (
     toolName === 'BrowserPage' &&

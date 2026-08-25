@@ -39,5 +39,6 @@ describe('native Browser Tool source boundary', () => {
     expect(combined).not.toContain('acceptDownloads: true');
     expect(pool).not.toContain('env: process.env');
     expect(pool).not.toContain("'--no-sandbox'");
+    expect(pool).toContain('chromiumSandbox: true');
   });
 });

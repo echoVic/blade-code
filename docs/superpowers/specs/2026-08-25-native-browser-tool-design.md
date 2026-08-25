@@ -169,7 +169,8 @@ Every initialized `SessionRuntime` owns one lightweight
 `SessionBrowserRuntime`. Construction does not launch Chromium.
 Its artifact identity uses the active Session workspace and Session ID, including
 for worktree-backed Sessions, so explicit Session deletion resolves the same
-namespace that screenshot writes used.
+namespace that screenshot writes used. Both write and deletion paths canonicalize
+the workspace with `path.resolve()` before deriving the namespace.
 
 The first Browser operation lazily acquires:
 
@@ -268,9 +269,10 @@ Launch happens only on first Runtime use.
 Chromium launches:
 
 - headless;
+- with `chromiumSandbox: true`; the effective Chromium command line must not contain
+  `--no-sandbox`;
 - without a persistent `userDataDir`;
 - without extensions;
-- without `--no-sandbox` added by Blade;
 - with a minimal cross-platform environment allowlist rather than raw
   `process.env`.
 
@@ -816,7 +818,9 @@ is outside this release.
 Cross-origin subframes and subresources required by the approved page are not an
 origin authorization grant and are not exposed as interactable top-level pages.
 Their content may appear in a snapshot, but `BrowserInteract` rejects refs owned by
-a cross-origin frame. Same-origin frames remain interactable.
+a cross-origin frame. Same-origin frames remain interactable. `about:blank` and
+`about:srcdoc` frames inherit the nearest HTTP(S) ancestor origin only when their
+iframe sandbox does not create an opaque origin.
 
 This Browser Tool is not a network sandbox: an approved page can issue its own
 network requests, including requests to other network classes. Hostname
@@ -1049,9 +1053,12 @@ A real, keyless Chromium integration uses two loopback fixture origins and prove
    popup closure, and popup capacity;
 6. stale ref rejection after DOM replacement;
 7. cross-origin redirect and click navigation blocked before target load;
-8. cross-origin iframe refs rejected without interaction;
-9. empty-cache missing-browser calls fail without installer or network activity;
-10. no external requests, downloads, residual pages, contexts, processes, ports, or
+8. background cross-origin navigation is reported by the next operation;
+9. cross-origin and sandboxed opaque iframe refs are rejected while same-origin
+   inherited frames remain interactable;
+10. Chromium runs with the sandbox enabled and without `--no-sandbox`;
+11. empty-cache missing-browser calls fail without installer or network activity;
+12. no external requests, downloads, residual pages, contexts, processes, ports, or
    temporary roots.
 
 ## Real API Qualification

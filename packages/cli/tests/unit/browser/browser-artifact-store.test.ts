@@ -110,7 +110,8 @@ describe('BrowserArtifactStore', () => {
   });
 
   it('uses one shared project and Session identity for runtime and deletion', async () => {
-    const identity = createBrowserSessionIdentity('/workspace', 'session-a');
+    const identity = createBrowserSessionIdentity('/workspace/', 'session-a');
+    expect(identity).toBe(createBrowserSessionIdentity('/workspace', 'session-a'));
     const store = new BrowserArtifactStore(identity, { storageRoot: root });
     const artifact = await store.writeScreenshot(png('shared identity'));
 

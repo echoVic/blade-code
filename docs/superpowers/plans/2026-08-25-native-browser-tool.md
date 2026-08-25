@@ -374,7 +374,8 @@ Inject a typed browser adapter and prove:
 - [x] **Step 2: Implement launch and context lease ownership**
 
 Dynamic-import `playwright` only inside the default adapter's launch path. Pass the
-sanitized environment and frozen context options. Never add `--no-sandbox`.
+sanitized environment, `chromiumSandbox: true`, and frozen context options. Assert
+the effective Chromium command line does not contain `--no-sandbox`.
 
 Use one internal mutex or single-flight state machine for launch/acquire/release.
 The public lease exposes an idempotent async `release()`.
@@ -562,9 +563,12 @@ Use two origins and assert:
 - popup top-level origin follows the same rule even before Chromium exposes its
   Frame; same-origin popups register and cross-origin popups close;
 - cross-origin iframe refs are visible but rejected before interaction;
+- same-origin `about:blank` and `about:srcdoc` frames inherit the nearest safe
+  HTTP(S) ancestor while sandboxed opaque frames remain rejected;
 - blocked output includes only the candidate origin;
 - background script navigation without an active tool call is checked against the
-  authorized origin and recorded as a non-consuming diagnostic when blocked;
+  authorized origin, recorded as a diagnostic, and reported by the next Browser
+  operation;
 - subresources do not become top-level pages or new approvals.
 
 Use `BrowserContext.route()` only for the internal top-level navigation guard. Tests
@@ -1581,9 +1585,13 @@ Require:
 - [ ] URL credentials and malformed/oversized URLs are rejected.
 - [ ] Permission signatures use normalized origin only.
 - [ ] Public, loopback, and private origins are visibly classified.
+- [ ] Permission previews display normalized origins.
 - [ ] Same-origin top-level redirects are allowed.
 - [ ] Cross-origin redirects, clicks, and popups are blocked before target load.
 - [ ] Cross-origin iframe refs cannot inherit top-level origin approval.
+- [ ] Same-origin inherited frames remain interactable; sandboxed opaque frames do
+  not inherit approval.
+- [ ] Background cross-origin navigation is reported by the next Browser operation.
 - [ ] Internal route guarding cannot be configured or bypassed by the Agent.
 - [ ] A new explicit BrowserNavigate call is required for a new origin.
 - [ ] No Provider secret enters Chromium's process environment.
@@ -1603,6 +1611,8 @@ Require:
 - [ ] Screenshot is viewport-only and capped at 8 MiB.
 - [ ] Screenshot count is 32 and Session bytes are 64 MiB.
 - [ ] Artifact directories/files enforce `0700`/`0600`, owner, and no-symlink rules.
+- [ ] Artifact write and deletion identities resolve equivalent workspace paths to
+  one namespace.
 - [ ] ACP omits local screenshot paths.
 - [ ] ACP receives screenshot identity only and cannot retrieve PNG bytes through
   Browser tools.
@@ -1629,6 +1639,8 @@ Require:
 - [ ] Artifact tests cover ownership, symlink, hash, file, count, and byte bounds.
 - [ ] Permission, hook, registry, sanitizer, and surface tests pass.
 - [ ] Real keyless Chromium covers two origins and all six tool capabilities.
+- [ ] Runtime launch options and the effective Chromium command line prove sandbox
+  enforcement.
 - [ ] Empty-cache package and tool-call tests prove no implicit Chromium download.
 - [ ] Real keyless Chromium leaves zero process, port, page, context, and temp residue.
 - [ ] Full unit, integration, CLI, Headless, E2E, snapshot, security, performance,

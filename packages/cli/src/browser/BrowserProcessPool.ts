@@ -187,6 +187,7 @@ export class BrowserProcessPool {
     try {
       browser = await adapter.launch({
         headless: true,
+        chromiumSandbox: true,
         env: createBrowserRuntimeEnvironment(this.environment),
       });
     } catch {

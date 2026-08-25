@@ -59,6 +59,7 @@ interface ChromiumHandle {
   launch(options: {
     executablePath: string;
     headless: true;
+    chromiumSandbox: true;
     env: Record<string, string>;
   }): Promise<BrowserHandle>;
 }
@@ -180,6 +181,7 @@ export async function getBrowserInstallationStatus(
     browser = await playwright.chromium.launch({
       executablePath,
       headless: true,
+      chromiumSandbox: true,
       env: createBrowserRuntimeEnvironment(options.environment),
     });
     const browserVersion = browser.version();

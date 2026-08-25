@@ -87,6 +87,7 @@ describe('BrowserInstallation', () => {
     expect(launch).toHaveBeenCalledWith({
       executablePath: '/browser/chromium',
       headless: true,
+      chromiumSandbox: true,
       env: { PATH: '/bin' },
     });
     expect(close).toHaveBeenCalledOnce();

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { SessionArtifactStore } from '../tools/artifacts/SessionArtifactStore.js';
 import {
   MAX_BROWSER_SCREENSHOT_BYTES,
@@ -20,7 +21,7 @@ export function createBrowserSessionIdentity(
   projectPath: string,
   sessionId: string
 ): string {
-  return `${projectPath}\0${sessionId}`;
+  return `${path.resolve(projectPath)}\0${sessionId}`;
 }
 
 export async function removeBrowserSessionArtifacts(

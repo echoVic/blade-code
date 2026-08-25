@@ -421,6 +421,7 @@ export class SessionBrowserRuntime {
         'action timeout'
       );
       const state = this.requireExistingPage(options.pageId);
+      this.throwIfBlockedNavigation(state);
       const expectedOrigin = this.assertExpectedOrigin(state, options.expectedOrigin);
       const snapshotInput = {
         pageId: state.id,
@@ -456,7 +457,7 @@ export class SessionBrowserRuntime {
         const element = await locator.elementHandle();
         const ownerFrame = await element?.ownerFrame();
         const frameOrigin = ownerFrame
-          ? browserOriginFromPageUrl(ownerFrame.url())
+          ? await this.resolveEffectiveFrameOrigin(ownerFrame)
           : null;
         if (frameOrigin !== state.authorizedOrigin) {
           throw new BrowserRuntimeError(
@@ -586,7 +587,23 @@ export class SessionBrowserRuntime {
           sideEffectsUncertain: false,
           observation,
         };
-      } catch {
+      } catch (error) {
+        if (
+          state.blockedCandidateOrigin ||
+          (error instanceof BrowserRuntimeError &&
+            error.code === 'browser_cross_origin_navigation')
+        ) {
+          return {
+            outcome: 'uncertain',
+            pageId: state.id,
+            actionApplied: 'unknown',
+            sideEffectsUncertain: true,
+            errorCode: 'browser_cross_origin_navigation',
+            ...(state.blockedCandidateOrigin
+              ? { candidateOrigin: state.blockedCandidateOrigin }
+              : {}),
+          };
+        }
         return {
           outcome: 'applied_observation_failed',
           pageId: state.id,
@@ -601,6 +618,7 @@ export class SessionBrowserRuntime {
   wait(options: BrowserWaitOptions): Promise<BrowserObservation> {
     return this.run(async (signal) => {
       const state = await this.resolvePage(options.pageId, false, signal);
+      this.throwIfBlockedNavigation(state);
       if (options.expectedOrigin) {
         this.assertExpectedOrigin(state, options.expectedOrigin);
       }
@@ -687,6 +705,7 @@ export class SessionBrowserRuntime {
             break;
         }
       } catch (error) {
+        this.throwIfBlockedNavigation(state);
         this.throwIfDisconnected(error, signal);
         if (isTimeoutError(error)) {
           throw new BrowserRuntimeError('browser_timeout', 'Browser wait timed out', {
@@ -702,6 +721,7 @@ export class SessionBrowserRuntime {
   inspect(options: BrowserInspectOptions): Promise<BrowserInspectResult> {
     return this.run(async (signal) => {
       const state = await this.resolvePage(options.pageId, false, signal);
+      this.throwIfBlockedNavigation(state);
       if (options.expectedOrigin) {
         this.assertExpectedOrigin(state, options.expectedOrigin);
       }
@@ -714,6 +734,7 @@ export class SessionBrowserRuntime {
           timeout: DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
           signal,
         });
+        this.throwIfBlockedNavigation(state);
         return {
           pageId: state.id,
           target: 'screenshot',
@@ -773,6 +794,7 @@ export class SessionBrowserRuntime {
         entries.push(entry);
         bytes += entryBytes;
       }
+      this.throwIfBlockedNavigation(state);
       return {
         pageId: state.id,
         target: options.target.kind,
@@ -998,7 +1020,7 @@ export class SessionBrowserRuntime {
       void page.close({ runBeforeUnload: false }).catch(() => undefined);
       this.addPageError({
         sequence: ++this.diagnosticSequence,
-        pageId: this.selectedPageId ?? 'unknown',
+        pageId: openerPageId ?? this.selectedPageId ?? 'unknown',
         kind: 'popup-capacity',
         text: 'Browser popup closed because the Session page limit was reached',
       });
@@ -1259,6 +1281,52 @@ export class SessionBrowserRuntime {
     return normalizedExpectedOrigin;
   }
 
+  private throwIfBlockedNavigation(state: PageState): void {
+    if (!state.blockedCandidateOrigin) return;
+    throw new BrowserRuntimeError(
+      'browser_cross_origin_navigation',
+      `Cross-origin navigation was blocked: ${state.blockedCandidateOrigin}`,
+      { candidateOrigin: state.blockedCandidateOrigin }
+    );
+  }
+
+  private async resolveEffectiveFrameOrigin(frame: Frame): Promise<string | null> {
+    let current: Frame | null = frame;
+    while (current) {
+      const origin = browserOriginFromPageUrl(current.url());
+      if (origin) return origin;
+      if (current === current.page().mainFrame()) return null;
+      if (current.url() !== 'about:blank' && current.url() !== 'about:srcdoc') {
+        return null;
+      }
+
+      const parent = current.parentFrame();
+      if (!parent) return null;
+      try {
+        const frameElement = await current.frameElement();
+        try {
+          const sandbox = await frameElement.getAttribute('sandbox');
+          if (
+            sandbox !== null &&
+            !sandbox
+              .toLowerCase()
+              .split(/\s+/u)
+              .filter(Boolean)
+              .includes('allow-same-origin')
+          ) {
+            return null;
+          }
+        } finally {
+          await frameElement.dispose().catch(() => undefined);
+        }
+      } catch {
+        return null;
+      }
+      current = parent;
+    }
+    return null;
+  }
+
   private async observe(
     state: PageState,
     signal: AbortSignal,
@@ -1268,6 +1336,7 @@ export class SessionBrowserRuntime {
     if (state.page.isClosed()) {
       throw new BrowserRuntimeError('browser_page_not_found', 'Browser page is closed');
     }
+    this.throwIfBlockedNavigation(state);
     const rawSnapshot = await state.page.ariaSnapshot({
       mode: 'ai',
       depth,
@@ -1275,6 +1344,7 @@ export class SessionBrowserRuntime {
       timeout: DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
       signal,
     });
+    this.throwIfBlockedNavigation(state);
     const tabs = await this.pageSummaries();
     const origin = browserOriginFromPageUrl(state.page.url()) ?? 'null';
     const title = sanitizeBrowserText(
@@ -1468,7 +1538,10 @@ export class SessionBrowserRuntime {
         await locator.press(action.key, { timeout, signal });
         break;
       case 'select':
-        await locator.selectOption(action.values, { timeout, signal });
+        await locator.selectOption(
+          action.values.map((value) => ({ value })),
+          { timeout, signal }
+        );
         break;
       case 'check':
         await locator.check({ timeout, signal });

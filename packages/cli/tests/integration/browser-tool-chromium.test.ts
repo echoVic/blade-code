@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { type Browser, chromium, type LaunchOptions } from 'playwright';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BrowserProcessPool } from '../../src/browser/BrowserProcessPool.js';
 import { MAX_BROWSER_FINGERPRINT_BYTES } from '../../src/browser/constants.js';
@@ -122,6 +123,12 @@ describe('SessionBrowserRuntime with real Chromium', () => {
               'http://127.0.0.1:${otherPort}/blocked',
               '_blank'
             )">Cross origin popup</button>
+            <button onclick="setTimeout(
+              () => location.href = 'http://127.0.0.1:${otherPort}/blocked',
+              750
+            )">Background cross origin</button>
+            <iframe srcdoc="<button aria-label='Inherited frame'>Inherited frame</button>"></iframe>
+            <iframe sandbox srcdoc="<button aria-label='Opaque frame'>Opaque frame</button>"></iframe>
             <iframe src="http://127.0.0.1:${otherPort}/frame"></iframe>
             <div id="status">Idle</div>
             <script>console.log('fixture-ready')</script>
@@ -132,7 +139,20 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     const fixturePort = await listen(fixture);
     const root = await mkdtemp(path.join(os.tmpdir(), 'blade-browser-runtime-'));
     roots.push(root);
-    const pool = new BrowserProcessPool();
+    let launchedBrowser: Browser | undefined;
+    const runtimeLaunchOptions: LaunchOptions[] = [];
+    const pool = new BrowserProcessPool({
+      adapter: {
+        launch: async (options) => {
+          runtimeLaunchOptions.push(options);
+          launchedBrowser = await chromium.launch({
+            ...options,
+            args: ['--enable-automation'],
+          });
+          return launchedBrowser;
+        },
+      },
+    });
     pools.push(pool);
     const runtime = new SessionBrowserRuntime('integration', 'browser', {
       pool,
@@ -145,6 +165,13 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     expect(first.origin).toBe(origin);
     expect(first.snapshot).toContain('textbox "Name"');
     expect(pool.stats().contexts).toBe(1);
+    expect(runtimeLaunchOptions).toEqual([
+      expect.objectContaining({ chromiumSandbox: true }),
+    ]);
+    const browserSession = await launchedBrowser!.newBrowserCDPSession();
+    const commandLine = await browserSession.send('Browser.getBrowserCommandLine');
+    expect(commandLine.arguments).not.toContain('--no-sandbox');
+    await browserSession.detach();
     await expect(
       runtime.navigate({
         action: 'back',
@@ -160,11 +187,30 @@ describe('SessionBrowserRuntime with real Chromium', () => {
         action: { kind: 'click' },
       })
     ).rejects.toMatchObject({ code: 'browser_cross_origin_frame' });
+    await expect(
+      runtime.interact({
+        pageId: first.pageId,
+        snapshotId: first.snapshotId,
+        ref: refFor(first, 'Inherited frame'),
+        expectedOrigin: origin,
+        action: { kind: 'click' },
+      })
+    ).resolves.toMatchObject({ outcome: 'applied' });
+    const afterInheritedFrame = await runtime.snapshot({ pageId: first.pageId });
+    await expect(
+      runtime.interact({
+        pageId: first.pageId,
+        snapshotId: afterInheritedFrame.snapshotId,
+        ref: refFor(afterInheritedFrame, 'Opaque frame'),
+        expectedOrigin: origin,
+        action: { kind: 'click' },
+      })
+    ).rejects.toMatchObject({ code: 'browser_cross_origin_frame' });
 
     const filled = await runtime.interact({
       pageId: first.pageId,
-      snapshotId: first.snapshotId,
-      ref: refFor(first, 'Name'),
+      snapshotId: afterInheritedFrame.snapshotId,
+      ref: refFor(afterInheritedFrame, 'Name'),
       expectedOrigin: origin.toUpperCase(),
       action: { kind: 'fill', value: 'Blade' },
     });
@@ -182,11 +228,24 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     if (selectedMode.outcome !== 'applied') {
       throw new Error('Select did not apply');
     }
-
-    const checked = await runtime.interact({
+    const labelSelection = await runtime.interact({
       pageId: selectedMode.pageId,
       snapshotId: selectedMode.observation.snapshotId,
-      ref: refFor(selectedMode.observation, 'Enabled'),
+      ref: refFor(selectedMode.observation, 'Mode'),
+      expectedOrigin: origin,
+      action: { kind: 'select', values: ['Safe'] },
+      timeoutMs: 100,
+    });
+    expect(labelSelection).toMatchObject({
+      outcome: 'uncertain',
+      errorCode: 'browser_timeout',
+    });
+    const afterLabelSelection = await runtime.snapshot({ pageId: first.pageId });
+
+    const checked = await runtime.interact({
+      pageId: afterLabelSelection.pageId,
+      snapshotId: afterLabelSelection.snapshotId,
+      ref: refFor(afterLabelSelection, 'Enabled'),
       expectedOrigin: origin,
       action: { kind: 'check' },
     });
@@ -398,13 +457,11 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     for (let index = 1; index < 8; index++) {
       await runtime.page({ action: { kind: 'open' } });
     }
-    const selectedRoot = await runtime.page({
-      action: { kind: 'select', pageId: first.pageId },
-    });
+    const rootAtCapacity = await runtime.snapshot({ pageId: first.pageId });
     const capacityPopup = await runtime.interact({
       pageId: first.pageId,
-      snapshotId: selectedRoot.observation!.snapshotId,
-      ref: refFor(selectedRoot.observation!, 'Same origin popup'),
+      snapshotId: rootAtCapacity.snapshotId,
+      ref: refFor(rootAtCapacity, 'Same origin popup'),
       expectedOrigin: origin,
       action: { kind: 'click' },
     });
@@ -438,7 +495,10 @@ describe('SessionBrowserRuntime with real Chromium', () => {
       tabs: [{ pageId: first.pageId }],
     });
 
-    const beforeCross = await runtime.snapshot({ pageId: first.pageId });
+    const beforeCross = await runtime.navigate({
+      url: `${origin}/`,
+      pageId: first.pageId,
+    });
     const blocked = await runtime.interact({
       pageId: beforeCross.pageId,
       snapshotId: beforeCross.snapshotId,
@@ -452,6 +512,24 @@ describe('SessionBrowserRuntime with real Chromium', () => {
       candidateOrigin: `http://127.0.0.1:${otherPort}`,
     });
     expect(crossOriginRequests).toBe(0);
+
+    const beforeBackground = await runtime.navigate({
+      url: `${origin}/`,
+      pageId: first.pageId,
+    });
+    const scheduledBackground = await runtime.interact({
+      pageId: beforeBackground.pageId,
+      snapshotId: beforeBackground.snapshotId,
+      ref: refFor(beforeBackground, 'Background cross origin'),
+      expectedOrigin: origin,
+      action: { kind: 'click' },
+    });
+    expect(scheduledBackground).toMatchObject({ outcome: 'applied' });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await expect(runtime.snapshot({ pageId: first.pageId })).rejects.toMatchObject({
+      code: 'browser_cross_origin_navigation',
+      details: { candidateOrigin: `http://127.0.0.1:${otherPort}` },
+    });
 
     const unavailable = createServer();
     const unavailablePort = await listen(unavailable);

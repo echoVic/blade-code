@@ -213,7 +213,7 @@ describe('native Browser tools', () => {
     const executor = new ToolExecutor(registry, {
       permissionConfig: {
         allow: [],
-        ask: ['BrowserNavigate(*)'],
+        ask: ['BrowserNavigate(*)', 'BrowserInteract(*)'],
         deny: [],
       },
     });
@@ -240,10 +240,53 @@ describe('native Browser tools', () => {
     expect(requestConfirmation).toHaveBeenCalledWith(
       expect.objectContaining({
         title: 'https://example.com:443',
-        details: expect.stringContaining('Network: public'),
+        details: 'Origin: https://example.com:443\nNetwork: public',
         risks: expect.arrayContaining([
           'The page may execute remote code and issue network requests',
         ]),
+      })
+    );
+
+    await executor.execute(
+      'BrowserNavigate',
+      {
+        action: 'reload',
+        pageId: 'browser_page_test',
+        expectedOrigin: 'HTTPS://EXAMPLE.COM:443',
+        waitUntil: 'load',
+        timeoutMs: 1000,
+      },
+      {
+        permissionMode: PermissionMode.DEFAULT,
+        confirmationHandler: { requestConfirmation },
+      }
+    );
+    await executor.execute(
+      'BrowserInteract',
+      {
+        pageId: 'browser_page_test',
+        snapshotId: 'browser_snapshot_test',
+        ref: 'e1',
+        expectedOrigin: 'HTTPS://EXAMPLE.COM:443',
+        action: { kind: 'click' },
+        timeoutMs: 1000,
+      },
+      {
+        permissionMode: PermissionMode.DEFAULT,
+        confirmationHandler: { requestConfirmation },
+      }
+    );
+
+    expect(requestConfirmation).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        details: 'Origin: https://example.com:443\nNetwork: public',
+      })
+    );
+    expect(requestConfirmation).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        details: 'Origin: https://example.com:443\nNetwork: public\nAction: click',
       })
     );
     executor.dispose();

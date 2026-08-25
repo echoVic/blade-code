@@ -44,6 +44,7 @@ describe('Chromium qualification preflight', () => {
     expect(launch).toHaveBeenCalledWith({
       executablePath: '/installed/chromium',
       headless: true,
+      chromiumSandbox: true,
       env: { PATH: '/bin' },
     });
     expect(close).toHaveBeenCalledOnce();

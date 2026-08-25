@@ -50,6 +50,7 @@ describe('BrowserProcessPool', () => {
     expect(launch).toHaveBeenCalledOnce();
     expect(launch).toHaveBeenCalledWith({
       headless: true,
+      chromiumSandbox: true,
       env: { PATH: '/bin' },
     });
     expect(browser.contexts).toHaveLength(2);
