@@ -55,6 +55,12 @@ describe('production qualification contract', () => {
     const installIndex = coverageJob.indexOf(
       'run: bunx playwright install --with-deps chromium'
     );
+    const sandboxIndex = coverageJob.indexOf(
+      'CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox'
+    );
+    const browserCheckIndex = coverageJob.indexOf(
+      'run: bun run --filter blade-code browser:check'
+    );
     const testIndex = coverageJob.indexOf(
       'run: bun run --filter blade-code test:coverage'
     );
@@ -63,7 +69,9 @@ describe('production qualification contract', () => {
     expect(coverageEnd).toBeGreaterThan(coverageStart);
     expect(coverageJob).toContain('path: ~/.cache/ms-playwright');
     expect(installIndex).toBeGreaterThanOrEqual(0);
-    expect(testIndex).toBeGreaterThan(installIndex);
+    expect(sandboxIndex).toBeGreaterThan(installIndex);
+    expect(browserCheckIndex).toBeGreaterThan(sandboxIndex);
+    expect(testIndex).toBeGreaterThan(browserCheckIndex);
   });
 
   it('keeps qualification policy in an independently testable module', () => {

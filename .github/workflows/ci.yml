@@ -191,8 +191,23 @@ jobs:
       - name: Install Chromium
         run: bunx playwright install --with-deps chromium
 
+      - name: Configure Chromium sandbox
+        shell: bash
+        run: |
+          sandbox_source="$(find "$HOME/.cache/ms-playwright" \
+            -path '*/chromium-*/chrome-linux*/chrome_sandbox' \
+            -type f -print -quit)"
+          test -n "$sandbox_source"
+          sudo install -o root -g root -m 4755 \
+            "$sandbox_source" /usr/local/sbin/chrome-devel-sandbox
+          echo "CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox" \
+            >> "$GITHUB_ENV"
+
       - name: Build CLI
         run: bun run build:cli
+
+      - name: Verify sandboxed Chromium
+        run: bun run --filter blade-code browser:check
 
       - name: Run tests with coverage
         run: bun run --filter blade-code test:coverage

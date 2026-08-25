@@ -31,6 +31,7 @@ describe('BrowserInstallation', () => {
       createBrowserRuntimeEnvironment({
         PATH: '/bin',
         HOME: '/home/test',
+        CHROME_DEVEL_SANDBOX: '/usr/local/sbin/chrome-devel-sandbox',
         DEEPSEEK_API_KEY: 'provider-secret',
         BLADE_SESSION_TOKEN: 'session-secret',
         HTTPS_PROXY: 'http://proxy.invalid',
@@ -39,6 +40,7 @@ describe('BrowserInstallation', () => {
     ).toEqual({
       PATH: '/bin',
       HOME: '/home/test',
+      CHROME_DEVEL_SANDBOX: '/usr/local/sbin/chrome-devel-sandbox',
     });
   });
 
