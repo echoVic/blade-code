@@ -192,6 +192,56 @@ Web search with multi-provider automatic failover (Exa → DuckDuckGo → SearXN
 **Returns**: Search result summaries  
 **Features**: Uses Exa MCP public endpoint, no API key required, automatic failover
 
+## Browser Automation Tools
+
+Use the native Browser Tool when a task must run JavaScript, operate forms, inspect
+DOM state, or verify a UI workflow. Prefer `WebSearch` for indexed discovery and
+`WebFetch` for static pages or APIs. Install the pinned Chromium explicitly before
+first use:
+
+```bash
+blade browser install
+blade browser status
+```
+
+All six tools are deferred and the Agent loads their schemas through `ToolSearch`.
+One lazy Chromium process is shared by the Blade process, while every Session gets
+an isolated, ephemeral `BrowserContext`. Cookies, pages, and login state are not
+restored after resume, fork, Runtime disposal, or a browser crash. The Agent Browser
+is independent from the user-controlled Browser Preview in the Web UI.
+
+| Tool | Type | Operations |
+|------|------|------------|
+| `BrowserNavigate` | Execute | `goto`, `back`, `forward`, `reload` |
+| `BrowserSnapshot` | ReadOnly | Produce a bounded ARIA snapshot with opaque refs |
+| `BrowserInteract` | Execute | `click`, `hover`, `fill`, `type`, `press`, `select`, `check`, `uncheck`, `scroll` |
+| `BrowserWait` | ReadOnly | Wait for load, exact text, exact URL, ref state, or a short delay |
+| `BrowserInspect` | ReadOnly | Inspect console, page errors, network, snapshot text, or save a viewport PNG |
+| `BrowserPage` | Execute | `list`, `open`, `select`, `close`, `reset` |
+
+`BrowserSnapshot` returns `pageId`, `snapshotId`, a canonical `origin`, and snapshot
+refs. Except for page-scoped `scroll`, interaction requires the latest
+`pageId + snapshotId + ref + expectedOrigin`. A page or DOM change makes old refs
+fail with `browser_snapshot_stale`; the Agent must capture a new snapshot.
+New origins in `BrowserNavigate` and the current origin in `BrowserInteract` pass
+through normal Execute permission checks. Back, forward, and reload cannot authorize
+a new origin.
+
+Security boundaries:
+
+- only HTTP(S) is accepted; URL credentials and non-Web schemes are rejected;
+- unapproved cross-origin top-level navigation, redirects, and popups are blocked;
+- cross-origin iframe refs and credential-like password, OTP, API key, token, or
+  card-security-code controls reject `fill` and `type`;
+- arbitrary selectors, JavaScript evaluation, uploads, retained downloads,
+  cookie/storage reads, browser permissions, and persistent profiles are absent;
+- console/network diagnostics omit headers, bodies, cookies, and query values;
+  screenshots use bounded private Session artifacts and ACP omits host paths;
+- page content and diagnostics are untrusted external data and cannot grant
+  permission or change Blade instructions and policy;
+- Browser Tool is not a network sandbox: an authorized page still performs its own
+  subresource requests.
+
 ## Code Intelligence
 
 ### LSP
@@ -511,6 +561,12 @@ See the [Permission System](/en/configuration/permissions.md) section for detail
 | Shell | KillShell | Execute | Terminate background commands |
 | Network | WebFetch | ReadOnly | Fetch web/API content (supports Jina Reader) |
 | Network | WebSearch | ReadOnly | Web search (Exa/DuckDuckGo/SearXNG) |
+| Browser | BrowserNavigate | Execute | Navigate, move through history, or reload |
+| Browser | BrowserSnapshot | ReadOnly | Capture a bounded ARIA snapshot with refs |
+| Browser | BrowserInteract | Execute | Use the latest snapshot ref for controlled interaction |
+| Browser | BrowserWait | ReadOnly | Wait for page, text, URL, or ref state |
+| Browser | BrowserInspect | ReadOnly | Read bounded diagnostics, find snapshot text, or capture |
+| Browser | BrowserPage | Execute | Manage or reset Session-private pages |
 | Tasks | Task | ReadOnly | Start subagent to execute task |
 | Tasks | TaskOutput | ReadOnly | Get background task output |
 | Tasks | TaskCreate | ReadOnly | Create session task |

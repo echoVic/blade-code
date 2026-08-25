@@ -47,6 +47,21 @@ npm install blade-code
 npx blade "Analyze my code"
 ```
 
+### 4. Install the Native Browser Tool
+
+The npm installation includes the pinned Playwright runtime but does not download
+Chromium automatically. Install and verify the matching browser only when the Agent
+needs to operate JavaScript pages, forms, DOM state, or UI workflows:
+
+```bash
+blade browser install
+blade browser status
+```
+
+`status` performs no network access. It exits non-zero and prints
+`blade browser install` when Chromium is missing or unusable. Ordinary web search
+and static retrieval continue to use `WebSearch` and `WebFetch` without Chromium.
+
 ## 🔐 Configuring Models
 
 You need to configure a model on first launch. There are several ways:
@@ -95,6 +110,7 @@ The API Key is written by the wizard into `~/.blade/auth.json` and never enters 
 blade --version    # Show the currently installed version
 blade --help       # Show help
 blade doctor       # Environment check
+blade browser status  # Check the native Browser Tool
 blade --print "Just a test"  # Test API connectivity
 blade web          # Test the Web UI
 ```

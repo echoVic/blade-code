@@ -207,6 +207,20 @@ Check and display current version information.
 blade update
 ```
 
+### blade browser
+
+Manage the pinned Chromium used by the native Browser Tool. Installing the npm
+package does not download a browser automatically.
+
+```bash
+blade browser install  # Download Chromium through the installed Playwright CLI
+blade browser status   # Offline version, executable-path, and launch check
+```
+
+`status` exits non-zero and prints the install command when Chromium is missing or
+cannot launch. Ordinary `blade --help`, `blade --version`, and Sessions that do not
+use Browser tools never start Chromium.
+
 ### blade mcp
 
 Manage MCP servers.

@@ -187,7 +187,16 @@ How rules are abstracted for different tools:
 | Edit/Write/ApplyPatch | `Edit(file_path:**/*.ts)` |
 | WebFetch | `WebFetch(url:https://api.github.com/**)` |
 | WebSearch | `WebSearch(query:*)` |
+| BrowserNavigate | `BrowserNavigate(http://127.0.0.1:3000)` |
+| BrowserInteract | `BrowserInteract(https://example.com:443)` |
+| BrowserPage | `BrowserPage(reset)` |
 | Task/SlashCommand | No rule generated automatically |
+
+Browser permissions are abstracted by canonical origin and omit URL query values,
+typed text, refs, and page content. `BrowserSnapshot`, `BrowserWait`, and
+`BrowserInspect` are ReadOnly; navigation, interaction, and page management are
+Execute. A cross-origin top-level transition requires a new `BrowserNavigate` call
+and cannot inherit authorization for the previous origin.
 
 ## Turn Limit
 

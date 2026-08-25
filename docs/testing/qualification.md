@@ -1136,6 +1136,32 @@ Flash/Pro 时 fail closed。API key 只能从受限本机存储投影到子进�
 `git diff --name-only` 以及测试或类型检查退出码。session fork 轨迹改为验证 parent/child
 JSONL、lineage、精确 fixture 文件内容和资源清理，不虚构 Git diff 证据。
 
+### Native Browser Tool 轨迹
+
+原生 Browser Tool 的发布门禁分为两层：
+
+1. keyless Chromium 集成测试使用真实固定版本 Chromium 与本机 loopback fixture，
+   覆盖导航、ARIA snapshot/ref、表单交互、等待、console/network/find/screenshot、
+   history/reload、页面管理、Context reset、跨 origin 跳转拒绝、跨 origin iframe
+   拒绝及两个 Session 的 Cookie 隔离；
+2. 真实 API 固定矩阵使用 DeepSeek V4 Flash 和 Pro，分别从 Headless、raw PTY TUI、
+   production Web GUI 与 ACP 进入，共八格。
+
+每个真实 API cell 必须通过一次精确 `ToolSearch` 加载六个 deferred Browser tools，
+再完成 Navigate、显式 Snapshot、Interact、Wait、Inspect 与 Page 管理，并返回只在
+表单提交后出现的隐藏 nonce。框架 retry 固定为 `0`。DOM 变化导致的
+`browser_snapshot_stale` 只有在同一轨迹随后成功执行新 Snapshot 和 Interact 时才允许；
+其他 Browser 错误均阻断发布。
+
+production Web cell 同时运行驱动 Blade UI 的外层 Chromium 和 server 内由 Browser Tool
+管理的内层 Chromium。所有 cell 结束后必须证明 BrowserContext、页面、Browser 进程、
+server、port、PTY、ACP connection、Session lease 与临时根均已回收，并全量检查 API
+key 未进入 DOM、PTY、ACP update、tool result、metadata、transcript 或诊断。
+
+该轨迹固定列入 `realApiQualification.files`，不能用 mock、仅 HTTP 成功、仅模型文本或
+keyless 测试替代。Chromium preflight 使用 `blade browser status`；缺失时只能显式执行
+`blade browser install`，资格测试本身不得下载浏览器。
+
 ## 准出证据
 
 每个独立 patch 至少保留以下证据：

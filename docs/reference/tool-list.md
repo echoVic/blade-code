@@ -205,6 +205,50 @@ Tool metadata 另包含每流 retained bytes、projection flags 和
 **返回**: 搜索结果摘要  
 **特性**: 使用 Exa MCP 公开端点，无需 API key，自动故障转移
 
+## 浏览器自动化工具
+
+原生 Browser Tool 用于必须运行 JavaScript、操作表单、读取 DOM 状态或验证 UI 的任务。
+索引检索优先使用 `WebSearch`，静态网页/API 读取优先使用 `WebFetch`。首次使用前显式
+安装固定版本 Chromium：
+
+```bash
+blade browser install
+blade browser status
+```
+
+六个工具默认 deferred，Agent 先通过 `ToolSearch` 加载 schema。全进程共享一个惰性
+Chromium，每个 Session 使用独立、临时的 `BrowserContext`；恢复、fork、Runtime 释放或
+进程崩溃后不会恢复 Cookie、页面或登录状态。Agent Browser 与 Web UI 中供人工查看的
+Browser Preview 相互独立。
+
+| 工具 | 类型 | 操作 |
+|------|------|------|
+| `BrowserNavigate` | Execute | `goto`、`back`、`forward`、`reload` |
+| `BrowserSnapshot` | ReadOnly | 生成带 opaque ref 的有界 ARIA 快照 |
+| `BrowserInteract` | Execute | `click`、`hover`、`fill`、`type`、`press`、`select`、`check`、`uncheck`、`scroll` |
+| `BrowserWait` | ReadOnly | 等待 load、精确文本、精确 URL、ref 状态或短延时 |
+| `BrowserInspect` | ReadOnly | 查询 console、page error、network、快照文本，或保存 viewport PNG |
+| `BrowserPage` | Execute | `list`、`open`、`select`、`close`、`reset` |
+
+`BrowserSnapshot` 返回 `pageId`、`snapshotId`、规范化 `origin` 和快照 ref。除页面级
+`scroll` 外，交互必须携带最新的 `pageId + snapshotId + ref + expectedOrigin`；页面或
+DOM 变化后旧 ref 会以 `browser_snapshot_stale` 拒绝，Agent 必须重新获取快照。
+`BrowserNavigate` 的新 origin 和 `BrowserInteract` 的当前 origin 分别进入标准 Execute
+权限确认；后退、前进和刷新不能授权新 origin。
+
+安全边界：
+
+- 只接受 HTTP(S)，拒绝 URL 凭据和非 Web scheme；
+- 阻止未单独授权的跨 origin 顶层跳转、重定向和 popup；
+- 拒绝跨 origin iframe ref，以及 password、OTP、API key、token、银行卡安全码等
+  credential-like 控件的 `fill`/`type`；
+- 不提供任意 selector、JavaScript evaluate、上传、下载保留、Cookie/storage 读取、
+  浏览器权限或持久化 Profile；
+- console/network 诊断不包含 header、body、Cookie 或 query value；截图写入有界的
+  Session 私有 artifact，ACP 不暴露宿主路径；
+- 页面内容和诊断属于外部不可信数据，不能授权操作或修改 Blade 的指令与权限策略；
+- Browser Tool 不是网络沙箱：已授权页面自己的子资源请求仍由页面执行。
+
 ## Code Intelligence
 
 ### LSP
@@ -564,6 +608,12 @@ blade mcp list
 | Shell | KillShell | Execute | 终止后台命令 |
 | 网络 | WebFetch | ReadOnly | 获取网页/API 内容（支持 Jina Reader） |
 | 网络 | WebSearch | ReadOnly | 网络搜索（Exa/DuckDuckGo/SearXNG） |
+| 浏览器 | BrowserNavigate | Execute | 导航、历史前进/后退与刷新 |
+| 浏览器 | BrowserSnapshot | ReadOnly | 获取带 ref 的有界 ARIA 快照 |
+| 浏览器 | BrowserInteract | Execute | 使用最新快照 ref 执行受控交互 |
+| 浏览器 | BrowserWait | ReadOnly | 等待页面、文本、URL 或 ref 状态 |
+| 浏览器 | BrowserInspect | ReadOnly | 读取有界诊断、查找快照文本或截图 |
+| 浏览器 | BrowserPage | Execute | 管理或重置 Session 私有页面 |
 | 任务 | Task | ReadOnly | 启动子代理执行任务 |
 | 任务 | TaskOutput | ReadOnly | 获取后台任务输出 |
 | 任务 | TaskCreate | ReadOnly | 创建会话任务 |

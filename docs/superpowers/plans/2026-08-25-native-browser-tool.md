@@ -23,6 +23,10 @@ React/Ink generic tool surfaces, Hono/SSE, ACP SDK, real DeepSeek Flash/Pro APIs
 **Frozen design:**
 `docs/superpowers/specs/2026-08-25-native-browser-tool-design.md`
 
+**Implementation record:** Tasks 1-14 are implemented in `64c60b5e`,
+`2862d099`, `4553d089`, `90fad7fe`, and `0ea1cc50`. The final fixed-source
+Browser Tool matrix passed 8/8 with framework retry `0`.
+
 ---
 
 ## Execution Constraints
@@ -82,12 +86,12 @@ React/Ink generic tool surfaces, Hono/SSE, ACP SDK, real DeepSeek Flash/Pro APIs
 | `packages/cli/src/tools/builtin/browser/browserTools.ts` | Six TypeBox schemas and Tool adapters |
 | `packages/cli/src/tools/builtin/index.ts` | Register Session-bound Browser tools |
 | `packages/cli/src/tools/types/ToolTypes.ts` | Typed Browser metadata |
-| `packages/cli/src/tools/display/ToolResultProjector.ts` | Bounded canonical Browser summaries/details |
+| `packages/cli/src/ui/utils/toolFormatters.ts` | Bounded canonical Browser summaries/details |
 | `packages/cli/src/tools/execution/ToolApprovalController.ts` | Browser origin/action approval preview and risks |
 | `packages/cli/src/server/routes/session.ts` | Explicit Browser metadata allowlist |
 | `packages/cli/src/prompts/sections.ts` | Treat Browser page content as untrusted data |
 | `packages/cli/src/agent/runtime/SessionRuntime.ts` | Browser Runtime ownership, tool injection, cleanup order |
-| `packages/cli/src/services/SessionService.ts` | Remove Browser artifacts on explicit Session deletion |
+| `packages/cli/src/services/SessionService.ts` and `packages/cli/src/context/storage/PersistentStore.ts` | Remove Browser artifacts on explicit Session deletion |
 
 ### Artifacts And CLI
 
@@ -113,7 +117,7 @@ React/Ink generic tool surfaces, Hono/SSE, ACP SDK, real DeepSeek Flash/Pro APIs
 | `packages/cli/tests/unit/browser/session-browser-runtime.test.ts` | Page/context/action/diagnostic lifecycle with injected adapters |
 | `packages/cli/tests/unit/browser/browser-artifact-store.test.ts` | Mode, ownership, hash, quotas |
 | `packages/cli/tests/unit/tooling/tools/builtin/browser-tools.test.ts` | Schemas, kinds, signatures, results |
-| `packages/cli/tests/unit/commands/browser.test.ts` | Status/install process contract |
+| `packages/cli/tests/unit/cli/commands/browser.test.ts` | Status/install command contract |
 | `packages/cli/tests/integration/browser-tool-chromium.test.ts` | Real keyless Chromium against loopback fixtures |
 | existing registry, Runtime, executor, projection, server-route, CLI, build, and qualification tests | Cross-cutting regression assertions |
 
@@ -121,9 +125,9 @@ React/Ink generic tool surfaces, Hono/SSE, ACP SDK, real DeepSeek Flash/Pro APIs
 
 | File | Responsibility |
 | --- | --- |
-| `packages/cli/tests/integration/real-api/browser-tool-fixture.ts` | Self-contained two-origin application and hidden nonce |
-| `packages/cli/tests/integration/real-api/browserToolHarness.ts` | Canonical transcript, request, secret, state, and cleanup assertions |
+| `packages/cli/tests/integration/real-api/browser-tool-fixture.ts` | Self-contained loopback application and hidden nonce |
 | `packages/cli/tests/support/browserToolHeadlessDriver.ts` | Production Headless entry |
+| `packages/cli/tests/support/browserToolPtyDriver.ts` | Isolated raw PTY subprocess wrapper |
 | `packages/cli/tests/support/browserToolPtyRunner.ts` | Real raw PTY TUI entry |
 | `packages/cli/tests/support/browserToolWebDriver.ts` | Outer production Chromium Web entry |
 | `packages/cli/tests/support/browserToolAcpDriver.ts` | Real ACP SDK entry |
@@ -136,7 +140,7 @@ React/Ink generic tool surfaces, Hono/SSE, ACP SDK, real DeepSeek Flash/Pro APIs
 
 | File | Responsibility |
 | --- | --- |
-| `README.md` | Browser Tool capability and install entry |
+| `README.md`, `README.en.md`, `packages/cli/README.md` | Browser Tool capability and install entry |
 | `docs/getting-started/installation.md` | Chinese browser installation/status |
 | `docs/en/getting-started/installation.md` | English browser installation/status |
 | `docs/tools.md` or current Chinese tool catalog | Chinese six-tool contract |
@@ -180,7 +184,7 @@ Do not claim a release pass from a hand-picked subset.
 - Modify: `packages/cli/scripts/browser-check.ts`
 - Modify: `packages/cli/tests/unit/scripts/browser-check.test.ts`
 
-- [ ] **Step 1: Write failing dependency and status tests**
+- [x] **Step 1: Write failing dependency and status tests**
 
 Assert:
 
@@ -205,7 +209,7 @@ bunx vitest run --config vitest.config.ts --project=unit \
   tests/unit/scripts/browser-check.test.ts
 ```
 
-- [ ] **Step 2: Move Playwright and implement the shared installation service**
+- [x] **Step 2: Move Playwright and implement the shared installation service**
 
 Use `createRequire(import.meta.url).resolve('playwright/package.json')` to locate the
 installed package. Do not resolve an unexported `playwright/cli` subpath and do not
@@ -213,12 +217,12 @@ invoke `npx`. Build the installer environment from the exact OS launch allowlist
 Playwright path/download-host/timeout, HTTP(S) proxy/no-proxy, and Node CA variables;
 drop Provider and Blade Session credentials.
 
-- [ ] **Step 3: Make `browser-check.ts` a thin adapter**
+- [x] **Step 3: Make `browser-check.ts` a thin adapter**
 
 Keep its keyless launch/close behavior and package script compatibility. Change its
 failure guidance to the public CLI command.
 
-- [ ] **Step 4: Run GREEN and package metadata checks**
+- [x] **Step 4: Run GREEN and package metadata checks**
 
 ```bash
 cd packages/cli
@@ -228,7 +232,7 @@ bunx vitest run --config vitest.config.ts --project=unit \
 bun pm ls playwright
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/cli/package.json bun.lock \
@@ -248,7 +252,7 @@ git commit -m "build(browser): ship pinned Playwright runtime"
 - Create: `packages/cli/src/browser/index.ts`
 - Create: `packages/cli/tests/unit/browser/browser-security.test.ts`
 
-- [ ] **Step 1: Write failing URL and origin tests**
+- [x] **Step 1: Write failing URL and origin tests**
 
 Cover:
 
@@ -261,7 +265,7 @@ Cover:
 - exact normalized-origin comparisons;
 - public -> private and same-origin redirect classification.
 
-- [ ] **Step 2: Write failing launch-environment and input-bound tests**
+- [x] **Step 2: Write failing launch-environment and input-bound tests**
 
 Use a full synthetic environment containing API keys, bearer tokens, passwords,
 proxy credentials, Blade variables, OS-required values, and arbitrary project
@@ -277,13 +281,13 @@ Numeric schemas use the exact integer ranges from the design: snapshot depth
 `100..60000`, wait timeout `100..30000`, and explicit time wait `0..5000`. Assert
 that zero is valid only for an immediate time wait.
 
-- [ ] **Step 3: Implement closed types and pure helpers**
+- [x] **Step 3: Implement closed types and pure helpers**
 
 Use discriminated unions for actions, waits, page operations, diagnostics, and
 typed failures. Do not use `any`. Keep Playwright imports out of the pure security
 module.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 ```bash
 cd packages/cli
@@ -292,7 +296,7 @@ bunx vitest run --config vitest.config.ts --project=unit \
 bun run type-check
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/cli/src/browser \
@@ -306,7 +310,7 @@ git commit -m "feat(browser): define bounded security contract"
 - Create: `packages/cli/src/browser/BrowserOperationGate.ts`
 - Create: `packages/cli/tests/unit/browser/browser-operation-gate.test.ts`
 
-- [ ] **Step 1: Write failing gate tests**
+- [x] **Step 1: Write failing gate tests**
 
 Prove:
 
@@ -320,12 +324,12 @@ Prove:
 - repeated close is idempotent;
 - queue and listener counts return to zero.
 
-- [ ] **Step 2: Implement the gate without unbounded promises or listeners**
+- [x] **Step 2: Implement the gate without unbounded promises or listeners**
 
 The active operation owns its caller AbortSignal. Closing the gate aborts a
 Runtime-owned signal that Playwright operations combine with the caller signal.
 
-- [ ] **Step 3: Run GREEN and leak checks**
+- [x] **Step 3: Run GREEN and leak checks**
 
 ```bash
 cd packages/cli
@@ -333,7 +337,7 @@ bunx vitest run --config vitest.config.ts --project=unit \
   tests/unit/browser/browser-operation-gate.test.ts
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add packages/cli/src/browser/BrowserOperationGate.ts \
@@ -348,7 +352,7 @@ git commit -m "feat(browser): bound session operation ordering"
 - Create: `packages/cli/tests/unit/browser/browser-process-pool.test.ts`
 - Modify: `packages/cli/src/browser/index.ts`
 
-- [ ] **Step 1: Write failing pool state-machine tests**
+- [x] **Step 1: Write failing pool state-machine tests**
 
 Inject a typed browser adapter and prove:
 
@@ -367,7 +371,7 @@ Inject a typed browser adapter and prove:
 - explicit disposal rejects future acquisition and settles partial launch;
 - stats contain counts only and return to zero.
 
-- [ ] **Step 2: Implement launch and context lease ownership**
+- [x] **Step 2: Implement launch and context lease ownership**
 
 Dynamic-import `playwright` only inside the default adapter's launch path. Pass the
 sanitized environment and frozen context options. Never add `--no-sandbox`.
@@ -375,7 +379,7 @@ sanitized environment and frozen context options. Never add `--no-sandbox`.
 Use one internal mutex or single-flight state machine for launch/acquire/release.
 The public lease exposes an idempotent async `release()`.
 
-- [ ] **Step 3: Run GREEN**
+- [x] **Step 3: Run GREEN**
 
 ```bash
 cd packages/cli
@@ -384,7 +388,7 @@ bunx vitest run --config vitest.config.ts --project=unit \
 bun run type-check
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add packages/cli/src/browser/BrowserProcessPool.ts \
@@ -402,7 +406,7 @@ git commit -m "feat(browser): add isolated Chromium process pool"
 - Create: `packages/cli/tests/unit/browser/browser-artifact-store.test.ts`
 - Modify: existing MCP artifact tests
 
-- [ ] **Step 1: Lock existing MCP behavior before extraction**
+- [x] **Step 1: Lock existing MCP behavior before extraction**
 
 Ensure current tests cover:
 
@@ -415,7 +419,7 @@ Ensure current tests cover:
 
 Add missing tests before changing production code.
 
-- [ ] **Step 2: Write failing Browser artifact tests**
+- [x] **Step 2: Write failing Browser artifact tests**
 
 Assert Browser artifacts:
 
@@ -427,7 +431,7 @@ Assert Browser artifacts:
 - omit paths for ACP;
 - never persist an oversized or partial file.
 
-- [ ] **Step 3: Extract the generic primitive**
+- [x] **Step 3: Extract the generic primitive**
 
 Parameterize namespace, extensions, per-file bytes, count, Session bytes, and path
 exposure. Keep `McpToolArtifactStore` as a typed wrapper so its public contract and
@@ -437,7 +441,7 @@ Browser artifacts survive Runtime disposal because committed tool results may re
 to them. Wire explicit Session deletion to remove the Browser artifact namespace and
 test missing/already-removed directories.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 ```bash
 cd packages/cli
@@ -449,7 +453,7 @@ bunx vitest run --config vitest.config.ts --project=unit \
 If the MCP artifact test has a different current filename, locate and run the full
 matching file rather than weakening this gate.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/cli/src/tools/artifacts/SessionArtifactStore.ts \
@@ -467,14 +471,15 @@ git commit -m "refactor(artifacts): share private session storage"
 - Create: `packages/cli/src/browser/BrowserSnapshotAuthority.ts`
 - Create: `packages/cli/tests/unit/browser/browser-snapshot-authority.test.ts`
 
-- [ ] **Step 1: Write failing snapshot tests**
+- [x] **Step 1: Write failing snapshot tests**
 
 Cover:
 
 - AI ARIA snapshot wrapper and untrusted-content markers;
 - UTF-8 line-bound truncation at 48 KiB;
 - default depth 12 and maximum depth 20;
-- exact `[ref=eN]` parsing;
+- exact lowercase alphanumeric ref parsing, including `e12` and frame-prefixed
+  `f5e12`;
 - bounded role/name fingerprints;
 - duplicate/malformed ref rejection;
 - one latest authority per page;
@@ -486,13 +491,13 @@ Cover:
 - fresh fingerprint acceptance and mismatch rejection;
 - no CSS, XPath, text, role, coordinate, or nth fallback.
 
-- [ ] **Step 2: Implement the pure authority**
+- [x] **Step 2: Implement the pure authority**
 
 The module accepts snapshot strings and page facts. It does not own Playwright
 objects. Return typed stale reasons suitable for a single
 `browser_snapshot_stale` projection.
 
-- [ ] **Step 3: Run GREEN**
+- [x] **Step 3: Run GREEN**
 
 ```bash
 cd packages/cli
@@ -500,7 +505,7 @@ bunx vitest run --config vitest.config.ts --project=unit \
   tests/unit/browser/browser-snapshot-authority.test.ts
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add packages/cli/src/browser/BrowserSnapshotAuthority.ts \
@@ -515,7 +520,7 @@ git commit -m "feat(browser): enforce snapshot ref authority"
 - Create: `packages/cli/tests/unit/browser/session-browser-runtime.test.ts`
 - Modify: `packages/cli/src/browser/index.ts`
 
-- [ ] **Step 1: Write failing lifecycle and page tests**
+- [x] **Step 1: Write failing lifecycle and page tests**
 
 With injected Playwright-shaped fakes, prove:
 
@@ -535,7 +540,7 @@ With injected Playwright-shaped fakes, prove:
 - only later Navigate/Snapshot/Page-open calls acquire a new generation;
 - disposal closes the gate and releases the sole context-closing lease exactly once.
 
-- [ ] **Step 2: Write failing origin-gate tests**
+- [x] **Step 2: Write failing origin-gate tests**
 
 Use two origins and assert:
 
@@ -562,19 +567,19 @@ Use `BrowserContext.route()` only for the internal top-level navigation guard. T
 must prove the model has no route registration/fulfillment API and cannot bypass or
 replace this handler.
 
-- [ ] **Step 3: Write failing diagnostics and download tests**
+- [x] **Step 3: Write failing diagnostics and download tests**
 
 Prove bounded console, page-error, request, response, failure, dialog, popup-cap, and
 download events. Assert no headers, bodies, cookies, query values, object handles, or
 raw stacks survive.
 
-- [ ] **Step 4: Implement context/page/diagnostic ownership**
+- [x] **Step 4: Implement context/page/diagnostic ownership**
 
 Attach every listener exactly once per page, detach it on close, and use one
 Session-wide ring per diagnostic class with page IDs on entries. Bound all rings at
 insertion time. Use the Browser operation gate around every public method.
 
-- [ ] **Step 5: Implement snapshot, action, wait, and inspection methods**
+- [x] **Step 5: Implement snapshot, action, wait, and inspection methods**
 
 Use only public Playwright APIs. Before interaction:
 
@@ -602,11 +607,14 @@ ASCII pattern, accessible-name handling, lowercase autocomplete tokens, and
 fail-closed 1 KiB candidate bounds.
 
 `BrowserWait` uses exact visible text and exact fragment-free normalized URL
-matching. Diagnostics return the newest bounded entries in ascending sequence
-without consuming them. `BrowserPage(open)` selects its blank page; same-origin
-popups register without changing selection; cross-origin popups close.
+matching, and ref-state waits use the latest snapshot authority. Diagnostics return
+the newest bounded entries in ascending sequence without consuming them; `find`
+returns matching lines from a fresh snapshot. `BrowserPage(open)` selects its blank
+page, while `reset` closes the complete Context; same-origin popups register without
+changing selection and cross-origin popups close. Click may accept or dismiss one
+expected dialog, and page-scoped scrolling is bounded.
 
-- [ ] **Step 6: Run GREEN**
+- [x] **Step 6: Run GREEN**
 
 ```bash
 cd packages/cli
@@ -618,7 +626,7 @@ bunx vitest run --config vitest.config.ts --project=unit \
 bun run type-check
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/cli/src/browser \
@@ -636,7 +644,7 @@ git commit -m "feat(browser): add session-isolated page runtime"
 - Modify: `packages/cli/tests/unit/tooling/tools/registry/deferred-tool-manager.test.ts`
 - Modify: `packages/cli/tests/unit/tooling/tools/registry/tool-registry.test.ts`
 
-- [ ] **Step 1: Write failing schema and declaration tests**
+- [x] **Step 1: Write failing schema and declaration tests**
 
 Lock exact names, discriminated unions, defaults, bounds, descriptions, and
 deferred ordering for:
@@ -658,7 +666,7 @@ all six schemas:
 }
 ```
 
-- [ ] **Step 2: Write failing ToolKind and permission-signature tests**
+- [x] **Step 2: Write failing ToolKind and permission-signature tests**
 
 Assert:
 
@@ -674,19 +682,19 @@ Add a negative hook test: a PreToolUse hook that changes an already-approved
 Navigate or Interact origin must trigger permission recomputation and cannot inherit
 the old approval.
 
-- [ ] **Step 3: Implement one Session-bound factory**
+- [x] **Step 3: Implement one Session-bound factory**
 
 `createBrowserTools(runtime)` returns all six tools. Adapters only validate schemas,
 call Runtime methods, and map typed Browser failures into canonical `ToolResult`.
 Do not duplicate Playwright logic in tool files.
 
-- [ ] **Step 4: Register through `getBuiltinTools`**
+- [x] **Step 4: Register through `getBuiltinTools`**
 
 Add a typed optional `browserRuntime` parameter. Registration must preserve tests
 that call `getBuiltinTools` without a Runtime by omitting Browser tools in that
 explicit legacy/test path.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 ```bash
 cd packages/cli
@@ -696,7 +704,7 @@ bunx vitest run --config vitest.config.ts --project=unit \
   tests/unit/tooling/tools/registry/tool-registry.test.ts
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/cli/src/tools/builtin/browser \
@@ -713,7 +721,7 @@ git commit -m "feat(tools): register deferred browser controls"
 - Modify: `packages/cli/tests/unit/agent-runtime/agent/session-runtime.test.ts`
 - Modify: any SessionRuntime factory fixture that requires the new typed option
 
-- [ ] **Step 1: Write failing Runtime ownership tests**
+- [x] **Step 1: Write failing Runtime ownership tests**
 
 Assert:
 
@@ -729,7 +737,7 @@ Assert:
 - repeated disposal is idempotent;
 - fork and cold resume receive fresh browser identities.
 
-- [ ] **Step 2: Add Runtime ownership**
+- [x] **Step 2: Add Runtime ownership**
 
 Create the lightweight Browser Runtime before built-in registration, pass it to
 `getBuiltinTools`, capture it before clearing fields during disposal, and clean it
@@ -737,7 +745,7 @@ through the existing `attempt()` aggregation.
 
 Do not expose Browser Runtime through HTTP or ACP service objects.
 
-- [ ] **Step 3: Run GREEN**
+- [x] **Step 3: Run GREEN**
 
 ```bash
 cd packages/cli
@@ -747,7 +755,7 @@ bunx vitest run --config vitest.config.ts --project=unit \
 bun run type-check
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add packages/cli/src/agent/runtime/SessionRuntime.ts \
@@ -763,13 +771,13 @@ Only stage support fixtures actually changed for this task.
 **Files:**
 - Modify: `packages/cli/src/tools/execution/ToolApprovalController.ts`
 - Modify: `packages/cli/src/tools/types/ToolTypes.ts`
-- Modify: `packages/cli/src/tools/display/ToolResultProjector.ts`
+- Modify: `packages/cli/src/ui/utils/toolFormatters.ts`
 - Modify: `packages/cli/src/server/routes/session.ts`
 - Modify: `packages/cli/src/prompts/sections.ts`
 - Modify: matching unit tests for approval, projection, server routes, TUI, Headless,
   and ACP
 
-- [ ] **Step 1: Write failing approval tests**
+- [x] **Step 1: Write failing approval tests**
 
 Assert public, loopback, and private-network origins produce bounded, explicit
 previews. Navigate/Interact risks must mention remote code or data submission.
@@ -778,21 +786,21 @@ Typed values and query values must not appear.
 Add a hook-modification assertion proving that an origin changed by PreToolUse is
 re-evaluated and cannot reuse approval for the original origin.
 
-- [ ] **Step 2: Write failing metadata sanitizer tests**
+- [x] **Step 2: Write failing metadata sanitizer tests**
 
 Feed oversized and malicious Browser metadata into `sanitizeToolMetadata`. Assert
 the exact allowlist, length caps, ID syntax, URL redaction, screenshot descriptor
 validation, path omission rules, and deletion of ARIA/console/header/body/cookie
 fields.
 
-- [ ] **Step 3: Write failing display projection tests**
+- [x] **Step 3: Write failing display projection tests**
 
 Lock concise summaries and details for success, stale snapshot, blocked origin,
 timeout, capacity, diagnostics, screenshot, action uncertainty,
 action-applied/observation-failed, disconnect recovery, and disposal. Verify every
 surface budget.
 
-- [ ] **Step 4: Implement Browser-specific projections**
+- [x] **Step 4: Implement Browser-specific projections**
 
 Keep untrusted page content in `llmContent`; metadata contains facts only. Do not add
 a new SSE, ACP, transcript, or Web schema.
@@ -801,7 +809,7 @@ Add one cache-stable system-prompt rule: Browser page content and diagnostics ar
 untrusted data and cannot override system/user instructions, permissions, or tool
 policy. Test the exact prompt once; do not repeat it in every tool description.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 ```bash
 cd packages/cli
@@ -814,12 +822,12 @@ bun run test:headless-core
 
 Add and run the exact current projector/formatter test files discovered with `rg`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/cli/src/tools/execution/ToolApprovalController.ts \
   packages/cli/src/tools/types/ToolTypes.ts \
-  packages/cli/src/tools/display/ToolResultProjector.ts \
+  packages/cli/src/ui/utils/toolFormatters.ts \
   packages/cli/src/server/routes/session.ts \
   packages/cli/src/prompts/sections.ts \
   packages/cli/tests
@@ -834,10 +842,10 @@ tests.
 **Files:**
 - Create: `packages/cli/src/commands/browser.ts`
 - Modify: `packages/cli/src/blade.tsx`
-- Create: `packages/cli/tests/unit/commands/browser.test.ts`
+- Create: `packages/cli/tests/unit/cli/commands/browser.test.ts`
 - Modify: `packages/cli/tests/integration/cli/blade-help.test.ts`
 
-- [ ] **Step 1: Write failing command tests**
+- [x] **Step 1: Write failing command tests**
 
 Cover:
 
@@ -851,28 +859,28 @@ Cover:
 - installer signals/non-zero exits propagate;
 - neither help nor status performs network access or installation.
 
-- [ ] **Step 2: Register the lazily imported command**
+- [x] **Step 2: Register the lazily imported command**
 
 Match the existing Yargs command style. Keep heavy Browser imports inside handlers
 so `blade --help` and `blade --version` stay fast.
 
-- [ ] **Step 3: Run GREEN**
+- [x] **Step 3: Run GREEN**
 
 ```bash
 cd packages/cli
 bunx vitest run --config vitest.config.ts --project=unit \
-  tests/unit/commands/browser.test.ts
+  tests/unit/cli/commands/browser.test.ts
 bunx vitest run --config vitest.config.ts --project=integration \
   tests/integration/cli/blade-help.test.ts
 bun run build
 node dist/blade.js browser status
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add packages/cli/src/commands/browser.ts packages/cli/src/blade.tsx \
-  packages/cli/tests/unit/commands/browser.test.ts \
+  packages/cli/tests/unit/cli/commands/browser.test.ts \
   packages/cli/tests/integration/cli/blade-help.test.ts
 git commit -m "feat(cli): manage pinned browser runtime"
 ```
@@ -884,7 +892,7 @@ git commit -m "feat(cli): manage pinned browser runtime"
 - Create only if reusable: `packages/cli/tests/support/browserToolFixtureServer.ts`
 - Modify: test cleanup helpers only when a missing generic primitive is proven
 
-- [ ] **Step 1: Build two self-contained loopback fixture origins**
+- [x] **Step 1: Build two self-contained loopback fixture origins**
 
 Fixtures must:
 
@@ -896,7 +904,7 @@ Fixtures must:
 - retain bounded server-side request evidence;
 - own explicit shutdown and port-release assertions.
 
-- [ ] **Step 2: Write the complete real Chromium test**
+- [x] **Step 2: Write the complete real Chromium test**
 
 Use the default Playwright adapter, not fakes. Cover every item in the spec's keyless
 Chromium sequence, including viewport screenshot file verification.
@@ -912,7 +920,7 @@ Also prove:
 - an empty browser cache plus blocked installer/network makes tool calls fail
   `browser_not_installed` without download activity.
 
-- [ ] **Step 3: Add failure-path cleanup**
+- [x] **Step 3: Add failure-path cleanup**
 
 The test `finally` block must close the Session Runtime, then explicitly dispose the
 pool test singleton, fixture servers, and temporary roots. It must not close pages
@@ -925,7 +933,7 @@ After cleanup assert:
 - no screenshot outside the owned temporary storage root was created;
 - no expected download file exists.
 
-- [ ] **Step 4: Run GREEN repeatedly without framework retry**
+- [x] **Step 4: Run GREEN repeatedly without framework retry**
 
 ```bash
 cd packages/cli
@@ -937,7 +945,7 @@ bunx vitest run --config vitest.config.ts --project=integration \
 
 Two clean first-attempt runs check lifecycle stability; do not encode retry.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/cli/tests/integration/browser-tool-chromium.test.ts \
@@ -951,15 +959,15 @@ Only include the support file when created.
 
 **Files:**
 - Create: `packages/cli/tests/integration/real-api/browser-tool-fixture.ts`
-- Create: `packages/cli/tests/integration/real-api/browserToolHarness.ts`
 - Create: `packages/cli/tests/support/browserToolHeadlessDriver.ts`
+- Create: `packages/cli/tests/support/browserToolPtyDriver.ts`
 - Create: `packages/cli/tests/support/browserToolPtyRunner.ts`
 - Create: `packages/cli/tests/support/browserToolWebDriver.ts`
 - Create: `packages/cli/tests/support/browserToolAcpDriver.ts`
 - Create: `packages/cli/tests/integration/real-api/browser-tool-trajectory.test.ts`
-- Create matching unit tests for the harness and drivers
+- Modify: `packages/cli/tests/unit/scripts/test-runner.test.ts`
 
-- [ ] **Step 1: Freeze the prompt and hidden evidence**
+- [x] **Step 1: Freeze the prompt and hidden evidence**
 
 The nonce exists only in the post-submit DOM. The prompt explicitly requires:
 
@@ -975,9 +983,15 @@ The nonce exists only in the post-submit DOM. The prompt explicitly requires:
 The prompt must not contain the nonce, expected final response, target refs, or an
 alternative shell/fetch route.
 
-- [ ] **Step 2: Build shared host assertions**
+The trace may contain a fail-closed `browser_snapshot_stale` interaction only when a
+later successful `BrowserSnapshot` and successful `BrowserInteract` prove recovery.
+No other Browser failure is accepted, and the harness does not cap legitimate stale
+recoveries with an arbitrary count threshold.
 
-Parse canonical transcript events and prove:
+- [x] **Step 2: Build shared host assertions**
+
+Use the existing canonical transcript helpers from
+`sessionForkTrajectoryHarness.ts` in the trajectory and prove:
 
 - all six schemas were loaded once;
 - the expected tools and order were used;
@@ -989,13 +1003,13 @@ Parse canonical transcript events and prove:
 - Browser pool and Session coordination return to zero;
 - complete credential and temporary-resource scans pass.
 
-- [ ] **Step 3: Add Headless and raw PTY drivers**
+- [x] **Step 3: Add Headless and raw PTY drivers**
 
 Headless uses the production entry and canonical output. TUI uses real `bun-pty`,
 visible permission behavior or explicit YOLO configuration, and waits on durable
 turn completion rather than terminal-history polling.
 
-- [ ] **Step 4: Add Web and ACP drivers**
+- [x] **Step 4: Add Web and ACP drivers**
 
 Web:
 
@@ -1008,12 +1022,12 @@ Web:
 
 ACP:
 
-- uses the real SDK over stdio;
+- uses the real SDK over paired NDJSON-compatible streams;
 - observes canonical tool updates;
 - closes the Session through the standard protocol;
 - receives no local screenshot artifact path.
 
-- [ ] **Step 5: Define the fixed eight-cell matrix**
+- [x] **Step 5: Define the fixed eight-cell matrix**
 
 Use exact catalog IDs `deepseek-v4-flash` and `deepseek-v4-pro`, the repository's
 release qualification sampling configuration, and all four surfaces. Set test-level
@@ -1022,23 +1036,24 @@ zero. Provider nondeterminism is a release signal; an independently evidenced
 Provider outage blocks release rather than converting a rerun into a first-pass
 success.
 
-- [ ] **Step 6: Run harness unit tests and one deliberate local dry path**
+- [x] **Step 6: Run harness source gates and the complete real matrix**
 
-The dry path may validate fixture/harness structure without a Provider. It must not
-be reported as real-API evidence.
+The source gate fixes all four surfaces, both model IDs, the exact ToolSearch
+selection, and all six tool names. The complete Provider matrix, not a dry path, is
+the release evidence.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/cli/tests/integration/real-api/browser-tool-fixture.ts \
-  packages/cli/tests/integration/real-api/browserToolHarness.ts \
   packages/cli/tests/integration/real-api/browser-tool-trajectory.test.ts \
   packages/cli/tests/support/browserToolHeadlessDriver.ts \
+  packages/cli/tests/support/browserToolPtyDriver.ts \
   packages/cli/tests/support/browserToolPtyRunner.ts \
   packages/cli/tests/support/browserToolWebDriver.ts \
   packages/cli/tests/support/browserToolAcpDriver.ts \
   packages/cli/tests/unit
-git commit -m "test(browser): add production surface matrix"
+git commit -m "test(browser): qualify native tools across surfaces"
 ```
 
 Inspect the staged unit-test set before commit.
@@ -1052,7 +1067,7 @@ Inspect the staged unit-test set before commit.
 - Modify: `packages/cli/tests/unit/scripts/qualification.test.ts`
 - Modify: `packages/cli/tests/unit/scripts/browser-check.test.ts`
 
-- [ ] **Step 1: Add failing manifest/source tests**
+- [x] **Step 1: Add failing manifest/source tests**
 
 Assert:
 
@@ -1067,11 +1082,11 @@ Assert:
 - production Browser tools do not inherit `process.env`;
 - Browser logs never emit raw Playwright stacks, page text, or unredacted URLs.
 
-- [ ] **Step 2: Add the trajectory to the manifest**
+- [x] **Step 2: Add the trajectory to the manifest**
 
 Do not create an optional flag that lets the normal release command skip it.
 
-- [ ] **Step 3: Run GREEN**
+- [x] **Step 3: Run GREEN**
 
 ```bash
 cd packages/cli
@@ -1081,7 +1096,7 @@ bunx vitest run --config vitest.config.ts --project=unit \
   tests/unit/scripts/browser-check.test.ts
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add packages/cli/scripts/test-config.js \
@@ -1096,19 +1111,22 @@ Do not stage `test-config.d.ts` if it did not change.
 
 **Files:**
 - Modify: `README.md`
+- Modify: `README.en.md`
+- Modify: `packages/cli/README.md`
 - Modify: `docs/getting-started/installation.md`
 - Modify: `docs/en/getting-started/installation.md`
 - Modify: current Chinese and English tool-catalog files
+- Modify: Chinese and English CLI-command and permission references
 - Modify: `docs/testing/qualification.md`
 - Modify: `docs/en/testing/qualification.md`
 - Modify only if needed: `AGENTS.md`
 
-- [ ] **Step 1: Locate canonical documentation paths**
+- [x] **Step 1: Locate canonical documentation paths**
 
 Use `rg` before editing. The docs site is bilingual; do not edit generated
 `docs/changelog.md` or `docs/en/changelog.md`.
 
-- [ ] **Step 2: Update installation and status**
+- [x] **Step 2: Update installation and status**
 
 Document:
 
@@ -1120,7 +1138,7 @@ blade browser status
 
 State that npm installation does not download Chromium automatically.
 
-- [ ] **Step 3: Document tool selection and safety**
+- [x] **Step 3: Document tool selection and safety**
 
 Explain:
 
@@ -1133,12 +1151,12 @@ Explain:
 - unsupported actions and data;
 - independence from Browser Preview.
 
-- [ ] **Step 4: Document qualification**
+- [x] **Step 4: Document qualification**
 
 Add the keyless Chromium contract and fixed Flash/Pro x four-surface matrix in both
 languages.
 
-- [ ] **Step 5: Check links, headings, and generated-file exclusions**
+- [x] **Step 5: Check links, headings, and generated-file exclusions**
 
 ```bash
 rg -n "BrowserNavigate|blade browser install|Browser Preview" \
@@ -1146,7 +1164,7 @@ rg -n "BrowserNavigate|blade browser install|Browser Preview" \
 git diff --check
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add README.md docs AGENTS.md
@@ -1168,7 +1186,7 @@ cd packages/cli
 bunx vitest run --config vitest.config.ts --project=unit \
   tests/unit/browser \
   tests/unit/tooling/tools/builtin/browser-tools.test.ts \
-  tests/unit/commands/browser.test.ts
+  tests/unit/cli/commands/browser.test.ts
 bunx vitest run --config vitest.config.ts --project=integration \
   tests/integration/browser-tool-chromium.test.ts \
   tests/integration/cli/blade-help.test.ts
@@ -1339,7 +1357,8 @@ Required evidence:
 - every local check passed;
 - Browser preflight passed;
 - every release-blocking real API file passed;
-- all eight Browser Tool cells passed first attempt with framework retry zero;
+- all eight Browser Tool cells passed in the final fixed-source run with framework
+  retry zero;
 - candidate HEAD did not change.
 
 - [ ] **Step 4: Write bilingual pre-seal evidence**
@@ -1610,9 +1629,9 @@ Require:
 
 ### Documentation And Release
 
-- [ ] Chinese and English install, tools, and qualification docs agree.
-- [ ] README names the capability and install command.
-- [ ] Generated docs changelog files were not edited.
+- [x] Chinese and English install, tools, and qualification docs agree.
+- [x] README names the capability and install command.
+- [x] Generated docs changelog files were not edited.
 - [ ] `CHANGELOG.md` and `CHANGELOG.zh.md` describe the same `0.10.87` release.
 - [ ] Package version is exactly `0.10.87`.
 - [ ] Local Qualification passed at final HEAD.

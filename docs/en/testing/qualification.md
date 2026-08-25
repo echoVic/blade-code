@@ -426,6 +426,36 @@ The required matrix for this trajectory group fixedly includes DeepSeek Flash an
 
 Receiving only model text or HTTP 200 does not count as passing. Each trajectory must prove expected file or persisted side effects, structured events, and process exit status; trajectories involving code modifications must also record `git diff --name-only` and test or type-check exit codes. Session fork trajectories instead verify parent/child JSONL, lineages, precise fixture file content, and resource cleanup, without fabricating Git diff evidence.
 
+### Native Browser Tool Trajectory
+
+Native Browser Tool release qualification has two layers:
+
+1. The keyless Chromium integration uses the real pinned Chromium and local
+   loopback fixtures. It covers navigation, ARIA snapshot/ref interaction, forms,
+   waits, console/network/find/screenshot inspection, history/reload, page
+   management, Context reset, cross-origin navigation rejection, cross-origin
+   iframe rejection, and Cookie isolation between two Sessions.
+2. The real API matrix runs DeepSeek V4 Flash and Pro through Headless, raw PTY TUI,
+   production Web GUI, and ACP, for eight cells.
+
+Every real API cell must load all six deferred Browser tools through one exact
+`ToolSearch`, then complete Navigate, explicit Snapshot, Interact, Wait, Inspect,
+and Page management before returning a nonce that exists only after form submission.
+Framework retry is fixed at `0`. A DOM-induced `browser_snapshot_stale` is accepted
+only when the same trace subsequently completes a fresh Snapshot and successful
+Interact. Any other Browser error blocks release.
+
+The production Web cell runs an outer Chromium driving Blade UI and an inner
+Chromium owned by Browser Tool in the server. Every cell must reclaim
+BrowserContexts, pages, browser processes, servers, ports, PTYs, ACP connections,
+Session leases, and temporary roots, and must prove the API key never reaches DOM,
+PTY, ACP updates, tool results, metadata, transcripts, or diagnostics.
+
+The trajectory is fixed in `realApiQualification.files`; mocks, HTTP-only success,
+model text alone, or keyless-only tests cannot replace it. Chromium preflight uses
+`blade browser status`. When missing, only an explicit `blade browser install` may
+download it; qualification itself never installs a browser.
+
 ## Qualification Evidence
 
 Each independent patch retains at minimum the following evidence:

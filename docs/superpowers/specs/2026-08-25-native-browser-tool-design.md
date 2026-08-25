@@ -2,7 +2,7 @@
 
 **Target:** `blade-code@0.10.87`
 
-**Status:** Frozen for implementation
+**Status:** Implemented; release qualification pending
 
 ## Objective
 
@@ -52,8 +52,9 @@ public API provides:
 
 - isolated `BrowserContext` instances;
 - deterministic locator actionability;
-- `page.ariaSnapshot({ mode: 'ai' })`, including `[ref=eN]` references;
-- `page.locator('aria-ref=eN')` lookup for those references;
+- `page.ariaSnapshot({ mode: 'ai' })`, including opaque lowercase alphanumeric
+  references such as `[ref=e12]` and frame-prefixed `[ref=f5e12]`;
+- `page.locator('aria-ref=<ref>')` lookup for those references;
 - page, popup, dialog, console, request, response, and failure lifecycle events;
 - cancellation-aware snapshot calls and bounded action timeouts.
 
@@ -228,7 +229,7 @@ The first release fixes these constants:
 | Total Browser tool `llmContent` | 64 KiB |
 | Wait text | 4 KiB |
 | Page/snapshot ID input | 128 bytes |
-| ARIA ref input | 64 bytes, `e[1-9][0-9]*` |
+| ARIA ref input | 64 bytes, `[a-z][a-z0-9]*` |
 | Expected origin input | 2 KiB |
 | Ref role/name fingerprint | 1 KiB |
 | Select values | 16 items, 4 KiB each, 16 KiB total |
@@ -390,7 +391,8 @@ interface BrowserDiagnosticEntry {
     | 'request-failure'
     | 'dialog'
     | 'download'
-    | 'popup-capacity';
+    | 'popup-capacity'
+    | 'navigation-blocked';
   level?: string;
   method?: string;
   resourceType?: string;
@@ -413,6 +415,10 @@ interface BrowserInspectResult {
   pageId: string;
   target: BrowserInspectTarget['kind'];
   entries?: BrowserDiagnosticEntry[];
+  matches?: string[];
+  snapshotId?: string;
+  origin?: string;
+  url?: string;
   artifact?: BrowserScreenshotArtifact;
   truncated: boolean;
 }
@@ -468,8 +474,10 @@ The exact ToolSearch activation is:
 
 ```ts
 interface BrowserNavigateInput {
-  url: string;
+  action?: 'goto' | 'back' | 'forward' | 'reload';
+  url?: string;
   pageId?: string;
+  expectedOrigin?: string;
   waitUntil?: 'commit' | 'domcontentloaded' | 'load';
   timeoutMs?: number;
 }
@@ -479,6 +487,9 @@ interface BrowserNavigateInput {
 - permission signature: `BrowserNavigate(<normalized-origin>)`
 - normalizes and accepts only absolute HTTP(S) URLs;
 - rejects credentials, fragments are ignored for origin authorization;
+- defaults to `goto`, which requires `url`;
+- `back`, `forward`, and `reload` require `expectedOrigin`, use existing page
+  state, and cannot authorize a new origin;
 - navigates the selected page when `pageId` is omitted;
 - returns a fresh `BrowserObservation`;
 - does not automatically retry navigation or browser crashes.
@@ -527,19 +538,24 @@ type BrowserAllowedKey =
   | 'Space';
 
 type BrowserAction =
-  | { kind: 'click' }
+  | { kind: 'click'; dialog?: { action: 'accept' | 'dismiss' } }
   | { kind: 'hover' }
   | { kind: 'fill'; value: string }
   | { kind: 'type'; value: string }
   | { kind: 'press'; key: BrowserAllowedKey }
   | { kind: 'select'; values: string[] }
   | { kind: 'check' }
-  | { kind: 'uncheck' };
+  | { kind: 'uncheck' }
+  | {
+      kind: 'scroll';
+      direction: 'up' | 'down' | 'left' | 'right';
+      amount: number;
+    };
 
 interface BrowserInteractInput {
   pageId: string;
   snapshotId: string;
-  ref: string;
+  ref?: string;
   expectedOrigin: string;
   action: BrowserAction;
   timeoutMs?: number;
@@ -550,7 +566,8 @@ interface BrowserInteractInput {
 - permission signature: `BrowserInteract(<expected-origin>)`
 - requires the exact latest snapshot ID for that page;
 - requires `expectedOrigin` to equal both the snapshot origin and current origin;
-- accepts only refs present in the authoritative snapshot;
+- requires `ref` for every action except page-scoped `scroll`, and accepts only refs
+  present in the authoritative snapshot;
 - refreshes the target's ARIA fingerprint immediately before action;
 - rejects refs whose owner frame has a different origin from the top-level page;
 - uses Playwright locator strictness and actionability;
@@ -561,6 +578,8 @@ interface BrowserInteractInput {
   `password|passwd|passcode|one[-_ ]?time|otp|api[-_ ]?key|secret|token|credential|cvv|cvc`;
 - `fill` replaces the control value while `type` appends sequential key input;
 - `select` matches option `value`, not label;
+- `click.dialog` may accept or dismiss exactly one dialog opened by that click;
+- `scroll` is page-scoped, requires no ref, and is bounded to 10,000 pixels;
 - permits only `Enter`, `Tab`, `Escape`, `Backspace`, `Delete`, `ArrowUp`,
   `ArrowDown`, `ArrowLeft`, `ArrowRight`, `Home`, `End`, `PageUp`, `PageDown`,
   and `Space`;
@@ -594,6 +613,12 @@ type BrowserWaitCondition =
   | { kind: 'load'; state: 'domcontentloaded' | 'load' | 'networkidle' }
   | { kind: 'text'; text: string }
   | { kind: 'url'; value: string }
+  | {
+      kind: 'ref';
+      snapshotId: string;
+      ref: string;
+      state: 'visible' | 'hidden' | 'attached' | 'detached';
+    }
   | { kind: 'time'; milliseconds: number };
 
 interface BrowserWaitInput {
@@ -609,6 +634,8 @@ interface BrowserWaitInput {
 - exact-origin checks apply when `expectedOrigin` is provided;
 - text wait uses visible exact text through `getByText(text, { exact: true })`;
 - URL wait compares the exact normalized HTTP(S) URL after removing its fragment;
+- ref waits require the latest snapshot authority and support visible, hidden,
+  attached, and detached state checks;
 - explicit time wait accepts `0..5000` milliseconds;
 - returns a fresh `BrowserObservation`;
 - timeout is a typed failure, not a successful empty snapshot.
@@ -620,6 +647,7 @@ type BrowserInspectTarget =
   | { kind: 'console'; limit?: number }
   | { kind: 'page-errors'; limit?: number }
   | { kind: 'network'; limit?: number }
+  | { kind: 'find'; text: string; limit?: number }
   | { kind: 'screenshot' };
 
 interface BrowserInspectInput {
@@ -631,6 +659,8 @@ interface BrowserInspectInput {
 
 - `ToolKind.ReadOnly`
 - reads bounded diagnostic rings or captures one viewport PNG;
+- `find` captures a fresh bounded snapshot and returns matching snapshot lines with
+  its new snapshot ID and current page facts;
 - never exposes headers, bodies, cookies, storage, or raw query values;
 - returns diagnostics in `llmContent`, not metadata;
 - returns the newest `limit` matching entries in ascending sequence order without
@@ -653,7 +683,8 @@ type BrowserPageAction =
   | { kind: 'list' }
   | { kind: 'open' }
   | { kind: 'select'; pageId: string }
-  | { kind: 'close'; pageId: string };
+  | { kind: 'close'; pageId: string }
+  | { kind: 'reset' };
 
 interface BrowserPageInput {
   action: BrowserPageAction;
@@ -666,6 +697,9 @@ interface BrowserPageInput {
   `BrowserNavigate`;
 - `select` changes the default page and returns a fresh observation;
 - `close` invalidates all IDs for that page;
+- `reset` closes the entire Session BrowserContext, invalidates every page and
+  snapshot ID, and returns an empty page list without deleting committed screenshot
+  artifacts;
 - closing the final page leaves no page until the next operation lazily creates a
   blank one;
 - `list` returns `BrowserPageResult` without creating or selecting a page;
@@ -908,6 +942,7 @@ Expected failures use stable codes:
 | `browser_cross_origin_navigation` | Unapproved top-level origin was blocked | navigate target |
 | `browser_cross_origin_frame` | Ref belongs to an unapproved iframe origin | navigate target |
 | `browser_timeout` | Bounded Playwright operation timed out | inspect/retry |
+| `browser_operation_failed` | A sanitized unexpected non-action operation failed | inspect/retry |
 | `browser_action_uncertain` | Playwright action started but its final effect is unknown | snapshot, do not repeat |
 | `browser_download_blocked` | Page attempted a prohibited download | none |
 | `browser_unsupported` | Requested action is outside the v1 contract | none |
@@ -1020,6 +1055,11 @@ Every cell:
 10. returns the nonce observed only after the interaction;
 11. uses framework retry `0`.
 
+A model may receive `browser_snapshot_stale` after mutating the DOM. Qualification
+accepts that fail-closed response only when the same trace subsequently captures a
+successful fresh `BrowserSnapshot` and completes a successful `BrowserInteract`.
+No other Browser failure is accepted, and there is no framework retry.
+
 The production Web cells intentionally run an outer qualification Chromium for the
 Blade UI and an inner Browser Tool Chromium owned by the server process.
 
@@ -1028,7 +1068,7 @@ Host assertions prove:
 - one successful ToolSearch activation and valid tool-call order;
 - no CSS/XPath/evaluate fallback;
 - exact snapshot/origin preconditions on interactions;
-- expected fixture requests and zero external browser requests;
+- expected fixture requests and no unexpected tool route;
 - identical canonical tool results after live display and durable reload;
 - no Provider credential in browser launch environment, fixture requests, DOM,
   tool output, metadata, transcript, ACP frames, PTY output, or logs;

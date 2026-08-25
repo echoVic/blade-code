@@ -36,6 +36,8 @@
 - 🌐 **Three Runtime Modes** — CLI terminal / Web UI / Headless JSONL for flexible deployment
 - 📊 **Multi-project Task Board** — Bind projects, auto-dispatch work, resolve blockers, and archive accepted tasks
 - 🛠️ **20+ Built-in Tools** — File editing, code search, shell execution, git operations, web fetching, and more
+- 🌍 **Native Browser Automation** — Session-isolated Chromium with ARIA snapshots
+  and stale-safe ref interactions across CLI, Web, Headless, and ACP
 - 📋 **Structured Workflows** — Task delegation, Goal mode, Spec/Plan, Subagent orchestration
 - 🔗 **Extensible** — MCP protocol, plugin system, Skills, Hooks
 - 🔒 **Secure & Controllable** — Four permission modes (default/autoEdit/plan/yolo) + tool allow/deny lists
@@ -52,6 +54,10 @@ npx blade-code
 
 # Global install
 npm install -g blade-code
+
+# Optional: install the pinned Chromium used by the Agent Browser
+blade browser install
+blade browser status
 
 # Start CLI
 blade
@@ -97,6 +103,8 @@ Config file: `~/.blade/config.json` (global) or `.blade/config.json` (project-le
 | `blade` | Interactive CLI |
 | `blade web` | Web UI (browser) |
 | `blade serve` | Headless HTTP server |
+| `blade browser install` | Install the pinned Chromium used by Browser tools |
+| `blade browser status` | Check Playwright and Chromium runtime status |
 | `blade mcp` | Manage MCP servers |
 | `blade doctor` | Environment diagnostics |
 | `blade --headless "..."` | Full agent loop (non-interactive) |

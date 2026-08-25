@@ -220,6 +220,18 @@ blade doctor
 blade update
 ```
 
+### blade browser
+
+管理原生 Browser Tool 使用的固定版本 Chromium。安装 npm 包时不会自动下载浏览器。
+
+```bash
+blade browser install  # 使用已安装的 Playwright CLI 下载 Chromium
+blade browser status   # 离线检查版本、可执行文件路径与启动状态
+```
+
+`status` 在 Chromium 缺失或无法启动时返回非零退出码，并打印安装命令。普通
+`blade --help`、`blade --version` 和不使用 Browser Tool 的 Session 不启动 Chromium。
+
 ### blade mcp
 
 管理 MCP 服务器。

@@ -41,6 +41,7 @@ Provider、模型能力、上下文窗口和价格均从内置目录动态读取
 - **终端执行**: 安全的命令执行环境
 - **Git 集成**: 版本控制操作
 - **网络搜索**: 多提供商自动故障转移
+- **原生浏览器**: Session 隔离的 Chromium、ARIA 快照与受控 UI 交互
 
 ### 📝 灵活的工作模式
 
@@ -56,6 +57,10 @@ Provider、模型能力、上下文窗口和价格均从内置目录动态读取
 ```bash
 # 安装
 npm install -g blade-code
+
+# 可选：启用原生 Browser Tool
+blade browser install
+blade browser status
 
 # CLI 模式
 blade

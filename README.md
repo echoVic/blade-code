@@ -36,6 +36,8 @@
 - 🌐 **三种运行模式** — CLI 终端 / Web UI / Headless JSONL，场景灵活切换
 - 📊 **多项目任务看板** — 绑定项目、自动派发、阻塞处理、验收归档
 - 🛠️ **20+ 内置工具** — 文件编辑、代码搜索、Shell 执行、Git 操作、Web 抓取等
+- 🌍 **原生浏览器自动化** — Session 隔离的 Chromium、ARIA 快照与安全 ref 交互，
+  同时支持 CLI、Web、Headless 和 ACP
 - 📋 **结构化工作流** — Task 委托、Goal 模式、Spec/Plan、Subagent 与 Agent Teams 编排
 - 🔗 **开放扩展** — MCP 协议、插件系统、Skills、Hooks
 - 🔒 **安全可控** — 四级权限模式（default/autoEdit/plan/yolo）+ 工具白/黑名单
@@ -52,6 +54,10 @@ npx blade-code
 
 # 全局安装
 npm install -g blade-code
+
+# 可选：安装 Agent Browser 所需的固定版本 Chromium
+blade browser install
+blade browser status
 
 # 启动 CLI
 blade
@@ -97,6 +103,8 @@ blade --headless --output-format jsonl "分析这个仓库"
 | `blade` | 交互式 CLI |
 | `blade web` | Web UI（浏览器） |
 | `blade serve` | 无头 HTTP 服务器 |
+| `blade browser install` | 安装原生 Browser Tool 所需的固定版本 Chromium |
+| `blade browser status` | 检查 Playwright 与 Chromium 运行状态 |
 | `blade mcp` | 管理 MCP 服务器 |
 | `blade doctor` | 环境诊断 |
 | `blade --headless "..."` | 完整 agent loop（非交互） |

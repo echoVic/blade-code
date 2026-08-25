@@ -29,6 +29,7 @@
 - 🆓 **开箱即用** - 内置免费 GLM-4.7 模型，可选自定义模型
 - 🌐 **双模式界面** - CLI 终端 + Web UI，随心切换
 - 🛠️ **丰富工具** - 20+ 内置工具：文件/搜索/Shell/Git/Web 等
+- 🌍 **原生浏览器自动化** - Session 隔离 Chromium、ARIA 快照与安全 ref 交互
 - 🔗 **扩展能力** - MCP、插件与 Skills 系统
 - 📋 **结构化工作流** - Spec / Plan / Subagents / Agent Teams
 - 🔒 **安全可控** - default/autoEdit/plan/yolo 权限模式与工具白/黑名单
@@ -46,6 +47,10 @@ npx blade-code
 npm install -g blade-code
 # 或
 pnpm add -g blade-code
+
+# 可选：安装 Agent Browser 所需的固定版本 Chromium
+blade browser install
+blade browser status
 
 # CLI 模式
 blade
@@ -99,6 +104,7 @@ API key 以渠道 ID 为键存放在权限为 `0600` 的 `~/.blade/auth.json`，
 - `blade` 启动交互式 CLI 界面
 - `blade web` 启动 Web UI（0.2.0 新增）
 - `blade serve` 启动无头服务器（0.2.0 新增）
+- `blade browser install/status` 安装或检查原生 Browser Tool 的 Chromium
 - `blade mcp` 管理 MCP 服务器；`blade mcp login/logout` 显式管理远程 OAuth
 - `blade doctor` 环境自检
 - `blade update` 检查更新

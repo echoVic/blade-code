@@ -187,7 +187,14 @@ Tool(param1:value1, param2:value2)
 | Edit/Write/ApplyPatch | `Edit(file_path:**/*.ts)` |
 | WebFetch | `WebFetch(url:https://api.github.com/**)` |
 | WebSearch | `WebSearch(query:*)` |
+| BrowserNavigate | `BrowserNavigate(http://127.0.0.1:3000)` |
+| BrowserInteract | `BrowserInteract(https://example.com:443)` |
+| BrowserPage | `BrowserPage(reset)` |
 | Task/SlashCommand | 不自动生成规则 |
+
+Browser 权限按规范化 origin 抽象，不包含 URL query value、输入文本、ref 或页面内容。
+`BrowserSnapshot`、`BrowserWait`、`BrowserInspect` 为 ReadOnly；导航、交互与页面管理为
+Execute。跨 origin 顶层跳转必须重新调用 `BrowserNavigate`，不能继承旧 origin 的授权。
 
 ## 轮次上限
 

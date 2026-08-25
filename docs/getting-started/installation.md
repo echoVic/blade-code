@@ -47,6 +47,20 @@ npm install blade-code
 npx blade "帮我分析代码"
 ```
 
+### 4. 安装原生 Browser Tool
+
+npm 安装只包含固定版本的 Playwright 运行库，不会自动下载 Chromium。需要让 Agent
+操作 JavaScript 页面、表单、DOM 状态或执行 UI 验证时，显式安装并检查对应浏览器：
+
+```bash
+blade browser install
+blade browser status
+```
+
+`status` 不访问网络；Chromium 缺失或不可运行时会返回非零退出码，并提示执行
+`blade browser install`。普通网页搜索和静态内容读取不需要 Chromium，继续使用
+`WebSearch` 和 `WebFetch`。
+
 ## 🔐 配置模型
 
 首次启动需配置模型，有以下方式：
@@ -95,6 +109,7 @@ API Key 由向导写入 `~/.blade/auth.json`，不会进入 `config.json`。
 blade --version    # 查看当前安装版本
 blade --help       # 查看帮助
 blade doctor       # 环境检查
+blade browser status  # 检查原生 Browser Tool
 blade --print "测试一下"  # 测试 API 连接
 blade web          # 测试 Web UI
 ```

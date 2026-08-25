@@ -44,6 +44,7 @@ channels all use the same configuration flow.
 - **Terminal execution**: a safe command execution environment
 - **Git integration**: version control operations
 - **Web search**: automatic failover across multiple providers
+- **Native browser**: Session-isolated Chromium, ARIA snapshots, and controlled UI interaction
 
 ### 📝 Flexible Working Modes
 
@@ -59,6 +60,10 @@ Supports the Model Context Protocol to connect external tools and services.
 ```bash
 # Install
 npm install -g blade-code
+
+# Optional: enable the native Browser Tool
+blade browser install
+blade browser status
 
 # CLI mode
 blade
