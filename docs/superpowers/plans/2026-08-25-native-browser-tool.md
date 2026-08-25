@@ -563,8 +563,9 @@ Use two origins and assert:
 - popup top-level origin follows the same rule even before Chromium exposes its
   Frame; same-origin popups register and cross-origin popups close;
 - cross-origin iframe refs are visible but rejected before interaction;
-- same-origin `about:blank` and `about:srcdoc` frames inherit the nearest safe
-  HTTP(S) ancestor while sandboxed opaque frames remain rejected;
+- same-origin frames, including `about:blank` and `about:srcdoc`, inherit the
+  nearest safe HTTP(S) ancestor only when every iframe sandbox preserves
+  `allow-same-origin`;
 - blocked output includes only the candidate origin;
 - background script navigation without an active tool call is checked against the
   authorized origin, recorded as a diagnostic, and reported by the next Browser
@@ -1573,6 +1574,8 @@ Require:
   action.
 - [ ] Action exceptions after invocation report uncertain side effects and are never
   automatically replayed.
+- [ ] Interaction rechecks origin immediately before invocation and after
+  settlement.
 - [ ] Password and exactly defined credential-like controls reject fill/type.
 - [ ] Ordinary text inputs are documented as durable and not generically
   secret-detectable.
@@ -1586,6 +1589,8 @@ Require:
 - [ ] Permission signatures use normalized origin only.
 - [ ] Public, loopback, and private origins are visibly classified.
 - [ ] Permission previews display normalized origins.
+- [ ] Navigate previews choose URL for `goto` and expected origin for
+  `back`/`forward`/`reload`.
 - [ ] Same-origin top-level redirects are allowed.
 - [ ] Cross-origin redirects, clicks, and popups are blocked before target load.
 - [ ] Cross-origin iframe refs cannot inherit top-level origin approval.
@@ -1635,6 +1640,8 @@ Require:
 - [ ] Pool tests cover single-flight, capacity, failure, crash, and release races.
 - [ ] Gate tests cover FIFO, abort, capacity, close, and listener cleanup.
 - [ ] Runtime tests cover every page and diagnostic lifecycle.
+- [ ] Raw Playwright target/browser-closed races normalize to
+  `browser_disconnected`.
 - [ ] Snapshot tests cover refs, fingerprints, stale state, and no fallback.
 - [ ] Artifact tests cover ownership, symlink, hash, file, count, and byte bounds.
 - [ ] Permission, hook, registry, sanitizer, and surface tests pass.

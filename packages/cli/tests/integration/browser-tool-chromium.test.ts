@@ -77,6 +77,11 @@ describe('SessionBrowserRuntime with real Chromium', () => {
         response.end('<h1>Same origin page</h1>');
         return;
       }
+      if (request.url === '/same-frame') {
+        response.writeHead(200, { 'content-type': 'text/html' });
+        response.end('<button aria-label="Sandboxed URL frame">Frame</button>');
+        return;
+      }
       if (request.url === '/download') {
         response.writeHead(200, {
           'content-type': 'application/octet-stream',
@@ -127,8 +132,10 @@ describe('SessionBrowserRuntime with real Chromium', () => {
               () => location.href = 'http://127.0.0.1:${otherPort}/blocked',
               750
             )">Background cross origin</button>
+            <button onclick="location.href = 'about:blank'">Unsupported origin</button>
             <iframe srcdoc="<button aria-label='Inherited frame'>Inherited frame</button>"></iframe>
             <iframe sandbox srcdoc="<button aria-label='Opaque frame'>Opaque frame</button>"></iframe>
+            <iframe sandbox src="/same-frame"></iframe>
             <iframe src="http://127.0.0.1:${otherPort}/frame"></iframe>
             <div id="status">Idle</div>
             <script>console.log('fixture-ready')</script>
@@ -202,6 +209,15 @@ describe('SessionBrowserRuntime with real Chromium', () => {
         pageId: first.pageId,
         snapshotId: afterInheritedFrame.snapshotId,
         ref: refFor(afterInheritedFrame, 'Opaque frame'),
+        expectedOrigin: origin,
+        action: { kind: 'click' },
+      })
+    ).rejects.toMatchObject({ code: 'browser_cross_origin_frame' });
+    await expect(
+      runtime.interact({
+        pageId: first.pageId,
+        snapshotId: afterInheritedFrame.snapshotId,
+        ref: refFor(afterInheritedFrame, 'Sandboxed URL frame'),
         expectedOrigin: origin,
         action: { kind: 'click' },
       })
@@ -529,6 +545,23 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     await expect(runtime.snapshot({ pageId: first.pageId })).rejects.toMatchObject({
       code: 'browser_cross_origin_navigation',
       details: { candidateOrigin: `http://127.0.0.1:${otherPort}` },
+    });
+
+    const beforeUnsupported = await runtime.navigate({
+      url: `${origin}/`,
+      pageId: first.pageId,
+    });
+    const unsupportedNavigation = await runtime.interact({
+      pageId: beforeUnsupported.pageId,
+      snapshotId: beforeUnsupported.snapshotId,
+      ref: refFor(beforeUnsupported, 'Unsupported origin'),
+      expectedOrigin: origin,
+      action: { kind: 'click' },
+    });
+    expect(unsupportedNavigation).toMatchObject({
+      outcome: 'uncertain',
+      errorCode: 'browser_cross_origin_navigation',
+      candidateOrigin: '[unsupported-origin]',
     });
 
     const unavailable = createServer();

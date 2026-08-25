@@ -501,7 +501,8 @@ export class SessionBrowserRuntime {
         }
       }
 
-      state.blockedCandidateOrigin = undefined;
+      this.throwIfBlockedNavigation(state);
+      this.assertExpectedOrigin(state, expectedOrigin);
       state.downloadBlocked = false;
       this.invalidatePage(state);
       const generation = this.runtimeGeneration;
@@ -538,6 +539,7 @@ export class SessionBrowserRuntime {
           this.activeInteractionPageId = undefined;
         }
       }
+      this.markUnexpectedInteractionOrigin(state, expectedOrigin);
       if (state.downloadBlocked) {
         state.downloadBlocked = false;
         throw new BrowserRuntimeError(
@@ -869,14 +871,9 @@ export class SessionBrowserRuntime {
     this.generationController.abort(
       new BrowserRuntimeError('browser_disposed', 'Browser Session Runtime is closed')
     );
-    this.snapshots.clear();
-    this.pages.clear();
-    this.blockedPopups.length = 0;
-    this.selectedPageId = undefined;
-    this.activeInteractionPageId = undefined;
-    this.context = undefined;
     const lease = this.lease;
     this.lease = undefined;
+    this.clearContextProjection(false);
     await lease?.release();
     await idle;
   }
@@ -894,7 +891,16 @@ export class SessionBrowserRuntime {
           { retryable: true }
         );
       }
-      return operation(AbortSignal.any([gateSignal, this.generationController.signal]));
+      const operationSignal = AbortSignal.any([
+        gateSignal,
+        this.generationController.signal,
+      ]);
+      try {
+        return await operation(operationSignal);
+      } catch (error) {
+        this.throwIfDisconnected(error, operationSignal);
+        throw error;
+      }
     }, signal);
   }
 
@@ -1134,12 +1140,20 @@ export class SessionBrowserRuntime {
     if (frame !== state.page.mainFrame()) return;
     this.invalidatePage(state);
     const origin = browserOriginFromPageUrl(frame.url());
+    const allowed = state.transientOrigin ?? state.authorizedOrigin;
     if (origin === null) {
+      if (allowed) {
+        state.blockedCandidateOrigin ??= '[unsupported-origin]';
+      }
       state.authorizedOrigin = null;
       return;
     }
-    const allowed = state.transientOrigin ?? state.authorizedOrigin;
-    state.authorizedOrigin = origin === allowed ? origin : null;
+    if (origin !== allowed) {
+      state.blockedCandidateOrigin ??= origin;
+      state.authorizedOrigin = null;
+      return;
+    }
+    state.authorizedOrigin = origin;
   }
 
   private async guardRoute(route: Route): Promise<void> {
@@ -1290,41 +1304,54 @@ export class SessionBrowserRuntime {
     );
   }
 
+  private markUnexpectedInteractionOrigin(
+    state: PageState,
+    expectedOrigin: string
+  ): void {
+    if (state.page.isClosed() || state.blockedCandidateOrigin) return;
+    const currentOrigin = browserOriginFromPageUrl(state.page.url());
+    if (currentOrigin !== expectedOrigin) {
+      state.blockedCandidateOrigin = currentOrigin ?? '[unsupported-origin]';
+    }
+  }
+
   private async resolveEffectiveFrameOrigin(frame: Frame): Promise<string | null> {
     let current: Frame | null = frame;
+    let effectiveOrigin: string | null = null;
     while (current) {
-      const origin = browserOriginFromPageUrl(current.url());
-      if (origin) return origin;
-      if (current === current.page().mainFrame()) return null;
-      if (current.url() !== 'about:blank' && current.url() !== 'about:srcdoc') {
-        return null;
+      if (current !== current.page().mainFrame()) {
+        try {
+          const frameElement = await current.frameElement();
+          try {
+            const sandbox = await frameElement.getAttribute('sandbox');
+            if (
+              sandbox !== null &&
+              !sandbox
+                .toLowerCase()
+                .split(/\s+/u)
+                .filter(Boolean)
+                .includes('allow-same-origin')
+            ) {
+              return null;
+            }
+          } finally {
+            await frameElement.dispose().catch(() => undefined);
+          }
+        } catch {
+          return null;
+        }
       }
 
-      const parent = current.parentFrame();
-      if (!parent) return null;
-      try {
-        const frameElement = await current.frameElement();
-        try {
-          const sandbox = await frameElement.getAttribute('sandbox');
-          if (
-            sandbox !== null &&
-            !sandbox
-              .toLowerCase()
-              .split(/\s+/u)
-              .filter(Boolean)
-              .includes('allow-same-origin')
-          ) {
-            return null;
-          }
-        } finally {
-          await frameElement.dispose().catch(() => undefined);
-        }
-      } catch {
+      const origin = browserOriginFromPageUrl(current.url());
+      if (origin) {
+        if (effectiveOrigin && origin !== effectiveOrigin) return null;
+        effectiveOrigin ??= origin;
+      } else if (current.url() !== 'about:blank' && current.url() !== 'about:srcdoc') {
         return null;
       }
-      current = parent;
+      current = current.parentFrame();
     }
-    return null;
+    return effectiveOrigin;
   }
 
   private async observe(
@@ -1482,18 +1509,24 @@ export class SessionBrowserRuntime {
       )
     );
     this.generationController = new AbortController();
+    const lease = this.lease;
+    this.lease = undefined;
+    this.clearContextProjection(true);
+    await lease?.release();
+  }
+
+  private clearContextProjection(clearDiagnostics: boolean): void {
     this.snapshots.clear();
     this.pages.clear();
     this.blockedPopups.length = 0;
     this.selectedPageId = undefined;
     this.activeInteractionPageId = undefined;
-    this.consoleEntries.length = 0;
-    this.pageErrorEntries.length = 0;
-    this.networkEntries.length = 0;
     this.context = undefined;
-    const lease = this.lease;
-    this.lease = undefined;
-    await lease?.release();
+    if (clearDiagnostics) {
+      this.consoleEntries.length = 0;
+      this.pageErrorEntries.length = 0;
+      this.networkEntries.length = 0;
+    }
   }
 
   private async executeAction(
@@ -1708,20 +1741,16 @@ export class SessionBrowserRuntime {
     );
     this.generationController = new AbortController();
     this.lease = undefined;
-    this.context = undefined;
-    this.selectedPageId = undefined;
-    this.activeInteractionPageId = undefined;
-    this.pages.clear();
-    this.blockedPopups.length = 0;
-    this.snapshots.clear();
+    this.clearContextProjection(false);
   }
 
   private throwIfDisconnected(error: unknown, signal: AbortSignal): void {
+    if (signal.aborted && signal.reason instanceof BrowserRuntimeError) {
+      throw signal.reason;
+    }
     if (
-      (signal.aborted &&
-        signal.reason instanceof BrowserRuntimeError &&
-        signal.reason.code === 'browser_disconnected') ||
-      (error instanceof Error && /browser.*closed|target.*closed/i.test(error.message))
+      error instanceof Error &&
+      /browser.*closed|target.*closed/i.test(error.message)
     ) {
       throw new BrowserRuntimeError(
         'browser_disconnected',

@@ -44,7 +44,7 @@ import type {
 import { BrowserRuntimeError } from '../../../browser/types.js';
 import { Default, StringEnum, Type } from '../../../schema/index.js';
 import { createTool } from '../../core/createTool.js';
-import type { Tool, ToolResult } from '../../types/index.js';
+import type { BrowserToolMetadata, Tool, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
 
 const PageId = Type.String({ minLength: 1, maxLength: MAX_BROWSER_ID_BYTES });
@@ -198,12 +198,28 @@ const BrowserPageActionSchema = Type.Union([
   Type.Object({ kind: Type.Literal('reset') }),
 ]);
 
+type BrowserMetadataArtifact = NonNullable<BrowserToolMetadata['browser']['artifact']>;
+
+function isBrowserMetadataArtifact(value: unknown): value is BrowserMetadataArtifact {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const artifact = value as Record<string, unknown>;
+  return (
+    typeof artifact.id === 'string' &&
+    artifact.kind === 'image' &&
+    artifact.mimeType === 'image/png' &&
+    typeof artifact.size === 'number' &&
+    typeof artifact.sha256 === 'string' &&
+    artifact.persisted === true &&
+    (artifact.path === undefined || typeof artifact.path === 'string')
+  );
+}
+
 function browserMetadata(
   action: string,
   result: unknown,
   status: 'ok' | 'warning' | 'error' = 'ok',
   errorCode?: string
-): Record<string, unknown> {
+): BrowserToolMetadata {
   const value =
     result && typeof result === 'object' && !Array.isArray(result)
       ? (result as Record<string, unknown>)
@@ -242,9 +258,7 @@ function browserMetadata(
         ? { diagnosticCount: value.entries.length }
         : {}),
       ...(errorCode ? { errorCode } : {}),
-      ...(value.artifact &&
-      typeof value.artifact === 'object' &&
-      !Array.isArray(value.artifact)
+      ...(isBrowserMetadataArtifact(value.artifact)
         ? { artifact: value.artifact }
         : {}),
     },

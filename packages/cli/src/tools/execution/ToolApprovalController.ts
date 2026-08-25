@@ -232,7 +232,8 @@ function generatePreviewForTool(
   params: Record<string, unknown>
 ): string | undefined {
   if (toolName === 'BrowserNavigate') {
-    if (typeof params.url === 'string') {
+    const action = typeof params.action === 'string' ? params.action : 'goto';
+    if (action === 'goto' && typeof params.url === 'string') {
       try {
         const target = normalizeBrowserUrl(params.url);
         return `Origin: ${target.origin}\nNetwork: ${target.classification}`;
@@ -240,7 +241,7 @@ function generatePreviewForTool(
         return 'Origin: invalid';
       }
     }
-    if (typeof params.expectedOrigin === 'string') {
+    if (action !== 'goto' && typeof params.expectedOrigin === 'string') {
       try {
         const origin = normalizeExpectedBrowserOrigin(params.expectedOrigin);
         const hostname = new URL(origin).hostname;

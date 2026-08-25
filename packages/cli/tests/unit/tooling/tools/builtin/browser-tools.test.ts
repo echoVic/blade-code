@@ -251,6 +251,7 @@ describe('native Browser tools', () => {
       'BrowserNavigate',
       {
         action: 'reload',
+        url: 'https://wrong.example/path',
         pageId: 'browser_page_test',
         expectedOrigin: 'HTTPS://EXAMPLE.COM:443',
         waitUntil: 'load',

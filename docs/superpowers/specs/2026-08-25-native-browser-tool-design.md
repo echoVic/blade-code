@@ -205,7 +205,8 @@ gate remains usable. A later `BrowserNavigate`, `BrowserSnapshot`, or
 `BrowserPage(open)` call may explicitly acquire a fresh context generation. Calls
 carrying old page or snapshot IDs fail stale/not-found without creating state.
 Invalidated leases are already removed from pool capacity; later `release()` calls
-are idempotent no-ops.
+are idempotent no-ops. Raw Playwright target/browser-closed races are normalized to
+`browser_disconnected` at the shared operation boundary.
 
 A resumed or forked Session receives a new BrowserContext. Browser state is never
 reconstructed from the transcript.
@@ -591,6 +592,8 @@ interface BrowserInteractInput {
   and `Space`;
 - invalidates the old snapshot authority immediately before invoking Playwright,
   regardless of action success, timeout, or partial side effect;
+- rechecks the page origin immediately before invocation and after action
+  settlement, closing races with page-script navigation;
 - returns `BrowserInteractionResult`.
 
 A missing, duplicated, detached, or fingerprint-changed ref returns
@@ -818,9 +821,9 @@ is outside this release.
 Cross-origin subframes and subresources required by the approved page are not an
 origin authorization grant and are not exposed as interactable top-level pages.
 Their content may appear in a snapshot, but `BrowserInteract` rejects refs owned by
-a cross-origin frame. Same-origin frames remain interactable. `about:blank` and
-`about:srcdoc` frames inherit the nearest HTTP(S) ancestor origin only when their
-iframe sandbox does not create an opaque origin.
+a cross-origin or sandboxed opaque frame. Same-origin frames remain interactable.
+`about:blank` and `about:srcdoc` frames inherit the nearest HTTP(S) ancestor origin
+only when every iframe sandbox in that ancestry preserves `allow-same-origin`.
 
 This Browser Tool is not a network sandbox: an approved page can issue its own
 network requests, including requests to other network classes. Hostname
@@ -854,7 +857,7 @@ schema validation
 
 Permission UI adds Browser-specific previews and risks:
 
-- normalized target or expected origin;
+- normalized target or expected origin selected according to the navigation action;
 - public, loopback, or private-network classification;
 - action kind;
 - warning that the page may execute remote code or submit data.

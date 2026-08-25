@@ -254,6 +254,7 @@ interface BrowserToolMetadataFields extends BaseMetadataFields {
     sideEffectsUncertain?: boolean;
     candidateOrigin?: string;
     errorCode?: string;
+    diagnosticCount?: number;
     artifact?: {
       id: string;
       kind: 'image';
