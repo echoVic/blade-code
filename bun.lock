@@ -17,7 +17,7 @@
     },
     "packages/cli": {
       "name": "blade-code",
-      "version": "0.10.65",
+      "version": "0.10.86",
       "bin": {
         "blade": "dist/blade.js",
       },
@@ -51,6 +51,7 @@
         "nanoid": "^5.1.6",
         "open": "^10.1.2",
         "picomatch": "^4.0.5",
+        "playwright": "1.62.1",
         "proper-lockfile": "^4.1.2",
         "react": "19.2.4",
         "react-dom": "19.2.4",
@@ -83,7 +84,6 @@
         "@types/yargs": "^17.0.35",
         "@vitest/coverage-v8": "^4.1.10",
         "jsdom": "^26.0.0",
-        "playwright": "1.62.1",
         "typescript": "^5.9.2",
         "vitest": "^4.1.10",
       },

@@ -1,41 +1,42 @@
 import { constants } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  checkChromiumExecutable,
-  resolveChromiumExecutablePath,
-} from '../../../scripts/browser-check.js';
+import { checkChromiumExecutable } from '../../../scripts/browser-check.js';
 
 describe('Chromium qualification preflight', () => {
-  it('resolves a non-empty Playwright Chromium executable path', () => {
-    expect(resolveChromiumExecutablePath()).toEqual(expect.any(String));
-    expect(resolveChromiumExecutablePath().length).toBeGreaterThan(0);
-  });
-
   it('fails closed with the explicit install command when Chromium is missing', async () => {
     const launch = vi.fn();
 
     await expect(
       checkChromiumExecutable({
-        executablePath: '/missing/chromium',
         access: vi.fn(async () => {
           throw new Error('ENOENT');
         }),
-        launch,
+        loadPlaywright: async () => ({
+          chromium: {
+            executablePath: () => '/missing/chromium',
+            launch,
+          },
+        }),
       })
-    ).rejects.toThrow('Install with: bun run --filter blade-code browser:install');
+    ).rejects.toThrow('Install with: blade browser install');
     expect(launch).not.toHaveBeenCalled();
   });
 
   it('checks execute permission and launches then closes Chromium without navigation', async () => {
     const close = vi.fn(async () => undefined);
     const access = vi.fn(async () => undefined);
-    const launch = vi.fn(async () => ({ close }));
+    const launch = vi.fn(async () => ({ close, version: () => 'test-chromium' }));
 
     await expect(
       checkChromiumExecutable({
-        executablePath: '/installed/chromium',
         access,
-        launch,
+        environment: { PATH: '/bin', DEEPSEEK_API_KEY: 'secret' },
+        loadPlaywright: async () => ({
+          chromium: {
+            executablePath: () => '/installed/chromium',
+            launch,
+          },
+        }),
       })
     ).resolves.toBe('/installed/chromium');
 
@@ -43,6 +44,7 @@ describe('Chromium qualification preflight', () => {
     expect(launch).toHaveBeenCalledWith({
       executablePath: '/installed/chromium',
       headless: true,
+      env: { PATH: '/bin' },
     });
     expect(close).toHaveBeenCalledOnce();
   });
