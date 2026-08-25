@@ -14,6 +14,7 @@ type ErasedPendingOperation = PendingOperation<unknown>;
 export class BrowserOperationGate {
   private readonly queue: ErasedPendingOperation[] = [];
   private readonly closeController = new AbortController();
+  private readonly idleWaiters = new Set<() => void>();
   private active = false;
   private closed = false;
 
@@ -64,20 +65,26 @@ export class BrowserOperationGate {
     });
   }
 
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    this.closeController.abort(
-      new BrowserRuntimeError('browser_disposed', 'Browser Session Runtime is closed')
-    );
-    for (const pending of this.queue.splice(0)) {
-      if (pending.signal && pending.abortListener) {
-        pending.signal.removeEventListener('abort', pending.abortListener);
-      }
-      pending.reject(
+  close(): Promise<void> {
+    if (!this.closed) {
+      this.closed = true;
+      this.closeController.abort(
         new BrowserRuntimeError('browser_disposed', 'Browser Session Runtime is closed')
       );
+      for (const pending of this.queue.splice(0)) {
+        if (pending.signal && pending.abortListener) {
+          pending.signal.removeEventListener('abort', pending.abortListener);
+        }
+        pending.reject(
+          new BrowserRuntimeError(
+            'browser_disposed',
+            'Browser Session Runtime is closed'
+          )
+        );
+      }
     }
+    if (!this.active) return Promise.resolve();
+    return new Promise<void>((resolve) => this.idleWaiters.add(resolve));
   }
 
   stats(): { active: boolean; pending: number; closed: boolean } {
@@ -104,6 +111,10 @@ export class BrowserOperationGate {
       .then(pending.resolve, pending.reject)
       .finally(() => {
         this.active = false;
+        if (this.closed) {
+          for (const resolve of this.idleWaiters) resolve();
+          this.idleWaiters.clear();
+        }
         this.drain();
       });
   }

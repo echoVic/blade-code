@@ -549,10 +549,15 @@ describe('SessionRuntime', () => {
 
   it('creates a runtime from the current store config', async () => {
     const runtime = await SessionRuntime.create({ sessionId: 'session-1' });
+    const { getBuiltinTools } = await import('../../../../src/tools/builtin/index.js');
+    const builtinOptions = vi.mocked(getBuiltinTools).mock.calls.at(-1)?.[0];
 
     expect(runtime.sessionId).toBe('session-1');
+    expect(builtinOptions?.browserRuntime).toBeDefined();
+    const disposeBrowser = vi.spyOn(builtinOptions!.browserRuntime!, 'dispose');
 
     await runtime.dispose();
+    expect(disposeBrowser).toHaveBeenCalledOnce();
   });
 
   it('reloads a recovered durable inbox into an idle cached runtime', async () => {

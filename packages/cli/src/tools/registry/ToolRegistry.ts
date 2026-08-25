@@ -295,9 +295,7 @@ export class ToolRegistry extends EventEmitter {
    * Plan 模式下只允许使用只读工具：Read, Glob, Grep, WebFetch, WebSearch, Task, TaskCreate/TaskGet/TaskUpdate/TaskList, EnterPlanMode, ExitPlanMode
    */
   getReadOnlyFunctionDeclarations(): FunctionDeclaration[] {
-    return this.getAll()
-      .filter((tool) => isReadOnlyKind(tool.kind))
-      .map((tool) => tool.getFunctionDeclaration());
+    return this._deferredManager.filterDeclarations(this.getReadOnlyTools());
   }
 
   /**

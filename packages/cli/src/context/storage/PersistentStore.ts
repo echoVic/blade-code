@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { nanoid } from 'nanoid';
 import type { BackgroundSubagentCompletion } from '../../agent/subagents/BackgroundSubagentCompletion.js';
 import type { SubagentInfoForContext } from '../../agent/types.js';
+import { BrowserArtifactStore } from '../../browser/BrowserArtifactStore.js';
 import type { ContentPart } from '../../services/ChatServiceInterface.js';
 import { materializeSessionEvents } from '../../services/sessionRewind.js';
 import type { JsonValue, MessageRole } from '../../store/types.js';
@@ -48,6 +49,7 @@ import {
 import { JSONLStore } from './JSONLStore.js';
 import {
   detectGitBranch,
+  getBladeStorageRoot,
   getProjectStoragePath,
   getSessionFilePath,
   getSessionInboxFilePath,
@@ -1986,6 +1988,9 @@ export class PersistentStore {
         .catch((error) => {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         });
+      await new BrowserArtifactStore(`${this.projectPath}\0${sessionId}`, {
+        storageRoot: getBladeStorageRoot(),
+      }).removeAll();
       // Best-effort：同步清理 SQLite 投影行（派生缓存，失败不影响 JSONL 真相）。
       try {
         const { getProjectionDb, removeSessionFromProjection } = await import(

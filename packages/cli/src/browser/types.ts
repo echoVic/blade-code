@@ -12,6 +12,7 @@ export type BrowserErrorCode =
   | 'browser_cross_origin_navigation'
   | 'browser_cross_origin_frame'
   | 'browser_timeout'
+  | 'browser_operation_failed'
   | 'browser_action_uncertain'
   | 'browser_download_blocked'
   | 'browser_unsupported';
@@ -93,12 +94,17 @@ export type BrowserInspectTarget =
   | { kind: 'console'; limit?: number }
   | { kind: 'page-errors'; limit?: number }
   | { kind: 'network'; limit?: number }
+  | { kind: 'find'; text: string; limit?: number }
   | { kind: 'screenshot' };
 
 export interface BrowserInspectResult {
   pageId: string;
   target: BrowserInspectTarget['kind'];
   entries?: BrowserDiagnosticEntry[];
+  matches?: string[];
+  snapshotId?: string;
+  origin?: string;
+  url?: string;
   artifact?: BrowserScreenshotArtifact;
   truncated: boolean;
 }
@@ -119,27 +125,43 @@ export type BrowserAllowedKey =
   | 'PageDown'
   | 'Space';
 
+export interface BrowserDialogAction {
+  action: 'accept' | 'dismiss';
+}
+
 export type BrowserAction =
-  | { kind: 'click' }
+  | { kind: 'click'; dialog?: BrowserDialogAction }
   | { kind: 'hover' }
   | { kind: 'fill'; value: string }
   | { kind: 'type'; value: string }
   | { kind: 'press'; key: BrowserAllowedKey }
   | { kind: 'select'; values: string[] }
   | { kind: 'check' }
-  | { kind: 'uncheck' };
+  | { kind: 'uncheck' }
+  | {
+      kind: 'scroll';
+      direction: 'up' | 'down' | 'left' | 'right';
+      amount: number;
+    };
 
 export type BrowserWaitCondition =
   | { kind: 'load'; state: 'domcontentloaded' | 'load' | 'networkidle' }
   | { kind: 'text'; text: string }
   | { kind: 'url'; value: string }
+  | {
+      kind: 'ref';
+      snapshotId: string;
+      ref: string;
+      state: 'visible' | 'hidden' | 'attached' | 'detached';
+    }
   | { kind: 'time'; milliseconds: number };
 
 export type BrowserPageAction =
   | { kind: 'list' }
   | { kind: 'open' }
   | { kind: 'select'; pageId: string }
-  | { kind: 'close'; pageId: string };
+  | { kind: 'close'; pageId: string }
+  | { kind: 'reset' };
 
 export type BrowserInteractionResult =
   | {

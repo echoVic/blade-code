@@ -7,6 +7,15 @@ import { basename } from 'node:path';
 import { isEditMetadata, isGlobMetadata } from '../../tools/types/index.js';
 import type { ToolDisplayOutput } from '../../tools/types/ToolTypes.js';
 
+const BROWSER_TOOL_NAMES = new Set([
+  'BrowserNavigate',
+  'BrowserSnapshot',
+  'BrowserInteract',
+  'BrowserWait',
+  'BrowserInspect',
+  'BrowserPage',
+]);
+
 /**
  * 格式化工具调用摘要（用于流式显示）
  * 生成清晰的执行日志，让用户知道正在做什么
@@ -84,6 +93,32 @@ export function formatToolCallSummary(
         query && query.length > 40 ? query.substring(0, 40) + '...' : query;
       return `Searching: "${truncatedQuery}"`;
     }
+    case 'BrowserNavigate': {
+      const url = params.url as string;
+      try {
+        return `Browser navigate: ${new URL(url).origin}`;
+      } catch {
+        return 'Browser navigate';
+      }
+    }
+    case 'BrowserSnapshot':
+      return 'Browser snapshot';
+    case 'BrowserInteract': {
+      const action = params.action as Record<string, unknown> | undefined;
+      return `Browser interact: ${String(action?.kind ?? 'action')}`;
+    }
+    case 'BrowserWait': {
+      const condition = params.condition as Record<string, unknown> | undefined;
+      return `Browser wait: ${String(condition?.kind ?? 'condition')}`;
+    }
+    case 'BrowserInspect': {
+      const target = params.target as Record<string, unknown> | undefined;
+      return `Browser inspect: ${String(target?.kind ?? 'page')}`;
+    }
+    case 'BrowserPage': {
+      const action = params.action as Record<string, unknown> | undefined;
+      return `Browser page: ${String(action?.kind ?? 'manage')}`;
+    }
     case 'TaskCreate': {
       const subject = params.subject as string;
       return `Creating task: ${subject || 'task'}`;
@@ -150,7 +185,14 @@ interface ToolResult {
  * 判断是否显示工具详细内容
  */
 export function shouldShowToolDetail(toolName: string, result: ToolResult): boolean {
-  if (!result?.success && !result?.metadata && toolName !== 'Bash') return false;
+  if (
+    !result?.success &&
+    !result?.metadata &&
+    toolName !== 'Bash' &&
+    !BROWSER_TOOL_NAMES.has(toolName)
+  ) {
+    return false;
+  }
 
   switch (toolName) {
     case 'Write':
@@ -168,6 +210,14 @@ export function shouldShowToolDetail(toolName: string, result: ToolResult): bool
     case 'WebFetch':
     case 'WebSearch':
       // 网络请求显示结果
+      return true;
+
+    case 'BrowserNavigate':
+    case 'BrowserSnapshot':
+    case 'BrowserInteract':
+    case 'BrowserWait':
+    case 'BrowserInspect':
+    case 'BrowserPage':
       return true;
 
     case 'TaskCreate':
@@ -196,7 +246,14 @@ export function generateToolDetail(
   toolName: string,
   result: ToolResult
 ): string | null {
-  if (!result?.success && toolName !== 'Bash' && toolName !== 'Task') return null;
+  if (
+    !result?.success &&
+    toolName !== 'Bash' &&
+    toolName !== 'Task' &&
+    !BROWSER_TOOL_NAMES.has(toolName)
+  ) {
+    return null;
+  }
 
   switch (toolName) {
     case 'Glob': {
@@ -427,6 +484,46 @@ export function generateToolDetail(
         return lines.join('\n');
       }
       return null;
+    }
+
+    case 'BrowserNavigate':
+    case 'BrowserSnapshot':
+    case 'BrowserInteract':
+    case 'BrowserWait':
+    case 'BrowserInspect':
+    case 'BrowserPage': {
+      const browser = result.metadata?.browser;
+      if (!browser || typeof browser !== 'object' || Array.isArray(browser)) {
+        return result.error?.message?.slice(0, 800) ?? null;
+      }
+      const metadata = browser as Record<string, unknown>;
+      const lines: string[] = [];
+      for (const [label, key] of [
+        ['Origin', 'origin'],
+        ['URL', 'url'],
+        ['Title', 'title'],
+        ['Page', 'pageId'],
+        ['Snapshot', 'snapshotId'],
+        ['Error', 'errorCode'],
+      ] as const) {
+        const value = metadata[key];
+        if (typeof value === 'string' && value) {
+          lines.push(`${label}: ${value.slice(0, 512)}`);
+        }
+      }
+      if (metadata.sideEffectsUncertain === true) {
+        lines.push('Side effects: uncertain; inspect before retrying');
+      }
+      const artifact =
+        metadata.artifact &&
+        typeof metadata.artifact === 'object' &&
+        !Array.isArray(metadata.artifact)
+          ? (metadata.artifact as Record<string, unknown>)
+          : undefined;
+      if (typeof artifact?.id === 'string') {
+        lines.push(`Screenshot: ${artifact.id}`);
+      }
+      return lines.join('\n') || null;
     }
 
     case 'Task': {

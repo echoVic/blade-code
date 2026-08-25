@@ -160,6 +160,7 @@ export async function main() {
     { hideBin },
     { cliConfig, globalOptions },
     { loadConfiguration, validateOutput, validatePermissions },
+    { browserCommands },
     { doctorCommands },
     { installCommands },
     { mcpCommands },
@@ -173,6 +174,7 @@ export async function main() {
     import('yargs/helpers'),
     import('./cli/config.js'),
     import('./cli/middleware.js'),
+    import('./commands/browser.js'),
     import('./commands/doctor.js'),
     import('./commands/install.js'),
     import('./commands/mcp.js'),
@@ -201,6 +203,7 @@ export async function main() {
     .middleware([loadConfiguration, validatePermissions, validateOutput])
 
     // 注册命令
+    .command(browserCommands)
     .command(mcpCommands)
     .command(projectsCommands)
     .command(scheduleCommands)

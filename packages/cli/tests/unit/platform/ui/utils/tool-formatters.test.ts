@@ -181,4 +181,46 @@ describe('tool formatters', () => {
     expect(/[\uD800-\uDBFF]$/.test(detail)).toBe(false);
     expect(/^[\uDC00-\uDFFF]/.test(detail)).toBe(false);
   });
+
+  it('renders bounded Browser summaries without page snapshot content', () => {
+    expect(
+      formatToolCallSummary('BrowserNavigate', {
+        url: 'https://example.com/path?token=secret',
+      })
+    ).toBe('Browser navigate: https://example.com');
+    expect(
+      formatToolCallSummary('BrowserInteract', {
+        action: { kind: 'click' },
+      })
+    ).toBe('Browser interact: click');
+
+    const display = formatToolDisplay('BrowserInteract', {
+      success: false,
+      llmContent: '<browser_data>untrusted page content</browser_data>',
+      error: { message: 'Action timed out' },
+      metadata: {
+        summary: 'BrowserInteract: error',
+        browser: {
+          action: 'BrowserInteract',
+          status: 'error',
+          pageId: 'browser_page_123',
+          origin: 'https://example.com:443',
+          errorCode: 'browser_timeout',
+          sideEffectsUncertain: true,
+        },
+      },
+    });
+
+    expect(display).toEqual({
+      status: 'fail',
+      summary: 'BrowserInteract: error',
+      detail: [
+        'Origin: https://example.com:443',
+        'Page: browser_page_123',
+        'Error: browser_timeout',
+        'Side effects: uncertain; inspect before retrying',
+      ].join('\n'),
+    });
+    expect(display.detail).not.toContain('untrusted page content');
+  });
 });

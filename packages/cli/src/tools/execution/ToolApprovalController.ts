@@ -1,4 +1,8 @@
 import { Mutex } from 'async-mutex';
+import {
+  classifyBrowserHostname,
+  normalizeBrowserUrl,
+} from '../../browser/BrowserSecurity.js';
 import { getConfigService } from '../../config/ConfigService.js';
 import {
   PermissionChecker,
@@ -226,6 +230,53 @@ function generatePreviewForTool(
   toolName: string,
   params: Record<string, unknown>
 ): string | undefined {
+  if (toolName === 'BrowserNavigate') {
+    if (typeof params.url === 'string') {
+      try {
+        const target = normalizeBrowserUrl(params.url);
+        return `Origin: ${target.origin}\nNetwork: ${target.classification}`;
+      } catch {
+        return 'Origin: invalid';
+      }
+    }
+    if (typeof params.expectedOrigin === 'string') {
+      try {
+        const hostname = new URL(params.expectedOrigin).hostname;
+        return (
+          `Origin: ${params.expectedOrigin}\n` +
+          `Network: ${classifyBrowserHostname(hostname)}`
+        );
+      } catch {
+        return 'Origin: invalid';
+      }
+    }
+    return 'Origin: invalid';
+  }
+  if (toolName === 'BrowserInteract' && typeof params.expectedOrigin === 'string') {
+    let classification = 'invalid';
+    try {
+      classification = classifyBrowserHostname(new URL(params.expectedOrigin).hostname);
+    } catch {
+      // Keep invalid classification for the permission preview.
+    }
+    const action =
+      params.action &&
+      typeof params.action === 'object' &&
+      !Array.isArray(params.action) &&
+      typeof (params.action as Record<string, unknown>).kind === 'string'
+        ? (params.action as Record<string, unknown>).kind
+        : 'unknown';
+    return `Origin: ${params.expectedOrigin}\nNetwork: ${classification}\nAction: ${action}`;
+  }
+  if (
+    toolName === 'BrowserPage' &&
+    params.action &&
+    typeof params.action === 'object' &&
+    !Array.isArray(params.action)
+  ) {
+    const action = (params.action as Record<string, unknown>).kind;
+    return typeof action === 'string' ? `Page action: ${action}` : undefined;
+  }
   if (toolName === 'Edit') {
     const oldString = params.old_string as string;
     const newString = params.new_string as string;
@@ -268,7 +319,13 @@ function truncate(text: string, maxLines: number): string {
 
 function extractRisks(toolName: string, params: Record<string, unknown>): string[] {
   const risks: string[] = [];
-  if (toolName === 'Bash') {
+  if (toolName === 'BrowserNavigate') {
+    risks.push('The page may execute remote code and issue network requests');
+  } else if (toolName === 'BrowserInteract') {
+    risks.push('This action may submit data or change remote state');
+  } else if (toolName === 'BrowserPage') {
+    risks.push('This action changes local browser page state');
+  } else if (toolName === 'Bash') {
     const command = (params.command as string) || '';
     if (command.includes('rm')) risks.push('[WARN] 此命令可能删除文件');
     if (command.includes('sudo')) risks.push('[WARN] 此命令需要管理员权限');

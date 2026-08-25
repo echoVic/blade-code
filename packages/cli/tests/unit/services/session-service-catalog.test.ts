@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionLease } from '../../../src/agent/runtime/SessionLease.js';
+import { BrowserArtifactStore } from '../../../src/browser/BrowserArtifactStore.js';
 import {
   JSONLStore,
   parseSessionJSONL,
@@ -739,6 +740,12 @@ describe('SessionService strict session catalog', () => {
       '{"version":1,"sessionId":"hidden-subagent","messages":[]}\n',
       'utf8'
     );
+    const browserArtifact = await new BrowserArtifactStore(
+      `${workspaceA}\0hidden-subagent`,
+      { storageRoot }
+    ).writeScreenshot(
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01])
+    );
 
     const listed = await SessionService.listSessionPage({ cwd: workspaceA });
     expect(listed.sessions).not.toContainEqual(
@@ -751,6 +758,7 @@ describe('SessionService strict session catalog', () => {
     expect(await SessionService.deleteSession('hidden-subagent', workspaceA)).toBe(1);
     await expect(access(transcriptPath)).rejects.toThrow();
     await expect(access(inboxPath)).rejects.toThrow();
+    await expect(access(path.dirname(browserArtifact.path!))).rejects.toThrow();
 
     await subagentStore.saveMessage(
       'hidden-subagent-unscoped',

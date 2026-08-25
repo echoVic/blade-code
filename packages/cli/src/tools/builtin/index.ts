@@ -9,6 +9,7 @@ import {
   getSubagentRegistry,
   type SubagentRegistry,
 } from '../../agent/subagents/SubagentRegistry.js';
+import type { SessionBrowserRuntime } from '../../browser/SessionBrowserRuntime.js';
 import type {
   CommunicationStyleSelection,
   ReasoningEffortSelection,
@@ -21,6 +22,7 @@ import type { SessionLspResources } from '../../lsp/WorkspaceLspResources.js';
 import { getSkillRegistry, type SkillRegistry } from '../../skills/index.js';
 import { CustomCommandRegistry } from '../../slash-commands/custom/CustomCommandRegistry.js';
 import type { Tool } from '../types/index.js';
+import { createBrowserTools } from './browser/index.js';
 // Config 工具
 import { configTool } from './config/index.js';
 // 文件操作工具
@@ -76,6 +78,7 @@ export async function getBuiltinTools(opts?: {
   getCommunicationStyle?: () => CommunicationStyleSelection;
   agentTeamsEnabled?: boolean;
   userPromptArtifactStore?: UserPromptArtifactStore;
+  browserRuntime?: SessionBrowserRuntime;
 }): Promise<Tool[]> {
   const sessionId = opts?.sessionId || `session_${Date.now()}`;
   const configDir = opts?.configDir || getBladeStorageRoot();
@@ -114,6 +117,7 @@ export async function getBuiltinTools(opts?: {
     // 网络工具: WebFetch, WebSearch
     webFetchTool,
     webSearchTool,
+    ...(opts?.browserRuntime ? createBrowserTools(opts.browserRuntime) : []),
 
     // 子代理任务: Task, TaskOutput
     createTaskTool(

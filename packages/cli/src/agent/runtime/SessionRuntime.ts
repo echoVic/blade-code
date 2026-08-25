@@ -3,6 +3,7 @@ import { Mutex } from 'async-mutex';
 import { nanoid } from 'nanoid';
 import * as path from 'path';
 import { isAcpMode } from '../../acp/AcpServiceContext.js';
+import { SessionBrowserRuntime } from '../../browser/SessionBrowserRuntime.js';
 import {
   type BladeConfig,
   ConfigManager,
@@ -349,6 +350,7 @@ export class SessionRuntime {
   private readonly attachmentCollector: AttachmentCollector;
   private readonly goalStore: GoalStore;
   private readonly userPromptArtifactStore: UserPromptArtifactStore;
+  private browserRuntime?: SessionBrowserRuntime;
   private activeTurnMailbox?: ActiveTurnMailbox;
 
   private chatService?: IChatService;
@@ -2390,9 +2392,11 @@ export class SessionRuntime {
     const sessionLease = this.sessionLease;
     const autoVerifyRuntime = this.autoVerifyRuntime;
     const lspManager = this.lspManager;
+    const browserRuntime = this.browserRuntime;
     await attempt('stop side conversations', () =>
       this.sideConversationOperations.shutdown('session-runtime-dispose')
     );
+    await attempt('close the Session browser', () => browserRuntime?.dispose());
     this.signalBackgroundSubagentCompletionWaiters();
     this.chatService = undefined;
     this.executionEngine = undefined;
@@ -2416,6 +2420,7 @@ export class SessionRuntime {
     this.sessionLease = undefined;
     this.autoVerifyRuntime = undefined;
     this.lspManager = undefined;
+    this.browserRuntime = undefined;
 
     await attempt('kill the session background processes', () =>
       BackgroundShellManager.getInstance().killSession(this.sessionId)
@@ -2688,6 +2693,13 @@ export class SessionRuntime {
   }
 
   private async registerBuiltinTools(): Promise<void> {
+    this.browserRuntime ??= new SessionBrowserRuntime(
+      `${this.projectRoot}\0${this.sessionId}`,
+      {
+        storageRoot: getBladeStorageRoot(),
+        exposeArtifactPaths: !isAcpMode(this.sessionId),
+      }
+    );
     const builtinTools = await getBuiltinTools({
       sessionId: this.sessionId,
       configDir: getBladeStorageRoot(),
@@ -2703,6 +2715,7 @@ export class SessionRuntime {
       getCommunicationStyle: () => this.selectedCommunicationStyle,
       agentTeamsEnabled: this.config.agentTeamsEnabled === true,
       userPromptArtifactStore: this.userPromptArtifactStore,
+      browserRuntime: this.browserRuntime,
     });
 
     const builtin = builtinTools.filter((tool) => !tool.name.startsWith('mcp__'));

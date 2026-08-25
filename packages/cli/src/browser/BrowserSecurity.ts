@@ -43,6 +43,20 @@ export function byteLength(value: string): number {
   return Buffer.byteLength(value, 'utf8');
 }
 
+export function assertBrowserStringBound(
+  value: string,
+  maximumBytes: number,
+  label: string,
+  options: { allowEmpty?: boolean } = {}
+): void {
+  if ((!options.allowEmpty && value.length === 0) || byteLength(value) > maximumBytes) {
+    throw new BrowserRuntimeError(
+      'browser_unsupported',
+      `${label} is empty or exceeds the supported size`
+    );
+  }
+}
+
 export function sliceUtf8(value: string, maximumBytes: number): string {
   const bytes = Buffer.from(value);
   if (bytes.length <= maximumBytes) return value;
@@ -134,12 +148,7 @@ export function classifyBrowserHostname(hostname: string): BrowserOriginClass {
 }
 
 export function normalizeBrowserUrl(value: string): NormalizedBrowserUrl {
-  if (!value || byteLength(value) > MAX_BROWSER_URL_BYTES) {
-    throw new BrowserRuntimeError(
-      'browser_unsupported',
-      'Browser URL is empty or exceeds the supported size'
-    );
-  }
+  assertBrowserStringBound(value, MAX_BROWSER_URL_BYTES, 'Browser URL');
 
   let url: URL;
   try {
@@ -168,6 +177,34 @@ export function normalizeBrowserUrl(value: string): NormalizedBrowserUrl {
     origin: canonicalBrowserOrigin(url),
     classification: classifyBrowserHostname(url.hostname),
   };
+}
+
+export function normalizeExpectedBrowserOrigin(value: string): string {
+  assertBrowserStringBound(value, MAX_BROWSER_ORIGIN_BYTES, 'Browser origin');
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new BrowserRuntimeError('browser_unsupported', 'Browser origin is invalid');
+  }
+  if (
+    (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+    url.username ||
+    url.password ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash
+  ) {
+    throw new BrowserRuntimeError('browser_unsupported', 'Browser origin is invalid');
+  }
+  const canonical = canonicalBrowserOrigin(url);
+  if (canonical !== value.toLowerCase()) {
+    throw new BrowserRuntimeError(
+      'browser_unsupported',
+      `Browser origin must use canonical form: ${canonical}`
+    );
+  }
+  return canonical;
 }
 
 export function projectBrowserUrl(value: string): string {

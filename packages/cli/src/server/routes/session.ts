@@ -45,6 +45,14 @@ import {
   UserShellCommandRequestSchema,
 } from '../../api/schemas.js';
 import {
+  MAX_BROWSER_DIAGNOSTIC_RESULT_ENTRIES,
+  MAX_BROWSER_ID_BYTES,
+  MAX_BROWSER_ORIGIN_BYTES,
+  MAX_BROWSER_PROJECTED_URL_BYTES,
+  MAX_BROWSER_SCREENSHOT_BYTES,
+  MAX_BROWSER_TITLE_BYTES,
+} from '../../browser/constants.js';
+import {
   DEFAULT_MAX_RESIDENT_SESSION_RUNTIMES,
   DEFAULT_SESSION_RUNTIME_IDLE_MS,
   SESSION_RUNTIME_SWEEP_MS,
@@ -447,6 +455,102 @@ export const sanitizeToolMetadata = (
   const toolAdmission = sanitizeToolAdmissionMetadata(sanitized.tool_admission);
   if (toolAdmission) sanitized.tool_admission = toolAdmission;
   else delete sanitized.tool_admission;
+  if (
+    [
+      'BrowserNavigate',
+      'BrowserSnapshot',
+      'BrowserInteract',
+      'BrowserWait',
+      'BrowserInspect',
+      'BrowserPage',
+    ].includes(toolName)
+  ) {
+    const source =
+      sanitized.browser &&
+      typeof sanitized.browser === 'object' &&
+      !Array.isArray(sanitized.browser)
+        ? (sanitized.browser as Record<string, unknown>)
+        : {};
+    const projected: Record<string, unknown> = {};
+    const boundedString = (key: string, maximum: number, pattern?: RegExp): void => {
+      const value = source[key];
+      if (
+        typeof value === 'string' &&
+        Buffer.byteLength(value) <= maximum &&
+        (!pattern || pattern.test(value))
+      ) {
+        projected[key] = value;
+      }
+    };
+    boundedString('action', 64);
+    boundedString('status', 16, /^(?:ok|warning|error)$/);
+    boundedString('pageId', MAX_BROWSER_ID_BYTES, /^browser_page_[a-f0-9-]+$/);
+    boundedString('snapshotId', MAX_BROWSER_ID_BYTES, /^browser_snapshot_[a-f0-9-]+$/);
+    boundedString('origin', MAX_BROWSER_ORIGIN_BYTES);
+    boundedString('candidateOrigin', MAX_BROWSER_ORIGIN_BYTES);
+    boundedString('url', MAX_BROWSER_PROJECTED_URL_BYTES);
+    boundedString('title', MAX_BROWSER_TITLE_BYTES);
+    boundedString('errorCode', 64, /^browser_[a-z_]+$/);
+    if (typeof source.truncated === 'boolean') {
+      projected.truncated = source.truncated;
+    }
+    if (
+      typeof source.actionApplied === 'boolean' ||
+      source.actionApplied === 'unknown'
+    ) {
+      projected.actionApplied = source.actionApplied;
+    }
+    if (typeof source.sideEffectsUncertain === 'boolean') {
+      projected.sideEffectsUncertain = source.sideEffectsUncertain;
+    }
+    if (
+      typeof source.diagnosticCount === 'number' &&
+      Number.isSafeInteger(source.diagnosticCount) &&
+      source.diagnosticCount >= 0 &&
+      source.diagnosticCount <= MAX_BROWSER_DIAGNOSTIC_RESULT_ENTRIES
+    ) {
+      projected.diagnosticCount = source.diagnosticCount;
+    }
+    if (
+      source.artifact &&
+      typeof source.artifact === 'object' &&
+      !Array.isArray(source.artifact)
+    ) {
+      const artifact = source.artifact as Record<string, unknown>;
+      if (
+        typeof artifact.id === 'string' &&
+        /^[a-f0-9]{64}$/.test(artifact.id) &&
+        artifact.sha256 === artifact.id &&
+        artifact.kind === 'image' &&
+        artifact.mimeType === 'image/png' &&
+        typeof artifact.size === 'number' &&
+        Number.isSafeInteger(artifact.size) &&
+        artifact.size >= 0 &&
+        artifact.size <= MAX_BROWSER_SCREENSHOT_BYTES &&
+        artifact.persisted === true
+      ) {
+        projected.artifact = {
+          id: artifact.id,
+          sha256: artifact.sha256,
+          kind: artifact.kind,
+          mimeType: artifact.mimeType,
+          size: artifact.size,
+          persisted: true,
+          ...(typeof artifact.path === 'string' &&
+          Buffer.byteLength(artifact.path) <= 8_192
+            ? { path: artifact.path }
+            : {}),
+        };
+      }
+    }
+    return {
+      ...(typeof sanitized.summary === 'string'
+        ? { summary: sanitized.summary.slice(0, 512) }
+        : {}),
+      browser: projected,
+      ...(toolAdmission ? { tool_admission: toolAdmission } : {}),
+    } as ToolResultMetadata;
+  }
   if (toolName === 'Bash') {
     const projected: Record<string, unknown> = {};
     const stringFields = ['message', 'signal', 'status', 'summary'] as const;

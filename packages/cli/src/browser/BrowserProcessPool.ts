@@ -100,6 +100,12 @@ export class BrowserProcessPool {
             { retryable: true }
           );
         }
+        if (this.leases.size === 0 && browser === this.browser) {
+          this.detachDisconnectListener(browser);
+          this.browser = undefined;
+          this.launchPromise = undefined;
+          await browser.close().catch(() => undefined);
+        }
         throw error;
       }
       if (this.disposed || browser !== this.browser || generation !== this.generation) {
@@ -183,11 +189,10 @@ export class BrowserProcessPool {
         headless: true,
         env: createBrowserRuntimeEnvironment(this.environment),
       });
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
+    } catch {
       throw new BrowserRuntimeError(
         'browser_not_installed',
-        `Chromium launch failed: ${reason.slice(0, 4096)}\n` +
+        'Chromium is unavailable or failed to launch.\n' +
           'Install with: blade browser install'
       );
     }

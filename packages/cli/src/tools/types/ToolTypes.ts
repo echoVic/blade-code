@@ -240,6 +240,32 @@ interface WebFetchMetadataFields extends BaseMetadataFields {
   redirect_chain?: string[];
 }
 
+interface BrowserToolMetadataFields extends BaseMetadataFields {
+  browser: {
+    action: string;
+    status: 'ok' | 'warning' | 'error';
+    pageId?: string;
+    snapshotId?: string;
+    origin?: string;
+    url?: string;
+    title?: string;
+    truncated?: boolean;
+    actionApplied?: boolean | 'unknown';
+    sideEffectsUncertain?: boolean;
+    candidateOrigin?: string;
+    errorCode?: string;
+    artifact?: {
+      id: string;
+      kind: 'image';
+      mimeType: 'image/png';
+      size: number;
+      sha256: string;
+      persisted: true;
+      path?: string;
+    };
+  };
+}
+
 /**
  * 泛型 Metadata 类型
  *
@@ -273,6 +299,7 @@ export type BashForegroundMetadata = Metadata<BashForegroundMetadataFields>;
 type BashMetadata = BashBackgroundMetadata | BashForegroundMetadata;
 export type WebSearchMetadata = Metadata<WebSearchMetadataFields>;
 export type WebFetchMetadata = Metadata<WebFetchMetadataFields>;
+export type BrowserToolMetadata = Metadata<BrowserToolMetadataFields>;
 
 /**
  * ToolResult.metadata 的类型（向后兼容）

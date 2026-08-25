@@ -28,6 +28,30 @@ describe('Blade CLI 基本行为', () => {
     expect(combinedOutput.length).toBeGreaterThan(0);
     expect(combinedOutput.toLowerCase()).toContain('blade');
     expect(combinedOutput).toContain('--headless');
+    expect(combinedOutput).toContain('browser');
+  });
+
+  it('执行 browser --help 应列出显式安装和状态命令', () => {
+    if (!existsSync(CLI_ENTRY)) {
+      console.warn(
+        '[cli] dist/blade.js 不存在，跳过 CLI 测试（请先运行 npm run build）'
+      );
+      return;
+    }
+
+    const result = spawnSync('node', [CLI_ENTRY, 'browser', '--help'], {
+      encoding: 'utf-8',
+      env: {
+        ...process.env,
+        BLADE_TELEMETRY_DISABLED: '1',
+      },
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    const combinedOutput = `${result.stdout}\n${result.stderr}`;
+    expect(combinedOutput).toContain('browser status');
+    expect(combinedOutput).toContain('browser install');
   });
 
   it('执行 --headless /help 应该走 headless 入口并成功退出', () => {
