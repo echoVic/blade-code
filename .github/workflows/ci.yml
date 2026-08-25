@@ -189,7 +189,7 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('packages/cli/package.json') }}
 
       - name: Install Chromium
-        run: bun run --filter blade-code browser:install
+        run: bunx playwright install --with-deps chromium
 
       - name: Build CLI
         run: bun run build:cli

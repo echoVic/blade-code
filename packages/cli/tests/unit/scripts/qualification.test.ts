@@ -53,7 +53,7 @@ describe('production qualification contract', () => {
     const coverageEnd = workflow.indexOf('\n  ci-pass:', coverageStart);
     const coverageJob = workflow.slice(coverageStart, coverageEnd);
     const installIndex = coverageJob.indexOf(
-      'run: bun run --filter blade-code browser:install'
+      'run: bunx playwright install --with-deps chromium'
     );
     const testIndex = coverageJob.indexOf(
       'run: bun run --filter blade-code test:coverage'
