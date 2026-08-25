@@ -996,6 +996,9 @@ describe('FilePreview', () => {
       expect(tab?.getAttribute('aria-selected')).toBe('true');
       return tab;
     });
+    const toolbar = container.querySelector<HTMLElement>('[data-preview-toolbar]');
+    expect(toolbar?.textContent?.replace(/\s+/g, '')).toBe('DiffFilesLogsBrowser');
+    expect(container.querySelector('[aria-label="Close preview"]')).toBeNull();
     const address = container.querySelector<HTMLInputElement>(
       '[data-preview-browser-address]'
     );

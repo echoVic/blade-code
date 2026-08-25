@@ -817,17 +817,19 @@ export function FilePreview({ returnFocusElement }: FilePreviewProps = {}) {
               {t('preview.tab.browser')}
             </TabsTrigger>
           </TabsList>
-          <Button
-            ref={closeButtonRef}
-            variant="ghost"
-            size="icon"
-            onClick={toggleFilePreview}
-            aria-label={t('preview.action.close')}
-            title={t('preview.action.close')}
-            className="h-9 w-9 shrink-0 rounded-md text-[hsl(var(--deck-ink-faint))] hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))]"
-          >
-            <X className="h-4 w-4" />
-          </Button>
+          {isCompact && (
+            <Button
+              ref={closeButtonRef}
+              variant="ghost"
+              size="icon"
+              onClick={toggleFilePreview}
+              aria-label={t('preview.action.close')}
+              title={t('preview.action.close')}
+              className="h-9 w-9 shrink-0 rounded-md text-[hsl(var(--deck-ink-faint))] hover:bg-[hsl(var(--deck-surface))] hover:text-[hsl(var(--deck-ink))]"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          )}
         </div>
 
         <TabsContent value="diff" className="overflow-hidden flex-1 mt-0">

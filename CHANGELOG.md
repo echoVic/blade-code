@@ -4,8 +4,10 @@
 
 ### Changed
 - The right-side Preview panel now opens directly into its four tabs, with the
-  close action sharing the same compact toolbar instead of occupying a separate
-  visible title row
+  desktop tabs filling the compact toolbar instead of sharing space with a
+  redundant title row or close action
+- Desktop users collapse Preview through the existing global toolbar toggle;
+  the full-screen compact dialog retains its internal close action
 - The panel retains its accessible Preview label while reclaiming vertical
   space on both desktop and compact mobile layouts
 
