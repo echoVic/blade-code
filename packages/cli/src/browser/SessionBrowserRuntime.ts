@@ -1122,16 +1122,7 @@ export class SessionBrowserRuntime {
               blocked.referrerOrigin === openerState.authorizedOrigin
           )
         : -1;
-    const fallbackIndex =
-      exactIndex === -1 && inferredIndex === -1
-        ? this.blockedPopups.findIndex((blocked) => blocked.openerPageId === undefined)
-        : -1;
-    const index =
-      exactIndex !== -1
-        ? exactIndex
-        : inferredIndex !== -1
-          ? inferredIndex
-          : fallbackIndex;
+    const index = exactIndex !== -1 ? exactIndex : inferredIndex;
     return index === -1 ? undefined : this.blockedPopups.splice(index, 1)[0];
   }
 
@@ -1338,7 +1329,10 @@ export class SessionBrowserRuntime {
         return false;
       }
     });
-    if (exact.length === 1) return exact[0];
+    const referrerIdentifiesDocument =
+      normalizedReferrer.url.pathname !== '/' ||
+      normalizedReferrer.url.search.length > 0;
+    if (referrerIdentifiesDocument && exact.length === 1) return exact[0];
     return candidates.length === 1 ? candidates[0] : undefined;
   }
 

@@ -648,23 +648,27 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     const target = createServer((request, response) => {
       if (request.url === '/popup') popupRequests++;
       response.writeHead(200, { 'content-type': 'text/html' });
-      response.end(`<!doctype html>
-        <button onclick="
-          const until = performance.now() + 700;
-          while (performance.now() < until) {}
-        ">Slow target action</button>`);
+      response.end('<h1>Popup target</h1>');
     });
     servers.push(target);
     const targetPort = await listen(target);
     const targetOrigin = `http://127.0.0.1:${targetPort}`;
 
-    const source = createServer((_request, response) => {
+    const source = createServer((request, response) => {
       response.writeHead(200, { 'content-type': 'text/html' });
-      response.end(`<!doctype html>
-        <button onclick="setTimeout(
-          () => window.open('${targetOrigin}/popup', '_blank'),
-          650
-        )">Schedule background popup</button>`);
+      response.end(
+        request.url === '/a'
+          ? `<!doctype html>
+              <button onclick="setTimeout(
+                () => window.open('${targetOrigin}/popup', '_blank'),
+                650
+              )">Schedule background popup</button>`
+          : `<!doctype html>
+              <button onclick="
+                const until = performance.now() + 700;
+                while (performance.now() < until) {}
+              ">Slow target action</button>`
+      );
     });
     servers.push(source);
     const sourcePort = await listen(source);
@@ -680,11 +684,11 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     });
     runtimes.push(runtime);
 
-    const sourcePage = await runtime.navigate({ url: `${sourceOrigin}/` });
+    const sourcePage = await runtime.navigate({ url: `${sourceOrigin}/a` });
     const opened = await runtime.page({ action: { kind: 'open' } });
-    const targetPage = await runtime.navigate({
+    const sidePage = await runtime.navigate({
       pageId: opened.selectedPageId,
-      url: `${targetOrigin}/`,
+      url: `${sourceOrigin}/`,
     });
     const sourceSnapshot = await runtime.snapshot({ pageId: sourcePage.pageId });
     await expect(
@@ -697,13 +701,13 @@ describe('SessionBrowserRuntime with real Chromium', () => {
       })
     ).resolves.toMatchObject({ outcome: 'applied' });
 
-    const targetSnapshot = await runtime.snapshot({ pageId: targetPage.pageId });
+    const sideSnapshot = await runtime.snapshot({ pageId: sidePage.pageId });
     await expect(
       runtime.interact({
-        pageId: targetPage.pageId,
-        snapshotId: targetSnapshot.snapshotId,
-        ref: refFor(targetSnapshot, 'Slow target action'),
-        expectedOrigin: targetOrigin,
+        pageId: sidePage.pageId,
+        snapshotId: sideSnapshot.snapshotId,
+        ref: refFor(sideSnapshot, 'Slow target action'),
+        expectedOrigin: sourceOrigin,
         action: { kind: 'click' },
       })
     ).resolves.toMatchObject({ outcome: 'applied' });
@@ -715,11 +719,11 @@ describe('SessionBrowserRuntime with real Chromium', () => {
         details: { candidateOrigin: targetOrigin },
       }
     );
-    await expect(
-      runtime.snapshot({ pageId: targetPage.pageId })
-    ).resolves.toMatchObject({ origin: targetOrigin });
+    await expect(runtime.snapshot({ pageId: sidePage.pageId })).resolves.toMatchObject({
+      origin: sourceOrigin,
+    });
     await expect(runtime.page({ action: { kind: 'list' } })).resolves.toMatchObject({
-      tabs: [{ pageId: sourcePage.pageId }, { pageId: targetPage.pageId }],
+      tabs: [{ pageId: sourcePage.pageId }, { pageId: sidePage.pageId }],
     });
   });
 });
