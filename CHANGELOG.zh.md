@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.10.87] - 2026-08-25
+
+### 新增
+- 新增六个延迟加载的原生 Browser 工具，覆盖导航、无障碍快照、基于 ref 的交互、
+  等待、诊断、截图和页面管理
+- 新增显式的 `blade browser install` 与 `blade browser status` 命令，用于管理固定
+  Playwright 1.62.1 版本对应的 Chromium Runtime
+
+### 变更
+- 浏览器自动化改为全进程惰性共享一个 Chromium，每个 Session 独占一个隔离且临时的
+  BrowserContext
+- CLI、Headless、Web 与 ACP 统一消费同一套 Browser Tool 结果和有界 metadata 契约；
+  现有 iframe Browser Preview 保持独立
+- Session 截图使用私有内容寻址存储，并通过与所属 Session 相同的规范化 workspace
+  identity 清理
+
+### 安全
+- 显式启用 Chromium sandbox；浏览器进程只接收白名单环境变量，不继承 Provider 凭据
+- 导航与交互权限按规范化 HTTP(S) origin 隔离，并执行过期 snapshot/ref 校验和操作前后
+  origin 复核
+- 阻断跨 origin 导航、popup 与 frame 交互；opaque sandbox frame、凭据控件、下载、
+  任意 selector、脚本执行、上传、持久化 profile 与 storage state 均不可用
+
+### 测试
+- 新增覆盖六个工具、Session 隔离、sandbox 启动参数、redirect、popup、frame、dialog、
+  download、诊断、artifact、过期 ref、边界、abort、crash 与清理的确定性真实 Chromium
+  测试
+- 新增零重试的 DeepSeek Flash/Pro 资格矩阵，覆盖 Headless、raw PTY TUI、production
+  Chromium Web 与 ACP
+
 ## [0.10.86] - 2026-08-25
 
 ### 变更

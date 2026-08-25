@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.10.87] - 2026-08-25
+
+### Added
+- Added six deferred native Browser tools for navigation, accessibility snapshots,
+  ref-based interaction, waiting, diagnostics, screenshots, and page management
+- Added explicit `blade browser install` and `blade browser status` commands for
+  the pinned Playwright 1.62.1 Chromium runtime
+
+### Changed
+- Browser automation now uses one lazy process-wide Chromium with an isolated,
+  ephemeral BrowserContext owned by each Session
+- CLI, Headless, Web, and ACP now consume one canonical Browser Tool result and
+  bounded metadata contract; the existing iframe Browser Preview remains independent
+- Session screenshot artifacts now use private content-addressed storage and are
+  removed through the same normalized workspace identity as the owning Session
+
+### Security
+- Chromium sandboxing is explicitly enabled, while the browser process receives
+  only an allowlisted environment without Provider credentials
+- Navigation and interaction permissions are scoped to normalized HTTP(S) origins,
+  with stale snapshot/ref checks and pre/post-action origin validation
+- Cross-origin navigation, popups, and frame interaction are blocked; opaque
+  sandboxed frames, credential controls, downloads, arbitrary selectors, script
+  evaluation, uploads, persistent profiles, and storage-state access remain unavailable
+
+### Tests
+- Added deterministic real-Chromium coverage for all six tools, Session isolation,
+  sandbox launch arguments, redirects, popups, frames, dialogs, downloads,
+  diagnostics, artifacts, stale refs, bounds, aborts, crashes, and cleanup
+- Added a zero-retry DeepSeek Flash/Pro qualification matrix across Headless, raw
+  PTY TUI, production Chromium Web, and ACP surfaces
+
 ## [0.10.86] - 2026-08-25
 
 ### Changed
