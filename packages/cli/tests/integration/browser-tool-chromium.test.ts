@@ -667,7 +667,8 @@ describe('SessionBrowserRuntime with real Chromium', () => {
               <button onclick="
                 const until = performance.now() + 700;
                 while (performance.now() < until) {}
-              ">Slow target action</button>`
+              ">Slow target action</button>
+              <button onclick="window.open('/same', '_blank')">Same-origin popup</button>`
       );
     });
     servers.push(source);
@@ -702,15 +703,33 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     ).resolves.toMatchObject({ outcome: 'applied' });
 
     const sideSnapshot = await runtime.snapshot({ pageId: sidePage.pageId });
-    await expect(
-      runtime.interact({
-        pageId: sidePage.pageId,
-        snapshotId: sideSnapshot.snapshotId,
-        ref: refFor(sideSnapshot, 'Slow target action'),
-        expectedOrigin: sourceOrigin,
-        action: { kind: 'click' },
-      })
-    ).resolves.toMatchObject({ outcome: 'applied' });
+    const sideInteraction = await runtime.interact({
+      pageId: sidePage.pageId,
+      snapshotId: sideSnapshot.snapshotId,
+      ref: refFor(sideSnapshot, 'Slow target action'),
+      expectedOrigin: sourceOrigin,
+      action: { kind: 'click' },
+    });
+    expect(sideInteraction).toMatchObject({ outcome: 'applied' });
+    if (sideInteraction.outcome !== 'applied') {
+      throw new Error('Side-page interaction was not applied');
+    }
+    const sameOriginPopup = await runtime.interact({
+      pageId: sidePage.pageId,
+      snapshotId: sideInteraction.observation.snapshotId,
+      ref: refFor(sideInteraction.observation, 'Same-origin popup'),
+      expectedOrigin: sourceOrigin,
+      action: { kind: 'click' },
+    });
+    expect(sameOriginPopup).toMatchObject({ outcome: 'applied' });
+    if (sameOriginPopup.outcome !== 'applied') {
+      throw new Error('Same-origin side-page popup was not applied');
+    }
+    const popupPage = sameOriginPopup.observation.tabs.find(
+      (tab) => tab.pageId !== sourcePage.pageId && tab.pageId !== sidePage.pageId
+    );
+    expect(popupPage?.origin).toBe(sourceOrigin);
+    await runtime.page({ action: { kind: 'close', pageId: popupPage!.pageId } });
 
     expect(popupRequests).toBe(0);
     await expect(runtime.snapshot({ pageId: sourcePage.pageId })).rejects.toMatchObject(
@@ -719,6 +738,15 @@ describe('SessionBrowserRuntime with real Chromium', () => {
         details: { candidateOrigin: targetOrigin },
       }
     );
+    await expect(
+      runtime.interact({
+        pageId: sideInteraction.pageId,
+        snapshotId: sideInteraction.observation.snapshotId,
+        ref: refFor(sideInteraction.observation, 'Slow target action'),
+        expectedOrigin: sourceOrigin,
+        action: { kind: 'click' },
+      })
+    ).rejects.toMatchObject({ code: 'browser_snapshot_stale' });
     await expect(runtime.snapshot({ pageId: sidePage.pageId })).resolves.toMatchObject({
       origin: sourceOrigin,
     });

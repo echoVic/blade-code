@@ -1072,10 +1072,16 @@ export class SessionBrowserRuntime {
     const state = this.registerPage(page, false, inheritedOrigin, openerState?.id);
     if (!state) return;
     const currentOrigin = browserOriginFromPageUrl(page.url());
+    const currentOriginUnauthorized = currentOrigin !== inheritedOrigin;
+    if (!blockedPopup && currentOriginUnauthorized) {
+      this.discardUnattributedBlockedPopup();
+    }
     const blockedOrigin =
       state.blockedCandidateOrigin ??
       blockedPopup?.origin ??
-      (currentOrigin && currentOrigin !== inheritedOrigin ? currentOrigin : undefined);
+      (currentOriginUnauthorized
+        ? (currentOrigin ?? '[unsupported-origin]')
+        : undefined);
     if (blockedOrigin) {
       state.blockedCandidateOrigin = blockedOrigin;
       if (openerState) openerState.blockedCandidateOrigin = blockedOrigin;
@@ -1109,21 +1115,37 @@ export class SessionBrowserRuntime {
   private takeBlockedPopup(
     openerState: PageState | undefined
   ): BlockedPopup | undefined {
-    const exactIndex = openerState
-      ? this.blockedPopups.findIndex(
-          (blocked) => blocked.openerPageId === openerState.id
-        )
-      : -1;
-    const inferredIndex =
-      exactIndex === -1 && openerState
-        ? this.blockedPopups.findIndex(
-            (blocked) =>
-              blocked.openerPageId === undefined &&
-              blocked.referrerOrigin === openerState.authorizedOrigin
-          )
-        : -1;
-    const index = exactIndex !== -1 ? exactIndex : inferredIndex;
+    const exactMatches = openerState
+      ? this.blockedPopups
+          .map((blocked, index) => ({ blocked, index }))
+          .filter(({ blocked }) => blocked.openerPageId === openerState.id)
+          .map(({ index }) => index)
+      : [];
+    const inferredMatches =
+      exactMatches.length === 0 && openerState
+        ? this.blockedPopups
+            .map((blocked, index) => ({ blocked, index }))
+            .filter(
+              ({ blocked }) =>
+                blocked.openerPageId === undefined &&
+                blocked.referrerOrigin === openerState.authorizedOrigin
+            )
+            .map(({ index }) => index)
+        : [];
+    const index =
+      exactMatches.length === 1
+        ? exactMatches[0]!
+        : inferredMatches.length === 1
+          ? inferredMatches[0]!
+          : -1;
     return index === -1 ? undefined : this.blockedPopups.splice(index, 1)[0];
+  }
+
+  private discardUnattributedBlockedPopup(): void {
+    const index = this.blockedPopups.findIndex(
+      (blocked) => blocked.openerPageId === undefined
+    );
+    if (index !== -1) this.blockedPopups.splice(index, 1);
   }
 
   private async settlePageRegistrations(signal: AbortSignal): Promise<void> {
@@ -1205,8 +1227,16 @@ export class SessionBrowserRuntime {
       const referrerOrigin = this.browserRequestReferrerOrigin(request);
       const openerState = this.resolvePopupOpenerFromReferrer(request);
       if (
-        openerState?.authorizedOrigin &&
-        candidateOrigin === openerState.authorizedOrigin
+        (openerState?.authorizedOrigin &&
+          candidateOrigin === openerState.authorizedOrigin) ||
+        (referrerOrigin &&
+          candidateOrigin === referrerOrigin &&
+          [...this.pages.values()].some(
+            (state) =>
+              !state.page.isClosed() &&
+              state.authorizedOrigin === referrerOrigin &&
+              browserOriginFromPageUrl(state.page.url()) === referrerOrigin
+          ))
       ) {
         await route.continue();
         return;
