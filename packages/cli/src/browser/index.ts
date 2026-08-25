@@ -1,3 +1,4 @@
+export * from './BrowserArtifactStore.js';
 export * from './BrowserInstallation.js';
 export * from './BrowserOperationGate.js';
 export * from './BrowserProcessPool.js';
