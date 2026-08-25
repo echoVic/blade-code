@@ -10,6 +10,10 @@ import {
 } from '../../../scripts/qualification.js';
 
 describe('production qualification contract', () => {
+  const ciWorkflowPath = path.resolve(
+    __dirname,
+    '../../../../../.github/workflows/ci.yml'
+  );
   const packagePath = path.resolve(__dirname, '../../../package.json');
   const qualificationScript = path.resolve(__dirname, '../../../scripts/qualify.ts');
   const qualificationCore = path.resolve(
@@ -41,6 +45,25 @@ describe('production qualification contract', () => {
       'node scripts/run-bun.js run scripts/qualify.ts production'
     );
     expect(fs.existsSync(qualificationScript)).toBe(true);
+  });
+
+  it('installs the pinned Chromium runtime before coverage integration tests', () => {
+    const workflow = fs.readFileSync(ciWorkflowPath, 'utf8');
+    const coverageStart = workflow.indexOf('\n  coverage:');
+    const coverageEnd = workflow.indexOf('\n  ci-pass:', coverageStart);
+    const coverageJob = workflow.slice(coverageStart, coverageEnd);
+    const installIndex = coverageJob.indexOf(
+      'run: bun run --filter blade-code browser:install'
+    );
+    const testIndex = coverageJob.indexOf(
+      'run: bun run --filter blade-code test:coverage'
+    );
+
+    expect(coverageStart).toBeGreaterThanOrEqual(0);
+    expect(coverageEnd).toBeGreaterThan(coverageStart);
+    expect(coverageJob).toContain('path: ~/.cache/ms-playwright');
+    expect(installIndex).toBeGreaterThanOrEqual(0);
+    expect(testIndex).toBeGreaterThan(installIndex);
   });
 
   it('keeps qualification policy in an independently testable module', () => {
