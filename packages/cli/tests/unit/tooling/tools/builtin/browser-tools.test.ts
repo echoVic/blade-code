@@ -112,6 +112,12 @@ describe('native Browser tools', () => {
       expect(registry.deferredToolManager.isLoaded(name)).toBe(true);
       expect(String(result.llmContent)).toContain(`"name":"${name}"`);
     }
+    expect(String(result.llmContent)).toContain(
+      'Exact case-sensitive HTML option values'
+    );
+    expect(String(result.llmContent)).toContain(
+      'Call BrowserInteract only once per assistant response'
+    );
     const planTools = registry
       .getFunctionDeclarationsByMode(PermissionMode.PLAN)
       .map((declaration) => declaration.name);
