@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.86] - 2026-08-25
+
+### Changed
+- The right-side Preview panel now opens directly into its four tabs, with the
+  close action sharing the same compact toolbar instead of occupying a separate
+  visible title row
+- The panel retains its accessible Preview label while reclaiming vertical
+  space on both desktop and compact mobile layouts
+
+### Tests
+- Added toolbar structure and compact keyboard-focus coverage, plus desktop and
+  mobile production Chromium validation
+- Re-ran the complete Web suite, bundle-size gate, and real DeepSeek embedded
+  browser trajectory
+
 ## [0.10.85] - 2026-08-23
 
 ### Added
