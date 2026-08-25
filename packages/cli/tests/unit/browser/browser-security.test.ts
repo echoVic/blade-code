@@ -83,5 +83,9 @@ describe('BrowserSecurity', () => {
 
   it('fails credential classification closed for oversized identity fields', () => {
     expect(isCredentialControl({ id: 'x'.repeat(1025) })).toBe(true);
+    expect(isCredentialControl({ accessibleNameExceededLimit: true })).toBe(true);
+    expect(isCredentialControl({ referencedAccessibleNameUnavailable: true })).toBe(
+      true
+    );
   });
 });

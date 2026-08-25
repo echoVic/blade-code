@@ -538,6 +538,7 @@ With injected Playwright-shaped fakes, prove:
 - active and queued pre-disconnect operations fail `browser_disconnected` without
   replay;
 - only later Navigate/Snapshot/Page-open calls acquire a new generation;
+- disposal settles while Context acquisition is pending and releases a late lease;
 - disposal closes the gate and releases the sole context-closing lease exactly once.
 
 - [x] **Step 2: Write failing origin-gate tests**
@@ -556,7 +557,8 @@ Use two origins and assert:
 - cross-origin redirect is aborted before target document load;
 - a click-triggered same-origin navigation succeeds;
 - a click-triggered cross-origin navigation is blocked;
-- popup top-level origin follows the same rule;
+- popup top-level origin follows the same rule even before Chromium exposes its
+  Frame; same-origin popups register and cross-origin popups close;
 - cross-origin iframe refs are visible but rejected before interaction;
 - blocked output includes only the candidate origin;
 - background script navigation without an active tool call is checked against the
@@ -604,7 +606,8 @@ but observation fails, return
 
 Credential-control tests apply NFKC, whitespace collapse, trim, lowercase, the exact
 ASCII pattern, accessible-name handling, lowercase autocomplete tokens, and
-fail-closed 1 KiB candidate bounds.
+fail-closed 1 KiB candidate bounds. A non-empty `aria-labelledby` whose computed
+name is omitted from the AI snapshot also fails closed for text entry.
 
 `BrowserWait` uses exact visible text and exact fragment-free normalized URL
 matching, and ref-state waits use the latest snapshot authority. Diagnostics return
@@ -1540,7 +1543,8 @@ Require:
 - [ ] AI ARIA snapshots use only public Playwright APIs.
 - [ ] Snapshot output is UTF-8 and line-bounded to 48 KiB.
 - [ ] Page and snapshot IDs are opaque.
-- [ ] Every action requires latest page/snapshot/ref/origin authority.
+- [ ] Every interaction requires latest page/snapshot/origin authority; every
+  non-scroll action additionally requires a snapshot ref.
 - [ ] Fresh ref fingerprint is checked immediately before action.
 - [ ] Missing, duplicate, detached, or changed refs fail stale.
 - [ ] No selector, coordinate, text, nth, XPath, or evaluate fallback exists.

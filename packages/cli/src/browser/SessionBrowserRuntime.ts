@@ -28,6 +28,7 @@ import {
 } from './BrowserSecurity.js';
 import { BrowserSnapshotAuthority } from './BrowserSnapshotAuthority.js';
 import {
+  BROWSER_POPUP_SETTLE_TIMEOUT_MS,
   DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
   DEFAULT_BROWSER_DIAGNOSTIC_RESULT_ENTRIES,
   DEFAULT_BROWSER_NAVIGATION_TIMEOUT_MS,
@@ -71,10 +72,17 @@ interface PageState {
   page: Page;
   generation: number;
   authorizedOrigin: string | null;
+  openerPageId?: string;
   transientOrigin?: string;
   blockedCandidateOrigin?: string;
+  popupPending?: boolean;
   nextDialogAction?: 'accept' | 'dismiss';
   createdSequence: number;
+}
+
+interface BlockedPopup {
+  origin: string;
+  openerPageId?: string;
 }
 
 export interface SessionBrowserRuntimeOptions {
@@ -160,18 +168,43 @@ function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(signal.reason);
+function raceWithAbort<T>(
+  operation: Promise<T>,
+  signal: AbortSignal,
+  releaseLateResult?: (value: T) => void | Promise<void>
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(signal.reason);
-    signal.addEventListener('abort', onAbort, { once: true });
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      reject(signal.reason);
+    };
+    if (signal.aborted) {
+      onAbort();
+    } else {
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
     operation.then(
       (value) => {
         signal.removeEventListener('abort', onAbort);
+        if (settled) {
+          if (releaseLateResult) {
+            try {
+              void Promise.resolve(releaseLateResult(value)).catch(() => undefined);
+            } catch {
+              // The caller has already observed cancellation; cleanup is best effort.
+            }
+          }
+          return;
+        }
+        settled = true;
         resolve(value);
       },
       (error) => {
         signal.removeEventListener('abort', onAbort);
+        if (settled) return;
+        settled = true;
         reject(error);
       }
     );
@@ -185,12 +218,17 @@ export class SessionBrowserRuntime {
   private readonly artifacts: BrowserArtifactStore;
   private readonly pages = new Map<string, PageState>();
   private readonly pageIds = new WeakMap<Page, string>();
+  private readonly popupOpeners = new WeakMap<Page, string>();
+  private readonly pageRegistrations = new WeakMap<Page, Promise<void>>();
+  private readonly blockedPopups: BlockedPopup[] = [];
   private readonly consoleEntries: BrowserDiagnosticEntry[] = [];
   private readonly pageErrorEntries: BrowserDiagnosticEntry[] = [];
   private readonly networkEntries: BrowserDiagnosticEntry[] = [];
+  private readonly pendingPageRegistrations = new Set<Promise<void>>();
   private lease?: BrowserContextLease;
   private context?: BrowserContext;
   private selectedPageId?: string;
+  private activeInteractionPageId?: string;
   private pageSequence = 0;
   private diagnosticSequence = 0;
   private runtimeGeneration = 0;
@@ -210,10 +248,7 @@ export class SessionBrowserRuntime {
 
   navigate(options: BrowserNavigateOptions): Promise<BrowserObservation> {
     return this.run(async (signal) => {
-      const state = await this.resolvePage(options.pageId, true);
-      const previousOrigin = state.authorizedOrigin;
-      state.blockedCandidateOrigin = undefined;
-      this.invalidatePage(state);
+      const action = options.action ?? 'goto';
       const timeout = options.timeoutMs ?? DEFAULT_BROWSER_NAVIGATION_TIMEOUT_MS;
       this.assertIntegerRange(
         timeout,
@@ -222,20 +257,33 @@ export class SessionBrowserRuntime {
         'navigation timeout'
       );
 
-      const action = options.action ?? 'goto';
+      if (action === 'goto' && !options.url) {
+        throw new BrowserRuntimeError(
+          'browser_unsupported',
+          'Browser goto requires a URL'
+        );
+      }
+      if (action !== 'goto' && !options.expectedOrigin) {
+        throw new BrowserRuntimeError(
+          'browser_origin_mismatch',
+          `Browser ${action} requires expectedOrigin`
+        );
+      }
+      const target = action === 'goto' ? normalizeBrowserUrl(options.url!) : undefined;
+      const expectedOrigin =
+        action === 'goto'
+          ? undefined
+          : normalizeExpectedBrowserOrigin(options.expectedOrigin!);
+      const state = await this.resolvePage(options.pageId, action === 'goto', signal);
+      const previousOrigin = state.authorizedOrigin;
       let targetOrigin = previousOrigin;
       if (action === 'goto') {
-        if (!options.url) {
-          throw new BrowserRuntimeError(
-            'browser_unsupported',
-            'Browser goto requires a URL'
-          );
-        }
-        const target = normalizeBrowserUrl(options.url);
-        targetOrigin = target.origin;
-        state.transientOrigin = target.origin;
+        targetOrigin = target!.origin;
+        state.transientOrigin = target!.origin;
+        state.blockedCandidateOrigin = undefined;
+        this.invalidatePage(state);
         try {
-          await state.page.goto(target.href, {
+          await state.page.goto(target!.href, {
             waitUntil: options.waitUntil ?? 'domcontentloaded',
             timeout,
             signal,
@@ -243,22 +291,18 @@ export class SessionBrowserRuntime {
         } catch (error) {
           return this.handleNavigationFailure(
             state,
-            target.origin,
+            target!.origin,
             previousOrigin,
             signal,
             error
           );
         }
       } else {
-        if (!options.expectedOrigin) {
-          throw new BrowserRuntimeError(
-            'browser_origin_mismatch',
-            `Browser ${action} requires expectedOrigin`
-          );
-        }
-        this.assertExpectedOrigin(state, options.expectedOrigin);
+        this.assertExpectedOrigin(state, expectedOrigin!);
         targetOrigin = state.authorizedOrigin;
         state.transientOrigin = state.authorizedOrigin ?? undefined;
+        state.blockedCandidateOrigin = undefined;
+        this.invalidatePage(state);
         try {
           if (action === 'back') {
             await state.page.goBack({
@@ -337,7 +381,7 @@ export class SessionBrowserRuntime {
     return this.run(async (signal) => {
       const depth = options.depth ?? DEFAULT_BROWSER_SNAPSHOT_DEPTH;
       this.assertIntegerRange(depth, 1, MAX_BROWSER_SNAPSHOT_DEPTH, 'snapshot depth');
-      const state = await this.resolvePage(options.pageId, true);
+      const state = await this.resolvePage(options.pageId, true, signal);
       return this.observe(state, signal, depth, options.includeBoxes ?? false);
     }, options.signal);
   }
@@ -360,6 +404,13 @@ export class SessionBrowserRuntime {
         throw new BrowserRuntimeError('browser_unsupported', 'Browser ref is invalid');
       }
       this.validateAction(options.action);
+      const timeout = options.timeoutMs ?? DEFAULT_BROWSER_ACTION_TIMEOUT_MS;
+      this.assertIntegerRange(
+        timeout,
+        100,
+        MAX_BROWSER_ACTION_TIMEOUT_MS,
+        'action timeout'
+      );
       const state = this.requireExistingPage(options.pageId);
       this.assertExpectedOrigin(state, options.expectedOrigin);
       const snapshotInput = {
@@ -410,13 +461,15 @@ export class SessionBrowserRuntime {
         validation &&
         (options.action.kind === 'fill' || options.action.kind === 'type')
       ) {
-        const [type, autocomplete, name, id, ariaLabel] = await Promise.all([
-          locator.getAttribute('type'),
-          locator.getAttribute('autocomplete'),
-          locator.getAttribute('name'),
-          locator.getAttribute('id'),
-          locator.getAttribute('aria-label'),
-        ]);
+        const [type, autocomplete, name, id, ariaLabel, ariaLabelledBy] =
+          await Promise.all([
+            locator.getAttribute('type'),
+            locator.getAttribute('autocomplete'),
+            locator.getAttribute('name'),
+            locator.getAttribute('id'),
+            locator.getAttribute('aria-label'),
+            locator.getAttribute('aria-labelledby'),
+          ]);
         if (
           isCredentialControl({
             type,
@@ -425,6 +478,10 @@ export class SessionBrowserRuntime {
             id,
             ariaLabel,
             accessibleName: validation.fingerprint,
+            accessibleNameExceededLimit: validation.fingerprintExceededLimit,
+            referencedAccessibleNameUnavailable:
+              Boolean(ariaLabelledBy?.trim()) &&
+              !/^-\s+\S+\s+"/u.test(validation.fingerprint),
           })
         ) {
           throw new BrowserRuntimeError(
@@ -436,23 +493,25 @@ export class SessionBrowserRuntime {
 
       state.blockedCandidateOrigin = undefined;
       this.invalidatePage(state);
-      const timeout = options.timeoutMs ?? DEFAULT_BROWSER_ACTION_TIMEOUT_MS;
-      this.assertIntegerRange(
-        timeout,
-        100,
-        MAX_BROWSER_ACTION_TIMEOUT_MS,
-        'action timeout'
-      );
       const generation = this.runtimeGeneration;
+      this.activeInteractionPageId = state.id;
       try {
         if (options.action.kind === 'click') {
           state.nextDialogAction = options.action.dialog?.action;
         }
         await this.executeAction(state.page, locator, options.action, timeout, signal);
+        if (options.action.kind === 'click' && state.popupPending) {
+          await delay(Math.min(timeout, BROWSER_POPUP_SETTLE_TIMEOUT_MS), signal);
+        }
+        await this.settlePageRegistrations(signal);
       } catch (error) {
         return this.uncertainInteraction(state, generation, error);
       } finally {
         state.nextDialogAction = undefined;
+        state.popupPending = false;
+        if (this.activeInteractionPageId === state.id) {
+          this.activeInteractionPageId = undefined;
+        }
       }
       if (state.blockedCandidateOrigin) {
         return {
@@ -475,12 +534,23 @@ export class SessionBrowserRuntime {
       }
 
       try {
+        const observation = await this.observe(state, signal);
+        if (state.blockedCandidateOrigin) {
+          return {
+            outcome: 'uncertain',
+            pageId: state.id,
+            actionApplied: 'unknown',
+            sideEffectsUncertain: true,
+            errorCode: 'browser_cross_origin_navigation',
+            candidateOrigin: state.blockedCandidateOrigin,
+          };
+        }
         return {
           outcome: 'applied',
           pageId: state.id,
           actionApplied: true,
           sideEffectsUncertain: false,
-          observation: await this.observe(state, signal),
+          observation,
         };
       } catch {
         return {
@@ -496,7 +566,7 @@ export class SessionBrowserRuntime {
 
   wait(options: BrowserWaitOptions): Promise<BrowserObservation> {
     return this.run(async (signal) => {
-      const state = await this.resolvePage(options.pageId, true);
+      const state = await this.resolvePage(options.pageId, true, signal);
       if (options.expectedOrigin) {
         this.assertExpectedOrigin(state, options.expectedOrigin);
       }
@@ -597,7 +667,7 @@ export class SessionBrowserRuntime {
 
   inspect(options: BrowserInspectOptions): Promise<BrowserInspectResult> {
     return this.run(async (signal) => {
-      const state = await this.resolvePage(options.pageId, true);
+      const state = await this.resolvePage(options.pageId, true, signal);
       if (options.expectedOrigin) {
         this.assertExpectedOrigin(state, options.expectedOrigin);
       }
@@ -684,7 +754,7 @@ export class SessionBrowserRuntime {
         case 'list':
           return this.pageResult();
         case 'open': {
-          const state = await this.createPage(true);
+          const state = await this.createPage(true, signal);
           return {
             ...(await this.pageResult()),
             observation: await this.observe(state, signal),
@@ -745,7 +815,9 @@ export class SessionBrowserRuntime {
     );
     this.snapshots.clear();
     this.pages.clear();
+    this.blockedPopups.length = 0;
     this.selectedPageId = undefined;
+    this.activeInteractionPageId = undefined;
     this.context = undefined;
     const lease = this.lease;
     this.lease = undefined;
@@ -770,7 +842,7 @@ export class SessionBrowserRuntime {
     }, signal);
   }
 
-  private async ensureContext(): Promise<BrowserContext> {
+  private async ensureContext(signal: AbortSignal): Promise<BrowserContext> {
     if (this.disposed) {
       throw new BrowserRuntimeError(
         'browser_disposed',
@@ -779,21 +851,28 @@ export class SessionBrowserRuntime {
     }
     if (this.context && this.lease) return this.context;
 
-    const lease = await this.pool.acquire(() => this.handleDisconnected());
+    const lease = await raceWithAbort(
+      this.pool.acquire(() => this.handleDisconnected()),
+      signal,
+      (lateLease) => lateLease.release()
+    );
     const context = lease.context;
-    if (this.disposed) {
+    if (this.disposed || signal.aborted) {
       await lease.release();
-      throw new BrowserRuntimeError(
-        'browser_disposed',
-        'Browser Session Runtime is closed'
+      throw (
+        signal.reason ??
+        new BrowserRuntimeError('browser_disposed', 'Browser Session Runtime is closed')
       );
     }
     try {
-      await context.route('**/*', (route) => this.guardRoute(route));
+      await raceWithAbort(
+        context.route('**/*', (route) => this.guardRoute(route)),
+        signal
+      );
       context.setDefaultTimeout(DEFAULT_BROWSER_ACTION_TIMEOUT_MS);
       context.setDefaultNavigationTimeout(DEFAULT_BROWSER_NAVIGATION_TIMEOUT_MS);
       context.on('page', (page) => {
-        void this.registerDiscoveredPage(page);
+        this.trackDiscoveredPage(page, this.activeInteractionPageId);
       });
       this.lease = lease;
       this.context = context;
@@ -804,7 +883,7 @@ export class SessionBrowserRuntime {
     }
   }
 
-  private async createPage(selected: boolean): Promise<PageState> {
+  private async createPage(selected: boolean, signal: AbortSignal): Promise<PageState> {
     if (this.pages.size >= MAX_BROWSER_PAGES_PER_SESSION) {
       throw new BrowserRuntimeError(
         'browser_capacity',
@@ -812,8 +891,10 @@ export class SessionBrowserRuntime {
         { retryable: true }
       );
     }
-    const context = await this.ensureContext();
-    const page = await context.newPage();
+    const context = await this.ensureContext(signal);
+    const page = await raceWithAbort(context.newPage(), signal, (latePage) =>
+      latePage.close({ runBeforeUnload: false }).catch(() => undefined)
+    );
     const state = this.registerPage(page, selected);
     if (!state) {
       throw new BrowserRuntimeError(
@@ -828,7 +909,8 @@ export class SessionBrowserRuntime {
 
   private async resolvePage(
     pageId: string | undefined,
-    createWhenEmpty: boolean
+    createWhenEmpty: boolean,
+    signal: AbortSignal
   ): Promise<PageState> {
     if (pageId) return this.requireExistingPage(pageId);
     if (this.selectedPageId) {
@@ -848,7 +930,7 @@ export class SessionBrowserRuntime {
         'Browser has no open page'
       );
     }
-    return this.createPage(true);
+    return this.createPage(true, signal);
   }
 
   private requireExistingPage(pageId: string): PageState {
@@ -866,11 +948,15 @@ export class SessionBrowserRuntime {
   private registerPage(
     page: Page,
     selected: boolean,
-    authorizedOrigin: string | null = null
+    authorizedOrigin: string | null = null,
+    openerPageId?: string
   ): PageState | undefined {
     const existingId = this.pageIds.get(page);
     if (existingId) {
       const existing = this.pages.get(existingId);
+      if (existing && openerPageId && !existing.openerPageId) {
+        existing.openerPageId = openerPageId;
+      }
       if (selected && existing) this.selectedPageId = existing.id;
       return existing;
     }
@@ -891,6 +977,7 @@ export class SessionBrowserRuntime {
       page,
       generation: 0,
       authorizedOrigin,
+      ...(openerPageId ? { openerPageId } : {}),
       createdSequence: ++this.pageSequence,
     };
     this.pages.set(id, state);
@@ -901,26 +988,63 @@ export class SessionBrowserRuntime {
   }
 
   private async registerDiscoveredPage(page: Page): Promise<void> {
-    if (this.pageIds.has(page) || this.disposed) return;
+    if (this.disposed) return;
+    const blockedPopup = this.blockedPopups.shift();
     const opener = await page.opener().catch(() => null);
-    const openerId = opener ? this.pageIds.get(opener) : undefined;
-    const inheritedOrigin = openerId
-      ? (this.pages.get(openerId)?.authorizedOrigin ?? null)
-      : null;
-    const state = this.registerPage(page, false, inheritedOrigin);
+    if (this.disposed) {
+      await page.close({ runBeforeUnload: false }).catch(() => undefined);
+      return;
+    }
+    const openerId =
+      this.popupOpeners.get(page) ??
+      (opener ? this.pageIds.get(opener) : undefined) ??
+      blockedPopup?.openerPageId;
+    const openerState = openerId ? this.pages.get(openerId) : undefined;
+    const inheritedOrigin = openerState?.authorizedOrigin ?? null;
+    const state = this.registerPage(page, false, inheritedOrigin, openerState?.id);
     if (!state) return;
     const currentOrigin = browserOriginFromPageUrl(page.url());
-    if (currentOrigin && currentOrigin !== inheritedOrigin) {
-      this.addNetwork({
-        sequence: ++this.diagnosticSequence,
-        pageId: state.id,
-        kind: 'navigation-blocked',
-        url: currentOrigin,
-        text: 'Cross-origin popup was blocked',
-      });
+    const blockedOrigin =
+      state.blockedCandidateOrigin ??
+      blockedPopup?.origin ??
+      (currentOrigin && currentOrigin !== inheritedOrigin ? currentOrigin : undefined);
+    if (blockedOrigin) {
+      state.blockedCandidateOrigin = blockedOrigin;
+      if (openerState) openerState.blockedCandidateOrigin = blockedOrigin;
+      if (!blockedPopup) {
+        this.addNetwork({
+          sequence: ++this.diagnosticSequence,
+          pageId: openerState?.id ?? state.id,
+          kind: 'navigation-blocked',
+          url: blockedOrigin,
+          text: 'Cross-origin popup was blocked',
+        });
+      }
       await page.close({ runBeforeUnload: false }).catch(() => undefined);
       this.removePage(state);
     }
+  }
+
+  private trackDiscoveredPage(page: Page, openerPageId?: string): Promise<void> {
+    if (openerPageId) this.popupOpeners.set(page, openerPageId);
+    const existing = this.pageRegistrations.get(page);
+    if (existing) return existing;
+    const registration = this.registerDiscoveredPage(page);
+    this.pageRegistrations.set(page, registration);
+    this.pendingPageRegistrations.add(registration);
+    void registration
+      .finally(() => this.pendingPageRegistrations.delete(registration))
+      .catch(() => undefined);
+    return registration;
+  }
+
+  private async settlePageRegistrations(signal: AbortSignal): Promise<void> {
+    const pending = [...this.pendingPageRegistrations];
+    if (pending.length === 0) return;
+    await raceWithAbort(
+      Promise.allSettled(pending).then(() => undefined),
+      signal
+    );
   }
 
   private attachPageListeners(state: PageState): void {
@@ -944,6 +1068,9 @@ export class SessionBrowserRuntime {
     });
     page.on('download', (download) => {
       void this.cancelDownload(state, download);
+    });
+    page.on('popup', (popup) => {
+      void this.trackDiscoveredPage(popup, state.id);
     });
   }
 
@@ -969,6 +1096,42 @@ export class SessionBrowserRuntime {
     try {
       frame = request.frame();
     } catch {
+      const candidateOrigin = (() => {
+        try {
+          return normalizeBrowserUrl(request.url()).origin;
+        } catch {
+          return '[unsupported-origin]';
+        }
+      })();
+      const openerState = this.activeInteractionPageId
+        ? this.pages.get(this.activeInteractionPageId)
+        : undefined;
+      if (openerState) openerState.popupPending = true;
+      if (
+        openerState?.authorizedOrigin &&
+        candidateOrigin === openerState.authorizedOrigin
+      ) {
+        await route.continue();
+        return;
+      }
+      if (openerState) openerState.blockedCandidateOrigin = candidateOrigin;
+      this.blockedPopups.push({
+        origin: candidateOrigin,
+        ...(openerState ? { openerPageId: openerState.id } : {}),
+      });
+      if (this.blockedPopups.length > MAX_BROWSER_PAGES_PER_SESSION) {
+        this.blockedPopups.splice(
+          0,
+          this.blockedPopups.length - MAX_BROWSER_PAGES_PER_SESSION
+        );
+      }
+      this.addNetwork({
+        sequence: ++this.diagnosticSequence,
+        pageId: openerState?.id ?? 'unknown',
+        kind: 'navigation-blocked',
+        url: candidateOrigin,
+        text: 'Cross-origin top-level navigation was blocked',
+      });
       await route.abort('blockedbyclient');
       return;
     }
@@ -981,11 +1144,19 @@ export class SessionBrowserRuntime {
     let state = this.pageIds.get(page)
       ? this.pages.get(this.pageIds.get(page)!)
       : undefined;
+    const opener = await page.opener().catch(() => null);
+    const openerId =
+      this.popupOpeners.get(page) ?? (opener ? this.pageIds.get(opener) : undefined);
+    const openerState = openerId ? this.pages.get(openerId) : undefined;
     if (!state) {
-      const selected = this.selectedPageId
-        ? this.pages.get(this.selectedPageId)
-        : undefined;
-      state = this.registerPage(page, false, selected?.authorizedOrigin ?? null);
+      state = this.registerPage(
+        page,
+        false,
+        openerState?.authorizedOrigin ?? null,
+        openerState?.id
+      );
+    } else if (openerState && !state.openerPageId) {
+      state.openerPageId = openerState.id;
     }
     if (!state) {
       await route.abort('blockedbyclient');
@@ -1003,14 +1174,22 @@ export class SessionBrowserRuntime {
     const allowed = state.transientOrigin ?? state.authorizedOrigin;
     if (!allowed || candidateOrigin !== allowed) {
       state.blockedCandidateOrigin = candidateOrigin;
+      const actionState = state.openerPageId
+        ? this.pages.get(state.openerPageId)
+        : undefined;
+      if (actionState) actionState.blockedCandidateOrigin = candidateOrigin;
       this.addNetwork({
         sequence: ++this.diagnosticSequence,
-        pageId: state.id,
+        pageId: actionState?.id ?? state.id,
         kind: 'navigation-blocked',
         url: candidateOrigin,
         text: 'Cross-origin top-level navigation was blocked',
       });
       await route.abort('blockedbyclient');
+      if (state.openerPageId) {
+        await page.close({ runBeforeUnload: false }).catch(() => undefined);
+        this.removePage(state);
+      }
       return;
     }
     await route.continue();
@@ -1201,7 +1380,9 @@ export class SessionBrowserRuntime {
     this.generationController = new AbortController();
     this.snapshots.clear();
     this.pages.clear();
+    this.blockedPopups.length = 0;
     this.selectedPageId = undefined;
+    this.activeInteractionPageId = undefined;
     this.consoleEntries.length = 0;
     this.pageErrorEntries.length = 0;
     this.networkEntries.length = 0;
@@ -1400,7 +1581,9 @@ export class SessionBrowserRuntime {
     this.lease = undefined;
     this.context = undefined;
     this.selectedPageId = undefined;
+    this.activeInteractionPageId = undefined;
     this.pages.clear();
+    this.blockedPopups.length = 0;
     this.snapshots.clear();
   }
 

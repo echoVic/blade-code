@@ -3,7 +3,10 @@ import {
   BrowserSnapshotAuthority,
   boundBrowserSnapshot,
 } from '../../../src/browser/BrowserSnapshotAuthority.js';
-import { MAX_BROWSER_SNAPSHOT_BYTES } from '../../../src/browser/constants.js';
+import {
+  MAX_BROWSER_FINGERPRINT_BYTES,
+  MAX_BROWSER_SNAPSHOT_BYTES,
+} from '../../../src/browser/constants.js';
 
 describe('BrowserSnapshotAuthority', () => {
   it('issues opaque latest snapshot identities with ref fingerprints', () => {
@@ -97,6 +100,32 @@ describe('BrowserSnapshotAuthority', () => {
         '- button "Confirm purchase" [ref=e1]'
       )
     ).toThrow('changed');
+  });
+
+  it('preserves an oversized fingerprint signal for fail-closed control checks', () => {
+    const authority = new BrowserSnapshotAuthority();
+    const label = 'x'.repeat(MAX_BROWSER_FINGERPRINT_BYTES + 1);
+    const record = authority.issue({
+      pageId: 'page-a',
+      pageGeneration: 1,
+      origin: 'https://example.com:443',
+      snapshot: `- textbox "${label}" [ref=e1]`,
+      depth: 12,
+      includeBoxes: false,
+    });
+
+    const validation = authority.validate({
+      pageId: 'page-a',
+      snapshotId: record.snapshotId,
+      pageGeneration: 1,
+      origin: record.origin,
+      ref: 'e1',
+    });
+
+    expect(Buffer.byteLength(validation.fingerprint)).toBeLessThanOrEqual(
+      MAX_BROWSER_FINGERPRINT_BYTES
+    );
+    expect(validation.fingerprintExceededLimit).toBe(true);
   });
 
   it('ignores Playwright box annotations in fingerprints', () => {

@@ -235,6 +235,7 @@ The first release fixes these constants:
 | Select values | 16 items, 4 KiB each, 16 KiB total |
 | Browser error message | 4 KiB |
 | Action timeout | integer 100..30000 ms, default 10000 ms |
+| Detected popup settlement | 500 ms within the action timeout |
 | Navigation timeout | integer 100..60000 ms, default 30000 ms |
 | Wait timeout | integer 100..30000 ms, default 10000 ms |
 | Explicit time wait | integer 0..5000 ms; zero snapshots immediately |
@@ -604,7 +605,9 @@ pattern is applied. `aria-labelledby` and multiple HTML labels are represented b
 Playwright's computed accessible name; Blade does not traverse them separately.
 `type` and whitespace-separated `autocomplete` tokens are compared lowercase.
 Each candidate is limited to 1 KiB UTF-8; an oversized candidate fails closed
-instead of being truncated before classification.
+instead of being truncated before classification. If Playwright omits the computed
+name of an `aria-labelledby` control from its AI snapshot, Blade also fails closed
+instead of treating the unnamed ref as safe for text entry.
 
 ### BrowserWait
 
@@ -708,8 +711,10 @@ interface BrowserPageInput {
   one remains.
 
 Same-origin popups are registered but do not replace the selected page. A
-cross-origin popup is blocked and closed. A popup above the eight-page limit is
-closed immediately and recorded as a bounded diagnostic.
+cross-origin popup is blocked and closed, including Chromium's initial popup
+navigation request before its Frame object exists; the opener interaction reports
+uncertain side effects with the candidate origin. A popup above the eight-page limit
+is closed immediately and recorded as a bounded diagnostic.
 
 ## Snapshot And Ref Authority
 
@@ -1000,10 +1005,12 @@ Unit tests cover:
 - process launch single-flight, context capacity, crash generation, final-lease
   closure, and idempotent disposal;
 - Session operation FIFO, queue bound, abort before launch, dispose during action,
-  and independent Session concurrency;
+  dispose while Context acquisition is pending, late lease cleanup, and independent
+  Session concurrency;
 - page cap, popup registration, active-page replacement, and page ID invalidation;
-- snapshot byte/depth bounds, ref parsing, fingerprint stability, stale IDs,
-  origin mismatch, cross-origin frame rejection, and no selector fallback;
+- snapshot byte/depth bounds, ref parsing, fingerprint stability and overflow,
+  stale IDs, precondition-preserved authority, origin mismatch, cross-origin frame
+  rejection, and no selector fallback;
 - action schemas, key allowlist, value bounds, password-field rejection, and
   download blocking;
 - action-applied/observation-failed and action-side-effect-uncertain results;
@@ -1022,7 +1029,8 @@ A real, keyless Chromium integration uses two loopback fixture origins and prove
 2. navigate -> AI snapshot -> ref interaction -> wait -> fresh snapshot;
 3. form fill, click, select, check, keyboard action, and same-origin navigation;
 4. console, page-error, network, and screenshot inspection;
-5. page open/select/list/close and popup capacity;
+5. page open/select/list/close/reset, same-origin popup registration, cross-origin
+   popup closure, and popup capacity;
 6. stale ref rejection after DOM replacement;
 7. cross-origin redirect and click navigation blocked before target load;
 8. cross-origin iframe refs rejected without interaction;

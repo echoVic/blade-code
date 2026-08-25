@@ -927,10 +927,10 @@ Production Web GUI 必须在绑定项目 A/B 之间切换，模型按钮和展�
   budget 的实际字节后注入错误，不得用固定 sleep 假设输出已经到达。raw PTY 的正向
   marker evidence 必须单调锁存；resize 或后续 redraw 只能增加证据，不能从 bounded tail
   撤销已观察事实。source contract 精确枚举 `backgroundSubagentCompletion`、
-  `foregroundBoundedOutput`、`foregroundCommandHandoff`、
+  `browserTool`、`foregroundBoundedOutput`、`foregroundCommandHandoff`、
   `foregroundProviderRecovery`、`goalFinalization`、`gracefulShutdown`、
   `rootTurnAutoResume`、`sessionRuntimeResidency`、`subagentResultAdoption`、
-  `toolAdmission`、`tui`、`weightedProviderAdmission` 12 个 PTY runner；新增 runner
+  `toolAdmission`、`tui`、`weightedProviderAdmission` 13 个 PTY runner；新增 runner
   必须更新 inventory 并显式完成 marker-latching 审计。只有明确要求 resize 后仍可见的
   事实才能由 resize 后的新 PTY 数据重新证明，不能复用历史匹配。background completion
   的 Provider queue、child marker 与 parent final 必须消费同一个有界 evidence

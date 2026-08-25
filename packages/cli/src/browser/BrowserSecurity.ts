@@ -37,6 +37,8 @@ export interface BrowserControlIdentity {
   id?: string | null;
   ariaLabel?: string | null;
   accessibleName?: string | null;
+  accessibleNameExceededLimit?: boolean;
+  referencedAccessibleNameUnavailable?: boolean;
 }
 
 export function byteLength(value: string): number {
@@ -243,6 +245,12 @@ function normalizeCredentialCandidate(value: string): string {
 
 export function isCredentialControl(identity: BrowserControlIdentity): boolean {
   if (identity.type?.toLowerCase() === 'password') return true;
+  if (
+    identity.accessibleNameExceededLimit ||
+    identity.referencedAccessibleNameUnavailable
+  ) {
+    return true;
+  }
   const autocompleteTokens =
     identity.autocomplete?.toLowerCase().trim().split(/\s+/).filter(Boolean) ?? [];
   if (autocompleteTokens.some((token) => CREDENTIAL_AUTOCOMPLETE_TOKENS.has(token))) {

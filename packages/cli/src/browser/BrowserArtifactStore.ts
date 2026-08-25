@@ -16,6 +16,23 @@ export interface BrowserArtifactStoreOptions {
   maxArtifactBytes?: number;
 }
 
+export function createBrowserSessionIdentity(
+  projectPath: string,
+  sessionId: string
+): string {
+  return `${projectPath}\0${sessionId}`;
+}
+
+export async function removeBrowserSessionArtifacts(
+  projectPath: string,
+  sessionId: string,
+  storageRoot?: string
+): Promise<void> {
+  await new BrowserArtifactStore(createBrowserSessionIdentity(projectPath, sessionId), {
+    storageRoot,
+  }).removeAll();
+}
+
 export class BrowserArtifactStore {
   private readonly store: SessionArtifactStore<'image'>;
 

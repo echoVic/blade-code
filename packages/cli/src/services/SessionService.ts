@@ -16,7 +16,7 @@ import {
   MAX_INLINE_ATTACHMENT_BYTES,
   MAX_INLINE_ATTACHMENT_COUNT,
 } from '../api/attachmentLimits.js';
-import { BrowserArtifactStore } from '../browser/BrowserArtifactStore.js';
+import { removeBrowserSessionArtifacts } from '../browser/BrowserArtifactStore.js';
 import type {
   CommunicationStyleSelection,
   ReasoningEffortSelection,
@@ -1617,9 +1617,11 @@ export class SessionService {
       await new UserPromptArtifactStore(resolvedProjectPath, sessionId, {
         storageRoot: getBladeStorageRoot(),
       }).removeAll();
-      await new BrowserArtifactStore(`${resolvedProjectPath}\0${sessionId}`, {
-        storageRoot: getBladeStorageRoot(),
-      }).removeAll();
+      await removeBrowserSessionArtifacts(
+        resolvedProjectPath,
+        sessionId,
+        getBladeStorageRoot()
+      );
       await this.removeFromProjection(sessionId, resolvedProjectPath);
       return 1;
     }
@@ -1645,9 +1647,11 @@ export class SessionService {
         await new UserPromptArtifactStore(session.projectPath, session.sessionId, {
           storageRoot: getBladeStorageRoot(),
         }).removeAll();
-        await new BrowserArtifactStore(`${session.projectPath}\0${session.sessionId}`, {
-          storageRoot: getBladeStorageRoot(),
-        }).removeAll();
+        await removeBrowserSessionArtifacts(
+          session.projectPath,
+          session.sessionId,
+          getBladeStorageRoot()
+        );
         await this.removeFromProjection(session.sessionId, session.projectPath);
       })
     );

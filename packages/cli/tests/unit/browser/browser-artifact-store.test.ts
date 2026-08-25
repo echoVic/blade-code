@@ -2,7 +2,11 @@ import { chmod, lstat, mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { BrowserArtifactStore } from '../../../src/browser/BrowserArtifactStore.js';
+import {
+  BrowserArtifactStore,
+  createBrowserSessionIdentity,
+  removeBrowserSessionArtifacts,
+} from '../../../src/browser/BrowserArtifactStore.js';
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -99,6 +103,18 @@ describe('BrowserArtifactStore', () => {
     const store = new BrowserArtifactStore('session-a', { storageRoot: root });
     const artifact = await store.writeScreenshot(png('delete'));
     await store.removeAll();
+
+    await expect(lstat(path.dirname(artifact.path!))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+  });
+
+  it('uses one shared project and Session identity for runtime and deletion', async () => {
+    const identity = createBrowserSessionIdentity('/workspace', 'session-a');
+    const store = new BrowserArtifactStore(identity, { storageRoot: root });
+    const artifact = await store.writeScreenshot(png('shared identity'));
+
+    await removeBrowserSessionArtifacts('/workspace', 'session-a', root);
 
     await expect(lstat(path.dirname(artifact.path!))).rejects.toMatchObject({
       code: 'ENOENT',

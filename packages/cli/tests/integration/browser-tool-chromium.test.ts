@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BrowserProcessPool } from '../../src/browser/BrowserProcessPool.js';
+import { MAX_BROWSER_FINGERPRINT_BYTES } from '../../src/browser/constants.js';
 import { SessionBrowserRuntime } from '../../src/browser/SessionBrowserRuntime.js';
 import type { BrowserObservation } from '../../src/browser/types.js';
 
@@ -56,6 +57,7 @@ describe('SessionBrowserRuntime with real Chromium', () => {
 
   it('navigates, snapshots, interacts, inspects, manages pages, and blocks origins', async () => {
     let crossOriginRequests = 0;
+    const oversizedAccessibleName = 'x'.repeat(MAX_BROWSER_FINGERPRINT_BYTES + 1);
     const other = createServer((request, response) => {
       if (request.url === '/blocked') crossOriginRequests++;
       response.writeHead(200, { 'content-type': 'text/html' });
@@ -80,6 +82,8 @@ describe('SessionBrowserRuntime with real Chromium', () => {
           <body>
             <label>Name <input aria-label="Name"></label>
             <label>Password <input type="password" aria-label="Password"></label>
+            <span id="oversized-label">${oversizedAccessibleName}</span>
+            <input aria-labelledby="oversized-label">
             <select aria-label="Mode">
               <option value="fast">Fast</option>
               <option value="safe">Safe</option>
@@ -97,6 +101,11 @@ describe('SessionBrowserRuntime with real Chromium', () => {
             ">Confirm</button>
             <a href="/same">Same origin</a>
             <a href="http://127.0.0.1:${otherPort}/blocked">Cross origin</a>
+            <button onclick="window.open('/same', '_blank')">Same origin popup</button>
+            <button onclick="window.open(
+              'http://127.0.0.1:${otherPort}/blocked',
+              '_blank'
+            )">Cross origin popup</button>
             <iframe src="http://127.0.0.1:${otherPort}/frame"></iframe>
             <div id="status">Idle</div>
             <script>console.log('fixture-ready')</script>
@@ -120,6 +129,12 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     expect(first.origin).toBe(origin);
     expect(first.snapshot).toContain('textbox "Name"');
     expect(pool.stats().contexts).toBe(1);
+    await expect(
+      runtime.navigate({
+        action: 'back',
+        pageId: first.pageId,
+      })
+    ).rejects.toMatchObject({ code: 'browser_origin_mismatch' });
     await expect(
       runtime.interact({
         pageId: first.pageId,
@@ -237,6 +252,19 @@ describe('SessionBrowserRuntime with real Chromium', () => {
         action: { kind: 'fill', value: 'must-not-be-written' },
       })
     ).rejects.toMatchObject({ code: 'browser_unsupported' });
+    const oversizedRef = credentialSnapshot.snapshot.match(
+      /^\s*- textbox \[ref=([a-z][a-z0-9]*)\]$/m
+    )?.[1];
+    expect(oversizedRef).toBeDefined();
+    await expect(
+      runtime.interact({
+        pageId: credentialSnapshot.pageId,
+        snapshotId: credentialSnapshot.snapshotId,
+        ref: oversizedRef!,
+        expectedOrigin: origin,
+        action: { kind: 'fill', value: 'must-not-be-written' },
+      })
+    ).rejects.toMatchObject({ code: 'browser_unsupported' });
 
     const diagnostics = await runtime.inspect({
       pageId: first.pageId,
@@ -304,6 +332,70 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     });
     expect(closed.tabs).toHaveLength(1);
     expect(closed.selectedPageId).toBe(first.pageId);
+
+    const beforeSamePopup = await runtime.snapshot({ pageId: first.pageId });
+    const samePopup = await runtime.interact({
+      pageId: beforeSamePopup.pageId,
+      snapshotId: beforeSamePopup.snapshotId,
+      ref: refFor(beforeSamePopup, 'Same origin popup'),
+      expectedOrigin: origin,
+      action: { kind: 'click' },
+    });
+    expect(samePopup).toMatchObject({ outcome: 'applied' });
+    if (samePopup.outcome !== 'applied') {
+      throw new Error('Same-origin popup was not applied');
+    }
+    expect(samePopup.observation.tabs).toHaveLength(2);
+    const samePopupPage = samePopup.observation.tabs.find(
+      (tab) => tab.pageId !== first.pageId
+    );
+    expect(samePopupPage?.origin).toBe(origin);
+    await runtime.page({
+      action: { kind: 'close', pageId: samePopupPage!.pageId },
+    });
+
+    for (let index = 1; index < 8; index++) {
+      await runtime.page({ action: { kind: 'open' } });
+    }
+    const selectedRoot = await runtime.page({
+      action: { kind: 'select', pageId: first.pageId },
+    });
+    const capacityPopup = await runtime.interact({
+      pageId: first.pageId,
+      snapshotId: selectedRoot.observation!.snapshotId,
+      ref: refFor(selectedRoot.observation!, 'Same origin popup'),
+      expectedOrigin: origin,
+      action: { kind: 'click' },
+    });
+    expect(capacityPopup).toMatchObject({ outcome: 'applied' });
+    const popupDiagnostics = await runtime.inspect({
+      pageId: first.pageId,
+      target: { kind: 'page-errors' },
+    });
+    expect(
+      popupDiagnostics.entries?.some((entry) => entry.kind === 'popup-capacity')
+    ).toBe(true);
+    const fullPageList = await runtime.page({ action: { kind: 'list' } });
+    for (const tab of fullPageList.tabs.filter((tab) => tab.pageId !== first.pageId)) {
+      await runtime.page({ action: { kind: 'close', pageId: tab.pageId } });
+    }
+
+    const beforePopup = await runtime.snapshot({ pageId: first.pageId });
+    const blockedPopup = await runtime.interact({
+      pageId: beforePopup.pageId,
+      snapshotId: beforePopup.snapshotId,
+      ref: refFor(beforePopup, 'Cross origin popup'),
+      expectedOrigin: origin,
+      action: { kind: 'click' },
+    });
+    expect(blockedPopup).toMatchObject({
+      outcome: 'uncertain',
+      errorCode: 'browser_cross_origin_navigation',
+      candidateOrigin: `http://127.0.0.1:${otherPort}`,
+    });
+    await expect(runtime.page({ action: { kind: 'list' } })).resolves.toMatchObject({
+      tabs: [{ pageId: first.pageId }],
+    });
 
     const beforeCross = await runtime.snapshot({ pageId: first.pageId });
     const blocked = await runtime.interact({

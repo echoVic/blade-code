@@ -19,7 +19,7 @@ export interface BrowserSnapshotAuthorityRecord {
   truncated: boolean;
   depth: number;
   includeBoxes: boolean;
-  refs: ReadonlyMap<string, string>;
+  refs: ReadonlyMap<string, BrowserRefFingerprint>;
 }
 
 export interface BrowserSnapshotInput {
@@ -35,20 +35,29 @@ export interface BrowserSnapshotInput {
 export interface BrowserSnapshotValidation {
   ref: string;
   fingerprint: string;
+  fingerprintExceededLimit: boolean;
   authority: BrowserSnapshotAuthorityRecord;
 }
 
-function fingerprintLine(line: string, ref: string): string {
+interface BrowserRefFingerprint {
+  value: string;
+  exceededLimit: boolean;
+}
+
+function fingerprintLine(line: string, ref: string): BrowserRefFingerprint {
   const withoutRef = line
     .replace(`[ref=${ref}]`, '')
     .replace(BOX_PATTERN, '')
     .trim()
     .replace(/\s+/g, ' ');
-  return sanitizeBrowserText(withoutRef, MAX_BROWSER_FINGERPRINT_BYTES);
+  return {
+    value: sanitizeBrowserText(withoutRef, MAX_BROWSER_FINGERPRINT_BYTES),
+    exceededLimit: Buffer.byteLength(withoutRef) > MAX_BROWSER_FINGERPRINT_BYTES,
+  };
 }
 
-function parseRefs(snapshot: string): ReadonlyMap<string, string> {
-  const refs = new Map<string, string>();
+function parseRefs(snapshot: string): ReadonlyMap<string, BrowserRefFingerprint> {
+  const refs = new Map<string, BrowserRefFingerprint>();
   for (const line of snapshot.split('\n')) {
     REF_PATTERN.lastIndex = 0;
     for (const match of line.matchAll(REF_PATTERN)) {
@@ -132,13 +141,18 @@ export class BrowserSnapshotAuthority {
   }): BrowserSnapshotValidation {
     const authority = this.validateSnapshot(input);
     const fingerprint = authority.refs.get(input.ref);
-    if (fingerprint === undefined) {
+    if (!fingerprint) {
       throw new BrowserRuntimeError(
         'browser_snapshot_stale',
         'Browser ref is not present in the latest snapshot'
       );
     }
-    return { ref: input.ref, fingerprint, authority };
+    return {
+      ref: input.ref,
+      fingerprint: fingerprint.value,
+      fingerprintExceededLimit: fingerprint.exceededLimit,
+      authority,
+    };
   }
 
   validateSnapshot(input: {
@@ -167,7 +181,12 @@ export class BrowserSnapshotAuthority {
     freshSnapshot: string
   ): void {
     const fresh = parseRefs(freshSnapshot);
-    if (fresh.get(validation.ref) !== validation.fingerprint) {
+    const fingerprint = fresh.get(validation.ref);
+    if (
+      !fingerprint ||
+      fingerprint.value !== validation.fingerprint ||
+      fingerprint.exceededLimit !== validation.fingerprintExceededLimit
+    ) {
       throw new BrowserRuntimeError(
         'browser_snapshot_stale',
         'Browser ref changed after the latest snapshot; capture a new snapshot'

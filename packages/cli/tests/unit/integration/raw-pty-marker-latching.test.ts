@@ -6,6 +6,7 @@ import { chunkUtf8PtyInput } from '../../support/ptyInput.js';
 const supportDir = path.resolve(import.meta.dirname, '../../support');
 const runnerInventory = [
   'backgroundSubagentCompletionPtyRunner.ts',
+  'browserToolPtyRunner.ts',
   'foregroundBoundedOutputPtyRunner.ts',
   'foregroundCommandHandoffPtyRunner.ts',
   'foregroundProviderRecoveryPtyRunner.ts',
@@ -36,6 +37,7 @@ describe('raw PTY marker latching source contract', () => {
 
   it.each([
     ['backgroundSubagentCompletionPtyRunner.ts', 'latchPtyMarker'],
+    ['browserToolPtyRunner.ts', 'latchPtyMarker'],
     ['foregroundBoundedOutputPtyRunner.ts', 'latchForegroundBoundedPtyMarkers'],
     [
       'foregroundCommandHandoffPtyRunner.ts',
