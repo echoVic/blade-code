@@ -824,6 +824,8 @@ Their content may appear in a snapshot, but `BrowserInteract` rejects refs owned
 a cross-origin or sandboxed opaque frame. Same-origin frames remain interactable.
 `about:blank` and `about:srcdoc` frames inherit the nearest HTTP(S) ancestor origin
 only when every iframe sandbox in that ancestry preserves `allow-same-origin`.
+Opaque sandbox state is captured during frame navigation and remains authoritative
+for that document even if page script later removes the DOM attribute.
 
 This Browser Tool is not a network sandbox: an approved page can issue its own
 network requests, including requests to other network classes. Hostname

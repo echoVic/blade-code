@@ -135,7 +135,11 @@ describe('SessionBrowserRuntime with real Chromium', () => {
             <button onclick="location.href = 'about:blank'">Unsupported origin</button>
             <iframe srcdoc="<button aria-label='Inherited frame'>Inherited frame</button>"></iframe>
             <iframe sandbox srcdoc="<button aria-label='Opaque frame'>Opaque frame</button>"></iframe>
-            <iframe sandbox src="/same-frame"></iframe>
+            <iframe
+              sandbox
+              onload="this.removeAttribute('sandbox')"
+              src="/same-frame"
+            ></iframe>
             <iframe src="http://127.0.0.1:${otherPort}/frame"></iframe>
             <div id="status">Idle</div>
             <script>console.log('fixture-ready')</script>
@@ -175,6 +179,10 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     expect(runtimeLaunchOptions).toEqual([
       expect.objectContaining({ chromiumSandbox: true }),
     ]);
+    const runtimePage = launchedBrowser!.contexts()[0]!.pages()[0]!;
+    await expect(
+      runtimePage.locator('iframe[src="/same-frame"]').getAttribute('sandbox')
+    ).resolves.toBeNull();
     const browserSession = await launchedBrowser!.newBrowserCDPSession();
     const commandLine = await browserSession.send('Browser.getBrowserCommandLine');
     expect(commandLine.arguments).not.toContain('--no-sandbox');

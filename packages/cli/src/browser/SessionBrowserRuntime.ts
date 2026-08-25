@@ -148,6 +148,12 @@ function isTimeoutError(error: unknown): boolean {
   );
 }
 
+function isBrowserClosedError(error: unknown): boolean {
+  return (
+    error instanceof Error && /browser.*closed|target.*closed/i.test(error.message)
+  );
+}
+
 function boundedErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return sanitizeBrowserText(
@@ -221,6 +227,7 @@ export class SessionBrowserRuntime {
   private readonly artifacts: BrowserArtifactStore;
   private readonly pages = new Map<string, PageState>();
   private readonly pageIds = new WeakMap<Page, string>();
+  private readonly opaqueFrames = new WeakSet<Frame>();
   private readonly popupOpeners = new WeakMap<Page, string>();
   private readonly pageRegistrations = new WeakMap<Page, Promise<void>>();
   private readonly blockedPopups: BlockedPopup[] = [];
@@ -455,7 +462,12 @@ export class SessionBrowserRuntime {
       }
       if (locator) {
         const element = await locator.elementHandle();
-        const ownerFrame = await element?.ownerFrame();
+        let ownerFrame: Frame | null = null;
+        try {
+          ownerFrame = (await element?.ownerFrame()) ?? null;
+        } finally {
+          await element?.dispose().catch(() => undefined);
+        }
         const frameOrigin = ownerFrame
           ? await this.resolveEffectiveFrameOrigin(ownerFrame)
           : null;
@@ -1137,7 +1149,10 @@ export class SessionBrowserRuntime {
   }
 
   private handleFrameNavigated(state: PageState, frame: Frame): void {
-    if (frame !== state.page.mainFrame()) return;
+    if (frame !== state.page.mainFrame()) {
+      void this.captureOpaqueFrame(frame);
+      return;
+    }
     this.invalidatePage(state);
     const origin = browserOriginFromPageUrl(frame.url());
     const allowed = state.transientOrigin ?? state.authorizedOrigin;
@@ -1205,6 +1220,11 @@ export class SessionBrowserRuntime {
       return;
     }
     if (frame.parentFrame()) {
+      if (await this.isFrameSandboxOpaque(frame)) {
+        this.opaqueFrames.add(frame);
+      } else {
+        this.opaqueFrames.delete(frame);
+      }
       await route.continue();
       return;
     }
@@ -1320,24 +1340,11 @@ export class SessionBrowserRuntime {
     let effectiveOrigin: string | null = null;
     while (current) {
       if (current !== current.page().mainFrame()) {
-        try {
-          const frameElement = await current.frameElement();
-          try {
-            const sandbox = await frameElement.getAttribute('sandbox');
-            if (
-              sandbox !== null &&
-              !sandbox
-                .toLowerCase()
-                .split(/\s+/u)
-                .filter(Boolean)
-                .includes('allow-same-origin')
-            ) {
-              return null;
-            }
-          } finally {
-            await frameElement.dispose().catch(() => undefined);
-          }
-        } catch {
+        if (
+          this.opaqueFrames.has(current) ||
+          (await this.isFrameSandboxOpaque(current))
+        ) {
+          this.opaqueFrames.add(current);
           return null;
         }
       }
@@ -1352,6 +1359,33 @@ export class SessionBrowserRuntime {
       current = current.parentFrame();
     }
     return effectiveOrigin;
+  }
+
+  private async captureOpaqueFrame(frame: Frame): Promise<void> {
+    if (await this.isFrameSandboxOpaque(frame)) {
+      this.opaqueFrames.add(frame);
+    }
+  }
+
+  private async isFrameSandboxOpaque(frame: Frame): Promise<boolean> {
+    try {
+      const frameElement = await frame.frameElement();
+      try {
+        const sandbox = await frameElement.getAttribute('sandbox');
+        return (
+          sandbox !== null &&
+          !sandbox
+            .toLowerCase()
+            .split(/\s+/u)
+            .filter(Boolean)
+            .includes('allow-same-origin')
+        );
+      } finally {
+        await frameElement.dispose().catch(() => undefined);
+      }
+    } catch {
+      return true;
+    }
   }
 
   private async observe(
@@ -1597,7 +1631,7 @@ export class SessionBrowserRuntime {
       | 'browser_action_uncertain' = 'browser_action_uncertain';
     if (state.blockedCandidateOrigin) {
       errorCode = 'browser_cross_origin_navigation';
-    } else if (generation !== this.runtimeGeneration) {
+    } else if (generation !== this.runtimeGeneration || isBrowserClosedError(error)) {
       errorCode = 'browser_disconnected';
     } else if (isTimeoutError(error)) {
       errorCode = 'browser_timeout';
@@ -1748,10 +1782,7 @@ export class SessionBrowserRuntime {
     if (signal.aborted && signal.reason instanceof BrowserRuntimeError) {
       throw signal.reason;
     }
-    if (
-      error instanceof Error &&
-      /browser.*closed|target.*closed/i.test(error.message)
-    ) {
+    if (isBrowserClosedError(error)) {
       throw new BrowserRuntimeError(
         'browser_disconnected',
         'Chromium disconnected during the Browser operation',

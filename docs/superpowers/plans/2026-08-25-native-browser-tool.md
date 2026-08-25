@@ -565,7 +565,8 @@ Use two origins and assert:
 - cross-origin iframe refs are visible but rejected before interaction;
 - same-origin frames, including `about:blank` and `about:srcdoc`, inherit the
   nearest safe HTTP(S) ancestor only when every iframe sandbox preserves
-  `allow-same-origin`;
+  `allow-same-origin`; removing a sandbox attribute does not retroactively grant
+  the current document an origin;
 - blocked output includes only the candidate origin;
 - background script navigation without an active tool call is checked against the
   authorized origin, recorded as a diagnostic, and reported by the next Browser
