@@ -1067,12 +1067,14 @@ export class SessionBrowserRuntime {
     const openerId =
       (opener ? this.pageIds.get(opener) : undefined) ?? this.popupOpeners.get(page);
     const openerState = openerId ? this.pages.get(openerId) : undefined;
-    const blockedPopup = this.takeBlockedPopup(openerState);
     const inheritedOrigin = openerState?.authorizedOrigin ?? null;
     const state = this.registerPage(page, false, inheritedOrigin, openerState?.id);
     if (!state) return;
     const currentOrigin = browserOriginFromPageUrl(page.url());
     const currentOriginUnauthorized = currentOrigin !== inheritedOrigin;
+    const blockedPopup = currentOriginUnauthorized
+      ? this.takeBlockedPopup(openerState)
+      : undefined;
     if (!blockedPopup && currentOriginUnauthorized) {
       this.discardUnattributedBlockedPopup();
     }
