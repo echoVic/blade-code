@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.89] - 2026-08-25
+
+### 修复
+- CI coverage 现在会配置固定版本 Chromium 的系统依赖与 SUID sandbox helper，
+  在测试前验证沙箱启动，并通过 Browser Runtime 环境白名单传递 helper 路径
+
 ## [0.10.88] - 2026-08-25
 
 ### 修复

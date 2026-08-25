@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.89] - 2026-08-25
+
+### Fixed
+- CI coverage now provisions the pinned Chromium system dependencies and SUID
+  sandbox helper, verifies sandboxed startup, and preserves the helper path through
+  the Browser runtime environment allowlist
+
 ## [0.10.88] - 2026-08-25
 
 ### Fixed
