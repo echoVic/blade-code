@@ -207,6 +207,8 @@ describe('tool formatters', () => {
           origin: 'https://example.com:443',
           errorCode: 'browser_timeout',
           sideEffectsUncertain: true,
+          diagnosticCount: 4,
+          truncated: true,
         },
       },
     });
@@ -219,6 +221,8 @@ describe('tool formatters', () => {
         'Page: browser_page_123',
         'Error: browser_timeout',
         'Side effects: uncertain; inspect before retrying',
+        'Diagnostics: 4',
+        'Output: truncated',
       ].join('\n'),
     });
     expect(display.detail).not.toContain('untrusted page content');

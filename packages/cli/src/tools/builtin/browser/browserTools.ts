@@ -37,8 +37,10 @@ import type {
 } from '../../../browser/SessionBrowserRuntime.js';
 import type {
   BrowserAction,
+  BrowserErrorCode,
   BrowserInspectTarget,
   BrowserPageAction,
+  BrowserToolName,
   BrowserWaitCondition,
 } from '../../../browser/types.js';
 import { BrowserRuntimeError } from '../../../browser/types.js';
@@ -215,10 +217,10 @@ function isBrowserMetadataArtifact(value: unknown): value is BrowserMetadataArti
 }
 
 function browserMetadata(
-  action: string,
+  action: BrowserToolName,
   result: unknown,
   status: 'ok' | 'warning' | 'error' = 'ok',
-  errorCode?: string
+  errorCode?: BrowserErrorCode
 ): BrowserToolMetadata {
   const value =
     result && typeof result === 'object' && !Array.isArray(result)
@@ -303,7 +305,7 @@ function errorType(code: string): ToolErrorType {
   return ToolErrorType.EXECUTION_ERROR;
 }
 
-function failure(toolName: string, error: unknown): ToolResult {
+function failure(toolName: BrowserToolName, error: unknown): ToolResult {
   const browserError =
     error instanceof BrowserRuntimeError
       ? error
@@ -329,7 +331,7 @@ function failure(toolName: string, error: unknown): ToolResult {
   };
 }
 
-function success(toolName: string, result: unknown): ToolResult {
+function success(toolName: BrowserToolName, result: unknown): ToolResult {
   return {
     success: true,
     llmContent: renderBrowserData(result),

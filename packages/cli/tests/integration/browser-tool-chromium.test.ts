@@ -642,4 +642,84 @@ describe('SessionBrowserRuntime with real Chromium', () => {
       running: true,
     });
   });
+
+  it('attributes a concurrent background popup to its actual opener', async () => {
+    let popupRequests = 0;
+    const target = createServer((request, response) => {
+      if (request.url === '/popup') popupRequests++;
+      response.writeHead(200, { 'content-type': 'text/html' });
+      response.end(`<!doctype html>
+        <button onclick="
+          const until = performance.now() + 700;
+          while (performance.now() < until) {}
+        ">Slow target action</button>`);
+    });
+    servers.push(target);
+    const targetPort = await listen(target);
+    const targetOrigin = `http://127.0.0.1:${targetPort}`;
+
+    const source = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/html' });
+      response.end(`<!doctype html>
+        <button onclick="setTimeout(
+          () => window.open('${targetOrigin}/popup', '_blank'),
+          650
+        )">Schedule background popup</button>`);
+    });
+    servers.push(source);
+    const sourcePort = await listen(source);
+    const sourceOrigin = `http://127.0.0.1:${sourcePort}`;
+
+    const root = await mkdtemp(path.join(os.tmpdir(), 'blade-browser-popup-owner-'));
+    roots.push(root);
+    const pool = new BrowserProcessPool();
+    pools.push(pool);
+    const runtime = new SessionBrowserRuntime('popup-project', 'popup-session', {
+      pool,
+      storageRoot: root,
+    });
+    runtimes.push(runtime);
+
+    const sourcePage = await runtime.navigate({ url: `${sourceOrigin}/` });
+    const opened = await runtime.page({ action: { kind: 'open' } });
+    const targetPage = await runtime.navigate({
+      pageId: opened.selectedPageId,
+      url: `${targetOrigin}/`,
+    });
+    const sourceSnapshot = await runtime.snapshot({ pageId: sourcePage.pageId });
+    await expect(
+      runtime.interact({
+        pageId: sourcePage.pageId,
+        snapshotId: sourceSnapshot.snapshotId,
+        ref: refFor(sourceSnapshot, 'Schedule background popup'),
+        expectedOrigin: sourceOrigin,
+        action: { kind: 'click' },
+      })
+    ).resolves.toMatchObject({ outcome: 'applied' });
+
+    const targetSnapshot = await runtime.snapshot({ pageId: targetPage.pageId });
+    await expect(
+      runtime.interact({
+        pageId: targetPage.pageId,
+        snapshotId: targetSnapshot.snapshotId,
+        ref: refFor(targetSnapshot, 'Slow target action'),
+        expectedOrigin: targetOrigin,
+        action: { kind: 'click' },
+      })
+    ).resolves.toMatchObject({ outcome: 'applied' });
+
+    expect(popupRequests).toBe(0);
+    await expect(runtime.snapshot({ pageId: sourcePage.pageId })).rejects.toMatchObject(
+      {
+        code: 'browser_cross_origin_navigation',
+        details: { candidateOrigin: targetOrigin },
+      }
+    );
+    await expect(
+      runtime.snapshot({ pageId: targetPage.pageId })
+    ).resolves.toMatchObject({ origin: targetOrigin });
+    await expect(runtime.page({ action: { kind: 'list' } })).resolves.toMatchObject({
+      tabs: [{ pageId: sourcePage.pageId }, { pageId: targetPage.pageId }],
+    });
+  });
 });

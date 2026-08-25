@@ -119,6 +119,21 @@ function normalizedIpv6(hostname: string): string {
   return hostname.replace(/^\[|\]$/g, '').toLowerCase();
 }
 
+function parseIpv4MappedIpv6(hostname: string): number[] | undefined {
+  const match = /^(?:::ffff:|0:0:0:0:0:ffff:)(.+)$/u.exec(hostname);
+  if (!match?.[1]) return undefined;
+  const dotted = parseIpv4(match[1]);
+  if (dotted) return dotted;
+
+  const words = match[1].split(':');
+  if (words.length !== 2 || words.some((word) => !/^[0-9a-f]{1,4}$/u.test(word))) {
+    return undefined;
+  }
+  const high = Number.parseInt(words[0]!, 16);
+  const low = Number.parseInt(words[1]!, 16);
+  return [high >>> 8, high & 0xff, low >>> 8, low & 0xff];
+}
+
 export function classifyBrowserHostname(hostname: string): BrowserOriginClass {
   const normalized = hostname.replace(/\.$/, '').toLowerCase();
   if (normalized === 'localhost' || normalized.endsWith('.localhost')) {
@@ -133,16 +148,14 @@ export function classifyBrowserHostname(hostname: string): BrowserOriginClass {
 
   const ipv6 = normalizedIpv6(normalized);
   if (isIP(ipv6) === 6) {
+    const mapped = parseIpv4MappedIpv6(ipv6);
+    if (mapped) {
+      if (mapped[0] === 127) return 'loopback';
+      return isPrivateIpv4(mapped) ? 'private-network' : 'public';
+    }
     if (ipv6 === '::1') return 'loopback';
     if (ipv6.startsWith('fc') || ipv6.startsWith('fd') || /^fe[89ab]/.test(ipv6)) {
       return 'private-network';
-    }
-    if (ipv6.startsWith('::ffff:')) {
-      const mapped = parseIpv4(ipv6.slice('::ffff:'.length));
-      if (mapped) {
-        if (mapped[0] === 127) return 'loopback';
-        return isPrivateIpv4(mapped) ? 'private-network' : 'public';
-      }
     }
   }
 

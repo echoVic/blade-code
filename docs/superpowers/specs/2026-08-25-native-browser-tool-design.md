@@ -727,8 +727,11 @@ interface BrowserPageInput {
 Same-origin popups are registered but do not replace the selected page. A
 cross-origin popup is blocked and closed, including Chromium's initial popup
 navigation request before its Frame object exists; the opener interaction reports
-uncertain side effects with the candidate origin. A popup above the eight-page limit
-is closed immediately and recorded as a bounded diagnostic.
+uncertain side effects with the candidate origin. Pre-Frame requests resolve their
+opener from the browser-generated referrer and fail closed when ownership is
+ambiguous; they never borrow authority from another currently active page. A popup
+above the eight-page limit is closed immediately and recorded against its actual
+opener as a bounded diagnostic.
 
 ## Snapshot And Ref Authority
 
@@ -778,7 +781,8 @@ User-supplied navigation accepts only `http:` and `https:`. It rejects:
 - malformed hosts or ports.
 
 Loopback and private-network origins are supported because local application testing
-is a primary use case. Permission previews label them explicitly.
+is a primary use case. Permission previews label them explicitly, including
+IPv4-mapped IPv6 forms.
 
 The permission boundary is the normalized origin:
 

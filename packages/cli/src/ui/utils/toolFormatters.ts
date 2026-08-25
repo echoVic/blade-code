@@ -4,17 +4,9 @@
  */
 
 import { basename } from 'node:path';
+import { isBrowserToolName } from '../../browser/types.js';
 import { isEditMetadata, isGlobMetadata } from '../../tools/types/index.js';
 import type { ToolDisplayOutput } from '../../tools/types/ToolTypes.js';
-
-const BROWSER_TOOL_NAMES = new Set([
-  'BrowserNavigate',
-  'BrowserSnapshot',
-  'BrowserInteract',
-  'BrowserWait',
-  'BrowserInspect',
-  'BrowserPage',
-]);
 
 /**
  * 格式化工具调用摘要（用于流式显示）
@@ -189,7 +181,7 @@ export function shouldShowToolDetail(toolName: string, result: ToolResult): bool
     !result?.success &&
     !result?.metadata &&
     toolName !== 'Bash' &&
-    !BROWSER_TOOL_NAMES.has(toolName)
+    !isBrowserToolName(toolName)
   ) {
     return false;
   }
@@ -250,7 +242,7 @@ export function generateToolDetail(
     !result?.success &&
     toolName !== 'Bash' &&
     toolName !== 'Task' &&
-    !BROWSER_TOOL_NAMES.has(toolName)
+    !isBrowserToolName(toolName)
   ) {
     return null;
   }
@@ -513,6 +505,15 @@ export function generateToolDetail(
       }
       if (metadata.sideEffectsUncertain === true) {
         lines.push('Side effects: uncertain; inspect before retrying');
+      }
+      if (
+        typeof metadata.diagnosticCount === 'number' &&
+        Number.isSafeInteger(metadata.diagnosticCount)
+      ) {
+        lines.push(`Diagnostics: ${metadata.diagnosticCount}`);
+      }
+      if (metadata.truncated === true) {
+        lines.push('Output: truncated');
       }
       const artifact =
         metadata.artifact &&

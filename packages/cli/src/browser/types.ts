@@ -1,5 +1,20 @@
 export type BrowserOriginClass = 'public' | 'loopback' | 'private-network';
 
+export const BROWSER_TOOL_NAMES = [
+  'BrowserNavigate',
+  'BrowserSnapshot',
+  'BrowserInteract',
+  'BrowserWait',
+  'BrowserInspect',
+  'BrowserPage',
+] as const;
+
+export type BrowserToolName = (typeof BROWSER_TOOL_NAMES)[number];
+
+export function isBrowserToolName(value: string): value is BrowserToolName {
+  return (BROWSER_TOOL_NAMES as readonly string[]).includes(value);
+}
+
 export type BrowserErrorCode =
   | 'browser_not_installed'
   | 'browser_capacity'

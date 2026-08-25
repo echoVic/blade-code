@@ -86,6 +86,7 @@ interface PageState {
 interface BlockedPopup {
   origin: string;
   openerPageId?: string;
+  referrerOrigin?: string;
 }
 
 export interface SessionBrowserRuntimeOptions {
@@ -240,7 +241,6 @@ export class SessionBrowserRuntime {
   private lease?: BrowserContextLease;
   private context?: BrowserContext;
   private selectedPageId?: string;
-  private activeInteractionPageId?: string;
   private pageSequence = 0;
   private diagnosticSequence = 0;
   private runtimeGeneration = 0;
@@ -518,7 +518,6 @@ export class SessionBrowserRuntime {
       state.downloadBlocked = false;
       this.invalidatePage(state);
       const generation = this.runtimeGeneration;
-      this.activeInteractionPageId = state.id;
       let actionFailed = false;
       let actionError: unknown;
       const downloadPromise =
@@ -547,9 +546,6 @@ export class SessionBrowserRuntime {
         actionError = error;
       } finally {
         state.nextDialogAction = undefined;
-        if (this.activeInteractionPageId === state.id) {
-          this.activeInteractionPageId = undefined;
-        }
       }
       this.markUnexpectedInteractionOrigin(state, expectedOrigin);
       if (state.downloadBlocked) {
@@ -946,7 +942,7 @@ export class SessionBrowserRuntime {
       context.setDefaultTimeout(DEFAULT_BROWSER_ACTION_TIMEOUT_MS);
       context.setDefaultNavigationTimeout(DEFAULT_BROWSER_NAVIGATION_TIMEOUT_MS);
       context.on('page', (page) => {
-        this.trackDiscoveredPage(page, this.activeInteractionPageId);
+        this.trackDiscoveredPage(page);
       });
       this.lease = lease;
       this.context = context;
@@ -1063,17 +1059,15 @@ export class SessionBrowserRuntime {
 
   private async registerDiscoveredPage(page: Page): Promise<void> {
     if (this.disposed) return;
-    const blockedPopup = this.blockedPopups.shift();
     const opener = await page.opener().catch(() => null);
     if (this.disposed) {
       await page.close({ runBeforeUnload: false }).catch(() => undefined);
       return;
     }
     const openerId =
-      this.popupOpeners.get(page) ??
-      (opener ? this.pageIds.get(opener) : undefined) ??
-      blockedPopup?.openerPageId;
+      (opener ? this.pageIds.get(opener) : undefined) ?? this.popupOpeners.get(page);
     const openerState = openerId ? this.pages.get(openerId) : undefined;
+    const blockedPopup = this.takeBlockedPopup(openerState);
     const inheritedOrigin = openerState?.authorizedOrigin ?? null;
     const state = this.registerPage(page, false, inheritedOrigin, openerState?.id);
     if (!state) return;
@@ -1110,6 +1104,35 @@ export class SessionBrowserRuntime {
       .finally(() => this.pendingPageRegistrations.delete(registration))
       .catch(() => undefined);
     return registration;
+  }
+
+  private takeBlockedPopup(
+    openerState: PageState | undefined
+  ): BlockedPopup | undefined {
+    const exactIndex = openerState
+      ? this.blockedPopups.findIndex(
+          (blocked) => blocked.openerPageId === openerState.id
+        )
+      : -1;
+    const inferredIndex =
+      exactIndex === -1 && openerState
+        ? this.blockedPopups.findIndex(
+            (blocked) =>
+              blocked.openerPageId === undefined &&
+              blocked.referrerOrigin === openerState.authorizedOrigin
+          )
+        : -1;
+    const fallbackIndex =
+      exactIndex === -1 && inferredIndex === -1
+        ? this.blockedPopups.findIndex((blocked) => blocked.openerPageId === undefined)
+        : -1;
+    const index =
+      exactIndex !== -1
+        ? exactIndex
+        : inferredIndex !== -1
+          ? inferredIndex
+          : fallbackIndex;
+    return index === -1 ? undefined : this.blockedPopups.splice(index, 1)[0];
   }
 
   private async settlePageRegistrations(signal: AbortSignal): Promise<void> {
@@ -1188,9 +1211,8 @@ export class SessionBrowserRuntime {
           return '[unsupported-origin]';
         }
       })();
-      const openerState = this.activeInteractionPageId
-        ? this.pages.get(this.activeInteractionPageId)
-        : undefined;
+      const referrerOrigin = this.browserRequestReferrerOrigin(request);
+      const openerState = this.resolvePopupOpenerFromReferrer(request);
       if (
         openerState?.authorizedOrigin &&
         candidateOrigin === openerState.authorizedOrigin
@@ -1202,6 +1224,7 @@ export class SessionBrowserRuntime {
       this.blockedPopups.push({
         origin: candidateOrigin,
         ...(openerState ? { openerPageId: openerState.id } : {}),
+        ...(referrerOrigin ? { referrerOrigin } : {}),
       });
       if (this.blockedPopups.length > MAX_BROWSER_PAGES_PER_SESSION) {
         this.blockedPopups.splice(
@@ -1282,6 +1305,41 @@ export class SessionBrowserRuntime {
       return;
     }
     await route.continue();
+  }
+
+  private browserRequestReferrerOrigin(request: Request): string | undefined {
+    const referrer = request.headers().referer;
+    if (!referrer) return undefined;
+    try {
+      return normalizeBrowserUrl(referrer).origin;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private resolvePopupOpenerFromReferrer(request: Request): PageState | undefined {
+    const referrer = request.headers().referer;
+    if (!referrer) return undefined;
+
+    let normalizedReferrer;
+    try {
+      normalizedReferrer = normalizeBrowserUrl(referrer);
+    } catch {
+      return undefined;
+    }
+    const candidates = [...this.pages.values()].filter(
+      (state) =>
+        !state.page.isClosed() && state.authorizedOrigin === normalizedReferrer.origin
+    );
+    const exact = candidates.filter((state) => {
+      try {
+        return normalizeBrowserUrl(state.page.url()).href === normalizedReferrer.href;
+      } catch {
+        return false;
+      }
+    });
+    if (exact.length === 1) return exact[0];
+    return candidates.length === 1 ? candidates[0] : undefined;
   }
 
   private settleNavigationAuthorization(
@@ -1554,7 +1612,6 @@ export class SessionBrowserRuntime {
     this.pages.clear();
     this.blockedPopups.length = 0;
     this.selectedPageId = undefined;
-    this.activeInteractionPageId = undefined;
     this.context = undefined;
     if (clearDiagnostics) {
       this.consoleEntries.length = 0;

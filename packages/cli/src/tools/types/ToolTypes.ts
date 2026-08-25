@@ -1,5 +1,6 @@
 import type { ConstrainedSamplingConfig } from '@earendil-works/pi-ai';
 import type { JSONSchema7 } from 'json-schema';
+import type { BrowserErrorCode, BrowserToolName } from '../../browser/types.js';
 import type { PermissionMode } from '../../config/types.js';
 import type { ExecutionContext } from './ExecutionTypes.js';
 
@@ -242,7 +243,7 @@ interface WebFetchMetadataFields extends BaseMetadataFields {
 
 interface BrowserToolMetadataFields extends BaseMetadataFields {
   browser: {
-    action: string;
+    action: BrowserToolName;
     status: 'ok' | 'warning' | 'error';
     pageId?: string;
     snapshotId?: string;
@@ -253,7 +254,7 @@ interface BrowserToolMetadataFields extends BaseMetadataFields {
     actionApplied?: boolean | 'unknown';
     sideEffectsUncertain?: boolean;
     candidateOrigin?: string;
-    errorCode?: string;
+    errorCode?: BrowserErrorCode;
     diagnosticCount?: number;
     artifact?: {
       id: string;

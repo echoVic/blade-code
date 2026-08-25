@@ -52,6 +52,7 @@ import {
   MAX_BROWSER_SCREENSHOT_BYTES,
   MAX_BROWSER_TITLE_BYTES,
 } from '../../browser/constants.js';
+import { isBrowserToolName } from '../../browser/types.js';
 import {
   DEFAULT_MAX_RESIDENT_SESSION_RUNTIMES,
   DEFAULT_SESSION_RUNTIME_IDLE_MS,
@@ -455,16 +456,7 @@ export const sanitizeToolMetadata = (
   const toolAdmission = sanitizeToolAdmissionMetadata(sanitized.tool_admission);
   if (toolAdmission) sanitized.tool_admission = toolAdmission;
   else delete sanitized.tool_admission;
-  if (
-    [
-      'BrowserNavigate',
-      'BrowserSnapshot',
-      'BrowserInteract',
-      'BrowserWait',
-      'BrowserInspect',
-      'BrowserPage',
-    ].includes(toolName)
-  ) {
+  if (isBrowserToolName(toolName)) {
     const source =
       sanitized.browser &&
       typeof sanitized.browser === 'object' &&

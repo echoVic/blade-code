@@ -43,8 +43,16 @@ describe('BrowserSecurity', () => {
     expect(classifyBrowserHostname('172.31.0.1')).toBe('private-network');
     expect(classifyBrowserHostname('192.168.1.1')).toBe('private-network');
     expect(classifyBrowserHostname('fc00::1')).toBe('private-network');
+    expect(classifyBrowserHostname('::ffff:127.0.0.1')).toBe('loopback');
+    expect(classifyBrowserHostname('[::ffff:7f00:1]')).toBe('loopback');
+    expect(classifyBrowserHostname('::ffff:a00:1')).toBe('private-network');
+    expect(classifyBrowserHostname('::ffff:ac10:1')).toBe('private-network');
+    expect(classifyBrowserHostname('::ffff:c0a8:101')).toBe('private-network');
+    expect(classifyBrowserHostname('::ffff:6440:1')).toBe('private-network');
+    expect(classifyBrowserHostname('::ffff:a9fe:1')).toBe('private-network');
     expect(classifyBrowserHostname('example.com')).toBe('public');
     expect(classifyBrowserHostname('8.8.8.8')).toBe('public');
+    expect(classifyBrowserHostname('::ffff:808:808')).toBe('public');
   });
 
   it('redacts query values and fragments from projected URLs', () => {

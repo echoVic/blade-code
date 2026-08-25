@@ -562,6 +562,8 @@ Use two origins and assert:
 - a click-triggered cross-origin navigation is blocked;
 - popup top-level origin follows the same rule even before Chromium exposes its
   Frame; same-origin popups register and cross-origin popups close;
+- pre-Frame popup authorization and diagnostics resolve the actual opener instead
+  of borrowing whichever page currently has an active operation;
 - cross-origin iframe refs are visible but rejected before interaction;
 - same-origin frames, including `about:blank` and `about:srcdoc`, inherit the
   nearest safe HTTP(S) ancestor only when every iframe sandbox preserves
@@ -1589,6 +1591,7 @@ Require:
 - [ ] URL credentials and malformed/oversized URLs are rejected.
 - [ ] Permission signatures use normalized origin only.
 - [ ] Public, loopback, and private origins are visibly classified.
+- [ ] IPv4-mapped IPv6 loopback and private addresses retain their network class.
 - [ ] Permission previews display normalized origins.
 - [ ] Navigate previews choose URL for `goto` and expected origin for
   `back`/`forward`/`reload`.
@@ -1629,6 +1632,8 @@ Require:
 ### Surface Consistency
 
 - [ ] TUI consumes canonical Browser ToolResult.
+- [ ] Browser diagnostic counts and truncation are visible without exposing raw
+  diagnostic content.
 - [ ] Headless text/JSON/JSONL consumes canonical Browser ToolResult.
 - [ ] Web live SSE and durable reload show the same Browser result.
 - [ ] ACP consumes the same result without filesystem-only detail.
