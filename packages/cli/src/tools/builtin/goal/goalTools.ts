@@ -26,6 +26,7 @@ function failure(error: unknown): ToolResult {
       type: ToolErrorType.EXECUTION_ERROR,
       message,
       code: 'GOAL_OPERATION_FAILED',
+      details: error,
     },
     metadata: { summary: message },
   };

@@ -93,6 +93,7 @@ export function createLspTool(manager: LspSessionManager) {
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message,
+            details: error,
           },
           metadata: {
             operation: params.operation,
