@@ -96,6 +96,30 @@ describe('production qualification contract', () => {
     );
   });
 
+  it('keeps coverage publishing actions on Node 24-compatible releases', () => {
+    const actionReferences = fs
+      .readdirSync(workflowsDirectory)
+      .filter((fileName) => /\.ya?ml$/.test(fileName))
+      .sort()
+      .flatMap((fileName) => {
+        const workflow = fs.readFileSync(
+          path.join(workflowsDirectory, fileName),
+          'utf8'
+        );
+
+        return (
+          workflow.match(
+            /(?:actions\/upload-artifact|codecov\/codecov-action)@[^\s#]+/g
+          ) ?? []
+        ).map((reference) => `${fileName}:${reference}`);
+      });
+
+    expect(actionReferences).toEqual([
+      'ci.yml:codecov/codecov-action@v7',
+      'ci.yml:actions/upload-artifact@v7',
+    ]);
+  });
+
   it('keeps qualification policy in an independently testable module', () => {
     expect(fs.existsSync(qualificationCore)).toBe(true);
   });
