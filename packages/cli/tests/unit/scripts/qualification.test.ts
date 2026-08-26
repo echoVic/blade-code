@@ -10,10 +10,11 @@ import {
 } from '../../../scripts/qualification.js';
 
 describe('production qualification contract', () => {
-  const ciWorkflowPath = path.resolve(
+  const workflowsDirectory = path.resolve(
     __dirname,
-    '../../../../../.github/workflows/ci.yml'
+    '../../../../../.github/workflows'
   );
+  const ciWorkflowPath = path.join(workflowsDirectory, 'ci.yml');
   const packagePath = path.resolve(__dirname, '../../../package.json');
   const qualificationScript = path.resolve(__dirname, '../../../scripts/qualify.ts');
   const qualificationCore = path.resolve(
@@ -72,6 +73,27 @@ describe('production qualification contract', () => {
     expect(sandboxIndex).toBeGreaterThan(installIndex);
     expect(browserCheckIndex).toBeGreaterThan(sandboxIndex);
     expect(testIndex).toBeGreaterThan(browserCheckIndex);
+  });
+
+  it('keeps the complete cache action inventory on the Node 24 runtime', () => {
+    const cacheReferences = fs
+      .readdirSync(workflowsDirectory)
+      .filter((fileName) => /\.ya?ml$/.test(fileName))
+      .sort()
+      .flatMap((fileName) => {
+        const workflow = fs.readFileSync(
+          path.join(workflowsDirectory, fileName),
+          'utf8'
+        );
+
+        return (workflow.match(/actions\/cache@[^\s#]+/g) ?? []).map(
+          (reference) => `${fileName}:${reference}`
+        );
+      });
+
+    expect(cacheReferences).toEqual(
+      Array.from({ length: 6 }, () => 'ci.yml:actions/cache@v6')
+    );
   });
 
   it('keeps qualification policy in an independently testable module', () => {
