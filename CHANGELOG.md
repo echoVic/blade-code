@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.10.96] - 2026-08-27
+
+### Fixed
+- Tool invocation retries now fail closed: only explicitly replay-safe local query
+  tools retry transient resource errors, preventing Bash, file writes, MCP calls,
+  stdin writes, and other side effects from being duplicated after an indeterminate
+  failure
+- Query-tool adapters preserve structured retryable error causes instead of
+  misreporting transient failures as missing or empty state; prompt artifact
+  initialization can recover after a failed attempt
+- Retry backoff now observes cancellation before another tool attempt can start
+- Web surfaces confirmed HTTP submission rejections even when an SSE resync has
+  already replaced the optimistic message, preserving capacity error feedback
+
+### Tests
+- Added an exhaustive built-in retry-safety inventory and a real-filesystem
+  integration test proving an uncertain side effect executes only once
+- Hardened raw PTY qualification by forcing interactive child rendering,
+  matching the current composer marker, and chunking bracketed-paste input
+
 ## [0.10.95] - 2026-08-26
 
 ### Added
