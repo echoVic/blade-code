@@ -6,6 +6,11 @@ import {
   latchPtyMarker,
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
+import {
+  createTuiPtyEnvironment,
+  TUI_COMPOSER_MARKER,
+  writeBracketedPaste,
+} from './ptyInput.js';
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -64,11 +69,7 @@ async function main(): Promise<void> {
   const followupPrompt = required('BLADE_GOAL_FINALIZATION_PTY_FOLLOWUP_PROMPT');
   const expectedFollowup = required('BLADE_GOAL_FINALIZATION_PTY_FOLLOWUP');
   const secret = process.env.BLADE_GOAL_FINALIZATION_PTY_SECRET ?? '';
-  const childEnv = Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string'
-    )
-  );
+  const childEnv = createTuiPtyEnvironment();
   const terminal = spawn(
     '/usr/bin/env',
     [
@@ -110,12 +111,12 @@ async function main(): Promise<void> {
 
   try {
     await waitFor(
-      () => sawInitial && sawCompleteGoal && output.includes('输入命令'),
+      () => sawInitial && sawCompleteGoal && output.includes(TUI_COMPOSER_MARKER),
       'Timed out waiting for recovered Goal finalization in TUI',
       60_000
     );
     await waitForInboxRemoval(workspace, sessionId, 10_000);
-    terminal.write(`\u001B[200~${followupPrompt}\u001B[201~`);
+    await writeBracketedPaste(terminal, followupPrompt);
     await waitFor(
       () => output.includes(followupPrompt.slice(0, 24)),
       'Goal follow-up did not reach the TUI composer',

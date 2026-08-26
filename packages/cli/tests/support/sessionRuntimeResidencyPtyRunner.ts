@@ -6,6 +6,11 @@ import {
   processIdentityMatches,
 } from '../../src/utils/process/ProcessIdentity.js';
 import { findSessionTranscript } from '../integration/real-api/sessionForkTrajectoryHarness.js';
+import {
+  createTuiPtyEnvironment,
+  TUI_COMPOSER_MARKER,
+  writeBracketedPaste,
+} from './ptyInput.js';
 
 interface RunnerInput {
   cliEntry: string;
@@ -63,16 +68,13 @@ function signalTerminalTree(terminal: PtyProcess, signal: NodeJS.Signals): void 
 
 async function main(): Promise<void> {
   const input = loadInput();
-  const env = Object.fromEntries(
-    Object.entries({
-      ...process.env,
-      HOME: input.home,
-      BLADE_STORAGE_ROOT: input.storageRoot,
-      BLADE_AUTO_MEMORY: '0',
-      BLADE_TELEMETRY_DISABLED: '1',
-      TERM: 'xterm-256color',
-    }).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
-  );
+  const env = createTuiPtyEnvironment({
+    HOME: input.home,
+    BLADE_STORAGE_ROOT: input.storageRoot,
+    BLADE_AUTO_MEMORY: '0',
+    BLADE_TELEMETRY_DISABLED: '1',
+    TERM: 'xterm-256color',
+  });
   const terminal = spawn(
     '/usr/bin/env',
     [
@@ -115,7 +117,7 @@ async function main(): Promise<void> {
   try {
     await Promise.race([
       waitFor(
-        () => output.includes('请输入您的问题'),
+        () => output.includes(TUI_COMPOSER_MARKER),
         'Timed out waiting for Session residency TUI composer',
         60_000
       ),
@@ -123,7 +125,7 @@ async function main(): Promise<void> {
         throw new Error(`Session residency TUI exited before composer (${exitCode})`);
       }),
     ]);
-    terminal.write(`\u001B[200~${input.prompt}\u001B[201~`);
+    await writeBracketedPaste(terminal, input.prompt);
     await waitFor(
       () => output.includes(input.marker),
       'Session residency bracketed paste did not reach TUI',

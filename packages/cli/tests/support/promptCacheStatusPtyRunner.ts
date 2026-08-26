@@ -1,6 +1,7 @@
 import { stripVTControlCharacters } from 'node:util';
 import { spawn } from 'bun-pty';
 import { latchPtyMarker } from './foregroundBoundedOutputPtyDriver.js';
+import { createTuiPtyEnvironment } from './ptyInput.js';
 
 const required = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -33,11 +34,7 @@ async function main(): Promise<void> {
   const cliEntry = required('BLADE_CACHE_PTY_CLI_ENTRY');
   const workspace = required('BLADE_CACHE_PTY_WORKSPACE');
   const sessionId = required('BLADE_CACHE_PTY_SESSION_ID');
-  const childEnv = Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string'
-    )
-  );
+  const childEnv = createTuiPtyEnvironment();
   const terminal = spawn(
     '/usr/bin/env',
     [

@@ -7,6 +7,7 @@ import {
   latchPtyEvidence,
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
+import { createTuiPtyEnvironment } from './ptyInput.js';
 import { hasVisibleWeightedProviderRejection } from './weightedProviderAdmissionPtyDriver.js';
 
 function required(name: string): string {
@@ -113,11 +114,7 @@ async function main(): Promise<void> {
   const storageRoot = required('BLADE_WEIGHTED_ADMISSION_PTY_STORAGE_ROOT');
   const sessionId = required('BLADE_WEIGHTED_ADMISSION_PTY_SESSION_ID');
   const secret = process.env.BLADE_WEIGHTED_ADMISSION_PTY_SECRET ?? '';
-  const childEnv = Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string'
-    )
-  );
+  const childEnv = createTuiPtyEnvironment();
   const terminal = spawn(
     '/usr/bin/env',
     [

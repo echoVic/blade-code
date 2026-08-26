@@ -1,7 +1,7 @@
 import { spawn } from 'bun-pty';
 import {
-  appendBoundedPtyEvidence,
   ArmedPtyMarkerLatch,
+  appendBoundedPtyEvidence,
   waitForPtyExit,
 } from './foregroundBoundedOutputPtyDriver.js';
 import {
@@ -9,6 +9,11 @@ import {
   type ForegroundCommandHandoffFixture,
   releaseForegroundCommandHandoffFixture,
 } from './foregroundCommandHandoffFixtureDriver.js';
+import {
+  createTuiPtyEnvironment,
+  TUI_COMPOSER_MARKER,
+  writeBracketedPaste,
+} from './ptyInput.js';
 
 interface RunnerInput {
   cliEntry: string;
@@ -47,16 +52,13 @@ async function main(): Promise<void> {
   const finalMarkerLatch = new ArmedPtyMarkerLatch(input.fixture.marker);
   const secretLatch = new ArmedPtyMarkerLatch(input.secret);
   secretLatch.arm();
-  const env = Object.fromEntries(
-    Object.entries({
-      ...process.env,
-      HOME: input.home,
-      BLADE_STORAGE_ROOT: input.storageRoot,
-      BLADE_AUTO_MEMORY: '0',
-      BLADE_TELEMETRY_DISABLED: '1',
-      TERM: 'xterm-256color',
-    }).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
-  );
+  const env = createTuiPtyEnvironment({
+    HOME: input.home,
+    BLADE_STORAGE_ROOT: input.storageRoot,
+    BLADE_AUTO_MEMORY: '0',
+    BLADE_TELEMETRY_DISABLED: '1',
+    TERM: 'xterm-256color',
+  });
   const terminal = spawn(
     '/usr/bin/env',
     [
@@ -98,11 +100,11 @@ async function main(): Promise<void> {
 
   try {
     await waitFor(
-      () => output.includes('请输入您的问题'),
+      () => output.includes(TUI_COMPOSER_MARKER),
       'Timed out waiting for TUI handoff composer',
       30_000
     );
-    terminal.write(`\u001B[200~${input.fixture.prompt}\u001B[201~`);
+    await writeBracketedPaste(terminal, input.fixture.prompt);
     await waitFor(
       () => output.includes('PASTE:'),
       'Foreground handoff bracketed paste did not reach TUI',

@@ -1,5 +1,20 @@
 const DEFAULT_PTY_INPUT_CHUNK_BYTES = 1024;
 
+export const TUI_COMPOSER_MARKER = '输入命令...';
+
+export function createTuiPtyEnvironment(
+  overrides: NodeJS.ProcessEnv = {}
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries({
+      ...process.env,
+      ...overrides,
+      CI: 'false',
+      CONTINUOUS_INTEGRATION: 'false',
+    }).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+  );
+}
+
 export function chunkUtf8PtyInput(
   input: string,
   maximumBytes = DEFAULT_PTY_INPUT_CHUNK_BYTES

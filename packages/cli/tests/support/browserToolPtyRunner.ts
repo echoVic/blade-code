@@ -5,6 +5,11 @@ import {
   latchPtyMarker,
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
+import {
+  createTuiPtyEnvironment,
+  TUI_COMPOSER_MARKER,
+  writeBracketedPaste,
+} from './ptyInput.js';
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -67,11 +72,7 @@ const prompt = required('BLADE_BROWSER_TOOL_PTY_PROMPT');
 const expected = required('BLADE_BROWSER_TOOL_PTY_EXPECTED');
 const sessionId = required('BLADE_BROWSER_TOOL_PTY_SESSION_ID');
 const secret = process.env.BLADE_BROWSER_TOOL_PTY_SECRET ?? '';
-const childEnv = Object.fromEntries(
-  Object.entries(process.env).filter(
-    (entry): entry is [string, string] => typeof entry[1] === 'string'
-  )
-);
+const childEnv = createTuiPtyEnvironment();
 const terminal = spawn(
   '/usr/bin/env',
   [
@@ -108,8 +109,8 @@ terminal.onData((chunk) => {
 });
 
 try {
-  await waitFor(() => output.includes('请输入您的问题'), 'PTY composer', 30_000);
-  terminal.write(`\u001B[200~${prompt}\u001B[201~`);
+  await waitFor(() => output.includes(TUI_COMPOSER_MARKER), 'PTY composer', 30_000);
+  await writeBracketedPaste(terminal, prompt);
   await waitFor(() => output.includes('PASTE:'), 'bracketed paste', 10_000);
   terminal.write('\r');
   await waitFor(() => sawExpected, 'Browser Tool final marker', 270_000);

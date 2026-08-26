@@ -4,6 +4,11 @@ import {
   latchForegroundBoundedPtyMarkers,
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
+import {
+  createTuiPtyEnvironment,
+  TUI_COMPOSER_MARKER,
+  writeBracketedPaste,
+} from './ptyInput.js';
 
 const required = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -41,11 +46,7 @@ async function main(): Promise<void> {
   const stderrTail = required('BLADE_BOUNDED_PTY_STDERR_TAIL');
   const sessionId = required('BLADE_BOUNDED_PTY_SESSION_ID');
   const secret = process.env.BLADE_BOUNDED_PTY_SECRET ?? '';
-  const childEnv = Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string'
-    )
-  );
+  const childEnv = createTuiPtyEnvironment();
   const terminal = spawn(
     '/usr/bin/env',
     [
@@ -102,11 +103,11 @@ async function main(): Promise<void> {
 
   try {
     await waitFor(
-      () => output.includes('请输入您的问题'),
+      () => output.includes(TUI_COMPOSER_MARKER),
       'Timed out waiting for TUI composer',
       30_000
     );
-    terminal.write(`\u001B[200~${prompt}\u001B[201~`);
+    await writeBracketedPaste(terminal, prompt);
     await waitFor(
       () => output.includes('bounded foreground'),
       'Bracketed paste did not reach the TUI composer',

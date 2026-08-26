@@ -3,6 +3,11 @@ import {
   appendBoundedPtyEvidence,
   latchPtyMarker,
 } from './foregroundBoundedOutputPtyDriver.js';
+import {
+  createTuiPtyEnvironment,
+  TUI_COMPOSER_MARKER,
+  writeBracketedPaste,
+} from './ptyInput.js';
 
 const required = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -37,11 +42,7 @@ function waitFor(
   });
 }
 
-const childEnv = Object.fromEntries(
-  Object.entries(process.env).filter(
-    (entry): entry is [string, string] => typeof entry[1] === 'string'
-  )
-);
+const childEnv = createTuiPtyEnvironment();
 const terminal = spawn(
   '/usr/bin/env',
   [
@@ -71,8 +72,8 @@ terminal.onData((chunk) => {
 });
 
 try {
-  await waitFor(() => output.includes('请输入您的问题'), 'composer', 30_000);
-  terminal.write(`\u001B[200~${prompt}\u001B[201~`);
+  await waitFor(() => output.includes(TUI_COMPOSER_MARKER), 'composer', 30_000);
+  await writeBracketedPaste(terminal, prompt);
   await waitFor(() => output.includes('BRACKETED_'), 'bracketed paste', 10_000);
   terminal.write('\r');
   await waitFor(() => sawExpected, expected, 270_000);

@@ -5,6 +5,7 @@ import {
   latchPtyMarker,
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
+import { createTuiPtyEnvironment } from './ptyInput.js';
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -81,11 +82,7 @@ async function main(): Promise<void> {
   const inputMessageId = required('BLADE_ROOT_RESUME_PTY_INPUT_MESSAGE_ID');
   const expected = required('BLADE_ROOT_RESUME_PTY_EXPECTED');
   const secret = process.env.BLADE_ROOT_RESUME_PTY_SECRET ?? '';
-  const childEnv = Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string'
-    )
-  );
+  const childEnv = createTuiPtyEnvironment();
   const terminal = spawn(
     '/usr/bin/env',
     [

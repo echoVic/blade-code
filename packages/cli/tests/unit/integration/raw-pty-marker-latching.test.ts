@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { chunkUtf8PtyInput } from '../../support/ptyInput.js';
+import { chunkUtf8PtyInput, createTuiPtyEnvironment } from '../../support/ptyInput.js';
 
 const supportDir = path.resolve(import.meta.dirname, '../../support');
 const runnerInventory = [
@@ -22,6 +22,19 @@ const runnerInventory = [
   'weightedProviderAdmissionPtyRunner.ts',
 ] as const;
 
+const promptInputRunners = [
+  'browserToolPtyRunner.ts',
+  'foregroundBoundedOutputPtyRunner.ts',
+  'foregroundCommandHandoffPtyRunner.ts',
+  'foregroundProviderRecoveryPtyRunner.ts',
+  'goalFinalizationPtyRunner.ts',
+  'gracefulShutdownPtyRunner.ts',
+  'sessionRuntimeResidencyPtyRunner.ts',
+  'tokenBudgetHandoffPtyRunner.ts',
+  'toolAdmissionPtyRunner.ts',
+  'tuiPtyRunner.ts',
+] as const satisfies readonly (typeof runnerInventory)[number][];
+
 function readRunner(fileName: (typeof runnerInventory)[number]): string {
   return readFileSync(path.join(supportDir, fileName), 'utf8');
 }
@@ -33,6 +46,39 @@ describe('raw PTY marker latching source contract', () => {
       .sort();
 
     expect(actual).toEqual([...runnerInventory]);
+  });
+
+  it.each(promptInputRunners)(
+    '%s waits for the real composer and uses bounded bracketed paste',
+    (fileName) => {
+      const source = readRunner(fileName);
+
+      expect(source).toContain('TUI_COMPOSER_MARKER');
+      expect(source).toContain('await writeBracketedPaste(');
+      expect(source).not.toContain("output.includes('请输入您的问题')");
+      expect(source).not.toContain('terminal.write(`\\u001B[200~');
+    }
+  );
+
+  it.each(runnerInventory)(
+    '%s forces interactive rendering in its PTY child',
+    (fileName) => {
+      expect(readRunner(fileName)).toContain('createTuiPtyEnvironment');
+    }
+  );
+
+  it('overrides inherited CI flags for interactive PTY children', () => {
+    expect(
+      createTuiPtyEnvironment({
+        CI: '1',
+        CONTINUOUS_INTEGRATION: 'true',
+        PTY_TEST_MARKER: 'preserved',
+      })
+    ).toMatchObject({
+      CI: 'false',
+      CONTINUOUS_INTEGRATION: 'false',
+      PTY_TEST_MARKER: 'preserved',
+    });
   });
 
   it.each([
@@ -102,7 +148,9 @@ describe('raw PTY marker latching source contract', () => {
     );
     expect(source).toContain("if (state === 'matched') return;");
     expect(source).toContain("if (state === 'mismatched')");
-    expect(source).toContain("composerReady ||= plainScan.includes('输入命令...')");
+    expect(source).toContain(
+      'composerReady ||= plainScan.includes(TUI_COMPOSER_MARKER)'
+    );
     expect(source).toContain('Date.now() - bracketedPasteModeSeenAt >= 5_000');
     expect(source).toContain(
       "'Timed out waiting for token-budget PTY paste acknowledgement'"

@@ -15,7 +15,11 @@ import {
   finalAssistantText,
   readSessionEvents,
 } from '../integration/real-api/sessionForkTrajectoryHarness.js';
-import { writeBracketedPaste } from './ptyInput.js';
+import {
+  createTuiPtyEnvironment,
+  TUI_COMPOSER_MARKER,
+  writeBracketedPaste,
+} from './ptyInput.js';
 import { classifyTokenBudgetPtyFinal } from './tokenBudgetHandoffPtyDriver.js';
 
 const MAX_PROJECTED_OUTPUT_CHARS = 12_000;
@@ -237,19 +241,14 @@ async function main(): Promise<void> {
   ) {
     throw new Error('Token-budget PTY runner final marker contract is invalid');
   }
-  const { BLADE_TOKEN_BUDGET_PTY_INPUT: _runnerInput, ...baseEnvironment } =
-    process.env;
-  void _runnerInput;
-  const env = Object.fromEntries(
-    Object.entries({
-      ...baseEnvironment,
-      HOME: input.home,
-      BLADE_STORAGE_ROOT: input.storageRoot,
-      BLADE_AUTO_MEMORY: '0',
-      BLADE_TELEMETRY_DISABLED: '1',
-      TERM: 'xterm-256color',
-    }).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
-  );
+  const env = createTuiPtyEnvironment({
+    HOME: input.home,
+    BLADE_STORAGE_ROOT: input.storageRoot,
+    BLADE_AUTO_MEMORY: '0',
+    BLADE_TELEMETRY_DISABLED: '1',
+    BLADE_TOKEN_BUDGET_PTY_INPUT: undefined,
+    TERM: 'xterm-256color',
+  });
   const args = [
     'node',
     input.cliEntry,
@@ -308,7 +307,7 @@ async function main(): Promise<void> {
     const plainScan = stripVTControlCharacters(scan);
     finalMarkerSeen ||= scan.includes(input.finalMarker);
     hiddenMarkerSeen ||= forbidden.some((value) => value && scan.includes(value));
-    composerReady ||= plainScan.includes('输入命令...');
+    composerReady ||= plainScan.includes(TUI_COMPOSER_MARKER);
     if (!bracketedPasteModeSeen && scan.includes('\u001b[?2004h')) {
       bracketedPasteModeSeen = true;
       bracketedPasteModeSeenAt = Date.now();
