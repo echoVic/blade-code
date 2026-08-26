@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.90] - 2026-08-26
+
+### Fixed
+- CI dependency and Playwright browser caches now use `actions/cache@v6` on the
+  Node.js 24 action runtime, with a complete workflow inventory test preventing
+  legacy cache-action regressions
+
 ## [0.10.89] - 2026-08-25
 
 ### Fixed

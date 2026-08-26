@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.90] - 2026-08-26
+
+### 修复
+- CI 依赖缓存与 Playwright 浏览器缓存统一升级至使用 Node.js 24 Runtime 的
+  `actions/cache@v6`，并新增完整 workflow 库存测试，防止旧版 cache action 回归
+
 ## [0.10.89] - 2026-08-25
 
 ### 修复
