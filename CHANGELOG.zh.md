@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.93] - 2026-08-26
+
+### 修复
+- 格式化 Browser Panel production qualification fixture，使仓库质量门禁能够校验
+  发布源码
+
 ## [0.10.92] - 2026-08-26
 
 ### 新增

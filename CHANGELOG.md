@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.93] - 2026-08-26
+
+### Fixed
+- Formatted the Browser Panel production qualification fixture so the repository
+  quality gate validates the release source
+
 ## [0.10.92] - 2026-08-26
 
 ### Added
