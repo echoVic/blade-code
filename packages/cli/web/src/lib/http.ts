@@ -1,4 +1,5 @@
 interface ErrorPayload {
+  code?: unknown;
   error?: unknown;
   message?: unknown;
 }
@@ -6,7 +7,8 @@ interface ErrorPayload {
 export class HttpResponseError extends Error {
   constructor(
     message: string,
-    readonly status: number
+    readonly status: number,
+    readonly code?: string
   ) {
     super(message);
     this.name = 'HttpResponseError';
@@ -30,7 +32,7 @@ export async function requestJson<T>(
       errorPayload?.error &&
       typeof errorPayload.error === 'object' &&
       !Array.isArray(errorPayload.error)
-        ? (errorPayload.error as { message?: unknown })
+        ? (errorPayload.error as { code?: unknown; message?: unknown })
         : undefined;
     const message =
       typeof errorPayload?.error === 'string'
@@ -40,7 +42,15 @@ export async function requestJson<T>(
           : typeof errorPayload?.message === 'string'
             ? errorPayload.message
             : response.statusText || `Request failed (${response.status})`;
-    throw new HttpResponseError(message, response.status);
+    throw new HttpResponseError(
+      message,
+      response.status,
+      typeof nestedError?.code === 'string'
+        ? nestedError.code
+        : typeof errorPayload?.code === 'string'
+          ? errorPayload.code
+          : undefined
+    );
   }
 
   return payload as T;

@@ -37,6 +37,10 @@ const FAILURE_DEFINITIONS = {
     message: 'The selected model does not support this input.',
     retryable: false,
   },
+  workspace_unavailable: {
+    message: 'The Session workspace is no longer available.',
+    retryable: false,
+  },
   capacity: {
     message: 'Task admission capacity is full. Retry after running tasks complete.',
     retryable: true,
@@ -132,6 +136,19 @@ function taskAdmissionResource(
   }
 }
 
+function isWorkspaceUnavailable(error: unknown): boolean {
+  try {
+    return (
+      error !== null &&
+      typeof error === 'object' &&
+      'name' in error &&
+      error.name === 'WorktreeUnavailableError'
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function taskFailureForCode(code: SessionTaskFailureCode): SessionTaskFailure {
   return {
     code,
@@ -140,6 +157,9 @@ export function taskFailureForCode(code: SessionTaskFailureCode): SessionTaskFai
 }
 
 export function toTaskFailure(error: unknown): SessionTaskFailure {
+  if (isWorkspaceUnavailable(error)) {
+    return taskFailureForCode('workspace_unavailable');
+  }
   const resource = taskAdmissionResource(error);
   if (resource) {
     return {

@@ -556,10 +556,14 @@ export const sessionService = {
     });
     if (!res.ok) {
       const body = (await res.json().catch(() => undefined)) as
-        | { reason?: string; error?: { message?: string } }
+        | { reason?: string; error?: { code?: string; message?: string } }
         | undefined;
       const reason = body?.error?.message ?? body?.reason;
-      throw new HttpResponseError(reason || 'Failed to send message', res.status);
+      throw new HttpResponseError(
+        reason || 'Failed to send message',
+        res.status,
+        body?.error?.code
+      );
     }
     return res.json();
   },

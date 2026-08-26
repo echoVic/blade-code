@@ -18,6 +18,7 @@ import { createWorktreeTools } from '../../src/tools/builtin/worktree/worktreeTo
 import {
   validateWorktreeName,
   WorktreeManager,
+  WorktreeUnavailableError,
 } from '../../src/worktree/WorktreeManager.js';
 import { removeTestDirectory } from '../support/helpers/removeTestDirectory.js';
 
@@ -117,6 +118,27 @@ describe('WorktreeManager integration', () => {
       'isolated\n'
     );
     expect(manager.getActiveSession('session-a')).toBeUndefined();
+  });
+
+  it('classifies a deleted persisted worktree during restore', async () => {
+    const session = await manager.enter({
+      sessionId: 'session-missing',
+      workspaceRoot: sourceCwd,
+      name: 'feature/missing',
+    });
+    await rm(session.worktreeRoot, { recursive: true, force: true });
+
+    const restoringManager = new WorktreeManager({
+      storageRoot: join(tempRoot, 'restoring-storage'),
+    });
+
+    await expect(restoringManager.restoreSession(session)).rejects.toEqual(
+      expect.objectContaining<WorktreeUnavailableError>({
+        message: 'Task worktree is no longer available',
+        name: 'WorktreeUnavailableError',
+        reason: 'missing',
+      })
+    );
   });
 
   it('summarizes tracked and untracked task artifacts against the base commit', async () => {

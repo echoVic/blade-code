@@ -71,7 +71,7 @@ import {
   assertValidSessionId,
   getBladeStorageRoot,
 } from '../../context/storage/pathUtils.js';
-import { toTaskFailure } from '../../context/taskFailure.js';
+import { taskFailureForCode, toTaskFailure } from '../../context/taskFailure.js';
 import type {
   SessionEvent,
   SessionTaskDelivery,
@@ -138,6 +138,7 @@ import { KeyedMutexRegistry } from '../../utils/KeyedMutexRegistry.js';
 import { createSessionId } from '../../utils/sessionId.js';
 import {
   WorktreeDeliveryConflict,
+  WorktreeUnavailableError,
   worktreeManager,
 } from '../../worktree/WorktreeManager.js';
 import { Bus } from '../bus.js';
@@ -148,6 +149,7 @@ import {
   ConflictError,
   InternalServerError,
   NotFoundError,
+  SessionWorkspaceUnavailableError,
   ServiceUnavailableError,
   TooManyRequestsError,
 } from '../error.js';
@@ -1733,9 +1735,6 @@ export const createSessionRouteController = (): SessionRouteController => {
           const runtime = await SessionRuntime.create({
             sessionId: session.id,
             workspaceRoot: session.projectPath,
-            ...((session.selectedModelId ?? session.taskModelId)
-              ? { modelId: session.selectedModelId ?? session.taskModelId }
-              : {}),
             permissionMode:
               overrides.permissionMode ??
               session.permissionMode ??
@@ -1768,6 +1767,28 @@ export const createSessionRouteController = (): SessionRouteController => {
                 }
               : {}),
           });
+          const resolvedModelId = runtime.getCurrentModelId();
+          if (
+            resolvedModelId &&
+            (session.selectedModelId || session.taskModelId) &&
+            resolvedModelId !== session.selectedModelId
+          ) {
+            const metadata = await SessionService.updateSessionMetadata(
+              session.id,
+              session.projectPath,
+              { selectedModelId: resolvedModelId }
+            ).catch((error) => {
+              logger.warn(
+                `[SessionRoutes] Failed to migrate restored model for ${session.id}:`,
+                error
+              );
+              return undefined;
+            });
+            if (metadata) {
+              session.selectedModelId = metadata.selectedModelId;
+              session.updatedAt = new Date(metadata.lastMessageTime);
+            }
+          }
           let initialLease: SessionRuntimeResidencyLease<SessionRuntime> | undefined =
             reservation.commit({
               key,
@@ -1800,6 +1821,9 @@ export const createSessionRouteController = (): SessionRouteController => {
           };
         } catch (error) {
           reservation.cancel();
+          if (error instanceof WorktreeUnavailableError) {
+            throw new SessionWorkspaceUnavailableError(error.reason);
+          }
           throw error;
         }
       })();
@@ -3886,7 +3910,22 @@ export const createSessionRouteController = (): SessionRouteController => {
         }
         if (stream.aborted || terminated) return;
 
-        void resumePendingSession(session).catch((error) => {
+        void resumePendingSession(session).catch(async (error) => {
+          if (error instanceof SessionWorkspaceUnavailableError) {
+            await refreshSessionTaskMetadata(session).catch(() => undefined);
+            const taskFailure =
+              session.taskFailure?.code === 'workspace_unavailable'
+                ? session.taskFailure
+                : taskFailureForCode('workspace_unavailable');
+            session.taskStatus = 'failed';
+            session.taskStatusReason = taskFailure.message;
+            session.taskFailure = taskFailure;
+            Bus.publish(ref, 'session.error', {
+              error: taskFailure.message,
+              taskFailure,
+            });
+            Bus.publish(ref, 'session.status', { status: 'error' });
+          }
           logger.error(
             `[SessionRoutes] Failed to resume pending input for ${sessionId}:`,
             error

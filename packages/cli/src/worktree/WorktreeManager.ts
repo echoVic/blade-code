@@ -90,6 +90,18 @@ export class WorktreeDeliveryConflict extends Error {
   }
 }
 
+export type WorktreeUnavailableReason =
+  | 'missing'
+  | 'metadata_mismatch'
+  | 'not_registered';
+
+export class WorktreeUnavailableError extends Error {
+  constructor(public readonly reason: WorktreeUnavailableReason) {
+    super('Task worktree is no longer available');
+    this.name = 'WorktreeUnavailableError';
+  }
+}
+
 export interface WorktreeApplyResult {
   action: 'apply';
   workspaceRoot: string;
@@ -388,11 +400,24 @@ export class WorktreeManager {
       }
 
       validateWorktreeName(session.name);
-      const [worktreeRoot, workspaceRoot, repositoryRoot] = await Promise.all([
-        realpath(session.worktreeRoot),
-        realpath(session.workspaceRoot),
-        realpath(session.repositoryRoot),
-      ]);
+      let worktreeRoot: string;
+      let workspaceRoot: string;
+      let repositoryRoot: string;
+      try {
+        [worktreeRoot, workspaceRoot, repositoryRoot] = await Promise.all([
+          realpath(session.worktreeRoot),
+          realpath(session.workspaceRoot),
+          realpath(session.repositoryRoot),
+        ]);
+      } catch (error) {
+        if (
+          (error as NodeJS.ErrnoException).code === 'ENOENT' ||
+          (error as NodeJS.ErrnoException).code === 'ENOTDIR'
+        ) {
+          throw new WorktreeUnavailableError('missing');
+        }
+        throw error;
+      }
       const [resolvedRootResult, branchResult, baseResult, listResult] =
         await Promise.all([
           runGit(worktreeRoot, ['rev-parse', '--show-toplevel']),
@@ -408,14 +433,14 @@ export class WorktreeManager {
       requireGitSuccess(listResult, 'List restored worktrees');
 
       if (resolvedRoot !== worktreeRoot || branch !== session.branch) {
-        throw new Error('Persisted worktree metadata does not match Git state');
+        throw new WorktreeUnavailableError('metadata_mismatch');
       }
       const registeredPaths = listResult.stdout
         .split('\n')
         .filter((line) => line.startsWith('worktree '))
         .map((line) => line.slice('worktree '.length));
       if (!registeredPaths.includes(worktreeRoot)) {
-        throw new Error('Persisted worktree is no longer registered');
+        throw new WorktreeUnavailableError('not_registered');
       }
 
       const restored: WorktreeSession = {

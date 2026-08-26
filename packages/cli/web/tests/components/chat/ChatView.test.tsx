@@ -349,4 +349,45 @@ describe('ChatView session event recovery', () => {
     });
     expect(useSessionStore.getState().error).toBeNull();
   });
+
+  it('renders an unavailable Session workspace without retry actions', async () => {
+    useSessionStore.setState({
+      isStreaming: false,
+      sessionEventConnectionState: 'connected',
+      sessions: [
+        {
+          sessionId: ref.sessionId,
+          projectPath: ref.projectPath,
+          rootId: ref.sessionId,
+          taskStatus: 'failed',
+          taskRetryAvailable: true,
+          taskFailure: {
+            code: 'workspace_unavailable',
+            message: 'The Session workspace is no longer available.',
+            retryable: false,
+          },
+          messageCount: 1,
+          firstMessageTime: '2026-08-07T00:00:00.000Z',
+          lastMessageTime: '2026-08-07T00:01:00.000Z',
+          hasErrors: true,
+        },
+      ],
+      error: 'This session workspace is no longer available',
+      errorContext: {
+        kind: 'submission',
+        sessionRef: ref,
+        failureCode: 'workspace_unavailable',
+      },
+    });
+
+    await act(async () => {
+      root.render(<ChatView />);
+    });
+
+    expect(container.textContent).toContain(
+      'This Session workspace is no longer available.'
+    );
+    expect(container.textContent).not.toContain('Retry task');
+    expect(container.textContent).not.toContain('Check model settings');
+  });
 });

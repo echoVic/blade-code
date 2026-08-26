@@ -56,6 +56,17 @@ export class ServiceUnavailableError extends BladeServerError {
   }
 }
 
+export class SessionWorkspaceUnavailableError extends BladeServerError {
+  constructor(reason: string) {
+    super(
+      'SESSION_WORKSPACE_UNAVAILABLE',
+      'This session workspace is no longer available',
+      409,
+      { reason }
+    );
+  }
+}
+
 export class AmbiguousSessionError extends BladeServerError {
   constructor() {
     super(

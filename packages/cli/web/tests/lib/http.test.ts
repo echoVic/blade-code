@@ -46,7 +46,10 @@ describe('requestJson', () => {
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
-            error: { message: 'No model is configured' },
+            error: {
+              code: 'SESSION_WORKSPACE_UNAVAILABLE',
+              message: 'This session workspace is no longer available',
+            },
           }),
           {
             status: 400,
@@ -56,6 +59,13 @@ describe('requestJson', () => {
       )
     );
 
-    await expect(requestJson('/value')).rejects.toThrow('No model is configured');
+    await expect(requestJson('/value')).rejects.toEqual(
+      expect.objectContaining<HttpResponseError>({
+        code: 'SESSION_WORKSPACE_UNAVAILABLE',
+        message: 'This session workspace is no longer available',
+        name: 'HttpResponseError',
+        status: 400,
+      })
+    );
   });
 });

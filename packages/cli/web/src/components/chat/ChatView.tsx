@@ -169,7 +169,7 @@ export function ChatView() {
       sameSessionRef(errorContext.sessionRef, currentSessionRef));
   const failureCode = errorContext?.failureCode ?? currentSession?.taskFailure?.code;
   const errorMessage =
-    errorContext?.kind === 'execution' && failureCode
+    (errorContext?.kind === 'execution' || errorContext?.failureCode) && failureCode
       ? t(taskFailureMessageKey(failureCode))
       : error === 'queue_full'
         ? t('chat.error.queueFull')

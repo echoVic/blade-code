@@ -1063,9 +1063,17 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         ) {
           return true;
         }
+        const failureCode =
+          isHttpResponseError(err) && err.code === 'SESSION_WORKSPACE_UNAVAILABLE'
+            ? 'workspace_unavailable'
+            : undefined;
         set((state) => ({
           error: (err as Error).message,
-          errorContext: { kind: 'submission', sessionRef },
+          errorContext: {
+            kind: 'submission',
+            sessionRef,
+            ...(failureCode ? { failureCode } : {}),
+          },
           messages: optimisticMessageId
             ? state.messages.filter((message) => message.id !== optimisticMessageId)
             : state.messages,

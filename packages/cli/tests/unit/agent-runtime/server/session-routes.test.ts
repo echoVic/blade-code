@@ -428,6 +428,13 @@ vi.mock('../../../../src/worktree/WorktreeManager.js', () => ({
       super(message);
     }
   },
+  WorktreeUnavailableError: class WorktreeUnavailableError extends Error {
+    readonly name = 'WorktreeUnavailableError';
+
+    constructor(public readonly reason: string) {
+      super('Task worktree is no longer available');
+    }
+  },
   worktreeManager: worktreeState,
 }));
 
@@ -1206,6 +1213,87 @@ describe('SessionRoutes runtime reuse', () => {
     });
     expect(vi.mocked(Agent.createWithRuntime).mock.calls[1]?.[1]).toEqual({
       sessionId: 'session-1',
+    });
+  });
+
+  it('falls back from a removed durable model and migrates the Session metadata', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const metadata = makeSessionMetadata({
+      sessionId: 'stale-model-session',
+      projectPath: '/tmp/stale-model-workspace',
+      selectedModelId: 'removed-model',
+    });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionService.loadSession).mockResolvedValue(makeMessages());
+
+    const response = await SessionRoutes().request(
+      `/stale-model-session/message?projectPath=${encodeURIComponent(metadata.projectPath)}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'continue with an available model' }),
+      }
+    );
+
+    expect(response.status).toBe(202);
+    expect(vi.mocked(SessionRuntime.create).mock.calls[0]?.[0]).not.toHaveProperty(
+      'modelId'
+    );
+    expect(SessionService.updateSessionMetadata).toHaveBeenCalledWith(
+      metadata.sessionId,
+      metadata.projectPath,
+      { selectedModelId: 'model-1' }
+    );
+  });
+
+  it('returns a stable conflict when a restored task worktree is unavailable', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { WorktreeUnavailableError } = await import(
+      '../../../../src/worktree/WorktreeManager.js'
+    );
+    const metadata = makeSessionMetadata({
+      sessionId: 'missing-worktree-session',
+      projectPath: '/tmp/missing-worktree',
+      taskStatus: 'completed',
+      taskIsolation: 'worktree',
+      taskWorktreePath: '/tmp/missing-worktree',
+    });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionService.findSessionTaskWorktree).mockResolvedValue({
+      sessionId: metadata.sessionId,
+      name: 'task/missing-worktree-session',
+      branch: 'blade-worktree-missing-worktree-session',
+      baseCommit: 'a'.repeat(40),
+      originalBranch: 'main',
+      repositoryRoot: '/tmp/repository',
+      originalWorkspaceRoot: '/tmp/source',
+      worktreeRoot: metadata.projectPath,
+      workspaceRoot: metadata.projectPath,
+      sourceHadChanges: false,
+    });
+    vi.mocked(SessionService.loadSession).mockResolvedValue(makeMessages());
+    vi.mocked(SessionRuntime.create).mockRejectedValueOnce(
+      new WorktreeUnavailableError('missing')
+    );
+
+    const response = await SessionRoutes().request(
+      `/${metadata.sessionId}/message?projectPath=${encodeURIComponent(metadata.projectPath)}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'continue' }),
+      }
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'SESSION_WORKSPACE_UNAVAILABLE',
+        message: 'This session workspace is no longer available',
+        details: { reason: 'missing' },
+      },
     });
   });
 
@@ -3111,7 +3199,6 @@ describe('SessionRoutes runtime reuse', () => {
       expect(SessionRuntime.create).toHaveBeenCalledWith({
         sessionId,
         workspaceRoot: executionPath,
-        modelId: 'model-1',
         permissionMode: PermissionMode.DEFAULT,
         taskIsolation: isolation,
         ...(isolation === 'worktree'

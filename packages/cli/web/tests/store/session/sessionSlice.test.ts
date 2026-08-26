@@ -857,6 +857,44 @@ describe('sessionSlice multimodal sendMessage', () => {
     });
   });
 
+  it('projects an unavailable Session workspace as a non-retryable submission failure', async () => {
+    const currentRef = createRef('session-worktree', '/tmp/missing-worktree');
+    const response = deferred<{ runId: string; status: string; queued?: number }>();
+    useSessionStore.setState({
+      currentSessionId: currentRef.sessionId,
+      currentSessionRef: currentRef,
+      isTemporarySession: false,
+      isStreaming: false,
+      messages: [],
+      error: null,
+      errorContext: null,
+    });
+    vi.mocked(sessionService.sendMessage).mockReturnValue(response.promise);
+
+    const sending = useSessionStore.getState().sendMessage({
+      content: 'Continue this task',
+    });
+    await flushMicrotasks();
+    response.reject(
+      new HttpResponseError(
+        'This session workspace is no longer available',
+        409,
+        'SESSION_WORKSPACE_UNAVAILABLE'
+      )
+    );
+
+    await expect(sending).resolves.toBe(false);
+    expect(useSessionStore.getState()).toMatchObject({
+      error: 'This session workspace is no longer available',
+      errorContext: {
+        kind: 'submission',
+        sessionRef: currentRef,
+        failureCode: 'workspace_unavailable',
+      },
+      messages: [],
+    });
+  });
+
   it('keeps the run connected until stopping is confirmed and deduplicates stop requests', async () => {
     const currentRef = createRef('session-active', '/tmp/project-active');
     const unsubscribeFromEvents = vi.fn();

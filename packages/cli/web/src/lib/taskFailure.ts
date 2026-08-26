@@ -12,6 +12,7 @@ const FAILURE_MESSAGE_KEYS: Record<TaskFailureCode, TranslationKey> = {
   model_unavailable: 'task.failure.modelUnavailable',
   context_limit: 'task.failure.contextLimit',
   unsupported_input: 'task.failure.unsupportedInput',
+  workspace_unavailable: 'task.failure.workspaceUnavailable',
   capacity: 'task.failure.capacity',
   runtime: 'task.failure.runtime',
 };
@@ -25,6 +26,7 @@ const FAILURE_RETRYABLE: Record<TaskFailureCode, boolean> = {
   model_unavailable: true,
   context_limit: false,
   unsupported_input: false,
+  workspace_unavailable: false,
   capacity: true,
   runtime: true,
 };

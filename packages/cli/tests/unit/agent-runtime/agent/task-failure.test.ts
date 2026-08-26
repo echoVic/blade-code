@@ -69,6 +69,23 @@ describe('taskFailure', () => {
     expect(JSON.stringify(failure)).not.toContain('32');
   });
 
+  it('classifies an unavailable managed worktree without exposing its path', () => {
+    const failure = toTaskFailure(
+      Object.assign(new Error('/private/task/worktree no longer exists'), {
+        name: 'WorktreeUnavailableError',
+        reason: 'missing',
+      })
+    );
+
+    expect(failure).toEqual({
+      code: 'workspace_unavailable',
+      message: 'The Session workspace is no longer available.',
+      retryable: false,
+    });
+    expect(isSessionTaskFailure(failure)).toBe(true);
+    expect(JSON.stringify(failure)).not.toContain('/private/task/worktree');
+  });
+
   it('uses bounded canonical messages and rejects malformed stored failures', () => {
     const failure = toTaskFailure('x'.repeat(1_000));
     expect(failure.message).toBe('Agent execution failed.');

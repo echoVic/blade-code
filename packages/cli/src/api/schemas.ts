@@ -207,6 +207,7 @@ export const SessionTaskFailureSchema = Runtime(
       'model_unavailable',
       'context_limit',
       'unsupported_input',
+      'workspace_unavailable',
       'capacity',
       'runtime',
     ]),
