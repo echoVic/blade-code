@@ -21,6 +21,15 @@ const model = isRealApiTestEnabled()
   : undefined;
 const cliEntry = path.resolve(import.meta.dirname, '../../../dist/blade.js');
 
+function browserCacheRoot(): string {
+  let current = path.dirname(chromium.executablePath());
+  while (path.dirname(current) !== current) {
+    if (path.basename(current) === 'ms-playwright') return current;
+    current = path.dirname(current);
+  }
+  throw new Error('Unable to locate the qualified Playwright browser cache');
+}
+
 async function reservePort(): Promise<number> {
   const server = createTcpServer();
   await new Promise<void>((resolve, reject) => {
@@ -180,7 +189,15 @@ describe
           response.end(
             `<!doctype html><html><body>` +
               `<main data-browser-fixture="${pageName}">` +
-              `Browser fixture ${pageName}</main></body></html>`
+              `<h1>Browser fixture ${pageName}</h1>` +
+              `<label>Fixture input <input aria-label="Fixture input"></label>` +
+              `<button onclick="` +
+              `document.querySelector('[data-browser-status]').textContent = ` +
+              `'Applied ' + document.querySelector('[aria-label=&quot;Fixture input&quot;]').value;` +
+              `console.log('browser-panel-applied')` +
+              `">Apply</button>` +
+              `<div data-browser-status>Idle</div>` +
+              `</main></body></html>`
           );
         });
         await new Promise<void>((resolve, reject) => {
@@ -207,6 +224,7 @@ describe
               BLADE_AUTO_MEMORY: '0',
               BLADE_TELEMETRY_DISABLED: '1',
               BLADE_ALLOW_ROOT: '1',
+              PLAYWRIGHT_BROWSERS_PATH: browserCacheRoot(),
             },
             stdio: ['ignore', 'pipe', 'pipe'],
           }
@@ -347,7 +365,7 @@ describe
         );
         expect(await page.getByRole('separator').count()).toBe(1);
 
-        const address = page.locator('[data-preview-browser-address]');
+        const address = page.locator('[data-browser-panel-address]');
         await address.fill(`${fixtureOrigin}/one`);
         await address.press('Enter');
         await page
@@ -393,6 +411,55 @@ describe
         expect(popup.url()).toBe(`${fixtureOrigin}/two`);
         await popup.close();
 
+        await page.getByRole('tab', { name: 'Test' }).click();
+        await address.fill(`${fixtureOrigin}/one`);
+        await address.press('Enter');
+        const testPanel = page.locator('[data-browser-test]');
+        await page
+          .locator('[data-browser-test-screenshot]')
+          .waitFor({ state: 'visible', timeout: 30_000 })
+          .catch(async (error) => {
+            throw new Error(
+              `Test browser screenshot did not appear; panel=${(
+                (await testPanel.textContent().catch(() => '')) ?? ''
+              ).slice(0, 2_000)}`,
+              { cause: error }
+            );
+          });
+        await testPanel
+          .locator('[data-browser-ref]')
+          .filter({ hasText: 'Fixture input' })
+          .click();
+        const initialSnapshotId =
+          await testPanel.getAttribute('data-browser-snapshot-id');
+        if (!initialSnapshotId) {
+          throw new Error('Test browser snapshot has no ID');
+        }
+        await testPanel.getByRole('textbox', { name: 'Input value' }).fill('API smoke');
+        await testPanel.getByRole('button', { name: 'Fill selected control' }).click();
+        await waitFor(
+          async () =>
+            (await testPanel.getAttribute('data-browser-snapshot-id')) !==
+            initialSnapshotId,
+          'Browser Panel did not publish the post-fill snapshot'
+        );
+        await testPanel
+          .locator('[data-browser-ref]')
+          .filter({ hasText: 'Apply' })
+          .click();
+        await testPanel.getByRole('button', { name: 'Click selected element' }).click();
+        const appliedStatus = testPanel
+          .locator('[data-browser-ref]')
+          .filter({ hasText: 'Applied API smoke' });
+        await appliedStatus.waitFor({ state: 'visible' });
+        expect(await appliedStatus.count()).toBe(1);
+        await testPanel.getByRole('tab', { name: 'Console' }).click();
+        await waitFor(
+          async () =>
+            (await testPanel.textContent())?.includes('browser-panel-applied') === true,
+          'Browser Panel console diagnostics did not include the fixture marker'
+        );
+
         await page.setViewportSize({ width: 390, height: 844 });
         await page.waitForFunction(
           () =>
@@ -406,6 +473,15 @@ describe
         expect(bounds!.y).toBeGreaterThanOrEqual(0);
         expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
         expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(844);
+        const testScreenshotBounds = await page
+          .locator('[data-browser-test-screenshot]')
+          .boundingBox();
+        expect(testScreenshotBounds).not.toBeNull();
+        expect(testScreenshotBounds!.x).toBeGreaterThanOrEqual(bounds!.x);
+        expect(
+          testScreenshotBounds!.x + testScreenshotBounds!.width
+        ).toBeLessThanOrEqual(bounds!.x + bounds!.width);
+        await page.getByRole('tab', { name: 'Preview' }).click();
         await page
           .frameLocator('[data-preview-browser-frame]')
           .locator('[data-browser-fixture="two"]')

@@ -219,7 +219,8 @@ blade browser status
 六个工具默认 deferred，Agent 先通过 `ToolSearch` 加载 schema。全进程共享一个惰性
 Chromium，每个 Session 使用独立、临时的 `BrowserContext`；恢复、fork、Runtime 释放或
 进程崩溃后不会恢复 Cookie、页面或登录状态。Agent Browser 与 Web UI 中供人工查看的
-Browser Preview 相互独立。
+Browser Panel 相互独立；其中 Test 模式还会使用独立的 Web Browser
+`BrowserContext`，不会与 Agent 抢占页面或快照。
 
 | 工具 | 类型 | 操作 |
 |------|------|------|

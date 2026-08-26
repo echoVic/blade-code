@@ -103,19 +103,30 @@ Web UI 支持 Blade Code 的所有核心功能：
 
 看板地址使用 `?view=board`，可与 `project` 参数组合形成项目级深链。
 
-## 内嵌浏览器预览
+## Browser 面板
 
-任务详情右侧的预览区包含“浏览器”标签，可直接打开本地开发服务器或 HTTP(S)
-页面。工具栏支持后退、前进、刷新、地址跳转和在系统浏览器中打开。
+任务详情右侧预览区的“浏览器”标签提供统一地址栏、后退、前进、刷新和三种运行模式：
+
+- **预览**：在 sandbox iframe 中快速打开本地开发服务器或可嵌入的 HTTP(S) 页面；
+- **测试**：在服务端独立 Chromium `BrowserContext` 中打开顶层页面，显示实时 PNG
+  截图和 ARIA/DOM 快照，并支持 ref 点击、表单填入、滚动以及 console、network、
+  page error 检查；
+- **外部**：通过明确的用户操作把当前 HTTP(S) 地址交给系统浏览器。
 
 预览区展开后可通过右上角控制切换为工作区全屏，再次点击即可还原原有分栏宽度。
 全屏模式保留左侧导航与顶部全局栏，并将当前会话输入框悬浮在预览内容底部；输入框
 上方的状态条可展开查看会话记录、上下文用量、缓存命中率与当前运行阶段。
 
-浏览器历史仅保留在当前预览面板生命周期内，最多 50 项。Blade 仅接受 HTTP(S)
-地址，拒绝包含凭据的 URL 和 Blade Web 自身 origin。页面在无 referrer 的 sandbox
-iframe 中运行，Blade 不会代理页面或移除目标站点的 `X-Frame-Options` / CSP；拒绝
-嵌入的站点应使用工具栏中的“在系统浏览器中打开”。
+预览历史仅保留在当前面板生命周期内，最多 50 项。Blade 仅接受 HTTP(S) 地址并拒绝
+包含凭据的 URL。预览页面使用无 referrer 的 sandbox iframe，Blade 不代理页面或移除
+目标站点的 `X-Frame-Options` / CSP；拒绝嵌入时切换到“测试”或“外部”。
+
+测试模式要求当前存在持久化 Session，并使用与 Agent Browser Tool 不同的
+`BrowserContext`、快照 authority、Cookie 和页面状态。显式 reset、删除 Session 或
+关闭 server 会释放该上下文。测试模式继续复用 Browser Runtime 的 origin 校验、
+跨 origin 导航阻断、credential 控件保护、下载取消、弹窗限制、诊断脱敏与资源上限。
+首次使用前仍需运行 `blade browser install`。当前版本使用按操作刷新的高质量 PNG；
+实时 WebRTC 画面和 Agent/用户控制权切换尚未启用。
 
 ## 与 CLI 的区别
 
@@ -126,7 +137,7 @@ iframe 中运行，Blade 不会代理页面或移除目标站点的 `X-Frame-Opt
 | 远程访问 | 需要 SSH | 直接访问 |
 | 会话共享 | 同一目录 | 同一目录 |
 | 文件操作 | ✅ | ✅ |
-| 内嵌浏览器预览 | ❌ | ✅ |
+| Browser 面板（预览 / 测试 / 外部） | ❌ | ✅ |
 | 终端执行 | ✅ | ✅ |
 
 ## 常见问题

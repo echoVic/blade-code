@@ -104,11 +104,19 @@ The board supports:
 
 The board address uses `?view=board` and can be combined with the `project` parameter to form a project-level deep link.
 
-## Embedded Browser Preview
+## Browser Panel
 
-The right-side Preview panel includes a Browser tab for local development
-servers and HTTP(S) pages. Its toolbar provides back, forward, reload, address
-navigation, and an explicit open-in-system-browser action.
+The Browser tab in the right-side Preview panel provides one address bar,
+back, forward, reload, and three execution modes:
+
+- **Preview** opens local development servers or embeddable HTTP(S) pages in a
+  sandboxed iframe.
+- **Test** opens a top-level page in an isolated server-side Chromium
+  `BrowserContext`, displays a live PNG plus an ARIA/DOM snapshot, and supports
+  ref-based clicks, form filling, scrolling, console, network, and page-error
+  inspection.
+- **External** hands the current HTTP(S) address to the system browser through
+  an explicit user action.
 
 Use the global control in the upper-right corner to maximize Preview across the
 workspace, then select it again to restore the previous split width. Maximized
@@ -116,11 +124,20 @@ Preview keeps the sidebar and application header visible and floats the current
 Session composer over the bottom of the content. Expand its status row to inspect
 the conversation, context usage, cache hit rate, and current run phase.
 
-Browser history lives only for the current Preview panel lifecycle and is capped
-at 50 entries. Blade accepts only HTTP(S) addresses and rejects credential-bearing
-URLs and Blade Web's own origin. Pages run in a no-referrer sandboxed iframe.
-Blade does not proxy pages or remove their `X-Frame-Options` or CSP; use the
-external-open action for sites that deny embedding.
+Preview history lives only for the current panel lifecycle and is capped at 50
+entries. Blade accepts only HTTP(S) addresses and rejects credential-bearing
+URLs. Preview pages use a no-referrer sandboxed iframe. Blade does not proxy
+pages or remove their `X-Frame-Options` or CSP; switch to Test or External for
+sites that deny embedding.
+
+Test requires a durable current Session. Its `BrowserContext`, snapshot
+authority, cookies, and pages are independent from the Agent Browser Tool.
+Explicit reset, Session deletion, and server shutdown release the context. Test
+reuses Browser Runtime origin checks, cross-origin navigation blocking,
+credential-control protection, download cancellation, popup limits, diagnostic
+redaction, and resource bounds. Run `blade browser install` before first use.
+This release refreshes a high-quality PNG after each operation; WebRTC streaming
+and Agent/user control transfer are not enabled yet.
 
 ## Differences from the CLI
 
@@ -131,7 +148,7 @@ external-open action for sites that deny embedding.
 | Remote access | Requires SSH | Direct access |
 | Session sharing | Same directory | Same directory |
 | File operations | ✅ | ✅ |
-| Embedded browser preview | ❌ | ✅ |
+| Browser panel (Preview / Test / External) | ❌ | ✅ |
 | Terminal execution | ✅ | ✅ |
 
 ## Common Issues

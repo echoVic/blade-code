@@ -30,7 +30,7 @@ import { type PreviewTab, useAppStore } from '@/store/AppStore';
 import { useSettingsStore } from '@/store/SettingsStore';
 import { type Session, useSessionStore } from '@/store/session';
 import { sameSessionRef } from '@/store/session/sessionIdentity';
-import { BrowserPreview } from './BrowserPreview';
+import { BrowserPanel } from './BrowserPanel';
 import { type PreviewDiffData, PreviewDiffList } from './PreviewDiffList';
 import {
   type DirectoryLoadState,
@@ -1139,7 +1139,7 @@ export function FilePreview({
           forceMount
           className="overflow-hidden flex-1 min-h-0"
         >
-          <BrowserPreview />
+          <BrowserPanel sessionRef={currentSessionRef} />
         </TabsContent>
       </Tabs>
     </div>

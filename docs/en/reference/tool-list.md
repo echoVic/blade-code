@@ -208,7 +208,9 @@ All six tools are deferred and the Agent loads their schemas through `ToolSearch
 One lazy Chromium process is shared by the Blade process, while every Session gets
 an isolated, ephemeral `BrowserContext`. Cookies, pages, and login state are not
 restored after resume, fork, Runtime disposal, or a browser crash. The Agent Browser
-is independent from the user-controlled Browser Preview in the Web UI.
+is independent from the user-controlled Browser Panel in the Web UI. Test mode
+uses another Web Browser `BrowserContext`, so user actions cannot take over the
+Agent's page or snapshot authority.
 
 | Tool | Type | Operations |
 |------|------|------------|

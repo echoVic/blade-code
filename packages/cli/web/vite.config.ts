@@ -35,10 +35,6 @@ export default defineConfig(({ mode }) => {
               return 'vendor-radix'
             }
 
-            if (id.includes('/lucide-react/')) {
-              return 'vendor-icons'
-            }
-
             return undefined
           },
         },

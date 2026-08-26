@@ -136,4 +136,71 @@ describe('SessionBrowserRuntime lifecycle', () => {
     await runtime.dispose();
     expect(release).toHaveBeenCalledOnce();
   });
+
+  it('captures a bounded screenshot only for the authorized page origin', async () => {
+    let currentUrl = 'about:blank';
+    let page: Page;
+    const mainFrame = {
+      url: () => currentUrl,
+      page: () => page,
+      parentFrame: () => null,
+    } as unknown as Frame;
+    const screenshot = vi.fn(async () => Buffer.from('png'));
+    page = {
+      isClosed: () => false,
+      on: vi.fn(),
+      url: () => currentUrl,
+      title: vi.fn(async () => 'Fixture'),
+      mainFrame: () => mainFrame,
+      goto: vi.fn(async (url: string) => {
+        currentUrl = url;
+        return null;
+      }),
+      ariaSnapshot: vi.fn(async () => '- heading "Fixture"'),
+      screenshot,
+    } as unknown as Page;
+    const context = {
+      route: vi.fn(async () => undefined),
+      setDefaultTimeout: vi.fn(),
+      setDefaultNavigationTimeout: vi.fn(),
+      on: vi.fn(),
+      newPage: vi.fn(async () => page),
+    } as unknown as BrowserContext;
+    const release = vi.fn(async () => undefined);
+    const runtime = new SessionBrowserRuntime('/project', 'session', {
+      pool: {
+        acquire: vi.fn(async () => ({
+          context,
+          generation: 1,
+          release,
+        })),
+      } as unknown as BrowserProcessPool,
+    });
+
+    const observation = await runtime.navigate({ url: 'https://example.com/' });
+    await expect(
+      runtime.screenshot({
+        pageId: observation.pageId,
+        expectedOrigin: observation.origin,
+      })
+    ).resolves.toEqual(Buffer.from('png'));
+    expect(screenshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'png',
+        fullPage: false,
+        animations: 'disabled',
+        caret: 'hide',
+      })
+    );
+
+    await expect(
+      runtime.screenshot({
+        pageId: observation.pageId,
+        expectedOrigin: 'https://other.example:443',
+      })
+    ).rejects.toMatchObject({ code: 'browser_origin_mismatch' });
+
+    await runtime.dispose();
+    expect(release).toHaveBeenCalledOnce();
+  });
 });

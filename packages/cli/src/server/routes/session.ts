@@ -152,6 +152,8 @@ import {
 } from '../error.js';
 import { OrderedSseEgress, type SerializedSseMessage } from '../OrderedSseEgress.js';
 import { normalizeSessionRef, type SessionRef, sessionRefKey } from '../sessionRef.js';
+import { WebBrowserSessionRegistry } from '../WebBrowserSessionRegistry.js';
+import { BrowserRoutes } from './browser.js';
 
 const logger = createLogger(LogCategory.SERVICE);
 
@@ -1514,6 +1516,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     );
   });
   const runtimes = new Map<string, SessionRuntime>();
+  const webBrowserSessions = new WebBrowserSessionRegistry();
   const runtimeInitializations = new Map<
     string,
     Promise<{
@@ -2508,6 +2511,20 @@ export const createSessionRouteController = (): SessionRouteController => {
     return result;
   };
 
+  app.route(
+    '/',
+    BrowserRoutes({
+      withAdmission,
+      resolveSessionRef: async (sessionId, projectPath) => {
+        const ref = await resolveSessionRef(sessionId, projectPath);
+        await getOrHydrateSession(ref);
+        return ref;
+      },
+      getRuntime: (ref) => webBrowserSessions.get(ref),
+      resetRuntime: (ref) => webBrowserSessions.reset(ref),
+    })
+  );
+
   app.get('/', async (c) => {
     try {
       const persistedSessions = await SessionService.listSessions();
@@ -3439,6 +3456,7 @@ export const createSessionRouteController = (): SessionRouteController => {
           logger.warn('[SessionRoutes] Failed to clear session goal:', error);
         });
       }
+      await webBrowserSessions.dispose(ref);
       await SessionService.deleteSession(ref.sessionId, ref.projectPath);
       Bus.publish(ref, 'session.deleted', {});
       if (cancelledRunId) {
@@ -4375,6 +4393,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       await settle([runtimeResidency.disposeAll()]);
       runtimes.clear();
       await settle([...runtimeDisposals.values()]);
+      await settle([webBrowserSessions.disposeAll()]);
       await settle([McpRegistry.getInstance().disconnectAll()]);
 
       runtimeInitializations.clear();

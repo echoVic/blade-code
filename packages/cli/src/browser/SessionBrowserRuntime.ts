@@ -48,6 +48,7 @@ import {
   MAX_BROWSER_PAGES_PER_SESSION,
   MAX_BROWSER_REF_BYTES,
   MAX_BROWSER_RESULT_BYTES,
+  MAX_BROWSER_SCREENSHOT_BYTES,
   MAX_BROWSER_SCROLL_AMOUNT,
   MAX_BROWSER_SELECT_VALUE_BYTES,
   MAX_BROWSER_SELECT_VALUES,
@@ -134,6 +135,12 @@ export interface BrowserInspectOptions {
   pageId?: string;
   expectedOrigin?: string;
   target: BrowserInspectTarget;
+  signal?: AbortSignal;
+}
+
+export interface BrowserScreenshotOptions {
+  pageId?: string;
+  expectedOrigin?: string;
   signal?: AbortSignal;
 }
 
@@ -811,6 +818,32 @@ export class SessionBrowserRuntime {
         entries,
         truncated: entries.length < selected.length || matching.length > limit,
       };
+    }, options.signal);
+  }
+
+  screenshot(options: BrowserScreenshotOptions = {}): Promise<Buffer> {
+    return this.run(async (signal) => {
+      const state = await this.resolvePage(options.pageId, false, signal);
+      this.throwIfBlockedNavigation(state);
+      if (options.expectedOrigin) {
+        this.assertExpectedOrigin(state, options.expectedOrigin);
+      }
+      const bytes = await state.page.screenshot({
+        type: 'png',
+        fullPage: false,
+        animations: 'disabled',
+        caret: 'hide',
+        timeout: DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
+        signal,
+      });
+      this.throwIfBlockedNavigation(state);
+      if (bytes.length > MAX_BROWSER_SCREENSHOT_BYTES) {
+        throw new BrowserRuntimeError(
+          'browser_operation_failed',
+          'Browser screenshot exceeds the supported size'
+        );
+      }
+      return bytes;
     }, options.signal);
   }
 

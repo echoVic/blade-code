@@ -3,14 +3,27 @@
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { BrowserPanel } from '../../../src/components/preview/BrowserPanel';
 import {
   appendPreviewBrowserHistory,
-  BrowserPreview,
   DEFAULT_PREVIEW_BROWSER_URL,
   MAX_PREVIEW_BROWSER_HISTORY,
   normalizePreviewBrowserUrl,
-} from '../../../src/components/preview/BrowserPreview';
+} from '../../../src/components/preview/browserPanelModel';
 import { setLocale } from '../../../src/i18n';
+
+const browserService = vi.hoisted(() => ({
+  navigate: vi.fn(),
+  snapshot: vi.fn(),
+  interact: vi.fn(),
+  inspect: vi.fn(),
+  screenshot: vi.fn(),
+  reset: vi.fn(),
+}));
+
+vi.mock('@/services/webBrowserService', () => ({
+  webBrowserService: browserService,
+}));
 
 function setInputValue(input: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(
@@ -69,12 +82,21 @@ describe('preview browser URL boundary', () => {
   });
 });
 
-describe('BrowserPreview', () => {
+describe('BrowserPanel', () => {
   let container: HTMLDivElement;
   let root: ReactDOM.Root;
 
   beforeEach(() => {
     setLocale('en');
+    vi.clearAllMocks();
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn(() => 'blob:browser-frame'),
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: vi.fn(),
+    });
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -88,7 +110,7 @@ describe('BrowserPreview', () => {
 
   it('navigates, reports load state, and preserves bounded history controls', async () => {
     await act(async () => {
-      root.render(<BrowserPreview />);
+      root.render(<BrowserPanel />);
     });
 
     const address = container.querySelector<HTMLInputElement>(
@@ -134,11 +156,22 @@ describe('BrowserPreview', () => {
         .querySelector<HTMLIFrameElement>('[data-preview-browser-frame]')
         ?.getAttribute('src')
     ).toBe('https://example.com/two');
+    expect(
+      container
+        .querySelector('[data-browser-panel]')
+        ?.getAttribute('data-browser-history-count')
+    ).toBe('2');
+    expect(
+      container
+        .querySelector('[data-browser-panel]')
+        ?.getAttribute('data-browser-history-index')
+    ).toBe('1');
 
     const back = container.querySelector<HTMLButtonElement>('[aria-label="Go back"]');
     const forward = container.querySelector<HTMLButtonElement>(
       '[aria-label="Go forward"]'
     );
+    expect(back?.disabled).toBe(false);
     await act(async () => back?.click());
     expect(address?.value).toBe('http://localhost:4173/one');
     expect(back?.disabled).toBe(true);
@@ -159,7 +192,7 @@ describe('BrowserPreview', () => {
 
   it('keeps the current page when a rejected URL is submitted', async () => {
     await act(async () => {
-      root.render(<BrowserPreview />);
+      root.render(<BrowserPanel />);
     });
     const address = container.querySelector<HTMLInputElement>(
       '[data-preview-browser-address]'
@@ -190,7 +223,7 @@ describe('BrowserPreview', () => {
   it('opens only the validated current URL from an explicit user gesture', async () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null);
     await act(async () => {
-      root.render(<BrowserPreview />);
+      root.render(<BrowserPanel />);
     });
     const external = container.querySelector<HTMLButtonElement>(
       '[aria-label="Open in system browser"]'
@@ -214,5 +247,176 @@ describe('BrowserPreview', () => {
       '_blank',
       'noopener,noreferrer'
     );
+  });
+
+  it('drives an isolated Test browser from DOM refs and diagnostics', async () => {
+    const observation = {
+      pageId: 'browser_page_1',
+      snapshotId: 'browser_snapshot_1',
+      url: 'https://example.com/form',
+      origin: 'https://example.com:443',
+      title: 'Example form',
+      tabs: [],
+      snapshot: '- textbox "Name" [ref=e1]\n- button "Save" [ref=e2]',
+      truncated: false,
+    };
+    browserService.navigate.mockResolvedValue(observation);
+    browserService.screenshot.mockResolvedValue(
+      new Blob(['png'], { type: 'image/png' })
+    );
+    browserService.interact.mockResolvedValue({
+      outcome: 'applied',
+      pageId: observation.pageId,
+      actionApplied: true,
+      sideEffectsUncertain: false,
+      observation: {
+        ...observation,
+        snapshotId: 'browser_snapshot_2',
+      },
+    });
+    browserService.inspect.mockResolvedValue({
+      pageId: observation.pageId,
+      target: 'console',
+      entries: [
+        {
+          sequence: 1,
+          pageId: observation.pageId,
+          kind: 'console',
+          level: 'info',
+          text: 'ready',
+        },
+      ],
+      truncated: false,
+    });
+    browserService.reset.mockResolvedValue(undefined);
+
+    await act(async () => {
+      root.render(
+        <BrowserPanel
+          sessionRef={{ sessionId: 'session-1', projectPath: '/project' }}
+        />
+      );
+    });
+    const testTab = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+    ).find((button) => button.textContent?.includes('Test'));
+    await act(async () => testTab?.click());
+
+    const address = container.querySelector<HTMLInputElement>(
+      '[data-browser-panel-address]'
+    );
+    const form = address?.closest('form');
+    await act(async () => {
+      if (!address || !form) throw new Error('Browser address form was not rendered');
+      setInputValue(address, 'example.com/form');
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await vi.waitFor(() => {
+      expect(browserService.navigate).toHaveBeenCalledWith(
+        { sessionId: 'session-1', projectPath: '/project' },
+        { action: 'goto', url: 'https://example.com/form' }
+      );
+      expect(container.querySelector('[data-browser-test-screenshot]')).not.toBeNull();
+    });
+
+    const ref = container.querySelector<HTMLButtonElement>('[data-browser-ref="e2"]');
+    await act(async () => ref?.click());
+    const click = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Click selected element"]'
+    );
+    await act(async () => click?.click());
+    await vi.waitFor(() =>
+      expect(browserService.interact).toHaveBeenCalledWith(
+        { sessionId: 'session-1', projectPath: '/project' },
+        expect.objectContaining({
+          pageId: 'browser_page_1',
+          snapshotId: 'browser_snapshot_1',
+          ref: 'e2',
+          action: { kind: 'click' },
+        })
+      )
+    );
+
+    const consoleTab = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+    ).find((button) => button.textContent?.includes('Console'));
+    await act(async () => consoleTab?.click());
+    await vi.waitFor(() => expect(browserService.inspect).toHaveBeenCalled());
+    expect(container.textContent).toContain('ready');
+
+    const reset = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Reset Test browser"]'
+    );
+    await act(async () => reset?.click());
+    await vi.waitFor(() => expect(browserService.reset).toHaveBeenCalled());
+  });
+
+  it('refreshes a stale Test snapshot before the next user action', async () => {
+    const first = {
+      pageId: 'browser_page_1',
+      snapshotId: 'browser_snapshot_1',
+      url: 'https://example.com/',
+      origin: 'https://example.com:443',
+      title: 'Example',
+      tabs: [],
+      snapshot: '- button "Save" [ref=e1]',
+      truncated: false,
+    };
+    const refreshed = {
+      ...first,
+      snapshotId: 'browser_snapshot_2',
+      snapshot: '- button "Save now" [ref=e2]',
+    };
+    browserService.navigate.mockResolvedValue(first);
+    browserService.screenshot.mockResolvedValue(
+      new Blob(['png'], { type: 'image/png' })
+    );
+    browserService.interact.mockRejectedValue(
+      new Error('Browser snapshot is stale; capture a new snapshot before interacting')
+    );
+    browserService.snapshot.mockResolvedValue(refreshed);
+
+    await act(async () => {
+      root.render(
+        <BrowserPanel
+          sessionRef={{ sessionId: 'session-1', projectPath: '/project' }}
+        />
+      );
+    });
+    const testTab = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+    ).find((button) => button.textContent?.includes('Test'));
+    await act(async () => testTab?.click());
+    const address = container.querySelector<HTMLInputElement>(
+      '[data-browser-panel-address]'
+    );
+    const form = address?.closest('form');
+    await act(async () => {
+      if (!address || !form) throw new Error('Browser address form was not rendered');
+      setInputValue(address, 'example.com');
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await vi.waitFor(() =>
+      expect(container.querySelector('[data-browser-ref="e1"]')).not.toBeNull()
+    );
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-browser-ref="e1"]')?.click();
+    });
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="Click selected element"]')
+        ?.click();
+    });
+
+    await vi.waitFor(() => {
+      expect(browserService.snapshot).toHaveBeenCalledWith(
+        { sessionId: 'session-1', projectPath: '/project' },
+        { pageId: 'browser_page_1' }
+      );
+      expect(container.textContent).toContain(
+        'Snapshot refreshed; select the element again.'
+      );
+      expect(container.querySelector('[data-browser-ref="e2"]')).not.toBeNull();
+    });
   });
 });
