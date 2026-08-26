@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.10.92] - 2026-08-26
+
+### 新增
+- 新增统一 Web Browser 面板，提供 iframe 预览、独立 Chromium 测试和显式系统
+  浏览器三种模式
+- 新增 Session 级 Web Browser 导航、交互、快照、诊断、截图与重置 API
+
+### 变更
+- Web 测试浏览器使用独立、临时的 `BrowserContext`，用户操作不会接管 Agent
+  Browser Tool 的页面、Cookie 或快照 ref
+- Lucide 图标改为跟随 Vite 动态 chunk 图分配，不再强制进入 Web 首屏 bundle
+
+### 安全
+- Web Test 复用 Browser Runtime 的 URL、origin、弹窗、下载、资源与脱敏边界，并在
+  reset、删除 Session 和 server shutdown 时释放上下文
+
+### 测试
+- 新增路由、生命周期、截图、交互、过期快照、响应式 UI、真实 Chromium 与
+  production Web 轨迹覆盖
+
 ## [0.10.91] - 2026-08-26
 
 ### 修复

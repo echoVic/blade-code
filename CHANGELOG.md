@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.10.92] - 2026-08-26
+
+### Added
+- Added a unified Web Browser panel with iframe Preview, isolated Chromium Test,
+  and explicit system-browser External modes
+- Added Session-scoped Web Browser navigation, interaction, snapshot, diagnostics,
+  screenshot, and reset APIs
+
+### Changed
+- Web Test browsing now owns a separate ephemeral `BrowserContext` so user
+  interaction cannot take over Agent Browser Tool pages, cookies, or snapshot refs
+- Lucide icons now follow Vite's dynamic chunk graph instead of being forced into
+  the initial Web bundle
+
+### Security
+- Web Test reuses Browser Runtime URL, origin, popup, download, resource, and
+  redaction boundaries, and releases contexts on reset, Session deletion, and
+  server shutdown
+
+### Tests
+- Added route, lifecycle, screenshot, interaction, stale-snapshot, responsive UI,
+  real Chromium, and production Web trajectory coverage
+
 ## [0.10.91] - 2026-08-26
 
 ### Fixed
