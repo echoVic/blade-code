@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { expect } from 'vitest';
 import type { ProcessIdentity } from '../../src/utils/process/ProcessIdentity.js';
 import type { BrowserToolFixture } from '../integration/real-api/browser-tool-fixture.js';
 import {
@@ -14,6 +15,7 @@ export interface BrowserToolWebEvidence {
   sessionId: string;
   markerVisible: true;
   markerVisibleAfterReload: true;
+  agentBrowserProjected: true;
   toolNames: string[];
   browserFaults: [];
 }
@@ -222,6 +224,30 @@ export async function runBrowserToolWebDriver(input: {
     }
     await composer.fill(input.fixture.prompt);
     await composer.press('Enter');
+    const browserPanel = page.locator('[data-browser-panel]');
+    await browserPanel.waitFor({ state: 'visible', timeout: timeoutMs });
+    await page.waitForFunction(
+      () => {
+        const panel = document.querySelector('[data-browser-panel]');
+        return (
+          panel?.getAttribute('data-browser-mode') === 'test' &&
+          panel.getAttribute('data-browser-test-source') === 'agent'
+        );
+      },
+      undefined,
+      { timeout: timeoutMs }
+    );
+    await page
+      .locator('[data-browser-test-screenshot]')
+      .waitFor({ state: 'visible', timeout: timeoutMs });
+    await page
+      .locator('[data-browser-agent-pointer]')
+      .waitFor({ state: 'visible', timeout: timeoutMs });
+    const browserAddress = page.locator('[data-browser-panel-address]');
+    expect(await browserAddress.getAttribute('readonly')).not.toBeNull();
+    expect(
+      await page.getByRole('button', { name: 'Click selected element' }).isDisabled()
+    ).toBe(true);
     await waitForMarker({
       page,
       origin,
@@ -257,6 +283,7 @@ export async function runBrowserToolWebDriver(input: {
       sessionId: created.sessionId,
       markerVisible: true,
       markerVisibleAfterReload: true,
+      agentBrowserProjected: true,
       toolNames,
       browserFaults: [],
     };

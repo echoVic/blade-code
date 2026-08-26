@@ -1,6 +1,11 @@
 import type { McpElicitationDetails } from '@api/schemas';
 import { taskFailureCode } from '@/lib/taskFailure';
 import type { Message as ServiceMessage, StreamEvent } from '@/services';
+import { useAppStore } from '@/store/AppStore';
+import {
+  isBrowserToolName,
+  useBrowserActivityStore,
+} from '@/store/BrowserActivityStore';
 import type {
   ActionStationarityInfo,
   Message,
@@ -2382,6 +2387,39 @@ const STREAM_END_EVENTS = new Set([
   'committed.turn_aborted',
 ]);
 
+function projectLiveBrowserActivity(event: StreamEvent, get: GetState): void {
+  if (
+    event.seq !== undefined ||
+    (event.type !== 'tool.start' && event.type !== 'tool.result')
+  ) {
+    return;
+  }
+  const ref = get().currentSessionRef;
+  const toolName = event.properties.toolName;
+  const toolCallId = event.properties.toolCallId;
+  if (!ref || !isBrowserToolName(toolName) || typeof toolCallId !== 'string') {
+    return;
+  }
+
+  const activity = useBrowserActivityStore.getState();
+  if (event.type === 'tool.start') {
+    activity.beginAgentActivity(ref, {
+      toolCallId,
+      toolName,
+      argumentsValue: event.properties.arguments,
+    });
+  } else {
+    activity.completeAgentActivity(ref, {
+      toolCallId,
+      toolName,
+      success:
+        event.properties.success === true || event.properties.status === 'completed',
+      metadata: event.properties.metadata,
+    });
+  }
+  useAppStore.getState().openFilePreview({ tab: 'browser' });
+}
+
 export const createEventDispatcher = (get: GetState, set: SetState) => {
   return (event: StreamEvent) => {
     const ref = get().currentSessionRef;
@@ -2398,6 +2436,8 @@ export const createEventDispatcher = (get: GetState, set: SetState) => {
     if (import.meta.env.DEV && !BUFFERED_EVENTS.has(event.type)) {
       console.log('[SSE Event]', event.type, event.properties);
     }
+
+    projectLiveBrowserActivity(event, get);
 
     if (event.type.startsWith('team.')) {
       handleTeamEvent(props, get, set);

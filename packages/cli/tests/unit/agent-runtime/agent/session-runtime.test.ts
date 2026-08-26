@@ -555,6 +555,20 @@ describe('SessionRuntime', () => {
     expect(runtime.sessionId).toBe('session-1');
     expect(builtinOptions?.browserRuntime).toBeDefined();
     const disposeBrowser = vi.spyOn(builtinOptions!.browserRuntime!, 'dispose');
+    const screenshotBrowser = vi
+      .spyOn(builtinOptions!.browserRuntime!, 'screenshot')
+      .mockResolvedValue(Buffer.from('png'));
+
+    await expect(
+      runtime.captureBrowserScreenshot({
+        pageId: 'browser_page_test',
+        expectedOrigin: 'https://example.com:443',
+      })
+    ).resolves.toEqual(Buffer.from('png'));
+    expect(screenshotBrowser).toHaveBeenCalledWith({
+      pageId: 'browser_page_test',
+      expectedOrigin: 'https://example.com:443',
+    });
 
     await runtime.dispose();
     expect(disposeBrowser).toHaveBeenCalledOnce();

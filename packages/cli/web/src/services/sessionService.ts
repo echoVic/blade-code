@@ -63,6 +63,7 @@ import { requestJson } from '@/lib/http';
 
 export interface StreamEvent {
   type: string;
+  seq?: number;
   properties: Record<string, unknown>;
 }
 

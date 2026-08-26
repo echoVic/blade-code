@@ -49,6 +49,7 @@ import {
   MAX_BROWSER_ID_BYTES,
   MAX_BROWSER_ORIGIN_BYTES,
   MAX_BROWSER_PROJECTED_URL_BYTES,
+  MAX_BROWSER_REF_BYTES,
   MAX_BROWSER_SCREENSHOT_BYTES,
   MAX_BROWSER_TITLE_BYTES,
 } from '../../browser/constants.js';
@@ -504,6 +505,85 @@ export const sanitizeToolMetadata = (
       source.diagnosticCount <= MAX_BROWSER_DIAGNOSTIC_RESULT_ENTRIES
     ) {
       projected.diagnosticCount = source.diagnosticCount;
+    }
+    if (
+      source.interaction &&
+      typeof source.interaction === 'object' &&
+      !Array.isArray(source.interaction)
+    ) {
+      const interaction = source.interaction as Record<string, unknown>;
+      const allowedActions = new Set([
+        'click',
+        'hover',
+        'fill',
+        'type',
+        'press',
+        'select',
+        'check',
+        'uncheck',
+        'scroll',
+      ]);
+      if (
+        typeof interaction.action === 'string' &&
+        allowedActions.has(interaction.action)
+      ) {
+        const projectedInteraction: Record<string, unknown> = {
+          action: interaction.action,
+        };
+        if (
+          typeof interaction.ref === 'string' &&
+          Buffer.byteLength(interaction.ref) <= MAX_BROWSER_REF_BYTES &&
+          /^[a-z][a-z0-9]*$/.test(interaction.ref)
+        ) {
+          projectedInteraction.ref = interaction.ref;
+        }
+        const boundedNumber = (
+          value: unknown,
+          minimum: number,
+          maximum: number
+        ): value is number =>
+          typeof value === 'number' &&
+          Number.isFinite(value) &&
+          value >= minimum &&
+          value <= maximum;
+        if (
+          interaction.viewport &&
+          typeof interaction.viewport === 'object' &&
+          !Array.isArray(interaction.viewport)
+        ) {
+          const viewport = interaction.viewport as Record<string, unknown>;
+          if (
+            boundedNumber(viewport.width, 1, 16_384) &&
+            boundedNumber(viewport.height, 1, 16_384)
+          ) {
+            projectedInteraction.viewport = {
+              width: viewport.width,
+              height: viewport.height,
+            };
+          }
+        }
+        if (
+          interaction.targetBox &&
+          typeof interaction.targetBox === 'object' &&
+          !Array.isArray(interaction.targetBox)
+        ) {
+          const targetBox = interaction.targetBox as Record<string, unknown>;
+          if (
+            boundedNumber(targetBox.x, -16_384, 32_768) &&
+            boundedNumber(targetBox.y, -16_384, 32_768) &&
+            boundedNumber(targetBox.width, 0, 16_384) &&
+            boundedNumber(targetBox.height, 0, 16_384)
+          ) {
+            projectedInteraction.targetBox = {
+              x: targetBox.x,
+              y: targetBox.y,
+              width: targetBox.width,
+              height: targetBox.height,
+            };
+          }
+        }
+        projected.interaction = projectedInteraction;
+      }
     }
     if (
       source.artifact &&
@@ -2521,6 +2601,12 @@ export const createSessionRouteController = (): SessionRouteController => {
         return ref;
       },
       getRuntime: (ref) => webBrowserSessions.get(ref),
+      captureAgentScreenshot: async (ref, options) => {
+        const session = await getOrHydrateSession(ref);
+        return withRuntime(session, (runtime) =>
+          runtime.captureBrowserScreenshot(options)
+        );
+      },
       resetRuntime: (ref) => webBrowserSessions.reset(ref),
     })
   );

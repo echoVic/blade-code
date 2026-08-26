@@ -27,6 +27,12 @@ function createRuntime(): SessionBrowserRuntime {
       actionApplied: true as const,
       sideEffectsUncertain: false as const,
       observation,
+      interaction: {
+        action: 'click' as const,
+        ref: 'e1',
+        viewport: { width: 1440, height: 900 },
+        targetBox: { x: 100, y: 80, width: 120, height: 32 },
+      },
     })),
     wait: vi.fn(async () => observation),
     inspect: vi.fn(async () => ({
@@ -175,6 +181,32 @@ describe('native Browser tools', () => {
         action: 'BrowserSnapshot',
         pageId: 'browser_page_test',
         snapshotId: 'browser_snapshot_test',
+      },
+    });
+  });
+
+  it('projects interaction geometry for the Web browser observer', async () => {
+    const runtime = createRuntime();
+    const interact = createBrowserTools(runtime).find(
+      (tool) => tool.name === 'BrowserInteract'
+    )!;
+    const result = await interact.execute({
+      pageId: 'browser_page_test',
+      snapshotId: 'browser_snapshot_test',
+      ref: 'e1',
+      expectedOrigin: 'https://example.com:443',
+      action: { kind: 'click' },
+      timeoutMs: 1000,
+    });
+
+    expect(result.metadata).toMatchObject({
+      browser: {
+        interaction: {
+          action: 'click',
+          ref: 'e1',
+          viewport: { width: 1440, height: 900 },
+          targetBox: { x: 100, y: 80, width: 120, height: 32 },
+        },
       },
     });
   });

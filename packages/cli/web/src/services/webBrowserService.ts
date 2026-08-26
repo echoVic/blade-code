@@ -66,7 +66,11 @@ export const webBrowserService = {
 
   screenshot: async (
     ref: SessionRef,
-    input: { pageId?: string; expectedOrigin?: string } = {}
+    input: {
+      pageId?: string;
+      expectedOrigin?: string;
+      source?: 'user' | 'agent';
+    } = {}
   ): Promise<Blob> => {
     const response = await fetch(
       browserSessionPath(ref, 'inspect', {

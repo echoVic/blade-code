@@ -3,7 +3,10 @@ import {
   WebBrowserInteractRequestSchema,
   WebBrowserNavigateRequestSchema,
 } from '../../api/browserSchemas.js';
-import type { SessionBrowserRuntime } from '../../browser/SessionBrowserRuntime.js';
+import type {
+  BrowserScreenshotOptions,
+  SessionBrowserRuntime,
+} from '../../browser/SessionBrowserRuntime.js';
 import { BrowserRuntimeError } from '../../browser/types.js';
 import { safeParseSchema } from '../../schema/index.js';
 import { BadRequestError, BladeServerError, InternalServerError } from '../error.js';
@@ -13,6 +16,10 @@ export interface WebBrowserRouteDependencies {
   withAdmission<T>(operation: () => Promise<T>): Promise<T>;
   resolveSessionRef(sessionId: string, projectPath?: string): Promise<SessionRef>;
   getRuntime(ref: SessionRef): SessionBrowserRuntime;
+  captureAgentScreenshot(
+    ref: SessionRef,
+    options: BrowserScreenshotOptions
+  ): Promise<Buffer>;
   resetRuntime(ref: SessionRef): Promise<void>;
 }
 
@@ -110,15 +117,27 @@ export function BrowserRoutes(dependencies: WebBrowserRouteDependencies) {
 
   app.get('/:sessionId/browser/inspect', async (c) => {
     const ref = await resolve(c.req.param('sessionId'), c.req.query('projectPath'));
-    const runtime = dependencies.getRuntime(ref);
     const target = c.req.query('target');
     const pageId = c.req.query('pageId');
     const expectedOrigin = c.req.query('expectedOrigin');
     if (target === 'screenshot') {
-      const bytes = await runtime.screenshot({
+      const source = c.req.query('source') ?? 'user';
+      if (source !== 'user' && source !== 'agent') {
+        throw new BadRequestError('Unsupported browser screenshot source');
+      }
+      if (source === 'agent' && (!pageId || !expectedOrigin)) {
+        throw new BadRequestError(
+          'Agent browser screenshots require pageId and expectedOrigin'
+        );
+      }
+      const options = {
         ...(pageId ? { pageId } : {}),
         ...(expectedOrigin ? { expectedOrigin } : {}),
-      });
+      };
+      const bytes =
+        source === 'agent'
+          ? await dependencies.captureAgentScreenshot(ref, options)
+          : await dependencies.getRuntime(ref).screenshot(options);
       return new Response(new Uint8Array(bytes), {
         headers: {
           'Content-Type': 'image/png',
@@ -138,7 +157,7 @@ export function BrowserRoutes(dependencies: WebBrowserRouteDependencies) {
       const text = c.req.query('text');
       if (!text) throw new BadRequestError('text is required for browser find');
       return c.json(
-        await runtime.inspect({
+        await dependencies.getRuntime(ref).inspect({
           ...common,
           target: { kind: 'find', text, ...(limit === undefined ? {} : { limit }) },
         })
@@ -148,7 +167,7 @@ export function BrowserRoutes(dependencies: WebBrowserRouteDependencies) {
       throw new BadRequestError('Unsupported browser inspection target');
     }
     return c.json(
-      await runtime.inspect({
+      await dependencies.getRuntime(ref).inspect({
         ...common,
         target: { kind: target, ...(limit === undefined ? {} : { limit }) },
       })

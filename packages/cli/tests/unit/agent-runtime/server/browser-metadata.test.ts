@@ -19,6 +19,13 @@ describe('Browser tool metadata projection', () => {
         actionApplied: true,
         sideEffectsUncertain: false,
         diagnosticCount: 2,
+        interaction: {
+          action: 'click',
+          ref: 'e12',
+          viewport: { width: 1440, height: 900 },
+          targetBox: { x: 120.5, y: 240, width: 80, height: 32 },
+          privateSelector: '#save',
+        },
         snapshot: 'private page text',
         console: ['private console'],
         headers: { authorization: 'secret' },
@@ -49,6 +56,12 @@ describe('Browser tool metadata projection', () => {
         actionApplied: true,
         sideEffectsUncertain: false,
         diagnosticCount: 2,
+        interaction: {
+          action: 'click',
+          ref: 'e12',
+          viewport: { width: 1440, height: 900 },
+          targetBox: { x: 120.5, y: 240, width: 80, height: 32 },
+        },
         artifact: {
           id: hash,
           sha256: hash,
@@ -73,6 +86,12 @@ describe('Browser tool metadata projection', () => {
         status: 'ok',
         pageId: '../escape',
         snapshotId: 'stale',
+        interaction: {
+          action: 'execute-script',
+          ref: '../secret',
+          viewport: { width: Number.POSITIVE_INFINITY, height: 900 },
+          targetBox: { x: 0, y: 0, width: -1, height: 20 },
+        },
         artifact: {
           id: 'bad',
           sha256: 'different',

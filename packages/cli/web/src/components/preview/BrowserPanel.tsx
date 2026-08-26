@@ -24,8 +24,9 @@ import {
   type BrowserInspectKind,
   webBrowserService,
 } from '@/services/webBrowserService';
+import { useBrowserActivityStore } from '@/store/BrowserActivityStore';
 import { type BrowserLoadState, BrowserPreview } from './BrowserPreview';
-import { BrowserTest } from './BrowserTest';
+import { BrowserTest, type BrowserTestSource } from './BrowserTest';
 import {
   appendPreviewBrowserHistory,
   type BrowserPanelMode,
@@ -38,6 +39,15 @@ import {
 
 interface BrowserPanelProps {
   sessionRef?: SessionRef | null;
+}
+
+function isHttpBrowserOrigin(value: string): boolean {
+  try {
+    const protocol = new URL(value).protocol;
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 const COPY = {
@@ -107,7 +117,14 @@ const COPY = {
 export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
   const { locale } = useLocale();
   const copy = COPY[locale];
+  const agentActivity = useBrowserActivityStore((state) => state.agentActivity);
+  const agentAvailable =
+    sessionRef !== null &&
+    agentActivity !== null &&
+    agentActivity.sessionRef.sessionId === sessionRef.sessionId &&
+    agentActivity.sessionRef.projectPath === sessionRef.projectPath;
   const [mode, setMode] = useState<BrowserPanelMode>('preview');
+  const [testSource, setTestSource] = useState<BrowserTestSource>('user');
   const [address, setAddress] = useState(DEFAULT_PREVIEW_BROWSER_URL);
   const [previewHistory, setPreviewHistory] = useState<PreviewBrowserHistory>({
     entries: [],
@@ -122,6 +139,9 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
     null
   );
   const [testScreenshotUrl, setTestScreenshotUrl] = useState<string | null>(null);
+  const [agentScreenshotUrl, setAgentScreenshotUrl] = useState<string | null>(null);
+  const [agentScreenshotLoading, setAgentScreenshotLoading] = useState(false);
+  const [agentScreenshotError, setAgentScreenshotError] = useState<string | null>(null);
   const [testBusy, setTestBusy] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
   const [externalUrl, setExternalUrl] = useState<string | null>(null);
@@ -132,13 +152,16 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
     useState<BrowserInspectKind | null>(null);
   const generation = useRef(0);
   const screenshotUrlRef = useRef<string | null>(null);
+  const agentScreenshotUrlRef = useRef<string | null>(null);
 
   const previewUrl = previewHistory.entries[previewHistory.index] ?? null;
   const currentUrl =
     mode === 'preview'
       ? previewUrl
       : mode === 'test'
-        ? (testObservation?.url ?? null)
+        ? testSource === 'agent' && agentAvailable
+          ? (agentActivity?.url ?? null)
+          : (testObservation?.url ?? null)
         : externalUrl;
   const currentHost = useMemo(() => {
     if (!currentUrl) return '';
@@ -152,13 +175,21 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
     mode === 'preview'
       ? previewLoadState
       : mode === 'test'
-        ? testBusy
-          ? 'loading'
-          : testError
-            ? 'error'
-            : testObservation
-              ? 'ready'
-              : 'idle'
+        ? testSource === 'agent' && agentAvailable
+          ? agentScreenshotLoading || agentActivity?.phase === 'running'
+            ? 'loading'
+            : agentScreenshotError || agentActivity?.phase === 'error'
+              ? 'error'
+              : agentScreenshotUrl
+                ? 'ready'
+                : 'idle'
+          : testBusy
+            ? 'loading'
+            : testError
+              ? 'error'
+              : testObservation
+                ? 'ready'
+                : 'idle'
         : externalUrl
           ? 'ready'
           : 'idle';
@@ -166,7 +197,9 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
     validationError !== null
       ? copy.error[validationError]
       : mode === 'test'
-        ? testError
+        ? testSource === 'agent' && agentAvailable
+          ? (agentScreenshotError ?? agentActivity?.errorCode ?? null)
+          : testError
         : null;
 
   const replaceScreenshotUrl = (next: string | null) => {
@@ -177,13 +210,25 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
     setTestScreenshotUrl(next);
   };
 
+  const replaceAgentScreenshotUrl = (next: string | null) => {
+    if (agentScreenshotUrlRef.current) {
+      URL.revokeObjectURL(agentScreenshotUrlRef.current);
+    }
+    agentScreenshotUrlRef.current = next;
+    setAgentScreenshotUrl(next);
+  };
+
   useEffect(() => {
     const nextGeneration = generation.current + 1;
     generation.current = nextGeneration;
     setTestObservation(null);
+    setTestSource('user');
     setTestError(null);
+    setAgentScreenshotError(null);
+    setAgentScreenshotLoading(false);
     setDiagnostics({});
     replaceScreenshotUrl(null);
+    replaceAgentScreenshotUrl(null);
     return () => {
       if (generation.current === nextGeneration) {
         generation.current += 1;
@@ -196,9 +241,79 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
       if (screenshotUrlRef.current) {
         URL.revokeObjectURL(screenshotUrlRef.current);
       }
+      if (agentScreenshotUrlRef.current) {
+        URL.revokeObjectURL(agentScreenshotUrlRef.current);
+      }
     },
     []
   );
+
+  useEffect(() => {
+    if (!sessionRef || !agentAvailable || !agentActivity) return;
+    setMode('test');
+    setTestSource('agent');
+    setValidationError(null);
+    if (agentActivity.url) setAddress(agentActivity.url);
+  }, [agentActivity?.revision, agentAvailable, sessionRef]);
+
+  useEffect(() => {
+    if (!sessionRef || !agentAvailable || !agentActivity) return;
+    if (
+      !agentActivity.pageId ||
+      !agentActivity.origin ||
+      agentActivity.frameRevision === 0
+    ) {
+      return;
+    }
+    if (!isHttpBrowserOrigin(agentActivity.origin)) {
+      setAgentScreenshotLoading(false);
+      setAgentScreenshotError(null);
+      replaceAgentScreenshotUrl(null);
+      return;
+    }
+
+    const requestGeneration = generation.current;
+    const frameRevision = agentActivity.frameRevision;
+    const isCurrentRequest = () => {
+      const current = useBrowserActivityStore.getState().agentActivity;
+      return (
+        generation.current === requestGeneration &&
+        current?.frameRevision === frameRevision &&
+        current.sessionRef.sessionId === sessionRef.sessionId &&
+        current.sessionRef.projectPath === sessionRef.projectPath
+      );
+    };
+    setAgentScreenshotLoading(true);
+    setAgentScreenshotError(null);
+    void webBrowserService
+      .screenshot(sessionRef, {
+        source: 'agent',
+        pageId: agentActivity.pageId,
+        expectedOrigin: agentActivity.origin,
+      })
+      .then((blob) => {
+        if (!isCurrentRequest()) return;
+        replaceAgentScreenshotUrl(URL.createObjectURL(blob));
+      })
+      .catch((error) => {
+        if (isCurrentRequest()) {
+          setAgentScreenshotError(
+            error instanceof Error ? error.message : String(error)
+          );
+        }
+      })
+      .finally(() => {
+        if (isCurrentRequest()) {
+          setAgentScreenshotLoading(false);
+        }
+      });
+  }, [
+    agentActivity?.frameRevision,
+    agentActivity?.origin,
+    agentActivity?.pageId,
+    agentAvailable,
+    sessionRef,
+  ]);
 
   const refreshScreenshot = async (
     ref: SessionRef,
@@ -270,6 +385,7 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
       return;
     }
     if (mode === 'test') {
+      if (testSource === 'agent') return;
       void runTestNavigation({ action: 'goto', url: resolved.url });
       return;
     }
@@ -301,7 +417,7 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
       }
       return;
     }
-    if (mode === 'test' && testObservation) {
+    if (mode === 'test' && testSource === 'user' && testObservation) {
       void runTestNavigation({
         action,
         pageId: testObservation.pageId,
@@ -318,8 +434,20 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
       nextMode === 'preview'
         ? previewUrl
         : nextMode === 'test'
-          ? testObservation?.url
+          ? testSource === 'agent' && agentAvailable
+            ? agentActivity?.url
+            : testObservation?.url
           : externalUrl;
+    if (nextUrl) setAddress(nextUrl);
+  };
+
+  const changeTestSource = (source: BrowserTestSource) => {
+    if (source === 'agent' && !agentAvailable) return;
+    setTestSource(source);
+    setValidationError(null);
+    setTestError(null);
+    setAgentScreenshotError(null);
+    const nextUrl = source === 'agent' ? agentActivity?.url : testObservation?.url;
     if (nextUrl) setAddress(nextUrl);
   };
 
@@ -456,17 +584,23 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
   const canGoBack =
     mode === 'preview'
       ? previewHistory.index > 0
-      : mode === 'test' && Boolean(testObservation);
+      : mode === 'test' && testSource === 'user' && Boolean(testObservation);
   const canGoForward =
     mode === 'preview'
       ? previewHistory.index >= 0 &&
         previewHistory.index < previewHistory.entries.length - 1
-      : mode === 'test' && Boolean(testObservation);
+      : mode === 'test' && testSource === 'user' && Boolean(testObservation);
+  const testReadOnly = mode === 'test' && testSource === 'agent';
+  const visibleTestBusy =
+    testSource === 'agent'
+      ? agentScreenshotLoading || agentActivity?.phase === 'running'
+      : testBusy;
 
   return (
     <section
       data-browser-panel
       data-browser-mode={mode}
+      data-browser-test-source={testSource}
       data-browser-history-count={previewHistory.entries.length}
       data-browser-history-index={previewHistory.index}
       className="flex h-full min-h-0 flex-col bg-[hsl(var(--deck-canvas))]"
@@ -510,7 +644,7 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
           type="button"
           variant="ghost"
           size="icon"
-          disabled={!canGoBack || (mode === 'test' && testBusy)}
+          disabled={!canGoBack || (mode === 'test' && visibleTestBusy)}
           aria-label={copy.back}
           title={copy.back}
           onClick={() => navigateRelative('back')}
@@ -522,7 +656,7 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
           type="button"
           variant="ghost"
           size="icon"
-          disabled={!canGoForward || (mode === 'test' && testBusy)}
+          disabled={!canGoForward || (mode === 'test' && visibleTestBusy)}
           aria-label={copy.forward}
           title={copy.forward}
           onClick={() => navigateRelative('forward')}
@@ -534,7 +668,12 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
           type="button"
           variant="ghost"
           size="icon"
-          disabled={mode === 'external' || !currentUrl || (mode === 'test' && testBusy)}
+          disabled={
+            mode === 'external' ||
+            testReadOnly ||
+            !currentUrl ||
+            (mode === 'test' && visibleTestBusy)
+          }
           aria-label={copy.reload}
           title={copy.reload}
           onClick={() => navigateRelative('reload')}
@@ -557,6 +696,7 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
             data-browser-panel-address
             data-preview-browser-address={mode === 'preview' || undefined}
             value={address}
+            readOnly={testReadOnly}
             onChange={(event) => {
               setAddress(event.target.value);
               setValidationError(null);
@@ -582,7 +722,7 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
           size="icon"
           aria-label={copy.go}
           title={copy.go}
-          disabled={mode === 'test' && testBusy}
+          disabled={testReadOnly || (mode === 'test' && visibleTestBusy)}
           className="h-8 w-8 rounded-md text-[hsl(var(--deck-accent))]"
         >
           {status === 'loading' ? (
@@ -625,17 +765,28 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
           />
         ) : mode === 'test' ? (
           <BrowserTest
+            source={testSource}
+            agentAvailable={agentAvailable}
             sessionAvailable={Boolean(sessionRef)}
-            observation={testObservation}
-            screenshotUrl={testScreenshotUrl}
-            busy={testBusy}
-            error={testError}
-            diagnostics={diagnostics}
-            diagnosticsLoading={diagnosticsLoading}
+            observation={testSource === 'agent' ? null : testObservation}
+            screenshotUrl={
+              testSource === 'agent' ? agentScreenshotUrl : testScreenshotUrl
+            }
+            interaction={
+              testSource === 'agent' ? agentActivity?.interaction : undefined
+            }
+            pointerRevision={
+              testSource === 'agent' ? (agentActivity?.pointerRevision ?? 0) : 0
+            }
+            busy={visibleTestBusy}
+            error={errorMessage}
+            diagnostics={testSource === 'agent' ? {} : diagnostics}
+            diagnosticsLoading={testSource === 'agent' ? null : diagnosticsLoading}
             onInteract={interact}
             onInspect={inspect}
             onSnapshot={refreshSnapshot}
             onReset={resetTestBrowser}
+            onSourceChange={changeTestSource}
           />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-3 bg-[hsl(var(--deck-canvas-veil))]">

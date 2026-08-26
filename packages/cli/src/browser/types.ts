@@ -178,7 +178,26 @@ export type BrowserPageAction =
   | { kind: 'close'; pageId: string }
   | { kind: 'reset' };
 
-export type BrowserInteractionResult =
+export interface BrowserViewportSize {
+  width: number;
+  height: number;
+}
+
+export interface BrowserTargetBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface BrowserInteractionVisual {
+  action: BrowserAction['kind'];
+  ref?: string;
+  viewport?: BrowserViewportSize;
+  targetBox?: BrowserTargetBox;
+}
+
+export type BrowserInteractionResult = (
   | {
       outcome: 'applied';
       pageId: string;
@@ -204,4 +223,7 @@ export type BrowserInteractionResult =
         | 'browser_timeout'
         | 'browser_action_uncertain';
       candidateOrigin?: string;
-    };
+    }
+) & {
+  interaction?: BrowserInteractionVisual;
+};

@@ -3,7 +3,11 @@ import { Mutex } from 'async-mutex';
 import { nanoid } from 'nanoid';
 import * as path from 'path';
 import { isAcpMode } from '../../acp/AcpServiceContext.js';
-import { SessionBrowserRuntime } from '../../browser/SessionBrowserRuntime.js';
+import {
+  type BrowserScreenshotOptions,
+  SessionBrowserRuntime,
+} from '../../browser/SessionBrowserRuntime.js';
+import { BrowserRuntimeError } from '../../browser/types.js';
 import {
   type BladeConfig,
   ConfigManager,
@@ -928,6 +932,16 @@ export class SessionRuntime {
 
   getCurrentModelId(): string | undefined {
     return this.currentModelId;
+  }
+
+  captureBrowserScreenshot(options: BrowserScreenshotOptions): Promise<Buffer> {
+    if (!this.browserRuntime) {
+      throw new BrowserRuntimeError(
+        'browser_page_not_found',
+        'The Agent browser is not available'
+      );
+    }
+    return this.browserRuntime.screenshot(options);
   }
 
   getReasoningConfiguration(): ReasoningEffortConfiguration {

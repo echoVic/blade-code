@@ -1,6 +1,7 @@
 import type {
   BrowserAction,
   BrowserDiagnosticEntry,
+  BrowserInteractionVisual,
   BrowserObservation,
 } from '@api/browserSchemas';
 import {
@@ -8,6 +9,7 @@ import {
   AppWindow,
   ArrowDown,
   ArrowUp,
+  Bot,
   Braces,
   Loader2,
   MousePointer2,
@@ -15,20 +17,26 @@ import {
   RotateCcw,
   Send,
   TerminalSquare,
+  UserRound,
   Wifi,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useLocale } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { BrowserInspectKind } from '@/services/webBrowserService';
 
 type InspectorTab = 'dom' | BrowserInspectKind;
+export type BrowserTestSource = 'user' | 'agent';
 
 interface BrowserTestProps {
+  source: BrowserTestSource;
+  agentAvailable: boolean;
   sessionAvailable: boolean;
   observation: BrowserObservation | null;
   screenshotUrl: string | null;
+  interaction?: BrowserInteractionVisual;
+  pointerRevision: number;
   busy: boolean;
   error: string | null;
   diagnostics: Partial<Record<BrowserInspectKind, BrowserDiagnosticEntry[]>>;
@@ -37,6 +45,7 @@ interface BrowserTestProps {
   onInspect: (target: BrowserInspectKind) => Promise<void>;
   onSnapshot: () => Promise<void>;
   onReset: () => Promise<void>;
+  onSourceChange: (source: BrowserTestSource) => void;
 }
 
 const COPY = {
@@ -58,6 +67,9 @@ const COPY = {
     network: 'Network',
     errors: 'Errors',
     noEntries: 'No entries',
+    user: 'User',
+    agent: 'Agent',
+    sourceAria: 'Test browser source',
   },
   zh: {
     unavailable: '没有活动 Session',
@@ -77,6 +89,9 @@ const COPY = {
     network: '网络',
     errors: '错误',
     noEntries: '暂无记录',
+    user: '用户',
+    agent: 'Agent',
+    sourceAria: '测试浏览器来源',
   },
 } as const;
 
@@ -99,9 +114,13 @@ function diagnosticText(entry: BrowserDiagnosticEntry): string {
 }
 
 export function BrowserTest({
+  source,
+  agentAvailable,
   sessionAvailable,
   observation,
   screenshotUrl,
+  interaction,
+  pointerRevision,
   busy,
   error,
   diagnostics,
@@ -110,12 +129,21 @@ export function BrowserTest({
   onInspect,
   onSnapshot,
   onReset,
+  onSourceChange,
 }: BrowserTestProps) {
   const { locale } = useLocale();
   const copy = COPY[locale];
   const [selectedRef, setSelectedRef] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState('');
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('dom');
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [renderedViewport, setRenderedViewport] = useState({
+    left: 0,
+    top: 0,
+    width: 0,
+    height: 0,
+  });
+  const readOnly = source === 'agent';
   const snapshotLines = useMemo(
     () => parseBrowserSnapshot(observation?.snapshot ?? ''),
     [observation?.snapshot]
@@ -127,7 +155,62 @@ export function BrowserTest({
     setSelectedRef(null);
   }, [observation?.snapshotId]);
 
+  useEffect(() => {
+    if (readOnly) setInspectorTab('dom');
+  }, [readOnly]);
+
+  const measureViewport = useCallback(() => {
+    const element = viewportRef.current;
+    const viewport = interaction?.viewport;
+    if (!element || !viewport || viewport.width <= 0 || viewport.height <= 0) {
+      setRenderedViewport({ left: 0, top: 0, width: 0, height: 0 });
+      return;
+    }
+    const bounds = element.getBoundingClientRect();
+    const scale = Math.min(
+      bounds.width / viewport.width,
+      bounds.height / viewport.height
+    );
+    const width = viewport.width * scale;
+    const height = viewport.height * scale;
+    setRenderedViewport({
+      left: (bounds.width - width) / 2,
+      top: (bounds.height - height) / 2,
+      width,
+      height,
+    });
+  }, [interaction?.viewport]);
+
+  useEffect(() => {
+    measureViewport();
+    const element = viewportRef.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measureViewport);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [measureViewport, screenshotUrl]);
+
+  const pointerPosition = useMemo(() => {
+    const box = interaction?.targetBox;
+    const viewport = interaction?.viewport;
+    if (
+      !box ||
+      !viewport ||
+      renderedViewport.width <= 0 ||
+      renderedViewport.height <= 0
+    ) {
+      return null;
+    }
+    const x = Math.min(viewport.width, Math.max(0, box.x + box.width / 2));
+    const y = Math.min(viewport.height, Math.max(0, box.y + box.height / 2));
+    return {
+      left: renderedViewport.left + (x / viewport.width) * renderedViewport.width,
+      top: renderedViewport.top + (y / viewport.height) * renderedViewport.height,
+    };
+  }, [interaction, renderedViewport]);
+
   const selectInspector = (tab: InspectorTab) => {
+    if (readOnly && tab !== 'dom') return;
     setInspectorTab(tab);
     if (tab !== 'dom') void onInspect(tab);
   };
@@ -135,15 +218,20 @@ export function BrowserTest({
   return (
     <section
       data-browser-test
+      data-browser-source={source}
       data-browser-snapshot-id={observation?.snapshotId}
       className="flex h-full min-h-0 flex-col bg-[hsl(var(--deck-canvas))]"
     >
-      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-neutral-950">
+      <div
+        ref={viewportRef}
+        className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-neutral-950"
+      >
         {screenshotUrl ? (
           <img
             data-browser-test-screenshot
             src={screenshotUrl}
             alt={copy.screenshotAlt}
+            onLoad={measureViewport}
             className="h-full w-full object-contain"
           />
         ) : (
@@ -152,6 +240,20 @@ export function BrowserTest({
             <span className="font-mono text-[11px]">
               {sessionAvailable ? copy.empty : copy.unavailable}
             </span>
+          </div>
+        )}
+        {readOnly && pointerPosition && (
+          <div
+            data-browser-agent-pointer
+            data-browser-action={interaction?.action}
+            className="pointer-events-none absolute z-10 transition-[left,top] duration-300 ease-out"
+            style={pointerPosition}
+          >
+            <span
+              key={pointerRevision}
+              className="absolute -left-2 -top-2 h-4 w-4 animate-ping rounded-full bg-cyan-400/70"
+            />
+            <MousePointer2 className="relative h-5 w-5 fill-white text-neutral-950 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]" />
           </div>
         )}
         {busy && (
@@ -170,6 +272,34 @@ export function BrowserTest({
       </div>
 
       <div className="flex h-10 shrink-0 items-center gap-1 border-y border-[hsl(var(--deck-border))] bg-[hsl(var(--deck-surface-2))] px-2">
+        <div
+          role="group"
+          aria-label={copy.sourceAria}
+          className="flex h-7 shrink-0 items-center border border-[hsl(var(--deck-border))]"
+        >
+          {(
+            [
+              ['user', copy.user, UserRound],
+              ['agent', copy.agent, Bot],
+            ] as const
+          ).map(([value, label, Icon]) => (
+            <button
+              key={value}
+              type="button"
+              disabled={value === 'agent' && !agentAvailable}
+              aria-pressed={source === value}
+              onClick={() => onSourceChange(value)}
+              className={cn(
+                'flex h-full items-center gap-1 border-r border-[hsl(var(--deck-border))] px-1.5 font-mono text-[9.5px] text-[hsl(var(--deck-ink-muted))] last:border-r-0 disabled:opacity-40',
+                source === value &&
+                  'bg-[hsl(var(--deck-canvas-veil))] text-[hsl(var(--deck-ink))]'
+              )}
+            >
+              <Icon className="h-3 w-3" />
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
         <span
           title={selectedRef ? `${copy.selectedRef}: ${selectedRef}` : copy.noRef}
           className="w-20 shrink-0 truncate font-mono text-[10px] text-[hsl(var(--deck-ink-muted))]"
@@ -180,7 +310,7 @@ export function BrowserTest({
           type="button"
           variant="ghost"
           size="icon"
-          disabled={!selectedRef || busy}
+          disabled={readOnly || !selectedRef || busy}
           title={copy.click}
           aria-label={copy.click}
           onClick={() => {
@@ -194,6 +324,7 @@ export function BrowserTest({
           <input
             value={inputValue}
             onChange={(event) => setInputValue(event.target.value)}
+            disabled={readOnly}
             placeholder={copy.valuePlaceholder}
             aria-label={copy.valuePlaceholder}
             className="min-w-0 flex-1 bg-transparent font-mono text-[10.5px] outline-none"
@@ -202,7 +333,7 @@ export function BrowserTest({
             type="button"
             variant="ghost"
             size="icon"
-            disabled={!selectedRef || !inputValue || busy}
+            disabled={readOnly || !selectedRef || !inputValue || busy}
             title={copy.fill}
             aria-label={copy.fill}
             onClick={() => {
@@ -219,7 +350,7 @@ export function BrowserTest({
           type="button"
           variant="ghost"
           size="icon"
-          disabled={!observation || busy}
+          disabled={readOnly || !observation || busy}
           title={copy.scrollUp}
           aria-label={copy.scrollUp}
           onClick={() =>
@@ -233,7 +364,7 @@ export function BrowserTest({
           type="button"
           variant="ghost"
           size="icon"
-          disabled={!observation || busy}
+          disabled={readOnly || !observation || busy}
           title={copy.scrollDown}
           aria-label={copy.scrollDown}
           onClick={() =>
@@ -247,7 +378,7 @@ export function BrowserTest({
           type="button"
           variant="ghost"
           size="icon"
-          disabled={!observation || busy}
+          disabled={readOnly || !observation || busy}
           title={copy.snapshot}
           aria-label={copy.snapshot}
           onClick={() => void onSnapshot()}
@@ -259,7 +390,7 @@ export function BrowserTest({
           type="button"
           variant="ghost"
           size="icon"
-          disabled={!sessionAvailable || busy}
+          disabled={readOnly || !sessionAvailable || busy}
           title={copy.reset}
           aria-label={copy.reset}
           onClick={() => {
@@ -289,6 +420,7 @@ export function BrowserTest({
               key={tab}
               type="button"
               role="tab"
+              disabled={readOnly && tab !== 'dom'}
               aria-selected={inspectorTab === tab}
               onClick={() => selectInspector(tab)}
               className={cn(
@@ -312,6 +444,7 @@ export function BrowserTest({
                     key={`${line.ref}:${index}`}
                     type="button"
                     data-browser-ref={line.ref}
+                    disabled={readOnly}
                     onClick={() => setSelectedRef(line.ref ?? null)}
                     className={cn(
                       'block w-full whitespace-pre-wrap px-1 text-left hover:bg-[hsl(var(--deck-accent)/0.08)]',

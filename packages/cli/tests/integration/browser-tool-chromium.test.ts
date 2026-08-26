@@ -240,6 +240,17 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     });
     expect(filled.outcome).toBe('applied');
     if (filled.outcome !== 'applied') throw new Error('Fill did not apply');
+    expect(filled.interaction).toMatchObject({
+      action: 'fill',
+      ref: refFor(afterInheritedFrame, 'Name'),
+      viewport: { width: 1440, height: 900 },
+      targetBox: {
+        x: expect.any(Number),
+        y: expect.any(Number),
+        width: expect.any(Number),
+        height: expect.any(Number),
+      },
+    });
 
     const selectedMode = await runtime.interact({
       pageId: filled.pageId,

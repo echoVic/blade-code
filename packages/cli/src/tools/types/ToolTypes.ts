@@ -1,6 +1,10 @@
 import type { ConstrainedSamplingConfig } from '@earendil-works/pi-ai';
 import type { JSONSchema7 } from 'json-schema';
-import type { BrowserErrorCode, BrowserToolName } from '../../browser/types.js';
+import type {
+  BrowserErrorCode,
+  BrowserInteractionVisual,
+  BrowserToolName,
+} from '../../browser/types.js';
 import type { PermissionMode } from '../../config/types.js';
 import type { ExecutionContext } from './ExecutionTypes.js';
 
@@ -256,6 +260,7 @@ interface BrowserToolMetadataFields extends BaseMetadataFields {
     candidateOrigin?: string;
     errorCode?: BrowserErrorCode;
     diagnosticCount?: number;
+    interaction?: BrowserInteractionVisual;
     artifact?: {
       id: string;
       kind: 'image';

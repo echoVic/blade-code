@@ -36,14 +36,22 @@ function harness(overrides: Partial<SessionBrowserRuntime> = {}) {
     ...overrides,
   } as unknown as SessionBrowserRuntime;
   const resetRuntime = vi.fn().mockResolvedValue(undefined);
+  const captureAgentScreenshot = vi.fn().mockResolvedValue(Buffer.from('agent-png'));
   const resolveSessionRef = vi.fn().mockResolvedValue(ref);
   const app = BrowserRoutes({
     withAdmission: (operation) => operation(),
     resolveSessionRef,
     getRuntime: () => runtime,
+    captureAgentScreenshot,
     resetRuntime,
   });
-  return { app, resetRuntime, resolveSessionRef, runtime };
+  return {
+    app,
+    captureAgentScreenshot,
+    resetRuntime,
+    resolveSessionRef,
+    runtime,
+  };
 }
 
 describe('BrowserRoutes', () => {
@@ -121,6 +129,21 @@ describe('BrowserRoutes', () => {
       pageId: 'browser_page_1',
       expectedOrigin: 'https://example.com:443',
     });
+  });
+
+  it('reads Agent browser screenshots without creating a user browser runtime', async () => {
+    const { app, captureAgentScreenshot, runtime } = harness();
+    const response = await app.request(
+      '/session-1/browser/inspect?projectPath=%2Fproject&target=screenshot&source=agent&pageId=browser_page_1&expectedOrigin=https%3A%2F%2Fexample.com%3A443'
+    );
+
+    expect(response.status).toBe(200);
+    expect(Buffer.from(await response.arrayBuffer()).toString()).toBe('agent-png');
+    expect(captureAgentScreenshot).toHaveBeenCalledWith(ref, {
+      pageId: 'browser_page_1',
+      expectedOrigin: 'https://example.com:443',
+    });
+    expect(runtime.screenshot).not.toHaveBeenCalled();
   });
 
   it('rejects malformed input and maps bounded Browser errors', async () => {

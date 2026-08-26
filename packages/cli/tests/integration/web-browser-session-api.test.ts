@@ -97,6 +97,7 @@ describe('Web Browser Session API with real Chromium', () => {
       withAdmission: (operation) => operation(),
       resolveSessionRef: async () => sessionRef,
       getRuntime: (ref) => registry.get(ref),
+      captureAgentScreenshot: (ref, options) => registry.get(ref).screenshot(options),
       resetRuntime: (ref) => registry.reset(ref),
     });
     const route = (operation: string) =>

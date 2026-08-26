@@ -2,6 +2,8 @@ import type { SessionRef } from '@api/schemas';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import type { Message as ServiceMessage } from '../../../src/services';
+import { useAppStore } from '../../../src/store/AppStore';
+import { useBrowserActivityStore } from '../../../src/store/BrowserActivityStore';
 import { createEventDispatcher } from '../../../src/store/session/handlers/eventHandlers';
 import { globalStreamingBuffer } from '../../../src/store/session/handlers/streamingBuffer';
 import type {
@@ -335,6 +337,12 @@ describe('eventHandlers', () => {
   afterEach(() => {
     vi.useRealTimers();
     globalStreamingBuffer.reset();
+    useBrowserActivityStore.getState().clearAgentActivity();
+    useAppStore.setState({
+      isFilePreviewOpen: false,
+      previewTab: 'diff',
+      previewTargetPath: null,
+    });
   });
 
   test('forwards cache usage and exact cost from token events', () => {
@@ -506,6 +514,70 @@ describe('eventHandlers', () => {
     nowSpy.mockRestore();
 
     expect(secondId).toBe(firstId);
+  });
+
+  test('opens the Agent browser for live Browser tools but ignores replayed events', () => {
+    const state = createState();
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+    const properties = {
+      sessionId: 'session-1',
+      projectPath: '/workspace/a',
+      messageId: 'assistant-1',
+      toolCallId: 'browser-tool-1',
+      toolName: 'BrowserInteract',
+      arguments: JSON.stringify({
+        ref: 'e2',
+        action: { kind: 'click' },
+      }),
+    };
+
+    dispatch({ type: 'tool.start', properties });
+
+    expect(useAppStore.getState()).toMatchObject({
+      isFilePreviewOpen: true,
+      previewTab: 'browser',
+    });
+    expect(useBrowserActivityStore.getState().agentActivity).toMatchObject({
+      toolCallId: 'browser-tool-1',
+      phase: 'running',
+      pendingAction: { action: 'click', ref: 'e2' },
+    });
+
+    dispatch({
+      type: 'tool.result',
+      properties: {
+        ...properties,
+        success: true,
+        metadata: {
+          browser: {
+            action: 'BrowserInteract',
+            status: 'ok',
+            pageId: 'browser_page_1',
+            origin: 'https://example.com:443',
+            url: 'https://example.com/',
+            interaction: {
+              action: 'click',
+              ref: 'e2',
+              viewport: { width: 1440, height: 900 },
+              targetBox: { x: 100, y: 200, width: 80, height: 40 },
+            },
+          },
+        },
+      },
+    });
+
+    expect(useBrowserActivityStore.getState().agentActivity).toMatchObject({
+      phase: 'ready',
+      frameRevision: 1,
+      pointerRevision: 1,
+      pageId: 'browser_page_1',
+    });
+
+    useBrowserActivityStore.getState().clearAgentActivity();
+    useAppStore.setState({ isFilePreviewOpen: false, previewTab: 'diff' });
+    dispatch({ type: 'tool.start', seq: 9, properties });
+    expect(useBrowserActivityStore.getState().agentActivity).toBeNull();
+    expect(useAppStore.getState().isFilePreviewOpen).toBe(false);
   });
 
   test('replays a tool start into its exact assistant instead of the current message', () => {

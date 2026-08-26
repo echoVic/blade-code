@@ -36,8 +36,8 @@
 - 🌐 **三种运行模式** — CLI 终端 / Web UI / Headless JSONL，场景灵活切换
 - 📊 **多项目任务看板** — 绑定项目、自动派发、阻塞处理、验收归档
 - 🛠️ **20+ 内置工具** — 文件编辑、代码搜索、Shell 执行、Git 操作、Web 抓取等
-- 🌍 **原生浏览器自动化** — Session 隔离的 Chromium、ARIA 快照与安全 ref 交互，
-  同时支持 CLI、Web、Headless 和 ACP
+- 🌍 **原生浏览器自动化** — Session 隔离的 Chromium、ARIA 快照与安全 ref 交互；
+  Web 会自动展示 Agent 页面与鼠标操作，同时支持 CLI、Headless 和 ACP
 - 📋 **结构化工作流** — Task 委托、Goal 模式、Spec/Plan、Subagent 与 Agent Teams 编排
 - 🔗 **开放扩展** — MCP 协议、插件系统、Skills、Hooks
 - 🔒 **安全可控** — 四级权限模式（default/autoEdit/plan/yolo）+ 工具白/黑名单

@@ -11,6 +11,7 @@ import {
   normalizePreviewBrowserUrl,
 } from '../../../src/components/preview/browserPanelModel';
 import { setLocale } from '../../../src/i18n';
+import { useBrowserActivityStore } from '../../../src/store/BrowserActivityStore';
 
 const browserService = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -89,6 +90,7 @@ describe('BrowserPanel', () => {
   beforeEach(() => {
     setLocale('en');
     vi.clearAllMocks();
+    useBrowserActivityStore.getState().clearAgentActivity();
     Object.defineProperty(URL, 'createObjectURL', {
       configurable: true,
       value: vi.fn(() => 'blob:browser-frame'),
@@ -104,6 +106,7 @@ describe('BrowserPanel', () => {
 
   afterEach(() => {
     act(() => root.unmount());
+    useBrowserActivityStore.getState().clearAgentActivity();
     container.remove();
     vi.restoreAllMocks();
   });
@@ -349,6 +352,101 @@ describe('BrowserPanel', () => {
     );
     await act(async () => reset?.click());
     await vi.waitFor(() => expect(browserService.reset).toHaveBeenCalled());
+  });
+
+  it('switches to the read-only Agent browser and renders its pointer activity', async () => {
+    browserService.screenshot.mockResolvedValue(
+      new Blob(['agent-png'], { type: 'image/png' })
+    );
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 800,
+      bottom: 500,
+      width: 800,
+      height: 500,
+      toJSON: () => ({}),
+    });
+
+    const sessionRef = {
+      sessionId: 'session-1',
+      projectPath: '/project',
+    };
+    await act(async () => {
+      root.render(<BrowserPanel sessionRef={sessionRef} />);
+    });
+    await act(async () => {
+      useBrowserActivityStore.getState().completeAgentActivity(sessionRef, {
+        toolCallId: 'browser-tool-1',
+        toolName: 'BrowserInteract',
+        success: true,
+        metadata: {
+          browser: {
+            action: 'BrowserInteract',
+            status: 'ok',
+            pageId: 'browser_page_1',
+            origin: 'https://example.com:443',
+            url: 'https://example.com/form',
+            interaction: {
+              action: 'click',
+              ref: 'e2',
+              viewport: { width: 1440, height: 900 },
+              targetBox: { x: 680, y: 430, width: 80, height: 40 },
+            },
+          },
+        },
+      });
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        container
+          .querySelector('[data-browser-panel]')
+          ?.getAttribute('data-browser-mode')
+      ).toBe('test');
+      expect(
+        container
+          .querySelector('[data-browser-panel]')
+          ?.getAttribute('data-browser-test-source')
+      ).toBe('agent');
+      expect(browserService.screenshot).toHaveBeenCalledWith(sessionRef, {
+        source: 'agent',
+        pageId: 'browser_page_1',
+        expectedOrigin: 'https://example.com:443',
+      });
+      expect(container.querySelector('[data-browser-agent-pointer]')).not.toBeNull();
+    });
+
+    const address = container.querySelector<HTMLInputElement>(
+      '[data-browser-panel-address]'
+    );
+    expect(address?.readOnly).toBe(true);
+    expect(address?.value).toBe('https://example.com/form');
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        '[aria-label="Click selected element"]'
+      )?.disabled
+    ).toBe(true);
+
+    await act(async () => {
+      useBrowserActivityStore.getState().completeAgentActivity(sessionRef, {
+        toolCallId: 'browser-tool-2',
+        toolName: 'BrowserPage',
+        success: true,
+        metadata: {
+          browser: {
+            action: 'BrowserPage',
+            status: 'ok',
+            pageId: 'browser_page_2',
+            origin: 'null',
+            url: 'about:blank',
+          },
+        },
+      });
+    });
+    expect(browserService.screenshot).toHaveBeenCalledTimes(1);
   });
 
   it('refreshes a stale Test snapshot before the next user action', async () => {

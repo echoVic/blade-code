@@ -64,6 +64,7 @@ import {
   type BrowserInspectResult,
   type BrowserInspectTarget,
   type BrowserInteractionResult,
+  type BrowserInteractionVisual,
   type BrowserObservation,
   type BrowserPageAction,
   type BrowserPageResult,
@@ -522,6 +523,15 @@ export class SessionBrowserRuntime {
 
       this.throwIfBlockedNavigation(state);
       this.assertExpectedOrigin(state, expectedOrigin);
+      const viewport =
+        typeof state.page.viewportSize === 'function'
+          ? state.page.viewportSize()
+          : null;
+      const interaction: BrowserInteractionVisual = {
+        action: options.action.kind,
+        ...(options.ref ? { ref: options.ref } : {}),
+        ...(viewport ? { viewport } : {}),
+      };
       state.downloadBlocked = false;
       this.invalidatePage(state);
       const generation = this.runtimeGeneration;
@@ -554,6 +564,13 @@ export class SessionBrowserRuntime {
       } finally {
         state.nextDialogAction = undefined;
       }
+      const targetBox =
+        locator && typeof locator.boundingBox === 'function'
+          ? await locator
+              .boundingBox({ timeout: Math.min(timeout, 500) })
+              .catch(() => null)
+          : null;
+      if (targetBox) interaction.targetBox = targetBox;
       this.markUnexpectedInteractionOrigin(state, expectedOrigin);
       if (state.downloadBlocked) {
         state.downloadBlocked = false;
@@ -563,7 +580,7 @@ export class SessionBrowserRuntime {
         );
       }
       if (actionFailed) {
-        return this.uncertainInteraction(state, generation, actionError);
+        return this.uncertainInteraction(state, generation, actionError, interaction);
       }
       if (state.blockedCandidateOrigin) {
         return {
@@ -573,6 +590,7 @@ export class SessionBrowserRuntime {
           sideEffectsUncertain: true,
           errorCode: 'browser_cross_origin_navigation',
           candidateOrigin: state.blockedCandidateOrigin,
+          interaction,
         };
       }
       if (generation !== this.runtimeGeneration) {
@@ -582,6 +600,7 @@ export class SessionBrowserRuntime {
           actionApplied: 'unknown',
           sideEffectsUncertain: true,
           errorCode: 'browser_disconnected',
+          interaction,
         };
       }
 
@@ -595,6 +614,7 @@ export class SessionBrowserRuntime {
             sideEffectsUncertain: true,
             errorCode: 'browser_cross_origin_navigation',
             candidateOrigin: state.blockedCandidateOrigin,
+            interaction,
           };
         }
         return {
@@ -603,6 +623,7 @@ export class SessionBrowserRuntime {
           actionApplied: true,
           sideEffectsUncertain: false,
           observation,
+          interaction,
         };
       } catch (error) {
         if (
@@ -619,6 +640,7 @@ export class SessionBrowserRuntime {
             ...(state.blockedCandidateOrigin
               ? { candidateOrigin: state.blockedCandidateOrigin }
               : {}),
+            interaction,
           };
         }
         return {
@@ -627,6 +649,7 @@ export class SessionBrowserRuntime {
           actionApplied: true,
           sideEffectsUncertain: false,
           observationError: 'browser_observation_failed',
+          interaction,
         };
       }
     }, options.signal);
@@ -1738,7 +1761,8 @@ export class SessionBrowserRuntime {
   private uncertainInteraction(
     state: PageState,
     generation: number,
-    error: unknown
+    error: unknown,
+    interaction?: BrowserInteractionVisual
   ): BrowserInteractionResult {
     let errorCode:
       | 'browser_cross_origin_navigation'
@@ -1761,6 +1785,7 @@ export class SessionBrowserRuntime {
       ...(state.blockedCandidateOrigin
         ? { candidateOrigin: state.blockedCandidateOrigin }
         : {}),
+      ...(interaction ? { interaction } : {}),
     };
   }
 

@@ -39,6 +39,7 @@ import type {
   BrowserAction,
   BrowserErrorCode,
   BrowserInspectTarget,
+  BrowserInteractionVisual,
   BrowserPageAction,
   BrowserToolName,
   BrowserWaitCondition,
@@ -211,6 +212,18 @@ const BrowserPageActionSchema = Type.Union([
 
 type BrowserMetadataArtifact = NonNullable<BrowserToolMetadata['browser']['artifact']>;
 
+const BROWSER_INTERACTION_ACTIONS = new Set<BrowserAction['kind']>([
+  'click',
+  'hover',
+  'fill',
+  'type',
+  'press',
+  'select',
+  'check',
+  'uncheck',
+  'scroll',
+]);
+
 function isBrowserMetadataArtifact(value: unknown): value is BrowserMetadataArtifact {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const artifact = value as Record<string, unknown>;
@@ -223,6 +236,59 @@ function isBrowserMetadataArtifact(value: unknown): value is BrowserMetadataArti
     artifact.persisted === true &&
     (artifact.path === undefined || typeof artifact.path === 'string')
   );
+}
+
+function browserInteractionVisual(
+  value: unknown
+): BrowserInteractionVisual | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  if (
+    typeof source.action !== 'string' ||
+    !BROWSER_INTERACTION_ACTIONS.has(source.action as BrowserAction['kind'])
+  ) {
+    return undefined;
+  }
+  const viewport =
+    source.viewport &&
+    typeof source.viewport === 'object' &&
+    !Array.isArray(source.viewport)
+      ? (source.viewport as Record<string, unknown>)
+      : undefined;
+  const targetBox =
+    source.targetBox &&
+    typeof source.targetBox === 'object' &&
+    !Array.isArray(source.targetBox)
+      ? (source.targetBox as Record<string, unknown>)
+      : undefined;
+  return {
+    action: source.action as BrowserAction['kind'],
+    ...(typeof source.ref === 'string' ? { ref: source.ref } : {}),
+    ...(viewport &&
+    typeof viewport.width === 'number' &&
+    typeof viewport.height === 'number'
+      ? {
+          viewport: {
+            width: viewport.width,
+            height: viewport.height,
+          },
+        }
+      : {}),
+    ...(targetBox &&
+    typeof targetBox.x === 'number' &&
+    typeof targetBox.y === 'number' &&
+    typeof targetBox.width === 'number' &&
+    typeof targetBox.height === 'number'
+      ? {
+          targetBox: {
+            x: targetBox.x,
+            y: targetBox.y,
+            width: targetBox.width,
+            height: targetBox.height,
+          },
+        }
+      : {}),
+  };
 }
 
 function browserMetadata(
@@ -241,6 +307,7 @@ function browserMetadata(
     !Array.isArray(value.observation)
       ? (value.observation as Record<string, unknown>)
       : value;
+  const interaction = browserInteractionVisual(value.interaction);
   return {
     summary: `${action}: ${status}`,
     browser: {
@@ -268,6 +335,7 @@ function browserMetadata(
       ...(Array.isArray(value.entries)
         ? { diagnosticCount: value.entries.length }
         : {}),
+      ...(interaction ? { interaction } : {}),
       ...(errorCode ? { errorCode } : {}),
       ...(isBrowserMetadataArtifact(value.artifact)
         ? { artifact: value.artifact }

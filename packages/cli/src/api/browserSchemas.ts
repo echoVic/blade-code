@@ -3,8 +3,10 @@ import type {
   BrowserDiagnosticEntry,
   BrowserInspectResult,
   BrowserInteractionResult,
+  BrowserInteractionVisual,
   BrowserObservation,
   BrowserPageResult,
+  BrowserToolName,
 } from '../browser/types.js';
 import { Runtime, type Static, StringEnum, Type } from '../schema/index.js';
 
@@ -117,6 +119,8 @@ export type {
   BrowserDiagnosticEntry,
   BrowserInspectResult,
   BrowserInteractionResult,
+  BrowserInteractionVisual,
   BrowserObservation,
   BrowserPageResult,
+  BrowserToolName,
 };
