@@ -2015,6 +2015,7 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
       pendingInputDelivery: null,
       recoveredSteeringCount: 0,
     });
+    resyncTerminalSession(props, get);
   } else if (
     props.status === 'queued' ||
     props.status === 'running' ||
@@ -2084,7 +2085,6 @@ const handleRunCancelled: EventHandler = (props, get, set) => {
     }
   }
   endAgentResponse();
-  resyncTerminalSession(props, get);
 };
 
 const handleSteeringQueued: EventHandler = (props, get, set) => {

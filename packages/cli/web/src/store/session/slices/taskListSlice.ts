@@ -976,7 +976,12 @@ export const createTaskListSlice: SliceCreator<TaskListSlice> = (set, get) => {
       try {
         await sessionService.abortSession(ref);
         const isCurrent = sameSessionRef(get().currentSessionRef, ref);
-        if (isCurrent) get().unsubscribeFromEvents();
+        if (isCurrent) {
+          await get().resyncSessionMessages(ref);
+          if (sameSessionRef(get().currentSessionRef, ref)) {
+            get().unsubscribeFromEvents();
+          }
+        }
         set((state) => ({
           sessions: state.sessions.map((session) =>
             sameSessionRef(sessionRefFromSession(session), ref)

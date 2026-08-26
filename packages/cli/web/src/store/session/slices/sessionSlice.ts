@@ -1112,6 +1112,8 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
       try {
         await sessionService.abortSession(currentSessionRef);
         if (!sameSessionRef(get().currentSessionRef, currentSessionRef)) return false;
+        await get().resyncSessionMessages(currentSessionRef);
+        if (!sameSessionRef(get().currentSessionRef, currentSessionRef)) return false;
         get().unsubscribeFromEvents();
         set({
           isStreaming: false,

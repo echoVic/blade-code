@@ -826,11 +826,19 @@ describe('sessionSlice multimodal sendMessage', () => {
     const currentRef = createRef('session-active', '/tmp/project-active');
     const unsubscribeFromEvents = vi.fn();
     const stopGate = deferred<void>();
+    const persistedMessages = [
+      createMessage({
+        id: 'persisted-after-stop',
+        role: 'assistant',
+        content: 'Partial response preserved',
+      }),
+    ];
     useSessionStore.setState({
       ...activeStreamingState(currentRef, vi.fn()),
       unsubscribeFromEvents,
     });
     vi.mocked(sessionService.abortSession).mockReturnValue(stopGate.promise);
+    vi.mocked(sessionService.getMessages).mockResolvedValue(persistedMessages);
 
     const stopping = useSessionStore.getState().abortSession();
     const duplicate = useSessionStore.getState().abortSession();
@@ -853,6 +861,16 @@ describe('sessionSlice multimodal sendMessage', () => {
       pendingSteeringCount: 0,
       pendingInputDelivery: null,
     });
+    expect(useSessionStore.getState().messages).toEqual([
+      expect.objectContaining({
+        id: 'persisted-after-stop',
+        content: 'Partial response preserved',
+        agentContent: expect.objectContaining({
+          textBefore: 'Partial response preserved',
+        }),
+      }),
+    ]);
+    expect(sessionService.getMessages).toHaveBeenCalledWith(currentRef);
   });
 
   it('keeps the active run and event stream when stopping fails', async () => {

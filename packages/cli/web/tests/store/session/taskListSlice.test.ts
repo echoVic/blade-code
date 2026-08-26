@@ -1331,6 +1331,7 @@ describe('taskListSlice', () => {
       projectPath: '/workspace/a',
     };
     const unsubscribeFromEvents = vi.fn();
+    const resyncSessionMessages = vi.fn().mockResolvedValue(undefined);
     useSessionStore.setState({
       sessions: [
         {
@@ -1345,6 +1346,7 @@ describe('taskListSlice', () => {
       agentPhase: 'running',
       currentRunId: 'run-a',
       unsubscribeFromEvents,
+      resyncSessionMessages,
     });
 
     const first = useSessionStore.getState().cancelTask(ref);
@@ -1355,6 +1357,10 @@ describe('taskListSlice', () => {
     await Promise.all([first, second]);
 
     expect(unsubscribeFromEvents).toHaveBeenCalledOnce();
+    expect(resyncSessionMessages).toHaveBeenCalledWith(ref);
+    expect(resyncSessionMessages.mock.invocationCallOrder[0]).toBeLessThan(
+      unsubscribeFromEvents.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
+    );
     expect(useSessionStore.getState()).toMatchObject({
       isStreaming: false,
       agentPhase: 'idle',

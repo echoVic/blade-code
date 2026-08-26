@@ -2121,6 +2121,41 @@ describe('eventHandlers', () => {
       providerStall: null,
       actionStationarity: null,
     });
+    expect(state.resyncSessionMessages).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      projectPath: '/workspace/a',
+    });
+  });
+
+  test('waits for idle before resyncing a cancelled run', () => {
+    const state = createState({
+      isStreaming: true,
+      agentPhase: 'running',
+      currentRunId: 'run-active',
+    });
+    const dispatch = createEventDispatcher(() => state, vi.fn());
+
+    dispatch({
+      type: 'run.cancelled',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        runId: 'run-active',
+      },
+    });
+
+    expect(state.resyncSessionMessages).not.toHaveBeenCalled();
+
+    dispatch({
+      type: 'session.status',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        status: 'idle',
+      },
+    });
+
+    expect(state.resyncSessionMessages).toHaveBeenCalledOnce();
   });
 
   test('closes a pending confirmation when permission times out', () => {
