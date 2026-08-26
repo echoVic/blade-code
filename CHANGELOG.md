@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.97] - 2026-08-27
+
+### Fixed
+- Resumed task Sessions now return a canonical `workspace_unavailable` failure
+  when their managed worktree is missing, mismatched, or no longer registered,
+  instead of collapsing into a generic runtime error
+- Server and Web surfaces map unavailable task workspaces to HTTP 409 and retain
+  the typed failure in task state so users receive actionable recovery guidance
+
+### Tests
+- Added unit, integration, and Web component coverage for missing, mismatched,
+  and unregistered task worktrees
+
 ## [0.10.96] - 2026-08-27
 
 ### Fixed
