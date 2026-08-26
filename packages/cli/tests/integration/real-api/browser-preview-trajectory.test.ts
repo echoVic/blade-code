@@ -430,8 +430,9 @@ describe
           .locator('[data-browser-ref]')
           .filter({ hasText: 'Fixture input' })
           .click();
-        const initialSnapshotId =
-          await testPanel.getAttribute('data-browser-snapshot-id');
+        const initialSnapshotId = await testPanel.getAttribute(
+          'data-browser-snapshot-id'
+        );
         if (!initialSnapshotId) {
           throw new Error('Test browser snapshot has no ID');
         }
