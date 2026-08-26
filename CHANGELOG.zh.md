@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.91] - 2026-08-26
+
+### 修复
+- CI 覆盖率发布升级至使用 Node.js 24 Runtime 的 `codecov/codecov-action@v7`
+  与 `actions/upload-artifact@v7`，并新增完整 workflow 库存测试，防止旧版
+  action 回归
+
 ## [0.10.90] - 2026-08-26
 
 ### 修复

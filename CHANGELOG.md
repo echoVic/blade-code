@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.91] - 2026-08-26
+
+### Fixed
+- CI coverage publishing now uses `codecov/codecov-action@v7` and
+  `actions/upload-artifact@v7` on Node.js 24-compatible runtimes, with a
+  complete workflow inventory test preventing legacy action regressions
+
 ## [0.10.90] - 2026-08-26
 
 ### Fixed
