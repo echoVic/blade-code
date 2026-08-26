@@ -1,5 +1,6 @@
 import type { Goal, Session, SessionRef } from '@api/schemas';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { HttpResponseError } from '../../../src/lib/http';
 import type {
   AgentPhase,
   SendMessagePayload,
@@ -817,6 +818,40 @@ describe('sessionSlice multimodal sendMessage', () => {
       agentPhase: 'idle',
       currentRunId: null,
       error: 'turn_unavailable',
+      errorContext: { kind: 'submission', sessionRef: currentRef },
+      messages: [existingMessage],
+    });
+  });
+
+  it('surfaces a definitive HTTP rejection after SSE replaces the optimistic message', async () => {
+    const currentRef = createRef('session-capacity', '/tmp/project-capacity');
+    const response = deferred<{ runId: string; status: string; queued?: number }>();
+    const existingMessage = createMessage({
+      id: 'existing-message',
+      role: 'assistant',
+      content: 'Previous answer',
+    });
+    useSessionStore.setState({
+      currentSessionId: currentRef.sessionId,
+      currentSessionRef: currentRef,
+      isTemporarySession: false,
+      isStreaming: true,
+      messages: [existingMessage],
+      error: null,
+      errorContext: null,
+    });
+    vi.mocked(sessionService.sendMessage).mockReturnValue(response.promise);
+
+    const sending = useSessionStore.getState().sendMessage({
+      content: 'Start another resident runtime',
+    });
+    await flushMicrotasks();
+    useSessionStore.setState({ messages: [existingMessage] });
+    response.reject(new HttpResponseError('Session runtime capacity is full', 429));
+
+    await expect(sending).resolves.toBe(false);
+    expect(useSessionStore.getState()).toMatchObject({
+      error: 'Session runtime capacity is full',
       errorContext: { kind: 'submission', sessionRef: currentRef },
       messages: [existingMessage],
     });

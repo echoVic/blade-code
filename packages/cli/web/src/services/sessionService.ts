@@ -59,7 +59,7 @@ import {
   UserShellCommandResponseSchema,
 } from '@api/schemas';
 import { t } from '@/i18n';
-import { requestJson } from '@/lib/http';
+import { HttpResponseError, requestJson } from '@/lib/http';
 
 export interface StreamEvent {
   type: string;
@@ -559,7 +559,7 @@ export const sessionService = {
         | { reason?: string; error?: { message?: string } }
         | undefined;
       const reason = body?.error?.message ?? body?.reason;
-      throw new Error(reason || 'Failed to send message');
+      throw new HttpResponseError(reason || 'Failed to send message', res.status);
     }
     return res.json();
   },

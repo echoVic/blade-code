@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { requestJson } from '@/lib/http';
+import { HttpResponseError, requestJson } from '@/lib/http';
 
 describe('requestJson', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -31,7 +31,13 @@ describe('requestJson', () => {
       )
     );
 
-    await expect(requestJson('/value')).rejects.toThrow('Connection refused');
+    await expect(requestJson('/value')).rejects.toEqual(
+      expect.objectContaining<HttpResponseError>({
+        message: 'Connection refused',
+        name: 'HttpResponseError',
+        status: 503,
+      })
+    );
   });
 
   it('surfaces Blade nested error messages', async () => {

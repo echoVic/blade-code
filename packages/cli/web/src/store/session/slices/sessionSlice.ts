@@ -1,5 +1,6 @@
 import { deriveSessionTitle } from '@api/sessionTitle';
 import { parseSideConversationCommand } from '@api/sideConversation';
+import { isHttpResponseError } from '@/lib/http';
 import { projectPathOf } from '@/lib/projectIdentity';
 import { sessionService } from '@/services';
 import { DEFAULT_WEB_PERMISSION_MODE, useConfigStore } from '@/store/ConfigStore';
@@ -1057,7 +1058,8 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         if (!isCurrentSend()) return false;
         if (
           optimisticMessageId &&
-          !get().messages.some((message) => message.id === optimisticMessageId)
+          !get().messages.some((message) => message.id === optimisticMessageId) &&
+          !isHttpResponseError(err)
         ) {
           return true;
         }
