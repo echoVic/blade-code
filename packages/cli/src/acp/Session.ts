@@ -5,6 +5,7 @@
  * 将 Agent 的流式输出转发给 IDE。
  */
 
+import { createHash } from 'node:crypto';
 import {
   type AgentSideConnection,
   type AvailableCommand,
@@ -46,8 +47,16 @@ import {
   type ServiceTierSelection,
 } from '../config/types.js';
 import { getBladeStorageRoot } from '../context/storage/pathUtils.js';
-import { taskFailureForCode, toTaskFailure } from '../context/taskFailure.js';
-import type { SessionTaskIsolation, SessionTaskWorktree } from '../context/types.js';
+import {
+  isSessionTaskFailure,
+  taskFailureForCode,
+  toTaskFailure,
+} from '../context/taskFailure.js';
+import type {
+  SessionTaskFailure,
+  SessionTaskIsolation,
+  SessionTaskWorktree,
+} from '../context/types.js';
 import type { GoalSnapshot } from '../goals/types.js';
 import { createLogger, LogCategory } from '../logging/Logger.js';
 import type {
@@ -105,6 +114,20 @@ import {
 import { AcpServiceContext } from './AcpServiceContext.js';
 
 const logger = createLogger(LogCategory.AGENT);
+const ACP_PENDING_RESUME_MAX_ATTEMPTS = 4;
+const ACP_PENDING_RESUME_INITIAL_DELAY_MS = 1_000;
+const ACP_PENDING_RESUME_MAX_DELAY_MS = 4_000;
+const ACP_PENDING_RESUME_RECOVERY_BUDGET_MS = 120_000;
+const ACP_PENDING_RESUME_JITTER_RATIO = 0.2;
+
+type AcpPendingResumeKind = 'pending_input' | 'goal';
+
+interface AcpPendingResumeFailure {
+  taskFailure: SessionTaskFailure;
+  toolExecutionStarted: boolean;
+  toolCallsCount: number;
+  outputStarted: boolean;
+}
 
 /**
  * ACP 会话类
@@ -226,6 +249,56 @@ function providerQueueCapacityFailure(details: unknown) {
   };
 }
 
+function stablePendingResumeRetryDelay(
+  sessionId: string,
+  failedAttempt: number
+): number {
+  const retryIndex = Math.max(0, failedAttempt - 1);
+  const base = Math.min(
+    ACP_PENDING_RESUME_INITIAL_DELAY_MS * 2 ** retryIndex,
+    ACP_PENDING_RESUME_MAX_DELAY_MS
+  );
+  const digest = createHash('sha256').update(`${sessionId}\0${failedAttempt}`).digest();
+  const ratio = digest.readUInt32BE(0) / 0xffffffff;
+  const factor =
+    1 - ACP_PENDING_RESUME_JITTER_RATIO + 2 * ACP_PENDING_RESUME_JITTER_RATIO * ratio;
+  return Math.min(
+    ACP_PENDING_RESUME_MAX_DELAY_MS,
+    Math.max(0, Math.round(base * factor))
+  );
+}
+
+function acpPendingResumeFailure(error: unknown): AcpPendingResumeFailure | undefined {
+  if (
+    !(error instanceof RequestError) ||
+    !error.data ||
+    typeof error.data !== 'object'
+  ) {
+    return undefined;
+  }
+  const data = error.data as {
+    outputStarted?: unknown;
+    taskFailure?: unknown;
+    toolExecutionStarted?: unknown;
+    toolCallsCount?: unknown;
+  };
+  if (
+    !isSessionTaskFailure(data.taskFailure) ||
+    data.toolExecutionStarted !== false ||
+    !Number.isInteger(data.toolCallsCount) ||
+    (data.toolCallsCount as number) < 0 ||
+    data.outputStarted !== false
+  ) {
+    return undefined;
+  }
+  return {
+    taskFailure: data.taskFailure,
+    toolExecutionStarted: data.toolExecutionStarted,
+    toolCallsCount: data.toolCallsCount as number,
+    outputStarted: data.outputStarted,
+  };
+}
+
 export class AcpSession {
   private agent: Agent | null = null;
   private runtime: SessionRuntime | null = null;
@@ -236,6 +309,13 @@ export class AcpSession {
   private pendingSideConversation: AbortController | null = null;
   private pendingSideConversationCompletion: Promise<void> | null = null;
   private pendingResumeRequested = false;
+  private pendingResumeAttempt = 0;
+  private readonly projectedPendingResumeInputIds = new Set<string>();
+  private pendingResumeRecoveryStartedAt = 0;
+  private pendingResumeInFlight = false;
+  private pendingResumeScheduled = false;
+  private pendingResumeGeneration = 0;
+  private pendingResumeTimer: ReturnType<typeof setTimeout> | null = null;
   private availableCommandsTimer: ReturnType<typeof setTimeout> | null = null;
   private taskStatusUnsubscribe?: () => void;
   private destroyed = false;
@@ -413,7 +493,7 @@ export class AcpSession {
             'blade/backgroundSubagentCompletion': event.properties,
           },
         });
-        this.schedulePendingResume();
+        this.requestPendingResume();
         return;
       }
       if (event.type === 'task.delivery') {
@@ -459,7 +539,7 @@ export class AcpSession {
             await new TeamMailbox(teamName, getBladeStorageRoot()).markDelivered([
               messageId,
             ]);
-            if (steering.delivery === 'next_turn') this.schedulePendingResume();
+            if (steering.delivery === 'next_turn') this.requestPendingResume();
           })().catch((error) => {
             logger.warn(
               `[AcpSession ${this.id}] Failed to deliver teammate message`,
@@ -534,11 +614,9 @@ export class AcpSession {
       activeGoal?.status === 'active' ||
       activeGoal?.status === 'verifying'
     ) {
-      if (this.options.initialMessages === undefined) {
-        this.schedulePendingResume();
-      } else {
-        this.pendingResumeRequested = true;
-      }
+      this.requestPendingResume({
+        defer: this.options.initialMessages !== undefined,
+      });
     }
     // 注意：available_commands_update 在 BladeAgent.newSession 响应后延迟发送
   }
@@ -572,7 +650,7 @@ export class AcpSession {
       return;
     }
     if (this.pendingResumeRequested) {
-      this.schedulePendingResume();
+      this.ensurePendingResumeScheduled();
     }
   }
 
@@ -881,7 +959,7 @@ export class AcpSession {
       const result = await executeSlashCommand(message, context);
       const action = result.data?.action;
       if (action === 'start_goal' || action === 'resume_goal') {
-        this.schedulePendingResume();
+        this.requestPendingResume();
       }
       if (action === 'rewind_session' && Array.isArray(result.data?.messages)) {
         this.messages = [...(result.data.messages as Message[])];
@@ -968,6 +1046,9 @@ export class AcpSession {
       }
       if (this.pendingSideConversation === controller) {
         this.pendingSideConversation = null;
+        if (!this.destroyed && this.pendingResumeRequested) {
+          this.ensurePendingResumeScheduled();
+        }
       }
     }
   }
@@ -1051,6 +1132,8 @@ export class AcpSession {
     internalOptions: {
       pendingInputOnly?: boolean;
       goalContinuationOnly?: boolean;
+      projectedRecoveredInputIds?: Set<string>;
+      abortSignal?: AbortSignal;
     } = {}
   ): Promise<PromptResponse> {
     // 设置当前会话（确保工具使用正确的服务上下文）
@@ -1117,13 +1200,25 @@ export class AcpSession {
         `[AcpSession ${this.id}] Queued steering for active turn (${steering.queued})`
       );
       if (steering.delivery === 'next_turn') {
-        this.schedulePendingResume();
+        this.requestPendingResume();
       }
       return { stopReason: 'end_turn' };
     }
 
     const abortController = new AbortController();
+    const abortFromInternalSignal = () => {
+      abortController.abort(internalOptions.abortSignal?.reason);
+    };
+    if (internalOptions.abortSignal?.aborted) {
+      abortFromInternalSignal();
+    } else {
+      internalOptions.abortSignal?.addEventListener('abort', abortFromInternalSignal, {
+        once: true,
+      });
+    }
     let providerAdmissionVisible = false;
+    let outputStarted = false;
+    let toolExecutionStarted = false;
     let resolvePromptCompletion!: () => void;
     const promptCompletion = new Promise<void>((resolve) => {
       resolvePromptCompletion = resolve;
@@ -1187,12 +1282,14 @@ export class AcpSession {
             // --- 流式内容（delta 是唯一内容信号） ---
             case 'content_delta':
               if (outputSchema) break;
+              if (event.delta.length > 0) outputStarted = true;
               this.sendUpdate({
                 sessionUpdate: 'agent_message_chunk',
                 content: { type: 'text', text: event.delta },
               });
               break;
             case 'thinking_delta':
+              if (event.delta.length > 0) outputStarted = true;
               this.sendUpdate({
                 sessionUpdate: 'agent_thought_chunk',
                 content: { type: 'text', text: event.delta },
@@ -1201,6 +1298,7 @@ export class AcpSession {
 
             // --- 工具事件 ---
             case 'tool_start': {
+              toolExecutionStarted = true;
               const toolCall = event.toolCall;
               const toolName = toolCall.function.name;
               if (toolName === STRUCTURED_OUTPUT_TOOL_NAME) break;
@@ -1231,6 +1329,7 @@ export class AcpSession {
               break;
             }
             case 'tool_progress': {
+              toolExecutionStarted = true;
               const toolCall = event.toolCall;
               if (toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
               this.sendUpdate({
@@ -1250,6 +1349,7 @@ export class AcpSession {
               break;
             }
             case 'tool_result': {
+              toolExecutionStarted = true;
               const toolCall = event.toolCall;
               if (toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
               const result = event.result;
@@ -1331,6 +1431,7 @@ export class AcpSession {
               break;
             }
             case 'structured_output':
+              outputStarted = true;
               this.sendUpdate({
                 sessionUpdate: 'agent_message_chunk',
                 content: {
@@ -1569,26 +1670,33 @@ export class AcpSession {
               break;
             case 'steering_applied':
               break;
-            case 'follow_up_started':
+            case 'follow_up_started': {
+              let projectedRecoveredInputs = 0;
               for (const pending of event.messages) {
                 if (!pending.recovered || pending.persisted) continue;
+                if (internalOptions.projectedRecoveredInputIds?.has(pending.id)) {
+                  continue;
+                }
                 for (const content of historyContentBlocks(pending.content)) {
                   this.sendUpdate({
                     sessionUpdate: 'user_message_chunk',
                     content,
                   });
                 }
+                internalOptions.projectedRecoveredInputIds?.add(pending.id);
+                projectedRecoveredInputs++;
               }
-              if (event.recovered > 0) {
+              if (projectedRecoveredInputs > 0) {
                 this.sendUpdate({
                   sessionUpdate: 'agent_message_chunk',
                   content: {
                     type: 'text',
-                    text: `[Resuming ${event.recovered} queued instruction${event.recovered === 1 ? '' : 's'} recovered after restart]\n`,
+                    text: `[Resuming ${projectedRecoveredInputs} queued instruction${projectedRecoveredInputs === 1 ? '' : 's'} recovered after restart]\n`,
                   },
                 });
               }
               break;
+            }
             case 'goal_updated':
               if (event.goal) {
                 this.sendUpdate(this.goalSessionUpdate(event.goal));
@@ -1710,11 +1818,12 @@ export class AcpSession {
         throw RequestError.internalError(
           {
             failureType,
-            taskFailure: {
-              code: taskFailure.code,
-              retryable: taskFailure.retryable,
-              ...(taskFailure.resource ? { resource: taskFailure.resource } : {}),
-            },
+            taskFailure,
+            outputStarted,
+            toolExecutionStarted,
+            ...(Number.isInteger(loopResult.metadata?.toolCallsCount)
+              ? { toolCallsCount: loopResult.metadata!.toolCallsCount }
+              : {}),
           },
           `Agent turn failed (${failureType})`
         );
@@ -1768,6 +1877,10 @@ export class AcpSession {
       logger.error(`[AcpSession ${this.id}] Prompt error:`, error);
       throw error;
     } finally {
+      internalOptions.abortSignal?.removeEventListener(
+        'abort',
+        abortFromInternalSignal
+      );
       if (providerAdmissionVisible && !this.destroyed) {
         this.sendUpdate({
           sessionUpdate: 'session_info_update',
@@ -1783,7 +1896,7 @@ export class AcpSession {
       if (this.pendingPrompt === abortController) {
         this.pendingPrompt = null;
         if (!this.destroyed && this.pendingResumeRequested) {
-          this.schedulePendingResume();
+          this.ensurePendingResumeScheduled();
         }
       }
     }
@@ -1869,7 +1982,7 @@ export class AcpSession {
       };
       this.messages.push(message);
       this.contextMessages.push(message);
-      if (result.delivery === 'next_turn') this.schedulePendingResume();
+      if (result.delivery === 'next_turn') this.requestPendingResume();
       if (!(await this.flushUpdates())) {
         controller.abort('acp-egress-failed');
         return { stopReason: 'cancelled' };
@@ -1901,40 +2014,303 @@ export class AcpSession {
       if (this.pendingUserShellCompletion === shellCompletion) {
         this.pendingUserShellCompletion = null;
       }
-      if (this.pendingUserShell === controller) this.pendingUserShell = null;
+      if (this.pendingUserShell === controller) {
+        this.pendingUserShell = null;
+        if (!this.destroyed && this.pendingResumeRequested) {
+          this.ensurePendingResumeScheduled();
+        }
+      }
     }
   }
 
-  private schedulePendingResume(): void {
-    if (this.destroyed || this.connection.signal.aborted) return;
-    this.pendingResumeRequested = true;
-    queueMicrotask(() => {
+  private requestPendingResume(options: { defer?: boolean } = {}): void {
+    if (!this.canSendUpdates()) return;
+    if (!this.pendingResumeRequested) {
+      this.pendingResumeRequested = true;
+      if (!this.pendingResumeInFlight) {
+        this.pendingResumeAttempt = 0;
+        this.projectedPendingResumeInputIds.clear();
+        this.pendingResumeRecoveryStartedAt = 0;
+      }
+    }
+    if (!options.defer) this.ensurePendingResumeScheduled();
+  }
+
+  private ensurePendingResumeScheduled(delayMs = 0): void {
+    if (
+      !this.pendingResumeRequested ||
+      !this.canSendUpdates() ||
+      this.pendingResumeScheduled ||
+      this.pendingResumeInFlight
+    ) {
+      return;
+    }
+
+    this.pendingResumeScheduled = true;
+    const generation = this.pendingResumeGeneration;
+    const run = () => {
+      if (generation !== this.pendingResumeGeneration) return;
+      this.pendingResumeScheduled = false;
+      this.pendingResumeTimer = null;
       void this.resumePendingIfIdle();
-    });
+    };
+    if (delayMs > 0) {
+      this.pendingResumeTimer = setTimeout(run, delayMs);
+      this.pendingResumeTimer.unref?.();
+    } else {
+      queueMicrotask(run);
+    }
+  }
+
+  private clearPendingResumeRequest(): boolean {
+    const hadPendingResume =
+      this.pendingResumeRequested ||
+      this.pendingResumeScheduled ||
+      this.pendingResumeInFlight ||
+      this.pendingResumeTimer !== null;
+    this.pendingResumeRequested = false;
+    this.pendingResumeAttempt = 0;
+    this.projectedPendingResumeInputIds.clear();
+    this.pendingResumeRecoveryStartedAt = 0;
+    this.pendingResumeGeneration++;
+    this.pendingResumeScheduled = false;
+    if (this.pendingResumeTimer !== null) {
+      clearTimeout(this.pendingResumeTimer);
+      this.pendingResumeTimer = null;
+    }
+    return hadPendingResume;
+  }
+
+  private preserveNewPendingInput(kind: AcpPendingResumeKind | 'preflight'): boolean {
+    if (
+      kind === 'pending_input' ||
+      !this.pendingResumeRequested ||
+      !this.runtime ||
+      this.runtime.getPendingSteeringCount() === 0
+    ) {
+      return false;
+    }
+    this.pendingResumeAttempt = 0;
+    this.projectedPendingResumeInputIds.clear();
+    this.pendingResumeRecoveryStartedAt = 0;
+    return true;
+  }
+
+  private pendingResumeSessionUpdate(
+    phase: 'retry_scheduled' | 'recovered' | 'failed' | 'exhausted',
+    details: {
+      attempt: number;
+      kind: AcpPendingResumeKind | 'preflight';
+      taskFailure?: SessionTaskFailure;
+      delayMs?: number;
+    }
+  ): SessionNotification['update'] {
+    return {
+      sessionUpdate: 'session_info_update',
+      updatedAt: new Date().toISOString(),
+      _meta: {
+        'blade/pendingResume': {
+          phase,
+          kind: details.kind,
+          attempt: details.attempt,
+          maxAttempts: ACP_PENDING_RESUME_MAX_ATTEMPTS,
+          ...(details.delayMs !== undefined
+            ? {
+                delayMs: details.delayMs,
+                nextRetryAt: Date.now() + details.delayMs,
+              }
+            : {}),
+          ...(details.taskFailure
+            ? {
+                failure: {
+                  code: details.taskFailure.code,
+                  retryable: details.taskFailure.retryable,
+                  ...(details.taskFailure.resource
+                    ? { resource: details.taskFailure.resource }
+                    : {}),
+                },
+              }
+            : {}),
+        },
+      },
+    };
   }
 
   private async resumePendingIfIdle(): Promise<void> {
-    if (this.destroyed || this.connection.signal.aborted) return;
-    if (this.pendingPrompt || this.pendingUserShell || !this.runtime || !this.agent)
+    if (!this.pendingResumeRequested) return;
+    if (!this.canSendUpdates()) {
+      this.clearPendingResumeRequest();
       return;
-    const hasPending = this.runtime.getPendingSteeringCount() > 0;
-    const goal = hasPending ? null : await this.runtime.getGoal();
-    const hasActiveGoal = goal?.status === 'active' || goal?.status === 'verifying';
-    if (!hasPending && !hasActiveGoal) {
-      this.pendingResumeRequested = false;
+    }
+    if (
+      this.pendingResumeInFlight ||
+      this.pendingPrompt ||
+      this.pendingUserShell ||
+      this.pendingSideConversation ||
+      !this.runtime ||
+      !this.agent
+    ) {
       return;
     }
 
+    this.pendingResumeInFlight = true;
     this.pendingResumeRequested = false;
-    await this.prompt(
-      { sessionId: this.id, prompt: [] },
-      {
-        pendingInputOnly: hasPending,
-        goalContinuationOnly: hasActiveGoal,
+    const generation = this.pendingResumeGeneration;
+    const attempt = this.pendingResumeAttempt + 1;
+    this.pendingResumeAttempt = attempt;
+    if (this.pendingResumeRecoveryStartedAt === 0) {
+      this.pendingResumeRecoveryStartedAt = Date.now();
+    }
+
+    let kind: AcpPendingResumeKind | 'preflight' = 'preflight';
+    let promptStarted = false;
+    let retryDelayMs: number | undefined;
+    let recoveryDeadlineTimer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const hasPending = this.runtime.getPendingSteeringCount() > 0;
+      const goal = hasPending ? null : await this.runtime.getGoal();
+      if (generation !== this.pendingResumeGeneration) return;
+      const hasActiveGoal = goal?.status === 'active' || goal?.status === 'verifying';
+      if (!hasPending && !hasActiveGoal) {
+        if (this.pendingResumeRequested) {
+          this.pendingResumeAttempt = 0;
+          this.projectedPendingResumeInputIds.clear();
+          this.pendingResumeRecoveryStartedAt = 0;
+          return;
+        }
+        this.clearPendingResumeRequest();
+        return;
       }
-    ).catch((error) => {
-      logger.error(`[AcpSession ${this.id}] Failed to resume pending input:`, error);
-    });
+
+      kind = hasPending ? 'pending_input' : 'goal';
+      promptStarted = true;
+      const recoveryRemainingMs =
+        ACP_PENDING_RESUME_RECOVERY_BUDGET_MS -
+        (Date.now() - this.pendingResumeRecoveryStartedAt);
+      if (recoveryRemainingMs <= 0) {
+        this.sendUpdate(
+          this.pendingResumeSessionUpdate('exhausted', {
+            attempt,
+            kind,
+            taskFailure: taskFailureForCode('timeout'),
+          })
+        );
+        if (!this.preserveNewPendingInput(kind)) {
+          this.clearPendingResumeRequest();
+        }
+        return;
+      }
+      const recoveryDeadlineController = new AbortController();
+      recoveryDeadlineTimer = setTimeout(() => {
+        recoveryDeadlineController.abort('acp-pending-resume-budget-exhausted');
+      }, recoveryRemainingMs);
+      recoveryDeadlineTimer.unref?.();
+      const response = await this.prompt(
+        { sessionId: this.id, prompt: [] },
+        {
+          pendingInputOnly: hasPending,
+          goalContinuationOnly: hasActiveGoal,
+          projectedRecoveredInputIds:
+            kind === 'pending_input' ? this.projectedPendingResumeInputIds : undefined,
+          abortSignal: recoveryDeadlineController.signal,
+        }
+      );
+      if (generation !== this.pendingResumeGeneration) return;
+      if (recoveryDeadlineController.signal.aborted) {
+        this.sendUpdate(
+          this.pendingResumeSessionUpdate('exhausted', {
+            attempt,
+            kind,
+            taskFailure: taskFailureForCode('timeout'),
+          })
+        );
+        if (!this.preserveNewPendingInput(kind)) {
+          this.clearPendingResumeRequest();
+        }
+        return;
+      }
+      if (response.stopReason !== 'end_turn') {
+        this.clearPendingResumeRequest();
+        return;
+      }
+      if (attempt > 1) {
+        this.sendUpdate(
+          this.pendingResumeSessionUpdate('recovered', { attempt, kind })
+        );
+      }
+      this.pendingResumeAttempt = 0;
+      this.projectedPendingResumeInputIds.clear();
+      this.pendingResumeRecoveryStartedAt = 0;
+    } catch (error) {
+      if (generation !== this.pendingResumeGeneration) return;
+      const projected = promptStarted
+        ? acpPendingResumeFailure(error)
+        : {
+            taskFailure: toTaskFailure(error),
+            toolExecutionStarted: false,
+            toolCallsCount: 0,
+            outputStarted: false,
+          };
+      const workStillPending =
+        kind === 'preflight' ||
+        (kind === 'pending_input' && this.runtime.getPendingSteeringCount() > 0);
+      const retryable =
+        workStillPending &&
+        projected?.taskFailure.retryable === true &&
+        !projected.toolExecutionStarted &&
+        projected.toolCallsCount === 0 &&
+        !projected.outputStarted;
+      const delayMs = stablePendingResumeRetryDelay(this.id, attempt);
+      const elapsedMs = Date.now() - this.pendingResumeRecoveryStartedAt;
+      const withinAttemptBudget = attempt < ACP_PENDING_RESUME_MAX_ATTEMPTS;
+      const withinTimeBudget =
+        elapsedMs + delayMs <= ACP_PENDING_RESUME_RECOVERY_BUDGET_MS;
+
+      if (retryable && withinAttemptBudget && withinTimeBudget) {
+        this.pendingResumeRequested = true;
+        retryDelayMs = delayMs;
+        this.sendUpdate(
+          this.pendingResumeSessionUpdate('retry_scheduled', {
+            attempt: attempt + 1,
+            kind,
+            taskFailure: projected.taskFailure,
+            delayMs,
+          })
+        );
+        logger.warn(
+          `[AcpSession ${this.id}] Pending resume attempt ${attempt} failed; ` +
+            `retrying in ${delayMs}ms`
+        );
+      } else {
+        const phase =
+          retryable && (!withinAttemptBudget || !withinTimeBudget)
+            ? 'exhausted'
+            : 'failed';
+        this.sendUpdate(
+          this.pendingResumeSessionUpdate(phase, {
+            attempt,
+            kind,
+            taskFailure: projected?.taskFailure,
+          })
+        );
+        logger.error(
+          `[AcpSession ${this.id}] Failed to resume pending input ` +
+            `(attempt=${attempt}, retryable=${retryable}, phase=${phase})`,
+          error
+        );
+        if (!this.preserveNewPendingInput(kind)) {
+          this.clearPendingResumeRequest();
+        }
+      }
+    } finally {
+      if (recoveryDeadlineTimer !== null) {
+        clearTimeout(recoveryDeadlineTimer);
+      }
+      this.pendingResumeInFlight = false;
+      if (this.pendingResumeRequested) {
+        this.ensurePendingResumeScheduled(retryDelayMs);
+      }
+    }
   }
 
   /**
@@ -1942,8 +2318,7 @@ export class AcpSession {
    */
   cancel(): void {
     logger.info(`[AcpSession ${this.id}] Cancel requested`);
-    this.pendingResumeRequested = false;
-    let cancelled = false;
+    let cancelled = this.clearPendingResumeRequest();
     if (this.pendingPrompt) {
       this.pendingPrompt.abort();
       this.pendingPrompt = null;
@@ -2314,6 +2689,7 @@ export class AcpSession {
 
   private async destroyOwnedResources(discardPendingInput: boolean): Promise<void> {
     this.destroyed = true;
+    this.clearPendingResumeRequest();
     this.updateEgress.close(
       new BoundedSerialEgressError('closed', 'ACP Session was destroyed')
     );
@@ -2490,6 +2866,7 @@ export class AcpSession {
   private handleUpdateEgressFailure(error: BoundedSerialEgressError): void {
     if (this.destroyed) return;
     logger.warn(`[AcpSession ${this.id}] Update egress closed: kind=${error.kind}`);
+    this.clearPendingResumeRequest();
     this.pendingPrompt?.abort('acp-egress-failed');
     this.pendingUserShell?.abort('acp-egress-failed');
     this.pendingSideConversation?.abort('acp-egress-failed');

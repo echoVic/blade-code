@@ -300,7 +300,8 @@ describe('AcpSession', () => {
     );
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await session.destroy().catch(() => undefined);
     vi.clearAllMocks();
     runtimeState.runtime.dispose.mockClear();
     runtimeState.runtime.enqueueSteering.mockClear();
@@ -407,6 +408,1260 @@ describe('AcpSession', () => {
           options: { goalContinuationOnly: true },
         });
       });
+    });
+
+    it('retries a retryable pending-input failure with bounded backoff', async () => {
+      vi.useFakeTimers();
+      try {
+        await session.initialize();
+        const mockAgent = getMockAgent();
+        let attempt = 0;
+        mockAgent.chatStream = vi.fn(async function* () {
+          attempt += 1;
+          yield {
+            kind: 'follow_up_started',
+            queued: 1,
+            recovered: 1,
+            messages: [
+              {
+                id: 'retry-input',
+                content: 'retry-safe recovered input',
+                queuedAt: Date.now(),
+                recovered: true,
+                persisted: false,
+              },
+              ...(attempt > 1
+                ? [
+                    {
+                      id: 'late-retry-input',
+                      content: 'new input during retry',
+                      queuedAt: Date.now(),
+                      recovered: true,
+                      persisted: false,
+                    },
+                  ]
+                : []),
+            ],
+          } as LoopEvent;
+          if (attempt === 1) {
+            return {
+              success: false,
+              error: {
+                type: 'api_error',
+                message: 'Provider request timed out.',
+              },
+              metadata: {
+                turnsCount: 1,
+                toolCallsCount: 0,
+                duration: 10,
+              },
+            } satisfies LoopResult;
+          }
+          return {
+            success: true,
+            finalMessage: 'recovered',
+            metadata: {
+              turnsCount: 1,
+              toolCallsCount: 0,
+              duration: 10,
+            },
+          } satisfies LoopResult;
+        }) as typeof mockAgent.chatStream;
+        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId: 'retry-child',
+            inboxMessageId: 'background-subagent-completion:retry-child',
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+
+        vi.runAllTicks();
+        await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1), {
+          timeout: 500,
+          interval: 1,
+        });
+        const scheduled = mockConnection.sessionUpdates.find(
+          ({ update }) =>
+            update.sessionUpdate === 'session_info_update' &&
+            update._meta?.['blade/pendingResume'] &&
+            (update._meta['blade/pendingResume'] as { phase?: string }).phase ===
+              'retry_scheduled'
+        );
+        expect(scheduled).toBeDefined();
+        const lifecycle = scheduled!.update._meta!['blade/pendingResume'] as {
+          attempt: number;
+          delayMs: number;
+          nextRetryAt: number;
+          failure: { code: string; retryable: boolean };
+        };
+        expect(lifecycle).toMatchObject({
+          attempt: 2,
+          failure: { code: 'timeout', retryable: true },
+        });
+
+        const remainingDelayMs = lifecycle.nextRetryAt - Date.now();
+        expect(remainingDelayMs).toBeGreaterThan(0);
+        await vi.advanceTimersByTimeAsync(remainingDelayMs - 1);
+        expect(mockAgent.chatStream).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(mockAgent.chatStream).toHaveBeenCalledTimes(2);
+        expect(mockConnection.sessionUpdates).toContainEqual(
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'session_info_update',
+              _meta: {
+                'blade/pendingResume': expect.objectContaining({
+                  phase: 'recovered',
+                  attempt: 2,
+                }),
+              },
+            }),
+          })
+        );
+        expect(
+          mockConnection.sessionUpdates.filter(
+            ({ update }) =>
+              update.sessionUpdate === 'user_message_chunk' &&
+              update.content.type === 'text' &&
+              update.content.text === 'retry-safe recovered input'
+          )
+        ).toHaveLength(1);
+        expect(
+          mockConnection.sessionUpdates.filter(
+            ({ update }) =>
+              update.sessionUpdate === 'user_message_chunk' &&
+              update.content.type === 'text' &&
+              update.content.text === 'new input during retry'
+          )
+        ).toHaveLength(1);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        await session.destroy().catch(() => undefined);
+        vi.useRealTimers();
+      }
+    });
+
+    it('projects recovered input on the first prompt after a preflight retry', async () => {
+      vi.useFakeTimers();
+      try {
+        await session.initialize();
+        runtimeState.runtime.getPendingSteeringCount
+          .mockReturnValueOnce(0)
+          .mockReturnValue(1);
+        runtimeState.runtime.getGoal
+          .mockReset()
+          .mockRejectedValueOnce(new Error('Provider request timed out.'));
+        const mockAgent = getMockAgent();
+        mockAgent.chatStream = vi.fn(async function* () {
+          yield {
+            kind: 'follow_up_started',
+            queued: 1,
+            recovered: 1,
+            messages: [
+              {
+                id: 'preflight-recovered-input',
+                content: 'input after preflight retry',
+                queuedAt: Date.now(),
+                recovered: true,
+                persisted: false,
+              },
+            ],
+          } as LoopEvent;
+          return {
+            success: true,
+            finalMessage: 'recovered',
+            metadata: {
+              turnsCount: 1,
+              toolCallsCount: 0,
+              duration: 10,
+            },
+          } satisfies LoopResult;
+        }) as typeof mockAgent.chatStream;
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId: 'preflight-retry-child',
+            inboxMessageId: 'background-subagent-completion:preflight-retry-child',
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+
+        vi.runAllTicks();
+        await vi.waitFor(
+          () =>
+            expect(
+              mockConnection.sessionUpdates.some(
+                ({ update }) =>
+                  update.sessionUpdate === 'session_info_update' &&
+                  (
+                    update._meta?.['blade/pendingResume'] as
+                      | { phase?: string }
+                      | undefined
+                  )?.phase === 'retry_scheduled'
+              )
+            ).toBe(true),
+          { timeout: 500, interval: 1 }
+        );
+        await vi.runOnlyPendingTimersAsync();
+
+        expect(mockAgent.chatStream).toHaveBeenCalledTimes(1);
+        expect(
+          mockConnection.sessionUpdates.filter(
+            ({ update }) =>
+              update.sessionUpdate === 'user_message_chunk' &&
+              update.content.type === 'text' &&
+              update.content.text === 'input after preflight retry'
+          )
+        ).toHaveLength(1);
+      } finally {
+        await session.destroy().catch(() => undefined);
+        vi.useRealTimers();
+      }
+    });
+
+    it('bounds pending-input retries and reports exhaustion', async () => {
+      vi.useFakeTimers();
+      try {
+        await session.initialize();
+        const mockAgent = getMockAgent();
+        mockAgent.chatStream = vi.fn(async function* () {
+          yield* [] as LoopEvent[];
+          return {
+            success: false,
+            error: {
+              type: 'api_error',
+              message: 'Provider connection failed.',
+            },
+            metadata: {
+              turnsCount: 1,
+              toolCallsCount: 0,
+              duration: 10,
+            },
+          } satisfies LoopResult;
+        }) as typeof mockAgent.chatStream;
+        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId: 'exhaust-child',
+            inboxMessageId: 'background-subagent-completion:exhaust-child',
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+
+        vi.runAllTicks();
+        await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1), {
+          timeout: 500,
+          interval: 1,
+        });
+        for (let retry = 0; retry < 3; retry++) {
+          await vi.runOnlyPendingTimersAsync();
+        }
+
+        expect(mockAgent.chatStream).toHaveBeenCalledTimes(4);
+        const lifecycle = mockConnection.sessionUpdates
+          .filter(
+            ({ update }) =>
+              update.sessionUpdate === 'session_info_update' &&
+              update._meta?.['blade/pendingResume']
+          )
+          .map(
+            ({ update }) =>
+              update._meta!['blade/pendingResume'] as {
+                phase: string;
+                attempt: number;
+              }
+          );
+        expect(
+          lifecycle.filter(({ phase }) => phase === 'retry_scheduled')
+        ).toHaveLength(3);
+        expect(lifecycle.at(-1)).toMatchObject({
+          phase: 'exhausted',
+          attempt: 4,
+        });
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        await session.destroy().catch(() => undefined);
+        vi.useRealTimers();
+      }
+    });
+
+    it('stops retrying when the recovery time budget is exhausted', async () => {
+      vi.useFakeTimers({ now: 1_000 });
+      try {
+        await session.initialize();
+        const mockAgent = getMockAgent();
+        mockAgent.chatStream = vi.fn(async function* () {
+          vi.setSystemTime(121_001);
+          yield* [] as LoopEvent[];
+          return {
+            success: false,
+            error: {
+              type: 'api_error',
+              message: 'Provider request timed out.',
+            },
+            metadata: {
+              turnsCount: 1,
+              toolCallsCount: 0,
+              duration: 120_001,
+            },
+          } satisfies LoopResult;
+        }) as typeof mockAgent.chatStream;
+        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId: 'budget-child',
+            inboxMessageId: 'background-subagent-completion:budget-child',
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+
+        vi.runAllTicks();
+        await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1), {
+          timeout: 500,
+          interval: 1,
+        });
+        await vi.runAllTimersAsync();
+
+        expect(mockAgent.chatStream).toHaveBeenCalledTimes(1);
+        expect(mockConnection.sessionUpdates).toContainEqual(
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'session_info_update',
+              _meta: {
+                'blade/pendingResume': expect.objectContaining({
+                  phase: 'exhausted',
+                  attempt: 1,
+                }),
+              },
+            }),
+          })
+        );
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        await session.destroy().catch(() => undefined);
+        vi.useRealTimers();
+      }
+    });
+
+    it('aborts an in-flight resume at the recovery deadline', async () => {
+      vi.useFakeTimers({ now: 1_000 });
+      try {
+        await session.initialize();
+        const mockAgent = getMockAgent();
+        mockAgent.chatStream = vi.fn(async function* (_message, context) {
+          await new Promise<void>((resolve) => {
+            if (context.signal?.aborted) {
+              resolve();
+              return;
+            }
+            context.signal?.addEventListener('abort', () => resolve(), {
+              once: true,
+            });
+          });
+          yield* [] as LoopEvent[];
+          return {
+            success: false,
+            error: {
+              type: 'aborted',
+              message: 'aborted',
+            },
+            metadata: {
+              turnsCount: 1,
+              toolCallsCount: 0,
+              duration: 120_000,
+            },
+          } satisfies LoopResult;
+        }) as typeof mockAgent.chatStream;
+        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId: 'deadline-child',
+            inboxMessageId: 'background-subagent-completion:deadline-child',
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+
+        vi.runAllTicks();
+        await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1), {
+          timeout: 500,
+          interval: 1,
+        });
+        await vi.advanceTimersByTimeAsync(120_000);
+
+        expect(mockConnection.sessionUpdates).toContainEqual(
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'session_info_update',
+              _meta: {
+                'blade/pendingResume': expect.objectContaining({
+                  phase: 'exhausted',
+                  attempt: 1,
+                  failure: {
+                    code: 'timeout',
+                    retryable: true,
+                  },
+                }),
+              },
+            }),
+          })
+        );
+        expect(mockAgent.chatStream).toHaveBeenCalledTimes(1);
+        expect(runtimeState.runtime.discardPendingInput).not.toHaveBeenCalled();
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        await session.destroy().catch(() => undefined);
+        vi.useRealTimers();
+      }
+    });
+
+    it.each([
+      {
+        name: 'non-retryable Provider failure',
+        message: 'Provider authentication failed. Check model credentials.',
+        toolCallsCount: 0,
+        code: 'authentication',
+        pendingAfterFailure: 1,
+        emitContent: false,
+        omitMetadata: false,
+        expectFailureDetails: true,
+      },
+      {
+        name: 'retryable failure after a tool call',
+        message: 'Provider request timed out.',
+        toolCallsCount: 1,
+        code: 'timeout',
+        pendingAfterFailure: 1,
+        emitContent: false,
+        omitMetadata: false,
+        expectFailureDetails: true,
+      },
+      {
+        name: 'retryable failure whose input was terminally acknowledged',
+        message: 'Provider request timed out.',
+        toolCallsCount: 0,
+        code: 'timeout',
+        pendingAfterFailure: 0,
+        emitContent: false,
+        omitMetadata: false,
+        expectFailureDetails: true,
+      },
+      {
+        name: 'retryable failure after partial output',
+        message: 'Provider request timed out.',
+        toolCallsCount: 0,
+        code: 'timeout',
+        pendingAfterFailure: 1,
+        emitContent: true,
+        omitMetadata: false,
+        expectFailureDetails: false,
+      },
+      {
+        name: 'retryable failure after an observed tool start',
+        message: 'Provider request timed out.',
+        toolCallsCount: 0,
+        code: 'timeout',
+        pendingAfterFailure: 1,
+        emitContent: false,
+        toolEvent: 'start' as const,
+        omitMetadata: false,
+        expectFailureDetails: false,
+      },
+      {
+        name: 'retryable failure after observed tool progress',
+        message: 'Provider request timed out.',
+        toolCallsCount: 0,
+        code: 'timeout',
+        pendingAfterFailure: 1,
+        emitContent: false,
+        toolEvent: 'progress' as const,
+        omitMetadata: false,
+        expectFailureDetails: false,
+      },
+      {
+        name: 'retryable failure after an observed tool result',
+        message: 'Provider request timed out.',
+        toolCallsCount: 0,
+        code: 'timeout',
+        pendingAfterFailure: 1,
+        emitContent: false,
+        toolEvent: 'result' as const,
+        omitMetadata: false,
+        expectFailureDetails: false,
+      },
+      {
+        name: 'retryable failure with unknown tool execution state',
+        message: 'Provider request timed out.',
+        toolCallsCount: 0,
+        code: 'timeout',
+        pendingAfterFailure: 1,
+        emitContent: false,
+        omitMetadata: true,
+        expectFailureDetails: false,
+      },
+    ])(
+      'does not auto-replay $name',
+      async ({
+        message,
+        toolCallsCount,
+        code,
+        pendingAfterFailure,
+        emitContent,
+        toolEvent,
+        omitMetadata,
+        expectFailureDetails,
+      }) => {
+        vi.useFakeTimers();
+        try {
+          await session.initialize();
+          const mockAgent = getMockAgent();
+          mockAgent.chatStream = vi.fn(async function* () {
+            if (emitContent) {
+              yield { kind: 'content_delta', delta: 'partial response' } as LoopEvent;
+            }
+            const toolCall = {
+              id: 'observed-tool',
+              type: 'function' as const,
+              function: { name: 'Read', arguments: '{}' },
+            };
+            if (toolEvent === 'start') {
+              yield {
+                kind: 'tool_start',
+                toolCall,
+                toolKind: ToolKind.ReadOnly,
+              } as LoopEvent;
+            } else if (toolEvent === 'progress') {
+              yield {
+                kind: 'tool_progress',
+                toolCall,
+                update: { message: 'reading' },
+              } as LoopEvent;
+            } else if (toolEvent === 'result') {
+              yield {
+                kind: 'tool_result',
+                toolCall,
+                result: { success: true, llmContent: 'read' },
+              } as LoopEvent;
+            }
+            return {
+              success: false,
+              error: { type: 'api_error', message },
+              ...(omitMetadata
+                ? {}
+                : {
+                    metadata: {
+                      turnsCount: 1,
+                      toolCallsCount,
+                      duration: 10,
+                    },
+                  }),
+            } satisfies LoopResult;
+          }) as typeof mockAgent.chatStream;
+          runtimeState.runtime.getPendingSteeringCount
+            .mockReturnValueOnce(1)
+            .mockReturnValue(pendingAfterFailure);
+          Bus.publish(
+            { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+            'subagent.completion.queued',
+            {
+              childSessionId: `terminal-child-${code}`,
+              inboxMessageId: `background-subagent-completion:terminal-child-${code}`,
+              status: 'completed',
+              type: 'Explore',
+              queued: 1,
+              delivery: 'next_turn',
+            }
+          );
+
+          vi.runAllTicks();
+          await vi.waitFor(
+            () => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1),
+            {
+              timeout: 500,
+              interval: 1,
+            }
+          );
+          await vi.runAllTimersAsync();
+          const lifecycle = mockConnection.sessionUpdates.find(
+            ({ update }) =>
+              update.sessionUpdate === 'session_info_update' &&
+              update._meta?.['blade/pendingResume']
+          )?.update._meta?.['blade/pendingResume'] as
+            | {
+                phase: string;
+                attempt: number;
+                failure?: { code: string };
+              }
+            | undefined;
+          expect(lifecycle).toMatchObject({
+            phase: 'failed',
+            attempt: 1,
+            ...(expectFailureDetails ? { failure: { code } } : {}),
+          });
+          if (!expectFailureDetails) {
+            expect(lifecycle).not.toHaveProperty('failure');
+          }
+          expect(vi.getTimerCount()).toBe(0);
+        } finally {
+          await session.destroy().catch(() => undefined);
+          vi.useRealTimers();
+        }
+      }
+    );
+
+    it('does not automatically reactivate a Goal paused by a failed continuation', async () => {
+      vi.useFakeTimers();
+      try {
+        await session.initialize();
+        runtimeState.runtime.getGoal.mockResolvedValue({
+          status: 'active',
+        });
+        const mockAgent = getMockAgent();
+        mockAgent.chatStream = vi.fn(async function* () {
+          yield* [] as LoopEvent[];
+          return {
+            success: false,
+            error: {
+              type: 'api_error',
+              message: 'Provider request timed out.',
+            },
+            metadata: {
+              turnsCount: 1,
+              toolCallsCount: 0,
+              duration: 10,
+            },
+          } satisfies LoopResult;
+        }) as typeof mockAgent.chatStream;
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId: 'goal-child',
+            inboxMessageId: 'background-subagent-completion:goal-child',
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+
+        vi.runAllTicks();
+        await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1), {
+          timeout: 500,
+          interval: 1,
+        });
+        await vi.runAllTimersAsync();
+
+        expect(mockAgent.chatStream).toHaveBeenCalledTimes(1);
+        expect(mockConnection.sessionUpdates).toContainEqual(
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'session_info_update',
+              _meta: {
+                'blade/pendingResume': expect.objectContaining({
+                  phase: 'failed',
+                  kind: 'goal',
+                  attempt: 1,
+                }),
+              },
+            }),
+          })
+        );
+      } finally {
+        await session.destroy().catch(() => undefined);
+        vi.useRealTimers();
+      }
+    });
+
+    it('continues new pending input after a Goal continuation fails', async () => {
+      await session.initialize();
+      runtimeState.runtime.getGoal.mockResolvedValue({
+        status: 'active',
+      });
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+      let releaseGoalAttempt!: () => void;
+      const goalAttemptBlocked = new Promise<void>((resolve) => {
+        releaseGoalAttempt = resolve;
+      });
+      const mockAgent = getMockAgent();
+      let attempt = 0;
+      const chatStream = vi.fn(async function* () {
+        attempt++;
+        if (attempt === 1) {
+          await goalAttemptBlocked;
+          yield* [] as LoopEvent[];
+          return {
+            success: false,
+            error: {
+              type: 'api_error',
+              message: 'Provider request timed out.',
+            },
+            metadata: {
+              turnsCount: 1,
+              toolCallsCount: 0,
+              duration: 10,
+            },
+          } satisfies LoopResult;
+        }
+        yield* [] as LoopEvent[];
+        return {
+          success: true,
+          finalMessage: 'pending input completed',
+          metadata: {
+            turnsCount: 1,
+            toolCallsCount: 0,
+            duration: 10,
+          },
+        } satisfies LoopResult;
+      });
+      mockAgent.chatStream = chatStream as typeof mockAgent.chatStream;
+      const publishWake = (childSessionId: string) =>
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId,
+            inboxMessageId: `background-subagent-completion:${childSessionId}`,
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+
+      publishWake('goal-wake');
+      await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1));
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+      publishWake('pending-after-goal-failure');
+      releaseGoalAttempt();
+
+      await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(2));
+      expect(chatStream).toHaveBeenNthCalledWith(
+        1,
+        '',
+        expect.any(Object),
+        expect.objectContaining({ goalContinuationOnly: true })
+      );
+      expect(chatStream).toHaveBeenNthCalledWith(
+        2,
+        '',
+        expect.any(Object),
+        expect.objectContaining({ pendingInputOnly: true })
+      );
+      expect(
+        mockConnection.sessionUpdates.filter(
+          ({ update }) =>
+            update.sessionUpdate === 'session_info_update' &&
+            (
+              update._meta?.['blade/pendingResume'] as
+                | { phase?: string; kind?: string }
+                | undefined
+            )?.phase === 'failed'
+        )
+      ).toContainEqual(
+        expect.objectContaining({
+          update: expect.objectContaining({
+            _meta: {
+              'blade/pendingResume': expect.objectContaining({
+                kind: 'goal',
+              }),
+            },
+          }),
+        })
+      );
+    });
+
+    it('preserves pending input when a Goal continuation reaches its deadline', async () => {
+      vi.useFakeTimers({ now: 1_000 });
+      try {
+        await session.initialize();
+        runtimeState.runtime.getGoal.mockResolvedValue({
+          status: 'active',
+        });
+        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+        const mockAgent = getMockAgent();
+        let attempt = 0;
+        const chatStream = vi.fn(async function* (
+          _message: unknown,
+          context: { signal?: AbortSignal }
+        ) {
+          attempt++;
+          if (attempt === 1) {
+            await new Promise<void>((resolve) => {
+              if (context.signal?.aborted) {
+                resolve();
+                return;
+              }
+              context.signal?.addEventListener('abort', () => resolve(), {
+                once: true,
+              });
+            });
+            yield* [] as LoopEvent[];
+            return {
+              success: false,
+              error: {
+                type: 'aborted',
+                message: 'aborted',
+              },
+              metadata: {
+                turnsCount: 1,
+                toolCallsCount: 0,
+                duration: 120_000,
+              },
+            } satisfies LoopResult;
+          }
+          yield* [] as LoopEvent[];
+          return {
+            success: true,
+            finalMessage: 'pending input completed',
+            metadata: {
+              turnsCount: 1,
+              toolCallsCount: 0,
+              duration: 10,
+            },
+          } satisfies LoopResult;
+        });
+        mockAgent.chatStream = chatStream as typeof mockAgent.chatStream;
+        const publishWake = (childSessionId: string) =>
+          Bus.publish(
+            { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+            'subagent.completion.queued',
+            {
+              childSessionId,
+              inboxMessageId: `background-subagent-completion:${childSessionId}`,
+              status: 'completed',
+              type: 'Explore',
+              queued: 1,
+              delivery: 'next_turn',
+            }
+          );
+
+        publishWake('goal-deadline-wake');
+        vi.runAllTicks();
+        await vi.waitFor(() => expect(chatStream).toHaveBeenCalledTimes(1), {
+          timeout: 500,
+          interval: 1,
+        });
+        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+        publishWake('pending-after-goal-deadline');
+        await vi.advanceTimersByTimeAsync(120_000);
+
+        await vi.waitFor(() => expect(chatStream).toHaveBeenCalledTimes(2), {
+          timeout: 500,
+          interval: 1,
+        });
+        expect(chatStream).toHaveBeenNthCalledWith(
+          2,
+          '',
+          expect.any(Object),
+          expect.objectContaining({ pendingInputOnly: true })
+        );
+        expect(
+          mockConnection.sessionUpdates.some(
+            ({ update }) =>
+              update.sessionUpdate === 'session_info_update' &&
+              (
+                update._meta?.['blade/pendingResume'] as
+                  | { phase?: string; kind?: string }
+                  | undefined
+              )?.phase === 'exhausted' &&
+              (
+                update._meta?.['blade/pendingResume'] as
+                  | { phase?: string; kind?: string }
+                  | undefined
+              )?.kind === 'goal'
+          )
+        ).toBe(true);
+      } finally {
+        await session.destroy().catch(() => undefined);
+        vi.useRealTimers();
+      }
+    });
+
+    it('resumes pending input after a side conversation settles', async () => {
+      await session.initialize();
+      const { executeSlashCommand } = await import(
+        '../../../../src/slash-commands/index.js'
+      );
+      let releaseSideConversation!: () => void;
+      const sideConversationBlocked = new Promise<void>((resolve) => {
+        releaseSideConversation = resolve;
+      });
+      vi.mocked(executeSlashCommand).mockImplementationOnce(async () => {
+        await sideConversationBlocked;
+        return {
+          success: true,
+          message: 'side conversation completed',
+        };
+      });
+      const mockAgent = getMockAgent();
+      const chatStream = vi.fn(async function* () {
+        yield* [] as LoopEvent[];
+        return {
+          success: true,
+          finalMessage: 'pending input completed',
+          metadata: {
+            turnsCount: 1,
+            toolCallsCount: 0,
+            duration: 10,
+          },
+        } satisfies LoopResult;
+      });
+      mockAgent.chatStream = chatStream as typeof mockAgent.chatStream;
+
+      const sideConversation = session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: '/btw inspect current state' }],
+      });
+      await vi.waitFor(() => expect(executeSlashCommand).toHaveBeenCalledTimes(1));
+
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+      Bus.publish(
+        { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+        'subagent.completion.queued',
+        {
+          childSessionId: 'side-conversation-child',
+          inboxMessageId: 'background-subagent-completion:side-conversation-child',
+          status: 'completed',
+          type: 'Explore',
+          queued: 1,
+          delivery: 'next_turn',
+        }
+      );
+      await Promise.resolve();
+      expect(chatStream).not.toHaveBeenCalled();
+
+      releaseSideConversation();
+      await sideConversation;
+      await vi.waitFor(() => expect(chatStream).toHaveBeenCalledTimes(1));
+      expect(chatStream).toHaveBeenCalledWith(
+        '',
+        expect.any(Object),
+        expect.objectContaining({ pendingInputOnly: true })
+      );
+    });
+
+    it('does not run a queued auto-resume after cancellation', async () => {
+      vi.useFakeTimers();
+      try {
+        await session.initialize();
+        const chatStream = vi.spyOn(getMockAgent(), 'chatStream');
+        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId: 'cancel-child',
+            inboxMessageId: 'background-subagent-completion:cancel-child',
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+
+        session.cancel();
+        await vi.runAllTimersAsync();
+
+        expect(chatStream).not.toHaveBeenCalled();
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        await session.destroy().catch(() => undefined);
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not revive retries after cancelling an in-flight auto-resume', async () => {
+      vi.useFakeTimers();
+      try {
+        await session.initialize();
+        let releaseAttempt!: () => void;
+        const attemptBlocked = new Promise<void>((resolve) => {
+          releaseAttempt = resolve;
+        });
+        const mockAgent = getMockAgent();
+        mockAgent.chatStream = vi.fn(async function* () {
+          await attemptBlocked;
+          yield* [] as LoopEvent[];
+          return {
+            success: false,
+            error: {
+              type: 'api_error',
+              message: 'Provider request timed out.',
+            },
+            metadata: {
+              turnsCount: 1,
+              toolCallsCount: 0,
+              duration: 10,
+            },
+          } satisfies LoopResult;
+        }) as typeof mockAgent.chatStream;
+        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId: 'cancel-in-flight-child',
+            inboxMessageId: 'background-subagent-completion:cancel-in-flight-child',
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+
+        vi.runAllTicks();
+        await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1), {
+          timeout: 500,
+          interval: 1,
+        });
+        session.cancel();
+        releaseAttempt();
+        await vi.runAllTimersAsync();
+
+        expect(mockAgent.chatStream).toHaveBeenCalledTimes(1);
+        expect(
+          mockConnection.sessionUpdates.filter(
+            ({ update }) =>
+              update.sessionUpdate === 'session_info_update' &&
+              update._meta?.['blade/pendingResume']
+          )
+        ).toHaveLength(0);
+        expect(runtimeState.runtime.discardPendingInput).not.toHaveBeenCalled();
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        await session.destroy().catch(() => undefined);
+        vi.useRealTimers();
+      }
+    });
+
+    it('cancels a scheduled retry without consuming durable input', async () => {
+      vi.useFakeTimers();
+      try {
+        await session.initialize();
+        const mockAgent = getMockAgent();
+        mockAgent.chatStream = vi.fn(async function* () {
+          yield* [] as LoopEvent[];
+          return {
+            success: false,
+            error: {
+              type: 'api_error',
+              message: 'Provider request timed out.',
+            },
+            metadata: {
+              turnsCount: 1,
+              toolCallsCount: 0,
+              duration: 10,
+            },
+          } satisfies LoopResult;
+        }) as typeof mockAgent.chatStream;
+        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId: 'cancel-retry-child',
+            inboxMessageId: 'background-subagent-completion:cancel-retry-child',
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+
+        vi.runAllTicks();
+        await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1), {
+          timeout: 500,
+          interval: 1,
+        });
+        expect(vi.getTimerCount()).toBe(1);
+
+        session.cancel();
+        await vi.runAllTimersAsync();
+
+        expect(mockAgent.chatStream).toHaveBeenCalledTimes(1);
+        expect(runtimeState.runtime.discardPendingInput).not.toHaveBeenCalled();
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        await session.destroy().catch(() => undefined);
+        vi.useRealTimers();
+      }
+    });
+
+    it('coalesces duplicate wake signals into one resume attempt', async () => {
+      vi.useFakeTimers();
+      try {
+        await session.initialize();
+        const mockAgent = getMockAgent();
+        const chatStream = vi.fn(async function* () {
+          yield* [] as LoopEvent[];
+          return {
+            success: true,
+            finalMessage: 'resumed once',
+            metadata: {
+              turnsCount: 1,
+              toolCallsCount: 0,
+              duration: 10,
+            },
+          } satisfies LoopResult;
+        }) as typeof mockAgent.chatStream;
+        mockAgent.chatStream = chatStream;
+        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+        const event = {
+          childSessionId: 'coalesced-child',
+          inboxMessageId: 'background-subagent-completion:coalesced-child',
+          status: 'completed',
+          type: 'Explore',
+          queued: 1,
+          delivery: 'next_turn',
+        };
+
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          event
+        );
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          event
+        );
+        vi.runAllTicks();
+        await vi.waitFor(() => expect(chatStream).toHaveBeenCalledTimes(1), {
+          timeout: 500,
+          interval: 1,
+        });
+        await vi.runAllTimersAsync();
+
+        expect(chatStream).toHaveBeenCalledTimes(1);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        await session.destroy().catch(() => undefined);
+        vi.useRealTimers();
+      }
+    });
+
+    it('preserves a wake signal that arrives during an idle preflight', async () => {
+      await session.initialize();
+      let releaseGoalRead!: () => void;
+      const goalRead = new Promise<null>((resolve) => {
+        releaseGoalRead = () => resolve(null);
+      });
+      runtimeState.runtime.getGoal.mockReset().mockImplementationOnce(() => goalRead);
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+      const mockAgent = getMockAgent();
+      const chatStream = vi.fn(async function* () {
+        yield* [] as LoopEvent[];
+        return {
+          success: true,
+          finalMessage: 'new wake processed',
+          metadata: {
+            turnsCount: 1,
+            toolCallsCount: 0,
+            duration: 10,
+          },
+        } satisfies LoopResult;
+      }) as typeof mockAgent.chatStream;
+      mockAgent.chatStream = chatStream;
+      const publishWake = (childSessionId: string) =>
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId,
+            inboxMessageId: `background-subagent-completion:${childSessionId}`,
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+
+      publishWake('preflight-child');
+      await vi.waitFor(() => {
+        expect(runtimeState.runtime.getGoal).toHaveBeenCalledTimes(1);
+      });
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+      publishWake('late-child');
+      releaseGoalRead();
+
+      await vi.waitFor(() => expect(chatStream).toHaveBeenCalledTimes(1));
+    });
+
+    it('preserves pending input that arrives during a failed preflight', async () => {
+      await session.initialize();
+      let rejectGoalRead!: (error: Error) => void;
+      const goalRead = new Promise<null>((_resolve, reject) => {
+        rejectGoalRead = reject;
+      });
+      runtimeState.runtime.getGoal.mockReset().mockImplementationOnce(() => goalRead);
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+      const mockAgent = getMockAgent();
+      const chatStream = vi.fn(async function* () {
+        yield* [] as LoopEvent[];
+        return {
+          success: true,
+          finalMessage: 'new wake processed',
+          metadata: {
+            turnsCount: 1,
+            toolCallsCount: 0,
+            duration: 10,
+          },
+        } satisfies LoopResult;
+      });
+      mockAgent.chatStream = chatStream as typeof mockAgent.chatStream;
+      const publishWake = (childSessionId: string) =>
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId,
+            inboxMessageId: `background-subagent-completion:${childSessionId}`,
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+
+      publishWake('failing-preflight-child');
+      await vi.waitFor(() => {
+        expect(runtimeState.runtime.getGoal).toHaveBeenCalledTimes(1);
+      });
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+      publishWake('pending-after-preflight-failure');
+      rejectGoalRead(new Error('Provider authentication failed.'));
+
+      await vi.waitFor(() => expect(chatStream).toHaveBeenCalledTimes(1));
+      expect(chatStream).toHaveBeenCalledWith(
+        '',
+        expect.any(Object),
+        expect.objectContaining({ pendingInputOnly: true })
+      );
     });
 
     it('应该在 durable background completion 入队后自动恢复 parent', async () => {
@@ -1865,6 +3120,13 @@ describe('AcpSession', () => {
         message: 'Internal error: Agent turn failed (intent_fulfillment_failed)',
         data: {
           failureType: 'intent_fulfillment_failed',
+          taskFailure: {
+            code: 'runtime',
+            message: 'Agent execution failed.',
+            retryable: true,
+          },
+          outputStarted: false,
+          toolExecutionStarted: false,
         },
       });
     });
@@ -3155,6 +4417,57 @@ describe('AcpSession', () => {
             status: 'completed',
           }),
         ])
+      );
+    });
+
+    it('resumes next-turn input after the owning shell operation settles', async () => {
+      runtimeState.runtime.executeUserShellCommand.mockResolvedValueOnce({
+        executionId: 'shell-next-turn',
+        messageId: 'shell-next-turn-message',
+        record: {
+          version: 1,
+          command: 'pwd',
+          status: 'completed',
+          exitCode: 0,
+          durationMs: 5,
+          stdout: '/remote/workspace',
+          stderr: '',
+          stdoutOmittedBytes: 0,
+          stderrOmittedBytes: 0,
+          binaryOutput: false,
+          truncated: false,
+        },
+        modelContent: '<user_shell_command>pwd</user_shell_command>',
+        auxiliary: false,
+        delivery: 'next_turn',
+        queued: 1,
+      });
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+      const mockAgent = getMockAgent();
+      const chatStream = vi.fn(async function* () {
+        yield* [] as LoopEvent[];
+        return {
+          success: true,
+          finalMessage: 'continued',
+          metadata: {
+            turnsCount: 1,
+            toolCallsCount: 0,
+            duration: 10,
+          },
+        } satisfies LoopResult;
+      }) as typeof mockAgent.chatStream;
+      mockAgent.chatStream = chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: '! pwd' }],
+      });
+
+      await vi.waitFor(() => expect(chatStream).toHaveBeenCalledTimes(1));
+      expect(chatStream).toHaveBeenCalledWith(
+        '',
+        expect.any(Object),
+        expect.objectContaining({ pendingInputOnly: true })
       );
     });
 

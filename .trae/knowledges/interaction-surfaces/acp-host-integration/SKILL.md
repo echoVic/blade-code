@@ -64,6 +64,7 @@ ACP 层把每个宿主 Session 映射为独占的 Agent、SessionRuntime、文�
 - 创建、fork、load 都先预留 residency，完成 Session 初始化后才 commit；任一步失败都会 cancel reservation 并销毁半初始化 Session (`packages/cli/src/acp/BladeAgent.ts`)
 - 所有异步宿主更新先检查 Session 未 destroyed、connection 未 aborted、egress 未 closed；迟到 timer、Bus 回调和 completion 都不得重新激活已释放 Session (`packages/cli/src/acp/Session.ts`)
 - 后台子代理完成和 team message 先进入 durable inbox，再在 Session idle 时通过空 prompt 自动续跑；连接关闭时保留该 inbox (`packages/cli/src/acp/Session.ts`)
+- durable inbox 自动续跑失败时只重试结构化标记为 retryable、且尚未产生部分输出或任何 `tool_start`/`tool_progress`/`tool_result` 的回合；重试采用单飞、有界指数退避、稳定抖动和硬总时限，`cancel`、egress 失败与 `destroy` 会使排队及执行中的旧代际失效，Goal/preflight 失败也不能吞掉随后到达的新输入；`blade/pendingResume` metadata 投影恢复状态 (`packages/cli/src/acp/Session.ts`)
 - `destroy()` 是 single-flight，先关闭 update egress 与订阅，再 cancel 活动工作并等待 completion，最后销毁 Agent、Runtime 和服务上下文，同时保留首个错误 (`packages/cli/src/acp/Session.ts`)
 - 图片 prompt 在协议入口同时限制数量、base64 总字节和文本字符/字节；通过校验后才转换成 Blade `UserMessageContent` (`packages/cli/src/acp/Session.ts`)
 
