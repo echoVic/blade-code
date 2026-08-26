@@ -2,7 +2,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { GoalStore } from '../../../../../src/goals/GoalStore.js';
 import { createGoalTools } from '../../../../../src/tools/builtin/goal/index.js';
+import { executeToolInvocation } from '../../../../../src/tools/execution/ToolInvocationRunner.js';
 
 describe('goal tools', () => {
   let storageRoot: string;
@@ -15,6 +17,7 @@ describe('goal tools', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     rmSync(storageRoot, { recursive: true, force: true });
   });
@@ -99,5 +102,30 @@ describe('goal tools', () => {
       llmContent: { goal: { status: 'blocked' } },
       metadata: { goalStatus: 'blocked' },
     });
+  });
+
+  it('retries a transient GetGoal failure identified only by errno', async () => {
+    await execute('CreateGoal', { objective: 'finish the migration' });
+    const get = vi.spyOn(GoalStore.prototype, 'get').mockRejectedValueOnce(
+      Object.assign(new Error('resource temporarily unavailable'), {
+        code: 'EAGAIN',
+      })
+    );
+
+    const result = await executeToolInvocation(getTool('GetGoal').build({}), {
+      sessionId,
+      workspaceRoot,
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      llmContent: {
+        goal: {
+          objective: 'finish the migration',
+        },
+      },
+      metadata: { retriedAttempts: 1 },
+    });
+    expect(get).toHaveBeenCalledTimes(2);
   });
 });

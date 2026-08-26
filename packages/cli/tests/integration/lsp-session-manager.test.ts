@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LspSessionManager } from '../../src/lsp/LspSessionManager.js';
 import { createLspTool } from '../../src/tools/builtin/lsp/index.js';
+import { executeToolInvocation } from '../../src/tools/execution/ToolInvocationRunner.js';
 import type { ToolResult } from '../../src/tools/types/index.js';
 
 const fixture = path.resolve(import.meta.dirname, '../support/fake-lsp-server.mjs');
@@ -247,6 +248,34 @@ describe('Session-scoped LSP integration', () => {
     ]);
     await expect.poll(() => processExists(pidA)).toBe(false);
     await expect.poll(() => processExists(pidB)).toBe(false);
+  });
+
+  it('retries a transient LSP failure identified only by errno', async () => {
+    const state = await createFixture('transient-retry');
+    const manager = createManager(state, 'session-transient-retry');
+    const query = vi.spyOn(manager, 'query').mockRejectedValueOnce(
+      Object.assign(new Error('resource temporarily unavailable'), {
+        code: 'EAGAIN',
+      })
+    );
+    const tool = createLspTool(manager);
+
+    const result = await executeToolInvocation(
+      tool.build({
+        operation: 'hover',
+        filePath: state.source,
+        line: 1,
+        character: 7,
+        query: '',
+      }),
+      {}
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      metadata: { retriedAttempts: 1 },
+    });
+    expect(query).toHaveBeenCalledTimes(2);
   });
 
   it('restarts one crashed server and cancels bounded requests', async () => {
