@@ -202,6 +202,7 @@ function createTeamStatusTool(runtime: TeamRuntime, fallbackSessionId: string) {
     displayName: 'Team Status',
     kind: ToolKind.ReadOnly,
     isConcurrencySafe: true,
+    isRetrySafe: true,
     schema: Type.Object({
       team_name: Type.Optional(
         Type.String({ description: 'Team name; omit to list owned teams' })

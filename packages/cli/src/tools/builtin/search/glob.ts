@@ -47,6 +47,7 @@ export const globTool = createTool({
   displayName: 'File Pattern Match',
   kind: ToolKind.ReadOnly,
   isConcurrencySafe: true, // 纯读操作，无副作用
+  isRetrySafe: true,
 
   schema: Type.Object({
     pattern: ToolSchemas.glob({

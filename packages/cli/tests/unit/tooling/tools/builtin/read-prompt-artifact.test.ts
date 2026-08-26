@@ -1,13 +1,14 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   getUserPromptArtifactReference,
   UserPromptArtifactStore,
 } from '../../../../../src/agent/runtime/UserPromptArtifactStore.js';
 import { MAX_INLINE_USER_MESSAGE_TEXT_BYTES } from '../../../../../src/api/attachmentLimits.js';
 import { createReadPromptArtifactTool } from '../../../../../src/tools/builtin/system/readPromptArtifact.js';
+import { executeToolInvocation } from '../../../../../src/tools/execution/ToolInvocationRunner.js';
 
 describe('ReadPromptArtifact', () => {
   let storageRoot: string;
@@ -77,5 +78,38 @@ describe('ReadPromptArtifact', () => {
       },
     });
     expect(String(result.llmContent)).not.toContain(storageRoot);
+  });
+
+  it('retries a transient store read without exposing its internal message', async () => {
+    const artifactId = '1'.repeat(64);
+    const read = vi
+      .spyOn(store, 'read')
+      .mockRejectedValueOnce(
+        Object.assign(new Error(`EMFILE: ${storageRoot}/private.txt`), {
+          code: 'EMFILE',
+        })
+      )
+      .mockResolvedValueOnce({
+        id: artifactId,
+        sha256: artifactId,
+        sizeBytes: 2,
+        offset: 0,
+        returnedBytes: 2,
+        content: 'ok',
+      });
+    const tool = createReadPromptArtifactTool(store);
+
+    const result = await executeToolInvocation(
+      tool.build({ artifact_id: artifactId, offset: 0, limit: 1024 }),
+      {}
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      llmContent: 'ok\n\n[End of prompt artifact]',
+      metadata: { retriedAttempts: 1 },
+    });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(result)).not.toContain(storageRoot);
   });
 });

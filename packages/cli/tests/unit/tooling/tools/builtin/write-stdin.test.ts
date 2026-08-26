@@ -31,6 +31,10 @@ describe('WriteStdin tool', () => {
     shellManagerMocks.writeInput.mockReset();
   });
 
+  it('is not retry-safe because stdin writes are externally visible', async () => {
+    expect((await getWriteStdinTool()).isRetrySafe).toBe(false);
+  });
+
   it('writes input to a shell owned by the active session', async () => {
     shellManagerMocks.writeInput.mockResolvedValue({
       success: true,

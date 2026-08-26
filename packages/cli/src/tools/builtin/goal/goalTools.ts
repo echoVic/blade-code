@@ -37,6 +37,7 @@ export function createGoalTools(options: GoalToolOptions) {
     displayName: 'Get Goal',
     kind: ToolKind.ReadOnly,
     isConcurrencySafe: true,
+    isRetrySafe: true,
     schema: Type.Object({}),
     description: {
       short: 'Read the persisted goal for the current session',

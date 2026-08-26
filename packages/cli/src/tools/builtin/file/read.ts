@@ -22,6 +22,7 @@ export const readTool = createTool({
   displayName: 'File Read',
   kind: ToolKind.ReadOnly,
   isConcurrencySafe: true, // 纯读操作，无副作用
+  isRetrySafe: true,
 
   schema: Type.Object({
     file_path: ToolSchemas.filePath({
@@ -101,13 +102,24 @@ export const readTool = createTool({
         if (!exists) {
           throw new Error('File not found');
         }
-      } catch (_error) {
+      } catch (error) {
+        const code =
+          error instanceof Error &&
+          'code' in error &&
+          typeof (error as NodeError).code === 'string'
+            ? (error as NodeError).code
+            : undefined;
+        const message =
+          code && code !== 'ENOENT'
+            ? `Unable to access file: ${file_path}`
+            : `File not found: ${file_path}`;
         return {
           success: false,
-          llmContent: `File not found: ${file_path}`,
+          llmContent: message,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
-            message: `File not found: ${file_path}`,
+            message,
+            code,
           },
         };
       }

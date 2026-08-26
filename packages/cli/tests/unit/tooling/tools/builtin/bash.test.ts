@@ -41,6 +41,7 @@ describe('Bash Tool', () => {
 
   it('shares batch execution while retaining execute-bucket limits', () => {
     expect(bashTool.isConcurrencySafe).toBe(false);
+    expect(bashTool.isRetrySafe).toBe(false);
     expect(bashTool.parallelism).toBe('shared');
   });
 

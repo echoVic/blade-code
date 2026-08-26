@@ -19,6 +19,7 @@ export const toolSearchTool = createTool({
   displayName: 'Tool Search',
   kind: ToolKind.ReadOnly,
   isConcurrencySafe: true,
+  isRetrySafe: true,
 
   schema: Type.Object({
     query: Type.String({

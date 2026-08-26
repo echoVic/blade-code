@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setFileSystemService } from '../../../../../../src/services/FileSystemService.js';
 import { FileAccessTracker } from '../../../../../../src/tools/builtin/file/FileAccessTracker.js';
 import { readTool } from '../../../../../../src/tools/builtin/file/read.js';
+import { executeToolInvocation } from '../../../../../../src/tools/execution/ToolInvocationRunner.js';
 import { createMockFileSystem } from '../../../../../support/mocks/mockFileSystem.js';
 
 // Mock AcpServiceContext at module level
@@ -83,6 +84,33 @@ describe('ReadTool', () => {
   });
 
   describe('基本功能', () => {
+    it('应该通过执行管线重试存在性检查的瞬态失败', async () => {
+      const filePath = '/tmp/transient.txt';
+      mockFS.setFile(filePath, 'recovered');
+      const exists = mockFS.exists.bind(mockFS);
+      const existsSpy = vi
+        .spyOn(mockFS, 'exists')
+        .mockRejectedValueOnce(
+          Object.assign(new Error('resource busy'), { code: 'EBUSY' })
+        )
+        .mockImplementation(exists);
+
+      const result = await executeToolInvocation(
+        readTool.build({ file_path: filePath, encoding: 'utf8' }),
+        {
+          sessionId: 'test-session',
+          signal: new AbortController().signal,
+        }
+      );
+
+      expect(result).toMatchObject({
+        success: true,
+        llmContent: 'recovered',
+        metadata: { retriedAttempts: 1 },
+      });
+      expect(existsSpy).toHaveBeenCalledTimes(2);
+    });
+
     it('应该能够读取文本文件', async () => {
       const filePath = '/tmp/test.txt';
       const content = 'Hello, World!';

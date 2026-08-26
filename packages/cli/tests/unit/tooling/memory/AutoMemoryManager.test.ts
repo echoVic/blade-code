@@ -168,6 +168,12 @@ describe('AutoMemoryManager', () => {
       expect(topics[0].size).toBeGreaterThan(0);
       expect(topics[0].lastModified).toBeInstanceOf(Date);
     });
+
+    it('should propagate non-ENOENT filesystem failures', async () => {
+      await fs.writeFile(memDir, 'not a directory', 'utf-8');
+
+      await expect(manager.listTopics()).rejects.toMatchObject({ code: 'EEXIST' });
+    });
   });
 
   describe('deleteTopic', () => {

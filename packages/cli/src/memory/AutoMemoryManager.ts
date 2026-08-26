@@ -180,8 +180,9 @@ export class AutoMemoryManager {
       }
 
       return topics.sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime());
-    } catch {
-      return [];
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
     }
   }
 

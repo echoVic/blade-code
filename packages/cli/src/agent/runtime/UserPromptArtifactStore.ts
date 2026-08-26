@@ -21,6 +21,7 @@ const PROMPT_ARTIFACT_VERSION = 1;
 const PROMPT_ARTIFACT_ID_PATTERN = /^[a-f0-9]{64}$/;
 const PROMPT_ARTIFACT_FILE_PATTERN = /^[a-f0-9]{64}\.txt$/;
 const MAX_USER_PROMPT_CONTENT_LAYOUT_ENTRIES = 64;
+const RETRYABLE_ARTIFACT_ERROR_CODES = new Set(['EBUSY', 'EAGAIN', 'EMFILE', 'ENFILE']);
 const PROMPT_ARTIFACT_ELISION =
   '\n\n...[middle omitted; read the private prompt artifact for the complete request]...\n\n';
 
@@ -72,14 +73,22 @@ function isNodeError(error: unknown, code: string): boolean {
 }
 
 function safeArtifactError(error: unknown, fallback: string): Error {
-  if (
+  const safeError =
     error instanceof Error &&
     (error.message.startsWith('Prompt artifact') ||
       error.message.startsWith('User prompt'))
-  ) {
-    return error;
+      ? error
+      : new Error(fallback);
+  const code =
+    error instanceof Error &&
+    'code' in error &&
+    typeof (error as NodeJS.ErrnoException).code === 'string'
+      ? (error as NodeJS.ErrnoException).code
+      : undefined;
+  if (code && RETRYABLE_ARTIFACT_ERROR_CODES.has(code)) {
+    (safeError as NodeJS.ErrnoException).code = code;
   }
-  return new Error(fallback);
+  return safeError;
 }
 
 function isPrivate(stats: Stats): boolean {
@@ -604,7 +613,10 @@ export class UserPromptArtifactStore {
   }
 
   private async initialize(): Promise<void> {
-    this.initializePromise ??= this.scan();
+    this.initializePromise ??= this.scan().catch((error) => {
+      this.initializePromise = undefined;
+      throw error;
+    });
     return this.initializePromise;
   }
 

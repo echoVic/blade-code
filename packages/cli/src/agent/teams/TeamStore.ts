@@ -109,10 +109,8 @@ export class TeamStore {
       const raw = await fs.readFile(this.getTeamFilePath(name), 'utf-8');
       return normalizeTeam(JSON.parse(raw));
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.warn(`Failed to load team ${name}:`, error);
-      }
-      return undefined;
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
     }
   }
 
@@ -141,10 +139,8 @@ export class TeamStore {
       }
       return teams.sort((a, b) => b.updatedAt - a.updatedAt);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.warn('Failed to list teams:', error);
-      }
-      return [];
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
     }
   }
 

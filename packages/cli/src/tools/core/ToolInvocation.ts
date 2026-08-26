@@ -14,7 +14,8 @@ export class UnifiedToolInvocation<TParams = unknown>
       context: ExecutionContext
     ) => Promise<ToolResult>,
     private readonly descriptionFn?: (params: TParams) => string,
-    private readonly affectedPathsFn?: (params: TParams) => string[]
+    private readonly affectedPathsFn?: (params: TParams) => string[],
+    public readonly isRetrySafe = false
   ) {}
 
   /**

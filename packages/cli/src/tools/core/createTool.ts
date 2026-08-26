@@ -28,6 +28,9 @@ export function createTool<T extends TSchema>(
     // 控制同路径文件锁和流式预启动；批内 gate 由 parallelism 独立控制
     isConcurrencySafe: config.isConcurrencySafe ?? false,
 
+    // 只有显式声明的幂等调用才能在未知完成状态下重放
+    isRetrySafe: config.isRetrySafe ?? false,
+
     parallelism:
       config.parallelism ?? (config.isConcurrencySafe ? 'shared' : 'exclusive'),
 
@@ -79,6 +82,7 @@ export function createTool<T extends TSchema>(
         version: config.version || '1.0.0',
         category: config.category,
         tags: config.tags || [],
+        isRetrySafe: config.isRetrySafe ?? false,
         parallelism:
           config.parallelism ?? (config.isConcurrencySafe ? 'shared' : 'exclusive'),
         description: config.description,
@@ -97,7 +101,8 @@ export function createTool<T extends TSchema>(
         validatedParams,
         config.execute,
         undefined,
-        config.affectedPaths
+        config.affectedPaths,
+        config.isRetrySafe ?? false
       );
     },
 

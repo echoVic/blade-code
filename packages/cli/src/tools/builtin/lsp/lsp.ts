@@ -25,6 +25,7 @@ export function createLspTool(manager: LspSessionManager) {
     kind: ToolKind.ReadOnly,
     strict: true,
     isConcurrencySafe: true,
+    isRetrySafe: true,
     parallelism: 'shared',
     schema: Type.Object({
       operation: StringEnum(OPERATIONS, {

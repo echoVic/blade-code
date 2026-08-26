@@ -1,7 +1,7 @@
 import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   collectUserPromptArtifactIds,
   getUserPromptArtifactReference,
@@ -169,6 +169,46 @@ describe('UserPromptArtifactStore', () => {
     await expect(
       store.restore(materialized.content, materialized.metadata)
     ).rejects.toThrow();
+  });
+
+  it('preserves only a retryable errno when sanitizing artifact failures', async () => {
+    const readVerified = vi
+      .spyOn(
+        store as unknown as {
+          readVerified(id: string, expectedSize?: number): Promise<Buffer>;
+        },
+        'readVerified'
+      )
+      .mockRejectedValueOnce(
+        Object.assign(new Error(`EMFILE: ${storageRoot}/private.txt`), {
+          code: 'EMFILE',
+        })
+      );
+
+    await expect(store.read('0'.repeat(64))).rejects.toMatchObject({
+      message: 'Prompt artifact is unavailable or invalid',
+      code: 'EMFILE',
+    });
+    expect(readVerified).toHaveBeenCalledOnce();
+  });
+
+  it('does not retain a rejected initialization attempt', async () => {
+    const internals = store as unknown as {
+      initialize(): Promise<void>;
+      scan(): Promise<void>;
+    };
+    const scan = vi
+      .spyOn(internals, 'scan')
+      .mockRejectedValueOnce(
+        Object.assign(new Error('resource temporarily unavailable'), {
+          code: 'EAGAIN',
+        })
+      )
+      .mockResolvedValueOnce();
+
+    await expect(internals.initialize()).rejects.toMatchObject({ code: 'EAGAIN' });
+    await expect(internals.initialize()).resolves.toBeUndefined();
+    expect(scan).toHaveBeenCalledTimes(2);
   });
 
   it('rejects malformed artifact metadata instead of treating a preview as complete', async () => {

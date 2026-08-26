@@ -51,8 +51,9 @@ export class LocalFileSystemService implements FileSystemService {
     try {
       await fs.access(filePath);
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw error;
     }
   }
 
@@ -69,8 +70,9 @@ export class LocalFileSystemService implements FileSystemService {
         isFile: stats.isFile(),
         mtime: stats.mtime,
       };
-    } catch {
-      return null;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
     }
   }
 

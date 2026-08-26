@@ -130,6 +130,7 @@ function createTaskGetTool(opts: { sessionId: string; configDir: string }) {
     displayName: 'Task Get',
     kind: ToolKind.ReadOnly,
     isConcurrencySafe: true,
+    isRetrySafe: true,
     schema: Type.Object({
       taskId: Type.String({
         minLength: 1,
@@ -276,6 +277,7 @@ function createTaskListTool(opts: { sessionId: string; configDir: string }) {
     displayName: 'Task List',
     kind: ToolKind.ReadOnly,
     isConcurrencySafe: true,
+    isRetrySafe: true,
     schema: Type.Object({}),
     description: {
       short: 'List all tasks',

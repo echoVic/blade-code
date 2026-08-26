@@ -13,6 +13,7 @@ export function createReadPromptArtifactTool(store: UserPromptArtifactStore) {
     displayName: 'Read Prompt Artifact',
     kind: ToolKind.ReadOnly,
     isConcurrencySafe: true,
+    isRetrySafe: true,
 
     schema: Type.Object({
       artifact_id: Type.String({
@@ -74,14 +75,21 @@ export function createReadPromptArtifactTool(store: UserPromptArtifactStore) {
             next_offset: chunk.nextOffset,
           },
         };
-      } catch {
+      } catch (error) {
         const message = 'Prompt artifact is unavailable or invalid';
+        const code =
+          error instanceof Error &&
+          'code' in error &&
+          typeof (error as NodeJS.ErrnoException).code === 'string'
+            ? (error as NodeJS.ErrnoException).code
+            : undefined;
         return {
           success: false,
           llmContent: `Prompt artifact read failed: ${message}`,
           error: {
             type: ToolErrorType.EXECUTION_ERROR,
             message,
+            code,
           },
           metadata: {
             summary: 'Prompt artifact read failed',

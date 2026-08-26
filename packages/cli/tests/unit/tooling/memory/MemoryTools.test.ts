@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AutoMemoryManager } from '../../../../src/memory/AutoMemoryManager.js';
 import { memoryReadTool } from '../../../../src/tools/builtin/memory/MemoryReadTool.js';
 import { memoryWriteTool } from '../../../../src/tools/builtin/memory/MemoryWriteTool.js';
+import { executeToolInvocation } from '../../../../src/tools/execution/ToolInvocationRunner.js';
 import type { ExecutionContext } from '../../../../src/tools/types/index.js';
 
 // Mock getProjectStoragePath to keep everything in temp dir (avoid sandbox restrictions)
@@ -36,6 +37,7 @@ describe('MemoryWriteTool', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
@@ -173,6 +175,7 @@ describe('MemoryReadTool', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
@@ -212,6 +215,31 @@ describe('MemoryReadTool', () => {
     const result = await memoryReadTool.execute({ topic: '_list' }, undefined, context);
     expect(result.success).toBe(true);
     expect(result.llmContent).toContain('No memory files found');
+  });
+
+  it('should retry a transient topic listing failure', async () => {
+    const listTopics = vi
+      .spyOn(AutoMemoryManager.prototype, 'listTopics')
+      .mockRejectedValueOnce(
+        Object.assign(new Error('too many open files'), { code: 'EMFILE' })
+      )
+      .mockResolvedValueOnce([]);
+
+    const result = await executeToolInvocation(
+      memoryReadTool.build({ topic: '_list' }),
+      {
+        workspaceRoot: tmpDir,
+      }
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      metadata: {
+        retriedAttempts: 1,
+        summary: '无记忆文件',
+      },
+    });
+    expect(listTopics).toHaveBeenCalledTimes(2);
   });
 
   it('should read MEMORY.md index', async () => {

@@ -49,6 +49,7 @@ import { TeamTaskGraph } from '../../../../../src/agent/teams/TeamTaskGraph';
 import { Bus } from '../../../../../src/server/bus';
 import { getBuiltinTools } from '../../../../../src/tools/builtin/index';
 import { createTeamTools } from '../../../../../src/tools/builtin/team/index';
+import { executeToolInvocation } from '../../../../../src/tools/execution/ToolInvocationRunner';
 
 async function createTempConfigDir() {
   return fs.mkdtemp(path.join(tmpdir(), 'blade-team-tools-test-'));
@@ -104,6 +105,52 @@ describe('agent team tools', () => {
         name: 'stateless-team',
       });
     } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  it('propagates non-ENOENT team listing failures', async () => {
+    const configDir = await createTempConfigDir();
+
+    try {
+      await fs.writeFile(path.join(configDir, 'teams'), 'not a directory');
+
+      await expect(TeamStore.getInstance(configDir).listTeams()).rejects.toMatchObject({
+        code: 'ENOTDIR',
+      });
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  it('retries a transient TeamStatus listing failure', async () => {
+    const configDir = await createTempConfigDir();
+    const listTeams = vi
+      .spyOn(TeamStore.prototype, 'listTeams')
+      .mockRejectedValueOnce(
+        Object.assign(new Error('too many open files'), { code: 'EMFILE' })
+      )
+      .mockResolvedValueOnce([]);
+
+    try {
+      const result = await executeToolInvocation(
+        getTool(configDir, 'TeamStatus').build({}),
+        {
+          sessionId: 'session-a',
+          workspaceRoot: configDir,
+        }
+      );
+
+      expect(result).toMatchObject({
+        success: true,
+        metadata: {
+          retriedAttempts: 1,
+          summary: '暂无 Agent Teams',
+        },
+      });
+      expect(listTeams).toHaveBeenCalledTimes(2);
+    } finally {
+      listTeams.mockRestore();
       await fs.rm(configDir, { recursive: true, force: true });
     }
   });

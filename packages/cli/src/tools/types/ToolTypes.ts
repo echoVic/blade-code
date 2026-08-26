@@ -21,6 +21,8 @@ export interface NodeError extends Error {
  * - ReadOnly: 只读操作，无副作用（Read, Glob, Grep, WebFetch, WebSearch, TaskOutput, TaskCreate/TaskGet/TaskUpdate/TaskList, Plan 工具等）
  * - Write: 文件写入操作（Edit, Write, NotebookEdit）
  * - Execute: 命令执行，可能有副作用（Bash, KillShell, Task, Skill, SlashCommand）
+ *
+ * ToolKind 是权限分类，不代表调用可安全重试；重放能力必须通过 isRetrySafe 单独声明。
  */
 export enum ToolKind {
   ReadOnly = 'readonly',
@@ -473,6 +475,8 @@ export interface FunctionDeclaration {
 export interface ToolInvocation<TParams = unknown, TResult = ToolResult> {
   readonly toolName: string;
   readonly params: TParams;
+  /** True only when replaying after an indeterminate transient failure is safe. */
+  readonly isRetrySafe?: boolean;
 
   getDescription(): string;
   getAffectedPaths(): string[];
@@ -516,6 +520,8 @@ export interface ToolConfig<TSchema = unknown, TParams = unknown> {
   kind: ToolKind;
   /** 是否可与同批其他并发安全工具共享执行（可选，默认 false） */
   isConcurrencySafe?: boolean;
+  /** 瞬态异常后是否可安全重放（可选，默认 false） */
+  isRetrySafe?: boolean;
   /** 批内调度模式；shared 仍可由文件锁或 kind 配额进一步限流 */
   parallelism?: 'shared' | 'exclusive';
   /** 是否启用 OpenAI Structured Outputs（可选，默认 false） */
@@ -577,6 +583,8 @@ export interface Tool<TParams = unknown> {
   readonly kind: ToolKind;
   /** 是否支持并发安全 */
   readonly isConcurrencySafe: boolean;
+  /** 瞬态异常后是否可安全重放 */
+  readonly isRetrySafe?: boolean;
   /** 是否可与同批其他 shared 工具并发 */
   readonly parallelism?: 'shared' | 'exclusive';
   /** 是否启用 OpenAI Structured Outputs */

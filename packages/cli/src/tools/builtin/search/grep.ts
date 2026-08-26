@@ -629,6 +629,7 @@ export const grepTool = createTool({
   displayName: '内容搜索',
   kind: ToolKind.ReadOnly,
   isConcurrencySafe: true, // 纯读操作，无副作用
+  isRetrySafe: true,
 
   schema: Type.Object({
     pattern: ToolSchemas.pattern({
