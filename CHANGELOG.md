@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.10.95] - 2026-08-26
+
+### Added
+- Web now opens the Browser panel automatically when the Agent uses a native
+  Browser tool and switches Test mode to a read-only Agent view
+- Agent Browser interactions now project bounded target geometry so the Web panel
+  can animate a visible pointer and click feedback over the latest screenshot
+
+### Security
+- Agent browser observation uses an origin-checked, screenshot-only route and does
+  not issue snapshots, expose page content, or grant the Web UI control of the
+  Agent BrowserContext
+
+### Tests
+- Extended the real DeepSeek production Web trajectory to require automatic panel
+  opening, Agent screenshots, pointer feedback, and disabled user controls
+
 ## [0.10.94] - 2026-08-26
 
 ### Fixed

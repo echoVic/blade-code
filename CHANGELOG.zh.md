@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.10.95] - 2026-08-26
+
+### 新增
+- Agent 调用原生 Browser Tool 时，Web 会自动打开 Browser 面板，并将 Test 模式切换到
+  只读的 Agent 视图
+- Agent Browser 交互会投影有界的目标几何信息，Web 面板可在最新截图上显示鼠标移动与
+  点击反馈
+
+### 安全
+- Agent 浏览器观察只使用校验 origin 的只读截图接口，不签发新快照、不暴露页面内容，
+  也不把 Agent BrowserContext 的控制权交给 Web UI
+
+### 测试
+- 扩展真实 DeepSeek production Web 轨迹，强制验证面板自动打开、Agent 截图、鼠标反馈
+  以及用户控制禁用状态
+
 ## [0.10.94] - 2026-08-26
 
 ### 修复
