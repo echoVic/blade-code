@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.94] - 2026-08-26
+
+### Fixed
+- Preserved the current Web task transcript when stopping a run by deferring
+  authoritative history resync until the server reaches its stable idle state
+
 ## [0.10.93] - 2026-08-26
 
 ### Fixed
