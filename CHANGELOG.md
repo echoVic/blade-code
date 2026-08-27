@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.100] - 2026-08-27
+
+### Fixed
+- Goal completion verification now treats the host-accepted
+  `verifying`/`pending` candidate as authoritative evidence that
+  `UpdateGoal complete` was submitted, preventing a circular requirement for
+  `complete` or PASS before the verifier can issue its own verdict
+- The candidate fact remains control-plane-only: verifiers must still prove every
+  requested artifact, test, command, and observable outcome independently
+
+### Tests
+- Tightened the real DeepSeek premature-stop recovery trajectory to require the
+  first completion candidate to PASS with no intermediate FAIL/PARTIAL verdict,
+  and qualified direct Runtime, verifier feedback, production Web, and ACP paths
+
 ## [0.10.99] - 2026-08-27
 
 ### Added

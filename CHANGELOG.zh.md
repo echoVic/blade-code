@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.100] - 2026-08-27
+
+### 修复
+- Goal 完成验证现在把宿主已接受的 `verifying`/`pending` candidate 视为
+  `UpdateGoal complete` 已提交的权威证据，避免 verifier 在给出 verdict 前反向要求
+  Goal 已经 `complete` 或已有 PASS 的循环依赖
+- candidate 事实仅证明控制面动作；verifier 仍必须独立验证每项交付物、测试、命令和
+  用户可观察结果
+
+### 测试
+- 收紧真实 DeepSeek premature-stop 恢复轨迹，要求首次 completion candidate 直接
+  PASS，且不得出现中间 FAIL/PARTIAL verdict；同时覆盖直接 Runtime、verifier 反馈、
+  production Web 和 ACP 路径
+
 ## [0.10.99] - 2026-08-27
 
 ### 新增
