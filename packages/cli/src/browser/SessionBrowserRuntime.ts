@@ -1603,7 +1603,8 @@ export class SessionBrowserRuntime {
       await state.page.title().catch(() => ''),
       MAX_BROWSER_TITLE_BYTES
     );
-    const viewport = state.page.viewportSize();
+    const viewport =
+      typeof state.page.viewportSize === 'function' ? state.page.viewportSize() : null;
     const record = this.snapshots.issue({
       pageId: state.id,
       pageGeneration: state.generation,
