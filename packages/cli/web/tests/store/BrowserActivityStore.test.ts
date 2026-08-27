@@ -73,4 +73,32 @@ describe('BrowserActivityStore', () => {
       },
     });
   });
+
+  it('projects a screenshot-authorized coordinate click', () => {
+    useBrowserActivityStore.getState().completeAgentActivity(ref, {
+      toolCallId: 'tool-coordinate',
+      toolName: 'BrowserInteract',
+      success: true,
+      metadata: {
+        browser: {
+          action: 'BrowserInteract',
+          status: 'ok',
+          pageId: 'browser_page_1',
+          interaction: {
+            action: 'click_at',
+            viewport: { width: 1440, height: 900 },
+            targetBox: { x: 640, y: 420, width: 1, height: 1 },
+          },
+        },
+      },
+    });
+
+    expect(useBrowserActivityStore.getState().agentActivity).toMatchObject({
+      interaction: {
+        action: 'click_at',
+        targetBox: { x: 640, y: 420, width: 1, height: 1 },
+      },
+      pointerRevision: 1,
+    });
+  });
 });

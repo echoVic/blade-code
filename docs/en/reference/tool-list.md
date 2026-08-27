@@ -194,8 +194,10 @@ Web search with multi-provider automatic failover (Exa → DuckDuckGo → SearXN
 
 ## Browser Automation Tools
 
-Use the native Browser Tool when a task must run JavaScript, operate forms, inspect
-DOM state, or verify a UI workflow. Prefer `WebSearch` for indexed discovery and
+The native Browser Tool is the default path for Web/UI development, interaction,
+and visual verification. One-off checks should not be replaced with temporary
+Playwright or Puppeteer scripts; repository-owned browser tests remain appropriate
+for durable regression coverage. Prefer `WebSearch` for indexed discovery and
 `WebFetch` for static pages or APIs. Install the pinned Chromium explicitly before
 first use:
 
@@ -218,15 +220,22 @@ a new snapshot or transfer control.
 |------|------|------------|
 | `BrowserNavigate` | Execute | `goto`, `back`, `forward`, `reload` |
 | `BrowserSnapshot` | ReadOnly | Produce a bounded ARIA snapshot with opaque refs |
-| `BrowserInteract` | Execute | `click`, `hover`, `fill`, `type`, `press`, `select`, `check`, `uncheck`, `scroll` |
+| `BrowserInteract` | Execute | `click`, `click_at`, `hover`, `fill`, `type`, `press`, `select`, `check`, `uncheck`, `scroll` |
 | `BrowserWait` | ReadOnly | Wait for load, exact text, exact URL, ref state, or a short delay |
 | `BrowserInspect` | ReadOnly | Inspect console, page errors, network, snapshot text, or save a viewport PNG |
 | `BrowserPage` | Execute | `list`, `open`, `select`, `close`, `reset` |
 
 `BrowserSnapshot` returns `pageId`, `snapshotId`, a canonical `origin`, and snapshot
-refs. Except for page-scoped `scroll`, interaction requires the latest
+refs. Normal interaction requires the latest
 `pageId + snapshotId + ref + expectedOrigin`. A page or DOM change makes old refs
-fail with `browser_snapshot_stale`; the Agent must capture a new snapshot.
+fail with `browser_snapshot_stale`; the Agent must capture a new snapshot. When an
+ARIA snapshot cannot accurately represent a visible target, an image-capable model
+can view a `BrowserInspect screenshot` result and use `click_at` with that page's
+`screenshotId` and image coordinates. Before clicking, the Runtime captures the
+viewport again and requires the page generation, origin, viewport, and pixel hash
+to match. Frame regions and stale screenshots fail closed. Screenshot pixels are
+temporary model context and are excluded from public tool results and the durable
+transcript.
 New origins in `BrowserNavigate` and the current origin in `BrowserInteract` pass
 through normal Execute permission checks. Back, forward, and reload cannot authorize
 a new origin.

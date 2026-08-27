@@ -100,6 +100,36 @@ describe('BrowserRoutes', () => {
       expect.objectContaining({ ref: 'e1', action: { kind: 'click' } })
     );
 
+    const coordinateInteraction = await app.request(
+      '/session-1/browser/interact?projectPath=%2Fproject',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          pageId: 'browser_page_1',
+          snapshotId: 'browser_snapshot_1',
+          expectedOrigin: 'https://example.com:443',
+          action: {
+            kind: 'click_at',
+            screenshotId: 'browser_screenshot_1',
+            x: 640,
+            y: 420,
+          },
+        }),
+      }
+    );
+    expect(coordinateInteraction.status).toBe(200);
+    expect(runtime.interact).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        action: {
+          kind: 'click_at',
+          screenshotId: 'browser_screenshot_1',
+          x: 640,
+          y: 420,
+        },
+      })
+    );
+
     const inspect = await app.request(
       '/session-1/browser/inspect?projectPath=%2Fproject&target=network&limit=20'
     );
@@ -157,6 +187,26 @@ describe('BrowserRoutes', () => {
       }
     );
     expect(invalidResponse.status).toBe(400);
+
+    const invalidCoordinate = await invalid.app.request(
+      '/session-1/browser/interact?projectPath=%2Fproject',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          pageId: 'browser_page_1',
+          snapshotId: 'browser_snapshot_1',
+          expectedOrigin: 'https://example.com:443',
+          action: {
+            kind: 'click_at',
+            screenshotId: 'browser_screenshot_1',
+            x: 10_001,
+            y: 420,
+          },
+        }),
+      }
+    );
+    expect(invalidCoordinate.status).toBe(400);
 
     const unavailable = harness({
       snapshot: vi

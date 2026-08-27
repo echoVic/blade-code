@@ -1,3 +1,4 @@
+import { MAX_BROWSER_COORDINATE, MAX_BROWSER_ID_BYTES } from '../browser/constants.js';
 import type {
   BrowserAction,
   BrowserDiagnosticEntry,
@@ -22,6 +23,19 @@ export const BrowserActionSchema = Runtime(
     Type.Object(
       {
         kind: Type.Literal('click'),
+        dialog: Type.Optional(BrowserDialogActionSchema),
+      },
+      { additionalProperties: false }
+    ),
+    Type.Object(
+      {
+        kind: Type.Literal('click_at'),
+        screenshotId: Type.String({
+          minLength: 1,
+          maxLength: MAX_BROWSER_ID_BYTES,
+        }),
+        x: Type.Integer({ minimum: 0, maximum: MAX_BROWSER_COORDINATE }),
+        y: Type.Integer({ minimum: 0, maximum: MAX_BROWSER_COORDINATE }),
         dialog: Type.Optional(BrowserDialogActionSchema),
       },
       { additionalProperties: false }

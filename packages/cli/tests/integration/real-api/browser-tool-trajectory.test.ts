@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -130,11 +130,21 @@ async function writeRuntimeConfig(
 
 function assertBrowserToolTrace(
   trace: ReturnType<typeof extractDurableToolTrace>,
-  fixtureOrigin: string
+  fixtureOrigin: string,
+  options: { strictToolSearch: boolean }
 ): void {
   const names = trace.map((record) => record.toolName);
   expect(names.filter((name) => name === 'ToolSearch')).toHaveLength(1);
-  const missing = expectedTools.filter((name) => !names.includes(name));
+  const requiredTools = options.strictToolSearch
+    ? expectedTools
+    : ([
+        'ToolSearch',
+        'BrowserNavigate',
+        'BrowserInteract',
+        'BrowserInspect',
+        'BrowserPage',
+      ] as const);
+  const missing = requiredTools.filter((name) => !names.includes(name));
   if (missing.length > 0) {
     throw new Error(
       `Browser Tool trace is missing ${missing.join(', ')}; trace=${JSON.stringify(
@@ -142,8 +152,19 @@ function assertBrowserToolTrace(
       )}`
     );
   }
-  expect(new Set(names).size).toBeLessThanOrEqual(expectedTools.length);
-  expect(names.every((name) => expectedTools.includes(name as never))).toBe(true);
+  if (options.strictToolSearch) {
+    expect(new Set(names).size).toBeLessThanOrEqual(expectedTools.length);
+    expect(names.every((name) => expectedTools.includes(name as never))).toBe(true);
+  } else {
+    const adHocBrowserScripts = trace.filter(
+      (record) =>
+        record.toolName === 'Bash' &&
+        /playwright|puppeteer|chrome(?:driver)?|chromium/i.test(
+          JSON.stringify(record.input)
+        )
+    );
+    expect(adHocBrowserScripts).toEqual([]);
+  }
   const failures = trace.filter((record) => record.error !== null);
   for (const failure of failures) {
     const index = trace.indexOf(failure);
@@ -176,11 +197,13 @@ function assertBrowserToolTrace(
   }
 
   const search = trace.find((record) => record.toolName === 'ToolSearch');
-  expect(search?.input).toMatchObject({
-    query:
-      'select:BrowserNavigate,BrowserSnapshot,BrowserInteract,BrowserWait,BrowserInspect,BrowserPage',
-    max_results: 6,
-  });
+  if (options.strictToolSearch) {
+    expect(search?.input).toMatchObject({
+      query:
+        'select:BrowserNavigate,BrowserSnapshot,BrowserInteract,BrowserWait,BrowserInspect,BrowserPage',
+      max_results: 6,
+    });
+  }
   for (const navigation of trace.filter(
     (record) => record.toolName === 'BrowserNavigate'
   )) {
@@ -229,7 +252,13 @@ describe
         const storageRoot = path.join(root, 'storage');
         const workspaceInput = path.join(root, 'workspace');
         const nonce = `browser_nonce_${randomBytes(12).toString('hex')}`;
-        const fixture = await createBrowserToolFixture(nonce);
+        const defaultGuiRouting = surface === 'web';
+        const fixture = await createBrowserToolFixture(nonce, {
+          promptMode: defaultGuiRouting ? 'default-gui-routing' : 'explicit-protocol',
+        });
+        if (defaultGuiRouting) {
+          expect(fixture.prompt).not.toMatch(/Browser Tool|Playwright|Puppeteer/);
+        }
         let sessionId = `browser-tool-${surface}-${nonce}`;
         let evidence: unknown;
         try {
@@ -289,7 +318,9 @@ describe
           const transcriptPath = findSessionTranscript(storageRoot, sessionId);
           const events = readSessionEvents(transcriptPath);
           const trace = extractDurableToolTrace(events);
-          assertBrowserToolTrace(trace, fixture.origin);
+          assertBrowserToolTrace(trace, fixture.origin, {
+            strictToolSearch: !defaultGuiRouting,
+          });
           assertNoSecrets({ evidence, trace, events }, [model.apiKey]);
           expect(finalAssistantText(events)).toContain(fixture.finalMarker);
           expect(evidence).toBeTruthy();

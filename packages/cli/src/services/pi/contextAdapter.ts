@@ -79,6 +79,25 @@ async function imageContent(
   };
 }
 
+async function multimodalContent(
+  content: ContentPart[],
+  supportsImages: boolean,
+  signal?: AbortSignal
+): Promise<Array<TextContent | ImageContent>> {
+  return Promise.all(
+    content.map((part) =>
+      part.type === 'text'
+        ? Promise.resolve<TextContent>({ type: 'text', text: part.text })
+        : supportsImages
+          ? imageContent(part.image_url.url, signal)
+          : Promise.resolve<TextContent>({
+              type: 'text',
+              text: '[Image omitted: current model does not support image input]',
+            })
+    )
+  );
+}
+
 export async function createPiContext(
   messages: Message[],
   model: Model<Api>,
@@ -92,29 +111,15 @@ export async function createPiContext(
     .filter(Boolean)
     .join('\n\n');
   const contextMessages: Context['messages'] = [];
+  const supportsImages = model.input.includes('image');
 
   for (const message of messages) {
     if (message.role === 'system') continue;
     if (message.role === 'user') {
-      const supportsImages = model.input.includes('image');
       const content =
         typeof message.content === 'string'
           ? message.content
-          : await Promise.all(
-              message.content.map((part) =>
-                part.type === 'text'
-                  ? Promise.resolve<TextContent>({
-                      type: 'text',
-                      text: part.text,
-                    })
-                  : supportsImages
-                    ? imageContent(part.image_url.url, signal)
-                    : Promise.resolve<TextContent>({
-                        type: 'text',
-                        text: '[Image omitted: current model does not support image input]',
-                      })
-              )
-            );
+          : await multimodalContent(message.content, supportsImages, signal);
       contextMessages.push({ role: 'user', content, timestamp: Date.now() });
       continue;
     }
@@ -152,7 +157,10 @@ export async function createPiContext(
       role: 'toolResult',
       toolCallId: message.tool_call_id ?? '',
       toolName: message.name ?? 'unknown',
-      content: [{ type: 'text', text: textContent(message.content) }],
+      content:
+        typeof message.content === 'string'
+          ? [{ type: 'text', text: message.content }]
+          : await multimodalContent(message.content, supportsImages, signal),
       isError: false,
       timestamp: Date.now(),
     });

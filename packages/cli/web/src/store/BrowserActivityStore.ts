@@ -16,6 +16,7 @@ const BROWSER_TOOL_NAMES = new Set<BrowserToolName>([
 ]);
 const BROWSER_ACTIONS = new Set<BrowserAction['kind']>([
   'click',
+  'click_at',
   'hover',
   'fill',
   'type',

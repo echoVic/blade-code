@@ -4,7 +4,7 @@ import {
   MAX_BROWSER_FINGERPRINT_BYTES,
   MAX_BROWSER_SNAPSHOT_BYTES,
 } from './constants.js';
-import { BrowserRuntimeError } from './types.js';
+import { BrowserRuntimeError, type BrowserViewportSize } from './types.js';
 
 const REF_PATTERN = /\[ref=([a-z][a-z0-9]*)\]/g;
 const BOX_PATTERN = /\s+\[box=[^\]]*\]/g;
@@ -37,6 +37,23 @@ export interface BrowserSnapshotValidation {
   fingerprint: string;
   fingerprintExceededLimit: boolean;
   authority: BrowserSnapshotAuthorityRecord;
+}
+
+export interface BrowserScreenshotAuthorityRecord {
+  screenshotId: string;
+  pageId: string;
+  pageGeneration: number;
+  origin: string;
+  sha256: string;
+  viewport: BrowserViewportSize;
+}
+
+export interface BrowserScreenshotInput {
+  pageId: string;
+  pageGeneration: number;
+  origin: string;
+  sha256: string;
+  viewport: BrowserViewportSize;
 }
 
 interface BrowserRefFingerprint {
@@ -192,6 +209,64 @@ export class BrowserSnapshotAuthority {
         'Browser ref changed after the latest snapshot; capture a new snapshot'
       );
     }
+  }
+
+  invalidate(pageId: string): void {
+    this.latestByPage.delete(pageId);
+  }
+
+  clear(): void {
+    this.latestByPage.clear();
+  }
+}
+
+export class BrowserScreenshotAuthority {
+  private readonly latestByPage = new Map<string, BrowserScreenshotAuthorityRecord>();
+
+  issue(input: BrowserScreenshotInput): BrowserScreenshotAuthorityRecord {
+    const record: BrowserScreenshotAuthorityRecord = {
+      screenshotId: `browser_screenshot_${randomUUID()}`,
+      pageId: input.pageId,
+      pageGeneration: input.pageGeneration,
+      origin: input.origin,
+      sha256: input.sha256,
+      viewport: { ...input.viewport },
+    };
+    this.latestByPage.set(input.pageId, record);
+    return record;
+  }
+
+  validate(
+    input: BrowserScreenshotInput & { screenshotId: string }
+  ): BrowserScreenshotAuthorityRecord {
+    const authority = this.latestByPage.get(input.pageId);
+    if (
+      !authority ||
+      authority.screenshotId !== input.screenshotId ||
+      authority.pageGeneration !== input.pageGeneration ||
+      authority.origin !== input.origin
+    ) {
+      throw new BrowserRuntimeError(
+        'browser_snapshot_stale',
+        'Browser screenshot is stale; capture a new screenshot before coordinate interaction'
+      );
+    }
+    if (
+      authority.viewport.width !== input.viewport.width ||
+      authority.viewport.height !== input.viewport.height
+    ) {
+      throw new BrowserRuntimeError(
+        'browser_snapshot_stale',
+        'Browser screenshot viewport changed; capture a new screenshot before coordinate interaction'
+      );
+    }
+    if (authority.sha256 !== input.sha256) {
+      throw new BrowserRuntimeError(
+        'browser_snapshot_stale',
+        'Browser screenshot pixels changed; capture a new screenshot before coordinate interaction'
+      );
+    }
+    return authority;
   }
 
   invalidate(pageId: string): void {

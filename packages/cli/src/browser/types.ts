@@ -118,8 +118,10 @@ export interface BrowserInspectResult {
   entries?: BrowserDiagnosticEntry[];
   matches?: string[];
   snapshotId?: string;
+  screenshotId?: string;
   origin?: string;
   url?: string;
+  viewport?: BrowserViewportSize;
   artifact?: BrowserScreenshotArtifact;
   truncated: boolean;
 }
@@ -146,6 +148,13 @@ export interface BrowserDialogAction {
 
 export type BrowserAction =
   | { kind: 'click'; dialog?: BrowserDialogAction }
+  | {
+      kind: 'click_at';
+      screenshotId: string;
+      x: number;
+      y: number;
+      dialog?: BrowserDialogAction;
+    }
   | { kind: 'hover' }
   | { kind: 'fill'; value: string }
   | { kind: 'type'; value: string }

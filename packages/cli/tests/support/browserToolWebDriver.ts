@@ -73,7 +73,8 @@ async function waitForMarker(input: {
       .locator('[data-chat-role="assistant"]')
       .filter({ hasText: input.marker })
       .last();
-    if ((await assistant.count()) > 0 && (await assistant.isVisible())) return;
+    const markerVisible =
+      (await assistant.count()) > 0 && (await assistant.isVisible());
     const response = await fetch(
       `${input.origin}/sessions/${encodeURIComponent(
         input.sessionId
@@ -81,6 +82,7 @@ async function waitForMarker(input: {
     );
     if (response.ok) {
       lastStatus = ((await response.json()) as { status?: unknown }).status;
+      if (markerVisible && lastStatus === 'completed') return;
       if (
         lastStatus === 'failed' ||
         lastStatus === 'cancelled' ||

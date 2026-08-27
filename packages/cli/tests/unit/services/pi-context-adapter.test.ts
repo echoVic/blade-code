@@ -63,6 +63,42 @@ describe('createPiContext image capabilities', () => {
     });
   });
 
+  it('passes ephemeral tool-result screenshots only to vision models', async () => {
+    const toolResult: Message = {
+      role: 'tool',
+      tool_call_id: 'browser-call',
+      name: 'BrowserInspect',
+      content: [
+        { type: 'text', text: 'Fresh Browser screenshot' },
+        {
+          type: 'image_url',
+          image_url: { url: 'data:image/png;base64,browser-image' },
+        },
+      ],
+    };
+
+    const vision = await createPiContext([toolResult], model(['text', 'image']));
+    const textOnly = await createPiContext([toolResult], model(['text']));
+
+    expect(vision.messages[0]).toMatchObject({
+      role: 'toolResult',
+      content: [
+        { type: 'text', text: 'Fresh Browser screenshot' },
+        { type: 'image', mimeType: 'image/png', data: 'browser-image' },
+      ],
+    });
+    expect(textOnly.messages[0]).toMatchObject({
+      role: 'toolResult',
+      content: [
+        { type: 'text', text: 'Fresh Browser screenshot' },
+        {
+          type: 'text',
+          text: '[Image omitted: current model does not support image input]',
+        },
+      ],
+    });
+  });
+
   it('does not forward Blade-only identity or metadata to provider context', async () => {
     const context = await createPiContext(
       [

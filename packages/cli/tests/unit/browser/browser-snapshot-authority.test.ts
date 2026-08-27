@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BrowserScreenshotAuthority,
   BrowserSnapshotAuthority,
   boundBrowserSnapshot,
 } from '../../../src/browser/BrowserSnapshotAuthority.js';
@@ -216,6 +217,71 @@ describe('BrowserSnapshotAuthority', () => {
         origin: 'https://example.com:443',
         ref: 'e2',
       })
+    ).toThrow();
+  });
+});
+
+describe('BrowserScreenshotAuthority', () => {
+  it('binds the latest screenshot to page generation, origin, pixels, and viewport', () => {
+    const authority = new BrowserScreenshotAuthority();
+    const record = authority.issue({
+      pageId: 'page-a',
+      pageGeneration: 2,
+      origin: 'https://example.com:443',
+      sha256: 'a'.repeat(64),
+      viewport: { width: 1440, height: 900 },
+    });
+
+    expect(record.screenshotId).toMatch(/^browser_screenshot_/);
+    expect(
+      authority.validate({
+        ...record,
+        viewport: { ...record.viewport },
+      })
+    ).toEqual(record);
+
+    for (const [candidate, reason] of [
+      [{ ...record, screenshotId: 'old' }, 'screenshot is stale'],
+      [{ ...record, pageGeneration: 3 }, 'screenshot is stale'],
+      [{ ...record, origin: 'https://other.test:443' }, 'screenshot is stale'],
+      [{ ...record, sha256: 'b'.repeat(64) }, 'screenshot pixels changed'],
+      [
+        { ...record, viewport: { width: 1280, height: 900 } },
+        'screenshot viewport changed',
+      ],
+    ] as const) {
+      let thrown: unknown;
+      try {
+        authority.validate(candidate);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toMatchObject({
+        code: 'browser_snapshot_stale',
+        message: expect.stringContaining(reason),
+      });
+    }
+  });
+
+  it('invalidates screenshot authority per page or globally', () => {
+    const authority = new BrowserScreenshotAuthority();
+    const input = {
+      pageId: 'page-a',
+      pageGeneration: 1,
+      origin: 'https://example.com:443',
+      sha256: 'a'.repeat(64),
+      viewport: { width: 1440, height: 900 },
+    };
+    const first = authority.issue(input);
+    authority.invalidate(input.pageId);
+    expect(() =>
+      authority.validate({ ...input, screenshotId: first.screenshotId })
+    ).toThrow();
+
+    const second = authority.issue(input);
+    authority.clear();
+    expect(() =>
+      authority.validate({ ...input, screenshotId: second.screenshotId })
     ).toThrow();
   });
 });

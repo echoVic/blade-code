@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type {
   BrowserContext,
   ConsoleMessage,
@@ -29,7 +29,10 @@ import {
   projectBrowserUrl,
   sanitizeBrowserText,
 } from './BrowserSecurity.js';
-import { BrowserSnapshotAuthority } from './BrowserSnapshotAuthority.js';
+import {
+  BrowserScreenshotAuthority,
+  BrowserSnapshotAuthority,
+} from './BrowserSnapshotAuthority.js';
 import {
   BROWSER_CLICK_SETTLE_TIMEOUT_MS,
   DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
@@ -38,6 +41,7 @@ import {
   DEFAULT_BROWSER_SNAPSHOT_DEPTH,
   DEFAULT_BROWSER_WAIT_TIMEOUT_MS,
   MAX_BROWSER_ACTION_TIMEOUT_MS,
+  MAX_BROWSER_COORDINATE,
   MAX_BROWSER_DIAGNOSTIC_ENTRIES,
   MAX_BROWSER_DIAGNOSTIC_RESULT_ENTRIES,
   MAX_BROWSER_DIAGNOSTIC_TEXT_BYTES,
@@ -136,7 +140,12 @@ export interface BrowserInspectOptions {
   pageId?: string;
   expectedOrigin?: string;
   target: BrowserInspectTarget;
+  includeScreenshotData?: boolean;
   signal?: AbortSignal;
+}
+
+export interface BrowserInspectRuntimeResult extends BrowserInspectResult {
+  screenshotDataUrl?: string;
 }
 
 export interface BrowserScreenshotOptions {
@@ -233,6 +242,7 @@ export class SessionBrowserRuntime {
   private readonly pool: BrowserProcessPool;
   private readonly gate = new BrowserOperationGate();
   private readonly snapshots = new BrowserSnapshotAuthority();
+  private readonly screenshots = new BrowserScreenshotAuthority();
   private readonly artifacts: BrowserArtifactStore;
   private readonly pages = new Map<string, PageState>();
   private readonly pageIds = new WeakMap<Page, string>();
@@ -414,10 +424,18 @@ export class SessionBrowserRuntime {
     return this.run(async (signal) => {
       this.assertIdentifier(options.pageId, 'page ID');
       this.assertIdentifier(options.snapshotId, 'snapshot ID');
-      if (options.action.kind !== 'scroll' && !options.ref) {
+      const coordinateAction =
+        options.action.kind === 'click_at' ? options.action : undefined;
+      if (options.action.kind !== 'scroll' && !coordinateAction && !options.ref) {
         throw new BrowserRuntimeError(
           'browser_unsupported',
-          'Browser action requires a snapshot ref'
+          'Browser action requires a top-level snapshot ref next to action'
+        );
+      }
+      if (coordinateAction && options.ref) {
+        throw new BrowserRuntimeError(
+          'browser_unsupported',
+          'Browser coordinate click cannot also use a snapshot ref'
         );
       }
       if (
@@ -448,15 +466,18 @@ export class SessionBrowserRuntime {
       const validation = options.ref
         ? this.snapshots.validate({ ...snapshotInput, ref: options.ref })
         : undefined;
-      const fresh = await state.page.ariaSnapshot({
-        mode: 'ai',
-        depth: authority.depth,
-        boxes: authority.includeBoxes,
-        timeout: options.timeoutMs ?? DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
-        signal,
-      });
       if (validation) {
+        const fresh = await state.page.ariaSnapshot({
+          mode: 'ai',
+          depth: authority.depth,
+          boxes: authority.includeBoxes,
+          timeout: options.timeoutMs ?? DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
+          signal,
+        });
         this.snapshots.verifyFreshFingerprint(validation, fresh);
+      }
+      if (coordinateAction) {
+        await this.validateCoordinateClick(state, coordinateAction, signal);
       }
 
       const locator = options.ref
@@ -531,6 +552,16 @@ export class SessionBrowserRuntime {
         action: options.action.kind,
         ...(options.ref ? { ref: options.ref } : {}),
         ...(viewport ? { viewport } : {}),
+        ...(coordinateAction
+          ? {
+              targetBox: {
+                x: coordinateAction.x,
+                y: coordinateAction.y,
+                width: 1,
+                height: 1,
+              },
+            }
+          : {}),
       };
       state.downloadBlocked = false;
       this.invalidatePage(state);
@@ -538,7 +569,7 @@ export class SessionBrowserRuntime {
       let actionFailed = false;
       let actionError: unknown;
       const downloadPromise =
-        options.action.kind === 'click'
+        options.action.kind === 'click' || coordinateAction
           ? state.page
               .waitForEvent('download', {
                 timeout: Math.min(timeout, BROWSER_CLICK_SETTLE_TIMEOUT_MS),
@@ -548,6 +579,8 @@ export class SessionBrowserRuntime {
       try {
         if (options.action.kind === 'click') {
           state.nextDialogAction = options.action.dialog?.action;
+        } else if (coordinateAction) {
+          state.nextDialogAction = coordinateAction.dialog?.action;
         }
         await this.executeAction(state.page, locator, options.action, timeout, signal);
         const download = downloadPromise
@@ -758,7 +791,7 @@ export class SessionBrowserRuntime {
     }, options.signal);
   }
 
-  inspect(options: BrowserInspectOptions): Promise<BrowserInspectResult> {
+  inspect(options: BrowserInspectOptions): Promise<BrowserInspectRuntimeResult> {
     return this.run(async (signal) => {
       const state = await this.resolvePage(options.pageId, false, signal);
       this.throwIfBlockedNavigation(state);
@@ -766,19 +799,37 @@ export class SessionBrowserRuntime {
         this.assertExpectedOrigin(state, options.expectedOrigin);
       }
       if (options.target.kind === 'screenshot') {
-        const bytes = await state.page.screenshot({
-          type: 'png',
-          fullPage: false,
-          animations: 'disabled',
-          caret: 'hide',
-          timeout: DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
-          signal,
-        });
+        const bytes = await this.captureStableScreenshot(state, signal);
         this.throwIfBlockedNavigation(state);
+        const viewport = state.page.viewportSize();
+        if (!viewport) {
+          throw new BrowserRuntimeError(
+            'browser_unsupported',
+            'Browser screenshot requires a fixed viewport'
+          );
+        }
+        const origin = browserOriginFromPageUrl(state.page.url()) ?? 'null';
+        const artifact = await this.artifacts.writeScreenshot(bytes);
+        const authority = this.screenshots.issue({
+          pageId: state.id,
+          pageGeneration: state.generation,
+          origin,
+          sha256: artifact.sha256,
+          viewport,
+        });
         return {
           pageId: state.id,
           target: 'screenshot',
-          artifact: await this.artifacts.writeScreenshot(bytes),
+          screenshotId: authority.screenshotId,
+          origin,
+          url: projectBrowserUrl(state.page.url()),
+          viewport,
+          artifact,
+          ...(options.includeScreenshotData
+            ? {
+                screenshotDataUrl: `data:image/png;base64,${bytes.toString('base64')}`,
+              }
+            : {}),
           truncated: false,
         };
       }
@@ -1601,6 +1652,7 @@ export class SessionBrowserRuntime {
   private invalidatePage(state: PageState): void {
     state.generation++;
     this.snapshots.invalidate(state.id);
+    this.screenshots.invalidate(state.id);
   }
 
   private assertIdentifier(value: string, label: string): void {
@@ -1627,6 +1679,12 @@ export class SessionBrowserRuntime {
   }
 
   private validateAction(action: BrowserAction): void {
+    if (action.kind === 'click_at') {
+      this.assertIntegerRange(action.x, 0, MAX_BROWSER_COORDINATE, 'x coordinate');
+      this.assertIntegerRange(action.y, 0, MAX_BROWSER_COORDINATE, 'y coordinate');
+      this.assertIdentifier(action.screenshotId, 'screenshot ID');
+      return;
+    }
     if (action.kind === 'fill' || action.kind === 'type') {
       if (byteLength(action.value) > MAX_BROWSER_INPUT_BYTES) {
         throw new BrowserRuntimeError(
@@ -1661,10 +1719,94 @@ export class SessionBrowserRuntime {
     }
   }
 
+  private async validateCoordinateClick(
+    state: PageState,
+    action: Extract<BrowserAction, { kind: 'click_at' }>,
+    signal: AbortSignal
+  ): Promise<void> {
+    const viewport = state.page.viewportSize();
+    if (!viewport || action.x >= viewport.width || action.y >= viewport.height) {
+      throw new BrowserRuntimeError(
+        'browser_unsupported',
+        'Browser coordinates must be inside the current viewport'
+      );
+    }
+    const bytes = await this.captureStableScreenshot(state, signal);
+    this.screenshots.validate({
+      screenshotId: action.screenshotId,
+      pageId: state.id,
+      pageGeneration: state.generation,
+      origin: browserOriginFromPageUrl(state.page.url()) ?? 'null',
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      viewport,
+    });
+    await this.assertCoordinateOutsideFrames(state.page, action.x, action.y);
+  }
+
+  private async assertCoordinateOutsideFrames(
+    page: Page,
+    x: number,
+    y: number
+  ): Promise<void> {
+    const mainFrame = page.mainFrame();
+    for (const frame of page.frames()) {
+      if (frame === mainFrame) continue;
+      let frameElement: Awaited<ReturnType<Frame['frameElement']>> | undefined;
+      try {
+        frameElement = await frame.frameElement();
+        const box = await frameElement.boundingBox();
+        if (
+          box &&
+          x >= box.x &&
+          x < box.x + box.width &&
+          y >= box.y &&
+          y < box.y + box.height
+        ) {
+          throw new BrowserRuntimeError(
+            'browser_cross_origin_frame',
+            'Browser coordinate clicks cannot target frame content'
+          );
+        }
+      } catch (error) {
+        if (!frame.isDetached()) throw error;
+      } finally {
+        await frameElement?.dispose().catch(() => undefined);
+      }
+    }
+  }
+
+  private async captureStableScreenshot(
+    state: PageState,
+    signal: AbortSignal
+  ): Promise<Buffer> {
+    const capture = () =>
+      state.page.screenshot({
+        type: 'png',
+        fullPage: false,
+        animations: 'disabled',
+        caret: 'hide',
+        timeout: DEFAULT_BROWSER_ACTION_TIMEOUT_MS,
+        signal,
+      });
+    let previous = await capture();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await delay(50, signal);
+      const current = await capture();
+      if (current.equals(previous)) return current;
+      previous = current;
+    }
+    throw new BrowserRuntimeError(
+      'browser_busy',
+      'Browser screenshot did not stabilize; wait for visual updates to settle',
+      { retryable: true }
+    );
+  }
+
   private removePage(state: PageState): void {
     if (this.pages.get(state.id) !== state) return;
     this.pages.delete(state.id);
     this.snapshots.invalidate(state.id);
+    this.screenshots.invalidate(state.id);
     if (this.selectedPageId === state.id) {
       const replacement = [...this.pages.values()].sort(
         (left, right) => left.createdSequence - right.createdSequence
@@ -1691,6 +1833,7 @@ export class SessionBrowserRuntime {
 
   private clearContextProjection(clearDiagnostics: boolean): void {
     this.snapshots.clear();
+    this.screenshots.clear();
     this.pages.clear();
     this.blockedPopups.length = 0;
     this.selectedPageId = undefined;
@@ -1709,6 +1852,10 @@ export class SessionBrowserRuntime {
     timeout: number,
     signal: AbortSignal
   ): Promise<void> {
+    if (action.kind === 'click_at') {
+      await raceWithAbort(page.mouse.click(action.x, action.y), signal);
+      return;
+    }
     if (action.kind === 'scroll') {
       const distance =
         action.direction === 'up' || action.direction === 'left'
@@ -1724,7 +1871,7 @@ export class SessionBrowserRuntime {
     if (!locator) {
       throw new BrowserRuntimeError(
         'browser_unsupported',
-        'Browser action requires a snapshot ref'
+        'Browser action requires a top-level snapshot ref next to action'
       );
     }
     switch (action.kind) {

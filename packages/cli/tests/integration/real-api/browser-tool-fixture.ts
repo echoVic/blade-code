@@ -8,6 +8,10 @@ export interface BrowserToolFixture {
   close(): Promise<void>;
 }
 
+export interface BrowserToolFixtureOptions {
+  promptMode?: 'explicit-protocol' | 'default-gui-routing';
+}
+
 function listen(server: Server): Promise<number> {
   return new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -23,7 +27,8 @@ function listen(server: Server): Promise<number> {
 }
 
 export async function createBrowserToolFixture(
-  nonce: string
+  nonce: string,
+  options: BrowserToolFixtureOptions = {}
 ): Promise<BrowserToolFixture> {
   if (!/^[a-z0-9_]{8,128}$/.test(nonce)) {
     throw new Error('Browser Tool fixture nonce is invalid');
@@ -74,7 +79,7 @@ export async function createBrowserToolFixture(
   });
   const port = await listen(server);
   const origin = `http://127.0.0.1:${port}`;
-  const prompt = [
+  const explicitPrompt = [
     'Use only ToolSearch and the six native Browser tools for this task.',
     'First call ToolSearch exactly once with this query:',
     'select:BrowserNavigate,BrowserSnapshot,BrowserInteract,BrowserWait,BrowserInspect,BrowserPage',
@@ -91,6 +96,17 @@ export async function createBrowserToolFixture(
     'Read the complete BROWSER_TOOL_OK_ value only from the post-submit page state.',
     'Your final response must be exactly that complete discovered value and nothing else.',
   ].join('\n');
+  const defaultGuiPrompt = [
+    'This is a Web GUI validation task.',
+    `Open ${origin}/ in the rendered interface and obtain a fresh accessibility representation after navigation.`,
+    'Enter Blade in Name, choose the exact option value safe for Mode, enable Enabled, and submit. Perform one interaction at a time and observe the new state after every interaction.',
+    'Wait until the exact visible text Saved appears.',
+    'Find the complete BROWSER_TOOL_OK_ value in the rendered state, inspect relevant console and network activity, and capture a viewport image.',
+    `Open a second top-level page at ${origin}/second, list the open pages, return to the first page, and close the second page.`,
+    'Do not modify the repository. Your final response must be exactly the complete discovered BROWSER_TOOL_OK_ value and nothing else.',
+  ].join('\n');
+  const prompt =
+    options.promptMode === 'default-gui-routing' ? defaultGuiPrompt : explicitPrompt;
 
   return {
     origin,

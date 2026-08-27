@@ -103,6 +103,13 @@ describe('SessionBrowserRuntime with real Chromium', () => {
               <option value="safe">Safe</option>
             </select>
             <label>Enabled <input type="checkbox" aria-label="Enabled"></label>
+            <canvas
+              id="visual-target"
+              width="200"
+              height="80"
+              style="border: 1px solid black"
+              onclick="document.querySelector('#status').textContent = 'Canvas clicked'"
+            ></canvas>
             <button onclick="
               document.querySelector('#status').textContent =
                 'Saved ' + document.querySelector('[aria-label=Name]').value;
@@ -142,7 +149,15 @@ describe('SessionBrowserRuntime with real Chromium', () => {
             ></iframe>
             <iframe src="http://127.0.0.1:${otherPort}/frame"></iframe>
             <div id="status">Idle</div>
-            <script>console.log('fixture-ready')</script>
+            <script>
+              const context = document.querySelector('#visual-target').getContext('2d');
+              context.fillStyle = '#0f766e';
+              context.fillRect(20, 20, 160, 40);
+              context.fillStyle = '#ffffff';
+              context.font = '16px sans-serif';
+              context.fillText('Visual target', 65, 46);
+              console.log('fixture-ready');
+            </script>
           </body>
         </html>`);
     });
@@ -404,14 +419,86 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     });
     expect(network.entries?.some((entry) => entry.url?.startsWith(origin))).toBe(true);
 
+    const visualTarget = await runtimePage.locator('#visual-target').boundingBox();
+    expect(visualTarget).not.toBeNull();
+    const clickX = Math.round(visualTarget!.x + visualTarget!.width / 2);
+    const clickY = Math.round(visualTarget!.y + visualTarget!.height / 2);
+    const coordinateSnapshot = await runtime.snapshot({ pageId: first.pageId });
     const screenshot = await runtime.inspect({
       pageId: first.pageId,
+      expectedOrigin: origin,
       target: { kind: 'screenshot' },
+    });
+    expect(screenshot).toMatchObject({
+      screenshotId: expect.stringMatching(/^browser_screenshot_/),
+      origin,
+      viewport: { width: 1440, height: 900 },
     });
     expect(screenshot.artifact?.path).toBeDefined();
     expect((await readFile(screenshot.artifact!.path!)).subarray(0, 8)).toEqual(
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
     );
+    const frameTarget = await runtimePage.locator('iframe').nth(1).boundingBox();
+    expect(frameTarget).not.toBeNull();
+    await expect(
+      runtime.interact({
+        pageId: first.pageId,
+        snapshotId: coordinateSnapshot.snapshotId,
+        expectedOrigin: origin,
+        action: {
+          kind: 'click_at',
+          screenshotId: screenshot.screenshotId!,
+          x: Math.round(frameTarget!.x + frameTarget!.width / 2),
+          y: Math.round(frameTarget!.y + frameTarget!.height / 2),
+        },
+      })
+    ).rejects.toMatchObject({ code: 'browser_cross_origin_frame' });
+
+    const coordinateResult = await runtime.interact({
+      pageId: first.pageId,
+      snapshotId: coordinateSnapshot.snapshotId,
+      expectedOrigin: origin,
+      action: {
+        kind: 'click_at',
+        screenshotId: screenshot.screenshotId!,
+        x: clickX,
+        y: clickY,
+      },
+    });
+    expect(coordinateResult).toMatchObject({
+      outcome: 'applied',
+      interaction: {
+        action: 'click_at',
+        viewport: { width: 1440, height: 900 },
+        targetBox: { x: clickX, y: clickY, width: 1, height: 1 },
+      },
+    });
+    await expect(runtimePage.locator('#status').textContent()).resolves.toBe(
+      'Canvas clicked'
+    );
+
+    const staleSnapshot = await runtime.snapshot({ pageId: first.pageId });
+    const staleScreenshot = await runtime.inspect({
+      pageId: first.pageId,
+      expectedOrigin: origin,
+      target: { kind: 'screenshot' },
+    });
+    await runtimePage.locator('#status').evaluate((element) => {
+      element.textContent = 'Changed outside Browser Tool';
+    });
+    await expect(
+      runtime.interact({
+        pageId: first.pageId,
+        snapshotId: staleSnapshot.snapshotId,
+        expectedOrigin: origin,
+        action: {
+          kind: 'click_at',
+          screenshotId: staleScreenshot.screenshotId!,
+          x: clickX,
+          y: clickY,
+        },
+      })
+    ).rejects.toMatchObject({ code: 'browser_snapshot_stale' });
 
     const beforeDownload = await runtime.snapshot({ pageId: first.pageId });
     await expect(

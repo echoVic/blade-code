@@ -5,7 +5,12 @@ import { createBrowserTools } from '../../../../../src/tools/builtin/browser/bro
 import { toolSearchTool } from '../../../../../src/tools/builtin/system/ToolSearchTool.js';
 import { ToolExecutor } from '../../../../../src/tools/execution/ToolExecutor.js';
 import { ToolRegistry } from '../../../../../src/tools/registry/ToolRegistry.js';
-import { ToolKind } from '../../../../../src/tools/types/index.js';
+import {
+  getModelVisibleToolResultContent,
+  getToolResultModelImages,
+  ToolErrorType,
+  ToolKind,
+} from '../../../../../src/tools/types/index.js';
 
 function createRuntime(): SessionBrowserRuntime {
   const observation = {
@@ -124,6 +129,11 @@ describe('native Browser tools', () => {
     expect(String(result.llmContent)).toContain(
       'Call BrowserInteract only once per assistant response'
     );
+    expect(String(result.llmContent)).toContain('click_at');
+    expect(String(result.llmContent)).toContain('screenshotId');
+    expect(String(result.llmContent)).toContain(
+      'ref is a top-level field next to action'
+    );
     const planTools = registry
       .getFunctionDeclarationsByMode(PermissionMode.PLAN)
       .map((declaration) => declaration.name);
@@ -185,6 +195,60 @@ describe('native Browser tools', () => {
     });
   });
 
+  it('attaches screenshot pixels as non-serializable model-only content', async () => {
+    const runtime = createRuntime();
+    vi.mocked(runtime.inspect).mockResolvedValueOnce({
+      pageId: 'browser_page_test',
+      target: 'screenshot',
+      screenshotId: 'browser_screenshot_test',
+      origin: 'https://example.com:443',
+      url: 'https://example.com/',
+      viewport: { width: 1440, height: 900 },
+      artifact: {
+        id: 'a'.repeat(64),
+        kind: 'image',
+        mimeType: 'image/png',
+        size: 16,
+        sha256: 'a'.repeat(64),
+        persisted: true,
+      },
+      screenshotDataUrl: 'data:image/png;base64,cGl4ZWxz',
+      truncated: false,
+    });
+    const registry = new ToolRegistry();
+    registry.registerAll(createBrowserTools(runtime));
+    const executor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+    });
+
+    const result = await executor.execute(
+      'BrowserInspect',
+      { target: { kind: 'screenshot' } },
+      { permissionMode: PermissionMode.YOLO }
+    );
+
+    expect(getToolResultModelImages(result)).toEqual([
+      {
+        type: 'image_url',
+        image_url: { url: 'data:image/png;base64,cGl4ZWxz' },
+      },
+    ]);
+    expect(getModelVisibleToolResultContent(result, String(result.llmContent))).toEqual(
+      [
+        { type: 'text', text: result.llmContent },
+        {
+          type: 'image_url',
+          image_url: { url: 'data:image/png;base64,cGl4ZWxz' },
+        },
+      ]
+    );
+    expect(JSON.stringify(result)).not.toContain('cGl4ZWxz');
+    expect(result.llmContent).not.toContain('screenshotDataUrl');
+    expect(runtime.inspect).toHaveBeenCalledWith(
+      expect.objectContaining({ includeScreenshotData: true })
+    );
+  });
+
   it('projects interaction geometry for the Web browser observer', async () => {
     const runtime = createRuntime();
     const interact = createBrowserTools(runtime).find(
@@ -242,6 +306,40 @@ describe('native Browser tools', () => {
         },
       },
     });
+  });
+
+  it('rejects a snapshot ref nested inside the action payload', async () => {
+    const runtime = createRuntime();
+    const registry = new ToolRegistry();
+    registry.registerAll(createBrowserTools(runtime));
+    const executor = new ToolExecutor(registry, {
+      permissionMode: PermissionMode.YOLO,
+    });
+
+    const result = await executor.execute(
+      'BrowserInteract',
+      {
+        pageId: 'browser_page_test',
+        snapshotId: 'browser_snapshot_test',
+        expectedOrigin: 'https://example.com:443',
+        action: {
+          kind: 'fill',
+          value: 'Blade',
+          ref: 'e1',
+        },
+        timeoutMs: 1000,
+      },
+      { permissionMode: PermissionMode.YOLO }
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: {
+        type: ToolErrorType.VALIDATION_ERROR,
+        message: expect.stringContaining('Parameter validation failed'),
+      },
+    });
+    expect(runtime.interact).not.toHaveBeenCalled();
   });
 
   it('requests permission with an origin-scoped Browser preview', async () => {

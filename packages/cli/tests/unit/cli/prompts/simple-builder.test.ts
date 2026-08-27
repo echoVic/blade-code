@@ -59,6 +59,18 @@ describe('buildSystemPrompt', () => {
         'Make performance tests portable across hardware'
       );
       expect(result.prompt).toContain('fixed wall-clock duration');
+      expect(result.prompt).toContain(
+        'use the native Browser tools as the default execution and verification path'
+      );
+      expect(result.prompt).toContain(
+        'Do not create or run an ad hoc Playwright, Puppeteer, or browser-control script'
+      );
+      expect(result.prompt).toContain(
+        'Before completing a runnable Web or frontend change'
+      );
+      expect(result.prompt).toContain(
+        'use BrowserInteract click_at with that screenshotId'
+      );
       expect(result.sources).toContainEqual({
         name: 'default',
         loaded: true,

@@ -207,7 +207,8 @@ Tool metadata 另包含每流 retained bytes、projection flags 和
 
 ## 浏览器自动化工具
 
-原生 Browser Tool 用于必须运行 JavaScript、操作表单、读取 DOM 状态或验证 UI 的任务。
+原生 Browser Tool 是 Web/UI 开发、交互和可视结果验证的默认路径；一次性验证不应改用
+临时 Playwright/Puppeteer 脚本。需要沉淀仓库级回归测试时仍可编写正式浏览器测试。
 索引检索优先使用 `WebSearch`，静态网页/API 读取优先使用 `WebFetch`。首次使用前显式
 安装固定版本 Chromium：
 
@@ -227,14 +228,18 @@ Chromium，每个 Session 使用独立、临时的 `BrowserContext`；恢复、f
 |------|------|------|
 | `BrowserNavigate` | Execute | `goto`、`back`、`forward`、`reload` |
 | `BrowserSnapshot` | ReadOnly | 生成带 opaque ref 的有界 ARIA 快照 |
-| `BrowserInteract` | Execute | `click`、`hover`、`fill`、`type`、`press`、`select`、`check`、`uncheck`、`scroll` |
+| `BrowserInteract` | Execute | `click`、`click_at`、`hover`、`fill`、`type`、`press`、`select`、`check`、`uncheck`、`scroll` |
 | `BrowserWait` | ReadOnly | 等待 load、精确文本、精确 URL、ref 状态或短延时 |
 | `BrowserInspect` | ReadOnly | 查询 console、page error、network、快照文本，或保存 viewport PNG |
 | `BrowserPage` | Execute | `list`、`open`、`select`、`close`、`reset` |
 
-`BrowserSnapshot` 返回 `pageId`、`snapshotId`、规范化 `origin` 和快照 ref。除页面级
-`scroll` 外，交互必须携带最新的 `pageId + snapshotId + ref + expectedOrigin`；页面或
-DOM 变化后旧 ref 会以 `browser_snapshot_stale` 拒绝，Agent 必须重新获取快照。
+`BrowserSnapshot` 返回 `pageId`、`snapshotId`、规范化 `origin` 和快照 ref。普通交互
+必须携带最新的 `pageId + snapshotId + ref + expectedOrigin`；页面或 DOM 变化后旧 ref
+会以 `browser_snapshot_stale` 拒绝，Agent 必须重新获取快照。对于 ARIA 快照无法准确
+表示的可视目标，支持图片输入的模型可通过 `BrowserInspect screenshot` 查看 viewport，
+再使用 `click_at` 提交同一页面的 `screenshotId` 和图像坐标。运行时会在点击前重新截图，
+只有页面代际、origin、viewport 和像素哈希全部一致才执行；frame 区域和过期截图会
+fail closed。截图像素只作为临时模型上下文传递，不进入公开工具结果或 durable transcript。
 `BrowserNavigate` 的新 origin 和 `BrowserInteract` 的当前 origin 分别进入标准 Execute
 权限确认；后退、前进和刷新不能授权新 origin。
 

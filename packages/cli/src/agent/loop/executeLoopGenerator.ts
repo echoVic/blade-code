@@ -60,7 +60,10 @@ import {
 } from '../../services/StructuredOutputService.js';
 import type { JsonObject, JsonValue } from '../../store/types.js';
 import { ToolTurnAdmission } from '../../tools/execution/ToolTurnAdmission.js';
-import { ToolErrorType } from '../../tools/types/index.js';
+import {
+  getModelVisibleToolResultContent,
+  ToolErrorType,
+} from '../../tools/types/index.js';
 import { isAbortError } from '../../utils/abort.js';
 import { getAbortReason } from '../../utils/abortReason.js';
 import { getCwd } from '../../utils/cwd.js';
@@ -4004,7 +4007,7 @@ validates the object and may return a bounded corrective error.`;
             role: 'tool',
             tool_call_id: toolCall.id,
             name: toolCall.function.name,
-            content: finalContent,
+            content: getModelVisibleToolResultContent(result, finalContent),
             ...(toolCall.function.name === 'Task' || independentVerificationEvidence
               ? {
                   metadata: toJsonValue({

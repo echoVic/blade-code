@@ -101,7 +101,20 @@ export function getUsingYourToolsSection(): string {
 }
 
 // ============================================================
-// 6. Tone and style — 格式、引用
+// 6. Browser and GUI work — 原生浏览器优先与视觉兜底
+// ============================================================
+
+export function getBrowserWorkflowSection(): string {
+  return `# Browser and GUI work
+ - For tasks that depend on rendered web behavior, browser interaction, or visual output, use the native Browser tools as the default execution and verification path. If they are deferred, load BrowserNavigate, BrowserSnapshot, BrowserInteract, BrowserWait, BrowserInspect, and BrowserPage together with ToolSearch.
+ - Do not create or run an ad hoc Playwright, Puppeteer, or browser-control script for one-off inspection when the native Browser tools can perform the work. Repository-owned browser tests remain appropriate when the user asks for reusable automated coverage or the change requires a permanent regression test.
+ - Before completing a runnable Web or frontend change, start or reuse the application, exercise the affected workflow through the native Browser tools, verify the visible result, and inspect relevant console and page errors. Source checks and unit tests do not replace this GUI validation.
+ - Prefer ARIA snapshot refs for interaction. If the latest snapshot omits or misrepresents a visible target and the current model can inspect images, capture a fresh viewport screenshot with BrowserInspect and use BrowserInteract click_at with that screenshotId and coordinates derived from that image. Never guess coordinates or reuse a screenshot after the page or viewport changes.
+ - Re-observe after every interaction. If an action has uncertain side effects, inspect the new page state before deciding whether another action is safe.`;
+}
+
+// ============================================================
+// 7. Tone and style — 格式、引用
 // ============================================================
 
 export function getToneAndStyleSection(): string {
@@ -114,7 +127,7 @@ export function getToneAndStyleSection(): string {
 }
 
 // ============================================================
-// 7. Output efficiency — 简洁输出
+// 8. Output efficiency — 简洁输出
 // ============================================================
 
 export function getOutputEfficiencySection(): string {
@@ -133,7 +146,7 @@ If you can say it in one sentence, don't use three. Prefer short, direct sentenc
 }
 
 // ============================================================
-// 8. Session-specific guidance — Agent/Explore、搜索策略、Skill
+// 9. Session-specific guidance — Agent/Explore、搜索策略、Skill
 // ============================================================
 
 export function getSessionSpecificGuidanceSection(): string {

@@ -9,6 +9,7 @@
 
 import {
   getActionsSection,
+  getBrowserWorkflowSection,
   getDoingTasksSection,
   getIntroSection,
   getOutputEfficiencySection,
@@ -81,12 +82,13 @@ You have a persistent memory system that survives across sessions. Your memories
  * 3. Doing tasks — 软件工程任务指导
  * 4. Actions — 可逆性、爆炸半径
  * 5. Using your tools — 工具使用偏好
- * 6. Tone and style — 格式、引用
- * 7. Output efficiency — 简洁输出
- * 8. Session-specific guidance — Agent/Explore、搜索策略、Skill
- * 9. Skills — 可用技能列表
- * 10. Auto Memory — 持久记忆
- * 11. Language — 语言指令
+ * 6. Browser and GUI work — 原生浏览器优先与视觉兜底
+ * 7. Tone and style — 格式、引用
+ * 8. Output efficiency — 简洁输出
+ * 9. Session-specific guidance — Agent/Explore、搜索策略、Skill
+ * 10. Skills — 可用技能列表
+ * 11. Auto Memory — 持久记忆
+ * 12. Language — 语言指令
  */
 export function buildDefaultPrompt(): string {
   const sections = [
@@ -95,6 +97,7 @@ export function buildDefaultPrompt(): string {
     getDoingTasksSection(),
     getActionsSection(),
     getUsingYourToolsSection(),
+    getBrowserWorkflowSection(),
     getToneAndStyleSection(),
     getOutputEfficiencySection(),
     getSessionSpecificGuidanceSection(),

@@ -253,6 +253,7 @@ interface BrowserToolMetadataFields extends BaseMetadataFields {
     status: 'ok' | 'warning' | 'error';
     pageId?: string;
     snapshotId?: string;
+    screenshotId?: string;
     origin?: string;
     url?: string;
     title?: string;
@@ -401,6 +402,16 @@ export function isEditMetadata(
   );
 }
 
+export interface ToolResultModelImage {
+  type: 'image_url';
+  image_url: {
+    url: string;
+  };
+}
+
+// Model-only images must not enter JSON events, durable results, or UI projections.
+export const TOOL_RESULT_MODEL_IMAGES = Symbol('blade.tool-result-model-images');
+
 /**
  * 泛型工具执行结果
  *
@@ -421,6 +432,34 @@ interface TypedToolResult<TMetadata extends ToolResultMetadata = ToolResultMetad
   llmContent: string | object;
   error?: ToolError;
   metadata?: TMetadata;
+  [TOOL_RESULT_MODEL_IMAGES]?: ToolResultModelImage[];
+}
+
+export function attachToolResultModelImages<T extends ToolResult>(
+  result: T,
+  images: ToolResultModelImage[]
+): T {
+  Object.defineProperty(result, TOOL_RESULT_MODEL_IMAGES, {
+    value: images,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return result;
+}
+
+export function getToolResultModelImages(
+  result: ToolResult
+): ToolResultModelImage[] | undefined {
+  return result[TOOL_RESULT_MODEL_IMAGES];
+}
+
+export function getModelVisibleToolResultContent(
+  result: ToolResult,
+  text: string
+): string | Array<{ type: 'text'; text: string } | ToolResultModelImage> {
+  const images = result.success ? getToolResultModelImages(result) : undefined;
+  return images && images.length > 0 ? [{ type: 'text', text }, ...images] : text;
 }
 
 /**
