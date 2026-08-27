@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.10.101] - 2026-08-27
+
+### 新增
+- 新增入口无关的 durable turn recovery assessment，并统一投影到 CLI TUI、
+  Headless/Print、Web 和 ACP，包括已恢复完成状态
+- 新增按 turn 持久化的 recovery acknowledgement；即使 active Goal 没有 inbox
+  输入，人工确认也能跨进程重启保留
+
+### 修复
+- 工具已成功或执行状态不明时，自动续跑会等待显式输入确认外部状态已检查；被门禁的
+  task Session 保持可恢复状态，不再被错误记录为 completed
+- 旧 v1 abort receipt 会从合成的 process-restart tool result 回填不确定副作用证据，
+  避免升级后重放状态不明的工具调用
+- 无输入的 Headless 和 Print 恢复会明确失败，不再返回空成功；Headless 使用退出码 2
+  表示需要人工处理
+- ACP JSON-RPC 错误数据现在会随规范化错误保留 runtime model ID，同时不暴露原始
+  Provider 详情
+
+### 测试
+- 新增连续重启、v1 迁移、持久确认、task 状态、rewind、Headless/Print、TUI、Web
+  和 ACP 回归覆盖
+- 使用真实 DeepSeek API 完成 Headless、ACP、raw PTY TUI、production Web GUI/reload
+  四入口资格测试，并验证文件副作用只发生一次
+
 ## [0.10.100] - 2026-08-27
 
 ### 修复

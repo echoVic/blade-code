@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.10.101] - 2026-08-27
+
+### Added
+- Added an entry-point-neutral durable turn-recovery assessment projected through
+  CLI TUI, Headless/Print, Web, and ACP, including recovered-completion state
+- Added durable, turn-scoped recovery acknowledgement so explicit operator review
+  survives process restarts even when an active Goal has no inbox input
+
+### Fixed
+- Interrupted or already-successful tools now block automatic continuation until
+  explicit input confirms external state was inspected; blocked task Sessions stay
+  recoverable instead of being incorrectly persisted as completed
+- Legacy v1 abort receipts recover uncertain tool evidence from their synthetic
+  process-restart results, preventing upgrades from replaying unknown side effects
+- Inputless Headless and Print recovery now fail visibly instead of returning an
+  empty success; Headless uses exit code 2 for the attention-required state
+- ACP failures retain the runtime model ID alongside their canonical typed error
+  data without exposing raw Provider details
+
+### Tests
+- Added repeated-restart, v1 migration, acknowledgement, task-status, rewind,
+  Headless/Print, TUI, Web, and ACP regression coverage
+- Qualified the recovery gate with real DeepSeek API calls across Headless, ACP,
+  raw PTY TUI, and production Web GUI/reload, including exactly-once file effects
+
 ## [0.10.100] - 2026-08-27
 
 ### Fixed
