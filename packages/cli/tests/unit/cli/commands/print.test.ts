@@ -133,6 +133,118 @@ describe('print command runner', () => {
     );
   });
 
+  it('fails visibly when an inputless recovery requires attention', async () => {
+    commandInputState.readOptionalCliInput.mockResolvedValueOnce(undefined);
+    runtimeState.create.mockResolvedValueOnce({
+      dispose: runtimeState.dispose,
+      getConfig: () => ({ permissionMode: 'default' }),
+      getPendingSteeringCount: () => 1,
+      getGoal: async () => null,
+      getRecoveredFinalResponse: async () => undefined,
+    });
+    const assessment = {
+      state: 'requires_attention' as const,
+      turnId: 'turn-before-restart',
+      inputMessageCount: 1,
+      reason: 'interrupted_tool_call' as const,
+    };
+    loopState.drainLoop.mockImplementationOnce(async (_stream, onEvent) => {
+      await onEvent?.({ kind: 'turn_recovery', assessment });
+      return {
+        success: true,
+        finalMessage: '',
+        metadata: {
+          turnsCount: 0,
+          toolCallsCount: 0,
+          duration: 0,
+          recoveryAttention: assessment,
+        },
+      };
+    });
+    const { runPrint } = await import('../../../../src/commands/print.js');
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    const exitCode = await runPrint({ print: true, resume: 'print-session' }, {
+      stdout,
+      stderr,
+    } as unknown as Pick<typeof process, 'stdout' | 'stderr'>);
+
+    expect(exitCode).toBe(1);
+    expect(stdout.write).not.toHaveBeenCalled();
+    expect(stderr.write.mock.calls.map(([chunk]) => chunk).join('')).toContain(
+      '[turn-recovery:requires_attention] turn-before-restart'
+    );
+    expect(stderr.write.mock.calls.map(([chunk]) => chunk).join('')).toContain(
+      'requires explicit user attention'
+    );
+  });
+
+  it('projects attention even when the inputless Session has no pending work', async () => {
+    commandInputState.readOptionalCliInput.mockResolvedValueOnce(undefined);
+    runtimeState.create.mockResolvedValueOnce({
+      dispose: runtimeState.dispose,
+      getConfig: () => ({ permissionMode: 'default' }),
+      getPendingSteeringCount: () => 0,
+      getGoal: async () => ({ status: 'paused' }),
+      getTurnRecoveryAssessment: () => ({
+        state: 'requires_attention',
+        turnId: 'turn-inputless-goal',
+        inputMessageCount: 0,
+        reason: 'successful_tool_result',
+      }),
+      getRecoveredFinalResponse: async () => undefined,
+    });
+    const { runPrint } = await import('../../../../src/commands/print.js');
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    const exitCode = await runPrint({ print: true, resume: 'print-session' }, {
+      stdout,
+      stderr,
+    } as unknown as Pick<typeof process, 'stdout' | 'stderr'>);
+
+    expect(exitCode).toBe(1);
+    expect(stderr.write.mock.calls.map(([chunk]) => chunk).join('')).toContain(
+      '[turn-recovery:requires_attention] turn-inputless-goal'
+    );
+    expect(stderr.write.mock.calls.map(([chunk]) => chunk).join('')).not.toContain(
+      'No unfinished turn'
+    );
+    expect(agentState.createWithRuntime).not.toHaveBeenCalled();
+  });
+
+  it('shows recovery attention before continuing an explicit print prompt', async () => {
+    const assessment = {
+      state: 'requires_attention' as const,
+      turnId: 'turn-before-restart',
+      inputMessageCount: 1,
+      reason: 'interrupted_tool_call' as const,
+    };
+    loopState.drainLoop.mockImplementationOnce(async (_stream, onEvent) => {
+      await onEvent?.({ kind: 'turn_recovery', assessment });
+      return {
+        success: true,
+        finalMessage: 'continued safely',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+    const { runPrint } = await import('../../../../src/commands/print.js');
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    const exitCode = await runPrint(
+      { print: true, message: 'I inspected state; continue safely' },
+      { stdout, stderr } as unknown as Pick<typeof process, 'stdout' | 'stderr'>
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout.write).toHaveBeenCalledWith('continued safely\n');
+    expect(stderr.write).toHaveBeenCalledWith(
+      '[turn-recovery:requires_attention] turn-before-restart\n'
+    );
+  });
+
   it('prints a final response recovered by this startup without calling a model', async () => {
     commandInputState.readOptionalCliInput.mockResolvedValueOnce(undefined);
     runtimeState.create.mockResolvedValueOnce({
@@ -143,6 +255,11 @@ describe('print command runner', () => {
       getRecoveredFinalResponse: async () => ({
         turnId: 'turn-print-recovered',
         content: 'PRINT_GOAL_FINALIZATION_RECOVERED',
+      }),
+      getTurnRecoveryAssessment: () => ({
+        state: 'completed',
+        turnId: 'turn-print-recovered',
+        inputMessageCount: 1,
       }),
     });
     const { runPrint } = await import('../../../../src/commands/print.js');
@@ -167,7 +284,9 @@ describe('print command runner', () => {
       response: 'PRINT_GOAL_FINALIZATION_RECOVERED',
       input: '',
     });
-    expect(stderr.write).not.toHaveBeenCalled();
+    expect(stderr.write).toHaveBeenCalledWith(
+      '[turn-recovery:completed] turn-print-recovered\n'
+    );
   });
 
   it('continues a verifying goal without a wake-up prompt', async () => {

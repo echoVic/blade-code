@@ -60,7 +60,10 @@ import {
 } from '../../store/vanilla.js';
 import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
 import { classifyError } from '../utils/errorExtractor.js';
-import { createLoopEventHandler } from '../utils/loopEventHandler.js';
+import {
+  createLoopEventHandler,
+  projectTurnRecoveryAssessment,
+} from '../utils/loopEventHandler.js';
 import {
   appendMarkdownDelta,
   finalizeMarkdownCache,
@@ -152,6 +155,7 @@ export const useCommandHandler = (
     runCodeReview,
     askSideQuestion,
     executeUserShellCommand,
+    getTurnRecoveryAssessment,
   } = useAgent({
     sessionId,
     workspaceRoot,
@@ -636,7 +640,11 @@ export const useCommandHandler = (
     const hasPending = await SessionRuntime.hasPendingInbox(workspaceRoot, sessionId);
     const hasActiveGoal =
       !hasPending && (await SessionRuntime.hasActiveGoal(workspaceRoot, sessionId));
-    if (!hasPending && !hasActiveGoal) {
+    const hasRecoverableTurn =
+      !hasPending &&
+      !hasActiveGoal &&
+      (await SessionRuntime.hasRecoverableTurn(workspaceRoot, sessionId));
+    if (!hasPending && !hasActiveGoal && !hasRecoverableTurn) {
       pendingResumeRequestedRef.current = false;
       return;
     }
@@ -662,7 +670,13 @@ export const useCommandHandler = (
       const goalAfterInitialization =
         !pendingAfterInitialization &&
         (await SessionRuntime.hasActiveGoal(workspaceRoot, sessionId));
-      if (!pendingAfterInitialization && !goalAfterInitialization) return;
+      if (!pendingAfterInitialization && !goalAfterInitialization) {
+        const recoveryAssessment = getTurnRecoveryAssessment();
+        if (recoveryAssessment.state !== 'none') {
+          projectTurnRecoveryAssessment(sessionActions, recoveryAssessment);
+        }
+        return;
+      }
 
       const chatContext = {
         messages: buildContextMessagesFromSession(getState().session),
@@ -967,7 +981,11 @@ export const useCommandHandler = (
         SessionRuntime.hasPendingInbox(workspaceRoot, sessionId),
         SessionRuntime.hasActiveGoal(workspaceRoot, sessionId),
       ]);
-      if (hasPending || hasActiveGoal) {
+      const hasRecoverableTurn =
+        !hasPending &&
+        !hasActiveGoal &&
+        (await SessionRuntime.hasRecoverableTurn(workspaceRoot, sessionId));
+      if (hasPending || hasActiveGoal || hasRecoverableTurn) {
         await resumePendingInput();
       }
     })().catch((error) => {

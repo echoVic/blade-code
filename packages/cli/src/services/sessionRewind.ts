@@ -24,6 +24,7 @@ function isConversationEvent(event: SessionEvent): boolean {
     event.type === 'turn_started' ||
     event.type === 'turn_completed' ||
     event.type === 'turn_aborted' ||
+    event.type === 'turn_recovery_acknowledged' ||
     event.type === 'interaction_requested' ||
     event.type === 'interaction_responded' ||
     event.type === 'interaction_recovered' ||
@@ -113,7 +114,8 @@ function projectBeforeCheckpoint(
     if (
       (event.type === 'turn_started' ||
         event.type === 'turn_completed' ||
-        event.type === 'turn_aborted') &&
+        event.type === 'turn_aborted' ||
+        event.type === 'turn_recovery_acknowledged') &&
       targetTurnIds.has(event.data.turnId)
     ) {
       return false;

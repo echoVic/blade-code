@@ -18,6 +18,7 @@ import type {
   SubagentProgress,
   TaskItem,
   ToolCallInfo,
+  TurnRecoveryInfo,
 } from '../types';
 import {
   createEmptyAgentContent,
@@ -1773,7 +1774,55 @@ const handlePermissionTimeout: EventHandler = (props, get, set) => {
 
 const handleTurnStarted: EventHandler = (props, get, set) => {
   if (props.sessionId !== get().currentSessionId) return;
-  set({ agentPhase: 'running', isStreaming: true });
+  set({ agentPhase: 'running', isStreaming: true, turnRecovery: null });
+};
+
+function parseTurnRecoveryAssessment(value: unknown): TurnRecoveryInfo | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const assessment = value as Record<string, unknown>;
+  if (
+    typeof assessment.turnId !== 'string' ||
+    !assessment.turnId ||
+    !Number.isSafeInteger(assessment.inputMessageCount) ||
+    (assessment.inputMessageCount as number) < 0
+  ) {
+    return null;
+  }
+  const common = {
+    turnId: assessment.turnId,
+    inputMessageCount: assessment.inputMessageCount as number,
+  };
+  if (assessment.state === 'completed' || assessment.state === 'resumable') {
+    return { state: assessment.state, ...common };
+  }
+  if (
+    assessment.state === 'requires_attention' &&
+    (assessment.reason === 'successful_tool_result' ||
+      assessment.reason === 'interrupted_tool_call')
+  ) {
+    return {
+      state: assessment.state,
+      ...common,
+      reason: assessment.reason,
+    };
+  }
+  return null;
+}
+
+const handleTurnRecovery: EventHandler = (props, get, set) => {
+  const state = get();
+  const ref = state.currentSessionRef;
+  if (
+    props.sessionId !== state.currentSessionId ||
+    !ref ||
+    props.projectPath !== ref.projectPath
+  ) {
+    return;
+  }
+  const assessment = parseTurnRecoveryAssessment(props.assessment);
+  if (!assessment) return;
+  set({ turnRecovery: assessment });
+  void state.resyncSessionMessages(ref);
 };
 
 const handleCompactionStarted: EventHandler = (props, get, set) => {
@@ -2336,6 +2385,7 @@ const eventHandlers: Record<string, EventHandler> = {
   'permission.asked': handlePermissionAsked,
   'permission.timeout': handlePermissionTimeout,
   'turn.started': handleTurnStarted,
+  'turn.recovery': handleTurnRecovery,
   'committed.turn_started': handleTurnStarted,
   'committed.turn_completed': handleCommittedSessionCompleted,
   'committed.turn_aborted': handleCommittedSessionCompleted,

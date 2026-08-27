@@ -944,6 +944,20 @@ function createEventWriter(
         writeLine(io.stderr, formatTask(task));
       }
     },
+    turnRecovery(event: Extract<LoopEvent, { kind: 'turn_recovery' }>) {
+      const assessment = event.assessment;
+      if (outputFormat === 'jsonl') {
+        writeJsonl('turn_recovery', {
+          state: assessment.state,
+          turn_id: assessment.turnId,
+          input_message_count: assessment.inputMessageCount,
+          reason:
+            assessment.state === 'requires_attention' ? assessment.reason : undefined,
+        });
+        return;
+      }
+      writeLine(io.stderr, `[turn-recovery:${assessment.state}] ${assessment.turnId}`);
+    },
     goal(event: Extract<LoopEvent, { kind: 'goal_updated' }>) {
       if (outputFormat === 'jsonl') {
         writeJsonl('goal', {
@@ -1560,6 +1574,24 @@ export async function runHeadless(
       inputlessResume && !pendingInputOnly ? await runtime.getGoal() : null;
     const goalContinuationOnly =
       resumedGoal?.status === 'active' || resumedGoal?.status === 'verifying';
+    const startupRecoveryAssessment = runtime.getTurnRecoveryAssessment?.() ?? {
+      state: 'none' as const,
+    };
+    if (
+      inputlessResume &&
+      !pendingInputOnly &&
+      !goalContinuationOnly &&
+      startupRecoveryAssessment.state === 'requires_attention'
+    ) {
+      eventWriter.turnRecovery({
+        kind: 'turn_recovery',
+        assessment: startupRecoveryAssessment,
+      });
+      eventWriter.error(
+        'Error: Turn recovery requires explicit user attention before continuation'
+      );
+      return await finish(2);
+    }
     const recoveredFinalResponse =
       inputlessResume && !pendingInputOnly && !goalContinuationOnly
         ? await runtime.getRecoveredFinalResponse()
@@ -1567,6 +1599,13 @@ export async function runHeadless(
     if (inputlessResume && !pendingInputOnly && !goalContinuationOnly) {
       if (!recoveredFinalResponse) {
         throw new Error('No unfinished turn or active goal to resume');
+      }
+      const recoveryAssessment = startupRecoveryAssessment;
+      if (recoveryAssessment.state !== 'none') {
+        eventWriter.turnRecovery({
+          kind: 'turn_recovery',
+          assessment: recoveryAssessment,
+        });
       }
       if (resumedGoal) {
         eventWriter.goal({ kind: 'goal_updated', goal: resumedGoal });
@@ -1795,6 +1834,9 @@ export async function runHeadless(
           case 'task_update':
             eventWriter.taskUpdate(event.tasks);
             break;
+          case 'turn_recovery':
+            eventWriter.turnRecovery(event);
+            break;
           case 'structured_output':
             eventWriter.structuredOutput(event);
             break;
@@ -1881,6 +1923,13 @@ export async function runHeadless(
     // 输出截断告警
     if (loopResult.metadata?.outputTruncated) {
       eventWriter.error('[warning] 输出因达到 token 上限被截断，部分内容可能不完整。');
+    }
+
+    if (loopResult.metadata?.recoveryAttention) {
+      eventWriter.error(
+        'Error: Turn recovery requires explicit user attention before continuation'
+      );
+      return await finish(2);
     }
 
     if (!loopResult.success) {

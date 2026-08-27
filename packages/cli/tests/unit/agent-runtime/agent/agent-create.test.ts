@@ -85,6 +85,8 @@ function createGoalRuntimeMocks() {
     ),
     restoreUserMessage: vi.fn(async (content: UserMessageContent) => content),
     getPendingSteeringMessages: vi.fn(() => []),
+    getTurnRecoveryAssessment: vi.fn(() => ({ state: 'none' as const })),
+    takeStartupTurnRecoveryAssessment: vi.fn(() => ({ state: 'none' as const })),
     takeStartupAdoptedToolResults: vi.fn(() => []),
     waitForBackgroundSubagentFollowUp: vi.fn().mockResolvedValue(false),
   };
@@ -1388,6 +1390,21 @@ describe('Agent runLoop system prompt injection', () => {
       getRecoveredSteeringCount: vi.fn(() => 1),
       getPendingSteeringMessages: vi.fn(() => []),
       loadModelContext: vi.fn().mockResolvedValue(durableContext),
+      getTurnRecoveryAssessment: vi.fn(() => ({
+        state: 'requires_attention',
+        turnId: 'turn-before-restart',
+        inputMessageCount: 1,
+        reason: 'interrupted_tool_call',
+      })),
+      takeStartupTurnRecoveryAssessment: vi
+        .fn()
+        .mockReturnValueOnce({
+          state: 'requires_attention',
+          turnId: 'turn-before-restart',
+          inputMessageCount: 1,
+          reason: 'interrupted_tool_call',
+        })
+        .mockReturnValue({ state: 'none' }),
       takeStartupAdoptedToolResults: vi
         .fn()
         .mockReturnValueOnce(adoptedResults)
@@ -1429,20 +1446,30 @@ describe('Agent runLoop system prompt injection', () => {
         events.push(step.value);
         step = await stream.next();
       }
-      return events;
+      return { events, result: step.value };
     };
-    const firstEvents = await collectEvents();
-    const secondEvents = await collectEvents();
+    const first = await collectEvents();
+    const second = await collectEvents();
+    const firstEvents = first.events;
+    const secondEvents = second.events;
 
     expect(firstEvents.map((event) => event.kind)).toEqual([
+      'turn_recovery',
       'tool_result',
       'subagent_completed',
       'tool_result',
       'subagent_completed',
-      'follow_up_started',
-      'turn_start',
     ]);
     expect(firstEvents[0]).toMatchObject({
+      kind: 'turn_recovery',
+      assessment: {
+        state: 'requires_attention',
+        turnId: 'turn-before-restart',
+        inputMessageCount: 1,
+        reason: 'interrupted_tool_call',
+      },
+    });
+    expect(firstEvents[1]).toMatchObject({
       kind: 'tool_result',
       toolCall: { id: 'task-success', function: { name: 'Task' } },
       result: {
@@ -1454,13 +1481,13 @@ describe('Agent runLoop system prompt injection', () => {
         },
       },
     });
-    expect(firstEvents[1]).toMatchObject({
+    expect(firstEvents[2]).toMatchObject({
       kind: 'subagent_completed',
       sessionId: 'agent-success',
       success: true,
       summary: marker,
     });
-    expect(firstEvents[2]).toMatchObject({
+    expect(firstEvents[3]).toMatchObject({
       kind: 'tool_result',
       toolCall: { id: 'task-failed', function: { name: 'Task' } },
       result: {
@@ -1472,18 +1499,44 @@ describe('Agent runLoop system prompt injection', () => {
         },
       },
     });
-    expect(firstEvents[3]).toMatchObject({
+    expect(firstEvents[4]).toMatchObject({
       kind: 'subagent_completed',
       sessionId: 'agent-failed',
       success: false,
       summary: 'durable child failure',
     });
-    expect(secondEvents.map((event) => event.kind)).toEqual([
-      'follow_up_started',
-      'turn_start',
+    expect(secondEvents).toEqual([
+      {
+        kind: 'turn_recovery',
+        assessment: {
+          state: 'requires_attention',
+          turnId: 'turn-before-restart',
+          inputMessageCount: 1,
+          reason: 'interrupted_tool_call',
+        },
+      },
     ]);
     expect(runtime.takeStartupAdoptedToolResults).toHaveBeenCalledTimes(2);
-    expect(runLoop).toHaveBeenCalledTimes(2);
+    expect(runtime.getTurnRecoveryAssessment).toHaveBeenCalledTimes(4);
+    expect(runtime.takeStartupTurnRecoveryAssessment).not.toHaveBeenCalled();
+    expect(runLoop).not.toHaveBeenCalled();
+    expect(runtime.beginPendingTurn).not.toHaveBeenCalled();
+    expect(first.result.metadata?.recoveryAttention).toEqual({
+      state: 'requires_attention',
+      turnId: 'turn-before-restart',
+      inputMessageCount: 1,
+      reason: 'interrupted_tool_call',
+    });
+    expect(second.result.metadata?.recoveryAttention).toEqual(
+      first.result.metadata?.recoveryAttention
+    );
+    expect(
+      runtime.setTaskStatus.mock.calls.some(([status]) => status === 'completed')
+    ).toBe(false);
+    expect(runtime.setTaskStatus).toHaveBeenCalledWith(
+      'interrupted',
+      'Turn recovery requires attention: interrupted_tool_call'
+    );
   });
 
   it('queues a new prompt behind durable input before starting an idle turn', async () => {
@@ -1527,6 +1580,19 @@ describe('Agent runLoop system prompt injection', () => {
           metadata: { inboxMessageId: 'older-durable' },
         },
       ]),
+      getTurnRecoveryAssessment: vi.fn(() => ({
+        state: 'requires_attention',
+        turnId: 'interrupted-older-turn',
+        inputMessageCount: 1,
+        reason: 'interrupted_tool_call',
+      })),
+      takeStartupTurnRecoveryAssessment: vi.fn(() => ({
+        state: 'requires_attention',
+        turnId: 'interrupted-older-turn',
+        inputMessageCount: 1,
+        reason: 'interrupted_tool_call',
+      })),
+      acknowledgeStartupTurnRecovery: vi.fn(),
     };
     const agent = new Agent(
       createConfig(),
@@ -1574,6 +1640,17 @@ describe('Agent runLoop system prompt injection', () => {
 
     expect(runtime.prepareInputTurn).toHaveBeenCalledWith('newer');
     expect(runtime.loadModelContext).toHaveBeenCalledOnce();
+    expect(events).toContainEqual({
+      kind: 'turn_recovery',
+      assessment: {
+        state: 'requires_attention',
+        turnId: 'interrupted-older-turn',
+        inputMessageCount: 1,
+        reason: 'interrupted_tool_call',
+      },
+    });
+    expect((agent as any).runLoop).toHaveBeenCalledOnce();
+    expect(runtime.acknowledgeStartupTurnRecovery).toHaveBeenCalledOnce();
     expect(events).toContainEqual(
       expect.objectContaining({
         kind: 'follow_up_started',
@@ -1585,6 +1662,63 @@ describe('Agent runLoop system prompt injection', () => {
         ]),
       })
     );
+  });
+
+  it('aborts a prepared turn without dropping recovery when acknowledgement fails', async () => {
+    const preparedTurn = { id: 'prepared-before-ack-failure' };
+    const runtime = {
+      ...createGoalRuntimeMocks(),
+      prepareInputTurn: vi.fn().mockResolvedValue({
+        accepted: true,
+        handle: preparedTurn,
+        messageId: 'new-input',
+        queued: 1,
+        mode: 'direct',
+      }),
+      getTurnRecoveryAssessment: vi.fn(() => ({
+        state: 'requires_attention',
+        turnId: 'interrupted-turn',
+        inputMessageCount: 0,
+        reason: 'successful_tool_result',
+      })),
+      takeStartupTurnRecoveryAssessment: vi.fn(() => ({ state: 'none' })),
+      acknowledgeStartupTurnRecovery: vi
+        .fn()
+        .mockRejectedValue(new Error('recovery acknowledgement fsync failed')),
+      finishTurn: vi.fn().mockResolvedValue(undefined),
+    };
+    const agent = new Agent(
+      createConfig(),
+      {},
+      { getRegistry: () => ({ getAll: () => [] }) } as any,
+      runtime as any
+    );
+    (agent as any).isInitialized = true;
+    (agent as any).runLoop = vi.fn();
+
+    const stream = agent.chatStream('continue after inspection', {
+      messages: [],
+      userId: 'user-1',
+      sessionId: 'session-1',
+      workspaceRoot: process.cwd(),
+    });
+    await expect(async () => {
+      for await (const _event of stream) {
+        // Consume until the acknowledgement failure is surfaced.
+      }
+    }).rejects.toThrow('recovery acknowledgement fsync failed');
+    expect(runtime.finishTurn).toHaveBeenCalledWith(preparedTurn, {
+      acknowledgeInput: true,
+      preserveStartupRecovery: true,
+      outcome: {
+        status: 'aborted',
+        cause: 'failed',
+        turnsCount: 0,
+        toolCallsCount: 0,
+        durationMs: 0,
+      },
+    });
+    expect((agent as any).runLoop).not.toHaveBeenCalled();
   });
 
   it('lets the model continue an active goal beyond 20 turns until it reaches a terminal state', async () => {

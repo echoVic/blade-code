@@ -24,16 +24,21 @@ import type {
   ServiceTierSelection,
 } from '../../config/types.js';
 import { ForegroundProcessLeaseStore } from '../../context/storage/ForegroundProcessLeaseStore.js';
-import type {
-  SessionAdoptedToolResult,
-  SessionInterruptedToolCall,
-  SessionTurnRecovery,
+import {
+  PersistentStore,
+  type SessionAdoptedToolResult,
+  type SessionInterruptedToolCall,
+  type SessionTurnRecovery,
 } from '../../context/storage/PersistentStore.js';
 import {
   getBladeStorageRoot,
   getSessionInboxFilePath,
 } from '../../context/storage/pathUtils.js';
 import { toTaskFailure } from '../../context/taskFailure.js';
+import {
+  assessSessionTurnRecovery,
+  type SessionTurnRecoveryAssessment,
+} from '../../context/turnRecoveryAssessment.js';
 import type {
   MessagePersistenceMetadata,
   SessionTaskDiffStat,
@@ -372,6 +377,8 @@ export class SessionRuntime {
   private initialized = false;
   private disposing = false;
   private startupTurnRecovery?: SessionTurnRecovery;
+  private startupTurnRecoveryAssessmentTaken = false;
+  private startupTurnRecoveryAcknowledged = false;
   private startupAdoptedToolResults: StartupAdoptedToolResult[] = [];
   private sessionLease?: SessionLease;
   private sessionMcpRegistry?: McpRegistry;
@@ -666,6 +673,13 @@ export class SessionRuntime {
     return GoalStore.hasActiveGoal(workspaceRoot, sessionId);
   }
 
+  static async hasRecoverableTurn(
+    workspaceRoot: string,
+    sessionId: string
+  ): Promise<boolean> {
+    return new PersistentStore(workspaceRoot).hasRecoverableTurn(sessionId);
+  }
+
   get sessionId(): string {
     return this.options.sessionId;
   }
@@ -878,6 +892,28 @@ export class SessionRuntime {
     return this.startupTurnRecovery
       ? structuredClone(this.startupTurnRecovery)
       : undefined;
+  }
+
+  getTurnRecoveryAssessment(): SessionTurnRecoveryAssessment {
+    if (this.startupTurnRecoveryAcknowledged) return { state: 'none' };
+    return assessSessionTurnRecovery(this.startupTurnRecovery);
+  }
+
+  takeStartupTurnRecoveryAssessment(): SessionTurnRecoveryAssessment {
+    if (this.startupTurnRecoveryAssessmentTaken) return { state: 'none' };
+    this.startupTurnRecoveryAssessmentTaken = true;
+    return this.getTurnRecoveryAssessment();
+  }
+
+  async acknowledgeStartupTurnRecovery(): Promise<void> {
+    const recovery = this.startupTurnRecovery;
+    if (recovery?.outcome === 'aborted') {
+      await this.getExecutionEngine()
+        .getContextManager()
+        .persistentStore.acknowledgeTurnRecovery(this.sessionId, recovery.turnId);
+    }
+    this.startupTurnRecoveryAcknowledged = true;
+    this.startupTurnRecoveryAssessmentTaken = true;
   }
 
   async getRecoveredFinalResponse(): Promise<RecoveredFinalResponse | undefined> {
@@ -1528,11 +1564,15 @@ export class SessionRuntime {
 
   async getRecoveredEmptyFinalState(handle: ActiveTurnHandle): Promise<{
     hadSuccessfulToolResult: boolean;
+    interruptedToolCallCount?: number;
     correctionSpent: boolean;
   }> {
     const recovery = this.startupTurnRecovery;
     if (!recovery || recovery.outcome !== 'aborted') {
-      return { hadSuccessfulToolResult: false, correctionSpent: false };
+      return {
+        hadSuccessfulToolResult: false,
+        correctionSpent: false,
+      };
     }
     const claimed = await this.getClaimedTurnMessageIds(handle);
     const recoveredInputIds = new Set(recovery.inputMessageIds);
@@ -1540,10 +1580,16 @@ export class SessionRuntime {
       claimed.length === 0 ||
       claimed.some((messageId) => !recoveredInputIds.has(messageId))
     ) {
-      return { hadSuccessfulToolResult: false, correctionSpent: false };
+      return {
+        hadSuccessfulToolResult: false,
+        correctionSpent: false,
+      };
     }
     return {
       hadSuccessfulToolResult: recovery.hadSuccessfulToolResult,
+      ...(recovery.interruptedToolCallCount
+        ? { interruptedToolCallCount: recovery.interruptedToolCallCount }
+        : {}),
       correctionSpent: recovery.emptyFinalCorrectionSpent,
     };
   }
@@ -1563,6 +1609,7 @@ export class SessionRuntime {
     options: {
       continuePending?: boolean;
       acknowledgeInput?: boolean;
+      preserveStartupRecovery?: boolean;
       outcome?: SessionTurnOutcome;
     } = {}
   ): Promise<ActiveTurnHandle | undefined> {
@@ -1591,7 +1638,15 @@ export class SessionRuntime {
       );
       await this.getActiveTurnMailbox().acknowledge(inputMessageIds);
     } else {
-      const inheritedRecovery = await this.getRecoveredEmptyFinalState(handle);
+      const startupRecovery = this.startupTurnRecovery;
+      const inheritedRecovery =
+        options.preserveStartupRecovery && startupRecovery?.outcome === 'aborted'
+          ? {
+              hadSuccessfulToolResult: startupRecovery.hadSuccessfulToolResult,
+              interruptedToolCallCount: startupRecovery.interruptedToolCallCount ?? 0,
+              correctionSpent: startupRecovery.emptyFinalCorrectionSpent,
+            }
+          : await this.getRecoveredEmptyFinalState(handle);
       const inputMessageIds =
         await this.getActiveTurnMailbox().claimedMessageIds(handle);
       const abortResult = await persistentStore.saveTurnAbort(
@@ -1604,9 +1659,10 @@ export class SessionRuntime {
           toolCallsCount: outcome.toolCallsCount,
           durationMs: outcome.durationMs,
           recovery: {
-            version: 1,
+            version: 2,
             inputMessageIds,
             hadSuccessfulToolResult: inheritedRecovery.hadSuccessfulToolResult,
+            interruptedToolCallCount: inheritedRecovery.interruptedToolCallCount ?? 0,
             emptyFinalCorrectionSpent: inheritedRecovery.correctionSpent,
           },
         },
@@ -1615,6 +1671,8 @@ export class SessionRuntime {
           : undefined
       );
       this.startupTurnRecovery = abortResult.recovery;
+      this.startupTurnRecoveryAcknowledged = false;
+      this.startupTurnRecoveryAssessmentTaken = false;
       if (options.acknowledgeInput) {
         await this.getActiveTurnMailbox().acknowledge(
           abortResult.acknowledgedInputMessageIds
@@ -2416,6 +2474,8 @@ export class SessionRuntime {
     this.executionEngine = undefined;
     this.activeTurnMailbox = undefined;
     this.startupTurnRecovery = undefined;
+    this.startupTurnRecoveryAcknowledged = false;
+    this.startupTurnRecoveryAssessmentTaken = false;
     this.startupAdoptedToolResults = [];
     this.backgroundTaskChildIds.clear();
     this.backgroundTaskCompletionSettledIds.clear();

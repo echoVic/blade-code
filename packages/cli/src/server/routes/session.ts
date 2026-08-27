@@ -30,7 +30,7 @@ import {
   toPublicAgentSession,
 } from '../../agent/subagents/AgentSessionStore.js';
 import { isTeamMessageMetadata, TeamMailbox } from '../../agent/teams/TeamMailbox.js';
-import type { ChatContext, UserMessageContent } from '../../agent/types.js';
+import type { ChatContext, LoopResult, UserMessageContent } from '../../agent/types.js';
 import {
   MAX_INLINE_ATTACHMENT_BYTES,
   MAX_USER_MESSAGE_TEXT_BYTES,
@@ -149,8 +149,8 @@ import {
   ConflictError,
   InternalServerError,
   NotFoundError,
-  SessionWorkspaceUnavailableError,
   ServiceUnavailableError,
+  SessionWorkspaceUnavailableError,
   TooManyRequestsError,
 } from '../error.js';
 import { OrderedSseEgress, type SerializedSseMessage } from '../OrderedSseEgress.js';
@@ -199,6 +199,7 @@ export interface RunState {
     | 'queued'
     | 'running'
     | 'waiting_permission'
+    | 'attention_required'
     | 'completed'
     | 'failed'
     | 'cancelled';
@@ -319,7 +320,8 @@ function cancelRun(run: RunState, reason = 'user-cancel'): boolean {
   if (
     run.status === 'cancelled' ||
     run.status === 'completed' ||
-    run.status === 'failed'
+    run.status === 'failed' ||
+    run.status === 'attention_required'
   ) {
     return false;
   }
@@ -1335,7 +1337,9 @@ function projectActiveSession(session: SessionInfo) {
   const taskStatus =
     run?.status === 'waiting_permission'
       ? 'running'
-      : (run?.status ?? session.taskStatus);
+      : run?.status === 'attention_required'
+        ? 'interrupted'
+        : (run?.status ?? session.taskStatus);
   return {
     sessionId: session.id,
     projectPath: session.projectPath,
@@ -2489,11 +2493,14 @@ export const createSessionRouteController = (): SessionRouteController => {
     if (isActiveRun(currentRun)) {
       return;
     }
-    if (
+    const terminalIsolatedTask =
       session.taskIsolation &&
       session.taskStatus !== 'queued' &&
-      session.taskStatus !== 'running'
-    ) {
+      session.taskStatus !== 'running';
+    let hasRecoveryOnDisk = terminalIsolatedTask
+      ? await SessionRuntime.hasRecoverableTurn(session.projectPath, session.id)
+      : false;
+    if (terminalIsolatedTask && !hasRecoveryOnDisk) {
       return;
     }
     const hasPendingOnDisk = await SessionRuntime.hasPendingInbox(
@@ -2503,7 +2510,13 @@ export const createSessionRouteController = (): SessionRouteController => {
     const hasActiveGoalOnDisk =
       !hasPendingOnDisk &&
       (await SessionRuntime.hasActiveGoal(session.projectPath, session.id));
-    if (!hasPendingOnDisk && !hasActiveGoalOnDisk) {
+    if (!hasPendingOnDisk && !hasActiveGoalOnDisk && !hasRecoveryOnDisk) {
+      hasRecoveryOnDisk = await SessionRuntime.hasRecoverableTurn(
+        session.projectPath,
+        session.id
+      );
+    }
+    if (!hasPendingOnDisk && !hasActiveGoalOnDisk && !hasRecoveryOnDisk) {
       return;
     }
     const runtimeLease = await acquireRuntime(session);
@@ -2520,7 +2533,24 @@ export const createSessionRouteController = (): SessionRouteController => {
       const hasPending = runtime.getPendingSteeringCount() > 0;
       const goal = hasPending ? null : await runtime.getGoal();
       const hasActiveGoal = goal?.status === 'active' || goal?.status === 'verifying';
-      if ((!hasPending && !hasActiveGoal) || runtime.hasTurnOwner()) {
+      const recoveryAssessment = runtime.getTurnRecoveryAssessment();
+      if (
+        recoveryAssessment.state !== 'none' &&
+        (recoveryAssessment.state === 'requires_attention' ||
+          (!hasPending && !hasActiveGoal))
+      ) {
+        Bus.publish(
+          { sessionId: session.id, projectPath: session.projectPath },
+          'turn.recovery',
+          { assessment: recoveryAssessment }
+        );
+      }
+      if (
+        recoveryAssessment.state === 'requires_attention' ||
+        terminalIsolatedTask ||
+        (!hasPending && !hasActiveGoal) ||
+        runtime.hasTurnOwner()
+      ) {
         return;
       }
       startRun(session, '', session.permissionMode ?? PermissionMode.DEFAULT, {
@@ -4462,7 +4492,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       sessionId,
       projectPath: ref.projectPath,
       runId: session.currentRunId,
-      status: run?.status || 'idle',
+      status: run?.status === 'attention_required' ? 'idle' : (run?.status ?? 'idle'),
     });
   });
 
@@ -4584,6 +4614,38 @@ async function executeRunAsync(
   let runtime: SessionRuntime | undefined;
   let agent: Agent | undefined;
   const sessionRef = sessionRefFromSession(session);
+
+  const settleRecoveryAttention = async (result: LoopResult): Promise<boolean> => {
+    const assessment = result.metadata?.recoveryAttention;
+    if (!assessment || !runtime) return false;
+    if (options.preparedInputTurn) {
+      await runtime
+        .finishTurn(options.preparedInputTurn.handle, {
+          preserveStartupRecovery: true,
+          outcome: {
+            status: 'aborted',
+            cause: 'failed',
+            turnsCount: 0,
+            toolCallsCount: 0,
+            durationMs: 0,
+          },
+        })
+        .catch(() => undefined);
+    }
+    const reason = `Turn recovery requires attention: ${assessment.reason}`;
+    const metadata = await runtime
+      .setTaskStatus('interrupted', reason)
+      .catch(() => undefined);
+    if (metadata) syncSessionTaskMetadata(session, metadata);
+    else {
+      session.taskStatus = 'interrupted';
+      session.taskStatusReason = reason;
+      session.taskCompletedAt = undefined;
+    }
+    run.status = 'attention_required';
+    emit('session.status', { status: 'idle' });
+    return true;
+  };
 
   const emit = (type: string, properties: Record<string, unknown>) => {
     Bus.publish(sessionRef, type, properties);
@@ -4827,6 +4889,9 @@ async function executeRunAsync(
           break;
         case 'turn_start':
           emit('turn.started', { turn: event.turn, maxTurns: event.maxTurns });
+          break;
+        case 'turn_recovery':
+          emit('turn.recovery', { assessment: event.assessment });
           break;
         case 'provider_admission':
           emit('provider.admission', {
@@ -5106,6 +5171,9 @@ async function executeRunAsync(
       }),
       handleLoopEvent
     );
+    if (await settleRecoveryAttention(loopResult)) {
+      return;
+    }
     if (!loopResult.success) {
       throw new Error(loopResult.error?.message ?? 'Agent run failed');
     }
@@ -5126,6 +5194,9 @@ async function executeRunAsync(
         }),
         handleLoopEvent
       );
+      if (await settleRecoveryAttention(loopResult)) {
+        return;
+      }
       if (!loopResult.success) {
         throw new Error(loopResult.error?.message ?? 'Agent follow-up failed');
       }
@@ -5162,7 +5233,14 @@ async function executeRunAsync(
     emit('session.status', { status: 'idle' });
   } catch (error) {
     if (runtime && options.preparedInputTurn) {
-      await runtime.finishTurn(options.preparedInputTurn.handle).catch(() => undefined);
+      const recoveryAssessment = runtime.getTurnRecoveryAssessment();
+      const cleanup =
+        recoveryAssessment.state === 'requires_attention'
+          ? runtime.finishTurn(options.preparedInputTurn.handle, {
+              preserveStartupRecovery: true,
+            })
+          : runtime.finishTurn(options.preparedInputTurn.handle);
+      await cleanup.catch(() => undefined);
     }
     if (abortController.signal.aborted || run.status === 'cancelled') {
       cancelRun(run, 'runtime-abort');

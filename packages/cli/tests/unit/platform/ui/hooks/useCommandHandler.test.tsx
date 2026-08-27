@@ -3,6 +3,7 @@
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SessionTurnRecoveryAssessment } from '../../../../../src/context/turnRecoveryAssessment.js';
 
 const mocks = vi.hoisted(() => {
   const abortController = new AbortController();
@@ -33,10 +34,15 @@ const mocks = vi.hoisted(() => {
     setCommunicationStyle: vi.fn(),
     runCodeReview: vi.fn(),
     executeUserShellCommand: vi.fn(),
+    getTurnRecoveryAssessment: vi.fn<() => SessionTurnRecoveryAssessment>(() => ({
+      state: 'none',
+    })),
+    projectTurnRecoveryAssessment: vi.fn(),
     processSlashCommand: vi.fn(),
     abort: vi.fn(),
     hasPendingInbox: vi.fn(),
     hasActiveGoal: vi.fn(),
+    hasRecoverableTurn: vi.fn(),
     resolvePendingWithHandler: vi.fn(),
     cancelPendingNonInteractive: vi.fn(),
     enqueueCommand: vi.fn(),
@@ -72,6 +78,7 @@ vi.mock('../../../../../src/agent/runtime/SessionRuntime.js', () => ({
   SessionRuntime: {
     hasPendingInbox: mocks.hasPendingInbox,
     hasActiveGoal: mocks.hasActiveGoal,
+    hasRecoverableTurn: mocks.hasRecoverableTurn,
   },
 }));
 
@@ -109,6 +116,7 @@ vi.mock('../../../../../src/ui/hooks/useAgent.js', () => ({
     setCommunicationStyle: mocks.setCommunicationStyle,
     runCodeReview: mocks.runCodeReview,
     executeUserShellCommand: mocks.executeUserShellCommand,
+    getTurnRecoveryAssessment: mocks.getTurnRecoveryAssessment,
   }),
 }));
 
@@ -191,6 +199,7 @@ vi.mock('../../../../../src/ui/hooks/useStreamingBuffer.js', () => ({
 }));
 
 vi.mock('../../../../../src/ui/utils/loopEventHandler.js', () => ({
+  projectTurnRecoveryAssessment: mocks.projectTurnRecoveryAssessment,
   createLoopEventHandler:
     (
       _deps: unknown,
@@ -251,6 +260,8 @@ describe('useCommandHandler durable recovery', () => {
     });
     mocks.hasPendingInbox.mockResolvedValue(true);
     mocks.hasActiveGoal.mockResolvedValue(false);
+    mocks.hasRecoverableTurn.mockResolvedValue(false);
+    mocks.getTurnRecoveryAssessment.mockReturnValue({ state: 'none' });
     mocks.resolvePendingWithHandler.mockResolvedValue(true);
     mocks.cancelPendingNonInteractive.mockResolvedValue(false);
     mocks.buildContextMessagesFromSession.mockReset().mockReturnValue([]);
@@ -315,6 +326,35 @@ describe('useCommandHandler durable recovery', () => {
     expect(mocks.resolvePendingWithHandler.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.hasPendingInbox.mock.invocationCallOrder[0]!
     );
+  });
+
+  it('projects completed recovery after startup reconciliation removes pending work', async () => {
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    mocks.hasActiveGoal.mockResolvedValue(false);
+    mocks.hasRecoverableTurn.mockResolvedValue(true);
+    mocks.getTurnRecoveryAssessment.mockReturnValue({
+      state: 'completed',
+      turnId: 'turn-finalized-before-restart',
+      inputMessageCount: 1,
+    });
+
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.projectTurnRecoveryAssessment).toHaveBeenCalledWith(
+        expect.any(Object),
+        {
+          state: 'completed',
+          turnId: 'turn-finalized-before-restart',
+          inputMessageCount: 1,
+        }
+      );
+    });
+    const agent = await mocks.createAgent.mock.results[0]?.value;
+    expect(agent.chatStream).not.toHaveBeenCalled();
   });
 
   it('retains the compacted model context after an automatic recovery', async () => {
@@ -534,6 +574,7 @@ describe('useCommandHandler durable recovery', () => {
   it('routes bang input to the Session shell without creating an Agent', async () => {
     mocks.hasPendingInbox.mockResolvedValue(false);
     mocks.hasActiveGoal.mockResolvedValue(false);
+    mocks.hasRecoverableTurn.mockResolvedValue(false);
     mocks.executeUserShellCommand.mockResolvedValueOnce({
       executionId: 'tui-shell',
       messageId: 'shell-message',

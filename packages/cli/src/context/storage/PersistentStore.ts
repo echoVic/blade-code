@@ -82,6 +82,11 @@ export interface SessionTurnRecovery {
   outcome: 'completed' | 'aborted';
   inputMessageIds: string[];
   hadSuccessfulToolResult: boolean;
+  /**
+   * Number of tool calls whose terminal result was unavailable during recovery.
+   * Older recovery receipts omit this field and are interpreted as zero.
+   */
+  interruptedToolCallCount?: number;
   emptyFinalCorrectionSpent: boolean;
   finalization?: SessionTurnFinalizationInfo;
 }
@@ -146,8 +151,10 @@ function durableTurnInputMessageIds(
 }
 
 interface ParsedTurnAbortReceipt {
+  version: 1 | 2;
   inputMessageIds: string[];
   hadSuccessfulToolResult: boolean;
+  interruptedToolCallCount: number;
   emptyFinalCorrectionSpent: boolean;
 }
 
@@ -155,7 +162,9 @@ function parseTurnAbortReceipt(value: unknown): ParsedTurnAbortReceipt | undefin
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return undefined;
   }
-  if (!('version' in value) || value.version !== 1) return undefined;
+  if (!('version' in value) || (value.version !== 1 && value.version !== 2)) {
+    return undefined;
+  }
   const inputMessageIds =
     'inputMessageIds' in value
       ? parseTurnInputMessageIds(value.inputMessageIds)
@@ -169,11 +178,79 @@ function parseTurnAbortReceipt(value: unknown): ParsedTurnAbortReceipt | undefin
   ) {
     return undefined;
   }
+  const interruptedToolCallCount =
+    value.version === 1
+      ? 0
+      : 'interruptedToolCallCount' in value &&
+          Number.isSafeInteger(value.interruptedToolCallCount) &&
+          (value.interruptedToolCallCount as number) >= 0
+        ? (value.interruptedToolCallCount as number)
+        : undefined;
+  if (interruptedToolCallCount === undefined) return undefined;
   return {
+    version: value.version,
     inputMessageIds,
     hadSuccessfulToolResult: value.hadSuccessfulToolResult,
+    interruptedToolCallCount,
     emptyFinalCorrectionSpent: value.emptyFinalCorrectionSpent,
   };
+}
+
+function uncertainRestartToolCallCount(
+  projected: readonly SessionEvent[],
+  turnId: string
+): number {
+  const turnStartIndex = projected.findLastIndex(
+    (event) => event.type === 'turn_started' && event.data.turnId === turnId
+  );
+  if (turnStartIndex < 0) return 0;
+  const nextTurnIndex = projected.findIndex(
+    (event, index) =>
+      index > turnStartIndex &&
+      event.type === 'turn_started' &&
+      event.data.turnId !== turnId
+  );
+  const scoped = projected.slice(
+    turnStartIndex + 1,
+    nextTurnIndex < 0 ? undefined : nextTurnIndex
+  );
+  const toolCallIds = new Set(
+    scoped.flatMap((event) => {
+      if (event.type !== 'part_created' || event.data.partType !== 'tool_call') {
+        return [];
+      }
+      const payload = event.data.payload;
+      return payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? [
+            typeof payload.toolCallId === 'string'
+              ? payload.toolCallId
+              : event.data.partId,
+          ]
+        : [event.data.partId];
+    })
+  );
+  const uncertainIds = new Set<string>();
+  for (const event of scoped) {
+    if (event.type !== 'part_created' || event.data.partType !== 'tool_result') {
+      continue;
+    }
+    const payload = event.data.payload;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) continue;
+    const toolCallId =
+      typeof payload.toolCallId === 'string' ? payload.toolCallId : event.data.partId;
+    const metadata = payload.metadata;
+    if (
+      toolCallIds.has(toolCallId) &&
+      metadata &&
+      typeof metadata === 'object' &&
+      !Array.isArray(metadata) &&
+      metadata.processRestartRecovery === true &&
+      metadata.sideEffectsUncertain === true
+    ) {
+      uncertainIds.add(toolCallId);
+    }
+  }
+  return uncertainIds.size;
 }
 
 function acknowledgedInboxIds(projected: readonly SessionEvent[]): Set<string> {
@@ -195,6 +272,15 @@ function unacknowledgedTurnRecovery(
 ): SessionTurnRecovery | undefined {
   const receipt = parseTurnAbortReceipt(aborted.data.recovery);
   if (!receipt) return undefined;
+  if (
+    source.some(
+      (event) =>
+        event.type === 'turn_recovery_acknowledged' &&
+        event.data.turnId === aborted.data.turnId
+    )
+  ) {
+    return undefined;
+  }
   const acknowledged = acknowledgedInboxIds(source);
   for (const messageId of additionallyAcknowledged) {
     acknowledged.add(messageId);
@@ -202,12 +288,23 @@ function unacknowledgedTurnRecovery(
   const inputMessageIds = receipt.inputMessageIds.filter(
     (messageId) => !acknowledged.has(messageId)
   );
-  if (inputMessageIds.length === 0) return undefined;
+  const interruptedToolCallCount =
+    receipt.version === 1
+      ? uncertainRestartToolCallCount(source, aborted.data.turnId)
+      : receipt.interruptedToolCallCount;
+  if (
+    inputMessageIds.length === 0 &&
+    !receipt.hadSuccessfulToolResult &&
+    interruptedToolCallCount === 0
+  ) {
+    return undefined;
+  }
   return {
     turnId: aborted.data.turnId,
     outcome: 'aborted',
     inputMessageIds,
     hadSuccessfulToolResult: receipt.hadSuccessfulToolResult,
+    ...(interruptedToolCallCount > 0 ? { interruptedToolCallCount } : {}),
     emptyFinalCorrectionSpent: receipt.emptyFinalCorrectionSpent,
   };
 }
@@ -740,6 +837,37 @@ export class PersistentStore {
     );
   }
 
+  async acknowledgeTurnRecovery(sessionId: string, turnId: string): Promise<void> {
+    await this.ensureSessionCreated(sessionId);
+    try {
+      await this.log(sessionId).commitValidated((events) => {
+        const projected = materializeSessionEvents(events);
+        if (
+          projected.some(
+            (event) =>
+              event.type === 'turn_recovery_acknowledged' &&
+              event.data.turnId === turnId
+          )
+        ) {
+          throw new TurnLifecycleNoop();
+        }
+        const aborted = projected.findLast(
+          (event): event is Extract<SessionEvent, { type: 'turn_aborted' }> =>
+            event.type === 'turn_aborted' && event.data.turnId === turnId
+        );
+        if (!aborted || !unacknowledgedTurnRecovery(projected, aborted)) {
+          throw new TurnLifecycleNoop();
+        }
+        return this.createEvent('turn_recovery_acknowledged', sessionId, {
+          turnId,
+          acknowledgedAt: new Date().toISOString(),
+        });
+      });
+    } catch (error) {
+      if (!(error instanceof TurnLifecycleNoop)) throw error;
+    }
+  }
+
   async persistBackgroundSubagentCompletion(
     sessionId: string,
     completion: BackgroundSubagentCompletion
@@ -1084,11 +1212,14 @@ export class PersistentStore {
           ...new Set([...durableInputMessageIds, ...inheritedInputMessageIds]),
         ];
         const receipt = {
-          version: 1 as const,
+          version: 2 as const,
           inputMessageIds,
           hadSuccessfulToolResult:
             toolEvidence.hadSuccessfulResult ||
             turn.recovery?.hadSuccessfulToolResult === true,
+          interruptedToolCallCount:
+            toolEvidence.orphaned.length +
+            (turn.recovery?.version === 2 ? turn.recovery.interruptedToolCallCount : 0),
           emptyFinalCorrectionSpent:
             durableEmptyFinalCorrectionSpent(projected, active.turnId) ||
             turn.recovery?.emptyFinalCorrectionSpent === true,
@@ -1098,6 +1229,9 @@ export class PersistentStore {
           outcome: 'aborted',
           inputMessageIds: receipt.inputMessageIds,
           hadSuccessfulToolResult: receipt.hadSuccessfulToolResult,
+          ...(receipt.interruptedToolCallCount > 0
+            ? { interruptedToolCallCount: receipt.interruptedToolCallCount }
+            : {}),
           emptyFinalCorrectionSpent: receipt.emptyFinalCorrectionSpent,
         };
         const eligibleAcknowledgementIds = uniqueAcknowledgementIds.filter(
@@ -1114,13 +1248,18 @@ export class PersistentStore {
         const recoverableInputMessageIds = receipt.inputMessageIds.filter(
           (messageId) => !postCommitAcknowledgedIds.has(messageId)
         );
+        const hasDangerousRecoveryEvidence =
+          receipt.hadSuccessfulToolResult || receipt.interruptedToolCallCount > 0;
         recovery =
-          recoverableInputMessageIds.length > 0
+          recoverableInputMessageIds.length > 0 || hasDangerousRecoveryEvidence
             ? {
                 turnId: turn.turnId,
                 outcome: 'aborted',
                 inputMessageIds: recoverableInputMessageIds,
                 hadSuccessfulToolResult: receipt.hadSuccessfulToolResult,
+                ...(receipt.interruptedToolCallCount > 0
+                  ? { interruptedToolCallCount: receipt.interruptedToolCallCount }
+                  : {}),
                 emptyFinalCorrectionSpent: receipt.emptyFinalCorrectionSpent,
               }
             : undefined;
@@ -1166,6 +1305,21 @@ export class PersistentStore {
           input: structuredClone(call.input),
         }))
       : [];
+  }
+
+  async hasRecoverableTurn(sessionId: string): Promise<boolean> {
+    const events = await this.loadEvents(sessionId);
+    if (!events) return false;
+    const projected = materializeSessionEvents(events);
+    const active = projectTurnLifecycle(projected).active;
+    if (active) {
+      const toolEvidence = durableToolCalls(projected, active.turnId);
+      if (toolEvidence.orphaned.length > 0 || toolEvidence.hadSuccessfulResult) {
+        return true;
+      }
+      if (durableTurnFinalization(projected, active.turnId)) return true;
+    }
+    return latestUnacknowledgedTurnRecovery(projected) !== undefined;
   }
 
   async loadBackgroundTaskChildIds(sessionId: string): Promise<Set<string>> {
@@ -1283,6 +1437,15 @@ export class PersistentStore {
         const activeDurableInputMessageIds = active
           ? durableTurnInputMessageIds(projected, active.turnId)
           : [];
+        const interruptedToolCallCount = activeToolEvidence
+          ? activeToolEvidence.orphaned.filter((call) => {
+              const adopted = options.adoptedToolResults?.get(call.toolCallId);
+              return !(
+                adopted?.toolCallId === call.toolCallId &&
+                adopted.toolName === call.toolName
+              );
+            }).length
+          : 0;
         recovery = active
           ? {
               turnId: active.turnId,
@@ -1298,12 +1461,20 @@ export class PersistentStore {
                 hadSuccessfulAdoptedToolResult ||
                 (inheritedPriorRecovery &&
                   priorRecovery?.hadSuccessfulToolResult === true),
+              ...(() => {
+                const count =
+                  interruptedToolCallCount +
+                  (inheritedPriorRecovery
+                    ? (priorRecovery?.interruptedToolCallCount ?? 0)
+                    : 0);
+                return count > 0 ? { interruptedToolCallCount: count } : {};
+              })(),
               emptyFinalCorrectionSpent:
                 durableEmptyFinalCorrectionSpent(projected, active.turnId) ||
                 (inheritedPriorRecovery &&
                   priorRecovery?.emptyFinalCorrectionSpent === true),
             }
-          : undefined;
+          : latestUnacknowledgedTurnRecovery(projected);
         const activeToolCalls = active ? (activeToolEvidence?.all.length ?? 0) : 0;
         const now = new Date().toISOString();
         const startedAt = active ? Date.parse(active.startedAt) : Number.NaN;
@@ -1379,9 +1550,10 @@ export class PersistentStore {
                   : 0,
                 recovery: recovery
                   ? {
-                      version: 1,
+                      version: 2,
                       inputMessageIds: recovery.inputMessageIds,
                       hadSuccessfulToolResult: recovery.hadSuccessfulToolResult,
+                      interruptedToolCallCount: recovery.interruptedToolCallCount ?? 0,
                       emptyFinalCorrectionSpent: recovery.emptyFinalCorrectionSpent,
                     }
                   : undefined,

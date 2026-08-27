@@ -36,13 +36,21 @@ export function parseTurnAbortAcknowledgedInputMessageIds(data: unknown): string
   if (typeof recovery !== 'object' || Array.isArray(recovery)) return [];
   if (
     !('version' in recovery) ||
-    recovery.version !== 1 ||
+    (recovery.version !== 1 && recovery.version !== 2) ||
     !('inputMessageIds' in recovery) ||
     !('hadSuccessfulToolResult' in recovery) ||
     typeof recovery.hadSuccessfulToolResult !== 'boolean' ||
     !('emptyFinalCorrectionSpent' in recovery) ||
     typeof recovery.emptyFinalCorrectionSpent !== 'boolean' ||
     !('acknowledgedInputMessageIds' in data)
+  ) {
+    return [];
+  }
+  if (
+    recovery.version === 2 &&
+    (!('interruptedToolCallCount' in recovery) ||
+      !Number.isSafeInteger(recovery.interruptedToolCallCount) ||
+      (recovery.interruptedToolCallCount as number) < 0)
   ) {
     return [];
   }
@@ -175,6 +183,7 @@ export type JSONLEventType =
   | 'turn_started'
   | 'turn_completed'
   | 'turn_aborted'
+  | 'turn_recovery_acknowledged'
   | 'inbox_acknowledged'
   | 'interaction_requested'
   | 'interaction_responded'
@@ -520,12 +529,25 @@ export interface SessionTurnAbortInfo extends SessionTurnMetrics {
   cause: SessionTurnAbortCause;
   abortedAt: string;
   acknowledgedInputMessageIds?: string[];
-  recovery?: {
-    version: 1;
-    inputMessageIds: string[];
-    hadSuccessfulToolResult: boolean;
-    emptyFinalCorrectionSpent: boolean;
-  };
+  recovery?:
+    | {
+        version: 1;
+        inputMessageIds: string[];
+        hadSuccessfulToolResult: boolean;
+        emptyFinalCorrectionSpent: boolean;
+      }
+    | {
+        version: 2;
+        inputMessageIds: string[];
+        hadSuccessfulToolResult: boolean;
+        interruptedToolCallCount: number;
+        emptyFinalCorrectionSpent: boolean;
+      };
+}
+
+export interface SessionTurnRecoveryAcknowledgementInfo {
+  turnId: string;
+  acknowledgedAt: string;
 }
 
 export interface SubagentRunRef {
@@ -581,6 +603,10 @@ export type SessionEvent =
       data: SessionTurnCompletionInfo;
     })
   | (SessionEventBase & { type: 'turn_aborted'; data: SessionTurnAbortInfo })
+  | (SessionEventBase & {
+      type: 'turn_recovery_acknowledged';
+      data: SessionTurnRecoveryAcknowledgementInfo;
+    })
   | (SessionEventBase & {
       type: 'inbox_acknowledged';
       data: InboxAcknowledgementInfo;

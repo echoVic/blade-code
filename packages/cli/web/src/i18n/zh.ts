@@ -593,6 +593,9 @@ export const zh: Dict = {
   'status.phase.switchingModel': '正在切换模型…',
   'status.phase.waitingPermission': '等待授权…',
   'status.phase.error': '运行失败',
+  'status.recovery.review': '恢复前需要检查',
+  'status.recovery.interruptedTool': '中断工具的执行状态不确定',
+  'status.recovery.successfulTool': '工具可能已经改变了外部状态',
 
   // Preview
   'preview.title': '预览',

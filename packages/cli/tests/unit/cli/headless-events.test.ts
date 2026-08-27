@@ -124,6 +124,22 @@ describe('headless event contract', () => {
     });
     expect(() => HeadlessJsonlEventSchema.parse(providerAdmission)).not.toThrow();
 
+    const turnRecovery = createHeadlessJsonlEvent('turn_recovery', {
+      state: 'requires_attention',
+      turn_id: 'turn-before-restart',
+      input_message_count: 1,
+      reason: 'interrupted_tool_call',
+    });
+    expect(turnRecovery).toEqual({
+      event_version: 1,
+      type: 'turn_recovery',
+      state: 'requires_attention',
+      turn_id: 'turn-before-restart',
+      input_message_count: 1,
+      reason: 'interrupted_tool_call',
+    });
+    expect(() => HeadlessJsonlEventSchema.parse(turnRecovery)).not.toThrow();
+
     const providerAdmissionRejected = createHeadlessJsonlEvent('provider_admission', {
       phase: 'rejected',
       request_class: 'foreground',

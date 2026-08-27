@@ -1089,6 +1089,32 @@ describe('createLoopEventHandler', () => {
       expect(deps.appActions.setTasks).toHaveBeenCalledWith(tasks);
     });
 
+    it('renders an interrupted tool recovery as a durable CLI warning', () => {
+      const deps = createMockDeps();
+      const handler = createLoopEventHandler(deps, createMockStats());
+
+      handler({
+        kind: 'turn_recovery',
+        assessment: {
+          state: 'requires_attention',
+          turnId: 'turn-before-restart',
+          inputMessageCount: 1,
+          reason: 'interrupted_tool_call',
+        },
+      });
+
+      expect(deps.sessionActions.addToolMessage).toHaveBeenCalledWith(
+        'Turn recovery requires attention',
+        {
+          toolName: 'Runtime Recovery',
+          phase: 'complete',
+          summary: 'An interrupted tool may have partially completed',
+          detail:
+            'turn-before-restart · inspect workspace, processes, and external state before retrying',
+        }
+      );
+    });
+
     it('steering_applied 应该移除已注入的排队输入', () => {
       const deps = createMockDeps();
       const handler = createLoopEventHandler(deps, createMockStats());

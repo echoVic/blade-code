@@ -55,6 +55,12 @@ const sessionState = vi.hoisted(() => ({
     runLength: number;
     haltThreshold: number;
   } | null,
+  turnRecovery: null as {
+    state: 'requires_attention';
+    turnId: string;
+    inputMessageCount: number;
+    reason: 'interrupted_tool_call' | 'successful_tool_result';
+  } | null,
 }));
 
 vi.mock('@/store/session', () => ({
@@ -76,6 +82,7 @@ describe('StatusBar', () => {
     sessionState.providerCircuit = null;
     sessionState.providerStall = null;
     sessionState.actionStationarity = null;
+    sessionState.turnRecovery = null;
     Object.assign(sessionState.tokenUsage, {
       inputTokens: 10,
       outputTokens: 5,
@@ -108,6 +115,24 @@ describe('StatusBar', () => {
 
     expect(container.textContent).toContain('Compacting context...');
     expect(container.textContent).not.toContain('Generating...');
+  });
+
+  it('keeps an interrupted tool recovery warning visible after streaming stops', () => {
+    sessionState.isStreaming = false;
+    sessionState.agentPhase = 'idle';
+    sessionState.turnRecovery = {
+      state: 'requires_attention',
+      turnId: 'turn-before-restart',
+      inputMessageCount: 1,
+      reason: 'interrupted_tool_call',
+    };
+
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    expect(container.textContent).toContain('Recovery needs review');
+    expect(container.textContent).toContain('Interrupted tool state is uncertain');
   });
 
   it('renders the cumulative prompt-cache hit rate', () => {

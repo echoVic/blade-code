@@ -46,6 +46,38 @@ type SessionActions = ReturnType<typeof useSessionActions>;
 type AppActions = ReturnType<typeof useAppActions>;
 type CommandActions = ReturnType<typeof useCommandActions>;
 
+export function projectTurnRecoveryAssessment(
+  sessionActions: SessionActions,
+  assessment: Extract<LoopEvent, { kind: 'turn_recovery' }>['assessment']
+): void {
+  if (assessment.state === 'requires_attention') {
+    const interrupted = assessment.reason === 'interrupted_tool_call';
+    sessionActions.addToolMessage('Turn recovery requires attention', {
+      toolName: 'Runtime Recovery',
+      phase: 'complete',
+      summary: interrupted
+        ? 'An interrupted tool may have partially completed'
+        : 'A completed tool may already have changed external state',
+      detail: `${assessment.turnId} · inspect workspace, processes, and external state before retrying`,
+    });
+    return;
+  }
+  sessionActions.addToolMessage(
+    assessment.state === 'completed'
+      ? 'Recovered completed turn'
+      : 'Resuming interrupted turn',
+    {
+      toolName: 'Runtime Recovery',
+      phase: 'complete',
+      summary:
+        assessment.state === 'completed'
+          ? 'The durable final response was recovered'
+          : 'No tool execution was recorded before interruption',
+      detail: assessment.turnId,
+    }
+  );
+}
+
 export interface LoopEventDeps {
   sessionActions: SessionActions;
   appActions: AppActions;
@@ -194,6 +226,10 @@ export function createLoopEventHandler(
         deps.sessionActions.setActionStationarity(
           event.phase === 'recovered' ? null : stationarity
         );
+        break;
+      }
+      case 'turn_recovery': {
+        projectTurnRecoveryAssessment(deps.sessionActions, event.assessment);
         break;
       }
 

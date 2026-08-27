@@ -609,14 +609,24 @@ export class AcpSession {
       });
     });
     const activeGoal = await this.runtime.getGoal();
-    if (
-      this.runtime.getPendingSteeringCount() > 0 ||
-      activeGoal?.status === 'active' ||
-      activeGoal?.status === 'verifying'
-    ) {
+    const hasPending = this.runtime.getPendingSteeringCount() > 0;
+    const hasActiveGoal =
+      activeGoal?.status === 'active' || activeGoal?.status === 'verifying';
+    if (hasPending || hasActiveGoal) {
       this.requestPendingResume({
         defer: this.options.initialMessages !== undefined,
       });
+    } else {
+      const recoveryAssessment = this.runtime.getTurnRecoveryAssessment();
+      if (recoveryAssessment.state !== 'none') {
+        this.sendUpdate({
+          sessionUpdate: 'session_info_update',
+          updatedAt: new Date().toISOString(),
+          _meta: {
+            'blade/turnRecovery': recoveryAssessment,
+          },
+        });
+      }
     }
     // 注意：available_commands_update 在 BladeAgent.newSession 响应后延迟发送
   }
@@ -1631,6 +1641,15 @@ export class AcpSession {
                 },
               });
               break;
+            case 'turn_recovery':
+              this.sendUpdate({
+                sessionUpdate: 'session_info_update',
+                updatedAt: new Date().toISOString(),
+                _meta: {
+                  'blade/turnRecovery': event.assessment,
+                },
+              });
+              break;
             case 'provider_stall':
               this.sendUpdate({
                 sessionUpdate: 'session_info_update',
@@ -1818,6 +1837,7 @@ export class AcpSession {
         throw RequestError.internalError(
           {
             failureType,
+            modelId: this.runtime.getCurrentModelId(),
             taskFailure,
             outputStarted,
             toolExecutionStarted,
@@ -2171,6 +2191,20 @@ export class AcpSession {
       const goal = hasPending ? null : await this.runtime.getGoal();
       if (generation !== this.pendingResumeGeneration) return;
       const hasActiveGoal = goal?.status === 'active' || goal?.status === 'verifying';
+      const recoveryAssessment = this.runtime.getTurnRecoveryAssessment();
+      if (
+        recoveryAssessment.state !== 'none' &&
+        (recoveryAssessment.state === 'requires_attention' ||
+          (!hasPending && !hasActiveGoal))
+      ) {
+        this.sendUpdate({
+          sessionUpdate: 'session_info_update',
+          updatedAt: new Date().toISOString(),
+          _meta: {
+            'blade/turnRecovery': recoveryAssessment,
+          },
+        });
+      }
       if (!hasPending && !hasActiveGoal) {
         if (this.pendingResumeRequested) {
           this.pendingResumeAttempt = 0;
@@ -2178,6 +2212,10 @@ export class AcpSession {
           this.pendingResumeRecoveryStartedAt = 0;
           return;
         }
+        this.clearPendingResumeRequest();
+        return;
+      }
+      if (recoveryAssessment.state === 'requires_attention') {
         this.clearPendingResumeRequest();
         return;
       }

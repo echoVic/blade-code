@@ -55,43 +55,56 @@ export function StatusBar() {
   const providerRetry = useSessionStore((state) => state.providerRetry);
   const providerStall = useSessionStore((state) => state.providerStall);
   const actionStationarity = useSessionStore((state) => state.actionStationarity);
+  const turnRecovery = useSessionStore((state) => state.turnRecovery);
   const phaseKey = PHASE_LABEL_KEYS[agentPhase] ?? '';
   const retryDelay =
     providerRetry?.delayMs !== undefined
       ? ` · ${Math.max(0, Math.ceil(providerRetry.delayMs / 1000))}s`
       : '';
-  const phaseLabel = actionStationarity
-    ? `${t(
-        actionStationarity.phase === 'halted'
-          ? 'status.phase.actionStationarityStopped'
-          : 'status.phase.actionStationarityRecovering'
-      )} · ${actionStationarity.toolName} · ${actionStationarity.runLength}/${actionStationarity.haltThreshold}`
-    : providerCircuit
-      ? providerCircuit.phase === 'probe'
-        ? 'Provider · Recovery probe'
-        : `Provider · Circuit open${
-            providerCircuit.retryAfterMs !== undefined
-              ? ` · probe in ${formatDurationMs(providerCircuit.retryAfterMs)}`
-              : ''
-          }${
-            providerCircuit.recoveryRemainingMs !== undefined
-              ? ` · ${formatDurationMs(providerCircuit.recoveryRemainingMs)}`
-              : ''
-          }`
-      : providerAdmission
-        ? `Provider · Capacity queue ${providerAdmission.queuePosition}/${Math.max(
-            providerAdmission.queueDepth,
-            providerAdmission.queuePosition
-          )} · ${providerAdmission.scope} · ${formatDurationMs(providerAdmission.waitMs)}`
-        : providerRetry
-          ? providerRetry.mode === 'bounded_foreground'
-            ? `Provider · Bounded recovery · ${providerRetry.attempt}/${providerRetry.maxRetries} · ${formatDurationMs(providerRetry.recoveryRemainingMs ?? 0)}`
-            : `Provider · ${t('chat.error.action.retryingTask')} · ${providerRetry.attempt}/${providerRetry.maxRetries}${retryDelay}`
-          : providerStall
-            ? `${t('status.phase.providerStall')} · ${Math.ceil(providerStall.durationMs / 1000)}s / ${Math.ceil(providerStall.timeoutMs / 1000)}s`
-            : phaseKey
-              ? t(phaseKey)
-              : '';
+  const recoveryLabel =
+    turnRecovery?.state === 'requires_attention' ? t('status.recovery.review') : '';
+  const recoveryDetail =
+    turnRecovery?.state === 'requires_attention'
+      ? t(
+          turnRecovery.reason === 'interrupted_tool_call'
+            ? 'status.recovery.interruptedTool'
+            : 'status.recovery.successfulTool'
+        )
+      : '';
+  const phaseLabel = recoveryLabel
+    ? recoveryLabel
+    : actionStationarity
+      ? `${t(
+          actionStationarity.phase === 'halted'
+            ? 'status.phase.actionStationarityStopped'
+            : 'status.phase.actionStationarityRecovering'
+        )} · ${actionStationarity.toolName} · ${actionStationarity.runLength}/${actionStationarity.haltThreshold}`
+      : providerCircuit
+        ? providerCircuit.phase === 'probe'
+          ? 'Provider · Recovery probe'
+          : `Provider · Circuit open${
+              providerCircuit.retryAfterMs !== undefined
+                ? ` · probe in ${formatDurationMs(providerCircuit.retryAfterMs)}`
+                : ''
+            }${
+              providerCircuit.recoveryRemainingMs !== undefined
+                ? ` · ${formatDurationMs(providerCircuit.recoveryRemainingMs)}`
+                : ''
+            }`
+        : providerAdmission
+          ? `Provider · Capacity queue ${providerAdmission.queuePosition}/${Math.max(
+              providerAdmission.queueDepth,
+              providerAdmission.queuePosition
+            )} · ${providerAdmission.scope} · ${formatDurationMs(providerAdmission.waitMs)}`
+          : providerRetry
+            ? providerRetry.mode === 'bounded_foreground'
+              ? `Provider · Bounded recovery · ${providerRetry.attempt}/${providerRetry.maxRetries} · ${formatDurationMs(providerRetry.recoveryRemainingMs ?? 0)}`
+              : `Provider · ${t('chat.error.action.retryingTask')} · ${providerRetry.attempt}/${providerRetry.maxRetries}${retryDelay}`
+            : providerStall
+              ? `${t('status.phase.providerStall')} · ${Math.ceil(providerStall.durationMs / 1000)}s / ${Math.ceil(providerStall.timeoutMs / 1000)}s`
+              : phaseKey
+                ? t(phaseKey)
+                : '';
 
   const usagePercent =
     tokenUsage.maxContextTokens > 0
@@ -237,10 +250,27 @@ export function StatusBar() {
 
       <div className="flex-1" />
 
-      {isStreaming && phaseLabel && (
-        <div className="flex gap-2 items-center">
-          <span className="deck-pulse-dot" />
-          <span className="text-[hsl(var(--deck-accent))]">{phaseLabel}</span>
+      {(recoveryLabel || (isStreaming && phaseLabel)) && (
+        <div className="flex min-w-0 items-center gap-2">
+          <span
+            className={cn(
+              'shrink-0',
+              recoveryLabel ? 'h-2 w-2 rounded-sm bg-amber-500' : 'deck-pulse-dot'
+            )}
+          />
+          <span
+            className={cn(
+              'truncate',
+              recoveryLabel
+                ? 'text-amber-600 dark:text-amber-400'
+                : 'text-[hsl(var(--deck-accent))]'
+            )}
+          >
+            {phaseLabel}
+            {recoveryDetail ? (
+              <span className="hidden sm:inline"> · {recoveryDetail}</span>
+            ) : null}
+          </span>
         </div>
       )}
     </div>

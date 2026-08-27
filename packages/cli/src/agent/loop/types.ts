@@ -12,6 +12,7 @@ import type {
   CompactionReason,
   CompactionStrategy,
 } from '../../context/compactionCheckpoint.js';
+import type { SessionTurnRecoveryAssessment } from '../../context/turnRecoveryAssessment.js';
 import type { GoalPrematureStopPattern, GoalSnapshot } from '../../goals/types.js';
 import type {
   ChatCompletionMessageToolCall,
@@ -95,6 +96,10 @@ export type SystemEvent =
 
 /** 业务事件 */
 export type DomainEvent =
+  | {
+      kind: 'turn_recovery';
+      assessment: Exclude<SessionTurnRecoveryAssessment, { state: 'none' }>;
+    }
   | { kind: 'task_update'; tasks: TaskListItem[] }
   | {
       kind: 'structured_output';

@@ -75,6 +75,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     providerCircuit: null,
     providerRetry: null,
     providerStall: null,
+    turnRecovery: overrides.turnRecovery ?? null,
     sessionEventConnectionState: 'idle',
     currentRunId: null,
     pendingSteeringCount: 0,
@@ -1773,6 +1774,63 @@ describe('eventHandlers', () => {
     });
     expect(state.agentPhase).toBe('running');
     expect(state.providerRetry).toBeNull();
+  });
+
+  test('retains turn recovery attention until an explicit turn starts', () => {
+    const state = createState();
+    state.isStreaming = true;
+    const set = vi.fn((partial) => {
+      if (typeof partial === 'function') Object.assign(state, partial(state));
+      else Object.assign(state, partial);
+    });
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'turn.recovery',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        assessment: {
+          state: 'requires_attention',
+          turnId: 'turn-before-restart',
+          inputMessageCount: 1,
+          reason: 'interrupted_tool_call',
+        },
+      },
+    });
+    expect(state.turnRecovery).toEqual({
+      state: 'requires_attention',
+      turnId: 'turn-before-restart',
+      inputMessageCount: 1,
+      reason: 'interrupted_tool_call',
+    });
+    expect(state.resyncSessionMessages).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      projectPath: '/workspace/a',
+    });
+
+    dispatch({
+      type: 'session.completed',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        runId: 'blocked-auto-resume',
+      },
+    });
+    expect(state.turnRecovery).toEqual(
+      expect.objectContaining({ state: 'requires_attention' })
+    );
+
+    dispatch({
+      type: 'turn.started',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        turn: 1,
+        maxTurns: 20,
+      },
+    });
+    expect(state.turnRecovery).toBeNull();
   });
 
   test('tracks and clears Provider admission lifecycle ephemerally', () => {

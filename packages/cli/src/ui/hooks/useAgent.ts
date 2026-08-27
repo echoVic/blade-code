@@ -928,6 +928,10 @@ export function useAgent(options: AgentOptions) {
     }
   );
 
+  const getTurnRecoveryAssessment = useMemoizedFn(
+    () => runtimeRef.current?.getTurnRecoveryAssessment() ?? { state: 'none' as const }
+  );
+
   const runCodeReview = useMemoizedFn(
     async (request: CodeReviewRequest, signal?: AbortSignal) => {
       const targetSessionId = options.sessionId;
@@ -979,6 +983,7 @@ export function useAgent(options: AgentOptions) {
     askSideQuestion,
     runCodeReview,
     executeUserShellCommand,
+    getTurnRecoveryAssessment,
     listRewindCheckpoints,
     rewindSession,
     listSubagents,

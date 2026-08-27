@@ -140,6 +140,19 @@ export interface ActionStationarityInfo {
   progressAware: boolean;
 }
 
+export type TurnRecoveryInfo =
+  | {
+      state: 'completed' | 'resumable';
+      turnId: string;
+      inputMessageCount: number;
+    }
+  | {
+      state: 'requires_attention';
+      turnId: string;
+      inputMessageCount: number;
+      reason: 'successful_tool_result' | 'interrupted_tool_call';
+    };
+
 export interface TaskItem {
   id: string;
   subject: string;
@@ -407,6 +420,7 @@ export interface StreamingSlice {
   providerRetry: ProviderRetryInfo | null;
   providerStall: ProviderStallInfo | null;
   actionStationarity: ActionStationarityInfo | null;
+  turnRecovery: TurnRecoveryInfo | null;
   sessionEventConnectionState: TaskEventConnectionState | 'idle';
   currentRunId: string | null;
   pendingSteeringCount: number;

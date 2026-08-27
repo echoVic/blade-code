@@ -94,6 +94,25 @@ function finalAgentText(updates: readonly acp.SessionNotification[]): string {
     .join('');
 }
 
+function describeAcpPromptFailure(error: unknown, secret: string): string {
+  const candidate = error as {
+    message?: unknown;
+    code?: unknown;
+    data?: unknown;
+  };
+  let detail: string;
+  try {
+    detail = JSON.stringify({
+      message: candidate?.message,
+      code: candidate?.code,
+      data: candidate?.data,
+    });
+  } catch {
+    detail = error instanceof Error ? error.message : String(error);
+  }
+  return secret ? detail.replaceAll(secret, '[REDACTED]') : detail;
+}
+
 async function inboxIsMissing(workspace: string, sessionId: string): Promise<boolean> {
   try {
     await access(getSessionInboxFilePath(workspace, sessionId));
@@ -126,18 +145,37 @@ async function waitForRecovery(input: {
   throw new Error('ACP root-turn recovery timed out');
 }
 
+async function waitForAttention(harness: AcpHarness, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const projected = harness.client.updates.some(
+      ({ update }) =>
+        update.sessionUpdate === 'session_info_update' &&
+        (update._meta?.['blade/turnRecovery'] as { state?: unknown } | undefined)
+          ?.state === 'requires_attention'
+    );
+    if (projected) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('ACP root-turn attention projection timed out');
+}
+
 export interface RootTurnAutoResumeAcpEvidence {
+  attentionProjected: true;
   finalText: string;
   updates: acp.SessionNotification[];
 }
 
 export async function runRootTurnAutoResumeAcpDriver(input: {
   workspace: string;
+  home: string;
   sessionId: string;
   expected: string;
   secret: string;
   timeoutMs?: number;
 }): Promise<RootTurnAutoResumeAcpEvidence> {
+  const previousHome = process.env.HOME;
+  process.env.HOME = input.home;
   const harness = createHarness();
   try {
     await runWithCwdOverride(input.workspace, async () => {
@@ -150,6 +188,34 @@ export async function runRootTurnAutoResumeAcpDriver(input: {
         cwd: input.workspace,
         mcpServers: [],
       });
+      await waitForAttention(harness, 30_000);
+      if (finalAgentText(harness.client.updates)) {
+        throw new Error('ACP root-turn recovery replayed before explicit input');
+      }
+      let result: acp.PromptResponse;
+      try {
+        result = await harness.connection.prompt({
+          sessionId: input.sessionId,
+          prompt: [
+            {
+              type: 'text',
+              text:
+                'I inspected the workspace and external state. Continue safely ' +
+                'without repeating any write or other side effect.',
+            },
+          ],
+        });
+      } catch (error) {
+        throw new Error(
+          `ACP explicit recovery prompt failed: ${describeAcpPromptFailure(
+            error,
+            input.secret
+          )}`
+        );
+      }
+      if (result.stopReason !== 'end_turn') {
+        throw new Error(`ACP explicit recovery stopped with ${result.stopReason}`);
+      }
       await waitForRecovery({
         harness,
         workspace: input.workspace,
@@ -164,10 +230,16 @@ export async function runRootTurnAutoResumeAcpDriver(input: {
       throw new Error('ACP root-turn recovery exposed the Provider credential');
     }
     return {
+      attentionProjected: true,
       finalText: finalAgentText(updates),
       updates,
     };
   } finally {
-    await harness.close();
+    try {
+      await harness.close();
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    }
   }
 }

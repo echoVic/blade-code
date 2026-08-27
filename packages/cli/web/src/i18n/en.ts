@@ -636,6 +636,9 @@ export const en = {
   'status.phase.switchingModel': 'Switching model...',
   'status.phase.waitingPermission': 'Waiting for permission...',
   'status.phase.error': 'Run failed',
+  'status.recovery.review': 'Recovery needs review',
+  'status.recovery.interruptedTool': 'Interrupted tool state is uncertain',
+  'status.recovery.successfulTool': 'A tool may already have changed state',
 
   // -------- Preview --------
   'preview.title': 'Preview',

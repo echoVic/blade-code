@@ -12,6 +12,8 @@ import {
 } from './foregroundBoundedOutputWebDriver.js';
 
 export interface RootTurnAutoResumeWebEvidence {
+  attentionVisible: true;
+  attentionVisibleAfterReload: true;
   markerVisible: true;
   markerVisibleAfterReload: true;
   composerVisible: true;
@@ -196,7 +198,29 @@ export async function runRootTurnAutoResumeWebDriver(input: {
       state: 'visible',
       timeout: 30_000,
     });
+    const attention = page.getByText(/Recovery needs review|恢复前需要检查/);
+    await attention.waitFor({ state: 'visible', timeout: 30_000 });
+    if (
+      (await page
+        .locator('[data-chat-role="assistant"]')
+        .filter({ hasText: input.expected })
+        .count()) > 0
+    ) {
+      throw new Error('Root-turn Web recovery replayed before explicit input');
+    }
+    refreshing = true;
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    refreshing = false;
+    const composer = page.locator('textarea[data-blade-composer]');
+    await composer.waitFor({ state: 'visible', timeout: 30_000 });
+    await attention.waitFor({ state: 'visible', timeout: 30_000 });
+    await composer.fill(
+      'I inspected the workspace and external state. Continue safely without ' +
+        'repeating any write or other side effect.'
+    );
+    await composer.press('Enter');
     await waitForExpectedAssistantText(page, input.expected, timeoutMs);
+    await attention.waitFor({ state: 'hidden', timeout: 30_000 });
     await waitForInboxRemoval(input.workspace, input.sessionId, 10_000);
     if ((await page.locator('body').textContent())?.includes(input.secret)) {
       throw new Error('Provider credential reached the browser DOM');
@@ -215,6 +239,8 @@ export async function runRootTurnAutoResumeWebDriver(input: {
       throw new Error(`Browser faults: ${JSON.stringify(faults)}`);
     }
     return {
+      attentionVisible: true,
+      attentionVisibleAfterReload: true,
       markerVisible: true,
       markerVisibleAfterReload: true,
       composerVisible: true,

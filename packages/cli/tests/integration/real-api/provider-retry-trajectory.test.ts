@@ -1370,6 +1370,7 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
     const sessionId = `real-tool-crash-${Date.now()}`;
     const markerPath = path.join(workspace, 'crash-marker.txt');
     let failedOutput = '';
+    let blockedOutput = '';
     let output = '';
     let errorOutput = '';
 
@@ -1463,6 +1464,83 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
             event.data.partId === toolCallId
         )
       ).toBe(false);
+      expect(
+        interruptedEvents?.find((event) => event.type === 'turn_aborted')
+      ).toMatchObject({
+        data: {
+          recovery: {
+            version: 2,
+            inputMessageIds: [expect.any(String)],
+            interruptedToolCallCount: 1,
+          },
+        },
+      });
+      expect(
+        interruptedEvents?.filter((event) => event.type === 'inbox_acknowledged')
+      ).toHaveLength(0);
+
+      const recoveryProbe = await runWithCwdOverride(workspace, () =>
+        SessionRuntime.create({
+          sessionId,
+          workspaceRoot: workspace,
+          permissionMode: PermissionMode.YOLO,
+        })
+      );
+      expect(recoveryProbe.getTurnRecoveryAssessment()).toEqual({
+        state: 'requires_attention',
+        turnId: expect.any(String),
+        inputMessageCount: 1,
+        reason: 'interrupted_tool_call',
+      });
+      await recoveryProbe.dispose();
+
+      const blockedExitCode = await runWithCwdOverride(workspace, () =>
+        runHeadless(
+          {
+            headless: true,
+            outputFormat: 'jsonl',
+            resume: sessionId,
+            maxTurns: 2,
+            allowedTools: ['Read', 'Write'],
+          },
+          {
+            stdout: {
+              write(chunk: string) {
+                blockedOutput += chunk;
+                return true;
+              },
+            },
+            stderr: {
+              write(chunk: string) {
+                errorOutput += chunk;
+                return true;
+              },
+            },
+          },
+          { stdin: Readable.from([]) as NodeJS.ReadStream }
+        )
+      );
+      const blockedEvents = blockedOutput
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+      expect(
+        blockedExitCode,
+        errorOutput.replaceAll(modelConfig.apiKey, '[redacted]')
+      ).toBe(2);
+      expect(blockedEvents).toContainEqual({
+        event_version: 1,
+        type: 'turn_recovery',
+        state: 'requires_attention',
+        turn_id: expect.any(String),
+        input_message_count: 1,
+        reason: 'interrupted_tool_call',
+      });
+      expect(
+        blockedEvents.filter(
+          (event) => event.type === 'content_delta' || event.type === 'tool_start'
+        )
+      ).toHaveLength(0);
 
       const exitCode = await runWithCwdOverride(workspace, () =>
         runHeadless(
@@ -1472,6 +1550,10 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
             resume: sessionId,
             maxTurns: 2,
             allowedTools: ['Read', 'Write'],
+            message:
+              'Inspect the process-restart receipt and crash-marker.txt. Do not ' +
+              'modify any file or repeat any prior tool. Reply exactly ' +
+              'TOOL_CRASH_RECEIPT_OK.',
           },
           {
             stdout: {
@@ -1486,8 +1568,7 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
                 return true;
               },
             },
-          },
-          { stdin: Readable.from([]) as NodeJS.ReadStream }
+          }
         )
       );
       const events = output
@@ -1511,7 +1592,9 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
             ['Write', 'Edit'].includes(event.tool_name ?? '')
         )
       ).toHaveLength(0);
-      expect(`${output}\n${errorOutput}`).not.toContain(modelConfig.apiKey);
+      expect(`${blockedOutput}\n${output}\n${errorOutput}`).not.toContain(
+        modelConfig.apiKey
+      );
 
       const recoveredEvents = await store.loadEvents(sessionId);
       if (!recoveredEvents) {

@@ -130,6 +130,107 @@ describe('headless runner', () => {
         goalContinuationOnly: false,
       })
     );
+  }, 15_000);
+
+  it('returns a blocked exit without reporting completion for recovery attention', async () => {
+    runtimeState.create.mockResolvedValueOnce({
+      dispose: runtimeState.dispose,
+      getConfig: () => ({ maxTurns: -1 }),
+      getPendingSteeringCount: () => 1,
+      getGoal: async () => null,
+      getRecoveredFinalResponse: async () => undefined,
+      executeUserShellCommand: runtimeState.executeUserShellCommand,
+    });
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      const assessment = {
+        state: 'requires_attention' as const,
+        turnId: 'turn-before-restart',
+        inputMessageCount: 1,
+        reason: 'interrupted_tool_call' as const,
+      };
+      yield { kind: 'turn_recovery' as const, assessment };
+      return {
+        success: true,
+        finalMessage: '',
+        metadata: {
+          turnsCount: 0,
+          toolCallsCount: 0,
+          duration: 0,
+          recoveryAttention: assessment,
+        },
+      };
+    });
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        resume: 'headless-session',
+        outputFormat: 'jsonl',
+      },
+      { stdout, stderr },
+      { stdin: Readable.from([]) as NodeJS.ReadStream }
+    );
+
+    const events = stdout.write.mock.calls.map(([chunk]) => JSON.parse(chunk));
+    expect(exitCode).toBe(2);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'turn_recovery',
+        state: 'requires_attention',
+      })
+    );
+    expect(
+      events.some((event) => event.type === 'phase' && event.phase === 'completed')
+    ).toBe(false);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'error',
+        message: expect.stringContaining('requires explicit user attention'),
+      })
+    );
+  }, 15_000);
+
+  it('projects inputless recovery attention before declaring there is no work', async () => {
+    runtimeState.create.mockResolvedValueOnce({
+      dispose: runtimeState.dispose,
+      getConfig: () => ({ maxTurns: -1 }),
+      getPendingSteeringCount: () => 0,
+      getGoal: async () => ({ status: 'paused' }),
+      getTurnRecoveryAssessment: () => ({
+        state: 'requires_attention',
+        turnId: 'turn-inputless-goal',
+        inputMessageCount: 0,
+        reason: 'successful_tool_result',
+      }),
+      getRecoveredFinalResponse: async () => undefined,
+      executeUserShellCommand: runtimeState.executeUserShellCommand,
+    });
+    const { runHeadless } = await import('../../../src/commands/headless.js');
+    const stdout = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+    const stderr = { write: vi.fn<(chunk: string) => boolean>(() => true) };
+
+    const exitCode = await runHeadless(
+      {
+        headless: true,
+        resume: 'headless-session',
+        outputFormat: 'jsonl',
+      },
+      { stdout, stderr },
+      { stdin: Readable.from([]) as NodeJS.ReadStream }
+    );
+
+    expect(exitCode).toBe(2);
+    expect(stdout.write.mock.calls.map(([chunk]) => JSON.parse(chunk))).toContainEqual(
+      expect.objectContaining({
+        type: 'turn_recovery',
+        state: 'requires_attention',
+        turn_id: 'turn-inputless-goal',
+      })
+    );
+    expect(agentState.createWithRuntime).not.toHaveBeenCalled();
   });
 
   it('rejects oversized input before resolving a durable Session', async () => {
@@ -169,6 +270,11 @@ describe('headless runner', () => {
         turnId: 'turn-recovered',
         content: 'GOAL_FINALIZATION_RECOVERED',
       }),
+      getTurnRecoveryAssessment: () => ({
+        state: 'completed',
+        turnId: 'turn-recovered',
+        inputMessageCount: 1,
+      }),
       executeUserShellCommand: runtimeState.executeUserShellCommand,
     });
     const { runHeadless } = await import('../../../src/commands/headless.js');
@@ -190,6 +296,11 @@ describe('headless runner', () => {
     expect(agentState.chatStream).not.toHaveBeenCalled();
     expect(stdout.write.mock.calls.map(([chunk]) => JSON.parse(chunk))).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          type: 'turn_recovery',
+          state: 'completed',
+          turn_id: 'turn-recovered',
+        }),
         expect.objectContaining({
           type: 'goal',
           goal_id: 'goal-recovered',

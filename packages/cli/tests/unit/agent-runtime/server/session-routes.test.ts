@@ -210,6 +210,9 @@ const runtimeState = vi.hoisted(() => ({
     getPendingSteeringCount: vi.fn(() => 0),
     getPendingSteeringMessages: vi.fn(() => []),
     getRecoveredSteeringCount: vi.fn(() => 0),
+    getTurnRecoveryAssessment: vi.fn<
+      () => ReturnType<SessionRuntime['getTurnRecoveryAssessment']>
+    >(() => ({ state: 'none' })),
     hasActiveTurn: vi.fn(() => false),
     hasTurnOwner: vi.fn(() => false),
     isIdleForResidency: vi.fn(() => true),
@@ -332,6 +335,7 @@ vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
     create: vi.fn(async () => runtimeState.runtime),
     hasPendingInbox: vi.fn(async () => false),
     hasActiveGoal: vi.fn(async () => false),
+    hasRecoverableTurn: vi.fn(async () => false),
   },
 }));
 
@@ -640,6 +644,7 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
     runtimeState.runtime.getPendingSteeringMessages.mockReturnValue([]);
     runtimeState.runtime.getRecoveredSteeringCount.mockReturnValue(0);
+    runtimeState.runtime.getTurnRecoveryAssessment.mockReturnValue({ state: 'none' });
     runtimeState.runtime.hasActiveTurn.mockReturnValue(false);
     runtimeState.runtime.hasTurnOwner.mockReturnValue(false);
     runtimeState.runtime.isIdleForResidency.mockReset();
@@ -673,6 +678,7 @@ describe('SessionRoutes runtime reuse', () => {
     );
     vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(false);
     vi.mocked(SessionRuntime.hasActiveGoal).mockResolvedValue(false);
+    vi.mocked(SessionRuntime.hasRecoverableTurn).mockResolvedValue(false);
     vi.mocked(SessionService.listSessions).mockResolvedValue([]);
     vi.mocked(SessionService.listSessionPage).mockResolvedValue({ sessions: [] });
     vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(undefined);
@@ -941,6 +947,8 @@ describe('SessionRoutes runtime reuse', () => {
       parentId: string;
       relationType: 'subagent' | 'fork';
       permissionMode: SessionMetadata['permissionMode'];
+      taskIsolation: SessionMetadata['taskIsolation'];
+      taskStatus: SessionMetadata['taskStatus'];
     }> = {}
   ): SessionMetadata =>
     makeSessionMetadata({
@@ -1958,6 +1966,156 @@ describe('SessionRoutes runtime reuse', () => {
     ]);
   });
 
+  it('projects recovery attention without starting a Web run on reconnect', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { Agent } = await import('../../../../src/agent/Agent.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
+    const recoveredMetadata = metadataFor(
+      'attention-web-session',
+      '/attention-workspace',
+      { permissionMode: 'yolo' }
+    );
+    vi.mocked(SessionService.listSessions).mockResolvedValue([recoveredMetadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(recoveredMetadata);
+    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    runtimeState.runtime.getTurnRecoveryAssessment.mockReturnValue({
+      state: 'requires_attention',
+      turnId: 'turn-before-restart',
+      inputMessageCount: 1,
+      reason: 'interrupted_tool_call',
+    });
+
+    const controller = new AbortController();
+    const response = await SessionRoutes().request('/attention-web-session/events', {
+      signal: controller.signal,
+    });
+    expect(response.status).toBe(200);
+    await vi.waitFor(() => {
+      expect(Bus.publish).toHaveBeenCalledWith(
+        {
+          sessionId: 'attention-web-session',
+          projectPath: '/attention-workspace',
+        },
+        'turn.recovery',
+        {
+          assessment: {
+            state: 'requires_attention',
+            turnId: 'turn-before-restart',
+            inputMessageCount: 1,
+            reason: 'interrupted_tool_call',
+          },
+        }
+      );
+    });
+    expect(Agent.createWithRuntime).not.toHaveBeenCalled();
+    expect(agentState.chatStream).not.toHaveBeenCalled();
+
+    controller.abort();
+    await response.body?.cancel().catch(() => undefined);
+  });
+
+  it('projects recovery attention for an interrupted isolated task after restart', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { Agent } = await import('../../../../src/agent/Agent.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
+    const recoveredMetadata = metadataFor(
+      'isolated-attention-web-session',
+      '/isolated-attention-workspace',
+      {
+        permissionMode: 'yolo',
+        taskIsolation: 'local',
+        taskStatus: 'interrupted',
+      }
+    );
+    vi.mocked(SessionService.listSessions).mockResolvedValue([recoveredMetadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(recoveredMetadata);
+    vi.mocked(SessionRuntime.hasRecoverableTurn).mockResolvedValue(true);
+    runtimeState.runtime.getTurnRecoveryAssessment.mockReturnValue({
+      state: 'requires_attention',
+      turnId: 'turn-isolated-before-restart',
+      inputMessageCount: 0,
+      reason: 'successful_tool_result',
+    });
+
+    const controller = new AbortController();
+    const response = await SessionRoutes().request(
+      '/isolated-attention-web-session/events',
+      { signal: controller.signal }
+    );
+    expect(response.status).toBe(200);
+    await vi.waitFor(() => {
+      expect(Bus.publish).toHaveBeenCalledWith(
+        {
+          sessionId: 'isolated-attention-web-session',
+          projectPath: '/isolated-attention-workspace',
+        },
+        'turn.recovery',
+        {
+          assessment: {
+            state: 'requires_attention',
+            turnId: 'turn-isolated-before-restart',
+            inputMessageCount: 0,
+            reason: 'successful_tool_result',
+          },
+        }
+      );
+    });
+    expect(Agent.createWithRuntime).not.toHaveBeenCalled();
+
+    controller.abort();
+    await response.body?.cancel().catch(() => undefined);
+  });
+
+  it('projects completed recovery before Web resume eligibility short-circuits', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { Agent } = await import('../../../../src/agent/Agent.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
+    const recoveredMetadata = metadataFor(
+      'completed-web-session',
+      '/completed-workspace',
+      { permissionMode: 'yolo' }
+    );
+    vi.mocked(SessionService.listSessions).mockResolvedValue([recoveredMetadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(recoveredMetadata);
+    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(false);
+    vi.mocked(SessionRuntime.hasActiveGoal).mockResolvedValue(false);
+    vi.mocked(SessionRuntime.hasRecoverableTurn).mockResolvedValue(true);
+    runtimeState.runtime.getGoal.mockResolvedValue({ status: 'complete' });
+    runtimeState.runtime.getTurnRecoveryAssessment.mockReturnValue({
+      state: 'completed',
+      turnId: 'turn-finalized-before-restart',
+      inputMessageCount: 1,
+    });
+
+    const controller = new AbortController();
+    const response = await SessionRoutes().request('/completed-web-session/events', {
+      signal: controller.signal,
+    });
+    expect(response.status).toBe(200);
+    await vi.waitFor(() => {
+      expect(Bus.publish).toHaveBeenCalledWith(
+        {
+          sessionId: 'completed-web-session',
+          projectPath: '/completed-workspace',
+        },
+        'turn.recovery',
+        {
+          assessment: {
+            state: 'completed',
+            turnId: 'turn-finalized-before-restart',
+            inputMessageCount: 1,
+          },
+        }
+      );
+    });
+    expect(Agent.createWithRuntime).not.toHaveBeenCalled();
+    expect(agentState.chatStream).not.toHaveBeenCalled();
+
+    controller.abort();
+    await response.body?.cancel().catch(() => undefined);
+  });
+
   it('wakes an idle Web parent when a background completion is durably queued', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     const { Bus } = await import('../../../../src/server/bus.js');
@@ -2728,12 +2886,148 @@ describe('SessionRoutes runtime reuse', () => {
     );
   });
 
+  it('preserves recovery evidence when outer Web cleanup retries an ack failure', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    mockResolvedSession('failed-recovery-ack');
+    runtimeState.runtime.getTurnRecoveryAssessment.mockReturnValue({
+      state: 'requires_attention',
+      turnId: 'turn-before-ack-failure',
+      inputMessageCount: 0,
+      reason: 'successful_tool_result',
+    });
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      if (Date.now() < 0) yield undefined;
+      throw new Error('recovery acknowledgement fsync failed');
+    });
+
+    const response = await SessionRoutes().request('/failed-recovery-ack/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'confirm external state' }),
+    });
+
+    expect(response.status).toBe(202);
+    await vi.waitFor(() => {
+      expect(runtimeState.runtime.finishTurn).toHaveBeenCalledWith(
+        { id: 'prepared-turn' },
+        { preserveStartupRecovery: true }
+      );
+    });
+  });
+
+  it('settles Web recovery attention without publishing completion', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
+    mockResolvedSession('attention-run');
+    const assessment = {
+      state: 'requires_attention' as const,
+      turnId: 'turn-before-restart',
+      inputMessageCount: 1,
+      reason: 'interrupted_tool_call' as const,
+    };
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      yield { kind: 'turn_recovery' as const, assessment };
+      return {
+        success: true,
+        finalMessage: '',
+        metadata: {
+          turnsCount: 0,
+          toolCallsCount: 0,
+          duration: 0,
+          recoveryAttention: assessment,
+        },
+      };
+    });
+
+    const response = await SessionRoutes().request('/attention-run/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'continue only after attention clears' }),
+    });
+
+    expect(response.status).toBe(202);
+    await vi.waitFor(() => {
+      expect(Bus.publish).toHaveBeenCalledWith(
+        refFor('attention-run'),
+        'session.status',
+        { status: 'idle' }
+      );
+    });
+    expect(Bus.publish).toHaveBeenCalledWith(refFor('attention-run'), 'turn.recovery', {
+      assessment,
+    });
+    expect(Bus.publish).not.toHaveBeenCalledWith(
+      refFor('attention-run'),
+      'session.completed',
+      expect.any(Object)
+    );
+    expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops the Web follow-up loop when recovery attention appears', async () => {
+    const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
+    mockResolvedSession('attention-follow-up');
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    const assessment = {
+      state: 'requires_attention' as const,
+      turnId: 'turn-before-follow-up',
+      inputMessageCount: 1,
+      reason: 'successful_tool_result' as const,
+    };
+    agentState.chatStream
+      .mockImplementationOnce(async function* () {
+        if (Date.now() < 0) yield undefined;
+        return {
+          success: true,
+          finalMessage: 'first turn',
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      })
+      .mockImplementationOnce(async function* () {
+        yield { kind: 'turn_recovery' as const, assessment };
+        return {
+          success: true,
+          finalMessage: '',
+          metadata: {
+            turnsCount: 0,
+            toolCallsCount: 0,
+            duration: 0,
+            recoveryAttention: assessment,
+          },
+        };
+      });
+
+    const response = await SessionRoutes().request('/attention-follow-up/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'start the run' }),
+    });
+
+    expect(response.status).toBe(202);
+    await vi.waitFor(() => expect(agentState.chatStream).toHaveBeenCalledTimes(2));
+    expect(Bus.publish).not.toHaveBeenCalledWith(
+      refFor('attention-follow-up'),
+      'session.completed',
+      expect.any(Object)
+    );
+  });
+
   it('publishes loop lifecycle events and preserves canonical tool failure state', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     const { Bus } = await import('../../../../src/server/bus.js');
     mockResolvedSession('surface-events');
 
     agentState.chatStream.mockImplementationOnce(async function* () {
+      yield {
+        kind: 'turn_recovery',
+        assessment: {
+          state: 'requires_attention',
+          turnId: 'turn-before-restart',
+          inputMessageCount: 1,
+          reason: 'interrupted_tool_call',
+        },
+      };
       yield { kind: 'turn_start', turn: 2, maxTurns: 8 };
       yield {
         kind: 'compaction',
@@ -2899,6 +3193,18 @@ describe('SessionRoutes runtime reuse', () => {
       turn: 2,
       maxTurns: 8,
     });
+    expect(Bus.publish).toHaveBeenCalledWith(
+      refFor('surface-events'),
+      'turn.recovery',
+      {
+        assessment: {
+          state: 'requires_attention',
+          turnId: 'turn-before-restart',
+          inputMessageCount: 1,
+          reason: 'interrupted_tool_call',
+        },
+      }
+    );
     expect(Bus.publish).toHaveBeenCalledWith(
       refFor('surface-events'),
       'compaction.started',

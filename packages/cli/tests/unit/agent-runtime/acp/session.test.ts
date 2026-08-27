@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { AcpSession } from '../../../../src/acp/Session.js';
 import type { LoopEvent } from '../../../../src/agent/loop/types.js';
+import type { SessionRuntime } from '../../../../src/agent/runtime/SessionRuntime.js';
 import type { LoopResult } from '../../../../src/agent/types.js';
 import {
   MAX_INLINE_ATTACHMENT_BYTES,
@@ -47,6 +48,9 @@ const runtimeState = vi.hoisted(() => ({
     })),
     getPendingSteeringCount: vi.fn(() => 0),
     getPendingSteeringMessages: vi.fn(() => []),
+    getTurnRecoveryAssessment: vi.fn<
+      () => ReturnType<SessionRuntime['getTurnRecoveryAssessment']>
+    >(() => ({ state: 'none' })),
     getCurrentModelId: vi.fn(() => 'model-1'),
     getReasoningConfiguration: vi.fn(() => ({
       selection: 'off' as const,
@@ -253,6 +257,7 @@ describe('AcpSession', () => {
     runtimeState.runtime.getCurrentModelId.mockReturnValue('model-1');
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
     runtimeState.runtime.getPendingSteeringMessages.mockReturnValue([]);
+    runtimeState.runtime.getTurnRecoveryAssessment.mockReturnValue({ state: 'none' });
     runtimeState.runtime.getGoal.mockReset().mockResolvedValue(null);
     runtimeState.runtime.listRewindCheckpoints.mockReset().mockResolvedValue([]);
     runtimeState.runtime.rewindSession.mockReset();
@@ -394,6 +399,67 @@ describe('AcpSession', () => {
           options: { pendingInputOnly: true },
         });
       });
+    });
+
+    it('projects recovery attention without starting an ACP prompt', async () => {
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+      runtimeState.runtime.getTurnRecoveryAssessment.mockReturnValue({
+        state: 'requires_attention',
+        turnId: 'turn-before-restart',
+        inputMessageCount: 1,
+        reason: 'interrupted_tool_call',
+      });
+      await session.initialize();
+
+      await vi.waitFor(() => {
+        expect(mockConnection.sessionUpdates).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              update: expect.objectContaining({
+                sessionUpdate: 'session_info_update',
+                _meta: {
+                  'blade/turnRecovery': {
+                    state: 'requires_attention',
+                    turnId: 'turn-before-restart',
+                    inputMessageCount: 1,
+                    reason: 'interrupted_tool_call',
+                  },
+                },
+              }),
+            }),
+          ])
+        );
+      });
+      expect(getMockAgent().calls).toEqual([]);
+    });
+
+    it('projects a completed startup recovery without starting an ACP prompt', async () => {
+      runtimeState.runtime.getGoal.mockResolvedValue({ status: 'complete' });
+      runtimeState.runtime.getTurnRecoveryAssessment.mockReturnValue({
+        state: 'completed',
+        turnId: 'turn-finalized-before-restart',
+        inputMessageCount: 1,
+      });
+
+      await session.initialize();
+
+      expect(mockConnection.sessionUpdates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'session_info_update',
+              _meta: {
+                'blade/turnRecovery': {
+                  state: 'completed',
+                  turnId: 'turn-finalized-before-restart',
+                  inputMessageCount: 1,
+                },
+              },
+            }),
+          }),
+        ])
+      );
+      expect(getMockAgent().calls).toEqual([]);
     });
 
     it('应该在初始化后自动恢复 verifying Goal', async () => {
@@ -2637,6 +2703,52 @@ describe('AcpSession', () => {
       ).toBe(false);
     });
 
+    it('projects turn recovery assessment through ACP metadata only', async () => {
+      const mockAgent = getMockAgent();
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield {
+          kind: 'turn_recovery',
+          assessment: {
+            state: 'requires_attention',
+            turnId: 'turn-before-restart',
+            inputMessageCount: 1,
+            reason: 'interrupted_tool_call',
+          },
+        } as LoopEvent;
+        return { success: true, finalMessage: 'recovered safely' };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'inspect recovery' }],
+      });
+
+      expect(mockConnection.sessionUpdates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            update: expect.objectContaining({
+              sessionUpdate: 'session_info_update',
+              _meta: {
+                'blade/turnRecovery': {
+                  state: 'requires_attention',
+                  turnId: 'turn-before-restart',
+                  inputMessageCount: 1,
+                  reason: 'interrupted_tool_call',
+                },
+              },
+            }),
+          }),
+        ])
+      );
+      expect(
+        mockConnection.sessionUpdates.some(
+          ({ update }) =>
+            update.sessionUpdate === 'agent_message_chunk' &&
+            JSON.stringify(update).includes('turnRecovery')
+        )
+      ).toBe(false);
+    });
+
     it('projects Provider retry lifecycle through ACP session metadata', async () => {
       const mockAgent = getMockAgent();
       mockAgent.chatStream = vi.fn(async function* () {
@@ -3120,6 +3232,7 @@ describe('AcpSession', () => {
         message: 'Internal error: Agent turn failed (intent_fulfillment_failed)',
         data: {
           failureType: 'intent_fulfillment_failed',
+          modelId: 'model-1',
           taskFailure: {
             code: 'runtime',
             message: 'Agent execution failed.',

@@ -1,6 +1,4 @@
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -30,117 +28,6 @@ const models = isRealApiTestEnabled()
   : [];
 const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
 let originalConfig: RuntimeConfig | null = null;
-
-function upstreamUrl(baseUrl: string, requestUrl: string | undefined): URL {
-  const target = new URL(baseUrl);
-  const incoming = new URL(requestUrl ?? '/', 'http://127.0.0.1');
-  target.pathname = `${target.pathname.replace(/\/$/, '')}/${incoming.pathname.replace(
-    /^\//,
-    ''
-  )}`;
-  target.search = incoming.search;
-  return target;
-}
-
-async function readRequestBody(
-  request: import('node:http').IncomingMessage
-): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks);
-}
-
-async function startOneShotFailureProxy(baseUrl: string) {
-  let requestCount = 0;
-  let forwardedRequests = 0;
-  const privateFailureMarker = 'PRIVATE_ACP_AUTO_RESUME_FAILURE';
-  const server = createServer((request, response) => {
-    void (async () => {
-      const body = await readRequestBody(request);
-      requestCount++;
-      if (requestCount === 1) {
-        response.writeHead(503, { 'content-type': 'application/json' });
-        response.end(
-          JSON.stringify({
-            error: {
-              type: 'server_error',
-              message: privateFailureMarker,
-            },
-          })
-        );
-        return;
-      }
-
-      forwardedRequests++;
-      const headers = new Headers();
-      for (const [name, value] of Object.entries(request.headers)) {
-        if (!value || name === 'host' || name === 'content-length') continue;
-        headers.set(name, Array.isArray(value) ? value.join(', ') : value);
-      }
-      const upstream = await fetch(upstreamUrl(baseUrl, request.url), {
-        method: request.method ?? 'POST',
-        headers,
-        body:
-          request.method === 'GET' || request.method === 'HEAD'
-            ? undefined
-            : body.toString('utf8'),
-        redirect: 'manual',
-      });
-      const responseHeaders: Record<string, string> = {};
-      upstream.headers.forEach((value, name) => {
-        if (
-          ![
-            'connection',
-            'content-encoding',
-            'content-length',
-            'transfer-encoding',
-          ].includes(name)
-        ) {
-          responseHeaders[name] = value;
-        }
-      });
-      response.writeHead(upstream.status, responseHeaders);
-      if (upstream.body) {
-        const reader = upstream.body.getReader();
-        for (;;) {
-          const chunk = await reader.read();
-          if (chunk.done) break;
-          response.write(Buffer.from(chunk.value));
-        }
-      }
-      response.end();
-    })().catch((error: unknown) => {
-      if (response.headersSent) {
-        response.destroy(error instanceof Error ? error : undefined);
-        return;
-      }
-      response.writeHead(502, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ error: { type: 'proxy_error' } }));
-    });
-  });
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      server.off('error', reject);
-      resolve();
-    });
-  });
-  const address = server.address() as AddressInfo;
-  return {
-    baseURL: `http://127.0.0.1:${address.port}`,
-    privateFailureMarker,
-    requestCount: () => requestCount,
-    forwardedRequests: () => forwardedRequests,
-    close: async () => {
-      server.closeAllConnections();
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      });
-    },
-  };
-}
 
 async function prepareExternalSurfaceFixture(
   model: (typeof models)[number],
@@ -254,15 +141,16 @@ afterAll(() => {
 
 describe
   .skipIf(models.length === 0)
-  .sequential('durable root-turn auto-resume (real API)', () => {
+  .sequential('durable root-turn attention-gated recovery (real API)', () => {
     for (const model of models) {
-      it(`${model.model} resumes the original inbox without a wake-up prompt`, async () => {
+      it(`${model.model} requires explicit input before headless recovery`, async () => {
         const workspace = await mkdtemp(path.join(os.tmpdir(), 'blade-root-resume-'));
         const storageRoot = path.join(workspace, '.blade-storage');
         const sessionId = `root-auto-resume-${model.model}-${Date.now()}`;
         const marker = `AUTO_RESUME_${model.model
           .toUpperCase()
           .replaceAll(/[^A-Z0-9]+/g, '_')}`;
+        let blockedStdout = '';
         let stdout = '';
         let stderr = '';
 
@@ -280,6 +168,57 @@ describe
             })
           );
 
+          const blockedExitCode = await runWithCwdOverride(workspace, () =>
+            runHeadless(
+              {
+                headless: true,
+                outputFormat: 'jsonl',
+                resume: sessionId,
+                maxTurns: 4,
+                permissionMode: PermissionMode.YOLO,
+                allowedTools: ['Read', 'Write'],
+              },
+              {
+                stdout: {
+                  write(chunk: string) {
+                    blockedStdout += chunk;
+                    return true;
+                  },
+                },
+                stderr: {
+                  write(chunk: string) {
+                    stderr += chunk;
+                    return true;
+                  },
+                },
+              },
+              { stdin: Readable.from([]) as NodeJS.ReadStream }
+            )
+          );
+          const blockedEvents = blockedStdout
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => HeadlessJsonlEventSchema.parse(JSON.parse(line)));
+          expect(blockedExitCode, stderr.replaceAll(model.apiKey, '[redacted]')).toBe(
+            2
+          );
+          expect(blockedEvents).toContainEqual({
+            event_version: 1,
+            type: 'turn_recovery',
+            state: 'requires_attention',
+            turn_id: expect.any(String),
+            input_message_count: 1,
+            reason: 'interrupted_tool_call',
+          });
+          expect(
+            blockedEvents.filter(
+              (event) => event.type === 'content_delta' || event.type === 'tool_start'
+            )
+          ).toHaveLength(0);
+          await expect(
+            access(getSessionInboxFilePath(workspace, sessionId))
+          ).resolves.toBeUndefined();
+
           const exitCode = await runWithCwdOverride(workspace, () =>
             runHeadless(
               {
@@ -289,6 +228,9 @@ describe
                 maxTurns: 4,
                 permissionMode: PermissionMode.YOLO,
                 allowedTools: ['Read', 'Write'],
+                message:
+                  'I inspected the workspace and external state. Continue safely ' +
+                  'without repeating any write or other side effect.',
               },
               {
                 stdout: {
@@ -303,8 +245,7 @@ describe
                     return true;
                   },
                 },
-              },
-              { stdin: Readable.from([]) as NodeJS.ReadStream }
+              }
             )
           );
           const events = stdout
@@ -349,22 +290,24 @@ describe
                 event.data.inboxMessageId === fixture.inputMessageId
             )
           ).toHaveLength(1);
-          expect(`${stdout}\n${stderr}`).not.toContain(model.apiKey);
+          expect(`${blockedStdout}\n${stdout}\n${stderr}`).not.toContain(model.apiKey);
         } finally {
           await rm(workspace, { recursive: true, force: true });
         }
       }, 240_000);
 
-      it(`${model.model} auto-resumes through ACP session/load`, async () => {
+      it(`${model.model} gates recovery through ACP session/load`, async () => {
         const prepared = await prepareExternalSurfaceFixture(model, 'acp');
         try {
           const evidence = await runRootTurnAutoResumeAcpDriver({
             workspace: prepared.workspace,
+            home: prepared.home,
             sessionId: prepared.sessionId,
             expected: prepared.fixture.expectedResponse,
             secret: model.apiKey,
           });
           expect(evidence.finalText).toContain(prepared.fixture.expectedResponse);
+          expect(evidence.attentionProjected).toBe(true);
           expect(
             evidence.updates.filter(
               (notification) =>
@@ -407,7 +350,7 @@ describe
         }
       }, 240_000);
 
-      it(`${model.model} auto-resumes through the real TUI raw PTY`, async () => {
+      it(`${model.model} gates recovery through the real TUI raw PTY`, async () => {
         const prepared = await prepareExternalSurfaceFixture(model, 'pty');
         try {
           const evidence = await runRootTurnAutoResumePtyDriver({
@@ -420,6 +363,7 @@ describe
             secret: model.apiKey,
           });
           expect(evidence.sawExpected).toBe(true);
+          expect(evidence.sawAttention).toBe(true);
           expect(await readFile(prepared.fixture.markerPath, 'utf8')).toBe(
             `${prepared.marker}\n`
           );
@@ -436,7 +380,7 @@ describe
         }
       }, 240_000);
 
-      it(`${model.model} auto-resumes through production Web GUI and reload`, async () => {
+      it(`${model.model} gates recovery through production Web GUI and reload`, async () => {
         const prepared = await prepareExternalSurfaceFixture(model, 'web');
         try {
           const evidence = await runRootTurnAutoResumeWebDriver({
@@ -448,6 +392,8 @@ describe
             secret: model.apiKey,
           });
           expect(evidence).toMatchObject({
+            attentionVisible: true,
+            attentionVisibleAfterReload: true,
             markerVisible: true,
             markerVisibleAfterReload: true,
             composerVisible: true,
@@ -466,107 +412,6 @@ describe
           );
         } finally {
           await rm(prepared.root, { recursive: true, force: true });
-        }
-      }, 240_000);
-    }
-
-    const retryModel =
-      models.find((model) => model.model.toLowerCase().includes('flash')) ?? models[0];
-    if (retryModel) {
-      it(`${retryModel.model} retries one transient ACP auto-resume failure`, async () => {
-        if (!retryModel.baseURL) {
-          throw new Error('ACP auto-resume retry qualification requires a base URL');
-        }
-        const proxy = await startOneShotFailureProxy(retryModel.baseURL);
-        const previousHome = process.env.HOME;
-        let prepared:
-          | Awaited<ReturnType<typeof prepareExternalSurfaceFixture>>
-          | undefined;
-        try {
-          const runtimeConfig = buildRealApiRuntimeConfig({
-            ...retryModel,
-            baseURL: proxy.baseURL,
-          });
-          prepared = await prepareExternalSurfaceFixture(retryModel, 'acp', {
-            ...runtimeConfig,
-            providerForegroundRecoveryMs: 0,
-            providerCircuitBreakerOpenMs: 0,
-            models: runtimeConfig.models.map((model) => ({
-              ...model,
-              overrides: {
-                ...model.overrides,
-                maxRetries: 0,
-              },
-            })),
-          });
-          process.env.HOME = prepared.home;
-
-          const evidence = await runRootTurnAutoResumeAcpDriver({
-            workspace: prepared.workspace,
-            sessionId: prepared.sessionId,
-            expected: prepared.fixture.expectedResponse,
-            secret: retryModel.apiKey,
-          });
-          const lifecycle = evidence.updates
-            .filter(
-              ({ update }) =>
-                update.sessionUpdate === 'session_info_update' &&
-                update._meta?.['blade/pendingResume']
-            )
-            .map(
-              ({ update }) =>
-                update._meta!['blade/pendingResume'] as {
-                  phase: string;
-                  attempt: number;
-                  failure?: { code: string; retryable: boolean };
-                }
-            );
-
-          expect(proxy.requestCount()).toBeGreaterThanOrEqual(3);
-          expect(proxy.forwardedRequests()).toBeGreaterThanOrEqual(2);
-          expect(lifecycle).toContainEqual(
-            expect.objectContaining({
-              phase: 'retry_scheduled',
-              attempt: 2,
-              failure: expect.objectContaining({ retryable: true }),
-            })
-          );
-          expect(lifecycle).toContainEqual(
-            expect.objectContaining({
-              phase: 'recovered',
-              attempt: 2,
-            })
-          );
-          expect(evidence.finalText).toContain(prepared.fixture.expectedResponse);
-          expect(
-            evidence.updates.filter(
-              ({ update }) =>
-                update.sessionUpdate === 'user_message_chunk' &&
-                update.content.type === 'text' &&
-                update.content.text.includes(prepared!.marker)
-            )
-          ).toHaveLength(1);
-          expect(JSON.stringify(evidence.updates)).not.toContain(
-            proxy.privateFailureMarker
-          );
-          await expect(
-            access(getSessionInboxFilePath(prepared.workspace, prepared.sessionId))
-          ).rejects.toMatchObject({ code: 'ENOENT' });
-          await assertSingleRecoveredWrite(
-            prepared.workspace,
-            prepared.sessionId,
-            prepared.fixture.orphanToolCallId
-          );
-        } finally {
-          if (previousHome === undefined) {
-            delete process.env.HOME;
-          } else {
-            process.env.HOME = previousHome;
-          }
-          await proxy.close().catch(() => undefined);
-          if (prepared) {
-            await rm(prepared.root, { recursive: true, force: true });
-          }
         }
       }, 240_000);
     }

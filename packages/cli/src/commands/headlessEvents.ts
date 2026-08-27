@@ -460,6 +460,16 @@ const ActionStationarityEventSchema = event({
   progress_aware: Type.Boolean(),
 });
 
+const TurnRecoveryEventSchema = event({
+  type: Type.Literal('turn_recovery'),
+  state: StringEnum(['completed', 'resumable', 'requires_attention']),
+  turn_id: Type.String({ minLength: 1 }),
+  input_message_count: Type.Integer({ minimum: 0 }),
+  reason: Type.Optional(
+    StringEnum(['successful_tool_result', 'interrupted_tool_call'])
+  ),
+});
+
 const TurnLimitEventSchema = event({
   type: Type.Literal('turn_limit'),
   turns_count: Type.Number(),
@@ -530,6 +540,7 @@ export const HeadlessJsonlEventSchema = Runtime(
     ProviderRetryEventSchema,
     ProviderStallEventSchema,
     ActionStationarityEventSchema,
+    TurnRecoveryEventSchema,
     TurnLimitEventSchema,
     TaskSessionEventSchema,
     TaskAdmissionEventSchema,

@@ -4,6 +4,7 @@
 
 import type { PermissionConfig } from '../config/types.js';
 import { PermissionMode } from '../config/types.js';
+import type { SessionTurnRecoveryAssessment } from '../context/turnRecoveryAssessment.js';
 import type { MessagePersistenceMetadata } from '../context/types.js';
 import type { GoalCompletionVerificationResult, GoalSnapshot } from '../goals/types.js';
 import type {
@@ -235,5 +236,9 @@ export interface LoopResult {
     goalVerificationVerdict?: 'pass' | 'fail' | 'partial';
     goalVerifierSessionId?: string;
     goalVerificationEvidenceSha256?: string;
+    recoveryAttention?: Extract<
+      SessionTurnRecoveryAssessment,
+      { state: 'requires_attention' }
+    >;
   };
 }

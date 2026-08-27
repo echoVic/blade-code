@@ -436,7 +436,7 @@ export class Agent {
       let ownsAdmission = false;
       let settled = false;
       const releaseOwnedAdmission = (
-        taskStatus: 'completed' | 'failed' | 'cancelled' | 'interrupted'
+        taskStatus: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
       ): void => {
         if (!ownsAdmission || !admissionPermit) return;
         admissionPermit.release();
@@ -511,6 +511,16 @@ export class Agent {
 
         await runtime.setTaskStatus('running');
         const result = yield* this.chatStreamInternal(message, activeContext, options);
+        const recoveryAttention = result.metadata?.recoveryAttention;
+        if (recoveryAttention) {
+          await runtime.setTaskStatus(
+            'interrupted',
+            `Turn recovery requires attention: ${recoveryAttention.reason}`
+          );
+          settled = true;
+          releaseOwnedAdmission('interrupted');
+          return result;
+        }
         const status = activeContext.signal?.aborted
           ? 'cancelled'
           : result.success
@@ -619,8 +629,46 @@ export class Agent {
       const durableContext = await this.sessionRuntime.loadModelContext();
       context.messages.splice(0, context.messages.length, ...durableContext);
     }
-    for (const event of this.takeStartupAdoptedToolResultEvents()) {
+    const recoveryAssessment = this.sessionRuntime?.getTurnRecoveryAssessment();
+    for (const event of this.takeStartupRecoveryEvents()) {
       yield event;
+    }
+    if (
+      (requestedPendingInputOnly || requestedGoalContinuationOnly) &&
+      recoveryAssessment?.state === 'requires_attention'
+    ) {
+      return {
+        success: true,
+        finalMessage: '',
+        metadata: {
+          turnsCount: 0,
+          toolCallsCount: 0,
+          duration: 0,
+          recoveryAttention: recoveryAssessment,
+        },
+      };
+    }
+    if (recoveryAssessment?.state === 'requires_attention') {
+      try {
+        await this.sessionRuntime?.acknowledgeStartupTurnRecovery();
+      } catch (error) {
+        if (preparedInputTurn && this.sessionRuntime) {
+          await this.sessionRuntime
+            .finishTurn(preparedInputTurn.handle, {
+              acknowledgeInput: true,
+              preserveStartupRecovery: true,
+              outcome: {
+                status: 'aborted',
+                cause: 'failed',
+                turnsCount: 0,
+                toolCallsCount: 0,
+                durationMs: 0,
+              },
+            })
+            .catch(() => undefined);
+        }
+        throw error;
+      }
     }
 
     let enhancedMessage = preparedMessage;
@@ -1244,6 +1292,20 @@ export class Agent {
       if (lifecycle) events.push(lifecycle);
       return events;
     });
+  }
+
+  private takeStartupRecoveryEvents(): LoopEvent[] {
+    const current = this.sessionRuntime?.getTurnRecoveryAssessment();
+    const assessment =
+      current?.state === 'requires_attention'
+        ? current
+        : this.sessionRuntime?.takeStartupTurnRecoveryAssessment();
+    const events: LoopEvent[] =
+      assessment && assessment.state !== 'none'
+        ? [{ kind: 'turn_recovery', assessment }]
+        : [];
+    events.push(...this.takeStartupAdoptedToolResultEvents());
+    return events;
   }
 
   /**

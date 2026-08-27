@@ -261,6 +261,22 @@ export async function runPrint(
       inputlessResume && !pendingInputOnly ? await runtime.getGoal() : null;
     const goalContinuationOnly =
       resumedGoal?.status === 'active' || resumedGoal?.status === 'verifying';
+    const startupRecoveryAssessment = runtime.getTurnRecoveryAssessment?.() ?? {
+      state: 'none' as const,
+    };
+    if (
+      inputlessResume &&
+      !pendingInputOnly &&
+      !goalContinuationOnly &&
+      startupRecoveryAssessment.state === 'requires_attention'
+    ) {
+      io.stderr.write(
+        `[turn-recovery:${startupRecoveryAssessment.state}] ${startupRecoveryAssessment.turnId}\n`
+      );
+      throw new Error(
+        'Turn recovery requires explicit user attention before continuation'
+      );
+    }
     const recoveredFinalResponse =
       inputlessResume && !pendingInputOnly && !goalContinuationOnly
         ? await runtime.getRecoveredFinalResponse()
@@ -268,6 +284,12 @@ export async function runPrint(
     if (inputlessResume && !pendingInputOnly && !goalContinuationOnly) {
       if (!recoveredFinalResponse) {
         throw new Error('No unfinished turn or active goal to resume');
+      }
+      const recoveryAssessment = startupRecoveryAssessment;
+      if (recoveryAssessment.state !== 'none') {
+        io.stderr.write(
+          `[turn-recovery:${recoveryAssessment.state}] ${recoveryAssessment.turnId}\n`
+        );
       }
       writePrintResponse({
         io,
@@ -329,8 +351,19 @@ export async function runPrint(
             pendingInputOnly,
             goalContinuationOnly,
           })
-        : agent.chatStream(input, chatContext)
+        : agent.chatStream(input, chatContext),
+      (event) => {
+        if (event.kind !== 'turn_recovery') return;
+        io.stderr.write(
+          `[turn-recovery:${event.assessment.state}] ${event.assessment.turnId}\n`
+        );
+      }
     );
+    if (loopResult.metadata?.recoveryAttention) {
+      throw new Error(
+        'Turn recovery requires explicit user attention before continuation'
+      );
+    }
     if (!loopResult.success) {
       throw new Error(loopResult.error?.message ?? 'Agent execution failed');
     }

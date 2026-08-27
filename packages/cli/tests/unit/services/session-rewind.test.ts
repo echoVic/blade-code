@@ -115,6 +115,18 @@ function turnCompleted(turnId: string): SessionEvent {
   };
 }
 
+function turnRecoveryAcknowledged(turnId: string): SessionEvent {
+  const event = base('turn_recovery_acknowledged');
+  return {
+    ...event,
+    type: 'turn_recovery_acknowledged',
+    data: {
+      turnId,
+      acknowledgedAt: event.timestamp,
+    },
+  };
+}
+
 function rewound(
   targetMessageId: string,
   mode: 'conversation' | 'code' | 'both' = 'conversation'
@@ -226,12 +238,14 @@ describe('session rewind projection', () => {
         parentMessageId: 'user-1',
       }),
       turnCompleted('turn-1'),
+      turnRecoveryAcknowledged('turn-1'),
       turnStarted('turn-2', 'inbox-2'),
       ...message('user-2', 'user', 'second', { inboxMessageId: 'inbox-2' }),
       ...message('assistant-2', 'assistant', 'done', {
         parentMessageId: 'user-2',
       }),
       turnCompleted('turn-2'),
+      turnRecoveryAcknowledged('turn-2'),
       rewound('user-2'),
     ];
 
@@ -245,6 +259,11 @@ describe('session rewind projection', () => {
     expect(
       projected.flatMap((event) =>
         event.type === 'turn_completed' ? [event.data.turnId] : []
+      )
+    ).toEqual(['turn-1']);
+    expect(
+      projected.flatMap((event) =>
+        event.type === 'turn_recovery_acknowledged' ? [event.data.turnId] : []
       )
     ).toEqual(['turn-1']);
   });

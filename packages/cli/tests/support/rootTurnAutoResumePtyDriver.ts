@@ -1,11 +1,33 @@
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
+function resolveBunExecutable(): string {
+  const candidates = [
+    process.env.BUN_EXEC_PATH,
+    process.env.BUN_INSTALL
+      ? path.join(process.env.BUN_INSTALL, 'bin', 'bun')
+      : undefined,
+    path.join(os.homedir(), '.bun', 'bin', 'bun'),
+    '/opt/homebrew/bin/bun',
+    '/usr/local/bin/bun',
+  ];
+  const executable = candidates.find((candidate): candidate is string =>
+    Boolean(candidate && existsSync(candidate))
+  );
+  if (!executable) {
+    throw new Error('Bun executable is unavailable for the root-turn PTY runner');
+  }
+  return executable;
+}
+
 export interface RootTurnAutoResumePtyEvidence {
   success: true;
+  sawAttention: true;
   sawExpected: true;
   output: string;
 }
@@ -38,16 +60,26 @@ export async function runRootTurnAutoResumePtyDriver(input: {
       BLADE_ROOT_RESUME_PTY_SECRET: input.secret,
     }).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
   );
-  const result = await execFileAsync('bun', [runner], {
-    cwd: path.resolve(import.meta.dirname, '../..'),
-    env,
-    timeout: input.timeoutMs ?? 210_000,
-    maxBuffer: 64 * 1024,
-    killSignal: 'SIGKILL',
-  });
-  const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+  let result: Awaited<ReturnType<typeof execFileAsync>>;
+  try {
+    result = await execFileAsync(resolveBunExecutable(), [runner], {
+      cwd: path.resolve(import.meta.dirname, '../..'),
+      env,
+      timeout: input.timeoutMs ?? 210_000,
+      maxBuffer: 64 * 1024,
+      killSignal: 'SIGKILL',
+    });
+  } catch (error) {
+    const failure = error as Error & { stdout?: string; stderr?: string };
+    const details = `${String(failure.stdout ?? '')}\n${String(failure.stderr ?? '')}`
+      .replaceAll(input.secret, '[REDACTED]')
+      .trim();
+    throw new Error(details || failure.message);
+  }
+  const parsed = JSON.parse(String(result.stdout)) as Record<string, unknown>;
   if (
     parsed.success !== true ||
+    parsed.sawAttention !== true ||
     parsed.sawExpected !== true ||
     typeof parsed.output !== 'string'
   ) {

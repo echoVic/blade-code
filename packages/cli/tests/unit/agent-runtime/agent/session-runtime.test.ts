@@ -1432,6 +1432,19 @@ describe('SessionRuntime', () => {
     const recoveredContext = await recovered.loadModelContext();
     expect(JSON.stringify(recoveredContext)).toContain(PROCESS_RESTART_TOOL_RESULT);
     expect(JSON.stringify(recoveredContext)).toContain('sideEffectsUncertain');
+    expect(recovered.getTurnRecoveryAssessment()).toEqual({
+      state: 'requires_attention',
+      turnId: orphaned.id,
+      inputMessageCount: 0,
+      reason: 'interrupted_tool_call',
+    });
+    expect(recovered.takeStartupTurnRecoveryAssessment()).toEqual({
+      state: 'requires_attention',
+      turnId: orphaned.id,
+      inputMessageCount: 0,
+      reason: 'interrupted_tool_call',
+    });
+    expect(recovered.takeStartupTurnRecoveryAssessment()).toEqual({ state: 'none' });
 
     const next = await recovered.beginTurn('goal');
     await recovered.finishTurn(next, {
@@ -1478,6 +1491,13 @@ describe('SessionRuntime', () => {
       hadSuccessfulToolResult: true,
       emptyFinalCorrectionSpent: true,
     });
+    await recovered.acknowledgeStartupTurnRecovery();
+    expect(recovered.getTurnRecoveryAssessment()).toEqual({ state: 'none' });
+    expect(recovered.getStartupTurnRecovery()).toMatchObject({
+      turnId: prepared.handle.id,
+      hadSuccessfulToolResult: true,
+      emptyFinalCorrectionSpent: true,
+    });
     const pendingTurn = await recovered.beginPendingTurn();
     if (!pendingTurn) throw new Error('Expected recovered pending turn');
     await expect(recovered.getRecoveredEmptyFinalState(pendingTurn)).resolves.toEqual({
@@ -1492,6 +1512,91 @@ describe('SessionRuntime', () => {
     });
     await recovered.finishTurn(pendingTurn);
     await recovered.dispose();
+  });
+
+  it('keeps an inputless Goal tool recovery gated across repeated restarts', async () => {
+    const workspaceRoot = path.join(storageRoot, 'goal-tool-recovery-project');
+    const sessionId = 'goal-tool-recovery-session';
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    await first.createGoal({ objective: 'finish the durable Goal safely' });
+    await first.beginTurn('goal');
+    await first
+      .getExecutionEngine()
+      .getContextManager()
+      .saveToolUse(sessionId, 'Write', {
+        file_path: path.join(workspaceRoot, 'result.txt'),
+        content: 'done',
+      });
+    await first.dispose();
+
+    const firstRestart = await SessionRuntime.create({ sessionId, workspaceRoot });
+    expect(firstRestart.getTurnRecoveryAssessment()).toMatchObject({
+      state: 'requires_attention',
+      inputMessageCount: 0,
+      reason: 'interrupted_tool_call',
+    });
+    await firstRestart.dispose();
+
+    const secondRestart = await SessionRuntime.create({ sessionId, workspaceRoot });
+    expect(secondRestart.getTurnRecoveryAssessment()).toMatchObject({
+      state: 'requires_attention',
+      inputMessageCount: 0,
+      reason: 'interrupted_tool_call',
+    });
+    await secondRestart.acknowledgeStartupTurnRecovery();
+    await secondRestart.dispose();
+
+    const acknowledgedRestart = await SessionRuntime.create({
+      sessionId,
+      workspaceRoot,
+    });
+    expect(acknowledgedRestart.getTurnRecoveryAssessment()).toEqual({ state: 'none' });
+    await acknowledgedRestart.dispose();
+  });
+
+  it('inherits dangerous recovery when a confirmation turn aborts before execution', async () => {
+    const workspaceRoot = path.join(storageRoot, 'ack-failure-recovery-project');
+    const sessionId = 'ack-failure-recovery-session';
+    const first = await SessionRuntime.create({ sessionId, workspaceRoot });
+    await first.beginTurn('goal');
+    const contextManager = first.getExecutionEngine().getContextManager();
+    const toolCallId = await contextManager.saveToolUse(sessionId, 'Write', {
+      file_path: path.join(workspaceRoot, 'result.txt'),
+      content: 'done',
+    });
+    await contextManager.saveToolResult(sessionId, toolCallId, 'Write', 'written');
+    await first.dispose();
+
+    const recovered = await SessionRuntime.create({ sessionId, workspaceRoot });
+    expect(recovered.getTurnRecoveryAssessment()).toMatchObject({
+      state: 'requires_attention',
+      reason: 'successful_tool_result',
+    });
+    const confirmation = await recovered.prepareInputTurn('I inspected state');
+    if (!confirmation.accepted) throw new Error('Expected confirmation turn');
+    await recovered.finishTurn(confirmation.handle, {
+      acknowledgeInput: true,
+      preserveStartupRecovery: true,
+      outcome: {
+        status: 'aborted',
+        cause: 'failed',
+        turnsCount: 0,
+        toolCallsCount: 0,
+        durationMs: 0,
+      },
+    });
+    expect(recovered.getTurnRecoveryAssessment()).toMatchObject({
+      state: 'requires_attention',
+      reason: 'successful_tool_result',
+    });
+    await recovered.dispose();
+
+    const restarted = await SessionRuntime.create({ sessionId, workspaceRoot });
+    expect(restarted.getTurnRecoveryAssessment()).toMatchObject({
+      state: 'requires_attention',
+      reason: 'successful_tool_result',
+    });
+    await restarted.dispose();
   });
 
   it('does not bind recovered empty-final state to a different inbox input', async () => {

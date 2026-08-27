@@ -239,6 +239,45 @@ describe('durable turn lifecycle', () => {
     });
   });
 
+  it('returns dangerous inputless recovery immediately from an explicit abort', async () => {
+    const store = new PersistentStore(workspaceRoot);
+    await store.initialize();
+    const sessionId = 'session-inputless-tool-abort';
+    const turnId = 'turn-inputless-tool-abort';
+    await store.saveTurnStart(sessionId, {
+      turnId,
+      kind: 'goal',
+      startedAt: new Date(Date.now() - 1_000).toISOString(),
+    });
+    const toolCallId = await store.saveToolUse(
+      sessionId,
+      'Write',
+      { file_path: '/workspace/result.txt', content: 'done' },
+      null
+    );
+    await store.saveToolResult(sessionId, toolCallId, 'Write', 'written');
+
+    const abort = await store.saveTurnAbort(sessionId, {
+      turnId,
+      cause: 'failed',
+      abortedAt: new Date().toISOString(),
+      turnsCount: 1,
+      toolCallsCount: 1,
+      durationMs: 1,
+    });
+
+    expect(abort.recovery).toEqual({
+      turnId,
+      outcome: 'aborted',
+      inputMessageIds: [],
+      hadSuccessfulToolResult: true,
+      emptyFinalCorrectionSpent: false,
+    });
+    await expect(store.hasRecoverableTurn(sessionId)).resolves.toBe(true);
+    await store.acknowledgeTurnRecovery(sessionId, turnId);
+    await expect(store.hasRecoverableTurn(sessionId)).resolves.toBe(false);
+  });
+
   it('does not treat a raw tool result without an error field as successful', async () => {
     const sessionId = 'session-missing-tool-result-error';
     const turnId = 'turn-missing-tool-result-error';
@@ -599,18 +638,20 @@ describe('durable turn lifecycle', () => {
       {
         turnId: 'turn-original',
         recovery: {
-          version: 1,
+          version: 2,
           inputMessageIds: [inputMessageId],
           hadSuccessfulToolResult: true,
+          interruptedToolCallCount: 0,
           emptyFinalCorrectionSpent: true,
         },
       },
       {
         turnId: 'turn-recovered',
         recovery: {
-          version: 1,
+          version: 2,
           inputMessageIds: [inputMessageId],
           hadSuccessfulToolResult: true,
+          interruptedToolCallCount: 0,
           emptyFinalCorrectionSpent: true,
         },
       },
@@ -773,11 +814,31 @@ describe('durable turn lifecycle', () => {
       },
     ],
     [
-      'unknown receipt version',
+      'v2 receipt with missing interrupted tool count',
       {
         version: 2,
+        inputMessageIds: ['missing-v2-count'],
+        hadSuccessfulToolResult: false,
+        emptyFinalCorrectionSpent: false,
+      },
+    ],
+    [
+      'v2 receipt with negative interrupted tool count',
+      {
+        version: 2,
+        inputMessageIds: ['negative-v2-count'],
+        hadSuccessfulToolResult: false,
+        interruptedToolCallCount: -1,
+        emptyFinalCorrectionSpent: false,
+      },
+    ],
+    [
+      'unknown receipt version',
+      {
+        version: 3,
         inputMessageIds: ['unknown-version'],
         hadSuccessfulToolResult: false,
+        interruptedToolCallCount: 0,
         emptyFinalCorrectionSpent: false,
       },
     ],
@@ -1073,13 +1134,21 @@ describe('durable turn lifecycle', () => {
       null
     );
 
-    await expect(store.recoverInterruptedTurn('session-tool-crash')).resolves.toEqual({
+    const expectedRecovery = {
       turnId: 'turn-tool-crash',
-      outcome: 'aborted',
+      outcome: 'aborted' as const,
       inputMessageIds: [],
       hadSuccessfulToolResult: false,
+      interruptedToolCallCount: 1,
       emptyFinalCorrectionSpent: false,
-    });
+    };
+    await expect(store.recoverInterruptedTurn('session-tool-crash')).resolves.toEqual(
+      expectedRecovery
+    );
+    await expect(store.recoverInterruptedTurn('session-tool-crash')).resolves.toEqual(
+      expectedRecovery
+    );
+    await store.acknowledgeTurnRecovery('session-tool-crash', expectedRecovery.turnId);
     await expect(
       store.recoverInterruptedTurn('session-tool-crash')
     ).resolves.toBeUndefined();
@@ -1141,6 +1210,55 @@ describe('durable turn lifecycle', () => {
     );
   });
 
+  it('recovers v1 interrupted-tool risk from its synthetic restart result', async () => {
+    const store = new PersistentStore(workspaceRoot);
+    await store.initialize();
+    const sessionId = 'session-v1-interrupted-tool';
+    const turnId = 'turn-v1-interrupted-tool';
+    const inputMessageId = 'input-v1-interrupted-tool';
+    await store.saveTurnStart(sessionId, {
+      turnId,
+      kind: 'user',
+      startedAt: new Date(Date.now() - 1_000).toISOString(),
+      inputMessageIds: [inputMessageId],
+    });
+    await store.saveMessage(sessionId, 'user', 'continue safely', null, {
+      inboxMessageId: inputMessageId,
+    });
+    const toolCallId = await store.saveToolUse(
+      sessionId,
+      'Write',
+      { file_path: '/workspace/result.txt', content: 'done' },
+      null
+    );
+    await store.saveToolResult(
+      sessionId,
+      toolCallId,
+      'Write',
+      null,
+      toolCallId,
+      PROCESS_RESTART_TOOL_RESULT,
+      undefined,
+      undefined,
+      { processRestartRecovery: true, sideEffectsUncertain: true }
+    );
+    await appendRawTurnAbort(workspaceRoot, sessionId, turnId, {
+      version: 1,
+      inputMessageIds: [inputMessageId],
+      hadSuccessfulToolResult: false,
+      emptyFinalCorrectionSpent: false,
+    });
+
+    await expect(store.recoverInterruptedTurn(sessionId)).resolves.toEqual({
+      turnId,
+      outcome: 'aborted',
+      inputMessageIds: [inputMessageId],
+      hadSuccessfulToolResult: false,
+      interruptedToolCallCount: 1,
+      emptyFinalCorrectionSpent: false,
+    });
+  });
+
   it('atomically adopts a host-validated subagent result before aborting the parent turn', async () => {
     const store = new PersistentStore(workspaceRoot);
     await store.initialize();
@@ -1181,6 +1299,13 @@ describe('durable turn lifecycle', () => {
         },
       },
     ]);
+    const expectedRecovery = {
+      turnId: 'turn-task-adoption',
+      outcome: 'aborted' as const,
+      inputMessageIds: [],
+      hadSuccessfulToolResult: true,
+      emptyFinalCorrectionSpent: false,
+    };
     await expect(
       store.recoverInterruptedTurn('session-task-adoption', {
         adoptedToolResults: new Map([
@@ -1211,13 +1336,14 @@ describe('durable turn lifecycle', () => {
           ],
         ]),
       })
-    ).resolves.toEqual({
-      turnId: 'turn-task-adoption',
-      outcome: 'aborted',
-      inputMessageIds: [],
-      hadSuccessfulToolResult: true,
-      emptyFinalCorrectionSpent: false,
-    });
+    ).resolves.toEqual(expectedRecovery);
+    await expect(
+      store.recoverInterruptedTurn('session-task-adoption')
+    ).resolves.toEqual(expectedRecovery);
+    await store.acknowledgeTurnRecovery(
+      'session-task-adoption',
+      expectedRecovery.turnId
+    );
     await expect(
       store.recoverInterruptedTurn('session-task-adoption')
     ).resolves.toBeUndefined();
@@ -2181,9 +2307,24 @@ describe('durable turn lifecycle', () => {
       durationMs: 1,
     });
 
+    const expectedRecovery = {
+      turnId: 'turn-terminal-orphan',
+      outcome: 'aborted' as const,
+      inputMessageIds: [],
+      hadSuccessfulToolResult: false,
+      interruptedToolCallCount: 2,
+      emptyFinalCorrectionSpent: false,
+    };
     await expect(
       store.recoverInterruptedTurn('session-terminal-orphan')
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual(expectedRecovery);
+    await expect(
+      store.recoverInterruptedTurn('session-terminal-orphan')
+    ).resolves.toEqual(expectedRecovery);
+    await store.acknowledgeTurnRecovery(
+      'session-terminal-orphan',
+      expectedRecovery.turnId
+    );
     await expect(
       store.recoverInterruptedTurn('session-terminal-orphan')
     ).resolves.toBeUndefined();
@@ -2202,6 +2343,59 @@ describe('durable turn lifecycle', () => {
         )
       ).toHaveLength(1);
     }
+  });
+
+  it('returns an aborted recovery while repairing its terminal orphan tool', async () => {
+    const store = new PersistentStore(workspaceRoot);
+    await store.initialize();
+    const sessionId = 'session-terminal-orphan-recovery';
+    const turnId = 'turn-terminal-orphan-recovery';
+    const inputMessageId = 'input-terminal-orphan-recovery';
+    await store.saveTurnStart(sessionId, {
+      turnId,
+      kind: 'user',
+      startedAt: new Date().toISOString(),
+    });
+    await store.saveMessage(sessionId, 'user', 'recover safely', null, {
+      inboxMessageId: inputMessageId,
+    });
+    const toolCallId = await store.saveToolUse(
+      sessionId,
+      'Write',
+      { file_path: '/workspace/result.txt', content: 'done' },
+      null
+    );
+    await store.saveTurnAbort(sessionId, {
+      turnId,
+      cause: 'failed',
+      abortedAt: new Date().toISOString(),
+      turnsCount: 1,
+      toolCallsCount: 1,
+      durationMs: 1,
+    });
+
+    const expected = {
+      turnId,
+      outcome: 'aborted' as const,
+      inputMessageIds: [inputMessageId],
+      hadSuccessfulToolResult: false,
+      interruptedToolCallCount: 1,
+      emptyFinalCorrectionSpent: false,
+    };
+    await expect(store.recoverInterruptedTurn(sessionId)).resolves.toEqual(expected);
+    await expect(store.recoverInterruptedTurn(sessionId)).resolves.toEqual(expected);
+
+    const events = await new JSONLStore(
+      getSessionFilePath(workspaceRoot, sessionId)
+    ).readAll();
+    expect(
+      events.filter(
+        (event) =>
+          event.type === 'part_created' &&
+          event.data.partType === 'tool_result' &&
+          event.data.partId === toolCallId
+      )
+    ).toHaveLength(1);
   });
 
   it('leaves pending durable interactions to their dedicated recovery flow', async () => {
