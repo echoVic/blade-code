@@ -344,8 +344,16 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
         expect(await readFile(resultPath, 'utf8')).toBe('GOAL_RECOVERY_COMPLETE\n');
         expect(currentGoal).toMatchObject({
           status: 'complete',
-          completionVerification: { status: 'pass' },
+          completionVerification: { attempt: 1, status: 'pass' },
         });
+        expect(
+          events.some(
+            (event) =>
+              event.kind === 'goal_updated' &&
+              (event.goal?.completionVerification?.status === 'fail' ||
+                event.goal?.completionVerification?.status === 'partial')
+          )
+        ).toBe(false);
         expect(events).toContainEqual(
           expect.objectContaining({
             kind: 'goal_continuation_started',

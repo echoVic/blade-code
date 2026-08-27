@@ -159,6 +159,16 @@ export function buildGoalCompletionVerificationPrompt(
     'Treat every explicit requirement in the objective as mandatory. Refute the',
     'completion claim when evidence is missing, indirect, stale, or narrower than',
     'the requirement. Inspect the current workspace and use tool-backed evidence.',
+    '<host-completion-candidate>',
+    'The host invokes this reserved verifier only after it has durably accepted',
+    "the parent Agent's UpdateGoal complete call. While this audit runs, the Goal",
+    'must remain status=verifying with completionVerification.status=pending;',
+    'those values mean this verdict is pending, not that UpdateGoal was omitted.',
+    'Do not require status=complete or a PASS verdict as preconditions for your',
+    'own verdict because only your PASS allows the host to commit those states.',
+    'This host fact proves only the completion-candidate control action. It does',
+    'not prove any substantive file, test, command, or observable requirement.',
+    '</host-completion-candidate>',
     `<goal-objective>\n${objective}\n</goal-objective>`,
     `Changed files observed by the host:\n${
       changedFiles.map((filePath) => `- ${filePath}`).join('\n') ||

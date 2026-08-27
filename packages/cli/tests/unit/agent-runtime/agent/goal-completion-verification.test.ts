@@ -6,6 +6,7 @@ import {
   isNewGoalCompletionCandidate,
 } from '../../../../src/agent/loop/goalCompletionVerification.js';
 import {
+  goalVerificationAgentConfig,
   goalVerificationFeedbackFromOutput,
   goalVerificationOutputFromValue,
 } from '../../../../src/agent/subagents/builtinGoalVerificationAgent.js';
@@ -220,15 +221,37 @@ describe('goal completion verification gate', () => {
 
   it('builds an authoritative objective-scoped verifier prompt', () => {
     const prompt = buildGoalCompletionVerificationPrompt(
-      'Create release.txt and prove it contains READY.',
+      'Create release.txt, prove it contains READY, then call UpdateGoal complete.',
       ['release.txt', 'src/release.ts']
     );
 
     expect(prompt).toContain(
-      '<goal-objective>\nCreate release.txt and prove it contains READY.\n</goal-objective>'
+      '<goal-objective>\nCreate release.txt, prove it contains READY, then call ' +
+        'UpdateGoal complete.\n</goal-objective>'
     );
     expect(prompt).toContain('- release.txt');
     expect(prompt).toContain('- src/release.ts');
     expect(prompt).toContain('Do not trust the parent agent summary');
+    expect(prompt).toContain('<host-completion-candidate>');
+    expect(prompt).toContain(
+      'status=verifying with completionVerification.status=pending'
+    );
+    expect(prompt).toContain('not that UpdateGoal was omitted');
+    expect(prompt).toContain(
+      'not prove any substantive file, test, command, or observable requirement'
+    );
+  });
+
+  it('keeps the candidate state contract in the reserved verifier system prompt', () => {
+    expect(goalVerificationAgentConfig.systemPrompt).toContain(
+      'This reserved verifier runs only after the host durably'
+    );
+    expect(goalVerificationAgentConfig.systemPrompt).toContain('status=verifying with');
+    expect(goalVerificationAgentConfig.systemPrompt).toContain(
+      'never as evidence that UpdateGoal was omitted'
+    );
+    expect(goalVerificationAgentConfig.systemPrompt).toContain(
+      'not the requested deliverables'
+    );
   });
 });

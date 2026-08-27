@@ -4493,6 +4493,16 @@ describe('executeLoopGenerator', () => {
         }),
         expect.objectContaining({ sessionId: 'test-session' })
       );
+      expect(executeMock).toHaveBeenNthCalledWith(
+        2,
+        'Task',
+        expect.objectContaining({
+          prompt: expect.stringContaining(
+            'status=verifying with completionVerification.status=pending'
+          ),
+        }),
+        expect.objectContaining({ sessionId: 'test-session' })
+      );
       expect(executeMock.mock.calls[1]?.[1]).not.toHaveProperty('resume_from');
       expect(executeMock).toHaveBeenNthCalledWith(
         3,

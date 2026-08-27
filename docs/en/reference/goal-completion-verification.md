@@ -46,6 +46,15 @@ The verifier has the following boundaries:
 
 `subagent_type`, background, resume, or worktree parameters passed by the model have no control. The Goal completion gate force-normalizes the next Task to be fresh, foreground, `goal-verification`, with `isolation="none"`.
 
+Launching the reserved verifier is authoritative evidence that the host has
+durably accepted `UpdateGoal complete`. During verification, the Goal must
+remain `status=verifying` with `completionVerification.status=pending`; the host
+can commit `complete` only after the verifier returns PASS. The verifier must
+therefore never interpret that intermediate state as a missing UpdateGoal call,
+or require `complete` or PASS before issuing its own verdict. This host fact
+proves only the completion candidate, not the requested artifacts, tests, or
+observable outcomes.
+
 ## Failure and Continuation
 
 - `PASS`: The host persists verifier evidence first, then finalizes the Goal.

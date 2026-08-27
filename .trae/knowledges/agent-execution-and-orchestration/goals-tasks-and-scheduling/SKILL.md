@@ -36,6 +36,7 @@ description: >
 
 ## Gotchas
 - `UpdateGoal({status:"complete"})` 只把状态改为 `verifying` 并增加 attempt；必须存在 fresh verifier Session ID 和 SHA-256 evidence digest 的 PASS，宿主才允许 `complete` (`packages/cli/src/tools/builtin/goal/goalTools.ts`, `packages/cli/src/goals/GoalStore.ts`, `git:0eff1b2a`)
+- reserved verifier 的启动本身证明宿主已持久接受 completion candidate；审计期间的 `verifying/pending` 是等待该 verifier verdict 的必要中间态，不能被解释成执行 Agent 未调用 `UpdateGoal complete`，但也不能替代对实际交付物的验证 (`packages/cli/src/agent/loop/goalCompletionVerification.ts`, `packages/cli/src/agent/subagents/builtinGoalVerificationAgent.ts`)
 - Goal 已有 PASS 后发生 workspace mutation、用户 steering 或 Stop hook continuation 会使证据失效；进程重启也不信任没有 exact finalization receipt 的旧 PASS (`packages/cli/src/agent/loop/executeLoopGenerator.ts`, `docs/reference/goal-completion-verification.md`)
 - Goal 最终 assistant commit 与 sidecar 完成不是一个文件事务；恢复只在 goal ID、attempt、verifier ID、evidence digest 和 goal revision 全匹配 receipt 时幂等补写 complete (`packages/cli/src/goals/GoalStore.ts`, `docs/reference/goal-completion-verification.md`, `git:ebd505c9`)
 - 同一脱敏 verifier 反馈连续 3 次会把 Goal 置为 blocked；不同反馈重置计数，PASS、编辑或显式 resume 清除 stall 状态 (`packages/cli/src/goals/GoalStore.ts`, `packages/cli/src/goals/types.ts`, `git:490df8c5`)

@@ -52,6 +52,12 @@ Blade 使用保留的内置 `goal-verification` subagent。用户、项目、插
 completion gate 会把下一次 Task 强制规范为 fresh、foreground、
 `goal-verification`、`isolation="none"`。
 
+保留 verifier 的启动本身是宿主已持久接受 `UpdateGoal complete` 的权威证据。验证期间
+Goal 必须保持 `status=verifying` 且 `completionVerification.status=pending`，直到
+verifier 返回 PASS 后宿主才可提交 `complete`。因此 verifier 不得把该中间态解释为
+“执行 Agent 未调用 UpdateGoal”，也不得要求先观察 `complete` 或 PASS 才给出自己的
+verdict。该宿主事实只证明完成候选已经提交，不替代对实际产物、测试和可观察结果的审计。
+
 ## 失败与继续
 
 - `PASS`：宿主先持久化 verifier evidence，再 finalize Goal。
