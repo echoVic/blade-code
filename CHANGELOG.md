@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.98] - 2026-08-27
+
+### Fixed
+- ACP now retries durable pending-input auto-resume after canonical transient
+  failures, using single-flight bounded backoff, stable jitter, and a hard recovery
+  deadline
+- Auto-resume retries fail closed after any partial output or tool execution, and
+  cancellation, egress failure, or Session destruction invalidates queued attempts
+
+### Tests
+- Added exhaustive ACP retry lifecycle coverage and a real DeepSeek trajectory
+  that injects one HTTP 503 and verifies exactly-once input projection and file
+  effects
+
 ## [0.10.97] - 2026-08-27
 
 ### Fixed
