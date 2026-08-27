@@ -41,6 +41,7 @@ import { type TranslationKey, useT } from '@/i18n';
 import {
   clearComposerDraft,
   readComposerDraft,
+  subscribeComposerDraftAppend,
   writeComposerDraft,
 } from '@/lib/composerDraft';
 import {
@@ -404,6 +405,27 @@ export function ChatInput({
       });
     };
   }, [draftKey]);
+
+  useEffect(
+    () =>
+      subscribeComposerDraftAppend((event) => {
+        if (event.key !== draftKey) return;
+        const nextAttachments = event.draft.attachments;
+        inputRef.current = event.draft.content;
+        attachmentsRef.current = nextAttachments;
+        setInput(event.draft.content);
+        setAttachments(nextAttachments);
+        setCursorPosition(event.draft.content.length);
+        requestAnimationFrame(() => {
+          textareaRef.current?.focus();
+          textareaRef.current?.setSelectionRange(
+            event.draft.content.length,
+            event.draft.content.length
+          );
+        });
+      }),
+    [draftKey]
+  );
 
   useEffect(() => {
     if (!currentModelInfo) return;

@@ -1603,6 +1603,7 @@ export class SessionBrowserRuntime {
       await state.page.title().catch(() => ''),
       MAX_BROWSER_TITLE_BYTES
     );
+    const viewport = state.page.viewportSize();
     const record = this.snapshots.issue({
       pageId: state.id,
       pageGeneration: state.generation,
@@ -1618,6 +1619,7 @@ export class SessionBrowserRuntime {
       url: projectBrowserUrl(state.page.url()),
       origin,
       title,
+      ...(viewport ? { viewport } : {}),
       tabs,
       snapshot: record.snapshot,
       truncated: record.truncated,

@@ -9,6 +9,10 @@ import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { ChatInput } from '../../../src/components/chat/ChatInput';
+import {
+  appendComposerDraftContext,
+  clearComposerDraft,
+} from '../../../src/lib/composerDraft';
 import { useConfigStore } from '../../../src/store/ConfigStore';
 import { useSessionStore } from '../../../src/store/session';
 
@@ -672,6 +676,38 @@ describe('ChatInput', () => {
     expect(renderComposer('session:["/workspace/b","shared"]').value).toBe(
       'Draft for workspace B'
     );
+  });
+
+  test('appends selected browser element context to the active draft', async () => {
+    const draftKey = 'session:["/workspace/browser","task"]';
+    clearComposerDraft(draftKey);
+    act(() => {
+      root.render(<ChatInput draftKey={draftKey} onSend={vi.fn()} />);
+    });
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    act(() => {
+      valueSetter?.call(textarea, 'Update this element');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    await act(async () => {
+      appendComposerDraftContext(
+        draftKey,
+        '<browser_element_context trust="untrusted">button</browser_element_context>'
+      );
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+
+    expect(textarea.value).toBe(
+      'Update this element\n\n' +
+        '<browser_element_context trust="untrusted">button</browser_element_context>'
+    );
+    expect(document.activeElement).toBe(textarea);
   });
 
   test('clears only the accepted composer draft', async () => {

@@ -236,6 +236,14 @@ viewport again and requires the page generation, origin, viewport, and pixel has
 to match. Frame regions and stale screenshots fail closed. Screenshot pixels are
 temporary model context and are excluded from public tool results and the durable
 transcript.
+
+The user-controlled `Test` view in the Web Browser panel also supports element
+picking. It projects selectable regions from the latest boxed snapshot over the
+screenshot. **Add to conversation** appends the redacted URL, page title, ARIA
+description, and viewport box to the current Session draft. Ephemeral snapshot
+refs are excluded, page text is marked as untrusted context, and this does not
+grant the Web UI control over the Agent BrowserContext.
+
 New origins in `BrowserNavigate` and the current origin in `BrowserInteract` pass
 through normal Execute permission checks. Back, forward, and reload cannot authorize
 a new origin.

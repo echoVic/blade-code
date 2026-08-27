@@ -11,8 +11,14 @@ export interface ComposerDraftSnapshot {
   outputSchema?: string;
 }
 
+export interface ComposerDraftAppendEvent {
+  key: string;
+  draft: ComposerDraftSnapshot;
+}
+
 const STORAGE_PREFIX = 'blade.composer.draft.';
 const drafts = new Map<string, ComposerDraftSnapshot>();
+const appendListeners = new Set<(event: ComposerDraftAppendEvent) => void>();
 const STORAGE_VERSION = 1;
 
 function storage(): Storage | null {
@@ -102,4 +108,36 @@ export function clearComposerDraft(key?: string): void {
   } catch {
     // Browser storage may be disabled or full.
   }
+}
+
+export function appendComposerDraftContext(
+  key: string | undefined,
+  context: string
+): boolean {
+  const addition = context.trim();
+  if (!key || !addition) return false;
+  const current = readComposerDraft(key);
+  const separator =
+    current.content.length === 0 ? '' : current.content.endsWith('\n') ? '\n' : '\n\n';
+  const draft = {
+    ...current,
+    content: `${current.content}${separator}${addition}`,
+  };
+  writeComposerDraft(key, draft);
+  const event = {
+    key,
+    draft: {
+      ...draft,
+      attachments: [...draft.attachments],
+    },
+  };
+  for (const listener of appendListeners) listener(event);
+  return true;
+}
+
+export function subscribeComposerDraftAppend(
+  listener: (event: ComposerDraftAppendEvent) => void
+): () => void {
+  appendListeners.add(listener);
+  return () => appendListeners.delete(listener);
 }

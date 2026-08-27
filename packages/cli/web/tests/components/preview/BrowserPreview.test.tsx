@@ -5,12 +5,17 @@ import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BrowserPanel } from '../../../src/components/preview/BrowserPanel';
 import {
+  formatBrowserElementContext,
+  parseBrowserSnapshot,
+} from '../../../src/components/preview/BrowserTest';
+import {
   appendPreviewBrowserHistory,
   DEFAULT_PREVIEW_BROWSER_URL,
   MAX_PREVIEW_BROWSER_HISTORY,
   normalizePreviewBrowserUrl,
 } from '../../../src/components/preview/browserPanelModel';
 import { setLocale } from '../../../src/i18n';
+import { clearComposerDraft, readComposerDraft } from '../../../src/lib/composerDraft';
 import { useBrowserActivityStore } from '../../../src/store/BrowserActivityStore';
 
 const browserService = vi.hoisted(() => ({
@@ -83,6 +88,30 @@ describe('preview browser URL boundary', () => {
   });
 });
 
+describe('browser element context', () => {
+  it('parses viewport boxes and omits ephemeral refs from prompt context', () => {
+    const [line] = parseBrowserSnapshot(
+      '- button "Save <now>" [ref=e2] [box=100, 200, 80, 40]'
+    );
+
+    expect(line).toEqual({
+      text: '- button "Save <now>" [ref=e2] [box=100, 200, 80, 40]',
+      ref: 'e2',
+      box: { x: 100, y: 200, width: 80, height: 40 },
+    });
+    const context = formatBrowserElementContext(line!, {
+      url: 'https://example.com/form?token=[redacted]',
+      title: 'Example form',
+      viewport: { width: 1440, height: 900 },
+    });
+    expect(context).toContain('<browser_element_context trust="untrusted">');
+    expect(context).toContain('button \\"Save \\u003cnow\\u003e\\"');
+    expect(context).toContain('viewport: [1440, 900]');
+    expect(context).toContain('viewport_box: [100, 200, 80, 40]');
+    expect(context).not.toContain('ref=e2');
+  });
+});
+
 describe('BrowserPanel', () => {
   let container: HTMLDivElement;
   let root: ReactDOM.Root;
@@ -91,6 +120,7 @@ describe('BrowserPanel', () => {
     setLocale('en');
     vi.clearAllMocks();
     useBrowserActivityStore.getState().clearAgentActivity();
+    clearComposerDraft('session:["/project","session-1"]');
     Object.defineProperty(URL, 'createObjectURL', {
       configurable: true,
       value: vi.fn(() => 'blob:browser-frame'),
@@ -259,11 +289,18 @@ describe('BrowserPanel', () => {
       url: 'https://example.com/form',
       origin: 'https://example.com:443',
       title: 'Example form',
+      viewport: { width: 1440, height: 900 },
       tabs: [],
-      snapshot: '- textbox "Name" [ref=e1]\n- button "Save" [ref=e2]',
+      snapshot:
+        '- textbox "Name" [ref=e1] [box=80, 120, 240, 36]\n' +
+        '- button "Save" [ref=e2] [box=340, 120, 80, 36]',
       truncated: false,
     };
     browserService.navigate.mockResolvedValue(observation);
+    browserService.snapshot.mockResolvedValue({
+      ...observation,
+      snapshotId: 'browser_snapshot_picker',
+    });
     browserService.screenshot.mockResolvedValue(
       new Blob(['png'], { type: 'image/png' })
     );
@@ -293,10 +330,23 @@ describe('BrowserPanel', () => {
     });
     browserService.reset.mockResolvedValue(undefined);
 
+    const onElementAdded = vi.fn();
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 800,
+      bottom: 500,
+      width: 800,
+      height: 500,
+      toJSON: () => ({}),
+    });
     await act(async () => {
       root.render(
         <BrowserPanel
           sessionRef={{ sessionId: 'session-1', projectPath: '/project' }}
+          onElementAdded={onElementAdded}
         />
       );
     });
@@ -322,6 +372,39 @@ describe('BrowserPanel', () => {
       expect(container.querySelector('[data-browser-test-screenshot]')).not.toBeNull();
     });
 
+    const picker = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Select element from page"]'
+    );
+    await act(async () => picker?.click());
+    await vi.waitFor(() =>
+      expect(browserService.snapshot).toHaveBeenCalledWith(
+        { sessionId: 'session-1', projectPath: '/project' },
+        { pageId: 'browser_page_1', includeBoxes: true }
+      )
+    );
+    await act(async () => {
+      container
+        .querySelector<HTMLImageElement>('[data-browser-test-screenshot]')
+        ?.dispatchEvent(new Event('load'));
+    });
+    const pageElement = await vi.waitFor(() => {
+      const element = container.querySelector<HTMLButtonElement>(
+        '[data-browser-pick-ref="e2"]'
+      );
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    await act(async () => pageElement.click());
+    const addToConversation = container.querySelector<HTMLButtonElement>(
+      '[data-browser-add-to-composer]'
+    );
+    await act(async () => addToConversation?.click());
+    const draft = readComposerDraft('session:["/project","session-1"]');
+    expect(draft.content).toContain('<browser_element_context trust="untrusted">');
+    expect(draft.content).toContain('element: "- button \\"Save\\""');
+    expect(draft.content).not.toContain('ref=e2');
+    expect(onElementAdded).toHaveBeenCalledOnce();
+
     const ref = container.querySelector<HTMLButtonElement>('[data-browser-ref="e2"]');
     await act(async () => ref?.click());
     const click = container.querySelector<HTMLButtonElement>(
@@ -333,7 +416,7 @@ describe('BrowserPanel', () => {
         { sessionId: 'session-1', projectPath: '/project' },
         expect.objectContaining({
           pageId: 'browser_page_1',
-          snapshotId: 'browser_snapshot_1',
+          snapshotId: 'browser_snapshot_picker',
           ref: 'e2',
           action: { kind: 'click' },
         })

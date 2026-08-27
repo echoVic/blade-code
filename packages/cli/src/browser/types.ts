@@ -61,6 +61,7 @@ export interface BrowserObservation {
   url: string;
   origin: string;
   title: string;
+  viewport?: BrowserViewportSize;
   tabs: BrowserPageSummary[];
   snapshot: string;
   truncated: boolean;

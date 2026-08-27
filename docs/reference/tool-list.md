@@ -240,6 +240,12 @@ Chromium，每个 Session 使用独立、临时的 `BrowserContext`；恢复、f
 再使用 `click_at` 提交同一页面的 `screenshotId` 和图像坐标。运行时会在点击前重新截图，
 只有页面代际、origin、viewport 和像素哈希全部一致才执行；frame 区域和过期截图会
 fail closed。截图像素只作为临时模型上下文传递，不进入公开工具结果或 durable transcript。
+
+Web Browser 面板的用户 `Test` 视图支持元素拾取。开启拾取后，面板从最新的带 box
+快照在截图上投影可选区域；“添加到对话”会把脱敏 URL、页面标题、ARIA 元素描述和
+viewport box 追加到当前 Session 草稿。短期 snapshot ref 不会写入草稿，页面文本按
+不可信上下文标记，且该能力不授予 Web UI 对 Agent BrowserContext 的控制权。
+
 `BrowserNavigate` 的新 origin 和 `BrowserInteract` 的当前 origin 分别进入标准 Execute
 权限确认；后退、前进和刷新不能授权新 origin。
 

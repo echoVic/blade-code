@@ -189,6 +189,7 @@ describe('SessionBrowserRuntime with real Chromium', () => {
 
     const first = await runtime.navigate({ url: `${origin}/` });
     expect(first.origin).toBe(origin);
+    expect(first.viewport).toEqual({ width: 1440, height: 900 });
     expect(first.snapshot).toContain('textbox "Name"');
     expect(pool.stats().contexts).toBe(1);
     expect(runtimeLaunchOptions).toEqual([
@@ -208,11 +209,16 @@ describe('SessionBrowserRuntime with real Chromium', () => {
         pageId: first.pageId,
       })
     ).rejects.toMatchObject({ code: 'browser_origin_mismatch' });
+    const boxedFirst = await runtime.snapshot({
+      pageId: first.pageId,
+      includeBoxes: true,
+    });
+    expect(boxedFirst.snapshot).toMatch(/\[box=[^\]]+\]/);
     await expect(
       runtime.interact({
         pageId: first.pageId,
-        snapshotId: first.snapshotId,
-        ref: refFor(first, 'Cross frame'),
+        snapshotId: boxedFirst.snapshotId,
+        ref: refFor(boxedFirst, 'Cross frame'),
         expectedOrigin: origin,
         action: { kind: 'click' },
       })
@@ -220,8 +226,8 @@ describe('SessionBrowserRuntime with real Chromium', () => {
     await expect(
       runtime.interact({
         pageId: first.pageId,
-        snapshotId: first.snapshotId,
-        ref: refFor(first, 'Inherited frame'),
+        snapshotId: boxedFirst.snapshotId,
+        ref: refFor(boxedFirst, 'Inherited frame'),
         expectedOrigin: origin,
         action: { kind: 'click' },
       })

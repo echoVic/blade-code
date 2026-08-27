@@ -18,6 +18,8 @@ import {
 import { type SyntheticEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useLocale } from '@/i18n';
+import { appendComposerDraftContext } from '@/lib/composerDraft';
+import { focusBladeComposer } from '@/lib/composerFocus';
 import { cn } from '@/lib/utils';
 import type { SessionRef } from '@/services/sessionService';
 import {
@@ -25,6 +27,7 @@ import {
   webBrowserService,
 } from '@/services/webBrowserService';
 import { useBrowserActivityStore } from '@/store/BrowserActivityStore';
+import { sessionRefKey } from '@/store/session/sessionIdentity';
 import { type BrowserLoadState, BrowserPreview } from './BrowserPreview';
 import { BrowserTest, type BrowserTestSource } from './BrowserTest';
 import {
@@ -39,6 +42,7 @@ import {
 
 interface BrowserPanelProps {
   sessionRef?: SessionRef | null;
+  onElementAdded?: () => void;
 }
 
 function isHttpBrowserOrigin(value: string): boolean {
@@ -114,7 +118,7 @@ const COPY = {
   },
 } as const;
 
-export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
+export function BrowserPanel({ sessionRef = null, onElementAdded }: BrowserPanelProps) {
   const { locale } = useLocale();
   const copy = COPY[locale];
   const agentActivity = useBrowserActivityStore((state) => state.agentActivity);
@@ -144,6 +148,7 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
   const [agentScreenshotError, setAgentScreenshotError] = useState<string | null>(null);
   const [testBusy, setTestBusy] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
+  const [elementPickerActive, setElementPickerActive] = useState(false);
   const [externalUrl, setExternalUrl] = useState<string | null>(null);
   const [diagnostics, setDiagnostics] = useState<
     Partial<Record<BrowserInspectKind, BrowserDiagnosticEntry[]>>
@@ -226,6 +231,7 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
     setTestError(null);
     setAgentScreenshotError(null);
     setAgentScreenshotLoading(false);
+    setElementPickerActive(false);
     setDiagnostics({});
     replaceScreenshotUrl(null);
     replaceAgentScreenshotUrl(null);
@@ -346,6 +352,7 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
       return;
     }
     const requestGeneration = generation.current;
+    setElementPickerActive(false);
     setTestBusy(true);
     setTestError(null);
     try {
@@ -427,6 +434,7 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
   };
 
   const changeMode = (nextMode: BrowserPanelMode) => {
+    setElementPickerActive(false);
     setMode(nextMode);
     setValidationError(null);
     setTestError(null);
@@ -444,6 +452,7 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
   const changeTestSource = (source: BrowserTestSource) => {
     if (source === 'agent' && !agentAvailable) return;
     setTestSource(source);
+    setElementPickerActive(false);
     setValidationError(null);
     setTestError(null);
     setAgentScreenshotError(null);
@@ -455,6 +464,7 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
     if (!sessionRef || !testObservation) return;
     const activeObservation = testObservation;
     const requestGeneration = generation.current;
+    setElementPickerActive(false);
     setTestBusy(true);
     setTestError(null);
     try {
@@ -505,20 +515,23 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
     }
   };
 
-  const refreshSnapshot = async () => {
-    if (!sessionRef || !testObservation) return;
+  const refreshSnapshot = async (includeBoxes = false): Promise<boolean> => {
+    if (!sessionRef || !testObservation) return false;
     const requestGeneration = generation.current;
     setTestBusy(true);
     setTestError(null);
     try {
       const observation = await webBrowserService.snapshot(sessionRef, {
         pageId: testObservation.pageId,
+        ...(includeBoxes ? { includeBoxes: true } : {}),
       });
       await applyTestObservation(sessionRef, observation, requestGeneration);
+      return generation.current === requestGeneration;
     } catch (error) {
       if (generation.current === requestGeneration) {
         setTestError(error instanceof Error ? error.message : String(error));
       }
+      return false;
     } finally {
       if (generation.current === requestGeneration) setTestBusy(false);
     }
@@ -549,9 +562,30 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
     }
   };
 
+  const changeElementPicker = async (active: boolean) => {
+    if (!active) {
+      setElementPickerActive(false);
+      return;
+    }
+    if (testSource === 'agent') return;
+    const refreshed = await refreshSnapshot(true);
+    if (refreshed) setElementPickerActive(true);
+  };
+
+  const addElementToConversation = (context: string) => {
+    const draftKey = sessionRef
+      ? `session:${sessionRefKey(sessionRef)}`
+      : 'session:temporary';
+    if (!appendComposerDraftContext(draftKey, context)) return;
+    setElementPickerActive(false);
+    onElementAdded?.();
+    requestAnimationFrame(() => focusBladeComposer());
+  };
+
   const resetTestBrowser = async () => {
     if (!sessionRef) return;
     const requestGeneration = generation.current;
+    setElementPickerActive(false);
     setTestBusy(true);
     setTestError(null);
     try {
@@ -784,9 +818,14 @@ export function BrowserPanel({ sessionRef = null }: BrowserPanelProps) {
             diagnosticsLoading={testSource === 'agent' ? null : diagnosticsLoading}
             onInteract={interact}
             onInspect={inspect}
-            onSnapshot={refreshSnapshot}
+            onSnapshot={async () => {
+              await refreshSnapshot();
+            }}
             onReset={resetTestBrowser}
             onSourceChange={changeTestSource}
+            pickerActive={elementPickerActive}
+            onPickerChange={changeElementPicker}
+            onAddToConversation={addElementToConversation}
           />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-3 bg-[hsl(var(--deck-canvas-veil))]">

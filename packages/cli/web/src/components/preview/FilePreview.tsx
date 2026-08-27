@@ -1139,7 +1139,12 @@ export function FilePreview({
           forceMount
           className="overflow-hidden flex-1 min-h-0"
         >
-          <BrowserPanel sessionRef={currentSessionRef} />
+          <BrowserPanel
+            sessionRef={currentSessionRef}
+            onElementAdded={() => {
+              if (isCompact) toggleFilePreview();
+            }}
+          />
         </TabsContent>
       </Tabs>
     </div>
