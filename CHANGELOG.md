@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.10.99] - 2026-08-27
+
+### Added
+- Made native Browser tools the default execution and verification path for
+  rendered Web/UI work, with explicit GUI validation before completion
+- Added vision-assisted `click_at` fallback backed by fresh screenshot authority,
+  stable-frame validation, viewport/origin binding, stale-pixel rejection, and
+  fail-closed frame protection
+- Added element picking to the user Test browser: boxed ARIA regions can be
+  selected directly on the screenshot and appended as bounded, untrusted context
+  to the current Session composer
+
+### Fixed
+- Main-view navigation now closes Settings, so New Task, Task Board, project, and
+  Session navigation cannot remain hidden behind the Settings page
+
+### Tests
+- Added Browser prompt, schema, multimodal Provider context, screenshot authority,
+  Web projection, composer draft, and navigation regression coverage
+- Qualified the Browser flow with real Chromium, native Web GUI interaction, and
+  an eight-cell zero-retry DeepSeek matrix across Headless, TUI, Web, and ACP
+
 ## [0.10.98] - 2026-08-27
 
 ### Fixed

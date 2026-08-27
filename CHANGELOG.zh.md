@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.10.99] - 2026-08-27
+
+### 新增
+- 原生 Browser Tool 成为 Web/UI 可视任务的默认执行与验证路径，任务完成前需要执行
+  真实 GUI 验证
+- 新增多模态 `click_at` 兜底，使用最新截图授权、稳定帧检测、viewport/origin 绑定、
+  像素过期拒绝和 frame 区域 fail-closed 保护
+- Web 用户 Test 浏览器新增元素拾取：可直接在截图上选择带 box 的 ARIA 区域，并将
+  有界且标记为不可信的元素上下文追加到当前 Session 输入框
+
+### 修复
+- 主视图导航现在会关闭设置页，点击新建任务、任务看板、项目或 Session 时不再被设置
+  页面继续遮挡
+
+### 测试
+- 新增 Browser 提示、schema、多模态 Provider 上下文、截图授权、Web 投影、Composer
+  草稿和导航回归测试
+- 使用真实 Chromium、原生 Web GUI 交互，以及 Headless、TUI、Web、ACP 的八单元
+  DeepSeek 零重试矩阵完成 Browser 流程资格验证
+
 ## [0.10.98] - 2026-08-27
 
 ### 修复
