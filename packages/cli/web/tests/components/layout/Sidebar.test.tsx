@@ -347,6 +347,36 @@ describe('Sidebar', () => {
     expect(sessionActionMocks.selectSession).not.toHaveBeenCalled();
   });
 
+  test('closes settings when navigating to a new task or the task board', async () => {
+    useAppStore.setState({
+      isSettingsOpen: true,
+      mainView: 'workspace',
+    });
+    await act(async () => {
+      root.render(<Sidebar />);
+    });
+
+    const taskBoard = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Task board'
+    );
+    await act(async () => taskBoard?.click());
+    expect(useAppStore.getState()).toMatchObject({
+      isSettingsOpen: false,
+      mainView: 'board',
+    });
+
+    act(() => useAppStore.setState({ isSettingsOpen: true }));
+    const newTask = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('New Task')
+    );
+    await act(async () => newTask?.click());
+    expect(useAppStore.getState()).toMatchObject({
+      isSettingsOpen: false,
+      mainView: 'workspace',
+    });
+    expect(sessionActionMocks.startTemporarySession).toHaveBeenCalled();
+  });
+
   test('reorders projects by drag and drop and persists the explicit order', async () => {
     useSessionStore.setState({
       boundProjects: [

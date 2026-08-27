@@ -75,6 +75,7 @@ export const useAppStore = create<AppState>((set) => ({
   setMainView: (view) =>
     set((state) => ({
       mainView: view,
+      isSettingsOpen: false,
       isFilePreviewOpen: view === 'board' ? false : state.isFilePreviewOpen,
     })),
   boardProjectPath: null,
