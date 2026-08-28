@@ -742,10 +742,13 @@ describe('SessionRoutes runtime reuse', () => {
     agentState.destroy.mockReset().mockResolvedValue(undefined);
     vi.mocked(Agent.createWithRuntime)
       .mockReset()
-      .mockImplementation(async () => ({
-        chatStream: agentState.chatStream,
-        destroy: agentState.destroy,
-      }));
+      .mockImplementation(
+        async () =>
+          ({
+            chatStream: agentState.chatStream,
+            destroy: agentState.destroy,
+          }) as unknown as Agent
+      );
   });
 
   afterEach(() => {
