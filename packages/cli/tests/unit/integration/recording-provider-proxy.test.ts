@@ -59,6 +59,26 @@ async function createProxy(
   return { proxy, requestCount };
 }
 
+async function waitForCondition(
+  predicate: () => boolean,
+  timeoutMs = 1_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error('Timed out waiting for proxy test condition');
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 describe('recording Provider proxy one-shot failure injection', () => {
   it('injects one fixed 503 before forwarding the next exact-path request', async () => {
     const { proxy, requestCount } = await createProxy({
@@ -124,6 +144,95 @@ describe('recording Provider proxy one-shot failure injection', () => {
     expect(requestCount.value).toBe(2);
     expect(proxy.injectedRequestNumbers).toEqual([]);
     expect(proxy.forwardedRequestNumbers).toEqual([1, 2]);
+  });
+
+  it('records a bounded structural lifecycle for a held upstream request', async () => {
+    const secret = 'proxy-lifecycle-secret';
+    const { proxy } = await createProxy({
+      holdRequestNumber: 1,
+      holdMs: 5_000,
+    });
+    const responsePromise = fetch(`${proxy.baseUrl}/chat/completions`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt: secret }),
+      headers: { authorization: `Bearer ${secret}` },
+    });
+
+    await waitForCondition(() => proxy.heldRequestNumbers.includes(1));
+    expect(proxy.requestLifecycle.map((entry) => entry.phase)).toEqual([
+      'body_read',
+      'hold_entered',
+    ]);
+
+    proxy.releaseHeld();
+    expect((await responsePromise).status).toBe(200);
+
+    expect(proxy.requestLifecycle).toEqual([
+      { requestNumber: 1, phase: 'body_read' },
+      { requestNumber: 1, phase: 'hold_entered' },
+      { requestNumber: 1, phase: 'release_observed' },
+      { requestNumber: 1, phase: 'upstream_started' },
+      { requestNumber: 1, phase: 'headers_received', statusClass: 2 },
+      { requestNumber: 1, phase: 'body_completed' },
+      { requestNumber: 1, phase: 'downstream_ended' },
+    ]);
+    expect(JSON.stringify(proxy.requestLifecycle)).not.toContain(secret);
+  });
+
+  it('forwards streaming response chunks before the upstream response ends', async () => {
+    const releaseTail = deferred<void>();
+    const upstreamStarted = { value: false };
+    const upstreamServer = createServer((_request, response) => {
+      upstreamStarted.value = true;
+      response.statusCode = 200;
+      response.setHeader('content-type', 'text/event-stream');
+      response.flushHeaders();
+      response.write('data: first\n\n');
+      void releaseTail.promise.then(() => response.end('data: second\n\n'));
+    });
+    await new Promise<void>((resolve, reject) => {
+      upstreamServer.once('error', reject);
+      upstreamServer.listen(0, '127.0.0.1', () => {
+        upstreamServer.off('error', reject);
+        resolve();
+      });
+    });
+    closers.push(async () => {
+      releaseTail.resolve();
+      upstreamServer.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        upstreamServer.close((error) => (error ? reject(error) : resolve()));
+      });
+    });
+    const address = upstreamServer.address() as AddressInfo;
+    const proxy = await startRecordingProviderProxy(
+      `http://127.0.0.1:${address.port}/v1`
+    );
+    closers.unshift(proxy.close);
+    let responseResolved = false;
+    const responsePromise = fetch(`${proxy.baseUrl}/chat/completions`, {
+      method: 'POST',
+    }).then((response) => {
+      responseResolved = true;
+      return response;
+    });
+
+    await waitForCondition(() => upstreamStarted.value);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(responseResolved).toBe(true);
+
+    const response = await responsePromise;
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('Streaming proxy response body is unavailable');
+    const first = await reader.read();
+    expect(new TextDecoder().decode(first.value)).toBe('data: first\n\n');
+    expect(proxy.requestLifecycle.at(-1)?.phase).toBe('headers_received');
+
+    releaseTail.resolve();
+    const second = await reader.read();
+    expect(new TextDecoder().decode(second.value)).toBe('data: second\n\n');
+    await reader.read();
+    expect(proxy.requestLifecycle.at(-1)?.phase).toBe('downstream_ended');
   });
 
   it('injects exactly once when matching requests arrive concurrently', async () => {

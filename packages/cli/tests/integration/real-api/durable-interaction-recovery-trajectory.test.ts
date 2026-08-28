@@ -1,4 +1,4 @@
-import type { ChildProcess } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   access,
@@ -13,6 +13,7 @@ import { createServer as createNetServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
+import { type Browser, chromium, type Page } from 'playwright';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BladeAgent } from '../../../src/acp/BladeAgent.js';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
@@ -37,6 +38,11 @@ import {
   createMockACPClient,
   type MockACPClient,
 } from '../../support/mocks/mockACPClient.js';
+import {
+  type RecordingProviderProxy,
+  type RecordingProviderRequestLifecycle,
+  startRecordingProviderProxy,
+} from '../../support/recordingProviderProxy.js';
 import { assertNoSecrets, finalAssistantText } from './sessionForkTrajectoryHarness.js';
 import {
   buildRealApiRuntimeConfig,
@@ -108,12 +114,318 @@ interface ProductionWebRecoveryEvidence {
   sseEvents: Array<{ type: string; properties: Record<string, unknown> }>;
   durableEvents: SessionEvent[];
   targetContent: string;
+  targetPath: string;
   finalMarker: string;
 }
 
 interface ProductionEventProbe {
   events: ProductionWebRecoveryEvidence['sseEvents'];
   close(): Promise<void>;
+}
+
+const PRODUCTION_WEB_DIAGNOSTIC_EVENT_TYPES = new Set([
+  'connected',
+  'interaction.resolved',
+  'message.complete',
+  'pending.resume',
+  'provider.retry',
+  'question.required',
+  'session.completed',
+  'session.error',
+  'session.status',
+  'tool.result',
+  'tool.start',
+]);
+
+type ProductionWebTerminalFailure =
+  | { type: 'session.error' }
+  | { type: 'pending.resume'; phase: 'failed' | 'exhausted' };
+
+export function findProductionWebTerminalFailure(
+  events: readonly ProductionWebRecoveryEvidence['sseEvents'][number][]
+): ProductionWebTerminalFailure | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type === 'session.error') return { type: 'session.error' };
+    if (event?.type !== 'pending.resume') continue;
+    const phase = event.properties.phase;
+    if (phase === 'failed' || phase === 'exhausted') {
+      return { type: 'pending.resume', phase };
+    }
+  }
+  return null;
+}
+
+const countSafeEventTypes = (types: readonly string[]): Record<string, number> => {
+  const counts: Record<string, number> = {};
+  for (const type of types) {
+    if (!PRODUCTION_WEB_DIAGNOSTIC_EVENT_TYPES.has(type)) continue;
+    counts[type] = (counts[type] ?? 0) + 1;
+  }
+  return counts;
+};
+
+export function formatProductionWebRecoveryDiagnostic(input: {
+  outcome: 'timeout' | 'terminal_failure';
+  elapsedMs: number;
+  sseEvents: ProductionWebRecoveryEvidence['sseEvents'];
+  durableEvents: SessionEvent[];
+  expectedMarker: string;
+  proxyLifecycle: readonly RecordingProviderRequestLifecycle[];
+  targetBytes: number | undefined;
+  transcriptBytes: number | undefined;
+  inboxMissing: boolean;
+  taskStatus: string | undefined;
+  taskFailure: unknown;
+  pageEventTypes: readonly string[];
+  markerPresent: boolean;
+  recoveryStatusPresent: boolean;
+  browserApplicationErrorCount: number;
+  pageErrorCount: number;
+  failedRequestCount: number;
+  child: {
+    alive: boolean;
+    exitCode: number | null;
+    signalCode: NodeJS.Signals | null;
+    stdoutBytes: number;
+    stderrBytes: number;
+  };
+}): string {
+  const pendingResume = input.sseEvents.flatMap((event) => {
+    if (event.type !== 'pending.resume') return [];
+    const phase = event.properties.phase;
+    if (
+      phase !== 'retry_scheduled' &&
+      phase !== 'recovered' &&
+      phase !== 'failed' &&
+      phase !== 'exhausted'
+    ) {
+      return [];
+    }
+    return [
+      {
+        phase,
+        attempt: Number.isSafeInteger(event.properties.attempt)
+          ? event.properties.attempt
+          : null,
+        maxAttempts: Number.isSafeInteger(event.properties.maxAttempts)
+          ? event.properties.maxAttempts
+          : null,
+      },
+    ];
+  });
+  const writeCalls = input.durableEvents.filter(
+    (event) =>
+      event.type === 'part_created' &&
+      event.data.partType === 'tool_call' &&
+      isRecord(event.data.payload) &&
+      event.data.payload.toolName === 'Write'
+  ).length;
+  const writeResults = input.durableEvents.filter(
+    (event) =>
+      event.type === 'part_created' &&
+      event.data.partType === 'tool_result' &&
+      isRecord(event.data.payload) &&
+      event.data.payload.toolName === 'Write'
+  ).length;
+  const taskFailure = isSessionTaskFailure(input.taskFailure)
+    ? {
+        code: input.taskFailure.code,
+        retryable: input.taskFailure.retryable,
+        ...(input.taskFailure.resource ? { resource: input.taskFailure.resource } : {}),
+      }
+    : null;
+  const diagnostic = JSON.stringify({
+    outcome: input.outcome,
+    elapsedMs: Math.max(0, Math.floor(input.elapsedMs)),
+    sseEventCounts: countSafeEventTypes(input.sseEvents.map((event) => event.type)),
+    pendingResume,
+    durableEventCounts: Object.fromEntries(
+      [...RECOVERY_DIAGNOSTIC_EVENT_TYPES].flatMap((type) => {
+        const count = input.durableEvents.filter((event) => event.type === type).length;
+        return count > 0 ? [[type, count]] : [];
+      })
+    ),
+    writeCalls,
+    writeResults,
+    durableMarkerPresent:
+      finalAssistantText(input.durableEvents)?.includes(input.expectedMarker) ?? false,
+    proxyLifecycle: input.proxyLifecycle.slice(-32).map((entry) => ({
+      requestNumber: entry.requestNumber,
+      phase: entry.phase,
+      ...(entry.statusClass === undefined ? {} : { statusClass: entry.statusClass }),
+    })),
+    targetBytes: boundedByteSize(input.targetBytes),
+    transcriptBytes: boundedByteSize(input.transcriptBytes),
+    inboxMissing: input.inboxMissing,
+    taskStatus: [
+      'queued',
+      'running',
+      'completed',
+      'failed',
+      'cancelled',
+      'interrupted',
+    ].includes(input.taskStatus ?? '')
+      ? input.taskStatus
+      : null,
+    taskFailure,
+    pageEventCounts: countSafeEventTypes(input.pageEventTypes),
+    markerPresent: input.markerPresent,
+    recoveryStatusPresent: input.recoveryStatusPresent,
+    browserFaults: {
+      console: Math.max(0, input.browserApplicationErrorCount),
+      page: Math.max(0, input.pageErrorCount),
+      request: Math.max(0, input.failedRequestCount),
+    },
+    child: {
+      alive: input.child.alive,
+      exitCode: input.child.exitCode,
+      signalCode: input.child.signalCode,
+      stdoutBytes: boundedByteSize(input.child.stdoutBytes),
+      stderrBytes: boundedByteSize(input.child.stderrBytes),
+    },
+  });
+  return Buffer.byteLength(diagnostic) <= 4_096
+    ? diagnostic
+    : JSON.stringify({ outcome: input.outcome, diagnostic: 'overflow' });
+}
+
+async function buildProductionWebRecoveryDiagnosticBounded(input: {
+  outcome: 'timeout' | 'terminal_failure';
+  startedAt: number;
+  page: Page | undefined;
+  probe: ProductionEventProbe | undefined;
+  proxy: RecordingProviderProxy;
+  store: PersistentStore;
+  sessionId: string;
+  projectPath: string;
+  target: string;
+  finalMarker: string;
+  child: ChildProcess | undefined;
+  stdout: readonly string[];
+  stderr: readonly string[];
+  browserApplicationErrorCount: number;
+  pageErrorCount: number;
+  failedRequestCount: number;
+}): Promise<string> {
+  const collect = async (): Promise<string> => {
+    const [
+      durableEvents,
+      targetBytes,
+      transcriptBytes,
+      inboxMissing,
+      metadata,
+      pageEventTypes,
+      markerPresent,
+      recoveryStatusPresent,
+    ] = await Promise.all([
+      input.store.loadEvents(input.sessionId).catch(() => []),
+      optionalFileSize(input.target).catch(() => undefined),
+      optionalFileSize(getSessionFilePath(input.projectPath, input.sessionId)).catch(
+        () => undefined
+      ),
+      fileIsMissing(getSessionInboxFilePath(input.projectPath, input.sessionId)).catch(
+        () => false
+      ),
+      SessionService.findSessionMetadata(input.sessionId, input.projectPath).catch(
+        () => undefined
+      ),
+      input.page
+        ?.evaluate(
+          () =>
+            (
+              window as typeof window & {
+                __bladeQualificationEventTypes?: string[];
+              }
+            ).__bladeQualificationEventTypes ?? []
+        )
+        .catch(() => []) ?? Promise.resolve([] as string[]),
+      input.page
+        ?.getByText(input.finalMarker, { exact: true })
+        .isVisible()
+        .catch(() => false) ?? Promise.resolve(false),
+      input.page
+        ?.getByText('Recovery attempt', { exact: false })
+        .isVisible()
+        .catch(() => false) ?? Promise.resolve(false),
+    ]);
+    return formatProductionWebRecoveryDiagnostic({
+      outcome: input.outcome,
+      elapsedMs: Date.now() - input.startedAt,
+      sseEvents: input.probe?.events ?? [],
+      durableEvents: durableEvents ?? [],
+      expectedMarker: input.finalMarker,
+      proxyLifecycle: input.proxy.requestLifecycle,
+      targetBytes,
+      transcriptBytes,
+      inboxMissing,
+      taskStatus: metadata?.taskStatus,
+      taskFailure: metadata?.taskFailure,
+      pageEventTypes,
+      markerPresent,
+      recoveryStatusPresent,
+      browserApplicationErrorCount: input.browserApplicationErrorCount,
+      pageErrorCount: input.pageErrorCount,
+      failedRequestCount: input.failedRequestCount,
+      child: {
+        alive:
+          input.child !== undefined &&
+          input.child.exitCode === null &&
+          input.child.signalCode === null,
+        exitCode: input.child?.exitCode ?? null,
+        signalCode: input.child?.signalCode ?? null,
+        stdoutBytes: Buffer.byteLength(input.stdout.join('')),
+        stderrBytes: Buffer.byteLength(input.stderr.join('')),
+      },
+    });
+  };
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      collect().catch(() => 'diagnostic unavailable'),
+      new Promise<string>((resolve) => {
+        timeout = setTimeout(() => resolve('diagnostic unavailable'), 1_000);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function waitForProductionWebFinalMarker(
+  page: Page,
+  events: readonly ProductionWebRecoveryEvidence['sseEvents'][number][],
+  finalMarker: string,
+  timeoutMs: number
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let completedAt: number | undefined;
+  while (Date.now() < deadline) {
+    if (
+      await page
+        .getByText(finalMarker, { exact: true })
+        .isVisible()
+        .catch(() => false)
+    ) {
+      return;
+    }
+    const failure = findProductionWebTerminalFailure(events);
+    if (failure) {
+      throw new Error(
+        failure.type === 'session.error'
+          ? 'Production Web recovery emitted session.error'
+          : `Production Web recovery emitted pending.resume ${failure.phase}`
+      );
+    }
+    if (events.some((event) => event.type === 'session.completed')) {
+      completedAt ??= Date.now();
+      if (Date.now() - completedAt >= 5_000) {
+        throw new Error('Production Web completed without rendering the final marker');
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('Timed out waiting for the production Web final marker');
 }
 
 async function waitForProductionCondition(
@@ -253,7 +565,11 @@ export function validateProductionWebRecoveryEvidence(
   if (typeof write.toolCallId !== 'string' || !isRecord(write.input)) {
     throw new Error('Write tool call evidence is malformed');
   }
-  if (write.input.content !== 'Canary\n' || evidence.targetContent !== 'Canary\n') {
+  if (
+    write.input.file_path !== evidence.targetPath ||
+    write.input.content !== 'Canary\n' ||
+    evidence.targetContent !== 'Canary\n'
+  ) {
     throw new Error('Write content did not match the exact Canary contract');
   }
   const matchingResults = evidence.durableEvents.filter(
@@ -278,10 +594,28 @@ export function validateProductionWebRecoveryEvidence(
       throw new Error(`Expected exactly one ${type} event`);
     }
   }
-  const serializedDurable = evidence.durableEvents
-    .map((event) => JSON.stringify(event))
-    .join('\n');
-  if (serializedDurable.split(evidence.finalMarker).length - 1 !== 1) {
+  const assistantMessageIds = new Set(
+    evidence.durableEvents.flatMap((event) =>
+      event.type === 'message_created' && event.data.role === 'assistant'
+        ? [event.data.messageId]
+        : []
+    )
+  );
+  const assistantText = evidence.durableEvents
+    .flatMap((event) => {
+      if (
+        event.type !== 'part_created' ||
+        event.data.partType !== 'text' ||
+        !assistantMessageIds.has(event.data.messageId) ||
+        !isRecord(event.data.payload) ||
+        typeof event.data.payload.text !== 'string'
+      ) {
+        return [];
+      }
+      return [event.data.payload.text];
+    })
+    .join('');
+  if (assistantText.split(evidence.finalMarker).length - 1 !== 1) {
     throw new Error('Expected exactly one durable final marker');
   }
   const completionCount = evidence.sseEvents.filter(
@@ -310,9 +644,12 @@ export function validateProductionWebRecoveryEvidence(
     phases.length !== 2 ||
     phases[0] !== 'retry_scheduled' ||
     phases[1] !== 'recovered' ||
-    attempts[0] !== 1 ||
+    attempts[0] !== 2 ||
     attempts[1] !== 2 ||
-    pendingResume.some((event) => event.properties.maxAttempts !== 4)
+    pendingResume.some(
+      (event) =>
+        event.properties.kind !== 'pending_input' || event.properties.maxAttempts !== 4
+    )
   ) {
     throw new Error('Pending resume phases or attempt semantics are invalid');
   }
@@ -1155,6 +1492,105 @@ describe('durable ACP recovery diagnostics', () => {
 });
 
 describe('durable Web recovery diagnostics', () => {
+  it('formats bounded structural production diagnostics without retaining secrets', () => {
+    const secret = 'production-web-diagnostic-secret';
+    const createdAt = '2026-08-29T00:00:00.000Z';
+    const diagnostic = formatProductionWebRecoveryDiagnostic({
+      outcome: 'terminal_failure',
+      elapsedMs: 123_456,
+      sseEvents: [
+        {
+          type: 'pending.resume',
+          properties: {
+            phase: 'retry_scheduled',
+            attempt: 2,
+            maxAttempts: 4,
+            unsafe: secret,
+          },
+        },
+        {
+          type: 'session.error',
+          properties: { error: secret },
+        },
+      ],
+      durableEvents: [
+        {
+          id: 'write-call',
+          sessionId: secret,
+          timestamp: createdAt,
+          type: 'part_created',
+          cwd: `/private/${secret}`,
+          version: 'test',
+          data: {
+            messageId: 'assistant',
+            partId: 'write-call',
+            partType: 'tool_call',
+            createdAt,
+            payload: {
+              toolCallId: 'write-call',
+              toolName: 'Write',
+              input: { file_path: `/private/${secret}`, content: secret },
+            },
+          },
+        },
+      ],
+      expectedMarker: `GUI_RECOVERED_${secret}`,
+      proxyLifecycle: [
+        { requestNumber: 2, phase: 'release_observed' },
+        { requestNumber: 2, phase: 'headers_received', statusClass: 2 },
+      ],
+      targetBytes: 7,
+      transcriptBytes: 8_000,
+      inboxMissing: false,
+      taskStatus: 'failed',
+      taskFailure: {
+        code: 'timeout',
+        message: 'Provider request timed out.',
+        retryable: true,
+      },
+      pageEventTypes: ['question.required', secret],
+      markerPresent: false,
+      recoveryStatusPresent: false,
+      browserApplicationErrorCount: 1,
+      pageErrorCount: 2,
+      failedRequestCount: 3,
+      child: {
+        alive: true,
+        exitCode: null,
+        signalCode: null,
+        stdoutBytes: 65,
+        stderrBytes: 4_500,
+      },
+    });
+
+    expect(diagnostic).toContain('"outcome":"terminal_failure"');
+    expect(diagnostic).toContain('"phase":"headers_received"');
+    expect(diagnostic).toContain('"pendingResume"');
+    expect(diagnostic).toContain('"writeCalls":1');
+    expect(diagnostic).toContain('"taskFailure":{"code":"timeout"');
+    expect(diagnostic).toContain('"pageEventCounts":{"question.required":1}');
+    expect(diagnostic).not.toContain(secret);
+    expect(Buffer.byteLength(diagnostic)).toBeLessThanOrEqual(4_096);
+  });
+
+  it('detects authoritative production recovery failures before a marker timeout', () => {
+    expect(
+      findProductionWebTerminalFailure([
+        {
+          type: 'pending.resume',
+          properties: { phase: 'retry_scheduled', attempt: 2 },
+        },
+        {
+          type: 'pending.resume',
+          properties: { phase: 'exhausted', attempt: 2 },
+        },
+      ])
+    ).toEqual({ type: 'pending.resume', phase: 'exhausted' });
+    expect(
+      findProductionWebTerminalFailure([{ type: 'session.completed', properties: {} }])
+    ).toBeNull();
+  });
+
   it('validates the exact production Chromium pending-resume trajectory', () => {
     const createdAt = '2026-08-29T00:00:00.000Z';
     const writeInput = { file_path: '/tmp/canary.txt', content: 'Canary\n' };
@@ -1181,9 +1617,15 @@ describe('durable Web recovery diagnostics', () => {
           },
         },
       ],
+      ['message_created', { messageId: 'final', role: 'assistant' }],
       [
-        'message_created',
-        { messageId: 'final', role: 'assistant', content: 'GUI_RECOVERED' },
+        'part_created',
+        {
+          partId: 'final-text',
+          messageId: 'final',
+          partType: 'text',
+          payload: { text: 'GUI_RECOVERED' },
+        },
       ],
       ['session.completed', {}],
     ].map(([type, data], index) => ({
@@ -1204,23 +1646,30 @@ describe('durable Web recovery diagnostics', () => {
             type: 'pending.resume',
             properties: {
               phase: 'retry_scheduled',
-              attempt: 1,
+              attempt: 2,
               maxAttempts: 4,
+              kind: 'pending_input',
               delayMs: 900,
             },
           },
           {
             type: 'pending.resume',
-            properties: { phase: 'recovered', attempt: 2, maxAttempts: 4 },
+            properties: {
+              phase: 'recovered',
+              attempt: 2,
+              maxAttempts: 4,
+              kind: 'pending_input',
+            },
           },
           { type: 'session.completed', properties: {} },
         ],
         durableEvents,
         targetContent: 'Canary\n',
+        targetPath: '/tmp/canary.txt',
         finalMarker: 'GUI_RECOVERED',
       })
     ).toEqual({
-      attempts: [1, 2],
+      attempts: [2, 2],
       phases: ['retry_scheduled', 'recovered'],
       writeSha256: createHash('sha256').update('Canary\n').digest('hex'),
     });
@@ -1247,6 +1696,7 @@ describe('durable Web recovery diagnostics', () => {
         ],
         durableEvents: [],
         targetContent: 'Canary\n',
+        targetPath: '/tmp/canary.txt',
         finalMarker: 'GUI_RECOVERED',
       })
     ).toThrow('exactly one Write');
@@ -1482,6 +1932,389 @@ describe('durable Web recovery diagnostics', () => {
     }
   });
 });
+
+describe
+  .skipIf(!isRealApiTestEnabled())
+  .sequential('production Chromium durable pending recovery (real API)', () => {
+    it('recovers a one-shot DeepSeek failure through the visible Web UI', async () => {
+      if (!deepseekFlash?.baseURL) throw new Error('DeepSeek Flash is unavailable');
+      const root = await mkdtemp(path.join(os.tmpdir(), 'blade-real-web-chromium-'));
+      const home = path.join(root, 'home');
+      const workspace = path.join(root, 'workspace');
+      const storageRoot = path.join(root, 'storage');
+      const sessionId = 'interaction-chromium-' + Date.now();
+      const target = path.join(workspace, 'gui-selected-channel.txt');
+      const finalMarker = 'GUI_INTERACTION_RECOVERED';
+      const proxy = await startRecordingProviderProxy(deepseekFlash.baseURL, {
+        inject503Once: { path: '/v1/chat/completions', retryAfterMs: 60_000 },
+        holdRequestNumber: 2,
+        holdMs: 10_000,
+      });
+      const config = buildDurableInteractionRecoveryConfig(
+        buildRealApiRuntimeConfig({
+          ...deepseekFlash,
+          baseURL: proxy.baseUrl,
+        })
+      );
+      const port = await reserveProductionWebPort();
+      const origin = 'http://127.0.0.1:' + port;
+      let child: ChildProcess | undefined;
+      let probe: ProductionEventProbe | undefined;
+      let browser: Browser | undefined;
+      let page: Page | undefined;
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      const browserApplicationErrors: string[] = [];
+      const pageErrors: string[] = [];
+      const failedRequests: string[] = [];
+      const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
+      const startedAt = Date.now();
+
+      try {
+        await Promise.all([
+          mkdir(path.join(home, '.blade'), { recursive: true }),
+          mkdir(workspace, { recursive: true }),
+          mkdir(storageRoot, { recursive: true }),
+        ]);
+        await writeFile(
+          path.join(home, '.blade', 'config.json'),
+          JSON.stringify(
+            {
+              currentModelId: config.currentModelId,
+              models: config.models,
+              modelProviders: config.modelProviders,
+              permissionMode: 'yolo',
+              providerForegroundRecoveryMs: config.providerForegroundRecoveryMs,
+              providerRequestAdmissionMs: config.providerRequestAdmissionMs,
+              providerCircuitBreakerOpenMs: 0,
+              hooks: { enabled: false },
+              disableAllHooks: true,
+              mcpServers: {},
+            },
+            null,
+            2
+          ) + '\n',
+          { mode: 0o600 }
+        );
+        process.env.BLADE_STORAGE_ROOT = storageRoot;
+        await SessionService.createSessionMetadata(sessionId, workspace, {
+          title: 'Pending Channel Decision',
+          taskStatus: 'completed',
+          selectedModelId: config.currentModelId,
+          permissionMode: 'yolo',
+        });
+        const store = new PersistentStore(workspace);
+        await store.saveMessage(
+          sessionId,
+          'user',
+          [
+            'A Channel question will be recovered in the production Web UI.',
+            'After the recovered answer, call Write exactly once with file_path=' +
+              JSON.stringify(target) +
+              '.',
+            'Set content to the selected label followed by exactly one newline.',
+            'That Write is the only allowed tool call. Never call AskUserQuestion again.',
+            'Do not emit assistant text or end the turn before Write succeeds.',
+            'After Write succeeds, reply with the exact concatenation of ' +
+              'GUI_INTERACTION_ and RECOVERED, with no separator.',
+          ].join(' ')
+        );
+        const question = {
+          header: 'Channel',
+          question: 'Which release channel should Blade write?',
+          multiSelect: false,
+          options: [
+            { label: 'Stable', description: 'Use the stable release channel' },
+            { label: 'Canary', description: 'Use the early canary release channel' },
+          ],
+        };
+        const toolCallId = await store.saveToolUse(sessionId, 'AskUserQuestion', {
+          questions: [question],
+        });
+        await SessionInteractionService.request(
+          {
+            sessionId,
+            projectPath: workspace,
+            toolCallId,
+            toolName: 'AskUserQuestion',
+          },
+          {
+            type: 'askUserQuestion',
+            message: 'Choose a release channel',
+            questions: [question],
+          }
+        );
+
+        child = spawn(
+          process.execPath,
+          [
+            path.resolve(import.meta.dirname, '../../../dist/blade.js'),
+            'serve',
+            '--hostname',
+            '127.0.0.1',
+            '--port',
+            String(port),
+          ],
+          {
+            cwd: workspace,
+            env: {
+              ...process.env,
+              HOME: home,
+              BLADE_STORAGE_ROOT: storageRoot,
+              BLADE_AUTO_MEMORY: '0',
+              BLADE_TELEMETRY_DISABLED: '1',
+            },
+            stdio: ['ignore', 'pipe', 'pipe'],
+          }
+        );
+        child.stdout?.on('data', (chunk) => stdout.push(chunk.toString()));
+        child.stderr?.on('data', (chunk) => stderr.push(chunk.toString()));
+        await waitForProductionCondition(
+          async () => {
+            try {
+              return (await fetch(origin + '/health')).ok;
+            } catch {
+              return false;
+            }
+          },
+          'Production Web qualification server did not become ready',
+          30_000
+        );
+        probe = await openProductionEventProbe(origin, sessionId, workspace);
+        await waitForProductionCondition(
+          () =>
+            probe?.events.some((event) => event.type === 'question.required') === true,
+          'Exact Session SSE did not replay the durable question',
+          20_000
+        );
+        const persistedSessionResponse = await fetch(
+          origin +
+            '/sessions/' +
+            sessionId +
+            '?projectPath=' +
+            encodeURIComponent(workspace)
+        );
+        if (!persistedSessionResponse.ok) {
+          throw new Error(
+            'Production server could not load seeded Session: ' +
+              persistedSessionResponse.status
+          );
+        }
+        browser = await chromium.launch({ headless: true });
+        page = await browser.newPage();
+        await page.addInitScript(() => {
+          const NativeEventSource = window.EventSource;
+          class RecordingEventSource extends NativeEventSource {
+            constructor(url: string | URL, eventSourceInitDict?: EventSourceInit) {
+              super(url, eventSourceInitDict);
+              this.addEventListener('message', (event) => {
+                try {
+                  const parsed = JSON.parse(event.data) as { type?: unknown };
+                  const target = window as typeof window & {
+                    __bladeQualificationEventTypes?: string[];
+                  };
+                  if (!target.__bladeQualificationEventTypes) {
+                    target.__bladeQualificationEventTypes = [];
+                  }
+                  if (typeof parsed.type === 'string') {
+                    target.__bladeQualificationEventTypes.push(parsed.type);
+                  }
+                } catch {
+                  // The application owns event parsing; this probe records only safe types.
+                }
+              });
+            }
+          }
+          window.EventSource = RecordingEventSource;
+        });
+        page.on('pageerror', (error) => pageErrors.push(error.message));
+        page.on('console', (message) => {
+          if (message.type() === 'error') browserApplicationErrors.push(message.text());
+        });
+        page.on('requestfailed', (request) => {
+          failedRequests.push(request.method() + ' ' + new URL(request.url()).pathname);
+        });
+        const navigation = new URL(origin);
+        navigation.searchParams.set('session', sessionId);
+        navigation.searchParams.set('project', workspace);
+        await page.goto(navigation.href, { waitUntil: 'domcontentloaded' });
+        const pendingQuestion = page.locator('[data-pending-interaction="question"]');
+        try {
+          await pendingQuestion.waitFor({ state: 'visible', timeout: 30_000 });
+        } catch (error) {
+          const diagnostic = await buildProductionWebRecoveryDiagnosticBounded({
+            outcome: 'timeout',
+            startedAt,
+            page,
+            probe,
+            proxy,
+            store,
+            sessionId,
+            projectPath: workspace,
+            target,
+            finalMarker,
+            child,
+            stdout,
+            stderr,
+            browserApplicationErrorCount: browserApplicationErrors.length,
+            pageErrorCount: pageErrors.length,
+            failedRequestCount: failedRequests.length,
+          });
+          throw new Error(`Pending question was not visible: ${diagnostic}`, {
+            cause: error,
+          });
+        }
+        await pendingQuestion.getByText('Canary', { exact: true }).click();
+        const responsePromise = page.waitForResponse(
+          (response) =>
+            response.request().method() === 'POST' &&
+            response.url().includes('/permissions/')
+        );
+        await pendingQuestion.getByText('Submit answers', { exact: true }).click();
+        const answerResponse = await responsePromise;
+        if (!answerResponse.ok()) {
+          throw new Error('Question response failed: ' + answerResponse.status());
+        }
+        await waitForProductionCondition(
+          () =>
+            probe?.events.some(
+              (event) =>
+                event.type === 'pending.resume' &&
+                event.properties.phase === 'retry_scheduled'
+            ) === true,
+          'Production Web SSE missed pending.resume retry_scheduled',
+          60_000
+        );
+        await waitForProductionCondition(
+          () => proxy.heldRequestNumbers.includes(2),
+          'Second outer attempt did not reach the Provider hold',
+          30_000
+        );
+        await page.getByText('Recovery attempt 2/4', { exact: false }).waitFor({
+          state: 'visible',
+          timeout: 15_000,
+        });
+        proxy.releaseHeld();
+        try {
+          await waitForProductionWebFinalMarker(
+            page,
+            probe.events,
+            finalMarker,
+            150_000
+          );
+        } catch (error) {
+          const terminalFailure = findProductionWebTerminalFailure(probe.events);
+          const diagnostic = await buildProductionWebRecoveryDiagnosticBounded({
+            outcome: terminalFailure ? 'terminal_failure' : 'timeout',
+            startedAt,
+            page,
+            probe,
+            proxy,
+            store,
+            sessionId,
+            projectPath: workspace,
+            target,
+            finalMarker,
+            child,
+            stdout,
+            stderr,
+            browserApplicationErrorCount: browserApplicationErrors.length,
+            pageErrorCount: pageErrors.length,
+            failedRequestCount: failedRequests.length,
+          });
+          throw new Error(
+            `Production Web recovery did not render its final marker: ${diagnostic}`,
+            { cause: error }
+          );
+        }
+        await waitForProductionCondition(
+          () =>
+            probe?.events.filter((event) => event.type === 'session.completed')
+              .length === 1,
+          'Production Web SSE missed session.completed',
+          30_000
+        );
+
+        const durableEvents = (await store.loadEvents(sessionId)) ?? [];
+        const transcript = await readFile(
+          getSessionFilePath(workspace, sessionId),
+          'utf8'
+        );
+        const targetContent = await readFile(target, 'utf8');
+        const result = validateProductionWebRecoveryEvidence({
+          sseEvents: probe.events,
+          durableEvents,
+          targetContent,
+          targetPath: target,
+          finalMarker,
+        });
+        expect(result.writeSha256).toBe(
+          createHash('sha256').update('Canary\n').digest('hex')
+        );
+        expect(proxy.injectedRequestNumbers).toEqual([1]);
+        expect(proxy.heldRequestNumbers).toEqual([2]);
+        expect(proxy.forwardedRequestNumbers).toContain(2);
+        expect(await fileIsMissing(getSessionInboxFilePath(workspace, sessionId))).toBe(
+          true
+        );
+        expect(browserApplicationErrors).toEqual([]);
+        expect(pageErrors).toEqual([]);
+        expect(failedRequests).toEqual([]);
+        expect(Buffer.byteLength(stdout.join(''))).toBeLessThanOrEqual(64 * 1_024);
+        expect(Buffer.byteLength(stderr.join(''))).toBeLessThanOrEqual(64 * 1_024);
+        const completedDom = await page.locator('body').innerText();
+
+        await page.close();
+        page = undefined;
+        const reloadContext = await browser.newContext();
+        const reloadPage = await reloadContext.newPage();
+        await reloadPage.goto(navigation.href, { waitUntil: 'domcontentloaded' });
+        await reloadPage.getByText(finalMarker, { exact: true }).waitFor({
+          state: 'visible',
+          timeout: 30_000,
+        });
+        expect(
+          await reloadPage.locator('[data-pending-interaction="question"]').count()
+        ).toBe(0);
+        expect(
+          await reloadPage.getByText('Recovery attempt', { exact: false }).count()
+        ).toBe(0);
+        const reloadedDom = await reloadPage.locator('body').innerText();
+        await reloadContext.close();
+
+        assertNoSecrets(
+          {
+            transcript,
+            completedDom,
+            reloadedDom,
+            sse: probe.events,
+            stdout: stdout.join(''),
+            stderr: stderr.join(''),
+            proxy: {
+              paths: proxy.requestPaths,
+              injected: proxy.injectedRequestNumbers,
+              forwarded: proxy.forwardedRequestNumbers,
+              held: proxy.heldRequestNumbers,
+            },
+          },
+          [deepseekFlash.apiKey]
+        );
+      } finally {
+        await probe?.close().catch(() => undefined);
+        await page?.close().catch(() => undefined);
+        await browser?.close().catch(() => undefined);
+        if (child && child.exitCode === null && child.signalCode === null) {
+          child.kill('SIGTERM');
+          await waitForProductionChildExit(child).catch(() => child?.kill('SIGKILL'));
+        }
+        proxy.releaseHeld();
+        await proxy.close().catch(() => undefined);
+        if (originalStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
+        else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
+        await rm(root, { recursive: true, force: true });
+      }
+    }, 360_000);
+  });
 
 describeReal('durable pending interaction recovery trajectory (real API)', () => {
   const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
