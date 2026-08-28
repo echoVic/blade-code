@@ -2228,6 +2228,171 @@ describe('SessionRoutes runtime reuse', () => {
     vi.useRealTimers();
   });
 
+  it('keeps a retrying Web pending resume single-flight across concurrent wakes', async () => {
+    vi.useFakeTimers({ now: 1_000 });
+    const [{ createSessionRouteController }, { Bus }, { TeamMailbox }] =
+      await Promise.all([
+        import('../../../../src/server/routes/session.js'),
+        import('../../../../src/server/bus.js'),
+        import('../../../../src/agent/teams/TeamMailbox.js'),
+      ]);
+    const sessionId = 'single-flight-retry-resume';
+    const projectPath = '/persisted-workspace';
+    const ref = { sessionId, projectPath };
+    const metadata = metadataFor(sessionId, projectPath, {
+      permissionMode: 'yolo',
+    });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionRuntime.hasPendingInbox).mockReset().mockResolvedValue(true);
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    runtimeState.runtime.enqueueSteering.mockResolvedValue({
+      accepted: true,
+      messageId: 'team-wake-message',
+      turnId: 'turn-1',
+      queued: 1,
+      delivery: 'next_turn',
+    });
+    agentState.chatStream.mockReset();
+
+    let releaseStatus: () => void = () => undefined;
+    const statusGate = new Promise<undefined>((resolve) => {
+      releaseStatus = () => resolve(undefined);
+    });
+    runtimeState.runtime.setTaskStatus.mockImplementationOnce(async () => {
+      await statusGate;
+      return undefined;
+    });
+    let releaseDestroy: () => void = () => undefined;
+    const destroyGate = new Promise<undefined>((resolve) => {
+      releaseDestroy = () => resolve(undefined);
+    });
+    agentState.destroy.mockImplementationOnce(() => destroyGate);
+    agentState.chatStream
+      .mockImplementationOnce(async function* () {
+        if (Date.now() < 0) yield undefined;
+        return {
+          success: false,
+          error: {
+            type: 'api_error' as const,
+            message: 'Provider request failed.',
+            details: Object.assign(new Error('opaque'), {
+              code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+            }),
+          },
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      })
+      .mockImplementationOnce(async function* () {
+        if (Date.now() < 0) yield undefined;
+        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+        return {
+          success: true,
+          finalMessage: 'recovered',
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      });
+
+    const markDelivered = vi
+      .spyOn(TeamMailbox.prototype, 'markDelivered')
+      .mockResolvedValue(undefined);
+    const controller = createSessionRouteController();
+    const eventControllers = [
+      new AbortController(),
+      new AbortController(),
+      new AbortController(),
+    ];
+    const responses: Response[] = [];
+    try {
+      responses.push(
+        await controller.app.request(`/${sessionId}/events`, {
+          signal: eventControllers[0].signal,
+        })
+      );
+      await vi.waitFor(() => {
+        expect(
+          busState.publish.mock.calls.filter(
+            ([, type, properties]) =>
+              type === 'pending.resume' && properties.phase === 'retry_scheduled'
+          )
+        ).toHaveLength(1);
+      });
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+
+      responses.push(
+        ...(await Promise.all(
+          eventControllers.slice(1).map((eventsController) =>
+            controller.app.request(`/${sessionId}/events`, {
+              signal: eventsController.signal,
+            })
+          )
+        ))
+      );
+      Bus.publish(ref, 'subagent.completion.queued', {
+        childSessionId: 'single-flight-child',
+        inboxMessageId: 'background-subagent-completion:single-flight-child',
+        status: 'completed',
+        queued: 1,
+        delivery: 'next_turn',
+      });
+      Bus.publish(ref, 'team.message.received', {
+        teamName: 'single-flight-team',
+        messageId: 'team-wake-message',
+        content: 'queued teammate wake',
+        metadata: {
+          clientVisible: false,
+          teamMessage: {
+            messageId: 'team-wake-message',
+            teamName: 'single-flight-team',
+            from: 'worker',
+            to: 'team-lead',
+          },
+        },
+      });
+      await vi.waitFor(() => {
+        expect(runtimeState.runtime.enqueueSteering).toHaveBeenCalledTimes(3);
+      });
+      expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+
+      releaseStatus();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(agentState.destroy).toHaveBeenCalledTimes(1);
+      expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+      releaseDestroy();
+      await vi.waitFor(() => {
+        expect(agentState.chatStream).toHaveBeenCalledTimes(2);
+      });
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      const pendingResumeEvents = busState.publish.mock.calls.filter(
+        ([, type]) => type === 'pending.resume'
+      );
+      expect(agentState.chatStream).toHaveBeenCalledTimes(2);
+      expect(
+        pendingResumeEvents.filter(
+          ([, , properties]) => properties.phase === 'retry_scheduled'
+        )
+      ).toHaveLength(1);
+      expect(
+        pendingResumeEvents.filter(
+          ([, , properties]) => properties.phase === 'recovered'
+        )
+      ).toHaveLength(1);
+    } finally {
+      releaseStatus();
+      releaseDestroy();
+      for (const eventsController of eventControllers) eventsController.abort();
+      await Promise.all(
+        responses.map((response) => response.body?.cancel().catch(() => undefined))
+      );
+      await controller.shutdown();
+      markDelivered.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it('can wake again when a scheduled Web pending resume fails before startRun', async () => {
     vi.useFakeTimers();
     const { createSessionRouteController } = await import(
