@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.104] - 2026-08-28
+
+### 修复
+- 按仓库格式规范整理 Goal frontier runtime 和资格测试改动，修复 CI Quality Gate 的格式检查失败。
+
+### 测试
+- 格式化后重新运行 format、type-check、生产构建以及 Runtime/Web 重点回归门禁。
+
 ## [0.10.103] - 2026-08-28
 
 ### 新增

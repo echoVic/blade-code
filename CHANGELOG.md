@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.104] - 2026-08-28
+
+### Fixed
+- Applied repository formatting to the Goal frontier runtime and qualification changes so the CI Quality Gate passes its format check.
+
+### Tests
+- Re-ran format, type-check, production build, and focused Runtime/Web regression gates after formatting.
+
 ## [0.10.103] - 2026-08-28
 
 ### Added
