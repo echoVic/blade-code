@@ -5,7 +5,6 @@
  * 将 Agent 的流式输出转发给 IDE。
  */
 
-import { createHash } from 'node:crypto';
 import {
   type AgentSideConnection,
   type AvailableCommand,
@@ -27,6 +26,12 @@ import { nanoid } from 'nanoid';
 import { Agent } from '../agent/Agent.js';
 import { drainLoop } from '../agent/loop/index.js';
 import type { LoopEvent } from '../agent/loop/types.js';
+import {
+  decidePendingResumeRetry,
+  PENDING_RESUME_MAX_ATTEMPTS,
+  PENDING_RESUME_RECOVERY_BUDGET_MS,
+  type PendingResumeFailureEvidence,
+} from '../agent/runtime/PendingResumeRecoveryPolicy.js';
 import { SessionRuntime } from '../agent/runtime/SessionRuntime.js';
 import { isTeamMessageMetadata, TeamMailbox } from '../agent/teams/TeamMailbox.js';
 import type { ChatContext, UserMessageContent } from '../agent/types.js';
@@ -114,20 +119,8 @@ import {
 import { AcpServiceContext } from './AcpServiceContext.js';
 
 const logger = createLogger(LogCategory.AGENT);
-const ACP_PENDING_RESUME_MAX_ATTEMPTS = 4;
-const ACP_PENDING_RESUME_INITIAL_DELAY_MS = 1_000;
-const ACP_PENDING_RESUME_MAX_DELAY_MS = 4_000;
-const ACP_PENDING_RESUME_RECOVERY_BUDGET_MS = 120_000;
-const ACP_PENDING_RESUME_JITTER_RATIO = 0.2;
 
 type AcpPendingResumeKind = 'pending_input' | 'goal';
-
-interface AcpPendingResumeFailure {
-  taskFailure: SessionTaskFailure;
-  toolExecutionStarted: boolean;
-  toolCallsCount: number;
-  outputStarted: boolean;
-}
 
 /**
  * ACP 会话类
@@ -249,26 +242,9 @@ function providerQueueCapacityFailure(details: unknown) {
   };
 }
 
-function stablePendingResumeRetryDelay(
-  sessionId: string,
-  failedAttempt: number
-): number {
-  const retryIndex = Math.max(0, failedAttempt - 1);
-  const base = Math.min(
-    ACP_PENDING_RESUME_INITIAL_DELAY_MS * 2 ** retryIndex,
-    ACP_PENDING_RESUME_MAX_DELAY_MS
-  );
-  const digest = createHash('sha256').update(`${sessionId}\0${failedAttempt}`).digest();
-  const ratio = digest.readUInt32BE(0) / 0xffffffff;
-  const factor =
-    1 - ACP_PENDING_RESUME_JITTER_RATIO + 2 * ACP_PENDING_RESUME_JITTER_RATIO * ratio;
-  return Math.min(
-    ACP_PENDING_RESUME_MAX_DELAY_MS,
-    Math.max(0, Math.round(base * factor))
-  );
-}
-
-function acpPendingResumeFailure(error: unknown): AcpPendingResumeFailure | undefined {
+function acpPendingResumeFailure(
+  error: unknown
+): PendingResumeFailureEvidence | undefined {
   if (
     !(error instanceof RequestError) ||
     !error.data ||
@@ -2162,7 +2138,7 @@ export class AcpSession {
           phase,
           kind: details.kind,
           attempt: details.attempt,
-          maxAttempts: ACP_PENDING_RESUME_MAX_ATTEMPTS,
+          maxAttempts: PENDING_RESUME_MAX_ATTEMPTS,
           ...(details.delayMs !== undefined
             ? {
                 delayMs: details.delayMs,
@@ -2252,7 +2228,7 @@ export class AcpSession {
       kind = hasPending ? 'pending_input' : 'goal';
       promptStarted = true;
       const recoveryRemainingMs =
-        ACP_PENDING_RESUME_RECOVERY_BUDGET_MS -
+        PENDING_RESUME_RECOVERY_BUDGET_MS -
         (Date.now() - this.pendingResumeRecoveryStartedAt);
       if (recoveryRemainingMs <= 0) {
         this.sendUpdate(
@@ -2321,38 +2297,31 @@ export class AcpSession {
       const workStillPending =
         kind === 'preflight' ||
         (kind === 'pending_input' && this.runtime.getPendingSteeringCount() > 0);
-      const retryable =
-        workStillPending &&
-        projected?.taskFailure.retryable === true &&
-        !projected.toolExecutionStarted &&
-        projected.toolCallsCount === 0 &&
-        !projected.outputStarted;
-      const delayMs = stablePendingResumeRetryDelay(this.id, attempt);
-      const elapsedMs = Date.now() - this.pendingResumeRecoveryStartedAt;
-      const withinAttemptBudget = attempt < ACP_PENDING_RESUME_MAX_ATTEMPTS;
-      const withinTimeBudget =
-        elapsedMs + delayMs <= ACP_PENDING_RESUME_RECOVERY_BUDGET_MS;
+      const decision = decidePendingResumeRetry({
+        sessionIdentity: this.id,
+        failedAttempt: attempt,
+        recoveryStartedAt: this.pendingResumeRecoveryStartedAt,
+        workStillPending,
+        evidence: projected,
+      });
 
-      if (retryable && withinAttemptBudget && withinTimeBudget) {
+      if (decision.phase === 'retry_scheduled') {
         this.pendingResumeRequested = true;
-        retryDelayMs = delayMs;
+        retryDelayMs = decision.delayMs;
         this.sendUpdate(
           this.pendingResumeSessionUpdate('retry_scheduled', {
             attempt: attempt + 1,
             kind,
-            taskFailure: projected.taskFailure,
-            delayMs,
+            taskFailure: projected?.taskFailure,
+            delayMs: decision.delayMs,
           })
         );
         logger.warn(
           `[AcpSession ${this.id}] Pending resume attempt ${attempt} failed; ` +
-            `retrying in ${delayMs}ms`
+            `retrying in ${decision.delayMs}ms`
         );
       } else {
-        const phase =
-          retryable && (!withinAttemptBudget || !withinTimeBudget)
-            ? 'exhausted'
-            : 'failed';
+        const phase = decision.phase;
         this.sendUpdate(
           this.pendingResumeSessionUpdate(phase, {
             attempt,
@@ -2362,7 +2331,7 @@ export class AcpSession {
         );
         logger.error(
           `[AcpSession ${this.id}] Failed to resume pending input ` +
-            `(attempt=${attempt}, retryable=${retryable}, phase=${phase})`,
+            `(attempt=${attempt}, retryable=${decision.retryable}, phase=${phase})`,
           error
         );
         if (!this.preserveNewPendingInput(kind)) {
