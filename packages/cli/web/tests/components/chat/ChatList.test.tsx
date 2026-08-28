@@ -47,4 +47,70 @@ describe('ChatList loading history', () => {
       'Content from the previous conversation'
     );
   });
+
+  it('stops following while scrolled away and reports unique unread messages', async () => {
+    const firstMessage = {
+      id: 'message-1',
+      role: 'assistant' as const,
+      content: 'First response',
+      timestamp: 1,
+    };
+    await act(async () => {
+      root.render(<ChatList messages={[firstMessage]} />);
+    });
+
+    const viewport = container.querySelector<HTMLDivElement>(
+      '[data-radix-scroll-area-viewport]'
+    );
+    expect(viewport).not.toBeNull();
+    Object.defineProperties(viewport!, {
+      scrollHeight: { configurable: true, value: 1_000 },
+      clientHeight: { configurable: true, value: 300 },
+      scrollTop: { configurable: true, writable: true, value: 700 },
+    });
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => resolve());
+        })
+    );
+
+    await act(async () => {
+      viewport!.scrollTop = 100;
+      viewport!.dispatchEvent(new Event('scroll'));
+    });
+    expect(container.textContent).toContain('Jump to latest');
+
+    const streamingMessage = {
+      id: 'message-2',
+      role: 'assistant' as const,
+      content: 'Streaming response',
+      timestamp: 2,
+    };
+    await act(async () => {
+      root.render(<ChatList messages={[firstMessage, streamingMessage]} />);
+    });
+    expect(container.textContent).toContain('1 new message');
+
+    await act(async () => {
+      root.render(
+        <ChatList
+          messages={[
+            firstMessage,
+            { ...streamingMessage, content: 'Streaming response update' },
+          ]}
+        />
+      );
+    });
+    expect(container.textContent).toContain('1 new message');
+
+    const jumpButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('new message')
+    );
+    await act(async () => {
+      jumpButton?.click();
+    });
+    expect(container.textContent).not.toContain('new message');
+    expect(viewport!.scrollTop).toBe(1_000);
+  });
 });

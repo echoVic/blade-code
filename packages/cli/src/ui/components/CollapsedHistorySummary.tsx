@@ -2,7 +2,7 @@
  * 折叠历史消息汇总组件
  *
  * 将多条折叠的历史消息合并为一行显示
- * 格式: > 8 条历史消息 [Ctrl+O 展开]
+ * 格式: > 8 条历史消息 [Ctrl+O 浏览]
  */
 
 import { Box, Text } from 'ink';
@@ -33,7 +33,7 @@ export const CollapsedHistorySummary: React.FC<CollapsedHistorySummaryProps> =
         <Text color={mutedColor}>
           {'>'} {collapsedCount} 条历史消息
         </Text>
-        <Text color={mutedColor}> [Ctrl+O 展开]</Text>
+        <Text color={mutedColor}> [Ctrl+O 浏览]</Text>
       </Box>
     );
   });

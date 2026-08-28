@@ -102,6 +102,7 @@ You: @src/utils/api.ts:10-50 what's wrong with this code?
 | `Shift+Enter` | New line |
 | `Ctrl+C` | Interrupt the current operation |
 | `Ctrl+D` | Exit Blade |
+| `Ctrl+O` | Open/close the read-only transcript pager |
 | `↑/↓` | Browse message history |
 | `Tab` | Autocomplete |
 

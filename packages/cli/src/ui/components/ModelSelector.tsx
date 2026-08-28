@@ -7,7 +7,7 @@
  */
 
 import { useMemoizedFn, useMount } from 'ahooks';
-import { Box, Text, useFocus, useFocusManager, useInput } from 'ink';
+import { Box, Text, useFocus, useFocusManager } from 'ink';
 import SelectInput from 'ink-select-input';
 import { memo, useMemo, useState } from 'react';
 import type { ModelConfig } from '../../config/types.js';
@@ -16,6 +16,7 @@ import { getModelDisplayName } from '../../services/pi/resolveModelConfig.js';
 import { useAllModels, useCurrentModelId } from '../../store/selectors/index.js';
 import { configActions, getConfig } from '../../store/vanilla.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
+import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
 
 interface ModelSelectorProps {
   onClose: () => void;

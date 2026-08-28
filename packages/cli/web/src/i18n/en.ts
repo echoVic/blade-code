@@ -419,6 +419,8 @@ export const en = {
   'chat.list.showEarlierWithRemaining':
     'Show {count} earlier messages, {remaining} hidden',
   'chat.list.jumpLatest': 'Jump to latest',
+  'chat.list.unreadMessage': '1 new message',
+  'chat.list.unreadMessages': '{count} new messages',
   'chat.turns.aria': 'Jump to a previous message',
   'chat.turns.label': 'Turn {n}',
   'chat.timeline.thinking': 'Thought process',

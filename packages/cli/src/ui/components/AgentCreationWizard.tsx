@@ -18,7 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { MultiSelect } from '@inkjs/ui';
 import { useMemoizedFn } from 'ahooks';
-import { Box, Text, useFocus, useFocusManager, useInput } from 'ink';
+import { Box, Text, useFocus, useFocusManager } from 'ink';
 import SelectInput from 'ink-select-input';
 import Spinner from 'ink-spinner';
 import TextInput from 'ink-text-input';
@@ -27,6 +27,7 @@ import { Agent } from '../../agent/Agent.js';
 import type { SubagentColor } from '../../agent/subagents/types.js';
 import { getCwd } from '../../utils/cwd.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
+import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
 
 interface AgentCreationWizardProps {
   /** 完成回调 */

@@ -25,6 +25,7 @@ import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { UpdatePrompt } from './components/UpdatePrompt.js';
 import { WorkspaceTrustPrompt } from './components/WorkspaceTrustPrompt.js';
 import { useTerminalInputModes } from './hooks/useTerminalInputModes.js';
+import { TerminalInputRouterProvider } from './input/TerminalInputRouter.js';
 import { themeManager } from './themes/ThemeManager.js';
 import { formatErrorMessage } from './utils/security.js';
 
@@ -67,7 +68,7 @@ function initializeStoreState(config: RuntimeConfig): void {
  * - ConfigManager 和 Store 已由 CLI 中间件初始化
  * - 版本检查在 blade.tsx main() 开头启动，与 yargs/middleware/UI初始化 并行
  */
-export const AppWrapper: React.FC<AppProps> = (props) => {
+const AppContent: React.FC<AppProps> = (props) => {
   useTerminalInputModes();
   const [isReady, setIsReady] = useState(false); // 应用初始化完成，可以显示主界面
   const [versionInfo, setVersionInfo] = useState<VersionCheckResult | null>(null);
@@ -236,3 +237,9 @@ export const AppWrapper: React.FC<AppProps> = (props) => {
     </ErrorBoundary>
   );
 };
+
+export const AppWrapper: React.FC<AppProps> = (props) => (
+  <TerminalInputRouterProvider>
+    <AppContent {...props} />
+  </TerminalInputRouterProvider>
+);

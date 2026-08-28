@@ -4,7 +4,7 @@
  */
 
 import { basename } from 'node:path';
-import { Box, Text, useInput } from 'ink';
+import { Box, Text } from 'ink';
 import SelectInput from 'ink-select-input';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { type SessionMetadata, SessionService } from '../../services/SessionService.js';
@@ -12,6 +12,7 @@ import type { SessionSelectionIntent } from '../../slash-commands/types.js';
 import { useCurrentFocus } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
+import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
 import {
   getSessionCandidateKey,
   getSessionDeliveryLabel,

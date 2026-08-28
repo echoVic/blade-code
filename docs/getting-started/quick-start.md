@@ -101,6 +101,7 @@ Blade: 好的，我来帮你创建一个带搜索功能的下拉选择器组件.
 | `Shift+Enter` | 换行 |
 | `Ctrl+C` | 中断当前操作 |
 | `Ctrl+D` | 退出 Blade |
+| `Ctrl+O` | 打开/关闭只读 transcript |
 | `↑/↓` | 浏览历史消息 |
 | `Tab` | 自动补全 |
 

@@ -1,10 +1,19 @@
 import type { SocketReadyState } from 'node:net';
 import { PassThrough } from 'node:stream';
-import { render, useInput } from 'ink';
-import { useState } from 'react';
+import { Box, render, useInput } from 'ink';
+import { act, useEffect, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { FocusId } from '../../src/store/types.js';
+import { getState } from '../../src/store/vanilla.js';
 import { CustomTextInput } from '../../src/ui/components/CustomTextInput.js';
+import { InputArea } from '../../src/ui/components/InputArea.js';
+import { TranscriptPager } from '../../src/ui/components/TranscriptPager.js';
+import { useInputBuffer } from '../../src/ui/hooks/useInputBuffer.js';
 import { useTerminalInputModes } from '../../src/ui/hooks/useTerminalInputModes.js';
+import {
+  TerminalInputRouterProvider,
+  useTerminalInput,
+} from '../../src/ui/input/TerminalInputRouter.js';
 import {
   DISABLE_BRACKETED_PASTE,
   ENABLE_BRACKETED_PASTE,
@@ -93,6 +102,8 @@ describe('TUI batched input integration', () => {
 
   afterEach(() => {
     for (const instance of activeRenders.splice(0)) instance.unmount();
+    getState().session.actions.resetSession();
+    getState().focus.actions.setFocus(FocusId.MAIN_INPUT);
   });
 
   function startHarness() {
@@ -136,6 +147,108 @@ describe('TUI batched input integration', () => {
       stdout,
       submitted,
       readValue: () => currentValue,
+    };
+  }
+
+  function startPagerHarness() {
+    const stdin = new TestInputStream();
+    const stdout = new TestOutputStream();
+    const stderr = new TestOutputStream();
+    let setPagerOpenExternal: ((open: boolean) => void) | null = null;
+    let snapshot = {
+      pagerOpen: false,
+      value: '',
+      cursorPosition: 0,
+      pasteMappingCount: 0,
+    };
+
+    getState().session.actions.restoreSession(
+      'pager-pty-session',
+      [
+        {
+          id: 'oldest-message',
+          role: 'user',
+          content: 'oldest structured message',
+          timestamp: 1,
+        },
+        {
+          id: 'latest-message',
+          role: 'assistant',
+          content: Array.from({ length: 16 }, (_, index) => `line ${index + 1}`).join(
+            '\n'
+          ),
+          timestamp: 2,
+        },
+      ],
+      undefined,
+      process.cwd()
+    );
+    getState().focus.actions.setFocus(FocusId.MAIN_INPUT);
+
+    function PagerHarness() {
+      useTerminalInputModes();
+      const buffer = useInputBuffer('', 0);
+      const [pagerOpen, setPagerOpen] = useState(false);
+      setPagerOpenExternal = setPagerOpen;
+      snapshot = {
+        pagerOpen,
+        value: buffer.value,
+        cursorPosition: buffer.cursorPosition,
+        pasteMappingCount: buffer.pasteMap.size,
+      };
+      useEffect(() => {
+        getState().focus.actions.setFocus(
+          pagerOpen ? FocusId.TRANSCRIPT_PAGER : FocusId.MAIN_INPUT
+        );
+      }, [pagerOpen]);
+      useTerminalInput(
+        (input, key) => {
+          if ((key.ctrl || key.meta) && input.toLowerCase() === 'o') {
+            setPagerOpen((open) => !open);
+            return true;
+          }
+          return false;
+        },
+        { priority: 90 }
+      );
+
+      return (
+        <Box flexDirection="column">
+          <Box display={pagerOpen ? 'none' : 'flex'}>
+            <InputArea
+              input={buffer.value}
+              cursorPosition={buffer.cursorPosition}
+              onChange={buffer.setValue}
+              onChangeCursorPosition={buffer.setCursorPosition}
+              onAddPasteMapping={buffer.addPasteMapping}
+              onAddImagePasteMapping={buffer.addImagePasteMapping}
+            />
+          </Box>
+          <Box display={pagerOpen ? 'flex' : 'none'}>
+            <TranscriptPager isOpen={pagerOpen} onClose={() => setPagerOpen(false)} />
+          </Box>
+        </Box>
+      );
+    }
+
+    const instance = render(
+      <TerminalInputRouterProvider>
+        <PagerHarness />
+      </TerminalInputRouterProvider>,
+      {
+        stdin: stdin as unknown as NodeJS.ReadStream,
+        stdout: stdout as unknown as NodeJS.WriteStream,
+        stderr: stderr as unknown as NodeJS.WriteStream,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      }
+    );
+    activeRenders.push(instance);
+    return {
+      stdin,
+      stdout,
+      readSnapshot: () => snapshot,
+      closePager: () => setPagerOpenExternal?.(false),
     };
   }
 
@@ -184,5 +297,39 @@ describe('TUI batched input integration', () => {
     }, RAW_INPUT_WAIT_OPTIONS);
     instance.unmount();
     expect(stdout.output).toContain(DISABLE_BRACKETED_PASTE);
+  });
+
+  it('preserves the complete composer while browsing the transcript pager', async () => {
+    const { stdin, stdout, readSnapshot, closePager } = startPagerHarness();
+    await waitForInputReady(stdin);
+
+    const pasted = `${'draft '.repeat(100)}\nsecond line`;
+    stdin.write('\u001B[200~');
+    stdin.write(pasted);
+    stdin.write('\u001B[201~');
+    await vi.waitFor(() => {
+      expect(readSnapshot().pasteMappingCount).toBe(1);
+    }, RAW_INPUT_WAIT_OPTIONS);
+    const beforePager = {
+      value: readSnapshot().value,
+      cursorPosition: readSnapshot().cursorPosition,
+      pasteMappingCount: readSnapshot().pasteMappingCount,
+    };
+
+    stdin.write('\x0f');
+    await vi.waitFor(() => {
+      expect(readSnapshot().pagerOpen).toBe(true);
+      expect(stdout.output).toContain('Transcript');
+    }, RAW_INPUT_WAIT_OPTIONS);
+    stdin.write('g');
+    await vi.waitFor(() => {
+      expect(stdout.output).toContain('oldest structured message');
+    }, RAW_INPUT_WAIT_OPTIONS);
+
+    act(() => closePager());
+    await vi.waitFor(() => {
+      expect(readSnapshot().pagerOpen).toBe(false);
+    }, RAW_INPUT_WAIT_OPTIONS);
+    expect(readSnapshot()).toMatchObject(beforePager);
   });
 });

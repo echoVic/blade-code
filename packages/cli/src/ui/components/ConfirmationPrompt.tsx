@@ -1,4 +1,4 @@
-import { Box, Text, useInput, useStdout } from 'ink';
+import { Box, Text, useStdout } from 'ink';
 import SelectInput, { type ItemProps as SelectItemProps } from 'ink-select-input';
 import React, { useMemo } from 'react';
 import { PermissionMode } from '../../config/types.js';
@@ -9,6 +9,7 @@ import type {
   ConfirmationResponse,
 } from '../../tools/types/ExecutionTypes.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
+import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
 import { MessageRenderer } from './MessageRenderer.js';
 
 const ConfirmationItem = React.memo(({ label, isSelected }: SelectItemProps) => (

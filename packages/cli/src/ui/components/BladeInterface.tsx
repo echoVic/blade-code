@@ -1,6 +1,7 @@
 import { useMemoizedFn } from 'ahooks';
-import { Box } from 'ink';
-import React, { useEffect, useMemo, useRef } from 'react';
+import ansiEscapes from 'ansi-escapes';
+import { Box, useStdout } from 'ink';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { parseCliAgents } from '../../cli/agents.js';
 import {
   type ModelConfig,
@@ -35,7 +36,9 @@ import { useConfirmation } from '../hooks/useConfirmation.js';
 import { useInputBuffer } from '../hooks/useInputBuffer.js';
 import { useMainInput } from '../hooks/useMainInput.js';
 import { useRefreshStatic } from '../hooks/useRefreshStatic.js';
+import { useTerminalInput } from '../input/TerminalInputRouter.js';
 import { themeManager } from '../themes/ThemeManager.js';
+import { clearRawRenderer } from '../utils/rawStreamRenderer.js';
 import {
   activateSessionSelection,
   listSessionCandidatesForIntent,
@@ -61,6 +64,7 @@ import { SkillsManager } from './SkillsManager.js';
 import { SubagentProgress } from './SubagentProgress.js';
 import { TeamProgress } from './TeamProgress.js';
 import { ThemeSelector } from './ThemeSelector.js';
+import { TranscriptPager } from './TranscriptPager.js';
 
 // 创建 BladeInterface 专用 Logger
 const logger = createLogger(LogCategory.UI);
@@ -94,6 +98,8 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const hasSentInitialMessage = useRef(false);
   const readyAnnouncementSent = useRef(false);
   const lastInitializationError = useRef<string | null>(null);
+  const pagerTransitionMountedRef = useRef(false);
+  const [transcriptPagerOpen, setTranscriptPagerOpen] = useState(false);
 
   // ==================== Context & Hooks ====================
   // App 状态和 actions（从 Zustand Store）
@@ -108,6 +114,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   const sessionActions = useSessionActions();
   const sessionId = useSessionId();
   const workspaceRoot = useWorkspaceRoot();
+  const { stdout } = useStdout();
 
   // Focus
   const focusActions = useFocusActions();
@@ -163,6 +170,54 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
   // ==================== Input Buffer ====================
   // 使用 useInputBuffer 创建稳定的输入状态，避免 resize 时重建
   const inputBuffer = useInputBuffer('', 0);
+
+  const redrawTerminalSurface = useMemoizedFn(() => {
+    clearRawRenderer();
+    stdout.write(ansiEscapes.eraseScreen + ansiEscapes.cursorTo(0, 0));
+    sessionActions.incrementClearCount();
+  });
+
+  const openTranscriptPager = useMemoizedFn(() => {
+    if (transcriptPagerOpen) return;
+    setTranscriptPagerOpen(true);
+  });
+
+  const closeTranscriptPager = useMemoizedFn(() => {
+    if (!transcriptPagerOpen) return;
+    setTranscriptPagerOpen(false);
+  });
+
+  const toggleTranscriptPager = useMemoizedFn(() => {
+    if (transcriptPagerOpen) {
+      closeTranscriptPager();
+    } else {
+      openTranscriptPager();
+    }
+  });
+
+  useTerminalInput(
+    (input, key) => {
+      if (
+        readyForChat &&
+        !requiresSetup &&
+        (key.ctrl || key.meta) &&
+        input.toLowerCase() === 'o'
+      ) {
+        toggleTranscriptPager();
+        return true;
+      }
+      return false;
+    },
+    { priority: 90 }
+  );
+
+  useEffect(() => {
+    if (!pagerTransitionMountedRef.current) {
+      pagerTransitionMountedRef.current = true;
+      return;
+    }
+    redrawTerminalSurface();
+  }, [redrawTerminalSurface, transcriptPagerOpen]);
 
   // ==================== Memoized Handlers ====================
   const handlePermissionModeToggle = useMemoizedFn(async () => {
@@ -474,9 +529,15 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
     } else if (activeModal === 'agentCreationWizard') {
       // 显示 agent 创建向导时，焦点转移到向导
       focusActions.setFocus(FocusId.AGENT_CREATION_WIZARD);
+    } else if (activeModal === 'skillsManager') {
+      focusActions.setFocus(FocusId.SKILLS_MANAGER);
+    } else if (activeModal === 'pluginsManager') {
+      focusActions.setFocus(FocusId.PLUGINS_MANAGER);
     } else if (activeModal === 'hooksManager') {
       // 显示 hooks 管理器时，焦点转移到管理器
       focusActions.setFocus(FocusId.HOOKS_MANAGER);
+    } else if (transcriptPagerOpen) {
+      focusActions.setFocus(FocusId.TRANSCRIPT_PAGER);
     } else if (activeModal === 'shortcuts') {
       // 显示快捷键帮助时，焦点保持在主输入框（帮助面板可以通过 ? 或 Esc 关闭）
       focusActions.setFocus(FocusId.MAIN_INPUT);
@@ -484,7 +545,13 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       // 其他情况，焦点在主输入框
       focusActions.setFocus(FocusId.MAIN_INPUT);
     }
-  }, [requiresSetup, confirmationState.isVisible, activeModal, focusActions.setFocus]);
+  }, [
+    requiresSetup,
+    confirmationState.isVisible,
+    activeModal,
+    transcriptPagerOpen,
+    focusActions.setFocus,
+  ]);
 
   useEffect(() => {
     if (!readyForChat || readyAnnouncementSent.current) {
@@ -682,10 +749,13 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
       {/* 阻塞式弹窗（确认、主题选择器等） */}
       {blockingModal}
 
-      {/* 主界面内容 - 当有阻塞弹窗时通过 display="none" 隐藏但不卸载，避免 Static 组件重复渲染 */}
-      <Box flexDirection="column" display={hasBlockingModal ? 'none' : 'flex'}>
+      {/* 主界面始终挂载，pager/弹窗只切换可见性，避免丢失 composer 状态。 */}
+      <Box
+        flexDirection="column"
+        display={hasBlockingModal || transcriptPagerOpen ? 'none' : 'flex'}
+      >
         {/* MessageArea 内部直接获取状态，不需要 props */}
-        <MessageArea />
+        <MessageArea active={!hasBlockingModal && !transcriptPagerOpen} />
 
         {/* Subagent 进度指示器 - 显示在加载指示器上方 */}
         <SubagentProgress />
@@ -695,7 +765,7 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         <SideConversationPanel />
 
         {/* 加载指示器 - 当有阻塞弹窗时暂停动画，避免无意义的重渲染 */}
-        <LoadingIndicator paused={hasBlockingModal} />
+        <LoadingIndicator paused={hasBlockingModal || transcriptPagerOpen} />
 
         <InputArea
           input={inputBuffer.value}
@@ -770,6 +840,14 @@ export const BladeInterface: React.FC<BladeInterfaceProps> = ({
         />
         {/* 状态栏 - 内部获取状态 */}
         <ChatStatusBar />
+      </Box>
+
+      <Box flexDirection="column" display={transcriptPagerOpen ? 'flex' : 'none'}>
+        <TranscriptPager
+          isOpen={transcriptPagerOpen}
+          compact={hasBlockingModal}
+          onClose={closeTranscriptPager}
+        />
       </Box>
     </Box>
   );

@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Readable } from 'node:stream';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const pluginState = {
   resolveWorkspaceAgentResources: vi.fn(),
@@ -63,6 +63,14 @@ vi.mock('react', () => ({
 
 vi.mock('ink', () => ({
   useInput: (handler: (input: string, key: Record<string, boolean>) => void) => {
+    mainInputState.useInputHandler = handler;
+  },
+}));
+
+vi.mock('../../../src/ui/input/TerminalInputRouter.js', () => ({
+  useTerminalInput: (
+    handler: (input: string, key: Record<string, boolean>) => void
+  ) => {
     mainInputState.useInputHandler = handler;
   },
 }));

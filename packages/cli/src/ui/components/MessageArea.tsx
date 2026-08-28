@@ -44,7 +44,11 @@ import { ThinkingBlock } from './ThinkingBlock.js';
  * - 流式消息在 Static 外部单独渲染
  * - 流式消息完成后自动移入 messages，触发 Static 更新
  */
-export const MessageArea: React.FC = React.memo(() => {
+interface MessageAreaProps {
+  active?: boolean;
+}
+
+const MessageAreaComponent: React.FC<MessageAreaProps> = ({ active = true }) => {
   const messages = useMessages();
   const currentStreamingMessageId = useCurrentStreamingMessageId();
   const currentStreamingBuffer = useCurrentStreamingBuffer();
@@ -82,6 +86,8 @@ export const MessageArea: React.FC = React.memo(() => {
 
   useEffect(() => {
     if (prevHistoryExpandedRef.current !== historyExpanded) {
+      prevHistoryExpandedRef.current = historyExpanded;
+      if (!active) return;
       if (isRawRendererActive()) {
         clearRawRenderer();
       }
@@ -89,9 +95,8 @@ export const MessageArea: React.FC = React.memo(() => {
         stdout.write(ansiEscapes.clearTerminal);
       }
       sessionActions.incrementClearCount();
-      prevHistoryExpandedRef.current = historyExpanded;
     }
-  }, [historyExpanded, stdout, sessionActions]);
+  }, [active, historyExpanded, stdout, sessionActions]);
 
   const historyMessages = messages;
 
@@ -114,7 +119,7 @@ export const MessageArea: React.FC = React.memo(() => {
     // eraseScreen 不移动光标；流式 tail 清理后光标通常停在 raw 区域起点。
     // 重挂 Static 前必须显式回到左上角，否则最终消息会从旧光标位置开始渲染，
     // 终端顶部就会留下大段空白。
-    if (stdout) {
+    if (active && stdout) {
       stdout.write(ansiEscapes.eraseScreen + ansiEscapes.cursorTo(0, 0));
     }
     streamingToolMessageIdsRef.current = new Set();
@@ -135,6 +140,7 @@ export const MessageArea: React.FC = React.memo(() => {
     stdout,
     sessionActions,
     historyMessages,
+    active,
   ]);
 
   const activeStreamingMessageId =
@@ -142,7 +148,7 @@ export const MessageArea: React.FC = React.memo(() => {
 
   useEffect(() => {
     // clearCount 变化时（resize/clear 等），清理 raw renderer
-    if (isRawRendererActive()) {
+    if (active && isRawRendererActive()) {
       clearRawRenderer();
     }
     streamingMessageIdRef.current = null;
@@ -251,6 +257,7 @@ export const MessageArea: React.FC = React.memo(() => {
     currentStreamingBuffer.version,
     terminalWidth,
     clearCount,
+    active,
   ]);
 
   useEffect(() => {
@@ -268,7 +275,7 @@ export const MessageArea: React.FC = React.memo(() => {
       return;
     }
     // tool 消息添加到 Static 前，清除 raw tail
-    if (isRawRendererActive()) {
+    if (active && isRawRendererActive()) {
       clearRawRenderer();
     }
     for (const msg of newToolMessages) {
@@ -289,11 +296,17 @@ export const MessageArea: React.FC = React.memo(() => {
         </Box>
       )),
     ]);
-  }, [activeStreamingMessageId, historyMessages, terminalWidth]);
+  }, [active, activeStreamingMessageId, historyMessages, terminalWidth]);
 
   // Raw tail 渲染：绕过 React/Ink，直接用 stdout.write 输出流式 tail
   // 这是性能优化的核心 — 最高频更新的 tail 不再触发 React reconciliation
   useEffect(() => {
+    if (!active) {
+      if (isRawRendererActive()) {
+        clearRawRenderer();
+      }
+      return;
+    }
     if (!activeStreamingMessageId) {
       if (isRawRendererActive()) {
         clearRawRenderer();
@@ -326,6 +339,7 @@ export const MessageArea: React.FC = React.memo(() => {
     currentStreamingBuffer.version,
     terminalHeight,
     terminalWidth,
+    active,
   ]);
 
   // 在 finalization 清理时也清除 raw renderer
@@ -338,10 +352,10 @@ export const MessageArea: React.FC = React.memo(() => {
   useEffect(() => {
     if (collapsePointState === null && historyMessages.length > expandedMessageCount) {
       setCollapsePointState(historyMessages.length);
-      if (isRawRendererActive()) {
+      if (active && isRawRendererActive()) {
         clearRawRenderer();
       }
-      if (stdout) {
+      if (active && stdout) {
         stdout.write(ansiEscapes.clearTerminal);
       }
       sessionActions.incrementClearCount();
@@ -352,6 +366,7 @@ export const MessageArea: React.FC = React.memo(() => {
     collapsePointState,
     stdout,
     sessionActions,
+    active,
   ]);
 
   const hasActiveTasks = useMemo(() => {
@@ -458,4 +473,6 @@ export const MessageArea: React.FC = React.memo(() => {
       </Box>
     </Box>
   );
-});
+};
+
+export const MessageArea = React.memo(MessageAreaComponent);

@@ -3,9 +3,10 @@
  * Step 2: 输入 API Key
  */
 
-import { Box, Text, useInput } from 'ink';
+import { Box, Text } from 'ink';
 import TextInput from 'ink-text-input';
 import React from 'react';
+import { useTerminalInput as useInput } from '../../input/TerminalInputRouter.js';
 import type { ProviderOption } from './types.js';
 
 interface ApiKeyInputProps {

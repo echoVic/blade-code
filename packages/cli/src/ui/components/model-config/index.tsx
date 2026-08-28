@@ -1,10 +1,11 @@
 import { useMemoizedFn } from 'ahooks';
-import { Box, Text, useInput } from 'ink';
+import { Box, Text } from 'ink';
 import React, { useState } from 'react';
 import type { SetupConfig } from '../../../config/types.js';
 import { getPiModelCatalog } from '../../../services/pi/PiModelCatalog.js';
 import { configActions, getConfig } from '../../../store/vanilla.js';
 import { useCtrlCHandler } from '../../hooks/useCtrlCHandler.js';
+import { useTerminalInput as useInput } from '../../input/TerminalInputRouter.js';
 import { ApiKeyInput } from './ApiKeyInput.js';
 import { CustomProviderInput } from './CustomProviderInput.js';
 import { useModels, useProviders } from './hooks/usePiCatalog.js';

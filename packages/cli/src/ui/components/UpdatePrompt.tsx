@@ -3,7 +3,7 @@
  *
  */
 
-import { Box, Text, useInput } from 'ink';
+import { Box, Text } from 'ink';
 import React, { useState } from 'react';
 import { getGracefulShutdown } from '../../services/GracefulShutdown.js';
 import {
@@ -12,6 +12,7 @@ import {
   setSkipUntilVersion,
   type VersionCheckResult,
 } from '../../services/VersionChecker.js';
+import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
 
 interface UpdatePromptProps {
   versionInfo: VersionCheckResult;

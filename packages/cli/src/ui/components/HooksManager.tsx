@@ -4,7 +4,7 @@
  * 提供交互式界面来添加、查看和管理 hooks 配置
  */
 
-import { Box, Text, useInput } from 'ink';
+import { Box, Text } from 'ink';
 import TextInput from 'ink-text-input';
 import React, { useState } from 'react';
 import { HookManager } from '../../hooks/HookManager.js';
@@ -13,6 +13,7 @@ import {
   HookEvent,
   type HookMatcher,
 } from '../../hooks/types/HookTypes.js';
+import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
 import { themeManager } from '../themes/ThemeManager.js';
 
 interface HooksManagerProps {

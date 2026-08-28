@@ -105,7 +105,7 @@ const INFORMATIVE_TIPS = [
   'Ctrl+C - 停止任务（双击退出）',
   'Ctrl+L - 清屏',
   'Ctrl+T - 展开/折叠 thinking 内容',
-  'Ctrl+O - 展开/折叠历史消息',
+  'Ctrl+O - 打开只读 transcript',
   'Ctrl+A / Ctrl+E - 光标跳到行首/行尾',
   'Ctrl+U / Ctrl+K - 删到行首/行尾',
   'Ctrl+W - 删除前一个单词',

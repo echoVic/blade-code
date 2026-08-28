@@ -4,10 +4,11 @@
  * 直接输入即可搜索，类似 fzf
  */
 
-import { Box, Text, useInput } from 'ink';
+import { Box, Text } from 'ink';
 import SelectInput from 'ink-select-input';
 import TextInput from 'ink-text-input';
 import React, { useMemo, useState } from 'react';
+import { useTerminalInput as useInput } from '../../input/TerminalInputRouter.js';
 import type { ProviderOption } from './types.js';
 
 interface ProviderSelectorProps {

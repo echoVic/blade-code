@@ -1,6 +1,6 @@
 import { useMemoizedFn } from 'ahooks';
 import { promises as fs } from 'fs';
-import { Box, Text, useInput } from 'ink';
+import { Box, Text } from 'ink';
 import SelectInput from 'ink-select-input';
 import TextInput from 'ink-text-input';
 import os from 'os';
@@ -13,6 +13,7 @@ import { FocusId } from '../../store/types.js';
 import { configActions } from '../../store/vanilla.js';
 import { getCwd } from '../../utils/cwd.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
+import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
 
 type RuleSource = 'local' | 'project' | 'global';
 type PermissionType = 'allow' | 'ask' | 'deny';

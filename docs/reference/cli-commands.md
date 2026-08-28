@@ -330,10 +330,15 @@ OAuth 交互。完整安全契约见 [MCP OAuth 生命周期](mcp-oauth-lifecycl
 | `Ctrl+D` | 退出程序 |
 | `Ctrl+L` | 清屏 |
 | `Ctrl+T` | 展开/折叠思维链 |
+| `Ctrl+O` | 打开/关闭只读 transcript pager |
 | `Esc` | 关闭建议/中断执行 |
 | `Shift+Tab` | 循环切换权限模式 |
 | `↑` / `↓` | 历史命令导航 |
 | `Tab` | 自动补全 |
+
+Transcript pager 支持 `↑/↓`、`j/k`、`PageUp/PageDown` 和 `g/G` 首尾跳转。
+离开底部后会停止自动跟随并累计新消息；按 `G` 回到底部后恢复跟随。审批界面
+出现时仍可用 `PageUp/PageDown` 浏览 transcript。
 
 ### 输入触发
 

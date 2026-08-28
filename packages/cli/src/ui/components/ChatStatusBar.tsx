@@ -128,6 +128,7 @@ export const ChatStatusBar: React.FC = React.memo(() => {
     ['Shift+Tab:切换模式', 'Up/Down:历史', 'Tab:补全'],
     ['Ctrl+A:行首', 'Ctrl+E:行尾', 'Ctrl+K:删到尾'],
     ['Ctrl+U:删到首', 'Ctrl+W:删单词', 'Ctrl+C:退出'],
+    ['Ctrl+O:浏览记录', 'PgUp/PgDn:翻页', 'g/G:首尾'],
   ];
 
   return (

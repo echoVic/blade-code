@@ -317,10 +317,16 @@ TUI corresponds to `/mcp login <name>` and `/mcp logout <name>`; headless and AC
 | `Ctrl+D` | Exit program |
 | `Ctrl+L` | Clear screen |
 | `Ctrl+T` | Expand/collapse thinking chain |
+| `Ctrl+O` | Open/close the read-only transcript pager |
 | `Esc` | Close suggestions / interrupt execution |
 | `Shift+Tab` | Cycle through permission modes |
 | `↑` / `↓` | History command navigation |
 | `Tab` | Autocomplete |
+
+The transcript pager supports `↑/↓`, `j/k`, `PageUp/PageDown`, and `g/G` for
+top/bottom navigation. Scrolling away from the bottom pauses follow mode and
+counts new messages; `G` returns to the latest output and resumes following.
+While an approval is visible, `PageUp/PageDown` still browse the transcript.
 
 ### Input Triggers
 

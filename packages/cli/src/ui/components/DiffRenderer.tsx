@@ -3,9 +3,10 @@
  * 支持交互式展开/折叠
  */
 
-import { Box, Text, useInput } from 'ink';
+import { Box, Text } from 'ink';
 import React, { useState } from 'react';
 import { useTheme } from '../../store/selectors/index.js';
+import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
 
 interface DiffRendererProps {
   patch: string; // unified diff 格式的 patch

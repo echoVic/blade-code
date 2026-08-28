@@ -398,6 +398,8 @@ export const zh: Dict = {
   'chat.list.showEarlierWithRemaining':
     '显示更早的 {count} 条消息，当前隐藏 {remaining} 条',
   'chat.list.jumpLatest': '回到最新消息',
+  'chat.list.unreadMessage': '1 条新消息',
+  'chat.list.unreadMessages': '{count} 条新消息',
   'chat.turns.aria': '跳转到之前的消息',
   'chat.turns.label': '第 {n} 轮',
   'chat.timeline.thinking': '思考过程',

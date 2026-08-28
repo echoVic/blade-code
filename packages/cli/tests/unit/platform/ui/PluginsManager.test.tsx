@@ -69,6 +69,10 @@ vi.mock('../../../../src/ui/hooks/useCtrlCHandler.js', () => ({
   useCtrlCHandler: () => vi.fn(),
 }));
 
+vi.mock('../../../../src/store/selectors/index.js', () => ({
+  useCurrentFocus: () => 'plugins-manager',
+}));
+
 describe('PluginsManager', () => {
   let inputHandler: ((input: string, key: Record<string, boolean>) => void) | undefined;
 

@@ -1,5 +1,4 @@
 import { useMemoizedFn } from 'ahooks';
-import { useInput } from 'ink';
 import { useEffect, useRef, useState } from 'react';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { getFuzzyCommandSuggestions } from '../../slash-commands/index.js';
@@ -14,6 +13,7 @@ import {
 import { FocusId } from '../../store/types.js';
 import { isThinkingModel } from '../../utils/modelDetection.js';
 import { endsWithSeparator } from '../../utils/pathHelpers.js';
+import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
 import { applySuggestion, useAtCompletion } from './useAtCompletion.js';
 import type { HistoryEntry, PasteMappings } from './useCommandHistory.js';
 import { useCtrlCHandler } from './useCtrlCHandler.js';
@@ -173,7 +173,7 @@ export const useMainInput = (
         onToggleShortcuts?.();
         // 防止 ? 被添加到输入框（通过延迟清空）
         setTimeout(() => buffer.clear(), 0);
-        return;
+        return true;
       }
 
       // 跳过基本编辑键和普通字符输入，交给 CustomTextInput 处理
@@ -197,7 +197,7 @@ export const useMainInput = (
           !(inputKey === '?' && !input));
 
       if (shouldSkip) {
-        return;
+        return false;
       }
 
       // Ctrl+C / Ctrl+D - 停止任务或退出
@@ -208,22 +208,17 @@ export const useMainInput = (
         (key.meta && inputKey === 'd')
       ) {
         handleCtrlC();
-        return;
+        return true;
       }
       // Ctrl+L - 清屏
       if ((key.ctrl && inputKey === 'l') || (key.meta && inputKey === 'l')) {
         handleClear();
-        return;
+        return true;
       }
       // Ctrl+T - 切换 thinking 内容展开/折叠
       if ((key.ctrl && inputKey === 't') || (key.meta && inputKey === 't')) {
         sessionActions.toggleThinkingExpanded();
-        return;
-      }
-      // Ctrl+O - 切换历史消息展开/折叠（与 Claude Code 一致）
-      if ((key.ctrl && inputKey === 'o') || (key.meta && inputKey === 'o')) {
-        sessionActions.toggleHistoryExpanded();
-        return;
+        return true;
       }
       // Esc - 关闭快捷键帮助 > 停止任务 > 隐藏建议 > 双击清空输入
       if (key.escape) {
@@ -232,7 +227,7 @@ export const useMainInput = (
           onToggleShortcuts?.();
         } else if (isProcessing && onAbort) {
           if (abortCalledRef.current) {
-            return;
+            return true;
           }
           abortCalledRef.current = true;
           onAbort();
@@ -249,12 +244,12 @@ export const useMainInput = (
             lastEscTimeRef.current = now;
           }
         }
-        return;
+        return true;
       }
       // Shift+Tab - 切换权限模式
       if (key.tab && key.shift) {
         onTogglePermissionMode?.();
-        return;
+        return true;
       }
       // Tab - 选中建议（有建议时），或切换 thinking 模式（无建议时，且模型支持）
       if (key.tab) {
@@ -284,12 +279,12 @@ export const useMainInput = (
           appActions.toggleThinkingMode();
         }
         // 如果模型不支持 thinking，Tab 键无效果（静默忽略）
-        return;
+        return true;
       }
       // Enter - 提交命令（建议通过 Tab 接受）
       if (key.return) {
         handleSubmit();
-        return;
+        return true;
       }
       // 上下箭头 - 建议导航或历史命令
       if (key.upArrow) {
@@ -308,7 +303,7 @@ export const useMainInput = (
             buffer.setCursorPosition(entry.display.length);
           }
         }
-        return;
+        return true;
       }
       if (key.downArrow) {
         if (showSuggestions && suggestions.length > 0) {
@@ -326,10 +321,14 @@ export const useMainInput = (
             buffer.setCursorPosition(entry.display.length);
           }
         }
-        return;
+        return true;
       }
+      return false;
     },
-    { isActive: isFocused } // 当输入框聚焦时激活，但只处理上面列出的特定按键
+    {
+      isActive: isFocused,
+      priority: 20,
+    }
   );
 
   return {

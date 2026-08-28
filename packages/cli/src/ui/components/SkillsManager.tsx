@@ -4,10 +4,12 @@
  * 显示所有可用的 Skills 及其详细信息
  */
 
-import { Box, Text, useInput } from 'ink';
+import { Box, Text } from 'ink';
 import { getSkillRegistry } from '../../skills/index.js';
-import { useWorkspaceRoot } from '../../store/selectors/index.js';
+import { useCurrentFocus, useWorkspaceRoot } from '../../store/selectors/index.js';
+import { FocusId } from '../../store/types.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
+import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
 
 export interface SkillsManagerProps {
   /** 完成回调 */
@@ -21,6 +23,7 @@ export interface SkillsManagerProps {
  */
 export function SkillsManager({ onCancel }: SkillsManagerProps) {
   const workspaceRoot = useWorkspaceRoot();
+  const isFocused = useCurrentFocus() === FocusId.SKILLS_MANAGER;
   const registry = getSkillRegistry({ cwd: workspaceRoot });
   const skills = registry.getAll();
 
@@ -33,13 +36,16 @@ export function SkillsManager({ onCancel }: SkillsManagerProps) {
   const handleCtrlC = useCtrlCHandler(false, onCancel);
 
   // ESC 和 Ctrl+C 处理
-  useInput((input, key) => {
-    if (key.escape) {
-      onCancel?.();
-    } else if ((key.ctrl && input === 'c') || (key.meta && input === 'c')) {
-      handleCtrlC();
-    }
-  });
+  useInput(
+    (input, key) => {
+      if (key.escape) {
+        onCancel?.();
+      } else if ((key.ctrl && input === 'c') || (key.meta && input === 'c')) {
+        handleCtrlC();
+      }
+    },
+    { isActive: isFocused }
+  );
 
   if (skills.length === 0) {
     return (

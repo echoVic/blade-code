@@ -1,4 +1,4 @@
-import { Box, Text, useInput } from 'ink';
+import { Box, Text } from 'ink';
 import TextInput from 'ink-text-input';
 import React, { useState } from 'react';
 import {
@@ -6,6 +6,7 @@ import {
   validateModelProviderConfig,
 } from '../../../config/modelProviders.js';
 import type { ModelProviderWireApi, SetupConfig } from '../../../config/types.js';
+import { useTerminalInput as useInput } from '../../input/TerminalInputRouter.js';
 
 type Field = 'id' | 'name' | 'baseUrl' | 'model';
 

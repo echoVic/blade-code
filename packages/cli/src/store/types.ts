@@ -348,6 +348,7 @@ export interface AppSlice extends AppState {
  */
 export enum FocusId {
   MAIN_INPUT = 'main-input',
+  TRANSCRIPT_PAGER = 'transcript-pager',
   SESSION_SELECTOR = 'session-selector',
   CONFIRMATION_PROMPT = 'confirmation-prompt',
   THEME_SELECTOR = 'theme-selector',
@@ -356,6 +357,8 @@ export enum FocusId {
   PERMISSIONS_MANAGER = 'permissions-manager',
   AGENTS_MANAGER = 'agents-manager',
   AGENT_CREATION_WIZARD = 'agent-creation-wizard',
+  SKILLS_MANAGER = 'skills-manager',
+  PLUGINS_MANAGER = 'plugins-manager',
   HOOKS_MANAGER = 'hooks-manager',
 }
 

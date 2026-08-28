@@ -12,9 +12,10 @@
 
 import { useMemoizedFn } from 'ahooks';
 import chalk from 'chalk';
-import { type Key, Text, useInput } from 'ink';
+import { type Key, Text } from 'ink';
 import React, { useEffect, useRef } from 'react';
 import { PASTE_CONFIG } from '../constants.js';
+import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
 import {
   createTerminalInputParserState,
   parseTerminalInput,
@@ -236,7 +237,8 @@ export function CustomTextInput({
         // - Ctrl+C: 中断/退出
         // - Shift+Tab: 切换权限模式
         // - 空输入时的 ? 键: 切换快捷键帮助
-        // - Ctrl+L/T/O: 清屏/切换 thinking/切换历史折叠（由 useMainInput 处理）
+        // - Ctrl+L/T: 清屏/切换 thinking（由 useMainInput 处理）
+        // - Ctrl+O: transcript pager（由 TerminalInputRouter 全局处理）
         if (
           isDisabledKey ||
           (key.ctrl && rawInput === 'c') ||
@@ -391,8 +393,9 @@ export function CustomTextInput({
 
         commitInputState(nextValue, nextCursorPosition);
       });
+      return true;
     },
-    { isActive: focus }
+    { isActive: focus, priority: 0 }
   );
 
   // === ink-text-input 原有的渲染逻辑 ===

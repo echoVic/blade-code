@@ -4,7 +4,7 @@
  * 显示所有已加载的插件及其详细信息
  */
 
-import { Box, Text, useInput } from 'ink';
+import { Box, Text } from 'ink';
 import { useEffect, useState } from 'react';
 import { ConfigManager } from '../../config/ConfigManager.js';
 import type {
@@ -18,7 +18,10 @@ import {
   uninstallWorkspacePlugin,
   updateWorkspacePlugin,
 } from '../../plugins/PluginLifecycle.js';
+import { useCurrentFocus } from '../../store/selectors/index.js';
+import { FocusId } from '../../store/types.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
+import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
 
 export interface PluginsManagerProps {
   workspaceRoot?: string;
@@ -34,6 +37,7 @@ const PLUGIN_SCOPES: PersistedPluginSettingsScope[] = ['local', 'project', 'glob
  * 插件管理器主组件
  */
 export function PluginsManager({ workspaceRoot, onCancel }: PluginsManagerProps) {
+  const isFocused = useCurrentFocus() === FocusId.PLUGINS_MANAGER;
   const registry = getPluginRegistry(workspaceRoot);
   const plugins = registry.getAll();
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -191,29 +195,32 @@ export function PluginsManager({ workspaceRoot, onCancel }: PluginsManagerProps)
     }
   };
 
-  useInput((input, key) => {
-    if (key.escape) {
-      onCancel?.();
-    } else if ((key.ctrl && input === 'c') || (key.meta && input === 'c')) {
-      handleCtrlC();
-    } else if ((key.upArrow || input === 'k') && plugins.length > 0) {
-      setConfirmingRemoval(null);
-      setSelectedIndex((index) => (index - 1 + plugins.length) % plugins.length);
-    } else if ((key.downArrow || input === 'j') && plugins.length > 0) {
-      setConfirmingRemoval(null);
-      setSelectedIndex((index) => (index + 1) % plugins.length);
-    } else if (input === ' ' || key.return) {
-      void toggleSelected();
-    } else if (input === 'r') {
-      void refresh();
-    } else if (input === 's') {
-      cycleScope();
-    } else if (input === 'u') {
-      void updateSelected();
-    } else if (input === 'x') {
-      void removeSelected();
-    }
-  });
+  useInput(
+    (input, key) => {
+      if (key.escape) {
+        onCancel?.();
+      } else if ((key.ctrl && input === 'c') || (key.meta && input === 'c')) {
+        handleCtrlC();
+      } else if ((key.upArrow || input === 'k') && plugins.length > 0) {
+        setConfirmingRemoval(null);
+        setSelectedIndex((index) => (index - 1 + plugins.length) % plugins.length);
+      } else if ((key.downArrow || input === 'j') && plugins.length > 0) {
+        setConfirmingRemoval(null);
+        setSelectedIndex((index) => (index + 1) % plugins.length);
+      } else if (input === ' ' || key.return) {
+        void toggleSelected();
+      } else if (input === 'r') {
+        void refresh();
+      } else if (input === 's') {
+        cycleScope();
+      } else if (input === 'u') {
+        void updateSelected();
+      } else if (input === 'x') {
+        void removeSelected();
+      }
+    },
+    { isActive: isFocused }
+  );
 
   if (plugins.length === 0) {
     return (

@@ -6,12 +6,13 @@
 
 import fs from 'node:fs';
 import { useMemoizedFn } from 'ahooks';
-import { Box, Text, useInput } from 'ink';
+import { Box, Text } from 'ink';
 import SelectInput from 'ink-select-input';
 import { useEffect, useMemo, useState } from 'react';
 import { getSubagentRegistry } from '../../agent/subagents/SubagentRegistry.js';
 import type { SubagentConfig } from '../../agent/subagents/types.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
+import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
 import { AgentCreationWizard } from './AgentCreationWizard.js';
 
 /** 每页显示的 agents 数量 */

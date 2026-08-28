@@ -4,9 +4,13 @@ import { BladeMark } from '@/components/layout/BladeMark';
 import { ScrollArea } from '@/components/ui/ScrollArea';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { Message } from '@/services';
+import type { Message } from '@/store/session';
 import { ChatMessage } from './ChatMessage';
-import { anchoredScrollTop, nextVisibleMessageCount } from './chatListWindow';
+import {
+  anchoredScrollTop,
+  collectUnreadMessageIds,
+  nextVisibleMessageCount,
+} from './chatListWindow';
 import { TurnNavigator } from './TurnNavigator';
 import { deriveChatTurns } from './turnNavigation';
 
@@ -25,11 +29,24 @@ function findViewport(root: HTMLDivElement | null): HTMLDivElement | null {
   );
 }
 
+function unreadMessageRevision(message: Message): string {
+  return JSON.stringify([
+    message.role,
+    message.content,
+    message.metadata,
+    message.agentContent,
+  ]);
+}
+
 function ChatListComponent({ messages, isLoading }: ChatListProps) {
   const t = useT();
   const containerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLElement | null>(null);
   const isNearBottomRef = useRef(true);
+  const hasPinnedInitiallyRef = useRef(false);
+  const currentMessagesRef = useRef(messages);
+  const previousMessagesRef = useRef(messages);
+  const unreadMessageIdsRef = useRef(new Set<string>());
   const previousMessageCountRef = useRef(messages.length);
   const pendingHistoryAnchorRef = useRef<{
     element: HTMLElement | null;
@@ -39,13 +56,23 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
   } | null>(null);
   const [visibleCount, setVisibleCount] = useState(INITIAL_RENDERED_MESSAGES);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const hasMessages = messages.length > 0;
+  currentMessagesRef.current = messages;
 
   useEffect(() => {
     const viewport = findViewport(containerRef.current);
-    if (!viewport || !isNearBottomRef.current) return;
+    if (!viewport || (hasPinnedInitiallyRef.current && !isNearBottomRef.current)) {
+      return;
+    }
 
     const frame = window.requestAnimationFrame(() => {
       viewport.scrollTop = viewport.scrollHeight;
+      hasPinnedInitiallyRef.current = true;
+      isNearBottomRef.current = true;
+      unreadMessageIdsRef.current = new Set();
+      setUnreadCount(0);
+      setShowJumpToLatest(false);
     });
     return () => window.cancelAnimationFrame(frame);
   }, [messages]);
@@ -56,17 +83,48 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
     viewportRef.current = viewport;
 
     const updatePosition = () => {
+      if (!hasPinnedInitiallyRef.current) return;
       const distanceFromBottom =
         viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
       const isNearBottom = distanceFromBottom <= NEAR_BOTTOM_THRESHOLD_PX;
+      const wasNearBottom = isNearBottomRef.current;
       isNearBottomRef.current = isNearBottom;
       setShowJumpToLatest(!isNearBottom);
+      if (isNearBottom) {
+        unreadMessageIdsRef.current = new Set();
+        setUnreadCount(0);
+      } else if (wasNearBottom) {
+        previousMessagesRef.current = currentMessagesRef.current;
+        unreadMessageIdsRef.current = new Set();
+        setUnreadCount(0);
+      }
     };
 
     updatePosition();
     viewport.addEventListener('scroll', updatePosition, { passive: true });
     return () => viewport.removeEventListener('scroll', updatePosition);
-  }, []);
+  }, [hasMessages, isLoading]);
+
+  useEffect(() => {
+    const previousMessages = previousMessagesRef.current;
+    previousMessagesRef.current = messages;
+    if (isNearBottomRef.current) {
+      if (unreadMessageIdsRef.current.size > 0) {
+        unreadMessageIdsRef.current = new Set();
+        setUnreadCount(0);
+      }
+      return;
+    }
+
+    const nextUnreadIds = collectUnreadMessageIds(
+      previousMessages,
+      messages,
+      unreadMessageIdsRef.current,
+      unreadMessageRevision
+    );
+    unreadMessageIdsRef.current = nextUnreadIds;
+    setUnreadCount(nextUnreadIds.size);
+  }, [messages]);
 
   useEffect(() => {
     const previousMessageCount = previousMessageCountRef.current;
@@ -185,9 +243,12 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
   const jumpToLatest = () => {
     const viewport = findViewport(containerRef.current);
     if (!viewport) return;
+    viewport.scrollTop = viewport.scrollHeight;
     isNearBottomRef.current = true;
+    hasPinnedInitiallyRef.current = true;
+    unreadMessageIdsRef.current = new Set();
+    setUnreadCount(0);
     setShowJumpToLatest(false);
-    viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' });
   };
 
   const showEarlierMessages = () => {
@@ -216,6 +277,11 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
     setVisibleCount(messages.length);
     return false;
   };
+
+  const unreadLabel =
+    unreadCount === 1
+      ? t('chat.list.unreadMessage')
+      : t('chat.list.unreadMessages', { count: unreadCount });
 
   return (
     <div ref={containerRef} className="relative flex-1 min-h-0">
@@ -265,10 +331,12 @@ function ChatListComponent({ messages, isLoading }: ChatListProps) {
         <button
           type="button"
           onClick={jumpToLatest}
+          aria-live="polite"
+          aria-label={unreadCount > 0 ? unreadLabel : t('chat.list.jumpLatest')}
           className="absolute bottom-4 left-1/2 z-10 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-[hsl(var(--deck-border-strong))] bg-[hsl(var(--deck-surface))]/95 px-3 py-1.5 font-mono text-[11px] text-[hsl(var(--deck-ink-muted))] shadow-lg backdrop-blur transition-colors hover:text-[hsl(var(--deck-ink))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--deck-accent))]"
         >
           <ArrowDown className="h-3.5 w-3.5 text-[hsl(var(--deck-accent))]" />
-          {t('chat.list.jumpLatest')}
+          {unreadCount > 0 ? unreadLabel : t('chat.list.jumpLatest')}
         </button>
       )}
     </div>

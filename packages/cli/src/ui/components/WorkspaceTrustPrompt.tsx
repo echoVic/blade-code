@@ -1,6 +1,7 @@
-import { Box, Text, useInput } from 'ink';
+import { Box, Text } from 'ink';
 import React, { useState } from 'react';
 import type { WorkspaceTrustStatus } from '../../security/WorkspaceTrustService.js';
+import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
 import { themeManager } from '../themes/ThemeManager.js';
 
 interface WorkspaceTrustPromptProps {

@@ -3,13 +3,14 @@
  */
 
 import { useMemoizedFn } from 'ahooks';
-import { Box, Text, useInput } from 'ink';
+import { Box, Text } from 'ink';
 import SelectInput from 'ink-select-input';
 import React, { useState } from 'react';
 import { useAppActions, useCurrentFocus } from '../../store/selectors/index.js';
 import { FocusId } from '../../store/types.js';
 import { configActions } from '../../store/vanilla.js';
 import { useCtrlCHandler } from '../hooks/useCtrlCHandler.js';
+import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
 import { themes } from '../themes/index.js';
 import { themeManager } from '../themes/ThemeManager.js';
 import type { Theme } from '../themes/types.js';
