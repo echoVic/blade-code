@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.108] - 2026-08-28
+
+### 修复
+- 隔离 Web pending-resume route 夹具与共享 module/Agent mock，使 Headless Core coverage 能稳定观察真实的 single-flight 生命周期。
+
+### 测试
+- Headless Core 现在包含 Web pending-resume 场景并完整通过 9 个文件、391 个测试的 recovery gate。
+
 ## [0.10.107] - 2026-08-28
 
 ### 修复

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.108] - 2026-08-28
+
+### Fixed
+- Isolated Web pending-resume route fixtures from shared module and Agent mocks so Headless Core coverage observes the real single-flight lifecycle deterministically.
+
+### Tests
+- Headless Core now passes the full 9-file, 391-test recovery gate with the Web pending-resume scenarios included.
+
 ## [0.10.107] - 2026-08-28
 
 ### Fixed
