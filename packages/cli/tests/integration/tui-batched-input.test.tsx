@@ -316,7 +316,9 @@ describe('TUI batched input integration', () => {
       pasteMappingCount: readSnapshot().pasteMappingCount,
     };
 
-    stdin.write('\x0f');
+    act(() => {
+      stdin.write('\x0f');
+    });
     await vi.waitFor(() => {
       expect(readSnapshot().pagerOpen).toBe(true);
       expect(stdout.output).toContain('Transcript');
