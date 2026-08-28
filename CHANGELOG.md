@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.110] - 2026-08-28
+
+### Added
+- Projected bounded Web pending-resume recovery into the active Session store and status bar, including attempt counts and retry delay without exposing Provider details.
+
+### Fixed
+- Cleared transient recovery state across Session switches, terminal lifecycle events, rewinds, cancellation, and exact-session user turns while preserving it through recovered assistant output.
+
+### Tests
+- Added strict payload validation, workspace identity, lifecycle reset, status priority, and privacy coverage; the Web suite passes 65 files and 507 tests.
+
 ## [0.10.109] - 2026-08-28
 
 ### Fixed

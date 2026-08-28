@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.110] - 2026-08-28
+
+### 新功能
+- 将有界 Web pending-resume 恢复状态投影到当前 Session store 与状态栏，显示尝试次数和重试延迟且不暴露 Provider 详情。
+
+### 修复
+- 在 Session 切换、终态事件、rewind、取消和精确 Session 用户新回合时清理瞬态恢复状态，同时在恢复中的 assistant 输出期间保留状态。
+
+### 测试
+- 新增严格 payload 校验、workspace identity、生命周期重置、状态优先级和隐私覆盖；Web 套件 65 个文件、507 个测试通过。
+
 ## [0.10.109] - 2026-08-28
 
 ### 修复
