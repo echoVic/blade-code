@@ -2569,6 +2569,100 @@ describe('SessionRoutes runtime reuse', () => {
     }
   );
 
+  it.each(['session delete', 'new message run', 'controller replacement'] as const)(
+    'clears a scheduled Web pending resume on %s',
+    async (cleanup) => {
+      vi.useFakeTimers();
+      const { createSessionRouteController } = await import(
+        '../../../../src/server/routes/session.js'
+      );
+      const sessionId = `pending-resume-${cleanup.replaceAll(' ', '-')}`;
+      const projectPath = '/persisted-workspace';
+      const metadata = metadataFor(sessionId, projectPath, {
+        permissionMode: 'yolo',
+      });
+      vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+      vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+      vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+      agentState.chatStream.mockImplementationOnce(async function* () {
+        if (Date.now() < 0) yield undefined;
+        return {
+          success: false,
+          error: {
+            type: 'api_error' as const,
+            message: 'Provider request failed.',
+            details: Object.assign(new Error('opaque'), {
+              code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+            }),
+          },
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      });
+      if (cleanup === 'new message run') {
+        agentState.chatStream.mockImplementationOnce(async function* () {
+          if (Date.now() < 0) yield undefined;
+          runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+          return {
+            success: true,
+            finalMessage: 'new user run',
+            metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+          };
+        });
+      }
+
+      const controller = createSessionRouteController();
+      let resetController: ReturnType<typeof createSessionRouteController> | undefined;
+      const eventsController = new AbortController();
+      const response = await controller.app.request(`/${sessionId}/events`, {
+        signal: eventsController.signal,
+      });
+      try {
+        await vi.waitFor(() => {
+          expect(
+            busState.publish.mock.calls.some(
+              ([, type, properties]) =>
+                type === 'pending.resume' && properties.phase === 'retry_scheduled'
+            )
+          ).toBe(true);
+        });
+
+        if (cleanup === 'session delete') {
+          const deleteResponse = await controller.app.request(
+            `/${sessionId}?projectPath=${encodeURIComponent(projectPath)}`,
+            { method: 'DELETE' }
+          );
+          expect(deleteResponse.status).toBe(200);
+        } else if (cleanup === 'new message run') {
+          const messageResponse = await controller.app.request(
+            `/${sessionId}/message?projectPath=${encodeURIComponent(projectPath)}`,
+            {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ content: 'start a fresh run' }),
+            }
+          );
+          expect(messageResponse.status).toBe(202);
+          await vi.waitFor(() => {
+            expect(agentState.chatStream).toHaveBeenCalledTimes(2);
+          });
+        } else {
+          resetController = createSessionRouteController();
+        }
+
+        const callsAfterCleanup = agentState.chatStream.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(agentState.chatStream).toHaveBeenCalledTimes(callsAfterCleanup);
+      } finally {
+        eventsController.abort();
+        await response.body?.cancel().catch(() => undefined);
+        await controller.shutdown();
+        await resetController?.shutdown();
+        vi.useRealTimers();
+      }
+    }
+  );
+
   it.each(['Goal-only', 'task-isolated'] as const)(
     'does not attach Web pending recovery to a %s run',
     async (kind) => {
