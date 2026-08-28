@@ -87,7 +87,7 @@ interface GoalExecutionFrontier {
 5. `buildGoalContinuationPrompt` 注入 `<goal-execution-frontier>`，包含统计、下一可执行任务、依赖阻塞数和摘要时间；不注入完整任务列表。
 6. Agent 执行现有 loop。Task 工具沿用现有事件，变更后刷新 frontier。
 
-如果 frontier 读取失败，步骤 3-5 不执行，Goal 进入可恢复的 paused/blocked 控制状态，事件携带 `task_list_unavailable` 类型和具体诊断；绝不能把读取失败当成空任务列表继续执行。
+如果 frontier 读取失败，步骤 3-5 不执行，Goal 进入可恢复的 `paused` 状态，事件携带 `task_list_unavailable` 类型和具体诊断；绝不能把读取失败当成空任务列表继续执行。`blocked` 仍只用于确实需要外部介入且满足 Goal 阻塞审计的情况。
 
 ### 下一任务选择
 
@@ -163,8 +163,6 @@ Verifier 不能仅凭 frontier digest 或 completed 计数通过目标，仍须�
 
 ## 分阶段交付
 
-1. **v0.10.102**：frontier 类型、作用域解析、GoalStore v2、continuation 注入、三端事件和单元/runtime 回归。
-2. **后续 patch**：真实 API 资格轨迹、Web/TUI/ACP 可视化增强和进程恢复专项证据。
-3. **后续 patch**：基于 frontier + 工具效果 + verifier feedback 的停滞分类器。
-4. **后续 patch**：可选的 Grok 风格 strategist/planner，仍受有界重试和独立 verifier 约束。
-
+1. **v0.10.102**：frontier 类型、作用域解析、GoalStore v2、continuation 注入、三端事件、单元/runtime 回归和真实 API 资格轨迹；发布前完成 Web GUI、ACP 与 CLI TUI/PTY 证据。
+2. **后续 patch**：基于 frontier + 工具效果 + verifier feedback 的停滞分类器。
+3. **后续 patch**：可选的 Grok 风格 strategist/planner，仍受有界重试和独立 verifier 约束。
