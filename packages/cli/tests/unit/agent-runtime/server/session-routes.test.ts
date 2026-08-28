@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LoopEvent } from '../../../../src/agent/loop/types.js';
+import { Agent } from '../../../../src/agent/Agent.js';
 import type {
   InputTurnPreparation,
   SteeringEnqueueResult,
@@ -630,9 +631,9 @@ describe('SessionRoutes runtime reuse', () => {
     runtimeState.runtime.prepareInputTurn.mockImplementation(async () =>
       makePreparedInputTurn()
     );
-    runtimeState.runtime.enqueueSteering.mockClear();
+    runtimeState.runtime.enqueueSteering.mockReset();
     runtimeState.runtime.setTaskAdmission.mockClear();
-    runtimeState.runtime.setTaskStatus.mockClear();
+    runtimeState.runtime.setTaskStatus.mockReset().mockResolvedValue(undefined);
     runtimeState.runtime.discardPendingInput.mockClear();
     runtimeState.runtime.getTaskAdmissionLimits.mockReturnValue({
       maxConcurrent: 3,
@@ -728,7 +729,7 @@ describe('SessionRoutes runtime reuse', () => {
           selectedModelId: update.selectedModelId ?? undefined,
         })
     );
-    agentState.chatStream.mockImplementation(async function* () {
+    agentState.chatStream.mockReset().mockImplementation(async function* () {
       if (Date.now() < 0) {
         yield undefined;
       }
@@ -738,7 +739,13 @@ describe('SessionRoutes runtime reuse', () => {
         metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
       };
     });
-    agentState.destroy.mockClear();
+    agentState.destroy.mockReset().mockResolvedValue(undefined);
+    vi.mocked(Agent.createWithRuntime)
+      .mockReset()
+      .mockImplementation(async () => ({
+        chatStream: agentState.chatStream,
+        destroy: agentState.destroy,
+      }));
   });
 
   afterEach(() => {
@@ -2220,6 +2227,15 @@ describe('SessionRoutes runtime reuse', () => {
     releaseDestroy();
     await vi.waitFor(() => {
       expect(agentState.chatStream).toHaveBeenCalledTimes(2);
+      expect(
+        busState.publish.mock.calls.filter(
+          ([, type, properties]) =>
+            type === 'pending.resume' && properties.phase === 'recovered'
+        )
+      ).toHaveLength(1);
+      expect(
+        busState.publish.mock.calls.filter(([, type]) => type === 'session.completed')
+      ).toHaveLength(1);
     });
 
     eventsController.abort();
@@ -2229,37 +2245,41 @@ describe('SessionRoutes runtime reuse', () => {
   });
 
   it('keeps a retrying Web pending resume single-flight across concurrent wakes', async () => {
+    const { SessionRuntime: CurrentSessionRuntime } = await import(
+      '../../../../src/agent/runtime/SessionRuntime.js'
+    );
+    const { SessionService: CurrentSessionService } = await import(
+      '../../../../src/services/SessionService.js'
+    );
+    const { Agent: CurrentAgent } = await import('../../../../src/agent/Agent.js');
+    const { Bus } = await import('../../../../src/server/bus.js');
+    const { TeamMailbox } = await import('../../../../src/agent/teams/TeamMailbox.js');
     vi.useFakeTimers({ now: 1_000 });
-    const [{ createSessionRouteController }, { Bus }, { TeamMailbox }] =
-      await Promise.all([
-        import('../../../../src/server/routes/session.js'),
-        import('../../../../src/server/bus.js'),
-        import('../../../../src/agent/teams/TeamMailbox.js'),
-      ]);
     const sessionId = 'single-flight-retry-resume';
     const projectPath = '/persisted-workspace';
     const ref = { sessionId, projectPath };
     const metadata = metadataFor(sessionId, projectPath, {
       permissionMode: 'yolo',
     });
-    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
-    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
-    vi.mocked(SessionRuntime.hasPendingInbox).mockReset().mockResolvedValue(true);
-    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
-    runtimeState.runtime.enqueueSteering.mockResolvedValue({
-      accepted: true,
-      messageId: 'team-wake-message',
-      turnId: 'turn-1',
-      queued: 1,
-      delivery: 'next_turn',
-    });
-    agentState.chatStream.mockReset();
+    vi.mocked(CurrentSessionService.findSessionMetadata).mockResolvedValue(metadata);
+
+    let pendingSteeringCount = 1;
+    const getPendingSteeringCount = vi.fn(() => pendingSteeringCount);
+    const enqueueSteering = vi.fn(
+      async (): Promise<SteeringEnqueueResult> => ({
+        accepted: true,
+        messageId: 'team-wake-message',
+        turnId: 'turn-1',
+        queued: 1,
+        delivery: 'next_turn',
+      })
+    );
 
     let releaseStatus: () => void = () => undefined;
     const statusGate = new Promise<undefined>((resolve) => {
       releaseStatus = () => resolve(undefined);
     });
-    runtimeState.runtime.setTaskStatus.mockImplementationOnce(async () => {
+    const setTaskStatus = vi.fn(async () => {
       await statusGate;
       return undefined;
     });
@@ -2267,35 +2287,80 @@ describe('SessionRoutes runtime reuse', () => {
     const destroyGate = new Promise<undefined>((resolve) => {
       releaseDestroy = () => resolve(undefined);
     });
-    agentState.destroy.mockImplementationOnce(() => destroyGate);
-    agentState.chatStream
-      .mockImplementationOnce(async function* () {
+    let destroyCalls = 0;
+    const destroy = agentState.destroy.mockReset().mockImplementation(async () => {
+      destroyCalls++;
+      if (destroyCalls === 1) await destroyGate;
+    });
+    let attempts = 0;
+    const chatStream = agentState.chatStream
+      .mockReset()
+      .mockImplementation(async function* () {
+        attempts++;
+        if (attempts === 1) {
+          if (Date.now() < 0) yield undefined;
+          return {
+            success: false,
+            error: {
+              type: 'api_error' as const,
+              message: 'Provider request failed.',
+              details: Object.assign(new Error('opaque'), {
+                code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+              }),
+            },
+            metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+          };
+        }
         if (Date.now() < 0) yield undefined;
-        return {
-          success: false,
-          error: {
-            type: 'api_error' as const,
-            message: 'Provider request failed.',
-            details: Object.assign(new Error('opaque'), {
-              code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
-            }),
-          },
-          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
-        };
-      })
-      .mockImplementationOnce(async function* () {
-        if (Date.now() < 0) yield undefined;
-        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+        pendingSteeringCount = 0;
         return {
           success: true,
           finalMessage: 'recovered',
           metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
         };
       });
+    const runtime = await createRuntimeDouble({
+      sessionId,
+      workspaceRoot: projectPath,
+      getPendingSteeringCount,
+      getPendingSteeringMessages: vi.fn(() => []),
+      enqueueSteering,
+      setTaskStatus,
+    });
 
+    const createRuntime = vi.mocked(CurrentSessionRuntime.create);
+    const defaultCreateRuntime = createRuntime.getMockImplementation();
+    if (!defaultCreateRuntime) throw new Error('Expected SessionRuntime.create mock');
+    createRuntime
+      .mockReset()
+      .mockImplementation(async (...args) =>
+        args[0].sessionId === sessionId ? runtime : defaultCreateRuntime(...args)
+      );
+    const hasPendingInbox = vi.mocked(CurrentSessionRuntime.hasPendingInbox);
+    const defaultHasPendingInbox = hasPendingInbox.getMockImplementation();
+    if (!defaultHasPendingInbox) {
+      throw new Error('Expected SessionRuntime.hasPendingInbox mock');
+    }
+    hasPendingInbox
+      .mockReset()
+      .mockImplementation(async (...args) =>
+        args[1] === sessionId ? true : defaultHasPendingInbox(...args)
+      );
+    const createAgent = vi.mocked(CurrentAgent.createWithRuntime);
+    const defaultCreateAgent = createAgent.getMockImplementation();
+    if (!defaultCreateAgent) throw new Error('Expected Agent.createWithRuntime mock');
+    createAgent.mockReset().mockImplementation(async (...args) => {
+      const agent = await defaultCreateAgent(...args);
+      return args[0].sessionId === sessionId
+        ? Object.assign(agent, { chatStream, destroy })
+        : agent;
+    });
     const markDelivered = vi
       .spyOn(TeamMailbox.prototype, 'markDelivered')
       .mockResolvedValue(undefined);
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
     const controller = createSessionRouteController();
     const eventControllers = [
       new AbortController(),
@@ -2305,10 +2370,20 @@ describe('SessionRoutes runtime reuse', () => {
     const responses: Response[] = [];
     try {
       responses.push(
-        await controller.app.request(`/${sessionId}/events`, {
-          signal: eventControllers[0].signal,
-        })
+        await controller.app.request(
+          `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`,
+          { signal: eventControllers[0].signal }
+        )
       );
+      await vi.waitFor(() => {
+        expect(SessionService.findSessionMetadata).toHaveBeenCalled();
+        expect(SessionRuntime.hasPendingInbox).toHaveBeenCalled();
+        expect(SessionRuntime.create).toHaveBeenCalled();
+        expect(Agent.createWithRuntime).toHaveBeenCalled();
+      });
+      await vi.waitFor(() => {
+        expect(chatStream).toHaveBeenCalledTimes(1);
+      });
       await vi.waitFor(() => {
         expect(
           busState.publish.mock.calls.filter(
@@ -2319,15 +2394,18 @@ describe('SessionRoutes runtime reuse', () => {
       });
 
       await vi.advanceTimersByTimeAsync(5_000);
-      expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+      expect(chatStream).toHaveBeenCalledTimes(1);
 
       responses.push(
         ...(await Promise.all(
-          eventControllers.slice(1).map((eventsController) =>
-            controller.app.request(`/${sessionId}/events`, {
-              signal: eventsController.signal,
-            })
-          )
+          eventControllers
+            .slice(1)
+            .map((eventsController) =>
+              controller.app.request(
+                `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`,
+                { signal: eventsController.signal }
+              )
+            )
         ))
       );
       Bus.publish(ref, 'subagent.completion.queued', {
@@ -2352,24 +2430,49 @@ describe('SessionRoutes runtime reuse', () => {
         },
       });
       await vi.waitFor(() => {
-        expect(runtimeState.runtime.enqueueSteering).toHaveBeenCalledTimes(3);
+        expect(enqueueSteering).toHaveBeenCalledTimes(3);
       });
-      expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+      expect(chatStream).toHaveBeenCalledTimes(1);
 
       releaseStatus();
       await vi.advanceTimersByTimeAsync(0);
-      expect(agentState.destroy).toHaveBeenCalledTimes(1);
-      expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+      expect(destroy).toHaveBeenCalledTimes(1);
+      expect(chatStream).toHaveBeenCalledTimes(1);
       releaseDestroy();
       await vi.waitFor(() => {
-        expect(agentState.chatStream).toHaveBeenCalledTimes(2);
+        expect(chatStream).toHaveBeenCalledTimes(2);
+        expect(
+          busState.publish.mock.calls.filter(
+            ([eventRef, type, properties]) =>
+              eventRef.sessionId === sessionId &&
+              eventRef.projectPath === projectPath &&
+              type === 'pending.resume' &&
+              properties.phase === 'recovered'
+          )
+        ).toHaveLength(1);
+        expect(
+          busState.publish.mock.calls.filter(
+            ([eventRef, type]) =>
+              eventRef.sessionId === sessionId &&
+              eventRef.projectPath === projectPath &&
+              type === 'session.completed'
+          )
+        ).toHaveLength(1);
+        expect(markDelivered).toHaveBeenCalledTimes(3);
+        expect(controller.getCoordinationStats().messageSubmissions).toEqual({
+          keys: 0,
+          operations: 0,
+        });
       });
       await vi.advanceTimersByTimeAsync(30_000);
 
       const pendingResumeEvents = busState.publish.mock.calls.filter(
-        ([, type]) => type === 'pending.resume'
+        ([eventRef, type]) =>
+          eventRef.sessionId === sessionId &&
+          eventRef.projectPath === projectPath &&
+          type === 'pending.resume'
       );
-      expect(agentState.chatStream).toHaveBeenCalledTimes(2);
+      expect(chatStream).toHaveBeenCalledTimes(2);
       expect(
         pendingResumeEvents.filter(
           ([, , properties]) => properties.phase === 'retry_scheduled'
@@ -2389,6 +2492,9 @@ describe('SessionRoutes runtime reuse', () => {
       );
       await controller.shutdown();
       markDelivered.mockRestore();
+      createAgent.mockReset().mockImplementation(defaultCreateAgent);
+      hasPendingInbox.mockReset().mockImplementation(defaultHasPendingInbox);
+      createRuntime.mockReset().mockImplementation(defaultCreateRuntime);
       vi.useRealTimers();
     }
   });
