@@ -306,6 +306,9 @@ export function createLoopEventHandler(
       case 'task_update':
         deps.appActions.setTasks(event.tasks);
         break;
+      case 'goal_frontier_updated':
+        deps.appActions.setTasks(event.tasks);
+        break;
       case 'mcp_catalog_changed': {
         const summary =
           `MCP catalog r${event.revision}: ` +

@@ -274,6 +274,35 @@ const TaskUpdateEventSchema = event({
   tasks: Type.Array(TaskListItemSchema),
 });
 
+const GoalFrontierEventSchema = event({
+  type: Type.Literal('goal_frontier'),
+  goal_id: Type.String({ minLength: 1 }),
+  status: StringEnum([
+    'active',
+    'verifying',
+    'paused',
+    'blocked',
+    'usage_limited',
+    'budget_limited',
+    'complete',
+  ]),
+  task_list_id: Type.String({ minLength: 1, maxLength: 256 }),
+  total: Type.Integer({ minimum: 0 }),
+  completed: Type.Integer({ minimum: 0 }),
+  in_progress: Type.Integer({ minimum: 0 }),
+  pending: Type.Integer({ minimum: 0 }),
+  blocked: Type.Integer({ minimum: 0 }),
+  next_task: Type.Optional(
+    Type.Object({
+      id: Type.String({ minLength: 1 }),
+      subject: Type.String({ minLength: 1, maxLength: 512 }),
+      priority: StringEnum(['high', 'medium', 'low']),
+    })
+  ),
+  digest_sha256: Type.String({ pattern: '^[a-f0-9]{64}$' }),
+  observed_at: Type.String(),
+});
+
 const GoalEventSchema = event({
   type: Type.Literal('goal'),
   state: StringEnum(['updated', 'cleared']),
@@ -531,6 +560,7 @@ export const HeadlessJsonlEventSchema = Runtime(
     PhaseEventSchema,
     ToolDetailEventSchema,
     TaskUpdateEventSchema,
+    GoalFrontierEventSchema,
     GoalEventSchema,
     SubagentEventSchema,
     TokenUsageEventSchema,

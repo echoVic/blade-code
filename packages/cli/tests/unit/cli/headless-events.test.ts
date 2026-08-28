@@ -603,4 +603,34 @@ describe('headless event contract', () => {
       resume_depth: 2,
     });
   });
+
+  it('validates a bounded goal frontier event', async () => {
+    const { HEADLESS_EVENT_VERSION, HeadlessJsonlEventSchema, createHeadlessJsonlEvent } =
+      await import('../../../src/commands/headlessEvents.js');
+    const event = createHeadlessJsonlEvent('goal_frontier', {
+      goal_id: 'goal-1',
+      status: 'active',
+      task_list_id: 'goal:session-1:goal-1',
+      total: 2,
+      completed: 1,
+      in_progress: 0,
+      pending: 1,
+      blocked: 0,
+      next_task: {
+        id: '2',
+        subject: 'Run the focused test',
+        priority: 'high',
+      },
+      digest_sha256: 'a'.repeat(64),
+      observed_at: '2026-08-28T00:00:00.000Z',
+    });
+
+    expect(event).toMatchObject({
+      event_version: HEADLESS_EVENT_VERSION,
+      type: 'goal_frontier',
+      goal_id: 'goal-1',
+      pending: 1,
+    });
+    expect(() => HeadlessJsonlEventSchema.parse(event)).not.toThrow();
+  });
 });

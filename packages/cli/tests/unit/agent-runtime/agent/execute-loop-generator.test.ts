@@ -716,6 +716,96 @@ describe('executeLoopGenerator', () => {
     );
   });
 
+  it('refreshes the Goal frontier after a Goal-scoped task update', async () => {
+    const deps = createMockDeps();
+    const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+    chatMock
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            id: 'tc-frontier-task',
+            type: 'function',
+            function: {
+              name: 'TaskUpdate',
+              arguments: '{"taskId":"1","status":"completed"}',
+            },
+          },
+        ],
+        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+        finishReason: 'tool_calls',
+      })
+      .mockResolvedValueOnce({
+        content: 'Updated the task.',
+        toolCalls: undefined,
+        usage: { promptTokens: 120, completionTokens: 20, totalTokens: 140 },
+        finishReason: 'stop',
+      });
+    (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      success: true,
+      llmContent: { tasks: [{ id: '1', status: 'completed' }] },
+      metadata: { tasks: [{ id: '1', status: 'completed' }] },
+    });
+    const frontier = {
+      taskListId: 'goal:test-session:goal-1',
+      total: 1,
+      completed: 1,
+      inProgress: 0,
+      pending: 0,
+      blocked: 0,
+      digestSha256: 'a'.repeat(64),
+      observedAt: '2026-08-28T00:00:00.000Z',
+    };
+    const goal = {
+      version: 2 as const,
+      sessionId: 'test-session',
+      goalId: 'goal-1',
+      objective: 'finish the task',
+      status: 'active' as const,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      continuationCount: 1,
+      createdAt: '2026-08-28T00:00:00.000Z',
+      updatedAt: '2026-08-28T00:00:00.000Z',
+    };
+    const refreshFrontier = vi.fn().mockResolvedValue({
+      ok: true,
+      goal,
+      frontier,
+      tasks: [{ id: '1', status: 'completed' }],
+    });
+
+    const { events, result } = await drainGenerator(
+      executeLoopGenerator(
+        deps,
+        'Complete the Goal task.',
+        createMockContext({ goalTaskListId: 'goal:test-session:goal-1' }),
+        {
+          stream: false,
+          goalLifecycle: {
+            snapshot: goal,
+            getSnapshot: vi.fn().mockResolvedValue(goal),
+            recordVerification: vi.fn(),
+            invalidateVerification: vi.fn(),
+            finalizeCompletion: vi.fn(),
+            refreshFrontier,
+          },
+        },
+        undefined
+      )
+    );
+
+    expect(result.success).toBe(true);
+    expect(refreshFrontier).toHaveBeenCalledOnce();
+    expect(events.map((event) => event.kind)).toContain('task_update');
+    expect(events.map((event) => event.kind)).toContain('goal_frontier_updated');
+    expect(
+      events.findIndex((event) => event.kind === 'task_update')
+    ).toBeLessThan(
+      events.findIndex((event) => event.kind === 'goal_frontier_updated')
+    );
+  });
+
   describe('foreground Provider recovery origin', () => {
     it('attaches the frozen recovery budget to a root Provider request', async () => {
       const deps = createMockDeps({

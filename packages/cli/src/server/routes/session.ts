@@ -5154,6 +5154,13 @@ async function executeRunAsync(
         case 'task_update':
           emit('task.updated', { tasks: event.tasks });
           break;
+        case 'goal_frontier_updated':
+          emit('goal.frontier.updated', {
+            goalId: event.goal.goalId,
+            goalStatus: event.goal.status,
+            frontier: event.frontier,
+          });
+          break;
 
         // stream_end is per-turn internal completion; clients consume run-level events.
         default:

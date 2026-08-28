@@ -3122,6 +3122,80 @@ describe('AcpSession', () => {
       });
     });
 
+    it('projects a Goal frontier before its matching ACP plan', async () => {
+      const mockAgent = getMockAgent();
+      const task = {
+        id: '1',
+        subject: 'Run tests',
+        description: 'Run focused tests',
+        status: 'in_progress',
+        priority: 'high',
+        blocks: [],
+        blockedBy: [],
+        createdAt: '2026-08-28T00:00:00.000Z',
+      } as any;
+      mockAgent.chatStream = vi.fn(async function* () {
+        yield {
+          kind: 'goal_frontier_updated',
+          goal: {
+            version: 2,
+            sessionId: 'test-session-id',
+            goalId: 'goal-frontier',
+            objective: 'finish tests',
+            status: 'active',
+            tokensUsed: 0,
+            timeUsedSeconds: 0,
+            continuationCount: 1,
+            createdAt: '2026-08-28T00:00:00.000Z',
+            updatedAt: '2026-08-28T00:00:00.000Z',
+          },
+          frontier: {
+            taskListId: 'goal:test-session-id:goal-frontier',
+            total: 1,
+            completed: 0,
+            inProgress: 1,
+            pending: 0,
+            blocked: 0,
+            nextTask: { id: '1', subject: 'Run tests', priority: 'high' },
+            digestSha256: 'a'.repeat(64),
+            observedAt: '2026-08-28T00:00:00.000Z',
+          },
+          tasks: [task],
+        } as LoopEvent;
+        return { success: true, finalMessage: 'continuing' };
+      }) as typeof mockAgent.chatStream;
+
+      await session.prompt({
+        sessionId: 'test-session-id',
+        prompt: [{ type: 'text', text: 'continue the goal' }],
+      });
+
+      const frontierIndex = mockConnection.sessionUpdates.findIndex(
+        (item) =>
+          item.update.sessionUpdate === 'session_info_update' &&
+          item.update._meta?.['blade/goalFrontier']
+      );
+      const planIndex = mockConnection.sessionUpdates.findIndex(
+        (item) => item.update.sessionUpdate === 'plan'
+      );
+      expect(frontierIndex).toBeGreaterThanOrEqual(0);
+      expect(planIndex).toBeGreaterThan(frontierIndex);
+      expect(mockConnection.sessionUpdates[frontierIndex]?.update).toMatchObject({
+        _meta: {
+          'blade/goalFrontier': {
+            goalId: 'goal-frontier',
+            taskListId: 'goal:test-session-id:goal-frontier',
+            total: 1,
+            inProgress: 1,
+          },
+        },
+      });
+      expect(mockConnection.sessionUpdates[planIndex]?.update).toMatchObject({
+        sessionUpdate: 'plan',
+        entries: [{ content: 'Run tests', status: 'in_progress', priority: 'high' }],
+      });
+    });
+
     it('projects reactive compaction lifecycle through ACP metadata only', async () => {
       const mockAgent = getMockAgent();
       mockAgent.chatStream = vi.fn(async function* () {

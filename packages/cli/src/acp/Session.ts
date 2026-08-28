@@ -1687,6 +1687,27 @@ export class AcpSession {
             case 'task_update':
               this.sendPlanUpdate(event.tasks);
               break;
+            case 'goal_frontier_updated':
+              this.sendUpdate({
+                sessionUpdate: 'session_info_update',
+                updatedAt: event.frontier.observedAt,
+                _meta: {
+                  'blade/goalFrontier': {
+                    goalId: event.goal.goalId,
+                    status: event.goal.status,
+                    taskListId: event.frontier.taskListId,
+                    total: event.frontier.total,
+                    completed: event.frontier.completed,
+                    inProgress: event.frontier.inProgress,
+                    pending: event.frontier.pending,
+                    blocked: event.frontier.blocked,
+                    nextTask: event.frontier.nextTask,
+                    digestSha256: event.frontier.digestSha256,
+                  },
+                },
+              });
+              this.sendPlanUpdate(event.tasks);
+              break;
             case 'steering_applied':
               break;
             case 'follow_up_started': {

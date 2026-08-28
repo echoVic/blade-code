@@ -1,4 +1,4 @@
-import type { McpElicitationDetails } from '@api/schemas';
+import type { Goal, McpElicitationDetails } from '@api/schemas';
 import { taskFailureCode } from '@/lib/taskFailure';
 import type { Message as ServiceMessage, StreamEvent } from '@/services';
 import { useAppStore } from '@/store/AppStore';
@@ -2213,6 +2213,18 @@ const handleGoalUpdated: EventHandler = (props, get, set) => {
   set({ goal: (props.goal as SessionStoreState['goal']) ?? null });
 };
 
+const handleGoalFrontierUpdated: EventHandler = (props, get, set) => {
+  if (props.sessionId !== get().currentSessionId) return;
+  const goal = get().goal;
+  if (!goal || goal.goalId !== props.goalId) return;
+  set({
+    goal: {
+      ...goal,
+      executionFrontier: props.frontier as NonNullable<Goal['executionFrontier']>,
+    },
+  });
+};
+
 const handleGoalCleared: EventHandler = (props, get, set) => {
   if (props.sessionId !== get().currentSessionId) return;
   set({ goal: null });
@@ -2409,6 +2421,7 @@ const eventHandlers: Record<string, EventHandler> = {
   'follow_up.started': handleFollowUpStarted,
   'steering.applied': handleSteeringApplied,
   'goal.updated': handleGoalUpdated,
+  'goal.frontier.updated': handleGoalFrontierUpdated,
   'goal.cleared': handleGoalCleared,
   'goal.continuation.started': handleGoalContinuationStarted,
   'session.rewound': handleSessionRewound,

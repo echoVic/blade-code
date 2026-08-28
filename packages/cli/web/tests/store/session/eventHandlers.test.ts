@@ -1521,6 +1521,57 @@ describe('eventHandlers', () => {
     expect(state.messages[0]?.agentContent?.tasks).toEqual(tasks);
   });
 
+  test('applies goal.frontier.updated events to the current goal', () => {
+    const goal = {
+      version: 2 as const,
+      sessionId: 'session-1',
+      goalId: 'goal-1',
+      objective: 'finish the task',
+      status: 'active' as const,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      continuationCount: 1,
+      createdAt: '2026-08-28T00:00:00.000Z',
+      updatedAt: '2026-08-28T00:00:00.000Z',
+    };
+    const state = createState({ goal });
+    const set = vi.fn(
+      (
+        update:
+          | Partial<SessionStoreState>
+          | ((current: SessionStoreState) => Partial<SessionStoreState>)
+      ) => {
+        Object.assign(state, typeof update === 'function' ? update(state) : update);
+      }
+    );
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'goal.frontier.updated',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        goalId: 'goal-1',
+        frontier: {
+          taskListId: 'goal:session-1:goal-1',
+          total: 1,
+          completed: 0,
+          inProgress: 1,
+          pending: 0,
+          blocked: 0,
+          nextTask: { id: '1', subject: 'Run tests', priority: 'high' },
+          digestSha256: 'a'.repeat(64),
+          observedAt: '2026-08-28T00:00:00.000Z',
+        },
+      },
+    });
+
+    expect(state.goal?.executionFrontier).toMatchObject({
+      taskListId: 'goal:session-1:goal-1',
+      inProgress: 1,
+    });
+  });
+
   test('ignores task.updated events for other sessions', () => {
     const state = createState();
     const dispatch = createEventDispatcher(() => state, vi.fn());

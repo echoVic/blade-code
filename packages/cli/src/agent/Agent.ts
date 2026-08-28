@@ -676,6 +676,10 @@ export class Agent {
     let policyUserMessage = message;
     let inputPersistenceMetadata = preparedMetadata;
     let initialGoal: GoalSnapshot | null = null;
+    let initialFrontier: Extract<
+      Awaited<ReturnType<SessionRuntime['prepareGoalContinuation']>>,
+      { ok: true }
+    > | null = null;
     if (requestedGoalContinuationOnly) {
       initialGoal = await this.sessionRuntime!.beginGoalContinuation();
       if (!initialGoal) {
@@ -700,6 +704,7 @@ export class Agent {
         };
       }
       initialGoal = preparedFrontier.goal;
+      initialFrontier = preparedFrontier;
       enhancedMessage = buildGoalContinuationPrompt(initialGoal);
     } else if (!requestedPendingInputOnly && preparedInputTurn?.mode !== 'pending') {
       try {
@@ -852,6 +857,14 @@ export class Agent {
           };
         }
         if (goalContinuation && currentGoal) {
+          if (initialFrontier) {
+            yield {
+              kind: 'goal_frontier_updated',
+              goal: initialFrontier.goal,
+              frontier: initialFrontier.frontier,
+              tasks: initialFrontier.tasks,
+            };
+          }
           yield {
             kind: 'goal_continuation_started',
             goal: currentGoal,
@@ -905,6 +918,13 @@ export class Agent {
                       this.sessionRuntime!.invalidateGoalCompletionVerification(reason),
                     finalizeCompletion: () =>
                       this.sessionRuntime!.finalizeVerifiedGoalCompletion(),
+                    refreshFrontier: async () => {
+                      const active = await this.sessionRuntime!.getGoal();
+                      if (!active || !['active', 'verifying'].includes(active.status)) {
+                        return null;
+                      }
+                      return this.sessionRuntime!.prepareGoalContinuation(active);
+                    },
                   },
                 }
               : {}),
@@ -1102,12 +1122,19 @@ export class Agent {
             };
           }
           currentGoal = preparedFrontier.goal;
+          initialFrontier = preparedFrontier;
           turnHandle = await this.sessionRuntime.beginTurn('goal');
           pendingInputOnly = false;
           goalContinuation = true;
           currentMessage = buildGoalContinuationPrompt(currentGoal);
           inputMessageId = undefined;
           currentOutputSchema = undefined;
+          yield {
+            kind: 'goal_frontier_updated',
+            goal: preparedFrontier.goal,
+            frontier: preparedFrontier.frontier,
+            tasks: preparedFrontier.tasks,
+          };
           yield {
             kind: 'goal_continuation_started',
             goal: currentGoal,

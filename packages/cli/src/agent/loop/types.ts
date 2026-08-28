@@ -13,7 +13,11 @@ import type {
   CompactionStrategy,
 } from '../../context/compactionCheckpoint.js';
 import type { SessionTurnRecoveryAssessment } from '../../context/turnRecoveryAssessment.js';
-import type { GoalPrematureStopPattern, GoalSnapshot } from '../../goals/types.js';
+import type {
+  GoalExecutionFrontier,
+  GoalPrematureStopPattern,
+  GoalSnapshot,
+} from '../../goals/types.js';
 import type {
   ChatCompletionMessageToolCall,
   IChatService,
@@ -101,6 +105,12 @@ export type DomainEvent =
       assessment: Exclude<SessionTurnRecoveryAssessment, { state: 'none' }>;
     }
   | { kind: 'task_update'; tasks: TaskListItem[] }
+  | {
+      kind: 'goal_frontier_updated';
+      goal: GoalSnapshot;
+      frontier: GoalExecutionFrontier;
+      tasks: TaskListItem[];
+    }
   | {
       kind: 'structured_output';
       output: JsonObject;

@@ -16,6 +16,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import type { LoopEvent } from '../../../../../src/agent/loop/types.js';
+import type { TaskListItem } from '../../../../../src/tools/builtin/task/taskListTypes.js';
 import {
   type ToolDisplayOutput,
   ToolKind,
@@ -146,6 +147,51 @@ describe('createLoopEventHandler', () => {
     handler({ ...queued, phase: 'admitted', queuePosition: 0 });
     expect(deps.sessionActions.setProviderAdmission).toHaveBeenLastCalledWith(null);
     expect(deps.sessionActions.finalizeStreamingMessage).not.toHaveBeenCalled();
+  });
+
+  it('projects a Goal frontier task snapshot into the TUI task panel', () => {
+    const deps = createMockDeps();
+    const handler = createLoopEventHandler(deps, createMockStats());
+    const task: TaskListItem = {
+      id: '1',
+      subject: 'Run tests',
+      description: 'Run focused tests',
+      status: 'in_progress',
+      priority: 'high',
+      blocks: [],
+      blockedBy: [],
+      createdAt: '2026-08-28T00:00:00.000Z',
+    };
+
+    handler({
+      kind: 'goal_frontier_updated',
+      goal: {
+        version: 2,
+        sessionId: 'session-1',
+        goalId: 'goal-1',
+        objective: 'finish tests',
+        status: 'active',
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        continuationCount: 1,
+        createdAt: '2026-08-28T00:00:00.000Z',
+        updatedAt: '2026-08-28T00:00:00.000Z',
+      },
+      frontier: {
+        taskListId: 'goal:session-1:goal-1',
+        total: 1,
+        completed: 0,
+        inProgress: 1,
+        pending: 0,
+        blocked: 0,
+        nextTask: { id: '1', subject: 'Run tests', priority: 'high' },
+        digestSha256: 'a'.repeat(64),
+        observedAt: '2026-08-28T00:00:00.000Z',
+      },
+      tasks: [task],
+    });
+
+    expect(deps.appActions.setTasks).toHaveBeenCalledWith([task]);
   });
 
   it('projects Provider retry state without crossing the stream finalize boundary', () => {

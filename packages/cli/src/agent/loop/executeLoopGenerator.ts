@@ -3717,6 +3717,34 @@ validates the object and may return a bounded corrective error.`;
           );
           if (taskAction) {
             yield taskAction;
+            if (!context.taskListId && options?.goalLifecycle?.refreshFrontier) {
+              const refreshed = await options.goalLifecycle.refreshFrontier();
+              if (refreshed?.ok) {
+                yield {
+                  kind: 'goal_frontier_updated',
+                  goal: refreshed.goal,
+                  frontier: refreshed.frontier,
+                  tasks: refreshed.tasks,
+                };
+              } else if (refreshed) {
+                if (refreshed.goal) {
+                  yield { kind: 'goal_updated', goal: refreshed.goal };
+                }
+                return {
+                  success: false,
+                  error: {
+                    type: 'goal_frontier_unavailable',
+                    message: refreshed.error.message,
+                  },
+                  metadata: {
+                    turnsCount,
+                    toolCallsCount: allToolResults.length,
+                    duration: Date.now() - startTime,
+                    tokensUsed: totalTokens,
+                  },
+                };
+              }
+            }
           }
 
           // 添加工具结果到消息历史

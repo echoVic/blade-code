@@ -944,6 +944,31 @@ function createEventWriter(
         writeLine(io.stderr, formatTask(task));
       }
     },
+    goalFrontier(event: Extract<LoopEvent, { kind: 'goal_frontier_updated' }>) {
+      if (outputFormat === 'jsonl') {
+        writeJsonl('goal_frontier', {
+          goal_id: event.goal.goalId,
+          status: event.goal.status,
+          task_list_id: event.frontier.taskListId,
+          total: event.frontier.total,
+          completed: event.frontier.completed,
+          in_progress: event.frontier.inProgress,
+          pending: event.frontier.pending,
+          blocked: event.frontier.blocked,
+          next_task: event.frontier.nextTask,
+          digest_sha256: event.frontier.digestSha256,
+          observed_at: event.frontier.observedAt,
+        });
+        return;
+      }
+      const next = event.frontier.nextTask
+        ? ` next=#${event.frontier.nextTask.id} ${event.frontier.nextTask.subject}`
+        : '';
+      writeLine(
+        io.stderr,
+        `[goal-frontier] ${event.frontier.completed}/${event.frontier.total} completed${next}`
+      );
+    },
     turnRecovery(event: Extract<LoopEvent, { kind: 'turn_recovery' }>) {
       const assessment = event.assessment;
       if (outputFormat === 'jsonl') {
@@ -1833,6 +1858,9 @@ export async function runHeadless(
           // --- 业务事件 ---
           case 'task_update':
             eventWriter.taskUpdate(event.tasks);
+            break;
+          case 'goal_frontier_updated':
+            eventWriter.goalFrontier(event);
             break;
           case 'turn_recovery':
             eventWriter.turnRecovery(event);
