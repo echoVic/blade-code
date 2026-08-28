@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.112] - 2026-08-28
+
+### 修复
+- 将无 Goal Session 的 frontier stall 清理改为原子 no-op，避免普通写入回合和恢复中的待处理交互在工具成功后异常失败。
+
+### 测试
+- 新增 GoalStore 与 Agent loop 的无 Goal 写入回归测试，并通过 production Chromium、真实 DeepSeek 请求和一次瞬态故障注入验证修复后的完整路径。
+
 ## [0.10.111] - 2026-08-28
 
 ### 修复

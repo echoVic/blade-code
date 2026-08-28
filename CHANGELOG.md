@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.112] - 2026-08-28
+
+### Fixed
+- Made Goal frontier-stall cleanup an atomic no-op for Sessions without a Goal, preventing ordinary write turns and recovered pending interactions from failing after a successful tool result.
+
+### Tests
+- Added GoalStore and Agent-loop regressions for the no-Goal write path, and verified the repaired path through production Chromium with a real DeepSeek request and one injected transient failure.
+
 ## [0.10.111] - 2026-08-28
 
 ### Fixed
