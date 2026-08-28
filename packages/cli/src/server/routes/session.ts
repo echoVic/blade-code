@@ -1722,6 +1722,21 @@ export const createSessionRouteController = (): SessionRouteController => {
     pendingResumeRecoveries.delete(key);
   };
 
+  const isPendingResumeAttemptCurrent = (
+    session: SessionInfo,
+    attempt: WebPendingResumeAttempt
+  ): boolean => {
+    const state = pendingResumeRecoveries.get(
+      sessionRefKey(sessionRefFromSession(session))
+    );
+    return (
+      state?.generation === attempt.generation &&
+      state.attempt === attempt.attempt &&
+      state.inFlight &&
+      !state.terminal
+    );
+  };
+
   const beginPendingResumeAttempt = (
     session: SessionInfo
   ): WebPendingResumeAttempt | undefined => {
@@ -2856,6 +2871,9 @@ export const createSessionRouteController = (): SessionRouteController => {
           ? (reservedAttempt ?? beginPendingResumeAttempt(session))
           : undefined;
       if (hasPending && !session.taskIsolation && !pendingResume) return;
+      if (reservedAttempt && !isPendingResumeAttemptCurrent(session, reservedAttempt)) {
+        return;
+      }
       startRun(session, '', session.permissionMode ?? PermissionMode.DEFAULT, {
         pendingInputOnly: hasPending,
         goalContinuationOnly: hasActiveGoal,

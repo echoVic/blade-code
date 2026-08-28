@@ -3152,6 +3152,86 @@ describe('SessionRoutes runtime reuse', () => {
     }
   );
 
+  it('invalidates a pending resume attempt when abort arrives during its disk probe', async () => {
+    vi.useFakeTimers();
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionId = 'abort-during-pending-resume-probe';
+    const projectPath = '/persisted-workspace';
+    const metadata = metadataFor(sessionId, projectPath, { permissionMode: 'yolo' });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    let releaseProbe: (pending: boolean) => void = () => undefined;
+    const probeGate = new Promise<boolean>((resolve) => {
+      releaseProbe = resolve;
+    });
+    vi.mocked(SessionRuntime.hasPendingInbox)
+      .mockResolvedValueOnce(true)
+      .mockImplementationOnce(() => probeGate);
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      if (Date.now() < 0) yield undefined;
+      return {
+        success: false,
+        error: {
+          type: 'api_error' as const,
+          message: 'Provider request failed.',
+          details: Object.assign(new Error('opaque'), {
+            code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+          }),
+        },
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const controller = createSessionRouteController();
+    const eventsController = new AbortController();
+    const response = await controller.app.request(
+      `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`,
+      { signal: eventsController.signal }
+    );
+    try {
+      await vi.waitFor(() => {
+        expect(
+          busState.publish.mock.calls.some(
+            ([, type, properties]) =>
+              type === 'pending.resume' && properties.phase === 'retry_scheduled'
+          )
+        ).toBe(true);
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(SessionRuntime.hasPendingInbox).toHaveBeenCalledTimes(2);
+
+      const abortPromise = controller.app.request(
+        `/${sessionId}/abort?projectPath=${encodeURIComponent(projectPath)}`,
+        { method: 'POST' }
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      releaseProbe(true);
+      expect((await abortPromise).status).toBe(200);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+      expect(Agent.createWithRuntime).toHaveBeenCalledTimes(1);
+      expect(
+        busState.publish.mock.calls.some(
+          ([, type, properties]) =>
+            type === 'pending.resume' && properties.phase === 'recovered'
+        )
+      ).toBe(false);
+      expect(
+        busState.publish.mock.calls.some(([, type]) => type === 'session.completed')
+      ).toBe(false);
+    } finally {
+      releaseProbe(true);
+      eventsController.abort();
+      await response.body?.cancel().catch(() => undefined);
+      await controller.shutdown();
+      vi.useRealTimers();
+    }
+  });
+
   it.each(['session delete', 'new message run', 'controller replacement'] as const)(
     'clears a scheduled Web pending resume on %s',
     async (cleanup) => {
