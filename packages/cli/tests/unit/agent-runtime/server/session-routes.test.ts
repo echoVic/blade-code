@@ -2669,6 +2669,95 @@ describe('SessionRoutes runtime reuse', () => {
     }
   });
 
+  it('stays terminal when persisting a pending resume startup failure rejects', async () => {
+    vi.useFakeTimers();
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionId = 'retry-terminal-persist-failure';
+    const projectPath = '/persisted-workspace';
+    const metadata = metadataFor(sessionId, projectPath, { permissionMode: 'yolo' });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionRuntime.hasPendingInbox)
+      .mockResolvedValueOnce(true)
+      .mockRejectedValueOnce(new Error('private retry startup details'))
+      .mockResolvedValue(true);
+    vi.mocked(SessionService.updateSessionMetadata).mockRejectedValueOnce(
+      new Error('private persistence details')
+    );
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      if (Date.now() < 0) yield undefined;
+      return {
+        success: false,
+        error: {
+          type: 'api_error' as const,
+          message: 'Provider request failed.',
+          details: Object.assign(new Error('opaque'), {
+            code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+          }),
+        },
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const controller = createSessionRouteController();
+    const firstController = new AbortController();
+    const firstResponse = await controller.app.request(
+      `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`,
+      { signal: firstController.signal }
+    );
+    try {
+      await vi.waitFor(() => {
+        expect(
+          busState.publish.mock.calls.filter(
+            ([, type, properties]) =>
+              type === 'pending.resume' && properties.phase === 'retry_scheduled'
+          )
+        ).toHaveLength(1);
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.waitFor(() => {
+        expect(
+          busState.publish.mock.calls.filter(
+            ([, type, properties]) =>
+              type === 'pending.resume' && properties.phase === 'failed'
+          )
+        ).toHaveLength(1);
+        expect(
+          busState.publish.mock.calls.filter(
+            ([, type, properties]) =>
+              type === 'session.error' &&
+              (properties.taskFailure as { code?: unknown } | undefined)?.code ===
+                'runtime'
+          )
+        ).toHaveLength(1);
+      });
+      expect(JSON.stringify(busState.publish.mock.calls)).not.toContain('private');
+
+      const pendingChecks = vi.mocked(SessionRuntime.hasPendingInbox).mock.calls.length;
+      const reconnectController = new AbortController();
+      const reconnectResponse = await controller.app.request(
+        `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`,
+        { signal: reconnectController.signal }
+      );
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        expect(SessionRuntime.hasPendingInbox).toHaveBeenCalledTimes(pendingChecks);
+        expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+      } finally {
+        reconnectController.abort();
+        await reconnectResponse.body?.cancel().catch(() => undefined);
+      }
+    } finally {
+      firstController.abort();
+      await firstResponse.body?.cancel().catch(() => undefined);
+      await controller.shutdown();
+      vi.useRealTimers();
+    }
+  });
+
   it('exhausts a Web pending resume whose cleanup crosses the recovery deadline', async () => {
     vi.useFakeTimers({ now: 1_000 });
     const { createSessionRouteController } = await import(
