@@ -1434,6 +1434,27 @@ describe('durable ACP recovery diagnostics', () => {
     }
   });
 
+  it('keeps the production Web final marker out of the seeded prompt', async () => {
+    const source = await readFile(import.meta.filename, 'utf8');
+    const webTitle =
+      "it('recovers a one-shot DeepSeek failure through the visible Web UI'";
+    const nextSuiteTitle =
+      "describeReal('durable pending interaction recovery trajectory (real API)'";
+    const webIndex = source.lastIndexOf(webTitle);
+    const nextSuiteIndex = source.indexOf(nextSuiteTitle, webIndex);
+
+    expect(webIndex).toBeGreaterThanOrEqual(0);
+    expect(nextSuiteIndex).toBeGreaterThan(webIndex);
+
+    const webCell = source.slice(webIndex, nextSuiteIndex);
+    expect(webCell).toContain(
+      'createDurableInteractionRecoveryPtyFinalInstruction(finalMarker)'
+    );
+    expect(webCell).toContain('finalInstruction: splitInstruction');
+    expect(webCell).toContain('expect(seed.prompt).not.toContain(finalMarker)');
+    expect(webCell).not.toContain('GUI_INTERACTION_ and RECOVERED');
+  });
+
   it('keeps the DeepSeek-only surface suite independent from GPT qualification gating', async () => {
     const source = await readFile(import.meta.filename, 'utf8');
     const regressionSuiteTitle =
@@ -2413,6 +2434,8 @@ describe
       const sessionId = 'interaction-chromium-' + Date.now();
       const target = path.join(workspace, 'gui-selected-channel.txt');
       const finalMarker = 'GUI_INTERACTION_RECOVERED';
+      const splitInstruction =
+        createDurableInteractionRecoveryPtyFinalInstruction(finalMarker);
       const proxy = await startRecordingProviderProxy(deepseekFlash.baseURL, {
         inject503Once: { path: '/v1/chat/completions', retryAfterMs: 60_000 },
         holdRequestNumber: 2,
@@ -2471,47 +2494,15 @@ describe
           selectedModelId: config.currentModelId,
           permissionMode: 'yolo',
         });
-        const store = new PersistentStore(workspace);
-        await store.saveMessage(
+        const seed = await seedDurablePendingChannelQuestion({
           sessionId,
-          'user',
-          [
-            'A Channel question will be recovered in the production Web UI.',
-            'After the recovered answer, call Write exactly once with file_path=' +
-              JSON.stringify(target) +
-              '.',
-            'Set content to the selected label followed by exactly one newline.',
-            'That Write is the only allowed tool call. Never call AskUserQuestion again.',
-            'Do not emit assistant text or end the turn before Write succeeds.',
-            'After Write succeeds, reply with the exact concatenation of ' +
-              'GUI_INTERACTION_ and RECOVERED, with no separator.',
-          ].join(' ')
-        );
-        const question = {
-          header: 'Channel',
-          question: 'Which release channel should Blade write?',
-          multiSelect: false,
-          options: [
-            { label: 'Stable', description: 'Use the stable release channel' },
-            { label: 'Canary', description: 'Use the early canary release channel' },
-          ],
-        };
-        const toolCallId = await store.saveToolUse(sessionId, 'AskUserQuestion', {
-          questions: [question],
+          workspace,
+          target,
+          finalInstruction: splitInstruction,
+          finalMarker,
         });
-        await SessionInteractionService.request(
-          {
-            sessionId,
-            projectPath: workspace,
-            toolCallId,
-            toolName: 'AskUserQuestion',
-          },
-          {
-            type: 'askUserQuestion',
-            message: 'Choose a release channel',
-            questions: [question],
-          }
-        );
+        expect(seed.prompt).not.toContain(finalMarker);
+        const store = new PersistentStore(workspace);
 
         child = spawn(
           process.execPath,
