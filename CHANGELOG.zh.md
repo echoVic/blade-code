@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.103] - 2026-08-28
+
+### 新增
+- 新增 durable Goal frontier 停滞分类器，识别依赖等待、任务前沿无变化和重复延期。
+- 新增有界策略切换提示，并将停滞诊断投影到 Headless JSONL、CLI TUI、Web SSE/DOM 和 ACP metadata。
+
+### 修复
+- Goal frontier 在同一回合刷新时现在会保留诊断但不会错误增加跨 continuation 计数；workspace mutation 会清除过期停滞状态。
+
+### 测试
+- 新增持久化、continuation、schema 和跨端投影的确定性覆盖。
+- 使用真实 DeepSeek Goal 轨迹和生产 Web GUI reload 轨迹完成资格验证。
+
 ## [0.10.102] - 2026-08-28
 
 ### 新增

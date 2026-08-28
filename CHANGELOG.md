@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.103] - 2026-08-28
+
+### Added
+- Added a durable Goal frontier stall classifier for dependency waits, unchanged tasks, and repeated deferrals.
+- Added bounded strategy-change prompts and stall diagnostics across Headless JSONL, CLI TUI, Web SSE/DOM, and ACP metadata.
+
+### Fixed
+- Goal frontier refreshes now preserve same-turn diagnostics without incrementing cross-continuation stall counts, and workspace mutations clear stale stall state.
+
+### Tests
+- Added deterministic persistence, continuation, schema, and cross-surface coverage.
+- Qualified the behavior with real DeepSeek Goal trajectories and a production Web GUI reload trajectory.
+
 ## [0.10.102] - 2026-08-28
 
 ### Added
