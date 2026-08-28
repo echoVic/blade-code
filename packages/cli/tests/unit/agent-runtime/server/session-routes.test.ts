@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { LoopEvent } from '../../../../src/agent/loop/types.js';
 import { Agent } from '../../../../src/agent/Agent.js';
+import type { LoopEvent } from '../../../../src/agent/loop/types.js';
 import type {
   InputTurnPreparation,
   SteeringEnqueueResult,
@@ -2255,6 +2255,9 @@ describe('SessionRoutes runtime reuse', () => {
       '../../../../src/services/SessionService.js'
     );
     const { Agent: CurrentAgent } = await import('../../../../src/agent/Agent.js');
+    const { SessionRuntimeResidency: CurrentSessionRuntimeResidency } = await import(
+      '../../../../src/agent/runtime/SessionRuntimeResidency.js'
+    );
     const { Bus } = await import('../../../../src/server/bus.js');
     const { TeamMailbox } = await import('../../../../src/agent/teams/TeamMailbox.js');
     vi.useFakeTimers({ now: 1_000 });
@@ -2296,10 +2299,12 @@ describe('SessionRoutes runtime reuse', () => {
       if (destroyCalls === 1) await destroyGate;
     });
     let attempts = 0;
+    const leaseHandoffOrder: string[] = [];
     const chatStream = agentState.chatStream
       .mockReset()
       .mockImplementation(async function* () {
         attempts++;
+        leaseHandoffOrder.push(`chat:${attempts}`);
         if (attempts === 1) {
           if (Date.now() < 0) yield undefined;
           return {
@@ -2330,6 +2335,26 @@ describe('SessionRoutes runtime reuse', () => {
       enqueueSteering,
       setTaskStatus,
     });
+    const originalReserve = CurrentSessionRuntimeResidency.prototype.reserve;
+    const reserveRuntime = vi
+      .spyOn(CurrentSessionRuntimeResidency.prototype, 'reserve')
+      .mockImplementation(async function (key, options) {
+        const reservation = await originalReserve.call(this, key, options);
+        return {
+          commit: (entry) => {
+            const lease = reservation.commit(entry);
+            if (entry.value !== runtime) return lease;
+            return {
+              value: lease.value,
+              release: () => {
+                leaseHandoffOrder.push('first-lease:release');
+                lease.release();
+              },
+            };
+          },
+          cancel: () => reservation.cancel(),
+        };
+      });
 
     const createRuntime = vi.mocked(CurrentSessionRuntime.create);
     const defaultCreateRuntime = createRuntime.getMockImplementation();
@@ -2379,10 +2404,10 @@ describe('SessionRoutes runtime reuse', () => {
         )
       );
       await vi.waitFor(() => {
-        expect(SessionService.findSessionMetadata).toHaveBeenCalled();
-        expect(SessionRuntime.hasPendingInbox).toHaveBeenCalled();
-        expect(SessionRuntime.create).toHaveBeenCalled();
-        expect(Agent.createWithRuntime).toHaveBeenCalled();
+        expect(CurrentSessionService.findSessionMetadata).toHaveBeenCalled();
+        expect(CurrentSessionRuntime.hasPendingInbox).toHaveBeenCalled();
+        expect(CurrentSessionRuntime.create).toHaveBeenCalled();
+        expect(CurrentAgent.createWithRuntime).toHaveBeenCalled();
       });
       await vi.waitFor(() => {
         expect(chatStream).toHaveBeenCalledTimes(1);
@@ -2444,6 +2469,7 @@ describe('SessionRoutes runtime reuse', () => {
       releaseDestroy();
       await vi.waitFor(() => {
         expect(chatStream).toHaveBeenCalledTimes(2);
+        expect(leaseHandoffOrder).toEqual(['chat:1', 'first-lease:release', 'chat:2']);
         expect(
           busState.publish.mock.calls.filter(
             ([eventRef, type, properties]) =>
@@ -2495,6 +2521,7 @@ describe('SessionRoutes runtime reuse', () => {
       );
       await controller.shutdown();
       markDelivered.mockRestore();
+      reserveRuntime.mockRestore();
       createAgent.mockReset().mockImplementation(defaultCreateAgent);
       hasPendingInbox.mockReset().mockImplementation(defaultHasPendingInbox);
       createRuntime.mockReset().mockImplementation(defaultCreateRuntime);
