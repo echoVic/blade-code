@@ -57,6 +57,22 @@ export interface GoalCompletionVerification {
   evidenceSha256?: string;
 }
 
+export interface GoalExecutionFrontier {
+  taskListId: string;
+  total: number;
+  completed: number;
+  inProgress: number;
+  pending: number;
+  blocked: number;
+  nextTask?: {
+    id: string;
+    subject: string;
+    priority: 'high' | 'medium' | 'low';
+  };
+  digestSha256: string;
+  observedAt: string;
+}
+
 export interface GoalSnapshot {
   version: 1;
   sessionId: string;

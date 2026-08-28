@@ -1,0 +1,126 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  formatGoalExecutionFrontier,
+  getGoalTaskListId,
+  readGoalExecutionFrontier,
+} from '../../../../src/goals/executionFrontier.js';
+import { TaskListManager } from '../../../../src/tools/builtin/task/TaskListManager.js';
+
+describe('goal execution frontier', () => {
+  let configDir: string;
+
+  beforeEach(async () => {
+    configDir = await mkdtemp(path.join(os.tmpdir(), 'blade-goal-frontier-'));
+  });
+
+  afterEach(async () => {
+    await rm(configDir, { recursive: true, force: true });
+  });
+
+  it('isolates goals and selects the highest-priority executable task', async () => {
+    const goal = { sessionId: 'session-a', goalId: 'goal-1' };
+    expect(getGoalTaskListId(goal)).toBe('goal:session-a:goal-1');
+
+    const manager = TaskListManager.getInstance(getGoalTaskListId(goal), configDir);
+    await manager.createTask({
+      subject: 'Low priority task',
+      description: 'The lower priority task',
+      priority: 'low',
+    });
+    await manager.createTask({
+      subject: 'High priority task',
+      description: 'The higher priority task',
+      priority: 'high',
+    });
+
+    const result = await readGoalExecutionFrontier(goal, { configDir });
+
+    expect(result.tasks).toHaveLength(2);
+    expect(result.frontier).toMatchObject({
+      taskListId: 'goal:session-a:goal-1',
+      total: 2,
+      completed: 0,
+      inProgress: 0,
+      pending: 2,
+      blocked: 0,
+      nextTask: {
+        subject: 'High priority task',
+        priority: 'high',
+      },
+    });
+
+    const otherGoal = await readGoalExecutionFrontier(
+      { sessionId: 'session-a', goalId: 'goal-2' },
+      { configDir }
+    );
+    expect(otherGoal.tasks).toEqual([]);
+    expect(otherGoal.frontier.taskListId).toBe('goal:session-a:goal-2');
+  });
+
+  it('counts pending tasks blocked by incomplete dependencies', async () => {
+    const goal = { sessionId: 'session-a', goalId: 'goal-1' };
+    const manager = TaskListManager.getInstance(getGoalTaskListId(goal), configDir);
+    const blocker = await manager.createTask({
+      subject: 'Complete blocker',
+      description: 'This must finish first',
+    });
+    await manager.createTask({
+      subject: 'Blocked task',
+      description: 'This waits for the blocker',
+      blockedBy: [blocker.id],
+    });
+
+    const { frontier } = await readGoalExecutionFrontier(goal, { configDir });
+
+    expect(frontier).toMatchObject({
+      total: 2,
+      pending: 2,
+      blocked: 1,
+      nextTask: { subject: 'Complete blocker' },
+    });
+  });
+
+  it('changes the digest when task state changes and keeps it stable otherwise', async () => {
+    const goal = { sessionId: 'session-a', goalId: 'goal-1' };
+    const manager = TaskListManager.getInstance(getGoalTaskListId(goal), configDir);
+    const task = await manager.createTask({
+      subject: 'Inspect state',
+      description: 'Inspect durable state',
+    });
+
+    const first = await readGoalExecutionFrontier(goal, { configDir });
+    const second = await readGoalExecutionFrontier(goal, { configDir });
+    expect(second.frontier.digestSha256).toBe(first.frontier.digestSha256);
+
+    await manager.updateTask(task.id, { status: 'in_progress' });
+    const changed = await readGoalExecutionFrontier(goal, { configDir });
+    expect(changed.frontier.digestSha256).not.toBe(first.frontier.digestSha256);
+    expect(changed.frontier.inProgress).toBe(1);
+  });
+
+  it('escapes and bounds the model-visible frontier block', () => {
+    const prompt = formatGoalExecutionFrontier({
+      taskListId: 'goal:session-a:goal-1',
+      total: 1,
+      completed: 0,
+      inProgress: 1,
+      pending: 0,
+      blocked: 0,
+      nextTask: {
+        id: '1',
+        subject: '<unsafe & subject>'.repeat(100),
+        priority: 'high',
+      },
+      digestSha256: 'a'.repeat(64),
+      observedAt: '2026-08-28T00:00:00.000Z',
+    });
+
+    expect(prompt).toContain('<goal-execution-frontier>');
+    expect(prompt).toContain('&lt;unsafe &amp; subject&gt;');
+    expect(prompt).not.toContain('<unsafe & subject>');
+    expect(prompt.length).toBeLessThan(4_500);
+  });
+});

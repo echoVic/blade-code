@@ -1,9 +1,15 @@
 export { GoalStore } from './GoalStore.js';
+export {
+  formatGoalExecutionFrontier,
+  getGoalTaskListId,
+  readGoalExecutionFrontier,
+} from './executionFrontier.js';
 export { detectGoalPrematureStop } from './prematureStop.js';
 export { buildGoalContinuationPrompt, formatGoalSummary } from './prompts.js';
 export type {
   GoalChangeEvent,
   GoalCreateInput,
+  GoalExecutionFrontier,
   GoalPrematureStopPattern,
   GoalPrematureStopState,
   GoalProgress,
