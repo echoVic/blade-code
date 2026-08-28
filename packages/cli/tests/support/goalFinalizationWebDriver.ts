@@ -132,6 +132,14 @@ export async function runGoalFinalizationWebDriver(input: {
   expectedInitial: string;
   followupPrompt: string;
   expectedFollowup: string;
+  expectedFrontier: {
+    taskListId: string;
+    total: number;
+    completed: number;
+    inProgress: number;
+    pending: number;
+    blocked: number;
+  };
   secret: string;
   timeoutMs?: number;
 }): Promise<GoalFinalizationWebEvidence> {
@@ -219,6 +227,7 @@ export async function runGoalFinalizationWebDriver(input: {
       timeoutMs,
       faults,
     });
+    await waitForGoalFrontier(page, input.expectedFrontier);
     await waitForInboxRemoval(input.workspace, input.sessionId, 10_000);
     if ((await page.locator('body').textContent())?.includes(input.secret)) {
       throw new Error('Provider credential reached the Goal finalization DOM');
@@ -246,6 +255,7 @@ export async function runGoalFinalizationWebDriver(input: {
       timeoutMs,
       faults,
     });
+    await waitForGoalFrontier(page, input.expectedFrontier);
     await page.waitForTimeout(500);
     if (faults.length > 0) {
       throw new Error(`Browser faults: ${JSON.stringify(faults)}`);
@@ -269,4 +279,36 @@ export async function runGoalFinalizationWebDriver(input: {
     await browser?.close().catch(() => undefined);
     await stopForegroundGuiLauncher(child, identity);
   }
+}
+
+async function waitForGoalFrontier(
+  page: Page,
+  expected: {
+    taskListId: string;
+    total: number;
+    completed: number;
+    inProgress: number;
+    pending: number;
+    blocked: number;
+  }
+): Promise<void> {
+  const section = page.locator('[data-blade-goal-frontier-task-list]').last();
+  await section.waitFor({ state: 'visible', timeout: 30_000 });
+  await section.evaluate((element, frontier) => {
+    const attributes: Record<string, string | undefined> = {
+      taskListId: element.getAttribute('data-blade-goal-frontier-task-list') ?? undefined,
+      total: element.getAttribute('data-blade-goal-frontier-total') ?? undefined,
+      completed: element.getAttribute('data-blade-goal-frontier-completed') ?? undefined,
+      inProgress: element.getAttribute('data-blade-goal-frontier-in-progress') ?? undefined,
+      pending: element.getAttribute('data-blade-goal-frontier-pending') ?? undefined,
+      blocked: element.getAttribute('data-blade-goal-frontier-blocked') ?? undefined,
+    };
+    for (const [key, value] of Object.entries(frontier)) {
+      if (attributes[key] !== String(value)) {
+        throw new Error(
+          `Goal frontier attribute ${key}=${String(attributes[key])} does not equal ${String(value)}`
+        );
+      }
+    }
+  }, expected);
 }

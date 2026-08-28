@@ -47,6 +47,12 @@ export async function seedGoalFinalizationHandoffFixture(input: {
     const goal = await runtime.createGoal({
       objective: `Keep ${path.basename(artifactPath)} equal to ${artifactMarker}.`,
     });
+    const preparedFrontier = await runtime.prepareGoalContinuation(goal);
+    if (!preparedFrontier.ok) {
+      throw new Error(
+        `Goal frontier fixture preparation failed: ${preparedFrontier.error.message}`
+      );
+    }
     const goalStore = new GoalStore(input.workspace, input.sessionId);
     await goalStore.requestCompletion();
     const passed = await goalStore.recordCompletionVerification({

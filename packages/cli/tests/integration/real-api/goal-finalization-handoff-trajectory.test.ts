@@ -405,6 +405,14 @@ describe
             expectedInitial: prepared.fixture.finalResponse,
             followupPrompt: prepared.followupPrompt,
             expectedFollowup: prepared.expectedFollowup,
+            expectedFrontier: {
+              taskListId: `goal:${prepared.sessionId}:${prepared.fixture.goalId}`,
+              total: 0,
+              completed: 0,
+              inProgress: 0,
+              pending: 0,
+              blocked: 0,
+            },
             secret: model.apiKey,
           });
           expect(evidence).toEqual({

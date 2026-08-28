@@ -160,6 +160,14 @@ export function GoalControlBar() {
           data-blade-goal-recovery={goal.prematureStop?.consecutiveCount}
           data-blade-goal-recovery-pattern={goal.prematureStop?.pattern}
           data-blade-goal-verification-stall={goal.verificationStall?.consecutiveCount}
+          data-blade-goal-frontier-task-list={goal.executionFrontier?.taskListId}
+          data-blade-goal-frontier-total={goal.executionFrontier?.total}
+          data-blade-goal-frontier-completed={goal.executionFrontier?.completed}
+          data-blade-goal-frontier-in-progress={goal.executionFrontier?.inProgress}
+          data-blade-goal-frontier-pending={goal.executionFrontier?.pending}
+          data-blade-goal-frontier-blocked={goal.executionFrontier?.blocked}
+          data-blade-goal-frontier-next-task={goal.executionFrontier?.nextTask?.id}
+          data-blade-goal-frontier-digest={goal.executionFrontier?.digestSha256.slice(0, 16)}
         >
           {/* Compact strip */}
           <div

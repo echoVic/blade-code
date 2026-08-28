@@ -46,6 +46,19 @@ const sessionState = vi.hoisted(() => ({
           consecutiveCount: number;
           detectedAt: string;
         },
+    executionFrontier: undefined as
+      | undefined
+      | {
+          taskListId: string;
+          total: number;
+          completed: number;
+          inProgress: number;
+          pending: number;
+          blocked: number;
+          nextTask?: { id: string; subject: string; priority: 'high' | 'medium' | 'low' };
+          digestSha256: string;
+          observedAt: string;
+        },
     createdAt: '2026-08-04T00:00:00.000Z',
     updatedAt: '2026-08-04T00:01:35.000Z',
   },
@@ -73,6 +86,7 @@ describe('GoalControlBar', () => {
     sessionState.goal.completionVerification = undefined;
     sessionState.goal.prematureStop = undefined;
     sessionState.goal.verificationStall = undefined;
+    sessionState.goal.executionFrontier = undefined;
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -193,6 +207,38 @@ describe('GoalControlBar', () => {
     expect(container.textContent).toContain('verifier-ses');
     expect(container.textContent).toContain('The restart assertion is still missing.');
     expect(container.textContent).toContain('sha256:aaaaaaaaaaaa');
+  });
+
+  it('projects bounded execution frontier attributes for GUI recovery checks', () => {
+    (sessionState.goal as { status: string }).status = 'active';
+    sessionState.goal.executionFrontier = {
+      taskListId: 'goal:goal-session:goal-1',
+      total: 3,
+      completed: 1,
+      inProgress: 1,
+      pending: 1,
+      blocked: 0,
+      nextTask: { id: '3', subject: 'Run tests', priority: 'high' },
+      digestSha256: 'a'.repeat(64),
+      observedAt: '2026-08-28T00:00:00.000Z',
+    };
+
+    act(() => {
+      root.render(<GoalControlBar />);
+    });
+
+    const section = container.querySelector('[data-blade-goal-status="active"]');
+    expect(section).toMatchObject({
+      dataset: {
+        bladeGoalFrontierTaskList: 'goal:goal-session:goal-1',
+        bladeGoalFrontierTotal: '3',
+        bladeGoalFrontierCompleted: '1',
+        bladeGoalFrontierInProgress: '1',
+        bladeGoalFrontierPending: '1',
+        bladeGoalFrontierBlocked: '0',
+        bladeGoalFrontierNextTask: '3',
+      },
+    });
   });
 
   it('edits without resuming and exposes resume as a separate action', async () => {
