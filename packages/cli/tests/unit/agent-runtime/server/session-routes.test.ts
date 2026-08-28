@@ -2543,6 +2543,23 @@ describe('SessionRoutes runtime reuse', () => {
       .mockResolvedValueOnce(true)
       .mockRejectedValueOnce(new Error('private retry startup details'))
       .mockResolvedValue(true);
+    let releaseTerminalPersist: () => void = () => undefined;
+    const terminalPersistGate = new Promise<void>((resolve) => {
+      releaseTerminalPersist = resolve;
+    });
+    vi.mocked(SessionService.updateSessionMetadata).mockImplementationOnce(
+      async (sessionId, projectPath, update) => {
+        await terminalPersistGate;
+        return makeSessionMetadata({
+          sessionId,
+          projectPath,
+          taskStatus: update.taskStatus,
+          taskStatusReason: update.taskStatusReason ?? undefined,
+          taskFailure: update.taskFailure ?? undefined,
+          taskCompletedAt: update.taskCompletedAt ?? undefined,
+        });
+      }
+    );
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
     agentState.chatStream
       .mockImplementationOnce(async function* () {
@@ -2587,6 +2604,14 @@ describe('SessionRoutes runtime reuse', () => {
       await vi.advanceTimersByTimeAsync(5_000);
       expect(SessionRuntime.hasPendingInbox).toHaveBeenCalledTimes(2);
       expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+      expect(SessionService.updateSessionMetadata).toHaveBeenCalledTimes(1);
+      expect(
+        busState.publish.mock.calls.some(
+          ([, type, properties]) =>
+            type === 'pending.resume' && properties.phase === 'failed'
+        )
+      ).toBe(false);
+      releaseTerminalPersist();
       await vi.waitFor(() => {
         expect(
           busState.publish.mock.calls.filter(
@@ -2636,6 +2661,7 @@ describe('SessionRoutes runtime reuse', () => {
         await secondResponse.body?.cancel().catch(() => undefined);
       }
     } finally {
+      releaseTerminalPersist();
       firstEventsController.abort();
       await firstResponse.body?.cancel().catch(() => undefined);
       await controller.shutdown();
@@ -2723,6 +2749,27 @@ describe('SessionRoutes runtime reuse', () => {
       expect(
         busState.publish.mock.calls.some(([, type]) => type === 'session.completed')
       ).toBe(false);
+
+      const pendingChecks = vi.mocked(SessionRuntime.hasPendingInbox).mock.calls.length;
+      const reconnectController = new AbortController();
+      const reconnectResponse = await controller.app.request(
+        `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`,
+        { signal: reconnectController.signal }
+      );
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        expect(SessionRuntime.hasPendingInbox).toHaveBeenCalledTimes(pendingChecks);
+        expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+        expect(
+          busState.publish.mock.calls.filter(
+            ([, type, properties]) =>
+              type === 'pending.resume' && properties.phase === 'exhausted'
+          )
+        ).toHaveLength(1);
+      } finally {
+        reconnectController.abort();
+        await reconnectResponse.body?.cancel().catch(() => undefined);
+      }
     } finally {
       releaseDestroy();
       eventsController.abort();
@@ -2923,6 +2970,28 @@ describe('SessionRoutes runtime reuse', () => {
               type === 'pending.resume' && properties.phase === 'failed'
           )
         ).toBe(true);
+
+        const pendingChecks = vi.mocked(SessionRuntime.hasPendingInbox).mock.calls
+          .length;
+        const reconnectController = new AbortController();
+        const reconnectResponse = await controller.app.request(
+          `/${sessionId}/events?projectPath=${encodeURIComponent('/persisted-workspace')}`,
+          { signal: reconnectController.signal }
+        );
+        try {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          expect(SessionRuntime.hasPendingInbox).toHaveBeenCalledTimes(pendingChecks);
+          expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+          expect(
+            busState.publish.mock.calls.filter(
+              ([, type, properties]) =>
+                type === 'pending.resume' && properties.phase === 'failed'
+            )
+          ).toHaveLength(1);
+        } finally {
+          reconnectController.abort();
+          await reconnectResponse.body?.cancel().catch(() => undefined);
+        }
       } finally {
         eventsController.abort();
         await response.body?.cancel().catch(() => undefined);

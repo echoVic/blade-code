@@ -1789,8 +1789,8 @@ export const createSessionRouteController = (): SessionRouteController => {
     if (!state || state.generation !== attempt.generation) return false;
     if (deadlineExceeded) {
       state.inFlight = false;
+      state.terminal = true;
       publishPendingResume(ref, 'exhausted', attempt.attempt, evidence.taskFailure);
-      clearPendingResumeRecovery(ref, attempt.generation);
       return false;
     }
     const decision = decidePendingResumeRetry({
@@ -1802,8 +1802,8 @@ export const createSessionRouteController = (): SessionRouteController => {
     });
     if (decision.phase !== 'retry_scheduled') {
       state.inFlight = false;
+      state.terminal = true;
       publishPendingResume(ref, decision.phase, attempt.attempt, evidence.taskFailure);
-      clearPendingResumeRecovery(ref, attempt.generation);
       return false;
     }
     const timer = setTimeout(() => {
@@ -1826,25 +1826,38 @@ export const createSessionRouteController = (): SessionRouteController => {
             state.inFlight = false;
             state.terminal = true;
             const taskCompletedAt = new Date().toISOString();
+            let metadata: SessionMetadata | undefined;
+            try {
+              metadata = await SessionService.updateSessionMetadata(
+                session.id,
+                session.projectPath,
+                {
+                  taskStatus: 'failed',
+                  taskStatusReason: taskFailure.message,
+                  taskFailure,
+                  taskCompletedAt,
+                  taskOwnerPid: null,
+                  taskQueuePosition: null,
+                  taskQueueDepth: null,
+                }
+              );
+            } catch {
+              logger.error(
+                `[SessionRoutes] Failed to persist terminal pending input state for ${session.id}`
+              );
+            }
+            if (pendingResumeRecoveries.get(key) !== state || !state.terminal) return;
             session.taskStatus = 'failed';
             session.taskStatusReason = taskFailure.message;
             session.taskFailure = taskFailure;
             session.taskCompletedAt = taskCompletedAt;
+            if (metadata) syncSessionTaskMetadata(session, metadata);
             publishPendingResume(ref, 'failed', nextAttempt.attempt, taskFailure);
             Bus.publish(ref, 'session.error', {
               error: taskFailure.message,
               taskFailure,
             });
             Bus.publish(ref, 'session.status', { status: 'error' });
-            void SessionService.updateSessionMetadata(session.id, session.projectPath, {
-              taskStatus: 'failed',
-              taskStatusReason: taskFailure.message,
-              taskFailure,
-              taskCompletedAt,
-              taskOwnerPid: null,
-              taskQueuePosition: null,
-              taskQueueDepth: null,
-            }).catch(() => undefined);
           }
         });
       })().catch((error) => {
