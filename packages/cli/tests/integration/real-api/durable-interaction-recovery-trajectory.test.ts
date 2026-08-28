@@ -849,21 +849,28 @@ function formatDurableInteractionRecoveryAcpFailure(
   }
 }
 
-function expectReal2xxDownstream(proxy: RecordingProviderProxy): void {
-  const successfulRequestNumber = proxy.forwardedRequestNumbers.find(
-    (requestNumber) => {
-      const lifecycle = proxy.requestLifecycle.filter(
-        (entry) => entry.requestNumber === requestNumber
-      );
-      return (
-        lifecycle.some(
-          (entry) => entry.phase === 'headers_received' && entry.statusClass === 2
-        ) &&
-        lifecycle.some((entry) => entry.phase === 'body_completed') &&
-        lifecycle.some((entry) => entry.phase === 'downstream_ended')
-      );
-    }
-  );
+function expectReal2xxDownstream(
+  proxy: RecordingProviderProxy,
+  expectedRequestNumber?: number
+): void {
+  const candidateRequestNumbers =
+    expectedRequestNumber === undefined
+      ? proxy.forwardedRequestNumbers
+      : proxy.forwardedRequestNumbers.filter(
+          (requestNumber) => requestNumber === expectedRequestNumber
+        );
+  const successfulRequestNumber = candidateRequestNumbers.find((requestNumber) => {
+    const lifecycle = proxy.requestLifecycle.filter(
+      (entry) => entry.requestNumber === requestNumber
+    );
+    return (
+      lifecycle.some(
+        (entry) => entry.phase === 'headers_received' && entry.statusClass === 2
+      ) &&
+      lifecycle.some((entry) => entry.phase === 'body_completed') &&
+      lifecycle.some((entry) => entry.phase === 'downstream_ended')
+    );
+  });
   expect(successfulRequestNumber).toBeDefined();
 }
 
@@ -1675,7 +1682,8 @@ describe('durable ACP recovery diagnostics', () => {
     );
     expect(webCell).toContain('finalInstruction: splitInstruction');
     expect(webCell).toContain('expect(seed.prompt).not.toContain(finalMarker)');
-    expect(webCell).toContain('expectReal2xxDownstream(proxy)');
+    expect(webCell).toContain('expectReal2xxDownstream(proxy, 2)');
+    expect(webCell).toContain('expectReal2xxDownstream(proxy, 3)');
     expect(webCell).not.toContain('GUI_INTERACTION_ and RECOVERED');
   });
 
@@ -1742,7 +1750,8 @@ describe('durable ACP recovery diagnostics', () => {
     };
 
     expect(() => expectReal2xxDownstream(mismatchedProxy)).toThrow();
-    expect(() => expectReal2xxDownstream(matchedProxy)).not.toThrow();
+    expect(() => expectReal2xxDownstream(matchedProxy, 22)).toThrow();
+    expect(() => expectReal2xxDownstream(matchedProxy, 21)).not.toThrow();
   });
 
   it('keeps ACP and PTY surface cleanup scoped from root allocation through optional proxy teardown', async () => {
@@ -3002,7 +3011,8 @@ describe
         expect(proxy.injectedRequestNumbers).toEqual([1]);
         expect(proxy.heldRequestNumbers).toEqual([2]);
         expect(proxy.forwardedRequestNumbers).toContain(2);
-        expectReal2xxDownstream(proxy);
+        expectReal2xxDownstream(proxy, 2);
+        expectReal2xxDownstream(proxy, 3);
         expect(await fileIsMissing(getSessionInboxFilePath(workspace, sessionId))).toBe(
           true
         );
@@ -3364,6 +3374,8 @@ describe
       let proxy: RecordingProviderProxy | undefined;
       const sessionId = `interaction-acp-subprocess-${Date.now()}`;
       const finalMarker = 'ACP_INTERACTION_RECOVERED';
+      const splitInstruction =
+        createDurableInteractionRecoveryPtyFinalInstruction(finalMarker);
       const expectedContent = 'Canary\n';
 
       try {
@@ -3399,10 +3411,10 @@ describe
           sessionId,
           workspace,
           target,
-          finalInstruction:
-            'After Write succeeds, reply exactly ACP_INTERACTION_RECOVERED.',
+          finalInstruction: splitInstruction,
           finalMarker,
         });
+        expect(seed.prompt).not.toContain(finalMarker);
         const store = new PersistentStore(workspace);
 
         const { stdout, stderr } = await runDurableInteractionRecoveryAcpSubprocess({
