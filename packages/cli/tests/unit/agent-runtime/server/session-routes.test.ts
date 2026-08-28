@@ -2529,7 +2529,7 @@ describe('SessionRoutes runtime reuse', () => {
     }
   });
 
-  it('can wake again when a scheduled Web pending resume fails before startRun', async () => {
+  it('fails closed when a scheduled Web pending resume fails before startRun', async () => {
     vi.useFakeTimers();
     const { createSessionRouteController } = await import(
       '../../../../src/server/routes/session.js'
@@ -2541,7 +2541,7 @@ describe('SessionRoutes runtime reuse', () => {
     vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
     vi.mocked(SessionRuntime.hasPendingInbox)
       .mockResolvedValueOnce(true)
-      .mockRejectedValueOnce(new Error('retry startup failed'))
+      .mockRejectedValueOnce(new Error('private retry startup details'))
       .mockResolvedValue(true);
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
     agentState.chatStream
@@ -2587,6 +2587,33 @@ describe('SessionRoutes runtime reuse', () => {
       await vi.advanceTimersByTimeAsync(5_000);
       expect(SessionRuntime.hasPendingInbox).toHaveBeenCalledTimes(2);
       expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => {
+        expect(
+          busState.publish.mock.calls.filter(
+            ([, type, properties]) =>
+              type === 'pending.resume' && properties.phase === 'failed'
+          )
+        ).toHaveLength(1);
+        expect(
+          busState.publish.mock.calls.filter(
+            ([, type, properties]) =>
+              type === 'session.error' &&
+              (properties.taskFailure as { code?: unknown } | undefined)?.code ===
+                'runtime'
+          )
+        ).toHaveLength(1);
+      });
+      expect(JSON.stringify(busState.publish.mock.calls)).not.toContain(
+        'private retry startup details'
+      );
+      expect(SessionService.updateSessionMetadata).toHaveBeenCalledWith(
+        'retry-startup-failure',
+        '/persisted-workspace',
+        expect.objectContaining({
+          taskStatus: 'failed',
+          taskFailure: expect.objectContaining({ code: 'runtime' }),
+        })
+      );
 
       const secondEventsController = new AbortController();
       const secondResponse = await controller.app.request(
@@ -2595,7 +2622,15 @@ describe('SessionRoutes runtime reuse', () => {
       );
       try {
         await vi.advanceTimersByTimeAsync(0);
-        expect(agentState.chatStream).toHaveBeenCalledTimes(2);
+        expect(SessionRuntime.hasPendingInbox).toHaveBeenCalledTimes(2);
+        expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+        expect(
+          busState.publish.mock.calls.filter(
+            ([, type, properties]) =>
+              type === 'pending.resume' &&
+              (properties.phase === 'failed' || properties.phase === 'exhausted')
+          )
+        ).toHaveLength(1);
       } finally {
         secondEventsController.abort();
         await secondResponse.body?.cancel().catch(() => undefined);
@@ -2603,6 +2638,95 @@ describe('SessionRoutes runtime reuse', () => {
     } finally {
       firstEventsController.abort();
       await firstResponse.body?.cancel().catch(() => undefined);
+      await controller.shutdown();
+      vi.useRealTimers();
+    }
+  });
+
+  it('exhausts a Web pending resume whose cleanup crosses the recovery deadline', async () => {
+    vi.useFakeTimers({ now: 1_000 });
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionId = 'cleanup-crosses-resume-deadline';
+    const projectPath = '/persisted-workspace';
+    const metadata = metadataFor(sessionId, projectPath, { permissionMode: 'yolo' });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+
+    let releaseDestroy: () => void = () => undefined;
+    const destroyGate = new Promise<undefined>((resolve) => {
+      releaseDestroy = () => resolve(undefined);
+    });
+    agentState.destroy.mockImplementationOnce(() => destroyGate);
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      if (Date.now() < 0) yield undefined;
+      return {
+        success: false,
+        error: {
+          type: 'api_error' as const,
+          message: 'Provider request failed.',
+          details: Object.assign(new Error('opaque'), {
+            code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+          }),
+        },
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const controller = createSessionRouteController();
+    const eventsController = new AbortController();
+    const response = await controller.app.request(
+      `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`,
+      { signal: eventsController.signal }
+    );
+    try {
+      await vi.waitFor(() => {
+        expect(
+          busState.publish.mock.calls.some(
+            ([, type, properties]) =>
+              type === 'pending.resume' && properties.phase === 'retry_scheduled'
+          )
+        ).toBe(true);
+      });
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+      releaseDestroy();
+      await vi.waitFor(() => {
+        expect(
+          busState.publish.mock.calls.filter(
+            ([, type, properties]) =>
+              type === 'pending.resume' && properties.phase === 'exhausted'
+          )
+        ).toHaveLength(1);
+      });
+
+      expect(Agent.createWithRuntime).toHaveBeenCalledTimes(1);
+      expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+      expect(
+        busState.publish.mock.calls.some(([, type]) =>
+          ['permission.asked', 'question.required', 'elicitation.required'].includes(
+            type
+          )
+        )
+      ).toBe(false);
+      expect(
+        busState.publish.mock.calls.filter(
+          ([, type, properties]) =>
+            type === 'session.error' &&
+            (properties.taskFailure as { code?: unknown } | undefined)?.code ===
+              'timeout'
+        )
+      ).toHaveLength(1);
+      expect(
+        busState.publish.mock.calls.some(([, type]) => type === 'session.completed')
+      ).toBe(false);
+    } finally {
+      releaseDestroy();
+      eventsController.abort();
+      await response.body?.cancel().catch(() => undefined);
       await controller.shutdown();
       vi.useRealTimers();
     }

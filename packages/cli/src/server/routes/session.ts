@@ -182,6 +182,7 @@ interface WebPendingResumeState {
   inFlight: boolean;
   projectedInputIds: Set<string>;
   startedAt: number;
+  terminal: boolean;
   timer: ReturnType<typeof setTimeout> | undefined;
 }
 
@@ -1726,7 +1727,7 @@ export const createSessionRouteController = (): SessionRouteController => {
   ): WebPendingResumeAttempt | undefined => {
     const key = sessionRefKey(sessionRefFromSession(session));
     let state = pendingResumeRecoveries.get(key);
-    if (state?.inFlight || state?.timer) return undefined;
+    if (state?.inFlight || state?.timer || state?.terminal) return undefined;
     if (!state) {
       state = {
         attempt: 0,
@@ -1734,6 +1735,7 @@ export const createSessionRouteController = (): SessionRouteController => {
         inFlight: false,
         projectedInputIds: new Set<string>(),
         startedAt: Date.now(),
+        terminal: false,
         timer: undefined,
       };
       pendingResumeRecoveries.set(key, state);
@@ -1819,8 +1821,30 @@ export const createSessionRouteController = (): SessionRouteController => {
           try {
             await resumePendingSession(session, nextAttempt);
           } catch (error) {
-            clearPendingResumeRecovery(ref, nextAttempt.generation);
-            throw error;
+            if (pendingResumeRecoveries.get(key) !== state) return;
+            const taskFailure = toTaskFailure(error);
+            state.inFlight = false;
+            state.terminal = true;
+            const taskCompletedAt = new Date().toISOString();
+            session.taskStatus = 'failed';
+            session.taskStatusReason = taskFailure.message;
+            session.taskFailure = taskFailure;
+            session.taskCompletedAt = taskCompletedAt;
+            publishPendingResume(ref, 'failed', nextAttempt.attempt, taskFailure);
+            Bus.publish(ref, 'session.error', {
+              error: taskFailure.message,
+              taskFailure,
+            });
+            Bus.publish(ref, 'session.status', { status: 'error' });
+            void SessionService.updateSessionMetadata(session.id, session.projectPath, {
+              taskStatus: 'failed',
+              taskStatusReason: taskFailure.message,
+              taskFailure,
+              taskCompletedAt,
+              taskOwnerPid: null,
+              taskQueuePosition: null,
+              taskQueueDepth: null,
+            }).catch(() => undefined);
           }
         });
       })().catch((error) => {
@@ -2714,6 +2738,10 @@ export const createSessionRouteController = (): SessionRouteController => {
     session: SessionInfo,
     reservedAttempt?: WebPendingResumeAttempt
   ): Promise<void> => {
+    const recoveryState = pendingResumeRecoveries.get(
+      sessionRefKey(sessionRefFromSession(session))
+    );
+    if (!reservedAttempt && recoveryState?.terminal) return;
     const currentRun = getRun(session.currentRunId);
     if (isActiveRun(currentRun)) {
       if (reservedAttempt) {
@@ -4985,6 +5013,12 @@ async function executeRunAsync(
       const remainingMs = options.pendingResume.deadlineAt - Date.now();
       if (remainingMs <= 0) {
         abortController.abort(WEB_PENDING_RESUME_DEADLINE_ABORT);
+        throw new WebAgentRunFailure({
+          taskFailure: taskFailureForCode('timeout'),
+          outputStarted: false,
+          toolExecutionStarted: false,
+          toolCallsCount: 0,
+        });
       } else {
         pendingResumeDeadlineTimer = setTimeout(() => {
           abortController.abort(WEB_PENDING_RESUME_DEADLINE_ABORT);
