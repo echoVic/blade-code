@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.113] - 2026-08-29
+
+### 文档
+- 记录共享 pending-resume 决策策略、Web 与 ACP 各自的生命周期边界、零副作用重放门禁，以及 CLI/TUI 不执行 whole-turn 自动重试的边界。
+
+### 测试
+- 新增 durable pending interaction 的真实 DeepSeek 资格验证，覆盖 production Chromium、基于 SDK stdio 的 production ACP child，以及 raw PTY 中的 production CLI。
+- 加固一次性 `503` 注入、真实上游流生命周期、持久化答案与最终输出精确性、先失败且未确认再成功确认的 turn 顺序、唯一 `Write`、reload 与 shutdown、Web/PTY prompt-isolated marker，以及有界脱敏诊断。
+
 ## [0.10.112] - 2026-08-28
 
 ### 修复

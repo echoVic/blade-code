@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.113] - 2026-08-29
+
+### Documentation
+- Documented the shared pending-resume decision policy, the distinct Web and ACP lifecycle boundaries, the zero-side-effect replay gate, and the CLI/TUI non-retry boundary.
+
+### Tests
+- Added real DeepSeek qualification for durable pending-interaction recovery through production Chromium, a production ACP child over SDK stdio, and the production CLI through a raw PTY.
+- Hardened qualification with one-shot `503` injection, streamed upstream lifecycle evidence, exact persisted answers and final output, ordered failed/unacknowledged then successful/acknowledged turns, one `Write`, reload and shutdown checks, prompt-isolated Web/PTY markers, and bounded redacted diagnostics.
+
 ## [0.10.112] - 2026-08-28
 
 ### Fixed
