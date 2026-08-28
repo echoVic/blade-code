@@ -53,6 +53,7 @@ export function StatusBar() {
   const providerAdmission = useSessionStore((state) => state.providerAdmission);
   const providerCircuit = useSessionStore((state) => state.providerCircuit);
   const providerRetry = useSessionStore((state) => state.providerRetry);
+  const pendingResume = useSessionStore((state) => state.pendingResume);
   const providerStall = useSessionStore((state) => state.providerStall);
   const actionStationarity = useSessionStore((state) => state.actionStationarity);
   const turnRecovery = useSessionStore((state) => state.turnRecovery);
@@ -60,6 +61,10 @@ export function StatusBar() {
   const retryDelay =
     providerRetry?.delayMs !== undefined
       ? ` · ${Math.max(0, Math.ceil(providerRetry.delayMs / 1000))}s`
+      : '';
+  const pendingResumeDelay =
+    pendingResume?.delayMs !== undefined
+      ? ` · retry in ${formatDurationMs(pendingResume.delayMs)}`
       : '';
   const recoveryLabel =
     turnRecovery?.state === 'requires_attention' ? t('status.recovery.review') : '';
@@ -100,11 +105,13 @@ export function StatusBar() {
             ? providerRetry.mode === 'bounded_foreground'
               ? `Provider · Bounded recovery · ${providerRetry.attempt}/${providerRetry.maxRetries} · ${formatDurationMs(providerRetry.recoveryRemainingMs ?? 0)}`
               : `Provider · ${t('chat.error.action.retryingTask')} · ${providerRetry.attempt}/${providerRetry.maxRetries}${retryDelay}`
-            : providerStall
-              ? `${t('status.phase.providerStall')} · ${Math.ceil(providerStall.durationMs / 1000)}s / ${Math.ceil(providerStall.timeoutMs / 1000)}s`
-              : phaseKey
-                ? t(phaseKey)
-                : '';
+            : pendingResume
+              ? `Recovery attempt ${pendingResume.attempt}/${pendingResume.maxAttempts}${pendingResumeDelay}`
+              : providerStall
+                ? `${t('status.phase.providerStall')} · ${Math.ceil(providerStall.durationMs / 1000)}s / ${Math.ceil(providerStall.timeoutMs / 1000)}s`
+                : phaseKey
+                  ? t(phaseKey)
+                  : '';
 
   const usagePercent =
     tokenUsage.maxContextTokens > 0

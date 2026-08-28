@@ -131,6 +131,20 @@ export interface ProviderStallInfo {
   outputStarted: boolean;
 }
 
+export interface PendingResumeInfo {
+  phase: 'retry_scheduled';
+  kind: 'pending_input';
+  attempt: number;
+  maxAttempts: number;
+  delayMs?: number;
+  nextRetryAt?: number;
+  failure?: {
+    code: NonNullable<Session['taskFailure']>['code'];
+    retryable: boolean;
+    resource?: 'pending_count' | 'pending_bytes' | 'resident_runtimes';
+  };
+}
+
 export interface ActionStationarityInfo {
   phase: 'detected' | 'halted';
   toolName: string;
@@ -418,6 +432,7 @@ export interface StreamingSlice {
   providerAdmission: ProviderAdmissionInfo | null;
   providerCircuit: ProviderCircuitInfo | null;
   providerRetry: ProviderRetryInfo | null;
+  pendingResume: PendingResumeInfo | null;
   providerStall: ProviderStallInfo | null;
   actionStationarity: ActionStationarityInfo | null;
   turnRecovery: TurnRecoveryInfo | null;

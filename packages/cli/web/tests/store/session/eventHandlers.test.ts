@@ -1,7 +1,7 @@
 import type { SessionRef } from '@api/schemas';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
-import type { Message as ServiceMessage } from '../../../src/services';
+import type { Message as ServiceMessage, StreamEvent } from '../../../src/services';
 import { useAppStore } from '../../../src/store/AppStore';
 import { useBrowserActivityStore } from '../../../src/store/BrowserActivityStore';
 import { createEventDispatcher } from '../../../src/store/session/handlers/eventHandlers';
@@ -74,6 +74,7 @@ function createState(overrides: Partial<SessionStoreState> = {}): SessionStoreSt
     providerAdmission: null,
     providerCircuit: null,
     providerRetry: null,
+    pendingResume: null,
     providerStall: null,
     turnRecovery: overrides.turnRecovery ?? null,
     sessionEventConnectionState: 'idle',
@@ -1749,6 +1750,7 @@ describe('eventHandlers', () => {
       providerAdmission: null,
       providerCircuit: null,
       providerRetry: null,
+      pendingResume: null,
       providerStall: null,
       actionStationarity: null,
     });
@@ -1835,6 +1837,129 @@ describe('eventHandlers', () => {
     });
     expect(state.agentPhase).toBe('running');
     expect(state.providerRetry).toBeNull();
+  });
+
+  test('projects pending resume only for the exact active session identity', () => {
+    const state = createState();
+    const set = vi.fn((partial) => {
+      Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
+    });
+    const dispatch = createEventDispatcher(() => state, set);
+    const scheduled = {
+      type: 'pending.resume',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        phase: 'retry_scheduled',
+        kind: 'pending_input',
+        attempt: 2,
+        maxAttempts: 4,
+        delayMs: 1_250,
+        nextRetryAt: 1_800_000_000_000,
+        failure: { code: 'timeout', retryable: true },
+      },
+    } satisfies StreamEvent;
+
+    dispatch({
+      ...scheduled,
+      properties: { ...scheduled.properties, projectPath: '/workspace/other' },
+    });
+    expect(
+      (state as SessionStoreState & { pendingResume?: unknown }).pendingResume
+    ).toBeNull();
+
+    dispatch(scheduled);
+    expect(state.agentPhase).toBe('running');
+    expect(
+      (state as SessionStoreState & { pendingResume?: unknown }).pendingResume
+    ).toEqual({
+      phase: 'retry_scheduled',
+      kind: 'pending_input',
+      attempt: 2,
+      maxAttempts: 4,
+      delayMs: 1_250,
+      nextRetryAt: 1_800_000_000_000,
+      failure: { code: 'timeout', retryable: true },
+    });
+  });
+
+  test.each(['recovered', 'failed', 'exhausted'] as const)(
+    'clears pending resume on %s without changing the session error',
+    (phase) => {
+      const state = createState({ error: 'authoritative session error' });
+      Object.assign(state, {
+        pendingResume: {
+          phase: 'retry_scheduled',
+          kind: 'pending_input',
+          attempt: 1,
+          maxAttempts: 4,
+        },
+      });
+      const set = vi.fn((partial) => {
+        Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
+      });
+      const dispatch = createEventDispatcher(() => state, set);
+
+      dispatch({
+        type: 'pending.resume',
+        properties: {
+          sessionId: 'session-1',
+          projectPath: '/workspace/a',
+          phase,
+          kind: 'pending_input',
+          attempt: 1,
+          maxAttempts: 4,
+        },
+      });
+
+      expect(
+        (state as SessionStoreState & { pendingResume?: unknown }).pendingResume
+      ).toBeNull();
+      expect(state.error).toBe('authoritative session error');
+    }
+  );
+
+  test.each([
+    { phase: 'unknown' },
+    { kind: 'goal' },
+    { attempt: 0 },
+    { attempt: 1.5 },
+    { maxAttempts: 0 },
+    { delayMs: -1 },
+    { delayMs: Number.POSITIVE_INFINITY },
+    { nextRetryAt: Number.NaN },
+    { failure: { code: 'timeout', retryable: 'yes' } },
+    { failure: { code: 'timeout', retryable: true, resource: 'secret' } },
+  ])('ignores malformed pending resume payload %#', (invalid) => {
+    const existing = {
+      phase: 'retry_scheduled',
+      kind: 'pending_input',
+      attempt: 1,
+      maxAttempts: 4,
+    };
+    const state = createState();
+    Object.assign(state, { pendingResume: existing });
+    const set = vi.fn((partial) => {
+      Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
+    });
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'pending.resume',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        phase: 'retry_scheduled',
+        kind: 'pending_input',
+        attempt: 2,
+        maxAttempts: 4,
+        ...invalid,
+      },
+    });
+
+    expect(
+      (state as SessionStoreState & { pendingResume?: unknown }).pendingResume
+    ).toBe(existing);
   });
 
   test('retains turn recovery attention until an explicit turn starts', () => {
@@ -2309,6 +2434,7 @@ describe('eventHandlers', () => {
       providerAdmission: null,
       providerCircuit: null,
       providerRetry: null,
+      pendingResume: null,
       providerStall: null,
       actionStationarity: null,
     });

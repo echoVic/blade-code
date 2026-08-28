@@ -9,6 +9,7 @@ import {
 import type {
   ActionStationarityInfo,
   Message,
+  PendingResumeInfo,
   PromptCacheBreakInfo,
   ProviderAdmissionInfo,
   ProviderCircuitInfo,
@@ -1845,6 +1846,7 @@ const handleModelFallback: EventHandler = (props, get, set) => {
     providerAdmission: null,
     providerCircuit: null,
     providerRetry: null,
+    pendingResume: null,
     providerStall: null,
     actionStationarity: null,
   });
@@ -1875,6 +1877,107 @@ const handleProviderRetry: EventHandler = (props, get, set) => {
     providerRetry:
       props.phase === 'recovered' ? null : (props as unknown as ProviderRetryInfo),
   });
+};
+
+const isFiniteNonnegative = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0;
+
+const isPositiveInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value > 0;
+
+const parsePendingResume = (
+  props: Record<string, unknown>
+): PendingResumeInfo | null => {
+  if (
+    props.phase !== 'retry_scheduled' ||
+    props.kind !== 'pending_input' ||
+    !isPositiveInteger(props.attempt) ||
+    !isPositiveInteger(props.maxAttempts) ||
+    props.attempt > props.maxAttempts ||
+    (props.delayMs !== undefined && !isFiniteNonnegative(props.delayMs)) ||
+    (props.nextRetryAt !== undefined && !isFiniteNonnegative(props.nextRetryAt))
+  )
+    return null;
+  let failure: PendingResumeInfo['failure'];
+  if (props.failure !== undefined) {
+    if (
+      !props.failure ||
+      typeof props.failure !== 'object' ||
+      Array.isArray(props.failure)
+    )
+      return null;
+    const candidate = props.failure as Record<string, unknown>;
+    const code = taskFailureCode(candidate.code);
+    const resource = candidate.resource;
+    if (
+      !code ||
+      typeof candidate.retryable !== 'boolean' ||
+      (resource !== undefined &&
+        resource !== 'pending_count' &&
+        resource !== 'pending_bytes' &&
+        resource !== 'resident_runtimes')
+    )
+      return null;
+    failure = {
+      code,
+      retryable: candidate.retryable,
+      ...(resource === undefined ? {} : { resource }),
+    };
+  }
+  return {
+    phase: 'retry_scheduled',
+    kind: 'pending_input',
+    attempt: props.attempt,
+    maxAttempts: props.maxAttempts,
+    ...(props.delayMs === undefined ? {} : { delayMs: props.delayMs }),
+    ...(props.nextRetryAt === undefined ? {} : { nextRetryAt: props.nextRetryAt }),
+    ...(failure ? { failure } : {}),
+  };
+};
+
+const handlePendingResume: EventHandler = (props, _get, set) => {
+  if (
+    props.kind !== 'pending_input' ||
+    !isPositiveInteger(props.attempt) ||
+    !isPositiveInteger(props.maxAttempts) ||
+    props.attempt > props.maxAttempts
+  )
+    return;
+  if (props.phase === 'retry_scheduled') {
+    const pendingResume = parsePendingResume(props);
+    if (pendingResume) set({ pendingResume, agentPhase: 'running' });
+    return;
+  }
+  if (
+    props.phase !== 'recovered' &&
+    props.phase !== 'failed' &&
+    props.phase !== 'exhausted'
+  )
+    return;
+  if (
+    (props.delayMs !== undefined && !isFiniteNonnegative(props.delayMs)) ||
+    (props.nextRetryAt !== undefined && !isFiniteNonnegative(props.nextRetryAt))
+  )
+    return;
+  if (props.failure !== undefined) {
+    if (
+      !props.failure ||
+      typeof props.failure !== 'object' ||
+      Array.isArray(props.failure)
+    )
+      return;
+    const failure = props.failure as Record<string, unknown>;
+    if (
+      !taskFailureCode(failure.code) ||
+      typeof failure.retryable !== 'boolean' ||
+      (failure.resource !== undefined &&
+        failure.resource !== 'pending_count' &&
+        failure.resource !== 'pending_bytes' &&
+        failure.resource !== 'resident_runtimes')
+    )
+      return;
+  }
+  set({ pendingResume: null });
 };
 
 const handleProviderStall: EventHandler = (props, get, set) => {
@@ -2062,6 +2165,7 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
       providerAdmission: null,
       providerCircuit: null,
       providerRetry: null,
+      pendingResume: null,
       providerStall: null,
       actionStationarity: null,
       currentRunId: null,
@@ -2101,6 +2205,7 @@ const handleSessionStatus: EventHandler = (props, get, set) => {
       providerAdmission: null,
       providerCircuit: null,
       providerRetry: null,
+      pendingResume: null,
       providerStall: null,
       actionStationarity: null,
       currentRunId: null,
@@ -2117,6 +2222,7 @@ const handleRunCancelled: EventHandler = (props, get, set) => {
   set((state) => ({
     isStreaming: false,
     agentPhase: 'idle',
+    pendingResume: null,
     messages: state.messages.map((message) => {
       const elicitation = message.agentContent?.elicitation;
       if (elicitation?.status !== 'pending' || !message.agentContent) {
@@ -2285,6 +2391,7 @@ const handleSessionRewound: EventHandler = (props, get, set) => {
     providerAdmission: null,
     providerCircuit: null,
     providerRetry: null,
+    pendingResume: null,
     providerStall: null,
     actionStationarity: null,
     currentRunId: null,
@@ -2405,6 +2512,7 @@ const eventHandlers: Record<string, EventHandler> = {
   'provider.admission': handleProviderAdmission,
   'provider.circuit': handleProviderCircuit,
   'provider.retry': handleProviderRetry,
+  'pending.resume': handlePendingResume,
   'provider.stall': handleProviderStall,
   'action.stationarity': handleActionStationarity,
   'compaction.started': handleCompactionStarted,

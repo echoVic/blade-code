@@ -132,6 +132,12 @@ function activeStreamingState(
     recoveredSteeringCount: 1,
     currentAssistantMessageId: 'assistant-active',
     hasToolCalls: true,
+    pendingResume: {
+      phase: 'retry_scheduled' as const,
+      kind: 'pending_input' as const,
+      attempt: 1,
+      maxAttempts: 4,
+    },
     eventUnsubscribe,
   };
 }
@@ -148,6 +154,7 @@ function expectStreamingStateReset(): void {
     currentAssistantMessageId: null,
     hasToolCalls: false,
     eventUnsubscribe: null,
+    pendingResume: null,
   });
 }
 
@@ -208,6 +215,7 @@ describe('sessionSlice multimodal sendMessage', () => {
       isStopping: false,
       agentPhase: 'idle',
       providerRetry: null,
+      pendingResume: null,
       providerStall: null,
       sessionEventConnectionState: 'idle',
       currentRunId: null,

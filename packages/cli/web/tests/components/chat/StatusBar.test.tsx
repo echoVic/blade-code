@@ -49,6 +49,14 @@ const sessionState = vi.hoisted(() => ({
     durationMs: number;
     timeoutMs: number;
   } | null,
+  pendingResume: null as {
+    phase: 'retry_scheduled';
+    kind: 'pending_input';
+    attempt: number;
+    maxAttempts: number;
+    delayMs?: number;
+    failure?: { code: string; retryable: boolean };
+  } | null,
   actionStationarity: null as {
     phase: 'detected' | 'halted';
     toolName: string;
@@ -81,6 +89,7 @@ describe('StatusBar', () => {
     sessionState.providerRetry = null;
     sessionState.providerCircuit = null;
     sessionState.providerStall = null;
+    sessionState.pendingResume = null;
     sessionState.actionStationarity = null;
     sessionState.turnRecovery = null;
     Object.assign(sessionState.tokenUsage, {
@@ -278,6 +287,51 @@ describe('StatusBar', () => {
     expect(container.textContent).toContain('30s');
     expect(container.textContent).toContain('300s');
     expect(container.textContent).not.toContain('Generating...');
+  });
+
+  it('renders bounded pending resume without exposing canonical failure details', () => {
+    sessionState.agentPhase = 'running';
+    sessionState.pendingResume = {
+      phase: 'retry_scheduled',
+      kind: 'pending_input',
+      attempt: 2,
+      maxAttempts: 4,
+      delayMs: 1_250,
+      failure: { code: 'provider_secret_timeout', retryable: true },
+    };
+
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    expect(container.textContent).toContain('Recovery attempt 2/4');
+    expect(container.textContent).toContain('retry in 2s');
+    expect(container.textContent).not.toContain('provider_secret_timeout');
+  });
+
+  it('keeps Provider retry ahead of pending resume and restores the ordinary phase after clear', () => {
+    sessionState.agentPhase = 'running';
+    sessionState.pendingResume = {
+      phase: 'retry_scheduled',
+      kind: 'pending_input',
+      attempt: 2,
+      maxAttempts: 4,
+    };
+    sessionState.providerRetry = { attempt: 1, maxRetries: 3 };
+
+    act(() => {
+      root.render(<StatusBar />);
+    });
+    expect(container.textContent).toContain('Provider');
+    expect(container.textContent).not.toContain('Recovery attempt');
+
+    sessionState.providerRetry = null;
+    sessionState.pendingResume = null;
+    act(() => {
+      root.render(<StatusBar />);
+    });
+    expect(container.textContent).toContain('Generating...');
+    expect(container.textContent).not.toContain('Recovery attempt');
   });
 
   it('renders action stationarity ahead of provider lifecycle state', () => {

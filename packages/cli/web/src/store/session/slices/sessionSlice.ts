@@ -58,6 +58,7 @@ const resetStreamingState = () => ({
   providerAdmission: null,
   providerCircuit: null,
   providerRetry: null,
+  pendingResume: null,
   providerStall: null,
   actionStationarity: null,
   turnRecovery: null,
@@ -172,6 +173,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
         isTemporarySession: false,
         sideConversation: null,
         teams: [],
+        pendingResume: null,
       });
     },
 
@@ -394,6 +396,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           providerAdmission: null,
           providerCircuit: null,
           providerRetry: null,
+          pendingResume: null,
           providerStall: null,
           actionStationarity: null,
           turnRecovery: null,
@@ -676,6 +679,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           providerAdmission: null,
           providerCircuit: null,
           providerRetry: null,
+          pendingResume: null,
           providerStall: null,
           actionStationarity: null,
           turnRecovery: null,
@@ -816,7 +820,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
 
       sideConversationController?.abort('main-conversation-submitted');
       sideConversationController = null;
-      if (get().sideConversation) set({ sideConversation: null });
+      set({ sideConversation: null, pendingResume: null });
 
       if (isTemporarySession || !sessionId || sessionId === TEMP_SESSION_ID) {
         try {
@@ -885,6 +889,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
             set({
               isStreaming: false,
               agentPhase: 'idle',
+              pendingResume: null,
             });
           }
           if (response.delivery) {
@@ -1135,6 +1140,7 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           providerAdmission: null,
           providerCircuit: null,
           providerRetry: null,
+          pendingResume: null,
           providerStall: null,
           actionStationarity: null,
           turnRecovery: null,
