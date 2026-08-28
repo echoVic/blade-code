@@ -173,6 +173,7 @@ function encodedInput(overrides: Record<string, unknown> = {}): string {
   return Buffer.from(
     JSON.stringify({
       cliEntry: '/tmp/blade/dist/blade.js',
+      nodeExecutable: '/opt/homebrew/bin/node',
       workspace: '/tmp/blade/workspace',
       home: '/tmp/blade/home',
       storageRoot: '/tmp/blade/storage',
@@ -567,6 +568,7 @@ describe('durable interaction ACP stdio runner', () => {
       {
         timeoutMs: 270_000,
         answerLabel: 'Stable',
+        nodeExecutable: '/opt/homebrew/bin/node',
       }
     );
     expect(() =>
@@ -579,6 +581,16 @@ describe('durable interaction ACP stdio runner', () => {
         encodedInput({ requestId: undefined })
       )
     ).toThrow('input is invalid');
+    expect(() =>
+      parseDurableInteractionRecoveryAcpRunnerInput(
+        encodedInput({ nodeExecutable: '/opt/homebrew/bin/bun' })
+      )
+    ).toThrow('input is invalid');
+    expect(() =>
+      parseDurableInteractionRecoveryAcpRunnerInput(
+        encodedInput({ nodeExecutable: 'node' })
+      )
+    ).toThrow('input is invalid');
   });
 
   it('uses the production CLI SDK stdio lifecycle without an extra prompt', async () => {
@@ -589,7 +601,8 @@ describe('durable interaction ACP stdio runner', () => {
     const source = await readFile(runnerPath, 'utf8');
 
     expect(source).toContain("'/dist/blade.js'");
-    expect(source).toContain("spawn(process.execPath, [input.cliEntry, '--acp']");
+    expect(source).toContain("spawn(input.nodeExecutable, [input.cliEntry, '--acp']");
+    expect(source).not.toContain("spawn(process.execPath, [input.cliEntry, '--acp']");
     expect(source).toContain('new acp.ClientSideConnection');
     expect(source).toContain('acp.ndJsonStream(');
     expect(source).toContain('Writable.toWeb(child.stdin)');

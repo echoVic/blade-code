@@ -21,6 +21,7 @@ const FALLBACK_KILL_TIMEOUT_MS = 5_000;
 
 export interface DurableInteractionRecoveryAcpRunnerInput {
   cliEntry: string;
+  nodeExecutable: string;
   workspace: string;
   home: string;
   storageRoot: string;
@@ -197,6 +198,7 @@ export function parseDurableInteractionRecoveryAcpRunnerInput(
     'expectedContent',
     'finalMarker',
     'home',
+    'nodeExecutable',
     'requestId',
     'secret',
     'sessionId',
@@ -210,6 +212,7 @@ export function parseDurableInteractionRecoveryAcpRunnerInput(
     !isRecord(parsed) ||
     !hasExactKeys(parsed, keys) ||
     !isNonemptyString(parsed.cliEntry) ||
+    !isNonemptyString(parsed.nodeExecutable) ||
     !isNonemptyString(parsed.workspace) ||
     !isNonemptyString(parsed.home) ||
     !isNonemptyString(parsed.storageRoot) ||
@@ -224,6 +227,7 @@ export function parseDurableInteractionRecoveryAcpRunnerInput(
     Number(parsed.timeoutMs) <= 0 ||
     Number(parsed.timeoutMs) > 600_000 ||
     !path.isAbsolute(parsed.cliEntry) ||
+    !path.isAbsolute(parsed.nodeExecutable) ||
     !path.isAbsolute(parsed.workspace) ||
     !path.isAbsolute(parsed.home) ||
     !path.isAbsolute(parsed.storageRoot) ||
@@ -232,11 +236,14 @@ export function parseDurableInteractionRecoveryAcpRunnerInput(
     throw new Error('Durable interaction ACP runner input is invalid');
   }
   const cliEntry = path.resolve(parsed.cliEntry);
+  const nodeExecutable = path.resolve(parsed.nodeExecutable);
   const workspace = path.resolve(parsed.workspace);
   const targetPath = path.resolve(parsed.targetPath);
   const relativeTarget = path.relative(workspace, targetPath);
   if (
     !cliEntry.replaceAll('\\', '/').endsWith('/dist/blade.js') ||
+    nodeExecutable !== parsed.nodeExecutable ||
+    !['node', 'node.exe'].includes(path.basename(nodeExecutable).toLowerCase()) ||
     relativeTarget === '..' ||
     relativeTarget.startsWith('../') ||
     path.isAbsolute(relativeTarget)
@@ -245,6 +252,7 @@ export function parseDurableInteractionRecoveryAcpRunnerInput(
   }
   return {
     cliEntry,
+    nodeExecutable,
     workspace,
     home: path.resolve(parsed.home),
     storageRoot: path.resolve(parsed.storageRoot),
@@ -1327,7 +1335,7 @@ async function runDurableInteractionRecoveryAcpRunnerWithStorage(
       }
     }
 
-    child = spawn(process.execPath, [input.cliEntry, '--acp'], {
+    child = spawn(input.nodeExecutable, [input.cliEntry, '--acp'], {
       cwd: input.workspace,
       env: childEnvironment(input),
       stdio: ['pipe', 'pipe', 'pipe'],

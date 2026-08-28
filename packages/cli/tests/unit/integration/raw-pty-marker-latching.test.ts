@@ -7,6 +7,7 @@ const supportDir = path.resolve(import.meta.dirname, '../../support');
 const runnerInventory = [
   'backgroundSubagentCompletionPtyRunner.ts',
   'browserToolPtyRunner.ts',
+  'durableInteractionRecoveryPtyRunner.ts',
   'foregroundBoundedOutputPtyRunner.ts',
   'foregroundCommandHandoffPtyRunner.ts',
   'foregroundProviderRecoveryPtyRunner.ts',
@@ -84,6 +85,10 @@ describe('raw PTY marker latching source contract', () => {
   it.each([
     ['backgroundSubagentCompletionPtyRunner.ts', 'latchPtyMarker'],
     ['browserToolPtyRunner.ts', 'latchPtyMarker'],
+    [
+      'durableInteractionRecoveryPtyRunner.ts',
+      'new ArmedPtyMarkerLatch(input.finalMarker)',
+    ],
     ['foregroundBoundedOutputPtyRunner.ts', 'latchForegroundBoundedPtyMarkers'],
     [
       'foregroundCommandHandoffPtyRunner.ts',
