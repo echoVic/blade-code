@@ -72,14 +72,15 @@ export function createSplitPtyMarkerInstruction(marker: string): string {
   const secondHalf = marker.slice(midpoint);
   return [
     'Final response protocol: do not call tools.',
-    'Your entire response must be exactly the payload of PART_A immediately ' +
-      'followed by the payload of PART_B.',
+    'Your entire response must be derived mechanically from MARKER_TEMPLATE.',
+    'Delete the one ~ character from MARKER_TEMPLATE.',
+    'Output every remaining character unchanged.',
+    'Example only: transforming 123~456 yields 123456.',
     'Copy payload characters literally. Output no labels, delimiters, quotes, ' +
       'spaces, markdown, explanation, or leading/trailing newline.',
     `The result must contain exactly ${marker.length} ASCII characters and match ` +
       `^[A-Za-z0-9_-]{${marker.length}}$.`,
-    `PART_A=${firstHalf}`,
-    `PART_B=${secondHalf}`,
+    `MARKER_TEMPLATE=${firstHalf}~${secondHalf}`,
   ].join('\n');
 }
 

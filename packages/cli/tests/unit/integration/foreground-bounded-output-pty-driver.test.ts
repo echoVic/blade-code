@@ -39,18 +39,20 @@ describe('foreground bounded output PTY driver', () => {
     'builds a mechanical %s final-marker instruction without embedding the marker',
     (_case, marker) => {
       const instruction = createSplitPtyMarkerInstruction(marker);
-      const partA = instruction.match(/^PART_A=([A-Za-z0-9_-]+)$/m)?.[1];
-      const partB = instruction.match(/^PART_B=([A-Za-z0-9_-]+)$/m)?.[1];
+      const template = instruction.match(
+        /^MARKER_TEMPLATE=([A-Za-z0-9_-]+~[A-Za-z0-9_-]+)$/m
+      )?.[1];
 
       expect(instruction).not.toContain(marker);
-      expect(partA).toBeTypeOf('string');
-      expect(partB).toBeTypeOf('string');
-      expect(`${partA}${partB}`).toBe(marker);
+      expect(template).toBeTypeOf('string');
+      expect(template?.split('~')).toHaveLength(2);
+      expect(template?.replace('~', '')).toBe(marker);
       expect(instruction).toContain(`exactly ${marker.length} ASCII characters`);
       expect(instruction).toContain(`match ^[A-Za-z0-9_-]{${marker.length}}$`);
-      expect(instruction).not.toContain(JSON.stringify(partA));
-      expect(instruction).not.toContain(JSON.stringify(partB));
-      expect(instruction.endsWith(`PART_B=${partB}`)).toBe(true);
+      expect(instruction).toContain('Delete the one ~ character from MARKER_TEMPLATE.');
+      expect(instruction).not.toContain('PART_A=');
+      expect(instruction).not.toContain('PART_B=');
+      expect(instruction.endsWith(`MARKER_TEMPLATE=${template}`)).toBe(true);
     }
   );
 

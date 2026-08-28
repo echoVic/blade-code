@@ -289,8 +289,10 @@ export function formatProductionWebRecoveryDiagnostic(input: {
     ),
     writeCalls,
     writeResults,
-    durableMarkerPresent:
-      finalAssistantText(input.durableEvents)?.includes(input.expectedMarker) ?? false,
+    durableFinal: finalMarkerDiagnostic(
+      finalAssistantText(input.durableEvents),
+      input.expectedMarker
+    ),
     proxyLifecycle: input.proxyLifecycle.slice(-32).map((entry) => ({
       requestNumber: entry.requestNumber,
       phase: entry.phase,
@@ -970,6 +972,31 @@ function textDiagnostic(
         ? createHash('sha256').update(text).digest('hex').slice(0, 12)
         : null,
     expectedMarkerPresent: present && text ? text.includes(expectedText) : false,
+  };
+}
+
+function finalMarkerDiagnostic(
+  text: string | undefined,
+  expectedText: string
+): ReturnType<typeof textDiagnostic> & {
+  utf8Bytes: number;
+  exactMatch: boolean;
+  trimmedExactMatch: boolean;
+  firstHalfPresent: boolean;
+  secondHalfPresent: boolean;
+  partLabelPresent: boolean;
+} {
+  const midpoint = Math.ceil(expectedText.length / 2);
+  const firstHalf = expectedText.slice(0, midpoint);
+  const secondHalf = expectedText.slice(midpoint);
+  return {
+    ...textDiagnostic(text, expectedText),
+    utf8Bytes: text ? Buffer.byteLength(text, 'utf8') : 0,
+    exactMatch: text === expectedText,
+    trimmedExactMatch: text?.trim() === expectedText,
+    firstHalfPresent: Boolean(text && firstHalf && text.includes(firstHalf)),
+    secondHalfPresent: Boolean(text && secondHalf && text.includes(secondHalf)),
+    partLabelPresent: Boolean(text && /PART_[AB]\s*=/.test(text)),
   };
 }
 
@@ -1981,6 +2008,29 @@ describe('durable ACP recovery diagnostics', () => {
 });
 
 describe('durable Web recovery diagnostics', () => {
+  it('classifies final-marker mismatches without retaining assistant text', () => {
+    const marker = 'GUI_INTERACTION_RECOVERED';
+    const assistantText = 'PART_A=GUI_INTERACTI\nPART_B=ON_RECOVERED';
+    const diagnostic = finalMarkerDiagnostic(assistantText, marker);
+
+    expect(diagnostic).toEqual({
+      present: true,
+      utf8ByteSizeBucket: '1_4096',
+      sha256Prefix: createHash('sha256')
+        .update(assistantText)
+        .digest('hex')
+        .slice(0, 12),
+      expectedMarkerPresent: false,
+      utf8Bytes: Buffer.byteLength(assistantText),
+      exactMatch: false,
+      trimmedExactMatch: false,
+      firstHalfPresent: true,
+      secondHalfPresent: true,
+      partLabelPresent: true,
+    });
+    expect(JSON.stringify(diagnostic)).not.toContain(assistantText);
+  });
+
   it('formats bounded structural production diagnostics without retaining secrets', () => {
     const secret = 'production-web-diagnostic-secret';
     const createdAt = '2026-08-29T00:00:00.000Z';
@@ -2056,6 +2106,7 @@ describe('durable Web recovery diagnostics', () => {
     expect(diagnostic).toContain('"phase":"headers_received"');
     expect(diagnostic).toContain('"pendingResume"');
     expect(diagnostic).toContain('"writeCalls":1');
+    expect(diagnostic).toContain('"durableFinal"');
     expect(diagnostic).toContain('"taskFailure":{"code":"timeout"');
     expect(diagnostic).toContain('"pageEventCounts":{"question.required":1}');
     expect(diagnostic).not.toContain(secret);

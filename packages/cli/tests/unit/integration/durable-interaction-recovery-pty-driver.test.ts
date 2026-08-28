@@ -190,8 +190,8 @@ describe('durable interaction raw PTY driver', () => {
     const instruction = createDurableInteractionRecoveryPtyFinalInstruction(marker);
 
     expect(instruction).not.toContain(marker);
-    expect(instruction).toContain('PART_A=');
-    expect(instruction).toContain('PART_B=');
+    expect(instruction).toContain('MARKER_TEMPLATE=');
+    expect(instruction).toContain('Delete the one ~ character');
   });
 
   it('keeps the raw PTY production and keyboard synchronization contract', async () => {
