@@ -274,6 +274,22 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
             kind: 'goal_continuation_started',
           })
         );
+        const frontierEvent = events.find(
+          (event): event is Extract<LoopEvent, { kind: 'goal_frontier_updated' }> =>
+            event.kind === 'goal_frontier_updated'
+        );
+        expect(frontierEvent).toMatchObject({
+          goal: { goalId: created.goalId },
+          frontier: {
+            taskListId: `goal:${sessionId}:${created.goalId}`,
+            total: 0,
+            completed: 0,
+            inProgress: 0,
+            pending: 0,
+            blocked: 0,
+          },
+          tasks: [],
+        });
         expect(context.messages).not.toContainEqual(
           expect.objectContaining({
             metadata: { transientGoalContinuation: true },
@@ -573,6 +589,15 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
           },
           { timeout: 30_000, interval: 50 }
         );
+        expect(
+          events.some(
+            (event) =>
+              event.sessionId === sessionId &&
+              event.type === 'goal.frontier.updated' &&
+              (event.properties.frontier as { taskListId?: string } | undefined)
+                ?.taskListId?.startsWith(`goal:${sessionId}:`)
+          )
+        ).toBe(true);
         expect((await readFile(resultPath, 'utf8')).trim()).toBe('WEB_GOAL_COMPLETE');
         const webGoal = await new GoalStore(workspace, sessionId).get();
         expect(webGoal).toMatchObject({
@@ -687,6 +712,26 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
               notification.update.title.includes('UpdateGoal')
           )
         ).toBe(true);
+        const frontierIndex = client.sessionUpdates.findIndex(
+          (notification) =>
+            notification.update.sessionUpdate === 'session_info_update' &&
+            notification.update._meta?.['blade/goalFrontier']
+        );
+        const planIndex = client.sessionUpdates.findIndex(
+          (notification) => notification.update.sessionUpdate === 'plan'
+        );
+        expect(frontierIndex).toBeGreaterThanOrEqual(0);
+        expect(planIndex).toBeGreaterThan(frontierIndex);
+        expect(client.sessionUpdates[frontierIndex]?.update).toMatchObject({
+          _meta: {
+            'blade/goalFrontier': {
+              taskListId: expect.stringContaining(`goal:${sessionId}:`),
+              total: 0,
+              completed: 0,
+              pending: 0,
+            },
+          },
+        });
         expect(
           client.sessionUpdates.some(
             (notification) =>
