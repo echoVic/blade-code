@@ -83,8 +83,9 @@ execution, nonzero/negative tool counts, missing evidence, attempt 4, and elapse
 Run:
 
 ```bash
-bunx vitest run --config packages/cli/vitest.config.ts --project unit \
-  packages/cli/tests/unit/agent-runtime/agent/pending-resume-recovery-policy.test.ts
+cd packages/cli
+bunx vitest run --config vitest.config.ts --project unit \
+  tests/unit/agent-runtime/agent/pending-resume-recovery-policy.test.ts
 ```
 
 Expected: FAIL because `PendingResumeRecoveryPolicy.js` does not exist.
@@ -147,9 +148,10 @@ for metadata.
 - [ ] **Step 6: Run policy and ACP regressions**
 
 ```bash
-bunx vitest run --config packages/cli/vitest.config.ts --project unit \
-  packages/cli/tests/unit/agent-runtime/agent/pending-resume-recovery-policy.test.ts \
-  packages/cli/tests/unit/agent-runtime/acp/session.test.ts
+cd packages/cli
+bunx vitest run --config vitest.config.ts --project unit \
+  tests/unit/agent-runtime/agent/pending-resume-recovery-policy.test.ts \
+  tests/unit/agent-runtime/acp/session.test.ts
 ```
 
 Expected: PASS with no ACP pending-resume snapshot or lifecycle changes.
@@ -210,8 +212,9 @@ throwing. Add an idempotency case passing a canonical `SessionTaskFailure` objec
 - [ ] **Step 2: Verify RED**
 
 ```bash
-bunx vitest run --config packages/cli/vitest.config.ts --project unit \
-  packages/cli/tests/unit/agent-runtime/agent/task-failure.test.ts
+cd packages/cli
+bunx vitest run --config vitest.config.ts --project unit \
+  tests/unit/agent-runtime/agent/task-failure.test.ts
 ```
 
 Expected: stable code cases return `runtime`, proving message regexes are insufficient.
@@ -226,9 +229,10 @@ canonical fields and allowed capacity resource.
 - [ ] **Step 4: Verify GREEN and related storage tests**
 
 ```bash
-bunx vitest run --config packages/cli/vitest.config.ts --project unit \
-  packages/cli/tests/unit/agent-runtime/agent/task-failure.test.ts \
-  packages/cli/tests/unit/agent-runtime/agent/session-runtime.test.ts
+cd packages/cli
+bunx vitest run --config vitest.config.ts --project unit \
+  tests/unit/agent-runtime/agent/task-failure.test.ts \
+  tests/unit/agent-runtime/agent/session-runtime.test.ts
 ```
 
 Expected: PASS.
@@ -260,8 +264,9 @@ Assert two calls, one `pending.resume/retry_scheduled`, one `recovered`, no
 - [ ] **Step 2: Verify RED**
 
 ```bash
-bunx vitest run --config packages/cli/vitest.config.ts --project unit \
-  packages/cli/tests/unit/agent-runtime/server/session-routes.test.ts \
+cd packages/cli
+bunx vitest run --config vitest.config.ts --project unit \
+  tests/unit/agent-runtime/server/session-routes.test.ts \
   -t 'retries a retryable zero-side-effect Web pending resume'
 ```
 
@@ -334,10 +339,11 @@ Add and observe RED before each minimal implementation adjustment:
 - [ ] **Step 8: Run focused server tests**
 
 ```bash
-bunx vitest run --config packages/cli/vitest.config.ts --project unit \
-  packages/cli/tests/unit/agent-runtime/server/session-routes.test.ts \
-  packages/cli/tests/unit/agent-runtime/agent/pending-resume-recovery-policy.test.ts \
-  packages/cli/tests/unit/agent-runtime/agent/task-failure.test.ts
+cd packages/cli
+bunx vitest run --config vitest.config.ts --project unit \
+  tests/unit/agent-runtime/server/session-routes.test.ts \
+  tests/unit/agent-runtime/agent/pending-resume-recovery-policy.test.ts \
+  tests/unit/agent-runtime/agent/task-failure.test.ts
 ```
 
 Expected: PASS with no leaked timer or unhandled rejection warnings.
@@ -377,8 +383,9 @@ exhausted       -> pendingResume null (session.error remains authoritative)
 - [ ] **Step 2: Verify RED**
 
 ```bash
-bunx vitest run --config packages/cli/web/vitest.config.ts \
-  packages/cli/web/tests/store/session/eventHandlers.test.ts \
+cd packages/cli/web
+bunx vitest run --config vitest.config.ts \
+  tests/store/session/eventHandlers.test.ts \
   -t 'pending resume'
 ```
 
@@ -397,9 +404,10 @@ raw failure message is rendered.
 Test English rendering for attempt/max and a terminal phase clearing the label. Run:
 
 ```bash
-bunx vitest run --config packages/cli/web/vitest.config.ts \
-  packages/cli/web/tests/store/session/eventHandlers.test.ts \
-  packages/cli/web/tests/components/chat/StatusBar.test.tsx
+cd packages/cli/web
+bunx vitest run --config vitest.config.ts \
+  tests/store/session/eventHandlers.test.ts \
+  tests/components/chat/StatusBar.test.tsx
 ```
 
 Expected: PASS.
@@ -458,11 +466,12 @@ mock Provider.
 ```bash
 bun run type-check
 bun run test:web
-bunx vitest run --config packages/cli/vitest.config.ts --project unit \
-  packages/cli/tests/unit/agent-runtime/agent/pending-resume-recovery-policy.test.ts \
-  packages/cli/tests/unit/agent-runtime/agent/task-failure.test.ts \
-  packages/cli/tests/unit/agent-runtime/server/session-routes.test.ts \
-  packages/cli/tests/unit/agent-runtime/acp/session.test.ts
+cd packages/cli
+bunx vitest run --config vitest.config.ts --project unit \
+  tests/unit/agent-runtime/agent/pending-resume-recovery-policy.test.ts \
+  tests/unit/agent-runtime/agent/task-failure.test.ts \
+  tests/unit/agent-runtime/server/session-routes.test.ts \
+  tests/unit/agent-runtime/acp/session.test.ts
 ```
 
 Expected: all PASS.
@@ -471,8 +480,9 @@ Expected: all PASS.
 
 ```bash
 REAL_API_TEST=1 REAL_API_RELEASE_MATRIX=1 \
-  bunx vitest run --config packages/cli/vitest.config.ts --project real-api \
-  packages/cli/tests/integration/real-api/durable-interaction-recovery-trajectory.test.ts \
+cd packages/cli
+bunx vitest run --config vitest.config.ts --project real-api \
+  tests/integration/real-api/durable-interaction-recovery-trajectory.test.ts \
   --retry=0
 ```
 
