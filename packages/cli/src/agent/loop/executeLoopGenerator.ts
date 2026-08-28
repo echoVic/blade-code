@@ -2205,6 +2205,7 @@ validates the object and may return a bounded corrective error.`;
               {
                 sessionId: context.sessionId,
                 taskListId: context.taskListId,
+                goalTaskListId: context.goalTaskListId,
                 userId: context.userId || 'default',
                 modelId: deps.config.currentModelId,
                 providerAdmissionOwnerId,
@@ -3453,6 +3454,7 @@ validates the object and may return a bounded corrective error.`;
               const result = await executeAdmittedTool(toolCall.function.name, params, {
                 sessionId: context.sessionId,
                 taskListId: context.taskListId,
+                goalTaskListId: context.goalTaskListId,
                 userId: context.userId || 'default',
                 modelId: deps.config.currentModelId,
                 providerAdmissionOwnerId,

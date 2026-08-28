@@ -319,7 +319,10 @@ function getManager(
   configDir: string
 ): TaskListManager {
   return TaskListManager.getInstance(
-    context.taskListId || context.sessionId || fallbackSessionId,
+    context.taskListId ||
+      context.goalTaskListId ||
+      context.sessionId ||
+      fallbackSessionId,
     configDir
   );
 }

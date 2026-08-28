@@ -248,6 +248,7 @@ export class GoalStore {
       }
       const next: GoalSnapshot = {
         ...goal,
+        version: 2,
         status: 'paused',
         statusReason: reason,
         updatedAt: new Date().toISOString(),
@@ -440,6 +441,7 @@ export class GoalStore {
 
       const next = parseSchema(GoalSnapshotSchema, {
         ...goal,
+        version: 2,
         status: 'complete',
         statusReason: undefined,
         verificationStall: undefined,
@@ -499,6 +501,7 @@ export class GoalStore {
         prematureStop.consecutiveCount >= MAX_CONSECUTIVE_GOAL_PREMATURE_STOPS;
       const next: GoalSnapshot = {
         ...goal,
+        version: 2,
         tokensUsed,
         timeUsedSeconds: goal.timeUsedSeconds + elapsedSeconds,
         status: budgetLimited
@@ -542,6 +545,7 @@ export class GoalStore {
       }
       const next: GoalSnapshot = {
         ...goal,
+        version: 2,
         continuationCount: goal.continuationCount + 1,
         updatedAt: new Date().toISOString(),
       };
@@ -570,7 +574,10 @@ export class GoalStore {
     return GoalStore.locks.runExclusive(this.filePath, async () => {
       const existing = await this.readUnlocked();
       if (!existing) throw new Error('Session has no goal');
-      const next = parseSchema(GoalSnapshotSchema, update(existing));
+      const next = parseSchema(GoalSnapshotSchema, {
+        ...update(existing),
+        version: 2,
+      });
       await this.persistUnlocked(next);
       this.emit(next);
       return next;

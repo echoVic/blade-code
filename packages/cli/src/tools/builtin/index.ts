@@ -136,7 +136,7 @@ export async function getBuiltinTools(opts?: {
     ...createTaskListTools({ sessionId, configDir }),
 
     // Goal mode: GetGoal, CreateGoal, UpdateGoal
-    ...createGoalTools({ sessionId, workspaceRoot }),
+    ...createGoalTools({ sessionId, workspaceRoot, configDir }),
 
     // Agent Teams are a formal capability gated by explicit configuration.
     ...(opts?.agentTeamsEnabled

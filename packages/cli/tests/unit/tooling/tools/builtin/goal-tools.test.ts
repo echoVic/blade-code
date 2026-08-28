@@ -3,7 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GoalStore } from '../../../../../src/goals/GoalStore.js';
+import { getGoalTaskListId } from '../../../../../src/goals/executionFrontier.js';
 import { createGoalTools } from '../../../../../src/tools/builtin/goal/index.js';
+import { TaskListManager } from '../../../../../src/tools/builtin/task/TaskListManager.js';
 import { executeToolInvocation } from '../../../../../src/tools/execution/ToolInvocationRunner.js';
 
 describe('goal tools', () => {
@@ -23,7 +25,11 @@ describe('goal tools', () => {
   });
 
   function getTool(name: string) {
-    const tool = createGoalTools({ sessionId, workspaceRoot }).find(
+    const tool = createGoalTools({
+      sessionId,
+      workspaceRoot,
+      configDir: storageRoot,
+    }).find(
       (candidate) => candidate.name === name
     );
     if (!tool) throw new Error(`Tool not found: ${name}`);
@@ -101,6 +107,28 @@ describe('goal tools', () => {
       success: true,
       llmContent: { goal: { status: 'blocked' } },
       metadata: { goalStatus: 'blocked' },
+    });
+  });
+
+  it('rejects completion while the goal-scoped task list is unfinished', async () => {
+    const created = await execute('CreateGoal', { objective: 'finish every task' });
+    const goal = (created.llmContent as { goal: { goalId: string } }).goal;
+    const taskManager = TaskListManager.getInstance(
+      getGoalTaskListId({ sessionId, goalId: goal.goalId }),
+      storageRoot
+    );
+    await taskManager.createTask({
+      subject: 'Run the final test',
+      description: 'The final test must pass',
+    });
+
+    await expect(execute('UpdateGoal', { status: 'complete' })).resolves.toMatchObject({
+      success: false,
+      error: { code: 'GOAL_OPERATION_FAILED' },
+      llmContent: { error: expect.stringContaining('unfinished') },
+    });
+    await expect(new GoalStore(workspaceRoot, sessionId).get()).resolves.toMatchObject({
+      status: 'active',
     });
   });
 

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { GoalExecutionFrontier } from './types.js';
+import type { GoalExecutionFrontier, GoalSnapshot } from './types.js';
 import { TaskListManager } from '../tools/builtin/task/TaskListManager.js';
 import type { TaskListItem } from '../tools/builtin/task/taskListTypes.js';
 
@@ -12,6 +12,14 @@ export interface GoalExecutionFrontierReadResult {
   frontier: GoalExecutionFrontier;
   tasks: TaskListItem[];
 }
+
+export type GoalExecutionFrontierPreparation =
+  | ({ ok: true } & GoalExecutionFrontierReadResult & { goal: GoalSnapshot })
+  | {
+      ok: false;
+      goal: GoalSnapshot | null;
+      error: { code: 'task_list_unavailable'; message: string };
+    };
 
 export function getGoalTaskListId(goal: GoalIdentity): string {
   return `goal:${goal.sessionId}:${goal.goalId}`;

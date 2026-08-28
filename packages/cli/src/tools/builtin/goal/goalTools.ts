@@ -1,6 +1,11 @@
 import { GoalStore } from '../../../goals/GoalStore.js';
+import {
+  getGoalTaskListId,
+  readGoalExecutionFrontier,
+} from '../../../goals/executionFrontier.js';
 import { formatGoalSummary } from '../../../goals/prompts.js';
 import { StringEnum, Type } from '../../../schema/index.js';
+import { getBladeStorageRoot } from '../../../context/storage/pathUtils.js';
 import { createTool } from '../../core/createTool.js';
 import type { ExecutionContext, ToolResult } from '../../types/index.js';
 import { ToolErrorType, ToolKind } from '../../types/index.js';
@@ -8,6 +13,7 @@ import { ToolErrorType, ToolKind } from '../../types/index.js';
 interface GoalToolOptions {
   sessionId: string;
   workspaceRoot: string;
+  configDir?: string;
 }
 
 function getStore(context: ExecutionContext, options: GoalToolOptions): GoalStore {
@@ -33,6 +39,7 @@ function failure(error: unknown): ToolResult {
 }
 
 export function createGoalTools(options: GoalToolOptions) {
+  const configDir = options.configDir ?? getBladeStorageRoot();
   const getGoal = createTool({
     name: 'GetGoal',
     displayName: 'Get Goal',
@@ -135,10 +142,24 @@ export function createGoalTools(options: GoalToolOptions) {
     async execute(params, context: ExecutionContext): Promise<ToolResult> {
       try {
         const store = getStore(context, options);
-        const goal =
-          params.status === 'complete'
-            ? await store.requestCompletion()
-            : await store.block(params.reason ?? '');
+        let goal: Awaited<ReturnType<GoalStore['requestCompletion']>>;
+        if (params.status === 'complete') {
+          const current = await store.get();
+          if (!current) throw new Error('Session has no goal');
+          const { frontier } = await readGoalExecutionFrontier(current, { configDir });
+          if (
+            frontier.pending > 0 ||
+            frontier.inProgress > 0 ||
+            frontier.blocked > 0
+          ) {
+            throw new Error(
+              `Goal has unfinished tasks (${frontier.completed}/${frontier.total} completed); update the goal-scoped task list before requesting completion`
+            );
+          }
+          goal = await store.requestCompletion();
+        } else {
+          goal = await store.block(params.reason ?? '');
+        }
         return {
           success: true,
           llmContent: {

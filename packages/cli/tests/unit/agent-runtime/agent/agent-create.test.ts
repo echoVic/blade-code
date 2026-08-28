@@ -74,6 +74,7 @@ function createGoalRuntimeMocks() {
     setTaskStatus: vi.fn().mockResolvedValue(undefined),
     recordGoalProgress: vi.fn().mockResolvedValue(null),
     getGoal: vi.fn().mockResolvedValue(null),
+    prepareGoalContinuation: vi.fn(async (goal) => ({ ok: true, goal })),
     pauseActiveGoal: vi.fn().mockResolvedValue(null),
     loadModelContext: vi.fn().mockResolvedValue([]),
     materializeUserMessage: vi.fn(

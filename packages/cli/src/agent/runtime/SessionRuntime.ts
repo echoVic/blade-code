@@ -52,6 +52,11 @@ import type {
   SessionTurnMetrics,
 } from '../../context/types.js';
 import { GoalStore } from '../../goals/GoalStore.js';
+import {
+  getGoalTaskListId,
+  readGoalExecutionFrontier,
+  type GoalExecutionFrontierPreparation,
+} from '../../goals/executionFrontier.js';
 import type {
   GoalCompletionVerificationResult,
   GoalCreateInput,
@@ -1161,6 +1166,40 @@ export class SessionRuntime {
 
   getGoal(): Promise<GoalSnapshot | null> {
     return this.goalStore.get();
+  }
+
+  async prepareGoalContinuation(
+    goal: GoalSnapshot
+  ): Promise<GoalExecutionFrontierPreparation> {
+    try {
+      const result = await readGoalExecutionFrontier(goal, {
+        configDir: getBladeStorageRoot(),
+      });
+      const updatedGoal = await this.goalStore.recordExecutionFrontier(result.frontier);
+      return { ok: true, goal: updatedGoal, ...result };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      let pausedGoal: GoalSnapshot | null = null;
+      try {
+        pausedGoal = await this.goalStore.pause(
+          `goal task list unavailable (${getGoalTaskListId(goal)}): ${detail}`
+        );
+      } catch (pauseError) {
+        logger.warn(
+          `[SessionRuntime] Failed to pause Goal after frontier failure: ${
+            pauseError instanceof Error ? pauseError.message : String(pauseError)
+          }`
+        );
+      }
+      return {
+        ok: false,
+        goal: pausedGoal,
+        error: {
+          code: 'task_list_unavailable',
+          message: `Goal execution frontier unavailable: ${detail}`,
+        },
+      };
+    }
   }
 
   async setTaskStatus(

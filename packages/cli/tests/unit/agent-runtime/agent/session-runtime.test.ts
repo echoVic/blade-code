@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,6 +28,7 @@ import {
 } from '../../../../src/context/storage/PersistentStore.js';
 import { getSessionFilePath } from '../../../../src/context/storage/pathUtils.js';
 import { GoalStore } from '../../../../src/goals/GoalStore.js';
+import { getGoalTaskListId } from '../../../../src/goals/executionFrontier.js';
 import { HookManager } from '../../../../src/hooks/HookManager.js';
 import { HookEvent } from '../../../../src/hooks/types/HookTypes.js';
 import { McpRegistry } from '../../../../src/mcp/McpRegistry.js';
@@ -35,6 +43,7 @@ import { CommunicationStyleCatalog } from '../../../../src/services/communicatio
 import { SessionService } from '../../../../src/services/SessionService.js';
 import type { UserShellExecutor } from '../../../../src/services/UserShellCommandService.js';
 import { FileAccessTracker } from '../../../../src/tools/builtin/file/FileAccessTracker.js';
+import { TaskListManager } from '../../../../src/tools/builtin/task/TaskListManager.js';
 import { BackgroundShellManager } from '../../../../src/tools/builtin/shell/BackgroundShellManager.js';
 import { InMemorySessionApprovalStore } from '../../../../src/tools/execution/SessionApprovalStore.js';
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
@@ -572,6 +581,35 @@ describe('SessionRuntime', () => {
 
     await runtime.dispose();
     expect(disposeBrowser).toHaveBeenCalledOnce();
+  });
+
+  it('pauses a Goal and returns typed failure when its task list is corrupt', async () => {
+    const workspaceRoot = path.join(storageRoot, 'goal-frontier-failure-project');
+    mkdirSync(workspaceRoot, { recursive: true });
+    const sessionId = 'goal-frontier-failure-session';
+    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const goal = await runtime.createGoal({ objective: 'recover from task corruption' });
+    const taskListId = getGoalTaskListId(goal);
+    await TaskListManager.getInstance(taskListId, storageRoot).createTask({
+      subject: 'Corruptible task',
+      description: 'This task establishes the durable file',
+    });
+    const encoded = encodeURIComponent(taskListId);
+    writeFileSync(
+      path.join(storageRoot, 'tasks', `${encoded}-agent-${encoded}.json`),
+      '{not-json',
+      'utf8'
+    );
+
+    const prepared = await runtime.prepareGoalContinuation(goal);
+
+    expect(prepared).toMatchObject({
+      ok: false,
+      error: { code: 'task_list_unavailable' },
+      goal: { status: 'paused' },
+    });
+    await expect(runtime.getGoal()).resolves.toMatchObject({ status: 'paused' });
+    await runtime.dispose();
   });
 
   it('reloads a recovered durable inbox into an idle cached runtime', async () => {

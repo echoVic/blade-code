@@ -17,6 +17,7 @@ export type {
   GoalStatus,
   GoalVerificationStallState,
 } from './types.js';
+export type { GoalExecutionFrontierPreparation } from './executionFrontier.js';
 export {
   GOAL_PREMATURE_STOP_PATTERNS,
   MAX_CONSECUTIVE_GOAL_PREMATURE_STOPS,

@@ -20,6 +20,7 @@ import {
 import type { ModelConfig } from '../config/types.js';
 import { ContextManager } from '../context/ContextManager.js';
 import { getBladeStorageRoot } from '../context/storage/pathUtils.js';
+import { getGoalTaskListId } from '../goals/executionFrontier.js';
 import { detectGoalPrematureStop } from '../goals/prematureStop.js';
 import { buildGoalContinuationPrompt } from '../goals/prompts.js';
 import type { GoalSnapshot } from '../goals/types.js';
@@ -684,6 +685,21 @@ export class Agent {
           metadata: { turnsCount: 0, toolCallsCount: 0, duration: 0 },
         };
       }
+      const preparedFrontier = await this.sessionRuntime!.prepareGoalContinuation(
+        initialGoal
+      );
+      if (!preparedFrontier.ok) {
+        if (preparedFrontier.goal) yield { kind: 'goal_updated', goal: preparedFrontier.goal };
+        return {
+          success: false,
+          error: {
+            type: 'goal_frontier_unavailable',
+            message: preparedFrontier.error.message,
+          },
+          metadata: { turnsCount: 0, toolCallsCount: 0, duration: 0 },
+        };
+      }
+      initialGoal = preparedFrontier.goal;
       enhancedMessage = buildGoalContinuationPrompt(initialGoal);
     } else if (!requestedPendingInputOnly && preparedInputTurn?.mode !== 'pending') {
       try {
@@ -854,6 +870,12 @@ export class Agent {
           const ownedHandle = turnHandle;
           const persistedGoal =
             currentGoal ?? (await this.sessionRuntime?.getGoal()) ?? null;
+          if (persistedGoal && !currentContext.taskListId) {
+            currentContext = {
+              ...currentContext,
+              goalTaskListId: getGoalTaskListId(persistedGoal),
+            };
+          }
           const loopOptions: LoopOptions = {
             ...options,
             pendingInputOnly,
@@ -1055,10 +1077,31 @@ export class Agent {
             return result;
           }
 
-          currentGoal = await this.sessionRuntime.beginGoalContinuation();
-          if (!currentGoal) {
+          const nextGoal = await this.sessionRuntime.beginGoalContinuation();
+          if (!nextGoal) {
             return result;
           }
+          const preparedFrontier = await this.sessionRuntime.prepareGoalContinuation(
+            nextGoal
+          );
+          if (!preparedFrontier.ok) {
+            if (preparedFrontier.goal) {
+              yield { kind: 'goal_updated', goal: preparedFrontier.goal };
+            }
+            return {
+              success: false,
+              error: {
+                type: 'goal_frontier_unavailable',
+                message: preparedFrontier.error.message,
+              },
+              metadata: {
+                turnsCount: result.metadata?.turnsCount ?? 0,
+                toolCallsCount: result.metadata?.toolCallsCount ?? 0,
+                duration: result.metadata?.duration ?? 0,
+              },
+            };
+          }
+          currentGoal = preparedFrontier.goal;
           turnHandle = await this.sessionRuntime.beginTurn('goal');
           pendingInputOnly = false;
           goalContinuation = true;

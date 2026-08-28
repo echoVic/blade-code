@@ -7,6 +7,7 @@ import {
   getGoalTaskListId,
   readGoalExecutionFrontier,
 } from '../../../../src/goals/executionFrontier.js';
+import { buildGoalContinuationPrompt } from '../../../../src/goals/prompts.js';
 import { TaskListManager } from '../../../../src/tools/builtin/task/TaskListManager.js';
 
 describe('goal execution frontier', () => {
@@ -122,5 +123,34 @@ describe('goal execution frontier', () => {
     expect(prompt).toContain('&lt;unsafe &amp; subject&gt;');
     expect(prompt).not.toContain('<unsafe & subject>');
     expect(prompt.length).toBeLessThan(4_500);
+  });
+
+  it('injects the persisted frontier into a goal continuation prompt', () => {
+    const prompt = buildGoalContinuationPrompt({
+      version: 2,
+      sessionId: 'session-a',
+      goalId: 'goal-1',
+      objective: 'finish the task list',
+      status: 'active',
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      continuationCount: 1,
+      executionFrontier: {
+        taskListId: 'goal:session-a:goal-1',
+        total: 1,
+        completed: 0,
+        inProgress: 0,
+        pending: 1,
+        blocked: 0,
+        nextTask: { id: '1', subject: 'Run the focused test', priority: 'high' },
+        digestSha256: 'b'.repeat(64),
+        observedAt: '2026-08-28T00:00:00.000Z',
+      },
+      createdAt: '2026-08-28T00:00:00.000Z',
+      updatedAt: '2026-08-28T00:00:00.000Z',
+    });
+
+    expect(prompt).toContain('<goal-execution-frontier>');
+    expect(prompt).toContain('Run the focused test');
   });
 });

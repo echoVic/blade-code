@@ -662,6 +662,60 @@ describe('executeLoopGenerator', () => {
     );
   });
 
+  it('propagates a Goal task-list scope without overriding a Team scope', async () => {
+    const deps = createMockDeps();
+    const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+    chatMock
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            id: 'tc-goal-task-list',
+            type: 'function',
+            function: {
+              name: 'TaskCreate',
+              arguments: '{"subject":"Goal","description":"Goal task"}',
+            },
+          },
+        ],
+        usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+        finishReason: 'tool_calls',
+      })
+      .mockResolvedValueOnce({
+        content: 'Created the goal task.',
+        toolCalls: undefined,
+        usage: { promptTokens: 120, completionTokens: 20, totalTokens: 140 },
+        finishReason: 'stop',
+      });
+    (deps.toolExecutor.execute as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      success: true,
+      llmContent: { task: { id: '1' } },
+    });
+
+    const { result } = await drainGenerator(
+      executeLoopGenerator(
+        deps,
+        'Create a goal task.',
+        createMockContext({ goalTaskListId: 'goal:test-session:goal-1' }),
+        { stream: false },
+        undefined
+      )
+    );
+
+    expect(result.success).toBe(true);
+    expect(deps.toolExecutor.execute).toHaveBeenCalledWith(
+      'TaskCreate',
+      {
+        subject: 'Goal',
+        description: 'Goal task',
+      },
+      expect.objectContaining({
+        sessionId: 'test-session',
+        goalTaskListId: 'goal:test-session:goal-1',
+      })
+    );
+  });
+
   describe('foreground Provider recovery origin', () => {
     it('attaches the frozen recovery budget to a root Provider request', async () => {
       const deps = createMockDeps({

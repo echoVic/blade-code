@@ -122,6 +122,36 @@ describe('task list tools persistence', () => {
     }
   });
 
+  it('prefers the shared Team scope over the active Goal scope', async () => {
+    const configDir = await createTempConfigDir();
+
+    try {
+      await getTool('session-a', configDir, 'TaskCreate')
+        .build({ subject: 'Goal task', description: 'Belongs to the goal' })
+        .execute(createAbortSignal(), undefined, {
+          sessionId: 'session-a',
+          goalTaskListId: 'goal:session-a:goal-1',
+        });
+      await getTool('session-a', configDir, 'TaskCreate')
+        .build({ subject: 'Team task', description: 'Belongs to the team' })
+        .execute(createAbortSignal(), undefined, {
+          sessionId: 'session-a',
+          taskListId: 'team-1',
+          goalTaskListId: 'goal:session-a:goal-1',
+        });
+
+      const goalTasks = await TaskListManager.getInstance(
+        'goal:session-a:goal-1',
+        configDir
+      ).listTasks();
+      const teamTasks = await TaskListManager.getInstance('team-1', configDir).listTasks();
+      expect(goalTasks.map((task) => task.subject)).toEqual(['Goal task']);
+      expect(teamTasks.map((task) => task.subject)).toEqual(['Team task']);
+    } finally {
+      await fs.rm(configDir, { recursive: true, force: true });
+    }
+  });
+
   it('updates and lists current tasks', async () => {
     const configDir = await createTempConfigDir();
 

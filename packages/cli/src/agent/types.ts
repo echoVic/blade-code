@@ -56,6 +56,8 @@ export interface ChatContext {
   sessionId: string;
   /** Shared task-list scope inherited by coordinated Agent Team members. */
   taskListId?: string;
+  /** Task-list scope derived from the active persisted Goal. */
+  goalTaskListId?: string;
   workspaceRoot: string;
   signal?: AbortSignal;
   confirmationHandler?: ConfirmationHandler; // 会话级别的确认处理器
@@ -208,6 +210,7 @@ export interface LoopResult {
       | 'delegation_protocol_failed'
       | 'verification_failed'
       | 'goal_verification_failed'
+      | 'goal_frontier_unavailable'
       | 'worktree_protocol_failed'
       | 'structured_output_failed'
       | 'message_persistence_failed'
