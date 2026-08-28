@@ -1,4 +1,7 @@
-import type { GoalPrematureStopPattern, GoalVerificationStallState } from '../goals/types.js';
+import type {
+  GoalPrematureStopPattern,
+  GoalVerificationStallState,
+} from '../goals/types.js';
 import { Default, Runtime, type Static, StringEnum, Type } from '../schema/index.js';
 import {
   MAX_INLINE_ATTACHMENT_BYTES,

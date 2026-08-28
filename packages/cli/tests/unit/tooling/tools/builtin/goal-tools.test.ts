@@ -29,9 +29,7 @@ describe('goal tools', () => {
       sessionId,
       workspaceRoot,
       configDir: storageRoot,
-    }).find(
-      (candidate) => candidate.name === name
-    );
+    }).find((candidate) => candidate.name === name);
     if (!tool) throw new Error(`Tool not found: ${name}`);
     return tool as any;
   }

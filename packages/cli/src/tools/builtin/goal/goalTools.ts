@@ -147,11 +147,7 @@ export function createGoalTools(options: GoalToolOptions) {
           const current = await store.get();
           if (!current) throw new Error('Session has no goal');
           const { frontier } = await readGoalExecutionFrontier(current, { configDir });
-          if (
-            frontier.pending > 0 ||
-            frontier.inProgress > 0 ||
-            frontier.blocked > 0
-          ) {
+          if (frontier.pending > 0 || frontier.inProgress > 0 || frontier.blocked > 0) {
             throw new Error(
               `Goal has unfinished tasks (${frontier.completed}/${frontier.total} completed); update the goal-scoped task list before requesting completion`
             );

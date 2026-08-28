@@ -605,8 +605,11 @@ describe('headless event contract', () => {
   });
 
   it('validates a bounded goal frontier event', async () => {
-    const { HEADLESS_EVENT_VERSION, HeadlessJsonlEventSchema, createHeadlessJsonlEvent } =
-      await import('../../../src/commands/headlessEvents.js');
+    const {
+      HEADLESS_EVENT_VERSION,
+      HeadlessJsonlEventSchema,
+      createHeadlessJsonlEvent,
+    } = await import('../../../src/commands/headlessEvents.js');
     const event = createHeadlessJsonlEvent('goal_frontier', {
       goal_id: 'goal-1',
       status: 'active',

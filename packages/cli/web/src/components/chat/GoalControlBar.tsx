@@ -167,7 +167,10 @@ export function GoalControlBar() {
           data-blade-goal-frontier-pending={goal.executionFrontier?.pending}
           data-blade-goal-frontier-blocked={goal.executionFrontier?.blocked}
           data-blade-goal-frontier-next-task={goal.executionFrontier?.nextTask?.id}
-          data-blade-goal-frontier-digest={goal.executionFrontier?.digestSha256.slice(0, 16)}
+          data-blade-goal-frontier-digest={goal.executionFrontier?.digestSha256.slice(
+            0,
+            16
+          )}
           data-blade-goal-frontier-stall={goal.frontierStall?.category}
           data-blade-goal-frontier-stall-count={goal.frontierStall?.consecutiveCount}
         >

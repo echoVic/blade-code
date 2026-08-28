@@ -296,10 +296,13 @@ async function waitForGoalFrontier(
   await section.waitFor({ state: 'visible', timeout: 30_000 });
   await section.evaluate((element, frontier) => {
     const attributes: Record<string, string | undefined> = {
-      taskListId: element.getAttribute('data-blade-goal-frontier-task-list') ?? undefined,
+      taskListId:
+        element.getAttribute('data-blade-goal-frontier-task-list') ?? undefined,
       total: element.getAttribute('data-blade-goal-frontier-total') ?? undefined,
-      completed: element.getAttribute('data-blade-goal-frontier-completed') ?? undefined,
-      inProgress: element.getAttribute('data-blade-goal-frontier-in-progress') ?? undefined,
+      completed:
+        element.getAttribute('data-blade-goal-frontier-completed') ?? undefined,
+      inProgress:
+        element.getAttribute('data-blade-goal-frontier-in-progress') ?? undefined,
       pending: element.getAttribute('data-blade-goal-frontier-pending') ?? undefined,
       blocked: element.getAttribute('data-blade-goal-frontier-blocked') ?? undefined,
     };

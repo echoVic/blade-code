@@ -689,11 +689,11 @@ export class Agent {
           metadata: { turnsCount: 0, toolCallsCount: 0, duration: 0 },
         };
       }
-      const preparedFrontier = await this.sessionRuntime!.prepareGoalContinuation(
-        initialGoal
-      );
+      const preparedFrontier =
+        await this.sessionRuntime!.prepareGoalContinuation(initialGoal);
       if (!preparedFrontier.ok) {
-        if (preparedFrontier.goal) yield { kind: 'goal_updated', goal: preparedFrontier.goal };
+        if (preparedFrontier.goal)
+          yield { kind: 'goal_updated', goal: preparedFrontier.goal };
         return {
           success: false,
           error: {
@@ -1105,9 +1105,8 @@ export class Agent {
           if (!nextGoal) {
             return result;
           }
-          const preparedFrontier = await this.sessionRuntime.prepareGoalContinuation(
-            nextGoal
-          );
+          const preparedFrontier =
+            await this.sessionRuntime.prepareGoalContinuation(nextGoal);
           if (!preparedFrontier.ok) {
             if (preparedFrontier.goal) {
               yield { kind: 'goal_updated', goal: preparedFrontier.goal };

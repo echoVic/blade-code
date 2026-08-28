@@ -79,8 +79,7 @@ export const GOAL_FRONTIER_STALL_CATEGORIES = [
   'repeated_deferral',
 ] as const;
 
-export type GoalFrontierStallCategory =
-  (typeof GOAL_FRONTIER_STALL_CATEGORIES)[number];
+export type GoalFrontierStallCategory = (typeof GOAL_FRONTIER_STALL_CATEGORIES)[number];
 
 export const MAX_CONSECUTIVE_GOAL_FRONTIER_STALLS = 3;
 

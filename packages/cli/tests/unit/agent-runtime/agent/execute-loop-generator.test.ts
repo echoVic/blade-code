@@ -799,9 +799,7 @@ describe('executeLoopGenerator', () => {
     expect(refreshFrontier).toHaveBeenCalledOnce();
     expect(events.map((event) => event.kind)).toContain('task_update');
     expect(events.map((event) => event.kind)).toContain('goal_frontier_updated');
-    expect(
-      events.findIndex((event) => event.kind === 'task_update')
-    ).toBeLessThan(
+    expect(events.findIndex((event) => event.kind === 'task_update')).toBeLessThan(
       events.findIndex((event) => event.kind === 'goal_frontier_updated')
     );
   });

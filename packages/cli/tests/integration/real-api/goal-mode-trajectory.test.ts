@@ -343,7 +343,8 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
           path.join(workspace, '.blade-storage')
         ).createTask({
           subject: 'Complete the recovery fixture',
-          description: 'Mark this task completed after writing and reading the result file.',
+          description:
+            'Mark this task completed after writing and reading the result file.',
           priority: 'high',
         });
         agent = await Agent.createWithRuntime(runtime, { sessionId });
@@ -615,8 +616,9 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
             (event) =>
               event.sessionId === sessionId &&
               event.type === 'goal.frontier.updated' &&
-              (event.properties.frontier as { taskListId?: string } | undefined)
-                ?.taskListId?.startsWith(`goal:${sessionId}:`)
+              (
+                event.properties.frontier as { taskListId?: string } | undefined
+              )?.taskListId?.startsWith(`goal:${sessionId}:`)
           )
         ).toBe(true);
         expect((await readFile(resultPath, 'utf8')).trim()).toBe('WEB_GOAL_COMPLETE');

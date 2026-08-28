@@ -588,7 +588,9 @@ describe('SessionRuntime', () => {
     mkdirSync(workspaceRoot, { recursive: true });
     const sessionId = 'goal-frontier-failure-session';
     const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
-    const goal = await runtime.createGoal({ objective: 'recover from task corruption' });
+    const goal = await runtime.createGoal({
+      objective: 'recover from task corruption',
+    });
     const taskListId = getGoalTaskListId(goal);
     await TaskListManager.getInstance(taskListId, storageRoot).createTask({
       subject: 'Corruptible task',

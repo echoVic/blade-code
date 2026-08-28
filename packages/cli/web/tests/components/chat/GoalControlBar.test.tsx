@@ -55,10 +55,14 @@ const sessionState = vi.hoisted(() => ({
           inProgress: number;
           pending: number;
           blocked: number;
-          nextTask?: { id: string; subject: string; priority: 'high' | 'medium' | 'low' };
+          nextTask?: {
+            id: string;
+            subject: string;
+            priority: 'high' | 'medium' | 'low';
+          };
           digestSha256: string;
-        observedAt: string;
-      },
+          observedAt: string;
+        },
     frontierStall: undefined as
       | undefined
       | {

@@ -144,7 +144,10 @@ describe('task list tools persistence', () => {
         'goal:session-a:goal-1',
         configDir
       ).listTasks();
-      const teamTasks = await TaskListManager.getInstance('team-1', configDir).listTasks();
+      const teamTasks = await TaskListManager.getInstance(
+        'team-1',
+        configDir
+      ).listTasks();
       expect(goalTasks.map((task) => task.subject)).toEqual(['Goal task']);
       expect(teamTasks.map((task) => task.subject)).toEqual(['Team task']);
     } finally {

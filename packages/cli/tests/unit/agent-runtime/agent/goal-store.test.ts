@@ -109,10 +109,10 @@ describe('GoalStore', () => {
       ...frontier,
       taskListId: `goal:${sessionId}:${created.goalId}`,
     };
-    const updated = await store.recordExecutionFrontier(
-      scopedFrontier,
-      { ...stall, digestSha256: scopedFrontier.digestSha256 }
-    );
+    const updated = await store.recordExecutionFrontier(scopedFrontier, {
+      ...stall,
+      digestSha256: scopedFrontier.digestSha256,
+    });
 
     expect(updated.version).toBe(2);
     expect(updated.executionFrontier).toEqual(scopedFrontier);
@@ -187,10 +187,14 @@ describe('GoalStore', () => {
     };
     await writeFile(filePath, JSON.stringify(legacyGoal), { mode: 0o600 });
 
-    await expect(new GoalStore(workspaceRoot, sessionId).get()).resolves.toMatchObject(
-      { version: 1, goalId: 'goal-1' }
-    );
-    const upgraded = await new GoalStore(workspaceRoot, sessionId).recordExecutionFrontier({
+    await expect(new GoalStore(workspaceRoot, sessionId).get()).resolves.toMatchObject({
+      version: 1,
+      goalId: 'goal-1',
+    });
+    const upgraded = await new GoalStore(
+      workspaceRoot,
+      sessionId
+    ).recordExecutionFrontier({
       ...frontier,
       taskListId: 'goal:goal-session:goal-1',
     });
