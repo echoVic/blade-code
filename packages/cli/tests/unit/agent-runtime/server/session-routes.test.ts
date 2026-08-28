@@ -2075,6 +2075,77 @@ describe('SessionRoutes runtime reuse', () => {
     await controller.shutdown();
   });
 
+  it('keeps terminal events when a new message steers an active Web pending resume', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const metadata = metadataFor('steered-pending-resume', '/persisted-workspace', {
+      permissionMode: 'yolo',
+    });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    let releaseRun: () => void = () => undefined;
+    const runGate = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    agentState.chatStream.mockImplementationOnce(async function* () {
+      yield { kind: 'content_delta' as const, delta: 'completed response' };
+      await runGate;
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+      return {
+        success: true,
+        finalMessage: 'completed response',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+      };
+    });
+
+    const controller = createSessionRouteController();
+    const eventsController = new AbortController();
+    const response = await controller.app.request('/steered-pending-resume/events', {
+      signal: eventsController.signal,
+    });
+    try {
+      await vi.waitFor(() => {
+        expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+      });
+
+      const steering = await controller.app.request(
+        '/steered-pending-resume/message?projectPath=%2Fpersisted-workspace',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: 'new requirement' }),
+        }
+      );
+      expect(steering.status).toBe(202);
+      await expect(steering.json()).resolves.toMatchObject({
+        status: 'steering_queued',
+      });
+
+      releaseRun();
+      await vi.waitFor(() => {
+        expect(
+          busState.publish.mock.calls.some(
+            ([, type, properties]) =>
+              type === 'session.status' && properties.status === 'idle'
+          )
+        ).toBe(true);
+      });
+      expect(
+        busState.publish.mock.calls.some(([, type]) => type === 'message.complete')
+      ).toBe(true);
+      expect(
+        busState.publish.mock.calls.some(([, type]) => type === 'session.completed')
+      ).toBe(true);
+    } finally {
+      eventsController.abort();
+      await response.body?.cancel().catch(() => undefined);
+      await controller.shutdown();
+    }
+  });
+
   it('waits for failed Web pending resume cleanup before retrying', async () => {
     vi.useFakeTimers();
     const { createSessionRouteController } = await import(
@@ -2155,6 +2226,85 @@ describe('SessionRoutes runtime reuse', () => {
     await response.body?.cancel().catch(() => undefined);
     await controller.shutdown();
     vi.useRealTimers();
+  });
+
+  it('can wake again when a scheduled Web pending resume fails before startRun', async () => {
+    vi.useFakeTimers();
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const metadata = metadataFor('retry-startup-failure', '/persisted-workspace', {
+      permissionMode: 'yolo',
+    });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionRuntime.hasPendingInbox)
+      .mockResolvedValueOnce(true)
+      .mockRejectedValueOnce(new Error('retry startup failed'))
+      .mockResolvedValue(true);
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    agentState.chatStream
+      .mockImplementationOnce(async function* () {
+        if (Date.now() < 0) yield undefined;
+        return {
+          success: false,
+          error: {
+            type: 'api_error' as const,
+            message: 'Provider request failed.',
+            details: Object.assign(new Error('opaque'), {
+              code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+            }),
+          },
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      })
+      .mockImplementationOnce(async function* () {
+        if (Date.now() < 0) yield undefined;
+        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+        return {
+          success: true,
+          finalMessage: 'recovered after startup failure',
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      });
+
+    const controller = createSessionRouteController();
+    const firstEventsController = new AbortController();
+    const firstResponse = await controller.app.request(
+      '/retry-startup-failure/events',
+      { signal: firstEventsController.signal }
+    );
+    try {
+      await vi.waitFor(() => {
+        expect(
+          busState.publish.mock.calls.some(
+            ([, type, properties]) =>
+              type === 'pending.resume' && properties.phase === 'retry_scheduled'
+          )
+        ).toBe(true);
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(SessionRuntime.hasPendingInbox).toHaveBeenCalledTimes(2);
+      expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+
+      const secondEventsController = new AbortController();
+      const secondResponse = await controller.app.request(
+        '/retry-startup-failure/events',
+        { signal: secondEventsController.signal }
+      );
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        expect(agentState.chatStream).toHaveBeenCalledTimes(2);
+      } finally {
+        secondEventsController.abort();
+        await secondResponse.body?.cancel().catch(() => undefined);
+      }
+    } finally {
+      firstEventsController.abort();
+      await firstResponse.body?.cancel().catch(() => undefined);
+      await controller.shutdown();
+      vi.useRealTimers();
+    }
   });
 
   it('rejects pending permission and ignores late success at the Web resume deadline', async () => {

@@ -1816,7 +1816,12 @@ export const createSessionRouteController = (): SessionRouteController => {
           state.inFlight = false;
           const nextAttempt = beginPendingResumeAttempt(session);
           if (!nextAttempt) return;
-          await resumePendingSession(session, nextAttempt);
+          try {
+            await resumePendingSession(session, nextAttempt);
+          } catch (error) {
+            clearPendingResumeRecovery(ref, nextAttempt.generation);
+            throw error;
+          }
         });
       })().catch((error) => {
         logger.error(
@@ -4320,7 +4325,6 @@ export const createSessionRouteController = (): SessionRouteController => {
     const sessionRef = sessionRefFromSession(session);
 
     return withMessageSubmissionLock(sessionRef, async () => {
-      clearPendingResumeRecovery(sessionRef);
       const currentRun = getRun(session.currentRunId);
       if (isActiveRun(currentRun)) {
         if (outputSchema) {
@@ -4432,6 +4436,8 @@ export const createSessionRouteController = (): SessionRouteController => {
           );
         });
       }
+
+      clearPendingResumeRecovery(sessionRef);
 
       if (session.permissionMode !== permissionMode) {
         await persistSessionPermissionMode(session, permissionMode);
@@ -5577,8 +5583,7 @@ async function executeRunAsync(
       return;
     }
     if (options.pendingResume) {
-      const currentGeneration = options.onPendingResumeSuccess?.(options.pendingResume);
-      if (currentGeneration === false) return;
+      options.onPendingResumeSuccess?.(options.pendingResume);
     }
 
     // message.complete 只在整个 run 结束时发一次（run-level 语义）
