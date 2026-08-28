@@ -369,4 +369,3 @@ Use the repository release script so the version, changelogs, annotated tag, rem
 Run: `npm view blade-code version` and `git status --short --branch`.
 
 Expected: npm reports `0.10.102`; the tag and release workflow are visible remotely; the working tree is clean.
-
