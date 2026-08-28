@@ -216,7 +216,7 @@ const ensureAssistantMessage = (
   return id;
 };
 
-const handleMessageCreated: EventHandler = (props, get, _set) => {
+const handleMessageCreated: EventHandler = (props, get, set) => {
   const { currentSessionId, addMessage, startAgentResponse, messages, updateMessage } =
     get();
   if (props.sessionId !== currentSessionId) return;
@@ -245,7 +245,9 @@ const handleMessageCreated: EventHandler = (props, get, _set) => {
     addMessage(message);
   }
 
-  if (role === 'assistant') {
+  if (role === 'user') {
+    set({ pendingResume: null });
+  } else {
     startAgentResponse(messageId);
   }
 };

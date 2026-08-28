@@ -1919,6 +1919,83 @@ describe('eventHandlers', () => {
     }
   );
 
+  test('clears pending resume when an exact-session user message starts a new turn', () => {
+    const state = createState({ messages: [] });
+    Object.assign(state, {
+      pendingResume: {
+        phase: 'retry_scheduled',
+        kind: 'pending_input',
+        attempt: 1,
+        maxAttempts: 4,
+      },
+    });
+    const set = vi.fn((partial) => {
+      Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
+    });
+    const dispatch = createEventDispatcher(() => state, set);
+
+    dispatch({
+      type: 'message.created',
+      properties: {
+        sessionId: 'session-1',
+        projectPath: '/workspace/a',
+        messageId: 'user-new-turn',
+        role: 'user',
+        content: 'new turn from another tab',
+      },
+    });
+
+    expect(state.pendingResume).toBeNull();
+  });
+
+  test('keeps pending resume through assistant output until its terminal lifecycle', () => {
+    const state = createState({ messages: [] });
+    const pendingResume = {
+      phase: 'retry_scheduled' as const,
+      kind: 'pending_input' as const,
+      attempt: 1,
+      maxAttempts: 4,
+    };
+    state.pendingResume = pendingResume;
+    const set = vi.fn((partial) => {
+      Object.assign(state, typeof partial === 'function' ? partial(state) : partial);
+    });
+    const dispatch = createEventDispatcher(() => state, set);
+    const identity = { sessionId: 'session-1', projectPath: '/workspace/a' };
+
+    dispatch({
+      type: 'message.created',
+      properties: {
+        ...identity,
+        messageId: 'assistant-recovery',
+        role: 'assistant',
+        content: '',
+      },
+    });
+    dispatch({
+      type: 'message.delta',
+      properties: {
+        ...identity,
+        messageId: 'assistant-recovery',
+        delta: 'recovered output',
+      },
+    });
+
+    expect(state.pendingResume).toBe(pendingResume);
+
+    dispatch({
+      type: 'pending.resume',
+      properties: {
+        ...identity,
+        phase: 'recovered',
+        kind: 'pending_input',
+        attempt: 1,
+        maxAttempts: 4,
+      },
+    });
+    expect(state.pendingResume).toBeNull();
+  });
+
   test.each([
     { phase: 'unknown' },
     { kind: 'goal' },
