@@ -3870,7 +3870,7 @@ validates the object and may return a bounded corrective error.`;
               }
               if (options?.goalLifecycle?.clearFrontierStall) {
                 const goal = await options.goalLifecycle.clearFrontierStall();
-                yield { kind: 'goal_updated', goal };
+                if (goal) yield { kind: 'goal_updated', goal };
               }
             }
             const verificationSubagentType =

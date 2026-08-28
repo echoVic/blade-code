@@ -153,7 +153,7 @@ export interface LoopOptions {
     ) => Promise<GoalSnapshot>;
     invalidateVerification: (reason: string) => Promise<GoalSnapshot>;
     finalizeCompletion: () => Promise<GoalSnapshot>;
-    clearFrontierStall?: () => Promise<GoalSnapshot>;
+    clearFrontierStall?: () => Promise<GoalSnapshot | null>;
     refreshFrontier?: () => Promise<GoalExecutionFrontierPreparation | null>;
   };
   /** Optional surface-reserved admission used for accurate queued responses. */

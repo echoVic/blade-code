@@ -51,13 +51,13 @@ import type {
   SessionTurnKind,
   SessionTurnMetrics,
 } from '../../context/types.js';
-import { GoalStore } from '../../goals/GoalStore.js';
 import {
+  type GoalExecutionFrontierPreparation,
   getGoalTaskListId,
   readGoalExecutionFrontier,
-  type GoalExecutionFrontierPreparation,
 } from '../../goals/executionFrontier.js';
 import { classifyGoalFrontierStall } from '../../goals/frontierStall.js';
+import { GoalStore } from '../../goals/GoalStore.js';
 import type {
   GoalCompletionVerificationResult,
   GoalCreateInput,
@@ -1348,7 +1348,7 @@ export class SessionRuntime {
     return this.goalStore.invalidateCompletionVerification(reason);
   }
 
-  clearGoalFrontierStall(): Promise<GoalSnapshot> {
+  clearGoalFrontierStall(): Promise<GoalSnapshot | null> {
     return this.goalStore.clearFrontierStall();
   }
 

@@ -229,6 +229,41 @@ const readTool: Tool = {
   },
 };
 
+const writeTool: Tool = {
+  ...readTool,
+  name: 'Write',
+  displayName: 'Write',
+  kind: ToolKind.Write,
+  getFunctionDeclaration() {
+    return {
+      name: 'Write',
+      description: 'Write a file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          file_path: { type: 'string' },
+          content: { type: 'string' },
+        },
+        required: ['file_path', 'content'],
+      },
+    };
+  },
+  getMetadata() {
+    return { name: 'Write' };
+  },
+  build(params: unknown) {
+    return {
+      toolName: 'Write',
+      params,
+      getDescription: () => 'Write invocation',
+      getAffectedPaths: () => [],
+      async execute(): Promise<ToolResult> {
+        return { success: true, llmContent: 'written' };
+      },
+    };
+  },
+};
+
 interface TestChatConfigOverrides {
   model?: string;
   maxContextTokens?: number;
@@ -802,6 +837,74 @@ describe('executeLoopGenerator', () => {
     expect(events.findIndex((event) => event.kind === 'task_update')).toBeLessThan(
       events.findIndex((event) => event.kind === 'goal_frontier_updated')
     );
+  });
+
+  it('does not clear Goal stall state after a write when no Goal is active', async () => {
+    const deps = createMockDeps();
+    const registry = deps.toolExecutor.getRegistry();
+    vi.mocked(registry.get).mockImplementation((name) =>
+      name === 'Write' ? writeTool : undefined
+    );
+    vi.mocked(registry.getFunctionDeclarationsByMode).mockReturnValue([
+      { name: 'Write', description: 'Write a file', parameters: {} },
+    ]);
+    const chatMock = deps.chatService.chat as ReturnType<typeof vi.fn>;
+    chatMock
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [
+          {
+            id: 'write-without-goal',
+            type: 'function',
+            function: {
+              name: 'Write',
+              arguments: JSON.stringify({
+                file_path: '/tmp/test/result.txt',
+                content: 'ok\n',
+              }),
+            },
+          },
+        ],
+        finishReason: 'tool_calls',
+      })
+      .mockResolvedValueOnce({
+        content: 'Done.',
+        toolCalls: undefined,
+        finishReason: 'stop',
+      });
+    vi.mocked(deps.toolExecutor.execute).mockResolvedValueOnce({
+      success: true,
+      llmContent: 'Created result.txt',
+      metadata: { file_path: '/tmp/test/result.txt' },
+    });
+    const getSnapshot = vi.fn().mockResolvedValue(null);
+    const clearFrontierStall = vi.fn().mockResolvedValue(null);
+
+    const { events, result } = await drainGenerator(
+      executeLoopGenerator(
+        deps,
+        'Write result.txt.',
+        createMockContext(),
+        {
+          stream: false,
+          builtinVerification: false,
+          goalLifecycle: {
+            snapshot: null,
+            getSnapshot,
+            recordVerification: vi.fn(),
+            invalidateVerification: vi.fn(),
+            finalizeCompletion: vi.fn(),
+            clearFrontierStall,
+          },
+        },
+        undefined
+      )
+    );
+
+    expect(result).toMatchObject({ success: true, finalMessage: 'Done.' });
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    expect(clearFrontierStall).toHaveBeenCalledOnce();
+    expect(events.some((event) => event.kind === 'goal_updated')).toBe(false);
   });
 
   describe('foreground Provider recovery origin', () => {

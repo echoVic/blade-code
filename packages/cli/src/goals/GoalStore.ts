@@ -8,6 +8,7 @@ import { parseSchema, StringEnum, safeParseSchema, Type } from '../schema/index.
 import { KeyedMutexRegistry } from '../utils/KeyedMutexRegistry.js';
 import {
   GOAL_COMPLETION_VERIFICATION_STATUSES,
+  GOAL_FRONTIER_STALL_CATEGORIES,
   GOAL_PREMATURE_STOP_PATTERNS,
   GOAL_STATUSES,
   type GoalChangeEvent,
@@ -17,11 +18,10 @@ import {
   type GoalFrontierStallState,
   type GoalProgress,
   type GoalSnapshot,
+  MAX_CONSECUTIVE_GOAL_FRONTIER_STALLS,
   MAX_CONSECUTIVE_GOAL_PREMATURE_STOPS,
   MAX_CONSECUTIVE_GOAL_VERIFICATION_STALLS,
   MAX_GOAL_VERIFICATION_FEEDBACK_CHARS,
-  GOAL_FRONTIER_STALL_CATEGORIES,
-  MAX_CONSECUTIVE_GOAL_FRONTIER_STALLS,
 } from './types.js';
 
 const MAX_GOAL_FILE_BYTES = 1024 * 1024;
@@ -245,14 +245,19 @@ export class GoalStore {
     });
   }
 
-  async clearFrontierStall(): Promise<GoalSnapshot> {
-    return this.updateExisting((goal) => {
+  async clearFrontierStall(): Promise<GoalSnapshot | null> {
+    return GoalStore.locks.runExclusive(this.filePath, async () => {
+      const goal = await this.readUnlocked();
+      if (!goal) return null;
       const { frontierStall: _frontierStall, ...withoutStall } = goal;
-      return {
+      const next = parseSchema(GoalSnapshotSchema, {
         ...withoutStall,
         version: 2,
         updatedAt: new Date().toISOString(),
-      };
+      });
+      await this.persistUnlocked(next);
+      this.emit(next);
+      return next;
     });
   }
 

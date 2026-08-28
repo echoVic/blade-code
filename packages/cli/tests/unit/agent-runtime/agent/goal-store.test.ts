@@ -6,8 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getSessionGoalFilePath } from '../../../../src/context/storage/pathUtils.js';
 import type { SessionGoalFinalizationInfo } from '../../../../src/context/types.js';
 import { GoalStore } from '../../../../src/goals/GoalStore.js';
-import type { GoalExecutionFrontier } from '../../../../src/goals/types.js';
-import type { GoalFrontierStallState } from '../../../../src/goals/types.js';
+import type {
+  GoalExecutionFrontier,
+  GoalFrontierStallState,
+} from '../../../../src/goals/types.js';
 
 describe('GoalStore', () => {
   let storageRoot: string;
@@ -168,6 +170,13 @@ describe('GoalStore', () => {
     const updated = await store.clearFrontierStall();
 
     expect(updated).not.toHaveProperty('frontierStall');
+  });
+
+  it('treats clearing frontier stall without a Goal as an atomic no-op', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+
+    await expect(store.clearFrontierStall()).resolves.toBeNull();
+    await expect(store.get()).resolves.toBeNull();
   });
 
   it('reads a version 1 goal and upgrades it when the frontier is recorded', async () => {
