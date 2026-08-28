@@ -16,13 +16,16 @@ import {
 } from '../sessionIdentity';
 import { persistUnreadTaskKeys, pruneUnreadTaskKeys } from '../taskAttention';
 import type {
+  Message,
   MessageContentPart,
   SendMessagePayload,
+  Session,
   SessionRef,
   SessionSlice,
   SliceCreator,
   StreamEvent,
 } from '../types';
+import { createEmptyAgentContent } from '../utils/agentTimeline';
 import { aggregateMessages } from '../utils/aggregateMessages';
 
 const buildOptimisticUserContent = (payload: SendMessagePayload) => {
@@ -47,6 +50,76 @@ const buildOptimisticUserContent = (payload: SendMessagePayload) => {
   }
 
   return parts;
+};
+
+const mergePendingInteractionProjection = (
+  authoritativeMessages: Message[],
+  currentMessages: Message[],
+  pendingInteraction: Session['pendingInteraction']
+): Message[] => {
+  if (!pendingInteraction) return authoritativeMessages;
+
+  const projectedMessage = currentMessages.find((message) => {
+    const content = message.agentContent;
+    if (!content) return false;
+    switch (pendingInteraction.type) {
+      case 'permission':
+        return (
+          content.confirmation?.toolCallId === pendingInteraction.requestId &&
+          content.confirmation.status === 'pending'
+        );
+      case 'question':
+        return (
+          content.question?.toolCallId === pendingInteraction.requestId &&
+          content.question.status === 'pending'
+        );
+      case 'elicitation':
+        return (
+          content.elicitation?.toolCallId === pendingInteraction.requestId &&
+          content.elicitation.status === 'pending'
+        );
+    }
+  });
+  if (!projectedMessage?.agentContent) return authoritativeMessages;
+
+  const authoritativeIndex = authoritativeMessages.findIndex(
+    (message) => message.id === projectedMessage.id
+  );
+  const authoritativeMessage = authoritativeMessages[authoritativeIndex];
+  const baseMessage: Message = authoritativeMessage ?? {
+    id: projectedMessage.id,
+    role: 'assistant',
+    content: '',
+    timestamp: projectedMessage.timestamp,
+  };
+  let agentContent = baseMessage.agentContent ?? createEmptyAgentContent();
+  switch (pendingInteraction.type) {
+    case 'permission':
+      agentContent = {
+        ...agentContent,
+        confirmation: projectedMessage.agentContent.confirmation,
+      };
+      break;
+    case 'question':
+      agentContent = {
+        ...agentContent,
+        question: projectedMessage.agentContent.question,
+      };
+      break;
+    case 'elicitation':
+      agentContent = {
+        ...agentContent,
+        elicitation: projectedMessage.agentContent.elicitation,
+      };
+      break;
+  }
+  const mergedMessage = { ...baseMessage, agentContent };
+  if (authoritativeIndex < 0) {
+    return [...authoritativeMessages, mergedMessage];
+  }
+  return authoritativeMessages.map((message, index) =>
+    index === authoritativeIndex ? mergedMessage : message
+  );
 };
 
 const resetStreamingState = () => ({
@@ -455,12 +528,16 @@ export const createSessionSlice: SliceCreator<SessionSlice> = (set, get) => {
           ) {
             return;
           }
-          const messages = aggregateMessages(rawMessages);
+          const authoritativeMessages = aggregateMessages(rawMessages);
           set((state) => ({
-            messages,
+            messages: mergePendingInteractionProjection(
+              authoritativeMessages,
+              state.messages,
+              findSessionByRef(state.sessions, ref)?.pendingInteraction
+            ),
             sessions: state.sessions.map((session) =>
               sameSessionRef(sessionRefFromSession(session), ref)
-                ? { ...session, messageCount: messages.length }
+                ? { ...session, messageCount: authoritativeMessages.length }
                 : session
             ),
           }));

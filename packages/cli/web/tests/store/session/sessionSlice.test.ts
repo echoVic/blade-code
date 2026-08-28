@@ -633,6 +633,143 @@ describe('sessionSlice multimodal sendMessage', () => {
     expect(useSessionStore.getState().eventUnsubscribe).toBe(replacementUnsubscribe);
   });
 
+  it('keeps a replayed durable question when an idle-status resync finishes later', async () => {
+    const targetRef = createRef('pending-question-session', '/tmp/pending-question');
+    const target = createSession({
+      ...targetRef,
+      pendingInteraction: {
+        type: 'question',
+        requestId: 'question-replay',
+      },
+    });
+    const persistedMessages = [
+      createMessage({
+        id: 'persisted-user',
+        role: 'user',
+        content: 'Choose a release channel',
+      }),
+    ];
+    const resyncSnapshot = deferred<Message[]>();
+    const prepareEventSubscription = vi.fn(
+      async (_ref: SessionRef, onEvent?: (event: StreamEvent) => void) => {
+        onEvent?.({
+          type: 'session.status',
+          properties: {
+            sessionId: targetRef.sessionId,
+            projectPath: targetRef.projectPath,
+            status: 'idle',
+          },
+        });
+        onEvent?.({
+          type: 'question.required',
+          properties: {
+            sessionId: targetRef.sessionId,
+            projectPath: targetRef.projectPath,
+            requestId: 'question-replay',
+            questions: [
+              {
+                question: 'Which release channel should Blade write?',
+                header: 'Channel',
+                options: [
+                  { label: 'Stable', description: 'Use the stable channel' },
+                  { label: 'Canary', description: 'Use the canary channel' },
+                ],
+                multiSelect: false,
+              },
+            ],
+            replayed: true,
+          },
+        });
+        return () => undefined;
+      }
+    );
+    useSessionStore.setState({
+      sessions: [target],
+      prepareEventSubscription,
+      replaceEventSubscription: actualReplaceEventSubscription,
+    });
+    vi.mocked(sessionService.getMessages)
+      .mockResolvedValueOnce(persistedMessages)
+      .mockReturnValueOnce(resyncSnapshot.promise);
+
+    await useSessionStore.getState().selectSession(targetRef);
+    await flushMicrotasks();
+
+    expect(sessionService.getMessages).toHaveBeenCalledTimes(2);
+    expect(
+      useSessionStore
+        .getState()
+        .messages.some(
+          (message) =>
+            message.agentContent?.question?.toolCallId === 'question-replay' &&
+            message.agentContent.question.status === 'pending'
+        )
+    ).toBe(true);
+
+    const inFlightResync = useSessionStore.getState().resyncSessionMessages(targetRef);
+    resyncSnapshot.resolve(persistedMessages);
+    await inFlightResync;
+
+    expect(
+      useSessionStore
+        .getState()
+        .messages.some(
+          (message) =>
+            message.agentContent?.question?.toolCallId === 'question-replay' &&
+            message.agentContent.question.status === 'pending'
+        )
+    ).toBe(true);
+    expect(useSessionStore.getState().sessions[0]?.pendingInteraction).toEqual({
+      type: 'question',
+      requestId: 'question-replay',
+    });
+  });
+
+  it('does not restore a pending interaction projection after it is resolved', async () => {
+    const targetRef = createRef('resolved-question-session', '/tmp/resolved-question');
+    const target = createSession(targetRef);
+    const pendingQuestion = createMessage({
+      id: 'assistant-question-resolved-question',
+      role: 'assistant',
+      content: '',
+      agentContent: {
+        textBefore: '',
+        toolCalls: [],
+        textAfter: '',
+        thinkingContent: '',
+        tasks: [],
+        subagent: null,
+        confirmation: null,
+        question: {
+          toolCallId: 'resolved-question',
+          questions: [
+            {
+              question: 'Proceed?',
+              header: 'Decision',
+              options: [{ label: 'Yes', description: 'Continue' }],
+              multiSelect: false,
+            },
+          ],
+          status: 'pending',
+        },
+        elicitation: null,
+      },
+    });
+    useSessionStore.setState({
+      sessions: [target],
+      currentSessionId: targetRef.sessionId,
+      currentSessionRef: targetRef,
+      isTemporarySession: false,
+      messages: [pendingQuestion],
+    });
+    vi.mocked(sessionService.getMessages).mockResolvedValue([]);
+
+    await useSessionStore.getState().resyncSessionMessages(targetRef);
+
+    expect(useSessionStore.getState().messages).toEqual([]);
+    expect(useSessionStore.getState().sessions[0]?.pendingInteraction).toBeUndefined();
+  });
+
   it('replaces stale run state with the selected session status snapshot', async () => {
     const sourceRef = createRef('source-session', '/tmp/source');
     const targetRef = createRef('target-session', '/tmp/target');
