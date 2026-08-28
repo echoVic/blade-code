@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.111] - 2026-08-28
+
+### Fixed
+- Preserved replayed pending permission, question, and elicitation cards when an older authoritative message resync finishes after Session SSE initialization, while still dropping resolved interactions.
+
+### Tests
+- Added deterministic coverage for the idle-status/resync race and stale interaction removal, plus reusable one-shot Provider failure injection and bounded production Web recovery evidence validation.
+- Verified the full deterministic suite with 4,417 passing tests and the Web suite with 509 passing tests.
+
 ## [0.10.110] - 2026-08-28
 
 ### Added
