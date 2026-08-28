@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.106] - 2026-08-28
+
+### 修复
+- 将 Provider recovery budget、request deadline 和 stream idle 超时统一为规范的可重试 task failure，同时不泄露 Provider 详情。
+- 加固 task failure 投影，拒绝 malformed canonical payload，并安全处理循环或过深的错误链。
+
+### 测试
+- 新增嵌套错误、有界深度、规范 payload、循环链和敏感详情回归覆盖。
+
 ## [0.10.105] - 2026-08-28
 
 ### 修复

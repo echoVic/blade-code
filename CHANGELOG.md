@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.106] - 2026-08-28
+
+### Fixed
+- Normalized Provider recovery-budget, request-deadline, and stream-idle timeout failures into the canonical retryable task failure without leaking provider details.
+- Hardened task-failure projection against malformed canonical payloads, cyclic error chains, and deeply nested error metadata.
+
+### Tests
+- Added bounded nested-error, canonical-payload, cyclic-chain, and sensitive-detail regression coverage.
+
 ## [0.10.105] - 2026-08-28
 
 ### Fixed
