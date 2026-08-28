@@ -16,6 +16,8 @@ export const en = {
   'layout.workspace.empty': 'No workspace',
   'layout.action.rewind': 'Rewind session',
   'layout.action.openNavigation': 'Open navigation',
+  'layout.action.previewRestore': 'Restore preview',
+  'layout.action.previewMaximize': 'Maximize preview',
 
   // -------- Terminal --------
   'terminal.title': 'Terminal',

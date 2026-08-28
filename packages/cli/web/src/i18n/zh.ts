@@ -16,6 +16,8 @@ export const zh: Dict = {
   'layout.workspace.empty': '未选择工作区',
   'layout.action.rewind': '回溯会话',
   'layout.action.openNavigation': '打开导航',
+  'layout.action.previewRestore': '还原预览',
+  'layout.action.previewMaximize': '最大化预览',
 
   // Terminal
   'terminal.title': '终端',
