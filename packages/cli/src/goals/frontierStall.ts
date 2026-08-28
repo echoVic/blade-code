@@ -79,6 +79,10 @@ function resolveCategory(
     return 'repeated_deferral';
   }
 
+  if (input.prematureStopCount < 1 && input.verificationStallCount < 1) {
+    return undefined;
+  }
+
   if (frontier.pending > 0 || frontier.inProgress > 0) {
     return 'same_task_no_effect';
   }

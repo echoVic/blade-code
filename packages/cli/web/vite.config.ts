@@ -8,7 +8,21 @@ export default defineConfig(({ mode }) => {
   const rootNodeModules = path.resolve(__dirname, '../../../node_modules')
 
   return {
-    plugins: [react()],
+    plugins: [
+      react(),
+      {
+        name: 'defer-session-events-preload',
+        transformIndexHtml: {
+          order: 'post',
+          handler(html) {
+            return html.replace(
+              /\s*<link[^>]+rel="modulepreload"[^>]+session-events-[^>]+>\n?/u,
+              '\n'
+            );
+          },
+        },
+      },
+    ],
     build: {
       outDir: '../dist/web',
       emptyOutDir: true,

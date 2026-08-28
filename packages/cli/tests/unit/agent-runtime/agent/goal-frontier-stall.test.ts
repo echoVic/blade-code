@@ -89,6 +89,12 @@ describe('goal frontier stall classifier', () => {
     ).toBeUndefined();
   });
 
+  it('does not classify unchanged work without an auditable liveness signal', () => {
+    expect(
+      classifyGoalFrontierStall(frontier('same'), frontier('same'), input())
+    ).toBeUndefined();
+  });
+
   it('continues a matching category with a bounded count', () => {
     const previous = {
       category: 'same_task_no_effect' as const,
@@ -99,7 +105,7 @@ describe('goal frontier stall classifier', () => {
     const result = classifyGoalFrontierStall(
       frontier('same'),
       frontier('same'),
-      input(),
+      input({ prematureStopCount: 1 }),
       previous
     );
 

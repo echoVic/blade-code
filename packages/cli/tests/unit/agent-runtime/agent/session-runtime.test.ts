@@ -632,7 +632,14 @@ describe('SessionRuntime', () => {
     if (!first.ok) throw new Error('first frontier preparation failed');
     expect(first.goal.frontierStall).toBeUndefined();
 
-    const second = await runtime.prepareGoalContinuation(first.goal);
+    const withLivenessSignal = await runtime.recordGoalProgress({
+      tokens: 0,
+      elapsedMs: 0,
+      prematureStopPattern: 'self_deferral',
+    });
+    if (!withLivenessSignal) throw new Error('Goal disappeared after liveness signal');
+
+    const second = await runtime.prepareGoalContinuation(withLivenessSignal);
     expect(second.ok).toBe(true);
     if (!second.ok) throw new Error('second frontier preparation failed');
     expect(second.goal.frontierStall).toMatchObject({
