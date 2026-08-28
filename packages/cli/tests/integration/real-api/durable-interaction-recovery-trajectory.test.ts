@@ -1,3 +1,4 @@
+import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   access,
@@ -8,6 +9,7 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
+import { createServer as createNetServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
@@ -39,6 +41,7 @@ import { assertNoSecrets, finalAssistantText } from './sessionForkTrajectoryHarn
 import {
   buildRealApiRuntimeConfig,
   isRealApiTestEnabled,
+  isReleaseMatrix,
   resolveForkQualificationModels,
 } from './testConfig.js';
 
@@ -47,6 +50,14 @@ const qualificationModels = isRealApiTestEnabled()
   : [];
 const gpt = qualificationModels.find((model) => model.id === 'gpt');
 const deepseek = qualificationModels.find((model) => model.id === 'deepseek');
+const deepseekFlash = qualificationModels.find(
+  (model) => model.id === 'deepseek' && model.model === 'deepseek-v4-flash'
+);
+if (isRealApiTestEnabled() && isReleaseMatrix() && !deepseekFlash) {
+  throw new Error(
+    'DeepSeek Flash is required for the production Chromium qualification'
+  );
+}
 const describeReal = gpt && deepseek ? describe.sequential : describe.skip;
 
 interface WebRecoveryWaitInput {
@@ -92,6 +103,229 @@ const DURABLE_INTERACTION_STRICT_WAIT_MS = Math.min(
   DURABLE_INTERACTION_ACP_WAIT_MS
 );
 const DURABLE_INTERACTION_FINALIZATION_RESERVE_MS = 30_000;
+
+interface ProductionWebRecoveryEvidence {
+  sseEvents: Array<{ type: string; properties: Record<string, unknown> }>;
+  durableEvents: SessionEvent[];
+  targetContent: string;
+  finalMarker: string;
+}
+
+interface ProductionEventProbe {
+  events: ProductionWebRecoveryEvidence['sseEvents'];
+  close(): Promise<void>;
+}
+
+async function waitForProductionCondition(
+  predicate: () => boolean | Promise<boolean>,
+  message: string,
+  timeoutMs = 60_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      if (await predicate()) return;
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(message, { cause: lastError });
+}
+
+export async function reserveProductionWebPort(): Promise<number> {
+  const server = createNetServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    server.close();
+    throw new Error('Unable to reserve production Web qualification port');
+  }
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+  return address.port;
+}
+
+export async function openProductionEventProbe(
+  origin: string,
+  sessionId: string,
+  projectPath: string
+): Promise<ProductionEventProbe> {
+  const controller = new AbortController();
+  const url = new URL(`${origin}/sessions/${sessionId}/events`);
+  url.searchParams.set('projectPath', projectPath);
+  const response = await fetch(url, { signal: controller.signal });
+  if (!response.ok || !response.body) {
+    controller.abort();
+    throw new Error(`Production Web SSE failed: ${response.status}`);
+  }
+  const events: ProductionEventProbe['events'] = [];
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let readError: unknown;
+  const consume = (frame: string): void => {
+    const data = frame
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trimStart())
+      .join('\n');
+    if (!data) return;
+    const event = JSON.parse(data) as { type?: unknown; properties?: unknown };
+    if (typeof event.type === 'string' && isRecord(event.properties)) {
+      events.push({ type: event.type, properties: event.properties });
+    }
+  };
+  const reading = (async () => {
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        const frames = buffer.split(/\r?\n\r?\n/);
+        buffer = frames.pop() ?? '';
+        for (const frame of frames) consume(frame);
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) readError = error;
+    }
+  })();
+  await waitForProductionCondition(
+    () => events.some((event) => event.type === 'connected'),
+    'Production Web SSE did not connect',
+    20_000
+  );
+  return {
+    events,
+    async close() {
+      controller.abort();
+      await reader.cancel().catch(() => undefined);
+      await reading;
+      if (readError) throw readError;
+    },
+  };
+}
+
+export function waitForProductionChildExit(
+  child: ChildProcess,
+  timeoutMs = 30_000
+): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('Production Web qualification server did not exit'));
+    }, timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timer);
+      child.off('error', onError);
+      child.off('exit', onExit);
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onExit = () => {
+      cleanup();
+      resolve();
+    };
+    child.once('error', onError);
+    child.once('exit', onExit);
+  });
+}
+
+export function validateProductionWebRecoveryEvidence(
+  evidence: ProductionWebRecoveryEvidence
+): { writeSha256: string; attempts: number[]; phases: string[] } {
+  const writes = evidence.durableEvents.flatMap((event) => {
+    if (event.type !== 'part_created' || event.data.partType !== 'tool_call') return [];
+    const payload = event.data.payload;
+    if (!isRecord(payload) || payload.toolName !== 'Write') return [];
+    return [payload];
+  });
+  if (writes.length !== 1) throw new Error('Expected exactly one Write tool call');
+  const write = writes[0]!;
+  if (typeof write.toolCallId !== 'string' || !isRecord(write.input)) {
+    throw new Error('Write tool call evidence is malformed');
+  }
+  if (write.input.content !== 'Canary\n' || evidence.targetContent !== 'Canary\n') {
+    throw new Error('Write content did not match the exact Canary contract');
+  }
+  const matchingResults = evidence.durableEvents.filter(
+    (event) =>
+      event.type === 'part_created' &&
+      event.data.partType === 'tool_result' &&
+      isRecord(event.data.payload) &&
+      event.data.payload.toolName === 'Write' &&
+      event.data.payload.toolCallId === write.toolCallId &&
+      event.data.payload.error === null &&
+      event.data.payload.output !== null
+  );
+  if (matchingResults.length !== 1) {
+    throw new Error('Expected exactly one successful matching Write result');
+  }
+  for (const type of [
+    'interaction_requested',
+    'interaction_responded',
+    'interaction_recovered',
+  ] as const) {
+    if (evidence.durableEvents.filter((event) => event.type === type).length !== 1) {
+      throw new Error(`Expected exactly one ${type} event`);
+    }
+  }
+  const serializedDurable = evidence.durableEvents
+    .map((event) => JSON.stringify(event))
+    .join('\n');
+  if (serializedDurable.split(evidence.finalMarker).length - 1 !== 1) {
+    throw new Error('Expected exactly one durable final marker');
+  }
+  const completionCount = evidence.sseEvents.filter(
+    (event) => event.type === 'session.completed'
+  ).length;
+  if (completionCount !== 1) throw new Error('Expected exactly one session.completed');
+  if (
+    evidence.sseEvents.some(
+      (event) =>
+        event.type === 'session.error' ||
+        (event.type === 'pending.resume' &&
+          ['failed', 'exhausted'].includes(String(event.properties.phase)))
+    )
+  ) {
+    throw new Error('Production Web recovery reached an unexpected terminal failure');
+  }
+  if (!evidence.sseEvents.some((event) => event.type === 'provider.retry')) {
+    throw new Error('Expected the first outer attempt to emit provider.retry');
+  }
+  const pendingResume = evidence.sseEvents.filter(
+    (event) => event.type === 'pending.resume'
+  );
+  const phases = pendingResume.map((event) => String(event.properties.phase));
+  const attempts = pendingResume.map((event) => Number(event.properties.attempt));
+  if (
+    phases.length !== 2 ||
+    phases[0] !== 'retry_scheduled' ||
+    phases[1] !== 'recovered' ||
+    attempts[0] !== 1 ||
+    attempts[1] !== 2 ||
+    pendingResume.some((event) => event.properties.maxAttempts !== 4)
+  ) {
+    throw new Error('Pending resume phases or attempt semantics are invalid');
+  }
+  const delayMs = Number(pendingResume[0]?.properties.delayMs);
+  if (!Number.isFinite(delayMs) || delayMs < 0 || delayMs > 4_800) {
+    throw new Error('Pending resume delay is outside its bounded policy');
+  }
+  return {
+    attempts,
+    phases,
+    writeSha256: createHash('sha256').update(evidence.targetContent).digest('hex'),
+  };
+}
 
 export function buildDurableInteractionRecoveryConfig(
   base: RuntimeConfig
@@ -921,6 +1155,103 @@ describe('durable ACP recovery diagnostics', () => {
 });
 
 describe('durable Web recovery diagnostics', () => {
+  it('validates the exact production Chromium pending-resume trajectory', () => {
+    const createdAt = '2026-08-29T00:00:00.000Z';
+    const writeInput = { file_path: '/tmp/canary.txt', content: 'Canary\n' };
+    const durableEvents = [
+      ['interaction_requested', {}],
+      ['interaction_responded', {}],
+      ['interaction_recovered', {}],
+      [
+        'part_created',
+        {
+          partType: 'tool_call',
+          payload: { toolCallId: 'write-1', toolName: 'Write', input: writeInput },
+        },
+      ],
+      [
+        'part_created',
+        {
+          partType: 'tool_result',
+          payload: {
+            toolCallId: 'write-1',
+            toolName: 'Write',
+            output: 'ok',
+            error: null,
+          },
+        },
+      ],
+      [
+        'message_created',
+        { messageId: 'final', role: 'assistant', content: 'GUI_RECOVERED' },
+      ],
+      ['session.completed', {}],
+    ].map(([type, data], index) => ({
+      id: `event-${index}`,
+      sessionId: 'session',
+      timestamp: createdAt,
+      type,
+      cwd: '/tmp',
+      version: 'test',
+      data,
+    })) as SessionEvent[];
+
+    expect(
+      validateProductionWebRecoveryEvidence({
+        sseEvents: [
+          { type: 'provider.retry', properties: { phase: 'scheduled' } },
+          {
+            type: 'pending.resume',
+            properties: {
+              phase: 'retry_scheduled',
+              attempt: 1,
+              maxAttempts: 4,
+              delayMs: 900,
+            },
+          },
+          {
+            type: 'pending.resume',
+            properties: { phase: 'recovered', attempt: 2, maxAttempts: 4 },
+          },
+          { type: 'session.completed', properties: {} },
+        ],
+        durableEvents,
+        targetContent: 'Canary\n',
+        finalMarker: 'GUI_RECOVERED',
+      })
+    ).toEqual({
+      attempts: [1, 2],
+      phases: ['retry_scheduled', 'recovered'],
+      writeSha256: createHash('sha256').update('Canary\n').digest('hex'),
+    });
+  });
+
+  it('rejects a recovered production trajectory with a duplicate Write', () => {
+    expect(() =>
+      validateProductionWebRecoveryEvidence({
+        sseEvents: [
+          {
+            type: 'pending.resume',
+            properties: {
+              phase: 'retry_scheduled',
+              attempt: 1,
+              maxAttempts: 4,
+              delayMs: 1_000,
+            },
+          },
+          {
+            type: 'pending.resume',
+            properties: { phase: 'recovered', attempt: 2, maxAttempts: 4 },
+          },
+          { type: 'session.completed', properties: {} },
+        ],
+        durableEvents: [],
+        targetContent: 'Canary\n',
+        finalMarker: 'GUI_RECOVERED',
+      })
+    ).toThrow('exactly one Write');
+  });
+
   it('preserves the safe diagnostic structure when evidence settles quickly', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'blade-web-diagnostic-fast-'));
     const secret = 'web-diagnostic-fast-secret';
