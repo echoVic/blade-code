@@ -106,6 +106,10 @@ You: @src/utils/api.ts:10-50 what's wrong with this code?
 | `↑/↓` | Browse message history |
 | `Tab` | Autocomplete |
 
+In the transcript pager, `/` searches the full transcript and `n/N` moves
+between matches. `Tab` selects a Tool/Thinking item, `Enter` or `e` toggles it,
+and `v` starts line selection for copying with `y` or `Ctrl+C`.
+
 ## Permission Control
 
 Blade requests confirmation before executing sensitive operations:

@@ -340,6 +340,12 @@ Transcript pager 支持 `↑/↓`、`j/k`、`PageUp/PageDown` 和 `g/G` 首尾�
 离开底部后会停止自动跟随并累计新消息；按 `G` 回到底部后恢复跟随。审批界面
 出现时仍可用 `PageUp/PageDown` 浏览 transcript。
 
+在 pager 内按 `/` 输入全文搜索词并按 `Enter` 确认，随后用 `n/N` 在匹配项之间
+向前或向后循环跳转。搜索会覆盖折叠的工具详情和 Thinking 内容，并在跳转时展开
+对应项。用 `Tab`/`Shift+Tab` 选择可展开项，按 `Enter` 或 `e` 单独展开/折叠。
+按 `v` 开始逐行选择，继续使用导航键扩展范围，再按 `y` 或 `Ctrl+C` 复制；`Esc`
+先取消搜索编辑或文本选择，再次按下可退出 pager。
+
 ### 输入触发
 
 - `/` 开头：触发 Slash 命令补全

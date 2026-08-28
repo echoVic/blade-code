@@ -328,6 +328,14 @@ top/bottom navigation. Scrolling away from the bottom pauses follow mode and
 counts new messages; `G` returns to the latest output and resumes following.
 While an approval is visible, `PageUp/PageDown` still browse the transcript.
 
+Inside the pager, press `/`, enter a full-text query, and confirm with `Enter`;
+then use `n/N` to cycle forward or backward through matches. Search includes
+collapsed tool details and Thinking content and expands the matching item on
+jump. Use `Tab`/`Shift+Tab` to select an expandable item and `Enter` or `e` to
+toggle it independently. Press `v` to start line selection, extend it with the
+navigation keys, and copy with `y` or `Ctrl+C`. `Esc` first cancels search
+editing or selection; press it again to leave the pager.
+
 ### Input Triggers
 
 - Starting with `/`: Triggers Slash command completion

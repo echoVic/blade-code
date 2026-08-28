@@ -3,33 +3,55 @@
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SessionMessage } from '../../../../src/store/types.js';
 
 let inputHandler:
   | ((input: string, key: Record<string, boolean>) => boolean | void)
   | undefined;
 
-const view = {
+const copy = vi.hoisted(() => ({
+  copyTranscriptText: vi.fn<
+    (
+      text: string,
+      options?: { writeTerminal?: (value: string) => void }
+    ) => Promise<{ success: boolean; method: 'native' }>
+  >(async () => ({
+    success: true,
+    method: 'native',
+  })),
+}));
+
+const defaultMessages: SessionMessage[] = [
+  {
+    id: 'user-1',
+    role: 'user',
+    content: 'oldest request',
+    timestamp: 1,
+  },
+  {
+    id: 'assistant-live',
+    role: 'assistant',
+    content: '',
+    timestamp: 2,
+  },
+];
+
+const view: {
+  focus: string;
+  messages: SessionMessage[];
+  streamingTail: string;
+  thinking: string | null;
+} = {
   focus: 'transcript-pager',
-  messages: [
-    {
-      id: 'user-1',
-      role: 'user' as const,
-      content: 'oldest request',
-      timestamp: 1,
-    },
-    {
-      id: 'assistant-live',
-      role: 'assistant' as const,
-      content: '',
-      timestamp: 2,
-    },
-  ],
+  messages: defaultMessages,
   streamingTail: 'line one\nline two\nline three\nline four\nline five',
+  thinking: null,
 };
 
 vi.mock('ink', () => ({
   Box: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
   Text: ({ children }: { children?: React.ReactNode }) => <span>{children}</span>,
+  useStdout: () => ({ stdout: { write: vi.fn() } }),
 }));
 
 vi.mock('../../../../src/ui/hooks/useTerminalDimensions.js', () => ({
@@ -54,7 +76,7 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
     lineCount: view.streamingTail.split('\n').length - 1,
     version: view.streamingTail.length,
   }),
-  useCurrentThinkingContent: () => null,
+  useCurrentThinkingContent: () => view.thinking,
   usePendingCommands: () => [],
   useCurrentFocus: () => view.focus,
   useTheme: () => ({
@@ -68,6 +90,10 @@ vi.mock('../../../../src/store/selectors/index.js', () => ({
   }),
 }));
 
+vi.mock('../../../../src/ui/utils/clipboard.js', () => ({
+  copyTranscriptText: copy.copyTranscriptText,
+}));
+
 import { TranscriptPager } from '../../../../src/ui/components/TranscriptPager.js';
 
 describe('TranscriptPager', () => {
@@ -78,7 +104,10 @@ describe('TranscriptPager', () => {
   beforeEach(() => {
     inputHandler = undefined;
     view.focus = 'transcript-pager';
+    view.messages = defaultMessages.map((message) => ({ ...message }));
     view.streamingTail = 'line one\nline two\nline three\nline four\nline five';
+    view.thinking = null;
+    copy.copyTranscriptText.mockClear();
     onClose = vi.fn<() => void>();
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -159,5 +188,128 @@ describe('TranscriptPager', () => {
       handled = inputHandler?.('', { downArrow: true });
     });
     expect(handled).toBe(false);
+  });
+
+  it('searches hidden tool details and cycles matches with n/N', () => {
+    view.messages = [
+      ...defaultMessages,
+      {
+        id: 'tool-1',
+        role: 'tool',
+        content: 'Read file',
+        timestamp: 3,
+        metadata: {
+          toolName: 'Read',
+          phase: 'complete',
+          detail: 'first needle\nsecond needle',
+        },
+      },
+    ];
+    act(() => {
+      root.render(<TranscriptPager isOpen onClose={() => onClose()} />);
+    });
+
+    act(() => {
+      inputHandler?.('/', {});
+      inputHandler?.('needle', {});
+      inputHandler?.('', { return: true });
+    });
+    expect(container.textContent).toContain('/needle 1/2');
+    expect(container.textContent).toContain('first needle');
+
+    act(() => {
+      inputHandler?.('n', {});
+    });
+    expect(container.textContent).toContain('/needle 2/2');
+    expect(container.textContent).toContain('second needle');
+
+    act(() => {
+      inputHandler?.('N', {});
+    });
+    expect(container.textContent).toContain('/needle 1/2');
+
+    act(() => {
+      inputHandler?.('N', {});
+    });
+    expect(container.textContent).toContain('/needle 2/2');
+  });
+
+  it('cancels search editing before Escape closes the pager', () => {
+    act(() => {
+      inputHandler?.('/', {});
+      inputHandler?.('draft', {});
+      inputHandler?.('', { escape: true });
+    });
+    expect(onClose).not.toHaveBeenCalled();
+
+    act(() => {
+      inputHandler?.('', { escape: true });
+    });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('expands only the selected thinking or tool block', () => {
+    view.messages = [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'answer',
+        thinkingContent: 'private reasoning detail',
+        timestamp: 1,
+      },
+      {
+        id: 'tool-1',
+        role: 'tool',
+        content: 'Read file',
+        timestamp: 2,
+        metadata: {
+          toolName: 'Read',
+          phase: 'complete',
+          detail: 'tool output detail',
+        },
+      },
+    ];
+    view.streamingTail = '';
+    act(() => {
+      root.render(<TranscriptPager isOpen onClose={() => onClose()} />);
+    });
+    expect(container.textContent).not.toContain('private reasoning detail');
+    expect(container.textContent).not.toContain('tool output detail');
+
+    act(() => {
+      inputHandler?.('', { tab: true });
+      inputHandler?.('', { return: true });
+    });
+    expect(container.textContent).toMatch(/private\s+reasoning detail/);
+    expect(container.textContent).not.toContain('tool output detail');
+
+    act(() => {
+      inputHandler?.('', { tab: true });
+      inputHandler?.('e', {});
+    });
+    expect(container.textContent).toMatch(/tool\s+output\s+detail/);
+
+    act(() => {
+      inputHandler?.('', { tab: true, shift: true });
+    });
+    expect(container.textContent).toContain('[-] Thinking');
+    expect(container.textContent).toMatch(/private\s+reasoning detail/);
+  });
+
+  it('copies a keyboard-selected line range without closing the pager', async () => {
+    act(() => {
+      inputHandler?.('g', {});
+      inputHandler?.('v', {});
+      inputHandler?.('j', {});
+    });
+    await act(async () => {
+      inputHandler?.('y', {});
+      await Promise.resolve();
+    });
+
+    expect(copy.copyTranscriptText).toHaveBeenCalledOnce();
+    expect(copy.copyTranscriptText.mock.calls[0]?.[0]).toContain('oldest request');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Copied');
   });
 });
