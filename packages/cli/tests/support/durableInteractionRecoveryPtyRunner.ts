@@ -1,0 +1,660 @@
+import { createHash } from 'node:crypto';
+import { access, readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
+import { spawn } from 'bun-pty';
+import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
+import { getSessionInboxFilePath } from '../../src/context/storage/pathUtils.js';
+import type { SessionEvent } from '../../src/context/types.js';
+import { finalAssistantText } from '../integration/real-api/sessionForkTrajectoryHarness.js';
+import {
+  ArmedPtyMarkerLatch,
+  appendBoundedPtyEvidence,
+  projectForegroundBoundedPtyOutput,
+  waitForPtyExit,
+} from './foregroundBoundedOutputPtyDriver.js';
+import { createTuiPtyEnvironment } from './ptyInput.js';
+
+interface RunnerInput {
+  cliEntry: string;
+  workspace: string;
+  storageRoot: string;
+  home: string;
+  sessionId: string;
+  requestId: string;
+  target: string;
+  expectedContent: string;
+  finalMarker: string;
+  secret: string;
+  runnerTimeoutMs: number;
+}
+
+interface CompletionEvidence {
+  interactionRequested: 1;
+  interactionResponded: 1;
+  interactionRecovered: 1;
+  writeCalls: 1;
+  writeResults: 1;
+  inboxMissing: true;
+  targetSha256: string;
+}
+
+class SafeRunnerFailure extends Error {
+  readonly stage: 'seed' | 'spawn';
+  readonly code: 'seed_invalid' | 'spawn_failed';
+
+  constructor(stage: 'seed' | 'spawn', code: 'seed_invalid' | 'spawn_failed') {
+    super(code);
+    this.stage = stage;
+    this.code = code;
+  }
+}
+
+const MAX_ENCODED_INPUT_BYTES = 256 * 1024;
+const MAX_DURABLE_EVIDENCE_BYTES = 8 * 1024 * 1024;
+
+function loadInput(): RunnerInput {
+  const encoded = process.env.BLADE_DURABLE_INTERACTION_PTY_INPUT;
+  if (!encoded) throw new Error('Missing BLADE_DURABLE_INTERACTION_PTY_INPUT');
+  if (Buffer.byteLength(encoded, 'utf8') > MAX_ENCODED_INPUT_BYTES) {
+    throw new Error('Durable interaction PTY input exceeds its bounded size');
+  }
+  if (
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)
+  ) {
+    throw new Error('Invalid durable interaction PTY input encoding');
+  }
+  const decoded = Buffer.from(encoded, 'base64').toString('utf8');
+  if (Buffer.from(decoded, 'utf8').toString('base64') !== encoded) {
+    throw new Error('Non-canonical durable interaction PTY input encoding');
+  }
+  const input = JSON.parse(decoded) as RunnerInput;
+  const keys = [
+    'cliEntry',
+    'expectedContent',
+    'finalMarker',
+    'home',
+    'requestId',
+    'runnerTimeoutMs',
+    'secret',
+    'sessionId',
+    'storageRoot',
+    'target',
+    'workspace',
+  ];
+  if (Object.keys(input).sort().join('\0') !== keys.join('\0')) {
+    throw new Error('Invalid durable interaction PTY input fields');
+  }
+  for (const name of keys.filter((name) => name !== 'runnerTimeoutMs')) {
+    if (
+      typeof input[name as keyof RunnerInput] !== 'string' ||
+      !input[name as keyof RunnerInput]
+    )
+      throw new Error(`Invalid durable interaction PTY setting: ${name}`);
+  }
+  if (!Number.isSafeInteger(input.runnerTimeoutMs) || input.runnerTimeoutMs < 1_000) {
+    throw new Error('Invalid durable interaction PTY runner timeout');
+  }
+  for (const value of [
+    input.cliEntry,
+    input.workspace,
+    input.storageRoot,
+    input.home,
+    input.target,
+  ]) {
+    if (!path.isAbsolute(value) || path.normalize(value) !== value) {
+      throw new Error('Durable interaction PTY paths must be canonical and absolute');
+    }
+  }
+  if (
+    path.basename(input.cliEntry) !== 'blade.js' ||
+    path.basename(path.dirname(input.cliEntry)) !== 'dist'
+  ) {
+    throw new Error('Durable interaction PTY CLI entry must be dist/blade.js');
+  }
+  const relativeTarget = path.relative(input.workspace, input.target);
+  if (
+    !relativeTarget ||
+    relativeTarget.startsWith('..') ||
+    path.isAbsolute(relativeTarget)
+  ) {
+    throw new Error(
+      'Durable interaction PTY target must be contained by the workspace'
+    );
+  }
+  return input;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function boundedEventsJson(events: readonly SessionEvent[]): string | undefined {
+  const serialized = JSON.stringify(events);
+  return Buffer.byteLength(serialized, 'utf8') <= MAX_DURABLE_EVIDENCE_BYTES
+    ? serialized
+    : undefined;
+}
+
+function signalTerminalTree(
+  pid: number,
+  signal: NodeJS.Signals,
+  fallback: () => void
+): void {
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    try {
+      process.kill(pid, signal);
+    } catch {
+      try {
+        fallback();
+      } catch {
+        // The terminal process already exited.
+      }
+    }
+  }
+}
+
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  message: string,
+  deadline: number
+): Promise<void> {
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      if (await predicate()) return;
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(message, { cause: lastError });
+}
+
+async function writeJson(value: Record<string, unknown>): Promise<void> {
+  await new Promise<void>((resolve) => {
+    process.stdout.write(JSON.stringify(value), () => resolve());
+  });
+}
+
+async function inboxIsMissing(workspace: string, sessionId: string): Promise<boolean> {
+  try {
+    await access(getSessionInboxFilePath(workspace, sessionId));
+    return false;
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
+      return true;
+    throw error;
+  }
+}
+
+function matchingInteractions(
+  events: readonly SessionEvent[],
+  type: 'interaction_requested' | 'interaction_responded' | 'interaction_recovered',
+  requestId: string
+): SessionEvent[] {
+  return events.filter(
+    (event) => event.type === type && event.data.requestId === requestId
+  );
+}
+
+function eventIndex(events: readonly SessionEvent[], event: SessionEvent): number {
+  return events.indexOf(event);
+}
+
+function writeEvidence(events: readonly SessionEvent[]): {
+  calls: Array<{ toolCallId: string; input: Record<string, unknown> }>;
+  results: Array<{ toolCallId: string; succeeded: boolean }>;
+} {
+  const calls: Array<{ toolCallId: string; input: Record<string, unknown> }> = [];
+  const results: Array<{ toolCallId: string; succeeded: boolean }> = [];
+  for (const event of events) {
+    if (event.type !== 'part_created' || !isRecord(event.data.payload)) continue;
+    const payload = event.data.payload;
+    if (payload.toolName !== 'Write' || typeof payload.toolCallId !== 'string')
+      continue;
+    if (event.data.partType === 'tool_call' && isRecord(payload.input)) {
+      calls.push({ toolCallId: payload.toolCallId, input: payload.input });
+    } else if (event.data.partType === 'tool_result') {
+      results.push({
+        toolCallId: payload.toolCallId,
+        succeeded: payload.error === null && payload.output !== null,
+      });
+    }
+  }
+  return { calls, results };
+}
+
+async function durableCompletionEvidence(
+  input: RunnerInput
+): Promise<CompletionEvidence | undefined> {
+  const events =
+    (await new PersistentStore(input.workspace).loadEvents(input.sessionId)) ?? [];
+  const requests = matchingInteractions(
+    events,
+    'interaction_requested',
+    input.requestId
+  );
+  const responses = matchingInteractions(
+    events,
+    'interaction_responded',
+    input.requestId
+  );
+  const recoveries = matchingInteractions(
+    events,
+    'interaction_recovered',
+    input.requestId
+  );
+  if (
+    events.filter((event) => event.type === 'interaction_requested').length !== 1 ||
+    events.filter((event) => event.type === 'interaction_responded').length !== 1 ||
+    events.filter((event) => event.type === 'interaction_recovered').length !== 1 ||
+    requests.length !== 1 ||
+    responses.length !== 1 ||
+    recoveries.length !== 1
+  ) {
+    return undefined;
+  }
+  const request = requests[0];
+  const response = responses[0];
+  if (
+    request?.type !== 'interaction_requested' ||
+    request.data.toolName !== 'AskUserQuestion' ||
+    request.data.interactionType !== 'question' ||
+    !isRecord(request.data.details) ||
+    !Array.isArray(request.data.details.questions) ||
+    request.data.details.questions.length !== 1 ||
+    !isRecord(request.data.details.questions[0]) ||
+    request.data.details.questions[0].header !== 'Channel' ||
+    request.data.details.questions[0].question !== 'Which release channel?' ||
+    request.data.details.questions[0].multiSelect !== false ||
+    !Array.isArray(request.data.details.questions[0].options) ||
+    request.data.details.questions[0].options.length !== 2 ||
+    !isRecord(request.data.details.questions[0].options[0]) ||
+    !isRecord(request.data.details.questions[0].options[1]) ||
+    request.data.details.questions[0].options[0].label !== 'Stable' ||
+    request.data.details.questions[0].options[1].label !== 'Canary' ||
+    response?.type !== 'interaction_responded' ||
+    !isRecord(response.data.response) ||
+    response.data.response.approved !== true ||
+    !isRecord(response.data.response.answers) ||
+    response.data.response.answers.Channel !== 'Canary'
+  ) {
+    return undefined;
+  }
+  const recovery = recoveries[0];
+  const inboxMessageId =
+    recovery?.type === 'interaction_recovered'
+      ? recovery.data.inboxMessageId
+      : undefined;
+  if (!inboxMessageId) return undefined;
+  const recoveryResults = events.filter(
+    (event) =>
+      event.type === 'part_created' &&
+      event.data.partType === 'tool_result' &&
+      isRecord(event.data.payload) &&
+      event.data.payload.toolName === 'AskUserQuestion' &&
+      event.data.payload.toolCallId === request.data.toolCallId &&
+      isRecord(event.data.payload.metadata) &&
+      event.data.payload.metadata.interactionRecovery === true &&
+      event.data.payload.metadata.requestId === input.requestId
+  );
+  if (recoveryResults.length !== 1) return undefined;
+  if (
+    !response ||
+    !recovery ||
+    !(
+      eventIndex(events, request) < eventIndex(events, response) &&
+      eventIndex(events, response) < eventIndex(events, recoveryResults[0]!) &&
+      eventIndex(events, recoveryResults[0]!) < eventIndex(events, recovery)
+    )
+  ) {
+    return undefined;
+  }
+  const turns = events.filter(
+    (event) =>
+      event.type === 'turn_started' &&
+      event.data.inputMessageIds?.includes(inboxMessageId)
+  );
+  if (turns.length !== 1 || turns[0]?.type !== 'turn_started') return undefined;
+  const turn = turns[0];
+  const acknowledgements = events.filter(
+    (event) =>
+      event.type === 'inbox_acknowledged' &&
+      event.data.messageIds.includes(inboxMessageId)
+  );
+  if (
+    acknowledgements.length !== 1 ||
+    acknowledgements[0]?.type !== 'inbox_acknowledged'
+  )
+    return undefined;
+  const acknowledgement = acknowledgements[0];
+  const completions = events.filter(
+    (event) =>
+      event.type === 'turn_completed' &&
+      event.data.turnId === turn.data.turnId &&
+      typeof event.seq === 'number' &&
+      typeof acknowledgement.seq === 'number' &&
+      event.seq > acknowledgement.seq
+  );
+  if (completions.length !== 1 || completions[0]?.type !== 'turn_completed')
+    return undefined;
+  const completed = completions[0];
+  const finalTerminal = events.findLast(
+    (event) => event.type === 'turn_completed' || event.type === 'turn_aborted'
+  );
+  if (finalTerminal !== completed || finalAssistantText(events) !== input.finalMarker)
+    return undefined;
+
+  const write = writeEvidence(events);
+  if (write.calls.length !== 1 || write.results.length !== 1) return undefined;
+  const call = write.calls[0];
+  const result = write.results[0];
+  if (
+    !call ||
+    !result?.succeeded ||
+    result.toolCallId !== call.toolCallId ||
+    call.input.file_path !== input.target ||
+    call.input.content !== input.expectedContent
+  ) {
+    return undefined;
+  }
+  const writeCallEvent = events.find(
+    (event) =>
+      event.type === 'part_created' &&
+      event.data.partType === 'tool_call' &&
+      isRecord(event.data.payload) &&
+      event.data.payload.toolCallId === call.toolCallId
+  );
+  const writeResultEvent = events.find(
+    (event) =>
+      event.type === 'part_created' &&
+      event.data.partType === 'tool_result' &&
+      isRecord(event.data.payload) &&
+      event.data.payload.toolCallId === call.toolCallId
+  );
+  if (
+    !writeCallEvent ||
+    !writeResultEvent ||
+    !(
+      eventIndex(events, recovery) < eventIndex(events, turn) &&
+      eventIndex(events, turn) < eventIndex(events, writeCallEvent) &&
+      eventIndex(events, writeCallEvent) < eventIndex(events, writeResultEvent) &&
+      eventIndex(events, writeResultEvent) < eventIndex(events, acknowledgement) &&
+      eventIndex(events, acknowledgement) < eventIndex(events, completed)
+    )
+  ) {
+    return undefined;
+  }
+  const targetContent = await readFile(input.target, 'utf8').catch(() => undefined);
+  if (targetContent !== input.expectedContent) return undefined;
+  if (!(await inboxIsMissing(input.workspace, input.sessionId))) return undefined;
+
+  return {
+    interactionRequested: 1,
+    interactionResponded: 1,
+    interactionRecovered: 1,
+    writeCalls: 1,
+    writeResults: 1,
+    inboxMissing: true,
+    targetSha256: createHash('sha256').update(targetContent).digest('hex'),
+  };
+}
+
+async function main(): Promise<void> {
+  const input = loadInput();
+  let existingEvents: SessionEvent[];
+  try {
+    existingEvents =
+      (await new PersistentStore(input.workspace).loadEvents(input.sessionId)) ?? [];
+  } catch {
+    throw new SafeRunnerFailure('seed', 'seed_invalid');
+  }
+  const existingEventsJson = boundedEventsJson(existingEvents);
+  if (!existingEventsJson) throw new Error('Durable interaction seed is too large');
+  if (existingEventsJson.includes(input.secret)) {
+    throw new Error('Durable interaction seed contained credentials');
+  }
+  if (JSON.stringify(existingEvents).includes(input.finalMarker)) {
+    throw new Error(
+      'Durable interaction final marker contaminated the seeded transcript'
+    );
+  }
+
+  const finalMarkerLatch = new ArmedPtyMarkerLatch(input.finalMarker);
+  const secretLatch = new ArmedPtyMarkerLatch(input.secret);
+  secretLatch.arm();
+  const childEnv = createTuiPtyEnvironment({
+    HOME: input.home,
+    BLADE_STORAGE_ROOT: input.storageRoot,
+    BLADE_AUTO_MEMORY: '0',
+    BLADE_TELEMETRY_DISABLED: '1',
+    TERM: 'xterm-256color',
+    BLADE_VERSION: '999.0.0',
+  });
+  delete childEnv.BLADE_DURABLE_INTERACTION_PTY_INPUT;
+  let terminal: ReturnType<typeof spawn>;
+  try {
+    terminal = spawn(
+      '/usr/bin/env',
+      [
+        'node',
+        input.cliEntry,
+        '--trust-workspace',
+        '--permission-mode',
+        'yolo',
+        '--max-turns',
+        '4',
+        '--resume',
+        input.sessionId,
+        '--allowed-tools',
+        'Write',
+        '--no-verification-agent',
+      ],
+      {
+        name: 'xterm-256color',
+        cwd: input.workspace,
+        cols: 120,
+        rows: 40,
+        env: childEnv,
+      }
+    );
+  } catch {
+    throw new SafeRunnerFailure('spawn', 'spawn_failed');
+  }
+  let output = '';
+  let plainOutput = '';
+  let questionVisible = false;
+  let canaryVisible = false;
+  let reviewVisible = false;
+  let reviewOutputOffset = Number.POSITIVE_INFINITY;
+  let exited = false;
+  let exitCode: number | undefined;
+  let exitSignal: number | string | null = null;
+  let termFallbackUsed = false;
+  let killFallbackUsed = false;
+  const exitPromise = new Promise<void>((resolve) => {
+    terminal.onExit((event: { exitCode: number; signal?: number | string }) => {
+      exited = true;
+      exitCode = event.exitCode;
+      exitSignal = event.signal ?? null;
+      resolve();
+    });
+  });
+  terminal.onData((chunk) => {
+    secretLatch.observe(chunk);
+    finalMarkerLatch.observe(chunk);
+    output = appendBoundedPtyEvidence(output, chunk, 256_000);
+    plainOutput = appendBoundedPtyEvidence(
+      plainOutput,
+      stripVTControlCharacters(chunk),
+      64_000
+    );
+    questionVisible ||=
+      plainOutput.includes('Which release channel?') &&
+      plainOutput.includes('Enter to select');
+    canaryVisible ||= plainOutput.includes('2. Canary');
+    const reviewEpoch = plainOutput.slice(reviewOutputOffset);
+    reviewVisible ||=
+      reviewEpoch.includes('Review Your Answers') &&
+      reviewEpoch.includes('Submit answers') &&
+      reviewEpoch.includes('Canary');
+  });
+
+  try {
+    const deadline = Date.now() + input.runnerTimeoutMs;
+    await Promise.race([
+      waitFor(
+        () => questionVisible && canaryVisible,
+        'Timed out waiting for the durable Channel question in the raw TUI',
+        deadline
+      ),
+      exitPromise.then(() => {
+        throw new Error(
+          `Durable interaction TUI exited before the question (${exitCode})`
+        );
+      }),
+    ]);
+    reviewOutputOffset = plainOutput.length;
+    terminal.write('2');
+    await waitFor(
+      () => reviewVisible,
+      'Timed out waiting for the Canary answer review in the raw TUI',
+      deadline
+    );
+    finalMarkerLatch.arm();
+    terminal.write('y');
+
+    let completion: CompletionEvidence | undefined;
+    await waitFor(
+      async () => {
+        completion = await durableCompletionEvidence(input);
+        return completion !== undefined;
+      },
+      'Timed out waiting for durable interaction acknowledgement and completion',
+      deadline
+    );
+    await waitFor(
+      () => finalMarkerLatch.seen,
+      'Raw TUI did not render the durable interaction final marker',
+      deadline
+    );
+    if (secretLatch.seen) {
+      throw new Error('Raw TUI durable interaction capture contained credentials');
+    }
+    const finalEvents =
+      (await new PersistentStore(input.workspace).loadEvents(input.sessionId)) ?? [];
+    const finalEventsJson = boundedEventsJson(finalEvents);
+    if (!finalEventsJson) throw new Error('Durable interaction evidence is too large');
+    const finalTarget = await readFile(input.target, 'utf8');
+    if (finalEventsJson.includes(input.secret) || finalTarget.includes(input.secret)) {
+      throw new Error('Durable interaction evidence contained credentials');
+    }
+
+    terminal.write('\u0004');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    terminal.write('\u0004');
+    await waitForPtyExit(
+      exitPromise,
+      'Durable interaction TUI did not exit after Ctrl-D',
+      15_000
+    );
+    if (exitCode !== 0 || exitSignal !== null) {
+      throw new Error('Durable interaction TUI did not exit cleanly');
+    }
+    if (!completion)
+      throw new Error('Durable interaction completion evidence is missing');
+    const successEvidence = {
+      success: true,
+      sessionId: input.sessionId,
+      questionVisible,
+      canaryVisible,
+      reviewVisible,
+      finalMarkerSeen: finalMarkerLatch.seen,
+      secretSeen: secretLatch.seen,
+      exitCode: 0,
+      exitSignal: null,
+      termFallbackUsed,
+      killFallbackUsed,
+      ...completion,
+      output: projectForegroundBoundedPtyOutput(
+        [
+          'Durable question visible',
+          'Canary option visible',
+          'Answer review visible',
+          'Durable completion observed',
+          'Final marker rendered',
+        ].join('\n')
+      ),
+    };
+    if (JSON.stringify(successEvidence).includes(input.secret)) {
+      throw new Error('Durable interaction success evidence contained credentials');
+    }
+    await writeJson(successEvidence);
+  } catch (error) {
+    const timedOut =
+      error instanceof Error &&
+      (error.message.startsWith('Timed out') || error.message.includes('did not exit'));
+    if (!exited) {
+      termFallbackUsed = true;
+      signalTerminalTree(terminal.pid, 'SIGTERM', () => terminal.kill('SIGTERM'));
+      await waitForPtyExit(exitPromise, 'PTY cleanup TERM timeout', 2_000).catch(
+        () => undefined
+      );
+    }
+    if (!exited) {
+      killFallbackUsed = true;
+      signalTerminalTree(terminal.pid, 'SIGKILL', () => terminal.kill('SIGKILL'));
+      await waitForPtyExit(exitPromise, 'PTY cleanup KILL timeout', 1_000).catch(
+        () => undefined
+      );
+    }
+    await writeJson({
+      success: false,
+      stage: reviewVisible ? 'completion' : questionVisible ? 'review' : 'question',
+      code: timedOut ? 'timeout' : 'qualification_failed',
+      timedOut,
+      secretSeen: secretLatch.seen,
+      termFallbackUsed,
+      killFallbackUsed,
+    });
+    process.exitCode = 1;
+  } finally {
+    if (!exited && !termFallbackUsed) {
+      termFallbackUsed = true;
+      signalTerminalTree(terminal.pid, 'SIGTERM', () => terminal.kill('SIGTERM'));
+      await waitForPtyExit(
+        exitPromise,
+        'Durable interaction TUI did not exit during cleanup',
+        2_000
+      ).catch(() => undefined);
+    }
+    if (!exited && !killFallbackUsed) {
+      killFallbackUsed = true;
+      signalTerminalTree(terminal.pid, 'SIGKILL', () => terminal.kill('SIGKILL'));
+      await waitForPtyExit(exitPromise, 'PTY cleanup KILL timeout', 1_000).catch(
+        () => undefined
+      );
+    }
+  }
+}
+
+if (import.meta.main) {
+  try {
+    await main();
+  } catch (error) {
+    const failure = error instanceof SafeRunnerFailure ? error : undefined;
+    await writeJson({
+      success: false,
+      stage: failure?.stage ?? 'input',
+      code: failure?.code ?? 'invalid_input',
+      timedOut: false,
+      secretSeen: false,
+      termFallbackUsed: false,
+      killFallbackUsed: false,
+    });
+    process.exitCode = 1;
+  }
+}
