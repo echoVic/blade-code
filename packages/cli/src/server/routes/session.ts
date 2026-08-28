@@ -11,6 +11,12 @@ import { resolveWorkspaceModelResources } from '../../agent/resources/WorkspaceM
 import { ActiveOperationGate } from '../../agent/runtime/ActiveOperationGate.js';
 import type { PreparedInputTurn } from '../../agent/runtime/ActiveTurnMailbox.js';
 import {
+  decidePendingResumeRetry,
+  PENDING_RESUME_MAX_ATTEMPTS,
+  PENDING_RESUME_RECOVERY_BUDGET_MS,
+  type PendingResumeFailureEvidence,
+} from '../../agent/runtime/PendingResumeRecoveryPolicy.js';
+import {
   type ResumedSubagent,
   SessionRuntime,
 } from '../../agent/runtime/SessionRuntime.js';
@@ -76,6 +82,7 @@ import type {
   SessionEvent,
   SessionTaskDelivery,
   SessionTaskDispatch,
+  SessionTaskFailure,
   SessionTaskKind,
   SessionTaskPriority,
   SessionTaskRetryRef,
@@ -159,6 +166,31 @@ import { WebBrowserSessionRegistry } from '../WebBrowserSessionRegistry.js';
 import { BrowserRoutes } from './browser.js';
 
 const logger = createLogger(LogCategory.SERVICE);
+const WEB_PENDING_RESUME_DEADLINE_ABORT =
+  'web-pending-resume-recovery-budget-exhausted';
+
+interface WebPendingResumeAttempt {
+  attempt: number;
+  deadlineAt: number;
+  generation: number;
+  projectedInputIds: Set<string>;
+}
+
+interface WebPendingResumeState {
+  attempt: number;
+  generation: number;
+  inFlight: boolean;
+  projectedInputIds: Set<string>;
+  startedAt: number;
+  timer: ReturnType<typeof setTimeout> | undefined;
+}
+
+class WebAgentRunFailure extends Error {
+  constructor(readonly evidence: PendingResumeFailureEvidence) {
+    super(evidence.taskFailure.message);
+    this.name = 'WebAgentRunFailure';
+  }
+}
 
 const CreateSessionSchema = Type.Object({
   title: Type.Optional(Type.String()),
@@ -213,6 +245,7 @@ export interface RunState {
   taskAdmission?: TaskAdmissionHandle;
   taskAdmissionUpdate?: Promise<void>;
   disposeRuntimeOnSettle?: boolean;
+  pendingResume?: WebPendingResumeAttempt;
   completion?: Promise<void>;
   createdAt: Date;
 }
@@ -266,6 +299,7 @@ interface SessionInfo {
 
 const sessions = new Map<string, SessionInfo>();
 let resumeRecoveredInteraction: ((session: SessionInfo) => Promise<void>) | undefined;
+let resetPendingResumeRecoveries: (() => void) | undefined;
 
 const activeRuns = new Map<string, RunState>();
 const activeUserShellRuns = new Map<
@@ -413,6 +447,8 @@ function resetSharedSessionRouteState(): void {
   activeUserShellRuns.clear();
   recentRuns.clear();
   resumeRecoveredInteraction = undefined;
+  resetPendingResumeRecoveries?.();
+  resetPendingResumeRecoveries = undefined;
   sessions.clear();
 }
 
@@ -1629,6 +1665,19 @@ export const createSessionRouteController = (): SessionRouteController => {
   }, SESSION_RUNTIME_SWEEP_MS);
   runtimeSweepTimer.unref?.();
   let shutdownPromise: Promise<void> | undefined;
+  const pendingResumeRecoveries = new Map<string, WebPendingResumeState>();
+  let nextPendingResumeGeneration = 1;
+  let resumePendingSession: (
+    session: SessionInfo,
+    pendingResume?: WebPendingResumeAttempt
+  ) => Promise<void>;
+  const clearAllPendingResumeRecoveries = (): void => {
+    for (const state of pendingResumeRecoveries.values()) {
+      if (state.timer) clearTimeout(state.timer);
+    }
+    pendingResumeRecoveries.clear();
+  };
+  resetPendingResumeRecoveries = clearAllPendingResumeRecoveries;
 
   const withAdmission = async <T>(operation: () => Promise<T>): Promise<T> => {
     let lease;
@@ -1655,6 +1704,151 @@ export const createSessionRouteController = (): SessionRouteController => {
     ref: SessionRef,
     operation: () => Promise<T> | T
   ): Promise<T> => messageSubmissionLocks.runExclusive(sessionRefKey(ref), operation);
+
+  const clearPendingResumeRecovery = (
+    ref: SessionRef,
+    expectedGeneration?: number
+  ): void => {
+    const key = sessionRefKey(ref);
+    const state = pendingResumeRecoveries.get(key);
+    if (
+      !state ||
+      (expectedGeneration !== undefined && state.generation !== expectedGeneration)
+    ) {
+      return;
+    }
+    if (state.timer) clearTimeout(state.timer);
+    pendingResumeRecoveries.delete(key);
+  };
+
+  const beginPendingResumeAttempt = (
+    session: SessionInfo
+  ): WebPendingResumeAttempt | undefined => {
+    const key = sessionRefKey(sessionRefFromSession(session));
+    let state = pendingResumeRecoveries.get(key);
+    if (state?.inFlight || state?.timer) return undefined;
+    if (!state) {
+      state = {
+        attempt: 0,
+        generation: nextPendingResumeGeneration++,
+        inFlight: false,
+        projectedInputIds: new Set<string>(),
+        startedAt: Date.now(),
+        timer: undefined,
+      };
+      pendingResumeRecoveries.set(key, state);
+    }
+    state.inFlight = true;
+    state.attempt++;
+    return {
+      attempt: state.attempt,
+      deadlineAt: state.startedAt + PENDING_RESUME_RECOVERY_BUDGET_MS,
+      generation: state.generation,
+      projectedInputIds: state.projectedInputIds,
+    };
+  };
+
+  const publishPendingResume = (
+    ref: SessionRef,
+    phase: 'retry_scheduled' | 'recovered' | 'failed' | 'exhausted',
+    attempt: number,
+    taskFailure?: SessionTaskFailure,
+    delayMs?: number
+  ): void => {
+    Bus.publish(ref, 'pending.resume', {
+      phase,
+      kind: 'pending_input',
+      attempt,
+      maxAttempts: PENDING_RESUME_MAX_ATTEMPTS,
+      ...(delayMs === undefined ? {} : { delayMs, nextRetryAt: Date.now() + delayMs }),
+      ...(taskFailure
+        ? {
+            failure: {
+              code: taskFailure.code,
+              retryable: taskFailure.retryable,
+              ...(taskFailure.resource ? { resource: taskFailure.resource } : {}),
+            },
+          }
+        : {}),
+    });
+  };
+
+  const schedulePendingResumeRetry = (
+    session: SessionInfo,
+    attempt: WebPendingResumeAttempt,
+    evidence: PendingResumeFailureEvidence,
+    workStillPending: boolean,
+    settlingRun: RunState,
+    deadlineExceeded: boolean
+  ): boolean => {
+    const ref = sessionRefFromSession(session);
+    const key = sessionRefKey(ref);
+    const state = pendingResumeRecoveries.get(key);
+    if (!state || state.generation !== attempt.generation) return false;
+    if (deadlineExceeded) {
+      state.inFlight = false;
+      publishPendingResume(ref, 'exhausted', attempt.attempt, evidence.taskFailure);
+      clearPendingResumeRecovery(ref, attempt.generation);
+      return false;
+    }
+    const decision = decidePendingResumeRetry({
+      sessionIdentity: key,
+      failedAttempt: attempt.attempt,
+      recoveryStartedAt: state.startedAt,
+      workStillPending,
+      evidence,
+    });
+    if (decision.phase !== 'retry_scheduled') {
+      state.inFlight = false;
+      publishPendingResume(ref, decision.phase, attempt.attempt, evidence.taskFailure);
+      clearPendingResumeRecovery(ref, attempt.generation);
+      return false;
+    }
+    const timer = setTimeout(() => {
+      void (async () => {
+        await settlingRun.completion;
+        if (pendingResumeRecoveries.get(key) !== state || state.timer !== timer) return;
+        await withMessageSubmissionLock(ref, async () => {
+          if (pendingResumeRecoveries.get(key) !== state || state.timer !== timer) {
+            return;
+          }
+          state.timer = undefined;
+          state.inFlight = false;
+          const nextAttempt = beginPendingResumeAttempt(session);
+          if (!nextAttempt) return;
+          await resumePendingSession(session, nextAttempt);
+        });
+      })().catch((error) => {
+        logger.error(
+          `[SessionRoutes] Failed to retry pending input for ${session.id}:`,
+          error
+        );
+      });
+    }, decision.delayMs);
+    timer.unref?.();
+    state.timer = timer;
+    state.inFlight = false;
+    publishPendingResume(
+      ref,
+      'retry_scheduled',
+      attempt.attempt + 1,
+      evidence.taskFailure,
+      decision.delayMs
+    );
+    return true;
+  };
+
+  const completePendingResume = (
+    session: SessionInfo,
+    attempt: WebPendingResumeAttempt
+  ): boolean => {
+    const ref = sessionRefFromSession(session);
+    const state = pendingResumeRecoveries.get(sessionRefKey(ref));
+    if (!state || state.generation !== attempt.generation) return false;
+    if (attempt.attempt > 1) publishPendingResume(ref, 'recovered', attempt.attempt);
+    clearPendingResumeRecovery(ref, attempt.generation);
+    return true;
+  };
 
   const withTaskDeliveryLock = <T>(
     ref: SessionRef,
@@ -1955,6 +2149,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       goalContinuationOnly?: boolean;
       runtimeLease?: SessionRuntimeResidencyLease<SessionRuntime>;
       outputSchema?: SessionTaskDispatch['outputSchema'];
+      pendingResume?: WebPendingResumeAttempt;
     } = {}
   ): RunState => {
     if (!admissionGate.stats().accepting) {
@@ -1969,6 +2164,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       abortController: new AbortController(),
       disposeRuntimeOnSettle:
         session.taskIsolation !== undefined && options.runtimeLease !== undefined,
+      pendingResume: options.pendingResume,
       createdAt: new Date(),
     };
     if (session.taskIsolation && options.runtimeLease) {
@@ -2024,6 +2220,27 @@ export const createSessionRouteController = (): SessionRouteController => {
         taskAdmission: run.taskAdmission,
         runtimeLease: options.runtimeLease,
         disposeRuntime,
+        pendingResume: options.pendingResume,
+        onPendingResumeFailure: (
+          attempt,
+          evidence,
+          workStillPending,
+          deadlineExceeded
+        ) =>
+          schedulePendingResumeRetry(
+            session,
+            attempt,
+            evidence,
+            workStillPending,
+            run,
+            deadlineExceeded
+          ),
+        onPendingResumeSuccess: (attempt) => completePendingResume(session, attempt),
+        onPendingResumeCancelled: (attempt) =>
+          clearPendingResumeRecovery(
+            sessionRefFromSession(session),
+            attempt.generation
+          ),
       }
     ).catch((error) => {
       logger.error(`[SessionRoutes] Run ${runId} failed:`, error);
@@ -2488,9 +2705,18 @@ export const createSessionRouteController = (): SessionRouteController => {
   ): Promise<SessionMetadata & { isActive: boolean }> =>
     withAdmission(() => deliverTaskOwned(sessionId, action, projectPath));
 
-  const resumePendingSessionOwned = async (session: SessionInfo): Promise<void> => {
+  const resumePendingSessionOwned = async (
+    session: SessionInfo,
+    reservedAttempt?: WebPendingResumeAttempt
+  ): Promise<void> => {
     const currentRun = getRun(session.currentRunId);
     if (isActiveRun(currentRun)) {
+      if (reservedAttempt) {
+        clearPendingResumeRecovery(
+          sessionRefFromSession(session),
+          reservedAttempt.generation
+        );
+      }
       return;
     }
     const terminalIsolatedTask =
@@ -2501,6 +2727,12 @@ export const createSessionRouteController = (): SessionRouteController => {
       ? await SessionRuntime.hasRecoverableTurn(session.projectPath, session.id)
       : false;
     if (terminalIsolatedTask && !hasRecoveryOnDisk) {
+      if (reservedAttempt) {
+        clearPendingResumeRecovery(
+          sessionRefFromSession(session),
+          reservedAttempt.generation
+        );
+      }
       return;
     }
     const hasPendingOnDisk = await SessionRuntime.hasPendingInbox(
@@ -2517,6 +2749,14 @@ export const createSessionRouteController = (): SessionRouteController => {
       );
     }
     if (!hasPendingOnDisk && !hasActiveGoalOnDisk && !hasRecoveryOnDisk) {
+      clearPendingResumeRecovery(sessionRefFromSession(session));
+      return;
+    }
+    if (reservedAttempt && !hasPendingOnDisk) {
+      clearPendingResumeRecovery(
+        sessionRefFromSession(session),
+        reservedAttempt.generation
+      );
       return;
     }
     const runtimeLease = await acquireRuntime(session);
@@ -2525,6 +2765,12 @@ export const createSessionRouteController = (): SessionRouteController => {
       const runtime = runtimeLease.value;
       const initializedRun = getRun(session.currentRunId);
       if (isActiveRun(initializedRun)) {
+        if (reservedAttempt) {
+          clearPendingResumeRecovery(
+            sessionRefFromSession(session),
+            reservedAttempt.generation
+          );
+        }
         return;
       }
       if (hasPendingOnDisk && runtime.getPendingSteeringCount() === 0) {
@@ -2551,19 +2797,34 @@ export const createSessionRouteController = (): SessionRouteController => {
         (!hasPending && !hasActiveGoal) ||
         runtime.hasTurnOwner()
       ) {
+        if (reservedAttempt || !hasPending) {
+          clearPendingResumeRecovery(
+            sessionRefFromSession(session),
+            reservedAttempt?.generation
+          );
+        }
         return;
       }
+      const pendingResume =
+        hasPending && !session.taskIsolation
+          ? (reservedAttempt ?? beginPendingResumeAttempt(session))
+          : undefined;
+      if (hasPending && !session.taskIsolation && !pendingResume) return;
       startRun(session, '', session.permissionMode ?? PermissionMode.DEFAULT, {
         pendingInputOnly: hasPending,
         goalContinuationOnly: hasActiveGoal,
         runtimeLease,
+        pendingResume: hasPending ? pendingResume : undefined,
       });
       transferred = true;
     } finally {
       if (!transferred) runtimeLease.release();
     }
   };
-  const resumePendingSession = async (session: SessionInfo): Promise<void> => {
+  resumePendingSession = async (
+    session: SessionInfo,
+    pendingResume?: WebPendingResumeAttempt
+  ): Promise<void> => {
     let lease;
     try {
       lease = admissionGate.enter();
@@ -2571,7 +2832,21 @@ export const createSessionRouteController = (): SessionRouteController => {
       return;
     }
     try {
-      await resumePendingSessionOwned(session);
+      const currentRun = getRun(session.currentRunId);
+      if (isActiveRun(currentRun)) {
+        if (pendingResume) {
+          clearPendingResumeRecovery(
+            sessionRefFromSession(session),
+            pendingResume.generation
+          );
+        }
+        return;
+      }
+      if (session.taskIsolation) {
+        await resumePendingSessionOwned(session);
+        return;
+      }
+      await resumePendingSessionOwned(session, pendingResume);
     } finally {
       lease.release();
     }
@@ -3571,6 +3846,7 @@ export const createSessionRouteController = (): SessionRouteController => {
 
     try {
       const ref = await resolveSessionRef(sessionId, requestedProjectPath);
+      clearPendingResumeRecovery(ref);
       const key = sessionRefKey(ref);
       const session = sessions.get(key);
       const runtime = runtimes.get(key);
@@ -4044,6 +4320,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     const sessionRef = sessionRefFromSession(session);
 
     return withMessageSubmissionLock(sessionRef, async () => {
+      clearPendingResumeRecovery(sessionRef);
       const currentRun = getRun(session.currentRunId);
       if (isActiveRun(currentRun)) {
         if (outputSchema) {
@@ -4448,6 +4725,7 @@ export const createSessionRouteController = (): SessionRouteController => {
   app.post('/:sessionId/abort', async (c) => {
     const sessionId = c.req.param('sessionId');
     const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
+    clearPendingResumeRecovery(ref);
     const session = sessions.get(sessionRefKey(ref));
     if (session?.currentRunId) {
       const run = getRun(session.currentRunId);
@@ -4500,6 +4778,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     if (shutdownPromise) return shutdownPromise;
     admissionGate.close(reason);
     clearInterval(runtimeSweepTimer);
+    clearAllPendingResumeRecoveries();
 
     shutdownPromise = (async () => {
       let firstError: unknown;
@@ -4558,6 +4837,9 @@ export const createSessionRouteController = (): SessionRouteController => {
       if (resumeRecoveredInteraction === resumePendingSession) {
         resumeRecoveredInteraction = undefined;
       }
+      if (resetPendingResumeRecoveries === clearAllPendingResumeRecoveries) {
+        resetPendingResumeRecoveries = undefined;
+      }
 
       if (firstError !== undefined) throw firstError;
     })();
@@ -4599,6 +4881,15 @@ async function executeRunAsync(
     taskAdmission?: TaskAdmissionHandle;
     runtimeLease?: SessionRuntimeResidencyLease<SessionRuntime>;
     disposeRuntime?: (session: SessionInfo, runtime?: SessionRuntime) => Promise<void>;
+    pendingResume?: WebPendingResumeAttempt;
+    onPendingResumeFailure?: (
+      attempt: WebPendingResumeAttempt,
+      evidence: PendingResumeFailureEvidence,
+      workStillPending: boolean,
+      deadlineExceeded: boolean
+    ) => boolean;
+    onPendingResumeSuccess?: (attempt: WebPendingResumeAttempt) => boolean;
+    onPendingResumeCancelled?: (attempt: WebPendingResumeAttempt) => void;
   } = {}
 ): Promise<void> {
   const { abortController, sessionId, id: runId } = run;
@@ -4613,6 +4904,9 @@ async function executeRunAsync(
   let runtimeLease = options.runtimeLease;
   let runtime: SessionRuntime | undefined;
   let agent: Agent | undefined;
+  let outputStarted = false;
+  let toolExecutionStarted = false;
+  let pendingResumeDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
   const sessionRef = sessionRefFromSession(session);
 
   const settleRecoveryAttention = async (result: LoopResult): Promise<boolean> => {
@@ -4681,6 +4975,28 @@ async function executeRunAsync(
   };
 
   try {
+    if (options.pendingResume) {
+      const remainingMs = options.pendingResume.deadlineAt - Date.now();
+      if (remainingMs <= 0) {
+        abortController.abort(WEB_PENDING_RESUME_DEADLINE_ABORT);
+      } else {
+        pendingResumeDeadlineTimer = setTimeout(() => {
+          abortController.abort(WEB_PENDING_RESUME_DEADLINE_ABORT);
+          const pendingPermission = run.pendingPermission;
+          run.pendingPermission = undefined;
+          pendingPermission?.resolve({
+            approved: false,
+            reason: CONFIRMATION_ABORTED_REASON,
+          });
+          if (pendingPermission) {
+            emit('interaction.resolved', {
+              requestId: pendingPermission.permissionId,
+            });
+          }
+        }, remainingMs);
+        pendingResumeDeadlineTimer.unref?.();
+      }
+    }
     if (options.taskAdmission) {
       await options.taskAdmission.ready;
       await run.taskAdmissionUpdate;
@@ -4816,6 +5132,7 @@ async function executeRunAsync(
       switch (event.kind) {
         // --- 流式增量 ---
         case 'content_delta':
+          if (event.delta.length > 0) outputStarted = true;
           if (structuredOutputExpected) break;
           emit('message.delta', {
             messageId: ensureAssistantMessage(),
@@ -4823,6 +5140,7 @@ async function executeRunAsync(
           });
           break;
         case 'structured_output':
+          outputStarted = true;
           emit('structured.output', {
             messageId: ensureAssistantMessage(),
             output: event.output,
@@ -4830,6 +5148,7 @@ async function executeRunAsync(
           });
           break;
         case 'thinking_delta':
+          if (event.delta.length > 0) outputStarted = true;
           emit('thinking.delta', {
             messageId: ensureAssistantMessage(),
             delta: event.delta,
@@ -4838,6 +5157,7 @@ async function executeRunAsync(
 
         // --- 工具事件 ---
         case 'tool_start':
+          toolExecutionStarted = true;
           if ('function' in event.toolCall) {
             if (event.toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
             emit('tool.start', {
@@ -4850,6 +5170,7 @@ async function executeRunAsync(
           }
           break;
         case 'tool_result':
+          toolExecutionStarted = true;
           if ('function' in event.toolCall) {
             if (event.toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
             emit('tool.result', {
@@ -4872,6 +5193,7 @@ async function executeRunAsync(
           }
           break;
         case 'tool_progress':
+          toolExecutionStarted = true;
           if ('function' in event.toolCall) {
             if (event.toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
             emit('tool.progress', {
@@ -5072,12 +5394,14 @@ async function executeRunAsync(
           }
           for (const message of event.messages) {
             if (!message.recovered || message.persisted) continue;
+            if (options.pendingResume?.projectedInputIds.has(message.id)) continue;
             emit('message.created', {
               messageId: message.id,
               role: 'user',
               content: getDisplayContent(message.content),
               recovered: true,
             });
+            options.pendingResume?.projectedInputIds.add(message.id);
           }
           emit('follow_up.started', {
             runId,
@@ -5168,6 +5492,20 @@ async function executeRunAsync(
           break;
       }
     };
+    const runFailure = (result: LoopResult): WebAgentRunFailure => {
+      const toolCallsCount = result.metadata?.toolCallsCount;
+      return new WebAgentRunFailure({
+        taskFailure: toTaskFailure(
+          result.error?.details ?? result.error?.message ?? 'Agent run failed'
+        ),
+        outputStarted,
+        toolExecutionStarted,
+        toolCallsCount:
+          typeof toolCallsCount === 'number' && Number.isInteger(toolCallsCount)
+            ? toolCallsCount
+            : -1,
+      });
+    };
     let loopResult = await drainLoop(
       agent.chatStream(content, chatContext, {
         stream: true,
@@ -5183,7 +5521,7 @@ async function executeRunAsync(
       return;
     }
     if (!loopResult.success) {
-      throw new Error(loopResult.error?.message ?? 'Agent run failed');
+      throw runFailure(loopResult);
     }
     for (let followUpRun = 0; followUpRun < 20; followUpRun++) {
       const requested = run.pendingFollowUpRequested === true;
@@ -5206,7 +5544,7 @@ async function executeRunAsync(
         return;
       }
       if (!loopResult.success) {
-        throw new Error(loopResult.error?.message ?? 'Agent follow-up failed');
+        throw runFailure(loopResult);
       }
     }
 
@@ -5218,10 +5556,29 @@ async function executeRunAsync(
     session.updatedAt = new Date();
     await refreshSessionTaskMetadata(session);
 
+    if (
+      options.pendingResume &&
+      abortController.signal.aborted &&
+      abortController.signal.reason === WEB_PENDING_RESUME_DEADLINE_ABORT
+    ) {
+      throw new WebAgentRunFailure({
+        taskFailure: taskFailureForCode('timeout'),
+        outputStarted,
+        toolExecutionStarted,
+        toolCallsCount: Number.isInteger(loopResult.metadata?.toolCallsCount)
+          ? (loopResult.metadata?.toolCallsCount ?? -1)
+          : -1,
+      });
+    }
+
     if (abortController.signal.aborted || run.status === 'cancelled') {
       await finalizeCancellation();
       emit('session.status', { status: 'idle' });
       return;
+    }
+    if (options.pendingResume) {
+      const currentGeneration = options.onPendingResumeSuccess?.(options.pendingResume);
+      if (currentGeneration === false) return;
     }
 
     // message.complete 只在整个 run 结束时发一次（run-level 语义）
@@ -5250,18 +5607,67 @@ async function executeRunAsync(
           : runtime.finishTurn(options.preparedInputTurn.handle);
       await cleanup.catch(() => undefined);
     }
-    if (abortController.signal.aborted || run.status === 'cancelled') {
+    const deadlineExceeded =
+      options.pendingResume !== undefined &&
+      abortController.signal.aborted &&
+      abortController.signal.reason === WEB_PENDING_RESUME_DEADLINE_ABORT;
+    if (
+      (abortController.signal.aborted && !deadlineExceeded) ||
+      run.status === 'cancelled'
+    ) {
+      if (options.pendingResume) {
+        options.onPendingResumeCancelled?.(options.pendingResume);
+      }
       cancelRun(run, 'runtime-abort');
       await finalizeCancellation();
       emit('session.status', { status: 'idle' });
       return;
     }
+    const pendingResumeEvidence =
+      error instanceof WebAgentRunFailure
+        ? error.evidence
+        : deadlineExceeded
+          ? {
+              taskFailure: taskFailureForCode('timeout'),
+              outputStarted,
+              toolExecutionStarted,
+              toolCallsCount: -1,
+            }
+          : options.pendingResume
+            ? {
+                taskFailure: toTaskFailure(error),
+                outputStarted: true,
+                toolExecutionStarted: true,
+                toolCallsCount: -1,
+              }
+            : undefined;
+    const retryScheduled =
+      options.pendingResume !== undefined &&
+      pendingResumeEvidence !== undefined &&
+      options.onPendingResumeFailure?.(
+        options.pendingResume,
+        pendingResumeEvidence,
+        deadlineExceeded || (runtime?.getPendingSteeringCount() ?? 0) > 0,
+        deadlineExceeded
+      ) === true;
+    run.status = 'failed';
+    if (retryScheduled) {
+      const runningMetadata = await runtime
+        ?.setTaskStatus('running')
+        .catch(() => undefined);
+      if (runningMetadata) syncSessionTaskMetadata(session, runningMetadata);
+      session.taskStatus = 'running';
+      session.taskStatusReason = undefined;
+      session.taskFailure = undefined;
+      session.taskCompletedAt = undefined;
+      emit('session.status', { status: 'running' });
+      return;
+    }
     await refreshSessionTaskMetadata(session).catch(() => undefined);
     logger.error('[SessionRoutes] Agent execution error:', error);
-    run.status = 'failed';
     session.taskStatus = 'failed';
     session.taskCompletedAt ??= new Date().toISOString();
-    const taskFailure = toTaskFailure(error);
+    const taskFailure = pendingResumeEvidence?.taskFailure ?? toTaskFailure(error);
     if (!session.taskFailure) {
       const failedMetadata = runtime
         ? await runtime.setTaskStatus('failed', error).catch(() => undefined)
@@ -5284,6 +5690,7 @@ async function executeRunAsync(
     });
     emit('session.status', { status: 'error' });
   } finally {
+    if (pendingResumeDeadlineTimer) clearTimeout(pendingResumeDeadlineTimer);
     options.taskAdmission?.release();
     if (options.taskAdmission) {
       const stats = taskRunScheduler.getStats();

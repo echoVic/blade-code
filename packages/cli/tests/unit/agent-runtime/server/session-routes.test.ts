@@ -1966,6 +1966,522 @@ describe('SessionRoutes runtime reuse', () => {
     ]);
   });
 
+  it('retries a retryable zero-side-effect Web pending resume', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const recoveredMetadata = metadataFor(
+      'retry-recovered-web-session',
+      '/persisted-workspace',
+      { permissionMode: 'yolo' }
+    );
+    vi.mocked(SessionService.listSessions).mockResolvedValue([recoveredMetadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(recoveredMetadata);
+    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    agentState.chatStream
+      .mockImplementationOnce(async function* () {
+        yield {
+          kind: 'follow_up_started' as const,
+          queued: 1,
+          recovered: 1,
+          messages: [
+            {
+              id: 'durable-recovered-input',
+              content: 'continue durable work',
+              queuedAt: Date.now(),
+              recovered: true,
+              persisted: false,
+            },
+          ],
+        };
+        return {
+          success: false,
+          error: {
+            type: 'api_error' as const,
+            message: 'Provider request failed.',
+            details: Object.assign(new Error('opaque Provider failure'), {
+              code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+            }),
+          },
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      })
+      .mockImplementationOnce(async function* () {
+        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+        yield {
+          kind: 'follow_up_started' as const,
+          queued: 1,
+          recovered: 1,
+          messages: [
+            {
+              id: 'durable-recovered-input',
+              content: 'continue durable work',
+              queuedAt: Date.now(),
+              recovered: true,
+              persisted: false,
+            },
+          ],
+        };
+        return {
+          success: true,
+          finalMessage: 'recovered',
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      });
+
+    const controller = createSessionRouteController();
+    const eventsController = new AbortController();
+    const response = await controller.app.request(
+      '/retry-recovered-web-session/events',
+      { signal: eventsController.signal }
+    );
+    expect(response.status).toBe(200);
+
+    await vi.waitFor(
+      () => {
+        expect(agentState.chatStream).toHaveBeenCalledTimes(2);
+      },
+      { timeout: 3_000 }
+    );
+    const published = busState.publish.mock.calls.map(([, type, properties]) => ({
+      type,
+      properties,
+    }));
+    expect(
+      published.filter(
+        (event) =>
+          event.type === 'pending.resume' &&
+          event.properties.phase === 'retry_scheduled'
+      )
+    ).toHaveLength(1);
+    expect(
+      published.filter(
+        (event) =>
+          event.type === 'pending.resume' && event.properties.phase === 'recovered'
+      )
+    ).toHaveLength(1);
+    expect(published.filter((event) => event.type === 'session.error')).toHaveLength(0);
+    expect(
+      published.filter(
+        (event) =>
+          event.type === 'message.created' &&
+          event.properties.messageId === 'durable-recovered-input'
+      )
+    ).toHaveLength(1);
+
+    eventsController.abort();
+    await response.body?.cancel().catch(() => undefined);
+    await controller.shutdown();
+  });
+
+  it('waits for failed Web pending resume cleanup before retrying', async () => {
+    vi.useFakeTimers();
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const metadata = metadataFor('settling-resume', '/persisted-workspace', {
+      permissionMode: 'yolo',
+    });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    let releaseStatus: () => void = () => undefined;
+    const statusGate = new Promise<undefined>((resolve) => {
+      releaseStatus = () => resolve(undefined);
+    });
+    runtimeState.runtime.setTaskStatus.mockImplementationOnce(async () => {
+      await statusGate;
+      return undefined;
+    });
+    let releaseDestroy: () => void = () => undefined;
+    const destroyGate = new Promise<undefined>((resolve) => {
+      releaseDestroy = () => resolve(undefined);
+    });
+    agentState.destroy.mockImplementationOnce(() => destroyGate);
+    agentState.chatStream
+      .mockImplementationOnce(async function* () {
+        if (Date.now() < 0)
+          yield { kind: 'turn_start' as const, turn: 1, maxTurns: 10 };
+        return {
+          success: false,
+          error: {
+            type: 'api_error' as const,
+            message: 'Provider request failed.',
+            details: Object.assign(new Error('opaque'), {
+              code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+            }),
+          },
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      })
+      .mockImplementationOnce(async function* () {
+        if (Date.now() < 0) yield undefined;
+        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+        return {
+          success: true,
+          finalMessage: 'recovered',
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      });
+
+    const controller = createSessionRouteController();
+    const eventsController = new AbortController();
+    const response = await controller.app.request('/settling-resume/events', {
+      signal: eventsController.signal,
+    });
+    await vi.waitFor(() => {
+      expect(busState.publish).toHaveBeenCalledWith(
+        expect.anything(),
+        'pending.resume',
+        expect.objectContaining({ phase: 'retry_scheduled' })
+      );
+    });
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(runtimeState.runtime.setTaskStatus).toHaveBeenCalledWith('running');
+    expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+    releaseStatus();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(agentState.destroy).toHaveBeenCalledTimes(1);
+    expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+    releaseDestroy();
+    await vi.waitFor(() => {
+      expect(agentState.chatStream).toHaveBeenCalledTimes(2);
+    });
+
+    eventsController.abort();
+    await response.body?.cancel().catch(() => undefined);
+    await controller.shutdown();
+    vi.useRealTimers();
+  });
+
+  it('rejects pending permission and ignores late success at the Web resume deadline', async () => {
+    vi.useFakeTimers({ now: 1_000 });
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const metadata = metadataFor('deadline-resume', '/persisted-workspace', {
+      permissionMode: 'yolo',
+    });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
+    runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+    let confirmationResponse: { approved: boolean; reason?: string } | undefined;
+    agentState.chatStream.mockImplementationOnce(async function* (_content, context) {
+      if (Date.now() < 0) yield undefined;
+      if (!context.confirmationHandler) {
+        throw new Error('Expected confirmation handler');
+      }
+      confirmationResponse = await context.confirmationHandler.requestConfirmation({
+        toolName: 'Write',
+        message: 'Approve a write after durable recovery',
+      });
+      return {
+        success: true,
+        finalMessage: 'late success',
+        metadata: { turnsCount: 1, toolCallsCount: 0, duration: 120_000 },
+      };
+    });
+
+    const controller = createSessionRouteController();
+    const eventsController = new AbortController();
+    const response = await controller.app.request('/deadline-resume/events', {
+      signal: eventsController.signal,
+    });
+    try {
+      await vi.waitFor(() => {
+        expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+      });
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(confirmationResponse).toEqual({
+        approved: false,
+        reason: '__aborted__',
+      });
+      expect(
+        busState.publish.mock.calls.some(
+          ([, type, properties]) =>
+            type === 'pending.resume' && properties.phase === 'exhausted'
+        )
+      ).toBe(true);
+      expect(
+        busState.publish.mock.calls.some(([, type]) => type === 'session.completed')
+      ).toBe(false);
+      expect(
+        busState.publish.mock.calls.some(
+          ([, type, properties]) =>
+            type === 'session.error' &&
+            (properties.taskFailure as { code?: unknown } | undefined)?.code ===
+              'timeout'
+        )
+      ).toBe(true);
+    } finally {
+      eventsController.abort();
+      await response.body?.cancel().catch(() => undefined);
+      vi.useRealTimers();
+      await controller.shutdown();
+    }
+  });
+
+  it.each([
+    ['content', { kind: 'content_delta', delta: 'partial' } satisfies LoopEvent, 0],
+    ['thinking', { kind: 'thinking_delta', delta: 'partial' } satisfies LoopEvent, 0],
+    [
+      'structured',
+      {
+        kind: 'structured_output',
+        output: { partial: true },
+        schemaDigest: 'schema',
+      } satisfies LoopEvent,
+      0,
+    ],
+    [
+      'tool_start',
+      {
+        kind: 'tool_start',
+        toolCall: {
+          id: 'tool-call',
+          type: 'function',
+          function: { name: 'Write', arguments: '{}' },
+        },
+      } satisfies LoopEvent,
+      0,
+    ],
+    [
+      'tool_progress',
+      {
+        kind: 'tool_progress',
+        toolCall: {
+          id: 'tool-call',
+          type: 'function',
+          function: { name: 'Write', arguments: '{}' },
+        },
+        update: { message: 'working' },
+      } satisfies LoopEvent,
+      0,
+    ],
+    [
+      'tool_result',
+      {
+        kind: 'tool_result',
+        toolCall: {
+          id: 'tool-call',
+          type: 'function',
+          function: { name: 'Write', arguments: '{}' },
+        },
+        result: { success: true, llmContent: 'done' },
+      } satisfies LoopEvent,
+      0,
+    ],
+    ['unknown count', undefined, undefined],
+    ['nonretryable', undefined, 0],
+    ['inbox cleared', undefined, 0],
+  ])(
+    'does not retry Web pending resume after %s evidence',
+    async (boundary, event, toolCallsCount) => {
+      const { createSessionRouteController } = await import(
+        '../../../../src/server/routes/session.js'
+      );
+      const sessionId = `no-retry-${boundary}`
+        .replaceAll('_', '-')
+        .replaceAll(' ', '-');
+      const metadata = metadataFor(sessionId, '/persisted-workspace', {
+        permissionMode: 'yolo',
+      });
+      vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+      vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+      vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+      const retryable = boundary !== 'nonretryable';
+      agentState.chatStream.mockImplementationOnce(async function* () {
+        if (event) yield event;
+        if (boundary === 'inbox cleared') {
+          runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
+        }
+        return {
+          success: false,
+          error: {
+            type: 'api_error' as const,
+            message: 'Provider request failed.',
+            details: retryable
+              ? Object.assign(new Error('opaque'), {
+                  code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+                })
+              : {
+                  code: 'permission' as const,
+                  message:
+                    'Provider rejected this request. Check account and model permissions.',
+                  retryable: false,
+                },
+          },
+          metadata: {
+            turnsCount: 1,
+            ...(toolCallsCount === undefined ? {} : { toolCallsCount }),
+            duration: 0,
+          },
+        };
+      });
+
+      const controller = createSessionRouteController();
+      const eventsController = new AbortController();
+      const response = await controller.app.request(`/${sessionId}/events`, {
+        signal: eventsController.signal,
+      });
+      try {
+        await vi.waitFor(() => {
+          expect(
+            busState.publish.mock.calls.some(([, type]) => type === 'session.error')
+          ).toBe(true);
+        });
+        expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+        expect(
+          busState.publish.mock.calls.some(
+            ([, type, properties]) =>
+              type === 'pending.resume' && properties.phase === 'retry_scheduled'
+          )
+        ).toBe(false);
+        expect(
+          busState.publish.mock.calls.some(
+            ([, type, properties]) =>
+              type === 'pending.resume' && properties.phase === 'failed'
+          )
+        ).toBe(true);
+      } finally {
+        eventsController.abort();
+        await response.body?.cancel().catch(() => undefined);
+        await controller.shutdown();
+      }
+    }
+  );
+
+  it.each(['shutdown', 'explicit abort'] as const)(
+    'cancels a scheduled Web pending resume on %s',
+    async (cleanup) => {
+      vi.useFakeTimers();
+      const { createSessionRouteController } = await import(
+        '../../../../src/server/routes/session.js'
+      );
+      const sessionId = `cleanup-${cleanup.replace(' ', '-')}`;
+      const metadata = metadataFor(sessionId, '/persisted-workspace', {
+        permissionMode: 'yolo',
+      });
+      vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+      vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+      vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(true);
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+      agentState.chatStream.mockImplementation(async function* () {
+        if (Date.now() < 0) yield undefined;
+        return {
+          success: false,
+          error: {
+            type: 'api_error' as const,
+            message: 'Provider request failed.',
+            details: Object.assign(new Error('opaque'), {
+              code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+            }),
+          },
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      });
+
+      const controller = createSessionRouteController();
+      const eventsController = new AbortController();
+      const response = await controller.app.request(`/${sessionId}/events`, {
+        signal: eventsController.signal,
+      });
+      try {
+        await vi.waitFor(() => {
+          expect(
+            busState.publish.mock.calls.some(
+              ([, type, properties]) =>
+                type === 'pending.resume' && properties.phase === 'retry_scheduled'
+            )
+          ).toBe(true);
+        });
+        if (cleanup === 'shutdown') {
+          await controller.shutdown('test-shutdown');
+        } else {
+          const abortResponse = await controller.app.request(`/${sessionId}/abort`, {
+            method: 'POST',
+          });
+          expect(abortResponse.status).toBe(200);
+        }
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+      } finally {
+        eventsController.abort();
+        await response.body?.cancel().catch(() => undefined);
+        if (cleanup !== 'shutdown') await controller.shutdown();
+        vi.useRealTimers();
+      }
+    }
+  );
+
+  it.each(['Goal-only', 'task-isolated'] as const)(
+    'does not attach Web pending recovery to a %s run',
+    async (kind) => {
+      const { createSessionRouteController } = await import(
+        '../../../../src/server/routes/session.js'
+      );
+      const sessionId = `excluded-${kind.toLowerCase()}`;
+      const metadata = metadataFor(sessionId, '/persisted-workspace', {
+        permissionMode: 'yolo',
+        ...(kind === 'task-isolated'
+          ? { taskIsolation: 'local', taskStatus: 'running' }
+          : {}),
+      });
+      vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+      vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+      vi.mocked(SessionRuntime.hasPendingInbox).mockResolvedValue(
+        kind === 'task-isolated'
+      );
+      vi.mocked(SessionRuntime.hasActiveGoal).mockResolvedValue(kind === 'Goal-only');
+      runtimeState.runtime.getPendingSteeringCount.mockReturnValue(
+        kind === 'task-isolated' ? 1 : 0
+      );
+      runtimeState.runtime.getGoal.mockResolvedValue(
+        kind === 'Goal-only' ? { status: 'active', goalId: 'goal-only' } : null
+      );
+      agentState.chatStream.mockImplementationOnce(async function* () {
+        if (Date.now() < 0) yield undefined;
+        return {
+          success: false,
+          error: {
+            type: 'api_error' as const,
+            message: 'Provider request failed.',
+            details: Object.assign(new Error('opaque'), {
+              code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+            }),
+          },
+          metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+        };
+      });
+
+      const controller = createSessionRouteController();
+      const eventsController = new AbortController();
+      const response = await controller.app.request(`/${sessionId}/events`, {
+        signal: eventsController.signal,
+      });
+      try {
+        await vi.waitFor(() => {
+          expect(
+            busState.publish.mock.calls.some(([, type]) => type === 'session.error')
+          ).toBe(true);
+        });
+        expect(agentState.chatStream).toHaveBeenCalledTimes(1);
+        expect(
+          busState.publish.mock.calls.some(([, type]) => type === 'pending.resume')
+        ).toBe(false);
+      } finally {
+        eventsController.abort();
+        await response.body?.cancel().catch(() => undefined);
+        await controller.shutdown();
+      }
+    }
+  );
+
   it('projects recovery attention without starting a Web run on reconnect', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     const { Agent } = await import('../../../../src/agent/Agent.js');
