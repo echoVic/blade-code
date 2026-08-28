@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.109] - 2026-08-28
+
+### Fixed
+- Made terminal Web pending-resume failures survive SSE reconnects so replay-safety and four-attempt/120-second budgets cannot be reset by a new wake.
+- Fail closed when a retry cannot start or its shared deadline expires before Agent creation, while preserving canonical errors and durable task status.
+- Invalidated stale retry attempts immediately before run startup so abort, deletion, controller replacement, and shutdown cannot revive cancelled work.
+
+### Tests
+- Added direct Runtime lease handoff, terminal persistence failure, reconnect, pre-start deadline, and in-flight cleanup race coverage.
+- Verified 443 deterministic test files with 4,406 passing tests; 82 credential-gated real API cases remained conditionally skipped.
+
 ## [0.10.108] - 2026-08-28
 
 ### Fixed

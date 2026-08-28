@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.109] - 2026-08-28
+
+### 修复
+- Web pending-resume 的失败终态现在可跨 SSE 重连保留，新的唤醒不会重置零副作用门禁或四次/120 秒恢复预算。
+- 重试在启动前失败或共享 deadline 在 Agent 创建前耗尽时会 fail closed，并保留规范错误与持久化任务状态。
+- 在启动 run 前再次校验 retry attempt 所有权，避免 abort、删除、controller replacement 或 shutdown 后旧回调复活已取消工作。
+
+### 测试
+- 新增 Runtime lease 交接、终态持久化失败、SSE 重连、启动前 deadline 和清理竞态的直接回归覆盖。
+- 验证 443 个确定性测试文件、4,406 个通过测试；82 个需要凭证的真实 API 用例按条件跳过。
+
 ## [0.10.108] - 2026-08-28
 
 ### 修复
