@@ -51,6 +51,13 @@ const FAILURE_DEFINITIONS = {
   },
 } as const satisfies Record<SessionTaskFailureCode, Omit<SessionTaskFailure, 'code'>>;
 
+const PROVIDER_TIMEOUT_CODES = new Set([
+  'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+  'PROVIDER_REQUEST_DEADLINE_EXCEEDED',
+  'STREAM_IDLE_TIMEOUT',
+]);
+const MAX_ERROR_CHAIN_DEPTH = 8;
+
 function rawErrorMessage(error: unknown): string {
   try {
     if (error instanceof Error) return error.message;
@@ -112,6 +119,33 @@ function classifyFailureCode(message: string): SessionTaskFailureCode {
   return 'runtime';
 }
 
+function hasProviderTimeoutCode(error: unknown): boolean {
+  const seen = new Set<object>();
+  let current = error;
+
+  for (let depth = 0; depth < MAX_ERROR_CHAIN_DEPTH; depth++) {
+    if (current === null || typeof current !== 'object' || seen.has(current)) {
+      return false;
+    }
+    seen.add(current);
+
+    try {
+      const candidate = current as { code?: unknown; lastError?: unknown };
+      if (
+        typeof candidate.code === 'string' &&
+        PROVIDER_TIMEOUT_CODES.has(candidate.code)
+      ) {
+        return true;
+      }
+      current = candidate.lastError;
+    } catch {
+      return false;
+    }
+  }
+
+  return false;
+}
+
 function taskAdmissionResource(
   error: unknown
 ): SessionTaskCapacityResource | undefined {
@@ -156,7 +190,43 @@ export function taskFailureForCode(code: SessionTaskFailureCode): SessionTaskFai
   };
 }
 
+function projectCanonicalTaskFailure(value: unknown): SessionTaskFailure | undefined {
+  try {
+    if (!value || typeof value !== 'object') return undefined;
+    const candidate = value as Partial<SessionTaskFailure>;
+    const code = candidate.code;
+    if (typeof code !== 'string' || !Object.hasOwn(FAILURE_DEFINITIONS, code)) {
+      return undefined;
+    }
+
+    const failureCode = code as SessionTaskFailureCode;
+    const canonical = FAILURE_DEFINITIONS[failureCode];
+    const resource = candidate.resource;
+    const resourceValid =
+      resource === undefined ||
+      resource === 'pending_count' ||
+      resource === 'pending_bytes' ||
+      resource === 'resident_runtimes';
+    if (
+      candidate.message !== canonical.message ||
+      candidate.retryable !== canonical.retryable ||
+      !resourceValid ||
+      (failureCode !== 'capacity' && resource !== undefined)
+    ) {
+      return undefined;
+    }
+
+    return resource === undefined
+      ? taskFailureForCode(failureCode)
+      : { ...taskFailureForCode(failureCode), resource };
+  } catch {
+    return undefined;
+  }
+}
+
 export function toTaskFailure(error: unknown): SessionTaskFailure {
+  const canonical = projectCanonicalTaskFailure(error);
+  if (canonical) return canonical;
   if (isWorkspaceUnavailable(error)) {
     return taskFailureForCode('workspace_unavailable');
   }
@@ -167,25 +237,12 @@ export function toTaskFailure(error: unknown): SessionTaskFailure {
       resource,
     };
   }
+  if (hasProviderTimeoutCode(error)) {
+    return taskFailureForCode('timeout');
+  }
   return taskFailureForCode(classifyFailureCode(rawErrorMessage(error)));
 }
 
 export function isSessionTaskFailure(value: unknown): value is SessionTaskFailure {
-  if (!value || typeof value !== 'object') return false;
-  const candidate = value as Partial<SessionTaskFailure>;
-  if (typeof candidate.code !== 'string' || !(candidate.code in FAILURE_DEFINITIONS)) {
-    return false;
-  }
-  const canonical = FAILURE_DEFINITIONS[candidate.code as SessionTaskFailureCode];
-  const resourceValid =
-    candidate.resource === undefined ||
-    candidate.resource === 'pending_count' ||
-    candidate.resource === 'pending_bytes' ||
-    candidate.resource === 'resident_runtimes';
-  return (
-    candidate.message === canonical.message &&
-    candidate.retryable === canonical.retryable &&
-    resourceValid &&
-    (candidate.code === 'capacity' || candidate.resource === undefined)
-  );
+  return projectCanonicalTaskFailure(value) !== undefined;
 }

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { SessionRuntimeCapacityError } from '../../../../src/agent/runtime/SessionRuntimeResidency.js';
+import { TaskAdmissionQueueFullError } from '../../../../src/agent/runtime/TaskRunScheduler.js';
 import {
   isSessionTaskFailure,
   toTaskFailure,
 } from '../../../../src/context/taskFailure.js';
-import { SessionRuntimeCapacityError } from '../../../../src/agent/runtime/SessionRuntimeResidency.js';
-import { TaskAdmissionQueueFullError } from '../../../../src/agent/runtime/TaskRunScheduler.js';
 
 describe('taskFailure', () => {
   it('classifies retryable provider failures without persisting paths or secrets', () => {
@@ -23,6 +23,83 @@ describe('taskFailure', () => {
     expect(failure.message).not.toContain('/Users/alice');
     expect(failure.message).not.toContain('opaque-sensitive-value-123456789');
     expect(isSessionTaskFailure(failure)).toBe(true);
+  });
+
+  it.each([
+    'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+    'PROVIDER_REQUEST_DEADLINE_EXCEEDED',
+    'STREAM_IDLE_TIMEOUT',
+  ] as const)('maps %s to canonical timeout without leaking details', (code) => {
+    const failure = toTaskFailure(
+      Object.assign(new Error('opaque secret and /private/path'), { code })
+    );
+
+    expect(failure).toEqual({
+      code: 'timeout',
+      message: 'Provider request timed out.',
+      retryable: true,
+    });
+    expect(JSON.stringify(failure)).not.toContain('opaque secret');
+    expect(JSON.stringify(failure)).not.toContain('/private/path');
+  });
+
+  it('finds a timeout code through a bounded lastError chain', () => {
+    const failure = toTaskFailure({
+      message: 'outer provider failure',
+      lastError: Object.assign(new Error('inner provider failure'), {
+        code: 'PROVIDER_RECOVERY_BUDGET_EXCEEDED',
+      }),
+    });
+
+    expect(failure).toEqual({
+      code: 'timeout',
+      message: 'Provider request timed out.',
+      retryable: true,
+    });
+  });
+
+  it('inspects no more than eight errors in a lastError chain', () => {
+    interface ChainError {
+      code?: string;
+      message: string;
+      lastError?: unknown;
+    }
+
+    const atLimit: ChainError = { message: 'level 1' };
+    let cursor = atLimit;
+    for (let depth = 2; depth <= 8; depth++) {
+      const next: ChainError = { message: `level ${depth}` };
+      cursor.lastError = next;
+      cursor = next;
+    }
+    cursor.lastError = Object.assign(new Error('level 9'), {
+      code: 'STREAM_IDLE_TIMEOUT',
+    });
+
+    expect(toTaskFailure(atLimit)).toEqual({
+      code: 'runtime',
+      message: 'Agent execution failed.',
+      retryable: true,
+    });
+    cursor.code = 'STREAM_IDLE_TIMEOUT';
+    expect(toTaskFailure(atLimit)).toEqual({
+      code: 'timeout',
+      message: 'Provider request timed out.',
+      retryable: true,
+    });
+  });
+
+  it('stops a cyclic lastError chain without throwing', () => {
+    const cyclic: { message: string; lastError?: unknown } = {
+      message: 'outer provider failure',
+    };
+    cyclic.lastError = cyclic;
+
+    expect(toTaskFailure(cyclic)).toEqual({
+      code: 'runtime',
+      message: 'Agent execution failed.',
+      retryable: true,
+    });
   });
 
   it.each([
@@ -115,10 +192,38 @@ describe('taskFailure', () => {
     expect(twice.message).toBe(once.message);
   });
 
+  it('idempotently preserves only allowed fields from a canonical failure', () => {
+    const canonical = {
+      code: 'capacity' as const,
+      message: 'Task admission capacity is full. Retry after running tasks complete.',
+      retryable: true,
+      resource: 'pending_bytes' as const,
+      detail: 'opaque secret and /private/path',
+      lastError: Object.assign(new Error('inner provider failure'), {
+        code: 'STREAM_IDLE_TIMEOUT',
+      }),
+    };
+
+    const once = toTaskFailure(canonical);
+    expect(once).toEqual({
+      code: 'capacity',
+      message: 'Task admission capacity is full. Retry after running tasks complete.',
+      retryable: true,
+      resource: 'pending_bytes',
+    });
+    expect(toTaskFailure(once)).toEqual(once);
+  });
+
   it('fails closed when inspecting a hostile error object', () => {
     const hostile = new Proxy(
       {},
       {
+        get() {
+          throw new Error('do not expose this value');
+        },
+        getPrototypeOf() {
+          throw new Error('do not expose this value');
+        },
         has() {
           throw new Error('do not expose this value');
         },
