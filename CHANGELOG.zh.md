@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.102] - 2026-08-28
+
+### 新增
+- 新增基于现有 TaskList 的 Goal 作用域 durable execution frontier，提供稳定的 Goal 隔离，并按 Team > Goal > Session 解析任务作用域。
+- 新增有界 frontier 刷新与 continuation 注入；每次 Provider 调用前都会读取最新任务计数、依赖阻塞、下一可执行任务和摘要哈希。
+- 新增 GoalSnapshot v2 持久化，兼容读取 v1，并支持 frontier 原子更新和未完成任务完成保护。
+- 新增 frontier 到 Headless JSONL、Web SSE/store、ACP metadata + plan 和 CLI TUI 任务面板的投影。
+- 新增终端 transcript pager 全文搜索和剪贴板复制。
+
+### 修复
+- 补齐 Web 预览显示模式翻译，并增加可在 reload 后验证 Goal frontier 的有界 GUI DOM 属性。
+- Goal frontier 读取失败时现在会以可恢复的类型化诊断暂停 Goal，不再把未知任务状态当成空列表继续执行。
+
+### 测试
+- 新增 frontier、GoalStore 迁移、作用域优先级、continuation 和跨端投影的确定性测试。
+- 使用真实 DeepSeek 完成 Runtime、Web REST、ACP 和生产 Web GUI reload 资格轨迹，浏览器断言全部通过。
+- Bun 1.3.11 下 build、type-check、lint 和全量测试门禁通过：4,322 项通过，保留 82 项条件跳过。
+
 ## [0.10.101] - 2026-08-27
 
 ### 新增

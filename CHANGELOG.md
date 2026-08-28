@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.102] - 2026-08-28
+
+### Added
+- Added a goal-scoped durable execution frontier backed by the existing TaskList, with stable Goal isolation and Team > Goal > Session task scope precedence.
+- Added bounded frontier refresh and continuation injection so resumed Goals receive the latest task counts, dependency blockers, next executable task, and digest before Provider execution.
+- Added GoalSnapshot v2 persistence with v1 read compatibility, atomic frontier updates, and unfinished-task completion protection.
+- Added frontier projections for Headless JSONL, Web SSE/store state, ACP metadata plus plan updates, and the CLI TUI task panel.
+- Added transcript pager full-text search and clipboard copy support.
+
+### Fixed
+- Added Web preview display-mode translations and bounded Goal frontier DOM attributes for reload-safe GUI observability.
+- Goal frontier read failures now pause the Goal with a typed, recoverable diagnostic instead of continuing with an unknown task state.
+
+### Tests
+- Added deterministic frontier, GoalStore migration, scope precedence, continuation, and cross-surface projection coverage.
+- Qualified Goal frontier behavior with real DeepSeek Runtime, Web REST, ACP, and production Web GUI reload trajectories; all required browser assertions pass.
+- Full Bun 1.3.11 build, type-check, lint, and test gates pass: 4,322 tests passed and 82 conditional skips retained.
+
 ## [0.10.101] - 2026-08-27
 
 ### Added
