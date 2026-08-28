@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.105] - 2026-08-28
+
+### Fixed
+- Prevented ordinary unchanged Goal work from being classified as stalled without an auditable liveness signal.
+- Deferred the unused session-event module preload from the Web initial page to keep the startup bundle within budget without changing event ordering.
+- Shared the bounded pending-resume recovery policy between ACP and future Web recovery orchestration.
+
+### Tests
+- Re-ran the full CLI and Web suites, production build, real DeepSeek Goal recovery, and production Web GUI reload qualification.
+- Added deterministic pending-resume policy coverage for replay boundaries, attempt limits, and recovery budgets.
+
 ## [0.10.104] - 2026-08-28
 
 ### Fixed

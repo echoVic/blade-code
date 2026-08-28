@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.105] - 2026-08-28
+
+### 修复
+- 没有可审计 liveness 信号时，不再把普通的未变化 Goal 任务误判为停滞。
+- 首屏不再预加载尚未使用的 session-event 模块，在不改变事件顺序的前提下使 Web 启动包保持在预算内。
+- 在 ACP 与后续 Web recovery 编排之间共享有界 pending-resume recovery policy。
+
+### 测试
+- 重新运行 CLI 和 Web 全量测试、生产构建、真实 DeepSeek Goal recovery，以及生产 Web GUI reload 资格轨迹。
+- 新增 pending-resume policy 的 replay boundary、尝试次数和恢复预算确定性测试。
+
 ## [0.10.104] - 2026-08-28
 
 ### 修复
