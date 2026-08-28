@@ -188,12 +188,18 @@ export async function runDurableInteractionRecoveryPtyDriver(
     if (failureStdout.includes(input.secret)) {
       throw new Error('Durable interaction PTY failure evidence contains credentials');
     }
-    const safeFailure = parseSafeFailureEvidence(failureStdout);
-    throw new Error(
-      safeFailure
-        ? `Durable interaction PTY failed at ${safeFailure.stage} (${safeFailure.code})`
-        : 'Durable interaction PTY runner failed without safe evidence'
-    );
+    try {
+      const safeFailure =
+        parseDurableInteractionRecoveryPtyFailureEvidence(failureStdout);
+      throw new Error(`Durable interaction PTY failed: ${JSON.stringify(safeFailure)}`);
+    } catch (parseError) {
+      if (
+        parseError instanceof Error &&
+        parseError.message.startsWith('Durable interaction PTY failed:')
+      )
+        throw parseError;
+      throw new Error('Durable interaction PTY runner failed without safe evidence');
+    }
   }
 
   const evidence = parseDurableInteractionRecoveryPtyEvidence(
@@ -215,6 +221,49 @@ interface SafeFailureEvidence {
   secretSeen: boolean;
   termFallbackUsed: boolean;
   killFallbackUsed: boolean;
+  reason: SafeFailureReason;
+  snapshot: SafeCompletionSnapshot | null;
+}
+
+type BoundedCount = 0 | 1 | '2plus';
+type SafeFailureReason =
+  | 'invalid_input'
+  | 'seed_invalid'
+  | 'spawn_failed'
+  | 'question_timeout'
+  | 'review_timeout'
+  | 'completion_timeout'
+  | 'shutdown_failed'
+  | 'duplicate_interaction'
+  | 'invalid_question'
+  | 'invalid_response'
+  | 'invalid_recovery_result'
+  | 'duplicate_turn'
+  | 'duplicate_acknowledgement'
+  | 'duplicate_completion'
+  | 'invalid_write'
+  | 'invalid_order'
+  | 'secret_detected';
+
+interface SafeCompletionSnapshot {
+  interactionRequested: BoundedCount;
+  interactionResponded: BoundedCount;
+  interactionRecovered: BoundedCount;
+  recoveryToolResults: BoundedCount;
+  writeCalls: BoundedCount;
+  writeResults: BoundedCount;
+  successfulWriteResults: BoundedCount;
+  turnStarts: BoundedCount;
+  acknowledgements: BoundedCount;
+  turnCompleted: BoundedCount;
+  turnAborted: BoundedCount;
+  targetState: 'missing' | 'matched' | 'mismatched' | 'unreadable';
+  inboxMissing: boolean | null;
+  durableFinalState: 'missing' | 'matched' | 'mismatched';
+  surfaceFinalSeen: boolean;
+  questionVisible: boolean;
+  reviewVisible: boolean;
+  childExitState: 'running' | 'clean' | 'failed' | 'signaled';
 }
 
 const SAFE_FAILURE_STAGES = new Set([
@@ -234,16 +283,91 @@ const SAFE_FAILURE_CODES = new Set([
   'qualification_failed',
   'shutdown_failed',
 ]);
+const SAFE_FAILURE_REASONS = new Set<SafeFailureReason>([
+  'invalid_input',
+  'seed_invalid',
+  'spawn_failed',
+  'question_timeout',
+  'review_timeout',
+  'completion_timeout',
+  'shutdown_failed',
+  'duplicate_interaction',
+  'invalid_question',
+  'invalid_response',
+  'invalid_recovery_result',
+  'duplicate_turn',
+  'duplicate_acknowledgement',
+  'duplicate_completion',
+  'invalid_write',
+  'invalid_order',
+  'secret_detected',
+]);
+const COUNT_VALUES = new Set<unknown>([0, 1, '2plus']);
 
-function parseSafeFailureEvidence(stdout: string): SafeFailureEvidence | undefined {
+function isSafeSnapshot(value: unknown): value is SafeCompletionSnapshot {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const snapshot = value as Record<string, unknown>;
+  const keys = [
+    'acknowledgements',
+    'childExitState',
+    'durableFinalState',
+    'inboxMissing',
+    'interactionRecovered',
+    'interactionRequested',
+    'interactionResponded',
+    'questionVisible',
+    'recoveryToolResults',
+    'reviewVisible',
+    'successfulWriteResults',
+    'surfaceFinalSeen',
+    'targetState',
+    'turnAborted',
+    'turnCompleted',
+    'turnStarts',
+    'writeCalls',
+    'writeResults',
+  ];
+  const countKeys = [
+    'interactionRequested',
+    'interactionResponded',
+    'interactionRecovered',
+    'recoveryToolResults',
+    'writeCalls',
+    'writeResults',
+    'successfulWriteResults',
+    'turnStarts',
+    'acknowledgements',
+    'turnCompleted',
+    'turnAborted',
+  ];
+  return (
+    Object.keys(snapshot).sort().join('\0') === keys.join('\0') &&
+    countKeys.every((key) => COUNT_VALUES.has(snapshot[key])) &&
+    ['missing', 'matched', 'mismatched', 'unreadable'].includes(
+      String(snapshot.targetState)
+    ) &&
+    (snapshot.inboxMissing === null || typeof snapshot.inboxMissing === 'boolean') &&
+    ['missing', 'matched', 'mismatched'].includes(String(snapshot.durableFinalState)) &&
+    typeof snapshot.surfaceFinalSeen === 'boolean' &&
+    typeof snapshot.questionVisible === 'boolean' &&
+    typeof snapshot.reviewVisible === 'boolean' &&
+    ['running', 'clean', 'failed', 'signaled'].includes(String(snapshot.childExitState))
+  );
+}
+
+export function parseDurableInteractionRecoveryPtyFailureEvidence(
+  stdout: string
+): SafeFailureEvidence {
   if (Buffer.byteLength(stdout, 'utf8') > MAX_SERIALIZED_EVIDENCE_BYTES)
-    return undefined;
+    throw new Error('Durable interaction PTY safe failure evidence is invalid');
   try {
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
     const keys = [
       'code',
       'killFallbackUsed',
+      'reason',
       'secretSeen',
+      'snapshot',
       'stage',
       'success',
       'termFallbackUsed',
@@ -259,12 +383,14 @@ function parseSafeFailureEvidence(stdout: string): SafeFailureEvidence | undefin
       typeof parsed.timedOut !== 'boolean' ||
       typeof parsed.secretSeen !== 'boolean' ||
       typeof parsed.termFallbackUsed !== 'boolean' ||
-      typeof parsed.killFallbackUsed !== 'boolean'
+      typeof parsed.killFallbackUsed !== 'boolean' ||
+      !SAFE_FAILURE_REASONS.has(parsed.reason as SafeFailureReason) ||
+      !(parsed.snapshot === null || isSafeSnapshot(parsed.snapshot))
     ) {
-      return undefined;
+      throw new Error('Durable interaction PTY safe failure evidence is invalid');
     }
     return parsed as unknown as SafeFailureEvidence;
   } catch {
-    return undefined;
+    throw new Error('Durable interaction PTY safe failure evidence is invalid');
   }
 }

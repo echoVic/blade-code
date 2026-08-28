@@ -1,5 +1,6 @@
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import {
   access,
   mkdir,
@@ -12,6 +13,7 @@ import {
 import { createServer as createNetServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { Hono } from 'hono';
 import { type Browser, chromium, type Page } from 'playwright';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -35,6 +37,14 @@ import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import {
+  parseDurableInteractionRecoveryAcpEvidence,
+  parseDurableInteractionRecoveryAcpFailureEvidence,
+} from '../../support/durableInteractionRecoveryAcpRunner.js';
+import {
+  createDurableInteractionRecoveryPtyFinalInstruction,
+  runDurableInteractionRecoveryPtyDriver,
+} from '../../support/durableInteractionRecoveryPtyDriver.js';
+import {
   createMockACPClient,
   type MockACPClient,
 } from '../../support/mocks/mockACPClient.js';
@@ -54,6 +64,7 @@ import {
 const qualificationModels = isRealApiTestEnabled()
   ? resolveForkQualificationModels(process.env)
   : [];
+const execFileAsync = promisify(execFile);
 const gpt = qualificationModels.find((model) => model.id === 'gpt');
 const deepseek = qualificationModels.find((model) => model.id === 'deepseek');
 const deepseekFlash = qualificationModels.find(
@@ -121,6 +132,36 @@ interface ProductionWebRecoveryEvidence {
 interface ProductionEventProbe {
   events: ProductionWebRecoveryEvidence['sseEvents'];
   close(): Promise<void>;
+}
+
+interface DurablePendingChannelSeed {
+  question: {
+    header: string;
+    question: string;
+    multiSelect: false;
+    options: Array<{ label: string; description: string }>;
+  };
+  requestId: string;
+  prompt: string;
+}
+
+function resolveDurableInteractionRunnerExecutable(): string {
+  const candidates = [
+    process.env.BUN_EXEC_PATH,
+    process.env.BUN_INSTALL
+      ? path.join(process.env.BUN_INSTALL, 'bin', 'bun')
+      : undefined,
+    path.join(os.homedir(), '.bun', 'bin', 'bun'),
+    '/opt/homebrew/bin/bun',
+    '/usr/local/bin/bun',
+  ];
+  const executable = candidates.find((candidate): candidate is string =>
+    Boolean(candidate && existsSync(candidate))
+  );
+  if (!executable) {
+    throw new Error('Bun executable is unavailable for durable interaction runners');
+  }
+  return executable;
 }
 
 const PRODUCTION_WEB_DIAGNOSTIC_EVENT_TYPES = new Set([
@@ -444,6 +485,213 @@ async function waitForProductionCondition(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(message, { cause: lastError });
+}
+
+async function writeQualificationConfig(
+  home: string,
+  config: RuntimeConfig
+): Promise<void> {
+  await mkdir(path.join(home, '.blade'), { recursive: true });
+  await writeFile(
+    path.join(home, '.blade', 'config.json'),
+    JSON.stringify(
+      {
+        currentModelId: config.currentModelId,
+        models: config.models,
+        modelProviders: config.modelProviders,
+        permissionMode: 'yolo',
+        providerForegroundRecoveryMs: config.providerForegroundRecoveryMs,
+        providerRequestAdmissionMs: config.providerRequestAdmissionMs,
+        providerCircuitBreakerOpenMs: 0,
+        hooks: { enabled: false },
+        disableAllHooks: true,
+        mcpServers: {},
+      },
+      null,
+      2
+    ) + '\n',
+    { mode: 0o600 }
+  );
+}
+
+async function seedDurablePendingChannelQuestion(input: {
+  sessionId: string;
+  workspace: string;
+  target: string;
+  finalInstruction: string;
+  finalMarker: string;
+}): Promise<DurablePendingChannelSeed> {
+  const question = {
+    header: 'Channel',
+    question: 'Which release channel?',
+    multiSelect: false as const,
+    options: [
+      { label: 'Stable', description: 'Use the stable release channel' },
+      { label: 'Canary', description: 'Use the early canary release channel' },
+    ],
+  };
+  const prompt = [
+    'A Channel question will be recovered after restart.',
+    'After the recovered answer, call Write exactly once with file_path=' +
+      JSON.stringify(input.target) +
+      '.',
+    'Set content to exactly Canary followed by exactly one newline.',
+    'That Write is the only allowed tool call. Never call AskUserQuestion again.',
+    'Do not emit assistant text or end the turn before Write succeeds.',
+    input.finalInstruction,
+  ].join(' ');
+  await new PersistentStore(input.workspace).saveMessage(
+    input.sessionId,
+    'user',
+    prompt
+  );
+  const toolCallId = await new PersistentStore(input.workspace).saveToolUse(
+    input.sessionId,
+    'AskUserQuestion',
+    {
+      questions: [question],
+    }
+  );
+  const request = await SessionInteractionService.request(
+    {
+      sessionId: input.sessionId,
+      projectPath: input.workspace,
+      toolCallId,
+      toolName: 'AskUserQuestion',
+    },
+    {
+      type: 'askUserQuestion',
+      message: 'Choose a release channel',
+      questions: [question],
+    }
+  );
+  return { question, requestId: request.requestId, prompt };
+}
+
+async function runDurableInteractionRecoveryAcpSubprocess(input: {
+  workspace: string;
+  home: string;
+  storageRoot: string;
+  sessionId: string;
+  requestId: string;
+  targetPath: string;
+  expectedContent: string;
+  finalMarker: string;
+  secret: string;
+  timeoutMs: number;
+}): Promise<{ stdout: string; stderr: string }> {
+  const runner = path.resolve(
+    import.meta.dirname,
+    '../../support/durableInteractionRecoveryAcpRunner.ts'
+  );
+  const cliEntry = path.resolve(import.meta.dirname, '../../../dist/blade.js');
+  const encodedInput = Buffer.from(
+    JSON.stringify({
+      cliEntry,
+      nodeExecutable: process.execPath,
+      workspace: input.workspace,
+      home: input.home,
+      storageRoot: input.storageRoot,
+      sessionId: input.sessionId,
+      requestId: input.requestId,
+      targetPath: input.targetPath,
+      answerLabel: 'Canary',
+      expectedContent: input.expectedContent,
+      finalMarker: input.finalMarker,
+      secret: input.secret,
+      timeoutMs: input.timeoutMs,
+    }),
+    'utf8'
+  ).toString('base64');
+  const executable = resolveDurableInteractionRunnerExecutable();
+  const options = {
+    cwd: path.resolve(import.meta.dirname, '../..'),
+    env: {
+      ...process.env,
+      HOME: input.home,
+      BLADE_STORAGE_ROOT: input.storageRoot,
+      BLADE_AUTO_MEMORY: '0',
+      BLADE_TELEMETRY_DISABLED: '1',
+      BLADE_DURABLE_INTERACTION_ACP_INPUT: encodedInput,
+    },
+    timeout: input.timeoutMs + 30_000,
+    maxBuffer: 64 * 1024,
+  } as const;
+  try {
+    const result = await execFileAsync(executable, [runner], options);
+    return {
+      stdout: String(result.stdout),
+      stderr: String(result.stderr),
+    };
+  } catch (error) {
+    throw formatDurableInteractionRecoveryAcpFailure(error, input.secret);
+  }
+}
+
+function formatDurableInteractionRecoveryAcpFailure(
+  error: unknown,
+  secret: string
+): Error {
+  const stdout = (() => {
+    if (
+      error &&
+      typeof error === 'object' &&
+      'stdout' in error &&
+      typeof error.stdout === 'string'
+    ) {
+      return error.stdout;
+    }
+    return '';
+  })();
+  const stderr = (() => {
+    if (
+      error &&
+      typeof error === 'object' &&
+      'stderr' in error &&
+      typeof error.stderr === 'string'
+    ) {
+      return error.stderr;
+    }
+    return '';
+  })();
+
+  if ((secret && stdout.includes(secret)) || (secret && stderr.includes(secret))) {
+    return new Error('ACP runner failed with non-structural output');
+  }
+
+  try {
+    const failure = parseDurableInteractionRecoveryAcpFailureEvidence(stdout, secret);
+    return new Error(
+      JSON.stringify({
+        stage: failure.stage,
+        code: failure.code,
+        reason: failure.reason,
+        timedOut: failure.timedOut,
+        termFallbackUsed: failure.termFallbackUsed,
+        killFallbackUsed: failure.killFallbackUsed,
+      })
+    );
+  } catch {
+    return new Error('ACP runner failed with non-structural output');
+  }
+}
+
+function expectReal2xxDownstream(proxy: RecordingProviderProxy): void {
+  const successfulRequestNumber = proxy.forwardedRequestNumbers.find(
+    (requestNumber) => {
+      const lifecycle = proxy.requestLifecycle.filter(
+        (entry) => entry.requestNumber === requestNumber
+      );
+      return (
+        lifecycle.some(
+          (entry) => entry.phase === 'headers_received' && entry.statusClass === 2
+        ) &&
+        lifecycle.some((entry) => entry.phase === 'body_completed') &&
+        lifecycle.some((entry) => entry.phase === 'downstream_ended')
+      );
+    }
+  );
+  expect(successfulRequestNumber).toBeDefined();
 }
 
 export async function reserveProductionWebPort(): Promise<number> {
@@ -1061,6 +1309,226 @@ async function waitForAcpRecovery(input: {
 }
 
 describe('durable ACP recovery diagnostics', () => {
+  it('resolves a Bun executable for durable interaction TS runners', () => {
+    const executable = resolveDurableInteractionRunnerExecutable();
+
+    expect(executable).not.toBe(process.execPath);
+    expect(path.basename(executable).toLowerCase()).toContain('bun');
+    expect(existsSync(executable)).toBe(true);
+  });
+
+  it('keeps the ACP runner source on a TS entrypoint so the outer launcher must not be Node', async () => {
+    const source = await readFile(import.meta.filename, 'utf8');
+    const launcherAnchor =
+      'const executable = resolveDurableInteractionRunnerExecutable();';
+    const spawnAnchor =
+      'const result = await execFileAsync(executable, [runner], options);';
+
+    expect(source).toContain('durableInteractionRecoveryAcpRunner.ts');
+    expect(source).toContain('resolveDurableInteractionRunnerExecutable()');
+    expect(source).toContain('execFileAsync(executable, [runner], options)');
+    expect(source.indexOf(launcherAnchor)).toBeGreaterThanOrEqual(0);
+    expect(source.indexOf(spawnAnchor)).toBeGreaterThan(source.indexOf(launcherAnchor));
+    expect(source).toContain('parseDurableInteractionRecoveryAcpFailureEvidence');
+    expect(source).toContain(
+      "return new Error('ACP runner failed with non-structural output')"
+    );
+    expect(source).toContain('stage: failure.stage');
+    expect(source).toContain('code: failure.code');
+    expect(source).toContain('reason: failure.reason');
+    expect(source).toContain('timedOut: failure.timedOut');
+    expect(source).toContain('termFallbackUsed: failure.termFallbackUsed');
+    expect(source).toContain('killFallbackUsed: failure.killFallbackUsed');
+  });
+
+  it('formats parsed ACP subprocess failures to an allowlist JSON only', () => {
+    const secret = 'provider-secret';
+    const error = {
+      stdout: JSON.stringify({
+        success: false,
+        stage: 'recovery',
+        code: 'timeout',
+        reason: 'none',
+        timedOut: true,
+        secretSeen: false,
+        termFallbackUsed: true,
+        killFallbackUsed: false,
+      }),
+      stderr: 'non-structural stderr that must not be surfaced',
+    };
+
+    const formatted = formatDurableInteractionRecoveryAcpFailure(error, secret);
+
+    expect(formatted.message).toBe(
+      JSON.stringify({
+        stage: 'recovery',
+        code: 'timeout',
+        reason: 'none',
+        timedOut: true,
+        termFallbackUsed: true,
+        killFallbackUsed: false,
+      })
+    );
+    expect(formatted.message).not.toContain(secret);
+    expect(formatted.message).not.toContain('stderr');
+    expect(formatted.message).not.toContain('success');
+    expect(formatted.message).not.toContain('secretSeen');
+  });
+
+  it('drops ACP subprocess failure output when the secret appears on the surface', () => {
+    const secret = 'provider-secret';
+    const error = {
+      stdout: `prefix ${secret} suffix`,
+      stderr: 'hidden',
+    };
+
+    const formatted = formatDurableInteractionRecoveryAcpFailure(error, secret);
+
+    expect(formatted.message).toBe('ACP runner failed with non-structural output');
+  });
+
+  it('drops ACP subprocess failure output when parsing safe failure evidence fails', () => {
+    const secret = 'provider-secret';
+    const error = {
+      stdout: JSON.stringify({ nope: true }),
+      stderr: 'hidden',
+    };
+
+    const formatted = formatDurableInteractionRecoveryAcpFailure(error, secret);
+
+    expect(formatted.message).toBe('ACP runner failed with non-structural output');
+  });
+
+  it('keeps the seeded durable channel question on the exact PTY-visible contract', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'blade-seed-channel-question-'));
+    const workspace = path.join(root, 'workspace');
+    const sessionId = `seed-channel-question-${Date.now()}`;
+    const target = path.join(workspace, 'selected-channel.txt');
+
+    try {
+      await mkdir(workspace, { recursive: true });
+      await SessionService.createSessionMetadata(sessionId, workspace, {
+        title: 'Pending Channel Decision',
+        taskStatus: 'completed',
+        selectedModelId: 'seed-question-contract',
+        permissionMode: 'yolo',
+      });
+
+      const seed = await seedDurablePendingChannelQuestion({
+        sessionId,
+        workspace,
+        target,
+        finalInstruction:
+          'After Write succeeds, reply exactly PTY_INTERACTION_RECOVERED.',
+        finalMarker: 'PTY_INTERACTION_RECOVERED',
+      });
+
+      expect(seed.question.question).toBe('Which release channel?');
+      expect(seed.question.header).toBe('Channel');
+      expect(seed.question.options.map((option) => option.label)).toEqual([
+        'Stable',
+        'Canary',
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the DeepSeek-only surface suite independent from GPT qualification gating', async () => {
+    const source = await readFile(import.meta.filename, 'utf8');
+    const regressionSuiteTitle =
+      'durable pending interaction recovery trajectory (real API)';
+    const surfaceSuiteTitle = 'production durable pending recovery surfaces (real API)';
+    const webTitle = 'restarts from a durable Web question and performs a real Write';
+    const acpSurfaceTitle =
+      'recovers a one-shot DeepSeek failure through a production ACP subprocess';
+    const ptySurfaceTitle =
+      'recovers a durable pending question through the raw PTY TUI';
+    const regressionTitle =
+      'replays a durable ACP question on session/load and resumes automatically (in-process regression)';
+    const regressionIndex = source.lastIndexOf(regressionSuiteTitle);
+    const surfaceIndex = source.lastIndexOf(surfaceSuiteTitle);
+
+    expect(surfaceIndex).toBeGreaterThan(regressionIndex);
+    expect(source).toMatch(
+      /describe\s*\.skipIf\(!isRealApiTestEnabled\(\) \|\| !deepseekFlash\)\s*\.sequential\('production durable pending recovery surfaces \(real API\)'/
+    );
+
+    const regressionSlice = source.slice(regressionIndex, surfaceIndex);
+    const surfaceSlice = source.slice(surfaceIndex);
+
+    expect(regressionSlice).toContain(webTitle);
+    expect(regressionSlice).toContain(regressionTitle);
+    expect(regressionSlice).not.toContain(acpSurfaceTitle);
+    expect(regressionSlice).not.toContain(ptySurfaceTitle);
+    expect(surfaceSlice).toContain(acpSurfaceTitle);
+    expect(surfaceSlice).toContain(ptySurfaceTitle);
+  });
+
+  it('requires a single forwarded request number to prove real 2xx downstream completion', () => {
+    const mismatchedProxy: RecordingProviderProxy = {
+      baseUrl: 'http://127.0.0.1:0',
+      requestBodies: [],
+      requestPaths: [],
+      requestStartedAt: [],
+      requestFinishedAt: [],
+      heldRequestNumbers: [],
+      injectedRequestNumbers: [],
+      forwardedRequestNumbers: [11, 12],
+      requestLifecycle: [
+        { requestNumber: 11, phase: 'headers_received', statusClass: 2 },
+        { requestNumber: 12, phase: 'body_completed' },
+        { requestNumber: 12, phase: 'downstream_ended' },
+      ],
+      maxInFlight: 1,
+      releaseHeld() {
+        // no-op for deterministic proxy contract coverage
+      },
+      close: async () => undefined,
+    };
+    const matchedProxy: RecordingProviderProxy = {
+      ...mismatchedProxy,
+      forwardedRequestNumbers: [21],
+      requestLifecycle: [
+        { requestNumber: 21, phase: 'headers_received', statusClass: 2 },
+        { requestNumber: 21, phase: 'body_completed' },
+        { requestNumber: 21, phase: 'downstream_ended' },
+      ],
+    };
+
+    expect(() => expectReal2xxDownstream(mismatchedProxy)).toThrow();
+    expect(() => expectReal2xxDownstream(matchedProxy)).not.toThrow();
+  });
+
+  it('keeps ACP and PTY surface cleanup scoped from root allocation through optional proxy teardown', async () => {
+    const source = await readFile(import.meta.filename, 'utf8');
+    const surfaceSuiteTitle = 'production durable pending recovery surfaces (real API)';
+    const acpTitle =
+      'recovers a one-shot DeepSeek failure through a production ACP subprocess';
+    const ptyTitle = 'recovers a durable pending question through the raw PTY TUI';
+    const surfaceStart = source.lastIndexOf(surfaceSuiteTitle);
+    const acpStart = source.indexOf(acpTitle, surfaceStart);
+    const ptyStart = source.indexOf(ptyTitle, surfaceStart);
+
+    expect(surfaceStart).toBeGreaterThanOrEqual(0);
+    expect(acpStart).toBeGreaterThanOrEqual(0);
+    expect(ptyStart).toBeGreaterThan(acpStart);
+
+    const acpSlice = source.slice(acpStart, ptyStart);
+    const ptySlice = source.slice(ptyStart);
+
+    for (const slice of [acpSlice, ptySlice]) {
+      expect(slice).toContain('let root: string | undefined;');
+      expect(slice).toContain('let proxy: RecordingProviderProxy | undefined;');
+      expect(slice).toContain('root = await mkdtemp(');
+      expect(slice).toContain('proxy = await startRecordingProviderProxy(');
+      expect(slice).toContain('await proxy?.close().catch(() => undefined);');
+      expect(slice).toContain(
+        'if (root) await rm(root, { recursive: true, force: true });'
+      );
+    }
+  });
+
   it('keeps Provider recovery inside the surface deadline', () => {
     const base = buildRealApiRuntimeConfig({
       id: 'gpt',
@@ -1935,7 +2403,7 @@ describe('durable Web recovery diagnostics', () => {
 
 describe
   .skipIf(!isRealApiTestEnabled())
-  .sequential('production Chromium durable pending recovery (real API)', () => {
+  .sequential('production durable pending recovery qualification (real API)', () => {
     it('recovers a one-shot DeepSeek failure through the visible Web UI', async () => {
       if (!deepseekFlash?.baseURL) throw new Error('DeepSeek Flash is unavailable');
       const root = await mkdtemp(path.join(os.tmpdir(), 'blade-real-web-chromium-'));
@@ -2467,7 +2935,7 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
     }
   }, 360_000);
 
-  it('replays a durable ACP question on session/load and resumes automatically', async () => {
+  it('replays a durable ACP question on session/load and resumes automatically (in-process regression)', async () => {
     if (!deepseek) throw new Error('DeepSeek qualification channel is unavailable');
     const root = await mkdtemp(path.join(os.tmpdir(), 'blade-real-acp-interaction-'));
     const workspace = path.join(root, 'workspace');
@@ -2598,3 +3066,204 @@ describeReal('durable pending interaction recovery trajectory (real API)', () =>
     }
   }, 600_000);
 });
+
+describe
+  .skipIf(!isRealApiTestEnabled() || !deepseekFlash)
+  .sequential('production durable pending recovery surfaces (real API)', () => {
+    const originalStorageRoot = process.env.BLADE_STORAGE_ROOT;
+
+    afterEach(() => {
+      if (originalStorageRoot === undefined) delete process.env.BLADE_STORAGE_ROOT;
+      else process.env.BLADE_STORAGE_ROOT = originalStorageRoot;
+    });
+
+    it('recovers a one-shot DeepSeek failure through a production ACP subprocess', async () => {
+      if (!deepseekFlash?.baseURL) throw new Error('DeepSeek Flash is unavailable');
+      let root: string | undefined;
+      let proxy: RecordingProviderProxy | undefined;
+      const sessionId = `interaction-acp-subprocess-${Date.now()}`;
+      const finalMarker = 'ACP_INTERACTION_RECOVERED';
+      const expectedContent = 'Canary\n';
+
+      try {
+        root = await mkdtemp(path.join(os.tmpdir(), 'blade-real-acp-subprocess-'));
+        const home = path.join(root, 'home');
+        const workspace = path.join(root, 'workspace');
+        const storageRoot = path.join(root, 'storage');
+        const target = path.join(workspace, 'acp-selected-channel.txt');
+        proxy = await startRecordingProviderProxy(deepseekFlash.baseURL, {
+          inject503Once: { path: '/v1/chat/completions', retryAfterMs: 60_000 },
+        });
+        const config = buildDurableInteractionRecoveryConfig(
+          buildRealApiRuntimeConfig({
+            ...deepseekFlash,
+            baseURL: proxy.baseUrl,
+          })
+        );
+
+        await Promise.all([
+          mkdir(home, { recursive: true }),
+          mkdir(workspace, { recursive: true }),
+          mkdir(storageRoot, { recursive: true }),
+        ]);
+        await writeQualificationConfig(home, config);
+        process.env.BLADE_STORAGE_ROOT = storageRoot;
+        await SessionService.createSessionMetadata(sessionId, workspace, {
+          title: 'Pending ACP Channel Decision',
+          taskStatus: 'completed',
+          selectedModelId: config.currentModelId,
+          permissionMode: 'yolo',
+        });
+        const seed = await seedDurablePendingChannelQuestion({
+          sessionId,
+          workspace,
+          target,
+          finalInstruction:
+            'After Write succeeds, reply exactly ACP_INTERACTION_RECOVERED.',
+          finalMarker,
+        });
+        const store = new PersistentStore(workspace);
+
+        const { stdout, stderr } = await runDurableInteractionRecoveryAcpSubprocess({
+          workspace,
+          home,
+          storageRoot,
+          sessionId,
+          requestId: seed.requestId,
+          targetPath: target,
+          expectedContent,
+          finalMarker,
+          secret: deepseekFlash.apiKey,
+          timeoutMs: 300_000,
+        });
+
+        const evidence = parseDurableInteractionRecoveryAcpEvidence(
+          stdout,
+          deepseekFlash.apiKey
+        );
+        const transcript = await readFile(
+          getSessionFilePath(workspace, sessionId),
+          'utf8'
+        );
+        const targetContent = await readFile(target, 'utf8');
+        const durableEvents = (await store.loadEvents(sessionId)) ?? [];
+        expect(evidence.sessionId).toBe(sessionId);
+        expect(evidence.pendingResumeAttempts).toEqual([2, 2]);
+        expect(evidence.pendingResumePhases).toEqual(['retry_scheduled', 'recovered']);
+        expect(evidence.maxAttempts).toBe(4);
+        expect(evidence.targetSha256).toBe(
+          createHash('sha256').update(expectedContent).digest('hex')
+        );
+        expect(targetContent).toBe(expectedContent);
+        expect(finalAssistantText(durableEvents)).toBe(finalMarker);
+        expect(proxy.injectedRequestNumbers).toEqual([1]);
+        expect(proxy.forwardedRequestNumbers.length).toBeGreaterThanOrEqual(1);
+        expectReal2xxDownstream(proxy);
+        assertNoSecrets(
+          {
+            transcript,
+            stdout,
+            stderr,
+            requestPaths: proxy.requestPaths,
+            requestLifecycle: proxy.requestLifecycle,
+          },
+          [deepseekFlash.apiKey]
+        );
+      } finally {
+        await proxy?.close().catch(() => undefined);
+        if (root) await rm(root, { recursive: true, force: true });
+      }
+    }, 360_000);
+
+    it('recovers a durable pending question through the raw PTY TUI', async () => {
+      if (!deepseekFlash?.baseURL) throw new Error('DeepSeek Flash is unavailable');
+      let root: string | undefined;
+      let proxy: RecordingProviderProxy | undefined;
+      const sessionId = `interaction-pty-${Date.now()}`;
+      const finalMarker = 'PTY_INTERACTION_RECOVERED';
+      const splitInstruction =
+        createDurableInteractionRecoveryPtyFinalInstruction(finalMarker);
+
+      try {
+        root = await mkdtemp(path.join(os.tmpdir(), 'blade-real-pty-interaction-'));
+        const home = path.join(root, 'home');
+        const workspace = path.join(root, 'workspace');
+        const storageRoot = path.join(root, 'storage');
+        const target = path.join(workspace, 'pty-selected-channel.txt');
+        proxy = await startRecordingProviderProxy(deepseekFlash.baseURL);
+        const config = buildDurableInteractionRecoveryConfig(
+          buildRealApiRuntimeConfig({
+            ...deepseekFlash,
+            baseURL: proxy.baseUrl,
+          })
+        );
+
+        await Promise.all([
+          mkdir(home, { recursive: true }),
+          mkdir(workspace, { recursive: true }),
+          mkdir(storageRoot, { recursive: true }),
+        ]);
+        await writeQualificationConfig(home, config);
+        process.env.BLADE_STORAGE_ROOT = storageRoot;
+        await SessionService.createSessionMetadata(sessionId, workspace, {
+          title: 'Pending PTY Channel Decision',
+          taskStatus: 'completed',
+          selectedModelId: config.currentModelId,
+          permissionMode: 'yolo',
+        });
+        const seed = await seedDurablePendingChannelQuestion({
+          sessionId,
+          workspace,
+          target,
+          finalInstruction: splitInstruction,
+          finalMarker,
+        });
+        expect(seed.prompt).not.toContain(finalMarker);
+
+        const evidence = await runDurableInteractionRecoveryPtyDriver({
+          workspace,
+          storageRoot,
+          home,
+          sessionId,
+          requestId: seed.requestId,
+          target,
+          expectedContent: 'Canary\n',
+          finalMarker,
+          secret: deepseekFlash.apiKey,
+          timeoutMs: 300_000,
+        });
+
+        const transcript = await readFile(
+          getSessionFilePath(workspace, sessionId),
+          'utf8'
+        );
+        expect(evidence.sessionId).toBe(sessionId);
+        expect(evidence.questionVisible).toBe(true);
+        expect(evidence.canaryVisible).toBe(true);
+        expect(evidence.reviewVisible).toBe(true);
+        expect(evidence.finalMarkerSeen).toBe(true);
+        expect(evidence.interactionRequested).toBe(1);
+        expect(evidence.interactionResponded).toBe(1);
+        expect(evidence.interactionRecovered).toBe(1);
+        expect(evidence.writeCalls).toBe(1);
+        expect(evidence.writeResults).toBe(1);
+        expect(evidence.inboxMissing).toBe(true);
+        expect(evidence.targetSha256).toBe(
+          createHash('sha256').update('Canary\n').digest('hex')
+        );
+        expectReal2xxDownstream(proxy);
+        assertNoSecrets(
+          {
+            transcript,
+            ptyEvidence: evidence.output,
+            requestPaths: proxy.requestPaths,
+            requestLifecycle: proxy.requestLifecycle,
+          },
+          [deepseekFlash.apiKey]
+        );
+      } finally {
+        await proxy?.close().catch(() => undefined);
+        if (root) await rm(root, { recursive: true, force: true });
+      }
+    }, 360_000);
+  });

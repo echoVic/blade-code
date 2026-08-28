@@ -65,7 +65,7 @@ export interface DurableInteractionRecoveryAcpEvidence {
   secretSeen: false;
 }
 
-type RunnerStage =
+export type RunnerStage =
   | 'input'
   | 'spawn'
   | 'initialize'
@@ -76,17 +76,42 @@ type RunnerStage =
   | 'child_exit'
   | 'evidence';
 
+const RUNNER_STAGES = [
+  'input',
+  'spawn',
+  'initialize',
+  'load_session',
+  'recovery',
+  'close_session',
+  'eof',
+  'child_exit',
+  'evidence',
+] as const satisfies readonly RunnerStage[];
+
+export type RunnerFailureCode =
+  | 'invalid_input'
+  | 'spawn_failed'
+  | 'protocol_failed'
+  | 'timeout'
+  | 'surface_secret'
+  | 'invalid_recovery'
+  | 'cleanup_failed';
+
+const RUNNER_FAILURE_CODES = [
+  'invalid_input',
+  'spawn_failed',
+  'protocol_failed',
+  'timeout',
+  'surface_secret',
+  'invalid_recovery',
+  'cleanup_failed',
+] as const satisfies readonly RunnerFailureCode[];
+
 export interface DurableInteractionRecoveryAcpFailureEvidence {
   success: false;
   stage: RunnerStage;
-  code:
-    | 'invalid_input'
-    | 'spawn_failed'
-    | 'protocol_failed'
-    | 'timeout'
-    | 'surface_secret'
-    | 'invalid_recovery'
-    | 'cleanup_failed';
+  code: RunnerFailureCode;
+  reason: RecoveryFailureReason;
   timedOut: boolean;
   secretSeen: boolean;
   termFallbackUsed: boolean;
@@ -120,8 +145,121 @@ export interface ChildExit {
 }
 
 class RunnerTimeoutError extends Error {}
-class InvalidRecoveryError extends Error {}
+export class InvalidRecoveryError extends Error {}
 class SurfaceSecretError extends Error {}
+
+export type RecoveryFailureReason =
+  | 'none'
+  | 'pending_resume_invalid'
+  | 'durable_budget'
+  | 'duplicate_completion'
+  | 'completion_order'
+  | 'duplicate_side_effect'
+  | 'recovery_result_invalid'
+  | 'write_invalid'
+  | 'final_turn_mismatch'
+  | 'durable_final_mismatch'
+  | 'durable_marker_count'
+  | 'acp_marker_count'
+  | 'acp_surface_overflow'
+  | 'final_marker_invalid'
+  | 'question_invalid'
+  | 'question_option_invalid'
+  | 'permission_request_invalid'
+  | 'option_invalid'
+  | 'interaction_duplicate'
+  | 'interaction_response_invalid'
+  | 'interaction_recovery_invalid'
+  | 'recovery_order'
+  | 'inbox_identity'
+  | 'target_invalid'
+  | 'terminal_failure'
+  | 'child_early_exit'
+  | 'seed_invalid'
+  | 'target_exists'
+  | 'stdio_unavailable'
+  | 'close_unsupported'
+  | 'callback_invalid'
+  | 'child_exit_invalid';
+
+const RECOVERY_FAILURE_REASONS = [
+  'none',
+  'pending_resume_invalid',
+  'durable_budget',
+  'duplicate_completion',
+  'completion_order',
+  'duplicate_side_effect',
+  'recovery_result_invalid',
+  'write_invalid',
+  'final_turn_mismatch',
+  'durable_final_mismatch',
+  'durable_marker_count',
+  'acp_marker_count',
+  'acp_surface_overflow',
+  'final_marker_invalid',
+  'question_invalid',
+  'question_option_invalid',
+  'permission_request_invalid',
+  'option_invalid',
+  'interaction_duplicate',
+  'interaction_response_invalid',
+  'interaction_recovery_invalid',
+  'recovery_order',
+  'inbox_identity',
+  'target_invalid',
+  'terminal_failure',
+  'child_early_exit',
+  'seed_invalid',
+  'target_exists',
+  'stdio_unavailable',
+  'close_unsupported',
+  'callback_invalid',
+  'child_exit_invalid',
+] as const satisfies readonly RecoveryFailureReason[];
+
+const RECOVERY_FAILURE_REASON_BY_MESSAGE = {
+  'pending resume evidence is invalid': 'pending_resume_invalid',
+  'durable event budget exceeded': 'durable_budget',
+  'duplicate durable completion evidence': 'duplicate_completion',
+  'durable completion ordering is invalid': 'completion_order',
+  'duplicate recovery side effect': 'duplicate_side_effect',
+  'recovery result evidence is invalid': 'recovery_result_invalid',
+  'Write evidence is invalid': 'write_invalid',
+  'final marker does not belong to recovered turn': 'final_turn_mismatch',
+  'durable final marker is not exact': 'durable_final_mismatch',
+  'durable final marker count is invalid': 'durable_marker_count',
+  'ACP final marker count is invalid': 'acp_marker_count',
+  'ACP surface text overflowed': 'acp_surface_overflow',
+  'final marker evidence is invalid': 'final_marker_invalid',
+  'invalid durable question': 'question_invalid',
+  'invalid durable question option': 'question_option_invalid',
+  'unexpected permission request': 'permission_request_invalid',
+  'permission request does not match interaction': 'permission_request_invalid',
+  'question option is not exact': 'option_invalid',
+  'duplicate interaction evidence': 'interaction_duplicate',
+  'interaction response is invalid': 'interaction_response_invalid',
+  'interaction recovery is invalid': 'interaction_recovery_invalid',
+  'durable recovery ordering is invalid': 'recovery_order',
+  'recovery inbox identity is invalid': 'inbox_identity',
+  'target content is invalid': 'target_invalid',
+  'terminal recovery failure': 'terminal_failure',
+  'ACP child exited before recovery': 'child_early_exit',
+  'seed is not pending-only': 'seed_invalid',
+  'target exists before recovery': 'target_exists',
+  'ACP stdio is unavailable': 'stdio_unavailable',
+  'ACP session/close is unavailable': 'close_unsupported',
+  'question callback evidence is invalid': 'callback_invalid',
+  'ACP child did not exit normally': 'child_exit_invalid',
+} as const satisfies Record<string, Exclude<RecoveryFailureReason, 'none'>>;
+
+export function recoveryFailureReason(error: unknown): RecoveryFailureReason {
+  if (!(error instanceof InvalidRecoveryError)) return 'none';
+  return (
+    RECOVERY_FAILURE_REASON_BY_MESSAGE[
+      error.message as keyof typeof RECOVERY_FAILURE_REASON_BY_MESSAGE
+    ] ?? 'none'
+  );
+}
 
 interface DurableCompletionLifecycle {
   turnId: string;
@@ -356,6 +494,54 @@ export function parseDurableInteractionRecoveryAcpEvidence(
   return parsed as unknown as DurableInteractionRecoveryAcpEvidence;
 }
 
+const FAILURE_EVIDENCE_KEYS = [
+  'code',
+  'killFallbackUsed',
+  'reason',
+  'secretSeen',
+  'stage',
+  'success',
+  'termFallbackUsed',
+  'timedOut',
+] as const;
+
+export function parseDurableInteractionRecoveryAcpFailureEvidence(
+  stdout: string,
+  secret: string
+): DurableInteractionRecoveryAcpFailureEvidence {
+  if (secret && stdout.includes(secret)) {
+    throw new Error(
+      'Durable interaction ACP failure evidence contains provider credentials'
+    );
+  }
+  if (Buffer.byteLength(stdout, 'utf8') > MAX_EVIDENCE_BYTES) {
+    throw new Error(
+      'Durable interaction ACP failure evidence exceeded its serialized budget'
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error('Durable interaction ACP failure evidence is invalid');
+  }
+  if (
+    !isRecord(parsed) ||
+    !hasExactKeys(parsed, FAILURE_EVIDENCE_KEYS) ||
+    parsed.success !== false ||
+    !RUNNER_STAGES.includes(parsed.stage as RunnerStage) ||
+    !RUNNER_FAILURE_CODES.includes(parsed.code as RunnerFailureCode) ||
+    !RECOVERY_FAILURE_REASONS.includes(parsed.reason as RecoveryFailureReason) ||
+    typeof parsed.timedOut !== 'boolean' ||
+    typeof parsed.secretSeen !== 'boolean' ||
+    typeof parsed.termFallbackUsed !== 'boolean' ||
+    typeof parsed.killFallbackUsed !== 'boolean'
+  ) {
+    throw new Error('Durable interaction ACP failure evidence is invalid');
+  }
+  return parsed as unknown as DurableInteractionRecoveryAcpFailureEvidence;
+}
+
 export class SecretScanner {
   private readonly tails = new Map<string, string>();
   seen = false;
@@ -550,63 +736,121 @@ export function inspectDurableCompletionLifecycle(
 ): DurableCompletionLifecycle | undefined {
   scanDurableEvents(events, observeSerializedEvent);
 
-  const starts = events.filter(
-    (event): event is Extract<SessionEvent, { type: 'turn_started' }> =>
-      event.type === 'turn_started' &&
-      event.data.inputMessageIds?.filter((id) => id === inboxMessageId).length === 1
-  );
-  const acknowledgements = events.filter(
-    (event): event is Extract<SessionEvent, { type: 'inbox_acknowledged' }> =>
-      event.type === 'inbox_acknowledged' &&
-      event.data.messageIds.includes(inboxMessageId)
-  );
-  if (starts.length > 1 || acknowledgements.length > 1) {
+  const starts = events.flatMap((event, index) => {
+    if (event.type !== 'turn_started') return [];
+    const claimCount =
+      event.data.inputMessageIds?.filter((id) => id === inboxMessageId).length ?? 0;
+    if (claimCount === 0) return [];
+    if (claimCount !== 1) {
+      throw new InvalidRecoveryError('duplicate durable completion evidence');
+    }
+    return [{ event, index }];
+  });
+  const acknowledgements = events.flatMap((event, index) => {
+    if (event.type !== 'inbox_acknowledged') return [];
+    const acknowledgementCount = event.data.messageIds.filter(
+      (id) => id === inboxMessageId
+    ).length;
+    if (acknowledgementCount === 0) return [];
+    if (acknowledgementCount !== 1) {
+      throw new InvalidRecoveryError('duplicate durable completion evidence');
+    }
+    return [{ event, index }];
+  });
+  if (acknowledgements.length > 1) {
     throw new InvalidRecoveryError('duplicate durable completion evidence');
   }
-  if (
-    acknowledgements.some(
-      (event) =>
-        event.data.messageIds.filter((id) => id === inboxMessageId).length !== 1
-    )
-  ) {
-    throw new InvalidRecoveryError('duplicate durable completion evidence');
-  }
-  const started = starts[0];
-  if (!started) {
+  if (starts.length === 0) {
     if (acknowledgements.length > 0) {
       throw new InvalidRecoveryError('durable completion ordering is invalid');
     }
     return undefined;
   }
-
-  const completions = events.filter(
-    (event): event is Extract<SessionEvent, { type: 'turn_completed' }> =>
-      event.type === 'turn_completed' && event.data.turnId === started.data.turnId
-  );
-  if (completions.length > 1) {
+  if (new Set(starts.map(({ event }) => event.data.turnId)).size !== starts.length) {
     throw new InvalidRecoveryError('duplicate durable completion evidence');
   }
-  const acknowledged = acknowledgements[0];
-  const completed = completions[0];
-  if (!acknowledged || !completed) {
-    if (completed) {
+
+  const attempts = starts.map(({ event: started, index: startedIndex }) => {
+    const terminals = events.flatMap((event, index) =>
+      (event.type === 'turn_completed' || event.type === 'turn_aborted') &&
+      event.data.turnId === started.data.turnId
+        ? [{ event, index }]
+        : []
+    );
+    if (terminals.length > 1) {
+      throw new InvalidRecoveryError('duplicate durable completion evidence');
+    }
+    const terminal = terminals[0];
+    if (terminal && terminal.index <= startedIndex) {
       throw new InvalidRecoveryError('durable completion ordering is invalid');
     }
+    return { started, startedIndex, terminal };
+  });
+  const completedAttempts = attempts.filter(
+    (attempt) => attempt.terminal?.event.type === 'turn_completed'
+  );
+  if (completedAttempts.length > 1) {
+    throw new InvalidRecoveryError('duplicate durable completion evidence');
+  }
+
+  const assertFailedAttempt = (
+    attempt: (typeof attempts)[number],
+    nextStartedIndex?: number
+  ): void => {
+    const terminal = attempt.terminal;
+    if (
+      !terminal ||
+      terminal.event.type !== 'turn_aborted' ||
+      terminal.event.data.cause !== 'failed' ||
+      terminal.event.data.recovery?.version !== 2 ||
+      terminal.event.data.recovery.inputMessageIds.filter((id) => id === inboxMessageId)
+        .length !== 1 ||
+      terminal.event.data.acknowledgedInputMessageIds?.includes(inboxMessageId) ||
+      (nextStartedIndex !== undefined && terminal.index >= nextStartedIndex)
+    ) {
+      throw new InvalidRecoveryError('durable completion ordering is invalid');
+    }
+  };
+
+  for (let index = 0; index < attempts.length - 1; index++) {
+    assertFailedAttempt(attempts[index]!, attempts[index + 1]!.startedIndex);
+  }
+
+  const finalAttempt = attempts.at(-1)!;
+  const completedAttempt = completedAttempts[0];
+  if (!completedAttempt) {
+    const acknowledgement = acknowledgements[0];
+    if (
+      acknowledgement &&
+      (acknowledgement.index <= finalAttempt.startedIndex || finalAttempt.terminal)
+    ) {
+      throw new InvalidRecoveryError('durable completion ordering is invalid');
+    }
+    if (finalAttempt.terminal) assertFailedAttempt(finalAttempt);
     return undefined;
   }
+  if (completedAttempt !== finalAttempt) {
+    throw new InvalidRecoveryError('durable completion ordering is invalid');
+  }
+
+  const acknowledged = acknowledgements[0];
+  const completed = completedAttempt.terminal;
   if (
+    !acknowledged ||
+    !completed ||
+    completed.event.type !== 'turn_completed' ||
     !(
-      events.indexOf(started) < events.indexOf(acknowledged) &&
-      events.indexOf(acknowledged) < events.indexOf(completed)
+      completedAttempt.startedIndex < acknowledged.index &&
+      acknowledged.index < completed.index
     )
   ) {
     throw new InvalidRecoveryError('durable completion ordering is invalid');
   }
   return {
-    turnId: started.data.turnId,
-    started,
-    acknowledged,
-    completed,
+    turnId: completedAttempt.started.data.turnId,
+    started: completedAttempt.started,
+    acknowledged: acknowledged.event,
+    completed: completed.event,
   };
 }
 
@@ -837,11 +1081,25 @@ export function inspectDurableFinalMarker(
   if (finalTerminal !== completed) {
     throw new InvalidRecoveryError('final marker does not belong to recovered turn');
   }
-  if (
-    finalAssistantText(events) !== finalMarker ||
-    countOccurrences(assistantText(events), finalMarker) !== 1
-  ) {
-    throw new InvalidRecoveryError('final marker evidence is invalid');
+  if (finalAssistantText(events) !== finalMarker) {
+    throw new InvalidRecoveryError('durable final marker is not exact');
+  }
+  if (countOccurrences(assistantText(events), finalMarker) !== 1) {
+    throw new InvalidRecoveryError('durable final marker count is invalid');
+  }
+  return 1;
+}
+
+export function inspectAcpFinalMarker(
+  agentText: string,
+  finalMarker: string,
+  overflowed: boolean
+): 1 {
+  if (countOccurrences(agentText, finalMarker) !== 1) {
+    throw new InvalidRecoveryError('ACP final marker count is invalid');
+  }
+  if (overflowed) {
+    throw new InvalidRecoveryError('ACP surface text overflowed');
   }
   return 1;
 }
@@ -1092,10 +1350,7 @@ async function inspectCompletion(
     lifecycle.completed,
     input.finalMarker
   );
-  const acpFinalMarkerCount = countOccurrences(client.agentText(), input.finalMarker);
-  if (acpFinalMarkerCount !== 1 || client.overflowed()) {
-    throw new InvalidRecoveryError('final marker evidence is invalid');
-  }
+  inspectAcpFinalMarker(client.agentText(), input.finalMarker, client.overflowed());
   const target = await readFile(input.targetPath, 'utf8').catch((error: unknown) => {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
       return undefined;
@@ -1246,12 +1501,14 @@ function failureCode(
 
 function boundedFailureEvidence(
   code: DurableInteractionRecoveryAcpFailureEvidence['code'],
-  secretSeen: boolean
+  secretSeen: boolean,
+  reason: RecoveryFailureReason = 'none'
 ): DurableInteractionRecoveryAcpFailureEvidence {
   return {
     success: false,
     stage: 'evidence',
     code,
+    reason,
     timedOut: false,
     secretSeen,
     termFallbackUsed: false,
@@ -1481,6 +1738,7 @@ async function runDurableInteractionRecoveryAcpRunnerWithStorage(
       success: false,
       stage,
       code: scanner.seen ? 'surface_secret' : failureCode(error, stage),
+      reason: scanner.seen ? 'none' : recoveryFailureReason(error),
       timedOut: error instanceof RunnerTimeoutError,
       secretSeen: scanner.seen,
       termFallbackUsed,
@@ -1522,6 +1780,7 @@ async function main(): Promise<void> {
       success: false,
       stage: 'input',
       code: 'invalid_input',
+      reason: 'none',
       timedOut: false,
       secretSeen: false,
       termFallbackUsed: false,

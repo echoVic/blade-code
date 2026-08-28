@@ -38,6 +38,48 @@ interface CompletionEvidence {
   inboxMissing: true;
   targetSha256: string;
 }
+type BoundedCount = 0 | 1 | '2plus';
+interface CompletionSnapshot {
+  interactionRequested: BoundedCount;
+  interactionResponded: BoundedCount;
+  interactionRecovered: BoundedCount;
+  recoveryToolResults: BoundedCount;
+  writeCalls: BoundedCount;
+  writeResults: BoundedCount;
+  successfulWriteResults: BoundedCount;
+  turnStarts: BoundedCount;
+  acknowledgements: BoundedCount;
+  turnCompleted: BoundedCount;
+  turnAborted: BoundedCount;
+  targetState: 'missing' | 'matched' | 'mismatched' | 'unreadable';
+  inboxMissing: boolean | null;
+  durableFinalState: 'missing' | 'matched' | 'mismatched';
+  surfaceFinalSeen: boolean;
+  questionVisible: boolean;
+  reviewVisible: boolean;
+  childExitState: 'running' | 'clean' | 'failed' | 'signaled';
+}
+type CompletionReason =
+  | 'waiting'
+  | 'duplicate_interaction'
+  | 'invalid_question'
+  | 'invalid_response'
+  | 'invalid_recovery_result'
+  | 'duplicate_turn'
+  | 'duplicate_acknowledgement'
+  | 'duplicate_completion'
+  | 'invalid_write'
+  | 'invalid_order';
+type CompletionAnalysis =
+  | { state: 'complete'; evidence: CompletionEvidence; snapshot: CompletionSnapshot }
+  | {
+      state: 'waiting' | 'invalid';
+      reason: CompletionReason;
+      snapshot: CompletionSnapshot;
+    };
+function boundedCount(value: number): BoundedCount {
+  return value > 1 ? '2plus' : (value as 0 | 1);
+}
 
 class SafeRunnerFailure extends Error {
   readonly stage: 'seed' | 'spawn';
@@ -47,6 +89,18 @@ class SafeRunnerFailure extends Error {
     super(code);
     this.stage = stage;
     this.code = code;
+  }
+}
+class SafeCompletionFailure extends Error {
+  readonly reason: Exclude<CompletionReason, 'waiting'>;
+  readonly snapshot: CompletionSnapshot;
+  constructor(
+    reason: Exclude<CompletionReason, 'waiting'>,
+    snapshot: CompletionSnapshot
+  ) {
+    super('completion_invalid');
+    this.reason = reason;
+    this.snapshot = snapshot;
   }
 }
 
@@ -166,6 +220,7 @@ async function waitFor(
     try {
       if (await predicate()) return;
     } catch (error) {
+      if (error instanceof SafeCompletionFailure) throw error;
       lastError = error;
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -227,7 +282,7 @@ function writeEvidence(events: readonly SessionEvent[]): {
   return { calls, results };
 }
 
-async function durableCompletionEvidence(
+async function computeDurableCompletionEvidence(
   input: RunnerInput
 ): Promise<CompletionEvidence | undefined> {
   const events =
@@ -403,6 +458,111 @@ async function durableCompletionEvidence(
   };
 }
 
+async function analyzeDurableCompletion(
+  input: RunnerInput,
+  surface: { questionVisible: boolean; reviewVisible: boolean; finalSeen: boolean },
+  childExitState: CompletionSnapshot['childExitState']
+): Promise<CompletionAnalysis> {
+  const events =
+    (await new PersistentStore(input.workspace).loadEvents(input.sessionId)) ?? [];
+  const count = (type: SessionEvent['type']) =>
+    events.filter((event) => event.type === type).length;
+  const recovery = events.find(
+    (event) =>
+      event.type === 'interaction_recovered' && event.data.requestId === input.requestId
+  );
+  const inboxMessageId =
+    recovery?.type === 'interaction_recovered'
+      ? recovery.data.inboxMessageId
+      : undefined;
+  const writes = writeEvidence(events);
+  let targetState: CompletionSnapshot['targetState'] = 'missing';
+  try {
+    const content = await readFile(input.target, 'utf8');
+    targetState = content === input.expectedContent ? 'matched' : 'mismatched';
+  } catch (error) {
+    targetState =
+      error instanceof Error && 'code' in error && error.code === 'ENOENT'
+        ? 'missing'
+        : 'unreadable';
+  }
+  const final = finalAssistantText(events);
+  const snapshot: CompletionSnapshot = {
+    interactionRequested: boundedCount(count('interaction_requested')),
+    interactionResponded: boundedCount(count('interaction_responded')),
+    interactionRecovered: boundedCount(count('interaction_recovered')),
+    recoveryToolResults: boundedCount(
+      events.filter(
+        (event) =>
+          event.type === 'part_created' &&
+          event.data.partType === 'tool_result' &&
+          isRecord(event.data.payload) &&
+          isRecord(event.data.payload.metadata) &&
+          event.data.payload.metadata.interactionRecovery === true
+      ).length
+    ),
+    writeCalls: boundedCount(writes.calls.length),
+    writeResults: boundedCount(writes.results.length),
+    successfulWriteResults: boundedCount(
+      writes.results.filter((result) => result.succeeded).length
+    ),
+    turnStarts: boundedCount(
+      inboxMessageId
+        ? events.filter(
+            (event) =>
+              event.type === 'turn_started' &&
+              event.data.inputMessageIds?.includes(inboxMessageId)
+          ).length
+        : 0
+    ),
+    acknowledgements: boundedCount(
+      inboxMessageId
+        ? events.filter(
+            (event) =>
+              event.type === 'inbox_acknowledged' &&
+              event.data.messageIds.includes(inboxMessageId)
+          ).length
+        : 0
+    ),
+    turnCompleted: boundedCount(count('turn_completed')),
+    turnAborted: boundedCount(count('turn_aborted')),
+    targetState,
+    inboxMissing: await inboxIsMissing(input.workspace, input.sessionId).catch(
+      () => null
+    ),
+    durableFinalState:
+      final === undefined
+        ? 'missing'
+        : final === input.finalMarker
+          ? 'matched'
+          : 'mismatched',
+    surfaceFinalSeen: surface.finalSeen,
+    questionVisible: surface.questionVisible,
+    reviewVisible: surface.reviewVisible,
+    childExitState,
+  };
+  if (
+    [
+      snapshot.interactionRequested,
+      snapshot.interactionResponded,
+      snapshot.interactionRecovered,
+    ].includes('2plus')
+  )
+    return { state: 'invalid', reason: 'duplicate_interaction', snapshot };
+  if (snapshot.turnStarts === '2plus')
+    return { state: 'invalid', reason: 'duplicate_turn', snapshot };
+  if (snapshot.acknowledgements === '2plus')
+    return { state: 'invalid', reason: 'duplicate_acknowledgement', snapshot };
+  if (snapshot.turnCompleted === '2plus')
+    return { state: 'invalid', reason: 'duplicate_completion', snapshot };
+  if (snapshot.writeCalls === '2plus' || snapshot.writeResults === '2plus')
+    return { state: 'invalid', reason: 'invalid_write', snapshot };
+  const evidence = await computeDurableCompletionEvidence(input);
+  return evidence
+    ? { state: 'complete', evidence, snapshot }
+    : { state: 'waiting', reason: 'waiting', snapshot };
+}
+
 async function main(): Promise<void> {
   const input = loadInput();
   let existingEvents: SessionEvent[];
@@ -475,6 +635,7 @@ async function main(): Promise<void> {
   let exitSignal: number | string | null = null;
   let termFallbackUsed = false;
   let killFallbackUsed = false;
+  let lastCompletionSnapshot: CompletionSnapshot | null = null;
   const exitPromise = new Promise<void>((resolve) => {
     terminal.onExit((event: { exitCode: number; signal?: number | string }) => {
       exited = true;
@@ -530,8 +691,30 @@ async function main(): Promise<void> {
     let completion: CompletionEvidence | undefined;
     await waitFor(
       async () => {
-        completion = await durableCompletionEvidence(input);
-        return completion !== undefined;
+        const analysis = await analyzeDurableCompletion(
+          input,
+          {
+            questionVisible,
+            reviewVisible,
+            finalSeen: finalMarkerLatch.seen,
+          },
+          exited
+            ? exitSignal === null && exitCode === 0
+              ? 'clean'
+              : exitSignal
+                ? 'signaled'
+                : 'failed'
+            : 'running'
+        );
+        lastCompletionSnapshot = analysis.snapshot;
+        if (analysis.state === 'invalid') {
+          throw new SafeCompletionFailure(
+            analysis.reason as Exclude<CompletionReason, 'waiting'>,
+            analysis.snapshot
+          );
+        }
+        completion = analysis.state === 'complete' ? analysis.evidence : undefined;
+        return analysis.state === 'complete';
       },
       'Timed out waiting for durable interaction acknowledgement and completion',
       deadline
@@ -619,6 +802,20 @@ async function main(): Promise<void> {
       secretSeen: secretLatch.seen,
       termFallbackUsed,
       killFallbackUsed,
+      reason:
+        error instanceof SafeCompletionFailure
+          ? error.reason
+          : timedOut
+            ? reviewVisible
+              ? 'completion_timeout'
+              : questionVisible
+                ? 'review_timeout'
+                : 'question_timeout'
+            : 'invalid_order',
+      snapshot:
+        error instanceof SafeCompletionFailure
+          ? error.snapshot
+          : lastCompletionSnapshot,
     });
     process.exitCode = 1;
   } finally {
@@ -654,6 +851,13 @@ if (import.meta.main) {
       secretSeen: false,
       termFallbackUsed: false,
       killFallbackUsed: false,
+      reason:
+        failure?.code === 'seed_invalid'
+          ? 'seed_invalid'
+          : failure?.code === 'spawn_failed'
+            ? 'spawn_failed'
+            : 'invalid_input',
+      snapshot: null,
     });
     process.exitCode = 1;
   }

@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createDurableInteractionRecoveryPtyFinalInstruction,
   parseDurableInteractionRecoveryPtyEvidence,
+  parseDurableInteractionRecoveryPtyFailureEvidence,
 } from '../../support/durableInteractionRecoveryPtyDriver.js';
 
 vi.unmock('node:child_process');
@@ -137,6 +138,53 @@ describe('durable interaction raw PTY driver', () => {
     }
   });
 
+  it('accepts only bounded structural failure diagnostics', () => {
+    const failure = {
+      success: false,
+      stage: 'completion',
+      code: 'qualification_failed',
+      reason: 'duplicate_interaction',
+      timedOut: false,
+      secretSeen: false,
+      termFallbackUsed: true,
+      killFallbackUsed: false,
+      snapshot: {
+        interactionRequested: '2plus',
+        interactionResponded: 1,
+        interactionRecovered: 1,
+        recoveryToolResults: 1,
+        writeCalls: 1,
+        writeResults: 1,
+        successfulWriteResults: 1,
+        turnStarts: 1,
+        acknowledgements: 1,
+        turnCompleted: 1,
+        turnAborted: 0,
+        targetState: 'matched',
+        inboxMissing: true,
+        durableFinalState: 'matched',
+        surfaceFinalSeen: true,
+        questionVisible: true,
+        reviewVisible: true,
+        childExitState: 'running',
+      },
+    } as const;
+
+    expect(
+      parseDurableInteractionRecoveryPtyFailureEvidence(JSON.stringify(failure))
+    ).toEqual(failure);
+    expect(() =>
+      parseDurableInteractionRecoveryPtyFailureEvidence(
+        JSON.stringify({ ...failure, rawError: 'private' })
+      )
+    ).toThrow('safe failure evidence is invalid');
+    expect(() =>
+      parseDurableInteractionRecoveryPtyFailureEvidence(
+        JSON.stringify({ ...failure, reason: 'provider-secret' })
+      )
+    ).toThrow('safe failure evidence is invalid');
+  });
+
   it('builds a split final-marker instruction without embedding the marker', () => {
     const marker = 'DURABLE_PTY_FINAL_123456';
     const instruction = createDurableInteractionRecoveryPtyFinalInstruction(marker);
@@ -184,6 +232,9 @@ describe('durable interaction raw PTY driver', () => {
     expect(source).not.toContain('resolvePendingWithHandler');
     expect(driver).not.toContain("killSignal: 'SIGKILL'");
     expect(runner).not.toContain('output.replaceAll');
+    expect(runner).not.toContain('error.message,');
+    expect(runner).toContain("state: 'invalid'");
+    expect(runner).toContain('lastCompletionSnapshot');
   });
 
   it('returns one structural failure JSON for invalid child input', async () => {
@@ -212,6 +263,8 @@ describe('durable interaction raw PTY driver', () => {
       secretSeen: false,
       termFallbackUsed: false,
       killFallbackUsed: false,
+      reason: 'invalid_input',
+      snapshot: null,
     });
     expect(stdout.trim().split('\n')).toHaveLength(1);
   });

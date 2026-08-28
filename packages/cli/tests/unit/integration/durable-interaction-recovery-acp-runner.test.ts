@@ -8,14 +8,18 @@ import type { SessionEvent } from '../../../src/context/types.js';
 import {
   awaitAcpChildShutdown,
   drainChildStderr,
+  InvalidRecoveryError,
+  inspectAcpFinalMarker,
   inspectAcpPendingResumeEvidence,
   inspectDurableCompletionLifecycle,
   inspectDurableFinalMarker,
   inspectDurableRecoveryResult,
   inspectDurableWriteEvidence,
   parseDurableInteractionRecoveryAcpEvidence,
+  parseDurableInteractionRecoveryAcpFailureEvidence,
   parseDurableInteractionRecoveryAcpRunnerInput,
   pollDurableInteractionCompletion,
+  recoveryFailureReason,
   SecretScanner,
   serializeDurableInteractionRecoveryAcpEvidence,
   withDurableInteractionStorageRoot,
@@ -67,6 +71,70 @@ function completionLifecycleEvents(): SessionEvent[] {
       data: {
         turnId,
         completedAt: '2026-08-29T00:00:02.000Z',
+        turnsCount: 1,
+        toolCallsCount: 1,
+        durationMs: 2_000,
+      },
+    },
+  ];
+}
+
+function retryCompletionLifecycleEvents(): SessionEvent[] {
+  const inboxMessageId = 'interaction-request-1';
+  return [
+    {
+      ...eventBase('turn-started-attempt-1', 'turn_started'),
+      type: 'turn_started',
+      data: {
+        turnId: 'recovered-turn-attempt-1',
+        kind: 'pending',
+        startedAt: '2026-08-29T00:00:00.000Z',
+        inputMessageIds: [inboxMessageId],
+      },
+    },
+    {
+      ...eventBase('turn-aborted-attempt-1', 'turn_aborted'),
+      type: 'turn_aborted',
+      data: {
+        turnId: 'recovered-turn-attempt-1',
+        cause: 'failed',
+        abortedAt: '2026-08-29T00:00:01.000Z',
+        turnsCount: 1,
+        toolCallsCount: 0,
+        durationMs: 1_000,
+        recovery: {
+          version: 2,
+          inputMessageIds: [inboxMessageId],
+          hadSuccessfulToolResult: false,
+          interruptedToolCallCount: 0,
+          emptyFinalCorrectionSpent: false,
+        },
+      },
+    },
+    {
+      ...eventBase('turn-started-attempt-2', 'turn_started'),
+      type: 'turn_started',
+      data: {
+        turnId: 'recovered-turn-attempt-2',
+        kind: 'pending',
+        startedAt: '2026-08-29T00:00:02.000Z',
+        inputMessageIds: [inboxMessageId],
+      },
+    },
+    {
+      ...eventBase('inbox-acknowledged-attempt-2', 'inbox_acknowledged'),
+      type: 'inbox_acknowledged',
+      data: {
+        messageIds: [inboxMessageId],
+        acknowledgedAt: '2026-08-29T00:00:03.000Z',
+      },
+    },
+    {
+      ...eventBase('turn-completed-attempt-2', 'turn_completed'),
+      type: 'turn_completed',
+      data: {
+        turnId: 'recovered-turn-attempt-2',
+        completedAt: '2026-08-29T00:00:04.000Z',
         turnsCount: 1,
         toolCallsCount: 1,
         durationMs: 2_000,
@@ -151,6 +219,17 @@ const safeEvidence = {
   secretSeen: false,
 } as const;
 
+const safeFailureEvidence = {
+  success: false,
+  stage: 'recovery',
+  code: 'timeout',
+  reason: 'none',
+  timedOut: true,
+  secretSeen: false,
+  termFallbackUsed: true,
+  killFallbackUsed: false,
+} as const;
+
 function pendingResumeUpdate(
   phase: string,
   attempt: number,
@@ -192,6 +271,118 @@ function encodedInput(overrides: Record<string, unknown> = {}): string {
 }
 
 describe('durable interaction ACP stdio runner', () => {
+  it.each([
+    ['pending resume evidence is invalid', 'pending_resume_invalid'],
+    ['durable event budget exceeded', 'durable_budget'],
+    ['duplicate durable completion evidence', 'duplicate_completion'],
+    ['durable completion ordering is invalid', 'completion_order'],
+    ['duplicate recovery side effect', 'duplicate_side_effect'],
+    ['recovery result evidence is invalid', 'recovery_result_invalid'],
+    ['Write evidence is invalid', 'write_invalid'],
+    ['final marker does not belong to recovered turn', 'final_turn_mismatch'],
+    ['durable final marker is not exact', 'durable_final_mismatch'],
+    ['durable final marker count is invalid', 'durable_marker_count'],
+    ['ACP final marker count is invalid', 'acp_marker_count'],
+    ['ACP surface text overflowed', 'acp_surface_overflow'],
+    ['final marker evidence is invalid', 'final_marker_invalid'],
+    ['invalid durable question', 'question_invalid'],
+    ['invalid durable question option', 'question_option_invalid'],
+    ['unexpected permission request', 'permission_request_invalid'],
+    ['permission request does not match interaction', 'permission_request_invalid'],
+    ['question option is not exact', 'option_invalid'],
+    ['duplicate interaction evidence', 'interaction_duplicate'],
+    ['interaction response is invalid', 'interaction_response_invalid'],
+    ['interaction recovery is invalid', 'interaction_recovery_invalid'],
+    ['durable recovery ordering is invalid', 'recovery_order'],
+    ['recovery inbox identity is invalid', 'inbox_identity'],
+    ['target content is invalid', 'target_invalid'],
+    ['terminal recovery failure', 'terminal_failure'],
+    ['ACP child exited before recovery', 'child_early_exit'],
+    ['seed is not pending-only', 'seed_invalid'],
+    ['target exists before recovery', 'target_exists'],
+    ['ACP stdio is unavailable', 'stdio_unavailable'],
+    ['ACP session/close is unavailable', 'close_unsupported'],
+    ['question callback evidence is invalid', 'callback_invalid'],
+    ['ACP child did not exit normally', 'child_exit_invalid'],
+  ] as const)('maps %s to the safe failure reason %s', (message, expected) => {
+    expect(recoveryFailureReason(new InvalidRecoveryError(message))).toBe(expected);
+  });
+
+  it('maps non-recovery and unknown errors to none without exposing messages', () => {
+    expect(recoveryFailureReason(new Error('pending resume evidence is invalid'))).toBe(
+      'none'
+    );
+    expect(
+      recoveryFailureReason(new InvalidRecoveryError('private unknown failure'))
+    ).toBe('none');
+    expect(recoveryFailureReason(new Error('private unknown failure'))).toBe('none');
+    expect(recoveryFailureReason('private unknown failure')).toBe('none');
+  });
+
+  it('parses exact bounded failure evidence', () => {
+    expect(
+      parseDurableInteractionRecoveryAcpFailureEvidence(
+        JSON.stringify(safeFailureEvidence),
+        'provider-secret'
+      )
+    ).toEqual(safeFailureEvidence);
+  });
+
+  it.each([
+    ['missing field', { ...safeFailureEvidence, timedOut: undefined }],
+    ['extra field', { ...safeFailureEvidence, diagnostic: 'private-detail' }],
+    ['success true', { ...safeFailureEvidence, success: true }],
+    ['unknown stage', { ...safeFailureEvidence, stage: 'private-stage' }],
+    ['unknown code', { ...safeFailureEvidence, code: 'private-code' }],
+    ['unknown reason', { ...safeFailureEvidence, reason: 'private-reason' }],
+    ['non-boolean flag', { ...safeFailureEvidence, killFallbackUsed: 0 }],
+  ])('rejects failure evidence with %s without echoing it', (_name, evidence) => {
+    const serialized = JSON.stringify(evidence);
+    let error: unknown;
+    try {
+      parseDurableInteractionRecoveryAcpFailureEvidence(serialized, 'provider-secret');
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(
+      'Durable interaction ACP failure evidence is invalid'
+    );
+    expect((error as Error).message).not.toContain('private-');
+  });
+
+  it('rejects oversized failure evidence with a fixed bounded error', () => {
+    expect(() =>
+      parseDurableInteractionRecoveryAcpFailureEvidence(
+        JSON.stringify({ ...safeFailureEvidence, stage: 'x'.repeat(17_000) }),
+        'provider-secret'
+      )
+    ).toThrow(
+      'Durable interaction ACP failure evidence exceeded its serialized budget'
+    );
+  });
+
+  it('secret-scans failure evidence before applying the byte budget', () => {
+    const secret = 'provider-secret-material';
+    const serialized = JSON.stringify({
+      ...safeFailureEvidence,
+      stage: secret + 'x'.repeat(17_000),
+    });
+    let error: unknown;
+    try {
+      parseDurableInteractionRecoveryAcpFailureEvidence(serialized, secret);
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(
+      'Durable interaction ACP failure evidence contains provider credentials'
+    );
+    expect((error as Error).message).not.toContain(secret);
+  });
+
   it('projects the exact bounded pending-resume failure recovery sequence', () => {
     expect(
       inspectAcpPendingResumeEvidence([
@@ -296,6 +487,7 @@ describe('durable interaction ACP stdio runner', () => {
       success: false,
       stage: 'evidence',
       code: 'surface_secret',
+      reason: 'none',
       timedOut: false,
       secretSeen: true,
       termFallbackUsed: false,
@@ -321,6 +513,166 @@ describe('durable interaction ACP stdio runner', () => {
       ).toThrow('duplicate durable completion evidence');
     }
   );
+
+  it('accepts a failed recovered attempt followed by one completed retry', () => {
+    expect(
+      inspectDurableCompletionLifecycle(
+        retryCompletionLifecycleEvents(),
+        'interaction-request-1'
+      )
+    ).toMatchObject({ turnId: 'recovered-turn-attempt-2' });
+  });
+
+  it('returns incomplete while the final recovered attempt is still active', () => {
+    expect(
+      inspectDurableCompletionLifecycle(
+        retryCompletionLifecycleEvents().slice(0, 3),
+        'interaction-request-1'
+      )
+    ).toBeUndefined();
+  });
+
+  it('fails closed when two recovered attempts both complete', () => {
+    const events = retryCompletionLifecycleEvents();
+    const firstCompletion: Extract<SessionEvent, { type: 'turn_completed' }> = {
+      ...eventBase('turn-completed-attempt-1', 'turn_completed'),
+      type: 'turn_completed',
+      data: {
+        turnId: 'recovered-turn-attempt-1',
+        completedAt: '2026-08-29T00:00:01.000Z',
+        turnsCount: 1,
+        toolCallsCount: 0,
+        durationMs: 1_000,
+      },
+    };
+
+    expect(() =>
+      inspectDurableCompletionLifecycle(
+        [events[0]!, firstCompletion, ...events.slice(2)],
+        'interaction-request-1'
+      )
+    ).toThrow('duplicate durable completion evidence');
+  });
+
+  it('fails closed when a prior recovered attempt has no terminal', () => {
+    const events = retryCompletionLifecycleEvents();
+
+    expect(() =>
+      inspectDurableCompletionLifecycle(
+        [events[0]!, ...events.slice(2)],
+        'interaction-request-1'
+      )
+    ).toThrow('durable completion ordering is invalid');
+  });
+
+  it('fails closed when acknowledgement belongs before the final attempt', () => {
+    const events = retryCompletionLifecycleEvents();
+
+    expect(() =>
+      inspectDurableCompletionLifecycle(
+        [events[0]!, events[3]!, events[1]!, events[2]!, events[4]!],
+        'interaction-request-1'
+      )
+    ).toThrow('durable completion ordering is invalid');
+  });
+
+  it('fails closed when a failed prior attempt acknowledges the recovered inbox', () => {
+    const events = retryCompletionLifecycleEvents();
+    const priorAbort = events[1]!;
+    if (priorAbort.type !== 'turn_aborted') throw new Error('Expected abort fixture');
+
+    expect(() =>
+      inspectDurableCompletionLifecycle(
+        [
+          events[0]!,
+          {
+            ...priorAbort,
+            data: {
+              ...priorAbort.data,
+              acknowledgedInputMessageIds: ['interaction-request-1'],
+            },
+          },
+          ...events.slice(2),
+        ],
+        'interaction-request-1'
+      )
+    ).toThrow('durable completion ordering is invalid');
+  });
+
+  it('fails closed when a prior abort uses legacy recovery evidence', () => {
+    const events = retryCompletionLifecycleEvents();
+    const priorAbort = events[1]!;
+    if (priorAbort.type !== 'turn_aborted') throw new Error('Expected abort fixture');
+
+    expect(() =>
+      inspectDurableCompletionLifecycle(
+        [
+          events[0]!,
+          {
+            ...priorAbort,
+            data: {
+              ...priorAbort.data,
+              recovery: {
+                version: 1,
+                inputMessageIds: ['interaction-request-1'],
+                hadSuccessfulToolResult: false,
+                emptyFinalCorrectionSpent: false,
+              },
+            },
+          },
+          ...events.slice(2),
+        ],
+        'interaction-request-1'
+      )
+    ).toThrow('durable completion ordering is invalid');
+  });
+
+  it('fails closed when one recovered attempt has duplicate terminal events', () => {
+    const events = retryCompletionLifecycleEvents();
+
+    expect(() =>
+      inspectDurableCompletionLifecycle(
+        [
+          ...events.slice(0, 2),
+          { ...events[1]!, id: 'duplicate-abort' },
+          ...events.slice(2),
+        ],
+        'interaction-request-1'
+      )
+    ).toThrow('duplicate durable completion evidence');
+  });
+
+  it('fails closed when the inbox is claimed again after completion', () => {
+    const events = retryCompletionLifecycleEvents();
+    const laterStart: Extract<SessionEvent, { type: 'turn_started' }> = {
+      ...eventBase('turn-started-attempt-3', 'turn_started'),
+      type: 'turn_started',
+      data: {
+        turnId: 'recovered-turn-attempt-3',
+        kind: 'pending',
+        startedAt: '2026-08-29T00:00:05.000Z',
+        inputMessageIds: ['interaction-request-1'],
+      },
+    };
+
+    expect(() =>
+      inspectDurableCompletionLifecycle(
+        [...events, laterStart],
+        'interaction-request-1'
+      )
+    ).toThrow('durable completion ordering is invalid');
+  });
+
+  it('fails closed when a recovered turn id is started more than once', () => {
+    const events = retryCompletionLifecycleEvents();
+
+    expect(() =>
+      inspectDurableCompletionLifecycle(
+        [events[0]!, { ...events[0]!, id: 'duplicate-turn-started' }],
+        'interaction-request-1'
+      )
+    ).toThrow('duplicate durable completion evidence');
+  });
 
   it('requires recovered turn start, acknowledgement, and completion in order', () => {
     const events = completionLifecycleEvents();
@@ -498,6 +850,66 @@ describe('durable interaction ACP stdio runner', () => {
     ).toThrow('final marker does not belong to recovered turn');
   });
 
+  it('fails with a fixed reason when the durable final assistant text is not exact', () => {
+    const marker = 'ACP_DURABLE_COMPLETE';
+    const base = completionLifecycleEvents();
+    const validEvents = [
+      base[0]!,
+      base[1]!,
+      ...finalMessageEvents('recovered-turn', `${marker}!`),
+      base[2]!,
+      completionStatusEvent('recovered-completed-status'),
+    ];
+    const lifecycle = inspectDurableCompletionLifecycle(
+      validEvents,
+      'interaction-request-1'
+    );
+
+    expect(lifecycle).toBeDefined();
+    expect(() =>
+      inspectDurableFinalMarker(validEvents, lifecycle!.completed, marker)
+    ).toThrow('durable final marker is not exact');
+  });
+
+  it('fails with a fixed reason when the durable final marker count is not exactly one', () => {
+    const marker = 'ACP_DURABLE_COMPLETE';
+    const base = completionLifecycleEvents();
+    const earlierMarker = finalMessageEvents('earlier-turn', marker);
+    const validEvents = [
+      base[0]!,
+      base[1]!,
+      ...earlierMarker,
+      ...finalMessageEvents('recovered-turn', marker),
+      base[2]!,
+      completionStatusEvent('recovered-completed-status'),
+    ];
+    const lifecycle = inspectDurableCompletionLifecycle(
+      validEvents,
+      'interaction-request-1'
+    );
+
+    expect(lifecycle).toBeDefined();
+    expect(() =>
+      inspectDurableFinalMarker(validEvents, lifecycle!.completed, marker)
+    ).toThrow('durable final marker count is invalid');
+  });
+
+  it('fails with a fixed reason when the ACP final marker count is not exactly one', () => {
+    expect(() =>
+      inspectAcpFinalMarker(
+        'ACP_DURABLE_COMPLETE ACP_DURABLE_COMPLETE',
+        'ACP_DURABLE_COMPLETE',
+        false
+      )
+    ).toThrow('ACP final marker count is invalid');
+  });
+
+  it('fails with a fixed reason when the ACP surface text overflowed', () => {
+    expect(() =>
+      inspectAcpFinalMarker('ACP_DURABLE_COMPLETE', 'ACP_DURABLE_COMPLETE', true)
+    ).toThrow('ACP surface text overflowed');
+  });
+
   it('drains stderr before accepting child shutdown and sees a tail secret', async () => {
     const stderr = new PassThrough();
     const scanner = new SecretScanner('provider-secret-material');
@@ -653,6 +1065,7 @@ describe('durable interaction ACP stdio runner', () => {
       success: false,
       stage: 'input',
       code: 'invalid_input',
+      reason: 'none',
       timedOut: false,
       secretSeen: false,
       termFallbackUsed: false,
