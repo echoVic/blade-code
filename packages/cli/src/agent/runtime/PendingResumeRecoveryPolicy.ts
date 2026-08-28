@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isSessionTaskFailure } from '../../context/taskFailure.js';
 import type { SessionTaskFailure } from '../../context/types.js';
 
 export const PENDING_RESUME_MAX_ATTEMPTS = 4;
@@ -31,17 +32,27 @@ interface PendingResumeRetryInput {
   evidence?: PendingResumeFailureEvidence;
 }
 
+function isCanonicalRetryableFailure(value: unknown): boolean {
+  try {
+    return isSessionTaskFailure(value) && value.retryable;
+  } catch {
+    return false;
+  }
+}
+
 export function stablePendingResumeRetryDelay(
   sessionIdentity: string,
   failedAttempt: number
 ): number {
-  const retryIndex = Math.max(0, failedAttempt - 1);
+  const boundedAttempt =
+    Number.isSafeInteger(failedAttempt) && failedAttempt > 0 ? failedAttempt : 1;
+  const retryIndex = boundedAttempt - 1;
   const base = Math.min(
     PENDING_RESUME_INITIAL_DELAY_MS * 2 ** retryIndex,
     PENDING_RESUME_MAX_DELAY_MS
   );
   const digest = createHash('sha256')
-    .update(`${sessionIdentity}\0${failedAttempt}`)
+    .update(`${sessionIdentity}\0${boundedAttempt}`)
     .digest();
   const ratio = digest.readUInt32BE(0) / 0xffffffff;
   const factor =
@@ -60,15 +71,23 @@ export function decidePendingResumeRetry(
   const retryable =
     input.workStillPending === true &&
     evidence !== undefined &&
-    evidence.taskFailure?.retryable === true &&
+    isCanonicalRetryableFailure(evidence.taskFailure) &&
     evidence.outputStarted === false &&
     evidence.toolExecutionStarted === false &&
     Number.isInteger(evidence.toolCallsCount) &&
     evidence.toolCallsCount === 0;
-  const withinAttemptBudget = input.failedAttempt < PENDING_RESUME_MAX_ATTEMPTS;
+  const withinAttemptBudget =
+    Number.isSafeInteger(input.failedAttempt) &&
+    input.failedAttempt > 0 &&
+    input.failedAttempt < PENDING_RESUME_MAX_ATTEMPTS;
+  const now = input.now ?? Date.now();
+  const elapsedMs = now - input.recoveryStartedAt;
   const withinTimeBudget =
-    (input.now ?? Date.now()) - input.recoveryStartedAt + delayMs <=
-    PENDING_RESUME_RECOVERY_BUDGET_MS;
+    Number.isFinite(now) &&
+    Number.isFinite(input.recoveryStartedAt) &&
+    Number.isFinite(elapsedMs) &&
+    elapsedMs >= 0 &&
+    elapsedMs + delayMs <= PENDING_RESUME_RECOVERY_BUDGET_MS;
 
   return {
     phase: retryable
