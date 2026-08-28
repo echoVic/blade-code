@@ -34,10 +34,7 @@ export function getPasteMarkerEnd(): string {
  * 使用非贪婪匹配 [\s\S]*? 确保匹配到最近的结束符（支持换行）
  * 's' flag (dotall) 在某些环境不支持，改用 [\s\S] 匹配任意字符
  */
-const _PASTE_MARKER_REGEX = new RegExp(
-  `${PASTE_MARKER_START}PASTE:(\\d+):[\\s\\S]*?${PASTE_MARKER_END}`,
-  'g'
-);
+const PASTE_MARKER_PATTERN = `${PASTE_MARKER_START}PASTE:(\\d+):[\\s\\S]*?${PASTE_MARKER_END}`;
 
 /**
  * 检查字符串是否包含任何粘贴标记
@@ -94,6 +91,118 @@ export interface ResolvedInput {
   images: Array<{ id: number; base64: string; mimeType: string }>;
   /** 交错的内容部分列表（保留顺序） */
   parts: ResolvedContentPart[];
+}
+
+export function validateImageAttachment(
+  pasteMap: PasteContentMap,
+  base64: string,
+  mimeType: string
+): void {
+  const existingImages = [...pasteMap.values()].filter(
+    (content): content is ImagePasteContent => content.type === 'image'
+  );
+  if (existingImages.length >= MAX_INLINE_ATTACHMENT_COUNT) {
+    throw new Error(`最多只能粘贴 ${MAX_INLINE_ATTACHMENT_COUNT} 张图片`);
+  }
+  const existingBytes = existingImages.reduce(
+    (total, image) =>
+      total + `data:${image.mimeType};base64,`.length + image.data.length,
+    0
+  );
+  const nextBytes = `data:${mimeType};base64,`.length + base64.length;
+  if (existingBytes + nextBytes > MAX_INLINE_ATTACHMENT_BYTES) {
+    throw new Error('图片编码后总大小不能超过 5 MiB');
+  }
+}
+
+export function resolveInput(input: string, pasteMap: PasteContentMap): ResolvedInput {
+  const images: ResolvedInput['images'] = [];
+  const parts: ResolvedContentPart[] = [];
+
+  if (!containsPasteMarker(input)) {
+    const trimmed = input.trim();
+    if (trimmed) {
+      parts.push({ type: 'text', text: trimmed });
+    }
+    return { displayText: input, text: input, images, parts };
+  }
+
+  const matches = Array.from(input.matchAll(new RegExp(PASTE_MARKER_PATTERN, 'g')));
+  let lastIndex = 0;
+  let textWithoutImages = '';
+  let displayText = '';
+
+  for (const match of matches) {
+    const matchStart = match.index!;
+    const matchEnd = matchStart + match[0].length;
+    const id = parseInt(match[1], 10);
+    const content = pasteMap.get(id);
+
+    if (matchStart > lastIndex) {
+      const beforeText = input.slice(lastIndex, matchStart);
+      parts.push({ type: 'text', text: beforeText });
+      textWithoutImages += beforeText;
+      displayText += beforeText;
+    }
+
+    if (!content) {
+      textWithoutImages += match[0];
+      displayText += match[0];
+      parts.push({ type: 'text', text: match[0] });
+    } else if (content.type === 'text') {
+      textWithoutImages += content.data;
+      displayText += content.data;
+      parts.push({ type: 'text', text: content.data });
+    } else {
+      const imageData = {
+        id,
+        base64: content.data,
+        mimeType: content.mimeType,
+      };
+      images.push(imageData);
+      parts.push({ type: 'image', ...imageData });
+      displayText += `[Image #${id}]`;
+    }
+
+    lastIndex = matchEnd;
+  }
+
+  if (lastIndex < input.length) {
+    const afterText = input.slice(lastIndex);
+    parts.push({ type: 'text', text: afterText });
+    textWithoutImages += afterText;
+    displayText += afterText;
+  }
+
+  const mergedParts: ResolvedContentPart[] = [];
+  for (const part of parts) {
+    const previous = mergedParts[mergedParts.length - 1];
+    if (part.type === 'text' && previous?.type === 'text') {
+      previous.text += part.text;
+    } else {
+      mergedParts.push(part);
+    }
+  }
+
+  let startIndex = 0;
+  let endIndex = mergedParts.length;
+  while (startIndex < mergedParts.length) {
+    const part = mergedParts[startIndex];
+    if (part.type !== 'text' || part.text.trim() !== '') break;
+    startIndex++;
+  }
+  while (endIndex > startIndex) {
+    const part = mergedParts[endIndex - 1];
+    if (part.type !== 'text' || part.text.trim() !== '') break;
+    endIndex--;
+  }
+
+  return {
+    displayText: displayText.trim(),
+    text: textWithoutImages.trim(),
+    images,
+    parts: mergedParts.slice(startIndex, endIndex),
+  };
 }
 
 /**
@@ -191,21 +300,7 @@ export function useInputBuffer(
   // 添加图片粘贴映射，返回生成的标记 ID
   const addImagePasteMapping = useMemoizedFn(
     (base64: string, mimeType: string): number => {
-      const existingImages = [...pasteMapRef.current.values()].filter(
-        (content): content is ImagePasteContent => content.type === 'image'
-      );
-      if (existingImages.length >= MAX_INLINE_ATTACHMENT_COUNT) {
-        throw new Error(`最多只能粘贴 ${MAX_INLINE_ATTACHMENT_COUNT} 张图片`);
-      }
-      const existingBytes = existingImages.reduce(
-        (total, image) =>
-          total + `data:${image.mimeType};base64,`.length + image.data.length,
-        0
-      );
-      const nextBytes = `data:${mimeType};base64,`.length + base64.length;
-      if (existingBytes + nextBytes > MAX_INLINE_ATTACHMENT_BYTES) {
-        throw new Error('图片编码后总大小不能超过 5 MiB');
-      }
+      validateImageAttachment(pasteMapRef.current, base64, mimeType);
 
       pasteIdCounterRef.current += 1;
       const id = pasteIdCounterRef.current;
@@ -226,125 +321,9 @@ export function useInputBuffer(
   });
 
   // 解析输入：分离文本和图片，同时保留相对顺序
-  const resolveInput = useMemoizedFn((input: string): ResolvedInput => {
-    const images: ResolvedInput['images'] = [];
-    const parts: ResolvedContentPart[] = [];
-
-    // 快速检查：如果没有标记，直接返回
-    if (!containsPasteMarker(input)) {
-      const trimmed = input.trim();
-      if (trimmed) {
-        parts.push({ type: 'text', text: trimmed });
-      }
-      return { displayText: input, text: input, images, parts };
-    }
-
-    // 使用 matchAll 获取所有匹配及其位置
-    const regex = new RegExp(
-      `${PASTE_MARKER_START}PASTE:(\\d+):[\\s\\S]*?${PASTE_MARKER_END}`,
-      'g'
-    );
-    const matches = Array.from(input.matchAll(regex));
-
-    let lastIndex = 0;
-    let textWithoutImages = '';
-    let displayText = '';
-
-    for (const match of matches) {
-      const matchStart = match.index!;
-      const matchEnd = matchStart + match[0].length;
-      const id = parseInt(match[1], 10);
-      const content = pasteMapRef.current.get(id);
-
-      // 处理标记前的文本（保留空白，用于图片间分隔）
-      if (matchStart > lastIndex) {
-        const beforeText = input.slice(lastIndex, matchStart);
-        parts.push({ type: 'text', text: beforeText });
-        textWithoutImages += beforeText;
-        displayText += beforeText;
-      }
-
-      if (!content) {
-        // 未找到映射，保留原标记（不应该发生）
-        textWithoutImages += match[0];
-        displayText += match[0];
-        parts.push({ type: 'text', text: match[0] });
-      } else if (content.type === 'text') {
-        // 文本粘贴：替换为原文（displayText 也显示原文）
-        textWithoutImages += content.data;
-        displayText += content.data;
-        parts.push({ type: 'text', text: content.data });
-      } else {
-        // 图片：添加到 parts 和 images，从纯文本中移除
-        const imageData = {
-          id,
-          base64: content.data,
-          mimeType: content.mimeType,
-        };
-        images.push(imageData);
-        parts.push({ type: 'image', ...imageData });
-        // 图片不添加到 textWithoutImages，但在 displayText 中显示占位符
-        displayText += `[Image #${id}]`;
-      }
-
-      lastIndex = matchEnd;
-    }
-
-    // 处理最后一个标记后的文本（保留空白）
-    if (lastIndex < input.length) {
-      const afterText = input.slice(lastIndex);
-      parts.push({ type: 'text', text: afterText });
-      textWithoutImages += afterText;
-      displayText += afterText;
-    }
-
-    // 合并相邻的文本部分
-    const mergedParts: ResolvedContentPart[] = [];
-    for (const part of parts) {
-      if (
-        part.type === 'text' &&
-        mergedParts.length > 0 &&
-        mergedParts[mergedParts.length - 1].type === 'text'
-      ) {
-        // 合并相邻文本
-        (mergedParts[mergedParts.length - 1] as { type: 'text'; text: string }).text +=
-          part.text;
-      } else {
-        mergedParts.push(part);
-      }
-    }
-
-    // 清理首尾的纯空白文本部分（保留中间的空白分隔符）
-    let startIndex = 0;
-    let endIndex = mergedParts.length;
-
-    // 跳过开头的纯空白文本
-    while (
-      startIndex < mergedParts.length &&
-      mergedParts[startIndex].type === 'text' &&
-      (mergedParts[startIndex] as { type: 'text'; text: string }).text.trim() === ''
-    ) {
-      startIndex++;
-    }
-
-    // 跳过结尾的纯空白文本
-    while (
-      endIndex > startIndex &&
-      mergedParts[endIndex - 1].type === 'text' &&
-      (mergedParts[endIndex - 1] as { type: 'text'; text: string }).text.trim() === ''
-    ) {
-      endIndex--;
-    }
-
-    const cleanedParts = mergedParts.slice(startIndex, endIndex);
-
-    return {
-      displayText: displayText.trim(),
-      text: textWithoutImages.trim(),
-      images,
-      parts: cleanedParts,
-    };
-  });
+  const resolveBufferedInput = useMemoizedFn(
+    (input: string): ResolvedInput => resolveInput(input, pasteMapRef.current)
+  );
 
   return {
     value: state.value,
@@ -356,6 +335,6 @@ export function useInputBuffer(
     addPasteMapping,
     addImagePasteMapping,
     restorePasteMappings,
-    resolveInput,
+    resolveInput: resolveBufferedInput,
   };
 }

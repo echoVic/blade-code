@@ -17,8 +17,7 @@ import {
   useTaskList,
   useThinkingExpanded,
 } from '../../store/selectors/index.js';
-import { useTerminalHeight } from '../hooks/useTerminalHeight.js';
-import { useTerminalWidth } from '../hooks/useTerminalWidth.js';
+import { useTerminalDimensions } from '../hooks/useTerminalDimensions.js';
 import {
   getMarkdownBlocksSnapshot,
   getMarkdownTailSnapshot,
@@ -60,8 +59,7 @@ export const MessageArea: React.FC = React.memo(() => {
   const expandedMessageCount = useExpandedMessageCount();
   const historyExpanded = useHistoryExpanded();
 
-  const terminalWidth = useTerminalWidth();
-  const terminalHeight = useTerminalHeight();
+  const { width: terminalWidth, height: terminalHeight } = useTerminalDimensions();
   const { stdout } = useStdout();
   const sessionActions = useSessionActions();
 

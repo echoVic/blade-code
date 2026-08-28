@@ -745,6 +745,57 @@ describe('useCommandHandler durable recovery', () => {
     expect(mocks.addUserMessage).toHaveBeenCalledWith('run after the previous answer');
   });
 
+  it('coalesces concurrent next-turn wakeups into one recovery run', async () => {
+    mocks.isProcessing = true;
+    mocks.storeProcessing = false;
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(mocks.hasPendingInbox).toHaveBeenCalled();
+    });
+
+    let resolvePending!: (value: boolean) => void;
+    const pending = new Promise<boolean>((resolve) => {
+      resolvePending = resolve;
+    });
+    mocks.hasPendingInbox.mockReset().mockReturnValue(pending);
+    mocks.createAgent.mockClear();
+
+    await act(async () => {
+      await Promise.all([
+        hook!.executeCommand({
+          text: 'first queued instruction',
+          displayText: 'first queued instruction',
+          images: [],
+          parts: [{ type: 'text', text: 'first queued instruction' }],
+        }),
+        hook!.executeCommand({
+          text: 'second queued instruction',
+          displayText: 'second queued instruction',
+          images: [],
+          parts: [{ type: 'text', text: 'second queued instruction' }],
+        }),
+      ]);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(mocks.hasPendingInbox).toHaveBeenCalledOnce();
+    });
+
+    resolvePending(true);
+    await act(async () => {
+      await pending;
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.createAgent).toHaveBeenCalledOnce();
+    });
+  });
+
   it('rejects slash commands during an active turn without steering or aborting', async () => {
     mocks.isProcessing = true;
     mocks.storeProcessing = true;

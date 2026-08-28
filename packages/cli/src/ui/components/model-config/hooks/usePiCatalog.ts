@@ -21,16 +21,23 @@ export const useProviders = (): UseProvidersResult => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     const load = async () => {
       try {
-        setProviders(await getProviders());
+        const nextProviders = await getProviders();
+        if (!cancelled) setProviders(nextProviders);
       } catch (err) {
-        setError(err instanceof Error ? err.message : '加载 Provider 列表失败');
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : '加载 Provider 列表失败');
+        }
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
-    load();
+    void load();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return { providers, isLoading, error };
@@ -50,20 +57,30 @@ export const useModels = (provider: string | undefined): UseModelsResult => {
   useEffect(() => {
     if (!provider) {
       setModels([]);
+      setIsLoading(false);
+      setError(null);
       return;
     }
+    let cancelled = false;
+    setModels([]);
+    setIsLoading(true);
+    setError(null);
     const load = async () => {
-      setIsLoading(true);
-      setError(null);
       try {
-        setModels(await getModelsForProvider(provider));
+        const nextModels = await getModelsForProvider(provider);
+        if (!cancelled) setModels(nextModels);
       } catch (err) {
-        setError(err instanceof Error ? err.message : '加载模型列表失败');
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : '加载模型列表失败');
+        }
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
-    load();
+    void load();
+    return () => {
+      cancelled = true;
+    };
   }, [provider]);
 
   return { models, isLoading, error };

@@ -9,16 +9,12 @@
  * - useStreamingBuffer.ts — 流式批处理缓冲
  * - loopEventHandler.ts — drainLoop 事件消费映射
  *
- * ## Finalize 协议
- *
- * handleAbort 和 loopEventHandler(stream_end) 共享"谁负责最终 finalize"的协议：
- * - abort 路径负责 finalize：handleAbort 先 drainPendingBuffers 保留内容，
- *   再 abort signal，再用 drain 结果调用 finalizeStreamingMessage。
- * - 晚到的 stream_end 只做清理不做提交（检查 streamFinalized || signal.aborted）。
+ * TuiStreamSession 收敛正常完成、abort 和 fallback 的流终态；
+ * PendingResumeCoordinator 合并来自 UI、Team 和 Subagent 的恢复唤醒。
  */
 
 import { useMemoizedFn } from 'ahooks';
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
 import { SessionRuntime } from '../../agent/runtime/SessionRuntime.js';
@@ -59,15 +55,16 @@ import {
   getState,
 } from '../../store/vanilla.js';
 import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
+import {
+  PendingResumeCoordinator,
+  type PendingResumeResult,
+} from '../services/PendingResumeCoordinator.js';
+import { TuiStreamSession } from '../services/TuiStreamSession.js';
 import { classifyError } from '../utils/errorExtractor.js';
 import {
   createLoopEventHandler,
   projectTurnRecoveryAssessment,
 } from '../utils/loopEventHandler.js';
-import {
-  appendMarkdownDelta,
-  finalizeMarkdownCache,
-} from '../utils/markdownIncremental.js';
 import { buildUserMessageContent } from '../utils/messageContent.js';
 import { buildContextMessagesFromSession } from '../utils/sessionContext.js';
 import {
@@ -121,7 +118,8 @@ export const useCommandHandler = (
 
   // ==================== Local Refs ====================
   const abortMessageSentRef = useRef(false);
-  const pendingResumeRequestedRef = useRef(false);
+  const activeStreamSessionRef = useRef<TuiStreamSession | null>(null);
+  const pendingResumeCoordinatorRef = useRef<PendingResumeCoordinator | null>(null);
   const sideConversationControllerRef = useRef<AbortController | null>(null);
 
   // ==================== 子模块组合 ====================
@@ -172,6 +170,17 @@ export const useCommandHandler = (
   });
 
   const streamingBuffer = useStreamingBuffer(sessionActions);
+  const createStreamSession = useMemoizedFn(
+    (signal: AbortSignal): TuiStreamSession =>
+      new TuiStreamSession({
+        signal,
+        streamingBuffer,
+        getStreamingMessageId: () => getState().session.currentStreamingMessageId,
+        finalizeStreamingMessage: sessionActions.finalizeStreamingMessage,
+        discardStreamingMessage: sessionActions.discardStreamingMessage,
+        clearThinking: () => sessionActions.setCurrentThinkingContent(null),
+      })
+  );
   const refreshTeams = useMemoizedFn(async (): Promise<void> => {
     if (!agentTeamsEnabled || !sessionId) {
       appActions.setTeams([]);
@@ -222,7 +231,7 @@ export const useCommandHandler = (
           },
         });
         if (result.delivery === 'next_turn') {
-          pendingResumeRequestedRef.current = true;
+          pendingResumeCoordinatorRef.current?.request();
         }
         return {
           success: result.record.status !== 'spawn_error',
@@ -240,6 +249,7 @@ export const useCommandHandler = (
   // ==================== 生命周期 ====================
   useEffect(() => {
     return () => {
+      activeStreamSessionRef.current = null;
       streamingBuffer.resetStreamingBuffers();
     };
   }, [streamingBuffer.resetStreamingBuffers]);
@@ -278,21 +288,13 @@ export const useCommandHandler = (
     //    然后 abort signal 让 ToolExecutor 检测到 signal.aborted 直接 return
     onDismissConfirmations?.();
 
-    // 1. drain 缓冲区，保留已接收内容
-    const { extraContent, extraThinking } = streamingBuffer.drainPendingBuffers();
-
-    // 2. 先触发 abort signal（reason='user-cancel'），阻止后续回调
-    //    此后 loopEventHandler 中的 stream_end 检查 signal.aborted 会跳过 finalize
-    commandActions.abort('user-cancel');
-    appActions.setTasks([]);
-
-    // 3. 用 drain 结果 finalize，确保已收内容提交到 store
-    const streamingId = getState().session.currentStreamingMessageId;
-    if (streamingId) {
-      if (extraContent) appendMarkdownDelta(streamingId, extraContent);
-      finalizeMarkdownCache(streamingId);
-    }
-    sessionActions.finalizeStreamingMessage(extraContent, extraThinking);
+    const signal =
+      commandActions.getAbortController()?.signal ?? new AbortController().signal;
+    const streamSession = activeStreamSessionRef.current ?? createStreamSession(signal);
+    streamSession.abortAndFinalize(() => {
+      commandActions.abort('user-cancel');
+      appActions.setTasks([]);
+    });
 
     // 4. 显示停止消息（防重复）
     if (!abortMessageSentRef.current) {
@@ -370,6 +372,8 @@ export const useCommandHandler = (
         contentDeltaTotalLen: 0,
         compactionCount: 0,
       };
+      const streamSession = createStreamSession(abortController.signal);
+      activeStreamSessionRef.current = streamSession;
       const eventHandler = createLoopEventHandler(
         {
           sessionActions,
@@ -379,11 +383,18 @@ export const useCommandHandler = (
           thinkingModeEnabled,
           getStreamingMessageId: () => getState().session.currentStreamingMessageId,
           signal: abortController.signal,
+          streamSession,
         },
         stats
       );
-      const loopResult = await drainLoop(stream, eventHandler);
-      return { loopResult, stats };
+      try {
+        const loopResult = await drainLoop(stream, eventHandler);
+        return { loopResult, stats };
+      } finally {
+        if (activeStreamSessionRef.current === streamSession) {
+          activeStreamSessionRef.current = null;
+        }
+      }
     }
   );
 
@@ -632,105 +643,138 @@ export const useCommandHandler = (
     }
   );
 
-  const resumePendingInput = useMemoizedFn(async (): Promise<void> => {
-    if (getState().command.isProcessing) {
-      pendingResumeRequestedRef.current = true;
-      return;
-    }
-    const hasPending = await SessionRuntime.hasPendingInbox(workspaceRoot, sessionId);
-    const hasActiveGoal =
-      !hasPending && (await SessionRuntime.hasActiveGoal(workspaceRoot, sessionId));
-    const hasRecoverableTurn =
-      !hasPending &&
-      !hasActiveGoal &&
-      (await SessionRuntime.hasRecoverableTurn(workspaceRoot, sessionId));
-    if (!hasPending && !hasActiveGoal && !hasRecoverableTurn) {
-      pendingResumeRequestedRef.current = false;
-      return;
-    }
-    if (getState().command.isProcessing) {
-      pendingResumeRequestedRef.current = true;
-      return;
-    }
+  const performPendingResume = useMemoizedFn(
+    async (lifecycleSignal: AbortSignal): Promise<PendingResumeResult> => {
+      if (lifecycleSignal.aborted) return 'completed';
+      if (getState().command.isProcessing) {
+        return 'deferred';
+      }
+      const hasPending = await SessionRuntime.hasPendingInbox(workspaceRoot, sessionId);
+      const hasActiveGoal =
+        !hasPending && (await SessionRuntime.hasActiveGoal(workspaceRoot, sessionId));
+      const hasRecoverableTurn =
+        !hasPending &&
+        !hasActiveGoal &&
+        (await SessionRuntime.hasRecoverableTurn(workspaceRoot, sessionId));
+      if (lifecycleSignal.aborted) return 'completed';
+      if (!hasPending && !hasActiveGoal && !hasRecoverableTurn) {
+        return 'completed';
+      }
+      if (getState().command.isProcessing) {
+        return 'deferred';
+      }
 
-    pendingResumeRequestedRef.current = false;
-    await ensureStoreInitialized();
-    const abortController = commandActions.createAbortController();
-    streamingBuffer.resetStreamingBuffers();
-    sessionActions.clearFinalizingStreamingMessageId();
-    commandActions.setProcessing(true);
-
-    try {
-      const agent = await createAgent();
-      if (abortController.signal.aborted) return;
-      const pendingAfterInitialization = await SessionRuntime.hasPendingInbox(
-        workspaceRoot,
-        sessionId
-      );
-      const goalAfterInitialization =
-        !pendingAfterInitialization &&
-        (await SessionRuntime.hasActiveGoal(workspaceRoot, sessionId));
-      if (!pendingAfterInitialization && !goalAfterInitialization) {
-        const recoveryAssessment = getTurnRecoveryAssessment();
-        if (recoveryAssessment.state !== 'none') {
-          projectTurnRecoveryAssessment(sessionActions, recoveryAssessment);
+      await ensureStoreInitialized();
+      if (lifecycleSignal.aborted) return 'completed';
+      if (getState().command.isProcessing) {
+        return 'deferred';
+      }
+      const abortController = commandActions.createAbortController();
+      const abortForLifecycle = () => {
+        if (!abortController.signal.aborted) {
+          abortController.abort('pending-resume-coordinator-disposed');
         }
-        return;
-      }
-
-      const chatContext = {
-        messages: buildContextMessagesFromSession(getState().session),
-        userId: 'cli-user',
-        sessionId,
-        workspaceRoot,
-        signal: abortController.signal,
-        confirmationHandler,
-        permissionMode,
-        onPermissionModeChange: async (nextMode: PermissionMode) => {
-          await configActions().setPermissionMode(nextMode);
-        },
       };
-      const { loopResult, stats } = await consumeAgentStream(
-        agent.chatStream('', chatContext, {
-          stream: true,
-          pendingInputOnly: pendingAfterInitialization,
-          goalContinuationOnly: goalAfterInitialization,
-        }),
-        abortController
-      );
-      if (stats.compactionCount > 0) {
-        sessionActions.setCompactedContext(chatContext.messages);
-      }
+      lifecycleSignal.addEventListener('abort', abortForLifecycle, { once: true });
+      if (lifecycleSignal.aborted) abortForLifecycle();
+      streamingBuffer.resetStreamingBuffers();
+      sessionActions.clearFinalizingStreamingMessageId();
+      commandActions.setProcessing(true);
 
-      if (loopResult.success && loopResult.metadata?.outputTruncated) {
-        sessionActions.addAssistantMessage(
-          '输出因达到 token 上限被截断，部分内容可能不完整。'
+      try {
+        const agent = await createAgent();
+        if (abortController.signal.aborted) {
+          return abortController.signal.reason === 'interrupted-by-new-command'
+            ? 'deferred'
+            : 'completed';
+        }
+        const pendingAfterInitialization = await SessionRuntime.hasPendingInbox(
+          workspaceRoot,
+          sessionId
         );
-      }
-      if (!loopResult.success && !isLoopCancellation(loopResult)) {
-        sessionActions.addAssistantMessage(
-          loopResult.error?.message || '恢复排队指令失败'
+        const goalAfterInitialization =
+          !pendingAfterInitialization &&
+          (await SessionRuntime.hasActiveGoal(workspaceRoot, sessionId));
+        if (abortController.signal.aborted) {
+          return abortController.signal.reason === 'interrupted-by-new-command'
+            ? 'deferred'
+            : 'completed';
+        }
+        if (!pendingAfterInitialization && !goalAfterInitialization) {
+          const recoveryAssessment = getTurnRecoveryAssessment();
+          if (recoveryAssessment.state !== 'none') {
+            projectTurnRecoveryAssessment(sessionActions, recoveryAssessment);
+          }
+          return 'completed';
+        }
+
+        const chatContext = {
+          messages: buildContextMessagesFromSession(getState().session),
+          userId: 'cli-user',
+          sessionId,
+          workspaceRoot,
+          signal: abortController.signal,
+          confirmationHandler,
+          permissionMode,
+          onPermissionModeChange: async (nextMode: PermissionMode) => {
+            await configActions().setPermissionMode(nextMode);
+          },
+        };
+        const { loopResult, stats } = await consumeAgentStream(
+          agent.chatStream('', chatContext, {
+            stream: true,
+            pendingInputOnly: pendingAfterInitialization,
+            goalContinuationOnly: goalAfterInitialization,
+          }),
+          abortController
         );
+        if (stats.compactionCount > 0) {
+          sessionActions.setCompactedContext(chatContext.messages);
+        }
+
+        if (loopResult.success && loopResult.metadata?.outputTruncated) {
+          sessionActions.addAssistantMessage(
+            '输出因达到 token 上限被截断，部分内容可能不完整。'
+          );
+        }
+        if (!loopResult.success && !isLoopCancellation(loopResult)) {
+          sessionActions.addAssistantMessage(
+            loopResult.error?.message || '恢复排队指令失败'
+          );
+        }
+      } catch (error) {
+        const classified = classifyError(error);
+        if (!classified.isAbort) {
+          sessionActions.setError(`恢复排队指令失败: ${classified.displayMessage}`);
+        }
+      } finally {
+        lifecycleSignal.removeEventListener('abort', abortForLifecycle);
+        const isOurTask = commandActions.getAbortController() === abortController;
+        if (isOurTask) {
+          commandActions.setProcessing(false);
+          commandActions.clearAbortController(abortController);
+          sessionActions.setCurrentThinkingContent(null);
+        }
       }
-    } catch (error) {
-      const classified = classifyError(error);
-      if (!classified.isAbort) {
-        sessionActions.setError(`恢复排队指令失败: ${classified.displayMessage}`);
-      }
-    } finally {
-      const isOurTask = commandActions.getAbortController() === abortController;
-      if (isOurTask) {
-        commandActions.setProcessing(false);
-        commandActions.clearAbortController(abortController);
-        sessionActions.setCurrentThinkingContent(null);
-      }
-      if (pendingResumeRequestedRef.current) {
-        queueMicrotask(() => {
-          void resumePendingInput();
-        });
-      }
+      return 'completed';
     }
-  });
+  );
+
+  const pendingResumeCoordinator = useMemo(
+    () =>
+      new PendingResumeCoordinator({
+        canRun: () => !getState().command.isProcessing,
+        run: performPendingResume,
+      }),
+    [performPendingResume, sessionId, workspaceRoot]
+  );
+  pendingResumeCoordinatorRef.current = pendingResumeCoordinator;
+
+  useEffect(() => {
+    return () => {
+      pendingResumeCoordinator.dispose();
+    };
+  }, [pendingResumeCoordinator]);
 
   // ==================== executeCommand ====================
   const executeCommand = useMemoizedFn(async (resolved: ResolvedInput) => {
@@ -849,12 +893,7 @@ export const useCommandHandler = (
       commandActions.enqueueCommand(resolved);
       sessionActions.addUserMessage(resolved.displayText);
       if (steering.delivery === 'next_turn') {
-        pendingResumeRequestedRef.current = true;
-        if (!getState().command.isProcessing) {
-          queueMicrotask(() => {
-            void resumePendingInput();
-          });
-        }
+        pendingResumeCoordinator.request();
       }
       return;
     }
@@ -866,8 +905,8 @@ export const useCommandHandler = (
     // 重置中止提示标记
     abortMessageSentRef.current = false;
 
-    // NOTE: 先创建 AbortController，保存引用用于 finally 中的清理判断
-    // 依赖 createAbortController() 的"复用未中止 controller"语义（commandSlice.ts:53-64）
+    // 仅在 idle 分支创建 controller，并保存引用用于 finally 的所有权判断。
+    // createAbortController() 会主动中止并替换已有 controller。
     const taskAbortController = commandActions.createAbortController();
 
     // 重置流式批处理缓冲区
@@ -902,11 +941,7 @@ export const useCommandHandler = (
         commandActions.setProcessing(false);
         commandActions.clearAbortController(taskAbortController);
         sessionActions.setCurrentThinkingContent(null);
-        if (pendingResumeRequestedRef.current) {
-          queueMicrotask(() => {
-            void resumePendingInput();
-          });
-        }
+        pendingResumeCoordinator.notifyIdle();
       }
     }
   });
@@ -935,8 +970,7 @@ export const useCommandHandler = (
               messageId,
             ]);
             if (steering.delivery === 'next_turn') {
-              pendingResumeRequestedRef.current = true;
-              if (!getState().command.isProcessing) await resumePendingInput();
+              pendingResumeCoordinator.request();
             }
           })().catch((error) => {
             logger.warn(
@@ -951,15 +985,18 @@ export const useCommandHandler = (
         return;
       }
       if (event.type !== 'subagent.completion.queued') return;
-      pendingResumeRequestedRef.current = true;
-      queueMicrotask(() => {
-        void resumePendingInput();
-      });
+      pendingResumeCoordinator.request();
     });
     return () => {
       unsubscribe();
     };
-  }, [enqueueSessionInput, refreshTeams, resumePendingInput, sessionId, workspaceRoot]);
+  }, [
+    enqueueSessionInput,
+    pendingResumeCoordinator,
+    refreshTeams,
+    sessionId,
+    workspaceRoot,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -986,7 +1023,7 @@ export const useCommandHandler = (
         !hasActiveGoal &&
         (await SessionRuntime.hasRecoverableTurn(workspaceRoot, sessionId));
       if (hasPending || hasActiveGoal || hasRecoverableTurn) {
-        await resumePendingInput();
+        pendingResumeCoordinator.request();
       }
     })().catch((error) => {
       if (!cancelled) {
@@ -999,7 +1036,7 @@ export const useCommandHandler = (
     return () => {
       cancelled = true;
     };
-  }, [confirmationHandler, resumePendingInput, sessionId, workspaceRoot]);
+  }, [confirmationHandler, pendingResumeCoordinator, sessionId, workspaceRoot]);
 
   return {
     executeCommand,

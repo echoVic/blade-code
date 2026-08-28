@@ -1,5 +1,5 @@
 import { useMemoizedFn } from 'ahooks';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { PasteContent } from './useInputBuffer.js';
 
 /**
@@ -25,7 +25,7 @@ export interface HistoryEntry {
  */
 export const useCommandHistory = () => {
   const [commandHistory, setCommandHistory] = useState<HistoryEntry[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
+  const historyIndexRef = useRef(-1);
 
   // 添加命令到历史记录
   const addToHistory = useMemoizedFn(
@@ -35,7 +35,7 @@ export const useCommandHistory = () => {
         pasteMappings: pasteMappings ? new Map(pasteMappings) : new Map(),
       };
       setCommandHistory((prev) => [...prev, entry]);
-      setHistoryIndex(-1);
+      historyIndexRef.current = -1;
     }
   );
 
@@ -44,34 +44,36 @@ export const useCommandHistory = () => {
     if (commandHistory.length === 0) return null;
 
     const newIndex =
-      historyIndex === -1 ? commandHistory.length - 1 : Math.max(0, historyIndex - 1);
+      historyIndexRef.current === -1
+        ? commandHistory.length - 1
+        : Math.max(0, historyIndexRef.current - 1);
 
-    setHistoryIndex(newIndex);
+    historyIndexRef.current = newIndex;
     return commandHistory[newIndex] || null;
   });
 
   // 获取下一个历史命令（返回完整条目）
   const getNextCommand = useMemoizedFn((): HistoryEntry | null => {
-    if (historyIndex === -1) return null;
+    if (historyIndexRef.current === -1) return null;
 
-    const newIndex = historyIndex + 1;
+    const newIndex = historyIndexRef.current + 1;
     if (newIndex >= commandHistory.length) {
-      setHistoryIndex(-1);
+      historyIndexRef.current = -1;
       return null;
     } else {
-      setHistoryIndex(newIndex);
+      historyIndexRef.current = newIndex;
       return commandHistory[newIndex] || null;
     }
   });
 
   // 重置历史索引
   const resetHistoryIndex = useMemoizedFn(() => {
-    setHistoryIndex(-1);
+    historyIndexRef.current = -1;
   });
 
   return {
     commandHistory,
-    historyIndex,
+    historyIndex: historyIndexRef.current,
     addToHistory,
     getPreviousCommand,
     getNextCommand,

@@ -8,7 +8,7 @@
  * - 根据 isProcessing 状态控制激活/停用
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePhraseCycler } from './usePhraseCycler.js';
 
 /**
@@ -35,7 +35,7 @@ export function useLoadingIndicator(
   paused = false
 ): LoadingIndicatorState {
   const [elapsedTime, setElapsedTime] = useState(0);
-  const [startTime, setStartTime] = useState<number | null>(null);
+  const startTimeRef = useRef<number | null>(null);
 
   // 使用短语循环器（传递 paused 参数）
   const currentPhrase = usePhraseCycler(isProcessing, isWaiting, paused);
@@ -46,7 +46,7 @@ export function useLoadingIndicator(
     if (!isProcessing) {
       // 停止处理时重置计时器
       setElapsedTime(0);
-      setStartTime(null);
+      startTimeRef.current = null;
       return;
     }
 
@@ -56,14 +56,14 @@ export function useLoadingIndicator(
     }
 
     // 开始处理时记录开始时间
-    if (startTime === null) {
-      setStartTime(Date.now());
+    if (startTimeRef.current === null) {
+      startTimeRef.current = Date.now();
     }
 
     // 每秒更新一次已用时间
     const intervalId = setInterval(() => {
-      if (startTime !== null) {
-        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      if (startTimeRef.current !== null) {
+        const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
         setElapsedTime(elapsed);
       }
     }, 1000);
@@ -71,7 +71,7 @@ export function useLoadingIndicator(
     return () => {
       clearInterval(intervalId);
     };
-  }, [isProcessing, startTime, paused]);
+  }, [isProcessing, paused]);
 
   return {
     currentPhrase,

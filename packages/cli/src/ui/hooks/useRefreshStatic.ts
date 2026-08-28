@@ -24,7 +24,7 @@ import { useTerminalWidth } from './useTerminalWidth.js';
  * - 增加 clearCount 以强制 Static 组件重新挂载
  *
  * 触发时机：
- * - 终端宽度变化（自动，带 300ms 防抖）
+ * - 终端宽度变化（由 useTerminalWidth 统一防抖）
  * - 手动调用 refreshStatic()
  */
 export function useRefreshStatic() {
@@ -51,7 +51,7 @@ export function useRefreshStatic() {
     incrementClearCount();
   }, [stdout, incrementClearCount]);
 
-  // 终端宽度变化时自动刷新（带 300ms 防抖）
+  // useTerminalWidth 已完成防抖，这里直接刷新，避免叠加延迟。
   useEffect(() => {
     // 跳过首次挂载
     if (isInitialMount.current) {
@@ -59,13 +59,7 @@ export function useRefreshStatic() {
       return;
     }
 
-    const handler = setTimeout(() => {
-      refreshStatic();
-    }, 300);
-
-    return () => {
-      clearTimeout(handler);
-    };
+    refreshStatic();
   }, [terminalWidth, refreshStatic]);
 
   return { refreshStatic };

@@ -22,6 +22,10 @@ let globalFileCache: {
 } | null = null;
 const FILE_CACHE_TTL = 5000; // 5 秒缓存
 
+export function clearAtCompletionCache(): void {
+  globalFileCache = null;
+}
+
 /**
  * @ 提及匹配结果
  */
@@ -156,6 +160,7 @@ export function useAtCompletion(
     () => JSON.stringify(ignorePatterns),
     [ignorePatterns]
   );
+  const shouldLoadFiles = input.includes('@');
 
   // 提取 @ 提及
   const atMatch = useMemo(() => {
@@ -174,7 +179,7 @@ export function useAtCompletion(
   // 加载文件列表（带防抖和全局缓存）- 只在输入包含 @ 时加载
   useEffect(() => {
     // 如果输入中没有 @，跳过文件加载
-    if (!input.includes('@')) {
+    if (!shouldLoadFiles) {
       setFiles([]);
       setLoading(false);
       return;
@@ -239,8 +244,21 @@ export function useAtCompletion(
       cancelled = true;
       clearTimeout(timer);
     };
+    // ignorePatternsKey intentionally represents the array's semantic value.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input, cwd, debounceDelay, ignorePatternsKey]);
+  }, [shouldLoadFiles, cwd, debounceDelay, ignorePatternsKey]);
+
+  const fuse = useMemo(
+    () =>
+      fuzzyMatch && files.length > 0
+        ? new Fuse(files, {
+            threshold: 0.4,
+            ignoreLocation: true,
+            minMatchCharLength: 1,
+          })
+        : null,
+    [files, fuzzyMatch]
+  );
 
   // 过滤建议
   const suggestions = useMemo(() => {
@@ -256,13 +274,7 @@ export function useAtCompletion(
     }
 
     // 使用 Fuse.js 进行模糊匹配
-    if (fuzzyMatch) {
-      const fuse = new Fuse(files, {
-        threshold: 0.4,
-        ignoreLocation: true, // 支持路径任意位置匹配（长路径中的文件名也能被搜到）
-        minMatchCharLength: 1,
-      });
-
+    if (fuse) {
       const results = fuse.search(query);
       return results.slice(0, maxSuggestions).map((r) => r.item);
     }
@@ -271,7 +283,7 @@ export function useAtCompletion(
     return files
       .filter((file) => file.toLowerCase().includes(query))
       .slice(0, maxSuggestions);
-  }, [atMatch, files, maxSuggestions, fuzzyMatch]);
+  }, [atMatch, files, fuse, maxSuggestions]);
 
   // 重置选中索引当建议变化时
   useEffect(() => {

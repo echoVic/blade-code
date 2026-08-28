@@ -8,10 +8,11 @@
  * - 1/4 概率显示实用提示，3/4 概率显示加载短语
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 // 切换间隔：15 秒
 const PHRASE_CHANGE_INTERVAL_MS = 15000;
+const WAITING_PHRASE = '等待用户确认...';
 
 /**
  * 加载短语列表 - 简洁、专业、略带趣味
@@ -156,6 +157,17 @@ const INFORMATIVE_TIPS = [
   '提示：/model once 临时切换模型',
 ];
 
+function selectRandomPhrase(): string {
+  const showTip = Math.random() < 1 / 4;
+  if (showTip) {
+    const randomIndex = Math.floor(Math.random() * INFORMATIVE_TIPS.length);
+    return INFORMATIVE_TIPS[randomIndex];
+  }
+
+  const randomIndex = Math.floor(Math.random() * WITTY_LOADING_PHRASES.length);
+  return WITTY_LOADING_PHRASES[randomIndex];
+}
+
 /**
  * usePhraseCycler Hook
  *
@@ -170,11 +182,13 @@ export function usePhraseCycler(
   paused = false
 ): string {
   const [currentPhrase, setCurrentPhrase] = useState<string>('');
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
 
   useEffect(() => {
     // 等待确认时显示固定文本
     if (isWaiting) {
-      setCurrentPhrase('等待用户确认...');
+      setCurrentPhrase(WAITING_PHRASE);
       return;
     }
 
@@ -184,36 +198,21 @@ export function usePhraseCycler(
       return;
     }
 
-    // 暂停时保持当前短语，不启动新的定时器
-    if (paused) {
-      return;
-    }
-
-    // 随机选择一个短语（首次加载）
-    const selectRandomPhrase = () => {
-      // 1/4 概率显示实用提示，3/4 概率显示加载短语
-      const showTip = Math.random() < 1 / 4;
-      if (showTip) {
-        const randomIndex = Math.floor(Math.random() * INFORMATIVE_TIPS.length);
-        return INFORMATIVE_TIPS[randomIndex];
-      }
-
-      const randomIndex = Math.floor(Math.random() * WITTY_LOADING_PHRASES.length);
-      return WITTY_LOADING_PHRASES[randomIndex];
-    };
-
-    // 初始化短语
-    setCurrentPhrase(selectRandomPhrase());
+    setCurrentPhrase((current) =>
+      current === '' || current === WAITING_PHRASE ? selectRandomPhrase() : current
+    );
 
     // 每 15 秒切换一次
     const intervalId = setInterval(() => {
-      setCurrentPhrase(selectRandomPhrase());
+      if (!pausedRef.current) {
+        setCurrentPhrase(selectRandomPhrase());
+      }
     }, PHRASE_CHANGE_INTERVAL_MS);
 
     return () => {
       clearInterval(intervalId);
     };
-  }, [isActive, isWaiting, paused]);
+  }, [isActive, isWaiting]);
 
   return currentPhrase;
 }
