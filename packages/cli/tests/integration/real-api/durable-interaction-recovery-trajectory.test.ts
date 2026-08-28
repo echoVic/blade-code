@@ -181,7 +181,11 @@ function createProductionWebRecoveryDurableEvents(input: {
     {
       ...eventBase('interaction-responded'),
       type: 'interaction_responded',
-      data: { requestId: 'request-1', response: {}, respondedAt: createdAt },
+      data: {
+        requestId: 'request-1',
+        response: { approved: true, answers: { Channel: 'Canary' } },
+        respondedAt: createdAt,
+      },
     },
     {
       ...eventBase('interaction-recovered'),
@@ -1022,13 +1026,34 @@ export function validateProductionWebRecoveryEvidence(
       throw new Error(`Expected exactly one ${type} event`);
     }
   }
+  const requestedInteraction = evidence.durableEvents.find(
+    (event) => event.type === 'interaction_requested'
+  );
+  const respondedInteraction = evidence.durableEvents.find(
+    (event) => event.type === 'interaction_responded'
+  );
   const recoveredInteraction = evidence.durableEvents.find(
     (event) => event.type === 'interaction_recovered'
   );
-  const inboxMessageId =
-    recoveredInteraction?.type === 'interaction_recovered'
-      ? recoveredInteraction.data.inboxMessageId
+  const response =
+    respondedInteraction?.type === 'interaction_responded'
+      ? respondedInteraction.data.response
       : undefined;
+  if (
+    requestedInteraction?.type !== 'interaction_requested' ||
+    respondedInteraction?.type !== 'interaction_responded' ||
+    recoveredInteraction?.type !== 'interaction_recovered' ||
+    respondedInteraction.data.requestId !== requestedInteraction.data.requestId ||
+    recoveredInteraction.data.requestId !== requestedInteraction.data.requestId ||
+    !isRecord(response) ||
+    response.approved !== true ||
+    !isRecord(response.answers) ||
+    Object.keys(response.answers).length !== 1 ||
+    response.answers.Channel !== 'Canary'
+  ) {
+    throw new Error('Expected the persisted Canary answer for the recovered request');
+  }
+  const inboxMessageId = recoveredInteraction.data.inboxMessageId;
   if (!inboxMessageId) {
     throw new Error('Expected a durable recovery inbox identity');
   }
@@ -2487,6 +2512,57 @@ describe('durable Web recovery diagnostics', () => {
         finalMarker: 'GUI_RECOVERED',
       })
     ).toThrow('durable completion');
+  });
+
+  it('rejects recovered Web evidence with the wrong persisted answer', () => {
+    const targetPath = '/tmp/canary.txt';
+    const durableEvents = createProductionWebRecoveryDurableEvents({
+      targetPath,
+      finalText: 'GUI_RECOVERED',
+    }).map(
+      (event): SessionEvent =>
+        event.type === 'interaction_responded'
+          ? {
+              ...event,
+              data: {
+                ...event.data,
+                response: { approved: true, answers: { Channel: 'Stable' } },
+              },
+            }
+          : event
+    );
+
+    expect(() =>
+      validateProductionWebRecoveryEvidence({
+        sseEvents: [
+          { type: 'provider.retry', properties: { phase: 'scheduled' } },
+          {
+            type: 'pending.resume',
+            properties: {
+              phase: 'retry_scheduled',
+              attempt: 2,
+              maxAttempts: 4,
+              kind: 'pending_input',
+              delayMs: 900,
+            },
+          },
+          {
+            type: 'pending.resume',
+            properties: {
+              phase: 'recovered',
+              attempt: 2,
+              maxAttempts: 4,
+              kind: 'pending_input',
+            },
+          },
+          { type: 'session.completed', properties: {} },
+        ],
+        durableEvents,
+        targetContent: 'Canary\n',
+        targetPath,
+        finalMarker: 'GUI_RECOVERED',
+      })
+    ).toThrow('persisted Canary answer');
   });
 
   it('preserves the safe diagnostic structure when evidence settles quickly', async () => {
