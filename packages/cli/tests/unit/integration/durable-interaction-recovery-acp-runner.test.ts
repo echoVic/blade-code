@@ -1,14 +1,22 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
 import { promisify } from 'node:util';
+import type * as acp from '@agentclientprotocol/sdk';
 import { describe, expect, it, vi } from 'vitest';
 import type { SessionEvent } from '../../../src/context/types.js';
 import {
+  awaitAcpChildShutdown,
+  drainChildStderr,
+  inspectAcpPendingResumeEvidence,
   inspectDurableCompletionLifecycle,
+  inspectDurableFinalMarker,
+  inspectDurableRecoveryResult,
   inspectDurableWriteEvidence,
   parseDurableInteractionRecoveryAcpEvidence,
   parseDurableInteractionRecoveryAcpRunnerInput,
   pollDurableInteractionCompletion,
+  SecretScanner,
   serializeDurableInteractionRecoveryAcpEvidence,
   withDurableInteractionStorageRoot,
 } from '../../support/durableInteractionRecoveryAcpRunner.js';
@@ -67,6 +75,52 @@ function completionLifecycleEvents(): SessionEvent[] {
   ];
 }
 
+function finalMessageEvents(turnId: string, marker: string): SessionEvent[] {
+  const messageId = `assistant-${turnId}`;
+  return [
+    {
+      ...eventBase(`message-${turnId}`, 'message_created'),
+      type: 'message_created',
+      data: {
+        messageId,
+        role: 'assistant',
+        createdAt: '2026-08-29T00:00:01.000Z',
+        metadata: {
+          turnFinalization: {
+            turnId,
+            inputMessageIds: [],
+            turnsCount: 1,
+            toolCallsCount: 1,
+            durationMs: 2_000,
+          },
+        },
+      },
+    },
+    {
+      ...eventBase(`part-${turnId}`, 'part_created'),
+      type: 'part_created',
+      data: {
+        partId: `part-${turnId}`,
+        messageId,
+        partType: 'text',
+        payload: { text: marker },
+        createdAt: '2026-08-29T00:00:01.000Z',
+      },
+    },
+  ];
+}
+
+function completionStatusEvent(id: string): SessionEvent {
+  return {
+    ...eventBase(id, 'session_updated'),
+    type: 'session_updated',
+    data: {
+      sessionId: 'durable-acp-session',
+      taskStatus: 'completed',
+    },
+  };
+}
+
 const safeEvidence = {
   success: true,
   sessionId: 'durable-acp-session',
@@ -74,6 +128,9 @@ const safeEvidence = {
   questionRequests: 1,
   requestMatched: true,
   optionMatched: true,
+  pendingResumePhases: ['retry_scheduled', 'recovered'],
+  pendingResumeAttempts: [2, 2],
+  maxAttempts: 4,
   interactionRequested: 1,
   interactionResponded: 1,
   interactionRecovered: 1,
@@ -93,6 +150,24 @@ const safeEvidence = {
   killFallbackUsed: false,
   secretSeen: false,
 } as const;
+
+function pendingResumeUpdate(
+  phase: string,
+  attempt: number,
+  maxAttempts = 4,
+  kind = 'pending_input'
+): acp.SessionNotification {
+  return {
+    sessionId: 'durable-acp-session',
+    update: {
+      sessionUpdate: 'session_info_update',
+      updatedAt: '2026-08-29T00:00:00.000Z',
+      _meta: {
+        'blade/pendingResume': { phase, attempt, maxAttempts, kind },
+      },
+    },
+  };
+}
 
 function encodedInput(overrides: Record<string, unknown> = {}): string {
   return Buffer.from(
@@ -116,6 +191,38 @@ function encodedInput(overrides: Record<string, unknown> = {}): string {
 }
 
 describe('durable interaction ACP stdio runner', () => {
+  it('projects the exact bounded pending-resume failure recovery sequence', () => {
+    expect(
+      inspectAcpPendingResumeEvidence([
+        pendingResumeUpdate('retry_scheduled', 2),
+        pendingResumeUpdate('recovered', 2),
+      ])
+    ).toEqual({
+      pendingResumePhases: ['retry_scheduled', 'recovered'],
+      pendingResumeAttempts: [2, 2],
+      maxAttempts: 4,
+    });
+  });
+
+  it.each([
+    [
+      'wrong attempt',
+      [pendingResumeUpdate('retry_scheduled', 1), pendingResumeUpdate('recovered', 2)],
+    ],
+    [
+      'terminal failed phase',
+      [pendingResumeUpdate('retry_scheduled', 2), pendingResumeUpdate('failed', 2)],
+    ],
+    [
+      'terminal exhausted phase',
+      [pendingResumeUpdate('retry_scheduled', 2), pendingResumeUpdate('exhausted', 2)],
+    ],
+  ])('rejects %s in pending-resume evidence', (_name, updates) => {
+    expect(() => inspectAcpPendingResumeEvidence(updates)).toThrow(
+      'pending resume evidence is invalid'
+    );
+  });
+
   it('parses only exact bounded success evidence', () => {
     expect(
       parseDurableInteractionRecoveryAcpEvidence(
@@ -302,6 +409,134 @@ describe('durable interaction ACP stdio runner', () => {
     ).toThrow('duplicate recovery side effect');
   });
 
+  it.each([
+    [
+      'wrong toolCallId',
+      { toolCallId: 'other-question-call', output: 'recovered', error: null },
+    ],
+    [
+      'failed result',
+      { toolCallId: 'question-call', output: null, error: 'recovery failed' },
+    ],
+  ])('rejects a recovery result with %s', (_name, result) => {
+    const event: Extract<SessionEvent, { type: 'part_created' }> = {
+      ...eventBase('recovery-result', 'part_created'),
+      type: 'part_created',
+      data: {
+        partId: 'recovery-result',
+        messageId: 'recovery-message',
+        partType: 'tool_result',
+        payload: {
+          toolName: 'AskUserQuestion',
+          ...result,
+          metadata: {
+            interactionRecovery: true,
+            requestId: 'request-1',
+          },
+        },
+        createdAt: '2026-08-29T00:00:00.000Z',
+      },
+    };
+
+    expect(() =>
+      inspectDurableRecoveryResult([event], 'request-1', 'question-call')
+    ).toThrow('recovery result evidence is invalid');
+  });
+
+  it('binds the final marker to the recovered completed turn', () => {
+    const marker = 'ACP_DURABLE_COMPLETE';
+    const base = completionLifecycleEvents();
+    const validEvents = [
+      base[0]!,
+      base[1]!,
+      ...finalMessageEvents('recovered-turn', marker),
+      base[2]!,
+      completionStatusEvent('recovered-completed-status'),
+    ];
+    const validLifecycle = inspectDurableCompletionLifecycle(
+      validEvents,
+      'interaction-request-1'
+    );
+    expect(validLifecycle).toBeDefined();
+    expect(
+      inspectDurableFinalMarker(validEvents, validLifecycle!.completed, marker)
+    ).toBe(1);
+
+    const laterTurn: SessionEvent[] = [
+      {
+        ...eventBase('later-turn-start', 'turn_started'),
+        type: 'turn_started',
+        data: {
+          turnId: 'later-turn',
+          kind: 'user',
+          startedAt: '2026-08-29T00:00:03.000Z',
+        },
+      },
+      ...finalMessageEvents('later-turn', marker),
+      {
+        ...eventBase('later-turn-completed', 'turn_completed'),
+        type: 'turn_completed',
+        data: {
+          turnId: 'later-turn',
+          completedAt: '2026-08-29T00:00:04.000Z',
+          turnsCount: 1,
+          toolCallsCount: 0,
+          durationMs: 1_000,
+        },
+      },
+      completionStatusEvent('later-completed-status'),
+    ];
+    const misleadingEvents = [...base, ...laterTurn];
+    const recoveredLifecycle = inspectDurableCompletionLifecycle(
+      misleadingEvents,
+      'interaction-request-1'
+    );
+    expect(recoveredLifecycle).toBeDefined();
+    expect(() =>
+      inspectDurableFinalMarker(misleadingEvents, recoveredLifecycle!.completed, marker)
+    ).toThrow('final marker does not belong to recovered turn');
+  });
+
+  it('drains stderr before accepting child shutdown and sees a tail secret', async () => {
+    const stderr = new PassThrough();
+    const scanner = new SecretScanner('provider-secret-material');
+    const stderrDrained = drainChildStderr(stderr, scanner);
+    const shutdown = awaitAcpChildShutdown(
+      Promise.resolve({ code: 0, signal: null }),
+      Promise.resolve(),
+      stderrDrained,
+      scanner,
+      1_000
+    );
+    let settled = false;
+    void shutdown.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      }
+    );
+
+    stderr.write('provider-secret-');
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    stderr.end('material');
+
+    await expect(shutdown).rejects.toThrow('surface secret');
+    expect(scanner.seen).toBe(true);
+
+    await expect(
+      awaitAcpChildShutdown(
+        Promise.resolve({ code: 0, signal: null }),
+        Promise.resolve(),
+        drainChildStderr(undefined, new SecretScanner('unused')),
+        new SecretScanner('unused'),
+        1_000
+      )
+    ).resolves.toEqual({ code: 0, signal: null });
+  });
+
   it('restores BLADE_STORAGE_ROOT after success and failure', async () => {
     const original = process.env.BLADE_STORAGE_ROOT;
     process.env.BLADE_STORAGE_ROOT = '/tmp/original-storage';
@@ -364,6 +599,8 @@ describe('durable interaction ACP stdio runner', () => {
     expect(source).not.toContain('new BladeAgent(');
     expect(source).not.toContain('createMockACPClient');
     expect(source).toContain('connection.closeSession({');
+    expect(source).toContain('drainChildStderr(child.stderr');
+    expect(source).toContain('awaitAcpChildShutdown(');
     expect(source).toContain('await endChildInput(child);');
     expect(source.indexOf('connection.closeSession({')).toBeLessThan(
       source.indexOf('await endChildInput(child);')

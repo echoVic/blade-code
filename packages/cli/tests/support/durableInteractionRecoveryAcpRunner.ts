@@ -41,6 +41,9 @@ export interface DurableInteractionRecoveryAcpEvidence {
   questionRequests: 1;
   requestMatched: true;
   optionMatched: true;
+  pendingResumePhases: readonly ['retry_scheduled', 'recovered'];
+  pendingResumeAttempts: readonly [2, 2];
+  maxAttempts: 4;
   interactionRequested: 1;
   interactionResponded: 1;
   interactionRecovered: 1;
@@ -94,6 +97,9 @@ export type RunnerEvidence =
   | DurableInteractionRecoveryAcpFailureEvidence;
 
 interface CompletionFacts {
+  pendingResumePhases: readonly ['retry_scheduled', 'recovered'];
+  pendingResumeAttempts: readonly [2, 2];
+  maxAttempts: 4;
   interactionRequested: 1;
   interactionResponded: 1;
   interactionRecovered: 1;
@@ -107,7 +113,7 @@ interface CompletionFacts {
   targetBytes: number;
 }
 
-interface ChildExit {
+export interface ChildExit {
   code: number | null;
   signal: NodeJS.Signals | null;
 }
@@ -264,8 +270,11 @@ const EVIDENCE_KEYS = [
   'interactionRequested',
   'interactionResponded',
   'killFallbackUsed',
+  'maxAttempts',
   'modeId',
   'optionMatched',
+  'pendingResumeAttempts',
+  'pendingResumePhases',
   'questionRequests',
   'recoveryToolResults',
   'requestMatched',
@@ -305,6 +314,15 @@ export function parseDurableInteractionRecoveryAcpEvidence(
     parsed.questionRequests !== 1 ||
     parsed.requestMatched !== true ||
     parsed.optionMatched !== true ||
+    !Array.isArray(parsed.pendingResumePhases) ||
+    parsed.pendingResumePhases.length !== 2 ||
+    parsed.pendingResumePhases[0] !== 'retry_scheduled' ||
+    parsed.pendingResumePhases[1] !== 'recovered' ||
+    !Array.isArray(parsed.pendingResumeAttempts) ||
+    parsed.pendingResumeAttempts.length !== 2 ||
+    parsed.pendingResumeAttempts[0] !== 2 ||
+    parsed.pendingResumeAttempts[1] !== 2 ||
+    parsed.maxAttempts !== 4 ||
     parsed.interactionRequested !== 1 ||
     parsed.interactionResponded !== 1 ||
     parsed.interactionRecovered !== 1 ||
@@ -330,7 +348,7 @@ export function parseDurableInteractionRecoveryAcpEvidence(
   return parsed as unknown as DurableInteractionRecoveryAcpEvidence;
 }
 
-class SecretScanner {
+export class SecretScanner {
   private readonly tails = new Map<string, string>();
   seen = false;
 
@@ -349,6 +367,69 @@ class SecretScanner {
       retainedCharacters === 0 ? '' : combined.slice(-retainedCharacters)
     );
   }
+}
+
+export interface AcpPendingResumeEvidence {
+  pendingResumePhases: readonly ['retry_scheduled', 'recovered'];
+  pendingResumeAttempts: readonly [2, 2];
+  maxAttempts: 4;
+}
+
+interface SafePendingResumeUpdate {
+  phase: 'retry_scheduled' | 'recovered' | 'failed' | 'exhausted' | 'invalid';
+  attempt: number | null;
+  maxAttempts: number | null;
+  kind: 'pending_input' | 'invalid';
+}
+
+function safePendingResumeUpdate(value: unknown): SafePendingResumeUpdate | undefined {
+  if (!isRecord(value)) return undefined;
+  const phase =
+    value.phase === 'retry_scheduled' ||
+    value.phase === 'recovered' ||
+    value.phase === 'failed' ||
+    value.phase === 'exhausted'
+      ? value.phase
+      : 'invalid';
+  return {
+    phase,
+    attempt: Number.isSafeInteger(value.attempt) ? Number(value.attempt) : null,
+    maxAttempts: Number.isSafeInteger(value.maxAttempts)
+      ? Number(value.maxAttempts)
+      : null,
+    kind: value.kind === 'pending_input' ? 'pending_input' : 'invalid',
+  };
+}
+
+function inspectSafePendingResumeEvidence(
+  projected: readonly SafePendingResumeUpdate[]
+): AcpPendingResumeEvidence {
+  if (
+    projected.length !== 2 ||
+    projected[0]?.phase !== 'retry_scheduled' ||
+    projected[1]?.phase !== 'recovered' ||
+    projected[0]?.attempt !== 2 ||
+    projected[1]?.attempt !== 2 ||
+    projected.some((entry) => entry.maxAttempts !== 4 || entry.kind !== 'pending_input')
+  ) {
+    throw new InvalidRecoveryError('pending resume evidence is invalid');
+  }
+  return {
+    pendingResumePhases: ['retry_scheduled', 'recovered'],
+    pendingResumeAttempts: [2, 2],
+    maxAttempts: 4,
+  };
+}
+
+export function inspectAcpPendingResumeEvidence(
+  updates: readonly acp.SessionNotification[]
+): AcpPendingResumeEvidence {
+  const projected = updates.flatMap(({ update }) => {
+    if (update.sessionUpdate !== 'session_info_update') return [];
+    const safe = safePendingResumeUpdate(update._meta?.['blade/pendingResume']);
+    return safe ? [safe] : [];
+  });
+  return inspectSafePendingResumeEvidence(projected);
 }
 
 function jsonStringByteLength(value: string, limit: number): number {
@@ -567,6 +648,78 @@ function payloadRecord(event: SessionEvent): Record<string, unknown> | undefined
   return event.data.payload;
 }
 
+export function inspectDurableRecoveryResult(
+  events: readonly SessionEvent[],
+  requestId: string,
+  toolCallId: string
+): SessionEvent | undefined {
+  const results = events.filter((event) => {
+    const payload = payloadRecord(event);
+    return (
+      event.type === 'part_created' &&
+      event.data.partType === 'tool_result' &&
+      payload?.toolName === 'AskUserQuestion' &&
+      isRecord(payload.metadata) &&
+      payload.metadata.interactionRecovery === true &&
+      payload.metadata.requestId === requestId
+    );
+  });
+  if (results.length > 1) {
+    throw new InvalidRecoveryError('duplicate recovery side effect');
+  }
+  const result = results[0];
+  if (!result) return undefined;
+  const payload = payloadRecord(result);
+  if (
+    payload?.toolCallId !== toolCallId ||
+    payload.error !== null ||
+    payload.output === null
+  ) {
+    throw new InvalidRecoveryError('recovery result evidence is invalid');
+  }
+  return result;
+}
+
+export function drainChildStderr(
+  stderr: Readable | null | undefined,
+  scanner: SecretScanner,
+  onSecret?: () => void
+): Promise<void> {
+  if (!stderr || stderr.readableEnded || stderr.destroyed) return Promise.resolve();
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let secretReported = false;
+    const cleanup = () => {
+      stderr.off('data', onData);
+      stderr.off('end', onDone);
+      stderr.off('close', onDone);
+      stderr.off('error', onError);
+    };
+    const settle = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve();
+    };
+    const onData = (chunk: Buffer | string) => {
+      scanner.observe('stderr', chunk.toString());
+      if (scanner.seen && !secretReported) {
+        secretReported = true;
+        onSecret?.();
+      }
+    };
+    const onDone = () => settle();
+    const onError = (error: Error) => settle(error);
+
+    stderr.on('data', onData);
+    stderr.once('end', onDone);
+    stderr.once('close', onDone);
+    stderr.once('error', onError);
+  });
+}
+
 interface DurableWriteEvidence {
   call: {
     event: SessionEvent;
@@ -665,6 +818,26 @@ function assistantText(events: readonly SessionEvent[]): string {
     .join('');
 }
 
+export function inspectDurableFinalMarker(
+  events: readonly SessionEvent[],
+  completed: Extract<SessionEvent, { type: 'turn_completed' }>,
+  finalMarker: string
+): 1 {
+  const finalTerminal = events.findLast(
+    (event) => event.type === 'turn_completed' || event.type === 'turn_aborted'
+  );
+  if (finalTerminal !== completed) {
+    throw new InvalidRecoveryError('final marker does not belong to recovered turn');
+  }
+  if (
+    finalAssistantText(events) !== finalMarker ||
+    countOccurrences(assistantText(events), finalMarker) !== 1
+  ) {
+    throw new InvalidRecoveryError('final marker evidence is invalid');
+  }
+  return 1;
+}
+
 function questionDefinition(
   events: readonly SessionEvent[],
   input: DurableInteractionRecoveryAcpRunnerInput
@@ -707,11 +880,12 @@ function questionDefinition(
   ) {
     throw new InvalidRecoveryError('invalid durable question option');
   }
-  return { header: question.header, labels };
+  return { header: question.header, labels, toolCallId: request.data.toolCallId };
 }
 
 class DurableInteractionAcpClient implements acp.Client {
   readonly questionRequests: acp.RequestPermissionRequest[] = [];
+  private readonly pendingResumeUpdates: SafePendingResumeUpdate[] = [];
   requestMatched = false;
   optionMatched = false;
   terminalFailure = false;
@@ -787,11 +961,12 @@ class DurableInteractionAcpClient implements acp.Client {
     }
     if (update.sessionUpdate === 'session_info_update') {
       const pending = update._meta?.['blade/pendingResume'];
-      if (
-        isRecord(pending) &&
-        (pending.phase === 'failed' || pending.phase === 'exhausted')
-      ) {
-        this.terminalFailure = true;
+      const safe = safePendingResumeUpdate(pending);
+      if (safe) {
+        this.pendingResumeUpdates.push(safe);
+        if (safe.phase === 'failed' || safe.phase === 'exhausted') {
+          this.terminalFailure = true;
+        }
       }
     }
     if (this.scanner.seen) throw new SurfaceSecretError('surface secret');
@@ -803,6 +978,10 @@ class DurableInteractionAcpClient implements acp.Client {
 
   overflowed(): boolean {
     return this.surfaceOverflow;
+  }
+
+  pendingResumeEvidence(): AcpPendingResumeEvidence {
+    return inspectSafePendingResumeEvidence(this.pendingResumeUpdates);
   }
 }
 
@@ -865,26 +1044,17 @@ async function inspectCompletion(
   if (recovery?.type !== 'interaction_recovered') {
     throw new InvalidRecoveryError('interaction recovery is invalid');
   }
-  const recoveryResults = events.filter((event) => {
-    const payload = payloadRecord(event);
-    return (
-      event.type === 'part_created' &&
-      event.data.partType === 'tool_result' &&
-      payload?.toolName === 'AskUserQuestion' &&
-      isRecord(payload.metadata) &&
-      payload.metadata.interactionRecovery === true &&
-      payload.metadata.requestId === input.requestId
-    );
-  });
+  const recoveryResult = inspectDurableRecoveryResult(
+    events,
+    input.requestId,
+    definition.toolCallId
+  );
   const write = inspectDurableWriteEvidence(
     events,
     input.targetPath,
     input.expectedContent
   );
-  if (recoveryResults.length > 1) {
-    throw new InvalidRecoveryError('duplicate recovery side effect');
-  }
-  if (recoveryResults.length !== 1 || !write) {
+  if (!recoveryResult || !write) {
     return undefined;
   }
   if (!lifecycle) return undefined;
@@ -893,8 +1063,8 @@ async function inspectCompletion(
   if (
     !(
       indexOf(requested[0]) < indexOf(responded[0]) &&
-      indexOf(responded[0]) < indexOf(recoveryResults[0]) &&
-      indexOf(recoveryResults[0]) < indexOf(recovered[0]) &&
+      indexOf(responded[0]) < indexOf(recoveryResult) &&
+      indexOf(recoveryResult) < indexOf(recovered[0]) &&
       indexOf(recovered[0]) < indexOf(lifecycle.started) &&
       indexOf(lifecycle.started) < indexOf(write.call.event) &&
       indexOf(write.call.event) < indexOf(write.result.event)
@@ -909,17 +1079,13 @@ async function inspectCompletion(
     throw new InvalidRecoveryError('durable completion ordering is invalid');
   }
 
-  const durableFinalMarkerCount = countOccurrences(
-    assistantText(events),
+  const durableFinalMarkerCount = inspectDurableFinalMarker(
+    events,
+    lifecycle.completed,
     input.finalMarker
   );
   const acpFinalMarkerCount = countOccurrences(client.agentText(), input.finalMarker);
-  if (
-    finalAssistantText(events) !== input.finalMarker ||
-    durableFinalMarkerCount !== 1 ||
-    acpFinalMarkerCount !== 1 ||
-    client.overflowed()
-  ) {
+  if (acpFinalMarkerCount !== 1 || client.overflowed()) {
     throw new InvalidRecoveryError('final marker evidence is invalid');
   }
   const target = await readFile(input.targetPath, 'utf8').catch((error: unknown) => {
@@ -934,8 +1100,10 @@ async function inspectCompletion(
     throw new InvalidRecoveryError('target content is invalid');
   }
   if (!(await inboxIsMissing(input.workspace, input.sessionId))) return undefined;
+  const pendingResume = client.pendingResumeEvidence();
 
   return {
+    ...pendingResume,
     interactionRequested: 1,
     interactionResponded: 1,
     interactionRecovered: 1,
@@ -944,7 +1112,7 @@ async function inspectCompletion(
     writeResults: 1,
     inboxMissing: true,
     acpFinalMarkerCount: 1,
-    durableFinalMarkerCount: 1,
+    durableFinalMarkerCount,
     targetSha256: createHash('sha256').update(target).digest('hex'),
     targetBytes: Buffer.byteLength(target, 'utf8'),
   };
@@ -972,6 +1140,22 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+export async function awaitAcpChildShutdown(
+  exitPromise: Promise<ChildExit>,
+  connectionClosed: Promise<unknown>,
+  stderrDrained: Promise<void>,
+  scanner: SecretScanner,
+  timeoutMs: number
+): Promise<ChildExit> {
+  const [exit] = await Promise.all([
+    withTimeout(exitPromise, timeoutMs),
+    withTimeout(connectionClosed, timeoutMs),
+    withTimeout(stderrDrained, timeoutMs),
+  ]);
+  if (scanner.seen) throw new SurfaceSecretError('surface secret');
+  return exit;
 }
 
 async function waitForCompletion(
@@ -1109,6 +1293,7 @@ async function runDurableInteractionRecoveryAcpRunnerWithStorage(
   let connection: acp.ClientSideConnection | undefined;
   let child: ChildProcess | undefined;
   let exitPromise: Promise<ChildExit> | undefined;
+  let stderrDrained: Promise<void> = Promise.resolve();
   const scanner = new SecretScanner(input.secret);
   const client = new DurableInteractionAcpClient(input, scanner);
 
@@ -1151,9 +1336,8 @@ async function runDurableInteractionRecoveryAcpRunnerWithStorage(
     if (!child.stdin || !child.stdout) {
       throw new InvalidRecoveryError('ACP stdio is unavailable');
     }
-    child.stderr?.on('data', (chunk: Buffer | string) => {
-      scanner.observe('stderr', chunk.toString());
-      if (scanner.seen && child?.exitCode === null && child.signalCode === null) {
+    stderrDrained = drainChildStderr(child.stderr, scanner, () => {
+      if (child?.exitCode === null && child.signalCode === null) {
         termFallbackUsed = true;
         child.kill('SIGTERM');
       }
@@ -1206,7 +1390,6 @@ async function runDurableInteractionRecoveryAcpRunnerWithStorage(
     ) {
       throw new InvalidRecoveryError('question callback evidence is invalid');
     }
-
     stage = 'close_session';
     await withTimeout(
       connection.closeSession({ sessionId: input.sessionId }),
@@ -1218,14 +1401,15 @@ async function runDurableInteractionRecoveryAcpRunnerWithStorage(
     await endChildInput(child);
 
     stage = 'child_exit';
-    const [exit] = await Promise.all([
-      withTimeout(exitPromise, NORMAL_CLOSE_TIMEOUT_MS),
-      withTimeout(connection.closed, NORMAL_CLOSE_TIMEOUT_MS),
-    ]);
-    if (exit.code !== 0 || exit.signal !== null || scanner.seen) {
-      throw scanner.seen
-        ? new SurfaceSecretError('surface secret')
-        : new InvalidRecoveryError('ACP child did not exit normally');
+    const exit = await awaitAcpChildShutdown(
+      exitPromise,
+      connection.closed,
+      stderrDrained,
+      scanner,
+      NORMAL_CLOSE_TIMEOUT_MS
+    );
+    if (exit.code !== 0 || exit.signal !== null) {
+      throw new InvalidRecoveryError('ACP child did not exit normally');
     }
 
     stage = 'evidence';
@@ -1284,6 +1468,7 @@ async function runDurableInteractionRecoveryAcpRunnerWithStorage(
         }
       }
     }
+    await withTimeout(stderrDrained, 2_000).catch(() => undefined);
     return {
       success: false,
       stage,
