@@ -37,6 +37,7 @@ import { SessionService } from '../../../src/services/SessionService.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { runWithCwdOverride } from '../../../src/utils/cwd.js';
 import {
+  inspectDurableCompletionLifecycle,
   parseDurableInteractionRecoveryAcpEvidence,
   parseDurableInteractionRecoveryAcpFailureEvidence,
 } from '../../support/durableInteractionRecoveryAcpRunner.js';
@@ -143,6 +144,176 @@ interface DurablePendingChannelSeed {
   };
   requestId: string;
   prompt: string;
+}
+
+function createProductionWebRecoveryDurableEvents(input: {
+  targetPath: string;
+  finalText: string;
+}): SessionEvent[] {
+  const createdAt = '2026-08-29T00:00:00.000Z';
+  const sessionId = 'production-web-recovery-session';
+  const inboxMessageId = 'interaction-request-1';
+  const firstTurnId = 'production-web-attempt-1';
+  const secondTurnId = 'production-web-attempt-2';
+  const writeMessageId = 'production-web-write-message';
+  const finalMessageId = 'production-web-final-message';
+  const eventBase = (id: string) => ({
+    id,
+    sessionId,
+    timestamp: createdAt,
+    cwd: '/tmp',
+    version: 'test',
+  });
+
+  return [
+    {
+      ...eventBase('interaction-requested'),
+      type: 'interaction_requested',
+      data: {
+        requestId: 'request-1',
+        toolCallId: 'question-1',
+        toolName: 'AskUserQuestion',
+        interactionType: 'question',
+        details: {},
+        requestedAt: createdAt,
+      },
+    },
+    {
+      ...eventBase('interaction-responded'),
+      type: 'interaction_responded',
+      data: { requestId: 'request-1', response: {}, respondedAt: createdAt },
+    },
+    {
+      ...eventBase('interaction-recovered'),
+      type: 'interaction_recovered',
+      data: { requestId: 'request-1', inboxMessageId, recoveredAt: createdAt },
+    },
+    {
+      ...eventBase('turn-started-1'),
+      type: 'turn_started',
+      data: {
+        turnId: firstTurnId,
+        kind: 'pending',
+        startedAt: createdAt,
+        inputMessageIds: [inboxMessageId],
+      },
+    },
+    {
+      ...eventBase('turn-aborted-1'),
+      type: 'turn_aborted',
+      data: {
+        turnId: firstTurnId,
+        cause: 'failed',
+        abortedAt: createdAt,
+        turnsCount: 0,
+        toolCallsCount: 0,
+        durationMs: 1,
+        recovery: {
+          version: 2,
+          inputMessageIds: [inboxMessageId],
+          hadSuccessfulToolResult: false,
+          interruptedToolCallCount: 0,
+          emptyFinalCorrectionSpent: false,
+        },
+      },
+    },
+    {
+      ...eventBase('turn-started-2'),
+      type: 'turn_started',
+      data: {
+        turnId: secondTurnId,
+        kind: 'pending',
+        startedAt: createdAt,
+        inputMessageIds: [inboxMessageId],
+      },
+    },
+    {
+      ...eventBase('write-message'),
+      type: 'message_created',
+      data: { messageId: writeMessageId, role: 'assistant', createdAt },
+    },
+    {
+      ...eventBase('write-call'),
+      type: 'part_created',
+      data: {
+        partId: 'write-call-part',
+        messageId: writeMessageId,
+        partType: 'tool_call',
+        payload: {
+          toolCallId: 'write-1',
+          toolName: 'Write',
+          input: { file_path: input.targetPath, content: 'Canary\n' },
+        },
+        createdAt,
+      },
+    },
+    {
+      ...eventBase('write-result'),
+      type: 'part_created',
+      data: {
+        partId: 'write-result-part',
+        messageId: writeMessageId,
+        partType: 'tool_result',
+        payload: {
+          toolCallId: 'write-1',
+          toolName: 'Write',
+          output: 'ok',
+          error: null,
+        },
+        createdAt,
+      },
+    },
+    {
+      ...eventBase('final-message'),
+      type: 'message_created',
+      data: {
+        messageId: finalMessageId,
+        role: 'assistant',
+        createdAt,
+        metadata: {
+          turnFinalization: {
+            turnId: secondTurnId,
+            inputMessageIds: [inboxMessageId],
+            turnsCount: 2,
+            toolCallsCount: 1,
+            durationMs: 2,
+          },
+        },
+      },
+    },
+    {
+      ...eventBase('final-part'),
+      type: 'part_created',
+      data: {
+        partId: 'final-text',
+        messageId: finalMessageId,
+        partType: 'text',
+        payload: { text: input.finalText },
+        createdAt,
+      },
+    },
+    {
+      ...eventBase('inbox-acknowledged'),
+      type: 'inbox_acknowledged',
+      data: { messageIds: [inboxMessageId], acknowledgedAt: createdAt },
+    },
+    {
+      ...eventBase('turn-completed-2'),
+      type: 'turn_completed',
+      data: {
+        turnId: secondTurnId,
+        completedAt: createdAt,
+        turnsCount: 2,
+        toolCallsCount: 1,
+        durationMs: 2,
+      },
+    },
+    {
+      ...eventBase('session-updated'),
+      type: 'session_updated',
+      data: { sessionId, taskStatus: 'completed' },
+    },
+  ];
 }
 
 function resolveDurableInteractionRunnerExecutable(): string {
@@ -844,6 +1015,16 @@ export function validateProductionWebRecoveryEvidence(
       throw new Error(`Expected exactly one ${type} event`);
     }
   }
+  const recoveredInteraction = evidence.durableEvents.find(
+    (event) => event.type === 'interaction_recovered'
+  );
+  const inboxMessageId =
+    recoveredInteraction?.type === 'interaction_recovered'
+      ? recoveredInteraction.data.inboxMessageId
+      : undefined;
+  if (!inboxMessageId) {
+    throw new Error('Expected a durable recovery inbox identity');
+  }
   const assistantMessageIds = new Set(
     evidence.durableEvents.flatMap((event) =>
       event.type === 'message_created' && event.data.role === 'assistant'
@@ -865,8 +1046,23 @@ export function validateProductionWebRecoveryEvidence(
       return [event.data.payload.text];
     })
     .join('');
+  if (finalAssistantText(evidence.durableEvents) !== evidence.finalMarker) {
+    throw new Error('Expected exact durable final marker');
+  }
   if (assistantText.split(evidence.finalMarker).length - 1 !== 1) {
     throw new Error('Expected exactly one durable final marker');
+  }
+  const lifecycle = inspectDurableCompletionLifecycle(
+    evidence.durableEvents,
+    inboxMessageId
+  );
+  const recoveryAttemptCount = evidence.durableEvents.filter(
+    (event) =>
+      event.type === 'turn_started' &&
+      event.data.inputMessageIds?.includes(inboxMessageId)
+  ).length;
+  if (!lifecycle || recoveryAttemptCount !== 2) {
+    throw new Error('Expected durable completion after exactly two attempts');
   }
   const completionCount = evidence.sseEvents.filter(
     (event) => event.type === 'session.completed'
@@ -1479,6 +1675,7 @@ describe('durable ACP recovery diagnostics', () => {
     );
     expect(webCell).toContain('finalInstruction: splitInstruction');
     expect(webCell).toContain('expect(seed.prompt).not.toContain(finalMarker)');
+    expect(webCell).toContain('expectReal2xxDownstream(proxy)');
     expect(webCell).not.toContain('GUI_INTERACTION_ and RECOVERED');
   });
 
@@ -2132,51 +2329,10 @@ describe('durable Web recovery diagnostics', () => {
   });
 
   it('validates the exact production Chromium pending-resume trajectory', () => {
-    const createdAt = '2026-08-29T00:00:00.000Z';
-    const writeInput = { file_path: '/tmp/canary.txt', content: 'Canary\n' };
-    const durableEvents = [
-      ['interaction_requested', {}],
-      ['interaction_responded', {}],
-      ['interaction_recovered', {}],
-      [
-        'part_created',
-        {
-          partType: 'tool_call',
-          payload: { toolCallId: 'write-1', toolName: 'Write', input: writeInput },
-        },
-      ],
-      [
-        'part_created',
-        {
-          partType: 'tool_result',
-          payload: {
-            toolCallId: 'write-1',
-            toolName: 'Write',
-            output: 'ok',
-            error: null,
-          },
-        },
-      ],
-      ['message_created', { messageId: 'final', role: 'assistant' }],
-      [
-        'part_created',
-        {
-          partId: 'final-text',
-          messageId: 'final',
-          partType: 'text',
-          payload: { text: 'GUI_RECOVERED' },
-        },
-      ],
-      ['session.completed', {}],
-    ].map(([type, data], index) => ({
-      id: `event-${index}`,
-      sessionId: 'session',
-      timestamp: createdAt,
-      type,
-      cwd: '/tmp',
-      version: 'test',
-      data,
-    })) as SessionEvent[];
+    const durableEvents = createProductionWebRecoveryDurableEvents({
+      targetPath: '/tmp/canary.txt',
+      finalText: 'GUI_RECOVERED',
+    });
 
     expect(
       validateProductionWebRecoveryEvidence({
@@ -2240,6 +2396,88 @@ describe('durable Web recovery diagnostics', () => {
         finalMarker: 'GUI_RECOVERED',
       })
     ).toThrow('exactly one Write');
+  });
+
+  it('rejects a final marker surrounded by extra assistant text', () => {
+    const targetPath = '/tmp/canary.txt';
+    const durableEvents = createProductionWebRecoveryDurableEvents({
+      targetPath,
+      finalText: 'prefix GUI_RECOVERED suffix',
+    });
+
+    expect(() =>
+      validateProductionWebRecoveryEvidence({
+        sseEvents: [
+          { type: 'provider.retry', properties: { phase: 'scheduled' } },
+          {
+            type: 'pending.resume',
+            properties: {
+              phase: 'retry_scheduled',
+              attempt: 2,
+              maxAttempts: 4,
+              kind: 'pending_input',
+              delayMs: 900,
+            },
+          },
+          {
+            type: 'pending.resume',
+            properties: {
+              phase: 'recovered',
+              attempt: 2,
+              maxAttempts: 4,
+              kind: 'pending_input',
+            },
+          },
+          { type: 'session.completed', properties: {} },
+        ],
+        durableEvents,
+        targetContent: 'Canary\n',
+        targetPath,
+        finalMarker: 'GUI_RECOVERED',
+      })
+    ).toThrow('exact durable final marker');
+  });
+
+  it('rejects recovered Web evidence without ordered durable attempts', () => {
+    const targetPath = '/tmp/canary.txt';
+    const durableEvents = createProductionWebRecoveryDurableEvents({
+      targetPath,
+      finalText: 'GUI_RECOVERED',
+    }).filter(
+      (event) => event.id !== 'turn-started-1' && event.id !== 'turn-aborted-1'
+    );
+
+    expect(() =>
+      validateProductionWebRecoveryEvidence({
+        sseEvents: [
+          { type: 'provider.retry', properties: { phase: 'scheduled' } },
+          {
+            type: 'pending.resume',
+            properties: {
+              phase: 'retry_scheduled',
+              attempt: 2,
+              maxAttempts: 4,
+              kind: 'pending_input',
+              delayMs: 900,
+            },
+          },
+          {
+            type: 'pending.resume',
+            properties: {
+              phase: 'recovered',
+              attempt: 2,
+              maxAttempts: 4,
+              kind: 'pending_input',
+            },
+          },
+          { type: 'session.completed', properties: {} },
+        ],
+        durableEvents,
+        targetContent: 'Canary\n',
+        targetPath,
+        finalMarker: 'GUI_RECOVERED',
+      })
+    ).toThrow('durable completion');
   });
 
   it('preserves the safe diagnostic structure when evidence settles quickly', async () => {
@@ -2764,6 +3002,7 @@ describe
         expect(proxy.injectedRequestNumbers).toEqual([1]);
         expect(proxy.heldRequestNumbers).toEqual([2]);
         expect(proxy.forwardedRequestNumbers).toContain(2);
+        expectReal2xxDownstream(proxy);
         expect(await fileIsMissing(getSessionInboxFilePath(workspace, sessionId))).toBe(
           true
         );
