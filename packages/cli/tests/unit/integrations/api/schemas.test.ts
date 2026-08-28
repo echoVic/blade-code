@@ -103,6 +103,44 @@ describe('API Schemas', () => {
         },
       });
     });
+
+    it('accepts a version 2 goal with a bounded execution frontier', () => {
+      const goal = GoalSchema.parse({
+        version: 2,
+        sessionId: 'session-1',
+        goalId: 'goal-1',
+        objective: 'Continue the durable task list.',
+        status: 'active',
+        tokensUsed: 12,
+        timeUsedSeconds: 3,
+        continuationCount: 1,
+        executionFrontier: {
+          taskListId: 'goal:session-1:goal-1',
+          total: 2,
+          completed: 1,
+          inProgress: 0,
+          pending: 1,
+          blocked: 0,
+          nextTask: {
+            id: '2',
+            subject: 'Run the focused test',
+            priority: 'high',
+          },
+          digestSha256: 'a'.repeat(64),
+          observedAt: '2026-08-28T00:00:00.000Z',
+        },
+        createdAt: '2026-08-28T00:00:00.000Z',
+        updatedAt: '2026-08-28T00:00:01.000Z',
+      });
+
+      expect(goal).toMatchObject({
+        version: 2,
+        executionFrontier: {
+          taskListId: 'goal:session-1:goal-1',
+          pending: 1,
+        },
+      });
+    });
   });
 
   describe('PermissionModeSchema', () => {

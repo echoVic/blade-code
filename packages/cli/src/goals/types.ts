@@ -74,7 +74,7 @@ export interface GoalExecutionFrontier {
 }
 
 export interface GoalSnapshot {
-  version: 1;
+  version: 1 | 2;
   sessionId: string;
   goalId: string;
   objective: string;
@@ -87,6 +87,7 @@ export interface GoalSnapshot {
   completionVerification?: GoalCompletionVerification;
   verificationStall?: GoalVerificationStallState;
   prematureStop?: GoalPrematureStopState;
+  executionFrontier?: GoalExecutionFrontier;
   createdAt: string;
   updatedAt: string;
 }

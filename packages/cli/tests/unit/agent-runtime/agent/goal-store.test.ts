@@ -6,11 +6,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getSessionGoalFilePath } from '../../../../src/context/storage/pathUtils.js';
 import type { SessionGoalFinalizationInfo } from '../../../../src/context/types.js';
 import { GoalStore } from '../../../../src/goals/GoalStore.js';
+import type { GoalExecutionFrontier } from '../../../../src/goals/types.js';
 
 describe('GoalStore', () => {
   let storageRoot: string;
   let workspaceRoot: string;
   const sessionId = 'goal-session';
+
+  const frontier: GoalExecutionFrontier = {
+    taskListId: 'goal:goal-session:goal-1',
+    total: 2,
+    completed: 1,
+    inProgress: 0,
+    pending: 1,
+    blocked: 0,
+    nextTask: {
+      id: '2',
+      subject: 'Run the focused test',
+      priority: 'high',
+    },
+    digestSha256: 'a'.repeat(64),
+    observedAt: '2026-08-28T00:00:00.000Z',
+  };
 
   beforeEach(() => {
     storageRoot = mkdtempSync(path.join(os.tmpdir(), 'blade-goal-store-'));
@@ -50,6 +67,75 @@ describe('GoalStore', () => {
     const mode = (await stat(filePath)).mode & 0o777;
     expect(mode).toBe(0o600);
     expect(JSON.parse(await readFile(filePath, 'utf8'))).toEqual(created);
+  });
+
+  it('creates version 2 goals and persists the execution frontier atomically', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    const created = await store.create({ objective: 'ship the frontier' });
+
+    expect((created as { version: number }).version).toBe(2);
+
+    const updated = await store.recordExecutionFrontier({
+      ...frontier,
+      taskListId: `goal:${sessionId}:${created.goalId}`,
+    });
+
+    expect(updated).toMatchObject({
+      version: 2,
+      executionFrontier: {
+        total: 2,
+        completed: 1,
+        pending: 1,
+        nextTask: { subject: 'Run the focused test' },
+      },
+    });
+    await expect(new GoalStore(workspaceRoot, sessionId).get()).resolves.toEqual(
+      updated
+    );
+  });
+
+  it('reads a version 1 goal and upgrades it when the frontier is recorded', async () => {
+    const filePath = getSessionGoalFilePath(workspaceRoot, sessionId);
+    await mkdir(path.dirname(filePath), { recursive: true });
+    const legacyGoal = {
+      version: 1,
+      sessionId,
+      goalId: 'goal-1',
+      objective: 'upgrade the persisted goal',
+      status: 'active',
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      continuationCount: 0,
+      createdAt: '2026-08-28T00:00:00.000Z',
+      updatedAt: '2026-08-28T00:00:00.000Z',
+    };
+    await writeFile(filePath, JSON.stringify(legacyGoal), { mode: 0o600 });
+
+    await expect(new GoalStore(workspaceRoot, sessionId).get()).resolves.toMatchObject(
+      { version: 1, goalId: 'goal-1' }
+    );
+    const upgraded = await new GoalStore(workspaceRoot, sessionId).recordExecutionFrontier({
+      ...frontier,
+      taskListId: 'goal:goal-session:goal-1',
+    });
+
+    expect(upgraded).toMatchObject({ version: 2, executionFrontier: frontier });
+    expect(JSON.parse(await readFile(filePath, 'utf8'))).toMatchObject({
+      version: 2,
+      executionFrontier: frontier,
+    });
+  });
+
+  it('rejects an execution frontier for a different goal', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    const created = await store.create({ objective: 'reject a mismatched frontier' });
+
+    await expect(
+      store.recordExecutionFrontier({ ...frontier, taskListId: 'goal:other:goal' })
+    ).rejects.toThrow('does not match the current goal');
+    const unchanged = await store.get();
+    expect(unchanged).toMatchObject({ goalId: created.goalId });
+    expect(unchanged).not.toHaveProperty('executionFrontier');
   });
 
   it('rejects a second unfinished goal and allows replacement after completion', async () => {

@@ -334,7 +334,7 @@ export type SessionUnarchiveResponse = Static<typeof SessionUnarchiveResponseSch
 
 export const GoalSchema = Runtime(
   Type.Object({
-    version: Type.Literal(1),
+    version: Type.Union([Type.Literal(1), Type.Literal(2)]),
     sessionId: Type.String(),
     goalId: Type.String(),
     objective: Type.String(),
@@ -372,6 +372,25 @@ export const GoalSchema = Runtime(
     ),
     verificationStall: Type.Optional(
       Type.Unsafe<GoalVerificationStallState>({ type: 'object' })
+    ),
+    executionFrontier: Type.Optional(
+      Type.Object({
+        taskListId: Type.String({ minLength: 1, maxLength: 256 }),
+        total: Type.Integer({ minimum: 0 }),
+        completed: Type.Integer({ minimum: 0 }),
+        inProgress: Type.Integer({ minimum: 0 }),
+        pending: Type.Integer({ minimum: 0 }),
+        blocked: Type.Integer({ minimum: 0 }),
+        nextTask: Type.Optional(
+          Type.Object({
+            id: Type.String({ minLength: 1 }),
+            subject: Type.String({ minLength: 1, maxLength: 512 }),
+            priority: StringEnum(['high', 'medium', 'low']),
+          })
+        ),
+        digestSha256: Type.String({ pattern: '^[a-f0-9]{64}$' }),
+        observedAt: Type.String(),
+      })
     ),
     createdAt: Type.String(),
     updatedAt: Type.String(),

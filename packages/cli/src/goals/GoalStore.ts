@@ -13,6 +13,7 @@ import {
   type GoalChangeEvent,
   type GoalCompletionVerificationResult,
   type GoalCreateInput,
+  type GoalExecutionFrontier,
   type GoalProgress,
   type GoalSnapshot,
   MAX_CONSECUTIVE_GOAL_PREMATURE_STOPS,
@@ -40,8 +41,26 @@ const GoalCompletionVerificationSchema = Type.Object({
   evidenceSha256: Type.Optional(Type.String({ pattern: '^[a-f0-9]{64}$' })),
 });
 
+const GoalExecutionFrontierSchema = Type.Object({
+  taskListId: Type.String({ minLength: 1, maxLength: 256 }),
+  total: Type.Integer({ minimum: 0 }),
+  completed: Type.Integer({ minimum: 0 }),
+  inProgress: Type.Integer({ minimum: 0 }),
+  pending: Type.Integer({ minimum: 0 }),
+  blocked: Type.Integer({ minimum: 0 }),
+  nextTask: Type.Optional(
+    Type.Object({
+      id: Type.String({ minLength: 1 }),
+      subject: Type.String({ minLength: 1, maxLength: 512 }),
+      priority: StringEnum(['high', 'medium', 'low']),
+    })
+  ),
+  digestSha256: Type.String({ pattern: '^[a-f0-9]{64}$' }),
+  observedAt: Type.String({ format: 'date-time' }),
+});
+
 const GoalSnapshotSchema = Type.Object({
-  version: Type.Literal(1),
+  version: Type.Union([Type.Literal(1), Type.Literal(2)]),
   sessionId: Type.String({ minLength: 1 }),
   goalId: Type.String({ minLength: 1 }),
   objective: Type.String({ minLength: 1, maxLength: MAX_OBJECTIVE_CHARS }),
@@ -66,6 +85,7 @@ const GoalSnapshotSchema = Type.Object({
       detectedAt: Type.String({ format: 'date-time' }),
     })
   ),
+  executionFrontier: Type.Optional(GoalExecutionFrontierSchema),
   createdAt: Type.String({ format: 'date-time' }),
   updatedAt: Type.String({ format: 'date-time' }),
 });
@@ -147,7 +167,7 @@ export class GoalStore {
       const now = new Date().toISOString();
       const tokenBudget = normalizeTokenBudget(input.tokenBudget);
       const goal: GoalSnapshot = {
-        version: 1,
+        version: 2,
         sessionId: this.sessionId,
         goalId: nanoid(12),
         objective: normalizeObjective(input.objective),
@@ -178,6 +198,25 @@ export class GoalStore {
         prematureStop: undefined,
         status: goal.status === 'verifying' ? 'active' : goal.status,
         statusReason: goal.status === 'verifying' ? undefined : goal.statusReason,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }
+
+  async recordExecutionFrontier(
+    frontier: GoalExecutionFrontier
+  ): Promise<GoalSnapshot> {
+    return this.updateExisting((goal) => {
+      const expectedTaskListId = `goal:${goal.sessionId}:${goal.goalId}`;
+      if (frontier.taskListId !== expectedTaskListId) {
+        throw new Error(
+          `Execution frontier task list ${frontier.taskListId} does not match the current goal`
+        );
+      }
+      return {
+        ...goal,
+        version: 2,
+        executionFrontier: frontier,
         updatedAt: new Date().toISOString(),
       };
     });
