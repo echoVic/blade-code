@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.107] - 2026-08-28
+
+### 修复
+- Web pending-resume recovery 现在具备 single-flight、等待 cleanup、shutdown/新输入可取消，并使用共享的有界重试策略。
+- 通过 React `act` 刷新快捷键状态切换，稳定 coverage 下 CLI transcript pager 的集成行为。
+
+### 测试
+- 新增 Web pending-resume ownership、cleanup、取消、deadline 和并发唤醒覆盖。
+- 验证完整 coverage 套件：443 个文件通过，4402 个测试通过。
+
 ## [0.10.106] - 2026-08-28
 
 ### 修复

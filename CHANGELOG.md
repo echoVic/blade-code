@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.107] - 2026-08-28
+
+### Fixed
+- Made Web pending-resume recovery single-flight, cleanup-aware, cancellable on shutdown or new input, and bounded by the shared retry policy.
+- Stabilized the CLI transcript pager integration under coverage by flushing the shortcut state transition through React `act`.
+
+### Tests
+- Added Web pending-resume ownership, cleanup, cancellation, deadline, and concurrent-wake coverage.
+- Verified the full coverage suite: 443 files passed and 4402 tests passed.
+
 ## [0.10.106] - 2026-08-28
 
 ### Fixed
