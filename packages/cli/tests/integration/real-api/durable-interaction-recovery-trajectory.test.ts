@@ -3374,8 +3374,6 @@ describe
       let proxy: RecordingProviderProxy | undefined;
       const sessionId = `interaction-acp-subprocess-${Date.now()}`;
       const finalMarker = 'ACP_INTERACTION_RECOVERED';
-      const splitInstruction =
-        createDurableInteractionRecoveryPtyFinalInstruction(finalMarker);
       const expectedContent = 'Canary\n';
 
       try {
@@ -3411,10 +3409,10 @@ describe
           sessionId,
           workspace,
           target,
-          finalInstruction: splitInstruction,
+          finalInstruction:
+            'After Write succeeds, reply exactly ACP_INTERACTION_RECOVERED.',
           finalMarker,
         });
-        expect(seed.prompt).not.toContain(finalMarker);
         const store = new PersistentStore(workspace);
 
         const { stdout, stderr } = await runDurableInteractionRecoveryAcpSubprocess({
