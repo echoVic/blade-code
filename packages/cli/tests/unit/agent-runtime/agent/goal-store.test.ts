@@ -7,6 +7,7 @@ import { getSessionGoalFilePath } from '../../../../src/context/storage/pathUtil
 import type { SessionGoalFinalizationInfo } from '../../../../src/context/types.js';
 import { GoalStore } from '../../../../src/goals/GoalStore.js';
 import type { GoalExecutionFrontier } from '../../../../src/goals/types.js';
+import type { GoalFrontierStallState } from '../../../../src/goals/types.js';
 
 describe('GoalStore', () => {
   let storageRoot: string;
@@ -92,6 +93,81 @@ describe('GoalStore', () => {
     await expect(new GoalStore(workspaceRoot, sessionId).get()).resolves.toEqual(
       updated
     );
+  });
+
+  it('persists a bounded frontier stall observation with the frontier', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    const created = await store.create({ objective: 'persist stall' });
+    const stall: GoalFrontierStallState = {
+      category: 'same_task_no_effect',
+      consecutiveCount: 2,
+      digestSha256: frontier.digestSha256,
+      detectedAt: '2026-08-28T00:00:00.000Z',
+    };
+
+    const scopedFrontier = {
+      ...frontier,
+      taskListId: `goal:${sessionId}:${created.goalId}`,
+    };
+    const updated = await store.recordExecutionFrontier(
+      scopedFrontier,
+      { ...stall, digestSha256: scopedFrontier.digestSha256 }
+    );
+
+    expect(updated.version).toBe(2);
+    expect(updated.executionFrontier).toEqual(scopedFrontier);
+    expect(updated.frontierStall).toEqual({
+      ...stall,
+      digestSha256: scopedFrontier.digestSha256,
+    });
+    expect((await store.get())?.frontierStall).toEqual({
+      ...stall,
+      digestSha256: scopedFrontier.digestSha256,
+    });
+    expect(created.goalId).toBe(updated.goalId);
+  });
+
+  it('clears a previous frontier stall when a fresh frontier has no observation', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    const created = await store.create({ objective: 'clear stall' });
+    const scopedFrontier = {
+      ...frontier,
+      taskListId: `goal:${sessionId}:${created.goalId}`,
+    };
+    const stall: GoalFrontierStallState = {
+      category: 'repeated_deferral',
+      consecutiveCount: 1,
+      digestSha256: scopedFrontier.digestSha256,
+      detectedAt: '2026-08-28T00:00:00.000Z',
+    };
+    await store.recordExecutionFrontier(scopedFrontier, stall);
+
+    const updated = await store.recordExecutionFrontier({
+      ...scopedFrontier,
+      digestSha256: 'b'.repeat(64),
+    });
+
+    expect(updated).not.toHaveProperty('frontierStall');
+  });
+
+  it('clears frontier stall state after a durable workspace mutation', async () => {
+    const store = new GoalStore(workspaceRoot, sessionId);
+    const created = await store.create({ objective: 'clear after mutation' });
+    const scopedFrontier = {
+      ...frontier,
+      taskListId: `goal:${sessionId}:${created.goalId}`,
+    };
+    const stall: GoalFrontierStallState = {
+      category: 'same_task_no_effect',
+      consecutiveCount: 2,
+      digestSha256: scopedFrontier.digestSha256,
+      detectedAt: '2026-08-28T00:00:00.000Z',
+    };
+    await store.recordExecutionFrontier(scopedFrontier, stall);
+
+    const updated = await store.clearFrontierStall();
+
+    expect(updated).not.toHaveProperty('frontierStall');
   });
 
   it('reads a version 1 goal and upgrades it when the frontier is recorded', async () => {

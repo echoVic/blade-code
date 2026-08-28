@@ -918,12 +918,16 @@ export class Agent {
                       this.sessionRuntime!.invalidateGoalCompletionVerification(reason),
                     finalizeCompletion: () =>
                       this.sessionRuntime!.finalizeVerifiedGoalCompletion(),
+                    clearFrontierStall: () =>
+                      this.sessionRuntime!.clearGoalFrontierStall(),
                     refreshFrontier: async () => {
                       const active = await this.sessionRuntime!.getGoal();
                       if (!active || !['active', 'verifying'].includes(active.status)) {
                         return null;
                       }
-                      return this.sessionRuntime!.prepareGoalContinuation(active);
+                      return this.sessionRuntime!.prepareGoalContinuation(active, {
+                        observeStall: false,
+                      });
                     },
                   },
                 }

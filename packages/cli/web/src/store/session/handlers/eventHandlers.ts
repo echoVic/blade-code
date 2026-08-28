@@ -2221,6 +2221,9 @@ const handleGoalFrontierUpdated: EventHandler = (props, get, set) => {
     goal: {
       ...goal,
       executionFrontier: props.frontier as NonNullable<Goal['executionFrontier']>,
+      ...(props.stall
+        ? { frontierStall: props.stall as NonNullable<Goal['frontierStall']> }
+        : { frontierStall: undefined }),
     },
   });
 };

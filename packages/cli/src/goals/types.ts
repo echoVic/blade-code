@@ -73,6 +73,30 @@ export interface GoalExecutionFrontier {
   observedAt: string;
 }
 
+export const GOAL_FRONTIER_STALL_CATEGORIES = [
+  'waiting_dependency',
+  'same_task_no_effect',
+  'repeated_deferral',
+] as const;
+
+export type GoalFrontierStallCategory =
+  (typeof GOAL_FRONTIER_STALL_CATEGORIES)[number];
+
+export const MAX_CONSECUTIVE_GOAL_FRONTIER_STALLS = 3;
+
+export interface GoalFrontierStallState {
+  category: GoalFrontierStallCategory;
+  consecutiveCount: number;
+  digestSha256: string;
+  detectedAt: string;
+}
+
+export interface GoalFrontierStallInput {
+  taskEffect: 'none' | 'changed';
+  prematureStopCount: number;
+  verificationStallCount: number;
+}
+
 export interface GoalSnapshot {
   version: 1 | 2;
   sessionId: string;
@@ -88,6 +112,7 @@ export interface GoalSnapshot {
   verificationStall?: GoalVerificationStallState;
   prematureStop?: GoalPrematureStopState;
   executionFrontier?: GoalExecutionFrontier;
+  frontierStall?: GoalFrontierStallState;
   createdAt: string;
   updatedAt: string;
 }

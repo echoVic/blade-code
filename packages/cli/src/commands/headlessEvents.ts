@@ -301,6 +301,10 @@ const GoalFrontierEventSchema = event({
   ),
   digest_sha256: Type.String({ pattern: '^[a-f0-9]{64}$' }),
   observed_at: Type.String(),
+  stall_category: Type.Optional(
+    StringEnum(['waiting_dependency', 'same_task_no_effect', 'repeated_deferral'])
+  ),
+  stall_count: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
 });
 
 const GoalEventSchema = event({
@@ -330,6 +334,10 @@ const GoalEventSchema = event({
   verification_stall_count: Type.Optional(Type.Integer({ minimum: 1 })),
   premature_stop_pattern: Type.Optional(StringEnum(GOAL_PREMATURE_STOP_PATTERNS)),
   premature_stop_count: Type.Optional(Type.Integer({ minimum: 1 })),
+  frontier_stall_category: Type.Optional(
+    StringEnum(['waiting_dependency', 'same_task_no_effect', 'repeated_deferral'])
+  ),
+  frontier_stall_count: Type.Optional(Type.Integer({ minimum: 1, maximum: 3 })),
 });
 
 const SubagentEventSchema = event({

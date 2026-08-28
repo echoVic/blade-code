@@ -612,6 +612,47 @@ describe('SessionRuntime', () => {
     await runtime.dispose();
   });
 
+  it('persists frontier stall observations only across continuation boundaries', async () => {
+    const workspaceRoot = path.join(storageRoot, 'goal-frontier-stall-project');
+    mkdirSync(workspaceRoot, { recursive: true });
+    const sessionId = 'goal-frontier-stall-session';
+    const runtime = await SessionRuntime.create({ sessionId, workspaceRoot });
+    const goal = await runtime.createGoal({ objective: 'recover a stalled task' });
+    const taskListId = getGoalTaskListId(goal);
+    const manager = TaskListManager.getInstance(taskListId, storageRoot);
+    const task = await manager.createTask({
+      subject: 'Make progress',
+      description: 'A task that remains pending across continuations',
+    });
+
+    const first = await runtime.prepareGoalContinuation(goal);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error('first frontier preparation failed');
+    expect(first.goal.frontierStall).toBeUndefined();
+
+    const second = await runtime.prepareGoalContinuation(first.goal);
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error('second frontier preparation failed');
+    expect(second.goal.frontierStall).toMatchObject({
+      category: 'same_task_no_effect',
+      consecutiveCount: 1,
+      digestSha256: second.frontier.digestSha256,
+    });
+
+    const third = await runtime.prepareGoalContinuation(second.goal);
+    expect(third.ok).toBe(true);
+    if (!third.ok) throw new Error('third frontier preparation failed');
+    expect(third.goal.frontierStall?.consecutiveCount).toBe(2);
+
+    await manager.updateTask(task.id, { status: 'completed' });
+    const recovered = await runtime.prepareGoalContinuation(third.goal);
+    expect(recovered.ok).toBe(true);
+    if (!recovered.ok) throw new Error('recovery frontier preparation failed');
+    expect(recovered.goal.frontierStall).toBeUndefined();
+
+    await runtime.dispose();
+  });
+
   it('reloads a recovered durable inbox into an idle cached runtime', async () => {
     const workspaceRoot = path.join(storageRoot, 'recovered-inbox-workspace');
     mkdirSync(workspaceRoot, { recursive: true });

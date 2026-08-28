@@ -14,11 +14,14 @@ import {
   type GoalCompletionVerificationResult,
   type GoalCreateInput,
   type GoalExecutionFrontier,
+  type GoalFrontierStallState,
   type GoalProgress,
   type GoalSnapshot,
   MAX_CONSECUTIVE_GOAL_PREMATURE_STOPS,
   MAX_CONSECUTIVE_GOAL_VERIFICATION_STALLS,
   MAX_GOAL_VERIFICATION_FEEDBACK_CHARS,
+  GOAL_FRONTIER_STALL_CATEGORIES,
+  MAX_CONSECUTIVE_GOAL_FRONTIER_STALLS,
 } from './types.js';
 
 const MAX_GOAL_FILE_BYTES = 1024 * 1024;
@@ -59,6 +62,16 @@ const GoalExecutionFrontierSchema = Type.Object({
   observedAt: Type.String({ format: 'date-time' }),
 });
 
+const GoalFrontierStallSchema = Type.Object({
+  category: StringEnum(GOAL_FRONTIER_STALL_CATEGORIES),
+  consecutiveCount: Type.Integer({
+    minimum: 1,
+    maximum: MAX_CONSECUTIVE_GOAL_FRONTIER_STALLS,
+  }),
+  digestSha256: Type.String({ pattern: '^[a-f0-9]{64}$' }),
+  detectedAt: Type.String({ format: 'date-time' }),
+});
+
 const GoalSnapshotSchema = Type.Object({
   version: Type.Union([Type.Literal(1), Type.Literal(2)]),
   sessionId: Type.String({ minLength: 1 }),
@@ -86,6 +99,7 @@ const GoalSnapshotSchema = Type.Object({
     })
   ),
   executionFrontier: Type.Optional(GoalExecutionFrontierSchema),
+  frontierStall: Type.Optional(GoalFrontierStallSchema),
   createdAt: Type.String({ format: 'date-time' }),
   updatedAt: Type.String({ format: 'date-time' }),
 });
@@ -196,6 +210,7 @@ export class GoalStore {
         completionVerification: undefined,
         verificationStall: undefined,
         prematureStop: undefined,
+        frontierStall: undefined,
         status: goal.status === 'verifying' ? 'active' : goal.status,
         statusReason: goal.status === 'verifying' ? undefined : goal.statusReason,
         updatedAt: new Date().toISOString(),
@@ -204,7 +219,9 @@ export class GoalStore {
   }
 
   async recordExecutionFrontier(
-    frontier: GoalExecutionFrontier
+    frontier: GoalExecutionFrontier,
+    stall?: GoalFrontierStallState,
+    options: { preserveStall?: boolean } = {}
   ): Promise<GoalSnapshot> {
     return this.updateExisting((goal) => {
       const expectedTaskListId = `goal:${goal.sessionId}:${goal.goalId}`;
@@ -213,10 +230,27 @@ export class GoalStore {
           `Execution frontier task list ${frontier.taskListId} does not match the current goal`
         );
       }
+      if (stall && stall.digestSha256 !== frontier.digestSha256) {
+        throw new Error('Frontier stall digest does not match the execution frontier');
+      }
+      const { frontierStall: previousStall, ...goalWithoutStall } = goal;
+      const nextStall = options.preserveStall ? previousStall : stall;
       return {
-        ...goal,
+        ...goalWithoutStall,
         version: 2,
         executionFrontier: frontier,
+        ...(nextStall === undefined ? {} : { frontierStall: nextStall }),
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }
+
+  async clearFrontierStall(): Promise<GoalSnapshot> {
+    return this.updateExisting((goal) => {
+      const { frontierStall: _frontierStall, ...withoutStall } = goal;
+      return {
+        ...withoutStall,
+        version: 2,
         updatedAt: new Date().toISOString(),
       };
     });
@@ -273,6 +307,7 @@ export class GoalStore {
         statusReason: undefined,
         verificationStall: undefined,
         prematureStop: undefined,
+        frontierStall: undefined,
         updatedAt: new Date().toISOString(),
       };
     });
@@ -298,6 +333,7 @@ export class GoalStore {
         status: 'verifying',
         statusReason: 'awaiting independent completion verification',
         prematureStop: undefined,
+        frontierStall: undefined,
         completionVerification: {
           attempt: (goal.completionVerification?.attempt ?? 0) + 1,
           status: 'pending',
@@ -412,6 +448,7 @@ export class GoalStore {
         statusReason: undefined,
         verificationStall: undefined,
         prematureStop: undefined,
+        frontierStall: undefined,
         updatedAt: new Date().toISOString(),
       };
     });
@@ -466,6 +503,7 @@ export class GoalStore {
         statusReason: normalizedReason,
         completionVerification: undefined,
         verificationStall: undefined,
+        frontierStall: undefined,
         updatedAt: new Date().toISOString(),
       };
     });

@@ -5159,6 +5159,7 @@ async function executeRunAsync(
             goalId: event.goal.goalId,
             goalStatus: event.goal.status,
             frontier: event.frontier,
+            stall: event.goal.frontierStall,
           });
           break;
 

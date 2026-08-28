@@ -1,4 +1,5 @@
 import { formatGoalExecutionFrontier } from './executionFrontier.js';
+import { formatGoalFrontierStall } from './frontierStall.js';
 import { type GoalSnapshot, MAX_CONSECUTIVE_GOAL_PREMATURE_STOPS } from './types.js';
 
 function escapeXml(value: string): string {
@@ -69,6 +70,7 @@ Continuation: ${goal.continuationCount}
 ${verification}
 </goal-state>
 ${goal.executionFrontier ? formatGoalExecutionFrontier(goal.executionFrontier) : ''}
+${goal.frontierStall ? formatGoalFrontierStall(goal.frontierStall) : ''}
 ${recovery}
 
 Continue working toward the active goal. Use the current workspace and transcript as

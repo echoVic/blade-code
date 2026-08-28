@@ -3146,6 +3146,12 @@ describe('AcpSession', () => {
             tokensUsed: 0,
             timeUsedSeconds: 0,
             continuationCount: 1,
+            frontierStall: {
+              category: 'same_task_no_effect',
+              consecutiveCount: 2,
+              digestSha256: 'a'.repeat(64),
+              detectedAt: '2026-08-28T00:00:00.000Z',
+            },
             createdAt: '2026-08-28T00:00:00.000Z',
             updatedAt: '2026-08-28T00:00:00.000Z',
           },
@@ -3187,6 +3193,10 @@ describe('AcpSession', () => {
             taskListId: 'goal:test-session-id:goal-frontier',
             total: 1,
             inProgress: 1,
+            stall: {
+              category: 'same_task_no_effect',
+              consecutiveCount: 2,
+            },
           },
         },
       });

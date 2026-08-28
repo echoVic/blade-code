@@ -958,6 +958,8 @@ function createEventWriter(
           next_task: event.frontier.nextTask,
           digest_sha256: event.frontier.digestSha256,
           observed_at: event.frontier.observedAt,
+          stall_category: event.goal.frontierStall?.category,
+          stall_count: event.goal.frontierStall?.consecutiveCount,
         });
         return;
       }
@@ -998,6 +1000,8 @@ function createEventWriter(
           verification_stall_count: event.goal?.verificationStall?.consecutiveCount,
           premature_stop_pattern: event.goal?.prematureStop?.pattern,
           premature_stop_count: event.goal?.prematureStop?.consecutiveCount,
+          frontier_stall_category: event.goal?.frontierStall?.category,
+          frontier_stall_count: event.goal?.frontierStall?.consecutiveCount,
         });
         return;
       }

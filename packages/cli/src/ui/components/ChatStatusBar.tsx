@@ -183,6 +183,9 @@ export const ChatStatusBar: React.FC = React.memo(() => {
                 {goal.verificationStall
                   ? ` verify-gap:${goal.verificationStall.consecutiveCount}`
                   : ''}
+                {goal.frontierStall
+                  ? ` frontier:${goal.frontierStall.category}:${goal.frontierStall.consecutiveCount}`
+                  : ''}
               </Text>
               <Text color="gray">·</Text>
             </>

@@ -1703,6 +1703,14 @@ export class AcpSession {
                     blocked: event.frontier.blocked,
                     nextTask: event.frontier.nextTask,
                     digestSha256: event.frontier.digestSha256,
+                    ...(event.goal.frontierStall
+                      ? {
+                          stall: {
+                            category: event.goal.frontierStall.category,
+                            consecutiveCount: event.goal.frontierStall.consecutiveCount,
+                          },
+                        }
+                      : {}),
                   },
                 },
               });

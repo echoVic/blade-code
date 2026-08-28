@@ -57,6 +57,7 @@ import {
   readGoalExecutionFrontier,
   type GoalExecutionFrontierPreparation,
 } from '../../goals/executionFrontier.js';
+import { classifyGoalFrontierStall } from '../../goals/frontierStall.js';
 import type {
   GoalCompletionVerificationResult,
   GoalCreateInput,
@@ -1169,13 +1170,36 @@ export class SessionRuntime {
   }
 
   async prepareGoalContinuation(
-    goal: GoalSnapshot
+    goal: GoalSnapshot,
+    options: { observeStall?: boolean } = {}
   ): Promise<GoalExecutionFrontierPreparation> {
     try {
       const result = await readGoalExecutionFrontier(goal, {
         configDir: getBladeStorageRoot(),
       });
-      const updatedGoal = await this.goalStore.recordExecutionFrontier(result.frontier);
+      const preserveStall =
+        options.observeStall === false &&
+        goal.frontierStall?.digestSha256 === result.frontier.digestSha256;
+      const stall =
+        options.observeStall === false
+          ? preserveStall
+            ? goal.frontierStall
+            : undefined
+          : classifyGoalFrontierStall(
+              goal.executionFrontier,
+              result.frontier,
+              {
+                taskEffect: 'none',
+                prematureStopCount: goal.prematureStop?.consecutiveCount ?? 0,
+                verificationStallCount: goal.verificationStall?.consecutiveCount ?? 0,
+              },
+              goal.frontierStall
+            );
+      const updatedGoal = await this.goalStore.recordExecutionFrontier(
+        result.frontier,
+        stall,
+        { preserveStall }
+      );
       return { ok: true, goal: updatedGoal, ...result };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -1322,6 +1346,10 @@ export class SessionRuntime {
 
   invalidateGoalCompletionVerification(reason: string): Promise<GoalSnapshot> {
     return this.goalStore.invalidateCompletionVerification(reason);
+  }
+
+  clearGoalFrontierStall(): Promise<GoalSnapshot> {
+    return this.goalStore.clearFrontierStall();
   }
 
   finalizeVerifiedGoalCompletion(): Promise<GoalSnapshot> {

@@ -141,6 +141,42 @@ describe('API Schemas', () => {
         },
       });
     });
+
+    it('accepts a bounded frontier stall diagnostic', () => {
+      const goal = GoalSchema.parse({
+        version: 2,
+        sessionId: 'session-1',
+        goalId: 'goal-1',
+        objective: 'Continue the durable task list.',
+        status: 'active',
+        tokensUsed: 12,
+        timeUsedSeconds: 3,
+        continuationCount: 2,
+        executionFrontier: {
+          taskListId: 'goal:session-1:goal-1',
+          total: 1,
+          completed: 0,
+          inProgress: 1,
+          pending: 0,
+          blocked: 0,
+          digestSha256: 'a'.repeat(64),
+          observedAt: '2026-08-28T00:00:00.000Z',
+        },
+        frontierStall: {
+          category: 'repeated_deferral',
+          consecutiveCount: 2,
+          digestSha256: 'a'.repeat(64),
+          detectedAt: '2026-08-28T00:00:01.000Z',
+        },
+        createdAt: '2026-08-28T00:00:00.000Z',
+        updatedAt: '2026-08-28T00:00:01.000Z',
+      });
+
+      expect(goal.frontierStall).toMatchObject({
+        category: 'repeated_deferral',
+        consecutiveCount: 2,
+      });
+    });
   });
 
   describe('PermissionModeSchema', () => {

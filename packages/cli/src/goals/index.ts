@@ -10,6 +10,9 @@ export type {
   GoalChangeEvent,
   GoalCreateInput,
   GoalExecutionFrontier,
+  GoalFrontierStallCategory,
+  GoalFrontierStallInput,
+  GoalFrontierStallState,
   GoalPrematureStopPattern,
   GoalPrematureStopState,
   GoalProgress,
@@ -23,4 +26,10 @@ export {
   MAX_CONSECUTIVE_GOAL_PREMATURE_STOPS,
   MAX_CONSECUTIVE_GOAL_VERIFICATION_STALLS,
   MAX_GOAL_VERIFICATION_FEEDBACK_CHARS,
+  GOAL_FRONTIER_STALL_CATEGORIES,
+  MAX_CONSECUTIVE_GOAL_FRONTIER_STALLS,
 } from './types.js';
+export {
+  classifyGoalFrontierStall,
+  formatGoalFrontierStall,
+} from './frontierStall.js';

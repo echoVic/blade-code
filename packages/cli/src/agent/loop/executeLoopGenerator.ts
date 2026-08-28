@@ -3868,6 +3868,10 @@ validates the object and may return a bounded corrective error.`;
                   yield { kind: 'goal_updated', goal };
                 }
               }
+              if (options?.goalLifecycle?.clearFrontierStall) {
+                const goal = await options.goalLifecycle.clearFrontierStall();
+                yield { kind: 'goal_updated', goal };
+              }
             }
             const verificationSubagentType =
               typeof resultMetadata?.subagentType === 'string'

@@ -153,4 +153,39 @@ describe('goal execution frontier', () => {
     expect(prompt).toContain('<goal-execution-frontier>');
     expect(prompt).toContain('Run the focused test');
   });
+
+  it('injects a bounded frontier stall strategy block into continuation prompts', () => {
+    const prompt = buildGoalContinuationPrompt({
+      version: 2,
+      sessionId: 'session-a',
+      goalId: 'goal-1',
+      objective: 'finish the task list',
+      status: 'active',
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      continuationCount: 2,
+      executionFrontier: {
+        taskListId: 'goal:session-a:goal-1',
+        total: 1,
+        completed: 0,
+        inProgress: 1,
+        pending: 0,
+        blocked: 0,
+        digestSha256: 'b'.repeat(64),
+        observedAt: '2026-08-28T00:00:00.000Z',
+      },
+      frontierStall: {
+        category: 'repeated_deferral',
+        consecutiveCount: 2,
+        digestSha256: 'b'.repeat(64),
+        detectedAt: '2026-08-28T00:00:00.000Z',
+      },
+      createdAt: '2026-08-28T00:00:00.000Z',
+      updatedAt: '2026-08-28T00:00:00.000Z',
+    });
+
+    expect(prompt).toContain('<goal-frontier-stall>');
+    expect(prompt).toContain('repeated_deferral');
+    expect(prompt).toContain('Required action:');
+  });
 });

@@ -1563,12 +1563,22 @@ describe('eventHandlers', () => {
           digestSha256: 'a'.repeat(64),
           observedAt: '2026-08-28T00:00:00.000Z',
         },
+        stall: {
+          category: 'same_task_no_effect',
+          consecutiveCount: 2,
+          digestSha256: 'a'.repeat(64),
+          detectedAt: '2026-08-28T00:00:00.000Z',
+        },
       },
     });
 
     expect(state.goal?.executionFrontier).toMatchObject({
       taskListId: 'goal:session-1:goal-1',
       inProgress: 1,
+    });
+    expect(state.goal?.frontierStall).toMatchObject({
+      category: 'same_task_no_effect',
+      consecutiveCount: 2,
     });
   });
 

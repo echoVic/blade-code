@@ -149,13 +149,20 @@ digest，也不暴露反馈原文。
 verifier 反馈；TUI 状态栏在恢复期间显示 `recovery:N`，重复验证缺口显示
 `verify-gap:N`。
 
+Goal continuation 还会比较持久化 execution frontier。任务 digest 连续不变且有可审计信号
+时，Goal sidecar 会记录 bounded `frontierStall`：`waiting_dependency`、
+`same_task_no_effect` 或 `repeated_deferral`，最多连续 3 次。它只在下一次 continuation
+prompt 中要求换策略，不会仅因 digest 不变把 Goal 标记为 blocked；Task 状态变化、workspace
+mutation、编辑或显式 resume 会清除该观察。
+
 ### Web
 
 Goal control bar 显示 `Verifying completion / 正在验证完成声明`。展开后展示 attempt、
 稳定 verdict、opaque verifier Session ID、安全摘要与 SHA-256 前缀。fresh tab 从
 GoalSnapshot 恢复相同证据。自动化可通过 `data-blade-goal-recovery` 和
 `data-blade-goal-recovery-pattern` 检查 premature-stop 状态，并通过
-`data-blade-goal-verification-stall` 检查重复 verifier 缺口。
+`data-blade-goal-verification-stall` 检查重复 verifier 缺口，通过
+`data-blade-goal-frontier-stall` 与 `data-blade-goal-frontier-stall-count` 检查任务前沿停滞。
 
 ### ACP
 
@@ -179,6 +186,8 @@ ACP projection 不包含完整 verifier transcript 或 credential，workspace ro
 `verificationStallCount`。
 每次 continuation 还会通过 `blade/goalContinuation` metadata 投影 continuation、
 premature-stop pattern 和连续次数。
+`blade/goalFrontier` metadata 同时携带 bounded stall category/count；标准 `plan` 的顺序和
+任务协议保持不变。
 
 ## 准出
 

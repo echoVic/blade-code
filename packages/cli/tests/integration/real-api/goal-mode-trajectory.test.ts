@@ -11,10 +11,12 @@ import type { ChatContext } from '../../../src/agent/types.js';
 import type { RuntimeConfig } from '../../../src/config/types.js';
 import { getSessionFilePath } from '../../../src/context/storage/pathUtils.js';
 import { GoalStore } from '../../../src/goals/GoalStore.js';
+import { getGoalTaskListId } from '../../../src/goals/executionFrontier.js';
 import { Bus } from '../../../src/server/bus.js';
 import { SessionRoutes } from '../../../src/server/routes/session.js';
 import { getState } from '../../../src/store/vanilla.js';
 import { createMockACPClient } from '../../support/mocks/mockACPClient.js';
+import { TaskListManager } from '../../../src/tools/builtin/task/TaskListManager.js';
 import {
   buildRealApiRuntimeConfig,
   getEnabledModelConfigs,
@@ -331,7 +333,18 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
             'Continuation is 1, use no tools and output exactly: I will check back ' +
             'later. When Continuation is 2 or greater, write GOAL_RECOVERY_COMPLETE ' +
             'followed by a newline to goal-recovery.txt, read the file to verify its ' +
-            'exact content, then call UpdateGoal with status complete.',
+            'exact content, mark the durable task with id 1 completed using TaskUpdate, ' +
+            'then call UpdateGoal with status complete.',
+        });
+        const goal = await runtime.getGoal();
+        if (!goal) throw new Error('Goal disappeared before task setup');
+        await TaskListManager.getInstance(
+          getGoalTaskListId(goal),
+          path.join(workspace, '.blade-storage')
+        ).createTask({
+          subject: 'Complete the recovery fixture',
+          description: 'Mark this task completed after writing and reading the result file.',
+          priority: 'high',
         });
         agent = await Agent.createWithRuntime(runtime, { sessionId });
         const context: ChatContext = {
@@ -377,6 +390,14 @@ describe.skipIf(!enabled)('Goal mode trajectory (real API)', () => {
             prematureStopCount: 1,
           })
         );
+        expect(
+          events.some(
+            (event) =>
+              event.kind === 'goal_frontier_updated' &&
+              event.goal.frontierStall?.category === 'same_task_no_effect' &&
+              event.goal.frontierStall.consecutiveCount === 1
+          )
+        ).toBe(true);
         const transcript = await readFile(
           getSessionFilePath(workspace, sessionId),
           'utf8'

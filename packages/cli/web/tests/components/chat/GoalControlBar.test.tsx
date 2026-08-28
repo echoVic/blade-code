@@ -57,7 +57,15 @@ const sessionState = vi.hoisted(() => ({
           blocked: number;
           nextTask?: { id: string; subject: string; priority: 'high' | 'medium' | 'low' };
           digestSha256: string;
-          observedAt: string;
+        observedAt: string;
+      },
+    frontierStall: undefined as
+      | undefined
+      | {
+          category: 'waiting_dependency' | 'same_task_no_effect' | 'repeated_deferral';
+          consecutiveCount: number;
+          digestSha256: string;
+          detectedAt: string;
         },
     createdAt: '2026-08-04T00:00:00.000Z',
     updatedAt: '2026-08-04T00:01:35.000Z',
@@ -87,6 +95,7 @@ describe('GoalControlBar', () => {
     sessionState.goal.prematureStop = undefined;
     sessionState.goal.verificationStall = undefined;
     sessionState.goal.executionFrontier = undefined;
+    sessionState.goal.frontierStall = undefined;
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -222,6 +231,12 @@ describe('GoalControlBar', () => {
       digestSha256: 'a'.repeat(64),
       observedAt: '2026-08-28T00:00:00.000Z',
     };
+    sessionState.goal.frontierStall = {
+      category: 'same_task_no_effect',
+      consecutiveCount: 2,
+      digestSha256: 'a'.repeat(64),
+      detectedAt: '2026-08-28T00:00:00.000Z',
+    };
 
     act(() => {
       root.render(<GoalControlBar />);
@@ -237,6 +252,8 @@ describe('GoalControlBar', () => {
         bladeGoalFrontierPending: '1',
         bladeGoalFrontierBlocked: '0',
         bladeGoalFrontierNextTask: '3',
+        bladeGoalFrontierStall: 'same_task_no_effect',
+        bladeGoalFrontierStallCount: '2',
       },
     });
   });

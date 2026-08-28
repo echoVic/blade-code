@@ -123,9 +123,15 @@ The status bar displays `goal:verifying`. Headless JSONL uses a stable `goal` ev
 
 Text output writes the lifecycle to stderr, avoiding pollution of final stdout. `/goal status` displays persisted verifier feedback; during recovery, the TUI status bar displays `recovery:N`, while a repeated verifier gap displays `verify-gap:N`.
 
+Goal continuations also compare the persisted execution frontier. When the task digest remains
+unchanged with an auditable liveness signal, the Goal sidecar records a bounded `frontierStall`
+category: `waiting_dependency`, `same_task_no_effect`, or `repeated_deferral`, capped at three
+observations. It only asks the next continuation to change strategy; an unchanged digest alone never
+blocks the Goal. Task changes, workspace mutation, editing, or explicit resume clear the observation.
+
 ### Web
 
-The Goal control bar displays `Verifying completion / 正在验证完成声明`. When expanded, it shows the attempt, stable verdict, opaque verifier Session ID, bounded feedback, SHA-256 prefix, and repeated-gap count. A fresh tab recovers the same evidence from GoalSnapshot. Automation can inspect durable recovery state through `data-blade-goal-recovery`, `data-blade-goal-recovery-pattern`, and `data-blade-goal-verification-stall`.
+The Goal control bar displays `Verifying completion / 正在验证完成声明`. When expanded, it shows the attempt, stable verdict, opaque verifier Session ID, bounded feedback, SHA-256 prefix, and repeated-gap count. A fresh tab recovers the same evidence from GoalSnapshot. Automation can inspect durable recovery state through `data-blade-goal-recovery`, `data-blade-goal-recovery-pattern`, and `data-blade-goal-verification-stall`. It can inspect frontier stall state through `data-blade-goal-frontier-stall` and `data-blade-goal-frontier-stall-count`.
 
 ### ACP
 
@@ -145,7 +151,7 @@ Goal lifecycle and verifier Task use standard session updates. On synchronous pr
 ```
 
 ACP projection does not include the full verifier transcript or credentials, and the workspace root is replaced with `.`. It carries the bounded `verificationSummary` and `verificationStallCount`.
-Each continuation additionally projects its continuation number, premature-stop pattern, and consecutive count through `blade/goalContinuation` metadata.
+Each continuation additionally projects its continuation number, premature-stop pattern, and consecutive count through `blade/goalContinuation` metadata. The `blade/goalFrontier` metadata also carries the bounded stall category/count; standard `plan` ordering and task semantics remain unchanged.
 
 ## Qualification
 

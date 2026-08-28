@@ -1,7 +1,4 @@
-import type {
-  GoalPrematureStopPattern,
-  GoalVerificationStallState,
-} from '../goals/types.js';
+import type { GoalPrematureStopPattern, GoalVerificationStallState } from '../goals/types.js';
 import { Default, Runtime, type Static, StringEnum, Type } from '../schema/index.js';
 import {
   MAX_INLINE_ATTACHMENT_BYTES,
@@ -390,6 +387,18 @@ export const GoalSchema = Runtime(
         ),
         digestSha256: Type.String({ pattern: '^[a-f0-9]{64}$' }),
         observedAt: Type.String(),
+      })
+    ),
+    frontierStall: Type.Optional(
+      Type.Object({
+        category: StringEnum([
+          'waiting_dependency',
+          'same_task_no_effect',
+          'repeated_deferral',
+        ]),
+        consecutiveCount: Type.Integer({ minimum: 1, maximum: 3 }),
+        digestSha256: Type.String({ pattern: '^[a-f0-9]{64}$' }),
+        detectedAt: Type.String(),
       })
     ),
     createdAt: Type.String(),

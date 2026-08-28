@@ -623,6 +623,8 @@ describe('headless event contract', () => {
       },
       digest_sha256: 'a'.repeat(64),
       observed_at: '2026-08-28T00:00:00.000Z',
+      stall_category: 'same_task_no_effect',
+      stall_count: 2,
     });
 
     expect(event).toMatchObject({
