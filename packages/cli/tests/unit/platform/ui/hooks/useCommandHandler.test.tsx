@@ -64,6 +64,7 @@ const mocks = vi.hoisted(() => {
     isProcessing: false,
     storeProcessing: false,
     setProcessing: vi.fn(),
+    setError: vi.fn(),
     clearAbortController: vi.fn(),
     setCurrentThinkingContent: vi.fn(),
     resetStreamingBuffers: vi.fn(),
@@ -142,7 +143,7 @@ vi.mock('../../../../../src/store/selectors/index.js', () => ({
     setCommand: mocks.setCommand,
     setCompactedContext: mocks.setCompactedContext,
     updateTokenUsage: mocks.updateTokenUsage,
-    setError: vi.fn(),
+    setError: mocks.setError,
   }),
   useAppActions: () => ({
     setTasks: vi.fn(),
@@ -569,6 +570,40 @@ describe('useCommandHandler durable recovery', () => {
     expect(mocks.addAssistantMessage).not.toHaveBeenCalledWith(canceledMessage);
     expect(mocks.addAssistantMessage).toHaveBeenCalledOnce();
     expect(mocks.addAssistantMessage).toHaveBeenCalledWith('已取消');
+  });
+
+  it('silences a lifecycle AbortError and releases command processing', async () => {
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    mocks.hasActiveGoal.mockResolvedValue(false);
+    mocks.hasRecoverableTurn.mockResolvedValue(false);
+    mocks.processSlashCommand.mockResolvedValueOnce({ type: 'not_slash' });
+    mocks.createAgent.mockRejectedValueOnce(
+      new DOMException('TUI Agent lifecycle was invalidated', 'AbortError')
+    );
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(mocks.hasPendingInbox).toHaveBeenCalled());
+    mocks.setProcessing.mockClear();
+    mocks.clearAbortController.mockClear();
+    mocks.addAssistantMessage.mockClear();
+    mocks.setError.mockClear();
+
+    await act(async () => {
+      await hook!.executeCommand({
+        displayText: 'continue after lifecycle change',
+        text: 'continue after lifecycle change',
+        images: [],
+        parts: [{ type: 'text', text: 'continue after lifecycle change' }],
+      });
+    });
+
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalled();
+    expect(mocks.setError).not.toHaveBeenCalled();
+    expect(mocks.setProcessing).toHaveBeenNthCalledWith(1, true);
+    expect(mocks.setProcessing).toHaveBeenLastCalledWith(false);
+    expect(mocks.clearAbortController).toHaveBeenCalledWith(mocks.abortController);
   });
 
   it('routes bang input to the Session shell without creating an Agent', async () => {
