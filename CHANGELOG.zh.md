@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.120] - 2026-08-29
+
+### 修复
+- 从 Web server 的 live Session projection 中移除完整 transcript 数组，使 SSE 与 Browser 访问不再在没有 Runtime 的情况下常驻历史规模内存。
+- 将 active 与 cold Session 的消息计数统一为 durable user/assistant metadata，同时保留按请求读取 history 和 Runtime 自主管理 model context 的边界。
+
+### 测试
+- 新增 AST 与 route 回归，覆盖 history-free hydration、durable message 读取、Browser 访问、cold resume context，以及 authoritative rewind/shell metadata。
+
 ## [0.10.119] - 2026-08-29
 
 ### 修复

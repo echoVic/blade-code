@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.120] - 2026-08-29
+
+### Fixed
+- Removed complete transcript arrays from the Web server's live Session projection, so SSE and Browser access no longer retain history-sized memory without a Runtime.
+- Unified active and cold Session message counts on durable user/assistant metadata while preserving request-scoped history reads and Runtime-owned model context.
+
+### Tests
+- Added AST and route regressions for history-free hydration, durable message reads, Browser access, cold resume context, and authoritative rewind/shell metadata.
+
 ## [0.10.119] - 2026-08-29
 
 ### Fixed
