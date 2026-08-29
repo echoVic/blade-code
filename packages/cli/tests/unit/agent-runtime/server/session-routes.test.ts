@@ -5328,6 +5328,137 @@ describe('SessionRoutes runtime reuse', () => {
     expect(runtime.dispose).toHaveBeenCalledOnce();
   });
 
+  it('disposes a Runtime created after the shutdown initialization snapshot', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const { SessionRuntime: CurrentSessionRuntime } = await import(
+      '../../../../src/agent/runtime/SessionRuntime.js'
+    );
+    const { SessionRuntimeResidency: CurrentSessionRuntimeResidency } = await import(
+      '../../../../src/agent/runtime/SessionRuntimeResidency.js'
+    );
+    const sessionId = 'shutdown-sse-runtime';
+    const projectPath = '/tmp/shutdown-sse-runtime';
+    const ref = { sessionId, projectPath };
+    mockResolvedSession(sessionId, { projectPath });
+
+    let releaseDisposeAll: () => void = () => undefined;
+    const disposeAllGate = new Promise<void>((resolve) => {
+      releaseDisposeAll = resolve;
+    });
+    let markDisposeAllEntered: () => void = () => undefined;
+    const disposeAllEntered = new Promise<void>((resolve) => {
+      markDisposeAllEntered = resolve;
+    });
+    const originalDisposeAll =
+      CurrentSessionRuntimeResidency.prototype.disposeAll;
+    const disposeAll = vi
+      .spyOn(CurrentSessionRuntimeResidency.prototype, 'disposeAll')
+      .mockImplementation(async function () {
+        markDisposeAllEntered();
+        await disposeAllGate;
+        await originalDisposeAll.call(this);
+      });
+
+    const createRuntime = vi.mocked(CurrentSessionRuntime.create);
+    const defaultCreateRuntime = createRuntime.getMockImplementation();
+    if (!defaultCreateRuntime) throw new Error('Expected SessionRuntime.create mock');
+    let releaseCreate: () => void = () => undefined;
+    const createGate = new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
+    let markRuntimeCreated: (runtime: SessionRuntime) => void = () => undefined;
+    const runtimeCreated = new Promise<SessionRuntime>((resolve) => {
+      markRuntimeCreated = resolve;
+    });
+    createRuntime.mockReset().mockImplementation(async (...args) => {
+      const runtime = await defaultCreateRuntime(...args);
+      markRuntimeCreated(runtime);
+      await createGate;
+      return runtime;
+    });
+
+    const controller = createSessionRouteController();
+    let collector: ReturnType<typeof createSseCollector> | undefined;
+    let shutdown: Promise<void> | undefined;
+    try {
+      const response = await controller.app.request(
+        `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`
+      );
+      collector = createSseCollector(response);
+      await expect(collector.next()).resolves.toMatchObject({ type: 'connected' });
+      expect(SessionService.assertSessionWritable).toHaveBeenCalledWith(
+        sessionId,
+        projectPath
+      );
+      expect(CurrentSessionRuntime.create).not.toHaveBeenCalled();
+
+      shutdown = controller.shutdown('server-shutdown');
+      await disposeAllEntered;
+
+      busState.publish(ref, 'team.message.received', {
+        teamName: 'shutdown-team',
+        messageId: 'shutdown-message',
+        content: 'wake after the shutdown snapshot',
+        metadata: {
+          clientVisible: false,
+          teamMessage: {
+            messageId: 'shutdown-message',
+            teamName: 'shutdown-team',
+            from: 'worker',
+            to: 'team-lead',
+          },
+        },
+      });
+
+      const runtime = await runtimeCreated;
+      const runtimeDispose = vi.spyOn(runtime, 'dispose');
+      try {
+        expect(CurrentSessionRuntime.create).toHaveBeenCalledOnce();
+        expect(controller.getRuntimeResidencyStats()).toMatchObject({
+          resident: 0,
+          reserved: 1,
+          pinned: 0,
+        });
+
+        releaseDisposeAll();
+        await expect(shutdown).resolves.toBeUndefined();
+        expect(controller.getRuntimeResidencyStats()).toMatchObject({
+          resident: 0,
+          reserved: 0,
+          pinned: 0,
+        });
+
+        releaseCreate();
+        await vi.waitFor(() => {
+          expect(controller.getCoordinationStats().messageSubmissions).toEqual({
+            keys: 0,
+            operations: 0,
+          });
+        });
+
+        expect(controller.getRuntimeResidencyStats()).toMatchObject({
+          resident: 0,
+          reserved: 0,
+          pinned: 0,
+        });
+        expect(Agent.createWithRuntime).not.toHaveBeenCalled();
+        expect(agentState.destroy).not.toHaveBeenCalled();
+        expect(runtimeDispose).toHaveBeenCalledOnce();
+      } finally {
+        runtimeDispose.mockRestore();
+      }
+    } finally {
+      releaseDisposeAll();
+      releaseCreate();
+      await shutdown?.catch(() => undefined);
+      await collector?.cancel();
+      disposeAll.mockRestore();
+      createRuntime.mockReset().mockImplementation(defaultCreateRuntime);
+    }
+  });
+
   it('keeps every admitted run active beyond the recent-run retention limit', async () => {
     const { createSessionRouteController } = await import(
       '../../../../src/server/routes/session.js'
