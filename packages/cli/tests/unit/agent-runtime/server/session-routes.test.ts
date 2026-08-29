@@ -4298,7 +4298,7 @@ describe('SessionRoutes runtime reuse', () => {
     expect(agentState.chatStream).not.toHaveBeenCalled();
   });
 
-  it('hydrates persisted session history before sending a follow-up message', async () => {
+  it('loads persisted model context without retaining Web Session history', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     mockResolvedSession('persisted-session', {
       projectPath: '/persisted-workspace',
