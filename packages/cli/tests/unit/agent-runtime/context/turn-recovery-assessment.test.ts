@@ -47,7 +47,7 @@ describe('assessSessionTurnRecovery', () => {
     });
   });
 
-  it('requires attention after a successful tool result', () => {
+  it('requires attention after a successful tool result without durable adoption proof', () => {
     expect(
       assessSessionTurnRecovery({
         turnId: 'turn-tool-succeeded',
@@ -65,14 +65,33 @@ describe('assessSessionTurnRecovery', () => {
     });
   });
 
+  it('resumes when every successful tool result has durable safe-adoption proof', () => {
+    expect(
+      assessSessionTurnRecovery({
+        turnId: 'turn-safe-adopted-tool',
+        outcome: 'aborted',
+        inputMessageIds: ['input-1'],
+        hadSuccessfulToolResult: true,
+        interruptedToolCallCount: 0,
+        allSuccessfulToolResultsSafeForResume: true,
+        emptyFinalCorrectionSpent: false,
+      })
+    ).toEqual({
+      state: 'resumable',
+      turnId: 'turn-safe-adopted-tool',
+      inputMessageCount: 1,
+    });
+  });
+
   it('requires attention when a process restart interrupted an in-flight tool', () => {
     expect(
       assessSessionTurnRecovery({
         turnId: 'turn-tool-interrupted',
         outcome: 'aborted',
         inputMessageIds: ['input-1'],
-        hadSuccessfulToolResult: false,
+        hadSuccessfulToolResult: true,
         interruptedToolCallCount: 1,
+        allSuccessfulToolResultsSafeForResume: true,
         emptyFinalCorrectionSpent: false,
       })
     ).toEqual({

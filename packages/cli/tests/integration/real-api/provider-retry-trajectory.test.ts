@@ -1469,9 +1469,10 @@ describe.skipIf(!enabled)('Provider retry trajectory (real API)', () => {
       ).toMatchObject({
         data: {
           recovery: {
-            version: 2,
+            version: 3,
             inputMessageIds: [expect.any(String)],
             interruptedToolCallCount: 1,
+            allSuccessfulToolResultsSafeForResume: false,
           },
         },
       });

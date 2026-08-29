@@ -87,6 +87,11 @@ export interface SessionTurnRecovery {
    * Older recovery receipts omit this field and are interpreted as zero.
    */
   interruptedToolCallCount?: number;
+  /**
+   * Durable proof that every successful result came from a host-validated Task
+   * adoption with known-safe side effects. Absence must be treated as false.
+   */
+  allSuccessfulToolResultsSafeForResume?: boolean;
   emptyFinalCorrectionSpent: boolean;
   finalization?: SessionTurnFinalizationInfo;
 }
@@ -151,10 +156,11 @@ function durableTurnInputMessageIds(
 }
 
 interface ParsedTurnAbortReceipt {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   inputMessageIds: string[];
   hadSuccessfulToolResult: boolean;
   interruptedToolCallCount: number;
+  allSuccessfulToolResultsSafeForResume?: boolean;
   emptyFinalCorrectionSpent: boolean;
 }
 
@@ -162,7 +168,10 @@ function parseTurnAbortReceipt(value: unknown): ParsedTurnAbortReceipt | undefin
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return undefined;
   }
-  if (!('version' in value) || (value.version !== 1 && value.version !== 2)) {
+  if (
+    !('version' in value) ||
+    (value.version !== 1 && value.version !== 2 && value.version !== 3)
+  ) {
     return undefined;
   }
   const inputMessageIds =
@@ -187,11 +196,18 @@ function parseTurnAbortReceipt(value: unknown): ParsedTurnAbortReceipt | undefin
         ? (value.interruptedToolCallCount as number)
         : undefined;
   if (interruptedToolCallCount === undefined) return undefined;
+  const allSuccessfulToolResultsSafeForResume =
+    value.version === 3 &&
+    'allSuccessfulToolResultsSafeForResume' in value &&
+    typeof value.allSuccessfulToolResultsSafeForResume === 'boolean'
+      ? value.allSuccessfulToolResultsSafeForResume
+      : false;
   return {
     version: value.version,
     inputMessageIds,
     hadSuccessfulToolResult: value.hadSuccessfulToolResult,
     interruptedToolCallCount,
+    ...(value.version === 3 ? { allSuccessfulToolResultsSafeForResume } : {}),
     emptyFinalCorrectionSpent: value.emptyFinalCorrectionSpent,
   };
 }
@@ -305,6 +321,11 @@ function unacknowledgedTurnRecovery(
     inputMessageIds,
     hadSuccessfulToolResult: receipt.hadSuccessfulToolResult,
     ...(interruptedToolCallCount > 0 ? { interruptedToolCallCount } : {}),
+    ...(receipt.version === 3 && receipt.allSuccessfulToolResultsSafeForResume === true
+      ? {
+          allSuccessfulToolResultsSafeForResume: true,
+        }
+      : {}),
     emptyFinalCorrectionSpent: receipt.emptyFinalCorrectionSpent,
   };
 }
@@ -335,6 +356,56 @@ export interface SessionAdoptedToolResult {
   error?: string;
   metadata?: JsonValue;
   subagentRef?: SubagentRunRef;
+}
+
+function isSafeAdoptedTaskResult(
+  call: SessionInterruptedToolCall,
+  adopted: SessionAdoptedToolResult | undefined
+): boolean {
+  const input = call.input;
+  const metadata = adopted?.metadata;
+  const ref = adopted?.subagentRef;
+  if (
+    call.toolName !== 'Task' ||
+    adopted?.toolCallId !== call.toolCallId ||
+    adopted.toolName !== 'Task' ||
+    input === null ||
+    typeof input !== 'object' ||
+    Array.isArray(input) ||
+    metadata === null ||
+    typeof metadata !== 'object' ||
+    Array.isArray(metadata) ||
+    !ref
+  ) {
+    return false;
+  }
+  const childId = input.subagent_session_id;
+  const requestedType = input.subagent_type;
+  const description = input.description;
+  const statusMatchesResult =
+    (ref.subagentStatus === 'completed' &&
+      adopted.error === undefined &&
+      typeof adopted.output === 'string') ||
+    (ref.subagentStatus === 'failed' &&
+      typeof adopted.error === 'string' &&
+      adopted.error.length > 0 &&
+      adopted.output === null);
+  return (
+    typeof childId === 'string' &&
+    childId === ref.subagentSessionId &&
+    metadata.subagentSessionId === ref.subagentSessionId &&
+    typeof description === 'string' &&
+    ref.subagentDescription === description &&
+    metadata.description === description &&
+    (requestedType === undefined ||
+      (typeof requestedType === 'string' && requestedType === ref.subagentType)) &&
+    metadata.subagentType === ref.subagentType &&
+    metadata.subagentStatus === ref.subagentStatus &&
+    statusMatchesResult &&
+    metadata.processRestartRecovery === true &&
+    metadata.subagentResultAdopted === true &&
+    metadata.sideEffectsUncertain === false
+  );
 }
 
 export interface SessionTurnRecoveryOptions {
@@ -1211,15 +1282,24 @@ export class PersistentStore {
         const inputMessageIds = [
           ...new Set([...durableInputMessageIds, ...inheritedInputMessageIds]),
         ];
+        const hadSuccessfulToolResult =
+          toolEvidence.hadSuccessfulResult ||
+          turn.recovery?.hadSuccessfulToolResult === true;
         const receipt = {
-          version: 2 as const,
+          version: 3 as const,
           inputMessageIds,
-          hadSuccessfulToolResult:
-            toolEvidence.hadSuccessfulResult ||
-            turn.recovery?.hadSuccessfulToolResult === true,
+          hadSuccessfulToolResult,
           interruptedToolCallCount:
             toolEvidence.orphaned.length +
-            (turn.recovery?.version === 2 ? turn.recovery.interruptedToolCallCount : 0),
+            (turn.recovery?.version === 2 || turn.recovery?.version === 3
+              ? turn.recovery.interruptedToolCallCount
+              : 0),
+          allSuccessfulToolResultsSafeForResume:
+            hadSuccessfulToolResult &&
+            !toolEvidence.hadSuccessfulResult &&
+            turn.recovery?.version === 3 &&
+            turn.recovery.hadSuccessfulToolResult &&
+            turn.recovery.allSuccessfulToolResultsSafeForResume,
           emptyFinalCorrectionSpent:
             durableEmptyFinalCorrectionSpent(projected, active.turnId) ||
             turn.recovery?.emptyFinalCorrectionSpent === true,
@@ -1231,6 +1311,9 @@ export class PersistentStore {
           hadSuccessfulToolResult: receipt.hadSuccessfulToolResult,
           ...(receipt.interruptedToolCallCount > 0
             ? { interruptedToolCallCount: receipt.interruptedToolCallCount }
+            : {}),
+          ...(receipt.allSuccessfulToolResultsSafeForResume
+            ? { allSuccessfulToolResultsSafeForResume: true }
             : {}),
           emptyFinalCorrectionSpent: receipt.emptyFinalCorrectionSpent,
         };
@@ -1259,6 +1342,9 @@ export class PersistentStore {
                 hadSuccessfulToolResult: receipt.hadSuccessfulToolResult,
                 ...(receipt.interruptedToolCallCount > 0
                   ? { interruptedToolCallCount: receipt.interruptedToolCallCount }
+                  : {}),
+                ...(receipt.allSuccessfulToolResultsSafeForResume
+                  ? { allSuccessfulToolResultsSafeForResume: true }
                   : {}),
                 emptyFinalCorrectionSpent: receipt.emptyFinalCorrectionSpent,
               }
@@ -1419,11 +1505,25 @@ export class PersistentStore {
           activeToolEvidence?.orphaned.some((call) => {
             const adopted = options.adoptedToolResults?.get(call.toolCallId);
             return (
-              adopted?.toolCallId === call.toolCallId &&
-              adopted.toolName === call.toolName &&
-              adopted.error === undefined
+              isSafeAdoptedTaskResult(call, adopted) && adopted?.error === undefined
             );
           }) ?? false;
+        const allSuccessfulAdoptedToolResultsSafeForResume =
+          activeToolEvidence?.orphaned
+            .filter((call) => {
+              const adopted = options.adoptedToolResults?.get(call.toolCallId);
+              return (
+                adopted?.toolCallId === call.toolCallId &&
+                adopted.toolName === call.toolName &&
+                adopted.error === undefined
+              );
+            })
+            .every((call) =>
+              isSafeAdoptedTaskResult(
+                call,
+                options.adoptedToolResults?.get(call.toolCallId)
+              )
+            ) ?? true;
         const activeInputMessageIds = new Set(active?.inputMessageIds ?? []);
         const priorRecovery = active
           ? latestUnacknowledgedTurnRecovery(projected)
@@ -1440,12 +1540,15 @@ export class PersistentStore {
         const interruptedToolCallCount = activeToolEvidence
           ? activeToolEvidence.orphaned.filter((call) => {
               const adopted = options.adoptedToolResults?.get(call.toolCallId);
-              return !(
-                adopted?.toolCallId === call.toolCallId &&
-                adopted.toolName === call.toolName
-              );
+              return !isSafeAdoptedTaskResult(call, adopted);
             }).length
           : 0;
+        const inheritedHadSuccessfulToolResult =
+          inheritedPriorRecovery && priorRecovery?.hadSuccessfulToolResult === true;
+        const hadSuccessfulToolResult =
+          (activeToolEvidence?.hadSuccessfulResult ?? false) ||
+          hadSuccessfulAdoptedToolResult ||
+          inheritedHadSuccessfulToolResult;
         recovery = active
           ? {
               turnId: active.turnId,
@@ -1456,11 +1559,7 @@ export class PersistentStore {
                   ...inheritedInputMessageIds,
                 ]),
               ],
-              hadSuccessfulToolResult:
-                (activeToolEvidence?.hadSuccessfulResult ?? false) ||
-                hadSuccessfulAdoptedToolResult ||
-                (inheritedPriorRecovery &&
-                  priorRecovery?.hadSuccessfulToolResult === true),
+              hadSuccessfulToolResult,
               ...(() => {
                 const count =
                   interruptedToolCallCount +
@@ -1469,6 +1568,13 @@ export class PersistentStore {
                     : 0);
                 return count > 0 ? { interruptedToolCallCount: count } : {};
               })(),
+              ...(hadSuccessfulToolResult &&
+              !(activeToolEvidence?.hadSuccessfulResult ?? false) &&
+              allSuccessfulAdoptedToolResultsSafeForResume &&
+              (!inheritedHadSuccessfulToolResult ||
+                priorRecovery?.allSuccessfulToolResultsSafeForResume === true)
+                ? { allSuccessfulToolResultsSafeForResume: true }
+                : {}),
               emptyFinalCorrectionSpent:
                 durableEmptyFinalCorrectionSpent(projected, active.turnId) ||
                 (inheritedPriorRecovery &&
@@ -1480,11 +1586,9 @@ export class PersistentStore {
         const startedAt = active ? Date.parse(active.startedAt) : Number.NaN;
         const recoveryResults = toolCalls.orphaned.flatMap((call) => {
           const adopted = options.adoptedToolResults?.get(call.toolCallId);
-          const validAdoption =
-            adopted?.toolCallId === call.toolCallId &&
-            adopted.toolName === call.toolName
-              ? adopted
-              : undefined;
+          const validAdoption = isSafeAdoptedTaskResult(call, adopted)
+            ? adopted
+            : undefined;
           const resultEvent = this.createEvent('part_created', sessionId, {
             partId: call.toolCallId,
             messageId: validAdoption ? call.messageId : call.toolCallId,
@@ -1550,10 +1654,12 @@ export class PersistentStore {
                   : 0,
                 recovery: recovery
                   ? {
-                      version: 2,
+                      version: 3,
                       inputMessageIds: recovery.inputMessageIds,
                       hadSuccessfulToolResult: recovery.hadSuccessfulToolResult,
                       interruptedToolCallCount: recovery.interruptedToolCallCount ?? 0,
+                      allSuccessfulToolResultsSafeForResume:
+                        recovery.allSuccessfulToolResultsSafeForResume === true,
                       emptyFinalCorrectionSpent: recovery.emptyFinalCorrectionSpent,
                     }
                   : undefined,

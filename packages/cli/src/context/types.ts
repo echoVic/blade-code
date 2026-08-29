@@ -36,7 +36,7 @@ export function parseTurnAbortAcknowledgedInputMessageIds(data: unknown): string
   if (typeof recovery !== 'object' || Array.isArray(recovery)) return [];
   if (
     !('version' in recovery) ||
-    (recovery.version !== 1 && recovery.version !== 2) ||
+    (recovery.version !== 1 && recovery.version !== 2 && recovery.version !== 3) ||
     !('inputMessageIds' in recovery) ||
     !('hadSuccessfulToolResult' in recovery) ||
     typeof recovery.hadSuccessfulToolResult !== 'boolean' ||
@@ -47,10 +47,17 @@ export function parseTurnAbortAcknowledgedInputMessageIds(data: unknown): string
     return [];
   }
   if (
-    recovery.version === 2 &&
+    (recovery.version === 2 || recovery.version === 3) &&
     (!('interruptedToolCallCount' in recovery) ||
       !Number.isSafeInteger(recovery.interruptedToolCallCount) ||
       (recovery.interruptedToolCallCount as number) < 0)
+  ) {
+    return [];
+  }
+  if (
+    recovery.version === 3 &&
+    (!('allSuccessfulToolResultsSafeForResume' in recovery) ||
+      typeof recovery.allSuccessfulToolResultsSafeForResume !== 'boolean')
   ) {
     return [];
   }
@@ -541,6 +548,14 @@ export interface SessionTurnAbortInfo extends SessionTurnMetrics {
         inputMessageIds: string[];
         hadSuccessfulToolResult: boolean;
         interruptedToolCallCount: number;
+        emptyFinalCorrectionSpent: boolean;
+      }
+    | {
+        version: 3;
+        inputMessageIds: string[];
+        hadSuccessfulToolResult: boolean;
+        interruptedToolCallCount: number;
+        allSuccessfulToolResultsSafeForResume: boolean;
         emptyFinalCorrectionSpent: boolean;
       };
 }

@@ -1632,6 +1632,7 @@ export class SessionRuntime {
   async getRecoveredEmptyFinalState(handle: ActiveTurnHandle): Promise<{
     hadSuccessfulToolResult: boolean;
     interruptedToolCallCount?: number;
+    allSuccessfulToolResultsSafeForResume?: boolean;
     correctionSpent: boolean;
   }> {
     const recovery = this.startupTurnRecovery;
@@ -1656,6 +1657,11 @@ export class SessionRuntime {
       hadSuccessfulToolResult: recovery.hadSuccessfulToolResult,
       ...(recovery.interruptedToolCallCount
         ? { interruptedToolCallCount: recovery.interruptedToolCallCount }
+        : {}),
+      ...(recovery.allSuccessfulToolResultsSafeForResume === true
+        ? {
+            allSuccessfulToolResultsSafeForResume: true,
+          }
         : {}),
       correctionSpent: recovery.emptyFinalCorrectionSpent,
     };
@@ -1711,6 +1717,8 @@ export class SessionRuntime {
           ? {
               hadSuccessfulToolResult: startupRecovery.hadSuccessfulToolResult,
               interruptedToolCallCount: startupRecovery.interruptedToolCallCount ?? 0,
+              allSuccessfulToolResultsSafeForResume:
+                startupRecovery.allSuccessfulToolResultsSafeForResume,
               correctionSpent: startupRecovery.emptyFinalCorrectionSpent,
             }
           : await this.getRecoveredEmptyFinalState(handle);
@@ -1726,10 +1734,12 @@ export class SessionRuntime {
           toolCallsCount: outcome.toolCallsCount,
           durationMs: outcome.durationMs,
           recovery: {
-            version: 2,
+            version: 3,
             inputMessageIds,
             hadSuccessfulToolResult: inheritedRecovery.hadSuccessfulToolResult,
             interruptedToolCallCount: inheritedRecovery.interruptedToolCallCount ?? 0,
+            allSuccessfulToolResultsSafeForResume:
+              inheritedRecovery.allSuccessfulToolResultsSafeForResume === true,
             emptyFinalCorrectionSpent: inheritedRecovery.correctionSpent,
           },
         },

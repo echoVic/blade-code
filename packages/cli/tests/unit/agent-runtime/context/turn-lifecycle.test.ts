@@ -12,6 +12,7 @@ import {
   PROCESS_RESTART_TOOL_RESULT,
 } from '../../../../src/context/storage/PersistentStore.js';
 import { getSessionFilePath } from '../../../../src/context/storage/pathUtils.js';
+import { assessSessionTurnRecovery } from '../../../../src/context/turnRecoveryAssessment.js';
 import { SessionService } from '../../../../src/services/SessionService.js';
 
 async function appendRawTurnAbort(
@@ -638,20 +639,22 @@ describe('durable turn lifecycle', () => {
       {
         turnId: 'turn-original',
         recovery: {
-          version: 2,
+          version: 3,
           inputMessageIds: [inputMessageId],
           hadSuccessfulToolResult: true,
           interruptedToolCallCount: 0,
+          allSuccessfulToolResultsSafeForResume: false,
           emptyFinalCorrectionSpent: true,
         },
       },
       {
         turnId: 'turn-recovered',
         recovery: {
-          version: 2,
+          version: 3,
           inputMessageIds: [inputMessageId],
           hadSuccessfulToolResult: true,
           interruptedToolCallCount: 0,
+          allSuccessfulToolResultsSafeForResume: false,
           emptyFinalCorrectionSpent: true,
         },
       },
@@ -835,10 +838,11 @@ describe('durable turn lifecycle', () => {
     [
       'unknown receipt version',
       {
-        version: 3,
+        version: 4,
         inputMessageIds: ['unknown-version'],
         hadSuccessfulToolResult: false,
         interruptedToolCallCount: 0,
+        allSuccessfulToolResultsSafeForResume: false,
         emptyFinalCorrectionSpent: false,
       },
     ],
@@ -858,6 +862,49 @@ describe('durable turn lifecycle', () => {
 
       await expect(store.recoverInterruptedTurn(sessionId)).resolves.toBeUndefined();
       await expect(store.loadSession(sessionId)).resolves.toMatchObject({ sessionId });
+    }
+  );
+
+  it.each([undefined, 'yes'])(
+    '%s v3 safe-adoption proof fails closed',
+    async (proof) => {
+      const store = new PersistentStore(workspaceRoot);
+      await store.initialize();
+      const sessionId = `session-v3-unsafe-proof-${String(proof)}`;
+      const turnId = `turn-v3-unsafe-proof-${String(proof)}`;
+      const inputMessageId = `input-v3-unsafe-proof-${String(proof)}`;
+      await store.saveTurnStart(sessionId, {
+        turnId,
+        kind: 'user',
+        startedAt: new Date(Date.now() - 1_000).toISOString(),
+        inputMessageIds: [inputMessageId],
+      });
+      await store.saveMessage(sessionId, 'user', 'continue safely', null, {
+        inboxMessageId: inputMessageId,
+      });
+      await appendRawTurnAbort(workspaceRoot, sessionId, turnId, {
+        version: 3,
+        inputMessageIds: [inputMessageId],
+        hadSuccessfulToolResult: true,
+        interruptedToolCallCount: 0,
+        ...(proof === undefined
+          ? {}
+          : { allSuccessfulToolResultsSafeForResume: proof }),
+        emptyFinalCorrectionSpent: false,
+      });
+
+      const recovery = await store.recoverInterruptedTurn(sessionId);
+      expect(recovery).toEqual({
+        turnId,
+        outcome: 'aborted',
+        inputMessageIds: [inputMessageId],
+        hadSuccessfulToolResult: true,
+        emptyFinalCorrectionSpent: false,
+      });
+      expect(assessSessionTurnRecovery(recovery)).toMatchObject({
+        state: 'requires_attention',
+        reason: 'successful_tool_result',
+      });
     }
   );
 
@@ -1259,6 +1306,45 @@ describe('durable turn lifecycle', () => {
     });
   });
 
+  it('fails closed for a v2 successful-tool receipt without safe-adoption proof', async () => {
+    const store = new PersistentStore(workspaceRoot);
+    await store.initialize();
+    const sessionId = 'session-v2-success-without-adoption-proof';
+    const turnId = 'turn-v2-success-without-adoption-proof';
+    const inputMessageId = 'input-v2-success-without-adoption-proof';
+    await store.saveTurnStart(sessionId, {
+      turnId,
+      kind: 'user',
+      startedAt: new Date(Date.now() - 1_000).toISOString(),
+      inputMessageIds: [inputMessageId],
+    });
+    await store.saveMessage(sessionId, 'user', 'continue safely', null, {
+      inboxMessageId: inputMessageId,
+    });
+    await appendRawTurnAbort(workspaceRoot, sessionId, turnId, {
+      version: 2,
+      inputMessageIds: [inputMessageId],
+      hadSuccessfulToolResult: true,
+      interruptedToolCallCount: 0,
+      emptyFinalCorrectionSpent: false,
+    });
+
+    const recovery = await store.recoverInterruptedTurn(sessionId);
+    expect(recovery).toEqual({
+      turnId,
+      outcome: 'aborted',
+      inputMessageIds: [inputMessageId],
+      hadSuccessfulToolResult: true,
+      emptyFinalCorrectionSpent: false,
+    });
+    expect(assessSessionTurnRecovery(recovery)).toEqual({
+      state: 'requires_attention',
+      turnId,
+      inputMessageCount: 1,
+      reason: 'successful_tool_result',
+    });
+  });
+
   it('atomically adopts a host-validated subagent result before aborting the parent turn', async () => {
     const store = new PersistentStore(workspaceRoot);
     await store.initialize();
@@ -1304,6 +1390,7 @@ describe('durable turn lifecycle', () => {
       outcome: 'aborted' as const,
       inputMessageIds: [],
       hadSuccessfulToolResult: true,
+      allSuccessfulToolResultsSafeForResume: true,
       emptyFinalCorrectionSpent: false,
     };
     await expect(
@@ -1319,6 +1406,7 @@ describe('durable turn lifecycle', () => {
                 processRestartRecovery: true,
                 subagentResultAdopted: true,
                 sideEffectsUncertain: false,
+                description: 'Inspect the durable marker',
                 subagentSessionId: 'agent-adopted-child',
                 subagentType: 'Explore',
                 subagentStatus: 'completed',
@@ -1426,6 +1514,295 @@ describe('durable turn lifecycle', () => {
       },
     });
     expect(JSON.stringify(events)).not.toContain(PROCESS_RESTART_TOOL_RESULT);
+  });
+
+  it('keeps a normal successful result gated when another result is safely adopted', async () => {
+    const store = new PersistentStore(workspaceRoot);
+    await store.initialize();
+    const sessionId = 'session-mixed-safe-adoption';
+    const turnId = 'turn-mixed-safe-adoption';
+    const inputMessageId = 'input-mixed-safe-adoption';
+    await store.saveTurnStart(sessionId, {
+      turnId,
+      kind: 'user',
+      startedAt: new Date(Date.now() - 1_000).toISOString(),
+      inputMessageIds: [inputMessageId],
+    });
+    await store.saveMessage(sessionId, 'user', 'continue after both tools', null, {
+      inboxMessageId: inputMessageId,
+    });
+    const readCallId = await store.saveToolUse(sessionId, 'Read', {
+      file_path: '/workspace/package.json',
+    });
+    await store.saveToolResult(sessionId, readCallId, 'Read', 'package contents');
+    const taskCallId = await store.saveToolUse(sessionId, 'Task', {
+      description: 'Inspect the durable marker',
+      prompt: 'Find the durable marker and report it.',
+      subagent_type: 'Explore',
+      subagent_session_id: 'agent-mixed-adopted-child',
+    });
+
+    const firstRecovery = await store.recoverInterruptedTurn(sessionId, {
+      adoptedToolResults: new Map([
+        [
+          taskCallId,
+          {
+            toolCallId: taskCallId,
+            toolName: 'Task',
+            output: 'MIXED_CHILD_DURABLE_MARKER',
+            metadata: {
+              processRestartRecovery: true,
+              subagentResultAdopted: true,
+              sideEffectsUncertain: false,
+              description: 'Inspect the durable marker',
+              subagentSessionId: 'agent-mixed-adopted-child',
+              subagentType: 'Explore',
+              subagentStatus: 'completed',
+            },
+            subagentRef: {
+              subagentSessionId: 'agent-mixed-adopted-child',
+              subagentType: 'Explore',
+              subagentDescription: 'Inspect the durable marker',
+              subagentStatus: 'completed',
+            },
+          },
+        ],
+      ]),
+    });
+    expect(firstRecovery).toEqual({
+      turnId,
+      outcome: 'aborted',
+      inputMessageIds: [inputMessageId],
+      hadSuccessfulToolResult: true,
+      emptyFinalCorrectionSpent: false,
+    });
+    expect(assessSessionTurnRecovery(firstRecovery)).toMatchObject({
+      state: 'requires_attention',
+      reason: 'successful_tool_result',
+    });
+    await expect(store.recoverInterruptedTurn(sessionId)).resolves.toEqual(
+      firstRecovery
+    );
+  });
+
+  it('keeps an interrupted tool gated when every successful result is safely adopted', async () => {
+    const store = new PersistentStore(workspaceRoot);
+    await store.initialize();
+    const sessionId = 'session-adoption-with-interrupted-tool';
+    const turnId = 'turn-adoption-with-interrupted-tool';
+    await store.saveTurnStart(sessionId, {
+      turnId,
+      kind: 'user',
+      startedAt: new Date(Date.now() - 1_000).toISOString(),
+    });
+    const taskCallId = await store.saveToolUse(sessionId, 'Task', {
+      description: 'Inspect the durable marker',
+      prompt: 'Find the durable marker and report it.',
+      subagent_type: 'Explore',
+      subagent_session_id: 'agent-adopted-with-interrupted-tool',
+    });
+    await store.saveToolUse(sessionId, 'Write', {
+      file_path: '/workspace/result.txt',
+      content: 'done',
+    });
+
+    const firstRecovery = await store.recoverInterruptedTurn(sessionId, {
+      adoptedToolResults: new Map([
+        [
+          taskCallId,
+          {
+            toolCallId: taskCallId,
+            toolName: 'Task',
+            output: 'SAFE_CHILD_WITH_INTERRUPTED_TOOL',
+            metadata: {
+              processRestartRecovery: true,
+              subagentResultAdopted: true,
+              sideEffectsUncertain: false,
+              description: 'Inspect the durable marker',
+              subagentSessionId: 'agent-adopted-with-interrupted-tool',
+              subagentType: 'Explore',
+              subagentStatus: 'completed',
+            },
+            subagentRef: {
+              subagentSessionId: 'agent-adopted-with-interrupted-tool',
+              subagentType: 'Explore',
+              subagentDescription: 'Inspect the durable marker',
+              subagentStatus: 'completed',
+            },
+          },
+        ],
+      ]),
+    });
+    expect(firstRecovery).toEqual({
+      turnId,
+      outcome: 'aborted',
+      inputMessageIds: [],
+      hadSuccessfulToolResult: true,
+      interruptedToolCallCount: 1,
+      allSuccessfulToolResultsSafeForResume: true,
+      emptyFinalCorrectionSpent: false,
+    });
+    expect(assessSessionTurnRecovery(firstRecovery)).toMatchObject({
+      state: 'requires_attention',
+      reason: 'interrupted_tool_call',
+    });
+    await expect(store.recoverInterruptedTurn(sessionId)).resolves.toEqual(
+      firstRecovery
+    );
+  });
+
+  it('keeps an adopted success with uncertain side effects as interrupted', async () => {
+    const store = new PersistentStore(workspaceRoot);
+    await store.initialize();
+    const sessionId = 'session-unsafe-task-adoption';
+    const turnId = 'turn-unsafe-task-adoption';
+    await store.saveTurnStart(sessionId, {
+      turnId,
+      kind: 'user',
+      startedAt: new Date(Date.now() - 1_000).toISOString(),
+    });
+    const taskCallId = await store.saveToolUse(sessionId, 'Task', {
+      description: 'Inspect uncertain side effects',
+      prompt: 'Report the durable result.',
+      subagent_type: 'Explore',
+      subagent_session_id: 'agent-unsafe-adopted-child',
+    });
+
+    const recovery = await store.recoverInterruptedTurn(sessionId, {
+      adoptedToolResults: new Map([
+        [
+          taskCallId,
+          {
+            toolCallId: taskCallId,
+            toolName: 'Task',
+            output: 'UNSAFE_CHILD_MARKER',
+            metadata: {
+              processRestartRecovery: true,
+              subagentResultAdopted: true,
+              sideEffectsUncertain: true,
+            },
+          },
+        ],
+      ]),
+    });
+    expect(recovery).toEqual({
+      turnId,
+      outcome: 'aborted',
+      inputMessageIds: [],
+      hadSuccessfulToolResult: false,
+      interruptedToolCallCount: 1,
+      emptyFinalCorrectionSpent: false,
+    });
+    expect(assessSessionTurnRecovery(recovery)).toMatchObject({
+      state: 'requires_attention',
+      reason: 'interrupted_tool_call',
+    });
+    expect(JSON.stringify(await store.loadEvents(sessionId))).toContain(
+      PROCESS_RESTART_TOOL_RESULT
+    );
+  });
+
+  it('keeps a failed adoption without host-safe metadata as interrupted', async () => {
+    const store = new PersistentStore(workspaceRoot);
+    await store.initialize();
+    const sessionId = 'session-malformed-failed-task-adoption';
+    const turnId = 'turn-malformed-failed-task-adoption';
+    await store.saveTurnStart(sessionId, {
+      turnId,
+      kind: 'user',
+      startedAt: new Date(Date.now() - 1_000).toISOString(),
+    });
+    const taskCallId = await store.saveToolUse(sessionId, 'Task', {
+      description: 'Inspect a failed child',
+      prompt: 'Report the durable failure.',
+      subagent_type: 'Explore',
+      subagent_session_id: 'agent-malformed-failed-child',
+    });
+
+    const recovery = await store.recoverInterruptedTurn(sessionId, {
+      adoptedToolResults: new Map([
+        [
+          taskCallId,
+          {
+            toolCallId: taskCallId,
+            toolName: 'Task',
+            output: null,
+            error: 'untrusted child failure',
+          },
+        ],
+      ]),
+    });
+    expect(recovery).toEqual({
+      turnId,
+      outcome: 'aborted',
+      inputMessageIds: [],
+      hadSuccessfulToolResult: false,
+      interruptedToolCallCount: 1,
+      emptyFinalCorrectionSpent: false,
+    });
+    expect(assessSessionTurnRecovery(recovery)).toMatchObject({
+      state: 'requires_attention',
+      reason: 'interrupted_tool_call',
+    });
+
+    const events = await store.loadEvents(sessionId);
+    expect(JSON.stringify(events)).toContain(PROCESS_RESTART_TOOL_RESULT);
+    expect(JSON.stringify(events)).not.toContain('untrusted child failure');
+  });
+
+  it('keeps an adoption with a missing terminal child reference as interrupted', async () => {
+    const store = new PersistentStore(workspaceRoot);
+    await store.initialize();
+    const sessionId = 'session-adoption-without-terminal-ref';
+    const turnId = 'turn-adoption-without-terminal-ref';
+    await store.saveTurnStart(sessionId, {
+      turnId,
+      kind: 'user',
+      startedAt: new Date(Date.now() - 1_000).toISOString(),
+    });
+    const taskCallId = await store.saveToolUse(sessionId, 'Task', {
+      description: 'Inspect a child without a terminal reference',
+      prompt: 'Report the durable result.',
+      subagent_type: 'Explore',
+      subagent_session_id: 'agent-without-terminal-ref',
+    });
+
+    const recovery = await store.recoverInterruptedTurn(sessionId, {
+      adoptedToolResults: new Map([
+        [
+          taskCallId,
+          {
+            toolCallId: taskCallId,
+            toolName: 'Task',
+            output: 'UNTRUSTED_CHILD_RESULT',
+            metadata: {
+              processRestartRecovery: true,
+              subagentResultAdopted: true,
+              sideEffectsUncertain: false,
+              subagentSessionId: 'agent-without-terminal-ref',
+              subagentType: 'Explore',
+              subagentStatus: 'completed',
+            },
+          },
+        ],
+      ]),
+    });
+
+    expect(recovery).toEqual({
+      turnId,
+      outcome: 'aborted',
+      inputMessageIds: [],
+      hadSuccessfulToolResult: false,
+      interruptedToolCallCount: 1,
+      emptyFinalCorrectionSpent: false,
+    });
+    expect(assessSessionTurnRecovery(recovery)).toMatchObject({
+      state: 'requires_attention',
+      reason: 'interrupted_tool_call',
+    });
+    expect(JSON.stringify(await store.loadEvents(sessionId))).not.toContain(
+      'UNTRUSTED_CHILD_RESULT'
+    );
   });
 
   it('atomically persists one hidden background completion and terminal child reference', async () => {

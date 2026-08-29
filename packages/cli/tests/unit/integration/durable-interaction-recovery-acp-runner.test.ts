@@ -524,6 +524,36 @@ describe('durable interaction ACP stdio runner', () => {
     ).toMatchObject({ turnId: 'recovered-turn-attempt-2' });
   });
 
+  it('accepts a v3 failed recovered attempt followed by one completed retry', () => {
+    const events = retryCompletionLifecycleEvents();
+    const priorAbort = events[1]!;
+    if (priorAbort.type !== 'turn_aborted') throw new Error('Expected abort fixture');
+
+    expect(
+      inspectDurableCompletionLifecycle(
+        [
+          events[0]!,
+          {
+            ...priorAbort,
+            data: {
+              ...priorAbort.data,
+              recovery: {
+                version: 3,
+                inputMessageIds: ['interaction-request-1'],
+                hadSuccessfulToolResult: false,
+                interruptedToolCallCount: 0,
+                allSuccessfulToolResultsSafeForResume: false,
+                emptyFinalCorrectionSpent: false,
+              },
+            },
+          },
+          ...events.slice(2),
+        ],
+        'interaction-request-1'
+      )
+    ).toMatchObject({ turnId: 'recovered-turn-attempt-2' });
+  });
+
   it('returns incomplete while the final recovered attempt is still active', () => {
     expect(
       inspectDurableCompletionLifecycle(

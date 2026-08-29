@@ -805,7 +805,8 @@ export function inspectDurableCompletionLifecycle(
       !terminal ||
       terminal.event.type !== 'turn_aborted' ||
       terminal.event.data.cause !== 'failed' ||
-      terminal.event.data.recovery?.version !== 2 ||
+      (terminal.event.data.recovery?.version !== 2 &&
+        terminal.event.data.recovery?.version !== 3) ||
       terminal.event.data.recovery.inputMessageIds.filter((id) => id === inboxMessageId)
         .length !== 1 ||
       terminal.event.data.acknowledgedInputMessageIds?.includes(inboxMessageId) ||

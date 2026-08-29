@@ -27,8 +27,8 @@ import {
   PROCESS_RESTART_TOOL_RESULT,
 } from '../../../../src/context/storage/PersistentStore.js';
 import { getSessionFilePath } from '../../../../src/context/storage/pathUtils.js';
-import { GoalStore } from '../../../../src/goals/GoalStore.js';
 import { getGoalTaskListId } from '../../../../src/goals/executionFrontier.js';
+import { GoalStore } from '../../../../src/goals/GoalStore.js';
 import { HookManager } from '../../../../src/hooks/HookManager.js';
 import { HookEvent } from '../../../../src/hooks/types/HookTypes.js';
 import { McpRegistry } from '../../../../src/mcp/McpRegistry.js';
@@ -43,8 +43,8 @@ import { CommunicationStyleCatalog } from '../../../../src/services/communicatio
 import { SessionService } from '../../../../src/services/SessionService.js';
 import type { UserShellExecutor } from '../../../../src/services/UserShellCommandService.js';
 import { FileAccessTracker } from '../../../../src/tools/builtin/file/FileAccessTracker.js';
-import { TaskListManager } from '../../../../src/tools/builtin/task/TaskListManager.js';
 import { BackgroundShellManager } from '../../../../src/tools/builtin/shell/BackgroundShellManager.js';
+import { TaskListManager } from '../../../../src/tools/builtin/task/TaskListManager.js';
 import { InMemorySessionApprovalStore } from '../../../../src/tools/execution/SessionApprovalStore.js';
 import { ToolExecutor } from '../../../../src/tools/execution/ToolExecutor.js';
 
@@ -2065,7 +2065,13 @@ describe('SessionRuntime', () => {
       outcome: 'aborted',
       inputMessageIds: [prepared.messageId],
       hadSuccessfulToolResult: true,
+      allSuccessfulToolResultsSafeForResume: true,
       emptyFinalCorrectionSpent: false,
+    });
+    expect(recovered.getTurnRecoveryAssessment()).toEqual({
+      state: 'resumable',
+      turnId: prepared.handle.id,
+      inputMessageCount: 1,
     });
     expect(recovered.getPendingSteeringCount()).toBe(1);
     expect(JSON.stringify(await recovered.loadModelContext())).toContain(
@@ -2104,6 +2110,19 @@ describe('SessionRuntime', () => {
 
     const second = await SessionRuntime.create({ sessionId, workspaceRoot });
     expect(second.takeStartupAdoptedToolResults()).toEqual([]);
+    expect(second.getStartupTurnRecovery()).toEqual({
+      turnId: prepared.handle.id,
+      outcome: 'aborted',
+      inputMessageIds: [prepared.messageId],
+      hadSuccessfulToolResult: true,
+      allSuccessfulToolResultsSafeForResume: true,
+      emptyFinalCorrectionSpent: false,
+    });
+    expect(second.getTurnRecoveryAssessment()).toEqual({
+      state: 'resumable',
+      turnId: prepared.handle.id,
+      inputMessageCount: 1,
+    });
     const events = await new PersistentStore(workspaceRoot).loadEvents(sessionId);
     expect(
       events?.filter(
