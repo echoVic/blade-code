@@ -351,7 +351,20 @@ describe('EventRoutes global task feed', () => {
     }
 
     const controller = maybeController();
-    const unsubscribeSpy = vi.spyOn(Bus, 'subscribe');
+    const originalSubscribe = Bus.subscribe.bind(Bus);
+    let wrappedUnsubscribe:
+      | ReturnType<typeof vi.fn<() => void>>
+      | undefined;
+    const subscribeSpy = vi
+      .spyOn(Bus, 'subscribe')
+      .mockImplementation((callback) => {
+        const actualUnsubscribe = originalSubscribe(callback);
+        const unsubscribe = vi.fn(() => {
+          actualUnsubscribe();
+        });
+        wrappedUnsubscribe = unsubscribe;
+        return unsubscribe;
+      });
     const response = await controller.app.request('/');
     expect(response.status).toBe(200);
     const reader = response.body?.getReader();
@@ -365,9 +378,9 @@ describe('EventRoutes global task feed', () => {
       const shutdown = controller.shutdown('server-shutdown');
       await expect(readUntilDone(reader, 1000)).resolves.toMatchObject({ done: true });
       await expect(shutdown).resolves.toBeUndefined();
-      expect(unsubscribeSpy).toHaveReturnedTimes(1);
-      const unsubscribe = unsubscribeSpy.mock.results[0]?.value;
-      expect(unsubscribe).toBeTypeOf('function');
+      expect(subscribeSpy).toHaveReturnedTimes(1);
+      expect(wrappedUnsubscribe).toBeDefined();
+      expect(wrappedUnsubscribe).toHaveBeenCalledOnce();
       expect(controller.getSseConnectionStats()).toEqual({
         accepting: false,
         active: 0,
@@ -381,10 +394,10 @@ describe('EventRoutes global task feed', () => {
           message: 'Server is shutting down',
         },
       });
-      expect(unsubscribeSpy).toHaveReturnedTimes(1);
+      expect(subscribeSpy).toHaveReturnedTimes(1);
     } finally {
       await reader.cancel().catch(() => undefined);
-      unsubscribeSpy.mockRestore();
+      subscribeSpy.mockRestore();
     }
   });
 });
