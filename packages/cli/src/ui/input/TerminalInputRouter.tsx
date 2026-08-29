@@ -18,12 +18,17 @@ interface TerminalInputRegistration {
 }
 
 interface TerminalInputRouterApi {
-  register: (handler: TerminalInputHandler, priority: number) => () => void;
+  register: (
+    handler: TerminalInputHandler,
+    priority: number,
+    onRegistered?: () => void
+  ) => () => void;
 }
 
 interface TerminalInputOptions {
   isActive?: boolean;
   priority?: number;
+  onRegistered?: () => void;
 }
 
 const TerminalInputRouterContext = createContext<TerminalInputRouterApi | null>(null);
@@ -37,9 +42,14 @@ export function TerminalInputRouterProvider({
   const nextIdRef = useRef(0);
 
   const register = useCallback(
-    (handler: TerminalInputHandler, priority: number): (() => void) => {
+    (
+      handler: TerminalInputHandler,
+      priority: number,
+      onRegistered?: () => void
+    ): (() => void) => {
       const id = nextIdRef.current++;
       registrationsRef.current.set(id, { id, priority, handler });
+      onRegistered?.();
       return () => {
         registrationsRef.current.delete(id);
       };
@@ -80,6 +90,8 @@ export function useTerminalInput(
   handlerRef.current = handler;
   const isActive = options.isActive ?? true;
   const priority = options.priority ?? 0;
+  const onRegisteredRef = useRef(options.onRegistered);
+  onRegisteredRef.current = options.onRegistered;
 
   useInkInput(
     (input, key) => {
@@ -92,6 +104,10 @@ export function useTerminalInput(
 
   useEffect(() => {
     if (!router || !isActive) return;
-    return router.register((input, key) => handlerRef.current(input, key), priority);
+    return router.register(
+      (input, key) => handlerRef.current(input, key),
+      priority,
+      () => onRegisteredRef.current?.()
+    );
   }, [isActive, priority, router]);
 }

@@ -7,8 +7,7 @@ import {
 } from '../../src/utils/process/ProcessIdentity.js';
 import { findSessionTranscript } from '../integration/real-api/sessionForkTrajectoryHarness.js';
 import {
-  createTuiPtyEnvironment,
-  TUI_COMPOSER_MARKER,
+  createTuiPtyComposerReadyHandshake,
   writeBracketedPaste,
 } from './ptyInput.js';
 
@@ -68,7 +67,7 @@ function signalTerminalTree(terminal: PtyProcess, signal: NodeJS.Signals): void 
 
 async function main(): Promise<void> {
   const input = loadInput();
-  const env = createTuiPtyEnvironment({
+  const handshake = createTuiPtyComposerReadyHandshake({
     HOME: input.home,
     BLADE_STORAGE_ROOT: input.storageRoot,
     BLADE_AUTO_MEMORY: '0',
@@ -96,7 +95,7 @@ async function main(): Promise<void> {
       cwd: input.workspace,
       cols: 140,
       rows: 48,
-      env,
+      env: handshake.env,
     }
   ) as PtyProcess;
   const identity = captureProcessIdentity(terminal.pid) ?? undefined;
@@ -117,7 +116,7 @@ async function main(): Promise<void> {
   try {
     await Promise.race([
       waitFor(
-        () => output.includes(TUI_COMPOSER_MARKER),
+        () => output.includes(handshake.marker),
         'Timed out waiting for Session residency TUI composer',
         60_000
       ),

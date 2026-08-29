@@ -5,8 +5,7 @@ import {
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
 import {
-  createTuiPtyEnvironment,
-  TUI_COMPOSER_MARKER,
+  createTuiPtyComposerReadyHandshake,
   writeBracketedPaste,
 } from './ptyInput.js';
 
@@ -46,7 +45,7 @@ async function main(): Promise<void> {
   const stderrTail = required('BLADE_BOUNDED_PTY_STDERR_TAIL');
   const sessionId = required('BLADE_BOUNDED_PTY_SESSION_ID');
   const secret = process.env.BLADE_BOUNDED_PTY_SECRET ?? '';
-  const childEnv = createTuiPtyEnvironment();
+  const handshake = createTuiPtyComposerReadyHandshake();
   const terminal = spawn(
     '/usr/bin/env',
     [
@@ -65,7 +64,7 @@ async function main(): Promise<void> {
       cwd: workspace,
       cols: 120,
       rows: 40,
-      env: childEnv,
+      env: handshake.env,
     }
   );
   let output = '';
@@ -103,7 +102,7 @@ async function main(): Promise<void> {
 
   try {
     await waitFor(
-      () => output.includes(TUI_COMPOSER_MARKER),
+      () => output.includes(handshake.marker),
       'Timed out waiting for TUI composer',
       30_000
     );

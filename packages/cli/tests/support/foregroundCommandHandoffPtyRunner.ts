@@ -10,8 +10,7 @@ import {
   releaseForegroundCommandHandoffFixture,
 } from './foregroundCommandHandoffFixtureDriver.js';
 import {
-  createTuiPtyEnvironment,
-  TUI_COMPOSER_MARKER,
+  createTuiPtyComposerReadyHandshake,
   writeBracketedPaste,
 } from './ptyInput.js';
 
@@ -52,7 +51,7 @@ async function main(): Promise<void> {
   const finalMarkerLatch = new ArmedPtyMarkerLatch(input.fixture.marker);
   const secretLatch = new ArmedPtyMarkerLatch(input.secret);
   secretLatch.arm();
-  const env = createTuiPtyEnvironment({
+  const handshake = createTuiPtyComposerReadyHandshake({
     HOME: input.home,
     BLADE_STORAGE_ROOT: input.storageRoot,
     BLADE_AUTO_MEMORY: '0',
@@ -79,7 +78,7 @@ async function main(): Promise<void> {
       cwd: input.workspace,
       cols: 140,
       rows: 48,
-      env,
+      env: handshake.env,
     }
   );
   let output = '';
@@ -100,7 +99,7 @@ async function main(): Promise<void> {
 
   try {
     await waitFor(
-      () => output.includes(TUI_COMPOSER_MARKER),
+      () => output.includes(handshake.marker),
       'Timed out waiting for TUI handoff composer',
       30_000
     );

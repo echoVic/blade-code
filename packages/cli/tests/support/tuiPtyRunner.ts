@@ -4,8 +4,7 @@ import {
   latchPtyMarker,
 } from './foregroundBoundedOutputPtyDriver.js';
 import {
-  createTuiPtyEnvironment,
-  TUI_COMPOSER_MARKER,
+  createTuiPtyComposerReadyHandshake,
   writeBracketedPaste,
 } from './ptyInput.js';
 
@@ -42,7 +41,7 @@ function waitFor(
   });
 }
 
-const childEnv = createTuiPtyEnvironment();
+const handshake = createTuiPtyComposerReadyHandshake();
 const terminal = spawn(
   '/usr/bin/env',
   [
@@ -61,7 +60,7 @@ const terminal = spawn(
     cwd: workspace,
     cols: 120,
     rows: 40,
-    env: childEnv,
+    env: handshake.env,
   }
 );
 let output = '';
@@ -72,7 +71,7 @@ terminal.onData((chunk) => {
 });
 
 try {
-  await waitFor(() => output.includes(TUI_COMPOSER_MARKER), 'composer', 30_000);
+  await waitFor(() => output.includes(handshake.marker), 'composer', 30_000);
   await writeBracketedPaste(terminal, prompt);
   await waitFor(() => output.includes('BRACKETED_'), 'bracketed paste', 10_000);
   terminal.write('\r');

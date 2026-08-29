@@ -1,7 +1,11 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { chunkUtf8PtyInput, createTuiPtyEnvironment } from '../../support/ptyInput.js';
+import {
+  chunkUtf8PtyInput,
+  createTuiPtyComposerReadyHandshake,
+  createTuiPtyEnvironment,
+} from '../../support/ptyInput.js';
 
 const supportDir = path.resolve(import.meta.dirname, '../../support');
 const runnerInventory = [
@@ -54,17 +58,62 @@ describe('raw PTY marker latching source contract', () => {
     (fileName) => {
       const source = readRunner(fileName);
 
-      expect(source).toContain('TUI_COMPOSER_MARKER');
+      expect(source).toContain('createTuiPtyComposerReadyHandshake');
+      expect(source).toContain('handshake.marker');
+      expect(source).toContain('handshake.env');
       expect(source).toContain('await writeBracketedPaste(');
+      expect(source).toContain('waitFor(');
+      expect(source).not.toContain('TUI_COMPOSER_MARKER');
       expect(source).not.toContain("output.includes('请输入您的问题')");
       expect(source).not.toContain('terminal.write(`\\u001B[200~');
     }
   );
 
+  it.each([
+    ['browserToolPtyRunner.ts', 'await waitFor(() => output.includes(handshake.marker)'],
+    [
+      'foregroundBoundedOutputPtyRunner.ts',
+      "await waitFor(\n      () => output.includes(handshake.marker),",
+    ],
+    [
+      'foregroundCommandHandoffPtyRunner.ts',
+      "await waitFor(\n      () => output.includes(handshake.marker),",
+    ],
+    [
+      'foregroundProviderRecoveryPtyRunner.ts',
+      "waitFor(\n        () => output.includes(handshake.marker),",
+    ],
+    [
+      'goalFinalizationPtyRunner.ts',
+      "await waitFor(\n      () => sawInitial && sawCompleteGoal && output.includes(handshake.marker),",
+    ],
+    [
+      'gracefulShutdownPtyRunner.ts',
+      "waitFor(\n        () => output.includes(handshake.marker),",
+    ],
+    [
+      'sessionRuntimeResidencyPtyRunner.ts',
+      "waitFor(\n        () => output.includes(handshake.marker),",
+    ],
+    ['toolAdmissionPtyRunner.ts', "await waitFor(\n      () => output.includes(handshake.marker),"],
+    ['tuiPtyRunner.ts', 'await waitFor(() => output.includes(handshake.marker)'],
+  ] as const)('%s waits for the exact ready marker before writing paste', (fileName, markerWait) => {
+    const source = readRunner(fileName);
+    const markerWaitIndex = source.indexOf(markerWait);
+    const pasteWriteIndex = source.indexOf('await writeBracketedPaste(');
+
+    expect(markerWaitIndex).toBeGreaterThanOrEqual(0);
+    expect(pasteWriteIndex).toBeGreaterThan(markerWaitIndex);
+  });
+
   it.each(runnerInventory)(
     '%s forces interactive rendering in its PTY child',
     (fileName) => {
-      expect(readRunner(fileName)).toContain('createTuiPtyEnvironment');
+      const source = readRunner(fileName);
+      expect(
+        source.includes('createTuiPtyEnvironment') ||
+          source.includes('createTuiPtyComposerReadyHandshake')
+      ).toBe(true);
     }
   );
 
@@ -80,6 +129,25 @@ describe('raw PTY marker latching source contract', () => {
       CONTINUOUS_INTEGRATION: 'false',
       PTY_TEST_MARKER: 'preserved',
     });
+  });
+
+  it('creates a nonce-bound composer-ready handshake per PTY child', () => {
+    const first = createTuiPtyComposerReadyHandshake({
+      BASE: 'value',
+    });
+    const second = createTuiPtyComposerReadyHandshake({
+      BASE: 'value',
+    });
+
+    expect(first.env.BASE).toBe('value');
+    expect(first.env.BLADE_TUI_COMPOSER_READY_NONCE).toMatch(/^[0-9a-f]{32}$/);
+    expect(second.env.BLADE_TUI_COMPOSER_READY_NONCE).toMatch(/^[0-9a-f]{32}$/);
+    expect(first.env.BLADE_TUI_COMPOSER_READY_NONCE).not.toBe(
+      second.env.BLADE_TUI_COMPOSER_READY_NONCE
+    );
+    expect(first.marker).toContain(first.env.BLADE_TUI_COMPOSER_READY_NONCE);
+    expect(second.marker).toContain(second.env.BLADE_TUI_COMPOSER_READY_NONCE);
+    expect(first.marker).not.toBe(second.marker);
   });
 
   it.each([
@@ -135,15 +203,28 @@ describe('raw PTY marker latching source contract', () => {
     const source = readRunner('tokenBudgetHandoffPtyRunner.ts');
 
     expect(source).toContain('input.finalMarker.length,');
+    expect(source).toContain('handshake.marker.length,');
     const scanIndex = source.indexOf('const scan = `${scanTail}${chunk}`;');
     const latchIndex = source.indexOf(
+      'composerReady ||= scan.includes(handshake.marker);'
+    );
+    const composerWaitIndex = source.indexOf(
+      'await waitFor(\n      () => composerReady,'
+    );
+    const finalMarkerLatchIndex = source.indexOf(
       'finalMarkerSeen ||= scan.includes(input.finalMarker);'
     );
     const rotateIndex = source.indexOf('scanTail = scan.slice(-(maxNeedle - 1));');
+    const pasteWriteIndex = source.indexOf(
+      "await writeBracketedPaste(terminal, input.prompt ?? '');"
+    );
 
     expect(scanIndex).toBeGreaterThanOrEqual(0);
     expect(latchIndex).toBeGreaterThan(scanIndex);
-    expect(rotateIndex).toBeGreaterThan(latchIndex);
+    expect(finalMarkerLatchIndex).toBeGreaterThan(scanIndex);
+    expect(rotateIndex).toBeGreaterThan(finalMarkerLatchIndex);
+    expect(composerWaitIndex).toBeGreaterThan(latchIndex);
+    expect(pasteWriteIndex).toBeGreaterThan(composerWaitIndex);
     expect(source).toContain(
       'await waitFor(\n      () => finalMarkerSeen,\n      () => exited,'
     );
@@ -153,15 +234,9 @@ describe('raw PTY marker latching source contract', () => {
     );
     expect(source).toContain("if (state === 'matched') return;");
     expect(source).toContain("if (state === 'mismatched')");
-    expect(source).toContain(
-      'composerReady ||= plainScan.includes(TUI_COMPOSER_MARKER)'
-    );
-    expect(source).toContain('Date.now() - bracketedPasteModeSeenAt >= 5_000');
+    expect(source).toContain('composerReady ||= scan.includes(handshake.marker)');
     expect(source).toContain(
       "'Timed out waiting for token-budget PTY paste acknowledgement'"
-    );
-    const pasteWriteIndex = source.indexOf(
-      "await writeBracketedPaste(terminal, input.prompt ?? '');"
     );
     const pasteAcknowledgementIndex = source.indexOf(
       "'Timed out waiting for token-budget PTY paste acknowledgement'"
@@ -176,6 +251,10 @@ describe('raw PTY marker latching source contract', () => {
     expect(source).toContain('composerFailureCode');
     expect(source).toContain('const deadline = Date.now() + input.timeoutMs - 10_000');
     expect(source).toContain('remainingStageBudget(deadline');
+    expect(source).not.toContain('Date.now() - bracketedPasteModeSeenAt >= 5_000');
+    expect(source).not.toContain('bracketedPasteModeSeenAt');
+    expect(source).not.toContain('bracketedPasteModeSeen = true');
+    expect(source).not.toContain('TUI_COMPOSER_MARKER');
     expect(source).not.toContain("composerReady ||= scan.includes('请输入您的问题')");
     expect(source).not.toContain('JSON.stringify(events).includes(input.finalMarker)');
     expect(source).not.toMatch(

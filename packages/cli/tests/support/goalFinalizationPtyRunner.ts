@@ -7,8 +7,7 @@ import {
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
 import {
-  createTuiPtyEnvironment,
-  TUI_COMPOSER_MARKER,
+  createTuiPtyComposerReadyHandshake,
   writeBracketedPaste,
 } from './ptyInput.js';
 
@@ -69,7 +68,7 @@ async function main(): Promise<void> {
   const followupPrompt = required('BLADE_GOAL_FINALIZATION_PTY_FOLLOWUP_PROMPT');
   const expectedFollowup = required('BLADE_GOAL_FINALIZATION_PTY_FOLLOWUP');
   const secret = process.env.BLADE_GOAL_FINALIZATION_PTY_SECRET ?? '';
-  const childEnv = createTuiPtyEnvironment();
+  const handshake = createTuiPtyComposerReadyHandshake();
   const terminal = spawn(
     '/usr/bin/env',
     [
@@ -88,7 +87,7 @@ async function main(): Promise<void> {
       cwd: workspace,
       cols: 120,
       rows: 40,
-      env: childEnv,
+      env: handshake.env,
     }
   );
   let output = '';
@@ -111,7 +110,7 @@ async function main(): Promise<void> {
 
   try {
     await waitFor(
-      () => sawInitial && sawCompleteGoal && output.includes(TUI_COMPOSER_MARKER),
+      () => sawInitial && sawCompleteGoal && output.includes(handshake.marker),
       'Timed out waiting for recovered Goal finalization in TUI',
       60_000
     );

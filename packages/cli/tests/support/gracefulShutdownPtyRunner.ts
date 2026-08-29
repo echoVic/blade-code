@@ -2,8 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { spawn } from 'bun-pty';
 import { appendBoundedPtyEvidence } from './foregroundBoundedOutputPtyDriver.js';
 import {
-  createTuiPtyEnvironment,
-  TUI_COMPOSER_MARKER,
+  createTuiPtyComposerReadyHandshake,
   writeBracketedPaste,
 } from './ptyInput.js';
 
@@ -87,7 +86,7 @@ async function waitForRootPid(filePath: string): Promise<number> {
 
 async function main(): Promise<void> {
   const input = loadInput();
-  const env = createTuiPtyEnvironment({
+  const handshake = createTuiPtyComposerReadyHandshake({
     HOME: input.home,
     BLADE_STORAGE_ROOT: input.storageRoot,
     BLADE_AUTO_MEMORY: '0',
@@ -112,7 +111,7 @@ async function main(): Promise<void> {
       cwd: input.workspace,
       cols: 120,
       rows: 40,
-      env,
+      env: handshake.env,
     }
   );
   let output = '';
@@ -134,7 +133,7 @@ async function main(): Promise<void> {
   try {
     await Promise.race([
       waitFor(
-        () => output.includes(TUI_COMPOSER_MARKER),
+        () => output.includes(handshake.marker),
         'Timed out waiting for TUI composer',
         60_000
       ),

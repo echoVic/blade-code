@@ -4,6 +4,8 @@ import type { Key } from 'ink';
 import { act, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as composerReady from '../../../../src/ui/input/tuiComposerReady.js';
+import { TerminalInputRouterProvider } from '../../../../src/ui/input/TerminalInputRouter.js';
 
 let inputHandler: ((input: string, key: Key) => void) | undefined;
 
@@ -45,11 +47,15 @@ describe('CustomTextInput batched terminal input', () => {
   let root: ReactDOM.Root;
   let latest = { value: '', cursorPosition: 0 };
   let onPaste: ReturnType<typeof vi.fn<(text: string) => Promise<{ prompt?: string }>>>;
+  let emitComposerReadyMarker: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     inputHandler = undefined;
     latest = { value: '', cursorPosition: 0 };
     onPaste = vi.fn(async (_text: string) => ({}));
+    emitComposerReadyMarker = vi
+      .spyOn(composerReady, 'emitTuiComposerReadyMarker')
+      .mockImplementation(() => false);
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
@@ -78,6 +84,8 @@ describe('CustomTextInput batched terminal input', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    emitComposerReadyMarker.mockRestore();
+    delete process.env.BLADE_TUI_COMPOSER_READY_NONCE;
   });
 
   it('inserts a complete multi-character stdin chunk', async () => {
@@ -160,5 +168,44 @@ describe('CustomTextInput batched terminal input', () => {
       value: '[paste]after',
       cursorPosition: 12,
     });
+  });
+
+  it('emits the nonce-bound ready marker only after terminal input registration', () => {
+    const events: string[] = [];
+    emitComposerReadyMarker.mockImplementation(() => {
+      events.push('marker');
+      return true;
+    });
+
+    act(() => {
+      root.unmount();
+    });
+
+    function RegistrationHarness() {
+      const [state, setState] = useState({ value: '', cursorPosition: 0 });
+      return (
+        <TerminalInputRouterProvider>
+          <CustomTextInput
+            value={state.value}
+            cursorPosition={state.cursorPosition}
+            onChange={(value) => setState((current) => ({ ...current, value }))}
+            onChangeCursorPosition={(cursorPosition) =>
+              setState((current) => ({ ...current, cursorPosition }))
+            }
+            onPaste={onPaste}
+          />
+        </TerminalInputRouterProvider>
+      );
+    }
+
+    act(() => {
+      process.env.BLADE_TUI_COMPOSER_READY_NONCE = '0123456789abcdef0123456789abcdef';
+      root = ReactDOM.createRoot(container);
+      root.render(<RegistrationHarness />);
+      events.push('rendered');
+    });
+
+    expect(events).toEqual(['rendered', 'marker']);
+    expect(emitComposerReadyMarker).toHaveBeenCalledTimes(1);
   });
 });

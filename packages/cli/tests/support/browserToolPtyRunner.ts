@@ -6,8 +6,7 @@ import {
   projectForegroundBoundedPtyOutput,
 } from './foregroundBoundedOutputPtyDriver.js';
 import {
-  createTuiPtyEnvironment,
-  TUI_COMPOSER_MARKER,
+  createTuiPtyComposerReadyHandshake,
   writeBracketedPaste,
 } from './ptyInput.js';
 
@@ -72,7 +71,7 @@ const prompt = required('BLADE_BROWSER_TOOL_PTY_PROMPT');
 const expected = required('BLADE_BROWSER_TOOL_PTY_EXPECTED');
 const sessionId = required('BLADE_BROWSER_TOOL_PTY_SESSION_ID');
 const secret = process.env.BLADE_BROWSER_TOOL_PTY_SECRET ?? '';
-const childEnv = createTuiPtyEnvironment();
+const handshake = createTuiPtyComposerReadyHandshake();
 const terminal = spawn(
   '/usr/bin/env',
   [
@@ -91,7 +90,7 @@ const terminal = spawn(
     cwd: workspace,
     cols: 120,
     rows: 40,
-    env: childEnv,
+    env: handshake.env,
   }
 );
 let output = '';
@@ -109,7 +108,7 @@ terminal.onData((chunk) => {
 });
 
 try {
-  await waitFor(() => output.includes(TUI_COMPOSER_MARKER), 'PTY composer', 30_000);
+  await waitFor(() => output.includes(handshake.marker), 'PTY composer', 30_000);
   await writeBracketedPaste(terminal, prompt);
   await waitFor(() => output.includes('PASTE:'), 'bracketed paste', 10_000);
   terminal.write('\r');

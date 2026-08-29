@@ -16,6 +16,7 @@ import { type Key, Text } from 'ink';
 import React, { useEffect, useRef } from 'react';
 import { PASTE_CONFIG } from '../constants.js';
 import { useTerminalInput as useInput } from '../input/TerminalInputRouter.js';
+import { emitTuiComposerReadyMarker } from '../input/tuiComposerReady.js';
 import {
   createTerminalInputParserState,
   parseTerminalInput,
@@ -108,6 +109,7 @@ export function CustomTextInput({
   const latestValueRef = useRef(originalValue);
   const latestCursorRef = useRef(cursorPosition);
   const pendingInputMutationRef = useRef<Promise<void> | null>(null);
+  const composerReadyEmittedRef = useRef(false);
 
   useEffect(() => {
     latestValueRef.current = originalValue;
@@ -395,7 +397,14 @@ export function CustomTextInput({
       });
       return true;
     },
-    { isActive: focus, priority: 0 }
+    {
+      isActive: focus,
+      priority: 0,
+      onRegistered: () => {
+        if (composerReadyEmittedRef.current) return;
+        composerReadyEmittedRef.current = emitTuiComposerReadyMarker();
+      },
+    }
   );
 
   // === ink-text-input 原有的渲染逻辑 ===

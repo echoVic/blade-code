@@ -1,3 +1,9 @@
+import { randomBytes } from 'node:crypto';
+import {
+  formatTuiComposerReadyMarker,
+  TUI_COMPOSER_READY_NONCE_ENV,
+} from '../../src/ui/input/tuiComposerReady.js';
+
 const DEFAULT_PTY_INPUT_CHUNK_BYTES = 1024;
 
 export const TUI_COMPOSER_MARKER = '输入命令...';
@@ -13,6 +19,22 @@ export function createTuiPtyEnvironment(
       CONTINUOUS_INTEGRATION: 'false',
     }).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
   );
+}
+
+export function createTuiPtyComposerReadyHandshake(
+  overrides: NodeJS.ProcessEnv = {}
+): {
+  env: Record<string, string>;
+  marker: string;
+} {
+  const nonce = randomBytes(16).toString('hex');
+  return {
+    env: createTuiPtyEnvironment({
+      ...overrides,
+      [TUI_COMPOSER_READY_NONCE_ENV]: nonce,
+    }),
+    marker: formatTuiComposerReadyMarker(nonce),
+  };
 }
 
 export function chunkUtf8PtyInput(

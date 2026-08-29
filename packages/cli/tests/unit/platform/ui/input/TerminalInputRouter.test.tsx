@@ -4,9 +4,9 @@ import { act } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const ink = vi.hoisted(() => ({
+const ink = {
   activeHandlers: [] as Array<(input: string, key: Record<string, boolean>) => void>,
-}));
+};
 
 vi.mock('ink', () => ({
   useInput: (
@@ -23,6 +23,11 @@ import {
   TerminalInputRouterProvider,
   useTerminalInput,
 } from '../../../../../src/ui/input/TerminalInputRouter.js';
+import {
+  emitTuiComposerReadyMarker,
+  formatTuiComposerReadyMarker,
+  readTuiComposerReadyMarker,
+} from '../../../../../src/ui/input/tuiComposerReady.js';
 
 describe('TerminalInputRouter', () => {
   let container: HTMLDivElement;
@@ -104,5 +109,100 @@ describe('TerminalInputRouter', () => {
     });
 
     expect(events).toEqual(['global', 'editor']);
+  });
+
+  it('fires onRegistered only after the active router handler is registered', () => {
+    const events: string[] = [];
+
+    function RegisteredHandler() {
+      useTerminalInput(
+        () => {
+          events.push('handler');
+          return true;
+        },
+        {
+          onRegistered: () => {
+            events.push('registered');
+            ink.activeHandlers[0]?.('x', {});
+          },
+        }
+      );
+      return null;
+    }
+
+    act(() => {
+      root.render(
+        <TerminalInputRouterProvider>
+          <RegisteredHandler />
+        </TerminalInputRouterProvider>
+      );
+    });
+
+    expect(events).toEqual(['registered', 'handler']);
+  });
+
+  it('does not fire onRegistered for inactive handlers', () => {
+    const onRegistered = vi.fn();
+
+    function InactiveHandler() {
+      useTerminalInput(
+        () => true,
+        {
+          isActive: false,
+          onRegistered,
+        }
+      );
+      return null;
+    }
+
+    act(() => {
+      root.render(
+        <TerminalInputRouterProvider>
+          <InactiveHandler />
+        </TerminalInputRouterProvider>
+      );
+    });
+
+    expect(onRegistered).not.toHaveBeenCalled();
+  });
+
+  it('does not read or emit a composer-ready marker when the env is absent', () => {
+    const write = vi.fn<(value: string) => void>();
+
+    expect(readTuiComposerReadyMarker({})).toBeUndefined();
+    expect(emitTuiComposerReadyMarker({}, write)).toBe(false);
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '',
+    'ABCDEF0123456789abcdef0123456789',
+    '0123456789abcdef0123456789abcde',
+    '0123456789abcdef0123456789abcdef0',
+    '0123456789abcdef0123456789abcdeg',
+  ])('does not read or emit a composer-ready marker for malformed nonce %j', (nonce) => {
+    const write = vi.fn<(value: string) => void>();
+    const env = {
+      BLADE_TUI_COMPOSER_READY_NONCE: nonce,
+    } satisfies NodeJS.ProcessEnv;
+
+    expect(readTuiComposerReadyMarker(env)).toBeUndefined();
+    expect(emitTuiComposerReadyMarker(env, write)).toBe(false);
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('reads and emits the exact composer-ready OSC marker for a valid nonce', () => {
+    const nonce = '0123456789abcdef0123456789abcdef';
+    const env = {
+      BLADE_TUI_COMPOSER_READY_NONCE: nonce,
+    } satisfies NodeJS.ProcessEnv;
+    const write = vi.fn<(value: string) => void>();
+    const marker = '\u001b]99;blade-composer-ready=0123456789abcdef0123456789abcdef\u0007';
+
+    expect(formatTuiComposerReadyMarker(nonce)).toBe(marker);
+    expect(readTuiComposerReadyMarker(env)).toBe(marker);
+    expect(emitTuiComposerReadyMarker(env, write)).toBe(true);
+    expect(write).toHaveBeenCalledOnce();
+    expect(write).toHaveBeenCalledWith(marker);
   });
 });

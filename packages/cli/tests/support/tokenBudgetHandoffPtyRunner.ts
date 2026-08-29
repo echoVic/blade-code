@@ -16,8 +16,7 @@ import {
   readSessionEvents,
 } from '../integration/real-api/sessionForkTrajectoryHarness.js';
 import {
-  createTuiPtyEnvironment,
-  TUI_COMPOSER_MARKER,
+  createTuiPtyComposerReadyHandshake,
   writeBracketedPaste,
 } from './ptyInput.js';
 import { classifyTokenBudgetPtyFinal } from './tokenBudgetHandoffPtyDriver.js';
@@ -241,7 +240,7 @@ async function main(): Promise<void> {
   ) {
     throw new Error('Token-budget PTY runner final marker contract is invalid');
   }
-  const env = createTuiPtyEnvironment({
+  const handshake = createTuiPtyComposerReadyHandshake({
     HOME: input.home,
     BLADE_STORAGE_ROOT: input.storageRoot,
     BLADE_AUTO_MEMORY: '0',
@@ -266,7 +265,7 @@ async function main(): Promise<void> {
     cwd: input.workspace,
     cols: 140,
     rows: 48,
-    env,
+    env: handshake.env,
   });
   let identity: ProcessIdentity | undefined;
   let output = '';
@@ -277,8 +276,6 @@ async function main(): Promise<void> {
   let bracketedPasteAccepted = false;
   let submittedInput = false;
   let exited = false;
-  let bracketedPasteModeSeen = false;
-  let bracketedPasteModeSeenAt: number | undefined;
   let setupWizardSeen = false;
   let initializationErrorSeen = false;
   let failureStage: PtyFailureStage = 'identity';
@@ -292,6 +289,7 @@ async function main(): Promise<void> {
   ];
   const maxNeedle = Math.max(
     1,
+    handshake.marker.length,
     input.finalMarker.length,
     ...forbidden.map((v) => v.length)
   );
@@ -307,11 +305,7 @@ async function main(): Promise<void> {
     const plainScan = stripVTControlCharacters(scan);
     finalMarkerSeen ||= scan.includes(input.finalMarker);
     hiddenMarkerSeen ||= forbidden.some((value) => value && scan.includes(value));
-    composerReady ||= plainScan.includes(TUI_COMPOSER_MARKER);
-    if (!bracketedPasteModeSeen && scan.includes('\u001b[?2004h')) {
-      bracketedPasteModeSeen = true;
-      bracketedPasteModeSeenAt = Date.now();
-    }
+    composerReady ||= scan.includes(handshake.marker);
     setupWizardSeen ||= plainScan.includes('Step 1: 选择 API 提供商');
     initializationErrorSeen ||= plainScan.includes('初始化失败');
     bracketedPasteAccepted ||= plainScan.includes('PASTE:');
@@ -323,19 +317,7 @@ async function main(): Promise<void> {
     identity = await captureIdentity(terminal.pid);
     failureStage = 'composer';
     await waitFor(
-      () => {
-        if (composerReady) return true;
-        if (
-          bracketedPasteModeSeenAt !== undefined &&
-          Date.now() - bracketedPasteModeSeenAt >= 5_000 &&
-          !setupWizardSeen &&
-          !initializationErrorSeen
-        ) {
-          composerReady = true;
-          return true;
-        }
-        return false;
-      },
+      () => composerReady,
       () => exited,
       'Timed out waiting for token-budget PTY composer',
       remainingStageBudget(deadline, 60_000)
@@ -374,8 +356,7 @@ async function main(): Promise<void> {
   } catch (error) {
     if (failureStage === 'composer') {
       const composerFailureCode =
-        `placeholder_${composerReady ? 1 : 0}:` +
-        `bracketed_${bracketedPasteModeSeen ? 1 : 0}:` +
+        `ready_${composerReady ? 1 : 0}:` +
         `setup_${setupWizardSeen ? 1 : 0}:` +
         `init_error_${initializationErrorSeen ? 1 : 0}`;
       failureCode = composerFailureCode;
