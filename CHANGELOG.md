@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.121] - 2026-08-29
+
+### Fixed
+- Fenced asynchronous Web Session hydration by exact generation across delete, archive, controller replacement, and shutdown so stale work cannot repopulate live projections.
+- Routed durable permission recovery through the active controller's single-flight hydration owner, while preserving committed responses without creating unowned live state when no controller is active.
+
+### Tests
+- Added deterministic Promise-gated regressions for stale hydration commits, lifecycle errors, generation ABA safety, permission-recovery ownership, failed-archive preservation, and ordinary same-key single-flight behavior.
+
 ## [0.10.120] - 2026-08-29
 
 ### Fixed

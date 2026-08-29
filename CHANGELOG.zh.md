@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.121] - 2026-08-29
+
+### 修复
+- 以精确 generation 为 delete、archive、controller replacement 与 shutdown 期间的异步 Web Session hydration 建立 fencing，防止过期任务重新写入 live projection。
+- 将 durable permission recovery 统一到 active controller 的 single-flight hydration owner；没有 active controller 时仍保留已提交的响应，但不创建无 owner 的 live state。
+
+### 测试
+- 新增确定性的 Promise-gated 回归，覆盖过期 hydration commit、生命周期错误、generation ABA 安全、permission recovery ownership、archive 失败保留以及普通 same-key single-flight 行为。
+
 ## [0.10.120] - 2026-08-29
 
 ### 修复
