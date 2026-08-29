@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.114] - 2026-08-29
+
+### 测试
+- 稳定 durable recovery 的 final-marker 资格校验，在判断最终响应前区分任务生命周期尚未完成与结构不匹配。
+- 隔离 durable raw PTY 与通用 foreground PTY 的 marker 协议，并补充 ACP、PTY、有界输出和轨迹 harness 的确定性回归测试。
+
 ## [0.10.113] - 2026-08-29
 
 ### 文档

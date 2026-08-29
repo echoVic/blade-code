@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.114] - 2026-08-29
+
+### Tests
+- Stabilized durable-recovery final-marker qualification by distinguishing an incomplete task lifecycle from a structural mismatch before evaluating the final response.
+- Isolated the durable raw-PTY marker protocol from the generic foreground PTY protocol and added deterministic ACP, PTY, bounded-output, and trajectory-harness regressions.
+
 ## [0.10.113] - 2026-08-29
 
 ### Documentation
