@@ -36,13 +36,21 @@ hide a distinct ordering or transport defect.
   `sendUpdateAndWait()` primitive, which waits for that exact queue offer.
 - State is cleared as recovered only after delivery succeeds and the recovery
   generation still matches.
-- An offer rejection, write failure, timeout, connection abort, cancellation, or
-  destroy returns from the recovery coroutine without entering Provider retry logic.
-  The durable turn is already complete and must never execute again because metadata
-  egress failed.
+- An offer rejection, write failure, timeout, connection abort, or destroy returns
+  from the recovery coroutine without entering Provider retry logic. The durable turn
+  is already complete and must never execute again because metadata egress failed.
+- A user cancellation after the durable turn completes invalidates the recovery
+  generation and prevents another turn, but does not pretend that an already-offered
+  ACP notification can be withdrawn. The exact write remains owned, non-idle, and
+  bounded by the existing egress timeout until it delivers or the transport fails.
 - `AcpSession` keeps a session-owned pending-resume completion promise. Residency is
   non-idle while a request is requested, scheduled, timed, in flight, or has an owned
   completion.
+- Completion settlement schedules a successor only when the completed attempt recorded
+  an explicit successor delay. A run that exits because a prompt, shell, or side
+  conversation is busy is rejected before an owner completion is created and relies on
+  the busy owner's existing `finally` wake-up. This prevents both a zero-delay
+  microtask spin and an owner-settlement race that could discard the `finally` wake.
 - Destroy first invalidates the generation and closes bounded egress, which settles a
   blocked exact-update wait, then joins the pending-resume completion before destroying
   the Agent and Runtime. No late coroutine may outlive its owner.
@@ -79,6 +87,10 @@ Deterministic tests must prove:
   from starting until the exact update settles;
 - egress failure or destroy settles the recovery owner without scheduling another
   Provider turn; and
+- cancellation during a deferred terminal write prevents another Provider turn while
+  preserving the already-offered notification until its bounded settlement; and
+- a wake received during another active ACP operation waits for that owner's `finally`
+  path without spinning the microtask queue; and
 - existing pending-resume retry, cancellation, replay, and bounded-egress tests remain
   green.
 

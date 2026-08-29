@@ -38,6 +38,10 @@
   concurrent wake cannot start a third prompt before the gate opens.
 - [ ] Add `pendingResumeCompletion` ownership around every scheduled
   `resumePendingIfIdle()` invocation without allowing overlapping attempts.
+- [ ] Reject busy scheduled callbacks before creating an owned completion. Completion
+  settlement schedules only an explicit successor delay, while
+  prompt/shell/side-conversation `finally` handlers remain the wake source for busy
+  callbacks.
 - [ ] Await `sendUpdateAndWait()` only for terminal `recovered`; on false, return
   without clearing success state through the normal path and without calling the
   Provider again. Recheck the generation after the await.
@@ -50,6 +54,11 @@
   Agent and Runtime. Keep cleanup idempotent and preserve the first cleanup error.
 - [ ] Add or extend an egress-rejection test proving metadata failure cannot schedule
   another pending-resume attempt.
+- [ ] Add a busy-operation regression proving a queued wake does not create a
+  zero-delay microtask spin and resumes exactly once after the active operation settles.
+- [ ] Add a cancellation test proving that cancellation invalidates the generation and
+  prevents another Provider turn without falsely claiming to retract an already-offered
+  terminal notification; the Session remains non-idle until that bounded write settles.
 - [ ] Run focused ACP Session tests and confirm the new lifecycle tests pass.
 
 ### Task 3: Review, qualify, and release independently
