@@ -56,9 +56,9 @@ There are two authoritative history consumers, both already available:
 - UI/history reads use `SessionService.loadSession()` per `GET
   /sessions/:sessionId/message` request and immediately project the result for the
   response. The server does not retain that array in `sessions`.
-- Agent execution uses `SessionRuntime.loadModelContext()` /
-  `SessionService.loadSessionModelContext()`, preserving the compacted model-context
-  semantics independently of the Web projection. `SessionRuntime.create()` receives
+- Agent execution uses `SessionService.loadSessionModelContext()`, matching the
+  `SessionRuntime.loadModelContext()` durable-context boundary and preserving compacted
+  model-context semantics independently of the Web projection. `SessionRuntime.create()` receives
   `sessionStart.isResume` from `messageCount > 0`, not from an in-memory history array.
 
 This keeps the visible transcript and model context separate, matching the existing
