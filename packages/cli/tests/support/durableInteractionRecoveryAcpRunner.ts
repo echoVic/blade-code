@@ -579,8 +579,10 @@ interface SafePendingResumeUpdate {
   kind: 'pending_input' | 'invalid';
 }
 
-function safePendingResumeUpdate(value: unknown): SafePendingResumeUpdate | undefined {
-  if (!isRecord(value)) return undefined;
+function safePendingResumeUpdate(value: unknown): SafePendingResumeUpdate {
+  if (!isRecord(value)) {
+    return { phase: 'invalid', attempt: null, maxAttempts: null, kind: 'invalid' };
+  }
   const phase =
     value.phase === 'retry_scheduled' ||
     value.phase === 'recovered' ||
@@ -600,14 +602,25 @@ function safePendingResumeUpdate(value: unknown): SafePendingResumeUpdate | unde
 
 function inspectSafePendingResumeEvidence(
   projected: readonly SafePendingResumeUpdate[]
-): AcpPendingResumeEvidence {
+): AcpPendingResumeEvidence | undefined {
+  const retryScheduled = projected[0];
+  if (
+    retryScheduled?.phase !== 'retry_scheduled' ||
+    retryScheduled.attempt !== 2 ||
+    retryScheduled.maxAttempts !== 4 ||
+    retryScheduled.kind !== 'pending_input'
+  ) {
+    throw new InvalidRecoveryError('pending resume evidence is invalid');
+  }
+  if (projected.length === 1) return undefined;
+
+  const recovered = projected[1];
   if (
     projected.length !== 2 ||
-    projected[0]?.phase !== 'retry_scheduled' ||
-    projected[1]?.phase !== 'recovered' ||
-    projected[0]?.attempt !== 2 ||
-    projected[1]?.attempt !== 2 ||
-    projected.some((entry) => entry.maxAttempts !== 4 || entry.kind !== 'pending_input')
+    recovered?.phase !== 'recovered' ||
+    recovered.attempt !== 2 ||
+    recovered.maxAttempts !== 4 ||
+    recovered.kind !== 'pending_input'
   ) {
     throw new InvalidRecoveryError('pending resume evidence is invalid');
   }
@@ -620,11 +633,11 @@ function inspectSafePendingResumeEvidence(
 
 export function inspectAcpPendingResumeEvidence(
   updates: readonly acp.SessionNotification[]
-): AcpPendingResumeEvidence {
+): AcpPendingResumeEvidence | undefined {
   const projected = updates.flatMap(({ update }) => {
     if (update.sessionUpdate !== 'session_info_update') return [];
-    const safe = safePendingResumeUpdate(update._meta?.['blade/pendingResume']);
-    return safe ? [safe] : [];
+    if (!Object.hasOwn(update._meta ?? {}, 'blade/pendingResume')) return [];
+    return [safePendingResumeUpdate(update._meta?.['blade/pendingResume'])];
   });
   return inspectSafePendingResumeEvidence(projected);
 }
@@ -1235,9 +1248,8 @@ class DurableInteractionAcpClient implements acp.Client {
       }
     }
     if (update.sessionUpdate === 'session_info_update') {
-      const pending = update._meta?.['blade/pendingResume'];
-      const safe = safePendingResumeUpdate(pending);
-      if (safe) {
+      if (Object.hasOwn(update._meta ?? {}, 'blade/pendingResume')) {
+        const safe = safePendingResumeUpdate(update._meta?.['blade/pendingResume']);
         this.pendingResumeUpdates.push(safe);
         if (safe.phase === 'failed' || safe.phase === 'exhausted') {
           this.terminalFailure = true;
@@ -1255,7 +1267,7 @@ class DurableInteractionAcpClient implements acp.Client {
     return this.surfaceOverflow;
   }
 
-  pendingResumeEvidence(): AcpPendingResumeEvidence {
+  pendingResumeEvidence(): AcpPendingResumeEvidence | undefined {
     return inspectSafePendingResumeEvidence(this.pendingResumeUpdates);
   }
 }
@@ -1374,6 +1386,7 @@ async function inspectCompletion(
   }
   if (!(await inboxIsMissing(input.workspace, input.sessionId))) return undefined;
   const pendingResume = client.pendingResumeEvidence();
+  if (!pendingResume) return undefined;
 
   return {
     ...pendingResume,
@@ -1459,9 +1472,16 @@ export async function pollDurableInteractionCompletion<T>(
   const intervalMs = options.intervalMs ?? 50;
   while (Date.now() < options.deadlineAt) {
     options.assertActive?.();
-    const completion = await options.inspect();
+    const completion = await withTimeout(
+      options.inspect(),
+      Math.max(0, options.deadlineAt - Date.now())
+    );
     if (completion !== undefined) return completion;
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    const remainingMs = options.deadlineAt - Date.now();
+    if (remainingMs <= 0) break;
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(intervalMs, remainingMs))
+    );
   }
   throw new RunnerTimeoutError('timeout');
 }

@@ -248,6 +248,17 @@ function pendingResumeUpdate(
   };
 }
 
+function malformedPendingResumeUpdate(value: unknown): acp.SessionNotification {
+  return {
+    sessionId: 'durable-acp-session',
+    update: {
+      sessionUpdate: 'session_info_update',
+      updatedAt: '2026-08-29T00:00:00.000Z',
+      _meta: { 'blade/pendingResume': value },
+    },
+  };
+}
+
 function encodedInput(overrides: Record<string, unknown> = {}): string {
   return Buffer.from(
     JSON.stringify({
@@ -397,10 +408,73 @@ describe('durable interaction ACP stdio runner', () => {
     });
   });
 
+  it('treats the exact pending-resume retry prefix as incomplete', () => {
+    expect(
+      inspectAcpPendingResumeEvidence([pendingResumeUpdate('retry_scheduled', 2)])
+    ).toBeUndefined();
+  });
+
+  it('polls past the exact pending-resume retry prefix until recovery arrives', async () => {
+    const completeUpdates = [
+      pendingResumeUpdate('retry_scheduled', 2),
+      pendingResumeUpdate('recovered', 2),
+    ];
+    let inspections = 0;
+
+    await expect(
+      pollDurableInteractionCompletion({
+        deadlineAt: Date.now() + 1_000,
+        intervalMs: 0,
+        inspect: async () => {
+          inspections += 1;
+          return inspectAcpPendingResumeEvidence(
+            inspections === 1 ? completeUpdates.slice(0, 1) : completeUpdates
+          );
+        },
+      })
+    ).resolves.toEqual({
+      pendingResumePhases: ['retry_scheduled', 'recovered'],
+      pendingResumeAttempts: [2, 2],
+      maxAttempts: 4,
+    });
+    expect(inspections).toBe(2);
+  });
+
+  it.each([null, 'malformed', []])(
+    'rejects a present malformed pending-resume value without filtering it: %j',
+    (malformed) => {
+      expect(() =>
+        inspectAcpPendingResumeEvidence([
+          pendingResumeUpdate('retry_scheduled', 2),
+          malformedPendingResumeUpdate(malformed),
+          pendingResumeUpdate('recovered', 2),
+        ])
+      ).toThrow('pending resume evidence is invalid');
+    }
+  );
+
   it.each([
+    ['empty sequence', []],
     [
-      'wrong attempt',
+      'wrong retry attempt',
       [pendingResumeUpdate('retry_scheduled', 1), pendingResumeUpdate('recovered', 2)],
+    ],
+    [
+      'wrong recovered attempt',
+      [pendingResumeUpdate('retry_scheduled', 2), pendingResumeUpdate('recovered', 3)],
+    ],
+    ['wrong kind', [pendingResumeUpdate('retry_scheduled', 2, 4, 'other')]],
+    ['wrong max attempts', [pendingResumeUpdate('retry_scheduled', 2, 3)]],
+    [
+      'reordered phases',
+      [pendingResumeUpdate('recovered', 2), pendingResumeUpdate('retry_scheduled', 2)],
+    ],
+    [
+      'duplicate phase',
+      [
+        pendingResumeUpdate('retry_scheduled', 2),
+        pendingResumeUpdate('retry_scheduled', 2),
+      ],
     ],
     [
       'terminal failed phase',
@@ -733,6 +807,40 @@ describe('durable interaction ACP stdio runner', () => {
       })
     ).rejects.toBe(eio);
     expect(Date.now() - startedAt).toBeLessThan(500);
+  });
+
+  it('times out an inspection that never settles at the absolute deadline', async () => {
+    vi.useFakeTimers({ now: 1_000 });
+    try {
+      let settled = false;
+      let rejection: unknown;
+      const polling = pollDurableInteractionCompletion({
+        deadlineAt: Date.now() + 25,
+        inspect: async () => new Promise<never>(() => undefined),
+        intervalMs: 1,
+      });
+      void polling.then(
+        () => {
+          settled = true;
+        },
+        (error: unknown) => {
+          rejection = error;
+          settled = true;
+        }
+      );
+
+      await vi.advanceTimersByTimeAsync(24);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(settled).toBe(true);
+      expect(rejection).toBeInstanceOf(Error);
+      expect((rejection as Error).constructor.name).toBe('RunnerTimeoutError');
+      expect((rejection as Error).message).toBe('timeout');
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('fails closed when the durable event count or byte budget is exceeded', () => {
