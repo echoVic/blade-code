@@ -1002,10 +1002,13 @@ describe('SessionRoutes runtime reuse', () => {
       permissionMode?: SessionMetadata['permissionMode'];
     } = {}
   ) => {
+    const messages = options.messages ?? makeMessages();
     const metadata = metadataFor(sessionId, options.projectPath, {
       permissionMode: options.permissionMode,
+      messageCount: messages.filter(
+        (message) => message.role === 'user' || message.role === 'assistant'
+      ).length,
     });
-    const messages = options.messages ?? makeMessages();
     vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (requestedSessionId: string, requestedProjectPath?: string) => {
@@ -1075,16 +1078,53 @@ describe('SessionRoutes runtime reuse', () => {
     }
   });
 
+  it('resolves a Browser route without loading durable history', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionId = 'history-free-browser-session';
+    const projectPath = '/tmp/history-free-browser-workspace';
+    mockResolvedSession(sessionId, { projectPath });
+    const controller = createSessionRouteController();
+
+    try {
+      const response = await controller.app.request(
+        `/${sessionId}/browser/reset?projectPath=${encodeURIComponent(projectPath)}`,
+        { method: 'POST' }
+      );
+
+      expect(response.status).toBe(200);
+      expect(SessionService.findSessionMetadata).toHaveBeenCalledWith(
+        sessionId,
+        projectPath
+      );
+      expect(SessionService.findSessionTaskWorktree).toHaveBeenCalledWith(
+        sessionId,
+        projectPath
+      );
+      expect(SessionService.loadSession).not.toHaveBeenCalled();
+      expect(SessionRuntime.create).not.toHaveBeenCalled();
+    } finally {
+      await controller.shutdown();
+    }
+  });
+
   it('loads and filters durable messages after an SSE projection already exists', async () => {
     const { createSessionRouteController } = await import(
       '../../../../src/server/routes/session.js'
     );
     const sessionId = 'durable-history-after-sse';
     const projectPath = '/tmp/durable-history-after-sse';
-    mockResolvedSession(sessionId, {
-      projectPath,
-      messages: makeMessages({ role: 'user', content: 'stale hydrated history' }),
-    });
+    const metadata = metadataFor(sessionId, projectPath, { messageCount: 2 });
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionService.loadSession).mockResolvedValue(
+      makeMessages(
+        { role: 'system', content: 'stale internal context' },
+        { role: 'user', content: 'stale hydrated history' },
+        { role: 'tool', content: 'stale internal tool result' }
+      )
+    );
     const requestController = new AbortController();
     const controller = createSessionRouteController();
     const eventsResponse = await controller.app.request(
@@ -1117,6 +1157,15 @@ describe('SessionRoutes runtime reuse', () => {
         { role: 'user', content: 'fresh durable user history' },
         { role: 'assistant', content: 'fresh durable assistant history' },
       ]);
+
+      const sessionsResponse = await controller.app.request('/');
+      const activeSessions = (await sessionsResponse.json()) as Array<{
+        sessionId: string;
+        messageCount: number;
+      }>;
+      expect(
+        activeSessions.find((session) => session.sessionId === sessionId)
+      ).toMatchObject({ messageCount: 2 });
     } finally {
       requestController.abort();
       await collector.cancel();
@@ -4258,7 +4307,7 @@ describe('SessionRoutes runtime reuse', () => {
         { role: 'assistant', content: 'earlier answer' }
       ),
     });
-    vi.mocked(SessionService.loadSession).mockResolvedValue(
+    vi.mocked(SessionService.loadSessionModelContext).mockResolvedValue(
       makeMessages(
         { role: 'user', content: 'earlier question' },
         { role: 'assistant', content: 'earlier answer' }
@@ -4276,7 +4325,8 @@ describe('SessionRoutes runtime reuse', () => {
     expect(response.status).toBe(202);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(SessionService.loadSession).toHaveBeenCalledWith(
+    expect(SessionService.loadSession).not.toHaveBeenCalled();
+    expect(SessionService.loadSessionModelContext).toHaveBeenCalledWith(
       'persisted-session',
       '/persisted-workspace'
     );
@@ -4286,6 +4336,14 @@ describe('SessionRoutes runtime reuse', () => {
         { role: 'assistant', content: 'earlier answer' },
       ],
     });
+    expect(SessionRuntime.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionStart: {
+          isResume: true,
+          resumeSessionId: 'persisted-session',
+        },
+      })
+    );
   });
 
   it('restores the persisted permission mode when a cold follow-up omits it', async () => {
@@ -8316,6 +8374,10 @@ describe('SessionRoutes runtime reuse', () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     const metadataA = metadataFor('shared-rewind', '/tmp/workspace-a');
     const metadataB = metadataFor('shared-rewind', '/tmp/workspace-b');
+    const rewoundMetadataA = metadataFor('shared-rewind', '/tmp/workspace-a', {
+      messageCount: 1,
+      lastMessageTime: '2026-08-05T00:00:01.000Z',
+    });
     const checkpoints = [
       {
         messageId: 'user-a',
@@ -8350,10 +8412,23 @@ describe('SessionRoutes runtime reuse', () => {
     });
 
     vi.mocked(SessionService.listSessions).mockResolvedValue([metadataA, metadataB]);
+    let rewound = false;
+    rewindA.mockImplementation(async () => {
+      rewound = true;
+      return {
+        checkpoint: checkpoints[0],
+        mode: 'both',
+        removedTurns: 1,
+        restoredFiles: ['/tmp/workspace-a/result.txt'],
+        messages: rewoundMessages,
+      };
+    });
     vi.mocked(SessionService.findSessionMetadata).mockImplementation(
       async (sessionId: string, projectPath?: string) => {
         if (sessionId !== 'shared-rewind') return undefined;
-        if (projectPath === '/tmp/workspace-a') return metadataA;
+        if (projectPath === '/tmp/workspace-a') {
+          return rewound ? rewoundMetadataA : metadataA;
+        }
         if (projectPath === '/tmp/workspace-b') return metadataB;
         return undefined;
       }
@@ -8361,6 +8436,12 @@ describe('SessionRoutes runtime reuse', () => {
     vi.mocked(SessionRuntime.create).mockImplementation(
       async ({ workspaceRoot }: SessionRuntimeOptions) =>
         workspaceRoot === '/tmp/workspace-a' ? runtimeA : runtimeB
+    );
+    vi.mocked(SessionService.loadSession).mockImplementation(
+      async (sessionId: string, projectPath?: string) =>
+        sessionId === 'shared-rewind' && projectPath === '/tmp/workspace-a'
+          ? rewoundMessages
+          : []
     );
 
     const app = SessionRoutes();
@@ -8405,6 +8486,22 @@ describe('SessionRoutes runtime reuse', () => {
       `/shared-rewind/message?projectPath=${encodeURIComponent('/tmp/workspace-a')}`
     );
     await expect(messagesResponse.json()).resolves.toEqual(rewoundMessages);
+    expect(SessionService.loadSession).toHaveBeenCalledWith(
+      'shared-rewind',
+      '/tmp/workspace-a'
+    );
+    const sessionsResponse = await app.request('/');
+    const sessions = (await sessionsResponse.json()) as Array<{
+      projectPath: string;
+      messageCount: number;
+      lastMessageTime: string;
+    }>;
+    expect(
+      sessions.find((session) => session.projectPath === '/tmp/workspace-a')
+    ).toMatchObject({
+      messageCount: 1,
+      lastMessageTime: rewoundMetadataA.lastMessageTime,
+    });
 
     const ambiguous = await app.request('/shared-rewind/rewind');
     expect(ambiguous.status).toBe(409);
@@ -8604,13 +8701,20 @@ describe('SessionRoutes runtime reuse', () => {
     const { SessionService } = await import(
       '../../../../src/services/SessionService.js'
     );
-    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(
-      makeSessionMetadata({
-        sessionId: 'shell-session',
-        projectPath: '/tmp/shell-workspace',
-      })
-    );
-    vi.mocked(SessionService.loadSession).mockResolvedValue([]);
+    const initialMetadata = makeSessionMetadata({
+      sessionId: 'shell-session',
+      projectPath: '/tmp/shell-workspace',
+      messageCount: 0,
+    });
+    const updatedMetadata = makeSessionMetadata({
+      sessionId: 'shell-session',
+      projectPath: '/tmp/shell-workspace',
+      messageCount: 1,
+    });
+    vi.mocked(SessionService.findSessionMetadata)
+      .mockResolvedValueOnce(initialMetadata)
+      .mockResolvedValueOnce(initialMetadata)
+      .mockResolvedValue(updatedMetadata);
     runtimeState.runtime.executeUserShellCommand.mockResolvedValueOnce({
       executionId: 'shell-execution',
       messageId: 'shell-message',
@@ -8631,7 +8735,8 @@ describe('SessionRoutes runtime reuse', () => {
       auxiliary: false,
     });
 
-    const response = await SessionRoutes().request('/shell-session/shell', {
+    const app = SessionRoutes();
+    const response = await app.request('/shell-session/shell', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -8651,10 +8756,19 @@ describe('SessionRoutes runtime reuse', () => {
     expect(runtimeState.runtime.executeUserShellCommand).toHaveBeenCalledWith('pwd', {
       signal: expect.any(AbortSignal),
     });
-    expect(SessionService.loadSession).toHaveBeenCalledWith(
+    expect(SessionService.loadSession).not.toHaveBeenCalled();
+    expect(SessionService.findSessionMetadata).toHaveBeenLastCalledWith(
       'shell-session',
       '/tmp/shell-workspace'
     );
+    const sessionsResponse = await app.request('/');
+    const sessions = (await sessionsResponse.json()) as Array<{
+      sessionId: string;
+      messageCount: number;
+    }>;
+    expect(
+      sessions.find((session) => session.sessionId === 'shell-session')
+    ).toMatchObject({ messageCount: 1 });
     expect(agentState.chatStream).not.toHaveBeenCalled();
   });
 

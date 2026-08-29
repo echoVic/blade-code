@@ -263,7 +263,7 @@ interface SessionInfo {
   updatedAt: Date;
   rootId: string;
   parentId?: string;
-  messages: Message[];
+  messageCount: number;
   currentRunId?: string;
   relationType?: 'subagent' | 'fork';
   taskStatus: SessionMetadata['taskStatus'];
@@ -1181,7 +1181,6 @@ function sessionRefFromSession(session: SessionInfo): SessionRef {
 
 function sessionInfoFromMetadata(
   metadata: SessionMetadata,
-  messages: Message[],
   taskWorktree?: SessionTaskWorktree
 ): SessionInfo {
   return {
@@ -1227,7 +1226,7 @@ function sessionInfoFromMetadata(
     archivedAt: metadata.archivedAt,
     archivedBySessionId: metadata.archivedBySessionId,
     taskWorktree,
-    messages,
+    messageCount: metadata.messageCount,
   };
 }
 
@@ -1362,6 +1361,7 @@ function syncSessionTaskMetadata(
   session.taskConcurrencyLimit = metadata.taskConcurrencyLimit;
   session.archivedAt = metadata.archivedAt;
   session.archivedBySessionId = metadata.archivedBySessionId;
+  session.messageCount = metadata.messageCount;
   session.updatedAt = new Date(metadata.lastMessageTime);
 }
 
@@ -1434,7 +1434,7 @@ function projectActiveSession(session: SessionInfo) {
       : session.pendingInteraction,
     agentType: undefined,
     model: undefined,
-    messageCount: session.messages.length,
+    messageCount: session.messageCount,
     firstMessageTime: session.createdAt.toISOString(),
     lastMessageTime: session.updatedAt.toISOString(),
     hasErrors: false,
@@ -2028,7 +2028,7 @@ export const createSessionRouteController = (): SessionRouteController => {
               : {}),
             ...(session.taskWorktree ? { taskWorktree: session.taskWorktree } : {}),
             ...(session.taskIsolation ? { taskIsolation: session.taskIsolation } : {}),
-            ...(session.messages.length > 0
+            ...(session.messageCount > 0
               ? {
                   sessionStart: {
                     isResume: true,
@@ -2168,11 +2168,11 @@ export const createSessionRouteController = (): SessionRouteController => {
         if (!metadata) {
           throw new NotFoundError('Session', ref.sessionId);
         }
-        const [messages, taskWorktree] = await Promise.all([
-          SessionService.loadSession(ref.sessionId, ref.projectPath),
-          SessionService.findSessionTaskWorktree(ref.sessionId, ref.projectPath),
-        ]);
-        const session = sessionInfoFromMetadata(metadata, messages, taskWorktree);
+        const taskWorktree = await SessionService.findSessionTaskWorktree(
+          ref.sessionId,
+          ref.projectPath
+        );
+        const session = sessionInfoFromMetadata(metadata, taskWorktree);
         sessions.set(key, session);
         return session;
       })();
@@ -2447,7 +2447,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       });
       const { metadata } = created;
       taskWorktree = created.taskWorktree;
-      session = sessionInfoFromMetadata(metadata, [], taskWorktree);
+      session = sessionInfoFromMetadata(metadata, taskWorktree);
       const sessionRef = sessionRefFromSession(session);
       sessions.set(sessionRefKey(sessionRef), session);
       Bus.publish(sessionRef, 'task.status', {
@@ -3160,7 +3160,7 @@ export const createSessionRouteController = (): SessionRouteController => {
           taskStatus: 'completed',
         }
       );
-      const session = sessionInfoFromMetadata(metadata, []);
+      const session = sessionInfoFromMetadata(metadata);
       const sessionRef = sessionRefFromSession(session);
       sessions.set(sessionRefKey(sessionRef), session);
       Bus.publish(sessionRef, 'session.created', {});
@@ -3246,7 +3246,7 @@ export const createSessionRouteController = (): SessionRouteController => {
         sourceProjectPath: sourceMetadata.projectPath,
         targetProjectPath: sourceMetadata.projectPath,
       });
-      const childSession = sessionInfoFromMetadata(fork.metadata, fork.messages);
+      const childSession = sessionInfoFromMetadata(fork.metadata);
       const childRef = sessionRefFromSession(childSession);
       sessions.set(sessionRefKey(childRef), childSession);
       Bus.publish(childRef, 'task.status', {
@@ -3395,8 +3395,7 @@ export const createSessionRouteController = (): SessionRouteController => {
           }
           throw error;
         }
-        session.messages = [...result.messages];
-        session.updatedAt = new Date();
+        await refreshSessionTaskMetadata(session);
         const clientMessages = projectClientMessages(result.messages);
         Bus.publish(ref, 'session.rewound', {
           targetMessageId: result.checkpoint.messageId,
@@ -3540,10 +3539,6 @@ export const createSessionRouteController = (): SessionRouteController => {
         });
         const completion = run.completion
           .then(async (result) => {
-            session.messages = await SessionService.loadSession(
-              ref.sessionId,
-              ref.projectPath
-            );
             await refreshSessionTaskMetadata(session);
             Bus.publish(ref, 'task.status', {
               taskStatus: session.taskStatus,
@@ -4014,10 +4009,7 @@ export const createSessionRouteController = (): SessionRouteController => {
 
     try {
       const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
-      const session = sessions.get(sessionRefKey(ref));
-      const messages = session?.messages
-        ? session.messages
-        : await SessionService.loadSession(ref.sessionId, ref.projectPath);
+      const messages = await SessionService.loadSession(ref.sessionId, ref.projectPath);
       return c.json(projectClientMessages(messages));
     } catch (error) {
       logger.error('[SessionRoutes] Failed to get messages:', error);
@@ -4314,10 +4306,6 @@ export const createSessionRouteController = (): SessionRouteController => {
                 )
               : undefined;
             if (recoveredReview) {
-              session.messages = await SessionService.loadSession(
-                ref.sessionId,
-                ref.projectPath
-              );
               await refreshSessionTaskMetadata(session);
               Bus.publish(ref, 'review.completed', {
                 reviewId: recoveredReview.reviewId,
@@ -4859,11 +4847,7 @@ export const createSessionRouteController = (): SessionRouteController => {
         const result = await runtime.executeUserShellCommand(parsed.data.command, {
           signal: controller.signal,
         });
-        session.messages = await SessionService.loadSession(
-          session.id,
-          session.projectPath
-        );
-        session.updatedAt = new Date();
+        await refreshSessionTaskMetadata(session);
         const currentRun = getRun(session.currentRunId);
         if (result.delivery === 'next_turn' && isActiveRun(currentRun)) {
           currentRun.pendingFollowUpRequested = true;
@@ -5721,12 +5705,6 @@ async function executeRunAsync(
       }
     }
 
-    // Keep the visible transcript separate from the compacted model projection.
-    session.messages = await SessionService.loadSession(
-      session.id,
-      session.projectPath
-    );
-    session.updatedAt = new Date();
     await refreshSessionTaskMetadata(session);
 
     if (
@@ -5955,11 +5933,11 @@ export async function respondToPermission(
       ref.projectPath
     );
     if (!metadata) return false;
-    const [messages, taskWorktree] = await Promise.all([
-      SessionService.loadSession(ref.sessionId, ref.projectPath),
-      SessionService.findSessionTaskWorktree(ref.sessionId, ref.projectPath),
-    ]);
-    session = sessionInfoFromMetadata(metadata, messages, taskWorktree);
+    const taskWorktree = await SessionService.findSessionTaskWorktree(
+      ref.sessionId,
+      ref.projectPath
+    );
+    session = sessionInfoFromMetadata(metadata, taskWorktree);
     sessions.set(sessionRefKey(ref), session);
   } else {
     await refreshSessionTaskMetadata(session);
