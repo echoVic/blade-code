@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.116] - 2026-08-29
+
+### Fixed
+- Added an opt-in nonce-bound OSC readiness handshake emitted only after the active TUI composer input handler is registered.
+- Made prompt-sending raw PTY runners wait for the exact per-child readiness marker and removed the token-budget runner's five-second bracketed-mode fallback.
+
+### Tests
+- Added deterministic nonce validation, registration ordering, runner inventory, wait-before-paste, and cross-chunk marker coverage.
+- Verified the DeepSeek Flash/Pro token-budget and large-prompt raw PTY cells with real Provider requests and zero framework retries.
+
 ## [0.10.115] - 2026-08-29
 
 ### Fixed

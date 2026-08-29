@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.116] - 2026-08-29
+
+### 修复
+- 新增 opt-in、nonce-bound 的 OSC readiness handshake，仅在 active TUI composer input handler 注册完成后输出。
+- 让所有发送 prompt 的 raw PTY runner 等待各自 child 的精确 readiness marker，并删除 token-budget runner 的五秒 bracketed-mode fallback。
+
+### 测试
+- 新增 nonce 校验、注册时序、runner 清单、wait-before-paste 与跨 chunk marker 的确定性覆盖。
+- 使用真实 Provider、零 framework retry 验证 DeepSeek Flash/Pro 的 token-budget 与 large-prompt raw PTY cell。
+
 ## [0.10.115] - 2026-08-29
 
 ### 修复
