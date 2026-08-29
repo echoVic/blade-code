@@ -331,6 +331,13 @@ const worktreeState = vi.hoisted(() => ({
   }),
 }));
 
+const loggerState = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
 vi.mock('../../../../src/agent/runtime/SessionRuntime.js', () => ({
   SessionRuntime: {
     create: vi.fn(async () => runtimeState.runtime),
@@ -546,12 +553,7 @@ vi.mock('../../../../src/logging/Logger.js', () => ({
   LogCategory: {
     SERVICE: 'service',
   },
-  createLogger: vi.fn(() => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  })),
+  createLogger: vi.fn(() => loggerState),
 }));
 
 function createSseCollector(response: Response) {
@@ -670,6 +672,10 @@ describe('SessionRoutes runtime reuse', () => {
       workspaceRoot: '/tmp/source',
       removed: true,
     });
+    loggerState.debug.mockReset();
+    loggerState.info.mockReset();
+    loggerState.warn.mockReset();
+    loggerState.error.mockReset();
     vi.mocked(SessionRuntime.create).mockImplementation(
       async (options: SessionRuntimeOptions) =>
         createRuntimeDouble({
@@ -5461,6 +5467,143 @@ describe('SessionRoutes runtime reuse', () => {
       } finally {
         runtimeDispose.mockRestore();
       }
+    } finally {
+      releaseDisposeAll();
+      releaseCreate();
+      await shutdown?.catch(() => undefined);
+      await collector?.cancel();
+      if (runtimeCreateStarted) {
+        await vi.waitFor(() => {
+          expect(controller.getCoordinationStats().messageSubmissions).toEqual({
+            keys: 0,
+            operations: 0,
+          });
+        });
+      }
+      disposeAll.mockRestore();
+      createRuntime.mockReset().mockImplementation(defaultCreateRuntime);
+    }
+  });
+
+  it('keeps the original residency-closed failure when disposing an uncommitted Runtime rejects', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const { SessionRuntime: CurrentSessionRuntime } = await import(
+      '../../../../src/agent/runtime/SessionRuntime.js'
+    );
+    const { SessionRuntimeResidency: CurrentSessionRuntimeResidency } = await import(
+      '../../../../src/agent/runtime/SessionRuntimeResidency.js'
+    );
+    const sessionId = 'shutdown-sse-runtime-cleanup-reject';
+    const projectPath = '/tmp/shutdown-sse-runtime-cleanup-reject';
+    const ref = { sessionId, projectPath };
+    mockResolvedSession(sessionId, { projectPath });
+
+    let releaseDisposeAll: () => void = () => undefined;
+    const disposeAllGate = new Promise<void>((resolve) => {
+      releaseDisposeAll = resolve;
+    });
+    let markDisposeAllEntered: () => void = () => undefined;
+    const disposeAllEntered = new Promise<void>((resolve) => {
+      markDisposeAllEntered = resolve;
+    });
+    const originalDisposeAll =
+      CurrentSessionRuntimeResidency.prototype.disposeAll;
+    const disposeAll = vi
+      .spyOn(CurrentSessionRuntimeResidency.prototype, 'disposeAll')
+      .mockImplementation(async function () {
+        markDisposeAllEntered();
+        await disposeAllGate;
+        await originalDisposeAll.call(this);
+      });
+
+    const createRuntime = vi.mocked(CurrentSessionRuntime.create);
+    const defaultCreateRuntime = createRuntime.getMockImplementation();
+    if (!defaultCreateRuntime) throw new Error('Expected SessionRuntime.create mock');
+    let releaseCreate: () => void = () => undefined;
+    const createGate = new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
+    let markRuntimeCreated: (runtime: SessionRuntime) => void = () => undefined;
+    const runtimeCreated = new Promise<SessionRuntime>((resolve) => {
+      markRuntimeCreated = resolve;
+    });
+    createRuntime.mockReset().mockImplementation(async (...args) => {
+      const runtime = await defaultCreateRuntime(...args);
+      runtime.dispose = vi
+        .fn<() => Promise<void>>()
+        .mockRejectedValueOnce(new Error('cleanup dispose failed'));
+      markRuntimeCreated(runtime);
+      await createGate;
+      return runtime;
+    });
+
+    const controller = createSessionRouteController();
+    let collector: ReturnType<typeof createSseCollector> | undefined;
+    let shutdown: Promise<void> | undefined;
+    let runtimeCreateStarted = false;
+    try {
+      const response = await controller.app.request(
+        `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`
+      );
+      collector = createSseCollector(response);
+      await expect(collector.next()).resolves.toMatchObject({ type: 'connected' });
+
+      shutdown = controller.shutdown('server-shutdown');
+      await disposeAllEntered;
+
+      busState.publish(ref, 'team.message.received', {
+        teamName: 'shutdown-team',
+        messageId: 'shutdown-message',
+        content: 'wake after the shutdown snapshot',
+        metadata: {
+          clientVisible: false,
+          teamMessage: {
+            messageId: 'shutdown-message',
+            teamName: 'shutdown-team',
+            from: 'worker',
+            to: 'team-lead',
+          },
+        },
+      });
+
+      const runtime = await runtimeCreated;
+      runtimeCreateStarted = true;
+      const runtimeDispose = vi.mocked(runtime.dispose);
+
+      releaseDisposeAll();
+      await expect(shutdown).resolves.toBeUndefined();
+
+      releaseCreate();
+      await vi.waitFor(() => {
+        expect(controller.getCoordinationStats().messageSubmissions).toEqual({
+          keys: 0,
+          operations: 0,
+        });
+      });
+
+      expect(runtimeDispose).toHaveBeenCalledOnce();
+      expect(loggerState.warn).toHaveBeenCalledWith(
+        `[SessionRoutes] Failed to dispose uncommitted Runtime for ${sessionId}:`,
+        expect.objectContaining({ message: 'cleanup dispose failed' })
+      );
+      expect(loggerState.error).toHaveBeenCalledWith(
+        `[SessionRoutes] Failed to deliver teammate message for ${sessionId}:`,
+        expect.objectContaining({
+          message: 'Session runtime residency is closed',
+        })
+      );
+      expect(
+        loggerState.error.mock.calls.some(([, error]) =>
+          error instanceof Error && error.message === 'cleanup dispose failed'
+        )
+      ).toBe(false);
+      expect(controller.getRuntimeResidencyStats()).toMatchObject({
+        resident: 0,
+        reserved: 0,
+        pinned: 0,
+      });
     } finally {
       releaseDisposeAll();
       releaseCreate();

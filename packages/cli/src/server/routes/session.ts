@@ -1986,8 +1986,9 @@ export const createSessionRouteController = (): SessionRouteController => {
           surface: 'web',
           allowEviction: true,
         });
+        let uncommittedRuntime: SessionRuntime | undefined;
         try {
-          const runtime = await SessionRuntime.create({
+          uncommittedRuntime = await SessionRuntime.create({
             sessionId: session.id,
             workspaceRoot: session.projectPath,
             permissionMode:
@@ -2022,7 +2023,7 @@ export const createSessionRouteController = (): SessionRouteController => {
                 }
               : {}),
           });
-          const resolvedModelId = runtime.getCurrentModelId();
+          const resolvedModelId = uncommittedRuntime.getCurrentModelId();
           if (
             resolvedModelId &&
             (session.selectedModelId || session.taskModelId) &&
@@ -2044,6 +2045,7 @@ export const createSessionRouteController = (): SessionRouteController => {
               session.updatedAt = new Date(metadata.lastMessageTime);
             }
           }
+          const runtime = uncommittedRuntime;
           let initialLease: SessionRuntimeResidencyLease<SessionRuntime> | undefined =
             reservation.commit({
               key,
@@ -2058,6 +2060,7 @@ export const createSessionRouteController = (): SessionRouteController => {
                 runtime.isIdleForResidency(),
               dispose: () => disposeRuntimeResources(session, key, runtime),
             });
+          uncommittedRuntime = undefined;
           runtimes.set(key, runtime);
           return {
             runtime,
@@ -2076,6 +2079,14 @@ export const createSessionRouteController = (): SessionRouteController => {
           };
         } catch (error) {
           reservation.cancel();
+          if (uncommittedRuntime) {
+            await uncommittedRuntime.dispose().catch((cleanupError) => {
+              logger.warn(
+                `[SessionRoutes] Failed to dispose uncommitted Runtime for ${session.id}:`,
+                cleanupError
+              );
+            });
+          }
           if (error instanceof WorktreeUnavailableError) {
             throw new SessionWorkspaceUnavailableError(error.reason);
           }
