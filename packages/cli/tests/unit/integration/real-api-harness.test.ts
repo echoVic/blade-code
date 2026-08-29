@@ -32,6 +32,7 @@ import {
   extractDurableToolTrace,
   finalAssistantText,
   findSessionTranscript,
+  inspectFinalAssistantText,
   readSessionEvents,
   startHeldProviderProxy,
 } from '../../integration/real-api/sessionForkTrajectoryHarness.js';
@@ -403,6 +404,10 @@ describe('real API coding-task harness', () => {
     ];
 
     expect(finalAssistantText(events)).toBeUndefined();
+    expect(inspectFinalAssistantText(events)).toEqual({
+      state: 'awaiting_task_completion',
+      text: marker,
+    });
     expect(
       finalAssistantText([
         ...events,
@@ -410,6 +415,13 @@ describe('real API coding-task harness', () => {
         createTaskStatusEvent(sessionId, 'completed'),
       ])
     ).toBe(marker);
+    expect(
+      inspectFinalAssistantText([
+        ...events,
+        createTitleUpdateEvent(sessionId),
+        createTaskStatusEvent(sessionId, 'completed'),
+      ])
+    ).toEqual({ state: 'ready', text: marker });
     expect(
       finalAssistantText([
         ...events,
@@ -535,6 +547,21 @@ describe('real API coding-task harness', () => {
       ])
     ).toBeUndefined();
     expect(finalAssistantText([])).toBeUndefined();
+    for (const malformed of [
+      [
+        ...events.filter((event) => event.type !== 'turn_started'),
+        createTaskStatusEvent(sessionId, 'completed'),
+      ],
+      [...events, createTaskStatusEvent(sessionId, 'failed')],
+      [...events, createTaskStatusEvent('different-session', 'completed')],
+      [...events, createTurnStartedEvent(sessionId, 'next-turn')],
+      [...events, laterUser],
+      [],
+    ]) {
+      expect(inspectFinalAssistantText(malformed)).toEqual({
+        state: 'structural_mismatch',
+      });
+    }
   });
 
   it('imports testConfig without reading the local Blade configuration', async () => {

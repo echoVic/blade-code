@@ -280,6 +280,7 @@ describe('durable interaction ACP stdio runner', () => {
     ['recovery result evidence is invalid', 'recovery_result_invalid'],
     ['Write evidence is invalid', 'write_invalid'],
     ['final marker does not belong to recovered turn', 'final_turn_mismatch'],
+    ['durable final structure is invalid', 'durable_final_structure'],
     ['durable final marker is not exact', 'durable_final_mismatch'],
     ['durable final marker count is invalid', 'durable_marker_count'],
     ['ACP final marker count is invalid', 'acp_marker_count'],
@@ -848,6 +849,96 @@ describe('durable interaction ACP stdio runner', () => {
     expect(() =>
       inspectDurableFinalMarker(misleadingEvents, recoveredLifecycle!.completed, marker)
     ).toThrow('final marker does not belong to recovered turn');
+  });
+
+  it('waits for the recovered turn task status before judging its final marker', () => {
+    const marker = 'ACP_DURABLE_COMPLETE';
+    const base = completionLifecycleEvents();
+    const eventsBeforeTaskCompletion = [
+      base[0]!,
+      base[1]!,
+      ...finalMessageEvents('recovered-turn', marker),
+      base[2]!,
+    ];
+    const lifecycle = inspectDurableCompletionLifecycle(
+      eventsBeforeTaskCompletion,
+      'interaction-request-1'
+    );
+
+    expect(lifecycle).toBeDefined();
+    expect(
+      inspectDurableFinalMarker(
+        eventsBeforeTaskCompletion,
+        lifecycle!.completed,
+        marker
+      )
+    ).toBeUndefined();
+    expect(
+      inspectDurableFinalMarker(
+        [
+          ...eventsBeforeTaskCompletion,
+          completionStatusEvent('recovered-completed-status'),
+        ],
+        lifecycle!.completed,
+        marker
+      )
+    ).toBe(1);
+  });
+
+  it('fails closed on a malformed durable final before task status is written', () => {
+    const marker = 'ACP_DURABLE_COMPLETE';
+    const base = completionLifecycleEvents();
+    const malformedEvents = [base[0]!, base[1]!, base[2]!];
+    const lifecycle = inspectDurableCompletionLifecycle(
+      malformedEvents,
+      'interaction-request-1'
+    );
+
+    expect(lifecycle).toBeDefined();
+    expect(() =>
+      inspectDurableFinalMarker(malformedEvents, lifecycle!.completed, marker)
+    ).toThrow('durable final structure is invalid');
+  });
+
+  it('fails closed on non-exact durable text before task status is written', () => {
+    const marker = 'ACP_DURABLE_COMPLETE';
+    const base = completionLifecycleEvents();
+    const events = [
+      base[0]!,
+      base[1]!,
+      ...finalMessageEvents('recovered-turn', `${marker}!`),
+      base[2]!,
+    ];
+    const lifecycle = inspectDurableCompletionLifecycle(
+      events,
+      'interaction-request-1'
+    );
+
+    expect(lifecycle).toBeDefined();
+    expect(() =>
+      inspectDurableFinalMarker(events, lifecycle!.completed, marker)
+    ).toThrow('durable final marker is not exact');
+  });
+
+  it('fails closed on a duplicate durable marker before task status is written', () => {
+    const marker = 'ACP_DURABLE_COMPLETE';
+    const base = completionLifecycleEvents();
+    const events = [
+      base[0]!,
+      base[1]!,
+      ...finalMessageEvents('earlier-turn', marker),
+      ...finalMessageEvents('recovered-turn', marker),
+      base[2]!,
+    ];
+    const lifecycle = inspectDurableCompletionLifecycle(
+      events,
+      'interaction-request-1'
+    );
+
+    expect(lifecycle).toBeDefined();
+    expect(() =>
+      inspectDurableFinalMarker(events, lifecycle!.completed, marker)
+    ).toThrow('durable final marker count is invalid');
   });
 
   it('fails with a fixed reason when the durable final assistant text is not exact', () => {

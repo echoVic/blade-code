@@ -4,7 +4,6 @@ import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { createSplitPtyMarkerInstruction } from './foregroundBoundedOutputPtyDriver.js';
 
 const execFileAsync = promisify(execFile);
 const MAX_SERIALIZED_EVIDENCE_BYTES = 32 * 1024;
@@ -68,7 +67,24 @@ export interface DurableInteractionRecoveryPtyInput {
 export function createDurableInteractionRecoveryPtyFinalInstruction(
   finalMarker: string
 ): string {
-  return createSplitPtyMarkerInstruction(finalMarker);
+  if (!/^[A-Za-z0-9_-]{2,128}$/.test(finalMarker)) {
+    throw new Error('PTY final marker violates the bounded ASCII contract');
+  }
+  const midpoint = Math.ceil(finalMarker.length / 2);
+  const firstHalf = finalMarker.slice(0, midpoint);
+  const secondHalf = finalMarker.slice(midpoint);
+  return [
+    'Final response protocol: do not call tools.',
+    'Your entire response must be derived mechanically from MARKER_TEMPLATE.',
+    'Delete the one ~ character from MARKER_TEMPLATE.',
+    'Output every remaining character unchanged.',
+    'Example only: transforming 123~456 yields 123456.',
+    'Copy payload characters literally. Output no labels, delimiters, quotes, ' +
+      'spaces, markdown, explanation, or leading/trailing newline.',
+    `The result must contain exactly ${finalMarker.length} ASCII characters and match ` +
+      `^[A-Za-z0-9_-]{${finalMarker.length}}$.`,
+    `MARKER_TEMPLATE=${firstHalf}~${secondHalf}`,
+  ].join('\n');
 }
 
 function isNonemptyString(value: unknown): value is string {

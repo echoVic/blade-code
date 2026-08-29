@@ -36,23 +36,24 @@ describe('foreground bounded output PTY driver', () => {
     ['hyphenated', 'FINAL_MARKER_deepseek-v4-flash'],
     ['maximum', 'A'.repeat(128)],
   ])(
-    'builds a mechanical %s final-marker instruction without embedding the marker',
+    'builds the stable split-field %s final-marker instruction without embedding the marker',
     (_case, marker) => {
       const instruction = createSplitPtyMarkerInstruction(marker);
-      const template = instruction.match(
-        /^MARKER_TEMPLATE=([A-Za-z0-9_-]+~[A-Za-z0-9_-]+)$/m
-      )?.[1];
+      const partA = instruction.match(/^PART_A=([A-Za-z0-9_-]+)$/m)?.[1];
+      const partB = instruction.match(/^PART_B=([A-Za-z0-9_-]+)$/m)?.[1];
 
       expect(instruction).not.toContain(marker);
-      expect(template).toBeTypeOf('string');
-      expect(template?.split('~')).toHaveLength(2);
-      expect(template?.replace('~', '')).toBe(marker);
+      expect(partA).toBeTypeOf('string');
+      expect(partB).toBeTypeOf('string');
+      expect(`${partA}${partB}`).toBe(marker);
       expect(instruction).toContain(`exactly ${marker.length} ASCII characters`);
       expect(instruction).toContain(`match ^[A-Za-z0-9_-]{${marker.length}}$`);
-      expect(instruction).toContain('Delete the one ~ character from MARKER_TEMPLATE.');
-      expect(instruction).not.toContain('PART_A=');
-      expect(instruction).not.toContain('PART_B=');
-      expect(instruction.endsWith(`MARKER_TEMPLATE=${template}`)).toBe(true);
+      expect(instruction).toContain(
+        'Your entire response must be exactly the payload of PART_A immediately ' +
+          'followed by the payload of PART_B.'
+      );
+      expect(instruction).not.toContain('MARKER_TEMPLATE=');
+      expect(instruction.endsWith(`PART_A=${partA}\nPART_B=${partB}`)).toBe(true);
     }
   );
 

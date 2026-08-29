@@ -323,27 +323,28 @@ export function readSessionEvents(filePath: string): SessionEvent[] {
   return events;
 }
 
-export function finalAssistantText(
+export type FinalAssistantTextInspection =
+  | { state: 'ready'; text: string }
+  | { state: 'awaiting_task_completion'; text: string }
+  | { state: 'structural_mismatch' };
+
+export function inspectFinalAssistantText(
   events: readonly SessionEvent[]
-): string | undefined {
+): FinalAssistantTextInspection {
   const terminalIndex = events.findLastIndex(
     (event) => event.type === 'turn_completed' || event.type === 'turn_aborted'
   );
-  if (terminalIndex < 0) return undefined;
+  if (terminalIndex < 0) return { state: 'structural_mismatch' };
   const completion = events[terminalIndex];
-  if (completion?.type !== 'turn_completed') return undefined;
+  if (completion?.type !== 'turn_completed') return { state: 'structural_mismatch' };
   const maintenanceSuffix = events.slice(terminalIndex + 1);
-  if (
-    !maintenanceSuffix.some(
-      (event) =>
-        event.type === 'session_updated' &&
-        event.sessionId === completion.sessionId &&
-        event.data.sessionId === completion.sessionId &&
-        event.data.taskStatus === 'completed'
-    )
-  ) {
-    return undefined;
-  }
+  const hasCompletedStatus = maintenanceSuffix.some(
+    (event) =>
+      event.type === 'session_updated' &&
+      event.sessionId === completion.sessionId &&
+      event.data.sessionId === completion.sessionId &&
+      event.data.taskStatus === 'completed'
+  );
   if (
     maintenanceSuffix.some(
       (event) =>
@@ -353,7 +354,7 @@ export function finalAssistantText(
         (event.data.taskStatus !== undefined && event.data.taskStatus !== 'completed')
     )
   ) {
-    return undefined;
+    return { state: 'structural_mismatch' };
   }
   const starts = events
     .slice(0, terminalIndex)
@@ -363,7 +364,7 @@ export function finalAssistantText(
         event.sessionId === completion.sessionId &&
         event.data.turnId === completion.data.turnId
     );
-  if (starts.length !== 1) return undefined;
+  if (starts.length !== 1) return { state: 'structural_mismatch' };
   const startIndex = events.indexOf(starts[0]!);
 
   const candidates = events
@@ -379,11 +380,13 @@ export function finalAssistantText(
       }
       return metadata.turnFinalization.turnId === completion.data.turnId;
     });
-  if (candidates.length !== 1) return undefined;
+  if (candidates.length !== 1) return { state: 'structural_mismatch' };
   const finalAssistant = candidates[0];
-  if (!finalAssistant) return undefined;
+  if (!finalAssistant) return { state: 'structural_mismatch' };
   const finalAssistantIndex = events.indexOf(finalAssistant);
-  if (startIndex < 0 || finalAssistantIndex <= startIndex) return undefined;
+  if (startIndex < 0 || finalAssistantIndex <= startIndex) {
+    return { state: 'structural_mismatch' };
+  }
   const orderedPartIds: string[] = [];
   const textByPartId = new Map<string, string>();
   for (const event of events.slice(finalAssistantIndex + 1, terminalIndex)) {
@@ -402,8 +405,18 @@ export function finalAssistantText(
     }
     textByPartId.set(event.data.partId, event.data.payload.text);
   }
-  if (orderedPartIds.length === 0) return undefined;
-  return orderedPartIds.map((partId) => textByPartId.get(partId) ?? '').join('');
+  if (orderedPartIds.length === 0) return { state: 'structural_mismatch' };
+  const text = orderedPartIds.map((partId) => textByPartId.get(partId) ?? '').join('');
+  return hasCompletedStatus
+    ? { state: 'ready', text }
+    : { state: 'awaiting_task_completion', text };
+}
+
+export function finalAssistantText(
+  events: readonly SessionEvent[]
+): string | undefined {
+  const result = inspectFinalAssistantText(events);
+  return result.state === 'ready' ? result.text : undefined;
 }
 
 export interface DurableToolTraceRecord {

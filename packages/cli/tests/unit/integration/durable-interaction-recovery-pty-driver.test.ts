@@ -8,6 +8,7 @@ import {
   parseDurableInteractionRecoveryPtyEvidence,
   parseDurableInteractionRecoveryPtyFailureEvidence,
 } from '../../support/durableInteractionRecoveryPtyDriver.js';
+import { createSplitPtyMarkerInstruction } from '../../support/foregroundBoundedOutputPtyDriver.js';
 
 vi.unmock('node:child_process');
 
@@ -192,6 +193,15 @@ describe('durable interaction raw PTY driver', () => {
     expect(instruction).not.toContain(marker);
     expect(instruction).toContain('MARKER_TEMPLATE=');
     expect(instruction).toContain('Delete the one ~ character');
+    expect(instruction).not.toBe(createSplitPtyMarkerInstruction(marker));
+  });
+
+  it('keeps the durable marker transform on the bounded ASCII contract', () => {
+    for (const marker of ['', 'A', 'A'.repeat(129), 'HAS SPACE', 'UNICODE_你好']) {
+      expect(() => createDurableInteractionRecoveryPtyFinalInstruction(marker)).toThrow(
+        'bounded ASCII contract'
+      );
+    }
   });
 
   it('keeps the raw PTY production and keyboard synchronization contract', async () => {

@@ -7,7 +7,7 @@ import * as acp from '@agentclientprotocol/sdk';
 import { PersistentStore } from '../../src/context/storage/PersistentStore.js';
 import { getSessionInboxFilePath } from '../../src/context/storage/pathUtils.js';
 import type { SessionEvent } from '../../src/context/types.js';
-import { finalAssistantText } from '../integration/real-api/sessionForkTrajectoryHarness.js';
+import { inspectFinalAssistantText } from '../integration/real-api/sessionForkTrajectoryHarness.js';
 
 const INPUT_ENV = 'BLADE_DURABLE_INTERACTION_ACP_INPUT';
 const MAX_INPUT_BYTES = 64 * 1024;
@@ -158,6 +158,7 @@ export type RecoveryFailureReason =
   | 'recovery_result_invalid'
   | 'write_invalid'
   | 'final_turn_mismatch'
+  | 'durable_final_structure'
   | 'durable_final_mismatch'
   | 'durable_marker_count'
   | 'acp_marker_count'
@@ -192,6 +193,7 @@ const RECOVERY_FAILURE_REASONS = [
   'recovery_result_invalid',
   'write_invalid',
   'final_turn_mismatch',
+  'durable_final_structure',
   'durable_final_mismatch',
   'durable_marker_count',
   'acp_marker_count',
@@ -226,6 +228,7 @@ const RECOVERY_FAILURE_REASON_BY_MESSAGE = {
   'recovery result evidence is invalid': 'recovery_result_invalid',
   'Write evidence is invalid': 'write_invalid',
   'final marker does not belong to recovered turn': 'final_turn_mismatch',
+  'durable final structure is invalid': 'durable_final_structure',
   'durable final marker is not exact': 'durable_final_mismatch',
   'durable final marker count is invalid': 'durable_marker_count',
   'ACP final marker count is invalid': 'acp_marker_count',
@@ -1074,19 +1077,24 @@ export function inspectDurableFinalMarker(
   events: readonly SessionEvent[],
   completed: Extract<SessionEvent, { type: 'turn_completed' }>,
   finalMarker: string
-): 1 {
+): 1 | undefined {
   const finalTerminal = events.findLast(
     (event) => event.type === 'turn_completed' || event.type === 'turn_aborted'
   );
   if (finalTerminal !== completed) {
     throw new InvalidRecoveryError('final marker does not belong to recovered turn');
   }
-  if (finalAssistantText(events) !== finalMarker) {
+  const finalInspection = inspectFinalAssistantText(events);
+  if (finalInspection.state === 'structural_mismatch') {
+    throw new InvalidRecoveryError('durable final structure is invalid');
+  }
+  if (finalInspection.text !== finalMarker) {
     throw new InvalidRecoveryError('durable final marker is not exact');
   }
   if (countOccurrences(assistantText(events), finalMarker) !== 1) {
     throw new InvalidRecoveryError('durable final marker count is invalid');
   }
+  if (finalInspection.state === 'awaiting_task_completion') return undefined;
   return 1;
 }
 
@@ -1350,6 +1358,7 @@ async function inspectCompletion(
     lifecycle.completed,
     input.finalMarker
   );
+  if (durableFinalMarkerCount === undefined) return undefined;
   inspectAcpFinalMarker(client.agentText(), input.finalMarker, client.overflowed());
   const target = await readFile(input.targetPath, 'utf8').catch((error: unknown) => {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT')
