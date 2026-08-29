@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import type { SessionEvent } from '../../src/context/types.js';
 
 const execFileAsync = promisify(execFile);
 const MAX_SERIALIZED_EVIDENCE_BYTES = 32 * 1024;
@@ -40,6 +41,11 @@ export interface DurableInteractionRecoveryPtyEvidence {
   interactionRequested: 1;
   interactionResponded: 1;
   interactionRecovered: 1;
+  pendingAttempts: 2;
+  failedAttempts: 1;
+  completedAttempts: 1;
+  acknowledgements: 1;
+  firstFailureReplaySafe: true;
   writeCalls: 1;
   writeResults: 1;
   inboxMissing: true;
@@ -49,6 +55,262 @@ export interface DurableInteractionRecoveryPtyEvidence {
   termFallbackUsed: false;
   killFallbackUsed: false;
   output: string;
+}
+
+export class InvalidDurableInteractionPtyLifecycleError extends Error {
+  constructor(
+    message: string,
+    readonly reason: 'duplicate_turn' | 'invalid_order'
+  ) {
+    super(message);
+  }
+}
+
+export interface DurableInteractionPtyRetryLifecycle {
+  firstAttempt: { turnId: string; index: number };
+  firstFailure: { turnId: string; index: number };
+  completedAttempt: { turnId: string; index: number };
+  acknowledgement: { index: number };
+  completion: { turnId: string; index: number };
+}
+
+export async function pollDurableInteractionPtyCompletion<T>(input: {
+  deadlineAt: number;
+  inspect: () => Promise<T | undefined>;
+  now?: () => number;
+  wait?: (delayMs: number) => Promise<void>;
+  intervalMs?: number;
+}): Promise<T> {
+  const now = input.now ?? Date.now;
+  const wait =
+    input.wait ??
+    ((delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
+  const intervalMs = input.intervalMs ?? 50;
+  while (now() < input.deadlineAt) {
+    const result = await input.inspect();
+    if (result !== undefined) return result;
+    await wait(intervalMs);
+  }
+  throw new Error(
+    'Timed out waiting for durable interaction acknowledgement and completion'
+  );
+}
+
+/**
+ * Validate the exact durable lifecycle expected from the one-shot PTY fault test.
+ * Incomplete prefixes return undefined so the runner can keep polling.
+ */
+export function inspectDurableInteractionPtyRetryLifecycle(
+  events: readonly SessionEvent[],
+  inboxMessageId: string
+): DurableInteractionPtyRetryLifecycle | undefined {
+  const terminalEvents = events.filter(
+    (event) => event.type === 'turn_completed' || event.type === 'turn_aborted'
+  );
+  if (terminalEvents.length > 2) {
+    throw new InvalidDurableInteractionPtyLifecycleError(
+      'PTY retry lifecycle contains an unexpected terminal',
+      'duplicate_turn'
+    );
+  }
+  const starts = events.flatMap((event, index) => {
+    if (event.type !== 'turn_started') return [];
+    const claims =
+      event.data.inputMessageIds?.filter((id) => id === inboxMessageId).length ?? 0;
+    if (claims === 0) return [];
+    if (
+      claims !== 1 ||
+      event.data.kind !== 'pending' ||
+      event.data.inputMessageIds?.length !== 1
+    ) {
+      throw new InvalidDurableInteractionPtyLifecycleError(
+        'PTY retry lifecycle must claim exactly one durable inbox message',
+        'invalid_order'
+      );
+    }
+    return [{ event, index }];
+  });
+  if (starts.length > 2) {
+    throw new InvalidDurableInteractionPtyLifecycleError(
+      'PTY retry lifecycle must contain exactly two pending attempts',
+      'duplicate_turn'
+    );
+  }
+  if (new Set(starts.map(({ event }) => event.data.turnId)).size !== starts.length) {
+    throw new InvalidDurableInteractionPtyLifecycleError(
+      'PTY retry lifecycle contains duplicate turn identities',
+      'duplicate_turn'
+    );
+  }
+  const claimedTurnIds = new Set(starts.map(({ event }) => event.data.turnId));
+  if (terminalEvents.some((event) => !claimedTurnIds.has(event.data.turnId))) {
+    throw new InvalidDurableInteractionPtyLifecycleError(
+      'PTY retry lifecycle contains an unexpected terminal',
+      'duplicate_turn'
+    );
+  }
+
+  const acknowledgements = events.flatMap((event, index) => {
+    if (event.type !== 'inbox_acknowledged') return [];
+    const matches = event.data.messageIds.filter((id) => id === inboxMessageId).length;
+    if (matches === 0) return [];
+    if (matches !== 1 || event.data.messageIds.length !== 1) {
+      throw new InvalidDurableInteractionPtyLifecycleError(
+        'PTY retry lifecycle acknowledgement is not exact',
+        'invalid_order'
+      );
+    }
+    return [{ event, index }];
+  });
+  if (acknowledgements.length > 1) {
+    throw new InvalidDurableInteractionPtyLifecycleError(
+      'PTY retry lifecycle contains duplicate acknowledgements',
+      'invalid_order'
+    );
+  }
+  if (starts.length === 0) {
+    if (acknowledgements.length > 0) {
+      throw new InvalidDurableInteractionPtyLifecycleError(
+        'PTY retry lifecycle acknowledges input before an attempt',
+        'invalid_order'
+      );
+    }
+    return undefined;
+  }
+
+  const terminalsFor = (turnId: string) =>
+    events.flatMap((event, index) =>
+      (event.type === 'turn_completed' || event.type === 'turn_aborted') &&
+      event.data.turnId === turnId
+        ? [{ event, index }]
+        : []
+    );
+  const firstStart = starts[0]!;
+  const firstTerminals = terminalsFor(firstStart.event.data.turnId);
+  if (firstTerminals.length > 1) {
+    throw new InvalidDurableInteractionPtyLifecycleError(
+      'PTY retry lifecycle contains duplicate first-attempt terminals',
+      'duplicate_turn'
+    );
+  }
+  const firstTerminal = firstTerminals[0];
+  if (!firstTerminal) {
+    if (starts.length > 1 || acknowledgements.length > 0) {
+      throw new InvalidDurableInteractionPtyLifecycleError(
+        'PTY retry lifecycle started a successor before aborting the first attempt',
+        'invalid_order'
+      );
+    }
+    return undefined;
+  }
+  if (firstTerminal.index <= firstStart.index) {
+    throw new InvalidDurableInteractionPtyLifecycleError(
+      'PTY retry lifecycle terminal precedes its first attempt',
+      'invalid_order'
+    );
+  }
+  const firstFailure = firstTerminal.event;
+  const recovery =
+    firstFailure.type === 'turn_aborted' ? firstFailure.data.recovery : undefined;
+  const assistantMessageIds = new Set(
+    events.flatMap((event) =>
+      event.type === 'message_created' && event.data.role === 'assistant'
+        ? [event.data.messageId]
+        : []
+    )
+  );
+  const firstAttemptObservableEvents = events
+    .slice(firstStart.index + 1, firstTerminal.index)
+    .filter(
+      (event) =>
+        (event.type === 'message_created' && event.data.role === 'assistant') ||
+        ((event.type === 'part_created' || event.type === 'part_updated') &&
+          (assistantMessageIds.has(event.data.messageId) ||
+            event.data.partType === 'tool_call' ||
+            event.data.partType === 'tool_result'))
+    );
+  if (
+    firstFailure.type !== 'turn_aborted' ||
+    firstFailure.data.cause !== 'failed' ||
+    firstFailure.data.toolCallsCount !== 0 ||
+    (recovery?.version !== 2 && recovery?.version !== 3) ||
+    recovery.inputMessageIds.length !== 1 ||
+    recovery.inputMessageIds[0] !== inboxMessageId ||
+    recovery.hadSuccessfulToolResult !== false ||
+    recovery.interruptedToolCallCount !== 0 ||
+    (recovery.version === 3 &&
+      recovery.allSuccessfulToolResultsSafeForResume !== false) ||
+    firstFailure.data.acknowledgedInputMessageIds?.includes(inboxMessageId) ||
+    firstAttemptObservableEvents.length !== 0
+  ) {
+    throw new InvalidDurableInteractionPtyLifecycleError(
+      'PTY retry first failure is not replay-safe',
+      'invalid_order'
+    );
+  }
+  if (starts.length === 1) {
+    if (acknowledgements.length > 0) {
+      throw new InvalidDurableInteractionPtyLifecycleError(
+        'PTY retry lifecycle acknowledged input before its retry',
+        'invalid_order'
+      );
+    }
+    return undefined;
+  }
+
+  const secondStart = starts[1]!;
+  if (firstTerminal.index >= secondStart.index) {
+    throw new InvalidDurableInteractionPtyLifecycleError(
+      'PTY retry lifecycle starts its retry before the failed attempt terminates',
+      'invalid_order'
+    );
+  }
+  const secondTerminals = terminalsFor(secondStart.event.data.turnId);
+  if (secondTerminals.length > 1) {
+    throw new InvalidDurableInteractionPtyLifecycleError(
+      'PTY retry lifecycle contains duplicate retry terminals',
+      'duplicate_turn'
+    );
+  }
+  const secondTerminal = secondTerminals[0];
+  if (!secondTerminal) {
+    const acknowledgement = acknowledgements[0];
+    if (acknowledgement && acknowledgement.index <= secondStart.index) {
+      throw new InvalidDurableInteractionPtyLifecycleError(
+        'PTY retry lifecycle acknowledgement precedes its retry',
+        'invalid_order'
+      );
+    }
+    return undefined;
+  }
+  const acknowledgement = acknowledgements[0];
+  if (
+    secondTerminal.event.type !== 'turn_completed' ||
+    !acknowledgement ||
+    !(
+      secondStart.index < acknowledgement.index &&
+      acknowledgement.index < secondTerminal.index
+    )
+  ) {
+    throw new InvalidDurableInteractionPtyLifecycleError(
+      'PTY retry lifecycle does not complete its second attempt in order',
+      'invalid_order'
+    );
+  }
+
+  return {
+    firstAttempt: { turnId: firstStart.event.data.turnId, index: firstStart.index },
+    firstFailure: { turnId: firstFailure.data.turnId, index: firstTerminal.index },
+    completedAttempt: {
+      turnId: secondStart.event.data.turnId,
+      index: secondStart.index,
+    },
+    acknowledgement: { index: acknowledgement.index },
+    completion: {
+      turnId: secondTerminal.event.data.turnId,
+      index: secondTerminal.index,
+    },
+  };
 }
 
 export interface DurableInteractionRecoveryPtyInput {
@@ -104,16 +366,21 @@ export function parseDurableInteractionRecoveryPtyEvidence(
     throw new Error('Durable interaction PTY evidence contains provider credentials');
   }
   const expectedKeys = [
+    'acknowledgements',
     'canaryVisible',
+    'completedAttempts',
     'exitCode',
     'exitSignal',
+    'failedAttempts',
     'finalMarkerSeen',
+    'firstFailureReplaySafe',
     'inboxMissing',
     'interactionRecovered',
     'interactionRequested',
     'interactionResponded',
     'killFallbackUsed',
     'output',
+    'pendingAttempts',
     'questionVisible',
     'reviewVisible',
     'secretSeen',
@@ -136,6 +403,11 @@ export function parseDurableInteractionRecoveryPtyEvidence(
     parsed.interactionRequested !== 1 ||
     parsed.interactionResponded !== 1 ||
     parsed.interactionRecovered !== 1 ||
+    parsed.pendingAttempts !== 2 ||
+    parsed.failedAttempts !== 1 ||
+    parsed.completedAttempts !== 1 ||
+    parsed.acknowledgements !== 1 ||
+    parsed.firstFailureReplaySafe !== true ||
     parsed.writeCalls !== 1 ||
     parsed.writeResults !== 1 ||
     parsed.inboxMissing !== true ||
@@ -241,7 +513,7 @@ interface SafeFailureEvidence {
   snapshot: SafeCompletionSnapshot | null;
 }
 
-type BoundedCount = 0 | 1 | '2plus';
+type BoundedCount = 0 | 1 | 2 | '3plus';
 type SafeFailureReason =
   | 'invalid_input'
   | 'seed_invalid'
@@ -318,7 +590,7 @@ const SAFE_FAILURE_REASONS = new Set<SafeFailureReason>([
   'invalid_order',
   'secret_detected',
 ]);
-const COUNT_VALUES = new Set<unknown>([0, 1, '2plus']);
+const COUNT_VALUES = new Set<unknown>([0, 1, 2, '3plus']);
 
 function isSafeSnapshot(value: unknown): value is SafeCompletionSnapshot {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;

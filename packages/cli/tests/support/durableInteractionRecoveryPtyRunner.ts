@@ -8,6 +8,11 @@ import { getSessionInboxFilePath } from '../../src/context/storage/pathUtils.js'
 import type { SessionEvent } from '../../src/context/types.js';
 import { finalAssistantText } from '../integration/real-api/sessionForkTrajectoryHarness.js';
 import {
+  InvalidDurableInteractionPtyLifecycleError,
+  inspectDurableInteractionPtyRetryLifecycle,
+  pollDurableInteractionPtyCompletion,
+} from './durableInteractionRecoveryPtyDriver.js';
+import {
   ArmedPtyMarkerLatch,
   appendBoundedPtyEvidence,
   projectForegroundBoundedPtyOutput,
@@ -33,12 +38,17 @@ interface CompletionEvidence {
   interactionRequested: 1;
   interactionResponded: 1;
   interactionRecovered: 1;
+  pendingAttempts: 2;
+  failedAttempts: 1;
+  completedAttempts: 1;
+  acknowledgements: 1;
+  firstFailureReplaySafe: true;
   writeCalls: 1;
   writeResults: 1;
   inboxMissing: true;
   targetSha256: string;
 }
-type BoundedCount = 0 | 1 | '2plus';
+type BoundedCount = 0 | 1 | 2 | '3plus';
 interface CompletionSnapshot {
   interactionRequested: BoundedCount;
   interactionResponded: BoundedCount;
@@ -78,7 +88,7 @@ type CompletionAnalysis =
       snapshot: CompletionSnapshot;
     };
 function boundedCount(value: number): BoundedCount {
-  return value > 1 ? '2plus' : (value as 0 | 1);
+  return value > 2 ? '3plus' : (value as 0 | 1 | 2);
 }
 
 class SafeRunnerFailure extends Error {
@@ -368,35 +378,10 @@ async function computeDurableCompletionEvidence(
   ) {
     return undefined;
   }
-  const turns = events.filter(
-    (event) =>
-      event.type === 'turn_started' &&
-      event.data.inputMessageIds?.includes(inboxMessageId)
-  );
-  if (turns.length !== 1 || turns[0]?.type !== 'turn_started') return undefined;
-  const turn = turns[0];
-  const acknowledgements = events.filter(
-    (event) =>
-      event.type === 'inbox_acknowledged' &&
-      event.data.messageIds.includes(inboxMessageId)
-  );
-  if (
-    acknowledgements.length !== 1 ||
-    acknowledgements[0]?.type !== 'inbox_acknowledged'
-  )
-    return undefined;
-  const acknowledgement = acknowledgements[0];
-  const completions = events.filter(
-    (event) =>
-      event.type === 'turn_completed' &&
-      event.data.turnId === turn.data.turnId &&
-      typeof event.seq === 'number' &&
-      typeof acknowledgement.seq === 'number' &&
-      event.seq > acknowledgement.seq
-  );
-  if (completions.length !== 1 || completions[0]?.type !== 'turn_completed')
-    return undefined;
-  const completed = completions[0];
+  const lifecycle = inspectDurableInteractionPtyRetryLifecycle(events, inboxMessageId);
+  if (!lifecycle) return undefined;
+  const completed = events[lifecycle.completion.index];
+  if (completed?.type !== 'turn_completed') return undefined;
   const finalTerminal = events.findLast(
     (event) => event.type === 'turn_completed' || event.type === 'turn_aborted'
   );
@@ -434,11 +419,13 @@ async function computeDurableCompletionEvidence(
     !writeCallEvent ||
     !writeResultEvent ||
     !(
-      eventIndex(events, recovery) < eventIndex(events, turn) &&
-      eventIndex(events, turn) < eventIndex(events, writeCallEvent) &&
+      eventIndex(events, recovery) < lifecycle.firstAttempt.index &&
+      lifecycle.firstAttempt.index < lifecycle.firstFailure.index &&
+      lifecycle.firstFailure.index < lifecycle.completedAttempt.index &&
+      lifecycle.completedAttempt.index < eventIndex(events, writeCallEvent) &&
       eventIndex(events, writeCallEvent) < eventIndex(events, writeResultEvent) &&
-      eventIndex(events, writeResultEvent) < eventIndex(events, acknowledgement) &&
-      eventIndex(events, acknowledgement) < eventIndex(events, completed)
+      eventIndex(events, writeResultEvent) < lifecycle.acknowledgement.index &&
+      lifecycle.acknowledgement.index < lifecycle.completion.index
     )
   ) {
     return undefined;
@@ -451,6 +438,11 @@ async function computeDurableCompletionEvidence(
     interactionRequested: 1,
     interactionResponded: 1,
     interactionRecovered: 1,
+    pendingAttempts: 2,
+    failedAttempts: 1,
+    completedAttempts: 1,
+    acknowledgements: 1,
+    firstFailureReplaySafe: true,
     writeCalls: 1,
     writeResults: 1,
     inboxMissing: true,
@@ -546,18 +538,29 @@ async function analyzeDurableCompletion(
       snapshot.interactionRequested,
       snapshot.interactionResponded,
       snapshot.interactionRecovered,
-    ].includes('2plus')
+    ].some((count) => count === 2 || count === '3plus')
   )
     return { state: 'invalid', reason: 'duplicate_interaction', snapshot };
-  if (snapshot.turnStarts === '2plus')
+  if (snapshot.turnStarts === '3plus')
     return { state: 'invalid', reason: 'duplicate_turn', snapshot };
-  if (snapshot.acknowledgements === '2plus')
+  if (snapshot.acknowledgements === 2 || snapshot.acknowledgements === '3plus')
     return { state: 'invalid', reason: 'duplicate_acknowledgement', snapshot };
-  if (snapshot.turnCompleted === '2plus')
-    return { state: 'invalid', reason: 'duplicate_completion', snapshot };
-  if (snapshot.writeCalls === '2plus' || snapshot.writeResults === '2plus')
+  if (
+    snapshot.writeCalls === 2 ||
+    snapshot.writeCalls === '3plus' ||
+    snapshot.writeResults === 2 ||
+    snapshot.writeResults === '3plus'
+  )
     return { state: 'invalid', reason: 'invalid_write', snapshot };
-  const evidence = await computeDurableCompletionEvidence(input);
+  let evidence: CompletionEvidence | undefined;
+  try {
+    evidence = await computeDurableCompletionEvidence(input);
+  } catch (error) {
+    if (error instanceof InvalidDurableInteractionPtyLifecycleError) {
+      return { state: 'invalid', reason: error.reason, snapshot };
+    }
+    throw error;
+  }
   return evidence
     ? { state: 'complete', evidence, snapshot }
     : { state: 'waiting', reason: 'waiting', snapshot };
@@ -688,9 +691,9 @@ async function main(): Promise<void> {
     finalMarkerLatch.arm();
     terminal.write('y');
 
-    let completion: CompletionEvidence | undefined;
-    await waitFor(
-      async () => {
+    const completion = await pollDurableInteractionPtyCompletion({
+      deadlineAt: deadline,
+      inspect: async () => {
         const analysis = await analyzeDurableCompletion(
           input,
           {
@@ -713,12 +716,9 @@ async function main(): Promise<void> {
             analysis.snapshot
           );
         }
-        completion = analysis.state === 'complete' ? analysis.evidence : undefined;
-        return analysis.state === 'complete';
+        return analysis.state === 'complete' ? analysis.evidence : undefined;
       },
-      'Timed out waiting for durable interaction acknowledgement and completion',
-      deadline
-    );
+    });
     await waitFor(
       () => finalMarkerLatch.seen,
       'Raw TUI did not render the durable interaction final marker',
@@ -747,8 +747,6 @@ async function main(): Promise<void> {
     if (exitCode !== 0 || exitSignal !== null) {
       throw new Error('Durable interaction TUI did not exit cleanly');
     }
-    if (!completion)
-      throw new Error('Durable interaction completion evidence is missing');
     const successEvidence = {
       success: true,
       sessionId: input.sessionId,

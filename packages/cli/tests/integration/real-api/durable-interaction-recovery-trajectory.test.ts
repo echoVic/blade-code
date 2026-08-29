@@ -1721,7 +1721,7 @@ describe('durable ACP recovery diagnostics', () => {
     const acpSurfaceTitle =
       'recovers a one-shot DeepSeek failure through a production ACP subprocess';
     const ptySurfaceTitle =
-      'recovers a durable pending question through the raw PTY TUI';
+      'recovers a one-shot DeepSeek failure through the raw PTY TUI';
     const regressionTitle =
       'replays a durable ACP question on session/load and resumes automatically (in-process regression)';
     const regressionIndex = source.lastIndexOf(regressionSuiteTitle);
@@ -1784,7 +1784,7 @@ describe('durable ACP recovery diagnostics', () => {
     const surfaceSuiteTitle = 'production durable pending recovery surfaces (real API)';
     const acpTitle =
       'recovers a one-shot DeepSeek failure through a production ACP subprocess';
-    const ptyTitle = 'recovers a durable pending question through the raw PTY TUI';
+    const ptyTitle = 'recovers a one-shot DeepSeek failure through the raw PTY TUI';
     const surfaceStart = source.lastIndexOf(surfaceSuiteTitle);
     const acpStart = source.indexOf(acpTitle, surfaceStart);
     const ptyStart = source.indexOf(ptyTitle, surfaceStart);
@@ -1806,6 +1806,18 @@ describe('durable ACP recovery diagnostics', () => {
         'if (root) await rm(root, { recursive: true, force: true });'
       );
     }
+  });
+
+  it('pins the raw PTY one-shot fault qualification to zero Vitest retries', async () => {
+    const source = await readFile(import.meta.filename, 'utf8');
+    const ptyTitle =
+      "it('recovers a one-shot DeepSeek failure through the raw PTY TUI'";
+    const ptyStart = source.lastIndexOf(ptyTitle);
+
+    expect(ptyStart).toBeGreaterThanOrEqual(0);
+    expect(source.slice(ptyStart)).toMatch(
+      /raw PTY TUI',\s*\{\s*retry: 0,\s*timeout: 360_000,\s*\}/
+    );
   });
 
   it('keeps Provider recovery inside the surface deadline', () => {
@@ -3542,7 +3554,10 @@ describe
       }
     }, 360_000);
 
-    it('recovers a durable pending question through the raw PTY TUI', async () => {
+    it('recovers a one-shot DeepSeek failure through the raw PTY TUI', {
+      retry: 0,
+      timeout: 360_000,
+    }, async () => {
       if (!deepseekFlash?.baseURL) throw new Error('DeepSeek Flash is unavailable');
       let root: string | undefined;
       let proxy: RecordingProviderProxy | undefined;
@@ -3557,13 +3572,23 @@ describe
         const workspace = path.join(root, 'workspace');
         const storageRoot = path.join(root, 'storage');
         const target = path.join(workspace, 'pty-selected-channel.txt');
-        proxy = await startRecordingProviderProxy(deepseekFlash.baseURL);
-        const config = buildDurableInteractionRecoveryConfig(
+        proxy = await startRecordingProviderProxy(deepseekFlash.baseURL, {
+          inject503Once: { path: '/v1/chat/completions', retryAfterMs: 0 },
+        });
+        const recoveryConfig = buildDurableInteractionRecoveryConfig(
           buildRealApiRuntimeConfig({
             ...deepseekFlash,
             baseURL: proxy.baseUrl,
           })
         );
+        const config: RuntimeConfig = {
+          ...recoveryConfig,
+          providerForegroundRecoveryMs: 0,
+          models: recoveryConfig.models.map((model) => ({
+            ...model,
+            overrides: { ...model.overrides, maxRetries: 0 },
+          })),
+        };
 
         await Promise.all([
           mkdir(home, { recursive: true }),
@@ -3604,6 +3629,8 @@ describe
           getSessionFilePath(workspace, sessionId),
           'utf8'
         );
+        const durableEvents =
+          (await new PersistentStore(workspace).loadEvents(sessionId)) ?? [];
         expect(evidence.sessionId).toBe(sessionId);
         expect(evidence.questionVisible).toBe(true);
         expect(evidence.canaryVisible).toBe(true);
@@ -3612,13 +3639,32 @@ describe
         expect(evidence.interactionRequested).toBe(1);
         expect(evidence.interactionResponded).toBe(1);
         expect(evidence.interactionRecovered).toBe(1);
+        expect(evidence.pendingAttempts).toBe(2);
+        expect(evidence.failedAttempts).toBe(1);
+        expect(evidence.completedAttempts).toBe(1);
+        expect(evidence.acknowledgements).toBe(1);
+        expect(evidence.firstFailureReplaySafe).toBe(true);
         expect(evidence.writeCalls).toBe(1);
         expect(evidence.writeResults).toBe(1);
         expect(evidence.inboxMissing).toBe(true);
         expect(evidence.targetSha256).toBe(
           createHash('sha256').update('Canary\n').digest('hex')
         );
-        expectReal2xxDownstream(proxy);
+        expect(
+          durableEvents.filter((event) => event.type === 'turn_started')
+        ).toHaveLength(2);
+        expect(
+          durableEvents.filter((event) => event.type === 'turn_aborted')
+        ).toHaveLength(1);
+        expect(
+          durableEvents.filter((event) => event.type === 'turn_completed')
+        ).toHaveLength(1);
+        expect(
+          durableEvents.filter((event) => event.type === 'inbox_acknowledged')
+        ).toHaveLength(1);
+        expect(proxy.injectedRequestNumbers).toEqual([1]);
+        expect(proxy.forwardedRequestNumbers[0]).toBe(2);
+        expectReal2xxDownstream(proxy, 2);
         assertNoSecrets(
           {
             transcript,
@@ -3632,5 +3678,5 @@ describe
         await proxy?.close().catch(() => undefined);
         if (root) await rm(root, { recursive: true, force: true });
       }
-    }, 360_000);
+    });
   });

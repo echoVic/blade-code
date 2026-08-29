@@ -277,10 +277,14 @@ describeReal('TUI durable pending-resume retry trajectory (real API)', () => {
         await seedRuntime?.dispose().catch(() => undefined);
         await hook?.cleanupAgent().catch(() => undefined);
         if (root) {
-          await act(async () => {
-            root?.unmount();
-            await Promise.resolve();
-          }).catch(() => undefined);
+          try {
+            await act(async () => {
+              root?.unmount();
+              await Promise.resolve();
+            });
+          } catch {
+            // Best-effort cleanup must not replace the qualification result.
+          }
         }
         container?.remove();
         vanillaStore.setState(originalStore, true);
