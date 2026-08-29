@@ -95,7 +95,7 @@ Introduce `createEventRouteController()` returning:
 interface EventRouteController {
   app: Hono;
   shutdown(reason?: string): Promise<void>;
-  getConnectionStats(): { accepting: boolean; active: number };
+  getSseConnectionStats(): { accepting: boolean; active: number };
 }
 ```
 
