@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.115] - 2026-08-29
+
+### 修复
+- 进程重启后，当全部成功结果都来自 host 校验且副作用已知安全的 foreground Task adoption 时，允许 parent turn 自动继续。
+- 使用 v3 recovery proof 跨重复重启持久化安全语义，同时让普通成功工具、interrupted tool、legacy receipt 以及 malformed 或 unsafe adoption 继续进入显式人工处置。
+
+### 测试
+- 新增严格 adoption 身份、mixed result、interrupted tool、malformed proof、二次重启与 ACP v2/v3 兼容覆盖。
+- 使用真实 Provider 且关闭 framework retry，重新验证 DeepSeek Flash/Pro 在 Headless、ACP、raw PTY 与 production Chromium Web 上的 adoption。
+
 ## [0.10.114] - 2026-08-29
 
 ### 测试

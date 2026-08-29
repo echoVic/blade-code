@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.115] - 2026-08-29
+
+### Fixed
+- Resumed parent turns after process restart when every successful result is a host-validated foreground Task adoption with known-safe side effects.
+- Persisted a v3 recovery proof across repeated restarts while keeping ordinary successful tools, interrupted tools, legacy receipts, and malformed or unsafe adoptions gated for explicit attention.
+
+### Tests
+- Added strict adoption identity, mixed-result, interrupted-tool, malformed-proof, second-restart, and ACP v2/v3 compatibility coverage.
+- Requalified DeepSeek Flash and Pro adoption through Headless, ACP, raw PTY, and production Chromium Web with real Provider requests and zero framework retries.
+
 ## [0.10.114] - 2026-08-29
 
 ### Tests
