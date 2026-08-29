@@ -50,16 +50,18 @@ Ordinary permission approvals are not implicitly expanded to Session or project 
 
 ## Pending-resume Recovery Boundary
 
-When an eligible Web or ACP turn hits a retryable zero-output Provider failure,
-both surfaces use the same pure retry decision. This is distinct from model
+When an eligible Web, ACP, or TUI turn hits a retryable zero-output Provider failure,
+all three surfaces use the same pure retry decision. This is distinct from model
 transport retries for one physical request, which remain owned by
 `PiAIChatService`. Web enables this policy only for non-task-isolated pending-input
 turns and starts a new run after the preceding run has durably settled and released
 its Agent/Runtime lease. ACP projects the same lifecycle and hard deadline for
 pending-input, Goal, and preflight continuations; it waits for the preceding prompt
-to settle, then calls prompt again on the same Session-owned Agent/Runtime. Automatic
-outer retry after failure applies only to pending input and to preflight before the
-work kind is known. A Goal failure is projected as `failed` and is not reactivated.
+to settle, then calls prompt again on the same Session-owned Agent/Runtime. TUI keeps
+attempt, deadline, backoff-timer, and wake ownership in the mounted
+`PendingResumeCoordinator`, without adding a public SSE/ACP retry payload. Automatic
+outer retry after failure applies only to pending input and to ACP preflight before the
+work kind is known. A Goal failure is not reactivated.
 
 Outer recovery permits at most four total attempts within a 120-second absolute
 budget. Base backoff starts at one second, grows exponentially to four seconds,
@@ -67,7 +69,7 @@ and adds ±20% stable jitter derived from Session identity and attempt; the fina
 delay remains capped at four seconds. Another attempt is scheduled only when all
 of these conditions hold:
 
-- the surface still has eligible durable work: a durable inbox for Web; for ACP,
+- the surface still has eligible durable work: a durable inbox for Web/TUI; for ACP,
   pending input or preflight before the work kind is known;
 - the failure is a canonical retryable `SessionTaskFailure`;
 - no non-empty assistant content/thinking or structured output started;
@@ -87,16 +89,17 @@ delay/nextRetryAt, and canonical failure code/retryable plus optional resource.
 The enclosing SSE or ACP message still carries its normal Session identity or
 update timestamp.
 
-CLI/TUI does not gain whole-turn automatic retry from this protocol. It continues
-to use `PendingResumeCoordinator` to coalesce durable inbox wake-ups. A failed TUI
-continuation retains recoverable durable state rather than claiming the Web/ACP
-outer-retry lifecycle.
+TUI enables this outer retry only for automatic pending-input recovery. Ordinary user
+commands, Goal-only continuation, preflight exceptions, cancellation, and turns with
+output or tool lifecycle are never replayed automatically. `PendingResumeCoordinator`
+coalesces durable inbox wake-ups and owns the bounded timer. Intermediate retryable
+failures remain silent; a final failure is displayed once with its canonical message.
 
 ## Cross-Surface Behavior
 
 | Surface | Recovery Behavior |
 | --- | --- |
-| CLI/TUI | After Session activation, restore interaction first, then read inbox to create Runtime; no new whole-turn outer retry |
+| CLI/TUI | After Session activation, restore interaction first, then read inbox to create Runtime; bounded outer retry applies only to zero-output, zero-tool-side-effect durable pending input |
 | Web | Fresh load replays the question; starts a pending-only turn after the answer and projects bounded outer-recovery state |
 | ACP | `session/load` replays the question and continues without an extra prompt; pending input shares Web's retry decision, while a Goal failure is projected but not retried automatically |
 | headless/print | Automatically rejects inexpressible interactions and continues with fail-closed result |

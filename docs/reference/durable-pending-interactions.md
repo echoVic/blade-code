@@ -56,20 +56,21 @@ Blade 不会重放可能已经产生副作用的原工具调用。恢复流程�
 
 ## Pending-resume 恢复边界
 
-Web 与 ACP 在符合各自恢复范围的 turn 遇到可重试的 Provider 零输出故障时，会使用
+Web、ACP 与 TUI 在各自符合恢复范围的 turn 遇到可重试的 Provider 零输出故障时，会使用
 同一个纯决策策略。它与模型传输层对单个 physical request 的重试不同：传输层仍由
 `PiAIChatService` 管理。Web 仅为非 task-isolated 的 pending-input turn 启用该策略，
 等待前一个 run 完整落盘并释放 Agent/Runtime lease 后再建新 run；ACP 会为 pending
 input、Goal 和 preflight continuation 投影同一生命周期与硬期限，并在同一个 Session
-持有的 Agent/Runtime 上等待前次 prompt 收尾后再次调用 prompt。失败后的自动 outer retry
-仅适用于 pending input，以及尚未确定 work kind 的 preflight。Goal failure 会投影
-`failed`，不会自动重新激活。
+持有的 Agent/Runtime 上等待前次 prompt 收尾后再次调用 prompt。TUI 由当前挂载的
+`PendingResumeCoordinator` 在进程内持有 attempt、deadline、backoff timer 与 wake ownership，
+但不新增公开的 SSE/ACP retry payload。失败后的自动 outer retry 仅适用于 pending input，
+以及 ACP 尚未确定 work kind 的 preflight；Goal failure 不会自动重新激活。
 
 外层恢复最多执行 4 次，总预算为 120 秒。基础退避从 1 秒开始，指数增长到最多
 4 秒，并叠加基于 Session identity 与 attempt 的 ±20% 稳定 jitter；最终延迟仍不超过
 4 秒。只有同时满足以下条件才会安排下一次尝试：
 
-- 当前 surface 的 eligible durable work 仍待处理：Web 是 durable inbox；ACP 自动重试
+- 当前 surface 的 eligible durable work 仍待处理：Web/TUI 是 durable inbox；ACP 自动重试
   pending input，以及尚未确定 work kind 的 preflight；
 - failure 是规范化且可重试的 `SessionTaskFailure`；
 - 尚未产生非空 assistant content/thinking 或 structured output；
@@ -86,15 +87,16 @@ credential。Web SSE 使用 `pending.resume`；ACP 使用
 attempt、maxAttempts、可选 delay/nextRetryAt，以及规范 failure 的 code/retryable 和
 可选 resource；外层 SSE/ACP envelope 仍携带各自的 Session identity 或更新时间。
 
-CLI/TUI 不在本协议中新增 whole-turn 自动重试。它仍由
-`PendingResumeCoordinator` 合并 durable inbox 唤醒；恢复失败会保留可继续处理的 durable
-状态，不会假装具备 Web/ACP 的 outer retry 生命周期。
+TUI 只为自动 pending-input recovery 启用该 outer retry。普通用户命令、Goal-only
+continuation、preflight exception、取消，以及已有输出或工具生命周期的 turn 均不会自动
+重放。`PendingResumeCoordinator` 合并 durable inbox 唤醒并持有有界 timer；中间可重试
+失败保持静默，最终失败只显示一次规范化错误。
 
 ## 跨端行为
 
 | Surface | 恢复行为 |
 | --- | --- |
-| CLI/TUI | Session activation 后先恢复交互，再读取 inbox 创建 Runtime；不新增 whole-turn outer retry |
+| CLI/TUI | Session activation 后先恢复交互，再读取 inbox 创建 Runtime；仅对零输出、零工具副作用的 durable pending input 做有界 outer retry |
 | Web | fresh load 重放问题；回答后自动启动 pending-only turn，并投影有界 outer recovery 状态 |
 | ACP | `session/load` 回放问题，回答后无需额外 prompt 自动继续；pending input 共享 Web 的 retry decision，Goal failure 只投影终态且不自动重试 |
 | headless/print | 自动拒绝无法表达的交互，并以 fail-closed 结果继续 |
