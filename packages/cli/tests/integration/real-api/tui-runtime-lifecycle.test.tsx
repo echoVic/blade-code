@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { act } from 'react';
 import ReactDOM from 'react-dom/client';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { Agent } from '../../../src/agent/Agent.js';
 import { SessionRuntime } from '../../../src/agent/runtime/SessionRuntime.js';
 import { DEFAULT_CONFIG } from '../../../src/config/defaults.js';
 import { PermissionMode, type RuntimeConfig } from '../../../src/config/types.js';
@@ -41,13 +42,19 @@ function setRuntimeModel(model: string): string {
   getState().config.actions.setConfig({
     ...DEFAULT_CONFIG,
     currentModelId: modelId,
+    providerForegroundRecoveryMs: 0,
     models: [
       {
         id: modelId,
         displayName: model,
         provider: 'deepseek',
         model,
-        overrides: { baseUrl, maxOutputTokens: 512, timeout: 180_000 },
+        overrides: {
+          baseUrl,
+          maxOutputTokens: 512,
+          maxRetries: 0,
+          timeout: 180_000,
+        },
       },
     ],
   });
@@ -67,6 +74,134 @@ afterAll(() => {
 
 describe.skipIf(!enabled)('TUI runtime lifecycle (real API)', () => {
   for (const model of models) {
+    it(`${model} replaces its completed-turn Agent without replacing the Runtime`, {
+      retry: 0,
+      timeout: 240_000,
+    }, async () => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'blade-tui-agent-owner-'));
+      const sessionId = `tui-agent-owner-${model}-${Date.now()}`;
+      const modelId = setRuntimeModel(model);
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const root = ReactDOM.createRoot(container);
+      const runtimeCreate = vi.spyOn(SessionRuntime, 'create');
+      const createWithRuntime = Agent.createWithRuntime.bind(Agent);
+      const agentCreate = vi.spyOn(Agent, 'createWithRuntime');
+      let hook: ReturnType<typeof useAgent> | undefined;
+
+      function Harness() {
+        hook = useAgent({
+          sessionId,
+          workspaceRoot: workspace,
+          modelId,
+          maxTurns: 2,
+          appendSystemPrompt:
+            'For the Agent ownership qualification, answer exactly as requested and do not call tools.',
+        });
+        return null;
+      }
+
+      try {
+        await act(async () => {
+          root.render(<Harness />);
+          await Promise.resolve();
+        });
+        const mountedHook = hook;
+        if (!mountedHook) throw new Error('TUI Agent hook was not mounted');
+        const firstAgent = await runWithCwdOverride(workspace, () =>
+          mountedHook.createAgent()
+        );
+        const ownedRuntimePromise = runtimeCreate.mock.results[0]?.value;
+        if (!ownedRuntimePromise)
+          throw new Error('TUI Session Runtime was not created');
+        const ownedRuntime = await ownedRuntimePromise;
+        const modelResources = ownedRuntime.getModelResources();
+        const firstResult = await runWithCwdOverride(workspace, () =>
+          firstAgent.chat(
+            'Reply with exactly TUI_AGENT_TURN_ONE_OK and nothing else.',
+            {
+              messages: [],
+              userId: 'tui-agent-owner-test',
+              sessionId,
+              workspaceRoot: workspace,
+              permissionMode: PermissionMode.YOLO,
+            },
+            { maxTurns: 2, stream: true }
+          )
+        );
+        expect(firstResult.success).toBe(true);
+        expect(firstResult.finalMessage?.trim()).toBe('TUI_AGENT_TURN_ONE_OK');
+
+        const destroyFirstAgent = firstAgent.destroy.bind(firstAgent);
+        let firstDestroySettled = false;
+        const firstDestroy = vi
+          .spyOn(firstAgent, 'destroy')
+          .mockImplementation(async () => {
+            await destroyFirstAgent();
+            firstDestroySettled = true;
+          });
+        agentCreate.mockImplementationOnce(async (runtime, agentOptions) => {
+          expect(firstDestroySettled).toBe(true);
+          return createWithRuntime(runtime, agentOptions);
+        });
+        try {
+          const secondAgent = await runWithCwdOverride(workspace, () =>
+            mountedHook.createAgent()
+          );
+          expect(secondAgent).not.toBe(firstAgent);
+          expect(firstDestroy).toHaveBeenCalledOnce();
+          expect(agentCreate).toHaveBeenCalledTimes(2);
+          expect(firstDestroy.mock.invocationCallOrder[0]).toBeLessThan(
+            agentCreate.mock.invocationCallOrder[1] ?? Number.POSITIVE_INFINITY
+          );
+          expect(runtimeCreate).toHaveBeenCalledOnce();
+
+          const secondResult = await runWithCwdOverride(workspace, () =>
+            secondAgent.chat(
+              'Reply with exactly TUI_AGENT_TURN_TWO_OK and nothing else.',
+              {
+                messages: [],
+                userId: 'tui-agent-owner-test',
+                sessionId,
+                workspaceRoot: workspace,
+                permissionMode: PermissionMode.YOLO,
+              },
+              { maxTurns: 2, stream: true }
+            )
+          );
+          expect(secondResult.success).toBe(true);
+          expect(secondResult.finalMessage?.trim()).toBe('TUI_AGENT_TURN_TWO_OK');
+          const credentialLeakDetected = JSON.stringify({
+            firstResult,
+            secondResult,
+          }).includes(apiKey);
+          expect(credentialLeakDetected).toBe(false);
+        } finally {
+          firstDestroy.mockRestore();
+        }
+
+        await mountedHook.cleanupAgent();
+        const replacement = await SessionRuntime.create({
+          sessionId,
+          workspaceRoot: workspace,
+          modelId,
+          modelResources,
+        });
+        await replacement.dispose();
+        expect(runtimeCreate).toHaveBeenCalledTimes(2);
+      } finally {
+        await hook?.cleanupAgent().catch(() => undefined);
+        await act(async () => {
+          root.unmount();
+          await Promise.resolve();
+        });
+        agentCreate.mockRestore();
+        runtimeCreate.mockRestore();
+        container.remove();
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    });
+
     it(`${model} releases its runtime lease after a real TUI Agent turn`, async () => {
       const workspace = mkdtempSync(path.join(os.tmpdir(), 'blade-tui-runtime-'));
       const sessionId = `tui-real-${model}-${Date.now()}`;
