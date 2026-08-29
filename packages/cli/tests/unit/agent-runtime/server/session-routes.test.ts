@@ -16,6 +16,7 @@ import {
   MAX_USER_MESSAGE_TEXT_CHARS,
 } from '../../../../src/api/attachmentLimits.js';
 import { PermissionMode } from '../../../../src/config/types.js';
+import type { ProjectedSessionInteraction } from '../../../../src/context/interactions.js';
 import type { SessionEvent } from '../../../../src/context/types.js';
 import type { Message } from '../../../../src/services/ChatServiceInterface.js';
 import type {
@@ -1170,6 +1171,1009 @@ describe('SessionRoutes runtime reuse', () => {
       requestController.abort();
       await collector.cancel();
       await controller.shutdown();
+    }
+  });
+
+  it('does not resurrect a deleted Session from an in-flight SSE hydration', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionId = 'delete-hydration-fence';
+    const projectPath = '/tmp/delete-hydration-fence';
+    const metadata = metadataFor(sessionId, projectPath, {
+      title: 'Deleted hydration',
+    });
+    let deleted = false;
+    let releaseHydration!: () => void;
+    const hydrationGate = new Promise<void>((resolve) => {
+      releaseHydration = resolve;
+    });
+    let markHydrationStarted!: () => void;
+    const hydrationStarted = new Promise<void>((resolve) => {
+      markHydrationStarted = resolve;
+    });
+    let taskWorktreeLookups = 0;
+
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (requestedSessionId, requestedProjectPath) =>
+        !deleted &&
+        requestedSessionId === sessionId &&
+        requestedProjectPath === projectPath
+          ? metadata
+          : undefined
+    );
+    vi.mocked(SessionService.findSessionTaskWorktree).mockImplementation(
+      async (requestedSessionId, requestedProjectPath) => {
+        if (requestedSessionId !== sessionId || requestedProjectPath !== projectPath) {
+          return undefined;
+        }
+        taskWorktreeLookups++;
+        if (taskWorktreeLookups === 1) {
+          markHydrationStarted();
+          await hydrationGate;
+        }
+        return undefined;
+      }
+    );
+    vi.mocked(SessionService.listSessions).mockImplementation(async () =>
+      deleted ? [] : [metadata]
+    );
+    vi.mocked(SessionService.deleteSession).mockImplementationOnce(async () => {
+      deleted = true;
+      return 1;
+    });
+
+    const requestController = new AbortController();
+    const controller = createSessionRouteController();
+    const staleResponsePromise = Promise.resolve(
+      controller.app.request(
+        `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`,
+        { signal: requestController.signal }
+      )
+    );
+    let staleResponse: Response | undefined;
+    let collector: ReturnType<typeof createSseCollector> | undefined;
+
+    try {
+      await hydrationStarted;
+
+      const deleteResponse = await controller.app.request(
+        `/${sessionId}?projectPath=${encodeURIComponent(projectPath)}`,
+        { method: 'DELETE' }
+      );
+      expect(deleteResponse.status).toBe(200);
+
+      releaseHydration();
+      staleResponse = await staleResponsePromise;
+      let errorCode: string | undefined;
+      let connectedType: string | undefined;
+      if (staleResponse.status === 200) {
+        collector = createSseCollector(staleResponse);
+        connectedType = (await collector.next()).type;
+      } else {
+        const body = (await staleResponse.json()) as {
+          error?: { code?: string };
+        };
+        errorCode = body.error?.code;
+      }
+
+      const sessionsResponse = await controller.app.request('/');
+      const activeSessions = (await sessionsResponse.json()) as Array<{
+        sessionId: string;
+      }>;
+
+      expect({
+        status: staleResponse.status,
+        errorCode,
+        connectedType,
+        subscribers: busState.subscribers.size,
+        runtimeCreations: vi.mocked(SessionRuntime.create).mock.calls.length,
+        activeSessionIds: activeSessions.map((session) => session.sessionId),
+      }).toEqual({
+        status: 404,
+        errorCode: 'NOT_FOUND',
+        connectedType: undefined,
+        subscribers: 0,
+        runtimeCreations: 0,
+        activeSessionIds: [],
+      });
+    } finally {
+      releaseHydration();
+      requestController.abort();
+      staleResponse ??= await staleResponsePromise.catch(() => undefined);
+      if (collector) await collector.cancel();
+      else await staleResponse?.body?.cancel().catch(() => undefined);
+      await controller.shutdown().catch(() => undefined);
+    }
+  });
+
+  it('does not let an old controller hydration populate replacement state', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionId = 'replacement-hydration-fence';
+    const projectPath = '/tmp/replacement-hydration-fence';
+    const metadata = metadataFor(sessionId, projectPath, {
+      title: 'Old controller hydration',
+    });
+    let releaseHydration!: () => void;
+    const hydrationGate = new Promise<void>((resolve) => {
+      releaseHydration = resolve;
+    });
+    let markHydrationStarted!: () => void;
+    const hydrationStarted = new Promise<void>((resolve) => {
+      markHydrationStarted = resolve;
+    });
+    let taskWorktreeLookups = 0;
+
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (requestedSessionId, requestedProjectPath) =>
+        requestedSessionId === sessionId && requestedProjectPath === projectPath
+          ? metadata
+          : undefined
+    );
+    vi.mocked(SessionService.findSessionTaskWorktree).mockImplementation(
+      async (requestedSessionId, requestedProjectPath) => {
+        if (requestedSessionId !== sessionId || requestedProjectPath !== projectPath) {
+          return undefined;
+        }
+        taskWorktreeLookups++;
+        if (taskWorktreeLookups === 1) {
+          markHydrationStarted();
+          await hydrationGate;
+        }
+        return undefined;
+      }
+    );
+    vi.mocked(SessionService.listSessions).mockResolvedValue([]);
+
+    const requestController = new AbortController();
+    const oldController = createSessionRouteController();
+    const staleResponsePromise = Promise.resolve(
+      oldController.app.request(
+        `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`,
+        { signal: requestController.signal }
+      )
+    );
+    let replacementController:
+      | ReturnType<typeof createSessionRouteController>
+      | undefined;
+    let staleResponse: Response | undefined;
+    let collector: ReturnType<typeof createSseCollector> | undefined;
+
+    try {
+      await hydrationStarted;
+      replacementController = createSessionRouteController();
+
+      releaseHydration();
+      staleResponse = await staleResponsePromise;
+      let errorCode: string | undefined;
+      let connectedType: string | undefined;
+      if (staleResponse.status === 200) {
+        collector = createSseCollector(staleResponse);
+        connectedType = (await collector.next()).type;
+      } else {
+        const body = (await staleResponse.json()) as {
+          error?: { code?: string };
+        };
+        errorCode = body.error?.code;
+      }
+
+      const sessionsResponse = await replacementController.app.request('/');
+      const activeSessions = (await sessionsResponse.json()) as Array<{
+        sessionId: string;
+      }>;
+
+      expect({
+        status: staleResponse.status,
+        errorCode,
+        connectedType,
+        subscribers: busState.subscribers.size,
+        runtimeCreations: vi.mocked(SessionRuntime.create).mock.calls.length,
+        replacementSessionIds: activeSessions.map((session) => session.sessionId),
+      }).toEqual({
+        status: 503,
+        errorCode: 'SERVICE_UNAVAILABLE',
+        connectedType: undefined,
+        subscribers: 0,
+        runtimeCreations: 0,
+        replacementSessionIds: [],
+      });
+    } finally {
+      releaseHydration();
+      requestController.abort();
+      staleResponse ??= await staleResponsePromise.catch(() => undefined);
+      if (collector) await collector.cancel();
+      else await staleResponse?.body?.cancel().catch(() => undefined);
+      await oldController.shutdown().catch(() => undefined);
+      await replacementController?.shutdown().catch(() => undefined);
+    }
+  });
+
+  it('does not let an invalidated hydration overwrite or release a newer same-key generation', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionId = 'same-key-hydration-generation';
+    const projectPath = '/tmp/same-key-hydration-generation';
+    const oldMetadata = metadataFor(sessionId, projectPath, {
+      title: 'Old generation',
+    });
+    const archivedMetadata = {
+      ...oldMetadata,
+      archivedAt: '2026-08-29T00:00:00.000Z',
+      archivedBySessionId: sessionId,
+    };
+    const newMetadata = metadataFor(sessionId, projectPath, {
+      title: 'New generation',
+    });
+    let durableMetadata: SessionMetadata = oldMetadata;
+    let taskWorktreeLookups = 0;
+    let releaseOldHydration!: () => void;
+    const oldHydrationGate = new Promise<void>((resolve) => {
+      releaseOldHydration = resolve;
+    });
+    let markOldHydrationStarted!: () => void;
+    const oldHydrationStarted = new Promise<void>((resolve) => {
+      markOldHydrationStarted = resolve;
+    });
+    let releaseNewHydration!: () => void;
+    const newHydrationGate = new Promise<void>((resolve) => {
+      releaseNewHydration = resolve;
+    });
+    let markNewHydrationStarted!: () => void;
+    const newHydrationStarted = new Promise<void>((resolve) => {
+      markNewHydrationStarted = resolve;
+    });
+
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (requestedSessionId, requestedProjectPath) =>
+        requestedSessionId === sessionId && requestedProjectPath === projectPath
+          ? durableMetadata
+          : undefined
+    );
+    vi.mocked(SessionService.findSessionTaskWorktree).mockImplementation(
+      async (requestedSessionId, requestedProjectPath) => {
+        if (requestedSessionId !== sessionId || requestedProjectPath !== projectPath) {
+          return undefined;
+        }
+        taskWorktreeLookups++;
+        if (taskWorktreeLookups === 1) {
+          markOldHydrationStarted();
+          await oldHydrationGate;
+        } else if (taskWorktreeLookups === 2) {
+          markNewHydrationStarted();
+          await newHydrationGate;
+        }
+        return undefined;
+      }
+    );
+    vi.mocked(SessionService.listSessions).mockResolvedValue([]);
+    vi.mocked(SessionService.listSessionArchiveMembers).mockImplementation(async () => [
+      durableMetadata,
+    ]);
+    vi.mocked(SessionService.archiveSession).mockImplementationOnce(async () => {
+      durableMetadata = archivedMetadata;
+      return archivedMetadata;
+    });
+    vi.mocked(SessionService.unarchiveSession).mockImplementationOnce(async () => {
+      durableMetadata = newMetadata;
+      return newMetadata;
+    });
+
+    const route = (suffix: string) =>
+      '/' + sessionId + suffix + '?projectPath=' + encodeURIComponent(projectPath);
+    const controller = createSessionRouteController();
+    const oldResponsePromise = Promise.resolve(
+      controller.app.request(route('/browser/reset'), { method: 'POST' })
+    );
+    let firstNewResponsePromise: Promise<Response> | undefined;
+    let joinedNewResponsePromise: Promise<Response> | undefined;
+
+    try {
+      await oldHydrationStarted;
+      const archiveResponse = await controller.app.request(route('/archive'), {
+        method: 'POST',
+      });
+      expect(archiveResponse.status).toBe(200);
+      const unarchiveResponse = await controller.app.request(route('/unarchive'), {
+        method: 'POST',
+      });
+      expect(unarchiveResponse.status).toBe(200);
+
+      firstNewResponsePromise = Promise.resolve(
+        controller.app.request(route('/browser/reset'), { method: 'POST' })
+      );
+      await newHydrationStarted;
+
+      releaseOldHydration();
+      const oldResponse = await oldResponsePromise;
+      const oldBody = (await oldResponse.json()) as {
+        error?: { code?: string };
+      };
+      const beforeNewCommitResponse = await controller.app.request('/');
+      const beforeNewCommit = (await beforeNewCommitResponse.json()) as Array<{
+        sessionId: string;
+        title?: string;
+      }>;
+
+      joinedNewResponsePromise = Promise.resolve(
+        controller.app.request(route('/browser/reset'), { method: 'POST' })
+      );
+      releaseNewHydration();
+      const [firstNewResponse, joinedNewResponse] = await Promise.all([
+        firstNewResponsePromise,
+        joinedNewResponsePromise,
+      ]);
+      const afterNewCommitResponse = await controller.app.request('/');
+      const afterNewCommit = (await afterNewCommitResponse.json()) as Array<{
+        sessionId: string;
+        title?: string;
+      }>;
+
+      expect({
+        oldStatus: oldResponse.status,
+        oldErrorCode: oldBody.error?.code,
+        beforeNewCommit,
+        firstNewStatus: firstNewResponse.status,
+        joinedNewStatus: joinedNewResponse.status,
+        taskWorktreeLookups,
+        afterNewCommit,
+      }).toEqual({
+        oldStatus: 409,
+        oldErrorCode: 'CONFLICT',
+        beforeNewCommit: [],
+        firstNewStatus: 200,
+        joinedNewStatus: 200,
+        taskWorktreeLookups: 2,
+        afterNewCommit: [
+          expect.objectContaining({
+            sessionId,
+            title: 'New generation',
+          }),
+        ],
+      });
+    } finally {
+      releaseOldHydration();
+      releaseNewHydration();
+      await oldResponsePromise.catch(() => undefined);
+      await firstNewResponsePromise?.catch(() => undefined);
+      await joinedNewResponsePromise?.catch(() => undefined);
+      await controller.shutdown().catch(() => undefined);
+    }
+  });
+
+  it('invalidates an in-flight Session hydration during shutdown', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionId = 'shutdown-hydration-fence';
+    const projectPath = '/tmp/shutdown-hydration-fence';
+    const metadata = metadataFor(sessionId, projectPath);
+    let releaseHydration!: () => void;
+    const hydrationGate = new Promise<void>((resolve) => {
+      releaseHydration = resolve;
+    });
+    let markHydrationStarted!: () => void;
+    const hydrationStarted = new Promise<void>((resolve) => {
+      markHydrationStarted = resolve;
+    });
+
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (requestedSessionId, requestedProjectPath) =>
+        requestedSessionId === sessionId && requestedProjectPath === projectPath
+          ? metadata
+          : undefined
+    );
+    vi.mocked(SessionService.findSessionTaskWorktree).mockImplementation(
+      async (requestedSessionId, requestedProjectPath) => {
+        if (requestedSessionId !== sessionId || requestedProjectPath !== projectPath) {
+          return undefined;
+        }
+        markHydrationStarted();
+        await hydrationGate;
+        return undefined;
+      }
+    );
+    vi.mocked(SessionService.listSessions).mockResolvedValue([]);
+
+    const controller = createSessionRouteController();
+    const staleResponsePromise = Promise.resolve(
+      controller.app.request(
+        `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`
+      )
+    );
+    let staleResponse: Response | undefined;
+    let shutdown: Promise<void> | undefined;
+
+    try {
+      await hydrationStarted;
+      let shutdownSettled = false;
+      shutdown = controller.shutdown('server-shutdown').then(() => {
+        shutdownSettled = true;
+      });
+      await Promise.resolve();
+      expect(shutdownSettled).toBe(false);
+
+      releaseHydration();
+      staleResponse = await staleResponsePromise;
+      let errorCode: string | undefined;
+      let streamDone: boolean | undefined;
+      if (staleResponse.status === 200) {
+        const collector = createSseCollector(staleResponse);
+        streamDone = (await collector.readDone(1000)).done;
+      } else {
+        const body = (await staleResponse.json()) as {
+          error?: { code?: string };
+        };
+        errorCode = body.error?.code;
+      }
+      await shutdown;
+
+      expect({
+        status: staleResponse.status,
+        errorCode,
+        streamDone,
+        subscribers: busState.subscribers.size,
+        runtimeCreations: vi.mocked(SessionRuntime.create).mock.calls.length,
+      }).toEqual({
+        status: 503,
+        errorCode: 'SERVICE_UNAVAILABLE',
+        streamDone: undefined,
+        subscribers: 0,
+        runtimeCreations: 0,
+      });
+    } finally {
+      releaseHydration();
+      staleResponse ??= await staleResponsePromise.catch(() => undefined);
+      await staleResponse?.body?.cancel().catch(() => undefined);
+      await shutdown?.catch(() => undefined);
+      await controller.shutdown().catch(() => undefined);
+    }
+  });
+
+  it('does not resurrect an archived Session from an in-flight SSE hydration', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionId = 'archive-hydration-fence';
+    const projectPath = '/tmp/archive-hydration-fence';
+    const metadata = metadataFor(sessionId, projectPath);
+    const archived = {
+      ...metadata,
+      archivedAt: '2026-08-29T00:00:00.000Z',
+      archivedBySessionId: sessionId,
+    };
+    let archiveCommitted = false;
+    let releaseHydration!: () => void;
+    const hydrationGate = new Promise<void>((resolve) => {
+      releaseHydration = resolve;
+    });
+    let markHydrationStarted!: () => void;
+    const hydrationStarted = new Promise<void>((resolve) => {
+      markHydrationStarted = resolve;
+    });
+
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (requestedSessionId, requestedProjectPath) =>
+        requestedSessionId === sessionId && requestedProjectPath === projectPath
+          ? metadata
+          : undefined
+    );
+    vi.mocked(SessionService.findSessionTaskWorktree).mockImplementation(
+      async (requestedSessionId, requestedProjectPath) => {
+        if (requestedSessionId !== sessionId || requestedProjectPath !== projectPath) {
+          return undefined;
+        }
+        markHydrationStarted();
+        await hydrationGate;
+        return undefined;
+      }
+    );
+    vi.mocked(SessionService.listSessionArchiveMembers).mockResolvedValue([metadata]);
+    vi.mocked(SessionService.archiveSession).mockImplementationOnce(async () => {
+      archiveCommitted = true;
+      return archived;
+    });
+    vi.mocked(SessionService.listSessions).mockImplementation(async () =>
+      archiveCommitted ? [] : [metadata]
+    );
+
+    const requestController = new AbortController();
+    const controller = createSessionRouteController();
+    const staleResponsePromise = Promise.resolve(
+      controller.app.request(
+        `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`,
+        { signal: requestController.signal }
+      )
+    );
+    let staleResponse: Response | undefined;
+    let collector: ReturnType<typeof createSseCollector> | undefined;
+
+    try {
+      await hydrationStarted;
+      const archiveResponse = await controller.app.request(
+        `/${sessionId}/archive?projectPath=${encodeURIComponent(projectPath)}`,
+        { method: 'POST' }
+      );
+      expect(archiveResponse.status).toBe(200);
+
+      releaseHydration();
+      staleResponse = await staleResponsePromise;
+      let errorCode: string | undefined;
+      let connectedType: string | undefined;
+      if (staleResponse.status === 200) {
+        collector = createSseCollector(staleResponse);
+        connectedType = (await collector.next()).type;
+      } else {
+        const body = (await staleResponse.json()) as {
+          error?: { code?: string };
+        };
+        errorCode = body.error?.code;
+      }
+
+      const sessionsResponse = await controller.app.request('/');
+      const activeSessions = (await sessionsResponse.json()) as Array<{
+        sessionId: string;
+      }>;
+      expect({
+        status: staleResponse.status,
+        errorCode,
+        connectedType,
+        subscribers: busState.subscribers.size,
+        runtimeCreations: vi.mocked(SessionRuntime.create).mock.calls.length,
+        activeSessionIds: activeSessions.map((session) => session.sessionId),
+      }).toEqual({
+        status: 409,
+        errorCode: 'CONFLICT',
+        connectedType: undefined,
+        subscribers: 0,
+        runtimeCreations: 0,
+        activeSessionIds: [],
+      });
+    } finally {
+      releaseHydration();
+      requestController.abort();
+      staleResponse ??= await staleResponsePromise.catch(() => undefined);
+      if (collector) await collector.cancel();
+      else await staleResponse?.body?.cancel().catch(() => undefined);
+      await controller.shutdown().catch(() => undefined);
+    }
+  });
+
+  it('keeps an in-flight Session hydration valid when durable archive fails', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionId = 'failed-archive-hydration';
+    const projectPath = '/tmp/failed-archive-hydration';
+    const metadata = metadataFor(sessionId, projectPath);
+    let releaseHydration!: () => void;
+    const hydrationGate = new Promise<void>((resolve) => {
+      releaseHydration = resolve;
+    });
+    let markHydrationStarted!: () => void;
+    const hydrationStarted = new Promise<void>((resolve) => {
+      markHydrationStarted = resolve;
+    });
+
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (requestedSessionId, requestedProjectPath) =>
+        requestedSessionId === sessionId && requestedProjectPath === projectPath
+          ? metadata
+          : undefined
+    );
+    vi.mocked(SessionService.findSessionTaskWorktree).mockImplementation(
+      async (requestedSessionId, requestedProjectPath) => {
+        if (requestedSessionId !== sessionId || requestedProjectPath !== projectPath) {
+          return undefined;
+        }
+        markHydrationStarted();
+        await hydrationGate;
+        return undefined;
+      }
+    );
+    vi.mocked(SessionService.listSessionArchiveMembers).mockResolvedValue([metadata]);
+    vi.mocked(SessionService.archiveSession).mockRejectedValueOnce(
+      new Error('durable archive failed')
+    );
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+
+    const requestController = new AbortController();
+    const controller = createSessionRouteController();
+    const hydrationResponsePromise = Promise.resolve(
+      controller.app.request(
+        `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`,
+        { signal: requestController.signal }
+      )
+    );
+    let hydrationResponse: Response | undefined;
+    let collector: ReturnType<typeof createSseCollector> | undefined;
+
+    try {
+      await hydrationStarted;
+      const archiveResponse = await controller.app.request(
+        `/${sessionId}/archive?projectPath=${encodeURIComponent(projectPath)}`,
+        { method: 'POST' }
+      );
+      expect(archiveResponse.status).toBe(500);
+
+      releaseHydration();
+      hydrationResponse = await hydrationResponsePromise;
+      expect(hydrationResponse.status).toBe(200);
+      collector = createSseCollector(hydrationResponse);
+      await expect(collector.next()).resolves.toMatchObject({ type: 'connected' });
+
+      const sessionsResponse = await controller.app.request('/');
+      const activeSessions = (await sessionsResponse.json()) as Array<{
+        sessionId: string;
+        isActive?: boolean;
+      }>;
+      expect(activeSessions).toContainEqual(
+        expect.objectContaining({ sessionId, isActive: true })
+      );
+      expect(busState.subscribers.size).toBe(1);
+      expect(SessionRuntime.create).not.toHaveBeenCalled();
+    } finally {
+      releaseHydration();
+      requestController.abort();
+      hydrationResponse ??= await hydrationResponsePromise.catch(() => undefined);
+      if (collector) await collector.cancel();
+      else await hydrationResponse?.body?.cancel().catch(() => undefined);
+      await controller.shutdown().catch(() => undefined);
+    }
+  });
+
+  it('keeps same-key concurrent Session hydrations single-flight', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionId = 'same-key-hydration';
+    const projectPath = '/tmp/same-key-hydration';
+    const metadata = metadataFor(sessionId, projectPath);
+    let releaseHydration!: () => void;
+    const hydrationGate = new Promise<void>((resolve) => {
+      releaseHydration = resolve;
+    });
+    let markHydrationStarted!: () => void;
+    const hydrationStarted = new Promise<void>((resolve) => {
+      markHydrationStarted = resolve;
+    });
+
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (requestedSessionId, requestedProjectPath) =>
+        requestedSessionId === sessionId && requestedProjectPath === projectPath
+          ? metadata
+          : undefined
+    );
+    vi.mocked(SessionService.findSessionTaskWorktree).mockImplementation(
+      async (requestedSessionId, requestedProjectPath) => {
+        if (requestedSessionId !== sessionId || requestedProjectPath !== projectPath) {
+          return undefined;
+        }
+        markHydrationStarted();
+        await hydrationGate;
+        return undefined;
+      }
+    );
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+
+    const firstAbort = new AbortController();
+    const secondAbort = new AbortController();
+    const controller = createSessionRouteController();
+    const firstResponsePromise = Promise.resolve(
+      controller.app.request(`/${sessionId}/events`, { signal: firstAbort.signal })
+    );
+    let firstResponse: Response | undefined;
+    let secondResponse: Response | undefined;
+    let firstCollector: ReturnType<typeof createSseCollector> | undefined;
+    let secondCollector: ReturnType<typeof createSseCollector> | undefined;
+
+    try {
+      await hydrationStarted;
+      const secondResponsePromise = Promise.resolve(
+        controller.app.request(`/${sessionId}/events`, { signal: secondAbort.signal })
+      );
+
+      releaseHydration();
+      [firstResponse, secondResponse] = await Promise.all([
+        firstResponsePromise,
+        secondResponsePromise,
+      ]);
+      firstCollector = createSseCollector(firstResponse);
+      secondCollector = createSseCollector(secondResponse);
+      const [firstConnected, secondConnected] = await Promise.all([
+        firstCollector.next(),
+        secondCollector.next(),
+      ]);
+
+      const sessionsResponse = await controller.app.request('/');
+      const activeSessions = (await sessionsResponse.json()) as Array<{
+        sessionId: string;
+        isActive?: boolean;
+      }>;
+      expect(firstConnected).toMatchObject({
+        type: 'connected',
+        properties: { sessionId, projectPath, status: 'idle' },
+      });
+      expect(secondConnected).toMatchObject({
+        type: 'connected',
+        properties: { sessionId, projectPath, status: 'idle' },
+      });
+      expect(SessionService.findSessionMetadata).toHaveBeenCalledTimes(1);
+      expect(SessionService.findSessionTaskWorktree).toHaveBeenCalledTimes(1);
+      expect(activeSessions).toEqual([
+        expect.objectContaining({ sessionId, isActive: true }),
+      ]);
+      expect(busState.subscribers.size).toBe(2);
+    } finally {
+      releaseHydration();
+      firstAbort.abort();
+      secondAbort.abort();
+      firstResponse ??= await firstResponsePromise.catch(() => undefined);
+      await Promise.all([
+        firstCollector?.cancel() ??
+          firstResponse?.body?.cancel().catch(() => undefined),
+        secondCollector?.cancel() ??
+          secondResponse?.body?.cancel().catch(() => undefined),
+      ]);
+      await controller.shutdown().catch(() => undefined);
+    }
+  });
+
+  it('shares active-controller hydration with durable permission recovery', async () => {
+    const { BladeServerError } = await import('../../../../src/server/error.js');
+    const { PermissionRoutes } = await import(
+      '../../../../src/server/routes/permission.js'
+    );
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const { SessionInteractionService } = await import(
+      '../../../../src/services/SessionInteractionService.js'
+    );
+    const sessionId = 'permission-shared-hydration';
+    const projectPath = '/tmp/permission-shared-hydration';
+    const permissionId = 'permission-shared-hydration-request';
+    const metadata = metadataFor(sessionId, projectPath);
+    const pending: ProjectedSessionInteraction = {
+      request: {
+        requestId: permissionId,
+        toolCallId: 'permission-tool-call',
+        toolName: 'Read',
+        interactionType: 'permission',
+        details: {
+          type: 'permission',
+          toolName: 'Read',
+          message: 'Allow durable read?',
+          args: {},
+        },
+        requestedAt: '2026-08-29T00:00:00.000Z',
+      },
+      hasToolResult: false,
+      hasRecoveryToolResult: false,
+    };
+    const findPending = vi
+      .spyOn(SessionInteractionService, 'findPending')
+      .mockResolvedValue(pending);
+    let continueDurableRecovery!: () => void;
+    const durableRecoveryGate = new Promise<void>((resolve) => {
+      continueDurableRecovery = resolve;
+    });
+    let markDurableRecoveryStarted!: () => void;
+    const durableRecoveryStarted = new Promise<void>((resolve) => {
+      markDurableRecoveryStarted = resolve;
+    });
+    const respondAndRecover = vi
+      .spyOn(SessionInteractionService, 'respondAndRecover')
+      .mockImplementation(async () => {
+        markDurableRecoveryStarted();
+        await durableRecoveryGate;
+      });
+    let releaseHydration!: () => void;
+    const hydrationGate = new Promise<void>((resolve) => {
+      releaseHydration = resolve;
+    });
+    let markHydrationStarted!: () => void;
+    const hydrationStarted = new Promise<void>((resolve) => {
+      markHydrationStarted = resolve;
+    });
+    let taskWorktreeLookups = 0;
+    let metadataLookups = 0;
+
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (requestedSessionId, requestedProjectPath) => {
+        if (requestedSessionId !== sessionId || requestedProjectPath !== projectPath) {
+          return undefined;
+        }
+        metadataLookups++;
+        return metadata;
+      }
+    );
+    vi.mocked(SessionService.findSessionTaskWorktree).mockImplementation(
+      async (requestedSessionId, requestedProjectPath) => {
+        if (requestedSessionId !== sessionId || requestedProjectPath !== projectPath) {
+          return undefined;
+        }
+        taskWorktreeLookups++;
+        if (taskWorktreeLookups === 1) {
+          markHydrationStarted();
+          await hydrationGate;
+        }
+        return undefined;
+      }
+    );
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadata]);
+
+    const requestController = new AbortController();
+    const controller = createSessionRouteController();
+    const app = new Hono();
+    app.onError((error, c) => {
+      if (error instanceof BladeServerError) {
+        return c.json(
+          error.toObject(),
+          error.statusCode as 400 | 404 | 409 | 429 | 500 | 503
+        );
+      }
+      throw error;
+    });
+    app.route('/sessions', controller.app);
+    app.route('/permissions', PermissionRoutes());
+    const sseResponsePromise = Promise.resolve(
+      app.request(`/sessions/${sessionId}/events`, { signal: requestController.signal })
+    );
+    let sseResponse: Response | undefined;
+    let collector: ReturnType<typeof createSseCollector> | undefined;
+    let permissionSettled = false;
+
+    try {
+      await hydrationStarted;
+      const permissionResponsePromise = Promise.resolve(
+        app.request(
+          `/permissions/${permissionId}?sessionId=${sessionId}&projectPath=${encodeURIComponent(projectPath)}`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ approved: true }),
+          }
+        )
+      ).then((response) => {
+        permissionSettled = true;
+        return response;
+      });
+
+      await durableRecoveryStarted;
+      continueDurableRecovery();
+      await new Promise<void>((resolve) => {
+        queueMicrotask(() => {
+          queueMicrotask(() => {
+            queueMicrotask(resolve);
+          });
+        });
+      });
+      expect({ permissionSettled, taskWorktreeLookups }).toEqual({
+        permissionSettled: false,
+        taskWorktreeLookups: 1,
+      });
+
+      releaseHydration();
+      const [permissionResponse, resolvedSseResponse] = await Promise.all([
+        permissionResponsePromise,
+        sseResponsePromise,
+      ]);
+      sseResponse = resolvedSseResponse;
+      collector = createSseCollector(sseResponse);
+      await expect(collector.next()).resolves.toMatchObject({ type: 'connected' });
+
+      expect(permissionResponse.status).toBe(200);
+      expect(findPending).toHaveBeenCalledWith(projectPath, sessionId);
+      expect(respondAndRecover).toHaveBeenCalledWith(
+        projectPath,
+        sessionId,
+        permissionId,
+        expect.objectContaining({ approved: true })
+      );
+      expect(metadataLookups).toBeGreaterThanOrEqual(1);
+      expect(taskWorktreeLookups).toBe(1);
+      expect(busState.publish).toHaveBeenCalledWith(
+        { sessionId, projectPath },
+        'interaction.resolved',
+        { requestId: permissionId }
+      );
+      expect(SessionRuntime.create).not.toHaveBeenCalled();
+    } finally {
+      continueDurableRecovery();
+      releaseHydration();
+      requestController.abort();
+      sseResponse ??= await sseResponsePromise.catch(() => undefined);
+      if (collector) await collector.cancel();
+      else await sseResponse?.body?.cancel().catch(() => undefined);
+      await controller.shutdown().catch(() => undefined);
+      findPending.mockRestore();
+      respondAndRecover.mockRestore();
+    }
+  });
+
+  it('commits a durable permission response without creating unowned live state', async () => {
+    const { BladeServerError } = await import('../../../../src/server/error.js');
+    const { resolveSessionRef, respondToPermission } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const { SessionInteractionService } = await import(
+      '../../../../src/services/SessionInteractionService.js'
+    );
+    const sessionId = 'permission-without-controller';
+    const projectPath = '/tmp/permission-without-controller';
+    const permissionId = 'permission-without-controller-request';
+    const metadata = metadataFor(sessionId, projectPath);
+    const pending: ProjectedSessionInteraction = {
+      request: {
+        requestId: permissionId,
+        toolCallId: 'orphaned-permission-tool-call',
+        toolName: 'Read',
+        interactionType: 'permission',
+        details: {
+          type: 'permission',
+          toolName: 'Read',
+          message: 'Allow durable read?',
+          args: {},
+        },
+        requestedAt: '2026-08-29T00:00:00.000Z',
+      },
+      hasToolResult: false,
+      hasRecoveryToolResult: false,
+    };
+    const findPending = vi
+      .spyOn(SessionInteractionService, 'findPending')
+      .mockResolvedValue(pending);
+    const respondAndRecover = vi
+      .spyOn(SessionInteractionService, 'respondAndRecover')
+      .mockResolvedValue(undefined);
+    vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(metadata);
+    vi.mocked(SessionService.findSessionTaskWorktree).mockResolvedValue(undefined);
+    vi.mocked(SessionService.listSessions).mockResolvedValue([]);
+
+    try {
+      const success = await respondToPermission(
+        { sessionId, projectPath },
+        permissionId,
+        { approved: true }
+      );
+      vi.mocked(SessionService.findSessionMetadata).mockResolvedValue(undefined);
+
+      let lookupOutcome = 'resolved';
+      try {
+        await resolveSessionRef(sessionId, projectPath);
+      } catch (error) {
+        lookupOutcome =
+          error instanceof BladeServerError
+            ? `${error.statusCode}:${error.code}`
+            : 'unexpected-error';
+      }
+
+      expect({
+        success,
+        taskWorktreeLookups: vi.mocked(SessionService.findSessionTaskWorktree).mock
+          .calls.length,
+        lookupOutcome,
+        runtimeCreations: vi.mocked(SessionRuntime.create).mock.calls.length,
+        agentCreations: vi.mocked(Agent.createWithRuntime).mock.calls.length,
+      }).toEqual({
+        success: true,
+        taskWorktreeLookups: 0,
+        lookupOutcome: '404:NOT_FOUND',
+        runtimeCreations: 0,
+        agentCreations: 0,
+      });
+      expect(respondAndRecover).toHaveBeenCalledWith(
+        projectPath,
+        sessionId,
+        permissionId,
+        expect.objectContaining({ approved: true })
+      );
+    } finally {
+      findPending.mockRestore();
+      respondAndRecover.mockRestore();
     }
   });
 
