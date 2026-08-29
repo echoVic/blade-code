@@ -26,6 +26,7 @@ import type { LoopResult } from '../../agent/types.js';
 import { parseSideConversationCommand } from '../../api/sideConversation.js';
 import type { PermissionMode } from '../../config/types.js';
 import { getBladeStorageRoot } from '../../context/storage/pathUtils.js';
+import { toTaskFailure } from '../../context/taskFailure.js';
 import { HookManager } from '../../hooks/HookManager.js';
 import { createLogger, LogCategory } from '../../logging/Logger.js';
 import { Bus } from '../../server/bus.js';
@@ -57,7 +58,8 @@ import {
 import type { ConfirmationHandler } from '../../tools/types/ExecutionTypes.js';
 import {
   PendingResumeCoordinator,
-  type PendingResumeResult,
+  type PendingResumeRunResult,
+  type PendingResumeWorkKind,
 } from '../services/PendingResumeCoordinator.js';
 import { TuiStreamSession } from '../services/TuiStreamSession.js';
 import { classifyError } from '../utils/errorExtractor.js';
@@ -231,7 +233,13 @@ export const useCommandHandler = (
           },
         });
         if (result.delivery === 'next_turn') {
-          pendingResumeCoordinatorRef.current?.request();
+          const currentSession = getState().session;
+          if (
+            currentSession.sessionId === sessionId &&
+            currentSession.workspaceRoot === workspaceRoot
+          ) {
+            pendingResumeCoordinatorRef.current?.request();
+          }
         }
         return {
           success: result.record.status !== 'spawn_error',
@@ -370,6 +378,8 @@ export const useCommandHandler = (
       const stats = {
         contentDeltaCount: 0,
         contentDeltaTotalLen: 0,
+        outputStarted: false,
+        toolExecutionStarted: false,
         compactionCount: 0,
       };
       const streamSession = createStreamSession(abortController.signal);
@@ -652,10 +662,10 @@ export const useCommandHandler = (
   );
 
   const performPendingResume = useMemoizedFn(
-    async (lifecycleSignal: AbortSignal): Promise<PendingResumeResult> => {
-      if (lifecycleSignal.aborted) return 'completed';
+    async (lifecycleSignal: AbortSignal): Promise<PendingResumeRunResult> => {
+      if (lifecycleSignal.aborted) return { status: 'completed' };
       if (getState().command.isProcessing) {
-        return 'deferred';
+        return { status: 'deferred' };
       }
       const hasPending = await SessionRuntime.hasPendingInbox(workspaceRoot, sessionId);
       const hasActiveGoal =
@@ -664,20 +674,21 @@ export const useCommandHandler = (
         !hasPending &&
         !hasActiveGoal &&
         (await SessionRuntime.hasRecoverableTurn(workspaceRoot, sessionId));
-      if (lifecycleSignal.aborted) return 'completed';
+      if (lifecycleSignal.aborted) return { status: 'completed' };
       if (!hasPending && !hasActiveGoal && !hasRecoverableTurn) {
-        return 'completed';
+        return { status: 'completed' };
       }
       if (getState().command.isProcessing) {
-        return 'deferred';
+        return { status: 'deferred' };
       }
 
       await ensureStoreInitialized();
-      if (lifecycleSignal.aborted) return 'completed';
+      if (lifecycleSignal.aborted) return { status: 'completed' };
       if (getState().command.isProcessing) {
-        return 'deferred';
+        return { status: 'deferred' };
       }
       const abortController = commandActions.createAbortController();
+      let workKind: PendingResumeWorkKind = 'preflight';
       const abortForLifecycle = () => {
         if (!abortController.signal.aborted) {
           abortController.abort('pending-resume-coordinator-disposed');
@@ -693,8 +704,8 @@ export const useCommandHandler = (
         const agent = await createAgent();
         if (abortController.signal.aborted) {
           return abortController.signal.reason === 'interrupted-by-new-command'
-            ? 'deferred'
-            : 'completed';
+            ? { status: 'deferred' }
+            : { status: 'completed' };
         }
         const pendingAfterInitialization = await SessionRuntime.hasPendingInbox(
           workspaceRoot,
@@ -705,16 +716,17 @@ export const useCommandHandler = (
           (await SessionRuntime.hasActiveGoal(workspaceRoot, sessionId));
         if (abortController.signal.aborted) {
           return abortController.signal.reason === 'interrupted-by-new-command'
-            ? 'deferred'
-            : 'completed';
+            ? { status: 'deferred' }
+            : { status: 'completed' };
         }
         if (!pendingAfterInitialization && !goalAfterInitialization) {
           const recoveryAssessment = getTurnRecoveryAssessment();
           if (recoveryAssessment.state !== 'none') {
             projectTurnRecoveryAssessment(sessionActions, recoveryAssessment);
           }
-          return 'completed';
+          return { status: 'completed' };
         }
+        workKind = pendingAfterInitialization ? 'pending_input' : 'goal';
 
         const chatContext = {
           messages: buildContextMessagesFromSession(getState().session),
@@ -739,6 +751,11 @@ export const useCommandHandler = (
         if (stats.compactionCount > 0) {
           sessionActions.setCompactedContext(chatContext.messages);
         }
+        if (abortController.signal.aborted) {
+          return abortController.signal.reason === 'interrupted-by-new-command'
+            ? { status: 'deferred' }
+            : { status: 'completed' };
+        }
 
         if (loopResult.success && loopResult.metadata?.outputTruncated) {
           sessionActions.addAssistantMessage(
@@ -746,15 +763,61 @@ export const useCommandHandler = (
           );
         }
         if (!loopResult.success && !isLoopCancellation(loopResult)) {
-          sessionActions.addAssistantMessage(
-            loopResult.error?.message || '恢复排队指令失败'
+          const taskFailure = toTaskFailure(
+            loopResult.error?.details ?? loopResult.error?.message ?? '恢复排队指令失败'
           );
+          if (workKind === 'pending_input') {
+            const reportedToolCallsCount = loopResult.metadata?.toolCallsCount;
+            const toolCallsCount =
+              typeof reportedToolCallsCount === 'number' &&
+              Number.isInteger(reportedToolCallsCount) &&
+              reportedToolCallsCount >= 0
+                ? reportedToolCallsCount
+                : -1;
+            const workStillPending = await SessionRuntime.hasPendingInbox(
+              workspaceRoot,
+              sessionId
+            );
+            if (abortController.signal.aborted) {
+              return abortController.signal.reason === 'interrupted-by-new-command'
+                ? { status: 'deferred' }
+                : { status: 'completed' };
+            }
+            return {
+              status: 'failed',
+              workKind,
+              workStillPending,
+              taskFailure,
+              evidence: {
+                taskFailure,
+                outputStarted: stats.outputStarted,
+                toolExecutionStarted: stats.toolExecutionStarted,
+                toolCallsCount,
+              },
+            };
+          }
+          return {
+            status: 'failed',
+            workKind,
+            workStillPending: false,
+            taskFailure,
+          };
         }
+        return { status: 'completed' };
       } catch (error) {
         const classified = classifyError(error);
-        if (!classified.isAbort) {
-          sessionActions.setError(`恢复排队指令失败: ${classified.displayMessage}`);
+        if (abortController.signal.reason === 'interrupted-by-new-command') {
+          return { status: 'deferred' };
         }
+        if (classified.isAbort || lifecycleSignal.aborted) {
+          return { status: 'completed' };
+        }
+        return {
+          status: 'failed',
+          workKind,
+          workStillPending: false,
+          taskFailure: toTaskFailure(error),
+        };
       } finally {
         lifecycleSignal.removeEventListener('abort', abortForLifecycle);
         const isOurTask = commandActions.getAbortController() === abortController;
@@ -764,23 +827,39 @@ export const useCommandHandler = (
           sessionActions.setCurrentThinkingContent(null);
         }
       }
-      return 'completed';
     }
   );
 
-  const pendingResumeCoordinator = useMemo(
-    () =>
-      new PendingResumeCoordinator({
-        canRun: () => !getState().command.isProcessing,
-        run: performPendingResume,
-      }),
-    [performPendingResume, sessionId, workspaceRoot]
-  );
-  pendingResumeCoordinatorRef.current = pendingResumeCoordinator;
+  const pendingResumeCoordinator = useMemo(() => {
+    let terminalWorkKind: PendingResumeWorkKind = 'preflight';
+    return new PendingResumeCoordinator({
+      canRun: () => !getState().command.isProcessing,
+      run: async (signal) => {
+        terminalWorkKind = 'preflight';
+        const result = await performPendingResume(signal);
+        if (result.status === 'failed') {
+          terminalWorkKind = result.workKind;
+        }
+        return result;
+      },
+      sessionIdentity: JSON.stringify([workspaceRoot, sessionId]),
+      onTerminalFailure: ({ taskFailure }) => {
+        if (terminalWorkKind === 'preflight') {
+          sessionActions.setError(`恢复排队指令失败: ${taskFailure.message}`);
+        } else {
+          sessionActions.addAssistantMessage(taskFailure.message);
+        }
+      },
+    });
+  }, [performPendingResume, sessionActions, sessionId, workspaceRoot]);
 
   useEffect(() => {
+    pendingResumeCoordinatorRef.current = pendingResumeCoordinator;
     return () => {
       pendingResumeCoordinator.dispose();
+      if (pendingResumeCoordinatorRef.current === pendingResumeCoordinator) {
+        pendingResumeCoordinatorRef.current = null;
+      }
     };
   }, [pendingResumeCoordinator]);
 
@@ -949,7 +1028,7 @@ export const useCommandHandler = (
         commandActions.setProcessing(false);
         commandActions.clearAbortController(taskAbortController);
         sessionActions.setCurrentThinkingContent(null);
-        pendingResumeCoordinator.notifyIdle();
+        pendingResumeCoordinatorRef.current?.notifyIdle();
       }
     }
   });

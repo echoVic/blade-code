@@ -1,14 +1,26 @@
 // @vitest-environment jsdom
 
-import { act } from 'react';
+import { act, Suspense, startTransition } from 'react';
 import ReactDOM from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { LoopEvent } from '../../../../../src/agent/loop/types.js';
+import { stablePendingResumeRetryDelay } from '../../../../../src/agent/runtime/PendingResumeRecoveryPolicy.js';
+import type { LoopResult } from '../../../../../src/agent/types.js';
+import { taskFailureForCode } from '../../../../../src/context/taskFailure.js';
 import type { SessionTurnRecoveryAssessment } from '../../../../../src/context/turnRecoveryAssessment.js';
+import { Bus } from '../../../../../src/server/bus.js';
+import { PendingResumeCoordinator } from '../../../../../src/ui/services/PendingResumeCoordinator.js';
 
 const mocks = vi.hoisted(() => {
-  const abortController = new AbortController();
   return {
-    abortController,
+    abortController: new AbortController(),
+    currentAbortController: null as AbortController | null,
+    createAbortController: vi.fn(),
+    getAbortController: vi.fn(),
+    sessionId: 'recovered-cli-session',
+    workspaceRoot: '/active-workspace',
+    storeSessionId: 'recovered-cli-session',
+    storeWorkspaceRoot: '/active-workspace',
     createAgent: vi.fn(),
     cleanupAgent: vi.fn(),
     steerActiveTurn: vi.fn(),
@@ -123,8 +135,8 @@ vi.mock('../../../../../src/ui/hooks/useAgent.js', () => ({
 
 vi.mock('../../../../../src/store/selectors/index.js', () => ({
   useIsProcessing: () => mocks.isProcessing,
-  useSessionId: () => 'recovered-cli-session',
-  useWorkspaceRoot: () => '/active-workspace',
+  useSessionId: () => mocks.sessionId,
+  useWorkspaceRoot: () => mocks.workspaceRoot,
   useCurrentModelId: () => 'model-1',
   usePermissionMode: () => 'default',
   useThinkingModeEnabled: () => false,
@@ -154,8 +166,8 @@ vi.mock('../../../../../src/store/selectors/index.js', () => ({
     setTeams: vi.fn(),
   }),
   useCommandActions: () => ({
-    createAbortController: vi.fn(() => mocks.abortController),
-    getAbortController: vi.fn(() => mocks.abortController),
+    createAbortController: mocks.createAbortController,
+    getAbortController: mocks.getAbortController,
     clearAbortController: mocks.clearAbortController,
     setProcessing: mocks.setProcessing,
     setRecoveredSteeringCount: vi.fn(),
@@ -169,6 +181,8 @@ vi.mock('../../../../../src/store/vanilla.js', () => ({
   getState: () => ({
     command: { isProcessing: mocks.storeProcessing },
     session: {
+      sessionId: mocks.storeSessionId,
+      workspaceRoot: mocks.storeWorkspaceRoot,
       messages: [],
       restoredContextMessages: [],
       restoredContextMessageCount: 0,
@@ -205,10 +219,26 @@ vi.mock('../../../../../src/ui/utils/loopEventHandler.js', () => ({
     (
       _deps: unknown,
       stats: {
+        outputStarted: boolean;
+        toolExecutionStarted: boolean;
         compactionCount?: number;
       }
     ) =>
-    (event: { kind?: string; phase?: string; outcome?: string }) => {
+    (event: LoopEvent) => {
+      if (
+        (event.kind === 'content_delta' || event.kind === 'thinking_delta') &&
+        event.delta.length > 0
+      ) {
+        stats.outputStarted = true;
+      } else if (event.kind === 'structured_output') {
+        stats.outputStarted = true;
+      } else if (
+        event.kind === 'tool_start' ||
+        event.kind === 'tool_progress' ||
+        event.kind === 'tool_result'
+      ) {
+        stats.toolExecutionStarted = true;
+      }
       if (
         event.kind === 'compaction' &&
         event.phase === 'end' &&
@@ -229,20 +259,119 @@ vi.mock('../../../../../src/ui/utils/sessionContext.js', () => ({
 
 import { useCommandHandler } from '../../../../../src/ui/hooks/useCommandHandler.js';
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function successfulLoopResult(finalMessage = 'resumed'): LoopResult {
+  return {
+    success: true,
+    finalMessage,
+    metadata: { turnsCount: 1, toolCallsCount: 0, duration: 0 },
+  };
+}
+
+interface FailedLoopResultOptions {
+  message?: string;
+  details?: unknown;
+  toolCallsCount?: number;
+  omitMetadata?: boolean;
+  type?: NonNullable<LoopResult['error']>['type'];
+  abortReason?: string;
+}
+
+function failedLoopResult(options: FailedLoopResultOptions = {}): LoopResult {
+  return {
+    success: false,
+    error: {
+      type: options.type ?? 'api_error',
+      message: options.message ?? 'opaque Provider failure',
+      ...(options.details === undefined ? {} : { details: options.details }),
+    },
+    ...(options.omitMetadata
+      ? {}
+      : {
+          metadata: {
+            turnsCount: 1,
+            toolCallsCount: options.toolCallsCount ?? 0,
+            duration: 1,
+            ...(options.abortReason === undefined
+              ? {}
+              : { abortReason: options.abortReason }),
+          },
+        }),
+  };
+}
+
+function agentReturning(result: LoopResult, events: LoopEvent[] = []) {
+  return {
+    chatStream: vi.fn(async function* () {
+      for (const event of events) yield event;
+      return result;
+    }),
+  };
+}
+
+async function flushAsyncWork(rounds = 20): Promise<void> {
+  await act(async () => {
+    for (let index = 0; index < rounds; index++) {
+      await Promise.resolve();
+    }
+  });
+}
+
 describe('useCommandHandler durable recovery', () => {
   let container: HTMLDivElement;
   let root: ReactDOM.Root;
+  let mounted: boolean;
   let hook: ReturnType<typeof useCommandHandler> | undefined;
   const confirmationHandler = {
     requestConfirmation: vi.fn(),
   };
 
-  function Harness() {
-    hook = useCommandHandler(undefined, undefined, confirmationHandler as never);
+  function Harness({ suspendWith }: { suspendWith?: Promise<never> }) {
+    const renderedHook = useCommandHandler(
+      undefined,
+      undefined,
+      confirmationHandler as never
+    );
+    if (suspendWith) throw suspendWith;
+    hook = renderedHook;
     return null;
   }
 
+  async function renderHarness(): Promise<void> {
+    await act(async () => {
+      root.render(
+        <Suspense fallback={null}>
+          <Harness />
+        </Suspense>
+      );
+      for (let index = 0; index < 20; index++) {
+        await Promise.resolve();
+      }
+    });
+  }
+
+  function unmountHarness(): void {
+    if (!mounted) return;
+    act(() => {
+      root.unmount();
+    });
+    mounted = false;
+  }
+
   beforeEach(() => {
+    mocks.abortController = new AbortController();
+    mocks.currentAbortController = null;
+    mocks.sessionId = 'recovered-cli-session';
+    mocks.workspaceRoot = '/active-workspace';
+    mocks.storeSessionId = 'recovered-cli-session';
+    mocks.storeWorkspaceRoot = '/active-workspace';
     mocks.isProcessing = false;
     mocks.storeProcessing = false;
     mocks.sideConversation = null;
@@ -266,7 +395,35 @@ describe('useCommandHandler durable recovery', () => {
     mocks.resolvePendingWithHandler.mockResolvedValue(true);
     mocks.cancelPendingNonInteractive.mockResolvedValue(false);
     mocks.buildContextMessagesFromSession.mockReset().mockReturnValue([]);
-    mocks.createAgent.mockResolvedValue({
+    mocks.createAbortController.mockReset().mockImplementation(() => {
+      if (
+        mocks.currentAbortController &&
+        !mocks.currentAbortController.signal.aborted
+      ) {
+        mocks.currentAbortController.abort('interrupted-by-new-command');
+      }
+      const controller = new AbortController();
+      mocks.abortController = controller;
+      mocks.currentAbortController = controller;
+      return controller;
+    });
+    mocks.getAbortController
+      .mockReset()
+      .mockImplementation(() => mocks.currentAbortController);
+    mocks.clearAbortController.mockImplementation(
+      (expectedController?: AbortController) => {
+        if (
+          expectedController === undefined ||
+          mocks.currentAbortController === expectedController
+        ) {
+          mocks.currentAbortController = null;
+        }
+      }
+    );
+    mocks.setProcessing.mockImplementation((processing: boolean) => {
+      mocks.storeProcessing = processing;
+    });
+    mocks.createAgent.mockReset().mockResolvedValue({
       chatStream: vi.fn(async function* (
         _message: string,
         _context: unknown,
@@ -287,13 +444,15 @@ describe('useCommandHandler durable recovery', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = ReactDOM.createRoot(container);
+    mounted = true;
   });
 
   afterEach(() => {
-    act(() => {
-      root.unmount();
-    });
+    unmountHarness();
     container.remove();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
     vi.clearAllMocks();
   });
 
@@ -396,7 +555,7 @@ describe('useCommandHandler durable recovery', () => {
     });
   });
 
-  it('shows a typed non-abort failure from automatic pending recovery', async () => {
+  it('shows one canonical non-abort failure from automatic pending recovery', async () => {
     mocks.createAgent.mockResolvedValueOnce({
       chatStream: vi.fn(async function* () {
         if (Date.now() < 0) yield undefined;
@@ -423,12 +582,15 @@ describe('useCommandHandler durable recovery', () => {
 
     await vi.waitFor(() => {
       expect(mocks.addAssistantMessage).toHaveBeenCalledWith(
-        'Recovered turn still produced an empty final response.'
+        taskFailureForCode('runtime').message
       );
     });
     expect(mocks.addAssistantMessage).toHaveBeenCalledTimes(1);
     expect(mocks.addAssistantMessage).not.toHaveBeenCalledWith(
       '输出因达到 token 上限被截断，部分内容可能不完整。'
+    );
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalledWith(
+      'Recovered turn still produced an empty final response.'
     );
     expect(mocks.addAssistantMessage).not.toHaveBeenCalledWith('已取消');
   });
@@ -459,6 +621,215 @@ describe('useCommandHandler durable recovery', () => {
     });
     expect(mocks.addAssistantMessage).not.toHaveBeenCalledWith(canceledMessage);
     expect(mocks.addAssistantMessage).not.toHaveBeenCalled();
+  });
+
+  it('reports a preflight failure once through the bounded global error channel', async () => {
+    const preflightFailure = Object.assign(new Error('opaque upstream secret'), {
+      code: 'STREAM_IDLE_TIMEOUT',
+    });
+    mocks.createAgent.mockRejectedValueOnce(preflightFailure);
+
+    await renderHarness();
+
+    expect(mocks.setError).toHaveBeenCalledOnce();
+    expect(mocks.setError).toHaveBeenCalledWith(
+      `恢复排队指令失败: ${taskFailureForCode('timeout').message}`
+    );
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalled();
+  });
+
+  it('silently retries one replay-safe pending-input failure after the shared delay', async () => {
+    vi.useFakeTimers({ now: 10_000 });
+    const sessionIdentity = JSON.stringify([
+      '/active-workspace',
+      'recovered-cli-session',
+    ]);
+    const delayMs = stablePendingResumeRetryDelay(sessionIdentity, 1);
+    const timeoutFailure = Object.assign(new Error('upstream secret'), {
+      code: 'STREAM_IDLE_TIMEOUT',
+    });
+    const firstAgent = agentReturning(
+      failedLoopResult({ details: timeoutFailure, message: 'raw Provider timeout' })
+    );
+    const secondAgent = agentReturning(successfulLoopResult());
+    mocks.createAgent
+      .mockResolvedValueOnce(firstAgent)
+      .mockResolvedValueOnce(secondAgent);
+
+    await renderHarness();
+
+    expect(mocks.createAgent).toHaveBeenCalledOnce();
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(delayMs - 1);
+    });
+    expect(mocks.createAgent).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    await flushAsyncWork();
+
+    expect(mocks.createAgent).toHaveBeenCalledTimes(2);
+    expect(firstAgent.chatStream).toHaveBeenCalledWith(
+      '',
+      expect.any(Object),
+      expect.objectContaining({ pendingInputOnly: true })
+    );
+    expect(secondAgent.chatStream).toHaveBeenCalledWith(
+      '',
+      expect.any(Object),
+      expect.objectContaining({ pendingInputOnly: true })
+    );
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalled();
+    expect(mocks.setError).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'content output',
+      [{ kind: 'content_delta', delta: 'visible output' } satisfies LoopEvent],
+    ],
+    [
+      'hidden thinking output',
+      [{ kind: 'thinking_delta', delta: 'hidden thought' } satisfies LoopEvent],
+    ],
+    [
+      'structured output',
+      [
+        {
+          kind: 'structured_output',
+          output: { result: 'partial' },
+          schemaDigest: 'schema-digest',
+        } satisfies LoopEvent,
+      ],
+    ],
+    [
+      'tool lifecycle',
+      [
+        {
+          kind: 'tool_start',
+          toolCall: {
+            id: 'tool-1',
+            type: 'function',
+            function: { name: 'Bash', arguments: '{}' },
+          },
+        } satisfies LoopEvent,
+      ],
+    ],
+  ])('does not retry a pending failure after %s', async (_label, events) => {
+    vi.useFakeTimers({ now: 10_000 });
+    const timeoutFailure = Object.assign(new Error('upstream secret'), {
+      code: 'STREAM_IDLE_TIMEOUT',
+    });
+    mocks.createAgent.mockResolvedValueOnce(
+      agentReturning(
+        failedLoopResult({ details: timeoutFailure, message: 'raw Provider timeout' }),
+        events
+      )
+    );
+
+    await renderHarness();
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    await flushAsyncWork();
+
+    expect(mocks.createAgent).toHaveBeenCalledOnce();
+    expect(mocks.addAssistantMessage).toHaveBeenCalledOnce();
+    expect(mocks.addAssistantMessage).toHaveBeenCalledWith(
+      taskFailureForCode('timeout').message
+    );
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalledWith('raw Provider timeout');
+  });
+
+  it.each([
+    ['positive', { toolCallsCount: 1 }],
+    ['missing', { omitMetadata: true }],
+    ['malformed', { toolCallsCount: Number.NaN }],
+    ['negative', { toolCallsCount: -1 }],
+  ])(
+    'does not retry a pending failure with %s tool-count evidence',
+    async (_label, failureOptions) => {
+      vi.useFakeTimers({ now: 10_000 });
+      const timeoutFailure = Object.assign(new Error('upstream secret'), {
+        code: 'STREAM_IDLE_TIMEOUT',
+      });
+      mocks.createAgent.mockResolvedValueOnce(
+        agentReturning(
+          failedLoopResult({
+            ...failureOptions,
+            details: timeoutFailure,
+            message: 'raw Provider timeout',
+          })
+        )
+      );
+
+      await renderHarness();
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await flushAsyncWork();
+
+      expect(mocks.createAgent).toHaveBeenCalledOnce();
+      expect(mocks.addAssistantMessage).toHaveBeenCalledOnce();
+      expect(mocks.addAssistantMessage).toHaveBeenCalledWith(
+        taskFailureForCode('timeout').message
+      );
+    }
+  );
+
+  it('does not retry a nonretryable pending-input failure', async () => {
+    vi.useFakeTimers({ now: 10_000 });
+    mocks.createAgent.mockResolvedValueOnce(
+      agentReturning(
+        failedLoopResult({
+          details: new Error('401 invalid api key'),
+          message: 'raw Provider authentication error',
+        })
+      )
+    );
+
+    await renderHarness();
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    await flushAsyncWork();
+
+    expect(mocks.createAgent).toHaveBeenCalledOnce();
+    expect(mocks.addAssistantMessage).toHaveBeenCalledOnce();
+    expect(mocks.addAssistantMessage).toHaveBeenCalledWith(
+      taskFailureForCode('authentication').message
+    );
+  });
+
+  it('does not retry when a fresh durable inbox check is empty', async () => {
+    vi.useFakeTimers({ now: 10_000 });
+    const timeoutFailure = Object.assign(new Error('upstream secret'), {
+      code: 'STREAM_IDLE_TIMEOUT',
+    });
+    mocks.hasPendingInbox
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    mocks.createAgent.mockResolvedValueOnce(
+      agentReturning(
+        failedLoopResult({ details: timeoutFailure, message: 'raw Provider timeout' })
+      )
+    );
+
+    await renderHarness();
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    await flushAsyncWork();
+
+    expect(mocks.hasPendingInbox).toHaveBeenCalledTimes(4);
+    expect(mocks.createAgent).toHaveBeenCalledOnce();
+    expect(mocks.addAssistantMessage).toHaveBeenCalledWith(
+      taskFailureForCode('timeout').message
+    );
   });
 
   it('snapshots prior context before adding the optimistic user message', async () => {
@@ -709,6 +1080,396 @@ describe('useCommandHandler durable recovery', () => {
     expect(agent.chatStream).not.toHaveBeenCalled();
     expect(mocks.hasActiveGoal).toHaveBeenCalledTimes(3);
     expect(mocks.addAssistantMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not retry a failed Goal-only continuation', async () => {
+    vi.useFakeTimers({ now: 10_000 });
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    mocks.hasActiveGoal.mockResolvedValue(true);
+    const timeoutFailure = Object.assign(new Error('upstream secret'), {
+      code: 'STREAM_IDLE_TIMEOUT',
+    });
+    mocks.createAgent.mockResolvedValueOnce(
+      agentReturning(
+        failedLoopResult({ details: timeoutFailure, message: 'raw Goal timeout' })
+      )
+    );
+
+    await renderHarness();
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    await flushAsyncWork();
+
+    expect(mocks.createAgent).toHaveBeenCalledOnce();
+    expect(mocks.addAssistantMessage).toHaveBeenCalledOnce();
+    expect(mocks.addAssistantMessage).toHaveBeenCalledWith(
+      taskFailureForCode('timeout').message
+    );
+  });
+
+  it('defers an interrupted pending run until the foreground command releases idle', async () => {
+    const pendingCompletion = deferred<LoopResult>();
+    const foregroundCompletion = deferred<LoopResult>();
+    const interruptedAgent = {
+      chatStream: vi.fn(async function* () {
+        if (Date.now() < 0) yield undefined;
+        return await pendingCompletion.promise;
+      }),
+    };
+    const foregroundAgent = {
+      chatStream: vi.fn(async function* () {
+        if (Date.now() < 0) yield undefined;
+        return await foregroundCompletion.promise;
+      }),
+    };
+    const resumedAgent = agentReturning(successfulLoopResult('pending done'));
+    mocks.createAgent
+      .mockResolvedValueOnce(interruptedAgent)
+      .mockResolvedValueOnce(foregroundAgent)
+      .mockResolvedValueOnce(resumedAgent);
+    mocks.processSlashCommand.mockResolvedValue({ type: 'not_slash' });
+
+    await renderHarness();
+    expect(mocks.createAgent).toHaveBeenCalledOnce();
+    const interruptedController = mocks.currentAbortController;
+
+    let foregroundCommand!: Promise<void>;
+    act(() => {
+      foregroundCommand = hook!.executeCommand({
+        displayText: 'foreground command',
+        text: 'foreground command',
+        images: [],
+        parts: [{ type: 'text', text: 'foreground command' }],
+      });
+    });
+    await flushAsyncWork();
+    expect(interruptedController?.signal.reason).toBe('interrupted-by-new-command');
+    expect(mocks.createAgent).toHaveBeenCalledTimes(2);
+
+    pendingCompletion.resolve(
+      failedLoopResult({
+        type: 'aborted',
+        message: '任务已被用户中止',
+        abortReason: 'interrupt',
+      })
+    );
+    await flushAsyncWork();
+    expect(mocks.createAgent).toHaveBeenCalledTimes(2);
+
+    foregroundCompletion.resolve(successfulLoopResult('foreground done'));
+    await act(async () => {
+      await foregroundCommand;
+    });
+    await flushAsyncWork();
+    expect(mocks.createAgent).toHaveBeenCalledTimes(3);
+    expect(resumedAgent.chatStream).toHaveBeenCalledWith(
+      '',
+      expect.any(Object),
+      expect.objectContaining({ pendingInputOnly: true })
+    );
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalledWith(
+      taskFailureForCode('runtime').message
+    );
+  });
+
+  it('defers an interruption received during the fresh inbox check', async () => {
+    vi.useFakeTimers({ now: 10_000 });
+    const freshInbox = deferred<boolean>();
+    const foregroundCompletion = deferred<LoopResult>();
+    const timeoutFailure = Object.assign(new Error('upstream secret'), {
+      code: 'STREAM_IDLE_TIMEOUT',
+    });
+    const failedAgent = agentReturning(
+      failedLoopResult({ details: timeoutFailure, message: 'raw Provider timeout' })
+    );
+    const foregroundAgent = {
+      chatStream: vi.fn(async function* () {
+        if (Date.now() < 0) yield undefined;
+        return await foregroundCompletion.promise;
+      }),
+    };
+    const resumedAgent = agentReturning(successfulLoopResult('pending done'));
+    mocks.hasPendingInbox
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true)
+      .mockReturnValueOnce(freshInbox.promise)
+      .mockResolvedValue(true);
+    mocks.createAgent
+      .mockResolvedValueOnce(failedAgent)
+      .mockResolvedValueOnce(foregroundAgent)
+      .mockResolvedValueOnce(resumedAgent);
+    mocks.processSlashCommand.mockResolvedValue({ type: 'not_slash' });
+
+    await renderHarness();
+    expect(mocks.hasPendingInbox).toHaveBeenCalledTimes(4);
+    const interruptedController = mocks.currentAbortController;
+
+    let foregroundCommand!: Promise<void>;
+    act(() => {
+      foregroundCommand = hook!.executeCommand({
+        displayText: 'foreground during inbox check',
+        text: 'foreground during inbox check',
+        images: [],
+        parts: [{ type: 'text', text: 'foreground during inbox check' }],
+      });
+    });
+    await flushAsyncWork();
+    expect(interruptedController?.signal.reason).toBe('interrupted-by-new-command');
+
+    freshInbox.resolve(true);
+    await flushAsyncWork();
+    foregroundCompletion.resolve(successfulLoopResult('foreground done'));
+    await act(async () => {
+      await foregroundCommand;
+    });
+    await flushAsyncWork();
+
+    expect(mocks.createAgent).toHaveBeenCalledTimes(3);
+    expect(resumedAgent.chatStream).toHaveBeenCalledOnce();
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalled();
+  });
+
+  it('cancels a pending retry timer when the hook unmounts', async () => {
+    vi.useFakeTimers({ now: 10_000 });
+    const timeoutFailure = Object.assign(new Error('upstream secret'), {
+      code: 'STREAM_IDLE_TIMEOUT',
+    });
+    mocks.createAgent.mockResolvedValueOnce(
+      agentReturning(
+        failedLoopResult({ details: timeoutFailure, message: 'raw Provider timeout' })
+      )
+    );
+
+    await renderHarness();
+    expect(mocks.createAgent).toHaveBeenCalledOnce();
+    unmountHarness();
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    await flushAsyncWork();
+
+    expect(mocks.createAgent).toHaveBeenCalledOnce();
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalled();
+  });
+
+  it('cancels an old Session retry when the hook switches identity', async () => {
+    vi.useFakeTimers({ now: 10_000 });
+    const timeoutFailure = Object.assign(new Error('upstream secret'), {
+      code: 'STREAM_IDLE_TIMEOUT',
+    });
+    mocks.createAgent.mockResolvedValueOnce(
+      agentReturning(
+        failedLoopResult({ details: timeoutFailure, message: 'raw Provider timeout' })
+      )
+    );
+
+    await renderHarness();
+    expect(mocks.createAgent).toHaveBeenCalledOnce();
+    mocks.sessionId = 'replacement-session';
+    mocks.workspaceRoot = '/replacement-workspace';
+    mocks.storeSessionId = 'replacement-session';
+    mocks.storeWorkspaceRoot = '/replacement-workspace';
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    await renderHarness();
+    mocks.createAgent.mockClear();
+    mocks.addAssistantMessage.mockClear();
+
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+    await flushAsyncWork();
+
+    expect(mocks.createAgent).not.toHaveBeenCalled();
+    expect(mocks.addAssistantMessage).not.toHaveBeenCalled();
+  });
+
+  it('lets an old foreground completion notify the current Session coordinator', async () => {
+    const foregroundCompletion = deferred<LoopResult>();
+    const oldForegroundAgent = {
+      chatStream: vi.fn(async function* () {
+        if (Date.now() < 0) yield undefined;
+        return await foregroundCompletion.promise;
+      }),
+    };
+    const replacementPendingAgent = agentReturning(
+      successfulLoopResult('replacement pending done')
+    );
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    mocks.processSlashCommand.mockResolvedValue({ type: 'not_slash' });
+    mocks.createAgent
+      .mockResolvedValueOnce(oldForegroundAgent)
+      .mockResolvedValueOnce(replacementPendingAgent);
+
+    await renderHarness();
+    let oldCommand!: Promise<void>;
+    act(() => {
+      oldCommand = hook!.executeCommand({
+        displayText: 'old foreground command',
+        text: 'old foreground command',
+        images: [],
+        parts: [{ type: 'text', text: 'old foreground command' }],
+      });
+    });
+    await flushAsyncWork();
+    expect(mocks.createAgent).toHaveBeenCalledOnce();
+
+    mocks.sessionId = 'replacement-session';
+    mocks.workspaceRoot = '/replacement-workspace';
+    mocks.storeSessionId = 'replacement-session';
+    mocks.storeWorkspaceRoot = '/replacement-workspace';
+    mocks.hasPendingInbox.mockResolvedValue(true);
+    await renderHarness();
+    expect(mocks.createAgent).toHaveBeenCalledOnce();
+
+    foregroundCompletion.resolve(successfulLoopResult('old foreground done'));
+    await act(async () => {
+      await oldCommand;
+    });
+    await flushAsyncWork();
+
+    expect(mocks.createAgent).toHaveBeenCalledTimes(2);
+    expect(replacementPendingAgent.chatStream).toHaveBeenCalledOnce();
+  });
+
+  it('does not publish a coordinator from a discarded render', async () => {
+    const foregroundCompletion = deferred<LoopResult>();
+    const requestSpy = vi.spyOn(PendingResumeCoordinator.prototype, 'request');
+    const notifyIdleSpy = vi.spyOn(PendingResumeCoordinator.prototype, 'notifyIdle');
+    const oldForegroundAgent = {
+      chatStream: vi.fn(async function* () {
+        if (Date.now() < 0) yield undefined;
+        return await foregroundCompletion.promise;
+      }),
+    };
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    mocks.processSlashCommand.mockResolvedValue({ type: 'not_slash' });
+    mocks.createAgent.mockResolvedValueOnce(oldForegroundAgent);
+
+    await renderHarness();
+    let oldCommand!: Promise<void>;
+    act(() => {
+      oldCommand = hook!.executeCommand({
+        displayText: 'committed foreground command',
+        text: 'committed foreground command',
+        images: [],
+        parts: [{ type: 'text', text: 'committed foreground command' }],
+      });
+    });
+    await flushAsyncWork();
+    expect(mocks.createAgent).toHaveBeenCalledOnce();
+
+    act(() => {
+      Bus.publish(
+        {
+          sessionId: 'recovered-cli-session',
+          projectPath: '/active-workspace',
+        },
+        'subagent.completion.queued',
+        {}
+      );
+    });
+    await flushAsyncWork();
+    expect(requestSpy).toHaveBeenCalledOnce();
+    const committedCoordinator = requestSpy.mock.instances[0];
+
+    mocks.sessionId = 'discarded-session';
+    mocks.workspaceRoot = '/discarded-workspace';
+    const discardedRender = new Promise<never>(() => {
+      // Intentionally unresolved: Suspense must discard this render.
+    });
+    await act(async () => {
+      startTransition(() => {
+        root.render(
+          <Suspense fallback={null}>
+            <Harness suspendWith={discardedRender} />
+          </Suspense>
+        );
+      });
+      await Promise.resolve();
+    });
+
+    foregroundCompletion.resolve(successfulLoopResult('foreground done'));
+    await act(async () => {
+      await oldCommand;
+    });
+
+    expect(notifyIdleSpy).toHaveBeenCalledOnce();
+    expect(notifyIdleSpy.mock.instances[0]).toBe(committedCoordinator);
+  });
+
+  it('does not let an old shell completion wake the replacement Session', async () => {
+    const shellCompletion = deferred<{
+      executionId: string;
+      messageId: string;
+      record: {
+        version: 1;
+        command: string;
+        status: 'completed';
+        exitCode: number;
+        durationMs: number;
+        stdout: string;
+        stderr: string;
+        stdoutOmittedBytes: number;
+        stderrOmittedBytes: number;
+        binaryOutput: boolean;
+        truncated: boolean;
+      };
+      modelContent: string;
+      auxiliary: boolean;
+      delivery: 'next_turn';
+    }>();
+    mocks.hasPendingInbox.mockResolvedValue(false);
+    mocks.executeUserShellCommand.mockReturnValueOnce(shellCompletion.promise);
+
+    await renderHarness();
+    let oldShellCommand!: Promise<void>;
+    act(() => {
+      oldShellCommand = hook!.executeCommand({
+        displayText: '! pwd',
+        text: '! pwd',
+        images: [],
+        parts: [{ type: 'text', text: '! pwd' }],
+      });
+    });
+    await flushAsyncWork();
+
+    mocks.sessionId = 'replacement-session';
+    mocks.workspaceRoot = '/replacement-workspace';
+    mocks.storeSessionId = 'replacement-session';
+    mocks.storeWorkspaceRoot = '/replacement-workspace';
+    await renderHarness();
+    mocks.createAgent.mockClear();
+    mocks.hasPendingInbox.mockResolvedValue(true);
+    mocks.storeProcessing = false;
+
+    shellCompletion.resolve({
+      executionId: 'old-shell',
+      messageId: 'old-shell-message',
+      record: {
+        version: 1,
+        command: 'pwd',
+        status: 'completed',
+        exitCode: 0,
+        durationMs: 3,
+        stdout: '/old-workspace',
+        stderr: '',
+        stdoutOmittedBytes: 0,
+        stderrOmittedBytes: 0,
+        binaryOutput: false,
+        truncated: false,
+      },
+      modelContent: '<user_shell_command>pwd</user_shell_command>',
+      auxiliary: false,
+      delivery: 'next_turn',
+    });
+    await act(async () => {
+      await oldShellCommand;
+    });
+    await flushAsyncWork();
+
+    expect(mocks.createAgent).not.toHaveBeenCalled();
   });
 
   it('exposes agent cleanup to orchestration owners', async () => {
