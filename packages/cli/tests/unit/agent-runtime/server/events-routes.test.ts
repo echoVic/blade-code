@@ -20,6 +20,31 @@ async function readSseEvent(
   return buffer;
 }
 
+async function readUntilDone(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  return new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+    const timer = setTimeout(
+      () =>
+        reject(
+          new Error(`Timed out waiting for SSE stream completion (${timeoutMs}ms)`)
+        ),
+      timeoutMs
+    );
+    reader.read().then(
+      (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
 describe('EventRoutes global task feed', () => {
   it('forwards task and interaction lifecycle events without private payloads', async () => {
     const controller = new AbortController();
@@ -304,6 +329,62 @@ describe('EventRoutes global task feed', () => {
         fastReader.cancel().catch(() => undefined),
       ]);
       writeSse.mockRestore();
+    }
+  });
+
+  it('owns global SSE shutdown through an explicit controller and rejects new subscribers once closed', async () => {
+    const eventsModule = await import('../../../../src/server/routes/events.js');
+    const maybeController = (
+      eventsModule as typeof eventsModule & {
+        createEventRouteController?: () => {
+          app: { request(input: string, init?: RequestInit): Promise<Response> };
+          shutdown(reason?: string): Promise<void>;
+          getSseConnectionStats(): { accepting: boolean; active: number };
+        };
+      }
+    ).createEventRouteController;
+
+    if (!maybeController) {
+      throw new Error(
+        'expected owned Event route controller export createEventRouteController()'
+      );
+    }
+
+    const controller = maybeController();
+    const unsubscribeSpy = vi.spyOn(Bus, 'subscribe');
+    const response = await controller.app.request('/');
+    expect(response.status).toBe(200);
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('Expected an SSE response body');
+    const decoder = new TextDecoder();
+
+    try {
+      const connected = await readSseEvent(reader, decoder);
+      expect(connected).toContain('"type":"connected"');
+
+      const shutdown = controller.shutdown('server-shutdown');
+      await expect(readUntilDone(reader, 1000)).resolves.toMatchObject({ done: true });
+      await expect(shutdown).resolves.toBeUndefined();
+      expect(unsubscribeSpy).toHaveReturnedTimes(1);
+      const unsubscribe = unsubscribeSpy.mock.results[0]?.value;
+      expect(unsubscribe).toBeTypeOf('function');
+      expect(controller.getSseConnectionStats()).toEqual({
+        accepting: false,
+        active: 0,
+      });
+
+      const denied = await controller.app.request('/');
+      expect(denied.status).toBe(503);
+      await expect(denied.json()).resolves.toMatchObject({
+        error: {
+          code: 'SERVICE_UNAVAILABLE',
+          message: 'Server is shutting down',
+        },
+      });
+      expect(unsubscribeSpy).toHaveReturnedTimes(1);
+    } finally {
+      await reader.cancel().catch(() => undefined);
+      unsubscribeSpy.mockRestore();
     }
   });
 });

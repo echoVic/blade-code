@@ -604,6 +604,27 @@ function createSseCollector(response: Response) {
     async cancel() {
       await reader.cancel().catch(() => undefined);
     },
+    async readDone(timeoutMs = 2000) {
+      return new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+        const timer = setTimeout(
+          () =>
+            reject(
+              new Error(`Timed out waiting for SSE stream completion (${timeoutMs}ms)`)
+            ),
+          timeoutMs
+        );
+        reader.read().then(
+          (result) => {
+            clearTimeout(timer);
+            resolve(result);
+          },
+          (error) => {
+            clearTimeout(timer);
+            reject(error);
+          }
+        );
+      });
+    },
   };
 }
 
@@ -8738,5 +8759,132 @@ describe('SessionRoutes runtime reuse', () => {
     expect(runtimeState.runtime.prepareInputTurn).not.toHaveBeenCalled();
     expect(runtimeState.runtime.enqueueSteering).not.toHaveBeenCalled();
     expect(agentState.chatStream).not.toHaveBeenCalled();
+  });
+
+  it('owns session SSE shutdown, drains connected readers, and blocks runtime disposal until a team callback settles', async () => {
+    const { TeamMailbox } = await import(
+      '../../../../src/agent/teams/TeamMailbox.js'
+    );
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionId = 'shutdown-owned-session';
+    const projectPath = '/tmp/shutdown-owned-session';
+    const ref = { sessionId, projectPath };
+    mockResolvedSession(sessionId, { projectPath });
+
+    let releaseEnqueue!: () => void;
+    const enqueueGate = new Promise<void>((resolve) => {
+      releaseEnqueue = resolve;
+    });
+    let resolveEnqueueStarted!: () => void;
+    const enqueueStarted = new Promise<void>((resolve) => {
+      resolveEnqueueStarted = resolve;
+    });
+    runtimeState.runtime.enqueueSteering.mockImplementationOnce(
+      async () =>
+        new Promise((resolve) => {
+          resolveEnqueueStarted();
+          enqueueGate.then(() =>
+            resolve({
+              accepted: true,
+              messageId: 'team-message-1',
+              turnId: 'turn-team-1',
+              queued: 1,
+              delivery: 'next_turn',
+            })
+          );
+        })
+    );
+    const markDelivered = vi
+      .spyOn(TeamMailbox.prototype, 'markDelivered')
+      .mockResolvedValue(undefined);
+
+    const controller = createSessionRouteController();
+    const response = await controller.app.request(
+      `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`
+    );
+    const collector = createSseCollector(response);
+    let shutdown: Promise<void> | undefined;
+    let secondRead: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
+
+    try {
+      await expect(collector.next()).resolves.toMatchObject({ type: 'connected' });
+
+      const maybeStatsController = controller as typeof controller & {
+        getSseConnectionStats?: () => { accepting: boolean; active: number };
+      };
+      if (!('getSseConnectionStats' in maybeStatsController)) {
+        throw new Error(
+          'expected owned Session route controller getSseConnectionStats()'
+        );
+      }
+      expect(maybeStatsController.getSseConnectionStats?.()).toEqual({
+        accepting: true,
+        active: 1,
+      });
+
+      busState.publish(ref, 'team.message.received', {
+        teamName: 'shutdown-team',
+        messageId: 'team-message-1',
+        content: 'deliver while shutdown is waiting',
+        metadata: {
+          clientVisible: false,
+          teamMessage: {
+            messageId: 'team-message-1',
+            teamName: 'shutdown-team',
+            from: 'worker',
+            to: 'team-lead',
+          },
+        },
+      });
+      await enqueueStarted;
+
+      secondRead = collector.readDone(1000);
+
+      shutdown = controller.shutdown('server-shutdown');
+      await expect(secondRead).resolves.toMatchObject({ done: true });
+
+      let shutdownSettled = false;
+      const observedShutdown = shutdown.then(() => {
+        shutdownSettled = true;
+      });
+      await Promise.resolve();
+
+      expect(shutdownSettled).toBe(false);
+      expect(markDelivered).not.toHaveBeenCalled();
+      expect(runtimeState.runtime.dispose).not.toHaveBeenCalled();
+      expect(busState.subscribers.size).toBe(0);
+      expect(maybeStatsController.getSseConnectionStats?.()).toEqual({
+        accepting: false,
+        active: 0,
+      });
+
+      busState.publish(ref, 'team.message.received', {
+        teamName: 'shutdown-team',
+        messageId: 'team-message-late',
+        content: 'must not start new work after unsubscribe',
+        metadata: {
+          clientVisible: false,
+          teamMessage: {
+            messageId: 'team-message-late',
+            teamName: 'shutdown-team',
+            from: 'worker',
+            to: 'team-lead',
+          },
+        },
+      });
+      expect(runtimeState.runtime.enqueueSteering).toHaveBeenCalledTimes(1);
+
+      releaseEnqueue();
+      await expect(observedShutdown).resolves.toBeUndefined();
+      expect(markDelivered).toHaveBeenCalledTimes(1);
+      expect(runtimeState.runtime.dispose).toHaveBeenCalledOnce();
+    } finally {
+      releaseEnqueue?.();
+      await shutdown?.catch(() => undefined);
+      await collector.cancel();
+      markDelivered.mockRestore();
+    }
   });
 });
