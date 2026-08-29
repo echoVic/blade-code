@@ -34,6 +34,7 @@ function createController(
       messageSubmissions: { keys: 0, operations: 0 },
       taskDeliveries: { keys: 0, operations: 0 },
     })),
+    getSseConnectionStats: vi.fn(() => ({ accepting: true, active: 0 })),
     shutdown: vi.fn(async () => undefined),
   };
 }

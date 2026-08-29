@@ -23,8 +23,8 @@ async function readSseEvent(
 async function readUntilDone(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   timeoutMs: number
-): Promise<ReadableStreamReadResult<Uint8Array>> {
-  return new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+): Promise<{ done: boolean }> {
+  return new Promise<{ done: boolean }>((resolve, reject) => {
     const timer = setTimeout(
       () =>
         reject(
@@ -351,20 +351,18 @@ describe('EventRoutes global task feed', () => {
     }
 
     const controller = maybeController();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {
+      // Expected owner-close paths must not reach Hono's fallback logger.
+    });
     const originalSubscribe = Bus.subscribe.bind(Bus);
-    let wrappedUnsubscribe:
-      | ReturnType<typeof vi.fn<() => void>>
-      | undefined;
-    const subscribeSpy = vi
-      .spyOn(Bus, 'subscribe')
-      .mockImplementation((callback) => {
-        const actualUnsubscribe = originalSubscribe(callback);
-        const unsubscribe = vi.fn(() => {
-          actualUnsubscribe();
-        });
-        wrappedUnsubscribe = unsubscribe;
-        return unsubscribe;
-      });
+    let unsubscribeCalls = 0;
+    const subscribeSpy = vi.spyOn(Bus, 'subscribe').mockImplementation((callback) => {
+      const actualUnsubscribe = originalSubscribe(callback);
+      return () => {
+        unsubscribeCalls += 1;
+        return actualUnsubscribe();
+      };
+    });
     const response = await controller.app.request('/');
     expect(response.status).toBe(200);
     const reader = response.body?.getReader();
@@ -379,12 +377,12 @@ describe('EventRoutes global task feed', () => {
       await expect(readUntilDone(reader, 1000)).resolves.toMatchObject({ done: true });
       await expect(shutdown).resolves.toBeUndefined();
       expect(subscribeSpy).toHaveReturnedTimes(1);
-      expect(wrappedUnsubscribe).toBeDefined();
-      expect(wrappedUnsubscribe).toHaveBeenCalledOnce();
+      expect(unsubscribeCalls).toBe(1);
       expect(controller.getSseConnectionStats()).toEqual({
         accepting: false,
         active: 0,
       });
+      expect(consoleError).not.toHaveBeenCalled();
 
       const denied = await controller.app.request('/');
       expect(denied.status).toBe(503);
@@ -398,6 +396,76 @@ describe('EventRoutes global task feed', () => {
     } finally {
       await reader.cancel().catch(() => undefined);
       subscribeSpy.mockRestore();
+      consoleError.mockRestore();
+    }
+  });
+
+  it('releases a global SSE lease after client cancellation', async () => {
+    const { createEventRouteController } = await import(
+      '../../../../src/server/routes/events.js'
+    );
+    const controller = createEventRouteController();
+    const requestAbort = new AbortController();
+    const response = await controller.app.request('/', {
+      signal: requestAbort.signal,
+    });
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('Expected an SSE response body');
+
+    try {
+      expect(await readSseEvent(reader, new TextDecoder())).toContain(
+        '"type":"connected"'
+      );
+      expect(controller.getSseConnectionStats()).toEqual({
+        accepting: true,
+        active: 1,
+      });
+
+      requestAbort.abort('client-disconnected');
+      await reader.cancel();
+      await vi.waitFor(() => {
+        expect(controller.getSseConnectionStats()).toEqual({
+          accepting: true,
+          active: 0,
+        });
+      });
+      await expect(controller.shutdown()).resolves.toBeUndefined();
+    } finally {
+      requestAbort.abort('test-cleanup');
+      await reader.cancel().catch(() => undefined);
+      if (controller.getSseConnectionStats().active === 0) {
+        await controller.shutdown().catch(() => undefined);
+      }
+    }
+  });
+
+  it('terminates a global SSE lease whose request was already aborted', async () => {
+    const { createEventRouteController } = await import(
+      '../../../../src/server/routes/events.js'
+    );
+    const controller = createEventRouteController();
+    const requestAbort = new AbortController();
+    requestAbort.abort('client-disconnected');
+    const response = await controller.app.request('/', {
+      signal: requestAbort.signal,
+    });
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('Expected an SSE response body');
+
+    try {
+      await expect(readUntilDone(reader, 1000)).resolves.toMatchObject({
+        done: true,
+      });
+      expect(controller.getSseConnectionStats()).toEqual({
+        accepting: true,
+        active: 0,
+      });
+      await expect(controller.shutdown()).resolves.toBeUndefined();
+    } finally {
+      await reader.cancel().catch(() => undefined);
+      if (controller.getSseConnectionStats().active === 0) {
+        await controller.shutdown().catch(() => undefined);
+      }
     }
   });
 });

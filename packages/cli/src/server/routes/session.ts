@@ -8,7 +8,10 @@ import { drainLoop } from '../../agent/loop/index.js';
 import type { LoopEvent } from '../../agent/loop/types.js';
 import { resolveWorkspaceAgentResources } from '../../agent/resources/WorkspaceAgentResources.js';
 import { resolveWorkspaceModelResources } from '../../agent/resources/WorkspaceModelResources.js';
-import { ActiveOperationGate } from '../../agent/runtime/ActiveOperationGate.js';
+import {
+  ActiveOperationGate,
+  type ActiveOperationLease,
+} from '../../agent/runtime/ActiveOperationGate.js';
 import type { PreparedInputTurn } from '../../agent/runtime/ActiveTurnMailbox.js';
 import {
   decidePendingResumeRetry,
@@ -140,6 +143,7 @@ import {
   formatToolDisplay,
   renderToolDisplayToString,
 } from '../../ui/utils/toolFormatters.js';
+import { BoundedSerialEgressError } from '../../utils/BoundedSerialEgress.js';
 import { getCwd } from '../../utils/cwd.js';
 import { KeyedMutexRegistry } from '../../utils/KeyedMutexRegistry.js';
 import { createSessionId } from '../../utils/sessionId.js';
@@ -1607,7 +1611,16 @@ export interface SessionRouteController {
     messageSubmissions: { keys: number; operations: number };
     taskDeliveries: { keys: number; operations: number };
   };
+  getSseConnectionStats(): { accepting: boolean; active: number };
   shutdown(reason?: string): Promise<void>;
+}
+
+function isExpectedSseOwnerCloseError(error: unknown, terminated: boolean): boolean {
+  return (
+    terminated &&
+    error instanceof BoundedSerialEgressError &&
+    (error.kind === 'closed' || error.kind === 'aborted')
+  );
 }
 
 export const createSessionRouteController = (): SessionRouteController => {
@@ -1659,6 +1672,7 @@ export const createSessionRouteController = (): SessionRouteController => {
     idleMs: startupConfig?.sessionRuntimeIdleMs ?? DEFAULT_SESSION_RUNTIME_IDLE_MS,
   });
   const admissionGate = new ActiveOperationGate();
+  const sseGate = new ActiveOperationGate();
   const runtimeSweepTimer = setInterval(() => {
     void runtimeResidency.sweepIdle().catch((error) => {
       logger.warn('[SessionRoutes] Session Runtime idle sweep failed:', error);
@@ -4020,315 +4034,387 @@ export const createSessionRouteController = (): SessionRouteController => {
 
   app.get('/:sessionId/events', async (c) => {
     const sessionId = c.req.param('sessionId');
-    const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
+    let sseLease: ActiveOperationLease;
     try {
-      await SessionService.assertSessionWritable(ref.sessionId, ref.projectPath);
-    } catch (error) {
-      if (error instanceof SessionArchivedError) {
-        throw new ConflictError(error.message);
-      }
-      throw error;
+      sseLease = sseGate.enter(c.req.raw.signal);
+    } catch {
+      throw new ServiceUnavailableError();
     }
-    const session = await getOrHydrateSession(ref);
 
-    // Last-Event-ID enables durable resume: the client's cursor is the seq of
-    // the last committed event it saw. Replay everything after it before live
-    // delivery. The browser EventSource cannot set request headers on a fresh
-    // connection (e.g. after a page reload), so a `lastEventId` query param is
-    // accepted as an equivalent fallback. Absent/invalid means a fresh stream.
-    const lastEventIdHeader =
-      c.req.header('Last-Event-ID') ?? c.req.query('lastEventId');
-    const parsedLastEventId = lastEventIdHeader
-      ? Number.parseInt(lastEventIdHeader, 10)
-      : Number.NaN;
-    const resumeFromSeq = Number.isInteger(parsedLastEventId)
-      ? parsedLastEventId + 1
-      : undefined;
-
-    return streamSSE(c, async (stream) => {
-      const HEARTBEAT_INTERVAL = 15000;
-      let unsubscribe: (() => void) | undefined;
-      let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
-      let terminated = false;
-      let egress: OrderedSseEgress | undefined;
-      let resolveTermination!: () => void;
-      const termination = new Promise<void>((resolve) => {
-        resolveTermination = resolve;
-      });
-      const cleanup = () => {
-        if (heartbeatInterval !== undefined) {
-          clearInterval(heartbeatInterval);
-          heartbeatInterval = undefined;
+    let handedOff = false;
+    try {
+      const ref = await resolveSessionRef(sessionId, c.req.query('projectPath'));
+      try {
+        await SessionService.assertSessionWritable(ref.sessionId, ref.projectPath);
+      } catch (error) {
+        if (error instanceof SessionArchivedError) {
+          throw new ConflictError(error.message);
         }
-        unsubscribe?.();
-        unsubscribe = undefined;
-      };
-      const terminate = (reason?: unknown) => {
-        if (terminated) return;
-        terminated = true;
-        cleanup();
-        egress?.close(reason);
-        resolveTermination();
-      };
-      const deliveredInteractionIds = new Set<string>();
+        throw error;
+      }
+      const session = await getOrHydrateSession(ref);
+      // Last-Event-ID enables durable resume: the client's cursor is the seq of
+      // the last committed event it saw. Replay everything after it before live
+      // delivery. The browser EventSource cannot set request headers on a fresh
+      // connection (e.g. after a page reload), so a `lastEventId` query param is
+      // accepted as an equivalent fallback. Absent/invalid means a fresh stream.
+      const lastEventIdHeader =
+        c.req.header('Last-Event-ID') ?? c.req.query('lastEventId');
+      const parsedLastEventId = lastEventIdHeader
+        ? Number.parseInt(lastEventIdHeader, 10)
+        : Number.NaN;
+      const resumeFromSeq = Number.isInteger(parsedLastEventId)
+        ? parsedLastEventId + 1
+        : undefined;
 
-      stream.onAbort(terminate);
-      egress = new OrderedSseEgress({
-        write: async (message) => {
-          await stream.writeSSE(message);
-        },
-        onFailure: (error) => {
-          logger.warn(
-            `[SessionRoutes] SSE egress closed for ${ref.sessionId}: ` +
-              `kind=${error.kind} pendingItems=${error.pendingItems ?? 0} ` +
-              `pendingBytes=${error.pendingBytes ?? 0}`
-          );
-          terminate(error);
-        },
-      });
-      unsubscribe = Bus.subscribe((event) => {
-        if (
-          event.sessionId !== ref.sessionId ||
-          event.projectPath !== ref.projectPath
-        ) {
+      const response = streamSSE(c, async (stream) => {
+        const HEARTBEAT_INTERVAL = 15000;
+        const sseOperations = new Set<Promise<unknown>>();
+        let unsubscribe: (() => void) | undefined;
+        let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
+        let terminationStarted = false;
+        let egress: OrderedSseEgress | undefined;
+        let resolveTermination!: () => void;
+        const termination = new Promise<void>((resolve) => {
+          resolveTermination = resolve;
+        });
+        let terminationPromise: Promise<void> | undefined;
+        const deliveredInteractionIds = new Set<string>();
+        const trackSseOperation = <T>(operation: Promise<T>): Promise<T> => {
+          const tracked = operation as Promise<unknown>;
+          sseOperations.add(tracked);
+          return operation.finally(() => {
+            sseOperations.delete(tracked);
+          });
+        };
+        const cleanup = () => {
+          unsubscribe?.();
+          unsubscribe = undefined;
+          if (heartbeatInterval !== undefined) {
+            clearInterval(heartbeatInterval);
+            heartbeatInterval = undefined;
+          }
+        };
+        const terminate = (reason?: unknown): Promise<void> => {
+          if (terminationPromise) return terminationPromise;
+          terminationStarted = true;
+          terminationPromise = (async () => {
+            try {
+              cleanup();
+              egress?.close(reason);
+              // Hono may leave writer.close() pending after the response body has
+              // already been cancelled. Initiate transport closure, but make the
+              // route-owned termination barrier about callback ownership only.
+              void stream.close();
+            } finally {
+              resolveTermination();
+            }
+          })();
+          return terminationPromise;
+        };
+        const releaseOnGateAbort = () => {
+          void terminate(sseLease.signal.reason);
+        };
+        const finalize = async (reason?: unknown): Promise<void> => {
+          await terminate(reason);
+          await Promise.allSettled([...sseOperations]);
+          sseLease.signal.removeEventListener('abort', releaseOnGateAbort);
+          sseLease.release();
+        };
+
+        sseLease.signal.addEventListener('abort', releaseOnGateAbort, { once: true });
+        stream.onAbort(() => {
+          void terminate();
+        });
+        if (sseLease.signal.aborted) {
+          await finalize(sseLease.signal.reason);
           return;
         }
-        const requestId = event.properties.requestId;
-        if (
-          (event.type === 'permission.asked' ||
-            event.type === 'question.required' ||
-            event.type === 'elicitation.required') &&
-          typeof requestId === 'string'
-        ) {
-          if (deliveredInteractionIds.has(requestId)) return;
-          deliveredInteractionIds.add(requestId);
-        }
-        if (event.type === 'subagent.completion.queued') {
-          void withMessageSubmissionLock(ref, () =>
-            resumePendingSession(session)
-          ).catch((error) => {
-            logger.error(
-              `[SessionRoutes] Failed to wake background completion for ${session.id}:`,
-              error
+        egress = new OrderedSseEgress({
+          write: async (message) => {
+            await stream.writeSSE(message);
+          },
+          onFailure: (error) => {
+            if (isExpectedSseOwnerCloseError(error, terminationStarted)) return;
+            logger.warn(
+              `[SessionRoutes] SSE egress closed for ${ref.sessionId}: ` +
+                `kind=${error.kind} pendingItems=${error.pendingItems ?? 0} ` +
+                `pendingBytes=${error.pendingBytes ?? 0}`
             );
-          });
-        }
-        if (
-          event.type === 'team.message.received' &&
-          typeof event.properties.teamName === 'string' &&
-          typeof event.properties.messageId === 'string' &&
-          typeof event.properties.content === 'string' &&
-          isTeamMessageMetadata(event.properties.metadata, {
-            messageId: event.properties.messageId,
-            teamName: event.properties.teamName,
-          })
-        ) {
-          const teamName = event.properties.teamName;
-          const messageId = event.properties.messageId;
-          const content = event.properties.content;
-          const metadata = event.properties.metadata;
-          void withMessageSubmissionLock(ref, async () => {
-            const runtimeLease = await acquireRuntime(session);
-            let shouldResume = false;
-            try {
-              const steering = await runtimeLease.value.enqueueSteering(content, {
-                allowBeforeTurn: true,
-                messageId,
-                origin: 'team_message',
-                metadata,
-              });
-              if (!steering.accepted) return;
-              await new TeamMailbox(teamName, getBladeStorageRoot()).markDelivered([
-                messageId,
-              ]);
-              shouldResume = steering.delivery === 'next_turn';
-            } finally {
-              runtimeLease.release();
-            }
-            if (shouldResume) await resumePendingSession(session);
-          }).catch((error) => {
-            logger.error(
-              `[SessionRoutes] Failed to deliver teammate message for ${session.id}:`,
-              error
-            );
-          });
-        }
-        // Only committed events carry a seq; ephemeral events never advance
-        // EventSource's Last-Event-ID cursor.
-        egress?.observe(sessionBusEventSseMessage(event), event.seq);
-      });
-
-      try {
-        if (stream.aborted || terminated) return;
-
-        const currentRun = getRun(session.currentRunId);
-        const runtimeLease = isActiveRun(currentRun)
-          ? await acquireRuntime(session)
-          : undefined;
-        try {
-          const runtime = runtimeLease?.value;
-          const queued = runtime?.getPendingSteeringCount() ?? 0;
-          await egress.writeInitial({
-            data: JSON.stringify({
-              type: 'connected',
-              properties: {
-                sessionId: ref.sessionId,
-                projectPath: ref.projectPath,
-                timestamp: Date.now(),
-                status: isActiveRun(currentRun) ? currentRun.status : 'idle',
-                runId: isActiveRun(currentRun) ? currentRun.id : undefined,
-                queued,
-                pendingInputDelivery:
-                  queued > 0
-                    ? runtime?.hasActiveTurn()
-                      ? 'current_turn'
-                      : 'next_turn'
-                    : null,
-                recovered: runtime?.getRecoveredSteeringCount() ?? 0,
-              },
-            }),
-          });
-        } finally {
-          runtimeLease?.release();
-        }
-        if (stream.aborted || terminated) return;
-
-        // Durable resume: replay committed events after the client's cursor
-        // straight from the authoritative JSONL transcript, each stamped with
-        // its seq so the cursor advances correctly.
-        if (resumeFromSeq !== undefined) {
-          const log = SessionEventLog.for(ref.sessionId, ref.projectPath);
-          await log.replay(
-            {
-              onCommitted: async (event) => {
-                if (stream.aborted || terminated) return;
-                const projected = projectCommittedSessionEvent(event);
-                if (projected.seq === undefined) return;
-                await egress.writeReplay(
-                  {
-                    ...(typeof event.seq === 'number' ? { id: String(event.seq) } : {}),
-                    data: JSON.stringify({
-                      type: projected.type,
-                      ...(projected.seq !== undefined ? { seq: projected.seq } : {}),
-                      properties: {
-                        ...projected.properties,
-                        sessionId: ref.sessionId,
-                        projectPath: ref.projectPath,
-                      },
-                    }),
-                  },
-                  projected.seq
-                );
-              },
-            },
-            resumeFromSeq
-          );
-          if (stream.aborted || terminated) return;
-        }
-        egress.finishInitialization({ replayed: resumeFromSeq !== undefined });
-        if (stream.aborted || terminated) return;
-
-        if (!currentRun && !activeReviewRuns.has(sessionRefKey(ref))) {
-          const hasPendingReview = (
-            await CodeReviewService.list(ref.projectPath, ref.sessionId)
-          ).some((review) => review.completion === undefined);
-          const recoveredReview = hasPendingReview
-            ? await withRuntime(session, (runtime) =>
-                CodeReviewService.recoverInterrupted(
-                  ref.projectPath,
-                  ref.sessionId,
-                  runtime
-                )
-              )
-            : undefined;
-          if (recoveredReview) {
-            session.messages = await SessionService.loadSession(
-              ref.sessionId,
-              ref.projectPath
-            );
-            await refreshSessionTaskMetadata(session);
-            Bus.publish(ref, 'review.completed', {
-              reviewId: recoveredReview.reviewId,
-              status: recoveredReview.status,
-              findings: 0,
-              recovered: true,
-            });
-          }
-        }
-        if (stream.aborted || terminated) return;
-        if (!currentRun) {
-          await SessionInteractionService.recoverResponded(
-            ref.projectPath,
-            ref.sessionId
-          );
-        }
-        if (stream.aborted || terminated) return;
-        const durablePending = currentRun
-          ? undefined
-          : await SessionInteractionService.findPending(ref.projectPath, ref.sessionId);
-        const pendingInteraction =
-          currentRun?.pendingPermission ??
-          (durablePending
-            ? {
-                permissionId: durablePending.request.requestId,
-                details: SessionInteractionService.confirmationDetails(durablePending),
-                resolve: () => undefined,
-              }
-            : undefined);
-        if (pendingInteraction) {
-          deliveredInteractionIds.add(pendingInteraction.permissionId);
-          const replay = buildPendingInteractionEvent(pendingInteraction, true);
-          egress.observe({
-            data: JSON.stringify({
-              type: replay.type,
-              properties: {
-                ...replay.properties,
-                sessionId: ref.sessionId,
-                projectPath: ref.projectPath,
-              },
-            }),
-          });
-        }
-        if (stream.aborted || terminated) return;
-
-        void resumePendingSession(session).catch(async (error) => {
-          if (error instanceof SessionWorkspaceUnavailableError) {
-            await refreshSessionTaskMetadata(session).catch(() => undefined);
-            const taskFailure =
-              session.taskFailure?.code === 'workspace_unavailable'
-                ? session.taskFailure
-                : taskFailureForCode('workspace_unavailable');
-            session.taskStatus = 'failed';
-            session.taskStatusReason = taskFailure.message;
-            session.taskFailure = taskFailure;
-            Bus.publish(ref, 'session.error', {
-              error: taskFailure.message,
-              taskFailure,
-            });
-            Bus.publish(ref, 'session.status', { status: 'error' });
-          }
-          logger.error(
-            `[SessionRoutes] Failed to resume pending input for ${sessionId}:`,
-            error
-          );
+            void terminate(error);
+          },
         });
-        if (stream.aborted || terminated) return;
+        unsubscribe = Bus.subscribe((event) => {
+          if (terminationStarted) return;
+          if (
+            event.sessionId !== ref.sessionId ||
+            event.projectPath !== ref.projectPath
+          ) {
+            return;
+          }
+          const requestId = event.properties.requestId;
+          if (
+            (event.type === 'permission.asked' ||
+              event.type === 'question.required' ||
+              event.type === 'elicitation.required') &&
+            typeof requestId === 'string'
+          ) {
+            if (deliveredInteractionIds.has(requestId)) return;
+            deliveredInteractionIds.add(requestId);
+          }
+          if (event.type === 'subagent.completion.queued') {
+            const operation = withMessageSubmissionLock(ref, () =>
+              resumePendingSession(session)
+            ).catch((error) => {
+              logger.error(
+                `[SessionRoutes] Failed to wake background completion for ${session.id}:`,
+                error
+              );
+            });
+            void trackSseOperation(operation);
+          }
+          if (
+            event.type === 'team.message.received' &&
+            typeof event.properties.teamName === 'string' &&
+            typeof event.properties.messageId === 'string' &&
+            typeof event.properties.content === 'string' &&
+            isTeamMessageMetadata(event.properties.metadata, {
+              messageId: event.properties.messageId,
+              teamName: event.properties.teamName,
+            })
+          ) {
+            const teamName = event.properties.teamName;
+            const messageId = event.properties.messageId;
+            const content = event.properties.content;
+            const metadata = event.properties.metadata;
+            const operation = withMessageSubmissionLock(ref, async () => {
+              const runtimeLease = await acquireRuntime(session);
+              let shouldResume = false;
+              try {
+                const steering = await runtimeLease.value.enqueueSteering(content, {
+                  allowBeforeTurn: true,
+                  messageId,
+                  origin: 'team_message',
+                  metadata,
+                });
+                if (!steering.accepted) return;
+                await new TeamMailbox(teamName, getBladeStorageRoot()).markDelivered([
+                  messageId,
+                ]);
+                shouldResume = steering.delivery === 'next_turn';
+              } finally {
+                runtimeLease.release();
+              }
+              if (!shouldResume) return;
+              await resumePendingSession(session).catch((error) => {
+                logger.error(
+                  `[SessionRoutes] Failed to wake teammate delivery for ${session.id}:`,
+                  error
+                );
+              });
+            }).catch((error) => {
+              logger.error(
+                `[SessionRoutes] Failed to deliver teammate message for ${session.id}:`,
+                error
+              );
+            });
+            void trackSseOperation(operation);
+          }
+          if (
+            event.type === 'subagent.completion.queued' ||
+            event.type === 'team.message.received'
+          ) {
+            return;
+          }
+          // Only committed events carry a seq; ephemeral events never advance
+          // EventSource's Last-Event-ID cursor.
+          egress?.observe(sessionBusEventSseMessage(event), event.seq);
+        });
 
-        heartbeatInterval = setInterval(() => {
-          if (stream.aborted || terminated) return;
-          egress?.offerHeartbeat({
-            data: JSON.stringify({
-              type: 'heartbeat',
-              properties: { timestamp: Date.now() },
-            }),
+        try {
+          if (stream.aborted || terminationStarted) return;
+
+          const currentRun = getRun(session.currentRunId);
+          const runtimeLease = isActiveRun(currentRun)
+            ? await acquireRuntime(session)
+            : undefined;
+          try {
+            const runtime = runtimeLease?.value;
+            const queued = runtime?.getPendingSteeringCount() ?? 0;
+            await egress.writeInitial({
+              data: JSON.stringify({
+                type: 'connected',
+                properties: {
+                  sessionId: ref.sessionId,
+                  projectPath: ref.projectPath,
+                  timestamp: Date.now(),
+                  status: isActiveRun(currentRun) ? currentRun.status : 'idle',
+                  runId: isActiveRun(currentRun) ? currentRun.id : undefined,
+                  queued,
+                  pendingInputDelivery:
+                    queued > 0
+                      ? runtime?.hasActiveTurn()
+                        ? 'current_turn'
+                        : 'next_turn'
+                      : null,
+                  recovered: runtime?.getRecoveredSteeringCount() ?? 0,
+                },
+              }),
+            });
+          } finally {
+            runtimeLease?.release();
+          }
+          if (stream.aborted || terminationStarted) return;
+
+          if (resumeFromSeq !== undefined) {
+            const log = SessionEventLog.for(ref.sessionId, ref.projectPath);
+            await log.replay(
+              {
+                onCommitted: async (event) => {
+                  if (stream.aborted || terminationStarted) return;
+                  const projected = projectCommittedSessionEvent(event);
+                  if (projected.seq === undefined) return;
+                  await egress.writeReplay(
+                    {
+                      ...(typeof event.seq === 'number'
+                        ? { id: String(event.seq) }
+                        : {}),
+                      data: JSON.stringify({
+                        type: projected.type,
+                        ...(projected.seq !== undefined ? { seq: projected.seq } : {}),
+                        properties: {
+                          ...projected.properties,
+                          sessionId: ref.sessionId,
+                          projectPath: ref.projectPath,
+                        },
+                      }),
+                    },
+                    projected.seq
+                  );
+                },
+              },
+              resumeFromSeq
+            );
+            if (stream.aborted || terminationStarted) return;
+          }
+          egress.finishInitialization({ replayed: resumeFromSeq !== undefined });
+          if (stream.aborted || terminationStarted) return;
+
+          if (!currentRun && !activeReviewRuns.has(sessionRefKey(ref))) {
+            const hasPendingReview = (
+              await CodeReviewService.list(ref.projectPath, ref.sessionId)
+            ).some((review) => review.completion === undefined);
+            const recoveredReview = hasPendingReview
+              ? await withRuntime(session, (runtime) =>
+                  CodeReviewService.recoverInterrupted(
+                    ref.projectPath,
+                    ref.sessionId,
+                    runtime
+                  )
+                )
+              : undefined;
+            if (recoveredReview) {
+              session.messages = await SessionService.loadSession(
+                ref.sessionId,
+                ref.projectPath
+              );
+              await refreshSessionTaskMetadata(session);
+              Bus.publish(ref, 'review.completed', {
+                reviewId: recoveredReview.reviewId,
+                status: recoveredReview.status,
+                findings: 0,
+                recovered: true,
+              });
+            }
+          }
+          if (stream.aborted || terminationStarted) return;
+          if (!currentRun) {
+            await SessionInteractionService.recoverResponded(
+              ref.projectPath,
+              ref.sessionId
+            );
+          }
+          if (stream.aborted || terminationStarted) return;
+          const durablePending = currentRun
+            ? undefined
+            : await SessionInteractionService.findPending(
+                ref.projectPath,
+                ref.sessionId
+              );
+          const pendingInteraction =
+            currentRun?.pendingPermission ??
+            (durablePending
+              ? {
+                  permissionId: durablePending.request.requestId,
+                  details:
+                    SessionInteractionService.confirmationDetails(durablePending),
+                  resolve: () => undefined,
+                }
+              : undefined);
+          if (pendingInteraction) {
+            deliveredInteractionIds.add(pendingInteraction.permissionId);
+            const replay = buildPendingInteractionEvent(pendingInteraction, true);
+            egress.observe({
+              data: JSON.stringify({
+                type: replay.type,
+                properties: {
+                  ...replay.properties,
+                  sessionId: ref.sessionId,
+                  projectPath: ref.projectPath,
+                },
+              }),
+            });
+          }
+          if (stream.aborted || terminationStarted) return;
+
+          const postInitResume = resumePendingSession(session).catch(async (error) => {
+            if (error instanceof SessionWorkspaceUnavailableError) {
+              await refreshSessionTaskMetadata(session).catch(() => undefined);
+              const taskFailure =
+                session.taskFailure?.code === 'workspace_unavailable'
+                  ? session.taskFailure
+                  : taskFailureForCode('workspace_unavailable');
+              session.taskStatus = 'failed';
+              session.taskStatusReason = taskFailure.message;
+              session.taskFailure = taskFailure;
+              Bus.publish(ref, 'session.error', {
+                error: taskFailure.message,
+                taskFailure,
+              });
+              Bus.publish(ref, 'session.status', { status: 'error' });
+            }
+            logger.error(
+              `[SessionRoutes] Failed to resume pending input for ${sessionId}:`,
+              error
+            );
           });
-        }, HEARTBEAT_INTERVAL);
+          void trackSseOperation(postInitResume);
+          if (stream.aborted || terminationStarted) return;
 
-        await termination;
-      } finally {
-        terminate();
-      }
-    });
+          heartbeatInterval = setInterval(() => {
+            if (stream.aborted || terminationStarted) return;
+            egress?.offerHeartbeat({
+              data: JSON.stringify({
+                type: 'heartbeat',
+                properties: { timestamp: Date.now() },
+              }),
+            });
+          }, HEARTBEAT_INTERVAL);
+
+          await termination;
+        } catch (error) {
+          if (isExpectedSseOwnerCloseError(error, terminationStarted)) return;
+          throw error;
+        } finally {
+          await finalize();
+        }
+      });
+      handedOff = true;
+      return response;
+    } catch (error) {
+      if (!handedOff) sseLease.release();
+      throw error;
+    }
   });
 
   app.post('/:sessionId/message', async (c) => {
@@ -4853,6 +4939,7 @@ export const createSessionRouteController = (): SessionRouteController => {
   const shutdown = (reason = 'server-shutdown'): Promise<void> => {
     if (shutdownPromise) return shutdownPromise;
     admissionGate.close(reason);
+    const sseDrain = sseGate.shutdown(reason);
     clearInterval(runtimeSweepTimer);
     clearAllPendingResumeRecoveries();
 
@@ -4900,6 +4987,9 @@ export const createSessionRouteController = (): SessionRouteController => {
       signalActiveWork();
       await settle([...observedCompletions]);
 
+      await settle([sseDrain]);
+
+      await settle([...runtimeInitializations.values()]);
       await settle([runtimeResidency.disposeAll()]);
       runtimes.clear();
       await settle([...runtimeDisposals.values()]);
@@ -4935,6 +5025,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       messageSubmissions: messageSubmissionLocks.getStats(),
       taskDeliveries: taskDeliveryLocks.getStats(),
     }),
+    getSseConnectionStats: () => sseGate.stats(),
     shutdown,
   };
 };

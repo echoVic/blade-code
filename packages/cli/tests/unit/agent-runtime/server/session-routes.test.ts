@@ -605,7 +605,7 @@ function createSseCollector(response: Response) {
       await reader.cancel().catch(() => undefined);
     },
     async readDone(timeoutMs = 2000) {
-      return new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+      return new Promise<{ done: boolean }>((resolve, reject) => {
         const timer = setTimeout(
           () =>
             reject(
@@ -5355,7 +5355,7 @@ describe('SessionRoutes runtime reuse', () => {
     expect(runtime.dispose).toHaveBeenCalledOnce();
   });
 
-  it('disposes a Runtime created after the shutdown initialization snapshot', async () => {
+  it('disposes an uncommitted Runtime when residency commit rejects', async () => {
     const { createSessionRouteController } = await import(
       '../../../../src/server/routes/session.js'
     );
@@ -5365,260 +5365,130 @@ describe('SessionRoutes runtime reuse', () => {
     const { SessionRuntimeResidency: CurrentSessionRuntimeResidency } = await import(
       '../../../../src/agent/runtime/SessionRuntimeResidency.js'
     );
-    const sessionId = 'shutdown-sse-runtime';
-    const projectPath = '/tmp/shutdown-sse-runtime';
-    const ref = { sessionId, projectPath };
+    const sessionId = 'runtime-commit-failure';
+    const projectPath = '/tmp/runtime-commit-failure';
     mockResolvedSession(sessionId, { projectPath });
-
-    let releaseDisposeAll: () => void = () => undefined;
-    const disposeAllGate = new Promise<void>((resolve) => {
-      releaseDisposeAll = resolve;
-    });
-    let markDisposeAllEntered: () => void = () => undefined;
-    const disposeAllEntered = new Promise<void>((resolve) => {
-      markDisposeAllEntered = resolve;
-    });
-    const originalDisposeAll =
-      CurrentSessionRuntimeResidency.prototype.disposeAll;
-    const disposeAll = vi
-      .spyOn(CurrentSessionRuntimeResidency.prototype, 'disposeAll')
-      .mockImplementation(async function () {
-        // production shutdown reaches disposeAll after taking its one-time
-        // runtime-initialization snapshot, so later creations are out of band.
-        markDisposeAllEntered();
-        await disposeAllGate;
-        await originalDisposeAll.call(this);
-      });
+    const commitFailure = new Error('injected residency commit failure');
 
     const createRuntime = vi.mocked(CurrentSessionRuntime.create);
     const defaultCreateRuntime = createRuntime.getMockImplementation();
     if (!defaultCreateRuntime) throw new Error('Expected SessionRuntime.create mock');
-    let releaseCreate: () => void = () => undefined;
-    const createGate = new Promise<void>((resolve) => {
-      releaseCreate = resolve;
-    });
-    let markRuntimeCreated: (runtime: SessionRuntime) => void = () => undefined;
-    const runtimeCreated = new Promise<SessionRuntime>((resolve) => {
-      markRuntimeCreated = resolve;
-    });
+    let createdRuntime: SessionRuntime | undefined;
     createRuntime.mockReset().mockImplementation(async (...args) => {
-      const runtime = await defaultCreateRuntime(...args);
-      markRuntimeCreated(runtime);
-      await createGate;
-      return runtime;
+      createdRuntime = await defaultCreateRuntime(...args);
+      return createdRuntime;
     });
+    const originalReserve = CurrentSessionRuntimeResidency.prototype.reserve;
+    const reserveRuntime = vi
+      .spyOn(CurrentSessionRuntimeResidency.prototype, 'reserve')
+      .mockImplementation(async function (key, options) {
+        const reservation = await originalReserve.call(this, key, options);
+        return {
+          commit: () => {
+            throw commitFailure;
+          },
+          cancel: () => reservation.cancel(),
+        };
+      });
 
     const controller = createSessionRouteController();
-    let collector: ReturnType<typeof createSseCollector> | undefined;
-    let shutdown: Promise<void> | undefined;
-    let shutdownSettled = false;
-    let runtimeCreateStarted = false;
     try {
       const response = await controller.app.request(
-        `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`
+        `/${sessionId}/subagents?projectPath=${encodeURIComponent(projectPath)}`
       );
-      collector = createSseCollector(response);
-      await expect(collector.next()).resolves.toMatchObject({ type: 'connected' });
-      expect(SessionService.assertSessionWritable).toHaveBeenCalledWith(
-        sessionId,
-        projectPath
-      );
-      expect(CurrentSessionRuntime.create).not.toHaveBeenCalled();
 
-      shutdown = controller.shutdown('server-shutdown').then(() => {
-        shutdownSettled = true;
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toEqual({
+        error: { code: 'INTERNAL_ERROR', message: 'Internal server error' },
       });
-      await disposeAllEntered;
-
-      busState.publish(ref, 'team.message.received', {
-        teamName: 'shutdown-team',
-        messageId: 'shutdown-message',
-        content: 'wake after the shutdown snapshot',
-        metadata: {
-          clientVisible: false,
-          teamMessage: {
-            messageId: 'shutdown-message',
-            teamName: 'shutdown-team',
-            from: 'worker',
-            to: 'team-lead',
-          },
-        },
+      if (!createdRuntime) throw new Error('Expected SessionRuntime.create result');
+      expect(CurrentSessionRuntime.create).toHaveBeenCalledOnce();
+      expect(createdRuntime.dispose).toHaveBeenCalledOnce();
+      expect(createdRuntime.listSubagents).not.toHaveBeenCalled();
+      expect(loggerState.error).toHaveBeenCalledWith(
+        '[SessionRoutes] Unhandled route error:',
+        commitFailure
+      );
+      expect(controller.getRuntimeResidencyStats()).toMatchObject({
+        resident: 0,
+        reserved: 0,
+        pinned: 0,
       });
 
-      const runtime = await runtimeCreated;
-      runtimeCreateStarted = true;
-      const runtimeDispose = vi.spyOn(runtime, 'dispose');
-      try {
-        expect(CurrentSessionRuntime.create).toHaveBeenCalledOnce();
-        expect(controller.getRuntimeResidencyStats()).toMatchObject({
-          resident: 0,
-          reserved: 1,
-          pinned: 0,
-        });
-        expect(controller.getCoordinationStats().messageSubmissions).toEqual({
-          keys: 1,
-          operations: 1,
-        });
-        expect(shutdownSettled).toBe(false);
-
-        releaseDisposeAll();
-        await expect(shutdown).resolves.toBeUndefined();
-        expect(controller.getRuntimeResidencyStats()).toMatchObject({
-          resident: 0,
-          reserved: 0,
-          pinned: 0,
-        });
-
-        releaseCreate();
-        await vi.waitFor(() => {
-          expect(controller.getCoordinationStats().messageSubmissions).toEqual({
-            keys: 0,
-            operations: 0,
-          });
-        });
-
-        expect(controller.getRuntimeResidencyStats()).toMatchObject({
-          resident: 0,
-          reserved: 0,
-          pinned: 0,
-        });
-        expect(Agent.createWithRuntime).not.toHaveBeenCalled();
-        expect(agentState.destroy).not.toHaveBeenCalled();
-        expect(runtimeDispose).toHaveBeenCalledOnce();
-      } finally {
-        runtimeDispose.mockRestore();
-      }
+      await controller.shutdown();
+      expect(createdRuntime.dispose).toHaveBeenCalledOnce();
     } finally {
-      releaseDisposeAll();
-      releaseCreate();
-      await shutdown?.catch(() => undefined);
-      await collector?.cancel();
-      if (runtimeCreateStarted) {
-        await vi.waitFor(() => {
-          expect(controller.getCoordinationStats().messageSubmissions).toEqual({
-            keys: 0,
-            operations: 0,
-          });
-        });
-      }
-      disposeAll.mockRestore();
+      await controller.shutdown().catch(() => undefined);
+      reserveRuntime.mockRestore();
       createRuntime.mockReset().mockImplementation(defaultCreateRuntime);
     }
   });
 
-  it('keeps the original residency-closed failure when disposing an uncommitted Runtime rejects', async () => {
+  it('keeps the original residency commit failure when uncommitted cleanup rejects', async () => {
     const { createSessionRouteController } = await import(
       '../../../../src/server/routes/session.js'
     );
     const { SessionRuntime: CurrentSessionRuntime } = await import(
       '../../../../src/agent/runtime/SessionRuntime.js'
     );
-    const { SessionRuntimeResidency: CurrentSessionRuntimeResidency } = await import(
-      '../../../../src/agent/runtime/SessionRuntimeResidency.js'
-    );
-    const sessionId = 'shutdown-sse-runtime-cleanup-reject';
-    const projectPath = '/tmp/shutdown-sse-runtime-cleanup-reject';
-    const ref = { sessionId, projectPath };
+    const {
+      SessionRuntimeResidency: CurrentSessionRuntimeResidency,
+      SessionRuntimeResidencyClosedError,
+    } = await import('../../../../src/agent/runtime/SessionRuntimeResidency.js');
+    const sessionId = 'runtime-commit-cleanup-reject';
+    const projectPath = '/tmp/runtime-commit-cleanup-reject';
     mockResolvedSession(sessionId, { projectPath });
-
-    let releaseDisposeAll: () => void = () => undefined;
-    const disposeAllGate = new Promise<void>((resolve) => {
-      releaseDisposeAll = resolve;
-    });
-    let markDisposeAllEntered: () => void = () => undefined;
-    const disposeAllEntered = new Promise<void>((resolve) => {
-      markDisposeAllEntered = resolve;
-    });
-    const originalDisposeAll =
-      CurrentSessionRuntimeResidency.prototype.disposeAll;
-    const disposeAll = vi
-      .spyOn(CurrentSessionRuntimeResidency.prototype, 'disposeAll')
-      .mockImplementation(async function () {
-        markDisposeAllEntered();
-        await disposeAllGate;
-        await originalDisposeAll.call(this);
-      });
+    const commitFailure = new SessionRuntimeResidencyClosedError();
+    const cleanupFailure = new Error('cleanup dispose failed');
 
     const createRuntime = vi.mocked(CurrentSessionRuntime.create);
     const defaultCreateRuntime = createRuntime.getMockImplementation();
     if (!defaultCreateRuntime) throw new Error('Expected SessionRuntime.create mock');
-    let releaseCreate: () => void = () => undefined;
-    const createGate = new Promise<void>((resolve) => {
-      releaseCreate = resolve;
-    });
-    let markRuntimeCreated: (runtime: SessionRuntime) => void = () => undefined;
-    const runtimeCreated = new Promise<SessionRuntime>((resolve) => {
-      markRuntimeCreated = resolve;
-    });
+    let createdRuntime: SessionRuntime | undefined;
     createRuntime.mockReset().mockImplementation(async (...args) => {
       const runtime = await defaultCreateRuntime(...args);
       runtime.dispose = vi
         .fn<() => Promise<void>>()
-        .mockRejectedValueOnce(new Error('cleanup dispose failed'));
-      markRuntimeCreated(runtime);
-      await createGate;
+        .mockRejectedValueOnce(cleanupFailure);
+      createdRuntime = runtime;
       return runtime;
     });
+    const originalReserve = CurrentSessionRuntimeResidency.prototype.reserve;
+    const reserveRuntime = vi
+      .spyOn(CurrentSessionRuntimeResidency.prototype, 'reserve')
+      .mockImplementation(async function (key, options) {
+        const reservation = await originalReserve.call(this, key, options);
+        return {
+          commit: () => {
+            throw commitFailure;
+          },
+          cancel: () => reservation.cancel(),
+        };
+      });
 
     const controller = createSessionRouteController();
-    let collector: ReturnType<typeof createSseCollector> | undefined;
-    let shutdown: Promise<void> | undefined;
-    let runtimeCreateStarted = false;
     try {
       const response = await controller.app.request(
-        `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`
+        `/${sessionId}/subagents?projectPath=${encodeURIComponent(projectPath)}`
       );
-      collector = createSseCollector(response);
-      await expect(collector.next()).resolves.toMatchObject({ type: 'connected' });
 
-      shutdown = controller.shutdown('server-shutdown');
-      await disposeAllEntered;
-
-      busState.publish(ref, 'team.message.received', {
-        teamName: 'shutdown-team',
-        messageId: 'shutdown-message',
-        content: 'wake after the shutdown snapshot',
-        metadata: {
-          clientVisible: false,
-          teamMessage: {
-            messageId: 'shutdown-message',
-            teamName: 'shutdown-team',
-            from: 'worker',
-            to: 'team-lead',
-          },
-        },
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toEqual({
+        error: { code: 'INTERNAL_ERROR', message: 'Internal server error' },
       });
-
-      const runtime = await runtimeCreated;
-      runtimeCreateStarted = true;
-      const runtimeDispose = vi.mocked(runtime.dispose);
-
-      releaseDisposeAll();
-      await expect(shutdown).resolves.toBeUndefined();
-
-      releaseCreate();
-      await vi.waitFor(() => {
-        expect(controller.getCoordinationStats().messageSubmissions).toEqual({
-          keys: 0,
-          operations: 0,
-        });
-      });
-
-      expect(runtimeDispose).toHaveBeenCalledOnce();
+      if (!createdRuntime) throw new Error('Expected SessionRuntime.create result');
+      expect(createdRuntime.dispose).toHaveBeenCalledOnce();
+      expect(createdRuntime.listSubagents).not.toHaveBeenCalled();
       expect(loggerState.warn).toHaveBeenCalledWith(
         `[SessionRoutes] Failed to dispose uncommitted Runtime for ${sessionId}:`,
-        expect.objectContaining({ message: 'cleanup dispose failed' })
+        cleanupFailure
       );
       expect(loggerState.error).toHaveBeenCalledWith(
-        `[SessionRoutes] Failed to deliver teammate message for ${sessionId}:`,
-        expect.objectContaining({
-          message: 'Session runtime residency is closed',
-        })
+        '[SessionRoutes] Unhandled route error:',
+        commitFailure
       );
       expect(
-        loggerState.error.mock.calls.some(([, error]) =>
-          error instanceof Error && error.message === 'cleanup dispose failed'
-        )
+        loggerState.error.mock.calls.some(([, error]) => error === cleanupFailure)
       ).toBe(false);
       expect(controller.getRuntimeResidencyStats()).toMatchObject({
         resident: 0,
@@ -5626,19 +5496,8 @@ describe('SessionRoutes runtime reuse', () => {
         pinned: 0,
       });
     } finally {
-      releaseDisposeAll();
-      releaseCreate();
-      await shutdown?.catch(() => undefined);
-      await collector?.cancel();
-      if (runtimeCreateStarted) {
-        await vi.waitFor(() => {
-          expect(controller.getCoordinationStats().messageSubmissions).toEqual({
-            keys: 0,
-            operations: 0,
-          });
-        });
-      }
-      disposeAll.mockRestore();
+      await controller.shutdown().catch(() => undefined);
+      reserveRuntime.mockRestore();
       createRuntime.mockReset().mockImplementation(defaultCreateRuntime);
     }
   });
@@ -8761,10 +8620,78 @@ describe('SessionRoutes runtime reuse', () => {
     expect(agentState.chatStream).not.toHaveBeenCalled();
   });
 
-  it('owns session SSE shutdown, drains connected readers, and blocks runtime disposal until a team callback settles', async () => {
-    const { TeamMailbox } = await import(
-      '../../../../src/agent/teams/TeamMailbox.js'
+  it('terminates a Session SSE lease aborted before stream handoff', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
     );
+    const sessionId = 'shutdown-before-sse-handoff';
+    const projectPath = '/tmp/shutdown-before-sse-handoff';
+    const metadata = mockResolvedSession(sessionId, { projectPath });
+    let releaseLookup!: () => void;
+    const lookupGate = new Promise<void>((resolve) => {
+      releaseLookup = resolve;
+    });
+    let resolveLookupStarted!: () => void;
+    const lookupStarted = new Promise<void>((resolve) => {
+      resolveLookupStarted = resolve;
+    });
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (requestedSessionId, requestedProjectPath) => {
+        if (requestedSessionId !== sessionId || requestedProjectPath !== projectPath) {
+          return undefined;
+        }
+        resolveLookupStarted();
+        await lookupGate;
+        return metadata;
+      }
+    );
+
+    const controller = createSessionRouteController();
+    const responsePromise = Promise.resolve(
+      controller.app.request(
+        `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`
+      )
+    );
+    let response: Response | undefined;
+    let collector: ReturnType<typeof createSseCollector> | undefined;
+    let shutdown: Promise<void> | undefined;
+
+    try {
+      await lookupStarted;
+      expect(controller.getSseConnectionStats()).toEqual({
+        accepting: true,
+        active: 1,
+      });
+
+      let shutdownSettled = false;
+      shutdown = controller.shutdown('server-shutdown').then(() => {
+        shutdownSettled = true;
+      });
+      await Promise.resolve();
+      expect(shutdownSettled).toBe(false);
+
+      releaseLookup();
+      response = await responsePromise;
+      expect(response.status).toBe(200);
+      collector = createSseCollector(response);
+      await expect(collector.readDone(1000)).resolves.toMatchObject({ done: true });
+      await expect(shutdown).resolves.toBeUndefined();
+      expect(busState.subscribers.size).toBe(0);
+      expect(controller.getSseConnectionStats()).toEqual({
+        accepting: false,
+        active: 0,
+      });
+    } finally {
+      releaseLookup();
+      response ??= await responsePromise.catch(() => undefined);
+      await collector?.cancel();
+      if (!collector) await response?.body?.cancel().catch(() => undefined);
+      await shutdown?.catch(() => undefined);
+    }
+  });
+
+  it('owns session SSE shutdown, drains connected readers, and blocks runtime disposal until a team callback settles', async () => {
+    const { TeamMailbox } = await import('../../../../src/agent/teams/TeamMailbox.js');
     const { createSessionRouteController } = await import(
       '../../../../src/server/routes/session.js'
     );
@@ -8806,7 +8733,7 @@ describe('SessionRoutes runtime reuse', () => {
     );
     const collector = createSseCollector(response);
     let shutdown: Promise<void> | undefined;
-    let secondRead: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
+    let secondRead: Promise<{ done: boolean }> | undefined;
 
     try {
       await expect(collector.next()).resolves.toMatchObject({ type: 'connected' });
@@ -8857,7 +8784,7 @@ describe('SessionRoutes runtime reuse', () => {
       expect(busState.subscribers.size).toBe(0);
       expect(maybeStatsController.getSseConnectionStats?.()).toEqual({
         accepting: false,
-        active: 0,
+        active: 1,
       });
 
       busState.publish(ref, 'team.message.received', {
@@ -8880,10 +8807,191 @@ describe('SessionRoutes runtime reuse', () => {
       await expect(observedShutdown).resolves.toBeUndefined();
       expect(markDelivered).toHaveBeenCalledTimes(1);
       expect(runtimeState.runtime.dispose).toHaveBeenCalledOnce();
+      expect(maybeStatsController.getSseConnectionStats?.()).toEqual({
+        accepting: false,
+        active: 0,
+      });
     } finally {
       releaseEnqueue?.();
       await shutdown?.catch(() => undefined);
       await collector.cancel();
+      markDelivered.mockRestore();
+    }
+  });
+
+  it('isolates per-stream SSE background operations so one client abort does not wait for another stream callback', async () => {
+    const { TeamMailbox } = await import('../../../../src/agent/teams/TeamMailbox.js');
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionA = {
+      sessionId: 'shutdown-owned-session-a',
+      projectPath: '/tmp/shutdown-owned-session-a',
+    };
+    const sessionB = {
+      sessionId: 'shutdown-owned-session-b',
+      projectPath: '/tmp/shutdown-owned-session-b',
+    };
+    const metadataA = metadataFor(sessionA.sessionId, sessionA.projectPath);
+    const metadataB = metadataFor(sessionB.sessionId, sessionB.projectPath);
+    vi.mocked(SessionService.listSessions).mockResolvedValue([metadataA, metadataB]);
+    vi.mocked(SessionService.findSessionMetadata).mockImplementation(
+      async (sessionId, projectPath) => {
+        if (sessionId === sessionA.sessionId && projectPath === sessionA.projectPath) {
+          return metadataA;
+        }
+        if (sessionId === sessionB.sessionId && projectPath === sessionB.projectPath) {
+          return metadataB;
+        }
+        return undefined;
+      }
+    );
+
+    let releaseEnqueueA!: () => void;
+    const enqueueGateA = new Promise<void>((resolve) => {
+      releaseEnqueueA = resolve;
+    });
+    let releaseEnqueueB!: () => void;
+    const enqueueGateB = new Promise<void>((resolve) => {
+      releaseEnqueueB = resolve;
+    });
+    let resolveEnqueueAStarted!: () => void;
+    const enqueueAStarted = new Promise<void>((resolve) => {
+      resolveEnqueueAStarted = resolve;
+    });
+    let resolveEnqueueBStarted!: () => void;
+    const enqueueBStarted = new Promise<void>((resolve) => {
+      resolveEnqueueBStarted = resolve;
+    });
+    runtimeState.runtime.enqueueSteering
+      .mockImplementationOnce(async (): Promise<SteeringEnqueueResult> => {
+        resolveEnqueueAStarted();
+        await enqueueGateA;
+        return {
+          accepted: true,
+          messageId: 'team-message-a',
+          turnId: 'turn-team-a',
+          queued: 1,
+          delivery: 'current_turn',
+        };
+      })
+      .mockImplementationOnce(async (): Promise<SteeringEnqueueResult> => {
+        resolveEnqueueBStarted();
+        await enqueueGateB;
+        return {
+          accepted: true,
+          messageId: 'team-message-b',
+          turnId: 'turn-team-b',
+          queued: 1,
+          delivery: 'current_turn',
+        };
+      });
+    const markDelivered = vi
+      .spyOn(TeamMailbox.prototype, 'markDelivered')
+      .mockResolvedValue(undefined);
+
+    const controller = createSessionRouteController();
+    const [responseA, responseB] = await Promise.all([
+      controller.app.request(
+        `/${sessionA.sessionId}/events?projectPath=${encodeURIComponent(sessionA.projectPath)}`
+      ),
+      controller.app.request(
+        `/${sessionB.sessionId}/events?projectPath=${encodeURIComponent(sessionB.projectPath)}`
+      ),
+    ]);
+    const collectorA = createSseCollector(responseA);
+    const collectorB = createSseCollector(responseB);
+    let shutdown: Promise<void> | undefined;
+    let aDone: Promise<{ done: boolean }> | undefined;
+
+    try {
+      await expect(collectorA.next()).resolves.toMatchObject({ type: 'connected' });
+      await expect(collectorB.next()).resolves.toMatchObject({ type: 'connected' });
+
+      const maybeStatsController = controller as typeof controller & {
+        getSseConnectionStats?: () => { accepting: boolean; active: number };
+      };
+      expect(maybeStatsController.getSseConnectionStats?.()).toEqual({
+        accepting: true,
+        active: 2,
+      });
+
+      busState.publish(sessionA, 'team.message.received', {
+        teamName: 'shutdown-team',
+        messageId: 'team-message-a',
+        content: 'deliver while stream A is still active',
+        metadata: {
+          clientVisible: false,
+          teamMessage: {
+            messageId: 'team-message-a',
+            teamName: 'shutdown-team',
+            from: 'worker',
+            to: 'team-lead',
+          },
+        },
+      });
+      busState.publish(sessionB, 'team.message.received', {
+        teamName: 'shutdown-team',
+        messageId: 'team-message-b',
+        content: 'deliver while stream B is closing',
+        metadata: {
+          clientVisible: false,
+          teamMessage: {
+            messageId: 'team-message-b',
+            teamName: 'shutdown-team',
+            from: 'worker',
+            to: 'team-lead',
+          },
+        },
+      });
+      await Promise.all([enqueueAStarted, enqueueBStarted]);
+
+      const bDone = collectorB.readDone(1000);
+      await collectorB.cancel();
+      await expect(bDone).resolves.toMatchObject({ done: true });
+
+      expect(markDelivered).not.toHaveBeenCalled();
+      expect(maybeStatsController.getSseConnectionStats?.()).toEqual({
+        accepting: true,
+        active: 2,
+      });
+
+      releaseEnqueueB();
+      await vi.waitFor(() => {
+        expect(maybeStatsController.getSseConnectionStats?.()).toEqual({
+          accepting: true,
+          active: 1,
+        });
+      });
+      expect(markDelivered).toHaveBeenCalledTimes(1);
+
+      aDone = collectorA.readDone(1000);
+      shutdown = controller.shutdown('server-shutdown');
+      await expect(aDone).resolves.toMatchObject({ done: true });
+      let shutdownSettled = false;
+      const observedShutdown = shutdown.then(() => {
+        shutdownSettled = true;
+      });
+      await Promise.resolve();
+
+      expect(shutdownSettled).toBe(false);
+      expect(runtimeState.runtime.dispose).not.toHaveBeenCalled();
+
+      releaseEnqueueA();
+      await expect(observedShutdown).resolves.toBeUndefined();
+      expect(markDelivered).toHaveBeenCalledTimes(2);
+      expect(runtimeState.runtime.enqueueSteering).toHaveBeenCalledTimes(2);
+      expect(runtimeState.runtime.dispose).toHaveBeenCalledTimes(2);
+      expect(maybeStatsController.getSseConnectionStats?.()).toEqual({
+        accepting: false,
+        active: 0,
+      });
+    } finally {
+      releaseEnqueueA?.();
+      releaseEnqueueB?.();
+      await shutdown?.catch(() => undefined);
+      await collectorA.cancel();
+      await collectorB.cancel();
       markDelivered.mockRestore();
     }
   });
