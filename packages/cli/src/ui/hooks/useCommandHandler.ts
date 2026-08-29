@@ -637,6 +637,14 @@ export const useCommandHandler = (
         }
 
         const classified = classifyError(error);
+        const lifecycleAbort =
+          typeof error === 'object' &&
+          error !== null &&
+          'name' in error &&
+          error.name === 'AbortError';
+        if (classified.isAbort || lifecycleAbort) {
+          return { success: false, error: 'aborted' };
+        }
         sessionActions.addAssistantMessage(`${classified.displayMessage}`);
         return { success: false, error: classified.displayMessage };
       }

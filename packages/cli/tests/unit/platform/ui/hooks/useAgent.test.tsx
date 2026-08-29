@@ -372,6 +372,10 @@ describe('useAgent runtime ownership', () => {
 
   it('destroys a late Agent before disposing its Runtime after unmount', async () => {
     const agentCreation = deferred<typeof agent>();
+    const runtimeDisposalStarted = deferred<void>();
+    runtime.dispose.mockImplementationOnce(async () => {
+      runtimeDisposalStarted.resolve();
+    });
     mocks.createWithRuntime.mockReturnValueOnce(agentCreation.promise);
     await act(async () => {
       root.render(<Harness />);
@@ -384,6 +388,7 @@ describe('useAgent runtime ownership', () => {
     agentCreation.resolve(agent);
 
     const outcome = await creation;
+    await runtimeDisposalStarted.promise;
     expect(outcome.status).toBe('rejected');
     if (outcome.status === 'rejected') {
       expect(outcome.error).toMatchObject({ name: 'AbortError' });
@@ -396,9 +401,9 @@ describe('useAgent runtime ownership', () => {
     expect(hook?.agentRef.current).toBeUndefined();
   });
 
-  it('commits only the replacement Session when the old Runtime resolves late', async () => {
-    const oldRuntime = createRuntimeCandidate('session-1', '/tmp/project');
-    const nextRuntime = createRuntimeCandidate('session-2', '/tmp/project');
+  it('commits only the replacement workspace when the old Runtime resolves late', async () => {
+    const oldRuntime = createRuntimeCandidate('session-1', '/tmp/project-a');
+    const nextRuntime = createRuntimeCandidate('session-1', '/tmp/project-b');
     const oldRuntimeCreation = deferred<typeof runtime>();
     mocks.createRuntime
       .mockReturnValueOnce(oldRuntimeCreation.promise)
@@ -406,13 +411,17 @@ describe('useAgent runtime ownership', () => {
     const nextAgent = createAgentCandidate();
     mocks.createWithRuntime.mockResolvedValueOnce(nextAgent);
     await act(async () => {
-      root.render(<Harness />);
+      root.render(<WorkspaceHarness workspaceRoot="/tmp/project-a" />);
       await Promise.resolve();
     });
 
     const oldCreation = observe(hook!.createAgent());
     await vi.waitFor(() => expect(mocks.createRuntime).toHaveBeenCalledOnce());
-    const nextCreation = hook!.createAgent({ sessionId: 'session-2' });
+    await act(async () => {
+      root.render(<WorkspaceHarness workspaceRoot="/tmp/project-b" />);
+      await Promise.resolve();
+    });
+    const nextCreation = hook!.createAgent();
     oldRuntimeCreation.resolve(oldRuntime);
 
     const oldOutcome = await oldCreation;
@@ -427,7 +436,7 @@ describe('useAgent runtime ownership', () => {
     expect(mocks.createWithRuntime).toHaveBeenCalledOnce();
     expect(mocks.createWithRuntime).toHaveBeenCalledWith(
       nextRuntime,
-      expect.objectContaining({ sessionId: 'session-2' })
+      expect.objectContaining({ sessionId: 'session-1' })
     );
     expect(hook?.agentRef.current).toBe(nextAgent);
   });
@@ -453,6 +462,41 @@ describe('useAgent runtime ownership', () => {
     );
     expect(runtime.dispose).not.toHaveBeenCalled();
     expect(hook?.agentRef.current).toBe(secondAgent);
+  });
+
+  it('keeps the previous Agent owned when cleanup interleaves with replacement handoff', async () => {
+    const firstAgent = createAgentCandidate();
+    const secondAgent = createAgentCandidate();
+    const runtimeDisposalStarted = deferred<void>();
+    runtime.dispose.mockImplementationOnce(async () => {
+      runtimeDisposalStarted.resolve();
+    });
+    mocks.createWithRuntime.mockResolvedValueOnce(firstAgent);
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+    await expect(hook!.createAgent()).resolves.toBe(firstAgent);
+
+    const replacement = observe(hook!.createAgent());
+    const unmount = Promise.resolve().then(() => {
+      act(() => root.unmount());
+    });
+    await unmount;
+    const outcome = await replacement;
+    await runtimeDisposalStarted.promise;
+
+    expect(outcome.status).toBe('rejected');
+    if (outcome.status === 'rejected') {
+      expect(outcome.error).toMatchObject({ name: 'AbortError' });
+    }
+    expect(mocks.createWithRuntime).toHaveBeenCalledOnce();
+    expect(firstAgent.destroy).toHaveBeenCalledOnce();
+    expect(secondAgent.destroy).not.toHaveBeenCalled();
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+    expect(firstAgent.destroy.mock.invocationCallOrder[0]).toBeLessThan(
+      runtime.dispose.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
+    );
   });
 
   it('shares Runtime and Agent initialization for concurrent exact-target callers', async () => {
@@ -482,6 +526,33 @@ describe('useAgent runtime ownership', () => {
     expect(firstAgent).toBe(agent);
     expect(secondAgent).toBe(agent);
     expect(hook?.agentRef.current).toBe(agent);
+  });
+
+  it('shares standalone Agent initialization while retaining an owned Session Runtime', async () => {
+    const ephemeralAgent = createAgentCandidate();
+    const ephemeralCreation = deferred<typeof agent>();
+    mocks.createAgent.mockReturnValueOnce(ephemeralCreation.promise);
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+    await expect(hook!.createAgent()).resolves.toBe(agent);
+
+    const firstCreation = hook!.createAgent({ modelId: 'different-model' });
+    const secondCreation = hook!.createAgent({ modelId: 'different-model' });
+    await vi.waitFor(() => expect(mocks.createAgent).toHaveBeenCalled());
+    ephemeralCreation.resolve(ephemeralAgent);
+    const [firstAgent, secondAgent] = await Promise.all([
+      firstCreation,
+      secondCreation,
+    ]);
+
+    expect(mocks.createAgent).toHaveBeenCalledOnce();
+    expect(firstAgent).toBe(ephemeralAgent);
+    expect(secondAgent).toBe(ephemeralAgent);
+    expect(mocks.createRuntime).toHaveBeenCalledOnce();
+    expect(runtime.dispose).not.toHaveBeenCalled();
+    expect(hook?.agentRef.current).toBe(ephemeralAgent);
   });
 
   it('serializes different Agent targets and destroys the stale candidate', async () => {
@@ -534,6 +605,233 @@ describe('useAgent runtime ownership', () => {
       firstAgentCreation.resolve(firstAgent);
       await Promise.all([firstCreation, secondCreation]);
     }
+  });
+
+  it('invalidates a different Agent target before awaiting its shared Runtime', async () => {
+    const firstAgent = createAgentCandidate();
+    const secondAgent = createAgentCandidate();
+    const firstAgentCreation = deferred<typeof agent>();
+    mocks.createWithRuntime
+      .mockReturnValueOnce(firstAgentCreation.promise)
+      .mockResolvedValueOnce(secondAgent);
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    const firstCreation = observe(hook!.createAgent({ systemPrompt: 'first target' }));
+    await vi.waitFor(() => expect(mocks.createWithRuntime).toHaveBeenCalledOnce());
+    firstAgentCreation.resolve(firstAgent);
+    const secondCreation = observe(
+      hook!.createAgent({ systemPrompt: 'second target' })
+    );
+
+    const [firstOutcome, secondOutcome] = await Promise.all([
+      firstCreation,
+      secondCreation,
+    ]);
+    expect(firstOutcome.status).toBe('rejected');
+    if (firstOutcome.status === 'rejected') {
+      expect(firstOutcome.error).toMatchObject({ name: 'AbortError' });
+    }
+    expect(secondOutcome).toEqual({ status: 'fulfilled', value: secondAgent });
+    expect(firstAgent.destroy).toHaveBeenCalledOnce();
+    expect(mocks.createWithRuntime).toHaveBeenCalledTimes(2);
+    expect(hook?.agentRef.current).toBe(secondAgent);
+  });
+
+  it('does not start a different Agent target when stale candidate cleanup fails', async () => {
+    const cleanupError = new Error('stale Agent cleanup failed');
+    const staleAgent = createAgentCandidate(async () => {
+      throw cleanupError;
+    });
+    const staleAgentCreation = deferred<typeof agent>();
+    mocks.createWithRuntime.mockReturnValueOnce(staleAgentCreation.promise);
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+
+    const staleCreation = observe(hook!.createAgent({ systemPrompt: 'stale target' }));
+    await vi.waitFor(() => expect(mocks.createWithRuntime).toHaveBeenCalledOnce());
+    const nextCreation = observe(hook!.createAgent({ systemPrompt: 'next target' }));
+    staleAgentCreation.resolve(staleAgent);
+
+    const [staleOutcome, nextOutcome] = await Promise.all([
+      staleCreation,
+      nextCreation,
+    ]);
+    expect(staleOutcome.status).toBe('rejected');
+    if (staleOutcome.status === 'rejected') {
+      expect(staleOutcome.error).toMatchObject({ name: 'AbortError' });
+    }
+    expect(nextOutcome).toEqual({ status: 'rejected', error: cleanupError });
+    expect(staleAgent.destroy).toHaveBeenCalledOnce();
+    expect(mocks.createWithRuntime).toHaveBeenCalledOnce();
+    expect(hook?.agentRef.current).toBeUndefined();
+  });
+
+  it('does not reopen a replacement target after external cleanup joins its barrier', async () => {
+    const runtimeA = createRuntimeCandidate('session-1', '/tmp/project-a');
+    const destroyStarted = deferred<void>();
+    const destroyGate = deferred<void>();
+    const firstAgent = createAgentCandidate(async () => {
+      destroyStarted.resolve();
+      await destroyGate.promise;
+    });
+    mocks.createRuntime.mockResolvedValueOnce(runtimeA);
+    mocks.createWithRuntime.mockResolvedValueOnce(firstAgent);
+    await act(async () => {
+      root.render(<WorkspaceHarness workspaceRoot="/tmp/project-a" />);
+      await Promise.resolve();
+    });
+    await expect(hook!.createAgent()).resolves.toBe(firstAgent);
+    await act(async () => {
+      root.render(<WorkspaceHarness workspaceRoot="/tmp/project-b" />);
+      await Promise.resolve();
+    });
+
+    const replacement = observe(hook!.createAgent());
+    await destroyStarted.promise;
+    const externalCleanup = hook!.cleanupAgent();
+    destroyGate.resolve();
+    await externalCleanup;
+    const outcome = await replacement;
+
+    expect(outcome.status).toBe('rejected');
+    if (outcome.status === 'rejected') {
+      expect(outcome.error).toMatchObject({ name: 'AbortError' });
+    }
+    expect(firstAgent.destroy).toHaveBeenCalledOnce();
+    expect(runtimeA.dispose).toHaveBeenCalledOnce();
+    expect(mocks.createRuntime).toHaveBeenCalledOnce();
+    expect(mocks.createWithRuntime).toHaveBeenCalledOnce();
+    expect(hook?.agentRef.current).toBeUndefined();
+  });
+
+  it('waits for same-owner cleanup before rebuilding resources', async () => {
+    const destroyStarted = deferred<void>();
+    const destroyGate = deferred<void>();
+    const nextRuntime = createRuntimeCandidate('session-1', '/tmp/project');
+    const nextAgent = createAgentCandidate();
+    agent.destroy.mockImplementationOnce(async () => {
+      destroyStarted.resolve();
+      await destroyGate.promise;
+    });
+    mocks.createRuntime
+      .mockResolvedValueOnce(runtime)
+      .mockResolvedValueOnce(nextRuntime);
+    mocks.createWithRuntime
+      .mockResolvedValueOnce(agent)
+      .mockResolvedValueOnce(nextAgent);
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+    await expect(hook!.createAgent()).resolves.toBe(agent);
+
+    const cleanup = hook!.cleanupAgent();
+    await destroyStarted.promise;
+    let creationSettled = false;
+    const creation = observe(hook!.createAgent()).then((outcome) => {
+      creationSettled = true;
+      return outcome;
+    });
+    await Promise.resolve();
+    expect({
+      creationSettled,
+      runtimeFactories: mocks.createRuntime.mock.calls.length,
+      agentFactories: mocks.createWithRuntime.mock.calls.length,
+    }).toEqual({
+      creationSettled: false,
+      runtimeFactories: 1,
+      agentFactories: 1,
+    });
+
+    destroyGate.resolve();
+    await cleanup;
+    const outcome = await creation;
+    expect(outcome).toEqual({ status: 'fulfilled', value: nextAgent });
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+    expect(nextRuntime.dispose).not.toHaveBeenCalled();
+    expect(mocks.createRuntime).toHaveBeenCalledTimes(2);
+    expect(mocks.createWithRuntime).toHaveBeenCalledTimes(2);
+    expect(hook?.agentRef.current).toBe(nextAgent);
+  });
+
+  it('restarts a cleanup waiter with the latest rendered workspace', async () => {
+    const runtimeA = createRuntimeCandidate('session-1', '/tmp/project-a');
+    const runtimeB = createRuntimeCandidate('session-1', '/tmp/project-b');
+    const agentA = createAgentCandidate();
+    const agentB = createAgentCandidate();
+    const destroyStarted = deferred<void>();
+    const destroyGate = deferred<void>();
+    agentA.destroy.mockImplementationOnce(async () => {
+      destroyStarted.resolve();
+      await destroyGate.promise;
+    });
+    mocks.createRuntime.mockResolvedValueOnce(runtimeA).mockResolvedValueOnce(runtimeB);
+    mocks.createWithRuntime.mockResolvedValueOnce(agentA).mockResolvedValueOnce(agentB);
+    await act(async () => {
+      root.render(<WorkspaceHarness workspaceRoot="/tmp/project-a" />);
+      await Promise.resolve();
+    });
+    await expect(hook!.createAgent()).resolves.toBe(agentA);
+
+    const cleanup = hook!.cleanupAgent();
+    await destroyStarted.promise;
+    const creation = hook!.createAgent();
+    await act(async () => {
+      root.render(<WorkspaceHarness workspaceRoot="/tmp/project-b" />);
+      await Promise.resolve();
+    });
+    destroyGate.resolve();
+    await cleanup;
+
+    await expect(creation).resolves.toBe(agentB);
+    expect(mocks.createRuntime).toHaveBeenCalledTimes(2);
+    expect(mocks.createRuntime).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        sessionId: 'session-1',
+        workspaceRoot: '/tmp/project-b',
+      })
+    );
+    expect(mocks.createRuntime).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ workspaceRoot: '/tmp/project-a' })
+    );
+    expect(mocks.createWithRuntime).toHaveBeenNthCalledWith(
+      2,
+      runtimeB,
+      expect.objectContaining({ sessionId: 'session-1' })
+    );
+    expect(hook?.agentRef.current).toBe(agentB);
+  });
+
+  it('propagates the first AbortError from cleanup while disposing all resources', async () => {
+    const agentCleanupError = new DOMException(
+      'Agent destroy was aborted by its transport',
+      'AbortError'
+    );
+    const runtimeCleanupError = new DOMException(
+      'Runtime dispose was aborted by its transport',
+      'AbortError'
+    );
+    agent.destroy.mockRejectedValueOnce(agentCleanupError);
+    runtime.dispose.mockRejectedValueOnce(runtimeCleanupError);
+    await act(async () => {
+      root.render(<Harness />);
+      await Promise.resolve();
+    });
+    await hook!.createAgent();
+
+    await expect(hook!.cleanupAgent()).rejects.toBe(agentCleanupError);
+    expect(agent.destroy).toHaveBeenCalledOnce();
+    expect(runtime.dispose).toHaveBeenCalledOnce();
+    expect(agent.destroy.mock.invocationCallOrder[0]).toBeLessThan(
+      runtime.dispose.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
+    );
   });
 
   it('passes invocation-scoped agents into the owned SessionRuntime', async () => {
