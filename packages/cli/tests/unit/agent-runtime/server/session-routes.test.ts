@@ -1035,6 +1035,95 @@ describe('SessionRoutes runtime reuse', () => {
     return metadata;
   };
 
+  it('hydrates an idle Session SSE projection without loading durable history', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionId = 'history-free-sse-session';
+    const projectPath = '/tmp/history-free-sse-workspace';
+    mockResolvedSession(sessionId, {
+      projectPath,
+      messages: makeMessages(
+        { role: 'user', content: 'durable user history' },
+        { role: 'assistant', content: 'durable assistant history' }
+      ),
+    });
+    const requestController = new AbortController();
+    const controller = createSessionRouteController();
+    const response = await controller.app.request(
+      `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`,
+      { signal: requestController.signal }
+    );
+    const collector = createSseCollector(response);
+
+    try {
+      expect(response.status).toBe(200);
+      await expect(collector.next()).resolves.toMatchObject({ type: 'connected' });
+      expect(SessionService.findSessionMetadata).toHaveBeenCalledWith(
+        sessionId,
+        projectPath
+      );
+      expect(SessionService.findSessionTaskWorktree).toHaveBeenCalledWith(
+        sessionId,
+        projectPath
+      );
+      expect(SessionService.loadSession).not.toHaveBeenCalled();
+    } finally {
+      requestController.abort();
+      await collector.cancel();
+      await controller.shutdown();
+    }
+  });
+
+  it('loads and filters durable messages after an SSE projection already exists', async () => {
+    const { createSessionRouteController } = await import(
+      '../../../../src/server/routes/session.js'
+    );
+    const sessionId = 'durable-history-after-sse';
+    const projectPath = '/tmp/durable-history-after-sse';
+    mockResolvedSession(sessionId, {
+      projectPath,
+      messages: makeMessages({ role: 'user', content: 'stale hydrated history' }),
+    });
+    const requestController = new AbortController();
+    const controller = createSessionRouteController();
+    const eventsResponse = await controller.app.request(
+      `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`,
+      { signal: requestController.signal }
+    );
+    const collector = createSseCollector(eventsResponse);
+
+    try {
+      await expect(collector.next()).resolves.toMatchObject({ type: 'connected' });
+      vi.mocked(SessionService.loadSession).mockClear();
+      vi.mocked(SessionService.loadSession).mockResolvedValue(
+        makeMessages(
+          { role: 'system', content: 'hidden system context' },
+          { role: 'user', content: 'fresh durable user history' },
+          { role: 'assistant', content: 'fresh durable assistant history' }
+        )
+      );
+
+      const messagesResponse = await controller.app.request(
+        `/${sessionId}/message?projectPath=${encodeURIComponent(projectPath)}`
+      );
+
+      expect(messagesResponse.status).toBe(200);
+      const messages = await messagesResponse.json();
+      expect(vi.mocked(SessionService.loadSession).mock.calls).toEqual([
+        [sessionId, projectPath],
+      ]);
+      expect(messages).toEqual([
+        { role: 'user', content: 'fresh durable user history' },
+        { role: 'assistant', content: 'fresh durable assistant history' },
+      ]);
+    } finally {
+      requestController.abort();
+      await collector.cancel();
+      await controller.shutdown();
+    }
+  });
+
   it('returns a cursor-based public session catalog page', async () => {
     const { SessionRoutes } = await import('../../../../src/server/routes/session.js');
     const metadata = metadataFor('catalog-session', '/tmp/catalog-workspace');
