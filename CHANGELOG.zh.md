@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.119] - 2026-08-29
+
+### 修复
+- 将 global 与 Session SSE 连接纳入 controller 显式所有权，并在 Runtime teardown 前终止连接、等待 callback 工作收敛。
+- 将 Node 客户端断开传播为 Fetch request cancellation，并调整 graceful shutdown 顺序，使存量 SSE 不再阻塞 server stop。
+- 保留确定性的 cleanup 错误与 server ownership，使失败的 shutdown 可诊断、可重试。
+
+### 测试
+- 新增 controller、handoff 前 abort、per-stream 隔离、真实 Node 断线、graceful stop 与 cleanup retry 的确定性回归。
+
 ## [0.10.118] - 2026-08-29
 
 ### 修复

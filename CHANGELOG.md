@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.119] - 2026-08-29
+
+### Fixed
+- Made global and per-Session SSE connections explicit controller-owned resources that terminate and drain before Runtime teardown.
+- Propagated Node client disconnects into Fetch request cancellation and ordered graceful shutdown so open SSE clients no longer block server stop.
+- Preserved deterministic cleanup errors and server ownership so a failed shutdown can be diagnosed and retried.
+
+### Tests
+- Added deterministic controller, pre-handoff abort, per-stream isolation, real Node disconnect, graceful-stop, and cleanup-retry regressions.
+
 ## [0.10.118] - 2026-08-29
 
 ### Fixed
