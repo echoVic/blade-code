@@ -302,8 +302,26 @@ interface SessionInfo {
   taskWorktree?: SessionTaskWorktree;
 }
 
+type SessionHydrationInvalidationReason =
+  | 'archive'
+  | 'delete'
+  | 'route-reset'
+  | 'server-shutdown';
+
+interface SessionHydrationState {
+  promise: Promise<SessionInfo>;
+  invalidatedBy?: SessionHydrationInvalidationReason;
+}
+
+interface SessionHydrationOwner {
+  accepting: boolean;
+  getOrHydrateSession(ref: SessionRef): Promise<SessionInfo>;
+  invalidateAll(reason: SessionHydrationInvalidationReason): void;
+  resumeRecoveredInteraction(session: SessionInfo): Promise<void>;
+}
+
 const sessions = new Map<string, SessionInfo>();
-let resumeRecoveredInteraction: ((session: SessionInfo) => Promise<void>) | undefined;
+let activeSessionHydrationOwner: SessionHydrationOwner | undefined;
 let resetPendingResumeRecoveries: (() => void) | undefined;
 
 const activeRuns = new Map<string, RunState>();
@@ -442,6 +460,12 @@ function sessionBusEventSseMessage(
 }
 
 function resetSharedSessionRouteState(): void {
+  const previousHydrationOwner = activeSessionHydrationOwner;
+  if (previousHydrationOwner) {
+    previousHydrationOwner.accepting = false;
+    previousHydrationOwner.invalidateAll('route-reset');
+  }
+  activeSessionHydrationOwner = undefined;
   for (const run of activeRuns.values()) {
     cancelRun(run, 'route-reset');
   }
@@ -451,7 +475,6 @@ function resetSharedSessionRouteState(): void {
   }
   activeUserShellRuns.clear();
   recentRuns.clear();
-  resumeRecoveredInteraction = undefined;
   resetPendingResumeRecoveries?.();
   resetPendingResumeRecoveries = undefined;
   sessions.clear();
@@ -1661,7 +1684,8 @@ export const createSessionRouteController = (): SessionRouteController => {
     }>
   >();
   const runtimeDisposals = new Map<string, Promise<void>>();
-  const sessionHydrations = new Map<string, Promise<SessionInfo>>();
+  const sessionHydrations = new Map<string, SessionHydrationState>();
+  const ownedSessionHydrations = new Set<SessionHydrationState>();
   const messageSubmissionLocks = new KeyedMutexRegistry<string>();
   const taskDeliveryLocks = new KeyedMutexRegistry<string>();
   const startupConfig = getConfig();
@@ -2153,18 +2177,72 @@ export const createSessionRouteController = (): SessionRouteController => {
     }
   };
 
+  const throwSessionHydrationInvalidation = (
+    ref: SessionRef,
+    reason: SessionHydrationInvalidationReason
+  ): never => {
+    if (reason === 'delete') {
+      throw new NotFoundError('Session', ref.sessionId);
+    }
+    if (reason === 'archive') {
+      throw new ConflictError('Session is archived');
+    }
+    throw new ServiceUnavailableError();
+  };
+
+  const assertSessionHydrationCurrent = (
+    ref: SessionRef,
+    key: string,
+    state: SessionHydrationState
+  ): void => {
+    if (state.invalidatedBy) {
+      throwSessionHydrationInvalidation(ref, state.invalidatedBy);
+    }
+    if (sessionHydrations.get(key) !== state) {
+      throw new ServiceUnavailableError();
+    }
+  };
+
+  const invalidateSessionHydration = (
+    ref: SessionRef,
+    reason: SessionHydrationInvalidationReason
+  ): void => {
+    const key = sessionRefKey(ref);
+    const state = sessionHydrations.get(key);
+    if (!state) return;
+    state.invalidatedBy ??= reason;
+    if (sessionHydrations.get(key) === state) {
+      sessionHydrations.delete(key);
+    }
+  };
+
+  const invalidateAllSessionHydrations = (
+    reason: SessionHydrationInvalidationReason
+  ): void => {
+    for (const state of ownedSessionHydrations) {
+      state.invalidatedBy ??= reason;
+    }
+    sessionHydrations.clear();
+  };
+
   const getOrHydrateSession = async (ref: SessionRef): Promise<SessionInfo> => {
+    const owner = activeSessionHydrationOwner;
+    if (!owner?.accepting || owner.getOrHydrateSession !== getOrHydrateSession) {
+      throw new ServiceUnavailableError();
+    }
     const key = sessionRefKey(ref);
     const existing = sessions.get(key);
     if (existing) return existing;
 
-    let hydration = sessionHydrations.get(key);
-    if (!hydration) {
-      hydration = (async () => {
+    let state = sessionHydrations.get(key);
+    if (!state) {
+      let createdState!: SessionHydrationState;
+      const promise = Promise.resolve().then(async () => {
         const metadata = await SessionService.findSessionMetadata(
           ref.sessionId,
           ref.projectPath
         );
+        assertSessionHydrationCurrent(ref, key, createdState);
         if (!metadata) {
           throw new NotFoundError('Session', ref.sessionId);
         }
@@ -2172,17 +2250,23 @@ export const createSessionRouteController = (): SessionRouteController => {
           ref.sessionId,
           ref.projectPath
         );
+        assertSessionHydrationCurrent(ref, key, createdState);
         const session = sessionInfoFromMetadata(metadata, taskWorktree);
+        assertSessionHydrationCurrent(ref, key, createdState);
         sessions.set(key, session);
         return session;
-      })();
-      sessionHydrations.set(key, hydration);
+      });
+      createdState = { promise };
+      state = createdState;
+      sessionHydrations.set(key, state);
+      ownedSessionHydrations.add(state);
     }
 
     try {
-      return await hydration;
+      return await state.promise;
     } finally {
-      if (sessionHydrations.get(key) === hydration) {
+      ownedSessionHydrations.delete(state);
+      if (sessionHydrations.get(key) === state) {
         sessionHydrations.delete(key);
       }
     }
@@ -2940,7 +3024,13 @@ export const createSessionRouteController = (): SessionRouteController => {
       lease.release();
     }
   };
-  resumeRecoveredInteraction = resumePendingSession;
+  const sessionHydrationOwner: SessionHydrationOwner = {
+    accepting: true,
+    getOrHydrateSession,
+    invalidateAll: invalidateAllSessionHydrations,
+    resumeRecoveredInteraction: resumePendingSession,
+  };
+  activeSessionHydrationOwner = sessionHydrationOwner;
 
   const recoverQueuedTasks = async (): Promise<TaskRecoveryResult> => {
     const result: TaskRecoveryResult = {
@@ -3849,8 +3939,8 @@ export const createSessionRouteController = (): SessionRouteController => {
           projectPath: member.projectPath,
         });
         const key = sessionRefKey(memberRef);
+        invalidateSessionHydration(memberRef, 'archive');
         sessions.delete(key);
-        sessionHydrations.delete(key);
         runtimeInitializations.delete(key);
         Bus.publish(memberRef, 'session.archived', {
           archiveRootId: ref.sessionId,
@@ -3958,13 +4048,13 @@ export const createSessionRouteController = (): SessionRouteController => {
       }
       await webBrowserSessions.dispose(ref);
       await SessionService.deleteSession(ref.sessionId, ref.projectPath);
-      Bus.publish(ref, 'session.deleted', {});
+      invalidateSessionHydration(ref, 'delete');
       if (cancelledRunId) {
         forgetRun(cancelledRunId);
       }
       sessions.delete(key);
-      sessionHydrations.delete(key);
       runtimeInitializations.delete(key);
+      Bus.publish(ref, 'session.deleted', {});
       const residentRuntime = runtimes.get(key);
       if (residentRuntime) {
         const removed = await runtimeResidency.remove(key, residentRuntime);
@@ -4924,6 +5014,11 @@ export const createSessionRouteController = (): SessionRouteController => {
     if (shutdownPromise) return shutdownPromise;
     admissionGate.close(reason);
     const sseDrain = sseGate.shutdown(reason);
+    sessionHydrationOwner.accepting = false;
+    invalidateAllSessionHydrations('server-shutdown');
+    const hydrationDrain = Promise.allSettled(
+      [...ownedSessionHydrations].map((state) => state.promise)
+    );
     clearInterval(runtimeSweepTimer);
     clearAllPendingResumeRecoveries();
 
@@ -4967,6 +5062,7 @@ export const createSessionRouteController = (): SessionRouteController => {
       signalActiveWork();
       await settle([...observedCompletions]);
 
+      await hydrationDrain;
       await settle([...runtimeInitializations.values()]);
       signalActiveWork();
       await settle([...observedCompletions]);
@@ -4983,9 +5079,10 @@ export const createSessionRouteController = (): SessionRouteController => {
       runtimeInitializations.clear();
       runtimeDisposals.clear();
       sessionHydrations.clear();
-      sessions.clear();
-      if (resumeRecoveredInteraction === resumePendingSession) {
-        resumeRecoveredInteraction = undefined;
+      ownedSessionHydrations.clear();
+      if (activeSessionHydrationOwner === sessionHydrationOwner) {
+        activeSessionHydrationOwner = undefined;
+        sessions.clear();
       }
       if (resetPendingResumeRecoveries === clearAllPendingResumeRecoveries) {
         resetPendingResumeRecoveries = undefined;
@@ -5926,25 +6023,40 @@ export async function respondToPermission(
     permissionId,
     response
   );
-  let session = sessions.get(sessionRefKey(ref));
-  if (!session) {
+  Bus.publish(ref, 'interaction.resolved', { requestId: permissionId });
+
+  const owner = activeSessionHydrationOwner;
+  if (!owner?.accepting) return true;
+
+  const key = sessionRefKey(ref);
+  let session = sessions.get(key);
+  if (session) {
     const metadata = await SessionService.findSessionMetadata(
       ref.sessionId,
       ref.projectPath
     );
-    if (!metadata) return false;
-    const taskWorktree = await SessionService.findSessionTaskWorktree(
-      ref.sessionId,
-      ref.projectPath
-    );
-    session = sessionInfoFromMetadata(metadata, taskWorktree);
-    sessions.set(sessionRefKey(ref), session);
+    if (
+      activeSessionHydrationOwner !== owner ||
+      !owner.accepting ||
+      sessions.get(key) !== session
+    ) {
+      return true;
+    }
+    if (metadata) syncSessionTaskMetadata(session, metadata);
   } else {
-    await refreshSessionTaskMetadata(session);
+    try {
+      session = await owner.getOrHydrateSession(ref);
+    } catch (error) {
+      if (activeSessionHydrationOwner !== owner || !owner.accepting) return true;
+      throw error;
+    }
   }
-  Bus.publish(ref, 'interaction.resolved', { requestId: permissionId });
-  if (resumeRecoveredInteraction) {
-    void resumeRecoveredInteraction(session).catch((error: unknown) => {
+  if (
+    activeSessionHydrationOwner === owner &&
+    owner.accepting &&
+    sessions.get(key) === session
+  ) {
+    void owner.resumeRecoveredInteraction(session).catch((error: unknown) => {
       logger.error(
         `[SessionRoutes] Failed to resume recovered interaction ${permissionId}:`,
         error

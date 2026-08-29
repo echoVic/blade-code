@@ -9860,7 +9860,6 @@ describe('SessionRoutes runtime reuse', () => {
       )
     );
     let response: Response | undefined;
-    let collector: ReturnType<typeof createSseCollector> | undefined;
     let shutdown: Promise<void> | undefined;
 
     try {
@@ -9879,9 +9878,13 @@ describe('SessionRoutes runtime reuse', () => {
 
       releaseLookup();
       response = await responsePromise;
-      expect(response.status).toBe(200);
-      collector = createSseCollector(response);
-      await expect(collector.readDone(1000)).resolves.toMatchObject({ done: true });
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({
+        error: {
+          code: 'SERVICE_UNAVAILABLE',
+          message: 'Server is shutting down',
+        },
+      });
       await expect(shutdown).resolves.toBeUndefined();
       expect(busState.subscribers.size).toBe(0);
       expect(controller.getSseConnectionStats()).toEqual({
@@ -9891,8 +9894,7 @@ describe('SessionRoutes runtime reuse', () => {
     } finally {
       releaseLookup();
       response ??= await responsePromise.catch(() => undefined);
-      await collector?.cancel();
-      if (!collector) await response?.body?.cancel().catch(() => undefined);
+      await response?.body?.cancel().catch(() => undefined);
       await shutdown?.catch(() => undefined);
     }
   });
