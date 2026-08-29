@@ -5356,6 +5356,8 @@ describe('SessionRoutes runtime reuse', () => {
     const disposeAll = vi
       .spyOn(CurrentSessionRuntimeResidency.prototype, 'disposeAll')
       .mockImplementation(async function () {
+        // production shutdown reaches disposeAll after taking its one-time
+        // runtime-initialization snapshot, so later creations are out of band.
         markDisposeAllEntered();
         await disposeAllGate;
         await originalDisposeAll.call(this);
@@ -5382,6 +5384,8 @@ describe('SessionRoutes runtime reuse', () => {
     const controller = createSessionRouteController();
     let collector: ReturnType<typeof createSseCollector> | undefined;
     let shutdown: Promise<void> | undefined;
+    let shutdownSettled = false;
+    let runtimeCreateStarted = false;
     try {
       const response = await controller.app.request(
         `/${sessionId}/events?projectPath=${encodeURIComponent(projectPath)}`
@@ -5394,7 +5398,9 @@ describe('SessionRoutes runtime reuse', () => {
       );
       expect(CurrentSessionRuntime.create).not.toHaveBeenCalled();
 
-      shutdown = controller.shutdown('server-shutdown');
+      shutdown = controller.shutdown('server-shutdown').then(() => {
+        shutdownSettled = true;
+      });
       await disposeAllEntered;
 
       busState.publish(ref, 'team.message.received', {
@@ -5413,6 +5419,7 @@ describe('SessionRoutes runtime reuse', () => {
       });
 
       const runtime = await runtimeCreated;
+      runtimeCreateStarted = true;
       const runtimeDispose = vi.spyOn(runtime, 'dispose');
       try {
         expect(CurrentSessionRuntime.create).toHaveBeenCalledOnce();
@@ -5421,6 +5428,11 @@ describe('SessionRoutes runtime reuse', () => {
           reserved: 1,
           pinned: 0,
         });
+        expect(controller.getCoordinationStats().messageSubmissions).toEqual({
+          keys: 1,
+          operations: 1,
+        });
+        expect(shutdownSettled).toBe(false);
 
         releaseDisposeAll();
         await expect(shutdown).resolves.toBeUndefined();
@@ -5454,6 +5466,14 @@ describe('SessionRoutes runtime reuse', () => {
       releaseCreate();
       await shutdown?.catch(() => undefined);
       await collector?.cancel();
+      if (runtimeCreateStarted) {
+        await vi.waitFor(() => {
+          expect(controller.getCoordinationStats().messageSubmissions).toEqual({
+            keys: 0,
+            operations: 0,
+          });
+        });
+      }
       disposeAll.mockRestore();
       createRuntime.mockReset().mockImplementation(defaultCreateRuntime);
     }
