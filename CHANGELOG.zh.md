@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.123] - 2026-08-30
+
+### 修复
+- 为 TUI 自动恢复 durable pending input 增加有界 outer retry，复用最多 4 次、总预算 120 秒的共享策略，并在已有输出、工具活动、取消、证据畸形或 inbox 已清空时 fail closed。
+- 为 pending-resume retry 增加 generation fencing、绝对 deadline、idle-aware 调度与可取消所有权；Session 切换、前台任务、cleanup 和 unmount 均不会丢失或复活旧恢复，同时普通命令和 Goal 不进入重试。
+
+### 测试
+- 新增 replay-boundary 与 coordinator 的确定性回归、关闭内部重试的 DeepSeek Flash/Pro 一次性 `503` 真实资格验证，以及通过 production raw PTY 证明两次有序 attempt 和唯一一次已确认 `Write`。
+
 ## [0.10.122] - 2026-08-30
 
 ### 修复

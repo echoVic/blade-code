@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.123] - 2026-08-30
+
+### Fixed
+- Added bounded outer retry for TUI automatic recovery of durable pending input, sharing the four-attempt, 120-second policy while failing closed after any output, tool activity, cancellation, malformed evidence, or cleared inbox.
+- Made pending-resume retry ownership generation-fenced, deadline-bound, idle-aware, and cancellable across Session replacement, foreground work, cleanup, and unmount without retrying ordinary commands or Goals.
+
+### Tests
+- Added deterministic replay-boundary and coordinator regressions, real DeepSeek Flash/Pro one-shot `503` qualification with internal retries disabled, and a production raw-PTY proof of two ordered attempts with exactly one acknowledged `Write`.
+
 ## [0.10.122] - 2026-08-30
 
 ### Fixed
