@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.118] - 2026-08-29
+
+### 修复
+- 清理已完成创建但在 residency 接管前失败的 Web Session Runtime，并在清理本身失败时保留原始初始化错误。
+
+### 测试
+- 新增确定性的 SSE/shutdown 竞态覆盖，验证延迟 Runtime 创建、精确 pre-commit 清理、空 residency 状态与清理错误优先级。
+
 ## [0.10.117] - 2026-08-29
 
 ### 修复

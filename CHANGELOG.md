@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.118] - 2026-08-29
+
+### Fixed
+- Disposed Web Session Runtimes that finish creation but fail before residency accepts ownership, preserving the original initialization failure when cleanup also fails.
+
+### Tests
+- Added deterministic SSE/shutdown race coverage for late Runtime creation, exact pre-commit cleanup, empty residency state, and cleanup-error precedence.
+
 ## [0.10.117] - 2026-08-29
 
 ### Fixed
