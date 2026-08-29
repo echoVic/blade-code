@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.122] - 2026-08-30
+
+### 修复
+- 为 TUI Runtime 与 Agent 初始化增加 generation fencing、exact-target single-flight 和 cleanup ownership，覆盖 unmount、graceful shutdown、Session/workspace 切换与并发 turn。
+- 在创建下一轮 Agent 前完整销毁上一轮 Agent，传播真实 cleanup 错误，并让生命周期取消在命令输出中保持静默。
+
+### 测试
+- 新增确定性的 Promise-gated 所有权回归、DeepSeek Flash/Pro 双轮真实模型资格验证，以及关闭 framework retry 的 production raw-PTY follow-up 控制。
+
 ## [0.10.121] - 2026-08-29
 
 ### 修复

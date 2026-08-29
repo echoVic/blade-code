@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.122] - 2026-08-30
+
+### Fixed
+- Made TUI Runtime and Agent initialization generation-fenced, exact-target single-flight, and cleanup-owned across unmount, graceful shutdown, Session/workspace replacement, and concurrent turns.
+- Destroyed the previous completed-turn Agent before creating its replacement, propagated real cleanup failures, and kept lifecycle cancellation silent in command output.
+
+### Tests
+- Added deterministic Promise-gated ownership regressions and real DeepSeek Flash/Pro two-turn qualification, plus a production raw-PTY follow-up control with framework retries disabled.
+
 ## [0.10.121] - 2026-08-29
 
 ### Fixed
