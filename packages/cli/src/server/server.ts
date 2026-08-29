@@ -19,7 +19,10 @@ import { getCwd } from '../utils/cwd.js';
 import { getVersion } from '../utils/packageInfo.js';
 import { BladeServerError, TooManyRequestsError } from './error.js';
 import { ConfigRoutes } from './routes/config.js';
-import { EventRoutes } from './routes/events.js';
+import {
+  createEventRouteController,
+  type EventRouteController,
+} from './routes/events.js';
 import { GlobalRoutes } from './routes/global.js';
 import { HookRoutes } from './routes/hooks.js';
 import { McpRoutes } from './routes/mcp.js';
@@ -59,6 +62,7 @@ let recoverQueuedTasksOnStart: (() => Promise<unknown>) | undefined;
 let taskScheduler: TaskScheduler | undefined;
 let staleSessionGcTimer: ReturnType<typeof setInterval> | undefined;
 let activeSessionController: SessionRouteController | undefined;
+let activeEventController: EventRouteController | undefined;
 const staticAssetContentCache = new Map<string, Buffer>();
 const staticAssetCompressionCache = new Map<string, Buffer>();
 const COMPRESSIBLE_ASSET_EXTENSIONS = new Set([
@@ -307,14 +311,16 @@ function createApp(): Hono<{ Variables: Variables }> {
   });
 
   const sessionController = createSessionRouteController();
+  const eventController = createEventRouteController();
   activeSessionController = sessionController;
+  activeEventController = eventController;
   recoverQueuedTasksOnStart = sessionController.recoverQueuedTasks;
   taskScheduler = new TaskScheduler({
     dispatch: (input) => sessionController.dispatchTask(input),
     store: scheduleStore,
   });
   app.route('/global', GlobalRoutes());
-  app.route('/events', EventRoutes());
+  app.route('/events', eventController.app);
   app.route('/sessions', sessionController.app);
   app.route('/tasks', TaskRoutes(sessionController));
   app.route('/teams', TeamRoutes());
@@ -545,38 +551,78 @@ function startWithNode(
 ): Promise<ServerHandle> {
   return new Promise((resolve, reject) => {
     const server: NodeServer = createServer(async (req, res) => {
-      const url = new URL(req.url || '/', `http://${req.headers.host}`);
-
-      const headers = new Headers();
-      for (const [key, value] of Object.entries(req.headers)) {
-        if (value) {
-          if (Array.isArray(value)) {
-            for (const v of value) {
-              headers.append(key, v);
-            }
-          } else {
-            headers.set(key, value);
-          }
+      const requestController = new AbortController();
+      const abortClientRequest = () => {
+        if (!requestController.signal.aborted) {
+          requestController.abort('client-disconnected');
         }
-      }
-
-      let body: BodyInit | undefined;
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
-        const buffer = await new Promise<Buffer>((resolve) => {
-          const chunks: Buffer[] = [];
-          req.on('data', (chunk: Buffer) => chunks.push(chunk));
-          req.on('end', () => resolve(Buffer.concat(chunks)));
-        });
-        body = buffer.toString();
-      }
-
-      const request = new Request(url.toString(), {
-        method: req.method,
-        headers,
-        body,
-      });
+      };
+      const handleRequestAborted = () => abortClientRequest();
+      const handleResponseClose = () => {
+        if (!res.writableEnded) abortClientRequest();
+      };
+      req.once('aborted', handleRequestAborted);
+      res.once('close', handleResponseClose);
+      if (req.aborted || res.destroyed) abortClientRequest();
 
       try {
+        const url = new URL(req.url || '/', `http://${req.headers.host}`);
+
+        const headers = new Headers();
+        for (const [key, value] of Object.entries(req.headers)) {
+          if (value) {
+            if (Array.isArray(value)) {
+              for (const v of value) {
+                headers.append(key, v);
+              }
+            } else {
+              headers.set(key, value);
+            }
+          }
+        }
+
+        let body: BodyInit | undefined;
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+          const buffer = await new Promise<Buffer>((resolve, reject) => {
+            const chunks: Buffer[] = [];
+            const cleanup = () => {
+              req.off('data', handleData);
+              req.off('end', handleEnd);
+              req.off('error', handleError);
+              requestController.signal.removeEventListener('abort', handleAbort);
+            };
+            const handleData = (chunk: Buffer) => chunks.push(chunk);
+            const handleEnd = () => {
+              cleanup();
+              resolve(Buffer.concat(chunks));
+            };
+            const handleError = (error: Error) => {
+              cleanup();
+              reject(error);
+            };
+            const handleAbort = () => {
+              cleanup();
+              reject(requestController.signal.reason);
+            };
+
+            req.on('data', handleData);
+            req.once('end', handleEnd);
+            req.once('error', handleError);
+            requestController.signal.addEventListener('abort', handleAbort, {
+              once: true,
+            });
+            if (requestController.signal.aborted) handleAbort();
+          });
+          body = buffer.toString();
+        }
+
+        const request = new Request(url.toString(), {
+          method: req.method,
+          headers,
+          body,
+          signal: requestController.signal,
+        });
+
         const response = await honoApp.fetch(request);
 
         res.statusCode = response.status;
@@ -601,6 +647,7 @@ function startWithNode(
           res.end(text);
         }
       } catch (error) {
+        if (requestController.signal.aborted) return;
         logger.error('[Server] Node request error:', error);
         res.statusCode = 500;
         res.end(
@@ -608,6 +655,9 @@ function startWithNode(
             error: { code: 'INTERNAL_ERROR', message: 'Internal server error' },
           })
         );
+      } finally {
+        req.off('aborted', handleRequestAborted);
+        res.off('close', handleResponseClose);
       }
     });
 
@@ -690,38 +740,83 @@ export namespace BladeServer {
 
   const stopOwnedServer = (
     handle: ServerHandle,
-    sessionController: SessionRouteController | undefined
+    sessionController: SessionRouteController | undefined,
+    eventController: EventRouteController | undefined
   ): Promise<void> => {
     if (serverHandle !== handle) return Promise.resolve();
     if (stopPromise) return stopPromise;
 
-    const routeShutdown = sessionController?.shutdown('server-shutdown');
-    taskScheduler?.stop();
-    stopStaleSessionGc();
+    let sessionRouteStartError: unknown;
+    let eventRouteStartError: unknown;
+    let taskSchedulerStopError: unknown;
+    let staleSessionGcStopError: unknown;
+    let sessionRouteShutdown: Promise<void> | undefined;
+    let eventRouteShutdown: Promise<void> | undefined;
+    try {
+      sessionRouteShutdown = sessionController?.shutdown('server-shutdown');
+    } catch (error) {
+      sessionRouteStartError = error;
+    }
+    try {
+      eventRouteShutdown = eventController?.shutdown('server-shutdown');
+    } catch (error) {
+      eventRouteStartError = error;
+    }
+    try {
+      taskScheduler?.stop();
+    } catch (error) {
+      taskSchedulerStopError = error;
+    }
+    try {
+      stopStaleSessionGc();
+    } catch (error) {
+      staleSessionGcStopError = error;
+    }
     stopPromise = (async () => {
-      let firstError: unknown;
-      const attempt = async (cleanup: (() => Promise<void>) | undefined) => {
-        if (!cleanup) return;
-        try {
-          await cleanup();
-        } catch (error) {
-          firstError ??= error;
-        }
-      };
-
-      await attempt(() => handle.stop());
-      await attempt(routeShutdown ? () => routeShutdown : undefined);
-      resetWorkspaceAgentResources();
+      const transportStop = Promise.resolve().then(() => handle.stop());
+      const [sessionRouteResult, eventRouteResult, transportResult] =
+        await Promise.allSettled([
+          sessionRouteShutdown ?? Promise.resolve(),
+          eventRouteShutdown ?? Promise.resolve(),
+          transportStop,
+        ]);
+      let resetError: unknown;
+      try {
+        resetWorkspaceAgentResources();
+      } catch (error) {
+        resetError = error;
+      }
+      const cleanupErrors = [
+        sessionRouteStartError,
+        sessionRouteResult.status === 'rejected'
+          ? sessionRouteResult.reason
+          : undefined,
+        eventRouteStartError,
+        eventRouteResult.status === 'rejected' ? eventRouteResult.reason : undefined,
+        taskSchedulerStopError,
+        staleSessionGcStopError,
+        transportResult.status === 'rejected' ? transportResult.reason : undefined,
+        resetError,
+      ];
+      const firstError = cleanupErrors.find((error) => error !== undefined);
+      if (firstError !== undefined) {
+        if (serverHandle === handle) stopPromise = undefined;
+        throw firstError;
+      }
 
       if (serverHandle === handle) {
         serverHandle = undefined;
         app = undefined;
-        activeSessionController = undefined;
+        if (activeSessionController === sessionController) {
+          activeSessionController = undefined;
+        }
+        if (activeEventController === eventController) {
+          activeEventController = undefined;
+        }
         recoverQueuedTasksOnStart = undefined;
         taskScheduler = undefined;
       }
       logger.info('[Server] Blade server stopped');
-      if (firstError !== undefined) throw firstError;
     })();
     return stopPromise;
   };
@@ -753,6 +848,7 @@ export namespace BladeServer {
 
     const handle = serverHandle;
     const sessionController = activeSessionController;
+    const eventController = activeEventController;
     void recoverQueuedTasksOnStart?.().catch((error) => {
       logger.warn('[Server] Failed to recover queued tasks:', error);
     });
@@ -763,7 +859,7 @@ export namespace BladeServer {
       url: handle.url,
       port: handle.port,
       hostname: handle.hostname,
-      stop: () => stopOwnedServer(handle, sessionController),
+      stop: () => stopOwnedServer(handle, sessionController, eventController),
     };
   }
 
@@ -787,6 +883,7 @@ export namespace BladeServer {
 
     const handle = serverHandle;
     const sessionController = activeSessionController;
+    const eventController = activeEventController;
     try {
       await recoverQueuedTasksOnStart?.();
     } catch (error) {
@@ -799,7 +896,7 @@ export namespace BladeServer {
       url: handle.url,
       port: handle.port,
       hostname: handle.hostname,
-      stop: () => stopOwnedServer(handle, sessionController),
+      stop: () => stopOwnedServer(handle, sessionController, eventController),
     };
   }
 
@@ -809,5 +906,12 @@ export namespace BladeServer {
 
   export function getSessionCoordinationStatsForTests() {
     return activeSessionController?.getCoordinationStats();
+  }
+
+  export function getSseConnectionStatsForTests() {
+    return {
+      global: activeEventController?.getSseConnectionStats(),
+      session: activeSessionController?.getSseConnectionStats(),
+    };
   }
 }
