@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.117] - 2026-08-29
+
+### 修复
+- 让 production ACP pending-resume completion 等待精确 terminal metadata 投递，并确保 egress 失败不会重试已经完成的 durable turn。
+- 在 busy operation、取消、销毁和有界 ACP writer 失败期间保留 retry backoff 与 wake 所有权。
+
+### 测试
+- 新增 incomplete metadata prefix、malformed update、absolute polling deadline、deferred/rejected writer、teardown join、取消与 busy-operation wake 时序的确定性覆盖。
+- 使用真实 DeepSeek 请求和零 framework retry 重新验证一次性失败后的 production ACP recovery 路径。
+
 ## [0.10.116] - 2026-08-29
 
 ### 修复

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.117] - 2026-08-29
+
+### Fixed
+- Made production ACP pending-resume completion wait for its exact terminal metadata delivery without retrying an already completed durable turn on egress failure.
+- Preserved retry backoff and wake ownership across busy operations, cancellation, teardown, and bounded ACP writer failures.
+
+### Tests
+- Added deterministic coverage for incomplete metadata prefixes, malformed updates, absolute polling deadlines, deferred or rejected writers, teardown joins, cancellation, and busy-operation wake ordering.
+- Requalified the one-shot-failure production ACP recovery path with a real DeepSeek request and zero framework retries.
+
 ## [0.10.116] - 2026-08-29
 
 ### Fixed
