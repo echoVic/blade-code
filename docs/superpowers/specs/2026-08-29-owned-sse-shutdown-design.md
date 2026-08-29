@@ -48,9 +48,11 @@ returning a streaming response. The lease combines two cancellation sources:
 - controller shutdown through the gate's own abort signal.
 
 If the gate is closed, a new stream request fails with the existing sanitized HTTP 503
-semantics before it subscribes or starts a heartbeat. A successful stream attaches one
-abort listener to the lease signal. That listener invokes the route's existing
-idempotent `terminate()` function.
+semantics before Session resolution, hydration, subscription, or heartbeat setup. The
+route owns the lease locally while it validates and constructs the streaming response.
+Any error before `streamSSE()` takes ownership releases that lease in the route handler.
+A successfully handed-off stream attaches one abort listener to the lease signal. That
+listener invokes the route's existing idempotent `terminate()` function.
 
 The stream callback's `finally` block must:
 
