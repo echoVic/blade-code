@@ -72,6 +72,7 @@ function createMockDeps(overrides?: Partial<LoopEventDeps>): LoopEventDeps {
       setCurrentThinkingContent: vi.fn(),
       appendAssistantContent: vi.fn(() => 'msg-1'),
       appendThinkingContent: vi.fn(),
+      replaceLastAssistantMessage: vi.fn(),
       addToolMessage: vi.fn(),
       updateTokenUsage: vi.fn(),
       setCompacting: vi.fn(),
@@ -106,7 +107,22 @@ function createMockDeps(overrides?: Partial<LoopEventDeps>): LoopEventDeps {
 }
 
 function createMockStats(): LoopEventStats {
-  return { contentDeltaCount: 0, contentDeltaTotalLen: 0 };
+  return {
+    contentDeltaCount: 0,
+    contentDeltaTotalLen: 0,
+    outputStarted: false,
+    toolExecutionStarted: false,
+  };
+}
+
+type ToolCallRef = Extract<LoopEvent, { kind: 'tool_start' }>['toolCall'];
+
+function createToolCall(id: string, name: string): ToolCallRef {
+  return {
+    id,
+    type: 'function',
+    function: { name, arguments: '{}' },
+  };
 }
 
 // ==================== 测试 ====================
@@ -608,6 +624,131 @@ describe('createLoopEventHandler', () => {
       handler({ kind: 'content_delta', delta: 'hello' } as LoopEvent);
 
       expect(deps.streamingBuffer.batchAppendContent).toHaveBeenCalledWith('hello');
+    });
+  });
+
+  describe('pending-resume replay boundaries', () => {
+    it('在 content_delta 被 abort 过滤前记录非空输出', () => {
+      const controller = new AbortController();
+      controller.abort();
+      const deps = createMockDeps({ signal: controller.signal });
+      const stats = createMockStats();
+      const handler = createLoopEventHandler(deps, stats);
+
+      handler({ kind: 'content_delta', delta: 'late output' });
+
+      expect(stats.outputStarted).toBe(true);
+      expect(deps.streamingBuffer.batchAppendContent).not.toHaveBeenCalled();
+    });
+
+    it('在 thinking_delta 被 UI 开关过滤前记录非空输出', () => {
+      const deps = createMockDeps({ thinkingModeEnabled: false });
+      const stats = createMockStats();
+      const handler = createLoopEventHandler(deps, stats);
+
+      handler({ kind: 'thinking_delta', delta: 'hidden reasoning' });
+
+      expect(stats.outputStarted).toBe(true);
+      expect(deps.streamingBuffer.batchAppendThinking).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['content_delta', { kind: 'content_delta', delta: '' } satisfies LoopEvent],
+      ['thinking_delta', { kind: 'thinking_delta', delta: '' } satisfies LoopEvent],
+    ])('空 %s 不记录输出开始', (_label, event) => {
+      const stats = createMockStats();
+      const handler = createLoopEventHandler(createMockDeps(), stats);
+
+      handler(event);
+
+      expect(stats.outputStarted).toBe(false);
+    });
+
+    it('structured_output 记录输出开始', () => {
+      const stats = createMockStats();
+      const handler = createLoopEventHandler(createMockDeps(), stats);
+
+      handler({
+        kind: 'structured_output',
+        output: { status: 'complete' },
+        schemaDigest: 'schema-digest',
+      });
+
+      expect(stats.outputStarted).toBe(true);
+    });
+
+    const visibleToolCall = createToolCall('visible-tool', 'Bash');
+    const structuredOutputToolCall = createToolCall(
+      'structured-output-tool',
+      'StructuredOutput'
+    );
+    const hiddenToolCall = createToolCall('hidden-tool', 'TaskCreate');
+    const successfulResult = { success: true, llmContent: 'done' } as const;
+    const progressUpdate = { message: 'working' } as const;
+    const toolLifecycleEvents: Array<[string, LoopEvent]> = [
+      ['visible tool_start', { kind: 'tool_start', toolCall: visibleToolCall }],
+      [
+        'visible tool_progress',
+        {
+          kind: 'tool_progress',
+          toolCall: visibleToolCall,
+          update: progressUpdate,
+        },
+      ],
+      [
+        'visible tool_result',
+        {
+          kind: 'tool_result',
+          toolCall: visibleToolCall,
+          result: successfulResult,
+        },
+      ],
+      [
+        'StructuredOutput tool_start',
+        { kind: 'tool_start', toolCall: structuredOutputToolCall },
+      ],
+      [
+        'StructuredOutput tool_progress',
+        {
+          kind: 'tool_progress',
+          toolCall: structuredOutputToolCall,
+          update: progressUpdate,
+        },
+      ],
+      [
+        'StructuredOutput tool_result',
+        {
+          kind: 'tool_result',
+          toolCall: structuredOutputToolCall,
+          result: successfulResult,
+        },
+      ],
+      ['UI-hidden tool_start', { kind: 'tool_start', toolCall: hiddenToolCall }],
+    ];
+
+    it.each(toolLifecycleEvents)(
+      '在 UI 过滤前记录 %s 的工具执行开始',
+      (_label, event) => {
+        const stats = createMockStats();
+        const handler = createLoopEventHandler(createMockDeps(), stats);
+
+        handler(event);
+
+        expect(stats.toolExecutionStarted).toBe(true);
+      }
+    );
+
+    it('边界字段一旦置为 true 就不会被后续空事件清除', () => {
+      const stats = createMockStats();
+      const handler = createLoopEventHandler(createMockDeps(), stats);
+
+      handler({ kind: 'content_delta', delta: 'started' });
+      handler({ kind: 'content_delta', delta: '' });
+      handler({ kind: 'tool_start', toolCall: visibleToolCall });
+      handler({ kind: 'turn_start', turn: 2, maxTurns: 10 });
+
+      expect(stats.outputStarted).toBe(true);
+      expect(stats.toolExecutionStarted).toBe(true);
     });
   });
 

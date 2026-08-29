@@ -81,6 +81,8 @@ export interface LoopEventDeps {
 export interface LoopEventStats {
   contentDeltaCount: number;
   contentDeltaTotalLen: number;
+  outputStarted: boolean;
+  toolExecutionStarted: boolean;
   compactionCount?: number;
 }
 
@@ -110,6 +112,7 @@ export function createLoopEventHandler(
     switch (event.kind) {
       // --- 流式增量（批处理减少渲染频率） ---
       case 'content_delta':
+        if (event.delta.length > 0) stats.outputStarted = true;
         // abort/interrupt 后或 model_fallback 已终结该流的 late delta 不写入缓冲区
         if (!streamSession.acceptsDeltas()) break;
         stats.contentDeltaCount++;
@@ -123,6 +126,7 @@ export function createLoopEventHandler(
         break;
 
       case 'thinking_delta':
+        if (event.delta.length > 0) stats.outputStarted = true;
         // abort/interrupt 后或 model_fallback 已终结该流的 late delta 不写入缓冲区
         if (!streamSession.acceptsDeltas()) break;
         if (deps.thinkingModeEnabled) {
@@ -200,6 +204,7 @@ export function createLoopEventHandler(
 
       // --- 工具事件 ---
       case 'tool_start': {
+        stats.toolExecutionStarted = true;
         const toolCall = event.toolCall;
         if (!('function' in toolCall)) break;
         if (toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
@@ -225,6 +230,7 @@ export function createLoopEventHandler(
         break;
       }
       case 'tool_progress': {
+        stats.toolExecutionStarted = true;
         const toolCall = event.toolCall;
         if (!('function' in toolCall)) break;
         if (toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
@@ -249,6 +255,7 @@ export function createLoopEventHandler(
         break;
       }
       case 'tool_result': {
+        stats.toolExecutionStarted = true;
         const toolCall = event.toolCall;
         if (!('function' in toolCall)) break;
         if (toolCall.function.name === STRUCTURED_OUTPUT_TOOL_NAME) break;
@@ -270,6 +277,7 @@ export function createLoopEventHandler(
         break;
       }
       case 'structured_output':
+        stats.outputStarted = true;
         deps.sessionActions.replaceLastAssistantMessage(
           JSON.stringify(event.output, null, 2)
         );
