@@ -48,6 +48,9 @@ const runtimeState = vi.hoisted(() => ({
     })),
     getPendingSteeringCount: vi.fn(() => 0),
     getPendingSteeringMessages: vi.fn(() => []),
+    isIdleForResidency: vi.fn<() => ReturnType<SessionRuntime['isIdleForResidency']>>(
+      () => true
+    ),
     getTurnRecoveryAssessment: vi.fn<
       () => ReturnType<SessionRuntime['getTurnRecoveryAssessment']>
     >(() => ({ state: 'none' })),
@@ -257,6 +260,7 @@ describe('AcpSession', () => {
     runtimeState.runtime.getCurrentModelId.mockReturnValue('model-1');
     runtimeState.runtime.getPendingSteeringCount.mockReturnValue(0);
     runtimeState.runtime.getPendingSteeringMessages.mockReturnValue([]);
+    runtimeState.runtime.isIdleForResidency.mockReturnValue(true);
     runtimeState.runtime.getTurnRecoveryAssessment.mockReturnValue({ state: 'none' });
     runtimeState.runtime.getGoal.mockReset().mockResolvedValue(null);
     runtimeState.runtime.listRewindCheckpoints.mockReset().mockResolvedValue([]);
@@ -478,37 +482,64 @@ describe('AcpSession', () => {
 
     it('retries a retryable pending-input failure with bounded backoff', async () => {
       vi.useFakeTimers();
+      let releaseRecovered!: () => void;
+      const recoveredGate = new Promise<void>((resolve) => {
+        releaseRecovered = resolve;
+      });
       try {
         await session.initialize();
         const mockAgent = getMockAgent();
+        const originalSessionUpdate = mockConnection.sessionUpdate.bind(mockConnection);
+        let markRecoveredEntered!: () => void;
+        const recoveredEntered = new Promise<void>((resolve) => {
+          markRecoveredEntered = resolve;
+        });
+        let recoveredDelivered = false;
+        let recoveredRecorded = false;
+        vi.spyOn(mockConnection, 'sessionUpdate').mockImplementation(async (params) => {
+          const lifecycle = params.update._meta?.['blade/pendingResume'] as
+            | { phase?: string }
+            | undefined;
+          if (lifecycle?.phase === 'recovered') {
+            markRecoveredEntered();
+            await originalSessionUpdate(params);
+            recoveredRecorded = true;
+            await recoveredGate;
+            recoveredDelivered = true;
+            return;
+          }
+          await originalSessionUpdate(params);
+        });
         let attempt = 0;
         mockAgent.chatStream = vi.fn(async function* () {
           attempt += 1;
-          yield {
-            kind: 'follow_up_started',
-            queued: 1,
-            recovered: 1,
-            messages: [
-              {
-                id: 'retry-input',
-                content: 'retry-safe recovered input',
-                queuedAt: Date.now(),
-                recovered: true,
-                persisted: false,
-              },
-              ...(attempt > 1
-                ? [
-                    {
-                      id: 'late-retry-input',
-                      content: 'new input during retry',
-                      queuedAt: Date.now(),
-                      recovered: true,
-                      persisted: false,
-                    },
-                  ]
-                : []),
-            ],
-          } as LoopEvent;
+          if (attempt <= 2) {
+            yield {
+              kind: 'follow_up_started',
+              queued: 1,
+              recovered: 1,
+              messages: [
+                {
+                  id: 'retry-input',
+                  content: 'retry-safe recovered input',
+                  queuedAt: Date.now(),
+                  recovered: true,
+                  persisted: false,
+                },
+                ...(attempt > 1
+                  ? [
+                      {
+                        id: 'late-retry-input',
+                        content: 'new input during retry',
+                        queuedAt: Date.now(),
+                        recovered: true,
+                        persisted: false,
+                      },
+                    ]
+                  : []),
+              ],
+            } as LoopEvent;
+          }
           if (attempt === 1) {
             return {
               success: false,
@@ -552,6 +583,17 @@ describe('AcpSession', () => {
           timeout: 500,
           interval: 1,
         });
+        await vi.waitFor(() =>
+          expect(
+            mockConnection.sessionUpdates.some(
+              ({ update }) =>
+                update.sessionUpdate === 'session_info_update' &&
+                update._meta?.['blade/pendingResume'] &&
+                (update._meta['blade/pendingResume'] as { phase?: string }).phase ===
+                  'retry_scheduled'
+            )
+          ).toBe(true)
+        );
         const scheduled = mockConnection.sessionUpdates.find(
           ({ update }) =>
             update.sessionUpdate === 'session_info_update' &&
@@ -577,6 +619,47 @@ describe('AcpSession', () => {
         expect(mockAgent.chatStream).toHaveBeenCalledTimes(1);
         await vi.advanceTimersByTimeAsync(1);
         expect(mockAgent.chatStream).toHaveBeenCalledTimes(2);
+        await recoveredEntered;
+        expect(recoveredRecorded).toBe(true);
+        expect(recoveredDelivered).toBe(false);
+        expect(
+          mockConnection.sessionUpdates.some(({ update }) => {
+            const lifecycle = update._meta?.['blade/pendingResume'] as
+              | { phase?: string; attempt?: number }
+              | undefined;
+            return lifecycle?.phase === 'recovered' && lifecycle.attempt === 2;
+          })
+        ).toBe(true);
+        expect(session.isIdleForResidency()).toBe(false);
+
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId: 'wake-during-recovered-egress',
+            inboxMessageId:
+              'background-subagent-completion:wake-during-recovered-egress',
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+        vi.runAllTicks();
+        await Promise.resolve();
+        expect(mockAgent.chatStream).toHaveBeenCalledTimes(2);
+        expect(session.isIdleForResidency()).toBe(false);
+
+        releaseRecovered();
+        await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(3), {
+          timeout: 500,
+          interval: 1,
+        });
+        await vi.waitFor(() => expect(session.isIdleForResidency()).toBe(true), {
+          timeout: 500,
+          interval: 1,
+        });
+        expect(recoveredDelivered).toBe(true);
         expect(mockConnection.sessionUpdates).toContainEqual(
           expect.objectContaining({
             update: expect.objectContaining({
@@ -608,6 +691,336 @@ describe('AcpSession', () => {
         ).toHaveLength(1);
         expect(vi.getTimerCount()).toBe(0);
       } finally {
+        releaseRecovered();
+        await session.destroy().catch(() => undefined);
+        vi.useRealTimers();
+      }
+    });
+
+    it('destroy closes a blocked recovered update and joins its resume owner', async () => {
+      vi.useFakeTimers();
+      try {
+        await session.initialize();
+        const mockAgent = getMockAgent();
+        const originalSessionUpdate = mockConnection.sessionUpdate.bind(mockConnection);
+        let recoveredRecorded = false;
+        let markRecoveredEntered!: () => void;
+        const recoveredEntered = new Promise<void>((resolve) => {
+          markRecoveredEntered = resolve;
+        });
+        vi.spyOn(mockConnection, 'sessionUpdate').mockImplementation(async (params) => {
+          const lifecycle = params.update._meta?.['blade/pendingResume'] as
+            | { phase?: string }
+            | undefined;
+          if (lifecycle?.phase === 'recovered') {
+            markRecoveredEntered();
+            await originalSessionUpdate(params);
+            recoveredRecorded = true;
+            await new Promise<void>(() => undefined);
+            return;
+          }
+          await originalSessionUpdate(params);
+        });
+        let attempt = 0;
+        mockAgent.chatStream = vi.fn(async function* () {
+          attempt += 1;
+          yield* [] as LoopEvent[];
+          if (attempt === 1) {
+            return {
+              success: false,
+              error: { type: 'api_error', message: 'Provider request timed out.' },
+              metadata: { turnsCount: 1, toolCallsCount: 0, duration: 10 },
+            } satisfies LoopResult;
+          }
+          return { success: true, finalMessage: 'recovered' } satisfies LoopResult;
+        }) as typeof mockAgent.chatStream;
+        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId: 'destroy-recovered-child',
+            inboxMessageId: 'background-subagent-completion:destroy-recovered-child',
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+
+        vi.runAllTicks();
+        await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1));
+        await vi.runOnlyPendingTimersAsync();
+        await recoveredEntered;
+        expect(recoveredRecorded).toBe(true);
+        expect(session.isIdleForResidency()).toBe(false);
+
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId: 'wake-before-destroy',
+            inboxMessageId: 'background-subagent-completion:wake-before-destroy',
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+        vi.runAllTicks();
+        await Promise.resolve();
+        expect(mockAgent.chatStream).toHaveBeenCalledTimes(2);
+        await expect(session.destroy()).resolves.toBeUndefined();
+
+        expect(mockAgent.chatStream).toHaveBeenCalledTimes(2);
+        expect(mockAgent.destroy).toHaveBeenCalledOnce();
+        expect(runtimeState.runtime.dispose).toHaveBeenCalledOnce();
+        expect(
+          mockConnection.sessionUpdates.some(({ update }) => {
+            const lifecycle = update._meta?.['blade/pendingResume'] as
+              | { phase?: string }
+              | undefined;
+            return lifecycle?.phase === 'recovered';
+          })
+        ).toBe(true);
+      } finally {
+        await session.destroy().catch(() => undefined);
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not retry or report recovered when the recovered writer rejects', async () => {
+      vi.useFakeTimers();
+      try {
+        await session.initialize();
+        const mockAgent = getMockAgent();
+        const originalSessionUpdate = mockConnection.sessionUpdate.bind(mockConnection);
+        let rejectRecovered!: (reason: Error) => void;
+        const recoveredWrite = new Promise<void>((_resolve, reject) => {
+          rejectRecovered = reject;
+        });
+        let markRecoveredEntered!: () => void;
+        const recoveredEntered = new Promise<void>((resolve) => {
+          markRecoveredEntered = resolve;
+        });
+        vi.spyOn(mockConnection, 'sessionUpdate').mockImplementation(async (params) => {
+          const lifecycle = params.update._meta?.['blade/pendingResume'] as
+            | { phase?: string }
+            | undefined;
+          if (lifecycle?.phase === 'recovered') {
+            markRecoveredEntered();
+            await recoveredWrite;
+          }
+          await originalSessionUpdate(params);
+        });
+        let attempt = 0;
+        mockAgent.chatStream = vi.fn(async function* () {
+          attempt += 1;
+          yield* [] as LoopEvent[];
+          if (attempt === 1) {
+            return {
+              success: false,
+              error: { type: 'api_error', message: 'Provider request timed out.' },
+              metadata: { turnsCount: 1, toolCallsCount: 0, duration: 10 },
+            } satisfies LoopResult;
+          }
+          return { success: true, finalMessage: 'recovered' } satisfies LoopResult;
+        }) as typeof mockAgent.chatStream;
+        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId: 'reject-recovered-child',
+            inboxMessageId: 'background-subagent-completion:reject-recovered-child',
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+
+        vi.runAllTicks();
+        await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1));
+        await vi.runOnlyPendingTimersAsync();
+        await recoveredEntered;
+        rejectRecovered(new Error('writer rejected recovered metadata'));
+        await vi.waitFor(() => expect(session.isIdleForResidency()).toBe(true));
+
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId: 'wake-after-recovered-rejection',
+            inboxMessageId:
+              'background-subagent-completion:wake-after-recovered-rejection',
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+        vi.runAllTicks();
+        await Promise.resolve();
+
+        expect(mockAgent.chatStream).toHaveBeenCalledTimes(2);
+        expect(
+          mockConnection.sessionUpdates.filter(({ update }) => {
+            const lifecycle = update._meta?.['blade/pendingResume'] as
+              | { phase?: string }
+              | undefined;
+            return lifecycle?.phase === 'retry_scheduled';
+          })
+        ).toHaveLength(1);
+        expect(
+          mockConnection.sessionUpdates.some(({ update }) => {
+            const lifecycle = update._meta?.['blade/pendingResume'] as
+              | { phase?: string }
+              | undefined;
+            return lifecycle?.phase === 'recovered';
+          })
+        ).toBe(false);
+        await expect(session.destroy()).resolves.toBeUndefined();
+      } finally {
+        await session.destroy().catch(() => undefined);
+        vi.useRealTimers();
+      }
+    });
+
+    it('keeps deferred recovered writes owned across cancel without starting a new turn', async () => {
+      vi.useFakeTimers();
+      let releaseRecovered!: () => void;
+      const recoveredGate = new Promise<void>((resolve) => {
+        releaseRecovered = resolve;
+      });
+      try {
+        await session.initialize();
+        const mockAgent = getMockAgent();
+        const originalSessionUpdate = mockConnection.sessionUpdate.bind(mockConnection);
+        let markRecoveredEntered!: () => void;
+        const recoveredEntered = new Promise<void>((resolve) => {
+          markRecoveredEntered = resolve;
+        });
+        vi.spyOn(mockConnection, 'sessionUpdate').mockImplementation(async (params) => {
+          const lifecycle = params.update._meta?.['blade/pendingResume'] as
+            | { phase?: string; attempt?: number }
+            | undefined;
+          if (lifecycle?.phase === 'recovered' && lifecycle.attempt === 2) {
+            markRecoveredEntered();
+            await originalSessionUpdate(params);
+            await recoveredGate;
+            return;
+          }
+          await originalSessionUpdate(params);
+        });
+
+        let attempt = 0;
+        mockAgent.chatStream = vi.fn(async function* () {
+          attempt += 1;
+          yield* [] as LoopEvent[];
+          if (attempt === 1) {
+            return {
+              success: false,
+              error: { type: 'api_error', message: 'Provider request timed out.' },
+              metadata: { turnsCount: 1, toolCallsCount: 0, duration: 10 },
+            } satisfies LoopResult;
+          }
+          return { success: true, finalMessage: 'recovered' } satisfies LoopResult;
+        }) as typeof mockAgent.chatStream;
+        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId: 'cancel-during-recovered-write',
+            inboxMessageId:
+              'background-subagent-completion:cancel-during-recovered-write',
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+
+        vi.runAllTicks();
+        await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(1), {
+          timeout: 500,
+          interval: 1,
+        });
+        await vi.waitFor(() =>
+          expect(
+            mockConnection.sessionUpdates.some(
+              ({ update }) =>
+                update.sessionUpdate === 'session_info_update' &&
+                update._meta?.['blade/pendingResume'] &&
+                (update._meta['blade/pendingResume'] as { phase?: string }).phase ===
+                  'retry_scheduled'
+            )
+          ).toBe(true)
+        );
+        const scheduled = mockConnection.sessionUpdates.find(
+          ({ update }) =>
+            update.sessionUpdate === 'session_info_update' &&
+            update._meta?.['blade/pendingResume'] &&
+            (update._meta['blade/pendingResume'] as { phase?: string }).phase ===
+              'retry_scheduled'
+        );
+        expect(scheduled).toBeDefined();
+        const lifecycle = scheduled!.update._meta!['blade/pendingResume'] as {
+          attempt: number;
+          nextRetryAt: number;
+        };
+        expect(lifecycle.attempt).toBe(2);
+
+        const remainingDelayMs = lifecycle.nextRetryAt - Date.now();
+        if (remainingDelayMs > 1) {
+          await vi.advanceTimersByTimeAsync(remainingDelayMs - 1);
+          expect(mockAgent.chatStream).toHaveBeenCalledTimes(1);
+          await vi.advanceTimersByTimeAsync(1);
+        } else if (remainingDelayMs > 0) {
+          await vi.advanceTimersByTimeAsync(remainingDelayMs);
+        }
+        await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(2));
+        await recoveredEntered;
+
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId: 'wake-before-cancel-during-recovered-write',
+            inboxMessageId:
+              'background-subagent-completion:wake-before-cancel-during-recovered-write',
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+        vi.runAllTicks();
+        await Promise.resolve();
+        expect(mockAgent.chatStream).toHaveBeenCalledTimes(2);
+        expect(session.isIdleForResidency()).toBe(false);
+
+        session.cancel();
+        expect(session.isIdleForResidency()).toBe(false);
+
+        releaseRecovered();
+        await vi.waitFor(() => expect(session.isIdleForResidency()).toBe(true), {
+          timeout: 500,
+          interval: 1,
+        });
+        expect(mockAgent.chatStream).toHaveBeenCalledTimes(2);
+        expect(
+          mockConnection.sessionUpdates.some(({ update }) => {
+            const lifecycle = update._meta?.['blade/pendingResume'] as
+              | { phase?: string; attempt?: number }
+              | undefined;
+            return lifecycle?.phase === 'recovered' && lifecycle.attempt === 2;
+          })
+        ).toBe(true);
+      } finally {
+        releaseRecovered();
         await session.destroy().catch(() => undefined);
         vi.useRealTimers();
       }
@@ -1429,6 +1842,86 @@ describe('AcpSession', () => {
         expect.any(Object),
         expect.objectContaining({ pendingInputOnly: true })
       );
+    });
+
+    it('does not spin pending resume scheduling while an active prompt still owns wakeup', async () => {
+      let releaseForeground!: () => void;
+      const foregroundBlocked = new Promise<void>((resolve) => {
+        releaseForeground = resolve;
+      });
+      const scheduledMicrotasks: VoidFunction[] = [];
+      const queueMicrotaskSpy = vi
+        .spyOn(globalThis, 'queueMicrotask')
+        .mockImplementation((callback) => scheduledMicrotasks.push(callback));
+      try {
+        await session.initialize();
+        const mockAgent = getMockAgent();
+        let markForegroundStarted!: () => void;
+        const foregroundStarted = new Promise<void>((resolve) => {
+          markForegroundStarted = resolve;
+        });
+        mockAgent.chatStream = vi.fn(async function* (message) {
+          if (message === 'foreground prompt') {
+            markForegroundStarted();
+            await foregroundBlocked;
+            yield* [] as LoopEvent[];
+            return {
+              success: true,
+              finalMessage: 'foreground prompt done',
+            } satisfies LoopResult;
+          }
+          yield* [] as LoopEvent[];
+          return {
+            success: true,
+            finalMessage: 'pending input resumed',
+          } satisfies LoopResult;
+        }) as typeof mockAgent.chatStream;
+        runtimeState.runtime.getPendingSteeringCount.mockReturnValue(1);
+
+        const foregroundPrompt = session.prompt({
+          sessionId: 'test-session-id',
+          prompt: [{ type: 'text', text: 'foreground prompt' }],
+        });
+        await foregroundStarted;
+        expect(mockAgent.chatStream).toHaveBeenCalledTimes(1);
+
+        Bus.publish(
+          { sessionId: 'test-session-id', projectPath: '/tmp/test' },
+          'subagent.completion.queued',
+          {
+            childSessionId: 'busy-spin-child',
+            inboxMessageId: 'background-subagent-completion:busy-spin-child',
+            status: 'completed',
+            type: 'Explore',
+            queued: 1,
+            delivery: 'next_turn',
+          }
+        );
+        expect(scheduledMicrotasks).toHaveLength(1);
+        scheduledMicrotasks.shift()?.();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(scheduledMicrotasks).toHaveLength(0);
+        expect(mockAgent.chatStream).toHaveBeenCalledTimes(1);
+        expect(session.isIdleForResidency()).toBe(false);
+
+        releaseForeground();
+        await foregroundPrompt;
+        expect(scheduledMicrotasks).toHaveLength(1);
+        scheduledMicrotasks.shift()?.();
+        await vi.waitFor(() => expect(mockAgent.chatStream).toHaveBeenCalledTimes(2));
+        expect(mockAgent.chatStream).toHaveBeenNthCalledWith(
+          2,
+          '',
+          expect.any(Object),
+          expect.objectContaining({ pendingInputOnly: true })
+        );
+        expect(scheduledMicrotasks).toHaveLength(0);
+      } finally {
+        releaseForeground();
+        queueMicrotaskSpy.mockRestore();
+        await session.destroy().catch(() => undefined);
+      }
     });
 
     it('does not run a queued auto-resume after cancellation', async () => {

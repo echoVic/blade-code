@@ -292,6 +292,8 @@ export class AcpSession {
   private pendingResumeScheduled = false;
   private pendingResumeGeneration = 0;
   private pendingResumeTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingResumeCompletion: Promise<void> | null = null;
+  private pendingResumeNextDelayMs: number | null = null;
   private availableCommandsTimer: ReturnType<typeof setTimeout> | null = null;
   private taskStatusUnsubscribe?: () => void;
   private destroyed = false;
@@ -2066,7 +2068,8 @@ export class AcpSession {
       !this.pendingResumeRequested ||
       !this.canSendUpdates() ||
       this.pendingResumeScheduled ||
-      this.pendingResumeInFlight
+      this.pendingResumeInFlight ||
+      this.pendingResumeCompletion !== null
     ) {
       return;
     }
@@ -2075,9 +2078,7 @@ export class AcpSession {
     const generation = this.pendingResumeGeneration;
     const run = () => {
       if (generation !== this.pendingResumeGeneration) return;
-      this.pendingResumeScheduled = false;
-      this.pendingResumeTimer = null;
-      void this.resumePendingIfIdle();
+      this.startPendingResumeRun(generation);
     };
     if (delayMs > 0) {
       this.pendingResumeTimer = setTimeout(run, delayMs);
@@ -2087,17 +2088,61 @@ export class AcpSession {
     }
   }
 
+  private startPendingResumeRun(generation: number): void {
+    if (generation !== this.pendingResumeGeneration) return;
+    this.pendingResumeScheduled = false;
+    this.pendingResumeTimer = null;
+    if (
+      !this.pendingResumeRequested ||
+      !this.canSendUpdates() ||
+      this.pendingResumeInFlight ||
+      this.pendingPrompt ||
+      this.pendingUserShell ||
+      this.pendingSideConversation ||
+      !this.runtime ||
+      !this.agent
+    ) {
+      return;
+    }
+    const completion = this.resumePendingIfIdle();
+    this.pendingResumeCompletion = completion;
+    void completion.then(
+      () => {
+        if (this.pendingResumeCompletion === completion) {
+          this.pendingResumeCompletion = null;
+          const nextDelayMs = this.pendingResumeNextDelayMs;
+          this.pendingResumeNextDelayMs = null;
+          if (nextDelayMs !== null && !this.destroyed && this.pendingResumeRequested) {
+            this.ensurePendingResumeScheduled(nextDelayMs);
+          }
+        }
+      },
+      () => {
+        if (this.pendingResumeCompletion === completion) {
+          this.pendingResumeCompletion = null;
+          const nextDelayMs = this.pendingResumeNextDelayMs;
+          this.pendingResumeNextDelayMs = null;
+          if (nextDelayMs !== null && !this.destroyed && this.pendingResumeRequested) {
+            this.ensurePendingResumeScheduled(nextDelayMs);
+          }
+        }
+      }
+    );
+  }
+
   private clearPendingResumeRequest(): boolean {
     const hadPendingResume =
       this.pendingResumeRequested ||
       this.pendingResumeScheduled ||
       this.pendingResumeInFlight ||
-      this.pendingResumeTimer !== null;
+      this.pendingResumeTimer !== null ||
+      this.pendingResumeCompletion !== null;
     this.pendingResumeRequested = false;
     this.pendingResumeAttempt = 0;
     this.projectedPendingResumeInputIds.clear();
     this.pendingResumeRecoveryStartedAt = 0;
     this.pendingResumeGeneration++;
+    this.pendingResumeNextDelayMs = null;
     this.pendingResumeScheduled = false;
     if (this.pendingResumeTimer !== null) {
       clearTimeout(this.pendingResumeTimer);
@@ -2169,6 +2214,7 @@ export class AcpSession {
     }
     if (
       this.pendingResumeInFlight ||
+      this.pendingResumeCompletion !== null ||
       this.pendingPrompt ||
       this.pendingUserShell ||
       this.pendingSideConversation ||
@@ -2277,9 +2323,14 @@ export class AcpSession {
         return;
       }
       if (attempt > 1) {
-        this.sendUpdate(
-          this.pendingResumeSessionUpdate('recovered', { attempt, kind })
-        );
+        if (
+          !(await this.sendUpdateAndWait(
+            this.pendingResumeSessionUpdate('recovered', { attempt, kind })
+          ))
+        ) {
+          return;
+        }
+        if (generation !== this.pendingResumeGeneration) return;
       }
       this.pendingResumeAttempt = 0;
       this.projectedPendingResumeInputIds.clear();
@@ -2344,7 +2395,7 @@ export class AcpSession {
       }
       this.pendingResumeInFlight = false;
       if (this.pendingResumeRequested) {
-        this.ensurePendingResumeScheduled(retryDelayMs);
+        this.pendingResumeNextDelayMs = retryDelayMs ?? 0;
       }
     }
   }
@@ -2704,6 +2755,11 @@ export class AcpSession {
       this.pendingPrompt === null &&
       this.pendingUserShell === null &&
       this.pendingSideConversation === null &&
+      !this.pendingResumeRequested &&
+      !this.pendingResumeScheduled &&
+      !this.pendingResumeInFlight &&
+      this.pendingResumeTimer === null &&
+      this.pendingResumeCompletion === null &&
       (this.runtime?.isIdleForResidency() ?? false)
     );
   }
@@ -2741,6 +2797,7 @@ export class AcpSession {
     const promptCompletion = this.pendingPromptCompletion;
     const userShellCompletion = this.pendingUserShellCompletion;
     const sideConversationCompletion = this.pendingSideConversationCompletion;
+    const pendingResumeCompletion = this.pendingResumeCompletion;
     this.agent = null;
     this.runtime = null;
     let firstError: unknown;
@@ -2757,6 +2814,9 @@ export class AcpSession {
     if (userShellCompletion) await attempt(() => userShellCompletion);
     if (sideConversationCompletion) {
       await attempt(() => sideConversationCompletion);
+    }
+    if (pendingResumeCompletion) {
+      await attempt(() => pendingResumeCompletion);
     }
     if (discardPendingInput && promptCompletion && runtime) {
       await attempt(() => runtime.discardPendingInput());
